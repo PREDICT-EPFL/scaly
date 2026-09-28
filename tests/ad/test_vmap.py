@@ -23,8 +23,8 @@ def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
   jvp_vmap = sc.jvp_many(mapped, z, seeds)
   jvp_ref = sc.jvp_many(unrolled, z, seeds)
 
-  fn_vmap = sc.Function._from_exprs("jvp_vmap", [z, p], [jvp_vmap], ["z", "p"], ["dy"])
-  fn_ref = sc.Function._from_exprs("jvp_ref", [z, p], [jvp_ref], ["z", "p"], ["dy"])
+  fn_vmap = sc.Function.from_exprs("jvp_vmap", [z, p], [jvp_vmap], ["z", "p"], ["dy"])
+  fn_ref = sc.Function.from_exprs("jvp_ref", [z, p], [jvp_ref], ["z", "p"], ["dy"])
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
@@ -38,11 +38,11 @@ def test_jacobian_of_vmap_matches_finite_differences() -> None:
   z = sc.sym("z", 3 * N)
   p = sc.sym("p", 3 * N)
   mapped = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  fn = sc.Function._from_exprs("mapped", [z, p], [mapped], ["z", "p"], ["y"])
+  fn = sc.Function.from_exprs("mapped", [z, p], [mapped], ["z", "p"], ["y"])
 
   seeds = sc.const(np.eye(3 * N))
   jacobian = sc.jvp_many(mapped, z, seeds).T  # (3N, 3N)
-  jac_fn = sc.Function._from_exprs("jac", [z, p], [jacobian], ["z", "p"], ["jac"])
+  jac_fn = sc.Function.from_exprs("jac", [z, p], [jacobian], ["z", "p"], ["jac"])
 
   rng = np.random.default_rng(1)
   zv = rng.normal(size=3 * N)
@@ -74,8 +74,8 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
   z = sc.sym("z", 2 * N)
   mapped = sc.vmap(piece, N, [(z, 0, 2)])
   unrolled = sc.concat([piece(z[2 * it : 2 * (it + 1)]) for it in range(N)])
-  mapped_fn = sc.Function._from_exprs("vmap_grad_factory", [z], [mapped], ["z"], ["y"])
-  unrolled_fn = sc.Function._from_exprs("vmap_grad_unrolled", [z], [unrolled], ["z"], ["y"])
+  mapped_fn = sc.Function.from_exprs("vmap_grad_factory", [z], [mapped], ["z"], ["y"])
+  unrolled_fn = sc.Function.from_exprs("vmap_grad_unrolled", [z], [unrolled], ["z"], ["y"])
   mapped_grad = mapped_fn.factory("vmap_grad_factory_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   unrolled_grad = unrolled_fn.factory("vmap_grad_unrolled_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   vmap_nodes = [node for node in topo(mapped_grad.outputs) if node.op == sc.ExprOp.VMAP]
@@ -101,8 +101,8 @@ def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   z, q = sc.sym("z", 3 * N), sc.sym("q", 2 * N)
   mapped = sc.vmap(duality_piece, N, [(z, 0, 3), (q, 0, 2)])
   unrolled = sc.concat([duality_piece((z[3 * k : 3 * (k + 1)], q[2 * k : 2 * (k + 1)])) for k in range(N)])
-  fn_vmap = sc.Function._from_exprs("duality_vmap", [z, q], [mapped], ["z", "q"], ["y"])
-  fn_unroll = sc.Function._from_exprs("duality_unroll", [z, q], [unrolled], ["z", "q"], ["y"])
+  fn_vmap = sc.Function.from_exprs("duality_vmap", [z, q], [mapped], ["z", "q"], ["y"])
+  fn_unroll = sc.Function.from_exprs("duality_unroll", [z, q], [unrolled], ["z", "q"], ["y"])
 
   rng = np.random.default_rng(5)
   zv, qv = rng.normal(size=3 * N), rng.normal(size=2 * N)

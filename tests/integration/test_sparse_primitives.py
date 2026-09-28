@@ -45,7 +45,7 @@ def _spmv(name: str, pattern: sparse.coo_array) -> sc.Function:
   a, x, y = sc.sym("a", nnz), sc.sym("x", n), sc.sym("y", m)
   ax = sc.segment_sum(a * sc.gather(x, cols), rows, m)
   aty = sc.segment_sum(a * sc.gather(y, rows), cols, n)
-  return sc.Function._from_exprs(f"spmv_{name}", [a, x, y], [ax, aty, sc.dot(y, ax)], ["a", "x", "y"], ["ax", "aty", "yax"])
+  return sc.Function.from_exprs(f"spmv_{name}", [a, x, y], [ax, aty, sc.dot(y, ax)], ["a", "x", "y"], ["ax", "aty", "yax"])
 
 
 @pytest.mark.parametrize("name", sorted(PATTERNS))

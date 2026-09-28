@@ -100,9 +100,9 @@ def ruiz(s: QPStructure, v: QPValues, *, scale_cost: bool = False, max_iter: int
       step_b = cost_cols  # PIQP's sparse aliasing: the stopping test reads the cost maxima
   nxt = concat([new_delta, new_delta_b, step, step_b, new_cost])
   names = ["ruiz", "P", "A", "G", "c"]
-  body = ConcreteFunction._from_exprs("ipm_ruiz_pass", [carry, pv, av, gv, cv], [nxt], names, ["next"])
+  body = ConcreteFunction.from_exprs("ipm_ruiz_pass", [carry, pv, av, gv, cv], [nxt], names, ["next"])
   go = maximum(norm_inf(1.0 - d_iter), norm_inf(1.0 - d_iter_b)) > epsilon
-  cond = ConcreteFunction._from_exprs("ipm_ruiz_go", [carry, pv, av, gv, cv], [go], names, ["go"])
+  cond = ConcreteFunction.from_exprs("ipm_ruiz_go", [carry, pv, av, gv, cv], [go], names, ["go"])
   init = Expr.const(np.concatenate([np.ones(big + n), np.zeros(big + n), np.ones(1)]))
   out, _ = while_loop(cond, body, init, max_iter=max_iter, params=(v.P, v.A, v.G, v.c))
   return Scaling(delta=out[:big], delta_b=out[big : big + n], c=out[size - 1])

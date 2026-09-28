@@ -23,7 +23,7 @@ LO, HI = np.array([0, 2, 4, 7, 3]), np.array([2, 2, 7, 8, 5])  # an empty group,
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _numpy(base, src, scale, dmap=DST, smap=SRC):
@@ -134,7 +134,7 @@ def test_ragged_updates_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
   def build(tag: str, *, clash: bool) -> sc.Function:
     c, lo, hi, w = sc.sym("c", 2 * n), sc.sym("lo", 1, dtype="int64"), sc.sym("hi", 1, dtype="int64"), sc.sym("w", 1)
     dmap = np.arange(n) + (0 if clash else n)
-    body = sc.Function._from_exprs(
+    body = sc.Function.from_exprs(
       f"rip_{int(clash)}_{tag}", [c, lo, hi, w], [ragged_add(c, c, lo, hi, w, dst_map=dmap)], ["c", "lo", "hi", "w"], ["n"]
     )
     c0, ws = sc.sym("c0", 2 * n), sc.sym("ws", steps)

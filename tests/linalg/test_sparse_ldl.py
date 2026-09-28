@@ -26,7 +26,7 @@ RNG = np.random.default_rng(707)
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _kkt(n: int, m: int, delta: float, seed: int) -> sparse.csc_array:
@@ -497,8 +497,8 @@ def test_solve_with_a_factor_carried_out_of_a_loop(schedule: Schedule) -> None:
   mat = SparseMatrix.symbol("K", t)
   fact = SparseLDL(mat, name=f"carried_{schedule}", schedule=schedule)
   c = sc.sym("c", fact.values.shape)
-  keep = sc.Function._from_exprs(f"carried_{schedule}_keep", [c], [c * 1.0], ["c"], ["c_next"])
-  stop = sc.Function._from_exprs(f"carried_{schedule}_stop", [c], [c[0] > c[0]], ["c"], ["go"])
+  keep = sc.Function.from_exprs(f"carried_{schedule}_keep", [c], [c * 1.0], ["c"], ["c_next"])
+  stop = sc.Function.from_exprs(f"carried_{schedule}_stop", [c], [c[0] > c[0]], ["c"], ["go"])
   carried, _ = sc.while_loop(stop, keep, fact.values, max_iter=3)
   b = sc.sym("b", k.shape[0])
   fn = _fn(f"carried_{schedule}", [mat.values, b], [fact.solve_with(carried, b), fact.solve(b)])

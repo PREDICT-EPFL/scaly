@@ -19,14 +19,14 @@ type Body = Callable[[sc.Expr], sc.Expr]
 
 def _mapped(name: str, body: Body) -> tuple[sc.Expr, sc.Expr]:
   x = sc.sym("x")
-  fn = sc.Function._from_exprs(name, [x], [body(x)], ["x"], ["y"])
+  fn = sc.Function.from_exprs(name, [x], [body(x)], ["x"], ["y"])
   xs = sc.sym("xs", 2)
   return xs, sc.vmap(fn, 2, [(xs, 0, 1)])
 
 
 def _scanned(name: str, body: Body) -> tuple[sc.Expr, sc.Expr]:
   c, x = sc.sym("c"), sc.sym("x")
-  step = sc.Function._from_exprs(name, [c, x], [c + body(x)], ["c", "x"], ["c_next"])
+  step = sc.Function.from_exprs(name, [c, x], [c + body(x)], ["c", "x"], ["c_next"])
   xs = sc.sym("xs", 2)
   return xs, sc.scan(step, sc.const(0.0), [(xs, 0, 1)], length=2)[0].reshape((1,))
 
@@ -34,8 +34,8 @@ def _scanned(name: str, body: Body) -> tuple[sc.Expr, sc.Expr]:
 def _looped(name: str, body: Body) -> tuple[sc.Expr, sc.Expr]:
   """A while loop differentiated in its param; it takes one step at the points used here."""
   c, x = sc.sym("c", 2), sc.sym("x", 2)
-  step = sc.Function._from_exprs(name, [c, x], [c + body(x)], ["c", "x"], ["c_next"])
-  go = sc.Function._from_exprs(f"{name}_go", [c, x], [c.sum() < 0.5], ["c", "x"], ["go"])
+  step = sc.Function.from_exprs(name, [c, x], [c + body(x)], ["c", "x"], ["c_next"])
+  go = sc.Function.from_exprs(f"{name}_go", [c, x], [c.sum() < 0.5], ["c", "x"], ["go"])
   xs = sc.sym("xs", 2)
   return xs, sc.while_loop(go, step, sc.const(np.zeros(2)), max_iter=3, params=[xs])[0]
 
@@ -82,7 +82,7 @@ def test_a_derivative_follows_the_setting_it_is_built_under(kind: str, order: tu
     with sc.options(nonsmooth=mode):
       built.extend(_derivatives(xs, y))
   # Both settings' derivatives in one Function: lowering refuses two Functions with one name.
-  fn = sc.Function._from_exprs(f"{name}_both", [xs], built, ["xs"], [f"{out}{i}" for i in range(2) for out in "gtj"])
+  fn = sc.Function.from_exprs(f"{name}_both", [xs], built, ["xs"], [f"{out}{i}" for i in range(2) for out in "gtj"])
   values = fn(np.full(2, 0.5))
   for i, mode in enumerate(order):
     gradient, tangent, jacobian = values[3 * i : 3 * i + 3]
@@ -104,7 +104,7 @@ def test_error_refuses_a_derivative_built_before_under_the_default(kind: str) ->
         build()
   point = np.array([0.3, 1.7])
   slope = np.cos(point - np.floor(point))
-  gradient, tangent, jacobian = sc.Function._from_exprs(f"{name}_default", [xs], built, ["xs"], ["g", "t", "j"])(point)
+  gradient, tangent, jacobian = sc.Function.from_exprs(f"{name}_default", [xs], built, ["xs"], ["g", "t", "j"])(point)
   np.testing.assert_allclose(gradient, slope, rtol=1e-14)
   np.testing.assert_allclose(tangent, slope.sum(), rtol=1e-14)
   np.testing.assert_allclose(np.asarray(jacobian).sum(axis=0), slope, rtol=1e-14)

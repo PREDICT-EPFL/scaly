@@ -227,7 +227,7 @@ def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
     (sc.const(np.zeros(4)), sc.const(np.zeros(2))),
   )
   outputs = (left.symbolic_call(*warm)[0][0], right.symbolic_call(*warm)[0][0], ipopt.symbolic_call(*warm)[0][0])
-  host = sc.Function._from_exprs("shared_problem_host", (), outputs, (), ("left", "right", "third"))
+  host = sc.Function.from_exprs("shared_problem_host", (), outputs, (), ("left", "right", "third"))
   source = render_c_source(host)
   assert source.count("static inline void filter_problem_hess_upper_raw(") == 1
   assert source.count("static inline void filter_problem_hess_lower_raw(") == 1

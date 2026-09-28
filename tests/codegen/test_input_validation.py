@@ -9,7 +9,7 @@ def test_jit_reports_input_errors() -> None:
   x = sc.sym("x", 2)
   y = sc.sym("y", 2)
   out = ((x + 2.0) * y).sum()
-  f = sc.Function._from_exprs("f", [x, y], [out], ["x", "y"], ["out"])
+  f = sc.Function.from_exprs("f", [x, y], [out], ["x", "y"], ["out"])
   xv, yv = np.array([1.0, 3.0]), np.array([4.0, 5.0])
 
   np.testing.assert_allclose(f((xv, yv)), ((xv + 2.0) * yv).sum())

@@ -66,17 +66,17 @@ _grad = sc.gradient(energy(_p, _theta), _p)
 _newton = -linalg.cho_solve(linalg.cholesky(sc.hessian(energy(_p, _theta), _p)), _grad)
 _step = sc.where(sc.isfinite(sc.norm_inf(_newton)), _newton, -0.01 * _grad)
 _step = _step * sc.minimum(1.0, MAX_STEP / sc.maximum(sc.norm_inf(_step), 1e-300))
-newton_iteration = sc.Function._from_exprs(
+newton_iteration = sc.Function.from_exprs(
   "chain_newton", [_carry], [sc.concat([_p + _step, _theta, sc.norm_inf(_grad).reshape((1,))])], ["carry"], ["next"]
 )
-not_converged = sc.Function._from_exprs("chain_not_converged", [_carry], [sc.greater(_carry[NP + 3], TOL)], ["carry"], ["go_on"])
+not_converged = sc.Function.from_exprs("chain_not_converged", [_carry], [sc.greater(_carry[NP + 3], TOL)], ["carry"], ["go_on"])
 
 
 def _equilibrium() -> sc.Function:
   params = sc.sym("params", 3)
   start = sc.concat([sc.const(initial_guess()), params, sc.const(np.ones(1))])
   carry, _ = sc.while_loop(not_converged, newton_iteration, start, max_iter=MAX_NEWTON)
-  return sc.Function._from_exprs("chain_equilibrium", [params], [carry[:NP]], ["params"], ["p"])
+  return sc.Function.from_exprs("chain_equilibrium", [params], [carry[:NP]], ["params"], ["p"])
 
 
 def _implicit_vjp() -> sc.Function:
@@ -84,7 +84,7 @@ def _implicit_vjp() -> sc.Function:
   params, p, p_bar = sc.sym("params", 3), sc.sym("p", NP), sc.sym("p_bar", NP)
   grad = sc.gradient(energy(p, params), p)
   w = linalg.cho_solve(linalg.cholesky(sc.jacobian(grad, p)), p_bar)
-  return sc.Function._from_exprs(
+  return sc.Function.from_exprs(
     "chain_equilibrium_vjp", [params, p, p_bar], [-(sc.jacobian(grad, params).T @ w)], ["params", "p", "p_bar"], ["params_bar"]
   )
 

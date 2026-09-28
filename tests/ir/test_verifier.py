@@ -32,7 +32,7 @@ def test_simple_scalar_graph_verifies() -> None:
 def test_matmul_named_call_verifies() -> None:
   a = sc.sym("a", (3, 4))
   b = sc.sym("b", (4, 2))
-  fn = sc.Function._from_exprs("mm", [a, b], [a @ b], ["a", "b"], ["c"])
+  fn = sc.Function.from_exprs("mm", [a, b], [a @ b], ["a", "b"], ["c"])
   c = sc.sym("c", (3, 4))
   d = sc.sym("d", (4, 2))
   out = fn((c, d))
@@ -41,7 +41,7 @@ def test_matmul_named_call_verifies() -> None:
 
 def test_vmap_graph_verifies() -> None:
   stage_in = sc.sym("u", 2)
-  stage = sc.Function._from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
+  stage = sc.Function.from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
   batch = sc.sym("batch", 8)
   mapped = sc.vmap(stage, length=4, inputs=[(batch, 0, 2)])
   verify_expr(mapped)
@@ -50,7 +50,7 @@ def test_vmap_graph_verifies() -> None:
 def test_jacobian_factory_output_verifies() -> None:
   x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  fn = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  fn = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
   jac = sc.jacobian(fn, "y", "x")
   verify_expr(jac.outputs)
 
@@ -119,7 +119,7 @@ def test_matmul_contracting_dim_mismatch_caught() -> None:
 
 def test_call_arg_shape_mismatch_caught() -> None:
   x = sc.sym("x", 3)
-  fn = sc.Function._from_exprs("f", [x], [x.sum()], ["x"], ["y"])
+  fn = sc.Function.from_exprs("f", [x], [x.sum()], ["x"], ["y"])
   bad_arg = sc.sym("z", 5)
   bad = Expr(
     ExprOp.CALL,
@@ -133,7 +133,7 @@ def test_call_arg_shape_mismatch_caught() -> None:
 
 def test_vmap_rank1_outer_required() -> None:
   stage_in = sc.sym("u", 2)
-  stage = sc.Function._from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
+  stage = sc.Function.from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
   bad_outer = sc.sym("batch", (4, 2))  # not rank-1
   bad = Expr(
     ExprOp.VMAP,
@@ -176,7 +176,7 @@ def test_verifier_smoke_on_workload_graphs() -> None:
   z = sc.sym("z", 6)
   A = sc.const(np.eye(4, 6))
   res = A @ z + z[:4]
-  fn = sc.Function._from_exprs("f", [z], [res.sum()], ["z"], ["y"])
+  fn = sc.Function.from_exprs("f", [z], [res.sum()], ["z"], ["y"])
   verify_expr(fn.outputs)
   jac = sc.jacobian(fn, "y", "z")
   verify_expr(jac.outputs)
@@ -234,7 +234,7 @@ def test_segment_extremum_rule() -> None:
 
 def test_scan_rule() -> None:
   c, u = sc.sym("c", 2), sc.sym("u", 1)
-  body = sc.Function._from_exprs("vs_step", [c, u], [c + u[0], c[:1]], ["c", "u"], ["n", "y"])
+  body = sc.Function.from_exprs("vs_step", [c, u], [c + u[0], c[:1]], ["c", "u"], ["n", "y"])
   final, ys = sc.scan(body, sc.sym("c0", 2), [(sc.sym("us", 3), 0, 1)], length=3)
   verify_expr([final, ys])
   bad = Expr(ExprOp.SCAN, final.args, TensorType((5,), dtype=dtypes.float64), attrs=dict(final.attrs))
@@ -244,14 +244,14 @@ def test_scan_rule() -> None:
 
 def test_while_rule_and_contract() -> None:
   c = sc.sym("c", 2)
-  body = sc.Function._from_exprs("vw_step", [c], [c * 0.5], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("vw_go", [c], [c[0] > 1.0], ["c"], ["go"])
+  body = sc.Function.from_exprs("vw_step", [c], [c * 0.5], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("vw_go", [c], [c[0] > 1.0], ["c"], ["go"])
   final, count = sc.while_loop(cond, body, sc.sym("c0", 2), max_iter=4)
   verify_expr([final, count])
   bad = Expr(ExprOp.WHILE, final.args, TensorType((3,), dtype=dtypes.float64), attrs=dict(final.attrs))
   with pytest.raises(VerifyError, match="while-attrs"):
     verify_expr(bad)
-  not_bool = sc.Function._from_exprs("vw_nb", [c], [c[:1]], ["c"], ["go"])
+  not_bool = sc.Function.from_exprs("vw_nb", [c], [c[:1]], ["c"], ["go"])
   with pytest.raises(ValueError, match="one bool"):
     sc.while_loop(not_bool, body, sc.sym("c0", 2), max_iter=4)
   with pytest.raises(ValueError, match="does not match the carry"):

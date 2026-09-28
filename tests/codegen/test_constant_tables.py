@@ -16,6 +16,6 @@ def test_a_constant_table_reaches_the_c_bit_for_bit() -> None:
     ]
   )
   index = sc.sym("i", table.size, dtype="int64")
-  fn = sc.Function._from_exprs("table_bits", [index], [sc.take(sc.const(table), index, in_range=True)], ["i"], ["v"])
+  fn = sc.Function.from_exprs("table_bits", [index], [sc.take(sc.const(table), index, in_range=True)], ["i"], ["v"])
   got = fn(np.arange(table.size))
   assert got.tobytes() == table.tobytes()

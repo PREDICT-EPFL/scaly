@@ -362,7 +362,7 @@ def test_matmul_lowering_matches_numpy_exactly(name) -> None:
   """Integer-valued inputs keep every product and partial sum exact, so the check is exact in any summation order."""
   sa, sb, product = _MATMUL_CASES[name]
   a, b = sc.sym("a", sa), sc.sym("b", sb)
-  fn = sc.Function._from_exprs(f"mm_{name}", [a, b], [sc.simplify(product(a, b))], ["a", "b"], ["y"])
+  fn = sc.Function.from_exprs(f"mm_{name}", [a, b], [sc.simplify(product(a, b))], ["a", "b"], ["y"])
   assert all(e.op != sc.ExprOp.TRANSPOSE for e in topo(fn.outputs)), "the transpose was not folded into the product"
   rng = np.random.default_rng(0)
   av, bv = (rng.integers(-8, 9, shape).astype(np.float64) for shape in (sa, sb))
@@ -377,8 +377,8 @@ def test_transpose_fold_is_bit_identical_to_the_transposed_product() -> None:
   rng = np.random.default_rng(1)
   av, vv, wv = rng.standard_normal((32, 12)), rng.standard_normal(32), rng.standard_normal(12)
   for tag, x, xv, product in (("v", v, vv, lambda m, x: m.T @ x), ("w", w, wv, lambda m, x: x @ m.T)):
-    transposed = sc.Function._from_exprs(f"mm_transposed_{tag}", [a, x], [product(a, x)], ["a", tag], ["y"])
-    folded = sc.Function._from_exprs(f"mm_folded_{tag}", [a, x], [sc.simplify(product(a, x))], ["a", tag], ["y"])
+    transposed = sc.Function.from_exprs(f"mm_transposed_{tag}", [a, x], [product(a, x)], ["a", tag], ["y"])
+    folded = sc.Function.from_exprs(f"mm_folded_{tag}", [a, x], [sc.simplify(product(a, x))], ["a", tag], ["y"])
     for fn in (transposed, folded):
       fn.recompile()
     np.testing.assert_array_equal(folded((av, xv)), transposed((av, xv)))
@@ -480,7 +480,7 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
   vector = sc.sym("vector", 3)
   output = (matrix.T @ vector).block()
   sparsity = sc.SparsityType((2, 1), (0, 1), (0, 0))
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     "normalized_metadata",
     [matrix, vector],
     [output],
@@ -515,7 +515,7 @@ def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str
   outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
   if identity == "simplify":
     outputs = [sc.simplify(output) for output in outputs]
-  fn = sc.Function._from_exprs(f"shared_outputs_{identity}", [x], outputs, ["x"], ["cos", "sin"])
+  fn = sc.Function.from_exprs(f"shared_outputs_{identity}", [x], outputs, ["x"], ["cos", "sin"])
 
   assert render_c_source(fn).count("sin(") == 1
   values = np.linspace(-2.0, 2.0, 64)
@@ -526,7 +526,7 @@ def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str
 
 def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
   x = sc.sym("x", 2, lowering="block")
-  fn = sc.Function._from_exprs("normalized_hints", [x], [(x * 1.0).scalar(), sc.const([2.0, 3.0]).scalar()], ["x"], ["identity", "constant"])
+  fn = sc.Function.from_exprs("normalized_hints", [x], [(x * 1.0).scalar(), sc.const([2.0, 3.0]).scalar()], ["x"], ["identity", "constant"])
   observed: list[sc.Function] = []
 
   lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized))
@@ -543,7 +543,7 @@ def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
 def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: object) -> None:
   x = sc.sym("x", 2, dtype=dtype)
   one = sc.const(np.full(2, value), dtype=dtype)
-  fn = sc.Function._from_exprs(f"normalized_{dtype}", [x], [(x * one).scalar()], ["x"], ["y"])
+  fn = sc.Function.from_exprs(f"normalized_{dtype}", [x], [(x * one).scalar()], ["x"], ["y"])
   observed: list[sc.Function] = []
 
   proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
@@ -557,16 +557,14 @@ def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: ob
 def test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction() -> None:
   matrix = sc.sym("matrix", (3, 2))
   vector = sc.sym("vector", 3)
-  product = sc.Function._from_exprs("normalized_cancel", [matrix, vector], [matrix.T @ vector], ["matrix", "vector"], ["y"])
+  product = sc.Function.from_exprs("normalized_cancel", [matrix, vector], [matrix.T @ vector], ["matrix", "vector"], ["y"])
   matrix_value = np.array([[1e16, -1e16], [1.0, 1.0], [-1e16, 1e16]])
   vector_value = np.ones(3)
   np.testing.assert_array_equal(product((matrix_value, vector_value)), vector_value @ matrix_value)
 
   empty_matrix = sc.sym("empty_matrix", (2, 0))
   empty_vector = sc.sym("empty_vector", 0)
-  empty = sc.Function._from_exprs(
-    "normalized_empty_product", [empty_matrix, empty_vector], [empty_matrix @ empty_vector], ["matrix", "vector"], ["y"]
-  )
+  empty = sc.Function.from_exprs("normalized_empty_product", [empty_matrix, empty_vector], [empty_matrix @ empty_vector], ["matrix", "vector"], ["y"])
   np.testing.assert_array_equal(empty((np.empty((2, 0)), np.empty(0))), np.zeros(2))
 
 
@@ -575,16 +573,16 @@ def test_two_different_functions_with_one_name_are_refused() -> None:
   would silently run the first one's body. Two Functions built from the same graph are the same
   procedure and are accepted."""
   c, u = sc.sym("c", 2), sc.sym("u", 1)
-  first = sc.Function._from_exprs("dup_step", [c, u], [c * u[0] + c[::-1]], ["c", "u"], ["cn"])
-  second = sc.Function._from_exprs("dup_step", [c, u], [c.sin() * u[0]], ["c", "u"], ["cn"])
-  twin = sc.Function._from_exprs("dup_step", [c, u], [c * u[0] + c[::-1]], ["c", "u"], ["cn"])
+  first = sc.Function.from_exprs("dup_step", [c, u], [c * u[0] + c[::-1]], ["c", "u"], ["cn"])
+  second = sc.Function.from_exprs("dup_step", [c, u], [c.sin() * u[0]], ["c", "u"], ["cn"])
+  twin = sc.Function.from_exprs("dup_step", [c, u], [c * u[0] + c[::-1]], ["c", "u"], ["cn"])
   c0, us = sc.sym("c0", 2), sc.sym("us", 3)
   (a,) = sc.scan(first, c0, [(us, 0, 1)], length=3)
   (b,) = sc.scan(second, c0, [(us, 0, 1)], length=3)
   (t,) = sc.scan(twin, c0, [(us, 0, 1)], length=3)
   with pytest.raises(LoweringError, match="dup_step"):
-    lower_function(sc.Function._from_exprs("dup_host", [c0, us], [a + b], ["c0", "us"], ["y"]))
-  host = sc.Function._from_exprs("dup_twins", [c0, us], [a, t], ["c0", "us"], ["y", "z"])
+    lower_function(sc.Function.from_exprs("dup_host", [c0, us], [a + b], ["c0", "us"], ["y"]))
+  host = sc.Function.from_exprs("dup_twins", [c0, us], [a, t], ["c0", "us"], ["y", "z"])
   y, z = host((np.array([0.3, -0.4]), np.array([0.5, 1.1, -0.7])))
   np.testing.assert_array_equal(y, z)
 
@@ -598,7 +596,7 @@ def test_input_names_that_look_generated(name: str) -> None:
   x, idx = sc.sym("x", 5), sc.sym(name, 1, dtype="int64")
   lo, hi = sc.const(np.array([0]), dtype="int64"), sc.const(np.array([3]), dtype="int64")
   y = sc.put_add(ragged_add(x, x * 1.0, lo, hi, sc.const([2.0]), dst_map=np.array([4, 3, 2])), idx, sc.const([10.0]))
-  fn = sc.Function._from_exprs(f"gen_name_{name}", [x, idx], [y], ["x", name], ["o"])
+  fn = sc.Function.from_exprs(f"gen_name_{name}", [x, idx], [y], ["x", name], ["o"])
   (got,) = fn._flat_numerical_call(np.arange(5.0), np.array([0]))
   np.testing.assert_array_equal(got, [10.0, 1.0, 6.0, 5.0, 4.0])
 
@@ -607,13 +605,13 @@ def test_hoisting_keeps_a_loop_count_with_its_loop() -> None:
   """A mapped callee whose while loop reports its step count next to work on a broadcast input:
   the count's read of the loop variable is not hoisted out with the invariant work."""
   c, p = sc.sym("c", 2), sc.sym("p", 2)
-  body = sc.Function._from_exprs("hk_body", [c], [c * 0.5], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("hk_cond", [c], [c[0] > 1e-3], ["c"], ["go"])
+  body = sc.Function.from_exprs("hk_body", [c], [c * 0.5], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("hk_cond", [c], [c[0] > 1e-3], ["c"], ["go"])
   x = sc.sym("x", 2)
   out, count = sc.while_loop(cond, body, x, max_iter=60)
-  inner = sc.Function._from_exprs("hk_inner", [x, p], [out[:1] + count.reshape((1,)) + (p * p).sum().reshape((1,))], ["x", "p"], ["y"])
+  inner = sc.Function.from_exprs("hk_inner", [x, p], [out[:1] + count.reshape((1,)) + (p * p).sum().reshape((1,))], ["x", "p"], ["y"])
   xs, pp = sc.sym("xs", 6), sc.sym("pp", 2)
-  fn = sc.Function._from_exprs("hk_outer", [xs, pp], [sc.vmap(inner, 3, [(xs, 0, 2), (pp, 0, 0)])], ["xs", "pp"], ["y"])
+  fn = sc.Function.from_exprs("hk_outer", [xs, pp], [sc.vmap(inner, 3, [(xs, 0, 2), (pp, 0, 0)])], ["xs", "pp"], ["y"])
   (got,) = fn._flat_numerical_call(np.array([1.0, 0.0, 2.0, 0.0, 4.0, 0.0]), np.array([1.0, 2.0]))
   expected = []
   for start in (1.0, 2.0, 4.0):
@@ -631,7 +629,7 @@ def test_max_and_min_reductions_in_four_lanes(n: int) -> None:
   from scaly.ir.expr import reduce_max, reduce_min
 
   x = sc.sym("x", n)
-  fn = sc.Function._from_exprs(f"four_lanes_{n}", [x], [reduce_max(x), reduce_min(x)], ["x"], ["mx", "mn"])
+  fn = sc.Function.from_exprs(f"four_lanes_{n}", [x], [reduce_max(x), reduce_min(x)], ["x"], ["mx", "mn"])
   rng = np.random.default_rng(n)
   for where in range(n):
     v = rng.standard_normal(n)
@@ -654,7 +652,7 @@ def test_elementwise_producers_fuse_into_extremum_reductions(n: int) -> None:
   from scaly.ir.expr import norm_inf, reduce_min
 
   x, y = sc.sym("x", n), sc.sym("y", n)
-  fn = sc.Function._from_exprs(f"fused_ext_{n}", [x, y], [norm_inf(x - 2.0 * y), reduce_min(sc.where(y < 0.0, -x / y, 1e30))], ["x", "y"], ["a", "b"])
+  fn = sc.Function.from_exprs(f"fused_ext_{n}", [x, y], [norm_inf(x - 2.0 * y), reduce_min(sc.where(y < 0.0, -x / y, 1e30))], ["x", "y"], ["a", "b"])
   body = render_c_source(fn).split(f"int fused_ext_{n}(")[1]
   assert not re.search(rf"double \w+\[{n}\]", body) and "w + " not in body, "a vector temporary survived"
   rng = np.random.default_rng(n)
@@ -676,7 +674,7 @@ def test_segment_extrema_in_runs(sort: bool) -> None:
   idx = rng.integers(0, 40, 400)
   idx = np.sort(idx) if sort else idx
   x = sc.sym("x", 400)
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     f"seg_runs_{int(sort)}", [x], [segment_max(x, idx, 41, fill=0.0), segment_min(x, idx, 41, fill=-1.0)], ["x"], ["a", "b"]
   )
   v = rng.standard_normal(400)
@@ -694,10 +692,10 @@ def test_segment_extrema_in_runs(sort: bool) -> None:
 def test_two_names_with_one_c_spelling_are_refused() -> None:
   """``f:_3`` and ``f__3`` are two names but one C symbol, so they clash like one name."""
   c, u = sc.sym("c", 2), sc.sym("u", 1)
-  first = sc.Function._from_exprs("step:_3", [c, u], [c * u[0]], ["c", "u"], ["cn"])
-  second = sc.Function._from_exprs("step__3", [c, u], [c.sin() * u[0]], ["c", "u"], ["cn"])
+  first = sc.Function.from_exprs("step:_3", [c, u], [c * u[0]], ["c", "u"], ["cn"])
+  second = sc.Function.from_exprs("step__3", [c, u], [c.sin() * u[0]], ["c", "u"], ["cn"])
   c0, us = sc.sym("c0", 2), sc.sym("us", 3)
   (a,) = sc.scan(first, c0, [(us, 0, 1)], length=3)
   (b,) = sc.scan(second, c0, [(us, 0, 1)], length=3)
   with pytest.raises(LoweringError, match="two different Functions are named 'step.*' and 'step.*', both 'step__3' in C"):
-    lower_function(sc.Function._from_exprs("c_spelling_host", [c0, us], [a + b], ["c0", "us"], ["y"]))
+    lower_function(sc.Function.from_exprs("c_spelling_host", [c0, us], [a + b], ["c0", "us"], ["y"]))

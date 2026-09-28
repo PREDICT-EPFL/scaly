@@ -53,7 +53,7 @@ def test_preprocessing_zeroes_free_rows_and_packs_the_box_bounds() -> None:
   }
   v = QPValues.preprocess(s, **syms)
   names = ["G", "h_l", "h_u", "x_l", "x_u"]
-  fn = sc.Function._from_exprs("qp_pre", list(syms.values()), [v.G, v.h_l, v.h_u, v.x_l, v.x_u], list(syms), names)
+  fn = sc.Function.from_exprs("qp_pre", list(syms.values()), [v.G, v.h_l, v.h_u, v.x_l, v.x_u], list(syms), names)
   G = np.arange(1.0, s.G_rows.size + 1.0)  # G's entries in the structure's order
   out = dict(
     zip(

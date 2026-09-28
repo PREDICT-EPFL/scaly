@@ -84,7 +84,7 @@ class MPC:
     # constant terms, which in the condensed form are everything that depends on x0 alone.
     problem = ocp.problem
     symbols = [*problem._var_symbols, *problem._param_symbols]
-    self.objective = ConcreteFunction._from_exprs(
+    self.objective = ConcreteFunction.from_exprs(
       f"{ocp.name}_objective", symbols, [problem.spec.minimize], [f"a{i}" for i in range(len(symbols))], ["cost"]
     )
     self._guess: np.ndarray | None = None
@@ -200,7 +200,7 @@ class MPC:
     k = ocp.interval.n_internal
     stats = solver_stats(self.solver)
     prm = [x0, np.concatenate(values)] if ocp.params else [x0]
-    cost = self.objective((*(np.ravel(a) for a in primal), *prm))  # its inputs are one group, as _from_exprs builds it
+    cost = self.objective((*(np.ravel(a) for a in primal), *prm))  # its inputs are one group, as from_exprs builds it
     return Solution(
       xs=(leaves["xs"] if ocp.states is None else np.asarray(ocp.states(x0, leaves["us"], *values))).reshape(ocp.horizon + 1, ocp.nx),
       us=leaves["us"].reshape(ocp.horizon, ocp.nu),

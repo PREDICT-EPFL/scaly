@@ -42,7 +42,7 @@ def evaluate(f: BSpline, points: np.ndarray, *, derivatives: bool = False) -> di
       hess_fwd = sc.stack([sc.stack([sc.jvp(jvp[:, i], x, s) for s in seeds], axis=1) for i in range(d)], axis=1)
     outs += [grad, jvp, hess, hess_fwd]
     names += ["grad", "jvp", "hess", "hess_fwd"]
-  fn = sc.Function._from_exprs(f"interp_eval_{next(_COUNTER)}", [x], outs, ["x"], names)
+  fn = sc.Function.from_exprs(f"interp_eval_{next(_COUNTER)}", [x], outs, ["x"], names)
   values = fn(points)
   values = values if isinstance(values, tuple) else (values,)
   return dict(zip(names, (np.asarray(v) for v in values), strict=True))

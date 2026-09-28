@@ -79,7 +79,7 @@ def bicycle_eq_function(horizon: int) -> sc.Function:
   parts = [stage_initial((z[:NZ], p[:NX]))]
   for i in range(horizon):
     parts.append(stage_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], params)))
-  return sc.Function._from_exprs(f"bicycle_eq_N{horizon}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
+  return sc.Function.from_exprs(f"bicycle_eq_N{horizon}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
 
 
 def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
@@ -92,7 +92,7 @@ def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return sc.Function._from_exprs(f"bicycle_eq_vmap_N{horizon}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return sc.Function.from_exprs(f"bicycle_eq_vmap_N{horizon}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def ca_bicycle_eq_jac(horizon: int, name: str = "ca_bicycle_eq_jac", sym_t=None):
@@ -199,9 +199,9 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
   fn = bicycle_eq_function(horizon)
   colored = sc.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
   reference = sc.sparse_jacobian_reference(fn.outputs[0], fn.inputs[0])
-  colored_fn = sc.Function._from_exprs("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
-  reference_fn = sc.Function._from_exprs("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
-  compare = sc.Function._from_exprs("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
+  colored_fn = sc.Function.from_exprs("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
+  reference_fn = sc.Function.from_exprs("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
+  compare = sc.Function.from_exprs("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
   zv, pv = _sample(horizon, 2)
   assert colored.sparsity == reference.sparsity
   assert len(topo(colored_fn.outputs)) < len(topo(reference_fn.outputs))

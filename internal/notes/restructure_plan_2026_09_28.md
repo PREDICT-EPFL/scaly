@@ -38,7 +38,7 @@
 | 2.1 | Op registry, builtins registered through it | ☑ |
 | 2.2 | Table-driven AD, sparsity, folding, verification | ☑ |
 | 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☑ |
-| 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☐ |
+| 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☑ |
 | 3.1 | Linear-algebra ops move into `scaly.linalg` | ☐ |
 | 3.2 | `linalg.banded` and `linalg.stagewise` | ☐ |
 | 4.1 | Method registry and the common `Info`/`Status` | ☐ |
@@ -499,6 +499,13 @@ runtime, CasADi's too, +45%, the ratios unchanged.
 `EXT_API_VERSION`; extension versions in the JIT cache key (bump `_JIT_CACHE_VERSION`). Replace
 the private uses in `linalg`, `interp`, `integrators`, `mpc`, `solvers`, examples and benchmarks.
 Gate: grep finds no `_from_exprs`, `_lift`, `_tokens`, `_load_library` outside the core.
+Log: done 2026-09-28. `scaly/ext.py` collects the registries, protocols and the public
+`Function.from_exprs`, `Function.lift`, `ConcreteFunction.tokens`, `codegen.jit.load_library`
+(renamed everywhere, 737 call sites). `EXT_API_VERSION` lives in `utils/ext_api.py` so the JIT key
+can include it; each plugin calls `require_ext_api` at import; `BuildRequirements.versions` puts the
+linked plugin distributions in the key (`_JIT_CACHE_VERSION` 5). The grep gate is a test that scans
+`src`, tests, plugins, examples and benchmarks. 2.3's smoke, rerun isolated with the worktree's own
+plugins, matched 2.2's.
 
 ### Phase 3: linear algebra out of the core
 

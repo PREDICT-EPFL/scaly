@@ -102,7 +102,7 @@ def test_chain_equilibrium_gradient_and_fit() -> None:
   import scaly as sc
 
   p, params = sc.sym("p", ns["NP"]), sc.sym("params", 3)
-  grad_fn = sc.Function._from_exprs("chain_grad_check", [p, params], [sc.gradient(ns["energy"](p, params), p)], ["p", "params"], ["g"])
+  grad_fn = sc.Function.from_exprs("chain_grad_check", [p, params], [sc.gradient(ns["energy"](p, params), p)], ["p", "params"], ["g"])
   for theta, weight in ((np.log([60.0, 0.03]), 0.0), (np.log([10.0, 0.2]), 0.05)):
     params_v = np.r_[theta, weight]
     assert np.abs(grad_fn((ns["equilibrium"](params_v), params_v))).max() < 1e-9

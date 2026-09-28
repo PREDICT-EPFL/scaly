@@ -98,7 +98,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   else:
     base_output_tree = G(L("f", f.type), L("g", g.type))
     base_outputs = (f, g)
-  base = ConcreteFunction._from_exprs(
+  base = ConcreteFunction.from_exprs(
     f"{problem.name}_base",
     (x, *problem._param_symbols),
     base_outputs,
@@ -130,7 +130,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     assert l_ineq is not None and u_ineq is not None
     bound_outputs = (x_lb, x_ub, l_ineq, u_ineq)
     bound_names = ("x_lb", "x_ub", "l_ineq", "u_ineq")
-  bounds = ConcreteFunction._from_exprs(
+  bounds = ConcreteFunction.from_exprs(
     f"{problem.name}_bounds",
     problem._param_symbols,
     bound_outputs,
@@ -181,7 +181,7 @@ def build_nlp[SV, NV, SP, NP](
     hess_full = cast(SparseJacobian, cached["hess_full"])
     hess = hess_full.triangle(triangle)
     hess_name = f"sphess_gamma_{x.name}_{x.name}"
-    hess_fn = ConcreteFunction._from_exprs(
+    hess_fn = ConcreteFunction.from_exprs(
       f"{problem.name}_hess_{triangle}",
       cast(tuple[Expr, ...], cached["hess_inputs"]),
       (hess.values,),

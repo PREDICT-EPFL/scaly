@@ -51,7 +51,7 @@ CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.n
 
 
 def _function(name: str, x: sc.Expr, y: sc.Expr) -> sc.Function:
-  return sc.Function._from_exprs(name, [x], [y], ["x"], ["y"])
+  return sc.Function.from_exprs(name, [x], [y], ["x"], ["y"])
 
 
 def _proc_ops(proc: ProgramNode) -> set[str]:

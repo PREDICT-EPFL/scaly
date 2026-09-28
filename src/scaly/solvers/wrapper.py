@@ -70,7 +70,14 @@ def solver_requirements(symbol: str, desc: SolverDescriptor) -> BuildRequirement
     libraries=(desc.backend,),
     link_flags=backend_compile_flags,
     isolated=True,
+    versions=_distribution(desc.backend),
   )
+
+
+def _distribution(backend: str) -> tuple[tuple[str, str], ...]:
+  """The plugin distribution providing ``backend`` and its version, when it is installed as one."""
+  dist = getattr(registry.available_backends().get(backend), "dist", None)
+  return ((dist.name, dist.version),) if dist is not None else ()
 
 
 def _decode_stats(name: str, raw: Any) -> SolverStats:

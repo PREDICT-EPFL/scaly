@@ -51,7 +51,7 @@ def _check(qp, backend: Backend, tag: str, *, static_eps: float = 1e-8, cases=CA
   rho, delta, ir = sc.sym("rho", ()), sc.sym("delta", ()), sc.sym("ir", ())
   factor = kkt.factor(rho, delta, Iterate.unflat(s, it_sym), ir=ir)
   lhs = factor.solve(Iterate.unflat(s, rhs_sym))
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     f"kkt_{tag}_{backend}",
     [*(syms[k] for k in ORDER), it_sym, rhs_sym, rho, delta, ir],
     [lhs.flat(), factor.ok, factor.ir],
@@ -119,7 +119,7 @@ def _noise_pivot(p22: float, ir: float, retries: int = 10) -> dict[str, float]:
   it = Iterate.unflat(s, sc.const(np.zeros(sum(Iterate.sizes(s)))))
   factor = kkt.factor(0.0, 1e-4, it, ir=ir)
   keys = ["ok", "ir", "delta", "retries"]
-  fn = sc.Function._from_exprs(f"noise_{int(ir)}_{p22 > 1}_{retries}", [pv], [factor.head[k] for k in keys], ["pv"], keys)
+  fn = sc.Function.from_exprs(f"noise_{int(ir)}_{p22 > 1}_{retries}", [pv], [factor.head[k] for k in keys], ["pv"], keys)
   return dict(zip(keys, (float(v) for v in fn(P[s.P_rows, s.P_cols])), strict=True))
 
 
@@ -158,7 +158,7 @@ def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend, toleran
   factor = kkt.factor(1e-6, 1e-4, Iterate.unflat(s, it_sym), ir=0.0)
   plain = kern._solve.symbolic_call((factor.record, kkt.data, rhs_sym))
   gated = kern.solve(factor.record, kkt.data, rhs_sym, ir > 0.5)
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     f"plain_{backend}_{int(tolerance)}",
     [*(syms[k] for k in ORDER), it_sym, rhs_sym, ir],
     [plain, gated],

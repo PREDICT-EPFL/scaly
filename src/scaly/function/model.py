@@ -143,12 +143,12 @@ class Function[**PS, **PN, SO, NO]:
     # arguments bind at all: a hit skips building the bound declaration, and the instance's own call
     # still checks structure and fixed shapes.
     self._by_arguments: dict[tuple[Any, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
-    # A derived template's instance is ``transform`` of its source's; see ``_lift``.
+    # A derived template's instance is ``transform`` of its source's; see ``lift``.
     self._source: Function[Any, Any, Any, Any] | None = None
     self._transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[PS, PN, SO, NO]] | None = None
     self._extra: tuple[str, ...] = ()
 
-  def _lift(
+  def lift(
     self, transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[Any, Any, Any, Any]], name: str, extra: tuple[str, ...] = ()
   ) -> Function[Any, Any, Any, Any]:
     """A template whose instance for a call is ``transform`` of this one's instance for the call's
@@ -264,7 +264,7 @@ class Function[**PS, **PN, SO, NO]:
         raise RuntimeError(f"{self.name}: two argument signatures would share the instance name {name!r}")
       _log.debug("instantiating %s", name)
       instance = ConcreteFunction(name, self._fn, bound, self._output, device=self._device, output_name=self.name)
-      instance._tokens = tokens
+      instance.tokens = tokens
       self._cache[key] = self._instances[name] = instance
     if arguments is not None:
       self._by_arguments[arguments] = instance
@@ -280,7 +280,7 @@ class Function[**PS, **PN, SO, NO]:
       instance = self._transform(source)
       if instance.name in self._instances:
         raise RuntimeError(f"{self.name}: two argument signatures would share the instance name {instance.name!r}")
-      instance._tokens = source._tokens
+      instance.tokens = source.tokens
       self._cache[source] = self._instances[instance.name] = instance
     if arguments is not None:
       self._by_arguments[arguments] = instance
@@ -326,7 +326,7 @@ class Function[**PS, **PN, SO, NO]:
   def with_device(self, device: DeviceSpec | str) -> Function[PS, PN, SO, NO]:
     """The same template, its instances placed on ``device``."""
     if self._source is not None and self._transform is not None:
-      return self._source.with_device(device)._lift(self._transform, self.name, self._extra)
+      return self._source.with_device(device).lift(self._transform, self.name, self._extra)
     return Function(self.name, self._fn, self._slots, self._output, device=device)
 
   def recompile(self) -> None:
@@ -339,7 +339,7 @@ class Function[**PS, **PN, SO, NO]:
     return self.concrete.callee_state(name)
 
   @staticmethod
-  def _from_exprs(
+  def from_exprs(
     name: str,
     inputs: Sequence[Expr],
     outputs: Sequence[Expr],
@@ -464,7 +464,7 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
   """
 
   # On a template's instance: what it adds to the template's name, which its derivatives reuse.
-  _tokens: str
+  tokens: str
 
   def __init__(  # no super().__init__(): an instance keeps no template state
     self,
@@ -805,6 +805,6 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
       ret_output_names.append(output_name)
       ret_sparsities.append(sparsity)
       ret_coloring_widths.append(coloring_width)
-    return ConcreteFunction._from_exprs(
+    return ConcreteFunction.from_exprs(
       name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths
     )

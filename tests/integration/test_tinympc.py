@@ -97,7 +97,7 @@ def test_cone_projection_matches_the_reference_and_is_a_projection() -> None:
   pts[:4] = [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, 0.0], [0.25, 0.0, 1.0]]  # axis, polar axis, apex, boundary
   mu = 0.25
   w = sc.sym("w", pts.size)
-  fn = sc.Function._from_exprs("proj", [w], [ts._project_cones(w, len(pts), 3, (tp.Cone(0, 3, mu),))], ["w"], ["p"])
+  fn = sc.Function.from_exprs("proj", [w], [ts._project_cones(w, len(pts), 3, (tp.Cone(0, 3, mu),))], ["w"], ["p"])
   got = np.asarray(fn(pts.reshape(-1))).reshape(pts.shape)
   want = np.array([tp.project_soc(s, mu) for s in pts])
   np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)

@@ -18,7 +18,7 @@ EXTRAPS = ["extend", "linear", "clamp", "periodic", "fill"]
 
 
 def fn_of(name: str, inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+  return sc.Function.from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
 
 
 def well_spaced(rng: np.random.Generator, n: int, lo: float = 0.0, hi: float = 1.0) -> np.ndarray:
@@ -247,9 +247,9 @@ def test_a_broadcast_tables_fit_runs_once_per_call() -> None:
   product) out of the loop into a prologue that runs once."""
   g = np.linspace(0.0, 1.0, 9)
   x, data = sc.sym("x"), sc.sym("data", 9)
-  body = sc.Function._from_exprs("interp_stage", [x, data], [interp.interpolant(g, data, kind="cubic")(x)], ["x", "data"], ["y"])
+  body = sc.Function.from_exprs("interp_stage", [x, data], [interp.interpolant(g, data, kind="cubic")(x)], ["x", "data"], ["y"])
   xs, table = sc.sym("xs", 16), sc.sym("table", 9)
-  fn = sc.Function._from_exprs("interp_map", [xs, table], [sc.vmap(body, 16, {"x": (xs, 0, 1), "data": (table, 0, 0)})], ["xs", "table"], ["y"])
+  fn = sc.Function.from_exprs("interp_map", [xs, table], [sc.vmap(body, 16, {"x": (xs, 0, 1), "data": (table, 0, 0)})], ["xs", "table"], ["y"])
   prog = lower_function(fn)
   names = [pr.attrs["name"] for pr in prog.args[: int(prog.attrs["proc_count"])]]
   assert names == ["interp_stage_hoist_1", "interp_stage_hoisted_1", "interp_map"]
@@ -299,7 +299,7 @@ def test_the_data_jacobian_matches_casadi_inlined(method: str, dims: tuple[int, 
 
 
 def _fn(inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr], name: str) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+  return sc.Function.from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
 
 
 @pytest.mark.parametrize(("kind", "sites"), [("cubic", 9), ("cubic", DENSE_FIT), ("cubic", DENSE_FIT + 5), ("spline", 9), ("spline", 30)])

@@ -14,7 +14,7 @@ def _vmap_vjp_piece(name: str, nargs: int = 1) -> sc.Function:
   out = inputs[0] * inputs[0] + inputs[0].sin()
   for inp in inputs[1:]:
     out = out + inputs[0] * inp + inp.sin()
-  return sc.Function._from_exprs(name, inputs, [out], input_names, ["y"])
+  return sc.Function.from_exprs(name, inputs, [out], input_names, ["y"])
 
 
 def _assert_vmap_vjp_matches_unrolled_and_fd(
@@ -38,8 +38,8 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
   mapped_obj, unrolled_obj = sc.dot(lam, mapped), sc.dot(lam, unrolled)
   (mapped_grad,) = sc.vjp((mapped_obj,), (z,), (sc.const(1.0),))
   (unrolled_grad,) = sc.vjp((unrolled_obj,), (z,), (sc.const(1.0),))
-  grad_fn = sc.Function._from_exprs(f"{name}_grads", [z, lam], [mapped_grad, unrolled_grad], ["z", "lam"], ["mapped", "unrolled"])
-  obj_fn = sc.Function._from_exprs(f"{name}_objective", [z, lam], [mapped_obj], ["z", "lam"], ["objective"])
+  grad_fn = sc.Function.from_exprs(f"{name}_grads", [z, lam], [mapped_grad, unrolled_grad], ["z", "lam"], ["mapped", "unrolled"])
+  obj_fn = sc.Function.from_exprs(f"{name}_objective", [z, lam], [mapped_obj], ["z", "lam"], ["objective"])
   lamv = np.random.default_rng(10).normal(size=mapped.size)
 
   mapped_value, unrolled_value = grad_fn((zv, lamv))
@@ -52,7 +52,7 @@ def test_vjp_scalar_output_matches_gradient() -> None:
   x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
   (grad_x,) = sc.vjp((y,), (x,), (sc.const(1.0),))
-  f = sc.Function._from_exprs("vjp", [x], [grad_x], ["x"], ["grad_x"])
+  f = sc.Function.from_exprs("vjp", [x], [grad_x], ["x"], ["grad_x"])
   xv = np.array([0.1, 0.4, 0.9])
 
   np.testing.assert_allclose(f(xv), np.cos(xv) + 2 * xv)
@@ -63,7 +63,7 @@ def test_vjp_vector_output_uses_cotangent_seed() -> None:
   y = sc.stack([x[0] * x[1], x[0].sin()])
   seed = sc.sym("seed", 2)
   (grad_x,) = sc.vjp((y,), (x,), (seed,))
-  f = sc.Function._from_exprs("vjp", [x, seed], [grad_x], ["x", "seed"], ["grad_x"])
+  f = sc.Function.from_exprs("vjp", [x, seed], [grad_x], ["x", "seed"], ["grad_x"])
   xv = np.array([0.3, 2.0])
   sv = np.array([1.5, -0.25])
 
@@ -76,7 +76,7 @@ def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
   y0 = (x + b).sum()
   y1 = (x * b).sum()
   (grad_x, grad_b) = sc.vjp((y0, y1), (x, b), (sc.const(2.0), sc.const(-0.5)))
-  f = sc.Function._from_exprs("vjp", [x, b], [grad_x, grad_b], ["x", "b"], ["grad_x", "grad_b"])
+  f = sc.Function.from_exprs("vjp", [x, b], [grad_x, grad_b], ["x", "b"], ["grad_x", "grad_b"])
   xv = np.arange(6.0).reshape(2, 3)
   bv = np.array([0.5, 1.5, 2.5])
 
@@ -91,7 +91,7 @@ def test_vjp_through_structural_ops_and_matmul() -> None:
   y = sc.concat([x.T, a @ x], axis=1)
   seed = sc.sym("seed", (2, 4))
   (grad_x,) = sc.vjp((y,), (x,), (seed,))
-  f = sc.Function._from_exprs("vjp", [x, a, seed], [grad_x], ["x", "a", "seed"], ["grad_x"])
+  f = sc.Function.from_exprs("vjp", [x, a, seed], [grad_x], ["x", "a", "seed"], ["grad_x"])
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
   av = np.array([[2.0, -1.0], [0.5, 3.0]])
   sv = np.arange(8.0).reshape(2, 4)
@@ -105,12 +105,12 @@ def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
   # reuses the callee's formal symbol `x`, so the substitution must not rewrite occurrences of `x`
   # inside the incoming cotangent (which the second call's adjoint injects into the first call's).
   x = sc.sym("x", 1)
-  f = sc.Function._from_exprs("sq", [x], [x * x], ["x"], ["y"])
+  f = sc.Function.from_exprs("sq", [x], [x * x], ["x"], ["y"])
   k1 = f(2 * x)
   k2 = f(x + k1)
   (grad_rev,) = sc.vjp((k2,), (x,), (sc.const(np.ones(1)),))
   jac_fwd = sc.jacobian(k2, x).reshape((1,))
-  fn = sc.Function._from_exprs("nested_sq", [x], [grad_rev, jac_fwd], ["x"], ["rev", "fwd"])
+  fn = sc.Function.from_exprs("nested_sq", [x], [grad_rev, jac_fwd], ["x"], ["rev", "fwd"])
 
   rev, fwd = fn(np.array([1.0]))
   np.testing.assert_allclose(rev, [90.0], rtol=1e-12)  # d/dx (x + 4x^2)^2 at x=1
@@ -124,7 +124,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
 
   rng = np.random.default_rng(7)
   x, u = sc.sym("x", 2), sc.sym("u", 1)
-  ode = sc.Function._from_exprs("ode2", [x, u], [sc.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])], ["x", "u"], ["f"])
+  ode = sc.Function.from_exprs("ode2", [x, u], [sc.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])], ["x", "u"], ["f"])
   dt = 0.1
   k1 = ode((x, u))
   k2 = ode((x + (dt / 2) * k1, u))
@@ -135,8 +135,8 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
   (grad_rev,) = sc.vjp((xnext,), (x,), (lam,))
   jac_t_lam = sc.jacobian(xnext, x).transpose((1, 0)) @ lam
   hess = hessian(sc.dot(lam, xnext), x)
-  fn = sc.Function._from_exprs("rk4_adj", [x, u, lam], [grad_rev, jac_t_lam, hess], ["x", "u", "lam"], ["rev", "fwd", "hess"])
-  obj = sc.Function._from_exprs("rk4_obj", [x, u, lam], [sc.dot(lam, xnext)], ["x", "u", "lam"], ["obj"])
+  fn = sc.Function.from_exprs("rk4_adj", [x, u, lam], [grad_rev, jac_t_lam, hess], ["x", "u", "lam"], ["rev", "fwd", "hess"])
+  obj = sc.Function.from_exprs("rk4_obj", [x, u, lam], [sc.dot(lam, xnext)], ["x", "u", "lam"], ["obj"])
   xv, uv, lamv = rng.normal(size=2), rng.normal(size=1), rng.normal(size=2)
 
   rev, fwd, hv = fn((xv, uv, lamv))
@@ -151,7 +151,7 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
   y = sc.stack([x[0] * x[1], x[2].sin() + x[0]])
   seeds = sc.sym("seeds", (2, 3))
   dy = sc.jvp_many(y, x, seeds)
-  f = sc.Function._from_exprs("jvp_many", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+  f = sc.Function.from_exprs("jvp_many", [x, seeds], [dy], ["x", "seeds"], ["dy"])
   xv = np.array([0.3, 1.2, 0.7])
   sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
   jac = np.array([[xv[1], xv[0], 0.0], [1.0, 0.0, np.cos(xv[2])]])
@@ -166,9 +166,9 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.Mon
   y = x.erf()
   jvp = sc.jvp(y, x, seed)
   (vjp,) = sc.vjp((y,), (x,), (seed,))
-  ad = sc.Function._from_exprs("erf_seed_ad", [x, seed], [jvp, vjp], ["x", "seed"], ["jvp", "vjp"])
+  ad = sc.Function.from_exprs("erf_seed_ad", [x, seed], [jvp, vjp], ["x", "seed"], ["jvp", "vjp"])
   weights = np.array([0.5, -1.25, 2.0])
-  base = sc.Function._from_exprs("erf_derivatives", [x], [y, (sc.const(weights) * y).sum()], ["x"], ["y", "cost"])
+  base = sc.Function.from_exprs("erf_derivatives", [x], [y, (sc.const(weights) * y).sum()], ["x"], ["y", "cost"])
   derivatives = base.factory("erf_jac_sphess", ["x"], [sc.factory.Jac("y", "x"), sc.factory.SpHess("cost", "x")])
 
   xv = np.array([-1.2, 0.25, 2.1])
@@ -193,7 +193,7 @@ def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
   scale = x.sum()
   seeds = sc.sym("seeds", (2, 3))
   dy = sc.jvp_many(scale * x, x, seeds)
-  f = sc.Function._from_exprs("jvp_many_broadcast_scalar", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+  f = sc.Function.from_exprs("jvp_many_broadcast_scalar", [x, seeds], [dy], ["x", "seeds"], ["dy"])
   xv = np.array([0.3, 1.2, -0.4])
   sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
 
@@ -215,7 +215,7 @@ def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
   assert sum(node.op == sc.ExprOp.RESHAPE for node in nodes) == 1
   assert not any(node.op == sc.ExprOp.STACK for node in nodes)
 
-  fn = sc.Function._from_exprs("jvp_many_sum", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  fn = sc.Function.from_exprs("jvp_many_sum", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(16).normal(size=(2, 3))
   seedv = np.random.default_rng(17).normal(size=(4, 2, 3))
   actual, expected = fn((xv, seedv))
@@ -263,7 +263,7 @@ def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
   for name, (expr, np_fn) in cases.items():
     dy = _jvp_many_structural(expr, x, seeds, {}, {})
     assert dy.shape == (4, *expr.shape), f"{name}: tangent shape {dy.shape}"
-    f = sc.Function._from_exprs(f"jvp_many_{name}", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+    f = sc.Function.from_exprs(f"jvp_many_{name}", [x, seeds], [dy], ["x", "seeds"], ["dy"])
     eps = 1e-6
     fd = np.stack([(np_fn(xv + eps * sv[i]) - np_fn(xv - eps * sv[i])) / (2 * eps) for i in range(4)])
     np.testing.assert_allclose(f((xv, sv)), fd, rtol=1e-6, atol=1e-8, err_msg=name)
@@ -273,7 +273,7 @@ def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
   # (dx * y).sum() in the 1-D matmul JVP branch also contracted the seed axis, silently summing per-seed derivatives
   x = sc.sym("x", 6)
   expr = x[:3] @ x[3:6] + x[0] * x[1]
-  fn = sc.Function._from_exprs("vec_dot_vec", [x], [sc.stack([expr])], ["x"], ["y"])
+  fn = sc.Function.from_exprs("vec_dot_vec", [x], [sc.stack([expr])], ["x"], ["y"])
   jf = fn.factory("vec_dot_vec_jac", ["x"], [sc.factory.Jac("y", "x")])
   xv = np.random.default_rng(11).normal(size=6)
   expected = np.concatenate([xv[3:6] + np.array([xv[1], xv[0], 0.0]), xv[:3]])[None, :]
@@ -291,7 +291,7 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   nodes = topo((structural,))
   assert sum(node.op == sc.ExprOp.GATHER for node in nodes) == 1
   assert sum(node.op == sc.ExprOp.SCATTER for node in nodes) == 1
-  fn = sc.Function._from_exprs("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  fn = sc.Function.from_exprs("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(12).normal(size=6)
   seedv = np.random.default_rng(13).normal(size=(3, 6))
   actual, expected = fn((xv, seedv))
@@ -307,7 +307,7 @@ def test_jvp_many_transpose_stays_structural() -> None:
 
   assert structural.shape == (4, *expr.shape)
   assert sum(node.op == sc.ExprOp.TRANSPOSE for node in topo((structural,))) == 1
-  fn = sc.Function._from_exprs("jvp_many_transpose", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  fn = sc.Function.from_exprs("jvp_many_transpose", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(14).normal(size=12)
   seedv = np.random.default_rng(15).normal(size=(4, 12))
   actual, expected = fn((xv, seedv))
@@ -321,7 +321,7 @@ def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pyte
   x = sc.sym("x", 12)
   expr = (x * x).reshape((2, 3, 1, 2)).transpose((3, 1, 0, 2))
   seeds = sc.sym("seeds", (2, 12))
-  fn = sc.Function._from_exprs("rank4_transpose_jvp", [x, seeds], [sc.jvp_many(expr, x, seeds).reshape((24,))], ["x", "seeds"], ["tan"])
+  fn = sc.Function.from_exprs("rank4_transpose_jvp", [x, seeds], [sc.jvp_many(expr, x, seeds).reshape((24,))], ["x", "seeds"], ["tan"])
   rng = np.random.default_rng(7)
   xv, sv = rng.normal(size=12), rng.normal(size=(2, 12))
   expected = np.concatenate([(2.0 * xv * sv[i]).reshape(2, 3, 1, 2).transpose(3, 1, 0, 2).reshape(-1) for i in range(2)])
@@ -356,8 +356,8 @@ def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:
     cot = sc.sym("cot", out.shape)
     objective = sc.dot(cot, out)
     gx, gy = sc.vjp((objective,), (x, y), (sc.const(1.0),))
-    grad_fn = sc.Function._from_exprs(f"matmul_vjp_{index}", [x, y, cot], [gx, gy], ["x", "y", "cot"], ["gx", "gy"])
-    objective_fn = sc.Function._from_exprs(f"matmul_vjp_objective_{index}", [x, y, cot], [objective], ["x", "y", "cot"], ["objective"])
+    grad_fn = sc.Function.from_exprs(f"matmul_vjp_{index}", [x, y, cot], [gx, gy], ["x", "y", "cot"], ["gx", "gy"])
+    objective_fn = sc.Function.from_exprs(f"matmul_vjp_objective_{index}", [x, y, cot], [objective], ["x", "y", "cot"], ["objective"])
     xv, yv, cotv = rng.normal(size=x_shape), rng.normal(size=y_shape), rng.normal(size=out.shape)
 
     actual_x, actual_y = grad_fn((xv, yv, cotv))
@@ -381,7 +381,7 @@ def test_matrix_vector_vjp_graph_uses_tensor_ops() -> None:
 def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
   z = sc.sym("z", 6)
   sj = sc.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z)
-  f = sc.Function._from_exprs("spjac_scalar_plus_vec", [z], [sj.to_dense()], ["z"], ["dense"])
+  f = sc.Function.from_exprs("spjac_scalar_plus_vec", [z], [sj.to_dense()], ["z"], ["dense"])
   zv = np.random.default_rng(5).normal(size=6)
   dense = np.zeros((5, 6))
   dense[:, 5] = 1.0
@@ -396,7 +396,7 @@ def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
   c0 = sc.sym("c0", (2, 2))
   c1 = sc.sym("c1", 2)
   (grad_x,) = sc.vjp_many((y0, y1), (x,), (c0, c1))
-  f = sc.Function._from_exprs("vjp_many", [x, c0, c1], [grad_x], ["x", "c0", "c1"], ["grad_x"])
+  f = sc.Function.from_exprs("vjp_many", [x, c0, c1], [grad_x], ["x", "c0", "c1"], ["grad_x"])
   xv = np.array([0.3, 1.2])
   c0v = np.array([[1.5, -0.25], [-0.5, 2.0]])
   c1v = np.array([0.75, -1.25])
@@ -425,12 +425,12 @@ def test_multi_seed_shape_errors() -> None:
 
 def test_vjp_through_call_node_inlines_callee_reverse_graph() -> None:
   x = sc.sym("x", 2)
-  inner = sc.Function._from_exprs("inner", [x], [x.sin() * x], ["x"], ["y"])
+  inner = sc.Function.from_exprs("inner", [x], [x.sin() * x], ["x"], ["y"])
   z = sc.sym("z", 2)
   inner_z = inner(z)
   seed = sc.sym("seed", 2)
   (grad_z,) = sc.vjp((inner_z,), (z,), (seed,))
-  outer = sc.Function._from_exprs("outer", [z, seed], [grad_z], ["z", "seed"], ["grad_z"])
+  outer = sc.Function.from_exprs("outer", [z, seed], [grad_z], ["z", "seed"], ["grad_z"])
   zv = np.array([0.2, 0.7])
   sv = np.array([3.0, -1.0])
 
@@ -457,7 +457,7 @@ def test_vjp_through_vmap_cross_formal_overlap_accumulates() -> None:
 
 def test_vjp_through_vmap_single_formal_overlap_uses_grouped_scatter() -> None:
   x = sc.sym("x", 3)
-  piece = sc.Function._from_exprs("vmap_vjp_grouped_piece", [x], [x * x + x.sin()], ["x"], ["y"])
+  piece = sc.Function.from_exprs("vmap_vjp_grouped_piece", [x], [x * x + x.sin()], ["x"], ["y"])
   z = sc.sym("z", 7)
   _assert_vmap_vjp_matches_unrolled_and_fd("vmap_vjp_grouped", piece, z, 3, [(z, 0, 2)], np.linspace(-0.8, 0.7, 7))
 
@@ -484,15 +484,15 @@ def test_vjp_through_vmap_adjoint_names_disambiguate_active_formal_sets() -> Non
   # {a_b} and {a, b} would both suffix to "a_b" if adjoints were named by joined formal names;
   # lowering dedupes callees by name, so the two maps would silently share one proc body.
   a, a_b, b = sc.sym("a", 2), sc.sym("a_b", 2), sc.sym("b", 2)
-  piece = sc.Function._from_exprs("vmap_vjp_collision_piece", [a, a_b, b], [a * a_b.sin() + b * a_b + a * b], ["a", "a_b", "b"], ["y"])
+  piece = sc.Function.from_exprs("vmap_vjp_collision_piece", [a, a_b, b], [a * a_b.sin() + b * a_b + a * b], ["a", "a_b", "b"], ["y"])
   z = sc.sym("z", 8)
   c0, c1 = sc.const(np.array([0.3, -0.7, 1.1, 0.2])), sc.const(np.array([0.9, 0.4, -0.5, 1.3]))
   m1 = sc.vmap(piece, 2, [(c0, 0, 2), (z[0:4], 0, 2), (c1, 0, 2)])
   m2 = sc.vmap(piece, 2, [(z[0:4], 0, 2), (c0, 0, 2), (z[4:8], 0, 2)])
   obj = m1.sum() + m2.sum()
   (grad_z,) = sc.vjp((obj,), (z,), (sc.const(1.0),))
-  grad_fn = sc.Function._from_exprs("vmap_vjp_collision_grads", [z], [grad_z], ["z"], ["grad_z"])
-  obj_fn = sc.Function._from_exprs("vmap_vjp_collision_obj", [z], [obj], ["z"], ["objective"])
+  grad_fn = sc.Function.from_exprs("vmap_vjp_collision_grads", [z], [grad_z], ["z"], ["grad_z"])
+  obj_fn = sc.Function.from_exprs("vmap_vjp_collision_obj", [z], [obj], ["z"], ["objective"])
   zv = np.random.default_rng(3).normal(size=8)
 
   fd = finite_difference(obj_fn, zv).reshape(-1)
@@ -506,7 +506,7 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   y = (x * x + p.floor()).sum()
   dy = sc.jvp(y, x, seed)
   grad = sc.gradient(y, x)
-  f = sc.Function._from_exprs("smooth_wrt_x", [x, p, seed], [dy, grad], ["x", "p", "seed"], ["dy", "grad"])
+  f = sc.Function.from_exprs("smooth_wrt_x", [x, p, seed], [dy, grad], ["x", "p", "seed"], ["dy", "grad"])
   xv = np.array([0.3, 1.2])
   pv = np.array([1.1, 2.9])
   sv = np.array([1.5, -0.25])
@@ -532,11 +532,11 @@ PIECEWISE_POINTS = np.array([-1.7, -0.6, 0.05, 0.45, 0.9, 2.3])
 def test_select_copysign_cast_jacobians_match_finite_differences_both_modes() -> None:
   x = sc.sym("x", PIECEWISE_POINTS.size)
   out = _piecewise(x)
-  f = sc.Function._from_exprs("pw", [x], [out], ["x"], ["y"])
+  f = sc.Function.from_exprs("pw", [x], [out], ["x"], ["y"])
   jac = sc.jacobian(f, "y", "x")(PIECEWISE_POINTS)
   lam = np.random.default_rng(3).normal(size=PIECEWISE_POINTS.size)
   (vjp,) = sc.vjp((out,), (x,), (sc.const(lam),))
-  rev = sc.Function._from_exprs("pw_rev", [x], [vjp], ["x"], ["g"])(PIECEWISE_POINTS)
+  rev = sc.Function.from_exprs("pw_rev", [x], [vjp], ["x"], ["g"])(PIECEWISE_POINTS)
   fd = finite_difference(lambda v: f(v), PIECEWISE_POINTS)
   np.testing.assert_allclose(jac, fd, rtol=1e-6, atol=1e-8)
   np.testing.assert_allclose(rev, lam @ jac, rtol=1e-12, atol=1e-12)
@@ -549,7 +549,7 @@ def test_select_structural_jvp_many_matches_unrolled() -> None:
   seeds = sc.const(np.eye(3))
   structural = _jvp_many_structural(y, x, seeds, {}, {})
   unrolled = _jvp_many_unrolled(y, x, seeds)
-  f = sc.Function._from_exprs("sel_many", [x], [structural, unrolled], ["x"], ["s", "u"])
+  f = sc.Function.from_exprs("sel_many", [x], [structural, unrolled], ["x"], ["s", "u"])
   s, u = f(np.array([0.5, -0.2, 1.1]))
   np.testing.assert_allclose(s, u, rtol=1e-14)
   assert structural.op == sc.ExprOp.SELECT or any(n.op == sc.ExprOp.SELECT for n in topo([structural]))
@@ -560,8 +560,8 @@ def test_derivative_flows_only_through_the_chosen_branch() -> None:
   # The unchosen branch is log(x) at a negative x: NaN value, NaN derivative, and neither may leak.
   y = sc.where(x > 0.0, x.log(), 3.0 * x)
   (g,) = sc.vjp((y.sum(),), (x,), (sc.const(1.0),))
-  (j,) = sc.jacobian(sc.Function._from_exprs("sel_nan_f", [x], [y], ["x"], ["y"]), "y", "x")._flat_symbolic_call([x])
-  f = sc.Function._from_exprs("sel_nan", [x], [y, g, j], ["x"], ["y", "g", "j"])
+  (j,) = sc.jacobian(sc.Function.from_exprs("sel_nan_f", [x], [y], ["x"], ["y"]), "y", "x")._flat_symbolic_call([x])
+  f = sc.Function.from_exprs("sel_nan", [x], [y, g, j], ["x"], ["y", "g", "j"])
   yv, gv, jv = f(np.array([2.0, -1.0]))
   np.testing.assert_allclose(yv, [np.log(2.0), -3.0])
   np.testing.assert_allclose(gv, [0.5, 3.0])
@@ -585,11 +585,11 @@ def test_nonsmooth_derivatives_match_finite_differences_away_from_ties(name: str
   x = sc.sym("x", 4)
   with sc.options(nonsmooth=mode):
     out = EXTREMA[name](x)
-    f = sc.Function._from_exprs(f"ns_{name}_{mode}", [x], [out], ["x"], ["y"])
+    f = sc.Function.from_exprs(f"ns_{name}_{mode}", [x], [out], ["x"], ["y"])
     jac = sc.jacobian(f, "y", "x")(xv)
     lam = np.linspace(-1.0, 1.0, out.size).reshape(out.shape)
     (g,) = sc.vjp((out,), (x,), (sc.const(lam),))
-  rev = sc.Function._from_exprs(f"ns_{name}_{mode}_rev", [x], [g], ["x"], ["g"])(xv)
+  rev = sc.Function.from_exprs(f"ns_{name}_{mode}_rev", [x], [g], ["x"], ["g"])(xv)
   np.testing.assert_allclose(jac, finite_difference(lambda v: f(v), xv).reshape(jac.shape), rtol=1e-6, atol=1e-8)
   np.testing.assert_allclose(rev, lam.reshape(-1) @ jac.reshape(out.size, -1), rtol=1e-12, atol=1e-12)
 
@@ -608,7 +608,7 @@ def test_nonsmooth_tie_conventions_are_exact(mode: str, expected: list[float]) -
   with sc.options(nonsmooth=mode):
     (g,) = sc.vjp((cost,), (x,), (sc.const(1.0),))
     tangent = sc.jvp(cost, x, sc.sym("seed", 5))
-  f = sc.Function._from_exprs(f"ns_tie_{mode}", [x, sc.sym("seed", 5)], [g, tangent], ["x", "seed"], ["g", "t"])
+  f = sc.Function.from_exprs(f"ns_tie_{mode}", [x, sc.sym("seed", 5)], [g, tangent], ["x", "seed"], ["g", "t"])
   xv = np.array([1.0, 3.0, 3.0, -2.0, -2.0])
   gv = f((xv, np.zeros(5)))[0]
   np.testing.assert_allclose(gv, expected)
@@ -619,7 +619,7 @@ def test_nonsmooth_tie_conventions_are_exact(mode: str, expected: list[float]) -
 def test_abs_derivative_is_zero_at_zero_and_error_mode_refuses_extrema() -> None:
   x = sc.sym("x", 3)
   (g,) = sc.vjp((x.abs().sum(),), (x,), (sc.const(1.0),))
-  f = sc.Function._from_exprs("abs_zero", [x], [g, sc.jvp(x.abs().sum(), x, sc.const(np.ones(3)))], ["x"], ["g", "t"])
+  f = sc.Function.from_exprs("abs_zero", [x], [g, sc.jvp(x.abs().sum(), x, sc.const(np.ones(3)))], ["x"], ["g", "t"])
   gv, tv = f(np.array([-2.0, 0.0, 3.0]))
   np.testing.assert_array_equal(gv, [-1.0, 0.0, 1.0])
   assert tv == 0.0
@@ -636,20 +636,20 @@ def test_gather_with_repeated_indices_differentiates_and_its_adjoint_is_one_node
   x = sc.sym("x", 4)
   idx = np.array([2, 0, 2, 3, 2, 1])
   y = (sc.gather(x, idx) ** 2) * sc.const(np.arange(1.0, 7.0))
-  f = sc.Function._from_exprs("gath_rep", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("gath_rep", [x], [y], ["x"], ["y"])
   xv = np.array([0.3, -1.2, 0.8, 2.0])
   jac = sc.jacobian(f, "y", "x")(xv)
   np.testing.assert_allclose(jac, finite_difference(lambda v: f(v), xv), rtol=1e-7, atol=1e-9)
   lam = np.linspace(1.0, 2.0, 6)
   (g,) = sc.vjp((y,), (x,), (sc.const(lam),))
-  np.testing.assert_allclose(sc.Function._from_exprs("gath_rep_g", [x], [g], ["x"], ["g"])(xv), lam @ jac, rtol=1e-12)
+  np.testing.assert_allclose(sc.Function.from_exprs("gath_rep_g", [x], [g], ["x"], ["g"])(xv), lam @ jac, rtol=1e-12)
   # The adjoint of a gather is one accumulating scatter whatever the size, not one sum per entry.
   big = sc.sym("big", 20_000)
   picks = np.random.default_rng(0).integers(0, 20_000, size=30_000)
   (gb,) = sc.vjp((sc.gather(big, picks).sum(),), (big,), (sc.const(1.0),))
   assert len(topo([gb])) < 20
   counts = np.bincount(picks, minlength=20_000).astype(float)
-  np.testing.assert_array_equal(sc.Function._from_exprs("gath_big", [big], [gb], ["big"], ["g"])(np.zeros(20_000)), counts)
+  np.testing.assert_array_equal(sc.Function.from_exprs("gath_big", [big], [gb], ["big"], ["g"])(np.zeros(20_000)), counts)
 
 
 @pytest.mark.parametrize("mode", ["split", "first"])
@@ -658,12 +658,12 @@ def test_segment_extrema_derivatives(mode: str) -> None:
   x = sc.sym("x", 6)
   out = sc.stack([sc.segment_max(x * x, ids, 4, fill=0.0).sum(), sc.segment_min(x, ids, 3).sum()])
   with sc.options(nonsmooth=mode):
-    f = sc.Function._from_exprs(f"seg_d_{mode}", [x], [out], ["x"], ["y"])
+    f = sc.Function.from_exprs(f"seg_d_{mode}", [x], [out], ["x"], ["y"])
     jac = sc.jacobian(f, "y", "x")
     (g,) = sc.vjp((out.sum(),), (x,), (sc.const(1.0),))
   xv = np.array([0.5, -1.0, 1.5, 2.0, 0.25, -0.75])
   np.testing.assert_allclose(jac(xv), finite_difference(lambda v: f(v), xv), rtol=1e-6, atol=1e-8)
-  gfun = sc.Function._from_exprs(f"seg_g_{mode}", [x], [g], ["x"], ["g"])
+  gfun = sc.Function.from_exprs(f"seg_g_{mode}", [x], [g], ["x"], ["g"])
   tie = np.array([1.0, 3.0, -1.0, 2.0, 3.0, 1.0])  # squares tie in bin 0 (1, 1, 1) and bin 1 (9, 9)
   expected_max = [2 / 3, 3.0, -2 / 3, 4.0, 3.0, 2 / 3] if mode == "split" else [2.0, 6.0, 0.0, 4.0, 0.0, 0.0]
   expected_min = [0.0, 0.5, 1.0, 1.0, 0.5, 0.0] if mode == "split" else [0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
@@ -672,7 +672,7 @@ def test_segment_extrema_derivatives(mode: str) -> None:
 
 def test_extremum_derivative_follows_the_operand_c_returns_next_to_nan() -> None:
   p, q = sc.sym("p", 1), sc.sym("q", 1)
-  f = sc.Function._from_exprs("mx_nan", [p, q], [sc.maximum(p, q), sc.minimum(p, q)], ["p", "q"], ["mx", "mn"])
+  f = sc.Function.from_exprs("mx_nan", [p, q], [sc.maximum(p, q), sc.minimum(p, q)], ["p", "q"], ["mx", "mn"])
   for pv, qv, to_p in ((1.0, np.nan, 1.0), (np.nan, 1.0, 0.0)):
     for out in ("mx", "mn"):
       assert sc.jacobian(f, out, "p")((np.array([pv]), np.array([qv])))[0, 0] == to_p
@@ -685,7 +685,7 @@ def test_jvp_many_through_a_cast_stays_structural(monkeypatch: pytest.MonkeyPatc
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   x = sc.sym("x", 3)
   y = (x > 0.5).cast("float64") * x.sin() + x.cast("float64") * x
-  fn = sc.Function._from_exprs("cast_jac", [x], [sc.jacobian(y, x)], ["x"], ["j"])
+  fn = sc.Function.from_exprs("cast_jac", [x], [sc.jacobian(y, x)], ["x"], ["j"])
   point = np.array([0.2, 0.7, 1.4])
   expected = np.diag((point > 0.5) * np.cos(point) + 2.0 * point)
   np.testing.assert_allclose(fn(point), expected, rtol=1e-12, atol=1e-14)
@@ -700,7 +700,7 @@ def test_second_derivative_of_a_constant_power_at_zero() -> None:
   mask = sc.const(np.array([1.0, 0.0, 1.0]))
   for p, second in ((2, 2.0), (3, 6.0)):
     f = ((x * mask) ** p).sum()
-    fn = sc.Function._from_exprs(f"pow_at_zero{p}", [x], [_hessian(f, x), sc.gradient(sc.gradient(f, x)[1], x)], ["x"], ["h", "g"])
+    fn = sc.Function.from_exprs(f"pow_at_zero{p}", [x], [_hessian(f, x), sc.gradient(sc.gradient(f, x)[1], x)], ["x"], ["h", "g"])
     h, g = fn._flat_numerical_call(np.ones(3))
     np.testing.assert_array_equal(h, np.diag([second, 0.0, second]))
     np.testing.assert_array_equal(g, np.zeros(3))

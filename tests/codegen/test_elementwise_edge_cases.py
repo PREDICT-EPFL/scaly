@@ -50,7 +50,7 @@ NAN_SIGN = {"copysign", "select_nonfinite"}  # the sign bit of a NaN result is d
 
 
 def _fn(name: str, inputs: list[sc.Expr], outputs: list[sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, inputs, outputs, [str(e.name) for e in inputs], [f"out{i}" for i in range(len(outputs))])
+  return sc.Function.from_exprs(name, inputs, outputs, [str(e.name) for e in inputs], [f"out{i}" for i in range(len(outputs))])
 
 
 def _grid_outputs(variant: str) -> list[np.ndarray]:

@@ -58,7 +58,7 @@ def solver(
   # ``build_qp(..., sparse=True)`` finds its patterns: an entry or bound that depends on a
   # parameter counts as present whatever value it takes.
   probe_outputs = [P.vec(), A.vec(), G.vec(), g_lb, g_ub, x_lb, x_ub]
-  probe = sc.Function._from_exprs(f"{name}_probe", params, probe_outputs, problem.params.names, ("P", "A", "G", "g_lb", "g_ub", "x_lb", "x_ub"))
+  probe = sc.Function.from_exprs(f"{name}_probe", params, probe_outputs, problem.params.names, ("P", "A", "G", "g_lb", "g_ub", "x_lb", "x_ub"))
   rng = np.random.default_rng(0)
   sample = probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params))
   p_val, a_val, g_val, *bounds = probe(*sample)
@@ -98,7 +98,7 @@ def structure_summary(problem: sc.Problem) -> dict[str, Any]:
   _prove_quadratic(problem, cached)
   P, _, A, _, G, *_ = _qp_data(problem, cached)
   params = list(problem._param_symbols)
-  probe = sc.Function._from_exprs(f"{problem.name}_nnz_probe", params, [P.vec(), A.vec(), G.vec()], problem.params.names, ("P", "A", "G"))
+  probe = sc.Function.from_exprs(f"{problem.name}_nnz_probe", params, [P.vec(), A.vec(), G.vec()], problem.params.names, ("P", "A", "G"))
   rng = np.random.default_rng(0)
   vals = probe(*probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params)))
   n, p, m = P.shape[0], A.shape[0], G.shape[0]

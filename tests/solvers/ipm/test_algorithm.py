@@ -51,7 +51,7 @@ def _solver(name: str, backend: Backend, settings: Settings) -> sc.Function:
   syms = {k: sc.sym(k, np.shape(values[k])) for k in ORDER}
   out = Solver(s, backend, settings, name=f"ipm_{qp.name}").solve(QPValues.preprocess(s, **syms), trace=True)
   tag = abs(hash(settings)) % 10**8
-  return sc.Function._from_exprs(f"ipm_{qp.name}_{backend}_{tag}", [syms[k] for k in ORDER], [out[k] for k in RESULT], list(ORDER), list(RESULT))
+  return sc.Function.from_exprs(f"ipm_{qp.name}_{backend}_{tag}", [syms[k] for k in ORDER], [out[k] for k in RESULT], list(ORDER), list(RESULT))
 
 
 def solve(qp: QP, backend: Backend, settings: Settings | None = None) -> dict[str, np.ndarray]:

@@ -22,7 +22,7 @@ def test_periodic_wrap_differentiates_through_floor_and_ceil(rounding: str) -> N
   wrapped point, since the rounding contributes a zero derivative off its jumps."""
   x = sc.sym("x", 5)
   f = _wrap(x, rounding).sin()
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     f"wrap_{rounding}",
     [x],
     [f, sc.gradient(f.sum(), x), sc.jacobian(f, x), sc.hessian(f.sum(), x)],
@@ -96,7 +96,7 @@ def test_broadcast_integer_index_build_differentiates_for_one_point() -> None:
   c = sc.take(sc.const(_COEF.reshape(-1)), sc.const(np.arange(4), dtype="int64") + sc.stack([cell]) * 4, in_range=True)
   s = x - sc.cast(cell, "float64")
   f = c[0] + s * (c[1] + s * (c[2] + s * c[3]))
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     "int_index_point", [x], [f, sc.gradient(f, x), sc.jacobian(f, x), sc.hessian(f, x), sc.jvp(f, x, sc.const(1.0))], ["x"], ["f", "g", "j", "h", "t"]
   )
   for xv in (0.25, 1.0, 2.75, -0.5, 3.5):
@@ -114,7 +114,7 @@ def test_broadcast_integer_index_build_differentiates_for_a_batch() -> None:
   s = x - sc.cast(cell, "float64")
   f = c[:, 0] + s * (c[:, 1] + s * (c[:, 2] + s * c[:, 3]))
   sj = sc.sparse_jacobian(f, x)
-  fn = sc.Function._from_exprs("int_index_batch", [x], [f, sc.jacobian(f, x), sc.hessian(f.sum(), x), sj.values], ["x"], ["f", "j", "h", "sj"])
+  fn = sc.Function.from_exprs("int_index_batch", [x], [f, sc.jacobian(f, x), sc.hessian(f.sum(), x), sj.values], ["x"], ["f", "j", "h", "sj"])
   xv = np.array([0.1, 0.9, 1.5, 2.2, 2.999, -0.3])
   value, slope, curvature = _np_cubic(xv)
   fv, jv, hv, sjv = fn(xv)

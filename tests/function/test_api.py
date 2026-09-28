@@ -164,7 +164,7 @@ def test_an_unnamed_leaf_outside_a_decorator_is_refused() -> None:
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
   x = sc.sym("x", 2)
   y = (x * x).sum()
-  fn = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  fn = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
 
   builders = (sc.jacobian, sc.gradient, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian)
   for build in builders:
@@ -211,7 +211,7 @@ def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
 def test_gradient_convenience_api_matches_factory() -> None:
   x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
 
   g_api = sc.gradient(f, "y", "x")
   g_factory = f.factory("g", ["x"], [sc.factory.Grad("y", "x")])
@@ -225,7 +225,7 @@ def test_gradient_convenience_api_matches_factory() -> None:
 def test_forward_convenience_api_matches_factory() -> None:
   x = sc.sym("x", 2)
   y = sc.stack([x[0] * x[1], x[0].sin()])
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
 
   fwd_api = sc.forward(f, "y", "x")
   fwd_factory = f.factory("fwd", ["x", "fwd:x"], [sc.factory.Fwd("y", "x")])
@@ -240,7 +240,7 @@ def test_forward_convenience_api_matches_factory() -> None:
 def test_adjoint_convenience_api_matches_factory() -> None:
   x = sc.sym("x", 2)
   y = sc.stack([x[0] * x[1], x[0].sin()])
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
 
   adj_api = sc.adjoint(f, "y", "x")
   adj_factory = f.factory("adj", ["x", "lam:y"], [sc.factory.Adj("y", "x")])
@@ -255,7 +255,7 @@ def test_adjoint_convenience_api_matches_factory() -> None:
 def test_seeded_factory_outputs_require_seed_inputs() -> None:
   x = sc.sym("x", 2)
   y = x * x
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
 
   for spec, missing in [(sc.factory.Fwd("y", "x"), "fwd:x"), (sc.factory.Adj("y", "x"), "lam:y")]:
     try:
@@ -269,7 +269,7 @@ def test_seeded_factory_outputs_require_seed_inputs() -> None:
 def test_factory_unknown_names_report_value_errors() -> None:
   x = sc.sym("x", 2)
   y = x * x
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
 
   cases = [
     (lambda: f.factory("bad", ["missing"], ["y"]), "unknown factory inputs: ['missing']"),
@@ -292,7 +292,7 @@ def test_lagrangian_hessian_convenience_api() -> None:
   x = sc.sym("x", 2)
   f_expr = x.sin().sum()
   g_expr = x * x
-  nlp = sc.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
+  nlp = sc.Function.from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
 
   h_api = sc.lagrangian_hessian(nlp, "x")
   h_factory = nlp.factory("h", ["x", "lam:f", "lam:g"], [sc.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})

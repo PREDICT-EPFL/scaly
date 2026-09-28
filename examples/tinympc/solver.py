@@ -116,7 +116,7 @@ def _backward_step(p: Problem, c: Cache, lowering: Lowering) -> sc.Function:
   d = sc.const(c.Quu_inv) @ (sc.const(p.B.T) @ pn + r + sc.const(c.BPf))
   p_prev = q + sc.const(c.AmBKt) @ pn - sc.const(c.Kinf.T) @ r + sc.const(c.APf)
   outs = [e.with_lowering(lowering) for e in (p_prev, d)]
-  return sc.Function._from_exprs("tiny_backward_step", [pn, r, q], outs, ["p", "r", "q"], ["p_prev", "d"])
+  return sc.Function.from_exprs("tiny_backward_step", [pn, r, q], outs, ["p", "r", "q"], ["p_prev", "d"])
 
 
 def _forward_step(p: Problem, c: Cache, lowering: Lowering) -> sc.Function:
@@ -127,7 +127,7 @@ def _forward_step(p: Problem, c: Cache, lowering: Lowering) -> sc.Function:
   if p.f is not None:
     x_next = x_next + sc.const(p.fdyn)
   outs = [e.with_lowering(lowering) for e in (x_next, u, x_next)]
-  return sc.Function._from_exprs("tiny_forward_step", [x, d], outs, ["x", "d"], ["x_next", "u", "x_out"])
+  return sc.Function.from_exprs("tiny_forward_step", [x, d], outs, ["x", "d"], ["x_next", "u", "x_out"])
 
 
 def _iteration(p: Problem, c: Cache, lay: Layout, lowering: Lowering, fixed_bounds=None) -> tuple[sc.Function, sc.Function]:
@@ -181,8 +181,8 @@ def _iteration(p: Problem, c: Cache, lay: Layout, lowering: Lowering, fixed_boun
   new["z"] = sc.where(done, get("z"), znew)
   new["done"] = sc.cast(done, "float64").reshape((1,))
   parts = [new.get(name, get(name)) for name in lay.offsets]
-  body = sc.Function._from_exprs("tiny_admm_iteration", [carry], [sc.concat(parts)], ["carry"], ["next"])
-  cond = sc.Function._from_exprs("tiny_not_converged", [carry], [sc.less(get("done")[0], 0.5)], ["carry"], ["go_on"])
+  body = sc.Function.from_exprs("tiny_admm_iteration", [carry], [sc.concat(parts)], ["carry"], ["next"])
+  cond = sc.Function.from_exprs("tiny_not_converged", [carry], [sc.less(get("done")[0], 0.5)], ["carry"], ["go_on"])
   return body, cond
 
 
@@ -239,7 +239,7 @@ def build_solver(p: Problem, c: Cache | None = None, name: str = "tinympc_solve"
   u0 = final[clay["u"][0] : clay["u"][0] + nu]
   # The output is not called ``state``: an output named like an input is read back from the output
   # buffer by the generated code (todo C-124), so the names stay distinct.
-  return sc.Function._from_exprs(name, inputs, [out_state, iterations, solved, u0], names, ["state_next", "iterations", "solved", "u0"])
+  return sc.Function.from_exprs(name, inputs, [out_state, iterations, solved, u0], names, ["state_next", "iterations", "solved", "u0"])
 
 
 def bound_inputs(p: Problem, bounds, fixed: bool = False) -> list[np.ndarray]:

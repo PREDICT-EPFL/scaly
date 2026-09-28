@@ -70,7 +70,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
   out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
-  host = sc.Function._from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
+  host = sc.Function.from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
   stats = sc.solver_stats(host, "nested_stats_qp")
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
@@ -82,6 +82,6 @@ def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = sc.sym("mu", 2)
   qps = [build_qp(P=np.eye(2), c=-mu) for _ in range(2)]
   outs = [qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu) for qp in qps]
-  host = sc.Function._from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
+  host = sc.Function.from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
   with pytest.raises(ValueError, match="duplicate extern symbol 'problem_body_piqp'"):
     render_c_source(host)

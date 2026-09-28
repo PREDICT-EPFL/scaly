@@ -44,10 +44,10 @@ def test_a_callee_and_a_loop_body_with_clashing_names() -> None:
   a, b = sc.sym("a", 2), sc.sym("b", 2)
   y, z = inner((a, b))
   c = sc.sym("c", 2)
-  body = sc.Function._from_exprs("nc_body", [c, b], [c * 0.5 + b], ["c", "b"], ["c"])  # output named like the carry
-  cond = sc.Function._from_exprs("nc_cond", [c, b], [sc.greater(c[0], 1.0)], ["c", "b"], ["go"])
+  body = sc.Function.from_exprs("nc_body", [c, b], [c * 0.5 + b], ["c", "b"], ["c"])  # output named like the carry
+  cond = sc.Function.from_exprs("nc_cond", [c, b], [sc.greater(c[0], 1.0)], ["c", "b"], ["go"])
   loop, _ = sc.while_loop(cond, body, z, max_iter=20, params=(b,))
-  fn = sc.Function._from_exprs("nc_outer", [a, b], [y, z, loop], ["a", "b"], ["y", "z", "loop"])
+  fn = sc.Function.from_exprs("nc_outer", [a, b], [y, z, loop], ["a", "b"], ["y", "z", "loop"])
   av, bv = np.array([1.0, -2.0]), np.array([0.25, 0.5])
   got_y, got_z, got_loop = fn((av, bv))
   np.testing.assert_array_equal(got_y, 3 * av)
@@ -68,11 +68,11 @@ def test_an_in_place_loop_body_whose_output_is_named_like_its_carry() -> None:
   c = sc.sym("c", 6)
   nxt = sc.put_add(c, sc.const(np.array([4, 5]), dtype="int64"), c[4:6] * 0.0 + 1.0)
   nxt = sc.index_add(nxt, np.array([0]), c[2:3] * 0.5)
-  body = sc.Function._from_exprs("nc_ip_body", [c], [nxt], ["c"], ["c"])  # output named like the carry
-  cond = sc.Function._from_exprs("nc_ip_cond", [c], [sc.less(c[4], 3.0)], ["c"], ["go"])
+  body = sc.Function.from_exprs("nc_ip_body", [c], [nxt], ["c"], ["c"])  # output named like the carry
+  cond = sc.Function.from_exprs("nc_ip_cond", [c], [sc.less(c[4], 3.0)], ["c"], ["go"])
   x = sc.sym("x", 6)
   out, _ = sc.while_loop(cond, body, x, max_iter=10)
-  fn = sc.Function._from_exprs("nc_ip", [x], [out], ["x"], ["out"])
+  fn = sc.Function.from_exprs("nc_ip", [x], [out], ["x"], ["out"])
   assert "nc_ip_body_inplace" in str(render_c_module(fn).body)
   xv = np.array([1.0, 2.0, 4.0, 0.0, 0.0, 0.0])
   want = xv.copy()

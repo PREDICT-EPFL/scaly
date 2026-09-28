@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from scaly.ext import require_ext_api
 from scaly_piqp import include_dir, lib_dir
 
 from .external import external_nlp
+
+require_ext_api(1, "scaly-sqp")
 
 if TYPE_CHECKING:
   from scaly.solvers.wrapper import SolverWrapperCtx

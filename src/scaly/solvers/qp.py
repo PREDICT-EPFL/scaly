@@ -215,7 +215,7 @@ def build_qp[SV, NV, SP, NP](
   P_sp = A_sp = G_sp = None
   if sparse:
     matrices = (P, A, G_mat)
-    probe = ConcreteFunction._from_exprs(
+    probe = ConcreteFunction.from_exprs(
       f"{name}_pattern_probe",
       params,
       tuple(matrix.vec() for matrix in matrices),
@@ -241,7 +241,7 @@ def build_qp[SV, NV, SP, NP](
     oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
   oracle_outputs.extend((x_lb, x_ub))
   oracle_names.extend(("x_lb", "x_ub"))
-  oracle = ConcreteFunction._from_exprs(
+  oracle = ConcreteFunction.from_exprs(
     f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names)
   )
 

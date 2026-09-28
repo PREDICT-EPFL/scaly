@@ -122,8 +122,8 @@ class _Newton:
     z, r = carry[:m], carry[m:]
     znew = z - linear.solve(linear.factor(z, fixed) if self.full else syms[len(params) :], r)
     labels = ["zr", *(f"q{i}" for i in range(len(syms)))]
-    body = ConcreteFunction._from_exprs(f"{name}_newton", [carry, *syms], [concat([znew, residual(znew, fixed)])], labels, ["zr_next"])
-    cond = ConcreteFunction._from_exprs(f"{name}_unconverged", [carry, *syms], [norm_inf(r) > tol * (1.0 + norm_inf(z))], labels, ["go"])
+    body = ConcreteFunction.from_exprs(f"{name}_newton", [carry, *syms], [concat([znew, residual(znew, fixed)])], labels, ["zr_next"])
+    cond = ConcreteFunction.from_exprs(f"{name}_unconverged", [carry, *syms], [norm_inf(r) > tol * (1.0 + norm_inf(z))], labels, ["go"])
     out, _ = while_loop(cond, body, concat([z0, residual(z0, params)]), max_iter=self.max_iter, params=held)
     return out[:m]
 
@@ -293,7 +293,7 @@ class _Stages:
       return [Expr.sym(f"{prefix}{nm}", shape, dtype=dtype) for nm, (shape, dtype) in zip(names, kinds, strict=True)]
 
     held, kstar = symbols(), Expr.sym("kstar", (m,))
-    base = ConcreteFunction._from_exprs(f"{self.name}_k", [*held, kstar], [kstar + 0.0], [*names, "kstar"], ["k"])
+    base = ConcreteFunction.from_exprs(f"{self.name}_k", [*held, kstar], [kstar + 0.0], [*names, "kstar"], ["k"])
 
     def jvp_rule(inner: ConcreteFunction[Any, Any, Any, Any], level: int) -> ConcreteFunction[Any, Any, Any, Any]:
       held, kstar, tangents, dkstar = symbols(), Expr.sym("kstar", (m,)), symbols("d"), Expr.sym("dkstar", (m,))
@@ -307,7 +307,7 @@ class _Stages:
       push = substitute(sum((jvp(g, p, t) for p, t in zip(held, tangents, strict=True)), Expr.const(np.zeros(m))), {free: k})
       dk = -solve(self.stage_matrix(k, held), push, assume="gen")
       labels = [*names, "kstar", *(f"d{nm}" for nm in names), "dkstar"]
-      return ConcreteFunction._from_exprs(f"{self.name}_k_jvp{level}", [*held, kstar, *tangents, dkstar], [dk], labels, ["dk"])
+      return ConcreteFunction.from_exprs(f"{self.name}_k_jvp{level}", [*held, kstar, *tangents, dkstar], [dk], labels, ["dk"])
 
     # The reverse rule reads the stages from the Function's output, whose derivative is the Function's
     # own, so one rule serves both levels.
@@ -315,7 +315,7 @@ class _Stages:
     lam = solve(self.stage_matrix(k, held).T, kbar, assume="gen")
     grads = [-g for g in vjp([self.residual(k, held)], held, [lam])]
     labels, outs = [*names, "kstar", "ko", "kbar"], [*grads, Expr.const(np.zeros(m))]
-    vjp_rule = ConcreteFunction._from_exprs(f"{self.name}_k_vjp", [*held, kstar, k, kbar], outs, labels, [f"{nm}bar" for nm in (*names, "kstar")])
+    vjp_rule = ConcreteFunction.from_exprs(f"{self.name}_k_vjp", [*held, kstar, k, kbar], outs, labels, [f"{nm}bar" for nm in (*names, "kstar")])
     inner = base
     for level in (1, 2):
       inner = custom_derivative(base, jvp=jvp_rule(inner, level), vjp=vjp_rule)

@@ -88,8 +88,8 @@ def bellman(v: sc.Expr, slip: sc.Expr, puddle: sc.Expr) -> tuple[sc.Expr, sc.Exp
 _carry = sc.sym("carry", S + 3)
 _v, _change, _slip, _puddle = _carry[:S], _carry[S], _carry[S + 1], _carry[S + 2]
 _, _v_new = bellman(_v, _slip, _puddle)
-sweep = sc.Function._from_exprs("vi_sweep", [_carry], [sc.concat([_v_new, sc.norm_inf(_v_new - _v).reshape((1,)), _carry[S + 1 :]])], ["carry"], ["next"])
-not_converged = sc.Function._from_exprs("vi_not_converged", [_carry], [sc.greater(_change, TOL)], ["carry"], ["go_on"])
+sweep = sc.Function.from_exprs("vi_sweep", [_carry], [sc.concat([_v_new, sc.norm_inf(_v_new - _v).reshape((1,)), _carry[S + 1 :]])], ["carry"], ["next"])
+not_converged = sc.Function.from_exprs("vi_not_converged", [_carry], [sc.greater(_change, TOL)], ["carry"], ["go_on"])
 
 
 @sc.function((), (), output=sc.G("value", "policy", "sweeps"))

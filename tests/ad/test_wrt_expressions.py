@@ -34,7 +34,7 @@ def _compare(tag: str, build) -> None:
   q = sc.sym("q", 3)
   at_slice = build(P)
   at_input = [substitute(e, {q: P}) for e in build(q)]
-  f = sc.Function._from_exprs(f"wrt_{tag}", [C], [*at_slice, *at_input], ["c"], [f"o{i}" for i in range(2 * len(at_slice))])
+  f = sc.Function.from_exprs(f"wrt_{tag}", [C], [*at_slice, *at_input], ["c"], [f"o{i}" for i in range(2 * len(at_slice))])
   out = f(X)
   n = len(at_slice)
   for got, want in zip(out[:n], out[n:], strict=True):
@@ -68,7 +68,7 @@ def test_a_slice_and_an_input_together() -> None:
   (g_slice, g_input) = vjp((_vector(P),), (P, C), (cot,))
   q = sc.sym("q", 3)
   (r_slice, r_input) = vjp((_vector(q),), (q, C), (cot,))
-  f = sc.Function._from_exprs(
+  f = sc.Function.from_exprs(
     "wrt_mixed", [C], [g_slice, g_input, substitute(r_slice, {q: P}), substitute(r_input, {q: P})], ["c"], ["a", "b", "c2", "d"]
   )
   a, b, ra, rb = f(X)
@@ -99,18 +99,18 @@ def test_newton_on_a_slice_of_a_while_loop_carry() -> None:
   x, a = carry[:3], carry[3]
   energy = sc.sumsqr(x * x - a) + 0.1 * sc.sumsqr(x)
   step = -sc.linalg.solve(sc.hessian(energy, x), sc.gradient(energy, x))
-  body = sc.Function._from_exprs("wrt_newton", [carry], [sc.concat([x + step, a.reshape((1,))])], ["c"], ["n"])
-  cond = sc.Function._from_exprs("wrt_newton_go", [carry], [sc.greater(sc.norm_inf(sc.gradient(energy, x)), 1e-12)], ["c"], ["g"])
+  body = sc.Function.from_exprs("wrt_newton", [carry], [sc.concat([x + step, a.reshape((1,))])], ["c"], ["n"])
+  cond = sc.Function.from_exprs("wrt_newton_go", [carry], [sc.greater(sc.norm_inf(sc.gradient(energy, x)), 1e-12)], ["c"], ["g"])
   start = sc.sym("start", 4)
   out, steps = sc.while_loop(cond, body, start, max_iter=50)
-  fn = sc.Function._from_exprs("wrt_newton_run", [start], [out, steps], ["s"], ["x", "k"])
+  fn = sc.Function.from_exprs("wrt_newton_run", [start], [out, steps], ["s"], ["x", "k"])
   final, k = fn(np.array([1.3, 1.5, 1.4, 2.0]))
   np.testing.assert_allclose(final[:3], np.full(3, np.sqrt(2.0 - 0.05)), rtol=1e-12)
   assert k < 10
 
 
 def _mapped(p: sc.Expr) -> sc.Expr:
-  body = sc.Function._from_exprs("wrt_pair", [a := sc.sym("a", 2)], [sc.stack([a[0] * a[1], a[0].sin() * a[1] * a[1]])], ["a"], ["o"])
+  body = sc.Function.from_exprs("wrt_pair", [a := sc.sym("a", 2)], [sc.stack([a[0] * a[1], a[0].sin() * a[1] * a[1]])], ["a"], ["o"])
   return sc.vmap(body, 2, [(sc.concat([p, C[4:5]]), 0, 2)])
 
 

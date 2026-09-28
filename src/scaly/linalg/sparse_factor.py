@@ -189,7 +189,7 @@ class SparseLDL:
     u5 = put(u4, clear, Expr.const(np.zeros(c)), **ok)
     inputs = [carry, j, a_idx, a_src, r_lo, r_hi, r_dk, r_jk, col, clear, kv]
     names = ["c", "j", "a_idx", "a_src", "r_lo", "r_hi", "r_dk", "r_jk", "col", "clear", "kv"]
-    return ConcreteFunction._from_exprs(f"{self.name}_f{k}", inputs, [u5], names, ["c_next"])
+    return ConcreteFunction.from_exprs(f"{self.name}_f{k}", inputs, [u5], names, ["c_next"])
 
   def _factor_tables(self, seg: Segment) -> list[np.ndarray]:
     s = self.symbolic
@@ -303,7 +303,7 @@ class SparseLDL:
         # y[i] -= L[i, j] y[j] for the rows i > j of column j
         nxt = ragged_add(yy, ff, col[:1], col[1:], -take(yy, j.reshape((1,)), in_range=True), dst_map=s.l_rows)
       tag = "b" if backward else "f"
-      self._sweeps[backward] = ConcreteFunction._from_exprs(f"{self.name}_s{tag}", [yy, j, col, ff], [nxt], ["y", "j", "col", "f"], ["y_next"])
+      self._sweeps[backward] = ConcreteFunction.from_exprs(f"{self.name}_s{tag}", [yy, j, col, ff], [nxt], ["y", "j", "col", "f"], ["y_next"])
     return self._sweeps[backward]
 
   def _sweep(self, f: Expr, y: Expr, backward: bool) -> Expr:
@@ -369,8 +369,8 @@ class SparseLDL:
     body_out = put(u1, rs, pb - self._k_times(pk, u1[:n]), in_range=True)
     params = [pf, pk, pb, pt]
     names = ["c", "f", "k", "b", "threshold"]
-    body = ConcreteFunction._from_exprs(f"{self.name}{tag}_refine", [c, *params], [body_out], names, ["c_next"])
-    cond = ConcreteFunction._from_exprs(f"{self.name}{tag}_refining", [c, *params], [norm_inf(c[n:]) > pt[0]], names, ["go"])
+    body = ConcreteFunction.from_exprs(f"{self.name}{tag}_refine", [c, *params], [body_out], names, ["c_next"])
+    cond = ConcreteFunction.from_exprs(f"{self.name}{tag}_refining", [c, *params], [norm_inf(c[n:]) > pt[0]], names, ["go"])
     threshold = (tol * maximum(1.0, norm_inf(b))).reshape((1,))
     out, _ = while_loop(cond, body, concat([x, b - self._k_times(kv, x)]), max_iter=refine, params=(f, kv, b, threshold))
     return out[:n]
@@ -406,7 +406,7 @@ class SparseLDL:
       # Every variant, and every rule of it, has a name of its own: several can meet in one graph.
       tag = "" if refine == 0 else f"_r{refine}" + ("" if tol is None else f"a{sum(t is not None for _, t in self._solvers)}")
       x = self._refined_solve(f, kv, b, refine, tol, tag)
-      base = ConcreteFunction._from_exprs(f"{self.name}_solve{tag}", [f, kv, b], [x], ["f", "kv", "b"], ["x"])
+      base = ConcreteFunction.from_exprs(f"{self.name}_solve{tag}", [f, kv, b], [x], ["f", "kv", "b"], ["x"])
       inner = base
       pattern = self._solve_sparsity()
       for level in (1, 2):
@@ -445,7 +445,7 @@ class SparseLDL:
     x = _call(inner, f, kv, b)
     dx = _call(inner, f, kv, db - self._k_times(dkv, x))
     names = ["f", "kv", "b", "df", "dkv", "db"]
-    return ConcreteFunction._from_exprs(f"{self.name}_solve{tag}_jvp{level}", [f, kv, b, df, dkv, db], [dx], names, ["dx"])
+    return ConcreteFunction.from_exprs(f"{self.name}_solve{tag}_jvp{level}", [f, kv, b, df, dkv, db], [dx], names, ["dx"])
 
   def _vjp_rule(self, inner: ConcreteFunction, level: int, tag: str) -> ConcreteFunction:
     f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
@@ -460,7 +460,7 @@ class SparseLDL:
       grad_used = grad_used - scatter(gather(bbar, c[off]) * gather(x, r[off]), off, (used.size,))
     kbar = scatter(grad_used, used, (self.matrix.nnz,))
     outs = [Expr.const(np.zeros(self.w_offset)), kbar, bbar]
-    return ConcreteFunction._from_exprs(
+    return ConcreteFunction.from_exprs(
       f"{self.name}_solve{tag}_vjp{level}", [f, kv, b, x, xbar], outs, ["f", "kv", "b", "xo", "xbar"], ["fbar", "kvbar", "bbar"]
     )
 

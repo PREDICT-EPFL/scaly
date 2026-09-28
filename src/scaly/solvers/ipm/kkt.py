@@ -231,7 +231,7 @@ class Kernels:
       digits = ok
     names = ["D", "x_reg", "delta_reg", "z_reg_ir"]
     outs = [f, where(ok, 1.0, 0.0), where(digits, 1.0, 0.0)]
-    fn = ConcreteFunction._from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
+    fn = ConcreteFunction.from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
     return fn, int(f.size)
 
   @staticmethod
@@ -300,11 +300,11 @@ class Kernels:
     c, d, v = Expr.sym("c", (size,)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("V", (sum(self.v_sizes),))
     head = Expr.sym("c", (len(HEADER),))
     names = ["c", "D", "V"]
-    body = ConcreteFunction._from_exprs(f"{self.name}_factor_try", [c, d, v], [self._try(c, d, v)], names, ["next"])
-    first = ConcreteFunction._from_exprs(f"{self.name}_factor_first", [head, d, v], [self._try(head, d, v)], names, ["next"])
+    body = ConcreteFunction.from_exprs(f"{self.name}_factor_try", [c, d, v], [self._try(c, d, v)], names, ["next"])
+    first = ConcreteFunction.from_exprs(f"{self.name}_factor_first", [head, d, v], [self._try(head, d, v)], names, ["next"])
     h = {k: c[i] for i, k in enumerate(HEADER)}
     go = logical_and(h["ok"] < 0.5, logical_or(h["ir"] < 0.5, h["retries"] < float(r.max_factor_retires)))
-    cond = ConcreteFunction._from_exprs(f"{self.name}_factor_go", [c, d, v], [go], names, ["go"])
+    cond = ConcreteFunction.from_exprs(f"{self.name}_factor_go", [c, d, v], [go], names, ["go"])
     return cond, body, first
 
   def factor(self, d: Expr, v: Expr, rho: Expr, delta: Expr, reg_limit: Expr, ir: Expr) -> tuple[dict[str, Expr], Expr]:
@@ -345,7 +345,7 @@ class Kernels:
     else:
       assert self._ldl is not None
       sol = self._ldl.solve_with(parts["factor"], rhs)
-    return ConcreteFunction._from_exprs(f"{self.name}_kkt_solve", [rec, d, rhs], [sol], ["rec", "D", "r"], ["l"])
+    return ConcreteFunction.from_exprs(f"{self.name}_kkt_solve", [rec, d, rhs], [sol], ["rec", "D", "r"], ["l"])
 
   def _times(self, rec: Expr, d: Expr, lhs: Expr) -> Expr:
     """PIQP's ``mul_condensed_kkt``: the KKT matrix times ``lhs``, with ``x_reg`` (static
@@ -383,8 +383,8 @@ class Kernels:
     stop = logical_or(logical_or(logical_not(finite), slow), logical_not(err_c > tol[0]))
     nxt = concat([stack([where(stop, 1.0, 0.0), err_c]), where(accept, cand, lhs), res_c])
     names = ["c", "rec", "D", "rhs", "tol"]
-    step = ConcreteFunction._from_exprs(f"{self.name}_refine_step", [c, rec, d, rhs, tol], [nxt], names, ["next"])
-    step_go = ConcreteFunction._from_exprs(f"{self.name}_refine_go", [c, rec, d, rhs, tol], [c[0] < 0.5], names, ["go"])
+    step = ConcreteFunction.from_exprs(f"{self.name}_refine_step", [c, rec, d, rhs, tol], [nxt], names, ["next"])
+    step_go = ConcreteFunction.from_exprs(f"{self.name}_refine_go", [c, rec, d, rhs, tol], [c[0] < 0.5], names, ["go"])
     return step_go, step
 
   @cached_property
@@ -407,8 +407,8 @@ class Kernels:
     stop0 = where(err0 > tol, 0.0, 1.0)
     out, _ = while_loop(step_go, step, concat([stack([stop0, err0]), x, e0]), max_iter=r.max_iter, params=(rec, d, rhs, tol.reshape((1,))))
     names = ["x", "rec", "D", "rhs", "on"]
-    gate = ConcreteFunction._from_exprs(f"{self.name}_refine", [x, rec, d, rhs, on], [out[2 : 2 + size]], names, ["x_next"])
-    opens = ConcreteFunction._from_exprs(f"{self.name}_refine_on", [x, rec, d, rhs, on], [on[0] > 0.5], names, ["go"])
+    gate = ConcreteFunction.from_exprs(f"{self.name}_refine", [x, rec, d, rhs, on], [out[2 : 2 + size]], names, ["x_next"])
+    opens = ConcreteFunction.from_exprs(f"{self.name}_refine_on", [x, rec, d, rhs, on], [on[0] > 0.5], names, ["go"])
     return opens, gate
 
   def solve(self, rec: Expr, d: Expr, rhs: Expr, ir: Expr) -> Expr:

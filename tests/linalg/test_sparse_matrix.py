@@ -34,7 +34,7 @@ def _values_in_order(mat: SparseMatrix, a: sparse.csc_array) -> np.ndarray:
 
 
 def _eval(inputs: list[sc.Expr], outputs: list[sc.Expr], point: list[np.ndarray]) -> tuple[np.ndarray, ...]:
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     f"sm{abs(hash(tuple(o.id for o in outputs))) % 10**9}", inputs, outputs, [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))]
   )
   return fn._flat_numerical_call(*point)
@@ -243,7 +243,7 @@ def test_derivatives_through_the_values(monkeypatch: pytest.MonkeyPatch) -> None
 
   np.testing.assert_allclose(grad_a, finite_difference(lambda z: value(z, pt[2]), pt[0]).reshape(-1), rtol=1e-6, atol=1e-8)
   np.testing.assert_allclose(jac_a.reshape(-1), grad_a, rtol=1e-12, atol=1e-14)
-  grad_x = sc.Function._from_exprs("sm_gx", inputs, [gradient(f, x)], ["a", "c", "x"], ["g"])
+  grad_x = sc.Function.from_exprs("sm_gx", inputs, [gradient(f, x)], ["a", "c", "x"], ["g"])
   fd = finite_difference(lambda z: grad_x._flat_numerical_call(pt[0], pt[1], z)[0].reshape(-1), pt[2])
   np.testing.assert_allclose(hess_x, fd, rtol=1e-6, atol=1e-7)
 
@@ -251,7 +251,7 @@ def test_derivatives_through_the_values(monkeypatch: pytest.MonkeyPatch) -> None
 def test_compact_values_cross_the_function_boundary() -> None:
   a, _, c, _, point = _pair()
   prod = a @ c
-  fn = sc.Function._from_exprs("sm_out", [a.values, c.values], [prod.values], ["a", "c"], ["ac"], output_sparsities=[prod.sparsity])
+  fn = sc.Function.from_exprs("sm_out", [a.values, c.values], [prod.values], ["a", "c"], ["ac"], output_sparsities=[prod.sparsity])
   (vals,) = fn._flat_numerical_call(point[0], point[2])
   assert fn.output_sparsities[0] == prod.sparsity
   got = sparse.coo_array((vals, (prod.sparsity.rows, prod.sparsity.cols)), shape=prod.shape).toarray()

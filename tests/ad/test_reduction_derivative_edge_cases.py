@@ -22,7 +22,7 @@ MODES = ["split", "first"]
 
 
 def _fn(name: str, inputs: Sequence[sc.Expr], outputs: Sequence[sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"out{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"out{k}" for k in range(len(outputs))])
 
 
 def _three_ways(name: str, out: sc.Expr, x: sc.Expr, mode: str) -> Callable[[np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:

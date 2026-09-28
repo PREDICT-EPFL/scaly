@@ -54,7 +54,7 @@ def test_a_derivative_shares_the_splines_search() -> None:
   x = sc.sym("x")
   i = f.index(x)
   d, dd = f.derivative(), f.derivative(2)
-  fn = sc.Function._from_exprs("with_derivs", [x], [f(x, index=i), d(x, index=i), dd(x, index=i)], ["x"], ["f", "d", "dd"])
+  fn = sc.Function.from_exprs("with_derivs", [x], [f(x, index=i), d(x, index=i), dd(x, index=i)], ["x"], ["f", "d", "dd"])
   assert render_c_source(fn).count("floor(") == 1
   xs = np.array(0.61)
   np.testing.assert_allclose(fn(xs), [f.to_scipy()(xs), f.to_scipy()(xs, 1), f.to_scipy()(xs, 2)], rtol=1e-12)
@@ -150,7 +150,7 @@ def test_expression_bounds_integrate_as_numbers_do_in_every_mode(extrap: Extrap)
     f = interp.BSpline(t, c, 3, extrap="periodic")
   ref = reference_1d(f)
   a, b = sc.sym("a"), sc.sym("b")
-  fn = sc.Function._from_exprs(f"integral_{extrap}", [a, b], [f.integrate(a, b), sc.gradient(f.integrate(a, b), b)], ["a", "b"], ["I", "dIdb"])
+  fn = sc.Function.from_exprs(f"integral_{extrap}", [a, b], [f.integrate(a, b), sc.gradient(f.integrate(a, b), b)], ["a", "b"], ["I", "dIdb"])
   for lo, hi in ((0.3, 1.7), (-3.0, -1.0), (2.5, 4.0), (-2.5, 4.5), (1.9, 0.2)):
     value, slope = fn((np.array(lo), np.array(hi)))
     assert abs(value - f.integrate(lo, hi)) <= 1e-12 * max(1.0, abs(value)), (lo, hi)
@@ -160,7 +160,7 @@ def test_expression_bounds_integrate_as_numbers_do_in_every_mode(extrap: Extrap)
 def test_expression_bounds_integrate_through_the_antiderivative() -> None:
   f = spline_1d(3)
   a, b = sc.sym("a"), sc.sym("b")
-  fn = sc.Function._from_exprs("integral", [a, b], [f.integrate(a, b), sc.gradient(f.integrate(a, b), b)], ["a", "b"], ["I", "dIdb"])
+  fn = sc.Function.from_exprs("integral", [a, b], [f.integrate(a, b), sc.gradient(f.integrate(a, b), b)], ["a", "b"], ["I", "dIdb"])
   value, slope = fn((np.array(0.25), np.array(1.6)))
   np.testing.assert_allclose(value, f.integrate(0.25, 1.6), rtol=1e-12)
   np.testing.assert_allclose(slope, f.to_scipy()(1.6), rtol=1e-12)
@@ -175,7 +175,7 @@ def test_nd_integrals() -> None:
   want = dblquad(lambda y, x: float(ref([x, y])), 0.1, 0.8, -0.6, 0.9, epsabs=1e-12, epsrel=1e-12)[0]
   assert abs(f.integrate([0.1, -0.6], [0.8, 0.9]) - want) < 1e-10
   lo, hi = sc.sym("lo", 2), sc.sym("hi", 2)
-  fn = sc.Function._from_exprs("box", [lo, hi], [f.integrate(lo, hi)], ["lo", "hi"], ["I"])
+  fn = sc.Function.from_exprs("box", [lo, hi], [f.integrate(lo, hi)], ["lo", "hi"], ["I"])
   np.testing.assert_allclose(fn((np.array([0.1, -0.6]), np.array([0.8, 0.9]))), want, rtol=1e-10)
   with pytest.raises(ValueError, match="inside the base box"):
     f.integrate([0.1, -2.0], [0.8, 0.9])
@@ -192,7 +192,7 @@ def test_inverse_round_trips_and_its_derivative_is_one_over_the_slope() -> None:
   ys = np.concatenate([y, np.linspace(y[-1], y[0], 301)])
   v = sc.sym("v", ys.size)
   out = inv(v)
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     "inverse", [v], [out, sc.jvp(out, v, sc.const(np.ones(ys.size))), sc.gradient(out.sum(), v)], ["v"], ["x", "fwd", "rev"]
   )
   xs, fwd, rev = fn(ys)
@@ -200,11 +200,11 @@ def test_inverse_round_trips_and_its_derivative_is_one_over_the_slope() -> None:
   np.testing.assert_allclose(fwd, 1.0 / ref(xs, 1), rtol=1e-10)
   np.testing.assert_allclose(rev, 1.0 / ref(xs, 1), rtol=1e-10)
   point = sc.sym("p")
-  second = sc.Function._from_exprs("inverse_curvature", [point], [sc.hessian(inv(point), point)], ["p"], ["h"])
+  second = sc.Function.from_exprs("inverse_curvature", [point], [sc.hessian(inv(point), point)], ["p"], ["h"])
   p0 = 0.5 * (y[3] + y[4])
   x0 = float(fn(np.full(ys.size, p0))[0][0])
   np.testing.assert_allclose(second(np.array(p0)), -ref(x0, 2) / ref(x0, 1) ** 3, rtol=1e-8)
-  beyond = sc.Function._from_exprs("inverse_outside", [point], [inv(point), sc.gradient(inv(point), point)], ["p"], ["x", "g"])
+  beyond = sc.Function.from_exprs("inverse_outside", [point], [inv(point), sc.gradient(inv(point), point)], ["p"], ["x", "g"])
   slope_end = ref(x[-1], 1)
   np.testing.assert_allclose(beyond(np.array(y[-1] - 1.0)), [x[-1] - 1.0 / slope_end, 1.0 / slope_end], rtol=1e-12)
   assert np.isnan(beyond(np.array(np.nan))[0])
@@ -219,7 +219,7 @@ def test_inverse_holds_a_flat_end_and_takes_the_data_end_as_inside() -> None:
   inv = interp.interpolant(x, y, kind="pchip").inverse()
   assert PchipInterpolator(x, y)(x[-1], 1) < 1e-12
   point = sc.sym("p")
-  fn = sc.Function._from_exprs("inverse_flat_end", [point], [inv(point), sc.gradient(inv(point), point)], ["p"], ["x", "g"])
+  fn = sc.Function.from_exprs("inverse_flat_end", [point], [inv(point), sc.gradient(inv(point), point)], ["p"], ["x", "g"])
   for target, want, slope in ((y[-1], x[-1], None), (np.nextafter(y[-1], np.inf), x[-1], None), (y[-1] + 1.0, x[-1], 0.0)):
     got, g = fn(np.array(target))
     assert abs(got - want) < 1e-9, target
@@ -240,7 +240,7 @@ def test_inverse_bisects_where_newton_would_leave_its_cell() -> None:
   u = np.concatenate([np.linspace(0.0, 1.0, 200), 1.0 - np.logspace(-9, -1, 30), np.logspace(-9, -1, 30)])
   targets = c[0] + (c[-1] - c[0]) * u
   v = sc.sym("v", targets.size)
-  xs = sc.Function._from_exprs("inverse_quintic", [v], [f.inverse()(v)], ["v"], ["x"])(targets)
+  xs = sc.Function.from_exprs("inverse_quintic", [v], [f.inverse()(v)], ["v"], ["x"])(targets)
   assert np.all((xs >= 0.0) & (xs <= 1.0))
   np.testing.assert_allclose(f.to_scipy()(xs), targets, rtol=0, atol=1e-12 * c[-1])
 
@@ -269,7 +269,7 @@ def test_inverse_refuses_what_is_not_monotone() -> None:
 
 
 def _fn(inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr], name: str) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+  return sc.Function.from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
 
 
 def test_expression_antiderivative_of_unclamped_knots_starts_at_zero() -> None:

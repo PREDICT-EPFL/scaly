@@ -27,7 +27,7 @@ RNG = np.random.default_rng(93)
 
 
 def _fn(name: str, inputs: Sequence[sc.Expr], outputs: Sequence[sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"out{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"out{k}" for k in range(len(outputs))])
 
 
 def _run(name: str, inputs: Sequence[sc.Expr], outputs: Sequence[sc.Expr], point: Sequence[np.ndarray]) -> tuple[np.ndarray, ...]:
@@ -94,7 +94,7 @@ def _mix_body(name: str) -> sc.ConcreteFunction:
   """A carry of two, two sliced inputs of sizes two and one, and two stacked outputs of different sizes."""
   c, a, b = sc.sym("c", 2), sc.sym("a", 2), sc.sym("b", 1)
   nxt = sc.stack([c[0] * a[0] + (c[1] * b[0]).sin(), c[1] - 0.3 * c[0] * a[1] + b[0] * b[0]])
-  return sc.Function._from_exprs(name, [c, a, b], [nxt, sc.stack([c[0] * c[1] + a[0]]), (c * b[0]).cos()], ["c", "a", "b"], ["cn", "y", "z"])
+  return sc.Function.from_exprs(name, [c, a, b], [nxt, sc.stack([c[0] * c[1] + a[0]]), (c * b[0]).cos()], ["c", "a", "b"], ["cn", "y", "z"])
 
 
 def _fixed_point(name: str, tol: float = 1e-13) -> tuple[sc.Function, sc.Function]:
@@ -102,8 +102,8 @@ def _fixed_point(name: str, tol: float = 1e-13) -> tuple[sc.Function, sc.Functio
   c = sc.sym("c", 4)
   x, p = c[:2], c[2:]
   step = 0.5 * x.cos() + p
-  body = sc.Function._from_exprs(f"{name}_step", [c], [sc.concat([step, p])], ["c"], ["cn"])
-  cond = sc.Function._from_exprs(f"{name}_go", [c], [sc.norm_inf(step - x) > tol], ["c"], ["go"])
+  body = sc.Function.from_exprs(f"{name}_step", [c], [sc.concat([step, p])], ["c"], ["cn"])
+  cond = sc.Function.from_exprs(f"{name}_go", [c], [sc.norm_inf(step - x) > tol], ["c"], ["go"])
   return cond, body
 
 
@@ -219,15 +219,15 @@ def test_jvp_many_joint_of_zero_seeds_is_zero() -> None:
 
 def test_contains_loop_looks_through_callees() -> None:
   x = sc.sym("x", 2)
-  plain = sc.Function._from_exprs("cl_plain", [x], [x.sin()], ["x"], ["y"])
-  step = sc.Function._from_exprs("cl_step", [x], [x * 0.5], ["x"], ["y"])
+  plain = sc.Function.from_exprs("cl_plain", [x], [x.sin()], ["x"], ["y"])
+  step = sc.Function.from_exprs("cl_step", [x], [x * 0.5], ["x"], ["y"])
   (fin,) = sc.scan(step, x, [], length=3)
-  scanned = sc.Function._from_exprs("cl_scan", [x], [fin], ["x"], ["y"])
-  cond = sc.Function._from_exprs("cl_go", [x], [x[0] > 1.0], ["x"], ["go"])
-  looped = sc.Function._from_exprs("cl_while", [x], [sc.while_loop(cond, step, x, max_iter=4)[0]], ["x"], ["y"])
-  called = sc.Function._from_exprs("cl_call", [x], [scanned._flat_symbolic_call([plain._flat_symbolic_call([x])[0]])[0]], ["x"], ["y"])
+  scanned = sc.Function.from_exprs("cl_scan", [x], [fin], ["x"], ["y"])
+  cond = sc.Function.from_exprs("cl_go", [x], [x[0] > 1.0], ["x"], ["go"])
+  looped = sc.Function.from_exprs("cl_while", [x], [sc.while_loop(cond, step, x, max_iter=4)[0]], ["x"], ["y"])
+  called = sc.Function.from_exprs("cl_call", [x], [scanned._flat_symbolic_call([plain._flat_symbolic_call([x])[0]])[0]], ["x"], ["y"])
   xs = sc.sym("xs", 4)
-  mapped = sc.Function._from_exprs("cl_vmap", [xs], [sc.vmap(looped, 2, [(xs, 0, 2)])], ["xs"], ["y"])
+  mapped = sc.Function.from_exprs("cl_vmap", [xs], [sc.vmap(looped, 2, [(xs, 0, 2)])], ["xs"], ["y"])
   assert not _contains_loop(plain)
   assert all(_contains_loop(fn) for fn in (scanned, looped, called, mapped))
 
@@ -245,7 +245,7 @@ def test_scan_carries_of_rank_0_1_2_with_a_matrix_formal(carry_shape: tuple[int,
   if carry_shape == (2, 2):
     nxt = nxt + 0.2 * (c @ m.transpose((1, 0))) + 0.1 * c.transpose((1, 0))
   tag = len(carry_shape)
-  body = sc.Function._from_exprs(f"rk{tag}_step", [c, m], [nxt, sc.stack([(c * c).sum() * m[1, 0]])], ["c", "m"], ["cn", "y"])
+  body = sc.Function.from_exprs(f"rk{tag}_step", [c, m], [nxt, sc.stack([(c * c).sum() * m[1, 0]])], ["c", "m"], ["cn", "y"])
   c0, ms = sc.sym("c0", carry_shape), sc.sym("ms", 16)
   fin, ys = sc.scan(body, c0, [(ms, 0, 4)], length=4)
   point = [0.3 + 0.1 * RNG.standard_normal(carry_shape), 0.8 + 0.2 * RNG.standard_normal(16)]
@@ -361,7 +361,7 @@ def test_scan_body_with_passthrough_and_boolean_outputs(monkeypatch: pytest.Monk
   boolean still gets one tangent loop; the boolean output has no tangent to carry."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c, a = sc.sym("c", 2), sc.sym("a", 2)
-  body = sc.Function._from_exprs("pb_step", [c, a], [c, a, c * a, sc.stack([c[0] > 0.1])], ["c", "a"], ["cn", "y", "z", "flag"])
+  body = sc.Function.from_exprs("pb_step", [c, a], [c, a, c * a, sc.stack([c[0] > 0.1])], ["c", "a"], ["cn", "y", "z", "flag"])
   c0, a_all = sc.sym("c0", 2), sc.sym("a_all", 6)
   fin, ys, zs, _ = sc.scan(body, c0, [(a_all, 4, -2)], length=3)
   _check_forward("pb", [c0, a_all], [fin, ys, zs], [np.array([0.3, 0.2]), np.linspace(-1.0, 1.0, 6)])
@@ -372,7 +372,7 @@ def test_scan_whose_init_and_sliced_input_are_one_symbol(monkeypatch: pytest.Mon
   the caller's symbols in swapped roles: interned symbols must not be confused."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c, a = sc.sym("c", 2), sc.sym("a", 2)
-  step = sc.Function._from_exprs("so_step", [c, a], [c * a + a[::-1].sin(), c * 2.0], ["c", "a"], ["cn", "y"])
+  step = sc.Function.from_exprs("so_step", [c, a], [c * a + a[::-1].sin(), c * 2.0], ["c", "a"], ["cn", "y"])
   outs = sc.scan(step, a, [(c, 0, 0)], length=3)
   point = [np.array([0.3, 0.7]), np.array([1.1, -0.4])]
   _check_forward("so", [c, a], list(outs), point)
@@ -393,7 +393,7 @@ def test_scan_reading_another_scans_tangent_trajectory(
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   body = _mix_body(f"tt_{spec[0]}{spec[1]}{spec[2]}_step")
   c, x = sc.sym("c", 2), sc.sym("x", 2 if spec == ("zs", 8, -2) else 1)
-  second = sc.Function._from_exprs(
+  second = sc.Function.from_exprs(
     f"tt_{spec[0]}{spec[1]}{spec[2]}_next", [c, x], [c * x[0] + 0.1 * c[::-1], sc.stack([c.sum()])], ["c", "x"], ["cn", "y"]
   )
   c0, a_all, b_all = sc.sym("c0", 2), sc.sym("a_all", 10), sc.sym("b_all", 5)
@@ -417,14 +417,14 @@ def test_an_op_without_a_multi_seed_rule_in_a_body_falls_back_inside_one_loop(mo
   per seed inside the single tangent loop, so the loop count still does not grow with the seeds;
   strict mode names the op."""
   c, u = sc.sym("c", 2), sc.sym("u", 1)
-  body = sc.Function._from_exprs("fb_step", [c, u], [sc.stack([sc.atan2(c[1], c[0] + 2.0) + u[0], c[0] * u[0]])], ["c", "u"], ["cn"])
+  body = sc.Function.from_exprs("fb_step", [c, u], [sc.stack([sc.atan2(c[1], c[0] + 2.0) + u[0], c[0] * u[0]])], ["c", "u"], ["cn"])
   c0, us = sc.sym("c0", 2), sc.sym("us", 4)
   (fin,) = sc.scan(body, c0, [(us, 0, 1)], length=4)
   _check_forward("fb", [c0, us], [fin], [np.array([0.3, -0.2]), np.linspace(0.5, 1.0, 4)])
   counts = {nseed: len(_loop_nodes([jvp_many(fin, us, sc.const(RNG.standard_normal((nseed, 4))))])) for nseed in (2, 3)}
   assert counts[2] == counts[3] == 1
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
-  (fresh,) = sc.scan(sc.Function._from_exprs("fb_strict_step", list(body.inputs), list(body.outputs), ["c", "u"], ["cn"]), c0, [(us, 0, 1)], length=4)
+  (fresh,) = sc.scan(sc.Function.from_exprs("fb_strict_step", list(body.inputs), list(body.outputs), ["c", "u"], ["cn"]), c0, [(us, 0, 1)], length=4)
   with pytest.raises(NotImplementedError, match="atan2"):
     jacobian(fresh, us)
 
@@ -434,7 +434,7 @@ def test_an_op_without_a_multi_seed_rule_in_a_body_falls_back_inside_one_loop(mo
 
 def _inner_scan_body(name: str) -> sc.Function:
   ic, iu = sc.sym("ic", 2), sc.sym("iu", 1)
-  return sc.Function._from_exprs(name, [ic, iu], [sc.stack([ic[0] + 0.3 * ic[1] * iu[0], ic[1].sin() + iu[0]])], ["ic", "iu"], ["icn"])
+  return sc.Function.from_exprs(name, [ic, iu], [sc.stack([ic[0] + 0.3 * ic[1] * iu[0], ic[1].sin() + iu[0]])], ["ic", "iu"], ["icn"])
 
 
 def test_scan_in_a_scan_body(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -442,7 +442,7 @@ def test_scan_in_a_scan_body(monkeypatch: pytest.MonkeyPatch) -> None:
   inner = _inner_scan_body("ss_inner")
   c, w = sc.sym("c", 2), sc.sym("w", 3)
   (fin,) = sc.scan(inner, c, [(w, 0, 1)], length=3)
-  outer = sc.Function._from_exprs("ss_outer", [c, w], [0.8 * fin + 0.1 * c.cos(), sc.stack([fin.sum()])], ["c", "w"], ["cn", "y"])
+  outer = sc.Function.from_exprs("ss_outer", [c, w], [0.8 * fin + 0.1 * c.cos(), sc.stack([fin.sum()])], ["c", "w"], ["cn", "y"])
   c0, ws = sc.sym("c0", 2), sc.sym("ws", 12)
   outs = sc.scan(outer, c0, [(ws, 9, -3)], length=4)
   _check_forward("ss", [c0, ws], list(outs), [np.array([0.2, -0.3]), 0.4 * np.sin(np.arange(12.0))])
@@ -452,7 +452,7 @@ def _scan_callee(name: str) -> sc.Function:
   """A Function whose output is a scan: ``x`` evolved three steps under a broadcast parameter."""
   x, p = sc.sym("x", 2), sc.sym("p", 1)
   (fin,) = sc.scan(_inner_scan_body(f"{name}_step"), x, [(p, 0, 0)], length=3)
-  return sc.Function._from_exprs(name, [x, p], [fin * p[0]], ["x", "p"], ["y"])
+  return sc.Function.from_exprs(name, [x, p], [fin * p[0]], ["x", "p"], ["y"])
 
 
 @pytest.mark.parametrize("pre", ["identity", "nonlinear"])
@@ -473,10 +473,10 @@ def test_vmap_of_a_function_holding_a_scan(pre: str, monkeypatch: pytest.MonkeyP
 def test_vmap_in_a_scan_body(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   ci, ui = sc.sym("ci", 1), sc.sym("ui", 1)
-  h = sc.Function._from_exprs("vm_h", [ci, ui], [ci * ui + (ci * 0.5).sin()], ["ci", "ui"], ["y"])
+  h = sc.Function.from_exprs("vm_h", [ci, ui], [ci * ui + (ci * 0.5).sin()], ["ci", "ui"], ["y"])
   c, u = sc.sym("c", 2), sc.sym("u", 2)
   mapped = sc.vmap(h, 2, [(c, 0, 1), (u, 0, 1)])
-  body = sc.Function._from_exprs("vm_step", [c, u], [0.5 * c + mapped, sc.stack([mapped.sum()])], ["c", "u"], ["cn", "y"])
+  body = sc.Function.from_exprs("vm_step", [c, u], [0.5 * c + mapped, sc.stack([mapped.sum()])], ["c", "u"], ["cn", "y"])
   c0, us = sc.sym("c0", 2), sc.sym("us", 8)
   outs = sc.scan(body, c0, [(us, 0, 2)], length=4)
   _check_forward("vm", [c0, us], list(outs), [np.array([0.2, -0.3]), np.linspace(-1.0, 1.0, 8)])
@@ -487,11 +487,11 @@ def test_while_loop_in_a_scan_body(monkeypatch: pytest.MonkeyPatch) -> None:
   equals the smooth one that finite differences see."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   z = sc.sym("z", 2)
-  fp = sc.Function._from_exprs("ws_fp", [z], [sc.stack([0.5 * z[0].cos() + z[1], z[1]])], ["z"], ["zn"])
-  go = sc.Function._from_exprs("ws_go", [z], [(0.5 * z[0].cos() + z[1] - z[0]).abs() > 1e-14], ["z"], ["go"])
+  fp = sc.Function.from_exprs("ws_fp", [z], [sc.stack([0.5 * z[0].cos() + z[1], z[1]])], ["z"], ["zn"])
+  go = sc.Function.from_exprs("ws_go", [z], [(0.5 * z[0].cos() + z[1] - z[0]).abs() > 1e-14], ["z"], ["go"])
   c, u = sc.sym("c", 2), sc.sym("u", 1)
   sol, _ = sc.while_loop(go, fp, sc.stack([c[0], c[0] * u[0] + 0.3 * c[1]]), max_iter=200)
-  body = sc.Function._from_exprs("ws_step", [c, u], [sc.stack([sol[0], c[1] + 0.1 * sol[0]]), sol[:1]], ["c", "u"], ["cn", "x"])
+  body = sc.Function.from_exprs("ws_step", [c, u], [sc.stack([sol[0], c[1] + 0.1 * sol[0]]), sol[:1]], ["c", "u"], ["cn", "x"])
   c0, us = sc.sym("c0", 2), sc.sym("us", 3)
   outs = sc.scan(body, c0, [(us, 0, 1)], length=3)
   _check_forward("ws", [c0, us], list(outs), [np.array([0.1, 0.4]), np.array([0.5, -0.2, 0.8])], rtol=1e-5, atol=1e-6)
@@ -503,8 +503,8 @@ def test_scan_in_a_while_loop_body(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c = sc.sym("c", 3)
   (fin,) = sc.scan(_inner_scan_body("sw_inner"), c[:2], [(c[2:] * 0.0 + 0.4, 0, 0)], length=2)
-  body = sc.Function._from_exprs("sw_step", [c], [sc.concat([0.5 * fin, c[2:] + 1.0])], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("sw_go", [c], [c[2] < 3.5], ["c"], ["go"])
+  body = sc.Function.from_exprs("sw_step", [c], [sc.concat([0.5 * fin, c[2:] + 1.0])], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("sw_go", [c], [c[2] < 3.5], ["c"], ["go"])
   c0 = sc.sym("c0", 3)
   final, _ = sc.while_loop(cond, body, c0, max_iter=10)
   _check_forward("sw", [c0], [final[:2]], [np.array([0.3, -0.6, 0.0])])
@@ -523,7 +523,7 @@ def test_a_call_around_a_loop_is_differentiated_in_place(loop: str, monkeypatch:
   else:
     cond, body = _fixed_point("ca_fp")
     fin = sc.while_loop(cond, body, sc.concat([x, x * p[0]]), max_iter=200)[0][:2]
-  callee = sc.Function._from_exprs(f"ca_{loop}", [x, p], [fin * p[0], fin.sum().reshape((1,))], ["x", "p"], ["y", "s"])
+  callee = sc.Function.from_exprs(f"ca_{loop}", [x, p], [fin * p[0], fin.sum().reshape((1,))], ["x", "p"], ["y", "s"])
   q = sc.sym("q", 3)
   y, s = callee._flat_symbolic_call([q[:2].sin(), q[2:]])
   host = [y + s[0], s * q[0]]
@@ -540,9 +540,9 @@ def test_a_call_inlined_with_its_formals_swapped(monkeypatch: pytest.MonkeyPatch
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   x, y = sc.sym("x", 2), sc.sym("y", 2)
   c, a = sc.sym("c", 2), sc.sym("a", 1)
-  step = sc.Function._from_exprs("cs_step", [c, a], [c * a[0] + c[::-1] * 0.3], ["c", "a"], ["cn"])
+  step = sc.Function.from_exprs("cs_step", [c, a], [c * a[0] + c[::-1] * 0.3], ["c", "a"], ["cn"])
   (fin,) = sc.scan(step, x, [(y, 0, 1)], length=2)
-  f = sc.Function._from_exprs("cs_f", [x, y], [fin + x * 0.1], ["x", "y"], ["o"])
+  f = sc.Function.from_exprs("cs_f", [x, y], [fin + x * 0.1], ["x", "y"], ["o"])
   (swapped,) = f._flat_symbolic_call([y, x])
   (mixed,) = f._flat_symbolic_call([y * 2.0, x.sin()])
   _check_forward("cs", [x, y], [swapped, mixed], [np.array([0.3, 0.7]), np.array([1.1, -0.4])])
@@ -577,8 +577,8 @@ def test_while_loop_carries_of_rank_0_and_2(carry_shape: tuple[int, ...], monkey
   tag = len(carry_shape)
   c = sc.sym("c", carry_shape)
   nxt = 0.5 * c.cos() + 0.1 if tag == 0 else 0.5 * (c @ c.transpose((1, 0))).cos() * 0.5 + 0.1
-  body = sc.Function._from_exprs(f"wr{tag}_step", [c], [nxt], ["c"], ["cn"])
-  cond = sc.Function._from_exprs(f"wr{tag}_go", [c], [sc.norm_inf((nxt - c).reshape((c.size,))) > 1e-14], ["c"], ["go"])
+  body = sc.Function.from_exprs(f"wr{tag}_step", [c], [nxt], ["c"], ["cn"])
+  cond = sc.Function.from_exprs(f"wr{tag}_go", [c], [sc.norm_inf((nxt - c).reshape((c.size,))) > 1e-14], ["c"], ["go"])
   c0 = sc.sym("c0", carry_shape)
   final, _ = sc.while_loop(cond, body, c0, max_iter=100)
   _check_forward(f"wr{tag}", [c0], [final], [np.full(carry_shape, 0.3) + (0.1 * np.eye(2) if tag else 0.0)], rtol=1e-5, atol=1e-6)
@@ -592,8 +592,8 @@ def test_while_loop_edge_step_counts(max_iter: int, runs: bool, monkeypatch: pyt
   steps give the chain of body Jacobians."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c = sc.sym("c", 3)
-  body = sc.Function._from_exprs(f"we{max_iter}{runs}_step", [c], [0.5 * c * c[::-1] + c.sin()], ["c"], ["cn"])
-  cond = sc.Function._from_exprs(f"we{max_iter}{runs}_go", [c], [c[0] < 1e9 if runs else c[0] > 1e9], ["c"], ["go"])
+  body = sc.Function.from_exprs(f"we{max_iter}{runs}_step", [c], [0.5 * c * c[::-1] + c.sin()], ["c"], ["cn"])
+  cond = sc.Function.from_exprs(f"we{max_iter}{runs}_go", [c], [c[0] < 1e9 if runs else c[0] > 1e9], ["c"], ["go"])
   c0 = sc.sym("c0", 3)
   final, count = sc.while_loop(cond, body, c0, max_iter=max_iter)
   start = np.array([0.3, -0.2, 0.5])
@@ -609,8 +609,8 @@ def test_while_loop_stored_carries_output(monkeypatch: pytest.MonkeyPatch) -> No
   repeated past the last step; its tangent follows the same layout."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c = sc.sym("c", 2)
-  body = sc.Function._from_exprs("wsc_step", [c], [sc.stack([c[0] * c[1] + 0.2, (c[0] * 0.5).sin()])], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("wsc_go", [c], [c[0] < 0.75], ["c"], ["go"])
+  body = sc.Function.from_exprs("wsc_step", [c], [sc.stack([c[0] * c[1] + 0.2, (c[0] * 0.5).sin()])], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("wsc_go", [c], [c[0] < 0.75], ["c"], ["go"])
   c0 = sc.sym("c0", 2)
   stored = _while_node(cond, body, c0, 6, -1)
   _check_forward("wsc", [c0], [stored], [np.array([0.7, 0.8])])
@@ -664,7 +664,7 @@ def test_function_level_wrappers_through_a_scan(monkeypatch: pytest.MonkeyPatch)
   c0, a_all, b_all = sc.sym("c0", 2), sc.sym("a_all", 8), sc.sym("b_all", 4)
   fin, ys, zs = sc.scan(body, c0, [(a_all, 6, -2), (b_all, 0, 1)], length=4)
   cost = sc.sumsqr(fin) + (ys * zs[1::2]).sum()
-  fn = sc.Function._from_exprs("fl", [c0, a_all, b_all], [cost, ys], ["c0", "a", "b"], ["f", "ys"])
+  fn = sc.Function.from_exprs("fl", [c0, a_all, b_all], [cost, ys], ["c0", "a", "b"], ["f", "ys"])
   point = (np.array([0.4, -0.3]), np.linspace(0.2, 1.0, 8), np.linspace(-0.5, 0.5, 4))
   jac, hess = sc.jacobian(fn, "ys", "a")(point), sc.hessian(fn, "f", "a")(point)
   ref_jac, ref_hess = _run("fl_ref", [c0, a_all, b_all], [jacobian(ys, a_all), sc.hessian(cost, a_all)], point)
@@ -681,7 +681,7 @@ def test_hessian_through_a_nested_scan_inside_a_call(monkeypatch: pytest.MonkeyP
   g = _scan_callee("hn_g")
   c, u = sc.sym("c", 2), sc.sym("u", 1)
   (y,) = g._flat_symbolic_call([c, u])
-  body = sc.Function._from_exprs("hn_step", [c, u], [0.7 * y + 0.2 * c, sc.stack([sc.sumsqr(y)])], ["c", "u"], ["cn", "s"])
+  body = sc.Function.from_exprs("hn_step", [c, u], [0.7 * y + 0.2 * c, sc.stack([sc.sumsqr(y)])], ["c", "u"], ["cn", "s"])
   c0, us = sc.sym("c0", 2), sc.sym("us", 4)
   fin, ss = sc.scan(body, c0, [(us, 3, -1)], length=4)
   cost = sc.sumsqr(fin) + ss.sum()
@@ -699,8 +699,8 @@ def test_hessian_through_a_while_loop(monkeypatch: pytest.MonkeyPatch) -> None:
   _check_hessian("hw", cost, [c0], 0, [np.array([0.0, 1.0, 0.3, -0.2])], rtol=1e-5)
   # A loop that stops after one of its six slots: the adjoint reads stored carries past the last step.
   c = sc.sym("c", 2)
-  body = sc.Function._from_exprs("hwe_step", [c], [sc.stack([c[0] * c[1] + 0.2, (c[0] * 0.5).sin()])], ["c"], ["cn"])
-  early = sc.Function._from_exprs("hwe_go", [c], [c[0] < 0.75], ["c"], ["go"])
+  body = sc.Function.from_exprs("hwe_step", [c], [sc.stack([c[0] * c[1] + 0.2, (c[0] * 0.5).sin()])], ["c"], ["cn"])
+  early = sc.Function.from_exprs("hwe_go", [c], [c[0] < 0.75], ["c"], ["go"])
   e0 = sc.sym("e0", 2)
   fin, _ = sc.while_loop(early, body, e0, max_iter=6)
   for k, start in enumerate((np.array([0.7, 0.8]), np.array([0.1, 0.8]))):
@@ -716,8 +716,8 @@ def test_hessian_through_loops_that_take_no_or_one_step(bound: int, monkeypatch:
   c0, a_all, b_all = sc.sym("c0", 2), sc.sym("a_all", 2), sc.sym("b_all", 1)
   fin, ys, _ = sc.scan(body, c0, [(a_all, 0, 0), (b_all, 0, 0)], length=bound)
   c = sc.sym("c", 2)
-  step = sc.Function._from_exprs(f"h{bound}_wstep", [c], [c * c[::-1] + 0.1], ["c"], ["cn"])
-  go = sc.Function._from_exprs(f"h{bound}_go", [c], [c[0] < 1e9], ["c"], ["go"])
+  step = sc.Function.from_exprs(f"h{bound}_wstep", [c], [c * c[::-1] + 0.1], ["c"], ["cn"])
+  go = sc.Function.from_exprs(f"h{bound}_go", [c], [c[0] < 1e9], ["c"], ["go"])
   wfin, _ = sc.while_loop(go, step, fin, max_iter=bound)
   cost = sc.sumsqr(wfin) + ys.sum() * a_all[1]
   point = [np.array([0.5, -0.4]), np.array([0.9, 1.2]), np.array([0.3])]
@@ -733,8 +733,8 @@ def _higher_order_loop(loop: str) -> tuple[sc.Expr, list[sc.Expr], list[np.ndarr
     fin, ys, _ = sc.scan(body, c0, [(a_all, 0, 0), (b_all, 3, -1)], length=4)
     return sc.sumsqr(fin) + (ys * ys).sum(), [c0, a_all, b_all], [np.array([0.5, -0.4]), np.array([0.9, 1.2]), np.linspace(-0.9, 0.7, 4)]
   c = sc.sym("c", 3)
-  step = sc.Function._from_exprs("ho_while_step", [c], [sc.stack([c[0] * c[1] * 0.5 + c[2].sin(), c[1] * 0.9, c[2] + c[0] * 0.1])], ["c"], ["cn"])
-  go = sc.Function._from_exprs("ho_while_go", [c], [c[0] < 1e9], ["c"], ["go"])
+  step = sc.Function.from_exprs("ho_while_step", [c], [sc.stack([c[0] * c[1] * 0.5 + c[2].sin(), c[1] * 0.9, c[2] + c[0] * 0.1])], ["c"], ["cn"])
+  go = sc.Function.from_exprs("ho_while_go", [c], [c[0] < 1e9], ["c"], ["go"])
   c0 = sc.sym("c0", 3)
   fin, _ = sc.while_loop(go, step, c0, max_iter=3)
   return sc.sumsqr(fin) + fin[0] * fin[2], [c0], [np.array([0.4, 0.8, -0.3])]
@@ -769,9 +769,9 @@ def _custom_scan(name: str) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   """A scan whose body has a deliberately wrong forward rule, ``5 dc + du`` for ``c*c + u``, so a
   result that honors the rule is told apart from one that differentiates the body."""
   c, u = sc.sym("c", 1), sc.sym("u", 1)
-  step = sc.Function._from_exprs(f"{name}_step", [c, u], [c * c + u, c * 2.0], ["c", "u"], ["cn", "y"])
+  step = sc.Function.from_exprs(f"{name}_step", [c, u], [c * c + u, c * 2.0], ["c", "u"], ["cn", "y"])
   dc, du = sc.sym("dc", 1), sc.sym("du", 1)
-  rule = sc.Function._from_exprs(f"{name}_jvp", [c, u, dc, du], [5.0 * dc + du, 7.0 * dc], ["c", "u", "dc", "du"], ["dcn", "dy"])
+  rule = sc.Function.from_exprs(f"{name}_jvp", [c, u, dc, du], [5.0 * dc + du, 7.0 * dc], ["c", "u", "dc", "du"], ["dcn", "dy"])
   stepped = sc.custom_derivative(step, jvp=rule)
   c0, us = sc.sym("c0", 1), sc.sym("us", 3)
   fin, ys = sc.scan(stepped, c0, [(us, 0, 1)], length=3)
@@ -793,13 +793,13 @@ def test_custom_jvp_on_a_loop_body_raises_in_strict_mode(monkeypatch: pytest.Mon
     jacobian(fin, us)
   cond, body = _fixed_point("cjw")
   x, dx = sc.sym("x", 4), sc.sym("dx", 4)
-  custom = sc.custom_derivative(body, jvp=sc.Function._from_exprs("cjw_jvp", [x, dx], [3.0 * dx], ["x", "dx"], ["d"]))
+  custom = sc.custom_derivative(body, jvp=sc.Function.from_exprs("cjw_jvp", [x, dx], [3.0 * dx], ["x", "dx"], ["d"]))
   final, _ = sc.while_loop(cond, custom, x, max_iter=5)
   with pytest.raises(NotImplementedError, match="custom jvp"):
     jacobian(final, x)
   monkeypatch.delenv("SCALY_STRICT_JVP_MANY")
-  never = sc.Function._from_exprs("cjw_never", [x], [x[0] > 1e9], ["x"], ["go"])
-  always = sc.Function._from_exprs("cjw_always", [x], [x[0] < 1e9], ["x"], ["go"])
+  never = sc.Function.from_exprs("cjw_never", [x], [x[0] > 1e9], ["x"], ["go"])
+  always = sc.Function.from_exprs("cjw_always", [x], [x[0] < 1e9], ["x"], ["go"])
   two = sc.while_loop(always, custom, x, max_iter=2)[0]
   jac_two, jac_none = _run("cjw", [x], [jacobian(two, x), jacobian(sc.while_loop(never, custom, x, max_iter=2)[0], x)], [np.zeros(4)])
   np.testing.assert_array_equal(jac_two, 9.0 * np.eye(4))
@@ -812,7 +812,7 @@ def _determinism_hessian() -> sc.Function:
   fin, ys, zs = sc.scan(body, c0, [(a_all, 6, -2), (b_all, 0, 1)], length=4)
   g = _scan_callee("det_g")
   (y,) = g._flat_symbolic_call([fin, b_all[:1]])
-  cost = sc.Function._from_exprs("det_cost", [c0, a_all, b_all], [sc.sumsqr(y) + (ys * zs[::2]).sum()], ["c0", "a", "b"], ["f"])
+  cost = sc.Function.from_exprs("det_cost", [c0, a_all, b_all], [sc.sumsqr(y) + (ys * zs[::2]).sum()], ["c0", "a", "b"], ["f"])
   return sc.hessian(cost, "f", "a")
 
 
@@ -867,7 +867,7 @@ def test_a_body_input_named_like_a_tangent_is_not_aliased_by_it(monkeypatch: pyt
   and type, so it would be the carry itself and the Jacobian silently wrong."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c, u = sc.sym("fwd:u", 3), sc.sym("u", 1)
-  body = sc.Function._from_exprs("nc_step", [c, u], [c * u[0] + c.sin(), (c * c).sum().reshape((1,))], ["fwd:u", "u"], ["cn", "y"])
+  body = sc.Function.from_exprs("nc_step", [c, u], [c * u[0] + c.sin(), (c * c).sum().reshape((1,))], ["fwd:u", "u"], ["cn", "y"])
   c0, us = sc.sym("nc_c0", 3), sc.sym("nc_us", 3)
   fin, ys = sc.scan(body, c0, [(us, 0, 1)], length=3)
   _check_forward("nc", [c0, us], [fin, ys], [np.array([0.3, -0.2, 0.5]), np.array([0.9, 1.1, -0.4])])
@@ -877,13 +877,13 @@ def _shooting_intervals(k: int, layers: int) -> tuple[sc.Expr, sc.Expr, sc.Expr]
   """``k`` calls of one Function holding a scan, each on its own slice of the variables, with some
   elementwise work around the scan: unrolled multiple shooting."""
   z, u = sc.sym("z", 2), sc.sym("u", 1)
-  step = sc.Function._from_exprs("ms_step", [z, u], [sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] - z[0].sin())])], ["z", "u"], ["zn"])
+  step = sc.Function.from_exprs("ms_step", [z, u], [sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] - z[0].sin())])], ["z", "u"], ["zn"])
   x0, us = sc.sym("x0", 2), sc.sym("us", 4)
   pre = x0
   for _ in range(layers):
     pre = (pre * 1.01 + 0.1).sin() + pre.cos() * 0.5
   (fin,) = sc.scan(step, pre, [(us, 0, 1)], length=4)
-  shoot = sc.Function._from_exprs("ms_shoot", [x0, us], [fin * fin + fin], ["x0", "us"], ["xf"])
+  shoot = sc.Function.from_exprs("ms_shoot", [x0, us], [fin * fin + fin], ["x0", "us"], ["xf"])
   xs, big_u = sc.sym(f"ms_X{k}", 2 * k), sc.sym(f"ms_U{k}", 4 * k)
   y = sc.concat([shoot._flat_symbolic_call([xs[2 * i : 2 * i + 2], big_u[4 * i : 4 * i + 4]])[0] for i in range(k)])
   return y, xs, big_u
@@ -909,7 +909,7 @@ def test_a_body_built_with_a_fallback_does_not_satisfy_a_later_strict_build(monk
   """``atan2`` has no multi-seed rule, so without strict mode the tangent body falls back to one
   pass per seed inside the loop. A later strict build must not reuse that body and skip its check."""
   c, u = sc.sym("c", 1), sc.sym("u", 1)
-  body = sc.Function._from_exprs("sc_step", [c, u], [sc.atan2(c, u + 2.0)], ["c", "u"], ["cn"])
+  body = sc.Function.from_exprs("sc_step", [c, u], [sc.atan2(c, u + 2.0)], ["c", "u"], ["cn"])
   c0, us = sc.sym("sc_c0", 1), sc.sym("sc_us", 3)
   (fin,) = sc.scan(body, c0, [(us, 0, 1)], length=3)
   monkeypatch.delenv("SCALY_STRICT_JVP_MANY", raising=False)
@@ -929,10 +929,10 @@ def test_two_inlined_calls_keep_their_own_tangents(monkeypatch: pytest.MonkeyPat
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   monkeypatch.setattr(forward, "_prunable_call", lambda *_: False)
   z, u = sc.sym("z", 2), sc.sym("u", 1)
-  step = sc.Function._from_exprs("ti_step", [z, u], [sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] - z[0].sin())])], ["z", "u"], ["zn"])
+  step = sc.Function.from_exprs("ti_step", [z, u], [sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] - z[0].sin())])], ["z", "u"], ["zn"])
   x0, us = sc.sym("x0", 2), sc.sym("us", 4)
   (fin,) = sc.scan(step, (x0 * 1.01 + 0.1).sin(), [(us, 0, 1)], length=1)
-  shoot = sc.Function._from_exprs("ti_shoot", [x0, us], [fin], ["x0", "us"], ["xf"])
+  shoot = sc.Function.from_exprs("ti_shoot", [x0, us], [fin], ["x0", "us"], ["xf"])
   xs, big_u = sc.sym("ti_X", 4), sc.sym("ti_U", 8)
   y = sc.concat([shoot._flat_symbolic_call([xs[:2], big_u[:4]])[0], shoot._flat_symbolic_call([xs[2:], big_u[4:]])[0]])
   _check_forward("ti", [xs, big_u], [y], [np.array([0.2, -0.3, 0.5, 0.1]), np.linspace(-1.0, 1.0, 8)], rtol=1e-5, atol=1e-6)
@@ -944,7 +944,7 @@ def test_two_inlined_calls_keep_their_own_tangents(monkeypatch: pytest.MonkeyPat
 def _pendulum_step(name: str) -> sc.Function:
   z, u = sc.sym("z", 2), sc.sym("u", 1)
   nxt = sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] * z[0].cos() - 9.81 * z[0].sin())])
-  return sc.Function._from_exprs(name, [z, u], [nxt, sc.stack([sc.sumsqr(z) * u[0] + u[0] ** 3])], ["z", "u"], ["zn", "c"])
+  return sc.Function.from_exprs(name, [z, u], [nxt, sc.stack([sc.sumsqr(z) * u[0] + u[0] ** 3])], ["z", "u"], ["zn", "c"])
 
 
 @pytest.mark.parametrize("length", [2, 12, 60])
@@ -979,8 +979,8 @@ def test_a_hessian_with_many_seeds_matches_the_per_seed_columns(monkeypatch: pyt
 def test_a_while_loop_with_many_seeds_uses_its_step_jacobian(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c = sc.sym("c", 2)
-  body = sc.Function._from_exprs("cw_step", [c], [sc.stack([0.5 * c[0].cos() + 0.1 * c[1], 0.9 * c[1]])], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("cw_go", [c], [c[1].abs() > 1e-3], ["c"], ["go"])
+  body = sc.Function.from_exprs("cw_step", [c], [sc.stack([0.5 * c[0].cos() + 0.1 * c[1], 0.9 * c[1]])], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("cw_go", [c], [c[1].abs() > 1e-3], ["c"], ["go"])
   p = sc.sym("cw_p", 300)
   final, _ = sc.while_loop(cond, body, sc.stack([p[:150].sum() * 0.01, p[150:].sum() * 0.01]), max_iter=100)
   jac = jacobian(final, p)
@@ -1005,11 +1005,11 @@ def test_every_used_output_of_a_scan_shares_one_backward_scan(through_call: bool
   step = _pendulum_step("ob_step")
   z, u = step.inputs
   zn, c = step.outputs
-  body = sc.Function._from_exprs("ob_body", [z, u], [zn, c, zn * zn], ["z", "u"], ["zn", "c", "q"])
+  body = sc.Function.from_exprs("ob_body", [z, u], [zn, c, zn * zn], ["z", "u"], ["zn", "c", "q"])
   x0, us = sc.sym("ob_x0", 2), sc.sym("ob_us", 6)
   fin, costs, squares = sc.scan(body, x0, [(us, 0, 1)], length=6)
   if through_call:
-    roll = sc.Function._from_exprs("ob_roll", [x0, us], [fin, costs, squares], ["x0", "us"], ["fin", "costs", "q"])
+    roll = sc.Function.from_exprs("ob_roll", [x0, us], [fin, costs, squares], ["x0", "us"], ["fin", "costs", "q"])
     fin, costs, squares = roll._flat_symbolic_call([x0, us])
   cost = costs.sum() + sc.sumsqr(fin) + 0.5 * squares.sum()
   (grad,) = sc.vjp((cost,), (us,), (sc.const(1.0),))

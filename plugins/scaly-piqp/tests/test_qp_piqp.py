@@ -216,6 +216,6 @@ def test_nested_qp_call_uses_the_declared_tree() -> None:
   assert qp.input_names == ("decision", "lam:decision", "lam_eq", "lam_ineq", "u_ref")
   out_exprs = qp(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref)
   assert len(out_exprs) == len(qp.output_names)
-  wrapped = sc.Function._from_exprs("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
+  wrapped = sc.Function.from_exprs("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
   result = wrapped(np.array([1.5, -0.3]))
   np.testing.assert_allclose(result, [1.5, -0.3], atol=1e-7)

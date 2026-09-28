@@ -15,6 +15,7 @@ one's docstring says what its package owns.
 ```
 src/scaly/
   __init__.py            curated public re-exports, and nothing else
+  ext.py                 the extension API: registries, protocols and the library-author Function API, collected
 
   ir/                    dialect definitions, verification, text, pass infrastructure
     types.py             DType, DeviceSpec, TensorType, SparsityType, ScalarType, backend support
@@ -123,6 +124,7 @@ src/scaly/
 
   utils/
     env.py               the environment variables and platform facts scaly reads
+    ext_api.py           EXT_API_VERSION and the check a package runs against it
     names.py             C identifier spelling shared by passes and code generation
     options.py           sc.options and sc.set_options: user conventions read when a graph is built
     torch_state_dict.py  reading PyTorch checkpoints without depending on torch
@@ -148,7 +150,7 @@ one, never a higher one.
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
-| 9 | `scaly/__init__` | The public names sit above everything they re-export. |
+| 9 | `scaly/__init__`, `scaly/ext` | The public names sit above everything they re-export, the extension API with them. |
 
 `passes/` straddles the frontend: its expression rewrites are below `Function` (import layer 2)
 and its lowering is above it (import layer 6). Enforcement is per module, not per package, so

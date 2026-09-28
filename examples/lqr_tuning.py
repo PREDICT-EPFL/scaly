@@ -65,7 +65,7 @@ def _riccati_step() -> sc.Function:
   k = linalg.cho_solve(linalg.cholesky(s), b.T @ p @ a)
   p_next = q + a.T @ p @ (a - b @ k)
   p_next = 0.5 * (p_next + p_next.T)
-  return sc.Function._from_exprs("riccati_step", [p_flat, weights], [p_next.reshape((NX * NX,)), k.reshape((NU * NX,))], ["P", "w"], ["P_prev", "K"])
+  return sc.Function.from_exprs("riccati_step", [p_flat, weights], [p_next.reshape((NX * NX,)), k.reshape((NU * NX,))], ["P", "w"], ["P_prev", "K"])
 
 
 def _closed_loop_step() -> sc.Function:
@@ -77,7 +77,7 @@ def _closed_loop_step() -> sc.Function:
   x_next = sc.const(A_TRUE) @ x + sc.const(B_TRUE) @ u + sc.const(np.eye(NX)[:, 3:4] * H) * gust
   tilt_excess = sc.maximum(x[2].abs() - TILT_LIMIT, 0.0)
   cost = H * (sc.sumsqr(x[0:2]) + 0.01 * sc.sumsqr(u) + 100.0 * sc.sumsqr(tilt_excess))
-  return sc.Function._from_exprs(
+  return sc.Function.from_exprs(
     "closed_loop_step", [x_flat, step, k_flat], [x_next.reshape((NX * NS,)), cost.reshape((1,))], ["X", "k", "K"], ["X_next", "cost"]
   )
 

@@ -5,6 +5,10 @@ from pathlib import Path
 import platform
 from typing import TYPE_CHECKING
 
+from scaly.ext import require_ext_api
+
+require_ext_api(1, "scaly-ipopt")
+
 if TYPE_CHECKING:
   from scaly.solvers.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction

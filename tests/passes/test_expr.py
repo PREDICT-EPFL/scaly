@@ -15,7 +15,7 @@ def test_cse_merges_equivalent_subgraphs() -> None:
 
   assert y.op == sc.ExprOp.MUL
   assert y.args[0] is y.args[1]
-  np.testing.assert_allclose(sc.Function._from_exprs("cse_eval", [x], [y], ["x"], ["y"])(np.array([2.0, 3.0])), np.array([9.0, 16.0]))
+  np.testing.assert_allclose(sc.Function.from_exprs("cse_eval", [x], [y], ["x"], ["y"])(np.array([2.0, 3.0])), np.array([9.0, 16.0]))
 
   a, b = x[0], x[1]
   z = sc.cse(sc.stack([a * b, b * a]))
@@ -43,10 +43,10 @@ def test_simplify_rewrites_algebraic_identities_and_folds_constants() -> None:
   np.testing.assert_allclose(m.value, np.zeros(2))
 
   q = sc.sym("q", 2)
-  np.testing.assert_allclose(sc.Function._from_exprs("simp_sub", [q], [sc.simplify(q - q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.zeros(2))
-  np.testing.assert_allclose(sc.Function._from_exprs("simp_div", [q], [sc.simplify(q / q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.ones(2))
+  np.testing.assert_allclose(sc.Function.from_exprs("simp_sub", [q], [sc.simplify(q - q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.zeros(2))
+  np.testing.assert_allclose(sc.Function.from_exprs("simp_div", [q], [sc.simplify(q / q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.ones(2))
   np.testing.assert_allclose(
-    sc.Function._from_exprs("simp_cse", [q], [sc.simplify(sc.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0])
+    sc.Function.from_exprs("simp_cse", [q], [sc.simplify(sc.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0])
   )
 
   assert sc.simplify(q**1.0) is q
@@ -80,7 +80,7 @@ def test_simplify_folds_matrix_transpose_into_matmul() -> None:
 
 
 def _eval(name: str, inputs: list[sc.Expr], y: sc.Expr, *values: np.ndarray) -> np.ndarray:
-  fn = sc.Function._from_exprs(name, inputs, [y], [str(x.name) for x in inputs], ["y"])
+  fn = sc.Function.from_exprs(name, inputs, [y], [str(x.name) for x in inputs], ["y"])
   return fn(values[0] if len(values) == 1 else values)
 
 
@@ -134,7 +134,7 @@ def test_constant_mask_of_the_result_shape_folds_when_uniform() -> None:
 def test_simplify_keeps_hint_when_replacement_is_declared_input(hint: Lowering) -> None:
   x = sc.sym("x", 3)
   simplified = sc.simplify((x * 1.0).with_lowering(hint))
-  fn = sc.Function._from_exprs("hinted_identity", [x], [simplified], ["x"], ["y"])
+  fn = sc.Function.from_exprs("hinted_identity", [x], [simplified], ["x"], ["y"])
 
   assert simplified.lowering == hint
   assert simplified.op == sc.ExprOp.RESHAPE
@@ -177,7 +177,7 @@ def test_gathers_scatters_and_transposes_compose_into_one_gather() -> None:
   assert scattered.op == sc.ExprOp.GATHER
   transposed = simplify(sc.gather(x, np.arange(12)[::-1].copy()).reshape((3, 4)).T)
   assert transposed.op == sc.ExprOp.GATHER and transposed.args[0] is x
-  fn = sc.Function._from_exprs("cg", [x], [twice, scattered, transposed], ["x"], ["a", "b", "c"])
+  fn = sc.Function.from_exprs("cg", [x], [twice, scattered, transposed], ["x"], ["a", "b", "c"])
   xv = np.arange(12.0) * 0.3
   a, b, c = fn(xv)
   np.testing.assert_array_equal(a, xv[::-1][[0, 5, 11]])

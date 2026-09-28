@@ -57,6 +57,7 @@ nav = [
         { "Building functions" = "api/functions.md" },
         { "Differentiation" = "api/ad.md" },
         { "Code generation" = "api/codegen.md" },
+        { "Extensions" = "api/ext.md" },
         { "Integrators" = "api/integrators.md" },
         { "Interpolation" = "api/interp.md" },
         { "Model predictive control" = "api/mpc.md" },

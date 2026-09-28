@@ -535,7 +535,7 @@ def _scan_jvp_body(callee: ConcreteFunction, active: tuple[int, ...]) -> Concret
     names = [str(aug.name) if split else callee.input_names[0], *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
     suffix = ("_".join(str(i) for i in active) or "c") + options_tag()
-    cache[key] = ConcreteFunction._from_exprs(
+    cache[key] = ConcreteFunction.from_exprs(
       f"{callee.name}_scanfwd_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
     )
   return cache[key]
@@ -606,7 +606,7 @@ def _tangent_cond(cond: ConcreteFunction, body: ConcreteFunction, aug: Expr, cs:
   inputs = [aug, *cond.inputs[1:], *dparams]
   taken: set[str] = set()
   names = [claim_name(n, taken) for n in (str(aug.name), *cond.input_names[1:], *(str(d.name) for d in dparams))]
-  return ConcreteFunction._from_exprs(f"{cond.name}_{body.name}_whilefwd{suffix}", inputs, [go], names, ["go"])
+  return ConcreteFunction.from_exprs(f"{cond.name}_{body.name}_whilefwd{suffix}", inputs, [go], names, ["go"])
 
 
 def _while_jvp_functions(
@@ -631,7 +631,7 @@ def _while_jvp_functions(
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
     # The step number and the params stay inputs of the tangent body, the params' tangents follow.
     inputs = [aug, *body.inputs[1:], *dparams]
-    aug_body = ConcreteFunction._from_exprs(
+    aug_body = ConcreteFunction.from_exprs(
       f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
     cache[key] = (aug_body, aug, dparams)
@@ -1005,7 +1005,7 @@ def _jvp_many_compressed(
     assert owner is not None
     varying = [k for k, j in enumerate(jacobians) if j.op != ExprOp.CONST]
     exprs = [*(o.reshape((o.size,)) for o in outs), *(jacobians[k].reshape((jacobians[k].size,)) for k in varying)]
-    step = ConcreteFunction._from_exprs(
+    step = ConcreteFunction.from_exprs(
       name,
       list(owner.inputs),
       [owner._inherit_lowering(simplify_cse_fixpoint(e)) for e in exprs],
@@ -1050,7 +1050,7 @@ def _seed_product_map(name: str, jac: Expr, seeds: dict[Expr, Expr], sizes: dict
   if total is None:
     return Expr.const(np.zeros(nseed * width, dtype=np.float64))
   inputs = [*rows.values(), *([] if constant else [jsym])]
-  product = ConcreteFunction._from_exprs(name, inputs, [simplify_cse_fixpoint(total)], [str(e.name) for e in inputs], ["tangent"])
+  product = ConcreteFunction.from_exprs(name, inputs, [simplify_cse_fixpoint(total)], [str(e.name) for e in inputs], ["tangent"])
   specs = [(seeds[w].reshape((nseed * size,)), 0, size) for w, size in sizes.items()]
   if not constant:
     specs.append((jac.reshape((m * width,)), 0, 0))
@@ -1109,7 +1109,7 @@ def _scan_jvp_many_body(callee: ConcreteFunction, active: tuple[int, ...], nseed
     names = [str(aug.name) if carried else callee.input_names[0], *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
     suffix = ("_".join(str(i) for i in active) or "c") + options_tag()
-    cache[key] = ConcreteFunction._from_exprs(
+    cache[key] = ConcreteFunction.from_exprs(
       f"{callee.name}_scanfwd{nseed}_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
     )
   return cache[key]
@@ -1173,7 +1173,7 @@ def _while_jvp_many_functions(
     split = {carry: aug[:cs].reshape(carry.shape)}
     nxt = substitute(concat([primal.reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
     inputs = [aug, *body.inputs[1:], *dparams]
-    aug_body = ConcreteFunction._from_exprs(
+    aug_body = ConcreteFunction.from_exprs(
       f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
     cache[key] = (aug_body, aug, dparams)
@@ -1247,7 +1247,7 @@ def _call_jvp_many_function(
       seed_hash = hashlib.sha1(repr(seeded).encode()).hexdigest()[:10]
       name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices) + options_tag()
       output_name = claim_name(f"fwd:{callee.output_names[output_index]}", taken)
-    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name])
+    fn = ConcreteFunction.from_exprs(name, inputs, [deriv], input_names, [output_name])
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
 
@@ -1274,7 +1274,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
     name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices) + options_tag()
-    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [claim_name(f"fwd:{callee.output_names[output_index]}", taken)])
+    fn = ConcreteFunction.from_exprs(name, inputs, [deriv], input_names, [claim_name(f"fwd:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
 
@@ -1305,7 +1305,7 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       name_hash = hashlib.sha1(";".join(fn.name for fn in functions).encode()).hexdigest()[:10]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
-      cache[key] = ConcreteFunction._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
+      cache[key] = ConcreteFunction.from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
     fn = cache[key]
     mapped = vmap(fn, length, list(bindings.values()))
     width = fn.outputs[0].size

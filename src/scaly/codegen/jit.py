@@ -36,6 +36,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import render_c_module
 from ..function.extern import ExternState, extern_functions
+from ..utils.ext_api import EXT_API_VERSION
 from .toolchain import cache_root, compiler_identity, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Scaly version.
-_JIT_CACHE_VERSION = "4"
+_JIT_CACHE_VERSION = "5"
 
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
@@ -54,9 +55,10 @@ _SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
 _SOLVER_NAMESPACE_LOCK = threading.Lock()
 
 
-def _load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
-  """Keep the native dependencies of extern callees (solver libraries) out of the host process
-  linker namespace on Linux."""
+def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
+  """Load a shared library built from generated code. ``isolated`` keeps the native dependencies of
+  extern callees (solver libraries) out of the host process linker namespace on Linux, in one
+  namespace every isolated library shares."""
   global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
@@ -129,24 +131,29 @@ def compile_flags() -> tuple[str, ...]:
   return (opt, *(vectorize_flags(opt, compiler.cc) if compiler is not None else ()), *HOST_CFLAGS)
 
 
-def _compute_cache_key(source: str, *, fun_name: str, compiler: tuple[str, ...], compile_flags: tuple[str, ...] = ()) -> str:
+def _compute_cache_key(
+  source: str, *, fun_name: str, compiler: tuple[str, ...], compile_flags: tuple[str, ...] = (), versions: tuple[tuple[str, str], ...] = ()
+) -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
-  Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
-  previously cached artifacts. Function names and compile/link flags are included so two
+  Any change to the codegen output, the ABI surface, the extension API or `_JIT_CACHE_VERSION`
+  invalidates previously cached artifacts. Function names and compile/link flags are included so two
   functions that happen to share a source skeleton (different symbols or solver rpaths) still
   get distinct entries. ``compiler`` is ``toolchain.compiler_identity``, since the flags alone do
-  not tell clang from GCC 12 or later.
+  not tell clang from GCC 12 or later. ``versions`` are the distributions the extern callees link
+  (``BuildRequirements.versions``): an upgraded library is not in the source.
   """
   h = hashlib.sha256()
   h.update(_JIT_CACHE_VERSION.encode())
+  h.update(b"\0")
+  h.update(f"ext{EXT_API_VERSION}".encode())
   h.update(b"\0")
   h.update(C_API_SIGNATURE.encode())
   h.update(b"\0")
   h.update(fun_name.encode())
   h.update(b"\0")
   h.update(source.encode())
-  for part in (*compiler, *compile_flags):
+  for part in (*compiler, *compile_flags, *(f"{name}=={version}" for name, version in versions)):
     h.update(b"\0")
     h.update(part.encode())
   return h.hexdigest()
@@ -188,7 +195,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   # The compiler and the compile flags are part of the key: changing either changes the machine
   # code built from the same source, so the two builds must not share a cache entry.
   flags = compile_flags()
-  key = _compute_cache_key(module.body, fun_name=fun.name, compiler=compiler_identity(cc), compile_flags=(*flags, *extra_flags))
+  key = _compute_cache_key(
+    module.body, fun_name=fun.name, compiler=compiler_identity(cc), compile_flags=(*flags, *extra_flags), versions=module.requirements.versions
+  )
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
@@ -272,7 +281,7 @@ class CompiledFunction:
   def __init__(self, fun: ConcreteFunction):
     self._name = fun.name  # not the Function, which holds this handle: no cycle keeps the workspaces
     self._artifact = _build_artifact(fun)
-    self._lib = _load_library(self._artifact.lib_path, isolated=self._artifact.isolated)
+    self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.isolated)
     symbol = c_ident(fun.name)
     self._symbol = symbol
     entry = getattr(self._lib, symbol)
@@ -428,7 +437,11 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
   except NotImplementedError:
     return
   key = _compute_cache_key(
-    module.body, fun_name=fun.name, compiler=compiler_identity(compiler.cc), compile_flags=(*compile_flags(), *module.link_flags)
+    module.body,
+    fun_name=fun.name,
+    compiler=compiler_identity(compiler.cc),
+    compile_flags=(*compile_flags(), *module.link_flags),
+    versions=module.requirements.versions,
   )
   with _artifact_lock:
     _artifact_cache.pop(key, None)

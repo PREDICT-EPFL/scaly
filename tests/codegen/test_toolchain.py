@@ -63,7 +63,7 @@ def test_solver_paths_required_needs_both_libraries(tmp_path, monkeypatch) -> No
 
 def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   (tmp_path / "scaly_aot_cli_target.py").write_text(
-    "import scaly as sc\n\n\ndef build():\n  x = sc.sym('x', 2)\n  return sc.Function._from_exprs('aot_cli', [x], [x * x], ['x'], ['y'])\n"
+    "import scaly as sc\n\n\ndef build():\n  x = sc.sym('x', 2)\n  return sc.Function.from_exprs('aot_cli', [x], [x * x], ['x'], ['y'])\n"
   )
   monkeypatch.syspath_prepend(str(tmp_path))
   out = tmp_path / "generated"

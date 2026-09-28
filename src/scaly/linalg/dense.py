@@ -123,13 +123,13 @@ def _general_solvers(n: int, dtype: DType) -> tuple[ConcreteFunction, ConcreteFu
 
     def base(trans: bool) -> ConcreteFunction:
       a, f, b = syms("a", "f", "b")
-      return ConcreteFunction._from_exprs(f"{tag}{'_t' if trans else ''}", [a, f, b], [lu_solve(f, b, trans=trans)], ["a", "f", "b"], ["x"])
+      return ConcreteFunction.from_exprs(f"{tag}{'_t' if trans else ''}", [a, f, b], [lu_solve(f, b, trans=trans)], ["a", "f", "b"], ["x"])
 
     def jvp(inner: ConcreteFunction, trans: bool, level: int) -> ConcreteFunction:
       a, f, b, da, df, db = syms("a", "f", "b", "da", "df", "db")
       x = _call(inner, a, f, b)
       dx = _call(inner, a, f, db - (da.T if trans else da) @ x)
-      return ConcreteFunction._from_exprs(f"{inner.name}_jvp{level}", [a, f, b, da, df, db], [dx], ["a", "f", "b", "da", "df", "db"], ["dx"])
+      return ConcreteFunction.from_exprs(f"{inner.name}_jvp{level}", [a, f, b, da, df, db], [dx], ["a", "f", "b", "da", "df", "db"], ["dx"])
 
     def vjp(other: ConcreteFunction, trans: bool, level: int, name: str) -> ConcreteFunction:
       a, f, b = syms("a", "f", "b")
@@ -137,7 +137,7 @@ def _general_solvers(n: int, dtype: DType) -> tuple[ConcreteFunction, ConcreteFu
       bbar = _call(other, a, f, xbar)
       outer = x.reshape((n, 1)) @ bbar.reshape((1, n)) if trans else bbar.reshape((n, 1)) @ x.reshape((1, n))
       outs = [-outer, Expr.const(np.zeros((n + 1, n)), dtype=dtype), bbar]
-      return ConcreteFunction._from_exprs(f"{name}_vjp{level}", [a, f, b, x, xbar], outs, ["a", "f", "b", "xo", "xbar"], ["abar", "fbar", "bbar"])
+      return ConcreteFunction.from_exprs(f"{name}_vjp{level}", [a, f, b, x, xbar], outs, ["a", "f", "b", "xo", "xbar"], ["abar", "fbar", "bbar"])
 
     plain, transposed = base(False), base(True)
     inner, inner_t = plain, transposed

@@ -19,14 +19,14 @@ class HyperDual:
     self.v, self.e1, self.e2, self.e12 = v, e1, e2, e12
 
   @staticmethod
-  def _lift(other) -> HyperDual | None:
+  def _coerce(other) -> HyperDual | None:
     # Arrays are left to NumPy, which then applies the operator elementwise.
     if isinstance(other, np.ndarray):
       return None
     return other if isinstance(other, HyperDual) else HyperDual(float(other))
 
   def __add__(self, other):
-    o = self._lift(other)
+    o = self._coerce(other)
     if o is None:
       return NotImplemented
     return HyperDual(self.v + o.v, self.e1 + o.e1, self.e2 + o.e2, self.e12 + o.e12)
@@ -37,13 +37,13 @@ class HyperDual:
     return HyperDual(-self.v, -self.e1, -self.e2, -self.e12)
 
   def __sub__(self, other):
-    return NotImplemented if isinstance(other, np.ndarray) else self + (-self._lift(other))
+    return NotImplemented if isinstance(other, np.ndarray) else self + (-self._coerce(other))
 
   def __rsub__(self, other):
-    return NotImplemented if isinstance(other, np.ndarray) else self._lift(other) + (-self)
+    return NotImplemented if isinstance(other, np.ndarray) else self._coerce(other) + (-self)
 
   def __mul__(self, other):
-    o = self._lift(other)
+    o = self._coerce(other)
     if o is None:
       return NotImplemented
     return HyperDual(
@@ -56,13 +56,13 @@ class HyperDual:
     return HyperDual(f, df * self.e1, df * self.e2, df * self.e12 + d2f * self.e1 * self.e2)
 
   def __truediv__(self, other):
-    o = self._lift(other)
+    o = self._coerce(other)
     if o is None:
       return NotImplemented
     return self * o._apply(1.0 / o.v, -1.0 / o.v**2, 2.0 / o.v**3)
 
   def __rtruediv__(self, other):
-    return NotImplemented if isinstance(other, np.ndarray) else self._lift(other) / self
+    return NotImplemented if isinstance(other, np.ndarray) else self._coerce(other) / self
 
   def __pow__(self, n) -> HyperDual:
     return self._apply(self.v**n, n * self.v ** (n - 1), n * (n - 1) * self.v ** (n - 2))

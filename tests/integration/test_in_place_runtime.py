@@ -24,7 +24,7 @@ RNG = np.random.default_rng(303)
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _run_both(monkeypatch: pytest.MonkeyPatch, build, point, *, expect_in_place: bool):
@@ -78,7 +78,7 @@ def _forward_substitution(m: sparse.csr_array, tag: str, *, grads: bool) -> sc.F
   vals, bk = sc.sym("vals", m.nnz), sc.sym("bk", ())
   row = (sc.take(vals, pos) * sc.take(x, cols)).sum()
   xk = (bk - row) / sc.take(vals, dpos)
-  body = sc.Function._from_exprs(
+  body = sc.Function.from_exprs(
     f"fsub_{tag}", [x, k, cols, pos, dpos, vals, bk], [sc.put(x, k.reshape((1,)), xk)], ["x", "k", "cols", "pos", "dpos", "vals", "bk"], ["n"]
   )
   v, b = sc.sym("v", m.nnz), sc.sym("b", n)
@@ -122,7 +122,7 @@ def _accumulate(tag: str, *, read: str, n: int = 12, steps: int = 8, width: int 
     read_t[5, 1] = write_t[5, 0] if write_t[5, 0] < n else 0
     write_t[5, 0] = read_t[5, 1]
   c, w_idx, r_idx, u = sc.sym("c", n), sc.sym("wi", width, dtype="int64"), sc.sym("ri", width, dtype="int64"), sc.sym("u", width)
-  body = sc.Function._from_exprs(
+  body = sc.Function.from_exprs(
     f"acc_{read}_{tag}", [c, w_idx, r_idx, u], [sc.put_add(c, w_idx, u * sc.take(c, r_idx, fill=1.0))], ["c", "wi", "ri", "u"], ["n"]
   )
   c0, us = sc.sym("c0", n), sc.sym("us", steps * width)
@@ -162,7 +162,7 @@ def test_reads_of_an_earlier_link_must_miss_every_later_write(monkeypatch: pytes
     u1 = sc.put(c, first, sc.take(c, (k + 2).reshape((1,))) * 0.5)
     source = first if clash else sc.const(np.array([9]), dtype="int64")
     u2 = sc.put_add(u1, (k + 1).reshape((1,)), sc.take(c, source))
-    body = sc.Function._from_exprs(f"two_{int(clash)}_{tag}", [c, k], [u2], ["c", "k"], ["n"])
+    body = sc.Function.from_exprs(f"two_{int(clash)}_{tag}", [c, k], [u2], ["c", "k"], ["n"])
     c0 = sc.sym("c0", n)
     (fin,) = sc.scan(body, c0, [], length=steps, index=True)
     return _fn(f"two_run_{int(clash)}_{tag}", [c0], [fin])
@@ -184,7 +184,7 @@ def test_data_dependent_indices_keep_two_slots(monkeypatch: pytest.MonkeyPatch) 
   target = sc.stack([c[0].abs().floor()]).cast("int64")  # an index read from the data
 
   def build(tag: str) -> sc.Function:
-    body = sc.Function._from_exprs(f"dd_{tag}", [c, k], [sc.put_add(c, target, sc.stack([1.0]))], ["c", "k"], ["n"])
+    body = sc.Function.from_exprs(f"dd_{tag}", [c, k], [sc.put_add(c, target, sc.stack([1.0]))], ["c", "k"], ["n"])
     c0 = sc.sym("c0", n)
     (fin,) = sc.scan(body, c0, [], length=4, index=True)
     return _fn(f"dd_run_{tag}", [c0], [fin])
@@ -199,7 +199,7 @@ def test_another_output_reading_the_carry_keeps_two_slots(monkeypatch: pytest.Mo
 
   def build(tag: str) -> sc.Function:
     nxt = sc.put(c, k.reshape((1,)), sc.stack([7.0]))
-    body = sc.Function._from_exprs(f"oo_{tag}", [c, k], [nxt, sc.stack([c.sum()])], ["c", "k"], ["n", "s"])
+    body = sc.Function.from_exprs(f"oo_{tag}", [c, k], [nxt, sc.stack([c.sum()])], ["c", "k"], ["n", "s"])
     c0 = sc.sym("c0", n)
     fin, sums = sc.scan(body, c0, [], length=n, index=True)
     return _fn(f"oo_run_{tag}", [c0], [fin, sums])
@@ -220,7 +220,7 @@ def test_batched_carry_and_mixed_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     u1 = sc.index_add(c, [0], sc.const([1.0]))
     c0, us = sc.sym("c0", (rows, n)), sc.sym("us", steps * rows * width)
     uf = sc.sym("uf", rows * width)
-    flat_body = sc.Function._from_exprs(f"bmf_{tag}", [c, idx, uf], [sc.put_add(u1, idx, uf.reshape((rows, width)))], ["c", "idx", "uf"], ["n"])
+    flat_body = sc.Function.from_exprs(f"bmf_{tag}", [c, idx, uf], [sc.put_add(u1, idx, uf.reshape((rows, width)))], ["c", "idx", "uf"], ["n"])
     (fin,) = sc.scan(flat_body, c0, [(sc.const(table.reshape(-1), dtype="int64"), 0, width), (us, 0, rows * width)], length=steps)
     return _fn(f"bm_run_{tag}", [c0, us], [fin])
 
@@ -242,8 +242,8 @@ def test_while_loop_with_index_updates_in_place(monkeypatch: pytest.MonkeyPatch)
   cc = sc.sym("cc", n)
 
   def build(tag: str) -> sc.Function:
-    body = sc.Function._from_exprs(f"wi_{tag}", [c, k], [sc.put(c, k.reshape((1,)), sc.take(c, (k + 1).reshape((1,))) + 1.0)], ["c", "k"], ["n"])
-    cond = sc.Function._from_exprs(f"wc_{tag}", [cc], [sc.less(cc.sum(), 40.0)], ["cc"], ["go"])
+    body = sc.Function.from_exprs(f"wi_{tag}", [c, k], [sc.put(c, k.reshape((1,)), sc.take(c, (k + 1).reshape((1,))) + 1.0)], ["c", "k"], ["n"])
+    cond = sc.Function.from_exprs(f"wc_{tag}", [cc], [sc.less(cc.sum(), 40.0)], ["cc"], ["go"])
     c0 = sc.sym("c0", n)
     fin, count = sc.while_loop(cond, body, c0, max_iter=n, index=True)
     return _fn(f"wi_run_{tag}", [c0], [fin, count])
@@ -260,7 +260,7 @@ def test_while_loop_with_index_updates_in_place(monkeypatch: pytest.MonkeyPatch)
 def test_proof_helpers_directly() -> None:
   """``update_chain`` finds the chain structurally; ``in_place_steps`` needs the tables."""
   c, i, j = sc.sym("c", 4), sc.sym("i", 1, dtype="int64"), sc.sym("j", 1, dtype="int64")
-  body = _normalize_function(sc.Function._from_exprs("ph", [c, i, j], [sc.put(c, i, sc.take(c, j))], ["c", "i", "j"], ["n"]))
+  body = _normalize_function(sc.Function.from_exprs("ph", [c, i, j], [sc.put(c, i, sc.take(c, j))], ["c", "i", "j"], ["n"]))
   chain = update_chain(body)
   assert chain is not None and [e.op for e in chain] == [sc.ExprOp.PUT]
   assert in_place_steps(body, {1: np.array([[0], [1]]), 2: np.array([[1], [2]])})
@@ -281,7 +281,7 @@ def test_whole_link_reads_and_row_positions_are_refused(monkeypatch: pytest.Monk
       values = sc.stack([c.sum() * 0.1, c.sum() * 0.2]).reshape((rows, 1))
     else:
       values = sc.stack([c[1, 3], c[1, 3]]).reshape((rows, 1)) + 1.0
-    body = sc.Function._from_exprs(f"wl_{kind}_{tag}", [c, k], [sc.put(c, col, values)], ["c", "k"], ["n"])
+    body = sc.Function.from_exprs(f"wl_{kind}_{tag}", [c, k], [sc.put(c, col, values)], ["c", "k"], ["n"])
     c0 = sc.sym("c0", (rows, n))
     (fin,) = sc.scan(body, c0, [], length=n, index=True)
     return _fn(f"wl_run_{kind}_{tag}", [c0], [fin])

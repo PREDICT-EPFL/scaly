@@ -23,7 +23,7 @@ def _function(qp, tag: str, scale_cost: bool):
   sv = scaled.values
   outs = [scaling.delta, scaling.delta_b, scaling.c, sv.P, sv.c, scaled.x_b, sv.A, sv.b, sv.G, sv.h_l, sv.h_u, sv.x_l, sv.x_u]
   names = ["d", "db", "c", "P", "cv", "xb", "A", "b", "G", "hl", "hu", "xl", "xu"]
-  fn = sc.Function._from_exprs(f"ruiz_{tag}_{int(scale_cost)}", [syms[k] for k in ORDER], outs, list(ORDER), names)
+  fn = sc.Function.from_exprs(f"ruiz_{tag}_{int(scale_cost)}", [syms[k] for k in ORDER], outs, list(ORDER), names)
   return fn, values
 
 

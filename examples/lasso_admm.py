@@ -60,10 +60,10 @@ _x = x_step(_l, _atb, _z, _u, _rho)
 _z_new = soft(_x + _u, _lam / _rho)
 _u_new = _u + _x - _z_new
 _residuals = sc.stack([sc.norm_inf(_x - _z_new), _rho * sc.norm_inf(_z_new - _z)])
-admm_iteration = sc.Function._from_exprs(
+admm_iteration = sc.Function.from_exprs(
   "admm_iteration", [_carry], [sc.concat([_carry[:_Z], _z_new, _u_new, _residuals])], ["carry"], ["next"]
 )
-not_converged = sc.Function._from_exprs(
+not_converged = sc.Function.from_exprs(
   "admm_not_converged", [_carry], [sc.logical_or(sc.greater(_carry[_RES], TOL), sc.greater(_carry[_RES + 1], TOL))], ["carry"], ["go_on"]
 )
 

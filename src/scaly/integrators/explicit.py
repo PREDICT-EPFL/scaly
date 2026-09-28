@@ -139,9 +139,9 @@ def adaptive(
       accept = err <= 1.0
       nxt = concat([where(accept, high, y), where(accept, time + hs, time).reshape((1,)), (h * _controller(err, exponent)).reshape((1,))])
       labels = ["xth", *(f"q{i}" for i in range(len(syms)))]
-      body = ConcreteFunction._from_exprs(f"{fname}_step", [state, *syms], [nxt], labels, ["xth_next"])
+      body = ConcreteFunction.from_exprs(f"{fname}_step", [state, *syms], [nxt], labels, ["xth_next"])
       left = total - time
-      cond = ConcreteFunction._from_exprs(f"{fname}_running", [state, *syms], [left > 1e-12 * maximum(1.0, total.abs())], labels, ["go"])
+      cond = ConcreteFunction.from_exprs(f"{fname}_running", [state, *syms], [left > 1e-12 * maximum(1.0, total.abs())], labels, ["go"])
       out, _ = while_loop(cond, body, carry, max_iter=int(max_steps), params=params)
       done = (span - out[n]) <= 1e-12 * maximum(1.0, span.abs())
       return where(done, out[:n], Expr.const(np.full(n, np.nan)))

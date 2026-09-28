@@ -8,7 +8,7 @@ import scaly as sc
 def test_structural_transpose_concat_vec_eval_and_ad() -> None:
   x = sc.sym("x", (2, 2))
   y = sc.concat([x.T, x + 1.0], axis=1).vec()
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
   jf = sc.jacobian(f, "y", "x")
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
 
@@ -34,7 +34,7 @@ def test_slice_split_eval_and_ad() -> None:
   x = sc.sym("x", 4)
   left, right = sc.split(x, [2, 2])
   y = sc.stack([x[0], x[2:4].sum(), sc.concat([left, right])[3]])
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
   jf = sc.jacobian(f, "y", "x")
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
@@ -59,7 +59,7 @@ def test_slice_split_eval_and_ad() -> None:
 def test_gather_scatter_eval_and_ad() -> None:
   x = sc.sym("x", 5)
   y = sc.scatter(x.gather([3, 1, 4]), [0, 2, 3], 5)
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f", [x], [y], ["x"], ["y"])
   jf = sc.jacobian(f, "y", "x")
   xv = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
 
@@ -85,5 +85,5 @@ def test_gather_scatter_eval_and_ad() -> None:
     raise AssertionError("out-of-range gather should fail")
 
   v = sc.sym("v", 2)
-  repeated = sc.Function._from_exprs("scatter_repeat", [v], [sc.scatter(v, [1, 1], 3)], ["v"], ["y"])
+  repeated = sc.Function.from_exprs("scatter_repeat", [v], [sc.scatter(v, [1, 1], 3)], ["v"], ["y"])
   np.testing.assert_allclose(repeated(np.array([2.0, 5.0])), [0.0, 7.0, 0.0])  # repeated indices accumulate

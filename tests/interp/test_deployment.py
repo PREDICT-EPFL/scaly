@@ -26,8 +26,8 @@ def test_float32_tables_evaluate_to_single_precision(strategy: str, extrap: str)
   rng = np.random.default_rng(1)
   pts = np.concatenate([inside_points(g, rng, 60), [[-0.3, 0.2], [1.4, -1.6]]])
   x32, x64 = sc.sym("x", pts.shape, dtype="float32"), sc.sym("x", pts.shape)
-  f32 = sc.Function._from_exprs(f"single_{strategy}_{extrap}", [x32], [single(x32)], ["x"], ["y"])
-  f64 = sc.Function._from_exprs(f"double_{strategy}_{extrap}", [x64], [double(x64)], ["x"], ["y"])
+  f32 = sc.Function.from_exprs(f"single_{strategy}_{extrap}", [x32], [single(x32)], ["x"], ["y"])
+  f64 = sc.Function.from_exprs(f"double_{strategy}_{extrap}", [x64], [double(x64)], ["x"], ["y"])
   want = f64(pts.astype(np.float32).astype(np.float64))  # the same, rounded, points
   got = f32(pts.astype(np.float32))
   scale = np.abs(want).max()
@@ -60,7 +60,7 @@ def test_a_table_passed_in_at_run_time_compiles_and_runs_from_c(tmp_path) -> Non
     pytest.skip("cc is required")
   g = (np.linspace(0.0, 1.0, 6), np.linspace(-1.0, 1.0, 5))
   x, table = sc.sym("x", 2), sc.sym("table", (6, 5))
-  fn = sc.Function._from_exprs("lut", [x, table], [interp.interpolant(g, table, kind="cubic")(x)], ["x", "table"], ["y"])
+  fn = sc.Function.from_exprs("lut", [x, table], [interp.interpolant(g, table, kind="cubic")(x)], ["x", "table"], ["y"])
   module = render_c_module(fn)
   assert "lut_table_t;  // 6 x 5, row-major (C order)" in module.header
   values = np.add.outer(np.linspace(0.0, 1.0, 6) ** 2, np.sin(np.linspace(-1.0, 1.0, 5)))
@@ -107,7 +107,7 @@ def test_a_float64_point_into_a_float32_spline() -> None:
   g = np.linspace(0.0, 1.0, 7)
   f = interp.interpolant(g, np.sin(3 * g), kind="cubic", dtype="float32")
   x = sc.sym("x", 5)
-  got = sc.Function._from_exprs("f64_point_f32", [x], [f(x)], ["x"], ["y"])(np.linspace(0.05, 0.95, 5))
+  got = sc.Function.from_exprs("f64_point_f32", [x], [f(x)], ["x"], ["y"])(np.linspace(0.05, 0.95, 5))
   np.testing.assert_allclose(got, make_interp_spline(g, np.sin(3 * g), k=3)(np.linspace(0.05, 0.95, 5)), rtol=0, atol=1e-6)
 
 

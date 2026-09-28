@@ -21,7 +21,7 @@ def _callees(prog: ProgramNode) -> list[ProgramNode]:
 @pytest.mark.parametrize("hint", ["scalar", "block"])
 def test_derived_procs_inherit_stage_hint(hint: Lowering) -> None:
   x = sc.sym("x", 3)
-  stage = sc.Function._from_exprs("hint_stage", [x], [(x.sin() * (x @ sc.const(np.ones(3)))).with_lowering(hint)], ["x"], ["y"])
+  stage = sc.Function.from_exprs("hint_stage", [x], [(x.sin() * (x @ sc.const(np.ones(3)))).with_lowering(hint)], ["x"], ["y"])
   length = 4
   z = sc.sym("z", 3 * length)
   lam = sc.sym("lam", 3 * length)
@@ -35,7 +35,7 @@ def test_derived_procs_inherit_stage_hint(hint: Lowering) -> None:
     jvp_many(mapped, z, seeds),
     jvp(mapped, z, seed),
   ]
-  fn = sc.Function._from_exprs("hint_chain", [z, lam, seed, seeds], outputs, ["z", "lam", "seed", "seeds"], ["g", "h", "jm", "j"])
+  fn = sc.Function.from_exprs("hint_chain", [z, lam, seed, seeds], outputs, ["z", "lam", "seed", "seeds"], ["g", "h", "jm", "j"])
   callees = _callees(lower_function(fn))
   names = [str(proc.attrs["name"]) for proc in callees]
   assert any("_adj0_0" in n and "fwd" not in n for n in names)

@@ -343,7 +343,7 @@ def test_symplectic_refusals() -> None:
 
 def test_the_controller_law() -> None:
   err = sc.sym("err", 5)
-  fn = sc.Function._from_exprs("law", [err], [_controller(err, -0.2)], ["err"], ["factor"])
+  fn = sc.Function.from_exprs("law", [err], [_controller(err, -0.2)], ["err"], ["factor"])
   (factor,) = fn._flat_numerical_call(np.array([0.0, 1e-12, 1.0, 32.0, 1e30]))
   expected = np.array([5.0, 5.0, 0.9, 0.9 * 32.0**-0.2, 0.2])
   assert np.all(np.abs(np.log2(factor / expected)) < 1 / 1024)  # capped growth, the law, floored shrinkage
@@ -352,7 +352,7 @@ def test_the_controller_law() -> None:
 def test_the_controller_factor_is_rounded_and_carries_no_derivative() -> None:
   v = sc.sym("v", 3)
   rounded = _power_of_two(v, 1024)
-  fn = sc.Function._from_exprs("rounded", [v], [rounded, sc.jacobian(rounded * v, v)], ["v"], ["r", "j"])
+  fn = sc.Function.from_exprs("rounded", [v], [rounded, sc.jacobian(rounded * v, v)], ["v"], ["r", "j"])
   values = np.array([0.37, 1.0, 4.2])
   r, j = fn._flat_numerical_call(values)
   assert np.all(np.abs(np.log2(r / values)) < 1 / 1024)  # within one step of 2^(1/1024)

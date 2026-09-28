@@ -21,7 +21,7 @@ from scaly.codegen import render_c_source
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _step(name: str, *, index: bool) -> sc.Function:

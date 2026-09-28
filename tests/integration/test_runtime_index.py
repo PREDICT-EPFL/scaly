@@ -26,7 +26,7 @@ RNG = np.random.default_rng(202)
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _np_take(x: np.ndarray, idx: np.ndarray, fill: float = 0.0) -> np.ndarray:
@@ -224,7 +224,7 @@ def test_scan_spmv_and_transpose_product_match_scipy(monkeypatch: pytest.MonkeyP
   lane = k * width + sc.const(np.arange(width), dtype="int64")
   cols = sc.take(sc.const(cols_t, dtype="int64"), lane)
   row_vals = sc.take(vb, sc.take(sc.const(pos_t, dtype="int64"), lane))
-  body = sc.Function._from_exprs(
+  body = sc.Function.from_exprs(
     "spmv_row",
     [c, k, xb, vb, yk],
     [sc.put_add(c, cols, row_vals * yk), sc.stack([(row_vals * sc.take(xb, cols)).sum()])],

@@ -86,7 +86,9 @@ class BuildRequirements:
   are emitted once. ``declarations`` are further exported prototypes for the header.
   ``libraries`` are resolved to flags by ``link_flags``: callees sharing a resolver are resolved
   together, once, with the sorted union of their library names. ``isolated`` asks the JIT to load
-  the library in its own linker namespace where the platform has one."""
+  the library in its own linker namespace where the platform has one. ``versions`` are the
+  ``(distribution, version)`` pairs of what the build links but the source does not show (a vendored
+  library): they join the JIT cache key, so an upgrade never reuses a library built against another."""
 
   includes: tuple[str, ...] = ()
   header_types: tuple[tuple[str, ...], ...] = ()
@@ -95,6 +97,7 @@ class BuildRequirements:
   libraries: tuple[str, ...] = ()
   link_flags: LinkResolver | None = None
   isolated: bool = False
+  versions: tuple[tuple[str, str], ...] = ()
 
 
 @runtime_checkable
@@ -143,7 +146,7 @@ def extern_function(
   input_names, output_names = tuple(leaf for leaf, _ in inputs), tuple(leaf for leaf, _ in outputs)
   in_tree = input_tree or param_list(flat_tree(input_names, tuple(e.type for e in input_exprs)))
   out_tree = output_tree or flat_tree(output_names, tuple(e.type for e in output_exprs))
-  function = ConcreteFunction._from_exprs(name, input_exprs, output_exprs, input_names, output_names)._with_trees(in_tree, out_tree)
+  function = ConcreteFunction.from_exprs(name, input_exprs, output_exprs, input_names, output_names)._with_trees(in_tree, out_tree)
   function.extern = callee
   return function
 

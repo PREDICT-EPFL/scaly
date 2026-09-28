@@ -26,7 +26,7 @@ def _spjac() -> sc.Function:
   x = sc.sym("x", 4)
   p = sc.sym("p", 2)
   y = sc.stack([x[0] * p[0], x[2:4].sum(), x[1] * x[3] + p[1]])
-  return sc.sparse_jacobian(sc.Function._from_exprs("f", [x, p], [y], ["x", "p"], ["y"]), "y", "x", name="f_spjac")
+  return sc.sparse_jacobian(sc.Function.from_exprs("f", [x, p], [y], ["x", "p"], ["y"]), "y", "x", name="f_spjac")
 
 
 def _build(tmp_path, fun: sc.Function, adapters: tuple[str, ...] = ()):
@@ -135,7 +135,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
 
 def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
   x = sc.sym("x", 3)
-  fun = sc.Function._from_exprs("g", [x], [x.sin(), x.sum()], ["x"], ["y", "s"])
+  fun = sc.Function.from_exprs("g", [x], [x.sin(), x.sum()], ["x"], ["y", "s"])
   module, lib_path = _build(tmp_path, fun, adapters=("cpp",))
   assert module.header_name == "g.hpp" and module.workspace_size == workspace_size(fun)
   ext = casadi.external("g", str(lib_path))
@@ -148,10 +148,10 @@ def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
 
 def test_casadi_rejects_dense_matrix_buffers() -> None:
   m = sc.sym("m", (2, 3))
-  fun = sc.Function._from_exprs("dense", [m], [m * 2.0], ["m"], ["n"])
+  fun = sc.Function.from_exprs("dense", [m], [m * 2.0], ["m"], ["n"])
   with pytest.raises(ValueError, match="column-major"):
     render_c_module(fun, adapters=("casadi",))
   with pytest.raises(ValueError, match="input 'm'"):
     render_c_api_header(fun, adapters=("casadi",))
   row = sc.sym("row", (1, 3))
-  render_c_module(sc.Function._from_exprs("row_ok", [row], [row * 2.0], ["row"], ["n"]), adapters=("casadi",))
+  render_c_module(sc.Function.from_exprs("row_ok", [row], [row * 2.0], ["row"], ["n"]), adapters=("casadi",))

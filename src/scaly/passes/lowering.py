@@ -1349,7 +1349,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict
     return None
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
-    renamed = ConcreteFunction._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
+    renamed = ConcreteFunction.from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
     ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.extern_fns, observe_expr=ctx.observe_expr, in_place=True)
   return name, _put_scratch(update_chain(normalized) or [])
 

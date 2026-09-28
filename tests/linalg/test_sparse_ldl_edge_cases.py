@@ -28,7 +28,7 @@ W = SPARSE_LDL_MAX_WIDTH
 
 
 def _fn(name: str, inputs: list[sc.Expr], outputs: list[sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _band(n: int) -> np.ndarray:

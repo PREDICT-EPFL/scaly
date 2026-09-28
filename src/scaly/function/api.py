@@ -225,7 +225,7 @@ def _derived(
 
   def derive(instance: ConcreteFunction[Any, Any, Any, Any]) -> Any:
     of_, wrt_ = cast(tuple[str, str], _resolved_names(operation, instance.name, instance.input_names, instance.output_names, of, wrt, weighted))
-    derived_name = default(instance.name, of_, wrt_) if name is None else (name if instance is source else f"{name}__{instance._tokens}")
+    derived_name = default(instance.name, of_, wrt_) if name is None else (name if instance is source else f"{name}__{instance.tokens}")
     return build(instance, derived_name, of_, wrt_)
 
   if source.is_concrete:
@@ -235,7 +235,7 @@ def _derived(
   declared_outputs = source._output.names if source._output is not None else None
   known_of, known_wrt = _resolved_names(operation, source.name, declared_inputs, declared_outputs, of, wrt, weighted)
   label = default(source.name, known_of, known_wrt) if known_of is not None and known_wrt is not None else f"{source.name}_{operation}"
-  return source._lift(derive, name or label, extra)
+  return source.lift(derive, name or label, extra)
 
 
 def _typed_result(result: ConcreteFunction[Any, Any, Any, Any], input_tree: _G) -> Any:

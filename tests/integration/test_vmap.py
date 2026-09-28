@@ -65,7 +65,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     p = sc.sym("p", NX * (N + 1), diff=False)
     initial = eq_initial((z[:NZ], p[:NX]))
     mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return sc.Function._from_exprs(f"race_car_eq_vmap_N{N}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
+    return sc.Function.from_exprs(f"race_car_eq_vmap_N{N}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
 
   fn_a = build(50)
   fn_b = build(100)
@@ -82,7 +82,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
       znext = fn.inputs[0][(i + 1) * NZ : (i + 2) * NZ]
       pi = fn.inputs[1][(i + 1) * NX : (i + 2) * NX]
       parts.append(eq_interstage((zi, znext, pi)))
-    ref = sc.Function._from_exprs(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [sc.concat(parts)], ["z", "p"], ["eq"])
+    ref = sc.Function.from_exprs(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [sc.concat(parts)], ["z", "p"], ["eq"])
     np.testing.assert_allclose(fn((zv, pv)), ref((zv, pv)), rtol=1e-12, atol=1e-12)
 
   src_a = render_c_source(fn_a)
@@ -137,7 +137,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     p = sc.sym("p", NX * (N + 1), diff=False)
     initial = eq_initial((z[:NZ], p[:NX]))
     mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return sc.Function._from_exprs(f"tr_vmap_N{N}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
+    return sc.Function.from_exprs(f"tr_vmap_N{N}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
 
   def build_unroll(N: int) -> sc.Function:
     z = sc.sym("z", NZ * (N + 1))
@@ -145,7 +145,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     parts = [eq_initial((z[:NZ], p[:NX]))]
     for i in range(N):
       parts.append(eq_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
-    return sc.Function._from_exprs(f"tr_unroll_N{N}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
+    return sc.Function.from_exprs(f"tr_unroll_N{N}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
 
   N = 4
   fn_vmap = build_vmap(N)
@@ -230,7 +230,7 @@ def _build_pairs_fn(mapped: bool) -> sc.Function:
     rows = [pairs_barrier((sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack)) for i, j in PAIRS]
     rows += [pairs_wall((sl(p, k), sl(nxt, k), slack)) for k in range(NB)]
     h = sc.concat(rows)
-  return sc.Function._from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h], ["u", "p"], ["h"])
+  return sc.Function.from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h], ["u", "p"], ["h"])
 
 
 def _pairs_sample() -> tuple[np.ndarray, np.ndarray]:
@@ -298,7 +298,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
   N = 4
   z = sc.sym("z", 3 * N)
-  fn = sc.Function._from_exprs("vmap_dense", [z], [sc.vmap(layer, N, [(z, 0, 3)])], ["z"], ["y"])
+  fn = sc.Function.from_exprs("vmap_dense", [z], [sc.vmap(layer, N, [(z, 0, 3)])], ["z"], ["y"])
 
   zv = np.random.default_rng(3).normal(size=3 * N)
   expected = np.zeros((N, 3 * N))
@@ -323,7 +323,7 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
   inputs = rng.normal(size=x.size), rng.normal(size=p.size)
   values = []
   for name, r in (("mapped", mapped), ("unrolled", unrolled)):
-    fn = sc.Function._from_exprs(name, [x, p], [sc.dot(weights, r**2)], ["x", "p"], ["f"])
+    fn = sc.Function.from_exprs(name, [x, p], [sc.dot(weights, r**2)], ["x", "p"], ["f"])
     derivatives = fn.factory(name + "_derivatives", ["x", "p"], ["f", sc.factory.Grad("f", "x"), sc.factory.SpHess("f", "x")])
     values.append(derivatives(inputs))
   for actual, expected in zip(values[0], values[1], strict=True):

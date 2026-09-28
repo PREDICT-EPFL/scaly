@@ -92,8 +92,8 @@ def discrete_map(f: Function[Any, Any, Any, Any], label: str, dt: float | None, 
   default = f"{f.name}_{label}"
   if f.is_concrete:
     return build(f.concrete, name or default)
-  return f._lift(
-    lambda inst: build(inst, f"{inst.name}_{label}" if name is None else f"{name}__{inst._tokens}"), name or default, ("dt",) if dt is None else ()
+  return f.lift(
+    lambda inst: build(inst, f"{inst.name}_{label}" if name is None else f"{name}__{inst.tokens}"), name or default, ("dt",) if dt is None else ()
   )
 
 

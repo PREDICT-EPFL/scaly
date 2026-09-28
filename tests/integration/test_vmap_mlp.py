@@ -81,7 +81,7 @@ def vmapped(stages: int) -> sc.Function:
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
   )
-  return sc.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum(), eq], ["z", "p"], ["cost", "eq"])
+  return sc.Function.from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum(), eq], ["z", "p"], ["cost", "eq"])
 
 
 def unrolled(stages: int) -> sc.Function:
@@ -99,7 +99,7 @@ def unrolled(stages: int) -> sc.Function:
   cost = terms[0]
   for term in terms[1:]:
     cost = cost + term
-  return sc.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost, sc.concat(rows)], ["z", "p"], ["cost", "eq"])
+  return sc.Function.from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost, sc.concat(rows)], ["z", "p"], ["cost", "eq"])
 
 
 def sample(stages: int, seed: int = 3) -> tuple[np.ndarray, np.ndarray]:

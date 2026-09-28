@@ -93,7 +93,7 @@ def _long_scalar_chain(length: int, *, scalar: bool = False) -> sc.Function:
   for i in range(length):
     acc = acc + x[i % 4] * float(i + 1)
   out = acc.reshape((1,))
-  return sc.Function._from_exprs(f"fold{length}", [x], [out.scalar() if scalar else out], ["x"], ["y"])
+  return sc.Function.from_exprs(f"fold{length}", [x], [out.scalar() if scalar else out], ["x"], ["y"])
 
 
 def _long_scalar_chain_numpy(length: int, x: np.ndarray) -> float:
@@ -106,7 +106,7 @@ def _flat_stage_fold(stages: int, n: int = 4) -> sc.Function:
   w = sc.sym("w", n)
   terms = [(x[i * n : (i + 1) * n] * w)[k] for i in range(stages) for k in range(n)]
   total = sum(terms, sc.const(0.0))
-  return sc.Function._from_exprs(f"stages{stages}", [x, w], [total.reshape((1,))], ["x", "w"], ["y"])
+  return sc.Function.from_exprs(f"stages{stages}", [x, w], [total.reshape((1,))], ["x", "w"], ["y"])
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the deep-fold witnesses")
@@ -436,7 +436,7 @@ def test_workspace_slots_do_not_collide_with_output_names() -> None:
   matrix = x.reshape((2, 2))
   square = matrix @ matrix
   cube = square @ matrix
-  f = sc.Function._from_exprs("slot_collision", [x], [square + cube, square - cube], ["x"], ["s1", "s2"])
+  f = sc.Function.from_exprs("slot_collision", [x], [square + cube, square - cube], ["x"], ["s1", "s2"])
 
   data = np.arange(1.0, 5.0)
   square_ref = data.reshape((2, 2)) @ data.reshape((2, 2))
@@ -456,10 +456,10 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   while raw callees can remain inlineable.
   """
   x = sc.sym("x", 2)
-  inner = sc.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
+  inner = sc.Function.from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
   z = sc.sym("z", 2)
   inner_z = inner(z * z)
-  outer = sc.Function._from_exprs("outer", [z], [inner_z], ["z"], ["y"])
+  outer = sc.Function.from_exprs("outer", [z], [inner_z], ["z"], ["y"])
   jf = outer.factory("J", ["z"], [sc.factory.Jac("y", "z")])
 
   source = render_program_c_source(jf)
@@ -473,10 +473,10 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
 
 def test_regular_raw_callees_stay_inline() -> None:
   x = sc.sym("x", 2)
-  inner = sc.Function._from_exprs("inner", [x], [x.sin()], ["x"], ["y"])
+  inner = sc.Function.from_exprs("inner", [x], [x.sin()], ["x"], ["y"])
   z = sc.sym("z", 2)
   inner_z = inner(z)
-  outer = sc.Function._from_exprs("outer", [z], [inner_z + 1.0], ["z"], ["out"])
+  outer = sc.Function.from_exprs("outer", [z], [inner_z + 1.0], ["z"], ["out"])
 
   source = render_program_c_source(outer)
   assert "static inline void inner_raw" in source
@@ -519,7 +519,7 @@ def test_optimized_program_still_verifies() -> None:
 def test_slice_gradient_combines_pads(count: int) -> None:
   x = sc.sym("x", 4 * count)
   cost = sum(((x[2 * i : 2 * i + 3] ** 2).sum() for i in range(count)), start=sc.const(0.0))
-  f = sc.Function._from_exprs("slice_cost", [x], [cost], ["x"], ["cost"])
+  f = sc.Function.from_exprs("slice_cost", [x], [cost], ["x"], ["cost"])
   grad = f.factory("slice_grad", ["x"], [sc.factory.Grad("cost", "x")])
   stages = {}
   lower_function(grad, observe=lambda name, prog: stages.__setitem__(name, prog))
@@ -553,7 +553,7 @@ def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None
   b = scatter(2 * x, [3, 5, 7], 8)
   c = scatter(-x, [0, 3, 7], 8)
   outputs = [a + (b + c), a] if shared else [a + (b + c)]
-  f = sc.Function._from_exprs("scatter_sum", [x], outputs, ["x"], ["sum", "a"] if shared else ["sum"])
+  f = sc.Function.from_exprs("scatter_sum", [x], outputs, ["x"], ["sum", "a"] if shared else ["sum"])
   data = np.array([-1.5, 2.0, 0.25])
   expected = np.zeros(8)
   expected[[1, 3, 5]] += data
@@ -575,7 +575,7 @@ def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None
   x = sc.sym("x", 4)
   a = scatter(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)
   b = scatter(x[2:] if alias else 2 * x, [1, 3] if alias else [1, 3, 5, 7], 8)
-  f = sc.Function._from_exprs("mutated_scatter", [x], [a + b], ["x"], ["sum"])
+  f = sc.Function.from_exprs("mutated_scatter", [x], [a + b], ["x"], ["sum"])
   stages = {}
   lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
   lowered = stages["lowered"]
@@ -594,7 +594,7 @@ def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
 
   x = sc.sym("x", 3)
   a, b, c = (scatter(x[i : i + 1], [1], 4) for i in range(3))
-  f = sc.Function._from_exprs("grouped_scatter", [x], [(a + b) + c if left_associated else a + (b + c)], ["x"], ["sum"])
+  f = sc.Function.from_exprs("grouped_scatter", [x], [(a + b) + c if left_associated else a + (b + c)], ["x"], ["sum"])
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 1 if left_associated else 0, 0, 0])
 
 
@@ -605,7 +605,7 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
   x = sc.sym("x", 3)
   index_sets = [[0, 3, 6], [1, 4, 7], [2, 5, 6], [0, 1, 2]]
   terms = [scatter((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
-  f = sc.Function._from_exprs("reshaped_scatter_sum", [x], [sum(terms[1:], start=terms[0])], ["x"], ["sum"])
+  f = sc.Function.from_exprs("reshaped_scatter_sum", [x], [sum(terms[1:], start=terms[0])], ["x"], ["sum"])
   _, _, loops = _classify(_main_body(f))
   zero_fills = [
     loop for loop in loops if len(loop.args) == 2 and loop.args[1].op == ProgramOp.STORE and loop.args[1].args[1].op == ProgramOp.CONST_FLOAT
@@ -624,10 +624,10 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
 def _mapped_mlp(stages: int, *, broadcast: bool) -> tuple[sc.Function, np.ndarray, np.ndarray]:
   """``sin(exp(W) @ x_i)`` per stage; ``W`` is one broadcast matrix or a fresh one per stage."""
   x, w = sc.sym("x", 3), sc.sym("w", 9)
-  stage = sc.Function._from_exprs("hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin()], ["x", "w"], ["y"])
+  stage = sc.Function.from_exprs("hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin()], ["x", "w"], ["y"])
   z, weights = sc.sym("z", 3 * stages), sc.sym("weights", 9 if broadcast else 9 * stages)
   out = sc.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0 if broadcast else 9)})
-  fn = sc.Function._from_exprs(f"hoist_map_{broadcast}", [z, weights], [out], ["z", "weights"], ["y"])
+  fn = sc.Function.from_exprs(f"hoist_map_{broadcast}", [z, weights], [out], ["z", "weights"], ["y"])
   rng = np.random.default_rng(3)
   return fn, rng.normal(size=3 * stages), rng.normal(size=weights.shape[0])
 
@@ -668,11 +668,11 @@ def test_hoist_leaves_per_trip_arguments_in_the_loop() -> None:
 def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
   """The same callee mapped once with ``w`` broadcast and once with ``x`` broadcast gets two distinct splits."""
   x, w = sc.sym("x", 3), sc.sym("w", 9)
-  stage = sc.Function._from_exprs("hoist_two", [x, w], [(w.reshape((3, 3)).exp() @ x.exp()).sin()], ["x", "w"], ["y"])
+  stage = sc.Function.from_exprs("hoist_two", [x, w], [(w.reshape((3, 3)).exp() @ x.exp()).sin()], ["x", "w"], ["y"])
   z, weights = sc.sym("z", 12), sc.sym("weights", 36)
   first = sc.vmap(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
   second = sc.vmap(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
-  fn = sc.Function._from_exprs("hoist_two_map", [z, weights], [first + second], ["z", "weights"], ["y"])
+  fn = sc.Function.from_exprs("hoist_two_map", [z, weights], [first + second], ["z", "weights"], ["y"])
   assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoisted_1", "hoist_two_hoist_0", "hoist_two_hoisted_0", "hoist_two_map"]
   zv, wv = np.random.default_rng(5).normal(size=12), np.random.default_rng(6).normal(size=36)
   ew, ex = np.exp(wv.reshape(4, 3, 3)), np.exp(zv.reshape(4, 3))
@@ -713,9 +713,9 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
 def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: Lowering, mode: str) -> None:
   x, w = sc.sym("x", 1), sc.sym("w", 1)
   output = (x * w.sin()).with_lowering(hint)
-  stage = sc.Function._from_exprs("policy_stage", [x, w], [output], ["x", "w"], ["y"])
+  stage = sc.Function.from_exprs("policy_stage", [x, w], [output], ["x", "w"], ["y"])
   z = sc.sym("z", 3)
-  root = sc.Function._from_exprs("policy_root", [z, w], [sc.vmap(stage, 3, [(z, 0, 1), (w, 0, 0)])], ["z", "w"], ["y"])
+  root = sc.Function.from_exprs("policy_root", [z, w], [sc.vmap(stage, 3, [(z, 0, 1), (w, 0, 0)])], ["z", "w"], ["y"])
   stages = {}
   lower_function(root, observe=lambda name, prog: stages.__setitem__(name, prog))
   procs = stages["pass:hoist_invariant"].args
@@ -726,11 +726,11 @@ def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: L
 
 def test_hoist_recognizes_generated_pure_callees_in_nested_maps() -> None:
   x, w = sc.sym("x", 1), sc.sym("w", 1)
-  inner = sc.Function._from_exprs("nested_inner", [x, w], [x * w.sin()], ["x", "w"], ["y"])
+  inner = sc.Function.from_exprs("nested_inner", [x, w], [x * w.sin()], ["x", "w"], ["y"])
   z = sc.sym("z", 2)
-  middle = sc.Function._from_exprs("nested_middle", [z, w], [sc.vmap(inner, 2, [(z, 0, 1), (w, 0, 0)]).block()], ["z", "w"], ["y"])
+  middle = sc.Function.from_exprs("nested_middle", [z, w], [sc.vmap(inner, 2, [(z, 0, 1), (w, 0, 0)]).block()], ["z", "w"], ["y"])
   outer_z = sc.sym("outer_z", 6)
-  root = sc.Function._from_exprs("nested_root", [outer_z, w], [sc.vmap(middle, 3, [(outer_z, 0, 2), (w, 0, 0)])], ["z", "w"], ["y"])
+  root = sc.Function.from_exprs("nested_root", [outer_z, w], [sc.vmap(middle, 3, [(outer_z, 0, 2), (w, 0, 0)])], ["z", "w"], ["y"])
   stages = {}
   lower_function(root, observe=lambda name, prog: stages.__setitem__(name, prog))
   assert any(proc.attrs.get("hoisted_from") == middle.name for proc in stages["pass:hoist_invariant"].args)
@@ -740,13 +740,13 @@ def test_hoist_recognizes_generated_pure_callees_in_nested_maps() -> None:
 
 def test_hoist_positions_and_existing_procedure_names_do_not_collide() -> None:
   inputs = [sc.sym(f"x{i}", 1) for i in range(13)]
-  stage = sc.Function._from_exprs(
+  stage = sc.Function.from_exprs(
     "position_stage", inputs, [sum((x.sin() for x in inputs), sc.const(0.0)).block()], [f"x{i}" for i in range(13)], ["y"]
   )
-  other = sc.Function._from_exprs("position_stage_hoist_1_2", [inputs[0]], [inputs[0].cos().block()], ["x"], ["y"])
+  other = sc.Function.from_exprs("position_stage_hoist_1_2", [inputs[0]], [inputs[0].cos().block()], ["x"], ["y"])
   outer = [sc.sym(f"z{i}", 3) for i in range(13)]
   mapped = [sc.vmap(stage, 3, [(z, 0, 0 if i in fixed else 1) for i, z in enumerate(outer)]) for fixed in [(1, 2), (12,)]]
-  root = sc.Function._from_exprs("position_root", outer, [other(outer[0][:1]) + mapped[0] + mapped[1]], [f"z{i}" for i in range(13)], ["y"])
+  root = sc.Function.from_exprs("position_root", outer, [other(outer[0][:1]) + mapped[0] + mapped[1]], [f"z{i}" for i in range(13)], ["y"])
   procs = lower_function(root).args
   names = [proc.attrs["name"] for proc in procs]
   assert len(names) == len(set(names))
@@ -780,12 +780,12 @@ def test_early_exit_loops_survive_every_program_pass() -> None:
   """A loop left early is kept as written by the whole pipeline, even with one trip and a scalar hint:
   unrolling it would orphan its break and the step count read after it."""
   c = sc.sym("c", 2)
-  body = sc.Function._from_exprs("ee_step", [c], [c * 0.5 + 1.0], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("ee_go", [c], [c[0] < 1.5], ["c"], ["go"])
+  body = sc.Function.from_exprs("ee_step", [c], [c * 0.5 + 1.0], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("ee_go", [c], [c[0] < 1.5], ["c"], ["go"])
   for max_iter in (1, 3):
     c0 = sc.sym("c0", 2).scalar()
     final, count = sc.while_loop(cond, body, c0, max_iter=max_iter)
-    fun = sc.Function._from_exprs(f"ee_{max_iter}", [c0], [final, count], ["c0"], ["c", "n"])
+    fun = sc.Function.from_exprs(f"ee_{max_iter}", [c0], [final, count], ["c0"], ["c", "n"])
     root = lower_function(fun).args[-1]
     loops = [n for n in _walk(root) if n.op == ProgramOp.FOR and n.attrs.get("exit_var")]
     assert len(loops) == 1 and any(n.op == ProgramOp.BREAK_IF for n in _walk(loops[0]))
@@ -817,10 +817,10 @@ from scaly.codegen import render_c_source
 
 z, u = sc.sym("z", 3), sc.sym("u", 2)
 zn = sc.stack([z[1] * u[0], z[2].sin() + u[1] * z[0], z[0] * z[1] + u[0] * u[1]]) * 0.5 + z
-step = sc.Function._from_exprs("hs_step", [z, u], [zn, zn * zn, sc.stack([sc.sumsqr(z) * u[0]])], ["z", "u"], ["zn", "zo", "c"])
+step = sc.Function.from_exprs("hs_step", [z, u], [zn, zn * zn, sc.stack([sc.sumsqr(z) * u[0]])], ["z", "u"], ["zn", "zo", "c"])
 x0, big_u = sc.sym("x0", 3), sc.sym("U", 10)
 fin, zs, cs = sc.scan(step, x0, [(big_u, 0, 2)], length=5)
-cost = sc.Function._from_exprs("hs_f", [x0, big_u], [cs.sum() + sc.sumsqr(zs) + (fin * fin).sum() * 0.3], ["x0", "U"], ["f"])
+cost = sc.Function.from_exprs("hs_f", [x0, big_u], [cs.sum() + sc.sumsqr(zs) + (fin * fin).sum() * 0.3], ["x0", "U"], ["f"])
 print(hashlib.sha256(render_c_source(sc.hessian(cost, "f", "U")).encode()).hexdigest())
 """
 
@@ -850,7 +850,7 @@ def test_gathers_and_scatters_with_affine_maps_run_without_divisions() -> None:
   a = sc.gather(x, np.arange(24).reshape(4, 6).T.reshape(-1))
   b = sc.scatter(x[:12] * 2.0, (np.arange(12).reshape(3, 4)[:, ::-1] * 2).reshape(-1), (24,))
   c = sc.gather(sc.gather(x * x, np.arange(24)[::-1].copy()), np.arange(24).reshape(2, 3, 4).transpose(1, 0, 2).reshape(-1))
-  fn = sc.Function._from_exprs("dl_maps", [x], [a, b, c], ["x"], ["a", "b", "c"])
+  fn = sc.Function.from_exprs("dl_maps", [x], [a, b, c], ["x"], ["a", "b", "c"])
   src = render_c_source(fn)
   assert _index_divisions(src) == 0, src
   xv = np.arange(24.0) - 5.0
@@ -867,7 +867,7 @@ def test_a_map_with_no_affine_factorization_keeps_its_table() -> None:
 
   perm = np.array([3, 0, 4, 1, 5, 2, 6])
   x = sc.sym("dn_x", 7)
-  fn = sc.Function._from_exprs("dn_perm", [x], [sc.gather(x.sin(), perm)], ["x"], ["y"])
+  fn = sc.Function.from_exprs("dn_perm", [x], [sc.gather(x.sin(), perm)], ["x"], ["y"])
   xv = np.linspace(0.0, 1.0, 7)
   np.testing.assert_array_equal(fn(xv), np.sin(xv)[perm])
   assert "static const" in render_c_source(fn)

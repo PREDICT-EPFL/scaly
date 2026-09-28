@@ -67,7 +67,7 @@ def _ruled() -> sc.Function:
   tangents = [sc.sym(f"d{name}", e.shape) for name, e in zip(SOLVE.input_names, SOLVE.inputs, strict=True)]
   dp = tangents[-1]
   outs = [sc.const(np.array([0.5, -0.5])) * dp, sc.const(np.zeros(2)) * dp, sc.const(np.zeros(1)) * dp, sc.const(np.zeros(0))]
-  rule = sc.Function._from_exprs("solver_derivatives_rule", [*inputs, *tangents], outs, names, [f"d{name}" for name in SOLVE.output_names])
+  rule = sc.Function.from_exprs("solver_derivatives_rule", [*inputs, *tangents], outs, names, [f"d{name}" for name in SOLVE.output_names])
   return sc.custom_derivative(SOLVE, jvp=rule)
 
 
@@ -84,7 +84,7 @@ def test_a_custom_rule_through_a_solver_reaches_the_sparse_jacobian() -> None:
   ruled = _ruled()
   t = sc.sym("t", 2)
   x = _solution(ruled, 2.0 * t[0] + t[1])
-  fn = sc.Function._from_exprs("solver_derivatives_jac", [t], [x, sc.sparse_jacobian(x, t).values, sc.jacobian(x, t)], ["t"], ["x", "v", "j"])
+  fn = sc.Function.from_exprs("solver_derivatives_jac", [t], [x, sc.sparse_jacobian(x, t).values, sc.jacobian(x, t)], ["t"], ["x", "v", "j"])
   value, compact, dense = fn(np.array([0.9, 0.2]))  # p = 2: the interior, x = (0.5, 0.5)
   np.testing.assert_allclose(value, [0.5, 0.5], atol=1e-8)
   expected = np.array([[1.0, 0.5], [-1.0, -0.5]])

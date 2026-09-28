@@ -176,7 +176,7 @@ def test_every_observed_program_stage_verifies() -> None:
   from scaly.passes.lowering import lower_function
 
   x = sc.sym("x", 5)
-  fun = sc.Function._from_exprs("observed", [x], [(x.sin() + x * x).scalar()], ["x"], ["y"])
+  fun = sc.Function.from_exprs("observed", [x], [(x.sin() + x * x).scalar()], ["x"], ["y"])
   stages: list[ProgramNode] = []
   lower_function(fun, observe=lambda _name, prog: stages.append(prog))
   assert stages

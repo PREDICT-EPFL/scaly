@@ -180,7 +180,7 @@ implicit-function rule at the solution is exact and costs one linear solve:
 ```python
 # x solves x**3 + x = p, so dx/dp = 1 / (3 x^2 + 1)
 p, x, xbar = sc.sym("p", n), sc.sym("x", n), sc.sym("xbar", n)
-rule = sc.Function._from_exprs("implicit", [p, x, xbar], [xbar / (3 * x * x + 1)], ["p", "x", "xbar"], ["pbar"])
+rule = sc.Function.from_exprs("implicit", [p, x, xbar], [xbar / (3 * x * x + 1)], ["p", "x", "xbar"], ["pbar"])
 solve_with_rule = sc.custom_derivative(solve, vjp=rule)
 ```
 

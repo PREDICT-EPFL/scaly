@@ -98,7 +98,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
     name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals) + options_tag()
-    fn = ConcreteFunction._from_exprs(name, inputs, [adj], input_names, [claim_name(f"adj:{callee.output_names[output_index]}", taken)])
+    fn = ConcreteFunction.from_exprs(name, inputs, [adj], input_names, [claim_name(f"adj:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices, zero)
   return cache[key]
 
@@ -185,7 +185,7 @@ def _scan_adj_function(callee: Any, extras: tuple[int, ...], active: tuple[int, 
     body = [callee._inherit_lowering(simplify_cse_fixpoint(g)) for g in (lam_in, *grads[1:])]
     tag = "_".join("t" if output < 0 else str(output) for output in extras) or "0"
     suffix = f"{tag}_" + ("_".join(str(i) for i in active) or "c") + options_tag()
-    cache[key] = ConcreteFunction._from_exprs(
+    cache[key] = ConcreteFunction.from_exprs(
       f"{callee.name}_scanadj{suffix}",
       inputs,
       body,
@@ -299,7 +299,7 @@ def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int
     names = [claim_name("lam", taken), body.input_names[0], str(step.name), str(count.name), *body.input_names[first : first + n_params]]
     # Each step-number flag and set of active params is its own Function, so it needs its own name.
     suffix = ("_k" if index else "") + "".join(f"_p{i}" for i in active) + options_tag()
-    cache[key] = ConcreteFunction._from_exprs(
+    cache[key] = ConcreteFunction.from_exprs(
       f"{body.name}_whileadj{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(out))], names, [claim_name("adj:carry", taken)]
     )
   return cache[key]

@@ -24,7 +24,7 @@ SIZES = [1, 2, 3, DENSE_UNROLL, DENSE_UNROLL + 1, 13, 24, 40]
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _needs_pivoting(n: int) -> np.ndarray:

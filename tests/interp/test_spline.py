@@ -75,7 +75,7 @@ def test_vector_and_matrix_outputs(strategy: Strategy) -> None:
   x = inside_points((f.axes[0].edges,), rng, 200)
   np.testing.assert_allclose(evaluate(f, x)["y"], SciBSpline(t, c, 3)(x), rtol=0, atol=1e-13 * scale(c))
   point = sc.sym("p")
-  fn = sc.Function._from_exprs(f"matrix_point_{strategy}", [point], [f(point)], ["p"], ["y"])
+  fn = sc.Function.from_exprs(f"matrix_point_{strategy}", [point], [f(point)], ["p"], ["y"])
   np.testing.assert_allclose(fn(np.array(0.37)), SciBSpline(t, c, 3)(0.37), rtol=0, atol=1e-13 * scale(c))
   t2 = (random_knots(rng, 1, 3, repeat=False), random_knots(rng, 2, 4, repeat=False))
   c2 = rng.normal(size=(t2[0].size - 2, t2[1].size - 3, 4))
@@ -188,10 +188,10 @@ def test_an_index_is_shared_and_found_once() -> None:
   f = interp.interpolant(np.linspace(0.0, 1.0, 17), np.sin(np.linspace(0.0, 3.0, 17)), kind="cubic", search="uniform")
   x = sc.sym("x")
   y = f(x)
-  fn = sc.Function._from_exprs("shared_search", [x], [y, sc.gradient(y, x), sc.hessian(y, x)], ["x"], ["y", "g", "h"])
+  fn = sc.Function.from_exprs("shared_search", [x], [y, sc.gradient(y, x), sc.hessian(y, x)], ["x"], ["y", "g", "h"])
   assert render_c_source(fn).count("floor(") == 1
   i = f.index(x)
-  shared = sc.Function._from_exprs("shared_index", [x], [f(x, index=i), f(x)], ["x"], ["a", "b"])
+  shared = sc.Function.from_exprs("shared_index", [x], [f(x, index=i), f(x)], ["x"], ["a", "b"])
   a, b = shared(np.array(0.4321))
   assert a == b
   with pytest.raises(ValueError, match="index="):
@@ -206,7 +206,7 @@ def test_function_names_follow_the_content() -> None:
   assert f.function() is interp.BSpline(t, np.array([0.0, 1.0, 0.0]), 1, name="tbl").function()  # one Function per content
   x = sc.sym("x")
   F, G = f.function(), g.function()
-  both = sc.Function._from_exprs("two_tables", [x], [F(x) + F(x + 0.1) + G(x)], ["x"], ["y"])
+  both = sc.Function.from_exprs("two_tables", [x], [F(x) + F(x + 0.1) + G(x)], ["x"], ["y"])
   np.testing.assert_allclose(both(np.array(0.25)), 0.5 + 0.7 + 1.0, rtol=1e-15)
 
 
@@ -258,12 +258,12 @@ def test_a_batch_is_one_map_with_a_block_diagonal_jacobian() -> None:
   rows, cols = np.asarray(sj.sparsity.rows), np.asarray(sj.sparsity.cols)
   assert np.array_equal(rows // 2, cols // 2) and sj.sparsity.nnz == 4 * n  # each output reads its own point
   i = f.index(x)
-  fn = sc.Function._from_exprs("batch_index", [x], [y, f(x, index=i), sj.values], ["x"], ["y", "yi", "sj"])
+  fn = sc.Function.from_exprs("batch_index", [x], [y, f(x, index=i), sj.values], ["x"], ["y", "yi", "sj"])
   pts = np.column_stack([rng.uniform(-0.2, 1.2, n), rng.uniform(-1.2, 1.2, n)])
   yv, yiv, sjv = fn(pts)
   np.testing.assert_array_equal(yv, yiv)
   single = sc.sym("p", 2)
-  point = sc.Function._from_exprs("batch_point", [single], [f(single), sc.jacobian(f(single), single)], ["p"], ["y", "j"])
+  point = sc.Function.from_exprs("batch_point", [single], [f(single), sc.jacobian(f(single), single)], ["p"], ["y", "j"])
   dense = np.zeros((2 * n, 2 * n))
   dense[rows, cols] = sjv
   for k in range(n):
@@ -275,7 +275,7 @@ def test_a_batch_is_one_map_with_a_block_diagonal_jacobian() -> None:
 
 
 def _fn(inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr], name: str) -> sc.Function:
-  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+  return sc.Function.from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
 
 
 @pytest.mark.parametrize("kind", ["nearest", "zoh", "linear", "cubic"])

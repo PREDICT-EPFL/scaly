@@ -72,7 +72,7 @@ def test_affine_gather_and_scatter_emit_no_index_table(build) -> None:
   perturbed[9] += 1
 
   def tables(indices: np.ndarray) -> list[ProgramNode]:
-    fun = sc.Function._from_exprs("affine_probe", [x], [build(x, indices)], ["x"], ["y"])
+    fun = sc.Function.from_exprs("affine_probe", [x], [build(x, indices)], ["x"], ["y"])
     return _const_int_buffers(lower_function(fun))
 
   assert tables(affine) == []
@@ -86,10 +86,10 @@ def test_an_empty_index_lowers_and_declares_nothing() -> None:
   x = sc.sym("x", 8)
   empty = np.zeros(0, dtype=np.int64)
   for name, expr in (("gather", gather(x, empty)), ("scatter", scatter(x[:0], empty, (8,)))):
-    fun = sc.Function._from_exprs(f"affine_empty_{name}", [x], [expr], ["x"], ["y"])
+    fun = sc.Function.from_exprs(f"affine_empty_{name}", [x], [expr], ["x"], ["y"])
     assert _const_int_buffers(lower_function(fun)) == []
   values = np.arange(8.0)
-  scattered = sc.Function._from_exprs("affine_empty_scatter_values", [x], [scatter(x[:0], empty, (8,))], ["x"], ["y"])
+  scattered = sc.Function.from_exprs("affine_empty_scatter_values", [x], [scatter(x[:0], empty, (8,))], ["x"], ["y"])
   np.testing.assert_array_equal(np.asarray(scattered(values)).reshape(-1), np.zeros(8))
 
 
@@ -100,7 +100,7 @@ def test_a_gather_reads_exactly_the_elements_numpy_would(case: int) -> None:
   indices = np.asarray(CASES[case][0], dtype=np.int64)
   size = int(indices.max()) + 1
   x = sc.sym("x", size)
-  fun = sc.Function._from_exprs(f"affine_gather_values_{case}", [x], [gather(x, indices)], ["x"], ["y"])
+  fun = sc.Function.from_exprs(f"affine_gather_values_{case}", [x], [gather(x, indices)], ["x"], ["y"])
   values = np.random.default_rng(case).normal(size=size)
   np.testing.assert_array_equal(np.asarray(fun(values)).reshape(-1), values[indices])
 
@@ -121,7 +121,7 @@ def _stage_jac_np(x: np.ndarray) -> np.ndarray:
 def test_vmap_forward_jacobian_matches_numpy(length: int) -> None:
   z = sc.sym("z", 2 * length)
   mapped = sc.vmap(_stage, length, [(z, 0, 2)])
-  fun = sc.Function._from_exprs(f"affine_jac_{length}", [z], [sc.jacobian(mapped, z)], ["z"], ["jac"])
+  fun = sc.Function.from_exprs(f"affine_jac_{length}", [z], [sc.jacobian(mapped, z)], ["z"], ["jac"])
   values = np.random.default_rng(1).normal(size=2 * length)
   expected = np.zeros((2 * length, 2 * length))
   for it in range(length):
@@ -133,7 +133,7 @@ def test_vmap_forward_jacobian_matches_numpy(length: int) -> None:
 def test_vmap_reverse_gradient_matches_numpy(length: int) -> None:
   z = sc.sym("z", 2 * length)
   mapped = sc.vmap(_stage, length, [(z, 0, 2)])
-  fun = sc.Function._from_exprs(f"affine_grad_{length}", [z], [sc.gradient(mapped.sum(), z)], ["z"], ["g"])
+  fun = sc.Function.from_exprs(f"affine_grad_{length}", [z], [sc.gradient(mapped.sum(), z)], ["z"], ["g"])
   values = np.random.default_rng(2).normal(size=2 * length)
   expected = np.concatenate([_stage_jac_np(values[2 * it : 2 * it + 2]).sum(axis=0) for it in range(length)])
   np.testing.assert_allclose(np.asarray(fun(values)).reshape(-1), expected, rtol=1e-12, atol=1e-12)
@@ -149,7 +149,7 @@ def test_vmap_hessian_matches_the_unrolled_function(length: int) -> None:
   results = []
   for name, expr in (("mapped", mapped), ("unrolled", unrolled)):
     cost = (expr * expr).sum()
-    fun = sc.Function._from_exprs(f"affine_hess_{name}_{length}", [z], [sc.hessian(cost, z)], ["z"], ["h"])
+    fun = sc.Function.from_exprs(f"affine_hess_{name}_{length}", [z], [sc.hessian(cost, z)], ["z"], ["h"])
     results.append(np.asarray(fun(values)))
   np.testing.assert_allclose(results[0], results[1], rtol=1e-10, atol=1e-10)
 
@@ -161,7 +161,7 @@ def test_vmap_hessian_index_tables_do_not_grow_with_the_trip_count() -> None:
     z = sc.sym("z", 2 * length)
     mapped = sc.vmap(_stage, length, [(z, 0, 2)])
     cost = (mapped * mapped).sum()
-    return render_c_source(sc.Function._from_exprs(f"affine_hess_size_{length}", [z], [sc.hessian(cost, z)], ["z"], ["h"]))
+    return render_c_source(sc.Function.from_exprs(f"affine_hess_size_{length}", [z], [sc.hessian(cost, z)], ["z"], ["h"]))
 
   small, large = rendered(8), rendered(64)
   assert _index_table_bytes(small) == _index_table_bytes(large)

@@ -64,7 +64,7 @@ NEW_OPS = frozenset(
 
 
 def _fn(name: str, inputs: list[Expr], outputs: list[Expr]) -> sc.ConcreteFunction:
-  return sc.Function._from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _i64(values: Any) -> Expr:

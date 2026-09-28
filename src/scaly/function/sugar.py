@@ -309,7 +309,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
     if rule is not None and not isinstance(rule, Function):
       raise TypeError(f"custom {label} must be a scaly Function")
   if not fn.is_concrete:
-    return fn._lift(lambda instance: custom_derivative(instance, jvp=jvp, vjp=vjp, sparsity=sparsity), f"{fn.name}_cd")
+    return fn.lift(lambda instance: custom_derivative(instance, jvp=jvp, vjp=vjp, sparsity=sparsity), f"{fn.name}_cd")
   # A template rule is instantiated at the leaves it takes: one parameter per leaf, flat.
   types_in, types_out = [e.type for e in fn.inputs], [e.type for e in fn.outputs]
   jvp = jvp if jvp is None or jvp.is_concrete else jvp.instantiate(*types_in, *types_in)

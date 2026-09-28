@@ -91,7 +91,7 @@ def test_the_convention_is_part_of_the_graph_and_the_generated_code() -> None:
   def grad(mode: str) -> sc.Function:
     with sc.options(nonsmooth=mode):
       (g,) = sc.vjp((cost,), (x,), (sc.const(1.0),))
-    return sc.Function._from_exprs(f"opt_grad_{mode}", [x], [g], ["x"], ["g"])
+    return sc.Function.from_exprs(f"opt_grad_{mode}", [x], [g], ["x"], ["g"])
 
   split, first = grad("split"), grad("first")
   tie = np.array([1.0, 1.0, 0.0])
@@ -109,10 +109,10 @@ def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
     looped = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
   unrolled = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
   assert all(not e.attrs["unroll"] for e in looped) and all(e.attrs["unroll"] for e in unrolled)
-  fns = {tag: sc.Function._from_exprs(f"du_{tag}", [a, b], outs, ["a", "b"], ["l", "d", "x"]) for tag, outs in (("loop", looped), ("flat", unrolled))}
+  fns = {tag: sc.Function.from_exprs(f"du_{tag}", [a, b], outs, ["a", "b"], ["l", "d", "x"]) for tag, outs in (("loop", looped), ("flat", unrolled))}
   for k, (loop_op, flat_op) in enumerate(zip(looped, unrolled, strict=True)):
     for tag, op, has_loop in (("loop", loop_op, True), ("flat", flat_op, False)):
-      src = render_c_source(sc.Function._from_exprs(f"du_{tag}{k}", [a, b], [op], ["a", "b"], ["o"]))
+      src = render_c_source(sc.Function.from_exprs(f"du_{tag}{k}", [a, b], [op], ["a", "b"], ["o"]))
       assert ("for (" in src.split(f"int du_{tag}{k}")[1]) == has_loop
   m = np.random.default_rng(3).standard_normal((4, 4))
   av, bv = m @ m.T + 4 * np.eye(4), np.arange(4.0)
@@ -124,8 +124,8 @@ def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
 
 def test_max_trajectory_refuses_a_reverse_pass_that_stores_too_much() -> None:
   c = sc.sym("c", 50)
-  body = sc.Function._from_exprs("traj_step", [c], [c.sin()], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("traj_go", [c], [c[0] < 10.0], ["c"], ["go"])
+  body = sc.Function.from_exprs("traj_step", [c], [c.sin()], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("traj_go", [c], [c[0] < 10.0], ["c"], ["go"])
   x = sc.sym("x", 50)
   (scanned,) = sc.scan(body, x, length=100)
   walked, _ = sc.while_loop(cond, body, x, max_iter=100)

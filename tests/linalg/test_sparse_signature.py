@@ -154,14 +154,14 @@ def test_generated_code_is_that_of_the_values_vector() -> None:
   """``S`` is interface only: the kernel is the one a Function over the bare values vector gets."""
   f = _matvec("sg_same_code")
   a, x = SparseMatrix.symbol("A", MASK), sc.sym("x", 4)
-  flat = sc.Function._from_exprs("sg_same_code", [a.values, x], [a @ x], ["A", "x"], ["y"])
+  flat = sc.Function.from_exprs("sg_same_code", [a.values, x], [a @ x], ["A", "x"], ["y"])
   assert render_c_module(f).body == render_c_module(flat).body
   assert render_c_module(f).header == render_c_module(flat).header
 
   build = _kkt_builder("sg_same_header", ...)
   q, am = sc.sym("q", 4), SparseMatrix.symbol("A", MASK[:2])
   k = SparseMatrix.block([[SparseMatrix.diag(q).add_diagonal(1e-6), None], [am, SparseMatrix.identity(2) * -1e-3]])
-  flat_build = sc.Function._from_exprs("sg_same_header", [q, am.values], [k.values], ["q", "A"], ["K"], output_sparsities=[k.sparsity])
+  flat_build = sc.Function.from_exprs("sg_same_header", [q, am.values], [k.values], ["q", "A"], ["K"], output_sparsities=[k.sparsity])
   assert render_c_module(build).body == render_c_module(flat_build).body
   assert render_c_module(build).header == render_c_module(flat_build).header
 

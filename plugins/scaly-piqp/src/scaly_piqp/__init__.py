@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from scaly.ext import require_ext_api
+
+require_ext_api(1, "scaly-piqp")
+
 if TYPE_CHECKING:
   from scaly.solvers.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction

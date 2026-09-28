@@ -55,6 +55,9 @@ the `<prefix>_csr_val_perm` and `<prefix>_csc_val_perm` tables, as
 `_JIT_CACHE_VERSION` in `src/scaly/codegen/jit.py` is bumped so a cached library from an older
 version is never reused.
 
+Extension API. `EXT_API_VERSION` (`scaly.ext`) versions what any package outside the compiler
+builds on, and every such package checks it at import; it is also part of every JIT cache key.
+
 Plugin protocol. `SOLVER_PLUGIN_PROTOCOL_VERSION` and `SCALY_SOLVER_STATS_VERSION` version the
 contract between core and solver plugins; [Solver plugins](solver_plugins.md#versioning) lists what
 each covers and its history. A protocol bump is a minor release of `scaly` and a coordinated release

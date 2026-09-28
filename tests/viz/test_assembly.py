@@ -9,7 +9,7 @@ from scaly.viz import clear_recordings, recordings, unvisualize_function, visual
 def _fun() -> Function:
   x = sym("x", (2,))
   y = x * x + 1.0
-  return Function._from_exprs("square_plus_one", [x], [y], output_names=["y"])
+  return Function.from_exprs("square_plus_one", [x], [y], output_names=["y"])
 
 
 def test_expr_and_program_assembly():
@@ -66,7 +66,7 @@ def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypat
   monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
   matrix, vector = sym("matrix", (2, 3)), sym("vector", 2)
   output = matrix.T @ vector
-  fun = Function._from_exprs("normalized_matmul", [matrix, vector], [output], ["matrix", "vector"], ["y"])
+  fun = Function.from_exprs("normalized_matmul", [matrix, vector], [output], ["matrix", "vector"], ["y"])
   clear_recordings(disk=True)
   visualize_function(fun)
   try:

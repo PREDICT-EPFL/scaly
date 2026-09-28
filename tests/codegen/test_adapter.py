@@ -17,7 +17,7 @@ from scaly.codegen.adapter import EntryHook, HeaderSpec, available_adapters, get
 
 def _fun() -> sc.ConcreteFunction:
   x = sc.sym("x", 3)
-  return sc.Function._from_exprs("adapter_probe", [x], [x * 2.0], ["x"], ["y"])
+  return sc.Function.from_exprs("adapter_probe", [x], [x * 2.0], ["x"], ["y"])
 
 
 @pytest.fixture

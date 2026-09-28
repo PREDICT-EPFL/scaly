@@ -33,6 +33,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "scaly"
 IMPORT_LAYERS: dict[str, int] = {
   "scaly.utils": 0,
   "scaly.utils.env": 0,
+  "scaly.utils.ext_api": 0,
   "scaly.utils.names": 0,
   "scaly.utils.options": 0,
   "scaly.utils.torch_state_dict": 0,
@@ -132,6 +133,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.viz.recording": 8,
   "scaly.viz.serve": 8,
   "scaly": 9,  # the curated public re-exports sit above everything they re-export
+  "scaly.ext": 9,  # the extension API, collected from every layer
 }
 
 # The one upward import the architecture sanctions (docs/dev/codebase.md, "Import layers").

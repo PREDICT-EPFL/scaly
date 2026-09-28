@@ -14,9 +14,7 @@ def test_clamp_before_cast_keeps_a_non_finite_input_in_range() -> None:
   x = sc.sym("x")
   clamped = sc.minimum(sc.maximum(x.floor(), 0.0), 3.0)
   cell = sc.cast(clamped, "int64")
-  fn = sc.Function._from_exprs(
-    "clamp_cast", [x], [clamped, sc.take(sc.const(table), sc.stack([cell]), in_range=True)[0]], ["x"], ["clamped", "value"]
-  )
+  fn = sc.Function.from_exprs("clamp_cast", [x], [clamped, sc.take(sc.const(table), sc.stack([cell]), in_range=True)[0]], ["x"], ["clamped", "value"])
   # The clamped float is checked as well as the read: a NaN reaching the cast is undefined, and
   # AArch64 happens to convert it to 0, which would hide it.
   for xv, expected in ((np.nan, 0), (np.inf, 3), (-np.inf, 0), (1e300, 3), (-1e300, 0), (2.5, 2), (3.0, 3), (-0.0, 0)):
@@ -40,6 +38,6 @@ def test_a_constant_nan_folds_through_the_clamp_as_the_c_does() -> None:
 
   f = interp.interpolant(np.linspace(0.0, 1.0, 50), np.linspace(0.0, 1.0, 50) ** 2, kind="cubic")
   x = sc.sym("x")
-  fn = sc.Function._from_exprs("const_nan_read", [x], [f(sc.const(np.nan)) + 0.0 * x], ["x"], ["y"])
+  fn = sc.Function.from_exprs("const_nan_read", [x], [f(sc.const(np.nan)) + 0.0 * x], ["x"], ["y"])
   assert "(int64_t)((double)NAN)" not in render_c_module(fn).body
   assert np.isnan(fn(np.array(0.5)))

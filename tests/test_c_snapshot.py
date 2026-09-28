@@ -50,7 +50,7 @@ def _shooting() -> sc.Function:
   z = sc.sym("z", 4 * (N_STAGES + 1))
   u = sc.sym("u", 2 * N_STAGES)
   defect = sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
-  return sc.Function._from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
+  return sc.Function.from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
 
 
 def _wide() -> sc.Function:
@@ -75,19 +75,19 @@ def _workspace() -> sc.Function:
   """A shared intermediate large enough to spill after expression normalization."""
   x = sc.sym("x", 2048)
   value = x.sin()
-  return sc.Function._from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
+  return sc.Function.from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
 
 
 def _control() -> sc.Function:
   """A scan whose step makes a data-dependent choice, takes a max and accumulates a repeated scatter."""
   c, u = sc.sym("c", 3), sc.sym("u", 2)
   clipped = sc.where(c > 1.0, 1.0, c) + sc.scatter(u, np.array([0, 2]), (3,))
-  step = sc.Function._from_exprs(
+  step = sc.Function.from_exprs(
     "control_step", [c, u], [clipped + sc.scatter(u * u, np.array([1, 1]), (3,)), sc.stack([clipped.max()])], ["c", "u"], ["n", "m"]
   )
   c0, us = sc.sym("c0", 3), sc.sym("us", 2 * N_STAGES)
   final, peaks = sc.scan(step, c0, [(us, 0, 2)], length=N_STAGES)
-  return sc.Function._from_exprs("control", [c0, us], [final, peaks], ["c0", "us"], ["final", "peaks"])
+  return sc.Function.from_exprs("control", [c0, us], [final, peaks], ["c0", "us"], ["final", "peaks"])
 
 
 def _qp_host() -> sc.Function:
@@ -95,7 +95,7 @@ def _qp_host() -> sc.Function:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
   x = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)[0]
-  return sc.Function._from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
+  return sc.Function.from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
 
 
 def _table() -> sc.Function:

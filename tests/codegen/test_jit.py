@@ -37,7 +37,7 @@ def _read_banner() -> None:
 def _simple_fn() -> sc.ConcreteFunction:
   x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  return sc.Function._from_exprs("smoke_jit", [x], [y], ["x"], ["y"])
+  return sc.Function.from_exprs("smoke_jit", [x], [y], ["x"], ["y"])
 
 
 def test_call_uses_jit_and_matches_numpy(isolated_cache) -> None:
@@ -126,7 +126,7 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
 def test_jit_handles_multi_output(isolated_cache) -> None:
   x = sc.sym("x", 2)
   y = sc.sym("y", 2)
-  fn = sc.Function._from_exprs("kw_jit", [x, y], [x + y, x * y, (x - y).sum()], ["x", "y"], ["sum", "prod", "diff"])
+  fn = sc.Function.from_exprs("kw_jit", [x, y], [x + y, x * y, (x - y).sum()], ["x", "y"], ["sum", "prod", "diff"])
   xv = np.array([1.0, 2.0])
   yv = np.array([3.0, -1.0])
   s, p, d = fn((xv, yv))
@@ -138,7 +138,7 @@ def test_jit_handles_multi_output(isolated_cache) -> None:
 def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
   x = sc.sym("x", 4)
   y = sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  f = sc.Function._from_exprs("f_sj", [x], [y], ["x"], ["y"])
+  f = sc.Function.from_exprs("f_sj", [x], [y], ["x"], ["y"])
   spjf = sc.sparse_jacobian(f, "y", "x", name="f_sj_jac")
   xv = np.array([2.0, 3.0, 5.0, 7.0])
   values = spjf(xv)
@@ -147,10 +147,10 @@ def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
 
 def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
   x = sc.sym("x", 3)
-  inner = sc.Function._from_exprs("inner_jit", [x], [x * x], ["x"], ["sq"])
+  inner = sc.Function.from_exprs("inner_jit", [x], [x * x], ["x"], ["sq"])
   z = sc.sym("z", 3)
   inner_sq = inner(z + 1.0)
-  outer = sc.Function._from_exprs("outer_jit", [z], [inner_sq.sum()], ["z"], ["s"])
+  outer = sc.Function.from_exprs("outer_jit", [z], [inner_sq.sum()], ["z"], ["s"])
   zv = np.array([0.25, -0.75, 2.0])
   np.testing.assert_allclose(outer(zv), ((zv + 1.0) ** 2).sum())
 
@@ -186,13 +186,13 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   from tests.solvers.problem_helpers import build_nlp
 
   value, target = sc.sym("value", 1), sc.sym("target", 1)
-  stage = sc.Function._from_exprs("oracle_stage", [value, target], [((value - target.exp()) ** 2).sum().block()], ["value", "target"], ["cost"])
+  stage = sc.Function.from_exprs("oracle_stage", [value, target], [((value - target.exp()) ** 2).sum().block()], ["value", "target"], ["cost"])
   x, param = sc.sym("x", 3), sc.sym("param", 1)
   cost = sc.vmap(stage, 3, [(x, 0, 1), (param, 0, 0)]).sum()
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
     inputs = (sc.const(np.zeros(3)), sc.const(np.zeros(3)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), param)
-    fun = sc.Function._from_exprs("hoisted_oracle_host", [param], [solver.symbolic_call(*inputs)[0]], ["param"], ["solution"])
+    fun = sc.Function.from_exprs("hoisted_oracle_host", [param], [solver.symbolic_call(*inputs)[0]], ["param"], ["solution"])
   else:
     fun = solver
   module = render_c_module(fun)
@@ -211,9 +211,9 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, inpu
   value = x
   for _ in range(40):
     value = value.sin() + 0.1
-  stage = sc.Function._from_exprs("named_deep_stage", [x], [value.block()], [input_name], ["y"])
+  stage = sc.Function.from_exprs("named_deep_stage", [x], [value.block()], [input_name], ["y"])
   z = sc.sym("z", 1)
-  root = sc.Function._from_exprs("named_deep_root", [z], [stage(z)], ["z"], ["y"])
+  root = sc.Function.from_exprs("named_deep_root", [z], [stage(z)], ["z"], ["y"])
   expected = np.array([0.3])
   for _ in range(40):
     expected = np.sin(expected) + 0.1
@@ -224,10 +224,10 @@ def _large_workspace_function(name: str, steps: int = 3000) -> sc.Function:
   z0, us = sc.sym("z0", 4), sc.sym("us", steps)
   c, u = sc.sym("c", 4), sc.sym("u", 1)
   # Nonlinear, so that the gradient reads back the carries the forward pass stored.
-  step = sc.Function._from_exprs(f"{name}_step", [c, u], [c.sin() * 0.99 + u[0] * 0.01], ["c", "u"], ["cn"])
+  step = sc.Function.from_exprs(f"{name}_step", [c, u], [c.sin() * 0.99 + u[0] * 0.01], ["c", "u"], ["cn"])
   (final,) = sc.scan(step, z0, [(us, 0, 1)], length=steps)
   (grad,) = sc.vjp((final,), (us,), (sc.const(np.ones(4)),))  # stores 3000 carries: a large workspace
-  return sc.Function._from_exprs(name, [z0, us], [grad], ["z0", "us"], ["g"])
+  return sc.Function.from_exprs(name, [z0, us], [grad], ["z0", "us"], ["g"])
 
 
 def test_a_loop_of_calls_does_not_grow_memory(isolated_cache) -> None:
@@ -294,7 +294,7 @@ def test_threads_compiling_one_function_at_once(isolated_cache) -> None:
   y = x
   for i in range(40):
     y = (y * (1.0 + 0.001 * i)).sin() + x
-  fn = sc.Function._from_exprs("cold_threads", [x], [y], ["x"], ["y"])
+  fn = sc.Function.from_exprs("cold_threads", [x], [y], ["x"], ["y"])
   barrier = threading.Barrier(8)
 
   def work(_: int) -> np.ndarray:
@@ -335,12 +335,12 @@ def test_integer_inputs_reach_callees_as_integers(isolated_cache) -> None:
   ``int64`` input through an ``int64_t`` pointer, so the entry converts it once; passing the
   ``double`` buffer through made the callee read raw bits (4.6e18 instead of 2)."""
   c, k = sc.sym("c", 1), sc.sym("k", 1, dtype="int64")
-  body = sc.Function._from_exprs("int_body", [c, k], [c + k.cast("float64")], ["c", "k"], ["cn"])
+  body = sc.Function.from_exprs("int_body", [c, k], [c + k.cast("float64")], ["c", "k"], ["cn"])
   c0, one, three = sc.sym("c0", 1), sc.sym("K1", 1, dtype="int64"), sc.sym("K3", 3, dtype="int64")
   (called,) = body._flat_symbolic_call([c0, one])
   (scanned,) = sc.scan(body, c0, [(three, 0, 1)], length=3)
   mapped = sc.vmap(body, 3, [(sc.const(np.zeros(3)), 0, 1), (three, 0, 1)])
-  fn = sc.Function._from_exprs("int_host", [c0, one, three], [called, scanned, mapped], ["c0", "K1", "K3"], ["called", "scanned", "mapped"])
+  fn = sc.Function.from_exprs("int_host", [c0, one, three], [called, scanned, mapped], ["c0", "K1", "K3"], ["called", "scanned", "mapped"])
   got = fn((np.array([0.5]), np.array([2], dtype=np.int64), np.array([1, 2, 3], dtype=np.int64)))
   np.testing.assert_array_equal(got[0], [2.5])
   np.testing.assert_array_equal(got[1], [6.5])
@@ -353,7 +353,7 @@ def test_calls_leave_no_reference_cycles(isolated_cache) -> None:
   import gc
 
   xs = [sc.sym(f"rc{i}", 3) for i in range(4)]
-  fn = sc.Function._from_exprs("rc_fn", xs, [x * 2.0 for x in xs], [f"rc{i}" for i in range(4)], [f"y{i}" for i in range(4)])
+  fn = sc.Function.from_exprs("rc_fn", xs, [x * 2.0 for x in xs], [f"rc{i}" for i in range(4)], [f"y{i}" for i in range(4)])
   point = tuple(np.ones(3) for _ in range(4))
   fn(point)
   gc.collect()
@@ -370,7 +370,7 @@ def test_inputs_of_every_memory_kind() -> None:
   """Addresses come from the buffer protocol where it applies; read-only, empty and strided inputs
   take the fallback (a copy for the strided one) and give the same result."""
   x, e = sc.sym("mk_x", 3), sc.sym("mk_e", 0)
-  fn = sc.Function._from_exprs("mem_kinds", [x, e], [x * 2.0, e + 1.0], ["x", "e"], ["y", "z"])
+  fn = sc.Function.from_exprs("mem_kinds", [x, e], [x * 2.0, e + 1.0], ["x", "e"], ["y", "z"])
   frozen = np.arange(3.0)
   frozen.setflags(write=False)
   strided = (np.arange(6.0) / 2.0)[::2]

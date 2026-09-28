@@ -3,8 +3,11 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.util
+import re
 from pathlib import Path
 from typing import Sequence, get_type_hints
+
+import pytest
 
 import scaly as sc
 import scaly.codegen as codegen
@@ -237,3 +240,32 @@ def test_tests_do_not_import_benchmark_problems() -> None:
       if any(name == "benchmarks.problems" or name.startswith("benchmarks.problems.") for name in names):
         violations.append(f"{path.relative_to(root)}:{node.lineno}")
   assert not violations, "Benchmark problem imports belong in problem checks: " + ", ".join(violations)
+
+
+def test_library_authors_use_the_public_function_api() -> None:
+  """``from_exprs``, ``lift``, ``tokens`` and ``load_library`` are public (``scaly.ext``); the private
+  spellings they replaced stay gone from every package, test, example and benchmark."""
+  root = Path(__file__).resolve().parents[1]
+  private = re.compile(r"\b(_from_exprs|_lift|_tokens|_load_library)\b")
+  found = []
+  for folder in ("src", "tests", "plugins", "examples", "benchmarks"):
+    for path in (root / folder).rglob("*"):
+      if path.suffix not in {".py", ".ipynb", ".md"} or any(part in {"third_party", ".ipynb_checkpoints", "results"} for part in path.parts):
+        continue
+      if path == Path(__file__).resolve():
+        continue
+      for number, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+        if private.search(line):
+          found.append(f"{path.relative_to(root)}:{number}")
+  assert not found, "private library-author names: " + ", ".join(found[:20])
+
+
+def test_the_extension_api_is_versioned_and_complete() -> None:
+  import scaly.ext as ext
+
+  assert ext.EXT_API_VERSION == 1
+  assert all(hasattr(ext, name) for name in ext.__all__)
+  assert ext.from_exprs is sc.Function.from_exprs and ext.register_op is __import__("scaly.ir.expr", fromlist=["register_op"]).register_op
+  ext.require_ext_api(ext.EXT_API_VERSION, "a package")
+  with pytest.raises(ImportError, match="extension API 0"):
+    ext.require_ext_api(0, "an old package")

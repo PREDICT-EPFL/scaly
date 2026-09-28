@@ -31,7 +31,7 @@ def _fold(op: ProgramOp, args: tuple[ProgramNode, ...], dtype) -> ProgramNode:
 
 
 def _function(name: str, inputs: list[sc.Expr], outputs: list[sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))])
+  return sc.Function.from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))])
 
 
 def _body(proc: ProgramNode) -> tuple[ProgramNode, ...]:

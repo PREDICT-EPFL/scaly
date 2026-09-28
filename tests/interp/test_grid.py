@@ -35,7 +35,7 @@ def expected_cell(edges: np.ndarray, x: np.ndarray, side: Side) -> np.ndarray:
 
 def search_fn(axis: Axis, n: int) -> sc.Function:
   x = sc.sym("x", n)
-  return sc.Function._from_exprs(f"cell_{axis.search}_{axis.side}_{n}", [x], [axis.cell(x)], ["x"], ["j"])
+  return sc.Function.from_exprs(f"cell_{axis.search}_{axis.side}_{n}", [x], [axis.cell(x)], ["x"], ["j"])
 
 
 def grids(rng: np.random.Generator) -> dict[str, np.ndarray]:
@@ -72,7 +72,7 @@ def test_a_scalar_point_searches_like_a_batch() -> None:
   for search in ("count", "binary"):
     axis = Axis(edges, 0, search=search)
     x = sc.sym("x")
-    fn = sc.Function._from_exprs(f"cell_scalar_{search}", [x], [axis.cell(x)], ["x"], ["j"])
+    fn = sc.Function.from_exprs(f"cell_scalar_{search}", [x], [axis.cell(x)], ["x"], ["j"])
     for v in (-1.0, 0.0, 0.3, 1.05, 2.5, 7.0, np.nan):
       assert fn(np.array(v)) == expected_cell(edges, np.array([v]), "right")[0]
 
@@ -188,6 +188,6 @@ def test_wrap_moves_by_whole_periods() -> None:
   axis = Axis(np.array([-1.0, 0.0, 2.0]), 0, extrap="periodic")
   x = sc.sym("x", 6)
   xs = np.array([-1.0, 2.0, 5.5, -4.25, 0.3, -7.0])
-  got = sc.Function._from_exprs("wrap", [x], [axis.wrap(x)], ["x"], ["w"])(xs)
+  got = sc.Function.from_exprs("wrap", [x], [axis.wrap(x)], ["x"], ["w"])(xs)
   np.testing.assert_allclose(got, -1.0 + np.mod(xs + 1.0, 3.0), rtol=0, atol=1e-15)
   assert math.isclose(axis.hi - axis.lo, 3.0)

@@ -22,7 +22,7 @@ TILES = [
 
 def _stage() -> sc.Function:
   x = sc.sym("x", 3)
-  return sc.Function._from_exprs("bake_stage", [x], [x.sin() * (x @ sc.const(np.ones(3)))], ["x"], ["y"])
+  return sc.Function.from_exprs("bake_stage", [x], [x.sin() * (x @ sc.const(np.ones(3)))], ["x"], ["y"])
 
 
 def _jac_np(x: np.ndarray) -> np.ndarray:
@@ -62,8 +62,8 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   seeds = _seeds(pattern)
   structural = sc.jvp_many(mapped, z, sc.const(seeds))
   unrolled = _jvp_many_unrolled(mapped, z, sc.const(seeds))
-  fn = sc.Function._from_exprs("bake", [z], [structural], ["z"], ["dy"])
-  ref = sc.Function._from_exprs("bake_ref", [z], [unrolled], ["z"], ["dy"])
+  fn = sc.Function.from_exprs("bake", [z], [structural], ["z"], ["dy"])
+  ref = sc.Function.from_exprs("bake_ref", [z], [unrolled], ["z"], ["dy"])
   zv = np.random.default_rng(1).normal(size=3 * length)
   expected = np.zeros((3, 3 * length))
   for it in range(length):

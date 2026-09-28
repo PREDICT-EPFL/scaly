@@ -137,7 +137,7 @@ def descriptor_function(
   """Build the plain Function whose opaque outputs share ``descriptor``.
 
   ``input_tree`` is its parameter list: for a solver, the five slots of the warm start, the
-  multipliers and the parameters. Without one the inputs are a single group, as for ``_from_exprs``.
+  multipliers and the parameters. Without one the inputs are a single group, as for ``from_exprs``.
   """
   return extern_function(
     descriptor.name, descriptor, descriptor.input_signature, descriptor.output_signature, input_tree=input_tree, output_tree=output_tree

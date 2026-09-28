@@ -436,7 +436,7 @@ def _sweep(width: int, direction: str) -> ConcreteFunction[Any, Any, Any, Any]:
     else:
       coef = Expr.sym("coef", (1,))
       nxt = row - coef[0] * prev
-    _SWEEPS[key] = ConcreteFunction._from_exprs(
+    _SWEEPS[key] = ConcreteFunction.from_exprs(
       f"interp_thomas_{direction}_{width}", [prev, row, coef], [nxt, nxt], ["prev", "row", "coef"], ["next", "out"]
     )
   return _SWEEPS[key]

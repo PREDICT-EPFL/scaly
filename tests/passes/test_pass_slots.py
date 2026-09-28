@@ -35,7 +35,7 @@ def test_an_inserted_pass_runs_at_its_slot(scratch_slots: None) -> None:
   assert [name for name, _ in PASS_PIPELINE] == [n for n in names if not n.startswith("probe")]
   x = sc.sym("x", 3)
   observed: list[str] = []
-  lower_function(sc.Function._from_exprs("slot_probe", [x], [x.sin()], ["x"], ["y"]), observe=lambda name, _: observed.append(name))
+  lower_function(sc.Function.from_exprs("slot_probe", [x], [x.sin()], ["x"], ["y"]), observe=lambda name, _: observed.append(name))
   assert seen == ["ran", "ran"]
   assert observed[observed.index("pass:fuse_elementwise") + 1 : observed.index("pass:fuse_elementwise") + 3] == [
     "pass:probe_before",

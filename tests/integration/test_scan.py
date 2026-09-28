@@ -34,7 +34,7 @@ def _rk4_body(name: str = "rk4_step") -> sc.Function:
   k3 = f(z + 0.5 * DT * k2)
   k4 = f(z + DT * k3)
   nxt = z + (DT / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-  return sc.Function._from_exprs(name, [z, u], [nxt, sc.stack([sc.sumsqr(z) + 0.01 * u[0] * u[0]])], ["z", "u"], ["znext", "cost"])
+  return sc.Function.from_exprs(name, [z, u], [nxt, sc.stack([sc.sumsqr(z) + 0.01 * u[0] * u[0]])], ["z", "u"], ["znext", "cost"])
 
 
 def _rk4_numpy(z: np.ndarray, us: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -63,7 +63,7 @@ def _rollout(length: int, *, unrolled: bool = False) -> sc.Function:
     outputs = [z, sc.concat(costs) if costs else sc.const(np.zeros(0))]
   else:
     outputs = list(sc.scan(body, z0, [(us, 0, 1)], length=length))
-  return sc.Function._from_exprs(f"roll_{'u' if unrolled else 's'}{length}", [z0, us], outputs, ["z0", "us"], ["zN", "costs"])
+  return sc.Function.from_exprs(f"roll_{'u' if unrolled else 's'}{length}", [z0, us], outputs, ["z0", "us"], ["zN", "costs"])
 
 
 Z0 = np.array([0.1, 0.4, -0.2, 0.05])
@@ -105,18 +105,18 @@ def test_scan_derivatives_match_the_unrolled_graph_and_finite_differences(length
   lam = np.linspace(-1.0, 1.0, 4)
   mu = np.linspace(0.5, 1.5, length)
   grads = sc.vjp(tuple(scanned.outputs), (z0, u), (sc.const(lam), sc.const(mu)))
-  g = sc.Function._from_exprs(f"roll_vjp{length}", [z0, u], list(grads), ["z0", "us"], ["gz", "gu"])((Z0, us))
+  g = sc.Function.from_exprs(f"roll_vjp{length}", [z0, u], list(grads), ["z0", "us"], ["gz", "gu"])((Z0, us))
   jz, ju_ = (sc.jacobian(scanned, "zN", w)((Z0, us)) for w in ("z0", "us"))
   cz, cu = (sc.jacobian(scanned, "costs", w)((Z0, us)) for w in ("z0", "us"))
   np.testing.assert_allclose(g[0], lam @ jz + mu @ cz, rtol=1e-11, atol=1e-12)
   np.testing.assert_allclose(g[1], lam @ ju_ + mu @ cu, rtol=1e-11, atol=1e-12)
-  cost = sc.Function._from_exprs(f"roll_cost{length}", [z0, u], [sc.sumsqr(scanned.outputs[0]) + scanned.outputs[1].sum()], ["z0", "us"], ["c"])
+  cost = sc.Function.from_exprs(f"roll_cost{length}", [z0, u], [sc.sumsqr(scanned.outputs[0]) + scanned.outputs[1].sum()], ["z0", "us"], ["c"])
   hess = sc.hessian(cost, "c", "us")((Z0, us))
   np.testing.assert_allclose(hess, hess.T, atol=1e-12)
   np.testing.assert_allclose(
     hess,
     sc.hessian(
-      sc.Function._from_exprs(
+      sc.Function.from_exprs(
         f"roll_ucost{length}", list(unrolled.inputs), [sc.sumsqr(unrolled.outputs[0]) + unrolled.outputs[1].sum()], ["z0", "us"], ["c"]
       ),
       "c",
@@ -145,10 +145,10 @@ def test_matrix_carry_kalman_filter_matches_numpy() -> None:
   gain = (pp @ sc.const(c)) / s
   xn = xp + gain * (y[0] - sc.dot(sc.const(c), xp))
   pn = pp - gain.reshape((n, 1)) @ (sc.const(c).reshape((1, n)) @ pp)
-  body = sc.Function._from_exprs("kf_step", [state, y], [sc.concat([xn, pn.reshape((n * n,))]), xn[:1]], ["state", "y"], ["next", "xhat"])
+  body = sc.Function.from_exprs("kf_step", [state, y], [sc.concat([xn, pn.reshape((n * n,))]), xn[:1]], ["state", "y"], ["next", "xhat"])
   init, ys = sc.sym("init", n + n * n), sc.sym("ys", 40)
   final, xhat = sc.scan(body, init, [(ys, 0, 1)], length=40)
-  kf = sc.Function._from_exprs("kf", [init, ys], [final, xhat], ["init", "ys"], ["final", "xhat"])
+  kf = sc.Function.from_exprs("kf", [init, ys], [final, xhat], ["init", "ys"], ["final", "xhat"])
   meas = np.sin(np.arange(40) * 0.2) + 0.05 * np.random.default_rng(0).normal(size=40)
   xv, pv = np.zeros(n), np.eye(n)
   ref = []
@@ -165,11 +165,11 @@ def test_matrix_carry_kalman_filter_matches_numpy() -> None:
 
 def test_slicing_broadcast_strided_and_backwards() -> None:
   c, w, v = sc.sym("c", 2), sc.sym("w", 2), sc.sym("v", 1)
-  body = sc.Function._from_exprs("mix_step", [c, w, v], [c * w + v[0], sc.stack([c[0] - v[0]])], ["c", "w", "v"], ["n", "y"])
+  body = sc.Function.from_exprs("mix_step", [c, w, v], [c * w + v[0], sc.stack([c[0] - v[0]])], ["c", "w", "v"], ["n", "y"])
   c0, w_all, v_all = sc.sym("c0", 2), sc.sym("w_all", 2), sc.sym("v_all", 9)
   # w is the same at every step (stride 0); v is read backwards every third entry, from the end.
   final, ys = sc.scan(body, c0, [(w_all, 0, 0), (v_all, 8, -3)], length=3)
-  f = sc.Function._from_exprs("mix", [c0, w_all, v_all], [final, ys], ["c0", "w", "v"], ["final", "ys"])
+  f = sc.Function.from_exprs("mix", [c0, w_all, v_all], [final, ys], ["c0", "w", "v"], ["final", "ys"])
   c0v, wv, vv = np.array([1.0, -1.0]), np.array([0.5, 2.0]), np.arange(9.0)
   cv, yv = c0v.copy(), []
   for k in range(3):
@@ -179,7 +179,7 @@ def test_slicing_broadcast_strided_and_backwards() -> None:
   got = f((c0v, wv, vv))
   np.testing.assert_allclose(got[0], cv)
   np.testing.assert_allclose(got[1], yv)
-  gv = sc.gradient(sc.Function._from_exprs("mix_c", [c0, w_all, v_all], [sc.sumsqr(final) + ys.sum()], ["c0", "w", "v"], ["c"]), "c", "v")(
+  gv = sc.gradient(sc.Function.from_exprs("mix_c", [c0, w_all, v_all], [sc.sumsqr(final) + ys.sum()], ["c0", "w", "v"], ["c"]), "c", "v")(
     (c0v, wv, vv)
   )
   fd = finite_difference(lambda x: float(np.sum(f((c0v, wv, x))[0] ** 2) + np.sum(f((c0v, wv, x))[1])), vv)
@@ -208,7 +208,7 @@ def test_reverse_mode_stores_the_carry_at_every_step_and_forward_keeps_two() -> 
   scanned = _rollout(30)
   z0, us = scanned.inputs
   (g,) = sc.vjp((scanned.outputs[0],), (us,), (sc.const(np.ones(4)),))
-  assert 31 * 4 in carry_slots(sc.Function._from_exprs("roll_traj", [z0, us], [g], ["z0", "us"], ["g"]))
+  assert 31 * 4 in carry_slots(sc.Function.from_exprs("roll_traj", [z0, us], [g], ["z0", "us"], ["g"]))
 
 
 def test_scan_contract_errors() -> None:
@@ -220,7 +220,7 @@ def test_scan_contract_errors() -> None:
   with pytest.raises(ValueError, match="sliced inputs"):
     sc.scan(body, sc.sym("z", 4), [], length=1)
   c = sc.sym("c", 2)
-  bad = sc.Function._from_exprs("grow", [c], [sc.concat([c, c])], ["c"], ["n"])
+  bad = sc.Function.from_exprs("grow", [c], [sc.concat([c, c])], ["c"], ["n"])
   with pytest.raises(ValueError, match="carry like its input"):
     sc.scan(bad, c, [], length=2)
 
@@ -229,8 +229,8 @@ def _newton(n: int, name: str) -> tuple[sc.Function, sc.Function]:
   """Newton's method for ``x**3 = target`` elementwise; the carry is ``[x, target]``."""
   c = sc.sym("c", 2 * n)
   x, target = c[:n], c[n:]
-  body = sc.Function._from_exprs(f"{name}_step", [c], [sc.concat([x - (x**3 - target) / (3.0 * x * x), target])], ["c"], ["cn"])
-  cond = sc.Function._from_exprs(f"{name}_go", [c], [sc.norm_inf(x**3 - target) > 1e-12], ["c"], ["go"])
+  body = sc.Function.from_exprs(f"{name}_step", [c], [sc.concat([x - (x**3 - target) / (3.0 * x * x), target])], ["c"], ["cn"])
+  cond = sc.Function.from_exprs(f"{name}_go", [c], [sc.norm_inf(x**3 - target) > 1e-12], ["c"], ["go"])
   return cond, body
 
 
@@ -238,7 +238,7 @@ def test_while_loop_newton_matches_a_python_loop() -> None:
   cond, body = _newton(5, "wn")
   c0 = sc.sym("c0", 10)
   final, count = sc.while_loop(cond, body, c0, max_iter=60)
-  f = sc.Function._from_exprs("wn_solve", [c0], [final, count], ["c0"], ["c", "n"])
+  f = sc.Function.from_exprs("wn_solve", [c0], [final, count], ["c0"], ["c", "n"])
   targets = np.array([8.0, 27.0, 0.5, 2.0, 100.0])
   start = np.concatenate([np.full(5, 1.5), targets])
   got, n = f(start)
@@ -253,21 +253,21 @@ def test_while_loop_newton_matches_a_python_loop() -> None:
 
 def test_while_loop_edge_counts() -> None:
   c = sc.sym("c", 1)
-  inc = sc.Function._from_exprs("we_inc", [c], [c + 1.0], ["c"], ["cn"])
-  never = sc.Function._from_exprs("we_never", [c], [c[0] > 1e9], ["c"], ["go"])
-  always = sc.Function._from_exprs("we_always", [c], [c[0] > -1e9], ["c"], ["go"])
-  finite = sc.Function._from_exprs("we_finite", [c], [sc.isfinite(c[0])], ["c"], ["go"])
-  double = sc.Function._from_exprs("we_double", [c], [c * c], ["c"], ["cn"])
+  inc = sc.Function.from_exprs("we_inc", [c], [c + 1.0], ["c"], ["cn"])
+  never = sc.Function.from_exprs("we_never", [c], [c[0] > 1e9], ["c"], ["go"])
+  always = sc.Function.from_exprs("we_always", [c], [c[0] > -1e9], ["c"], ["go"])
+  finite = sc.Function.from_exprs("we_finite", [c], [sc.isfinite(c[0])], ["c"], ["go"])
+  double = sc.Function.from_exprs("we_double", [c], [c * c], ["c"], ["cn"])
   c0 = sc.sym("c0", 1)
   outs = [*sc.while_loop(never, inc, c0, max_iter=5), *sc.while_loop(always, inc, c0, max_iter=5), *sc.while_loop(finite, double, c0, max_iter=40)]
   outs += [*sc.while_loop(always, inc, c0, max_iter=0), *sc.while_loop(always, inc, c0, max_iter=1)]
-  f = sc.Function._from_exprs("we", [c0], outs, ["c0"], ["a", "na", "b", "nb", "d", "nd", "z", "nz", "o", "no"])
+  f = sc.Function.from_exprs("we", [c0], outs, ["c0"], ["a", "na", "b", "nb", "d", "nd", "z", "nz", "o", "no"])
   a, na, b, nb, d, nd, z, nz, o, no = f(np.array([3.0]))
   assert (a[0], na, b[0], nb) == (3.0, 0.0, 8.0, 5.0)  # zero steps return init; max_iter steps equal a scan
   assert d[0] == np.inf and nd == 10  # 3**(2**k) overflows at the 10th squaring and the guard stops it
   assert (z[0], nz, o[0], no) == (3.0, 0.0, 4.0, 1.0)
   (scanned,) = sc.scan(inc, c0, [], length=5)
-  np.testing.assert_array_equal(sc.Function._from_exprs("we_scan", [c0], [scanned], ["c0"], ["s"])(np.array([3.0])), b)
+  np.testing.assert_array_equal(sc.Function.from_exprs("we_scan", [c0], [scanned], ["c0"], ["s"])(np.array([3.0])), b)
 
 
 def test_while_loop_derivatives_through_the_steps() -> None:
@@ -275,13 +275,13 @@ def test_while_loop_derivatives_through_the_steps() -> None:
   matches finite differences, and it approaches the implicit derivative as the tolerance shrinks."""
   c = sc.sym("c", 2)
   x, p = c[0], c[1]
-  body = sc.Function._from_exprs("wd_step", [c], [sc.stack([0.5 * x.cos() + p, p])], ["c"], ["cn"])
+  body = sc.Function.from_exprs("wd_step", [c], [sc.stack([0.5 * x.cos() + p, p])], ["c"], ["cn"])
 
   def solve(tol: float) -> sc.Function:
-    cond = sc.Function._from_exprs(f"wd_go_{tol:g}", [c], [(0.5 * x.cos() + p - x).abs() > tol], ["c"], ["go"])
+    cond = sc.Function.from_exprs(f"wd_go_{tol:g}", [c], [(0.5 * x.cos() + p - x).abs() > tol], ["c"], ["go"])
     c0 = sc.sym("c0", 2)
     final, _ = sc.while_loop(cond, body, c0, max_iter=200)
-    return sc.Function._from_exprs(f"wd_{tol:g}", [c0], [final[:1] * 2.0], ["c0"], ["x"])
+    return sc.Function.from_exprs(f"wd_{tol:g}", [c0], [final[:1] * 2.0], ["c0"], ["x"])
 
   start = np.array([0.0, 0.3])
   loose, tight = solve(1e-3), solve(1e-13)
@@ -290,7 +290,7 @@ def test_while_loop_derivatives_through_the_steps() -> None:
   for fun in (loose, tight):
     jac = sc.jacobian(fun, "x", "c0")(start)
     np.testing.assert_allclose(jac, finite_difference(lambda v: fun(v), start).reshape(jac.shape), rtol=1e-6, atol=1e-8)
-    g = sc.gradient(sc.Function._from_exprs(f"{fun.name}_s", list(fun.inputs), [fun.outputs[0].sum()], ["c0"], ["s"]), "s", "c0")(start)
+    g = sc.gradient(sc.Function.from_exprs(f"{fun.name}_s", list(fun.inputs), [fun.outputs[0].sum()], ["c0"], ["s"]), "s", "c0")(start)
     np.testing.assert_allclose(g, jac.reshape(-1), rtol=1e-12, atol=1e-14)
   assert abs(sc.jacobian(loose, "x", "c0")(start)[0, 1] - implicit) > 1e-5
   assert abs(sc.jacobian(tight, "x", "c0")(start)[0, 1] - implicit) < 1e-10
@@ -302,7 +302,7 @@ def test_while_loop_code_is_constant_in_max_iter_and_copies_once() -> None:
   def render(max_iter: int) -> str:
     c0 = sc.sym("c0", 6)
     final, count = sc.while_loop(cond, body, c0, max_iter=max_iter)
-    return render_c_source(sc.Function._from_exprs("wc", [c0], [final, count], ["c0"], ["c", "n"])).replace(f" < {max_iter};", " < K;")
+    return render_c_source(sc.Function.from_exprs("wc", [c0], [final, count], ["c0"], ["c", "n"])).replace(f" < {max_iter};", " < K;")
 
   assert render(10) == render(100_000)
   src = render(10)
@@ -315,7 +315,7 @@ def _accumulator(size: int, name: str) -> sc.Function:
   c, x = sc.sym("c", size), sc.sym("x", 2)
   u1 = sc.index_add(c, [0, 1], x * c[2:4])
   u2 = sc.index_set(u1, [size - 1, size - 2], sc.stack([u1[0] * 0.5, u1[1] + u1[2]]))
-  return sc.Function._from_exprs(name, [c, x], [u2], ["c", "x"], ["cn"])
+  return sc.Function.from_exprs(name, [c, x], [u2], ["c", "x"], ["cn"])
 
 
 def _procs(fun: sc.Function) -> dict[str, ProgramNode]:
@@ -331,10 +331,10 @@ def test_in_place_carry_matches_the_two_slot_carry(size: int, monkeypatch: pytes
   (scanned,) = sc.scan(body, c0, [(xs, 0, 2)], length=20)
   start = np.linspace(0.5, 1.5, size)
   data = np.sin(np.arange(40.0))
-  donated = sc.Function._from_exprs(f"acc_ip{size}", [c0, xs], [scanned], ["c0", "xs"], ["c"])
+  donated = sc.Function.from_exprs(f"acc_ip{size}", [c0, xs], [scanned], ["c0", "xs"], ["c"])
   assert f"acc{size}_inplace" in _procs(donated)
   monkeypatch.setattr(lowering, "DONATE_CARRIES", False)
-  two_slot = sc.Function._from_exprs(f"acc_2s{size}", [c0, xs], [scanned], ["c0", "xs"], ["c"])
+  two_slot = sc.Function.from_exprs(f"acc_2s{size}", [c0, xs], [scanned], ["c0", "xs"], ["c"])
   assert f"acc{size}_inplace" not in _procs(two_slot)
   np.testing.assert_array_equal(donated((start, data)), two_slot((start, data)))
   c, ref = start.copy(), None
@@ -350,7 +350,7 @@ def test_in_place_body_touches_only_its_indices_and_holds_one_carry() -> None:
   body = _accumulator(size, "acc_struct")
   c0, xs = sc.sym("c0", size), sc.sym("xs", 40)
   (scanned,) = sc.scan(body, c0, [(xs, 0, 2)], length=20)
-  procs = _procs(sc.Function._from_exprs("acc_struct_host", [c0, xs], [scanned], ["c0", "xs"], ["c"]))
+  procs = _procs(sc.Function.from_exprs("acc_struct_host", [c0, xs], [scanned], ["c0", "xs"], ["c"]))
   inplace = procs["acc_struct_inplace"]
   assert inplace.attrs.get("in_place") and inplace.attrs["scalarize_mode"] == "disabled"
   writes = 0
@@ -391,11 +391,11 @@ def test_bodies_that_read_what_they_overwrite_keep_two_slots() -> None:
   import scaly.passes.lowering as lowering
 
   for name, (outs, names) in cases.items():
-    fun = sc.Function._from_exprs(name, [c, x], [o for o in outs if o is not None], ["c", "x"], names)
+    fun = sc.Function.from_exprs(name, [c, x], [o for o in outs if o is not None], ["c", "x"], names)
     assert lowering.in_place_chain(lowering._normalize_function(fun)) is None, name
     c0, xs = sc.sym("c0", 4), sc.sym("xs", 3)
     results = sc.scan(fun, c0, [(xs, 0, 1)], length=3)
-    host = sc.Function._from_exprs(f"{name}_host", [c0, xs], list(results), ["c0", "xs"], [f"o{i}" for i in range(len(results))])
+    host = sc.Function.from_exprs(f"{name}_host", [c0, xs], list(results), ["c0", "xs"], [f"o{i}" for i in range(len(results))])
     # The loop-level proof bounds a read through a slice even under a comparison: the select reads
     # entry 0 and writes entry 3, which it proves apart. Every other case keeps two slots.
     assert (f"{name}_inplace" in _procs(host)) == (name == "ip_neg_select"), name
@@ -405,23 +405,23 @@ def test_bodies_that_read_what_they_overwrite_keep_two_slots() -> None:
       step = fun._flat_numerical_call(cv, data[k : k + 1])
       cv = step[0]
     np.testing.assert_allclose(host._flat_numerical_call(start, data)[0], cv, rtol=1e-13)
-  ok = sc.Function._from_exprs("ip_pos", [c, x], [sc.index_add(sc.index_add(c, [0], x), [1], sc.index_add(c, [0], x)[:1])], ["c", "x"], ["cn"])
+  ok = sc.Function.from_exprs("ip_pos", [c, x], [sc.index_add(sc.index_add(c, [0], x), [1], sc.index_add(c, [0], x)[:1])], ["c", "x"], ["cn"])
   assert lowering.in_place_chain(lowering._normalize_function(ok)) is not None
 
 
 def test_in_place_while_loop_and_reverse_mode_fall_back() -> None:
   size = 50
   c = sc.sym("c", size)
-  body = sc.Function._from_exprs("ipw_step", [c], [sc.index_add(c, [0, 1], sc.stack([1.0 + 0.0 * c[2], c[0] * 0.0 + 2.0]))], ["c"], ["cn"])
-  cond = sc.Function._from_exprs("ipw_go", [c], [c[0] < 7.5], ["c"], ["go"])
+  body = sc.Function.from_exprs("ipw_step", [c], [sc.index_add(c, [0, 1], sc.stack([1.0 + 0.0 * c[2], c[0] * 0.0 + 2.0]))], ["c"], ["cn"])
+  cond = sc.Function.from_exprs("ipw_go", [c], [c[0] < 7.5], ["c"], ["go"])
   c0 = sc.sym("c0", size)
   final, count = sc.while_loop(cond, body, c0, max_iter=100)
-  fun = sc.Function._from_exprs("ipw", [c0], [final, count], ["c0"], ["c", "n"])
+  fun = sc.Function.from_exprs("ipw", [c0], [final, count], ["c0"], ["c", "n"])
   assert "ipw_step_inplace" in _procs(fun)
   got, n = fun(np.zeros(size))
   assert n == 8 and got[0] == 8.0 and got[1] == 16.0 and not got[2:].any()
   (grad,) = sc.vjp((final.sum(),), (c0,), (sc.const(1.0),))
-  rev = sc.Function._from_exprs("ipw_grad", [c0], [grad], ["c0"], ["g"])
+  rev = sc.Function.from_exprs("ipw_grad", [c0], [grad], ["c0"], ["g"])
   assert "ipw_step_inplace" not in _procs(rev)  # reverse mode needs every carry, so two slots are not enough either
   np.testing.assert_array_equal(rev(np.zeros(size)), np.ones(size))
 
@@ -429,7 +429,7 @@ def test_in_place_while_loop_and_reverse_mode_fall_back() -> None:
 def test_index_updates_differentiate() -> None:
   c, v = sc.sym("c", 5), sc.sym("v", 3)
   y = sc.index_set(sc.index_add(c * c, [1, 1, 4], v.sin()), [0, 2], v[:2] * c[3])
-  f = sc.Function._from_exprs("idx_d", [c, v], [y], ["c", "v"], ["y"])
+  f = sc.Function.from_exprs("idx_d", [c, v], [y], ["c", "v"], ["y"])
   cv, vv = np.array([0.3, -1.0, 2.0, 0.7, 1.5]), np.array([0.2, -0.4, 0.9])
   expected = cv * cv
   np.add.at(expected, [1, 1, 4], np.sin(vv))
@@ -443,7 +443,7 @@ def test_index_updates_differentiate() -> None:
     assert set(zip(pattern.rows, pattern.cols)) == {tuple(ix) for ix in np.argwhere(np.abs(jac) > 0)}
   lam = np.arange(1.0, 6.0)
   gc, gv = sc.vjp((y,), tuple(f.inputs), (sc.const(lam),))
-  g = sc.Function._from_exprs("idx_g", list(f.inputs), [gc, gv], ["c", "v"], ["gc", "gv"])((cv, vv))
+  g = sc.Function.from_exprs("idx_g", list(f.inputs), [gc, gv], ["c", "v"], ["gc", "gv"])((cv, vv))
   np.testing.assert_allclose(g[0], lam @ sc.jacobian(f, "y", "c")((cv, vv)), rtol=1e-12, atol=1e-14)
   np.testing.assert_allclose(g[1], lam @ sc.jacobian(f, "y", "v")((cv, vv)), rtol=1e-12, atol=1e-14)
   with pytest.raises(ValueError, match="distinct"):
@@ -454,11 +454,11 @@ def _cubic_solver(n: int, name: str) -> sc.Function:
   """``x**3 + x = p`` elementwise by Newton inside a ``while_loop``; ``dx/dp = 1 / (3x^2 + 1)``."""
   c = sc.sym("c", 2 * n)
   x, p = c[:n], c[n:]
-  body = sc.Function._from_exprs(f"{name}_step", [c], [sc.concat([x - (x**3 + x - p) / (3 * x * x + 1), p])], ["c"], ["cn"])
-  cond = sc.Function._from_exprs(f"{name}_go", [c], [sc.norm_inf(x**3 + x - p) > 1e-14], ["c"], ["go"])
+  body = sc.Function.from_exprs(f"{name}_step", [c], [sc.concat([x - (x**3 + x - p) / (3 * x * x + 1), p])], ["c"], ["cn"])
+  cond = sc.Function.from_exprs(f"{name}_go", [c], [sc.norm_inf(x**3 + x - p) > 1e-14], ["c"], ["go"])
   pp = sc.sym("p", n)
   final, _ = sc.while_loop(cond, body, sc.concat([sc.const(np.zeros(n)), pp]), max_iter=60)
-  return sc.Function._from_exprs(name, [pp], [final[:n]], ["p"], ["x"])
+  return sc.Function.from_exprs(name, [pp], [final[:n]], ["p"], ["x"])
 
 
 def _implicit_rules(n: int, name: str, scale: float = 1.0) -> tuple[sc.Function, sc.Function]:
@@ -467,8 +467,8 @@ def _implicit_rules(n: int, name: str, scale: float = 1.0) -> tuple[sc.Function,
   # The forward rule gets only the inputs, so it recomputes the solution through the solver itself.
   solver = _cubic_solver(n, f"{name}_inner")
   xs = solver(p)
-  jvp = sc.Function._from_exprs(f"{name}_jvp", [p, dp], [dp * scale / (3 * xs * xs + 1)], ["p", "dp"], ["dx"])
-  vjp = sc.Function._from_exprs(f"{name}_vjp", [p, x, bar], [bar * slope], ["p", "x", "xbar"], ["pbar"])
+  jvp = sc.Function.from_exprs(f"{name}_jvp", [p, dp], [dp * scale / (3 * xs * xs + 1)], ["p", "dp"], ["dx"])
+  vjp = sc.Function.from_exprs(f"{name}_vjp", [p, x, bar], [bar * slope], ["p", "x", "xbar"], ["pbar"])
   return jvp, vjp
 
 
@@ -484,12 +484,12 @@ def test_custom_derivatives_replace_differentiating_the_solver_steps() -> None:
   jvp, vjp = _implicit_rules(3, "cd_rules")
   custom = sc.custom_derivative(solver, jvp=jvp, vjp=vjp)
   q = sc.sym("q", 3)
-  host = sc.Function._from_exprs("cd_host", [q], [custom(q)], ["q"], ["x"])
+  host = sc.Function.from_exprs("cd_host", [q], [custom(q)], ["q"], ["x"])
   xs = _cubic_root(P)
   exact = np.diag(1.0 / (3 * xs * xs + 1))
   np.testing.assert_allclose(host(P), xs, rtol=1e-13)
   np.testing.assert_allclose(sc.jacobian(host, "x", "q")(P), exact, rtol=1e-12, atol=1e-15)
-  cost = sc.Function._from_exprs("cd_cost", [q], [(custom(q) ** 2).sum()], ["q"], ["c"])
+  cost = sc.Function.from_exprs("cd_cost", [q], [(custom(q) ** 2).sum()], ["q"], ["c"])
   grad = sc.gradient(cost, "c", "q")
   np.testing.assert_allclose(grad(P), 2 * xs * np.diag(exact), rtol=1e-12)
   np.testing.assert_allclose(sc.sparse_jacobian(host, "x", "q")(P), np.diag(exact), rtol=1e-12)
@@ -504,12 +504,12 @@ def test_custom_rules_are_the_ones_used_in_both_modes_and_under_vmap() -> None:
   custom = sc.custom_derivative(solver, jvp=jvp, vjp=vjp)
   q = sc.sym("q", 3)
   mapped = sc.vmap(custom, 3, [(q, 0, 1)])
-  host = sc.Function._from_exprs("cd_wrong_host", [q], [mapped], ["q"], ["x"])
+  host = sc.Function.from_exprs("cd_wrong_host", [q], [mapped], ["q"], ["x"])
   xs = _cubic_root(P)
   doubled = np.diag(2.0 / (3 * xs * xs + 1))
   np.testing.assert_allclose(sc.jacobian(host, "x", "q")(P), doubled, rtol=1e-12, atol=1e-15)
   (g,) = sc.vjp((mapped,), (q,), (sc.const(np.ones(3)),))
-  np.testing.assert_allclose(sc.Function._from_exprs("cd_wrong_g", [q], [g], ["q"], ["g"])(P), np.diag(doubled), rtol=1e-12)
+  np.testing.assert_allclose(sc.Function.from_exprs("cd_wrong_g", [q], [g], ["q"], ["g"])(P), np.diag(doubled), rtol=1e-12)
 
 
 def test_a_missing_direction_differentiates_the_body() -> None:
@@ -517,12 +517,12 @@ def test_a_missing_direction_differentiates_the_body() -> None:
   _, vjp = _implicit_rules(3, "cd_half")
   custom = sc.custom_derivative(solver, vjp=vjp)
   q = sc.sym("q", 3)
-  host = sc.Function._from_exprs("cd_half_host", [q], [custom(q)], ["q"], ["x"])
+  host = sc.Function.from_exprs("cd_half_host", [q], [custom(q)], ["q"], ["x"])
   xs = _cubic_root(P)
   # Forward mode goes through the Newton steps; at this tolerance that matches the implicit value.
   np.testing.assert_allclose(sc.jacobian(host, "x", "q")(P), np.diag(1.0 / (3 * xs * xs + 1)), rtol=1e-9, atol=1e-12)
   with pytest.raises(ValueError, match="must map shapes"):
-    sc.custom_derivative(solver, vjp=sc.Function._from_exprs("cd_bad", [sc.sym("a", 3)], [sc.sym("a", 3)], ["a"], ["b"]))
+    sc.custom_derivative(solver, vjp=sc.Function.from_exprs("cd_bad", [sc.sym("a", 3)], [sc.sym("a", 3)], ["a"], ["b"]))
   with pytest.raises(TypeError, match="scaly Function"):
     sc.custom_derivative(solver, jvp=lambda p: p)
 
@@ -531,37 +531,37 @@ def test_custom_derivative_copies_keep_their_own_derivatives() -> None:
   """A Function and its custom-derivative copy in one graph each keep their own derivative, in a
   call, under ``vmap`` in either order, and as a ``scan`` body."""
   x, t, bar = sc.sym("x", 1), sc.sym("t", 1), sc.sym("bar", 1)
-  plain = sc.Function._from_exprs("cdn_sq", [x], [x * x], ["x"], ["y"])
-  jvp = sc.Function._from_exprs("cdn_jvp", [x, t], [20.0 * x * t], ["x", "t"], ["dy"])
-  vjp = sc.Function._from_exprs("cdn_vjp", [x, sc.sym("y", 1), bar], [20.0 * x * bar], ["x", "y", "bar"], ["xbar"])
+  plain = sc.Function.from_exprs("cdn_sq", [x], [x * x], ["x"], ["y"])
+  jvp = sc.Function.from_exprs("cdn_jvp", [x, t], [20.0 * x * t], ["x", "t"], ["dy"])
+  vjp = sc.Function.from_exprs("cdn_vjp", [x, sc.sym("y", 1), bar], [20.0 * x * bar], ["x", "y", "bar"], ["xbar"])
   custom = sc.custom_derivative(plain, jvp=jvp, vjp=vjp)
   assert custom.name != plain.name
   q = sc.sym("q", 1)
   for first, second in ((plain, custom), (custom, plain)):
-    host = sc.Function._from_exprs(f"cdn_host_{first.name}", [q], [first(q) + second(q)], ["q"], ["y"])
+    host = sc.Function.from_exprs(f"cdn_host_{first.name}", [q], [first(q) + second(q)], ["q"], ["y"])
     assert sc.jacobian(host, "y", "q")(np.array([3.0]))[0, 0] == 66.0  # 2x + 20x at x = 3
     assert (
-      sc.gradient(sc.Function._from_exprs(f"cdn_s_{first.name}", [q], [(first(q) + second(q)).sum()], ["q"], ["s"]), "s", "q")(np.array([3.0]))[0]
+      sc.gradient(sc.Function.from_exprs(f"cdn_s_{first.name}", [q], [(first(q) + second(q)).sum()], ["q"], ["s"]), "s", "q")(np.array([3.0]))[0]
       == 66.0
     )
   qs = sc.sym("qs", 2)
   mapped = sc.vmap(plain, 2, [(qs, 0, 1)]) + sc.vmap(custom, 2, [(qs, 0, 1)])
-  host = sc.Function._from_exprs("cdn_vmap", [qs], [mapped], ["qs"], ["y"])
+  host = sc.Function.from_exprs("cdn_vmap", [qs], [mapped], ["qs"], ["y"])
   np.testing.assert_array_equal(np.diag(sc.jacobian(host, "y", "qs")(np.array([3.0, 1.0]))), [66.0, 22.0])
   # As a scan body, the rule of the Function being scanned is the one differentiated.
   c, u = sc.sym("c", 1), sc.sym("u", 1)
-  step = sc.Function._from_exprs("cdn_step", [c, u], [c * c + u], ["c", "u"], ["cn"])
-  rule = sc.Function._from_exprs(
+  step = sc.Function.from_exprs("cdn_step", [c, u], [c * c + u], ["c", "u"], ["cn"])
+  rule = sc.Function.from_exprs(
     "cdn_step_jvp", [c, u, sc.sym("dc", 1), sc.sym("du", 1)], [5.0 * sc.sym("dc", 1) + sc.sym("du", 1)], ["c", "u", "dc", "du"], ["dcn"]
   )
-  back = sc.Function._from_exprs("cdn_step_vjp", [c, u, sc.sym("cn", 1), bar], [5.0 * bar, bar], ["c", "u", "cn", "bar"], ["cbar", "ubar"])
+  back = sc.Function.from_exprs("cdn_step_vjp", [c, u, sc.sym("cn", 1), bar], [5.0 * bar, bar], ["c", "u", "cn", "bar"], ["cbar", "ubar"])
   stepped = sc.custom_derivative(step, jvp=rule, vjp=back)
   c0, us = sc.sym("c0", 1), sc.sym("us", 3)
   (final,) = sc.scan(stepped, c0, [(us, 0, 1)], length=3)
-  loop = sc.Function._from_exprs("cdn_loop", [c0, us], [final], ["c0", "us"], ["c"])
+  loop = sc.Function.from_exprs("cdn_loop", [c0, us], [final], ["c0", "us"], ["c"])
   assert sc.jacobian(loop, "c", "c0")((np.array([0.5]), np.zeros(3)))[0, 0] == 125.0
   (g,) = sc.vjp((final,), (c0,), (sc.const(np.ones(1)),))
-  assert sc.Function._from_exprs("cdn_loop_g", [c0, us], [g], ["c0", "us"], ["g"])((np.array([0.5]), np.zeros(3)))[0] == 125.0
+  assert sc.Function.from_exprs("cdn_loop_g", [c0, us], [g], ["c0", "us"], ["g"])((np.array([0.5]), np.zeros(3)))[0] == 125.0
 
 
 # --- Multi-seed forward mode through loops (C-93) -----------------------------------------------
@@ -605,10 +605,10 @@ def test_jacobian_of_a_scan_is_one_scan_carrying_every_seed(monkeypatch: pytest.
 def test_multi_seed_tangents_of_broadcast_strided_and_backward_slices(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   c, w, v = sc.sym("c", 2), sc.sym("w", 2), sc.sym("v", 1)
-  body = sc.Function._from_exprs("mixm_step", [c, w, v], [c * w + v[0] * c[::-1], sc.stack([c[0] * v[0]])], ["c", "w", "v"], ["n", "y"])
+  body = sc.Function.from_exprs("mixm_step", [c, w, v], [c * w + v[0] * c[::-1], sc.stack([c[0] * v[0]])], ["c", "w", "v"], ["n", "y"])
   c0, w_all, v_all = sc.sym("c0", 2), sc.sym("w_all", 2), sc.sym("v_all", 9)
   final, ys = sc.scan(body, c0, [(w_all, 0, 0), (v_all, 8, -3)], length=3)
-  f = sc.Function._from_exprs("mixm", [c0, w_all, v_all], [final, ys], ["c0", "w", "v"], ["final", "ys"])
+  f = sc.Function.from_exprs("mixm", [c0, w_all, v_all], [final, ys], ["c0", "w", "v"], ["final", "ys"])
   point = (np.array([1.0, -1.0]), np.array([0.5, 2.0]), np.linspace(-1.0, 1.0, 9))
   for k, wrt in enumerate(("c0", "w", "v")):
     for i, out in enumerate(("final", "ys")):
@@ -627,12 +627,12 @@ def _single_shooting_cost(n: int) -> sc.Function:
   b = np.array([[0.5 * DT**2], [DT]])
   z, u = sc.sym("z", 2), sc.sym("u", 1)
   zn = a @ z + b @ u
-  step = sc.Function._from_exprs(f"ss{n}_step", [z, u], [zn, zn, sc.stack([sc.sumsqr(z) + 0.1 * sc.sumsqr(u)])], ["z", "u"], ["zn", "zo", "c"])
+  step = sc.Function.from_exprs(f"ss{n}_step", [z, u], [zn, zn, sc.stack([sc.sumsqr(z) + 0.1 * sc.sumsqr(u)])], ["z", "u"], ["zn", "zo", "c"])
   x0, big_u = sc.sym("x0", 2), sc.sym("U", n)
   _, xs, costs = sc.scan(step, x0, [(big_u, 0, 1)], length=n)
-  shoot = sc.Function._from_exprs(f"ss{n}_shoot", [x0, big_u], [xs, costs], ["x0", "U"], ["X", "costs"])
+  shoot = sc.Function.from_exprs(f"ss{n}_shoot", [x0, big_u], [xs, costs], ["x0", "U"], ["X", "costs"])
   xs_c, costs_c = shoot._flat_symbolic_call([x0, big_u])
-  return sc.Function._from_exprs(f"ss{n}_cost", [x0, big_u], [costs_c.sum() + 10.0 * sc.sumsqr(xs_c)], ["x0", "U"], ["f"])
+  return sc.Function.from_exprs(f"ss{n}_cost", [x0, big_u], [costs_c.sum() + 10.0 * sc.sumsqr(xs_c)], ["x0", "U"], ["f"])
 
 
 def _condensed_hessian(n: int) -> np.ndarray:
@@ -676,7 +676,7 @@ def test_jacobian_of_a_while_loop_is_one_loop_carrying_every_seed(monkeypatch: p
   cond, body = _newton(3, "wm")
   c0 = sc.sym("c0", 6)
   final, _ = sc.while_loop(cond, body, c0, max_iter=60)
-  f = sc.Function._from_exprs("wm_solve", [c0], [final[:3]], ["c0"], ["x"])
+  f = sc.Function.from_exprs("wm_solve", [c0], [final[:3]], ["c0"], ["x"])
   start = np.array([1.5, 1.5, 1.5, 8.0, 27.0, 2.0])
   jac = sc.jacobian(f, "x", "c0")(start)
   x = f(start)
@@ -690,13 +690,13 @@ def test_sparse_jacobian_of_a_map_honors_the_callee_rule() -> None:
   """The structured sparse Jacobian of a ``vmap`` colors the callee's pattern; with a forward rule
   (and a declared pattern) its values must come from the rule, as the dense Jacobian's do."""
   a, ta = sc.sym("a", 2), sc.sym("ta", 2)
-  body = sc.Function._from_exprs("sjr_body", [a], [a * a], ["a"], ["y"])
-  rule = sc.Function._from_exprs("sjr_rule", [a, ta], [3.0 * ta], ["a", "ta"], ["dy"])  # not the body's 2a
+  body = sc.Function.from_exprs("sjr_body", [a], [a * a], ["a"], ["y"])
+  rule = sc.Function.from_exprs("sjr_rule", [a, ta], [3.0 * ta], ["a", "ta"], ["dy"])  # not the body's 2a
   x = sc.sym("x", 6)
   for k, pattern in enumerate((None, lambda out, i: np.eye(2, dtype=bool))):
     mapped = sc.vmap(sc.custom_derivative(body, jvp=rule, sparsity=pattern), 3, [(x, 0, 2)])
     sj = sc.sparse_jacobian(mapped, x)
-    (values,) = sc.Function._from_exprs(f"sjr_{k}", [x], [sj.values], ["x"], ["v"])._flat_numerical_call(np.arange(1.0, 7.0))
+    (values,) = sc.Function.from_exprs(f"sjr_{k}", [x], [sj.values], ["x"], ["v"])._flat_numerical_call(np.arange(1.0, 7.0))
     got = np.zeros((6, 6))
     got[list(sj.sparsity.rows), list(sj.sparsity.cols)] = values
     np.testing.assert_array_equal(got, 3.0 * np.eye(6))

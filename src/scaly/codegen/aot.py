@@ -64,6 +64,7 @@ class Requirements:
   declarations: tuple[str, ...] = ()
   links: tuple[tuple[LinkResolver, tuple[str, ...]], ...] = ()
   isolated: bool = False
+  versions: tuple[tuple[str, str], ...] = ()
 
   @staticmethod
   def merge(requirements: tuple[BuildRequirements, ...]) -> Requirements:
@@ -80,6 +81,7 @@ class Requirements:
       declarations=tuple(line for req in requirements for line in req.declarations),
       links=tuple((resolver, tuple(sorted(libraries))) for resolver, libraries in links.items()),
       isolated=any(req.isolated for req in requirements),
+      versions=tuple(sorted({v for req in requirements for v in req.versions})),
     )
 
   def link_flags(self) -> tuple[str, ...]:

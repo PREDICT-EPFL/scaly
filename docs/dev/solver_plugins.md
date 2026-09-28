@@ -15,7 +15,8 @@ packaging metadata, and a Python function that renders the C wrapper.
 
 A plugin is a Python package that:
 
-1. depends on `scaly`;
+1. depends on `scaly`, and checks at import the extension API it was written against
+   (`scaly.ext.require_ext_api(1, "scaly-mysolver")`);
 2. exposes a backend object through the `scaly.solvers` entry-point group;
 3. when it wraps its own native solver, bundles the vendored shared library under `<pkg>/lib/` and
    its C headers under `<pkg>/include/`, built by a hatch build hook (`plugins/scaly-piqp` and

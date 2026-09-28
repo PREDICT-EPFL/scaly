@@ -88,7 +88,7 @@ def test_an_extension_op_differentiates_reports_sparsity_lowers_and_compiles() -
   x = sc.sym("x", 3)
   seed = sc.sym("seed", 3)
   y = _cube(x)
-  fn = sc.Function._from_exprs(
+  fn = sc.Function.from_exprs(
     "registry_cube",
     [x, seed],
     [y, jvp(y, x, seed), vjp([y.sum()], [x], [sc.const(1.0)])[0], jvp_many(y, x, sc.const(np.eye(3)))],
@@ -103,7 +103,7 @@ def test_an_extension_op_differentiates_reports_sparsity_lowers_and_compiles() -
   np.testing.assert_allclose(many, np.diag(3 * xv**2))
   pattern = sc.jacobian_sparsity(y, x)
   assert list(zip(pattern.rows, pattern.cols, strict=True)) == [(0, 0), (1, 1), (2, 2)]
-  np.testing.assert_allclose(sc.jacobian(sc.Function._from_exprs("registry_cube_y", [x], [y], ["x"], ["y"]), "y", "x")(xv), np.diag(3 * xv**2))
+  np.testing.assert_allclose(sc.jacobian(sc.Function.from_exprs("registry_cube_y", [x], [y], ["x"], ["y"]), "y", "x")(xv), np.diag(3 * xv**2))
   folded = simplify(_cube(sc.const(np.array([2.0]))))
   assert folded.op == ExprOp.CONST and folded.value is not None and folded.value[0] == 8.0
 
@@ -134,7 +134,7 @@ HALF_SINE = register_op(
 
 def test_an_elementwise_trait_lowers_the_op_and_colours_it() -> None:
   x = sc.sym("x", 3)
-  fn = sc.Function._from_exprs("registry_half_sine", [x], [Expr(HALF_SINE.name, (x,), x.type)], ["x"], ["y"])
+  fn = sc.Function.from_exprs("registry_half_sine", [x], [Expr(HALF_SINE.name, (x,), x.type)], ["x"], ["y"])
   xv = np.array([0.1, 0.2, 0.3])
   np.testing.assert_allclose(fn(xv), np.sin(xv))
   assert has_trait(HALF_SINE.name, "expensive") and not has_trait(TOY.name, "elementwise")

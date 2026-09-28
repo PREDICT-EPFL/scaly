@@ -24,7 +24,7 @@ N = 7
 
 
 def _fn(name, inputs, outputs):
-  return sc.Function._from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
+  return sc.Function.from_exprs(name, list(inputs), list(outputs), [str(x.name) for x in inputs], [f"o{k}" for k in range(len(outputs))])
 
 
 def _body(name: str = "tv_step") -> sc.Function:
@@ -33,7 +33,7 @@ def _body(name: str = "tv_step") -> sc.Function:
   t = k.cast("float64")
   first = sc.where(sc.equal(k, 0), 2.0, 1.0)  # ``k == 0`` would be Python identity, not a comparison
   nxt = sc.stack([c[0] + 0.1 * t * c[1] + first * u[0], c[1] * (1.0 + 0.01 * t) + (c[0] * u[0]).sin()])
-  return sc.Function._from_exprs(name, [c, k, u], [nxt, sc.stack([t * c[0]])], ["c", "k", "u"], ["n", "y"])
+  return sc.Function.from_exprs(name, [c, k, u], [nxt, sc.stack([t * c[0]])], ["c", "k", "u"], ["n", "y"])
 
 
 def _numpy(x0: np.ndarray, us: np.ndarray, *, steps: np.ndarray | None = None) -> float:
@@ -114,7 +114,7 @@ def test_scan_index_stores_no_table(kind: str) -> None:
 def test_scan_index_backward_walk_counts_steps() -> None:
   """A sliced input walked backwards (a negative stride) does not change the step number."""
   c, k, u = sc.sym("c", 1), sc.sym("k", (), dtype="int64"), sc.sym("u", 1)
-  body = sc.Function._from_exprs(
+  body = sc.Function.from_exprs(
     "bw_step", [c, k, u], [c * 0.5 + k.cast("float64") * u[0], sc.stack([k.cast("float64")])], ["c", "k", "u"], ["n", "y"]
   )
   x0, us = sc.sym("x0", 1), sc.sym("us", 5)
@@ -151,7 +151,7 @@ def test_scan_index_sparsity_matches_table_and_keeps_the_periodic_walk() -> None
   x0t, ust, vt = _objective(table=True)
   np.testing.assert_array_equal(sc.jacobian_sparsity(v.reshape((1,)), us).to_mask(), sc.jacobian_sparsity(vt.reshape((1,)), ust).to_mask())
   c, k = sc.sym("c", 3), sc.sym("k", (), dtype="int64")
-  body = sc.Function._from_exprs("sp_step", [c, k], [sc.stack([c[0] + k.cast("float64"), c[0] * c[1], c[2]])], ["c", "k"], ["n"])
+  body = sc.Function.from_exprs("sp_step", [c, k], [sc.stack([c[0] + k.cast("float64"), c[0] * c[1], c[2]])], ["c", "k"], ["n"])
   x = sc.sym("x", 3)
   (fin,) = sc.scan(body, x, [], length=200_000, index=True)
   start = time.perf_counter()
@@ -162,15 +162,15 @@ def test_scan_index_sparsity_matches_table_and_keeps_the_periodic_walk() -> None
 
 def test_scan_index_validation() -> None:
   c, u = sc.sym("c", 1), sc.sym("u", 1)
-  plain = sc.Function._from_exprs("no_idx", [c, u], [c + u], ["c", "u"], ["n"])
+  plain = sc.Function.from_exprs("no_idx", [c, u], [c + u], ["c", "u"], ["n"])
   with pytest.raises(ValueError, match="int64 scalar"):
     sc.scan(plain, sc.sym("x", 1), [(sc.sym("us", 3), 0, 1)], length=3, index=True)
   k2 = sc.sym("k", (2,), dtype="int64")
-  wrong = sc.Function._from_exprs("wide_idx", [c, k2], [c], ["c", "k"], ["n"])
+  wrong = sc.Function.from_exprs("wide_idx", [c, k2], [c], ["c", "k"], ["n"])
   with pytest.raises(ValueError, match="int64 scalar"):
     sc.scan(wrong, sc.sym("x", 1), [], length=3, index=True)
   k = sc.sym("k", (), dtype="int64")
-  good = sc.Function._from_exprs("idx_u", [c, k, u], [c + u], ["c", "k", "u"], ["n"])
+  good = sc.Function.from_exprs("idx_u", [c, k, u], [c + u], ["c", "k", "u"], ["n"])
   with pytest.raises(ValueError, match="1 sliced inputs after the carry and the index, got 0"):
     sc.scan(good, sc.sym("x", 1), [], length=3, index=True)
   nodes = sc.scan(good, sc.sym("x", 1), [(sc.sym("us", 3), 0, 1)], length=3, index=True)
@@ -185,9 +185,9 @@ MAX_ITER = 40
 def _while_parts():
   c, k = sc.sym("c", 2), sc.sym("k", (), dtype="int64")
   damp = 1.0 / (1.0 + 0.5 * k.cast("float64"))
-  body = sc.Function._from_exprs("dn_step", [c, k], [sc.stack([c[0] - (c[0] * c[0] - c[1]) / (2.0 * c[0]) * damp, c[1]])], ["c", "k"], ["n"])
+  body = sc.Function.from_exprs("dn_step", [c, k], [sc.stack([c[0] - (c[0] * c[0] - c[1]) / (2.0 * c[0]) * damp, c[1]])], ["c", "k"], ["n"])
   cc = sc.sym("cc", 2)
-  cond = sc.Function._from_exprs("dn_go", [cc], [(cc[0] * cc[0] - cc[1]).abs() > 1e-9], ["cc"], ["go"])
+  cond = sc.Function.from_exprs("dn_go", [cc], [(cc[0] * cc[0] - cc[1]).abs() > 1e-9], ["cc"], ["go"])
   a = sc.sym("a", 2)
   fin, n = sc.while_loop(cond, body, a, max_iter=MAX_ITER, index=True)
   return a, fin, n
@@ -243,9 +243,9 @@ def test_while_index_passes_the_counter() -> None:
 def test_while_index_validation() -> None:
   c, k = sc.sym("c", 1), sc.sym("k", (), dtype="int64")
   cc = sc.sym("cc", 1)
-  cond = sc.Function._from_exprs("wv_go", [cc], [cc[0] > 0.0], ["cc"], ["go"])
-  indexed = sc.Function._from_exprs("wv_idx", [c, k], [c - 1.0], ["c", "k"], ["n"])
-  plain = sc.Function._from_exprs("wv_plain", [c], [c - 1.0], ["c"], ["n"])
+  cond = sc.Function.from_exprs("wv_go", [cc], [cc[0] > 0.0], ["cc"], ["go"])
+  indexed = sc.Function.from_exprs("wv_idx", [c, k], [c - 1.0], ["c", "k"], ["n"])
+  plain = sc.Function.from_exprs("wv_plain", [c], [c - 1.0], ["c"], ["n"])
   with pytest.raises(ValueError, match="int64 scalar"):
     sc.while_loop(cond, plain, sc.sym("x", 1), max_iter=3, index=True)
   with pytest.raises(ValueError, match="body takes the carry and 0 params"):
@@ -270,7 +270,7 @@ def test_scan_uniform_constant_slice_is_passed_as_a_value() -> None:
 def test_scan_varying_float_table_is_still_read() -> None:
   """A float table whose entries differ along the walk stays a table, read one entry per step."""
   c, t = sc.sym("c", 1), sc.sym("t", ())
-  body = sc.Function._from_exprs("ft_step", [c, t], [c * 0.5 + t], ["c", "t"], ["n"])
+  body = sc.Function.from_exprs("ft_step", [c, t], [c * 0.5 + t], ["c", "t"], ["n"])
   x0 = sc.sym("x0", 1)
   times = np.array([0.5, 1.5, -2.0, 4.0, 0.25])
   (fin,) = sc.scan(body, x0, [(sc.const(times), 0, 1)], length=5)
@@ -293,7 +293,7 @@ def test_where_rejects_a_python_bool_condition() -> None:
 def test_scan_float_table_keeps_the_sign_of_zero(table: list[float]) -> None:
   """``-0.0`` and ``0.0`` compare equal but are different values: ``1 / z`` tells them apart."""
   c, z = sc.sym("c", ()), sc.sym("z", ())
-  body = sc.Function._from_exprs(f"nz_step{len(set(map(str, table)))}", [c, z], [c, 1.0 / z], ["c", "z"], ["n", "y"])
+  body = sc.Function.from_exprs(f"nz_step{len(set(map(str, table)))}", [c, z], [c, 1.0 / z], ["c", "z"], ["n", "y"])
   x0 = sc.sym("x0", ())
   _, ys = sc.scan(body, x0, [(sc.const(np.array(table)), 0, 1)], length=3)
   (got,) = _fn(f"nz{len(set(map(str, table)))}", [x0], [ys])._flat_numerical_call(np.array(1.0))
