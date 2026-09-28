@@ -54,5 +54,5 @@ def casadi_ipopt_options(verbose: bool, **ipopt: object) -> dict[str, object]:
 
 
 def scaly_ipopt_options(verbose: bool, **ipopt: object) -> dict[str, object]:
-  """The same IPOPT options for ``sc.solver(..., "ipopt", options=...)``, which passes them straight through."""
+  """The same IPOPT options for ``sc.opt.solver(..., sc.opt.IPOPT(options=...))``, which passes them straight through."""
   return {"print_level": 5 if verbose else 0, "sb": "yes", **ipopt}

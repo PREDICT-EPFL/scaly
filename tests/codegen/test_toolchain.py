@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from scaly.codegen import aot
-from scaly.solvers import paths as solver_paths_module
+from scaly.opt.external import paths as solver_paths_module
 from scaly.utils import env
 
 

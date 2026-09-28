@@ -50,18 +50,18 @@ def interval(x, u, xnext):
   return sc.concat([xf - xnext, qf])
 
 
-@sc.problem(vars=sc.L("w", NW))
+@sc.opt.problem(vars=sc.L("w", NW))
 def multiple_shooting(w):
   out = sc.vmap(interval, N, [(w, 0, 3), (w, 2, 3), (w, 3, 3)]).reshape((N, 3))
-  return sc.ProblemSpec(minimize=out[:, 2].sum(), eq=(out[:, 0:2].reshape((2 * N,)),), lb=sc.const(LBW), ub=sc.const(UBW))
+  return sc.opt.ProblemSpec(minimize=out[:, 2].sum(), eq=(out[:, 0:2].reshape((2 * N,)),), lb=sc.const(LBW), ub=sc.const(UBW))
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(multiple_shooting, "ipopt", options=scaly_ipopt_options(verbose))
+  solve = sc.opt.solver(multiple_shooting, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
 
   def run():
-    w, _, lam_g, _ = solve(W0, np.zeros(NW), np.zeros(2 * N), np.zeros(0), ())
-    stats = sc.solver_stats(solve)
+    w, _, lam_g, _, _ = solve(W0, np.zeros(NW), np.zeros(2 * N), np.zeros(0), ())
+    stats = sc.opt.solver_stats(solve)
     return {"f": np.array([stats.obj]), "x1": w[0::3], "x2": w[1::3], "u": w[2::3], "lam_g": lam_g, "iter": np.array([stats.iter])}
 
   return run

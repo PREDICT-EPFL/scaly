@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -15,10 +16,13 @@ from ..function.tree import G, L, Tree, param_list
 from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, topo
 from ..ir.types import SparsityType, TensorType
 from ..passes.expr import simplify_cse_fixpoint
-from .model import SolverDescriptor, descriptor_function
+from .external.model import SolverDescriptor, descriptor_function
 from .nlp import _lowered
-from .problem import Problem, ProblemSpec, bounded, problem
-from .registry import SolverBackend
+from .method import Info
+from .problem import NLP, ProblemSpec, bounded, problem
+
+if TYPE_CHECKING:
+  from .external.method import External
 
 type QPData[T] = tuple[tuple[T, T], tuple[T, T], tuple[T, T, T]]
 
@@ -27,8 +31,10 @@ class NotQuadratic(ValueError):
   """A problem rejected because a QP oracle depends nonlinearly on its variables."""
 
 
-def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *, triu: bool = False) -> SparsityType:
-  """Return the structural matrix pattern in compressed sparse column order."""
+def matrix_pattern(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *, triu: bool = False) -> SparsityType:
+  """The structural pattern of ``mat``, an ``Expr`` of ``params``, in compressed sparse column order: an
+  entry is present when it depends on a parameter or is nonzero in ``probe``, its value at one draw of
+  them; ``triu`` keeps the upper triangle. An empty pattern keeps its first entry."""
   nrow, ncol = mat.shape
   vec = mat.vec()
   keep = np.asarray(probe, dtype=np.float64).reshape(-1) != 0.0
@@ -68,7 +74,7 @@ def _reaches_extern_call(exprs: Sequence[Expr]) -> bool:
   return visit(exprs)
 
 
-def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> None:
+def _prove_variable_independent_bounds(problem: NLP[Any, Any, Any, Any]) -> None:
   for side, bound in (("lb", problem.spec.lb), ("ub", problem.spec.ub)):
     if bound is None:
       continue
@@ -87,13 +93,13 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
           raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
 
 
-def _refuse_nested_solvers(problem: Problem[Any, Any, Any, Any]) -> None:
+def _refuse_nested_solvers(problem: NLP[Any, Any, Any, Any]) -> None:
   """Refuse a cost or constraint that reaches a solver, before its oracles differentiate through it."""
   if _reaches_extern_call((problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
 
 
-def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> None:
+def _prove_quadratic(problem: NLP[Any, Any, Any, Any], cached: dict[str, Any]) -> None:
   """Prove that the cost is quadratic and every constraint is affine in the variables."""
   x = cast(Expr, cached["x"])
   hessian = sparse_hessian(simplify_cse_fixpoint(cast(Expr, cached["f"])), x)
@@ -129,7 +135,7 @@ def _concat_vectors(exprs: tuple[Expr, ...]) -> Expr:
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
-def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr]:
+def _qp_data(problem: NLP[Any, Any, Any, Any], cached: dict[str, Any]) -> tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr]:
   x = cast(Expr, cached["x"])
   n = x.size
   zero = Expr.const(np.zeros(x.shape))
@@ -185,51 +191,103 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
   return P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub
 
 
+def prove_qp(problem: NLP[Any, Any, Any, Any]) -> dict[str, Any]:
+  """Prove ``problem`` a quadratic problem: its bounds independent of the variables, no solver
+  inside it, its cost quadratic and its constraints affine; ``NotQuadratic`` names what is not. The
+  proof is kept with the problem; the lowered problem it proves is returned."""
+  cached = problem._cache.get("qp_proof")
+  if cached is None:
+    _prove_variable_independent_bounds(problem)
+    _refuse_nested_solvers(problem)
+    cached = _lowered(problem)
+    _prove_quadratic(problem, cached)
+    problem._cache["qp_proof"] = cached
+  return cast(dict[str, Any], cached)
+
+
+@dataclass(frozen=True)
+class QPForm:
+  """The quadratic normal form of a problem, as ``extract_qp`` proves and builds it:
+
+      minimize 1/2 x' P x + c' x + f0  subject to  A x = b,  g_lb <= G x <= g_ub,  x_lb <= x <= x_ub
+
+  over the problem's variables flattened in declaration order. Every matrix and vector is a dense
+  ``Expr`` of the problem's parameters ``params`` (named ``param_names``); an absent bound is an
+  infinity, and a QP method reads the patterns from ``patterns`` and the values in them from
+  ``in_pattern``."""
+
+  P: Expr
+  c: Expr
+  A: Expr
+  b: Expr
+  G: Expr
+  g_lb: Expr
+  g_ub: Expr
+  x_lb: Expr
+  x_ub: Expr
+  f0: Expr
+  params: tuple[Expr, ...]
+  param_names: tuple[str, ...]
+
+  def patterns(self, name: str = "qp") -> tuple[SparsityType, SparsityType | None, SparsityType | None]:
+    """The structural patterns of ``P``'s upper triangle, ``A`` and ``G`` (``None`` for none of its
+    rows), each ``matrix_pattern`` at one random draw of the parameters, so that an entry that
+    depends on a parameter is present whatever value it takes."""
+    probe = ConcreteFunction.from_exprs(
+      f"{name}_pattern_probe", self.params, (self.P.vec(), self.A.vec(), self.G.vec()), self.param_names, ("P", "A", "G")
+    )
+    rng = np.random.default_rng(0)
+    values = probe.numerical_call(*probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in self.params)))
+    P_sp = matrix_pattern(self.P, self.params, values[0], triu=True)
+    A_sp = matrix_pattern(self.A, self.params, values[1]) if self.A.shape[0] else None
+    G_sp = matrix_pattern(self.G, self.params, values[2]) if self.G.shape[0] else None
+    return P_sp, A_sp, G_sp
+
+  @staticmethod
+  def in_pattern(matrix: Expr, pattern: SparsityType) -> Expr:
+    """The entries of ``matrix`` at ``pattern``'s coordinates, in its (CSC) order."""
+    return _gathered(matrix, pattern)
+
+
+def extract_qp(problem: NLP[Any, Any, Any, Any]) -> QPForm:
+  """The quadratic normal form of ``problem`` (``QPForm``), after proving it one (``prove_qp``, which
+  raises ``NotQuadratic`` naming what is not); kept with the problem."""
+  form = problem._cache.get("qp_form")
+  if form is None:
+    cached = prove_qp(problem)
+    P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
+    x = cast(Expr, cached["x"])
+    f0 = simplify_cse_fixpoint(substitute(cast(Expr, cached["f"]), {x: Expr.const(np.zeros(x.shape))}))
+    form = QPForm(P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub, f0, tuple(problem._param_symbols), problem.params.names)
+    problem._cache["qp_form"] = form
+  return cast(QPForm, form)
+
+
 def build_qp[SV, NV, SP, NP](
-  problem: Problem[SV, NV, SP, NP],
-  backend: SolverBackend,
+  problem: NLP[SV, NV, SP, NP],
+  method: External,
   *,
   name: str,
   options: dict[str, Any] | None,
+  sparse: bool = False,
 ) -> ConcreteFunction[
   [SV, SV, Expr, Expr, SP],
   [NV, NV, np.ndarray, np.ndarray, NP],
-  tuple[SV, SV, Expr, Expr],
-  tuple[NV, NV, np.ndarray, np.ndarray],
+  tuple[SV, SV, Expr, Expr, Info],
+  tuple[NV, NV, np.ndarray, np.ndarray, Info],
 ]:
-  """Build a typed QP solver after proving and extracting the problem's matrix data."""
-  _prove_variable_independent_bounds(problem)
-  _refuse_nested_solvers(problem)
-  cached = _lowered(problem)
-  _prove_quadratic(problem, cached)
-  P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
+  """Build a typed QP solver for the external method ``method`` after proving and extracting the
+  problem's matrix data; ``sparse`` passes the matrices in their structural patterns."""
+  form = extract_qp(problem)
+  P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = form.P, form.c, form.A, form.b, form.G, form.g_lb, form.g_ub, form.x_lb, form.x_ub
   n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]
 
   resolved_options = dict(options or {})
-  sparse_option = resolved_options.pop("sparse", False)
-  if not isinstance(sparse_option, bool):
-    raise TypeError("PIQP option 'sparse' must be a bool")
-  sparse = sparse_option
   params = problem._param_symbols
 
   P_sp = A_sp = G_sp = None
   if sparse:
-    matrices = (P, A, G_mat)
-    probe = ConcreteFunction.from_exprs(
-      f"{name}_pattern_probe",
-      params,
-      tuple(matrix.vec() for matrix in matrices),
-      problem.params.names,
-      ("P", "A", "G"),
-    )
-    rng = np.random.default_rng(0)
-    sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
-    values = probe.numerical_call(*sample)
-    P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
-    if n_eq:
-      A_sp = _qp_matrix_sparsity(A, params, values[1])
-    if n_ineq:
-      G_sp = _qp_matrix_sparsity(G_mat, params, values[2])
+    P_sp, A_sp, G_sp = form.patterns(name)
 
   oracle_outputs: list[Expr] = [_gathered(P, P_sp) if P_sp is not None else P.vec(), c]
   oracle_names = ["P", "c"]
@@ -263,7 +321,8 @@ def build_qp[SV, NV, SP, NP](
   )
   descriptor = SolverDescriptor(
     name=name,
-    backend=backend.name,
+    backend=method.backend,
+    method=method,
     n=n,
     n_eq=n_eq,
     n_ineq=n_ineq,
@@ -282,9 +341,7 @@ def build_qp[SV, NV, SP, NP](
   return cast(Any, descriptor_function(descriptor, input_tree, output_tree))
 
 
-def qp_problem(n: int, n_eq: int, n_ineq: int) -> Problem[Expr, np.ndarray, QPData[Expr], QPData[np.ndarray]]:
-  """Return the typed matrix-data form of a quadratic problem."""
-
+def _matrix_form(n: int, n_eq: int, n_ineq: int, name: str) -> NLP[Expr, np.ndarray, QPData[Expr], QPData[np.ndarray]]:
   @problem(
     vars=L("x", n),
     params=G(
@@ -292,7 +349,7 @@ def qp_problem(n: int, n_eq: int, n_ineq: int) -> Problem[Expr, np.ndarray, QPDa
       G(L("A", (n_eq, n)), L("b", n_eq)),
       G(L("G", (n_ineq, n)), L("g_lb", n_ineq), L("g_ub", n_ineq)),
     ),
-    name="qp",
+    name=name,
   )
   def qp(x: Expr, params: QPData[Expr]) -> ProblemSpec[Expr]:
     (P, c), (A, b), (G_mat, g_lb, g_ub) = params
@@ -303,3 +360,19 @@ def qp_problem(n: int, n_eq: int, n_ineq: int) -> Problem[Expr, np.ndarray, QPDa
     )
 
   return qp
+
+
+@dataclass(frozen=True, init=False)
+class QP(NLP[Expr, np.ndarray, QPData[Expr], QPData[np.ndarray]]):
+  """A quadratic problem in matrix form, whose matrices are its parameters:
+
+      minimize 1/2 x' P x + c' x  subject to  A x = b,  g_lb <= G x <= g_ub
+
+  over ``n`` variables, with ``n_eq`` equalities and ``n_ineq`` rows of inequalities. The
+  parameters are ``((P, c), (A, b), (G, g_lb, g_ub))``. It is an ``NLP`` like any other, so every
+  method solves it; a QP method sees the quadratic it is at once."""
+
+  def __init__(self, n: int, n_eq: int, n_ineq: int, *, name: str = "qp") -> None:
+    traced = _matrix_form(n, n_eq, n_ineq, name)
+    for f in fields(NLP):
+      object.__setattr__(self, f.name, getattr(traced, f.name))

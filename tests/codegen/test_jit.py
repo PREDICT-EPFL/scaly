@@ -183,7 +183,7 @@ def test_jit_input_shape_mismatch_raises(isolated_cache) -> None:
 @pytest.mark.parametrize("nested", [False, True])
 def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) -> None:
   from scaly.codegen import render_c_module
-  from tests.solvers.problem_helpers import build_nlp
+  from tests.opt.problem_helpers import build_nlp
 
   value, target = sc.sym("value", 1), sc.sym("target", 1)
   stage = sc.Function.from_exprs("oracle_stage", [value, target], [((value - target.exp()) ** 2).sum().block()], ["value", "target"], ["cost"])

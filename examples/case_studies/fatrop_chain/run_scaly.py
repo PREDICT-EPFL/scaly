@@ -61,13 +61,13 @@ def main() -> None:
     b = build(dim, nm)
     p = b["problem"]
     options = IPOPT_OPTIONS if args.solver == "ipopt" else {"tol": 1e-8, "max_iter": 100}
-    solve = sc.solver(p, args.solver, name=f"fatrop_chain{dim}d_M{nm}_{args.solver}", options=options)
+    solve = sc.opt.solver(p, sc.opt.REGISTRY.get(args.solver)(options=options), name=f"fatrop_chain{dim}d_M{nm}_{args.solver}")
     z0 = initial_guess(dim, nm, b["horizon"])
     zeros = (np.zeros(b["n_var"]), np.zeros(p.n_eq), np.zeros(p.n_ineq))
 
     def run():
       z, *_ = solve(z0, *zeros, x0)
-      st = sc.solver_stats(solve)
+      st = sc.opt.solver_stats(solve)
       return np.asarray(z), st.iter, st.t_total, st.t_fe
 
   z, iters, wall, fe = run()

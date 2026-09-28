@@ -15,14 +15,14 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.solvers.problem_helpers import build_qp
+from tests.opt.problem_helpers import build_qp
 from scaly.codegen import render_c_api_header, render_c_source
 from scaly.codegen.jit import CompiledFunction, JitError
-from scaly.solvers.registry import available_backends
-from scaly.solvers.stats import CSolverStats
+from scaly.opt.method import REGISTRY
+from scaly.opt.external.stats import CSolverStats
 
 pytestmark = pytest.mark.skipif(
-  "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
+  "piqp" not in REGISTRY.installed(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
 )
 
 
@@ -68,7 +68,7 @@ def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
     compiled.callee_state()
 
   def mismatched_stats(out: ctypes.c_void_p) -> int:
-    ctypes.cast(out, ctypes.POINTER(CSolverStats)).contents.version = sc.SCALY_SOLVER_STATS_VERSION + 1
+    ctypes.cast(out, ctypes.POINTER(CSolverStats)).contents.version = sc.opt.SCALY_SOLVER_STATS_VERSION + 1
     return 0
 
   _, state = compiled._state_entries["stats_version_qp"]
@@ -84,7 +84,7 @@ def test_sparse_qp_rejects_nested_solver_data() -> None:
   inner = build_qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
   x_inner = inner.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), ())[0]
   P = sc.stack([sc.stack([2.0 + x_inner[0], sc.const(0.0)]), sc.stack([sc.const(0.0), sc.const(2.0)])], axis=0)
-  with pytest.raises(sc.NotQuadratic, match="cannot prove QP structure through a nested solver"):
+  with pytest.raises(sc.opt.NotQuadratic, match="cannot prove QP structure through a nested solver"):
     build_qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
 
 

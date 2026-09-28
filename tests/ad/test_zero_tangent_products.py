@@ -69,13 +69,13 @@ def _outer(u):
   return _inner(u)
 
 
-@sc.problem(vars=sc.L("u", 1), name="zero_tangent_two_levels")
+@sc.opt.problem(vars=sc.L("u", 1), name="zero_tangent_two_levels")
 def _two_levels(u):
-  return sc.ProblemSpec(minimize=(u * u).sum(), eq=(_outer(u) - 1.0,))
+  return sc.opt.ProblemSpec(minimize=(u * u).sum(), eq=(_outer(u) - 1.0,))
 
 
 @pytest.mark.solver("piqp")
 def test_piqp_accepts_a_constraint_scaled_behind_two_calls() -> None:
-  solve = sc.solver(_two_levels, "piqp", options={"eps_abs": 1e-10, "eps_rel": 1e-10})
+  solve = sc.opt.solver(_two_levels, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10}))
   u, *_ = solve.numerical_call(np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(0), ())
   np.testing.assert_allclose(u, [0.5], atol=1e-8)  # 2 u = 1

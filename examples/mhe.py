@@ -11,7 +11,7 @@ for the states in the window, the noise sequence and ``b``. ``F`` is an RK4 step
 ``sc.vmap`` with ``b`` broadcast to every stage (stride 0). The arrival cost is centred on the
 previous window's estimate of its second state.
 
-The solver is ``sc.solver(problem, "sqp")``: Scaly's own SQP, generated as C around PIQP
+The solver is ``sc.opt.solver(problem, "sqp")``: Scaly's own SQP, generated as C around PIQP
 subproblems, which warm-starts primal and dual iterates unconditionally, the natural fit for a
 receding horizon. The same ``Problem`` given to IPOPT gives the same estimate on a window, since the
 problem description names no backend.
@@ -51,11 +51,11 @@ def defect(x: sc.Expr, w: sc.Expr, b: sc.Expr, x_next: sc.Expr) -> sc.Expr:
   return rk4(x, b[0]) + sc.stack([sc.const(0.0), DT * w[0]]) - x_next
 
 
-@sc.problem(
+@sc.opt.problem(
   vars=sc.G(sc.L("xs", 2 * (M + 1)), sc.L("ws", M), sc.L("b", 1)),
   params=sc.G(sc.L("ys", M + 1), sc.L("xbar", 2), sc.L("bbar", 1)),
 )
-def estimation(variables: tuple[sc.Expr, ...], params: tuple[sc.Expr, ...]) -> sc.ProblemSpec:
+def estimation(variables: tuple[sc.Expr, ...], params: tuple[sc.Expr, ...]) -> sc.opt.ProblemSpec:
   xs, ws, b = variables
   ys, xbar, bbar = params
   thetas = xs.reshape((M + 1, 2))[:, 0]
@@ -66,15 +66,15 @@ def estimation(variables: tuple[sc.Expr, ...], params: tuple[sc.Expr, ...]) -> s
     + 0.5 * sc.sumsqr(ws) / S_W**2
   )
   defects = sc.vmap(defect, M, [(xs, 0, 2), (ws, 0, 1), (b, 0, 0), (xs, 2, 2)])
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=cost,
     eq=(defects,),
-    lb=(sc.NO_LB, sc.NO_LB, sc.const(np.zeros(1))),
+    lb=(sc.opt.NO_LB, sc.opt.NO_LB, sc.const(np.zeros(1))),
     ub=None,
   )
 
 
-mhe_sqp = sc.solver(estimation, "sqp", name="mhe_sqp", options={"tol": 1e-9, "dual_tol": 1e-8, "qp_tol": 1e-10})
+mhe_sqp = sc.opt.solver(estimation, sc.opt.SQP(options={"tol": 1e-9, "dual_tol": 1e-8, "qp_tol": 1e-10}), name="mhe_sqp")
 
 
 def simulate(seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
@@ -110,8 +110,8 @@ def main() -> dict:
   estimates, b_hist, iterations = [], [], []
   for k in range(M, T):
     window = ys[k - M : k + 1]
-    (xs, ws, b), lam_box, lam_eq, _ = mhe_sqp((xs, ws, b), lam_box, lam_eq, np.zeros(0), (window, xbar, bbar))
-    iterations.append(sc.solver_stats(mhe_sqp).iter)
+    (xs, ws, b), lam_box, lam_eq, _, _ = mhe_sqp((xs, ws, b), lam_box, lam_eq, np.zeros(0), (window, xbar, bbar))
+    iterations.append(sc.opt.solver_stats(mhe_sqp).iter)
     estimates.append(xs[-2:])
     b_hist.append(float(b[0]))
     # Arrival cost for the next window, then shift the solution.
@@ -123,7 +123,7 @@ def main() -> dict:
   naive = np.gradient(ys, DT)[M:] - truth[M:, 1]
 
   # The same window with IPOPT: the Problem is backend-independent.
-  mhe_ipopt = sc.solver(estimation, "ipopt", name="mhe_ipopt", options={"tol": 1e-10})
+  mhe_ipopt = sc.opt.solver(estimation, sc.opt.IPOPT(options={"tol": 1e-10}), name="mhe_ipopt")
   params = (ys[T - M - 1 :], xbar, bbar)
   zeros = ((np.zeros(2 * (M + 1)), np.zeros(M), np.zeros(1)), (np.zeros(2 * (M + 1)), np.zeros(M), np.zeros(1)), np.zeros(n_eq), np.zeros(0))
   (x_s, _, b_s), *_ = mhe_sqp((window_guess(params[0]), np.zeros(M), bbar), *zeros[1:], params)

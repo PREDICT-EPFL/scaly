@@ -85,12 +85,12 @@ def build(dim: int, no_masses: int = 6, horizon: int | None = None, T: float | N
     e = x[end : end + dim] - sc.const(x_end)
     return (ALPHA * sc.sumsqr(e) + BETA * sc.sumsqr(x[dim * (no_masses + 1) :]) + GAMMA * sc.sumsqr(u)).reshape((1,))
 
-  @sc.problem(vars=sc.L("z", n_var), params=sc.L("x0", nx), name=f"chain{dim}d_M{no_masses}_N{horizon}")
-  def problem(z: sc.Expr, x0: sc.Expr) -> sc.ProblemSpec:
+  @sc.opt.problem(vars=sc.L("z", n_var), params=sc.L("x0", nx), name=f"chain{dim}d_M{no_masses}_N{horizon}")
+  def problem(z: sc.Expr, x0: sc.Expr) -> sc.opt.ProblemSpec:
     gaps = sc.vmap(gap, horizon, [(z, 0, nz), (z, nx, nz), (z, nz, nz)])
     costs = sc.vmap(stage_cost, horizon, [(z, 0, nz), (z, nx, nz)])
     us = z[: horizon * nz].reshape((horizon, nz))[:, nx:].reshape((horizon * nu,))
-    return sc.ProblemSpec(minimize=costs.sum(), eq=(gaps, z[:nx] - x0), ineq=(sc.bounded(us, lo=-1.0, hi=1.0, name="u_box"),))
+    return sc.opt.ProblemSpec(minimize=costs.sum(), eq=(gaps, z[:nx] - x0), ineq=(sc.opt.bounded(us, lo=-1.0, hi=1.0, name="u_box"),))
 
   return {"problem": problem, "model": model, "step": step, "n_var": n_var, "nx": nx, "nu": nu, "horizon": horizon, "T": T}
 
@@ -124,9 +124,9 @@ def initial_guess(dim: int, no_masses: int, horizon: int) -> np.ndarray:
 if __name__ == "__main__":
   for dim in (2, 3):
     b = build(dim)
-    solve = sc.solver(b["problem"], "ipopt", name=f"fatrop_chain{dim}d_ipopt", options=IPOPT_OPTIONS)
+    solve = sc.opt.solver(b["problem"], sc.opt.IPOPT(options=IPOPT_OPTIONS), name=f"fatrop_chain{dim}d_ipopt")
     x0, z0 = initial_state(dim), initial_guess(dim, 6, b["horizon"])
     p = b["problem"]
     z, *_ = solve(z0, np.zeros(b["n_var"]), np.zeros(p.n_eq), np.zeros(p.n_ineq), x0)
-    stats = sc.solver_stats(solve)
+    stats = sc.opt.solver_stats(solve)
     print(f"{dim}D: {stats.iter} IPOPT iterations, status {stats.to_solver_status().name}, u_0 = {z[b['nx'] : b['nx'] + b['nu']]}")

@@ -304,20 +304,19 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
     ub[i * nz + nx : (i + 1) * nz] = 1.0
   problem_name = f"chain_M{n_masses}_N{horizon}"
 
-  @sc.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n_masses)), name=problem_name)
-  def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    return sc.ProblemSpec(
+  @sc.opt.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n_masses)), name=problem_name)
+  def problem(z: sc.Expr, p: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
+    return sc.opt.ProblemSpec(
       minimize=_objective(z, n_masses, horizon),
       eq=(_chain_eq_expr(z, p, n_masses, horizon),),
       lb=sc.const(lb),
       ub=sc.const(ub),
     )
 
-  return sc.solver(
+  return sc.opt.solver(
     problem,
-    solver,
+    sc.opt.REGISTRY.get(solver)(options={"max_iter": 80, "tol": 1e-6} if solver == "sqp" else {}),
     name=f"{problem_name}_{solver}",
-    options={"max_iter": 80, "tol": 1e-6} if solver == "sqp" else None,
   )
 
 

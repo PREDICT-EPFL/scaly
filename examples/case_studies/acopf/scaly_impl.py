@@ -121,7 +121,7 @@ def load_case(path: Path) -> Case:
   )
 
 
-def problem(c: Case) -> sc.Problem:
+def problem(c: Case) -> sc.opt.NLP:
   """rosetta-opf's model of case `c` as a Scaly problem, variables `(va, vm, pg, qg, p, q)`."""
   C = sc.const
   ttm = c.tr**2 + c.ti**2
@@ -131,7 +131,7 @@ def problem(c: Case) -> sc.Problem:
   to_vv, to_c, to_s = c.g + c.g_to, (-c.g * c.tr - c.b * c.ti) / ttm, (-c.b * c.tr + c.g * c.ti) / ttm
   toq_vv = -(c.b + c.b_to)
 
-  @sc.problem(vars=sc.G(sc.L("va", c.n_bus), sc.L("vm", c.n_bus), sc.L("pg", c.n_gen), sc.L("qg", c.n_gen), sc.L("p", c.n_arc), sc.L("q", c.n_arc)), name=f"acopf_{c.name}")
+  @sc.opt.problem(vars=sc.G(sc.L("va", c.n_bus), sc.L("vm", c.n_bus), sc.L("pg", c.n_gen), sc.L("qg", c.n_gen), sc.L("p", c.n_arc), sc.L("q", c.n_arc)), name=f"acopf_{c.name}")
   def opf(variables):
     va, vm, pg, qg, p, q = variables
     vm_fr, vm_to = sc.gather(vm, c.f), sc.gather(vm, c.t)
@@ -148,15 +148,15 @@ def problem(c: Case) -> sc.Problem:
     bal_p = sc.segment_sum(p, c.arc_bus, c.n_bus) - gen_p + C(c.pd) + C(c.gs) * vm * vm
     bal_q = sc.segment_sum(q, c.arc_bus, c.n_bus) - gen_q + C(c.qd) - C(c.bs) * vm * vm
     cost = (C(c.cost[:, 0]) * pg * pg + C(c.cost[:, 1]) * pg + C(c.cost[:, 2])).sum()
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=cost,
       eq=(sc.gather(va, c.ref), bal_p, bal_q, eq_p_fr, eq_q_fr, eq_p_to, eq_q_to),
       ineq=(
-        sc.bounded(dva, lo=C(c.angmin), hi=C(c.angmax), name="angle_difference"),
-        sc.bounded(p * p + q * q, hi=C(c.arc_rate**2), name="thermal"),
+        sc.opt.bounded(dva, lo=C(c.angmin), hi=C(c.angmax), name="angle_difference"),
+        sc.opt.bounded(p * p + q * q, hi=C(c.arc_rate**2), name="thermal"),
       ),
-      lb=(sc.NO_LB, C(c.vmin), C(c.pmin), C(c.qmin), C(-c.arc_rate), C(-c.arc_rate)),
-      ub=(sc.NO_UB, C(c.vmax), C(c.pmax), C(c.qmax), C(c.arc_rate), C(c.arc_rate)),
+      lb=(sc.opt.NO_LB, C(c.vmin), C(c.pmin), C(c.qmin), C(-c.arc_rate), C(-c.arc_rate)),
+      ub=(sc.opt.NO_UB, C(c.vmax), C(c.pmax), C(c.qmax), C(c.arc_rate), C(c.arc_rate)),
     )
 
   return opf

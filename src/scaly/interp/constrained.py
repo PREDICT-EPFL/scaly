@@ -11,10 +11,11 @@ from scipy import sparse
 
 from ..function.model import ConcreteFunction
 from ..ir.types import DType
-from ..solvers.qp import qp_problem
-from ..solvers.solver import solver
+from ..opt.qp import QP
+from ..opt.method import REGISTRY
+from ..opt.solver import solver
 from ..function.method import Status
-from ..solvers.wrapper import solver_stats
+from ..opt.external.wrapper import solver_stats
 from .grid import Extrap, Search, basis_derivatives, check_sites, derivative_matrix
 from .spline import BSpline, Strategy, _per_axis, design_matrix
 
@@ -252,10 +253,6 @@ def _derivative_row(knots: Sequence[np.ndarray], degrees: Sequence[int], point: 
 def _qp_solver(n: int, n_eq: int, n_ineq: int) -> ConcreteFunction[Any, Any, Any, Any]:
   key = (n, n_eq, n_ineq)
   if key not in _SOLVERS:
-    _SOLVERS[key] = solver(
-      qp_problem(n, n_eq, n_ineq),
-      "piqp",
-      name=f"interp_constrained_{n}_{n_eq}_{n_ineq}",
-      options={"eps_abs": 1e-12, "eps_rel": 1e-12, "eps_duality_gap_abs": 1e-12, "eps_duality_gap_rel": 1e-12},
-    )
+    tight = {"eps_abs": 1e-12, "eps_rel": 1e-12, "eps_duality_gap_abs": 1e-12, "eps_duality_gap_rel": 1e-12}
+    _SOLVERS[key] = solver(QP(n, n_eq, n_ineq), REGISTRY.get("piqp")(options=tight), name=f"interp_constrained_{n}_{n_eq}_{n_ineq}")
   return _SOLVERS[key]

@@ -11,8 +11,8 @@ import pytest
 
 import scaly as sc
 from scaly import mpc
-from scaly.solvers.qp import NotQuadratic
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.qp import NotQuadratic
+from scaly.opt.external.graph import solver_descriptor
 
 A = np.array([[1.0, 0.1], [0.0, 1.0]])
 B = np.array([[0.005], [0.1]])

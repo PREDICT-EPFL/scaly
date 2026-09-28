@@ -87,29 +87,29 @@ def inferred(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@sc.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
-def quadratic(x: sc.Expr, scale: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-  return sc.ProblemSpec(minimize=(x * x).sum() * scale, lb=sc.const(-1.0), ub=sc.const(1.0))
+@sc.opt.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
+def quadratic(x: sc.Expr, scale: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
+  return sc.opt.ProblemSpec(minimize=(x * x).sum() * scale, lb=sc.const(-1.0), ub=sc.const(1.0))
 
 
-@sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.G(sc.L("x", 4), sc.L("u_ref", 2)))
-def filter_problem(variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, sc.Expr]) -> sc.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
+@sc.opt.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.G(sc.L("x", 4), sc.L("u_ref", 2)))
+def filter_problem(variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, sc.Expr]) -> sc.opt.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
   u, s = variables
   x, u_ref = params
   barrier = x[:2] @ u + x[2:].sum()
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=0.5 * ((u - u_ref) * (u - u_ref)).sum() + 10.0 * s.sum(),
     eq=(u[0:1] - u[1:2],),
-    ineq=(sc.bounded(barrier + s, lo=0.0, name="cbf"), sc.bounded(u, lo=-1.0, hi=1.0, name="u_box")),
-    lb=(sc.NO_LB, sc.const(0.0)),
-    ub=(sc.NO_UB, sc.NO_UB),
+    ineq=(sc.opt.bounded(barrier + s, lo=0.0, name="cbf"), sc.opt.bounded(u, lo=-1.0, hi=1.0, name="u_box")),
+    lb=(sc.opt.NO_LB, sc.const(0.0)),
+    ub=(sc.opt.NO_UB, sc.opt.NO_UB),
   )
 
 
-quadratic_ipopt = sc.solver(quadratic, "ipopt")
-filter_sqp = sc.solver(filter_problem, "sqp")
-qp3 = sc.qp_problem(3, 1, 2)
-qp3_piqp = sc.solver(qp3, "piqp")
+quadratic_ipopt = sc.opt.solver(quadratic, "ipopt")
+filter_sqp = sc.opt.solver(filter_problem, "sqp")
+qp3 = sc.opt.QP(3, 1, 2)
+qp3_piqp = sc.opt.solver(qp3, "piqp")
 
 grad_f_x = sc.gradient(cost, "f", "x")
 hess_f_x = sc.hessian(cost, "f", "x")
@@ -122,8 +122,8 @@ grad2 = sc.gradient(cost2, "f", "x")
 
 
 if TYPE_CHECKING:
-  assert_type(sc.NO_LB, sc.Expr)
-  assert_type(sc.NO_UB, sc.Expr)
+  assert_type(sc.opt.NO_LB, sc.Expr)
+  assert_type(sc.opt.NO_UB, sc.Expr)
   sc.L("x", "3")  # ty: ignore[invalid-argument-type]
   sc.G(sc.L("x", 3))  # ty: ignore[no-matching-overload]
   sc.G(sc.L("x", 3), sc.L("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
@@ -249,27 +249,27 @@ if TYPE_CHECKING:
   assert_type(fwd_f_x.numerical_call((np.zeros(3), np.zeros(())), np.zeros(3)), np.ndarray)
   assert_type(hess_l.numerical_call(np.zeros(3), (np.zeros(3), np.zeros(3))), np.ndarray)
 
-  assert_type(quadratic, sc.Problem[sc.Expr, np.ndarray, sc.Expr, np.ndarray])
+  assert_type(quadratic, sc.opt.NLP[sc.Expr, np.ndarray, sc.Expr, np.ndarray])
   assert_type(
     filter_problem,
-    sc.Problem[
+    sc.opt.NLP[
       tuple[sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray],
       tuple[sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray],
     ],
   )
-  assert_type(qp3, sc.Problem[sc.Expr, np.ndarray, sc.QPData[sc.Expr], sc.QPData[np.ndarray]])
-  sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("p", ()))(lambda variables, p: sc.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
-  sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
+  assert_type(qp3, sc.opt.QP)
+  sc.opt.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("p", ()))(lambda variables, p: sc.opt.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
+  sc.opt.problem(vars=sc.L("x", 2), params=sc.L("p", ()))(lambda x, p: sc.opt.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
 
   assert_type(
     quadratic_ipopt,
     sc.ConcreteFunction[
       [sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
       [np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-      tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+      tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.opt.Info],
+      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, sc.opt.Info],
     ],
   )
   assert_type(
@@ -277,8 +277,8 @@ if TYPE_CHECKING:
     sc.ConcreteFunction[
       [tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr, tuple[sc.Expr, sc.Expr]],
       [tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]],
-      tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],
-      tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
+      tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr, sc.opt.Info],
+      tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, sc.opt.Info],
     ],
   )
   assert_type(
@@ -289,7 +289,7 @@ if TYPE_CHECKING:
       np.zeros(3),
       (np.zeros(4), np.zeros(2)),
     ),
-    tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
+    tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, sc.opt.Info],
   )
   assert_type(
     filter_sqp.symbolic_call(
@@ -299,7 +299,7 @@ if TYPE_CHECKING:
       sc.sym("lam_ineq0", 3),
       (sc.sym("x0", 4), sc.sym("u_ref0", 2)),
     ),
-    tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],
+    tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr, sc.opt.Info],
   )
   assert_type(
     qp3_piqp.numerical_call(
@@ -313,7 +313,7 @@ if TYPE_CHECKING:
         (np.zeros((2, 3)), np.zeros(2), np.zeros(2)),
       ),
     ),
-    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, sc.opt.Info],
   )
   quadratic_ipopt.numerical_call(np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0))  # ty: ignore[missing-argument]
   quadratic_ipopt((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0), np.zeros(())))  # ty: ignore[no-matching-overload]

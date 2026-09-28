@@ -93,7 +93,7 @@ src/scaly/
     transcription.py     how one interval of a horizon becomes variables, equality constraints and a cost
 
   mpc/                   model predictive control: OCPs over a horizon, their solvers and control laws
-    ocp.py               the OCP: dynamics, costs, constraints, horizon, transcription, and the sc.problem it builds
+    ocp.py               the OCP: dynamics, costs, constraints, horizon, transcription, and the sc.opt.problem it builds
     controller.py        MPC: the OCP's solver, its control law with the shifted warm start, closed-loop simulation
     polytope.py          polytopes in halfspace form and the linear programs on them (SciPy's HiGHS)
     terminal.py          terminal ingredients: the LQR gain and cost, ellipsoidal and maximal invariant sets
@@ -109,17 +109,21 @@ src/scaly/
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
     toolchain.py         C compiler discovery, cache root, the diagnostics report
 
-  solvers/
-    model.py             SolverDescriptor, the extern callee of its opaque plain Function
-    wrapper.py           that callee's C: the plugin-rendered wrapper, its stats accessor, its build requirements
-    problem.py           typed backend-free Problem declarations
-    solver.py            backend selection
-    graph.py             the solver queries over a Function graph
-    registry.py          plugin discovery and protocol validation
-    paths.py             vendored solver library and header discovery
-    stats.py             the versioned solver-statistics ABI and SolverStatus
-    qp.py nlp.py         quadratic proof/extraction and NLP oracle construction
+  opt/                   optimization problems and the methods that solve them
+    problem.py           typed NLP declarations and ProblemSpec
+    qp.py nlp.py         the normal forms: quadratic proof and extract_qp, the QP class; nlp_oracles
+    method.py            the opt method registry, METHOD_API and Info
+    solver.py            solver(problem, method): resolve the method, build the Function
     _oracle.py           shared oracle-assembly helpers
+    external/            solvers from plugins, called from generated C
+      method.py          External, the base of every plugin's method class
+      model.py           SolverDescriptor, the extern callee of its opaque plain Function
+      wrapper.py         that callee's C: the plugin-rendered wrapper, the Info frame, its stats accessor, its build requirements
+      graph.py           the solver queries over a Function graph
+      paths.py           vendored solver library and header discovery
+      stats.py           the versioned solver-statistics ABI and SolverStatus
+
+  solvers/
     ipm/                 PIQP's interior-point method written once as generated code
       structure.py       QPStructure (the patterns and which bounds exist) and QPValues
       ruiz.py            Ruiz equilibration of the problem data, as a while_loop
@@ -152,10 +156,10 @@ one, never a higher one.
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
-| 3 | `function/{model,tree,extern}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, and the protocol a Function with an extern body implements. |
+| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites and structural sparsity. Nothing here knows what a `Function` is. |
+| 3 | `function/{model,tree,extern,method}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, the protocol a Function with an extern body implements, and the method interface every domain shares. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
-| 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
+| 5 | `function/{factory,api}`, `opt/*`, `solvers/ipm`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |

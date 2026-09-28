@@ -46,10 +46,10 @@ def instances(horizons: list[int] = HORIZONS, per_horizon: int = 1) -> dict[tupl
   return out
 
 
-def problem(horizon: int) -> sc.Problem:
+def problem(horizon: int) -> sc.opt.NLP:
   a, b = dynamics()
 
-  @sc.problem(
+  @sc.opt.problem(
     vars=sc.G(sc.L("u", (horizon, NU)), sc.L("x", (horizon + 1, NX))),
     params=sc.G(sc.L("q", NX), sc.L("r", NU), sc.L("x0", NX)),
     name=f"masses_T{horizon}",
@@ -61,7 +61,7 @@ def problem(horizon: int) -> sc.Problem:
     dyn = (x[1:] - x[:-1] @ sc.const(a.T) - u @ sc.const(b.T)).vec()
     x_bound = np.full((horizon + 1, NX), X_MAX)
     x_bound[horizon] = np.inf  # the terminal state is not bounded
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=cost,
       eq=(x[0] - x0, dyn),
       lb=(sc.const(np.full((horizon, NU), -U_MAX)), sc.const(-x_bound)),

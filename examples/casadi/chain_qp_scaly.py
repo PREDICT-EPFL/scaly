@@ -31,19 +31,19 @@ def variable_bounds() -> tuple[np.ndarray, np.ndarray]:
 LB, UB = variable_bounds()
 
 
-@sc.problem(vars=sc.L("x", 2 * N))
+@sc.opt.problem(vars=sc.L("x", 2 * N))
 def chain(x):
   y, z = x.reshape((N, 2))[:, 0], x.reshape((N, 2))[:, 1]
   vchain = D_I / 2 * (sc.sumsqr(y[1:] - y[:-1]) + sc.sumsqr(z[1:] - z[:-1])) + G0 * M_I * z.sum()
-  return sc.ProblemSpec(minimize=vchain, ineq=(sc.bounded(z - 0.1 * y, lo=0.5),), lb=sc.const(LB), ub=sc.const(UB))
+  return sc.opt.ProblemSpec(minimize=vchain, ineq=(sc.opt.bounded(z - 0.1 * y, lo=0.5),), lb=sc.const(LB), ub=sc.const(UB))
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(chain, "piqp", options={"sparse": True, "verbose": verbose})
+  solve = sc.opt.solver(chain, sc.opt.PIQP(sparse=True, options={"verbose": verbose}))
 
   def run():
     x, *_ = solve(np.zeros(2 * N), np.zeros(2 * N), np.zeros(0), np.zeros(N), ())
-    return {"f": np.array([sc.solver_stats(solve).obj]), "y": x[0::2], "z": x[1::2]}
+    return {"f": np.array([sc.opt.solver_stats(solve).obj]), "y": x[0::2], "z": x[1::2]}
 
   return run
 

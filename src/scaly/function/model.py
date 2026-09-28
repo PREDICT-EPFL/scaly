@@ -700,7 +700,7 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
   def callee_state(self, name: str | None = None) -> Any:
     """The state the extern callee ``name`` (``function/extern.py``) exposed after the latest call,
     decoded by the callee; ``name`` may be left out when this Function reaches one. A solver's is its
-    statistics, which ``sc.solver_stats`` reads."""
+    statistics, which ``sc.opt.solver_stats`` reads."""
     jit = _jit()
     if self._compiled is None:
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")

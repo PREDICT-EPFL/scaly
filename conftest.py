@@ -80,7 +80,7 @@ def pytest_xdist_node_collection_finished(node, ids) -> None:
   _check_nodeid_baseline(node.config, ids)
 
 
-from scaly.solvers.paths import solver_diagnostic, solver_loadable  # noqa: E402 -- needs the path above
+from scaly.opt.external.paths import solver_diagnostic, solver_loadable  # noqa: E402 -- needs the path above
 
 
 def pytest_collection_modifyitems(items) -> None:

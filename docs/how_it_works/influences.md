@@ -136,7 +136,7 @@ pattern is standard. Doing it on the callee of a `VMAP`, coloring a small local 
 constant seeds through one derivative function and mapping the result, is what keeps generated
 derivative code from growing with the horizon.
 
-Solvers as graph nodes. `sc.problem(...)` returns a backend-free `Problem`; `sc.solver(...)` turns
+Solvers as graph nodes. `sc.opt.problem(...)` returns a problem that names no solver; `sc.opt.solver(...)` turns
 it into a `Function` whose body is an `extern_call`, so a solve nests inside a larger graph like any
 other operation, and the oracles, wrapper and host function compile into a single shared library
 with no Python in the loop. See [Solvers](solvers.md).

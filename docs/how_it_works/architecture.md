@@ -27,9 +27,9 @@ Scaly has two intermediate representations and one direction of travel.
   vectorization that other compilers get from LLVM vector types comes from the GNU vector
   extension gcc, clang and `zig cc` share, with plain C as the opt-in fallback.
 - Everything else hangs off that spine. `ad/` builds derivative graphs inside the expression
-  dialect. `function/` is the user-facing frontend. `solvers/` wraps vendored QP and NLP (quadratic
-  and nonlinear programming) backends as opaque `Function`s. `viz/` watches the pipeline without
-  being part of it.
+  dialect. `function/` is the user-facing frontend. `opt/` turns optimization problems into
+  `Function`s through methods, the vendored QP and NLP (quadratic and nonlinear programming)
+  solvers among them as opaque ones. `viz/` watches the pipeline without being part of it.
 
 ```mermaid
 flowchart TB
@@ -232,9 +232,9 @@ The CLI is `scaly_codegen`. `codegen/__init__.py` imports `.aot`, so running
 copies of the observer registry, letting a CLI render escape a recorder that was armed elsewhere.
 The `python -m scaly.codegen` shim remains available for compatibility.
 
-### Solvers: `solvers/`, `plugins/`
+### Solvers: `opt/`, `plugins/`
 
-`sc.problem(...)` declares a typed backend-free problem. `sc.solver(...)` returns a plain
+`sc.opt.problem(...)` declares a typed problem that names no solver. `sc.opt.solver(problem, method)` returns a plain
 `Function` whose body is `ExprOp.EXTERN_CALL` nodes sharing a `SolverDescriptor`. Calling it with
 `Expr` leaves returns the declared expression tree, so a solver nests directly inside a larger
 graph. `EXTERN_CALL` has no derivative rule: a derivative that reaches one raises, its structural
@@ -244,16 +244,17 @@ A Function with an extern body is the one sanctioned render path outside the pro
 compiler knows it only through the extern-callee protocol in `function/extern.py`: the Functions
 its C calls, the hand-written C sources it adds, the C that defines it, and what compiling and
 loading the translation unit needs (includes, type definitions, prototypes, link flags, a state
-accessor). A `SolverDescriptor` implements the protocol in `solvers/wrapper.py`, which frames a
-body produced by the plugin's `render_wrapper` hook with the stats storage and accessor; the
-plugin drives the vendored C API directly. Everything else in such a graph, the oracle functions
+accessor). A `SolverDescriptor` implements the protocol in `opt/external/wrapper.py`, which frames a
+body produced by the plugin's `render_wrapper` hook with the stats storage, the `Info` outputs and
+the accessor; the plugin drives the vendored C API directly. Everything else in such a graph, the oracle functions
 the wrapper calls and the host function that calls the solver, lowers through the program dialect
 like anything else, and `codegen/aot.py` orders the single translation unit.
 
-Backends ship as separate distributions under `plugins/`, discovered by entry point in
-`solvers/registry.py`. `solvers/paths.py` finds their vendored libraries and headers;
-`solvers/graph.py` answers the queries the backend asks about a graph (is this a solver, what does
-it reach, which flags does it need). The plugin contract is
+The solvers ship as separate distributions under `plugins/`, each a method class declared in the
+`scaly.methods` entry points and found by the registry in `opt/method.py` (`function/method.py`
+holds the machinery every domain shares). `opt/external/paths.py` finds their vendored libraries
+and headers; `opt/external/graph.py` answers the queries the backend asks about a graph (is this a
+solver, what does it reach, which flags does it need). The plugin contract is
 [Solver plugins](../dev/solver_plugins.md); the user-facing interface is
 [Solvers](../guide/solvers.md).
 

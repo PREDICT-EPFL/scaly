@@ -1,53 +1,75 @@
-# Solvers
+# Optimization
 
-## Problem construction
+## Problems
 
-::: scaly.solvers.problem.Bounded
+::: scaly.opt.problem.problem
 
-::: scaly.solvers.problem.bounded
+::: scaly.opt.problem.NLP
 
-::: scaly.solvers.problem.NO_LB
+::: scaly.opt.problem.ProblemSpec
 
-::: scaly.solvers.problem.NO_UB
+::: scaly.opt.problem.Bounded
 
-::: scaly.solvers.problem.ProblemSpec
+::: scaly.opt.problem.bounded
 
-::: scaly.solvers.problem.Problem
+::: scaly.opt.problem.NO_LB
 
-::: scaly.solvers.problem.problem
+::: scaly.opt.problem.NO_UB
 
-## Solver selection
+::: scaly.opt.qp.QP
 
-::: scaly.solvers.solver.solver
+::: scaly.opt.qp.QPData
 
-::: scaly.solvers.qp.qp_problem
+## Solving
 
-::: scaly.solvers.qp.QPData
+::: scaly.opt.solver.solver
 
-::: scaly.solvers.qp.NotQuadratic
-
-## Plugin descriptors
-
-::: scaly.solvers.model.SolverDescriptor
-
-::: scaly.solvers.model.ExternalOracle
-
-## Statistics
-
-::: scaly.solvers.wrapper.solver_stats
-
-::: scaly.solvers.stats.SolverStats
-
-::: scaly.solvers.stats.SolverStatus
+::: scaly.opt.method.Info
 
 ::: scaly.function.method.Status
 
+::: scaly.opt.method.REGISTRY
+
+## Normal forms
+
+::: scaly.opt.qp.extract_qp
+
+::: scaly.opt.qp.QPForm
+
+::: scaly.opt.qp.matrix_pattern
+
+::: scaly.opt.qp.NotQuadratic
+
+::: scaly.opt.nlp.nlp_oracles
+
+::: scaly.opt.nlp.NLPOracles
+
+## External methods
+
+::: scaly.opt.external.method.External
+
+::: scaly.opt.method.METHOD_API
+
+::: scaly.opt.external.model.SolverDescriptor
+
+::: scaly.opt.external.model.ExternalOracle
+
+::: scaly.opt.external.wrapper.SolverWrapperCtx
+
+## Statistics
+
+::: scaly.opt.external.wrapper.solver_stats
+
+::: scaly.opt.external.stats.SolverStats
+
+::: scaly.opt.external.stats.SolverStatus
+
 ## Graph queries
 
-::: scaly.solvers.graph.is_solver_function
+::: scaly.opt.external.graph.is_solver_function
 
-::: scaly.solvers.graph.solver_descriptor
+::: scaly.opt.external.graph.solver_descriptor
 
-::: scaly.solvers.graph.solver_callees
+::: scaly.opt.external.graph.solver_callees
 
-::: scaly.solvers.graph.solver_compile_flags
+::: scaly.opt.external.graph.solver_compile_flags

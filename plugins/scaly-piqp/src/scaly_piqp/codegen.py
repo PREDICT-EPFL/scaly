@@ -1,6 +1,6 @@
 """PIQP C wrapper template — the plugin half of scaly's solver codegen contract.
 
-Called by ``scaly.solvers.wrapper.render_solver`` through the backend's
+Called by ``scaly.opt.external.wrapper.render_solver`` through the backend's
 ``render_wrapper`` hook. Emits a ``static void <ctx.raw_symbol>(...)`` that
 calls the generated QP-data oracle, drives ``piqp_c`` (dense or sparse
 interface), and fills ``ctx.stats_symbol``. Contract: ``docs/dev/solver_plugins.md``.
@@ -12,10 +12,10 @@ import math
 
 from typing import TYPE_CHECKING
 
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 if TYPE_CHECKING:
-  from scaly.solvers.wrapper import SolverWrapperCtx
+  from scaly.opt.external.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
   from scaly.ir.types import SparsityType
 

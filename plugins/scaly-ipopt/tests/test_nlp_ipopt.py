@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.solvers.wrapper import SolverWrapperCtx
+from scaly.opt.external.wrapper import SolverWrapperCtx
 from scaly.ir.types import SparsityType
-from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
-from tests.solvers.problem_helpers import build_nlp, solve_nlp
+from scaly.opt.external.model import ExternalOracle, SolverDescriptor, descriptor_function
+from tests.opt.problem_helpers import build_nlp, solve_nlp
 
 
 def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.ConcreteFunction:
@@ -94,9 +94,9 @@ def test_nlp_generated_stats_and_timing_split() -> None:
   f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
   nlp = build_nlp(x=x, f=f, h_eq=sc.stack([x[0] + x[1] - 1.0]), name="nlp_stats_gen")
   out = solve_nlp(nlp, np.array([0.5, 0.5]), np.zeros(1), np.zeros(0), np.zeros(2))
-  stats = sc.solver_stats(nlp)
+  stats = sc.opt.solver_stats(nlp)
   assert stats is not None
-  assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
+  assert stats.version == sc.opt.SCALY_SOLVER_STATS_VERSION
   assert stats.status == sc.Status.OK
   assert stats.iter > 0
   assert stats.obj == pytest.approx(float(out["f"]), rel=1e-12, abs=1e-12)
@@ -111,8 +111,8 @@ def test_nlp_generated_stats_and_timing_split() -> None:
   assert stats.step_inf >= 0.0 and 0.0 < stats.alpha <= 1.0
   assert stats.backtracks >= 0
   assert stats.merit_penalty == 0.0 and stats.qp_iter == 0
-  assert sc.solver_stats(nlp).to_solver_status() is not None and sc.solver_stats(nlp).to_solver_status().ok
-  assert sc.solver_stats(nlp).to_solver_status().iter == stats.iter
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and sc.opt.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp).to_solver_status().iter == stats.iter
 
 
 @pytest.mark.solver("ipopt")
@@ -144,11 +144,11 @@ def test_nlp_generated_warm_start_reduces_iterations() -> None:
   cold = build("nlp_ws_cold", warm=False)
   warm = build("nlp_ws_warm", warm=True)
   cold_out = solve_nlp(cold, np.array([-1.2, 2.2]), np.zeros(1), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(cold) is not None and sc.solver_stats(cold).status == sc.Status.OK
+  assert sc.opt.solver_stats(cold) is not None and sc.opt.solver_stats(cold).status == sc.Status.OK
   solve_nlp(warm, cold_out["x"], cold_out["lam_eq"], np.zeros(0), cold_out["lam_box"])
-  assert sc.solver_stats(warm) is not None and sc.solver_stats(warm).status == sc.Status.OK
-  assert sc.solver_stats(cold).iter >= 1
-  assert sc.solver_stats(warm).iter < sc.solver_stats(cold).iter
+  assert sc.opt.solver_stats(warm) is not None and sc.opt.solver_stats(warm).status == sc.Status.OK
+  assert sc.opt.solver_stats(cold).iter >= 1
+  assert sc.opt.solver_stats(warm).iter < sc.opt.solver_stats(cold).iter
 
 
 @pytest.mark.solver("ipopt")
@@ -157,11 +157,11 @@ def test_nlp_generated_status_max_iter() -> None:
   f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
   nlp = build_nlp(x=x, f=f, h_eq=sc.stack([x[0] + x[1] - 1.0]), name="nlp_max_iter", options={"max_iter": 1})
   solve_nlp(nlp, np.array([-1.2, 2.2]), np.zeros(1), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(nlp) is not None
-  assert sc.solver_stats(nlp).status == sc.Status.MAX_ITER
-  assert sc.solver_stats(nlp).native_status == -1
-  assert sc.solver_stats(nlp).iter == 1
-  assert sc.solver_stats(nlp).to_solver_status() is not None and not sc.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp) is not None
+  assert sc.opt.solver_stats(nlp).status == sc.Status.MAX_ITER
+  assert sc.opt.solver_stats(nlp).native_status == -1
+  assert sc.opt.solver_stats(nlp).iter == 1
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and not sc.opt.solver_stats(nlp).to_solver_status().ok
 
 
 @pytest.mark.solver("ipopt")
@@ -175,12 +175,12 @@ def test_nlp_generated_rejected_option_reports_error_status() -> None:
   )
   x0 = np.array([0.5, -0.5])
   out = solve_nlp(nlp, x0, np.zeros(1), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(nlp) is not None
-  assert sc.solver_stats(nlp).status == sc.Status.ERROR
-  assert sc.solver_stats(nlp).native_status == -12
-  assert sc.solver_stats(nlp).iter == 0
+  assert sc.opt.solver_stats(nlp) is not None
+  assert sc.opt.solver_stats(nlp).status == sc.Status.ERROR
+  assert sc.opt.solver_stats(nlp).native_status == -12
+  assert sc.opt.solver_stats(nlp).iter == 0
   np.testing.assert_allclose(out["x"], x0)
-  assert sc.solver_stats(nlp).to_solver_status() is not None and not sc.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and not sc.opt.solver_stats(nlp).to_solver_status().ok
 
 
 @pytest.mark.solver("ipopt")
@@ -194,7 +194,7 @@ def test_nlp_equality_constrained_quadratic() -> None:
   h_eq = sc.stack([x[0] + x[1] - 1.0], axis=0)
   nlp = build_nlp(x=x, f=f, h_eq=h_eq)
   out = solve_nlp(nlp, np.array([0.5, 0.5]), np.zeros(1), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(nlp).to_solver_status() is not None and sc.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and sc.opt.solver_stats(nlp).to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.0, 1.0], atol=1e-6)
   np.testing.assert_allclose(out["f"], 2.0, atol=1e-6)
   np.testing.assert_allclose(out["lam_eq"], [2.0], atol=1e-6)
@@ -211,7 +211,7 @@ def test_nlp_box_only_quadratic() -> None:
   f = (x[0] - 0.5) ** 2 + (x[1] + 2) ** 2
   nlp = build_nlp(x=x, f=f, x_lb=np.array([-np.inf, -1.0]))
   out = solve_nlp(nlp, np.array([0.0, 0.0]), np.zeros(0), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(nlp).to_solver_status() is not None and sc.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and sc.opt.solver_stats(nlp).to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.5, -1.0], atol=1e-6)
   # lam_box = mult_x_U - mult_x_L: negative <=> lower bound active.
   assert out["lam_box"][1] < 0
@@ -236,7 +236,7 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
   nlp = build_nlp(x=x, f=f, g_ineq=g, l_ineq=np.array([0.0]), u_ineq=np.array([5.0]))
   x0 = np.array([1.0, -0.5])
   out = solve_nlp(nlp, x0, np.zeros(0), np.zeros(1), np.zeros(2))
-  assert sc.solver_stats(nlp).to_solver_status() is not None and sc.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and sc.opt.solver_stats(nlp).to_solver_status().ok
 
   np.testing.assert_allclose(out["x"], [0.0, 0.0], atol=2e-4)
   np.testing.assert_allclose(out["g_ineq"], [0.0], atol=2e-4)
@@ -266,14 +266,14 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   x0 = np.array([0.2, 0.1, -0.3, 0.2])
   mapped_out = solve_nlp(mapped_nlp, x0, np.zeros(2), np.zeros(0), np.zeros(4))
   unrolled_out = solve_nlp(unrolled_nlp, x0, np.zeros(2), np.zeros(0), np.zeros(4))
-  assert sc.solver_stats(mapped_nlp).to_solver_status() is not None and sc.solver_stats(mapped_nlp).to_solver_status().ok
-  assert sc.solver_stats(unrolled_nlp).to_solver_status() is not None and sc.solver_stats(unrolled_nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(mapped_nlp).to_solver_status() is not None and sc.opt.solver_stats(mapped_nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(unrolled_nlp).to_solver_status() is not None and sc.opt.solver_stats(unrolled_nlp).to_solver_status().ok
   np.testing.assert_allclose(mapped_out["x"], target, atol=2e-6)
   np.testing.assert_allclose(mapped_out["x"], unrolled_out["x"], rtol=1e-7, atol=1e-7)
   np.testing.assert_allclose(mapped_out["f"], unrolled_out["f"], rtol=1e-8, atol=1e-10)
   # The exact-Hessian callback was actually exercised, and the handoff carries correct values:
   # this easy feasible problem could converge identically even with a broken Hessian.
-  assert sc.solver_stats(mapped_nlp) is not None and sc.solver_stats(mapped_nlp).n_eval_h > 0
+  assert sc.opt.solver_stats(mapped_nlp) is not None and sc.opt.solver_stats(mapped_nlp).n_eval_h > 0
 
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
     x = sc.sym("x", 4)
@@ -299,7 +299,7 @@ def test_nlp_with_symbolic_parameter() -> None:
   nlp = build_nlp(x=x, f=f, p=mu)
   for mu_val in [np.zeros(2), np.array([1.5, -2.3])]:
     out = solve_nlp(nlp, np.array([0.0, 0.0]), np.zeros(0), np.zeros(0), np.zeros(2), mu_val)
-    assert sc.solver_stats(nlp).to_solver_status() is not None and sc.solver_stats(nlp).to_solver_status().ok
+    assert sc.opt.solver_stats(nlp).to_solver_status() is not None and sc.opt.solver_stats(nlp).to_solver_status().ok
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-6)
 
 
@@ -315,7 +315,7 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
   nlp = build_nlp(x=x_sym, f=f, h_eq=h_eq)
   x0 = np.array([0.5, 0.5])
   out = solve_nlp(nlp, x0, np.zeros(1), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(nlp).to_solver_status() is not None and sc.solver_stats(nlp).to_solver_status().ok
+  assert sc.opt.solver_stats(nlp).to_solver_status() is not None and sc.opt.solver_stats(nlp).to_solver_status().ok
 
   # Substitute y=1-x. The stationary points solve
   #   400*x^3 + 600*x^2 - 198*x - 202 = 0

@@ -12,9 +12,10 @@ import numpy as np
 from ..function.model import ConcreteFunction
 from ..function.tree import G, L, param_list
 from ..ir.expr import Expr, concat
-from ..solvers.solver import solver as make_solver
-from ..solvers.stats import SolverStatus
-from ..solvers.wrapper import solver_stats
+from ..opt.method import REGISTRY
+from ..opt.solver import solver as make_solver
+from ..opt.external.stats import SolverStatus
+from ..opt.external.wrapper import solver_stats
 from .ocp import OCP
 
 __all__ = ["MPC", "ClosedLoop", "Solution", "simulate"]
@@ -72,9 +73,10 @@ class MPC:
   def __init__(self, ocp: OCP, solver: str = "ipopt", *, options: dict[str, Any] | None = None, name: str | None = None) -> None:
     self.ocp, self.backend = ocp, solver
     self.solver_name = name or f"{ocp.name}_{solver}"
-    if solver == "piqp" and not ocp.condensed:
-      options = {"sparse": True, **(options or {})}  # a horizon's QP is banded: PIQP's sparse backend
-    self.solver = make_solver(ocp.problem, solver, name=self.solver_name, options=options)
+    fields: dict[str, Any] = {"options": dict(options or {})}
+    if solver == "piqp":  # a horizon's QP is banded: PIQP's sparse backend, unless condensed or asked otherwise
+      fields["sparse"] = fields["options"].pop("sparse", not ocp.condensed)
+    self.solver = make_solver(ocp.problem, REGISTRY.get(solver)(**fields), name=self.solver_name)
     layout = ocp.layout
     self.n_eq, self.n_ineq = ocp.problem.n_eq, ocp.problem.n_ineq
     self.guess_size = 2 * layout.n_vars + self.n_eq + self.n_ineq
@@ -141,8 +143,8 @@ class MPC:
     return _tree(primal), _tree(box), lam_eq, lam_ineq, prm
 
   def _solve(self, *args: Any) -> tuple[list[Any], list[Any], Any, Any]:
-    """The solver's four outputs, the variable trees as lists of leaves (one leaf comes bare)."""
-    primal, box, lam_eq, lam_ineq = self.solver(*args)
+    """The solver's solution and multipliers, the variable trees as lists of leaves (one leaf comes bare)."""
+    primal, box, lam_eq, lam_ineq, _ = self.solver(*args)
     return _leaves(primal), _leaves(box), lam_eq, lam_ineq
 
   def _law(self) -> ConcreteFunction[Any, Any, Any, Any]:

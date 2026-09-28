@@ -20,8 +20,8 @@ import numpy as np
 
 import scaly as sc
 from scaly.passes.lowering import lower_function
-from scaly.solvers.paths import solver_loadable
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.paths import solver_loadable
+from scaly.opt.external.graph import solver_descriptor
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,

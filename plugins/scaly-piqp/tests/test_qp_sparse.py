@@ -6,17 +6,17 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.solvers.problem_helpers import build_qp, solve_qp
+from tests.opt.problem_helpers import build_qp, solve_qp
 from scaly.codegen import render_c_source
-from scaly.solvers.qp import _qp_matrix_sparsity
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.qp import matrix_pattern
+from scaly.opt.external.graph import solver_descriptor
 
 
 def _sparse_problem(sparse: bool, name: str) -> sc.Function:
   """Parameterized expression-form QP with structural matrix zeros."""
 
-  @sc.problem(vars=sc.L("decision", 4), params=sc.L("t", 2), name=name)
-  def problem_body(x: sc.Expr, t: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+  @sc.opt.problem(vars=sc.L("decision", 4), params=sc.L("t", 2), name=name)
+  def problem_body(x: sc.Expr, t: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
     objective = (
       0.5 * ((2.0 + t[0] * t[0]) * x[0] * x[0] + 2.0 * t[1] * x[0] * x[1] + 3.0 * x[1] * x[1] + (1.5 + t[1] * t[1]) * x[2] * x[2] + x[3] * x[3])
       + t[0] * x[0]
@@ -24,15 +24,15 @@ def _sparse_problem(sparse: bool, name: str) -> sc.Function:
       + 0.5 * x[2]
       + t[1] * x[3]
     )
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=objective,
       eq=(x[0:1] + x[1:2] - (1.0 + t[0]),),
-      ineq=(sc.bounded(sc.stack([x[1] - x[3], t[0] * x[0] + x[2]]), -2.0, 3.0),),
+      ineq=(sc.opt.bounded(sc.stack([x[1] - x[3], t[0] * x[0] + x[2]]), -2.0, 3.0),),
       lb=sc.const(np.full(4, -5.0)),
       ub=sc.const(np.full(4, 5.0)),
     )
 
-  return sc.solver(problem_body, "piqp", name=name, options={"sparse": sparse})
+  return sc.opt.solver(problem_body, sc.opt.PIQP(sparse=sparse), name=name)
 
 
 @pytest.mark.solver("piqp")
@@ -70,7 +70,7 @@ def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
   for tv in (np.array([0.3, -0.7]), np.array([1.1, 0.2]), np.array([-0.5, 0.9])):
     sparse_out = solve_qp(sparse_qp, np.zeros(4), np.zeros(1), np.zeros(2), tv)
     dense_out = solve_qp(dense_qp, np.zeros(4), np.zeros(1), np.zeros(2), tv)
-    assert sc.solver_stats(sparse_qp) is not None and sc.solver_stats(sparse_qp).status == sc.Status.OK
+    assert sc.opt.solver_stats(sparse_qp) is not None and sc.opt.solver_stats(sparse_qp).status == sc.Status.OK
     for key in sparse_out:
       np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-6, atol=1e-6, err_msg=f"output {key} diverges for t={tv}")
 
@@ -89,7 +89,7 @@ def test_sparse_qp_constant_data_and_stats() -> None:
   assert P_sparsity is not None and P_sparsity.nnz == 3
   out = solve_qp(qp, np.zeros(3), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.5, -0.5, 0.0], atol=1e-7)
-  stats = sc.solver_stats(qp)
+  stats = sc.opt.solver_stats(qp)
   assert stats is not None and stats.status == sc.Status.OK
   assert stats.obj == pytest.approx(float(out["cost"]), rel=1e-12, abs=1e-12)
   assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=0.1, abs=1e-12)
@@ -129,7 +129,7 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   assert P_sparsity is not None
   assert list(zip(P_sparsity.rows, P_sparsity.cols)) == [(0, 0)]
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
-  assert sc.solver_stats(qp) is not None and sc.solver_stats(qp).status == sc.Status.OK
+  assert sc.opt.solver_stats(qp) is not None and sc.opt.solver_stats(qp).status == sc.Status.OK
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
 
 
@@ -140,7 +140,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
   t = sc.sym("t", 1)
   zero = sc.const(0.0)
   P = sc.stack([sc.stack([sc.const(2.0), t[0] - t[0]]), sc.stack([zero, sc.const(2.0)])], axis=0)
-  sparsity = _qp_matrix_sparsity(P, (t,), np.diag([2.0, 2.0]), triu=True)
+  sparsity = matrix_pattern(P, (t,), np.diag([2.0, 2.0]), triu=True)
   assert set(zip(sparsity.rows, sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
 
 

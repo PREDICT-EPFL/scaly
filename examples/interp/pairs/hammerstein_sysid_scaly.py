@@ -25,20 +25,20 @@ def step(x, u, a, c):
   return sc.stack([y, x[0]]), sc.stack([y])
 
 
-@sc.problem(vars=sc.G(sc.L("a", 2), sc.L("c", 20)))
+@sc.opt.problem(vars=sc.G(sc.L("a", 2), sc.L("c", 20)))
 def sysid(theta):
   a, c = theta
   _, y = sc.scan(step, sc.const(np.zeros(2)), [(sc.const(DATA["u"]), 0, 1), (a, 0, 0), (c, 0, 0)], length=N)
   residual = y - DATA["y"]
-  return sc.ProblemSpec(minimize=(residual**2).sum())
+  return sc.opt.ProblemSpec(minimize=(residual**2).sum())
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(sysid, "ipopt", options=scaly_ipopt_options(verbose))
+  solve = sc.opt.solver(sysid, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
 
   def run():
     (a, c), *_ = solve((DATA["a_guess"], DATA["c_guess"]), (np.zeros(2), np.zeros(20)), np.zeros(0), np.zeros(0), ())
-    stats = sc.solver_stats(solve)
+    stats = sc.opt.solver_stats(solve)
     return {"a": a, "c": c, "f": np.array([stats.obj]), "iter": np.array([stats.iter])}
 
   return run

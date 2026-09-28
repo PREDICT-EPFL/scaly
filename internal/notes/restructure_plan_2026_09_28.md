@@ -42,7 +42,7 @@
 | 3.1 | Linear-algebra ops move into `scaly.linalg` | ☑ |
 | 3.2 | `linalg.banded` and `linalg.stagewise` | ☑ |
 | 4.1 | Method registry and the common `Info`/`Status` | ☑ |
-| 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☐ |
+| 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☑ |
 | 4.3 | IPM as the method `opt.ipm` | ☐ |
 | 4.4 | `scaly.roots` | ☐ |
 | 4.5 | `integrators` and `interp` as method registries | ☐ |
@@ -584,6 +584,23 @@ Changes: `solvers/` becomes `opt/` (§3.5); `sc.problem`/`sc.solver`/`qp_problem
 move to `scaly.methods` entry points and emit `status`/`iter` as outputs; `interp/constrained.py`
 and `mpc` updated. Rewrite `docs/dev/solver_plugins.md` and `docs/guide/solvers.md`.
 Gate: plugin tests pass; no import of an underscore name from `scaly.opt` outside it.
+Log: done 2026-09-29. `solvers/` is `opt/` (problems, the normal forms, `solver`) and `opt/external/`
+(descriptor, wrapper frame, stats, paths, graph queries, and `External`, the base of every plugin's
+method class); `solvers/` keeps only `ipm` for 4.3. `sc.problem`, `sc.solver`, `sc.qp_problem`,
+`sc.Problem` and the rest of the solver names left the top level for `sc.opt` (`sc.opt.NLP`, and
+`sc.opt.QP(n, n_eq, n_ineq)`, a subclass, for the matrix form); about 700 callers, 97 files by
+codemod. The plugins are method classes (`PIQP(sparse=, options=)`, `IPOPT(options=)`,
+`SQP(options=)`, options checked when the method is made) in `scaly.methods` under `opt.<name>`;
+`scaly.solvers` and the backend objects are gone, and `METHOD_API` 9 continues the plugin protocol.
+`sc.opt.solver(problem, method="auto")` takes an instance, a name or `"auto"` (PIQP, IPOPT, SQP in
+that order, a QP method's `supports` proving the problem quadratic). Every solver returns an
+`opt.Info` (status, iter, objective, primal residual) after its solution: core's frame defines the
+exported raw function around the plugin's `<raw>_solve` and copies them from the stats, so no
+plugin wrapper changed; the solver C snapshot moved by exactly that frame. `extract_qp` (`QPForm`,
+with `patterns`/`in_pattern`, and `matrix_pattern`) and `nlp_oracles` (`NLPOracles`) are the public
+normal forms; `generated_piqp.py` uses them and renders byte-identical C, and a test refuses an
+underscore import from `scaly.opt` outside it. Four notebooks with uncommitted edits by the user were
+rewritten in both the working copy and the index, their edits left unstaged.
 
 **4.3 IPM as `opt.ipm`.**
 Changes: `solvers/ipm/` becomes `opt/ipm/`; `examples/qp_solvers/generated_piqp.py` becomes the

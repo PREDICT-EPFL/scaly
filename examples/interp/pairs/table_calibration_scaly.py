@@ -19,18 +19,18 @@ GRID, POINTS, MEASURED, _ = calibration_data()
 N = GRID.size
 
 
-@sc.problem(vars=sc.L("T", (N, N)))
+@sc.opt.problem(vars=sc.L("T", (N, N)))
 def calibrate(T):
   residual = interp.interpolant((GRID, GRID), T, kind="linear").at(POINTS) - MEASURED
-  return sc.ProblemSpec(minimize=(residual**2).sum())
+  return sc.opt.ProblemSpec(minimize=(residual**2).sum())
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(calibrate, "ipopt", options=scaly_ipopt_options(verbose))
+  solve = sc.opt.solver(calibrate, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
 
   def run():
     table, *_ = solve(np.zeros((N, N)), np.zeros((N, N)), np.zeros(0), np.zeros(0), ())
-    stats = sc.solver_stats(solve)
+    stats = sc.opt.solver_stats(solve)
     return {"table": table, "f": np.array([stats.obj]), "iter": np.array([stats.iter])}
 
   return run

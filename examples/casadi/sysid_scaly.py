@@ -68,34 +68,34 @@ U_DATA = 0.1 * np.random.random(N)
 Y_DATA = all_samples(U_DATA, PARAM_TRUTH)
 
 
-@sc.problem(vars=sc.L("params", 4), params=sc.G(sc.L("u", N), sc.L("y", N)))
+@sc.opt.problem(vars=sc.L("params", 4), params=sc.G(sc.L("u", N), sc.L("y", N)))
 def single_shooting(params, data):
   u, y = data
   e = y - all_samples(u, params * SCALE)
-  return sc.ProblemSpec(minimize=0.5 * sc.dot(e, e))
+  return sc.opt.ProblemSpec(minimize=0.5 * sc.dot(e, e))
 
 
-@sc.problem(vars=sc.G(sc.L("params", 4), sc.L("X", 2 * N)), params=sc.G(sc.L("u", N), sc.L("y", N)))
+@sc.opt.problem(vars=sc.G(sc.L("params", 4), sc.L("X", 2 * N)), params=sc.G(sc.L("u", N), sc.L("y", N)))
 def multiple_shooting(variables, data):
   params, X = variables
   u, y = data
   Xn = sc.vmap(one_sample, N, [(X, 0, 2), (u, 0, 1), (params * SCALE, 0, 0)]).reshape((N, 2))
   e = y - Xn[:, 0]
   gaps = Xn[:-1] - X.reshape((N, 2))[1:]
-  return sc.ProblemSpec(minimize=0.5 * sc.dot(e, e), eq=(gaps.reshape((2 * (N - 1),)),))
+  return sc.opt.ProblemSpec(minimize=0.5 * sc.dot(e, e), eq=(gaps.reshape((2 * (N - 1),)),))
 
 
 def build(verbose: bool = False):
-  single = sc.solver(single_shooting, "ipopt", options=scaly_ipopt_options(verbose))
-  multiple = sc.solver(multiple_shooting, "ipopt", options=scaly_ipopt_options(verbose))
+  single = sc.opt.solver(single_shooting, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
+  multiple = sc.opt.solver(multiple_shooting, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
   yd = np.diff(Y_DATA) * FS
   X0 = np.stack([Y_DATA, np.r_[yd, yd[-1]]], axis=1).reshape(-1)
 
   def run():
     p_single, *_ = single(PARAM_GUESS, np.zeros(4), np.zeros(0), np.zeros(0), (U_DATA, Y_DATA))
-    it_single = sc.solver_stats(single).iter
+    it_single = sc.opt.solver_stats(single).iter
     (p_multiple, _), *_ = multiple((PARAM_GUESS, X0), (np.zeros(4), np.zeros(2 * N)), np.zeros(2 * (N - 1)), np.zeros(0), (U_DATA, Y_DATA))
-    it_multiple = sc.solver_stats(multiple).iter
+    it_multiple = sc.opt.solver_stats(multiple).iter
     return {
       "params_single": p_single * SCALE,
       "params_multiple": p_multiple * SCALE,

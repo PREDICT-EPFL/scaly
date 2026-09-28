@@ -23,8 +23,8 @@ import numpy as np
 import scaly as sc
 from scaly.ir.expr import substitute
 from scaly.codegen.aot import render_c_module
-from scaly.solvers.graph import solver_compile_flags
-from scaly.solvers.paths import solver_loadable
+from scaly.opt.external.graph import solver_compile_flags
+from scaly.opt.external.paths import solver_loadable
 from benchmarks.harness import CLOSED_LOOP_PAIRS, SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root, gbench, solver_oracle_name
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path
@@ -72,14 +72,14 @@ def _qp_filter() -> sc.Function:
         rows.append(sc.stack([grad[d] if k == car else sc.const(0.0) for k in range(2) for d in range(2)], axis=0))
         bias.append(ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
-    @sc.problem(vars=sc.L("u", NU), name="smoke_safety_filter_qp_problem")
+    @sc.opt.problem(vars=sc.L("u", NU), name="smoke_safety_filter_qp_problem")
     def problem(u):
-      return sc.ProblemSpec(
+      return sc.opt.ProblemSpec(
         minimize=0.5 * sc.dot(u, u) - sc.dot(u_ref, u),
-        ineq=(sc.bounded(sc.stack(rows, axis=0) @ u, lo=-sc.stack(bias, axis=0), name="obstacles"),),
+        ineq=(sc.opt.bounded(sc.stack(rows, axis=0) @ u, lo=-sc.stack(bias, axis=0), name="obstacles"),),
       )
 
-    solve = sc.solver(problem, "piqp", name="smoke_safety_filter_qp_piqp")
+    solve = sc.opt.solver(problem, "piqp", name="smoke_safety_filter_qp_piqp")
     params = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
     return solve.symbolic_call(sc.const(np.zeros(NU)), sc.const(np.zeros(NU)), sc.const(np.zeros(0)), sc.const(np.zeros(len(bias))), params)[0]
 
@@ -101,12 +101,12 @@ def _nlp_filter() -> sc.Function:
         grad = 2.0 * diff
         rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
-    @sc.problem(vars=sc.L("u", (NU,)), name="smoke_safety_filter_problem")
+    @sc.opt.problem(vars=sc.L("u", (NU,)), name="smoke_safety_filter_problem")
     def problem(variable):
-      return sc.ProblemSpec(
+      return sc.opt.ProblemSpec(
         minimize=0.5 * sc.dot(variable - u_ref, variable - u_ref),
         ineq=(
-          sc.bounded(
+          sc.opt.bounded(
             sc.stack([substitute(row, {u: variable}) for row in rows], axis=0),
             lo=sc.const(np.zeros(len(rows))),
             hi=sc.const(np.full(len(rows), 1e30)),
@@ -115,7 +115,7 @@ def _nlp_filter() -> sc.Function:
         ),
       )
 
-    nlp = sc.solver(problem, "ipopt", name="smoke_safety_filter_nlp_ipopt")
+    nlp = sc.opt.solver(problem, "ipopt", name="smoke_safety_filter_nlp_ipopt")
     return nlp.symbolic_call(
       sc.const(np.zeros(NU)),
       sc.const(np.zeros(NU)),

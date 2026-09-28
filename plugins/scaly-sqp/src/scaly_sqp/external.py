@@ -8,7 +8,7 @@ from typing import Any
 from scaly.function import ConcreteFunction
 from scaly.function.tree import G, L, flat_tree, param_list
 from scaly.ir.types import SparsityType, TensorType
-from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
+from scaly.opt.external.model import ExternalOracle, SolverDescriptor, descriptor_function
 
 
 def external_nlp(

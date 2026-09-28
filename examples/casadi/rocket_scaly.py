@@ -28,18 +28,18 @@ def F(x, u):
   return x
 
 
-@sc.problem(vars=sc.L("U", NU))
+@sc.opt.problem(vars=sc.L("U", NU))
 def rocket(U):
   (X,) = sc.scan(F, sc.const(np.array([0.0, 0.0, 1.0])), [(U, 0, 1)], length=NU)
-  return sc.ProblemSpec(minimize=sc.sumsqr(U), eq=(X[0:2] - sc.const(np.array([10.0, 0.0])),), lb=sc.const(-0.5), ub=sc.const(0.5))
+  return sc.opt.ProblemSpec(minimize=sc.sumsqr(U), eq=(X[0:2] - sc.const(np.array([10.0, 0.0])),), lb=sc.const(-0.5), ub=sc.const(0.5))
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(rocket, "ipopt", options=scaly_ipopt_options(verbose, tol=1e-10))
+  solve = sc.opt.solver(rocket, sc.opt.IPOPT(options=scaly_ipopt_options(verbose, tol=1e-10)))
 
   def run():
-    U, lam_U, lam_g, _ = solve(np.full(NU, 0.4), np.zeros(NU), np.zeros(2), np.zeros(0), ())
-    stats = sc.solver_stats(solve)
+    U, lam_U, lam_g, _, _ = solve(np.full(NU, 0.4), np.zeros(NU), np.zeros(2), np.zeros(0), ())
+    stats = sc.opt.solver_stats(solve)
     return {"f": np.array([stats.obj]), "u": U, "lam_u": lam_U, "lam_g": lam_g, "iter": np.array([stats.iter])}
 
   return run

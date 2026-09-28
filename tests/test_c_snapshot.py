@@ -23,9 +23,9 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.solvers.problem_helpers import build_qp
+from tests.opt.problem_helpers import build_qp
 from scaly.codegen import render_c_api_header, render_c_source
-from scaly.solvers.registry import available_backends
+from scaly.opt.method import REGISTRY
 
 BASELINE = Path(__file__).resolve().parent / "baseline" / "c"
 N_STAGES = 3
@@ -171,7 +171,7 @@ def test_baseline_holds_exactly_the_corpus() -> None:
 def main() -> int:
   BASELINE.mkdir(parents=True, exist_ok=True)
   builders = dict(CORPUS)
-  if "piqp" in available_backends():
+  if "piqp" in REGISTRY.installed():
     builders |= SOLVER_CORPUS
   else:
     print("skipping the solver entry: the scaly-piqp plugin is not installed")

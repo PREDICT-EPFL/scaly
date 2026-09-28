@@ -1,6 +1,6 @@
-"""``examples/qp_solvers``: the generated PIQP, reached from a ``sc.problem``, against the PIQP library.
+"""``examples/qp_solvers``: the generated PIQP, reached from a ``sc.opt.problem``, against the PIQP library.
 
-The example's front end (``generated_piqp.solver``) extracts a problem's QP the way ``sc.solver`` does
+The example's front end (``generated_piqp.solver``) extracts a problem's QP the way ``sc.opt.solver`` does
 and generates the solver from it. On small instances of the four families it must take the vendored
 library's iterations, backend for backend, and return its solution; ``qp_data`` must reproduce the
 problem's objective.
@@ -48,12 +48,12 @@ def test_generated_piqp_matches_the_library(example: dict, family: str, backend:
   params = case.params()
   x, _, _, _, status, iters, obj = gp["solver"](case.problem, backend, name=f"test_{case.name}_{family}_{backend}")(params)
 
-  library = sc.solver(case.problem, "piqp", name=f"test_{case.name}_{family}_lib_{backend}", options={"sparse": backend == "sparse"})
+  library = sc.opt.solver(case.problem, sc.opt.PIQP(sparse=backend == "sparse"), name=f"test_{case.name}_{family}_lib_{backend}")
   p = case.problem
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
   out = library(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
   x_lib = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(out[0], "x")])
-  stats = sc.solver_stats(library)
+  stats = sc.opt.solver_stats(library)
 
   assert int(status) == 1 and stats.status.name == "OK"
   assert int(iters) == stats.iter

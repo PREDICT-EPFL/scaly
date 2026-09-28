@@ -1,49 +1,47 @@
-"""Structural tests for the solver plugin protocol (docs/dev/solver_plugins.md).
+"""Structural tests for external optimization methods (docs/dev/solver_plugins.md).
 
-These exercise the registry gates and the core/plugin codegen handoff with a
-fake in-test backend — no C toolchain or vendored solver library involved.
+These exercise the registry gates and the core/plugin codegen handoff with a fake in-test method
+(an ``External``) — no C toolchain or vendored solver library involved.
 """
 
 from __future__ import annotations
 
-import sys
+from dataclasses import dataclass, replace
+from importlib.metadata import EntryPoint
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.function import method as core_method
 from scaly.function.extern import ExternRenderCtx
-from scaly.solvers import graph as solver_graph
-from scaly.solvers import registry, wrapper
-from scaly.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
-from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
-from scaly.solvers.graph import solver_descriptor
+from scaly.function.method import MethodError, MethodRegistry
+from scaly.opt import method as opt_method
+from scaly.opt.external import External, wrapper
+from scaly.opt.external import graph as solver_graph
+from scaly.opt.external.graph import solver_descriptor
+from scaly.opt.external.model import ExternalOracle, SolverDescriptor, descriptor_function
+from scaly.opt.method import METHOD_API
 
 
-class _FakeEntryPoint:
-  def __init__(self, backend: object) -> None:
-    self._backend = backend
-
-  def load(self) -> object:
-    return self._backend
-
-
-class _FakeBackend:
-  name = "fake"
+@dataclass(frozen=True)
+class FakeMethod(External):
+  name = "opt.fake"
   kind = "qp"
-  protocol_version = SOLVER_PLUGIN_PROTOCOL_VERSION
   lib_stem = "fake"
   link_flags = ("-lfake",)
   header = "fake/fake.h"
 
-  def include_dir(self) -> Path:
+  @staticmethod
+  def include_dir() -> Path:
     return Path("/nonexistent/include")
 
-  def lib_dir(self) -> Path:
+  @staticmethod
+  def lib_dir() -> Path:
     return Path("/nonexistent/lib")
 
-  def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201 - protocol mirror
+  def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201 - the hook's signature
     inputs = ", ".join(f"const double* in{i}" for i in range(len(solver_descriptor(fun).input_signature)))
     outputs = ", ".join(f"double* out{i}" for i in range(len(solver_descriptor(fun).output_signature)))
     return [
@@ -53,10 +51,16 @@ class _FakeBackend:
     ]
 
 
-def _fake_solver_function(backend: str = "fake") -> sc.ConcreteFunction:
+@dataclass(frozen=True)
+class StaleMethod(FakeMethod):
+  name = "opt.stale"
+  api = METHOD_API - 1
+
+
+def _fake_solver_function(method: External | None = None) -> sc.ConcreteFunction:
   desc = SolverDescriptor(
     name="fake_qp",
-    backend=backend,
+    backend="fake",
     n=1,
     n_eq=0,
     n_ineq=0,
@@ -64,65 +68,66 @@ def _fake_solver_function(backend: str = "fake") -> sc.ConcreteFunction:
     output_signature=(("x", (1,)),),
     param_names=(),
     n_var_blocks=0,
+    method=method or FakeMethod(),
   )
   return descriptor_function(desc)
 
 
-def test_protocol_version_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _Stale(_FakeBackend):
-    protocol_version = SOLVER_PLUGIN_PROTOCOL_VERSION - 1
-
-  monkeypatch.setattr(registry, "available_backends", lambda: {"stale": _FakeEntryPoint(_Stale())})
-  with pytest.raises(SolverPluginError, match="protocol version"):
-    registry.get_backend("stale")
+FAKES = [
+  EntryPoint("opt.fake", "tests.opt.test_registry:FakeMethod", core_method.METHOD_ENTRY_POINTS),
+  EntryPoint("opt.stale", "tests.opt.test_registry:StaleMethod", core_method.METHOD_ENTRY_POINTS),
+]
 
 
-def test_entry_point_name_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "available_backends", lambda: {"other": _FakeEntryPoint(_FakeBackend())})
-  with pytest.raises(SolverPluginError, match="must equal the entry-point name"):
-    registry.get_backend("other")
+@pytest.fixture
+def fake_opt_registry(monkeypatch: pytest.MonkeyPatch) -> MethodRegistry:
+  """The opt registry seeing only the fake methods, with nothing loaded yet."""
+  monkeypatch.setattr(core_method, "entry_points", lambda group: [ep for ep in FAKES if ep.group == group])
+  monkeypatch.setattr(opt_method.REGISTRY, "_loaded", {})
+  monkeypatch.setattr(opt_method, "_EXTERNAL", {})
+  return opt_method.REGISTRY
 
 
-def test_missing_render_wrapper_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _NoRender(_FakeBackend):
-    render_wrapper = None
+def test_a_method_api_mismatch_is_rejected(fake_opt_registry: MethodRegistry) -> None:
+  with pytest.raises(MethodError, match=f"implements API {METHOD_API - 1} of NLP; this scaly has API {METHOD_API}"):
+    fake_opt_registry.get("stale")
 
-  monkeypatch.setattr(registry, "available_backends", lambda: {"fake": _FakeEntryPoint(_NoRender())})
-  with pytest.raises(SolverPluginError, match="render_wrapper"):
-    registry.get_backend("fake")
+
+def test_external_methods_skip_a_broken_install_with_a_warning(fake_opt_registry: MethodRegistry) -> None:
+  with pytest.warns(RuntimeWarning, match="could not load opt.stale"):
+    methods = opt_method.external_methods()
+  assert list(methods) == ["fake"] and isinstance(methods["fake"], FakeMethod)
+
+
+def test_a_missing_method_names_its_distribution(fake_opt_registry: MethodRegistry) -> None:
+  with pytest.raises(MethodError, match=r"opt\.ipopt is not installed; it comes with scaly-ipopt"):
+    fake_opt_registry.get("ipopt")
+  with pytest.raises(MethodError, match=r"no method opt\.nope; installed: \['fake', 'stale'\]"):
+    fake_opt_registry.get("nope")
 
 
 def test_broken_path_provider_does_not_hide_other_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _BrokenPaths(_FakeBackend):
-    def include_dir(self):  # noqa: ANN201
+  from scaly.opt.external import paths
+
+  @dataclass(frozen=True)
+  class BrokenPaths(FakeMethod):
+    @staticmethod
+    def include_dir() -> Path:
       raise OSError("boom")
 
-    def lib_dir(self):  # noqa: ANN201
-      raise OSError("boom")
-
-  monkeypatch.setattr(registry, "loaded_backends", lambda: {"fake": _FakeBackend(), "broken": _BrokenPaths()})
-  with pytest.warns(RuntimeWarning, match="could not inspect solver plugin 'broken'"):
-    paths = registry.installed_backend_paths()
-  assert len(paths) == 1
-
-
-def test_loaded_backends_skips_version_mismatch_with_warning(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _Stale(_FakeBackend):
-    protocol_version = SOLVER_PLUGIN_PROTOCOL_VERSION - 1
-
-  monkeypatch.setattr(registry, "available_backends", lambda: {"fake": _FakeEntryPoint(_FakeBackend()), "stale": _FakeEntryPoint(_Stale())})
-  with pytest.warns(RuntimeWarning, match="could not load solver plugin 'stale'"):
-    backends = registry.loaded_backends()
-  assert list(backends) == ["fake"]
+  monkeypatch.setattr(paths, "_backends", lambda: {"fake": FakeMethod(), "broken": BrokenPaths()})
+  with pytest.warns(RuntimeWarning, match="could not inspect opt.broken"):
+    found = paths._plugin_solver_paths()
+  assert len(found) == 1
 
 
 def test_generic_lib_env_var_override(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-  from scaly.solvers import paths as solver_paths_module
+  from scaly.opt.external import paths as solver_paths_module
   from scaly.utils import env
 
   lib = tmp_path / f"libfake{env.shared_lib_ext()}"
   lib.write_text("")
-  monkeypatch.setattr(solver_paths_module, "_backends", lambda: {"fake": _FakeBackend()})
+  monkeypatch.setattr(solver_paths_module, "_backends", lambda: {"fake": FakeMethod()})
   monkeypatch.setattr(solver_paths_module, "_plugin_solver_paths", lambda: [])
   monkeypatch.setenv("SCALY_FAKE_LIB", str(lib))
   paths = solver_paths_module.solver_paths()
@@ -130,62 +135,74 @@ def test_generic_lib_env_var_override(tmp_path, monkeypatch: pytest.MonkeyPatch)
   assert paths.source == "SCALY_FAKE_LIB"
 
 
-def test_kind_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
-  with pytest.raises(SolverPluginError, match="solves qp problems, not nlp"):
-    registry.require_backend("fake", "nlp")
+def test_a_method_declares_what_it_solves() -> None:
+  @dataclass(frozen=True)
+  class NoKind(FakeMethod):
+    kind = "lp"
+
+  @dataclass(frozen=True)
+  class NoTriangle(FakeMethod):
+    kind = "nlp"
+    hess_triangle = None
+
+  with pytest.raises(TypeError, match="must declare kind 'qp' or 'nlp'"):
+    NoKind()
+  with pytest.raises(TypeError, match="must declare hess_triangle"):
+    NoTriangle()
 
 
 @pytest.mark.parametrize("triangle", ["lower", "upper"])
-def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.MonkeyPatch, triangle: str) -> None:
-  class _FakeNlpBackend(_FakeBackend):
+def test_nlp_descriptor_uses_the_methods_hessian_triangle(triangle: str) -> None:
+  @dataclass(frozen=True)
+  class FakeNlp(FakeMethod):
     kind = "nlp"
     hess_triangle = triangle
 
-  fake_backend = lambda name: _FakeNlpBackend()  # noqa: E731
-  monkeypatch.setattr(registry, "get_backend", fake_backend)
-  monkeypatch.setattr(sys.modules["scaly.solvers.solver"], "get_backend", fake_backend)
-
-  @sc.problem(vars=sc.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
+  @sc.opt.problem(vars=sc.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
   def problem(x):
-    return sc.ProblemSpec(minimize=x[0] * x[1])
+    return sc.opt.ProblemSpec(minimize=x[0] * x[1])
 
-  nlp = sc.solver(problem, "fake", name=f"layout_{triangle}")
+  nlp = sc.opt.solver(problem, FakeNlp(), name=f"layout_{triangle}")
   sparsity = solver_descriptor(nlp).hess_sparsity
   assert sparsity is not None
   assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
   assert not hasattr(solver_descriptor(nlp), "hess_lower_mask")
 
 
-def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _MissingTriangle(_FakeBackend):
-    kind = "nlp"
-    hess_triangle = None
+def test_a_qp_method_refuses_a_problem_that_is_not_quadratic() -> None:
+  @sc.opt.problem(vars=sc.L("nq_x", 2), name="not_quadratic")
+  def problem(x):
+    return sc.opt.ProblemSpec(minimize=(x**4).sum())
 
-  monkeypatch.setattr(registry, "get_backend", lambda name: _MissingTriangle())
-  with pytest.raises(SolverPluginError, match="must declare hess_triangle"):
-    registry.require_backend("fake", "nlp")
-
-
-def test_missing_backend_error_lists_installed(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "available_backends", lambda: {})
-  with pytest.raises(SolverPluginError, match="no solver plugin 'nope'"):
-    registry.get_backend("nope")
+  support = FakeMethod().supports(problem)
+  assert not support and "not quadratic" in support.reasons[0]
+  with pytest.raises(sc.opt.NotQuadratic, match="cost is not quadratic"):
+    sc.opt.solver(problem, FakeMethod())
 
 
 def test_render_solver_dispatches_to_plugin_and_frames_stats(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
   lines = wrapper.render_solver(fun, solver_descriptor(fun), ExternRenderCtx("fake_qp", "fake_qp_raw"))
-  # Core-owned framing: stats storage before the plugin body, accessor after.
+  # Core-owned framing: stats storage before the plugin body, which defines ``<raw>_solve`` over the
+  # solution; ``<raw>`` calls it and writes the Info outputs from the stats; the accessor comes last.
   assert lines[0] == "static scaly_solver_stats fake_qp_stats_data;"
-  assert "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w) {" in lines
+  assert "static void fake_qp_raw_solve(const double* in0, const double* in1, const double* in2, double* out0, double* w) {" in lines
+  frame = lines.index(
+    "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* out1, double* out2, double* out3, double* out4, double* w) {"
+  )
+  assert lines[frame + 1 : frame + 6] == [
+    "  fake_qp_raw_solve(in0, in1, in2, out0, w);",
+    "  out1[0] = (double)fake_qp_stats_data.status;",
+    "  out2[0] = (double)fake_qp_stats_data.iter;",
+    "  out3[0] = (double)fake_qp_stats_data.obj;",
+    "  out4[0] = (double)fake_qp_stats_data.primal_viol;",
+  ]
   assert "int fake_qp_stats(scaly_solver_stats* out) {" in lines
   # The plugin body was told about the same stats symbol core declared.
   assert "  fake_qp_stats_data.version = SCALY_SOLVER_STATS_VERSION;" in lines
 
 
-def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_external_oracle_source_and_symbol_cross_the_plugin_boundary() -> None:
   oracle = ExternalOracle(
     name="foreign_base",
     raw_symbol="foreign_base_raw",
@@ -204,20 +221,22 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
     param_names=(),
     n_var_blocks=0,
     base=oracle,
+    method=FakeMethod(),
   )
 
-  class _ExternalBackend(_FakeBackend):
+  @dataclass(frozen=True)
+  class ExternalBackend(FakeMethod):
     def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201
       assert ctx.raw_symbol_of(solver_descriptor(fun).base) == "foreign_base_raw"
       return super().render_wrapper(fun, ctx)
 
-  monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
+  desc = replace(desc, method=ExternalBackend())
   source = sc.codegen.render_c_source(descriptor_function(desc))
   assert source.count(oracle.source) == 1
   assert source.index(oracle.source) < source.index("static scaly_solver_stats external_qp_stats_data;")
 
 
-def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_external_oracle_workspace_is_part_of_solver_workspace() -> None:
   oracle = ExternalOracle(
     name="foreign_base",
     raw_symbol="foreign_base_raw",
@@ -237,8 +256,8 @@ def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pyte
     param_names=(),
     n_var_blocks=0,
     base=oracle,
+    method=FakeMethod(),
   )
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   from scaly.codegen.aot import render_c_module
 
   header = render_c_module(descriptor_function(desc)).header
@@ -258,6 +277,7 @@ def _external_solver(name: str, oracle: ExternalOracle) -> sc.ConcreteFunction:
       param_names=(),
       n_var_blocks=0,
       base=oracle,
+      method=FakeMethod(),
     )
   )
 
@@ -267,8 +287,7 @@ def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypat
   oracle = ExternalOracle("shared", "shared_raw", source, (("x", (1,)),), (("f", ()),))
   left, right = _external_solver("left_solver", oracle), _external_solver("right_solver", oracle)
   args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
-  host = sc.Function.from_exprs("two_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
+  host = sc.Function.from_exprs("two_external_solvers", [], [left(tuple(args))[0] + right(tuple(args))[0]], [], ["x"])
 
   from scaly.codegen.aot import render_c_module
 
@@ -280,8 +299,7 @@ def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch
   second = ExternalOracle("second", "shared_raw", "static void shared_raw(int x) { (void)x; }", (), ())
   left, right = _external_solver("left_conflict", first), _external_solver("right_conflict", second)
   args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
-  host = sc.Function.from_exprs("conflicting_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
+  host = sc.Function.from_exprs("conflicting_external_solvers", [], [left(tuple(args))[0] + right(tuple(args))[0]], [], ["x"])
 
   from scaly.codegen.aot import render_c_module
 
@@ -294,7 +312,7 @@ def test_stats_abi_v3_layout_is_additive() -> None:
   and keeps the struct 8-aligned (four doubles at offset 96, two int32)."""
   import ctypes
 
-  from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, STATS_FIELDS, CSolverStats
+  from scaly.opt.external.stats import SCALY_SOLVER_STATS_VERSION, STATS_FIELDS, CSolverStats
 
   assert SCALY_SOLVER_STATS_VERSION == 3
   names = [name for name, _ in STATS_FIELDS]
@@ -309,7 +327,6 @@ def test_stats_abi_v3_layout_is_additive() -> None:
 
 
 def test_solver_backends_used_and_includes(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
   assert solver_graph.solver_backends_used(fun) == ("fake",)
   assert wrapper.solver_requirements("fake_qp", solver_descriptor(fun)).includes == ("#include <time.h>", '#include "fake/fake.h"')

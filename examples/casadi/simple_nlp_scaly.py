@@ -11,17 +11,17 @@ import scaly as sc
 from _common import scaly_ipopt_options, show
 
 
-@sc.problem(vars=sc.L("x", 2))
+@sc.opt.problem(vars=sc.L("x", 2))
 def simple_nlp(x):
-  return sc.ProblemSpec(minimize=x[0] ** 2 + x[1] ** 2, ineq=(sc.bounded(x[0] + x[1] - 10, lo=0.0),))
+  return sc.opt.ProblemSpec(minimize=x[0] ** 2 + x[1] ** 2, ineq=(sc.opt.bounded(x[0] + x[1] - 10, lo=0.0),))
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(simple_nlp, "ipopt", options=scaly_ipopt_options(verbose))
+  solve = sc.opt.solver(simple_nlp, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
 
   def run():
-    x, lam_x, _, lam_g = solve(np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(1), ())
-    stats = sc.solver_stats(solve)
+    x, lam_x, _, lam_g, _ = solve(np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(1), ())
+    stats = sc.opt.solver_stats(solve)
     return {"f": np.array([stats.obj]), "x": x, "lam_x": lam_x, "lam_g": lam_g, "iter": np.array([stats.iter])}
 
   return run

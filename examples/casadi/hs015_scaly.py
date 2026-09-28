@@ -14,21 +14,21 @@ import scaly as sc
 from _common import scaly_ipopt_options, show
 
 
-@sc.problem(vars=sc.L("x", 2))
+@sc.opt.problem(vars=sc.L("x", 2))
 def hs015(x):
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=100 * (x[1] - x[0] ** 2) ** 2 + (1 - x[0]) ** 2,
-    ineq=(sc.bounded(sc.stack([x[0] * x[1], x[0] + x[1] ** 2]), lo=sc.const(np.array([1.0, 0.0]))),),
+    ineq=(sc.opt.bounded(sc.stack([x[0] * x[1], x[0] + x[1] ** 2]), lo=sc.const(np.array([1.0, 0.0]))),),
     ub=sc.const(np.array([0.5, np.inf])),
   )
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(hs015, "ipopt", options=scaly_ipopt_options(verbose))
+  solve = sc.opt.solver(hs015, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
 
   def run():
-    x, lam_x, _, lam_g = solve(np.array([-2.0, 1.0]), np.zeros(2), np.zeros(0), np.zeros(2), ())
-    return {"f": np.array([sc.solver_stats(solve).obj]), "x": x, "lam_x": lam_x, "lam_g": lam_g}
+    x, lam_x, _, lam_g, _ = solve(np.array([-2.0, 1.0]), np.zeros(2), np.zeros(0), np.zeros(2), ())
+    return {"f": np.array([sc.opt.solver_stats(solve).obj]), "x": x, "lam_x": lam_x, "lam_g": lam_g}
 
   return run
 

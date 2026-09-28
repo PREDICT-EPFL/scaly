@@ -21,8 +21,8 @@ from dataclasses import replace
 import numpy as np
 
 import scaly as sc
-from scaly.solvers.paths import solver_loadable, solver_paths
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.paths import solver_loadable, solver_paths
+from scaly.opt.external.graph import solver_descriptor
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,

@@ -6,14 +6,14 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.solvers.problem_helpers import build_qp
-from scaly.solvers.registry import available_backends
+from tests.opt.problem_helpers import build_qp
+from scaly.opt.method import REGISTRY
 from scaly.ir.expr import ExprOp, topo
 from scaly.codegen import render_c_source
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 pytestmark = pytest.mark.skipif(
-  "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
+  "piqp" not in REGISTRY.installed(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
 )
 
 
@@ -21,16 +21,17 @@ def test_solver_call_returns_expressions() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
   out_exprs = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
-  assert len(out_exprs) == len(qp.output_names)
+  *solution, info = out_exprs  # the solution's four groups, then the solver's Info
+  assert len(solution) == 4 and isinstance(info, sc.opt.Info)
   # call() inherits from Function and wraps each output in an ExprOp.CALL node
   # whose callee is the solver function — the inner EXTERN_CALL nodes live in
   # the callee's own expression graph.
-  for e in out_exprs:
+  for e in (*solution, info.status, info.iter, info.objective, info.primal_residual):
     assert e.op == ExprOp.CALL
     assert e.attrs["callee"] is qp
   # Shapes line up with the descriptor's output signature.
   expected_shapes = tuple(s for _, s in solver_descriptor(qp).output_signature)
-  for e, expected in zip(out_exprs, expected_shapes, strict=True):
+  for e, expected in zip(solution, expected_shapes, strict=True):
     assert e.shape == expected
 
 
@@ -72,8 +73,8 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
   host = sc.Function.from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
-  stats = sc.solver_stats(host, "nested_stats_qp")
-  assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
+  stats = sc.opt.solver_stats(host, "nested_stats_qp")
+  assert stats.version == sc.opt.SCALY_SOLVER_STATS_VERSION
   assert stats.status == sc.Status.OK
   assert stats.n_eval_f == 1
 

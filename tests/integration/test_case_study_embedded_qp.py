@@ -24,13 +24,13 @@ NM, T = 2, 3
 NX, NU = 2 * NM, NM
 
 
-def masses() -> sc.Problem:
+def masses() -> sc.opt.NLP:
   band = -2 * np.eye(NM) + np.eye(NM, k=1) + np.eye(NM, k=-1)
   ac = np.block([[np.zeros((NM, NM)), np.eye(NM)], [band, np.zeros((NM, NM))]])
   a = np.eye(NX) + 0.25 * ac  # explicit Euler: the study's matrix exponential is not what is under test
   b = 0.25 * np.vstack([np.zeros((NM, NM)), np.eye(NM)])
 
-  @sc.problem(
+  @sc.opt.problem(
     vars=sc.G(sc.L("u", (T, NU)), sc.L("x", (T + 1, NX))), params=sc.G(sc.L("q", NX), sc.L("r", NU), sc.L("x0", NX)), name="masses_param_hessian"
   )
   def problem(variables, params):
@@ -40,7 +40,7 @@ def masses() -> sc.Problem:
     dyn = (x[1:] - x[:-1] @ sc.const(a.T) - u @ sc.const(b.T)).vec()
     x_bound = np.full((T + 1, NX), 0.6)
     x_bound[T] = np.inf
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=cost,
       eq=(x[0] - x0, dyn),
       lb=(sc.const(np.full((T, NU), -0.5)), sc.const(-x_bound)),
@@ -63,7 +63,7 @@ def generated_piqp() -> Iterator[dict]:
 def test_generated_piqp_with_a_parametric_hessian_matches_the_library(generated_piqp: dict) -> None:
   p = masses()
   generated = generated_piqp["solver"](p, "sparse", name="test_masses_param_hessian_generated")
-  library = sc.solver(p, "piqp", name="test_masses_param_hessian_library", options={"sparse": True})
+  library = sc.opt.solver(p, sc.opt.PIQP(sparse=True), name="test_masses_param_hessian_library")
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
   x0 = np.array([0.5, -0.4, 0.3, 0.2])
   solutions = []
@@ -72,7 +72,7 @@ def test_generated_piqp_with_a_parametric_hessian_matches_the_library(generated_
     x, _, _, _, status, iters, obj = generated(params)
     out = library(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
     x_lib = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(out[0], "x")])
-    stats = sc.solver_stats(library)
+    stats = sc.opt.solver_stats(library)
     assert int(status) == 1 and stats.status.name == "OK"
     assert int(iters) == stats.iter
     np.testing.assert_allclose(x, x_lib, atol=1e-8 * (1 + np.abs(x_lib).max()))

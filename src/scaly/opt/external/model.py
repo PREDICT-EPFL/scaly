@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..function import ConcreteFunction
-from ..function.extern import BuildRequirements, ExternRenderCtx, ExternSource, ExternState, extern_function
-from ..function.tree import Tree, _G
-from ..ir.types import SparsityType
-from ..utils.names import c_ident
+from ...function import ConcreteFunction
+from ...function.extern import BuildRequirements, ExternRenderCtx, ExternSource, ExternState, extern_function
+from ...function.tree import Tree, _G, flat_tree
+from ...ir.types import SparsityType, TensorType
+from ...utils.names import c_ident
+from ..method import Info
 from . import wrapper
 
 
@@ -47,7 +48,7 @@ class SolverDescriptor:
   """
 
   name: str
-  backend: str  # solver plugin name (an ``scaly.solvers`` entry point, e.g. "piqp", "ipopt")
+  backend: str  # the method's short name ("piqp" for the ``scaly.methods`` entry ``opt.piqp``)
   n: int
   n_eq: int
   n_ineq: int
@@ -78,6 +79,9 @@ class SolverDescriptor:
   G_sparsity: SparsityType | None = None
   # Solver-specific options
   options: tuple[tuple[str, Any], ...] = ()
+  # The external method (``opt.external.External``) whose wrapper, header and library this uses;
+  # the installed one with default options when left out.
+  method: Any = field(default=None, hash=False, compare=False, repr=False)
   # Oracle output naming (QP); the order in which the oracle's outputs encode
   # the QP data buffers.
   oracle_output_names: tuple[str, ...] = ()
@@ -138,7 +142,14 @@ def descriptor_function(
 
   ``input_tree`` is its parameter list: for a solver, the five slots of the warm start, the
   multipliers and the parameters. Without one the inputs are a single group, as for ``from_exprs``.
+  The outputs are the descriptor's (``output_tree``, or flat) and then an ``opt.Info``, which the
+  wrapper frame fills from the solver's statistics (``wrapper.render_solver``).
   """
+  info = Info.tree()
+  signature = descriptor.output_signature
+  solution = output_tree or flat_tree(tuple(n for n, _ in signature), tuple(TensorType(s, diff=False) for _, s in signature))
+  parts = solution.parts if isinstance(solution, _G) else (solution,)
+  outputs = (*signature, *zip(info.names, info.shapes, strict=True))
   return extern_function(
-    descriptor.name, descriptor, descriptor.input_signature, descriptor.output_signature, input_tree=input_tree, output_tree=output_tree
+    descriptor.name, descriptor, descriptor.input_signature, outputs, input_tree=input_tree, output_tree=_G((*parts, info), public=False)
   )

@@ -76,10 +76,10 @@ cpp = "scaly.codegen.cpp"
 casadi = "scaly.codegen.casadi"
 
 [project.entry-points."scaly.toolchain_report"]
-solvers = "scaly.solvers.paths:toolchain_report"
+solvers = "scaly.opt.external.paths:toolchain_report"
 
 [project.entry-points."scaly.env_vars"]
-solvers = "scaly.solvers.paths:SOLVER_ENV_VARS"
+solvers = "scaly.opt.external.paths:SOLVER_ENV_VARS"
 
 [project.scripts]
 scaly_codegen = "scaly.codegen.aot:main"

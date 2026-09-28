@@ -66,17 +66,20 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.function.api": 5,
   "scaly.function.factory": 5,
   "scaly.solvers": 5,
-  "scaly.solvers._oracle": 5,
-  "scaly.solvers.graph": 5,
-  "scaly.solvers.nlp": 5,
-  "scaly.solvers.problem": 5,
-  "scaly.solvers.solver": 5,
-  "scaly.solvers.stats": 5,
-  "scaly.solvers.paths": 5,
-  "scaly.solvers.qp": 5,
-  "scaly.solvers.registry": 5,
-  "scaly.solvers.model": 5,
-  "scaly.solvers.wrapper": 5,
+  "scaly.opt": 5,
+  "scaly.opt.external": 5,
+  "scaly.opt._oracle": 5,
+  "scaly.opt.external.graph": 5,
+  "scaly.opt.nlp": 5,
+  "scaly.opt.problem": 5,
+  "scaly.opt.solver": 5,
+  "scaly.opt.external.stats": 5,
+  "scaly.opt.external.paths": 5,
+  "scaly.opt.qp": 5,
+  "scaly.opt.external.method": 5,
+  "scaly.opt.method": 5,
+  "scaly.opt.external.model": 5,
+  "scaly.opt.external.wrapper": 5,
   "scaly.solvers.ipm": 5,
   "scaly.solvers.ipm.structure": 5,
   "scaly.solvers.ipm.ruiz": 5,
@@ -243,7 +246,7 @@ def test_module_imports_standalone(module: str) -> None:
 
 
 # The packages built on the compiler, which ``import scaly`` leaves unloaded (``sc.<name>`` loads one).
-BUILT_ON_THE_CORE = ("scaly.integrators", "scaly.interp", "scaly.linalg", "scaly.mpc")
+BUILT_ON_THE_CORE = ("scaly.integrators", "scaly.interp", "scaly.linalg", "scaly.mpc", "scaly.opt")
 
 
 def test_import_scaly_is_the_compiler_alone() -> None:

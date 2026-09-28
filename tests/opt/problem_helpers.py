@@ -11,7 +11,7 @@ import scaly as sc
 from scaly.function.tree import Tree, flat_tree
 from scaly.ir.expr import Expr, as_expr, substitute
 from scaly.ir.types import TensorType
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 
 def build_nlp(
@@ -38,7 +38,7 @@ def build_nlp(
     if param.name is None:
       raise ValueError("test parameter needs a name")
 
-  def spec(replacements: dict[Expr, Expr]) -> sc.ProblemSpec[Expr]:
+  def spec(replacements: dict[Expr, Expr]) -> sc.opt.ProblemSpec[Expr]:
     def sub(value: Any) -> Expr:
       return substitute(as_expr(value), replacements)
 
@@ -46,13 +46,13 @@ def build_nlp(
     inequalities = ()
     if g_ineq is not None:
       inequalities = (
-        sc.bounded(
+        sc.opt.bounded(
           sub(g_ineq),
           None if l_ineq is None else sub(l_ineq),
           None if u_ineq is None else sub(u_ineq),
         ),
       )
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=sub(f),
       eq=equalities,
       ineq=inequalities,
@@ -62,8 +62,8 @@ def build_nlp(
 
   if not declared_params:
 
-    @sc.problem(vars=variables, name=name)
-    def problem_body(new_x: Expr) -> sc.ProblemSpec[Expr]:
+    @sc.opt.problem(vars=variables, name=name)
+    def problem_body(new_x: Expr) -> sc.opt.ProblemSpec[Expr]:
       return spec({x: new_x})
 
   else:
@@ -72,13 +72,13 @@ def build_nlp(
       tuple(TensorType(param.shape, param.type.dtype, param.type.sparsity, diff=False) for param in declared_params),
     )
 
-    @sc.problem(vars=variables, params=param_tree, name=name)
-    def problem_body(new_x: Expr, new_params: Any) -> sc.ProblemSpec[Expr]:
+    @sc.opt.problem(vars=variables, params=param_tree, name=name)
+    def problem_body(new_x: Expr, new_params: Any) -> sc.opt.ProblemSpec[Expr]:
       replacements = {x: new_x}
       replacements.update(zip(declared_params, param_tree.flatten_symbolic(new_params, "test parameters"), strict=True))
       return spec(replacements)
 
-  return sc.solver(problem_body, solver, name=name, options=options)
+  return sc.opt.solver(problem_body, sc.opt.REGISTRY.get(solver)(options=options or {}), name=name)
 
 
 def build_qp(
@@ -106,13 +106,13 @@ def build_qp(
     raise ValueError(f"c must have shape ({n},), got {c_expr.shape}")
   variable = sc.L("decision", n)
 
-  @sc.problem(vars=variable, name=name)
-  def problem_body(x: Expr) -> sc.ProblemSpec[Expr]:
+  @sc.opt.problem(vars=variable, name=name)
+  def problem_body(x: Expr) -> sc.opt.ProblemSpec[Expr]:
     equalities = () if A_eq is None else (as_expr(A_eq) @ x - as_expr(b_eq),)
     inequalities = ()
     if G_ineq is not None:
-      inequalities = (sc.bounded(as_expr(G_ineq) @ x, l_ineq, u_ineq),)
-    return sc.ProblemSpec(
+      inequalities = (sc.opt.bounded(as_expr(G_ineq) @ x, l_ineq, u_ineq),)
+    return sc.opt.ProblemSpec(
       minimize=0.5 * (x @ P_expr @ x) + c_expr @ x,
       eq=equalities,
       ineq=inequalities,
@@ -120,7 +120,7 @@ def build_qp(
       ub=None if x_ub is None else as_expr(x_ub),
     )
 
-  return sc.solver(problem_body, solver, name=name, options={"sparse": sparse, **(options or {})})
+  return sc.opt.solver(problem_body, sc.opt.REGISTRY.get(solver)(sparse=sparse, options=options or {}), name=name)
 
 
 def solve_qp(
@@ -136,11 +136,11 @@ def solve_qp(
   if params and named_params:
     raise TypeError("pass positional or named QP parameters, not both")
   values = params or tuple(named_params[name] for name in descriptor.param_names)
-  outputs = solver(*solver.input_tree.unflatten((x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)))
-  result = dict(zip(solver.output_names, outputs, strict=True))
+  *outputs, _ = solver(*solver.input_tree.unflatten((x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)))
+  result = dict(zip(solver.output_names, outputs, strict=False))
   result["x"] = outputs[0]
   result["lam_box"] = outputs[1]
-  result["cost"] = np.asarray(sc.solver_stats(solver).obj)
+  result["cost"] = np.asarray(sc.opt.solver_stats(solver).obj)
   return result
 
 
@@ -157,7 +157,7 @@ def solve_nlp(
   if len(params) != len(descriptor.param_names):
     raise ValueError(f"expected {len(descriptor.param_names)} parameters, got {len(params)}")
   param_values: Any = () if not params else params[0] if len(params) == 1 else params
-  x, lam_box, lam_eq, lam_ineq = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, param_values)
+  x, lam_box, lam_eq, lam_ineq, _ = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, param_values)
   base = descriptor.base
   if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), param_values))

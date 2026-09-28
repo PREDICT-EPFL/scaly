@@ -11,8 +11,8 @@ license-files = ["LICENSE.md"]
 requires = ["hatchling", "cmake>=3.5"]
 build-backend = "hatchling.build"
 
-[project.entry-points."scaly.solvers"]
-piqp = "scaly_piqp:BACKEND"
+[project.entry-points."scaly.methods"]
+"opt.piqp" = "scaly_piqp:PIQP"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scaly_piqp"]

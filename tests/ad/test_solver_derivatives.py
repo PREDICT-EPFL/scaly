@@ -14,10 +14,10 @@ from scaly.ad import jacobian_sparsity, jvp, jvp_many, vjp
 from scaly.passes.expr import simplify_cse_fixpoint
 
 
-@sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()), name="solver_derivatives_qp")
+@sc.opt.problem(vars=sc.L("x", 2), params=sc.L("p", ()), name="solver_derivatives_qp")
 def _qp(x, p):
   """``x0 = clip((p - 1) / 2, 0.2, 0.8)``, ``x1 = 1 - x0``: interior for ``1.4 < p < 2.6``."""
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=x[0] ** 2 + x[1] ** 2 + x[0] * x[1] - (2.0 + p) * x[0] - 4.0 * x[1],
     eq=(x.sum() - 1.0,),
     lb=sc.const(np.zeros(2)),
@@ -25,7 +25,7 @@ def _qp(x, p):
   )
 
 
-SOLVE = sc.solver(_qp, "piqp", name="solver_derivatives_solve", options={"eps_abs": 1e-10, "eps_rel": 1e-10})
+SOLVE = sc.opt.solver(_qp, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10}), name="solver_derivatives_solve")
 ZEROS = (sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(0)))
 
 
@@ -66,7 +66,8 @@ def _ruled() -> sc.Function:
   inputs = [sc.sym(name, e.shape) for name, e in zip(SOLVE.input_names, SOLVE.inputs, strict=True)]
   tangents = [sc.sym(f"d{name}", e.shape) for name, e in zip(SOLVE.input_names, SOLVE.inputs, strict=True)]
   dp = tangents[-1]
-  outs = [sc.const(np.array([0.5, -0.5])) * dp, sc.const(np.zeros(2)) * dp, sc.const(np.zeros(1)) * dp, sc.const(np.zeros(0))]
+  solution = [sc.const(np.array([0.5, -0.5])) * dp, sc.const(np.zeros(2)) * dp, sc.const(np.zeros(1)) * dp, sc.const(np.zeros(0))]
+  outs = [*solution, *(sc.const(0.0) * dp for _ in range(4))]  # the Info outputs carry no derivative
   rule = sc.Function.from_exprs("solver_derivatives_rule", [*inputs, *tangents], outs, names, [f"d{name}" for name in SOLVE.output_names])
   return sc.custom_derivative(SOLVE, jvp=rule)
 

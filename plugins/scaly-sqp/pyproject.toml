@@ -11,8 +11,8 @@ license-files = ["LICENSE.md"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project.entry-points."scaly.solvers"]
-sqp = "scaly_sqp:BACKEND"
+[project.entry-points."scaly.methods"]
+"opt.sqp" = "scaly_sqp:SQP"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scaly_sqp"]

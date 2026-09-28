@@ -67,23 +67,6 @@ from .function.method import Status
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
-from .solvers import (
-  SCALY_SOLVER_STATS_VERSION,
-  Bounded,
-  NO_LB,
-  NO_UB,
-  NotQuadratic,
-  Problem,
-  ProblemSpec,
-  QPData,
-  SolverStats,
-  SolverStatus,
-  bounded,
-  problem,
-  qp_problem,
-  solver,
-  solver_stats,
-)
 from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
 from .ir.spec import Rule, Spec, VerifyError
 from .ad.sparse import SparseJacobian, sparse_jacobian_colored, sparse_jacobian_reference
@@ -96,13 +79,14 @@ const = Expr.const
 
 # The packages built on the compiler load on first use, so ``import scaly`` is the compiler alone:
 # ``sc.linalg`` imports ``scaly.linalg`` the first time it is read.
-_PACKAGES = ("integrators", "interp", "linalg", "mpc")
+_PACKAGES = ("integrators", "interp", "linalg", "mpc", "opt")
 
 if TYPE_CHECKING:
   from . import integrators as integrators
   from . import interp as interp
   from . import linalg as linalg
   from . import mpc as mpc
+  from . import opt as opt
 
 
 def __getattr__(name: str) -> Any:
@@ -120,10 +104,8 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
   "BACKEND_SUPPORT",
-  "SCALY_SOLVER_STATS_VERSION",
   "Status",
   "BackendSupport",
-  "Bounded",
   "BufferType",
   "C_API_SIGNATURE",
   "COMMON_OPS",
@@ -134,19 +116,11 @@ __all__ = [
   "Function",
   "G",
   "L",
-  "NO_LB",
-  "NO_UB",
   "NotConcrete",
-  "NotQuadratic",
   "ExprOp",
   "Pattern",
   "PatternMatcher",
   "ScalarType",
-  "Problem",
-  "ProblemSpec",
-  "QPData",
-  "SolverStats",
-  "SolverStatus",
   "Spec",
   "SparseJacobian",
   "SparsityType",
@@ -157,7 +131,6 @@ __all__ = [
   "as_dtype",
   "atan2",
   "backend_supports",
-  "bounded",
   "c_api_signature",
   "dtypes",
   "color_groups",
@@ -206,8 +179,6 @@ __all__ = [
   "put",
   "put_add",
   "where",
-  "problem",
-  "qp_problem",
   "norm_1",
   "norm_2",
   "norm_inf",
@@ -218,8 +189,6 @@ __all__ = [
   "options",
   "set_options",
   "program_graph",
-  "solver",
-  "solver_stats",
   "render_expr_assembly",
   "render_program_assembly",
   "rewrite",

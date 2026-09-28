@@ -76,7 +76,7 @@ static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* 
 
 static scaly_solver_stats corpus_qp_stats_data;
 // PIQP dense solver wrapper for corpus_qp (n=2, p=0, m=0).
-static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w) {
+static void corpus_qp_raw_solve(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w) {
   (void)in0;
   (void)in1;
   (void)in2;
@@ -155,6 +155,14 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   corpus_qp_stats_data.t_glue = stats_t_total - stats_t_fe - stats_t_solver;
 }
 
+static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* out4, double* out5, double* out6, double* out7, double* w) {
+  corpus_qp_raw_solve(in0, in1, in2, in3, in4, out0, out1, out2, out3, w);
+  out4[0] = (double)corpus_qp_stats_data.status;
+  out5[0] = (double)corpus_qp_stats_data.iter;
+  out6[0] = (double)corpus_qp_stats_data.obj;
+  out7[0] = (double)corpus_qp_stats_data.primal_viol;
+}
+
 int corpus_qp_stats(scaly_solver_stats* out) {
   if (!out) return 1;
   *out = corpus_qp_stats_data;
@@ -174,7 +182,11 @@ int qp_host(const double** arg, double** res, int* iw, double* w, int mem) {
   double s1[2];
   double s2[1];
   double s3[1];
-  corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL);
+  double s4[1];
+  double s5[1];
+  double s6[1];
+  double s7[1];
+  corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, s4, s5, s6, s7, NULL);
   res[0][0] = 0.0;
   for (long long i_cost = 0; i_cost < 2; ++i_cost) {
     double v0 = s0[i_cost];

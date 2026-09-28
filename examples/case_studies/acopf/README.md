@@ -29,7 +29,7 @@ rosetta-opf (lanl-ansi/rosetta-opf at `496d026`) states the AC-OPF as PowerModel
   renames its calls to ExaModels 0.12's (`@add_var`, `@add_con`, `@add_con!`), the same model, so it
   runs against the same Ipopt build as the other two (NLPModelsIpopt 0.11.3).
 - **Scaly**: `scaly_impl.py`, the same model term for term, every term written for all buses,
-  generators or branches at once with `sc.gather` and `sc.segment_sum`; `sc.solver(problem, "ipopt")`.
+  generators or branches at once with `sc.gather` and `sc.segment_sum`; `sc.opt.solver(problem, "ipopt")`.
   It reads the case as `baseline/export_case.jl` writes it: PowerModels' processing (per unit,
   corrected angle limits, quadratic costs, thermal limits) with every collection in JuMP's order.
 
@@ -106,7 +106,7 @@ Evaluation and code both grow as variables x colours. At case9241 the Hessian ta
 against ExaModels' 0.23 s, and the 277 MB of C take 12 s to render and 22 s to compile. ExaModels forms
 each constraint pattern's small local Hessian and scatters it into the sparse result, which grows with
 the number of nonzeros. Doing the same for Scaly's gathered and `vmap`ped patterns is CS-5 in
-`internal/todo.md`. The colouring algorithm itself scales: `sc.solver` builds case13659's problem,
+`internal/todo.md`. The colouring algorithm itself scales: `sc.opt.solver` builds case13659's problem,
 sparsity and colouring in 3.7 s.
 
 ## Files

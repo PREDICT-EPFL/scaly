@@ -8,8 +8,8 @@ They are for tools that consume generated code, such as a build script that link
 
 from __future__ import annotations
 
-from ..function import ConcreteFunction, Function
-from ..function.extern import extern_functions
+from ...function import ConcreteFunction, Function
+from ...function.extern import extern_functions
 from .model import ExternalOracle, SolverDescriptor
 from .paths import backend_compile_flags
 

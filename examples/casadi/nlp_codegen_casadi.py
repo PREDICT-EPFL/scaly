@@ -4,7 +4,7 @@
 
 The original shows two routes, ``jit`` and ``external``; this is ``external``: the solver's
 dependencies go to ``nlp.c``, which is compiled with ``gcc -O3`` and loaded back as the oracles of
-a new ``nlpsol``. Scaly's route is the same one, taken by ``sc.solver`` on its own.
+a new ``nlpsol``. Scaly's route is the same one, taken by ``sc.opt.solver`` on its own.
 
 After casadi/docs/examples/python/nlp_codegen.py (Joel Andersson, 2016).
 """

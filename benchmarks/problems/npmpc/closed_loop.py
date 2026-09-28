@@ -31,7 +31,7 @@ import numpy as np
 
 from benchmarks.harness.timing import SolveTiming
 
-from scaly import SolverStats
+from scaly.opt import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,

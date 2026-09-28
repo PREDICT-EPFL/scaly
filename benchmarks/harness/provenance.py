@@ -66,11 +66,11 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
     casadi_version = importlib.metadata.version("casadi")
   except importlib.metadata.PackageNotFoundError:
     casadi_version = "not installed"
-  from scaly.solvers.paths import solver_paths
-  from scaly.solvers.registry import loaded_backends
+  from scaly.opt.external.paths import solver_paths
+  from scaly.opt.method import external_methods
 
   paths = solver_paths()
-  ipopt = loaded_backends().get("ipopt")
+  ipopt = external_methods().get("ipopt")
   ipopt_library = paths.loads.get("ipopt")
   native_solvers = {}
   if ipopt is not None and ipopt_library is not None:

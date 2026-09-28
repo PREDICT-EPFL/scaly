@@ -105,16 +105,16 @@ Differentiation is graph-to-graph. The result compiles, nests and renders like a
 
 ## Declare an optimization problem
 
-A `Problem` separates the model from the solver backend.
+An optimization problem separates the model from the solver.
 
 ```python
-@sc.problem(
+@sc.opt.problem(
     vars=sc.L("us", N),
     params=sc.L("z0", 2),
 )
-def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
     zN, cost = rollout(z0, us)
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
         minimize=cost,
         eq=(zN,),
         lb=sc.const(np.full(N, -2.0)),
@@ -122,36 +122,36 @@ def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     )
 ```
 
-The objective is scalar and equality groups are constrained to zero. Use `sc.bounded` for one- or
+The objective is scalar and equality groups are constrained to zero. Use `sc.opt.bounded` for one- or
 two-sided inequality groups. Variable bounds have the declared variable structure.
 
-Choose a backend:
+Choose a method:
 
 ```python
-solve = sc.solver(
+solve = sc.opt.solver(
     shooting_problem,
-    "ipopt",
-    options={"print_level": 0},
-)
+    sc.opt.IPOPT(options={"print_level": 0}))
 ```
 
-IPOPT, PIQP and scaly-sqp are discovered as plugins. PIQP is accepted only when scaly can prove the
-cost quadratic, the constraints affine and the bounds independent of the variables.
+IPOPT, PIQP and scaly-sqp are methods discovered as plugins; `sc.opt.solver(problem)` takes the
+first installed one that fits. PIQP is accepted only when scaly can prove the cost quadratic, the
+constraints affine and the bounds independent of the variables.
 
 ## Call the solver
 
-A solver takes five arguments and returns four results. The arguments are the warm start, the box
-multipliers, the equality multipliers, the inequality multipliers and the parameters:
+A solver takes five arguments and returns five results. The arguments are the warm start, the box
+multipliers, the equality multipliers, the inequality multipliers and the parameters; the results
+end with the solve's `Info` (status, iterations, objective, primal residual):
 
 ```text
 arguments = vars_init, lam_box0, lam_eq0, lam_ineq0, params
-results   = vars,      lam_box,  lam_eq,  lam_ineq
+results   = vars,      lam_box,  lam_eq,  lam_ineq,  info
 ```
 
 For this problem, the variable and parameter trees each have one leaf:
 
 ```python
-us_opt, lam_box, lam_eq, lam_ineq = solve(
+us_opt, lam_box, lam_eq, lam_ineq, info = solve(
     np.zeros(N),
     np.zeros(N),
     np.zeros(2),
@@ -159,7 +159,7 @@ us_opt, lam_box, lam_eq, lam_ineq = solve(
     np.array([1.0, 0.0]),
 )
 
-stats = sc.solver_stats(solve)
+stats = sc.opt.solver_stats(solve)
 print(stats.obj, stats.iter, stats.to_solver_status())
 ```
 
@@ -168,7 +168,7 @@ multipliers are signed: positive means the upper side is active, negative the lo
 
 A solver is a plain `Function`. Call it with `Expr` leaves to put it inside another graph; the host,
 oracles and native wrapper then compile into one shared library. See [Solvers](solvers.md) for
-multi-block variables, bounded groups, `qp_problem`, sparse PIQP data, nesting and statistics, and
+multi-block variables, bounded groups, methods, `sc.opt.QP`, sparse PIQP data, nesting and statistics, and
 [Solver backends](solver_backends.md) for backend options and warm-start behavior.
 
 ## Preserve regular repetition

@@ -16,7 +16,7 @@ What it shows:
   constraint Jacobian and Lagrangian Hessian are built from one stage's derivatives, and the
   generated code has one loop, not ``N`` copies;
 * the variables are a tree, ``(states, inputs, slacks)``, with bounds per leaf, the track limits are
-  two ``sc.bounded`` inequality groups, and the measured state is a parameter, so one generated
+  two ``sc.opt.bounded`` inequality groups, and the measured state is a parameter, so one generated
   solver runs the whole closed loop;
 * the loop warm-starts each solve from the previous solution shifted by one stage, and reads
   IPOPT's iteration count and timings from ``solver_stats()``.
@@ -79,22 +79,22 @@ def terminal_cost(x: sc.Expr) -> sc.Expr:
 SLACK_PENALTY = 1e3  # an exact (l1) penalty: the track limit holds whenever it can
 
 
-@sc.problem(vars=sc.G(sc.L("xs", (N + 1) * NX), sc.L("us", N * NU), sc.L("slack", N)), params=sc.L("x0", NX))
-def swing_up(variables: tuple[sc.Expr, sc.Expr, sc.Expr], x0: sc.Expr) -> sc.ProblemSpec:
+@sc.opt.problem(vars=sc.G(sc.L("xs", (N + 1) * NX), sc.L("us", N * NU), sc.L("slack", N)), params=sc.L("x0", NX))
+def swing_up(variables: tuple[sc.Expr, sc.Expr, sc.Expr], x0: sc.Expr) -> sc.opt.ProblemSpec:
   xs, us, slack = variables
   defects = sc.vmap(defect, N, [(xs, 0, NX), (us, 0, NU), (xs, NX, NX)])
   costs = sc.vmap(stage_cost, N, [(xs, 0, NX), (us, 0, NU)])
   positions = xs.reshape((N + 1, NX))[1:, 0]
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=costs.sum() + terminal_cost(xs[N * NX :]) + SLACK_PENALTY * slack.sum(),
     eq=(xs[:NX] - x0, defects),
-    ineq=(sc.bounded(positions - slack, hi=P_MAX, name="track_right"), sc.bounded(positions + slack, lo=-P_MAX, name="track_left")),
-    lb=(sc.NO_LB, sc.const(np.full(N * NU, -U_MAX)), sc.const(np.zeros(N))),
-    ub=(sc.NO_UB, sc.const(np.full(N * NU, U_MAX)), sc.NO_UB),
+    ineq=(sc.opt.bounded(positions - slack, hi=P_MAX, name="track_right"), sc.opt.bounded(positions + slack, lo=-P_MAX, name="track_left")),
+    lb=(sc.opt.NO_LB, sc.const(np.full(N * NU, -U_MAX)), sc.const(np.zeros(N))),
+    ub=(sc.opt.NO_UB, sc.const(np.full(N * NU, U_MAX)), sc.opt.NO_UB),
   )
 
 
-mpc = sc.solver(swing_up, "ipopt", name="cartpole_mpc", options={"print_level": 0, "tol": 1e-8, "max_iter": 500})
+mpc = sc.opt.solver(swing_up, sc.opt.IPOPT(options={"print_level": 0, "tol": 1e-8, "max_iter": 500}), name="cartpole_mpc")
 
 
 def plant_step(x: np.ndarray, u: float, substeps: int = 10) -> np.ndarray:
@@ -131,8 +131,8 @@ def main(sim_steps: int = SIM_STEPS) -> dict:
   lam_eq, lam_ineq = np.zeros(swing_up.n_eq), np.zeros(swing_up.n_ineq)
   history, inputs, iterations, times, statuses = [x], [], [], [], []
   for _ in range(sim_steps):
-    (xs, us, slack), lam_box, lam_eq, lam_ineq = mpc((xs_guess, us_guess, slack), lam_box, lam_eq, lam_ineq, x)
-    stats = sc.solver_stats(mpc)
+    (xs, us, slack), lam_box, lam_eq, lam_ineq, _ = mpc((xs_guess, us_guess, slack), lam_box, lam_eq, lam_ineq, x)
+    stats = sc.opt.solver_stats(mpc)
     iterations.append(stats.iter)
     times.append(stats.t_total)
     statuses.append(stats.to_solver_status().name)

@@ -1,6 +1,6 @@
 """IPOPT C wrapper template — the plugin half of scaly's solver codegen contract.
 
-Called by ``scaly.solvers.wrapper.render_solver`` through the backend's
+Called by ``scaly.opt.external.wrapper.render_solver`` through the backend's
 ``render_wrapper`` hook. Emits the IPOPT eval callbacks bridging into the
 generated base/grad/jac/hess kernels plus a ``static void <ctx.raw_symbol>(...)``
 that builds the ``IpoptProblem``, runs ``IpoptSolve``, and fills
@@ -13,10 +13,10 @@ import math
 import re
 from typing import TYPE_CHECKING
 
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 if TYPE_CHECKING:
-  from scaly.solvers.wrapper import SolverWrapperCtx
+  from scaly.opt.external.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
 
 _IPOPT_INF = 2e19

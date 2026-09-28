@@ -33,24 +33,24 @@ def xd(x, u):
 def make_ocp(N: int, verbose: bool):
   tau, wi, D = lgl_setup(N)
 
-  @sc.problem(vars=sc.G(sc.L("X", 2 * (N + 1)), sc.L("U", N + 1)), name=f"lgl_N{N}")
+  @sc.opt.problem(vars=sc.G(sc.L("X", 2 * (N + 1)), sc.L("U", N + 1)), name=f"lgl_N{N}")
   def ocp(variables):
     X, U = variables  # X stacks x at the N + 1 points
     Xm = X.reshape((N + 1, 2))
     defect = sc.const(D) @ Xm - (TF - T0) / 2 * sc.vmap(xd, N + 1, [(X, 0, 2), (U, 0, 1)]).reshape((N + 1, 2))
     lagrange = 0.5 * (TF - T0) * sc.dot(sc.const(wi), 4 * U * U)
-    return sc.ProblemSpec(minimize=lagrange + 4 * Xm[N, 0] + Xm[N, 1], eq=(defect.reshape((2 * (N + 1),)), X[0:2] - sc.const(np.array([0.0, 1.0]))))
+    return sc.opt.ProblemSpec(minimize=lagrange + 4 * Xm[N, 0] + Xm[N, 1], eq=(defect.reshape((2 * (N + 1),)), X[0:2] - sc.const(np.array([0.0, 1.0]))))
 
-  solver = sc.solver(ocp, "ipopt", options=scaly_ipopt_options(verbose))
+  solver = sc.opt.solver(ocp, sc.opt.IPOPT(options=scaly_ipopt_options(verbose)))
   X0 = np.repeat(np.linspace(0, 1, N + 1), 2)
   n_eq = 2 * (N + 1) + 2
 
   def solve():
-    (X, U), _, lam_eq, _ = solver((X0, np.ones(N + 1)), (np.zeros(2 * (N + 1)), np.zeros(N + 1)), np.zeros(n_eq), np.zeros(0), ())
+    (X, U), _, lam_eq, _, _ = solver((X0, np.ones(N + 1)), (np.zeros(2 * (N + 1)), np.zeros(N + 1)), np.zeros(n_eq), np.zeros(0), ())
     adjoint = -lam_eq[: 2 * (N + 1)].reshape(N + 1, 2) / wi[:, None]
     numerical = np.hstack([X.reshape(N + 1, 2), U[:, None], adjoint])
     ts = (TF - T0) / 2 * lgl_nodes(N) + 0.5 * (TF + T0)
-    return numerical, np.max(np.abs(analytical(ts) - numerical), axis=0), sc.solver_stats(solver).iter
+    return numerical, np.max(np.abs(analytical(ts) - numerical), axis=0), sc.opt.solver_stats(solver).iter
 
   return solve
 

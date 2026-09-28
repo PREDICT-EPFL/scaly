@@ -1,6 +1,6 @@
-"""A problem-level front end for the generated PIQP (``scaly.solvers.ipm``), shaped like ``sc.solver``.
+"""A problem-level front end for the generated PIQP (``scaly.solvers.ipm``), shaped like ``sc.opt.solver``.
 
-``sc.solver(problem, "piqp")`` proves a ``sc.problem`` quadratic, extracts ``P``, ``c``, ``A``, ``b``,
+``sc.opt.solver(problem, "piqp")`` proves a ``sc.opt.problem`` quadratic, extracts ``P``, ``c``, ``A``, ``b``,
 ``G`` and the bounds as expressions of the parameters, and hands their values to the vendored PIQP
 library at run time. ``solver(problem, backend)`` below does the same extraction (Scaly's own
 helpers) and then *generates the solver itself*: the sparsity patterns and which bounds are finite
@@ -21,8 +21,6 @@ import numpy as np
 import scaly as sc
 from scaly.ir.expr import substitute
 from scaly.solvers.ipm import INF, QPStructure, QPValues, Settings, Solver
-from scaly.solvers.nlp import _lowered
-from scaly.solvers.qp import _gathered, _prove_quadratic, _prove_variable_independent_bounds, _qp_data, _qp_matrix_sparsity
 
 OUTPUTS = ("x", "y", "z_l", "z_u", "status", "iter", "obj")
 """The generated Function's outputs: the stacked variables, the equality multipliers, the
@@ -31,7 +29,7 @@ iteration count and the objective at ``x``."""
 
 
 def solver(
-  problem: sc.Problem,
+  problem: sc.opt.NLP,
   backend: Literal["sparse", "dense"] = "sparse",
   settings: Settings | None = None,
   *,
@@ -40,24 +38,17 @@ def solver(
   """The generated PIQP for ``problem``: a ``Function`` from the problem's parameters (flattened, in
   the order of ``problem.params.names``) to ``OUTPUTS``."""
   name = name or f"{problem.name}_ipm_{backend}"
-  _prove_variable_independent_bounds(problem)
-  cached = _lowered(problem)
-  _prove_quadratic(problem, cached)
-  P, c, A, b, G, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
+  form = sc.opt.extract_qp(problem)
+  P, c, A, b, G, g_lb, g_ub, x_lb, x_ub = form.P, form.c, form.A, form.b, form.G, form.g_lb, form.g_ub, form.x_lb, form.x_ub
   n, p, m = P.shape[0], A.shape[0], G.shape[0]
-  params = list(problem._param_symbols)
+  params = list(form.params)
 
-  # Patterns and finite bounds from the expressions' structure and one random probe, as
-  # ``build_qp(..., sparse=True)`` finds its patterns: an entry or bound that depends on a
-  # parameter counts as present whatever value it takes.
-  probe_outputs = [P.vec(), A.vec(), G.vec(), g_lb, g_ub, x_lb, x_ub]
-  probe = sc.Function.from_exprs(f"{name}_probe", params, probe_outputs, problem.params.names, ("P", "A", "G", "g_lb", "g_ub", "x_lb", "x_ub"))
+  # The patterns ``PIQP(sparse=True)`` finds, and which bounds are finite at one random probe: an
+  # entry or bound that depends on a parameter counts as present whatever value it takes.
+  P_sp, A_sp, G_sp = form.patterns(name)
+  probe = sc.Function.from_exprs(f"{name}_probe", params, [g_lb, g_ub, x_lb, x_ub], form.param_names, ("g_lb", "g_ub", "x_lb", "x_ub"))
   rng = np.random.default_rng(0)
-  sample = probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params))
-  p_val, a_val, g_val, *bounds = probe(*sample)
-  P_sp = _qp_matrix_sparsity(P, params, p_val, triu=True)
-  A_sp = _qp_matrix_sparsity(A, params, a_val) if p else None
-  G_sp = _qp_matrix_sparsity(G, params, g_val) if m else None
+  bounds = probe(*probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params)))
   h_l, h_u, xl, xu = (np.asarray(v, dtype=float) for v in bounds)
   A_pat, G_pat = (np.zeros(shape, dtype=bool) if sp is None else sp for sp, shape in ((A_sp, (p, n)), (G_sp, (m, n))))
   s = QPStructure.from_patterns(P_sp, A_pat, G_pat, h_l=h_l, h_u=h_u, x_l=xl, x_u=xu)
@@ -65,50 +56,46 @@ def solver(
     assert want is None or np.array_equal(got, want.rows), "pattern order differs from the gathered values"
 
   data = {
-    "P": _gathered(P, P_sp),
+    "P": form.in_pattern(P, P_sp),
     "c": c,
-    "A": _gathered(A, A_sp) if A_sp is not None else sc.const(np.zeros(0)),
+    "A": form.in_pattern(A, A_sp) if A_sp is not None else sc.const(np.zeros(0)),
     "b": b,
-    "G": _gathered(G, G_sp) if G_sp is not None else sc.const(np.zeros(0)),
+    "G": form.in_pattern(G, G_sp) if G_sp is not None else sc.const(np.zeros(0)),
     "h_l": g_lb,
     "h_u": g_ub,
     "x_l": x_lb,
     "x_u": x_ub,
   }
 
+  oracles = sc.opt.nlp_oracles(problem)
+  objective = oracles.base.outputs[0]  # the problem's own objective, constants included
+
   def solve(inputs: Any) -> Any:
     # The data above are expressions of the problem's parameter symbols; the Function has its own.
     swap = dict(zip(params, problem.params.flatten_symbolic(inputs, name), strict=True))
     out = Solver(s, backend, settings, name=name).solve(QPValues.preprocess(s, **{k: substitute(v, swap) for k, v in data.items()}))
-    obj = substitute(cached["f"], {**swap, cached["x"]: out["x"]})  # the problem's own objective, constants included
+    obj = substitute(objective, {**swap, oracles.x: out["x"]})
     return out["x"], out["y"], out["z_l"], out["z_u"], out["status"], out["iter"], obj
 
   return sc.function(problem.params, output=sc.G(*OUTPUTS), name=name)(solve)
 
 
-def structure_summary(problem: sc.Problem) -> dict[str, Any]:
+def structure_summary(problem: sc.opt.NLP) -> dict[str, Any]:
   """Sizes and non-zeros of the extracted QP, for the tables."""
-  cached = _lowered(problem)
-  _prove_quadratic(problem, cached)
-  P, _, A, _, G, *_ = _qp_data(problem, cached)
-  params = list(problem._param_symbols)
-  probe = sc.Function.from_exprs(f"{problem.name}_nnz_probe", params, [P.vec(), A.vec(), G.vec()], problem.params.names, ("P", "A", "G"))
-  rng = np.random.default_rng(0)
-  vals = probe(*probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params)))
-  n, p, m = P.shape[0], A.shape[0], G.shape[0]
-  nnz = [len(_qp_matrix_sparsity(M, params, v, triu=k == 0).rows) if M.shape[0] else 0 for k, (M, v) in enumerate(zip((P, A, G), vals))]
+  form = sc.opt.extract_qp(problem)
+  n, p, m = form.P.shape[0], form.A.shape[0], form.G.shape[0]
+  nnz = [0 if sp is None or not rows else len(sp.rows) for sp, rows in zip(form.patterns(f"{problem.name}_nnz"), (n, p, m), strict=True)]
   return {"n": n, "p": p, "m": m, "nnz_P_upper": nnz[0], "nnz_A": nnz[1], "nnz_G": nnz[2]}
 
 
-def qp_data(problem: sc.Problem) -> sc.Function:
+def qp_data(problem: sc.opt.NLP) -> sc.Function:
   """The extracted QP as dense matrices, for checking any solver's answer: a ``Function`` from the
   parameters to ``((P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), f0)``, with ``f0`` the objective at
   ``x = 0``, so that the problem's objective is ``1/2 x^T P x + c^T x + f0``."""
-  cached = _lowered(problem)
-  _prove_quadratic(problem, cached)
-  data = _qp_data(problem, cached)
-  f0 = substitute(cached["f"], {cached["x"]: sc.const(np.zeros(cached["x"].shape))})
-  params = list(problem._param_symbols)
+  form = sc.opt.extract_qp(problem)
+  data = (form.P, form.c, form.A, form.b, form.G, form.g_lb, form.g_ub, form.x_lb, form.x_ub)
+  f0 = form.f0
+  params = list(form.params)
 
   def evaluate(inputs: Any) -> tuple[sc.Expr, ...]:
     swap = dict(zip(params, problem.params.flatten_symbolic(inputs, "qp_data"), strict=True))

@@ -141,7 +141,7 @@ class CModule:
     without one. Resolved on demand because a resolver raises when a library or header is missing
     (a solver's ``SolverLibraryError``): rendering has to stay possible on a machine without the
     vendored solver stack, and against a backend that has no library at all (the fake backends in
-    ``tests/solvers/test_registry.py``)."""
+    ``tests/opt/test_registry.py``)."""
     return self.requirements.link_flags()
 
 

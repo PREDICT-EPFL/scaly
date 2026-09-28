@@ -1,7 +1,7 @@
 """Vendored-solver library and header discovery.
 
-Which solvers exist is not hardcoded here: every installed solver plugin (``scaly.solvers`` entry
-points, see ``registry.py``) declares its shared-library stem, C header, and link flags, and its
+Which solvers exist is not hardcoded here: every installed external method (a ``scaly.methods``
+entry point under ``opt.``, an ``opt.external.External``) declares its shared-library stem, C header, and link flags, and its
 vendored ``lib`` / ``include`` package directories join the search path. Explicit override
 variables and legacy core package paths remain as debugging and migration fallbacks.
 
@@ -17,16 +17,16 @@ import re
 import shutil
 import subprocess
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from ..utils.env import EnvVar, ToolchainError, env_bool, env_path, shared_lib_ext
+from ...utils.env import EnvVar, ToolchainError, env_bool, env_path, shared_lib_ext
+from ..method import external_method, external_methods
 
 if TYPE_CHECKING:
   from collections.abc import Sequence
-
-  from .registry import SolverBackend
 
 
 class SolverLibraryError(ToolchainError):
@@ -88,15 +88,17 @@ def _system_library(stem: str) -> str | None:
 
 
 def _plugin_solver_paths() -> list[tuple[Path, Path]]:
-  from .registry import installed_backend_paths
+  out: list[tuple[Path, Path]] = []
+  for name, method in _backends().items():
+    try:
+      out.append((method.include_dir(), method.lib_dir()))
+    except Exception as exc:  # noqa: BLE001 - one broken plugin must not hide the others
+      warnings.warn(f"could not inspect opt.{name}: {exc}", RuntimeWarning, stacklevel=2)
+  return out
 
-  return installed_backend_paths()
 
-
-def _backends() -> dict[str, SolverBackend]:
-  from .registry import loaded_backends
-
-  return loaded_backends()
+def _backends() -> dict[str, Any]:
+  return external_methods()
 
 
 def _lib_env_var(name: str) -> str:
@@ -229,18 +231,16 @@ def backend_compile_flags(names: Sequence[str], *, rpath: bool = True) -> list[s
   ``graph.solver_compile_flags`` is the same question asked of a ``Function``."""
   if not names:
     return []
-  from .registry import get_backend
-
-  backends = [get_backend(name) for name in names]
+  backends = [external_method(name) for name in names]
   paths = solver_paths()
-  pkg_cflags = _pkg_config_flags(tuple(b.name for b in backends), "--cflags")
+  pkg_cflags = _pkg_config_flags(tuple(names), "--cflags")
   pkg_include_dirs = _include_dirs_from_cflags(pkg_cflags)
   missing: list[str] = []
-  for backend in backends:
-    if paths.loads.get(backend.name) is None:
-      missing.append(f"{backend.name} library")
-    if not _header_available(paths, backend.name, pkg_include_dirs):
-      missing.append(f"{backend.name} headers")
+  for name in names:
+    if paths.loads.get(name) is None:
+      missing.append(f"{name} library")
+    if not _header_available(paths, name, pkg_include_dirs):
+      missing.append(f"{name} headers")
   if missing:
     raise SolverLibraryError(f"missing native solver pieces for JIT/AOT codegen: {', '.join(missing)}\n\n{solver_diagnostic()}")
 
@@ -250,7 +250,7 @@ def backend_compile_flags(names: Sequence[str], *, rpath: bool = True) -> list[s
   flags.extend(f"-L{p}" for p in paths.lib_dirs)
   if rpath:
     flags.extend(f"-Wl,-rpath,{p}" for p in paths.lib_dirs)
-  flags.extend(_pkg_config_flags(tuple(b.name for b in backends), "--libs"))
+  flags.extend(_pkg_config_flags(tuple(names), "--libs"))
   for backend in backends:
     flags.extend(backend.link_flags)
   return flags

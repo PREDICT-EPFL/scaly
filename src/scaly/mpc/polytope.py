@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from ..ir.expr import Expr
-from ..solvers.problem import Bounded, bounded
+from ..opt.problem import Bounded, bounded
 
 __all__ = ["Polytope"]
 

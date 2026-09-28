@@ -165,11 +165,11 @@ def load_data(path: Path) -> Data:
   return Data(json.loads(Path(path).read_text()))
 
 
-def subproblem(d: Data) -> sc.Problem:
+def subproblem(d: Data) -> sc.opt.NLP:
   """The convex subproblem as a Scaly QP with the discretization and the reference as parameters."""
   Sx, cx, Su, cu = (sc.const(a) for a in (d.S_x, d.c_x, d.S_u, d.c_u))
 
-  @sc.problem(
+  @sc.opt.problem(
     vars=sc.G(sc.L("xh", (N, NX)), sc.L("uh", (N, NU)), sc.L("nu_p", (K, NX)), sc.L("nu_m", (K, NX))),
     params=sc.G(
       sc.L("xp", (K, NX)), sc.L("A", (K, NX * NX)), sc.L("B", (K, NX * NU)), sc.L("C", (K, NX * NU)), sc.L("Xr", (N, NX)), sc.L("Ur", (N, NU))
@@ -192,7 +192,7 @@ def subproblem(d: Data) -> sc.Problem:
       rhs = (Ak @ X[k] + Bk @ Uu[k] + Ck @ Uu[k + 1] + bias - cx) / Sx + (nu_p[k] - nu_m[k])
       dyn.append(xh[k + 1] - rhs)
     y = X[:, NX - 1]
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=cost,
       eq=(
         X[0, 1:4] - sc.const(np.array([7.5, 4.5, 2.5])),  # the example's convex equalities
@@ -201,14 +201,14 @@ def subproblem(d: Data) -> sc.Problem:
         sc.gather(X[N - 1], d.fixed_final) - sc.const(d.x_term[d.fixed_final]),
         *dyn,
       ),
-      ineq=(sc.bounded(y[1:] - y[:-1], lo=sc.const(np.full(K, -d.licq)), hi=sc.const(np.full(K, d.licq)), name="ctcs_increments"),),
+      ineq=(sc.opt.bounded(y[1:] - y[:-1], lo=sc.const(np.full(K, -d.licq)), hi=sc.const(np.full(K, d.licq)), name="ctcs_increments"),),
       lb=(
         sc.const(np.tile((d.x_min - d.c_x) / d.S_x, (N, 1))),
         sc.const(np.tile((d.u_min - d.c_u) / d.S_u, (N, 1))),
         sc.const(np.zeros((K, NX))),
         sc.const(np.zeros((K, NX))),
       ),
-      ub=(sc.const(np.tile((d.x_max - d.c_x) / d.S_x, (N, 1))), sc.const(np.tile((d.u_max - d.c_u) / d.S_u, (N, 1))), sc.NO_UB, sc.NO_UB),
+      ub=(sc.const(np.tile((d.x_max - d.c_x) / d.S_x, (N, 1))), sc.const(np.tile((d.u_max - d.c_u) / d.S_u, (N, 1))), sc.opt.NO_UB, sc.opt.NO_UB),
     )
 
   return qp

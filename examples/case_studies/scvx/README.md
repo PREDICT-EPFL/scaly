@@ -37,7 +37,7 @@ hands it to CVXPY, which canonicalizes it for QOCO (`abstol` 1e-6, `reltol` 1e-9
 steps written out with diffrax's coefficients, the tangent `d x / d(x_k, u_k, u_{k+1})` carried through
 every stage by the variational equation (for an explicit Runge-Kutta step, the step's forward-mode
 derivative, stage for stage), one call to a Function returning the rates and their Jacobians per stage,
-the intervals in a `vmap`; the subproblem as an `sc.problem`, the l1 term split into nonnegative parts,
+the intervals in a `vmap`; the subproblem as an `sc.opt.problem`, the l1 term split into nonnegative parts,
 solved by Scaly's generated PIQP (`examples/qp_solvers/generated_piqp.py`, `eps_abs` 1e-9) as a
 Function called inside the loop body; the PTR a `while_loop`. `ptr(X0, U0)` returns the trajectory, the
 iteration count and the `J_tr` and `J_vc` traces.

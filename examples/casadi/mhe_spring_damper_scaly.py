@@ -50,7 +50,7 @@ def gap(x, u, w, xnext):
   return xnext - phi(x, u, w)
 
 
-@sc.problem(
+@sc.opt.problem(
   vars=sc.G(sc.L("X", 2 * N), sc.L("W", N - 1)),
   params=sc.G(sc.L("U", N - 1), sc.L("Y", N), sc.L("S", (2, 2)), sc.L("x0", 2)),
 )
@@ -60,11 +60,11 @@ def mhe(variables, params):
   e0 = X[0:2] - x0
   obj = sc.dot(e0, S @ e0) + R * sc.sumsqr(X.reshape((N, 2))[:, 0] - Y) + Q * sc.sumsqr(W)
   gaps = sc.vmap(gap, N - 1, [(X, 0, 2), (U, 0, 1), (W, 0, 1), (X, 2, 2)])
-  return sc.ProblemSpec(minimize=obj, eq=(gaps,))
+  return sc.opt.ProblemSpec(minimize=obj, eq=(gaps,))
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(mhe, "ipopt", options=scaly_ipopt_options(False, max_iter=100))
+  solve = sc.opt.solver(mhe, sc.opt.IPOPT(options=scaly_ipopt_options(False, max_iter=100)))
 
   # The simulated plant and its measurements, as in the original.
   np.random.seed(0)
@@ -89,7 +89,7 @@ def build(verbose: bool = False):
     (X, W), *_ = solve((init_X.reshape(-1), init_W), *zeros, (U, Y, linalg.inv(P), x0))
     X = X.reshape(N, 2)
     est_X[0:N], est_W[0 : N - 1] = X, W
-    iterations = sc.solver_stats(solve).iter
+    iterations = sc.opt.solver_stats(solve).iter
     for i in range(1, N_SIM - N + 1):
       # EKF update of the arrival cost
       H0 = H(X[0])
@@ -107,7 +107,7 @@ def build(verbose: bool = False):
       (X, W), *_ = solve((init_X.reshape(-1), init_W), *zeros, (U, Y, linalg.inv(P), x0))
       X = X.reshape(N, 2)
       est_X[N - 1 + i], est_W[N - 2 + i] = X[N - 1], W[N - 2]
-      iterations += sc.solver_stats(solve).iter
+      iterations += sc.opt.solver_stats(solve).iter
     error = est_X[:, 0] - sim_X[:, 0]
     return {"x_est": est_X[:, 0], "dx_est": est_X[:, 1], "error_sq": np.array([error @ error]), "iter_total": np.array([iterations])}
 

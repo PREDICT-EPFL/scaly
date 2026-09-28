@@ -3,7 +3,7 @@ accessor, and what a translation unit holding one needs to compile and load.
 
 A solver Function's C body is a template per backend, parameterized by the ``SolverDescriptor``.
 The templates live in the solver plugins (``scaly_piqp.codegen``, ``scaly_ipopt.codegen``, ...):
-the plugin's ``SolverBackend.render_wrapper`` hook gets a :class:`SolverWrapperCtx`, and the body it
+the plugin's ``External.render_wrapper`` hook gets a :class:`SolverWrapperCtx`, and the body it
 returns is framed here with the stats static and the exported ``<symbol>_stats`` accessor. The
 oracle Functions the template drives lower through Program IR like any other Function and are
 rendered as ``<oracle>_raw``. The compiler reaches all of this through the extern-callee protocol
@@ -15,13 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..function.extern import BuildRequirements, ExternRenderCtx, ExternState
+from ...function.extern import BuildRequirements, ExternRenderCtx, ExternState
+from ..method import REGISTRY, external_method
 from .paths import backend_compile_flags
-from . import registry
 from .stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats, stats_c_defs, stats_c_timing_defs
 
 if TYPE_CHECKING:
-  from ..function import ConcreteFunction, Function
+  from ...function import ConcreteFunction, Function
   from .model import ExternalOracle, SolverDescriptor
 
 
@@ -43,13 +43,29 @@ class SolverWrapperCtx:
     return ExternRenderCtx.raw_symbol_of(fun)
 
 
+# The ``opt.Info`` outputs after the solution, in order, and the statistics field each copies.
+INFO_FIELDS = ("status", "iter", "obj", "primal_viol")
+
+
 def render_solver(fun: ConcreteFunction, desc: SolverDescriptor, ctx: ExternRenderCtx) -> list[str]:
-  """The stats static, the plugin's wrapper body, and the exported ``<symbol>_stats`` accessor."""
-  wrapper = SolverWrapperCtx(symbol=ctx.symbol, raw_symbol=ctx.raw_symbol, stats_symbol=f"{ctx.symbol}_stats_data")
-  body = registry.get_backend(desc.backend).render_wrapper(fun, wrapper)
+  """The stats static, the plugin's wrapper body, the frame that calls it and writes the ``Info``
+  outputs from the statistics it filled, and the exported ``<symbol>_stats`` accessor.
+
+  The plugin defines ``<raw>_solve`` over the descriptor's inputs and solution outputs; ``<raw>``,
+  what the generated code calls, takes the ``Info`` outputs after them."""
+  wrapper = SolverWrapperCtx(symbol=ctx.symbol, raw_symbol=f"{ctx.raw_symbol}_solve", stats_symbol=f"{ctx.symbol}_stats_data")
+  body = _method(desc).render_wrapper(fun, wrapper)
+  n_in, n_out = len(desc.input_signature), len(desc.output_signature)
+  params = [*(f"const double* in{i}" for i in range(n_in)), *(f"double* out{i}" for i in range(n_out + len(INFO_FIELDS))), "double* w"]
+  args = [*(f"in{i}" for i in range(n_in)), *(f"out{i}" for i in range(n_out)), "w"]
   return [
     f"static scaly_solver_stats {wrapper.stats_symbol};",
     *body,
+    "",
+    f"static void {ctx.raw_symbol}({', '.join(params)}) {{",
+    f"  {wrapper.raw_symbol}({', '.join(args)});",
+    *(f"  out{n_out + k}[0] = (double){wrapper.stats_symbol}.{field};" for k, field in enumerate(INFO_FIELDS)),
+    "}",
     "",
     f"int {ctx.symbol}_stats(scaly_solver_stats* out) {{",
     "  if (!out) return 1;",
@@ -63,7 +79,7 @@ def solver_requirements(symbol: str, desc: SolverDescriptor) -> BuildRequirement
   """The backend's header, the stats ABI in header and source, the accessor's prototype, and the
   vendored library, isolated in its own linker namespace on Linux."""
   return BuildRequirements(
-    includes=("#include <time.h>", f'#include "{registry.get_backend(desc.backend).header}"'),
+    includes=("#include <time.h>", f'#include "{_method(desc).header}"'),
     header_types=(tuple(stats_c_defs()),),
     source_blocks=(tuple(stats_c_defs()), tuple(stats_c_timing_defs())),
     declarations=(f"int {symbol}_stats(scaly_solver_stats* out);",),
@@ -74,9 +90,13 @@ def solver_requirements(symbol: str, desc: SolverDescriptor) -> BuildRequirement
   )
 
 
+def _method(desc: SolverDescriptor) -> Any:
+  return desc.method if desc.method is not None else external_method(desc.backend)
+
+
 def _distribution(backend: str) -> tuple[tuple[str, str], ...]:
   """The plugin distribution providing ``backend`` and its version, when it is installed as one."""
-  dist = getattr(registry.available_backends().get(backend), "dist", None)
+  dist = getattr(REGISTRY.installed().get(backend), "dist", None)
   return ((dist.name, dist.version),) if dist is not None else ()
 
 

@@ -1,7 +1,7 @@
 # Solver backends
 
 Three backends ship with scaly. Each is a separate distribution under `plugins/`, discovered by
-entry point, so installing one makes its name available to `sc.solver(problem, backend)`. This page
+entry point, so installing one makes its name available to `sc.opt.solver(problem, backend)`. This page
 says what each one is, when to pick it, and what it costs to ship.
 
 [Solvers](solvers.md) covers problem shapes, calling conventions and nesting a solver in a graph.
@@ -12,9 +12,9 @@ says what each one is, when to pick it, and what it costs to ship.
 | | PIQP | IPOPT | scaly-sqp |
 | --- | --- | --- | --- |
 | Solves | quadratic programs | nonlinear programs | nonlinear programs |
-| Reached through | `sc.solver(problem, "piqp")` | `sc.solver(problem, "ipopt")` | `sc.solver(problem, "sqp")` |
-| Method | proximal interior point | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
-| Sparse data | `options={"sparse": True}` for the problem data | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
+| Method | `sc.opt.PIQP(...)`, or `"piqp"` | `sc.opt.IPOPT(...)`, or `"ipopt"` | `sc.opt.SQP(...)`, or `"sqp"` |
+| Algorithm | proximal interior point | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
+| Sparse data | `sparse=True` for the problem data | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
 | Exact Lagrangian Hessian | n/a (the Hessian is your `P`) | yes, default | yes, default; `hessian="objective"` to approximate |
 | Warm start | no, upstream has no C API for it | primal always; multipliers only if you ask | primal and dual, always |
 | Foreign oracles | no | no | yes, see [below](#driving-the-sqp-with-foreign-oracles) |
@@ -35,9 +35,9 @@ than scaly. It is the newest of the three and the least tested.
 
 ## PIQP
 
-A proximal interior-point QP solver. Select it with `sc.solver(problem, "piqp")`.
+A proximal interior-point QP solver. Select it with `sc.opt.solver(problem, "piqp")`.
 
-By default scaly assembles the problem for PIQP's dense interface. With `options={"sparse": True}`
+By default scaly assembles the problem for PIQP's dense interface. With `sc.opt.PIQP(sparse=True)`
 it instead derives the structural patterns of `P`, `A_eq` and `G_ineq` once and bakes them into the
 wrapper as static compressed sparse column (CSC) tables, so each solve refills values only. Which is
 faster depends on how sparse your data is; there is no measurement in this repository comparing the
@@ -67,15 +67,15 @@ the wrapper keeps a persistent workspace and re-solves after a value update inst
 
 ## IPOPT
 
-The COIN-OR interior-point NLP solver. Select it with `sc.solver(problem, "ipopt")`.
+The COIN-OR interior-point NLP solver. Select it with `sc.opt.solver(problem, "ipopt")`.
 
 Scaly feeds it a compact sparse constraint Jacobian and a compact sparse Lagrangian Hessian, both
 built through `Function.factory` from the same `sc.factory.SpJac` and `sc.factory.SpHess` requests
-any user can make. IPOPT consumes the lower triangle. `sc.solver` asks for that triangle when it
+any user can make. IPOPT consumes the lower triangle. `sc.opt.solver` asks for that triangle when it
 builds the descriptor, so the descriptor pattern and oracle values already match and the generated
 wrapper writes them directly into IPOPT's value buffer.
 
-Exact Hessians are the default. Pass `options={"hessian_approximation": "limited-memory"}` for the
+Exact Hessians are the default. `sc.opt.IPOPT(options={"hessian_approximation": "limited-memory"})` gives the
 quasi-Newton alternative.
 
 Warm starting is split. `x0` is always IPOPT's starting point. The multipliers are always passed
@@ -83,7 +83,7 @@ too, `mult_g` from the equality and inequality duals and `mult_x_L`/`mult_x_U` f
 box duals, but IPOPT ignores them unless you also pass `options={"warm_start_init_point": "yes"}`.
 
 Options are IPOPT's own, passed as strings, integers or floats. Scaly defaults to `print_level=0`
-and `sb="yes"` so the solver stays quiet inside a control loop; pass `options={...}` to override or
+and `sb="yes"` so the solver stays quiet inside a control loop; the method's `options` override or
 extend. A rejected option does not crash. It comes back as `ERROR` statistics with a native status
 of `Invalid_Option` and defined outputs.
 
@@ -100,7 +100,7 @@ can drive a solver, and so that a second NLP implementation can disagree with IP
 
 The QP backend is PIQP only. If you know CasADi's `sqpmethod`, where any registered QP solver plugs
 in as the subproblem solver, do not expect the same here. scaly-sqp does not go through the QP
-plugin contract that `sc.solver(problem, "piqp")` uses; its generated C calls PIQP's C API directly
+plugin contract that `sc.opt.solver(problem, "piqp")` uses; its generated C calls PIQP's C API directly
 and borrows the vendored library from `scaly-piqp`. A future QP plugin such as OSQP or HPIPM would
 be selectable as a standalone solver but not as the SQP subproblem solver. Making that possible
 needs a second, narrower contract for in-C QP subproblems, plus the problem-form reconciliation

@@ -9,7 +9,7 @@ import numpy as np
 
 import scaly as sc
 from scaly.codegen import render_c_module
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
 from .common import (
   ClosedLoopConfig,
@@ -715,21 +715,21 @@ def build_scaly_nlp(
   )
   problem_name = base.name.replace("_oracle", "_problem")
 
-  @sc.problem(vars=vars_tree, params=params_tree, name=problem_name)
+  @sc.opt.problem(vars=vars_tree, params=params_tree, name=problem_name)
   def problem(
     variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]
-  ) -> sc.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
+  ) -> sc.opt.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
     u, s = variables
     cost, constraints = _scaly_oracle_outputs((sc.concat([u, s]), *params), loop_cfg, filt_cfg)
-    inequalities = (sc.bounded(constraints, lo=sc.const(np.zeros(n_s)), name="barrier"),) if n_s else ()
-    return sc.ProblemSpec(
+    inequalities = (sc.opt.bounded(constraints, lo=sc.const(np.zeros(n_s)), name="barrier"),) if n_s else ()
+    return sc.opt.ProblemSpec(
       minimize=cost,
       ineq=inequalities,
       lb=(sc.const(-np.ones(n_u)), sc.const(np.zeros(n_s))),
       ub=(sc.const(np.ones(n_u)), sc.const(np.full(n_s, np.inf))),
     )
 
-  result = sc.solver(problem, solver, name=base.name.replace("_oracle", f"_{solver}_nlp"), options=options)
+  result = sc.opt.solver(problem, sc.opt.REGISTRY.get(solver)(options=options or {}), name=base.name.replace("_oracle", f"_{solver}_nlp"))
   setattr(result, "_benchmark_base", base)
   return result
 
@@ -863,7 +863,7 @@ class ScalyDTCBFSafetyFilter:
         variables0, box0 = z0, lam_box0
       param_values = params[0] if self._packed_params else params
       started = time.perf_counter()
-      variables, box, lam_eq, lam_ineq = active_nlp.numerical_call(variables0, box0, np.zeros(0), lam_g0, param_values)
+      variables, box, lam_eq, lam_ineq, _ = active_nlp.numerical_call(variables0, box0, np.zeros(0), lam_g0, param_values)
       self.last_solve_wall_ms += (time.perf_counter() - started) * 1000.0
       if descriptor.n_var_blocks == 2:
         z_sol = np.concatenate(variables)
@@ -881,7 +881,7 @@ class ScalyDTCBFSafetyFilter:
         "lam_eq": lam_eq,
         "lam_ineq": lam_ineq,
         "lam_box": np.asarray(box_sol),
-      }, sc.solver_stats(active_nlp)
+      }, sc.opt.solver_stats(active_nlp)
 
     active_nlp = self.nlp
     out, stats = solve(active_nlp)

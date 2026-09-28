@@ -23,8 +23,8 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
-from scaly.solvers.paths import solver_loadable, solver_paths
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.paths import solver_loadable, solver_paths
+from scaly.opt.external.graph import solver_descriptor
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
@@ -421,7 +421,7 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
 
   from benchmarks.harness.closed_loop import run_race_cars
   from scaly import Status
-  from scaly.solvers import SCALY_SOLVER_STATS_VERSION, SolverStats
+  from scaly.opt import SCALY_SOLVER_STATS_VERSION, SolverStats
   from benchmarks.problems.race_cars import NX, NU
   from benchmarks.problems.race_cars import closed_loop
   from benchmarks.problems.race_cars.closed_loop import StepRecord, StepTelemetry

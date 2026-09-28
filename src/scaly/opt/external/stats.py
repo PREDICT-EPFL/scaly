@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass, fields
 
-from ..function.method import Status
+from ...function.method import Status
 
 SCALY_SOLVER_STATS_VERSION = 3
 

@@ -74,8 +74,8 @@ def line_flows(theta: sc.Expr, v: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, s
   return p_ft, q_ft, p_tf, q_tf
 
 
-@sc.problem(vars=sc.G(sc.L("theta", N_BUS), sc.L("v", N_BUS), sc.L("pg", 3), sc.L("qg", 3)))
-def opf(variables: tuple[sc.Expr, ...]) -> sc.ProblemSpec:
+@sc.opt.problem(vars=sc.G(sc.L("theta", N_BUS), sc.L("v", N_BUS), sc.L("pg", 3), sc.L("qg", 3)))
+def opf(variables: tuple[sc.Expr, ...]) -> sc.opt.ProblemSpec:
   theta, v, pg, qg = variables
   p_ft, q_ft, p_tf, q_tf = line_flows(theta, v)
   ends = np.r_[FROM, TO]
@@ -84,16 +84,16 @@ def opf(variables: tuple[sc.Expr, ...]) -> sc.ProblemSpec:
   mw = BASE_MVA * pg
   cost = (sc.const(COST[:, 0]) * mw * mw + sc.const(COST[:, 1]) * mw + sc.const(COST[:, 2])).sum()
   loading = sc.concat([p_ft * p_ft + q_ft * q_ft, p_tf * p_tf + q_tf * q_tf])
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=cost,
     eq=(theta[0:1], p_balance, q_balance),
-    ineq=(sc.bounded(loading, hi=sc.const(np.r_[RATE, RATE] ** 2), name="ratings"),),
-    lb=(sc.NO_LB, sc.const(np.full(N_BUS, 0.9)), sc.const(P_MIN), sc.const(np.full(3, -Q_LIM))),
-    ub=(sc.NO_UB, sc.const(np.full(N_BUS, 1.1)), sc.const(P_MAX), sc.const(np.full(3, Q_LIM))),
+    ineq=(sc.opt.bounded(loading, hi=sc.const(np.r_[RATE, RATE] ** 2), name="ratings"),),
+    lb=(sc.opt.NO_LB, sc.const(np.full(N_BUS, 0.9)), sc.const(P_MIN), sc.const(np.full(3, -Q_LIM))),
+    ub=(sc.opt.NO_UB, sc.const(np.full(N_BUS, 1.1)), sc.const(P_MAX), sc.const(np.full(3, Q_LIM))),
   )
 
 
-solve_opf = sc.solver(opf, "ipopt", name="opf_case9", options={"tol": 1e-10})
+solve_opf = sc.opt.solver(opf, sc.opt.IPOPT(options={"tol": 1e-10}), name="opf_case9")
 
 
 def mismatch(theta: np.ndarray, v: np.ndarray, pg: np.ndarray, qg: np.ndarray) -> float:
@@ -114,8 +114,8 @@ def mismatch(theta: np.ndarray, v: np.ndarray, pg: np.ndarray, qg: np.ndarray) -
 def main() -> dict:
   start = (np.zeros(N_BUS), np.ones(N_BUS), 0.5 * (P_MIN + P_MAX), np.zeros(3))
   zeros = (np.zeros(N_BUS), np.zeros(N_BUS), np.zeros(3), np.zeros(3))
-  (theta, v, pg, qg), lam_box, lam_eq, lam_ineq = solve_opf(start, zeros, np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ())
-  stats = sc.solver_stats(solve_opf)
+  (theta, v, pg, qg), lam_box, lam_eq, lam_ineq, _ = solve_opf(start, zeros, np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ())
+  stats = sc.opt.solver_stats(solve_opf)
   y = Y_SERIES
   vf, vt = v[FROM] * np.exp(1j * theta[FROM]), v[TO] * np.exp(1j * theta[TO])
   s_ft = vf * np.conj((y + 0.5j * B_C) * vf - y * vt)

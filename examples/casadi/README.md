@@ -20,13 +20,13 @@ uv run examples/casadi/compare.py rocket race_car --processes 5
 
 | Pair | Problem | CasADi | Scaly |
 | --- | --- | --- | --- |
-| `rosenbrock` | Rosenbrock's problem as an equality-constrained NLP | `nlpsol` IPOPT | `sc.problem`, IPOPT |
-| `simple_nlp` | closest point to the origin on a half-plane | `nlpsol` IPOPT | `sc.bounded` inequality, IPOPT |
+| `rosenbrock` | Rosenbrock's problem as an equality-constrained NLP | `nlpsol` IPOPT | `sc.opt.problem`, IPOPT |
+| `simple_nlp` | closest point to the origin on a half-plane | `nlpsol` IPOPT | `sc.opt.bounded` inequality, IPOPT |
 | `hs015` | Hock-Schittkowski 15 | `nlpsol` Uno (IPOPT preset) | IPOPT; Scaly has no Uno backend |
-| `nlp_codegen` | NLP whose oracles are generated as C, compiled and loaded | `generate_dependencies`, gcc, `nlpsol` from the `.so` | `sc.solver` (which always does this), `write_module` |
+| `nlp_codegen` | NLP whose oracles are generated as C, compiled and loaded | `generate_dependencies`, gcc, `nlpsol` from the `.so` | `sc.opt.solver` (which always does this), `write_module` |
 | `c_code_generation` | gradient of det of a 7x7 matrix, compiled at `-O0`, `-O3`, `-Os` | SX `det`, `generate`, gcc, `external` | expansion by minors with each minor computed once, `SCALY_CC_OPT` |
 | `parallel_map` | sin applied 100 000 times, at 300 points | SX chain, `map` | `scan` for the chain, `vmap` for the points |
-| `simple_lp` | two-variable LP | `conic` qpOASES | `sc.qp_problem`, PIQP |
+| `simple_lp` | two-variable LP | `conic` qpOASES | `sc.opt.QP`, PIQP |
 | `chain_qp` | hanging chain on a sloped floor, 80 variables | `qpsol` qpOASES, sparse | QP proof, PIQP with `sparse=True` |
 | `rocket` | minimum-effort rocket, 50 intervals of 20 Euler steps | MX, `expand` | `scan` over the intervals |
 | `race_car` | minimum-time race with a speed limit | `Opti`, RK4 | RK4 defect under `vmap`, the final time broadcast |
@@ -120,7 +120,7 @@ What the numbers say:
 ## A slow spot found on the way
 
 `sysid`'s multiple-shooting problem has an arrowhead Hessian: the four parameters couple to all 4000
-states. Of the 13.5 s `sc.solver` takes to build that solver, 8.9 s are in `star_coloring`
+states. Of the 13.5 s `sc.opt.solver` takes to build that solver, 8.9 s are in `star_coloring`
 (`src/scaly/ad/sparsity.py`) and 3.7 s in `_star_recovery_indices` (`src/scaly/ad/sparse.py`),
 whose Python loops grow with the number of variables times the degree of the dense rows. That, and
 not code generation or compilation, is why Scaly's setup is 27 s in that row.

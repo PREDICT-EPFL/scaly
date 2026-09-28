@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from scaly.codegen.jit import HOST_CFLAGS
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
@@ -44,7 +44,7 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
   if not isinstance(solver, sc.Function):
     return solver(x0, lam_eq, lam_ineq, lam_box, params)
 
-  x, lam_box, lam_eq, lam_ineq = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, params)
+  x, lam_box, lam_eq, lam_ineq, _ = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, params)
   descriptor = solver_descriptor(solver)
   base = descriptor.base
   if isinstance(base, sc.Function):
@@ -74,4 +74,4 @@ def problem_stats(solver):
   """Return stats from either a typed Scaly Function or the CasADi adapter."""
   import scaly as sc
 
-  return sc.solver_stats(solver) if isinstance(solver, sc.Function) else solver.last_stats
+  return sc.opt.solver_stats(solver) if isinstance(solver, sc.Function) else solver.last_stats

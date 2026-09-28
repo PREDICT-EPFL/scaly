@@ -36,11 +36,11 @@ def dz_dt(z: sc.Expr) -> sc.Expr:
   return z * z - 2 * z + 1
 
 
-def problem(N: int) -> sc.Problem:
+def problem(N: int) -> sc.opt.NLP:
   D, C = coefficients()
   h = 1.0 / N
 
-  @sc.problem(vars=sc.L("x", N * (K + 1)), name=f"biegler_N{N}")
+  @sc.opt.problem(vars=sc.L("x", N * (K + 1)), name=f"biegler_N{N}")
   def collocation(x):
     Z = x.reshape((N, K + 1))
     g = []
@@ -51,13 +51,13 @@ def problem(N: int) -> sc.Problem:
         g.append(Z[i + 1, 0] - sum(D[j] * Z[i, j] for j in range(K + 1)))
     lb, ub = np.full(N * (K + 1), -100.0), np.full(N * (K + 1), 100.0)
     lb[0] = ub[0] = Z0
-    return sc.ProblemSpec(minimize=x[0] ** 2, eq=(sc.stack(g),), lb=sc.const(lb), ub=sc.const(ub))
+    return sc.opt.ProblemSpec(minimize=x[0] ** 2, eq=(sc.stack(g),), lb=sc.const(lb), ub=sc.const(ub))
 
   return collocation
 
 
 def build(verbose: bool = False):
-  solvers = [(N, sc.solver(problem(N), "ipopt", options=scaly_ipopt_options(verbose, tol=1e-10))) for N in range(1, 11)]
+  solvers = [(N, sc.opt.solver(problem(N), sc.opt.IPOPT(options=scaly_ipopt_options(verbose, tol=1e-10)))) for N in range(1, 11)]
 
   def run():
     out = {}

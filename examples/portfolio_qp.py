@@ -16,7 +16,7 @@ extracted ``P`` and ``A`` when the solver is built and bake them into the genera
 which then refills values only.
 
 Sweeping ``gamma`` traces the efficient frontier. The factored and the dense formulation (the full
-``Sigma``, through ``sc.qp_problem``) agree, and so does SciPy's SLSQP on a small instance.
+``Sigma``, through ``sc.opt.QP``) agree, and so does SciPy's SLSQP on a small instance.
 
 The generated C lands in ``examples/generated/portfolio_qp/``.
 """
@@ -38,22 +38,22 @@ GAMMAS = np.logspace(0, 2.5, 11)
 TIGHT = {"eps_abs": 1e-10, "eps_rel": 1e-10, "eps_duality_gap_abs": 1e-10, "eps_duality_gap_rel": 1e-10}
 
 
-@sc.problem(
+@sc.opt.problem(
   vars=sc.G(sc.L("x", N_ASSETS), sc.L("y", N_FACTORS)),
   params=sc.G(sc.L("mu", N_ASSETS), sc.L("F", (N_ASSETS, N_FACTORS)), sc.L("d", N_ASSETS), sc.L("gamma", ())),
 )
-def markowitz(variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, ...]) -> sc.ProblemSpec:
+def markowitz(variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, ...]) -> sc.opt.ProblemSpec:
   x, y = variables
   mu, f, d, gamma = params
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=gamma * (sc.sumsqr(y) + (d * x * x).sum()) - mu @ x,
     eq=(y - f.T @ x, x.sum() - 1.0),
-    lb=(sc.const(np.zeros(N_ASSETS)), sc.NO_LB),
-    ub=(sc.const(np.full(N_ASSETS, X_MAX)), sc.NO_UB),
+    lb=(sc.const(np.zeros(N_ASSETS)), sc.opt.NO_LB),
+    ub=(sc.const(np.full(N_ASSETS, X_MAX)), sc.opt.NO_UB),
   )
 
 
-solve_factored = sc.solver(markowitz, "piqp", name="markowitz_sparse", options={"sparse": True, **TIGHT})
+solve_factored = sc.opt.solver(markowitz, sc.opt.PIQP(sparse=True, options={**TIGHT}), name="markowitz_sparse")
 
 
 def market(seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -74,8 +74,8 @@ def solve(mu: np.ndarray, f: np.ndarray, d: np.ndarray, gamma: float) -> np.ndar
 
 def dense_reference(mu: np.ndarray, f: np.ndarray, d: np.ndarray, gamma: float) -> np.ndarray:
   """The same portfolio from the dense ``Sigma``, as a matrix-data QP (box bounds as inequalities)."""
-  qp = sc.qp_problem(N_ASSETS, 1, N_ASSETS)
-  solve_dense = sc.solver(qp, "piqp", name="markowitz_dense", options=TIGHT)
+  qp = sc.opt.QP(N_ASSETS, 1, N_ASSETS)
+  solve_dense = sc.opt.solver(qp, sc.opt.PIQP(options=TIGHT), name="markowitz_dense")
   sigma = f @ f.T + np.diag(d)
   data = ((2 * gamma * sigma, -mu), (np.ones((1, N_ASSETS)), np.ones(1)), (np.eye(N_ASSETS), np.zeros(N_ASSETS), np.full(N_ASSETS, X_MAX)))
   x, *_ = solve_dense(np.zeros(N_ASSETS), np.zeros(N_ASSETS), np.zeros(1), np.zeros(N_ASSETS), data)

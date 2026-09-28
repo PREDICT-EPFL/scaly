@@ -58,8 +58,9 @@ version is never reused.
 Extension API. `EXT_API_VERSION` (`scaly.ext`) versions what any package outside the compiler
 builds on, and every such package checks it at import; it is also part of every JIT cache key.
 
-Plugin protocol. `SOLVER_PLUGIN_PROTOCOL_VERSION` and `SCALY_SOLVER_STATS_VERSION` version the
-contract between core and solver plugins; [Solver plugins](solver_plugins.md#versioning) lists what
+Method API. `METHOD_API` (`scaly.opt.method`, the method API of `sc.opt.NLP`, which continues the
+solver plugin protocol's numbering) and `SCALY_SOLVER_STATS_VERSION` version the contract between
+core and solver plugins; [Solver plugins](solver_plugins.md#versioning) lists what
 each covers and its history. A protocol bump is a minor release of `scaly` and a coordinated release
 of every official plugin, which raise their lower bound on `scaly` in the same commit. A patch
 release never bumps either constant.

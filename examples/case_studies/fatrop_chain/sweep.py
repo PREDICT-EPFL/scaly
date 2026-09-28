@@ -9,7 +9,7 @@ docs/results/fairness.md), times each kernel from C with `time_kernel.c`, and ch
 CasADi's SX evaluation at the same point. A backend that fails at one size is skipped at larger ones.
 
 Backends:
-  scaly         `sc.solver(problem, "ipopt")`'s descriptor kernels (the IPOPT drop-in's oracles)
+  scaly         `sc.opt.solver(problem, "ipopt")`'s descriptor kernels (the IPOPT drop-in's oracles)
   scaly_stage   the Fatrop drop-in's oracles: dense stage Hessians and Jacobians, `vmap` over stages
   casadi_sx     rockit's NLP expanded to SX (`expand=True`), what the paper compiled
   casadi_mx     rockit's NLP as MX, one call node per stage (`expand=False`)
@@ -146,14 +146,14 @@ def worker(backend: str, dim: int, masses: int, horizon: int, repeats: int, work
   if backend in ("scaly", "scaly_stage"):
     import scaly as sc
     from scaly.codegen import write_module
-    from scaly.solvers.graph import solver_descriptor
+    from scaly.opt.external.graph import solver_descriptor
     from scaly_impl import build, sizes
 
     nx, nu = sizes(dim, masses)
     sources = []
     if backend == "scaly":
       b = build(dim, masses, horizon)
-      desc = solver_descriptor(sc.solver(b["problem"], "ipopt", name=f"sweep_{dim}d_M{masses}"))
+      desc = solver_descriptor(sc.opt.solver(b["problem"], "ipopt", name=f"sweep_{dim}d_M{masses}"))
       for kind, fn, sp in (("hess", desc.hess, desc.hess_sparsity), ("jac", desc.jac, desc.jac_sparsity)):
         assert isinstance(fn, sc.Function) and sp is not None
         module = write_module(fn, work)

@@ -20,8 +20,8 @@ from scaly.ir.expr_spec import spec_expr
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.program_spec import spec_program_full
 from scaly.ir.spec import Rule, Spec, VerifyError
-from scaly.solvers.problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec
-from scaly.solvers.qp import NotQuadratic, QPData, qp_problem
+from scaly.opt.problem import NLP, NO_LB, NO_UB, Bounded, ProblemSpec
+from scaly.opt.qp import QP, NotQuadratic, QPData
 
 
 def test_public_exports_are_canonical() -> None:
@@ -33,18 +33,18 @@ def test_public_exports_are_canonical() -> None:
   assert sc.NotConcrete is NotConcrete and issubclass(NotConcrete, TypeError)
   assert sc.L is L
   assert sc.G is G
-  assert sc.Bounded is Bounded
-  assert sc.Problem is Problem
-  assert sc.ProblemSpec is ProblemSpec
-  assert sc.NotQuadratic is NotQuadratic
-  assert sc.NO_LB is NO_LB
-  assert sc.NO_UB is NO_UB
-  assert sc.QPData is QPData
-  assert sc.qp_problem is qp_problem
-  assert callable(sc.bounded) and callable(sc.problem) and callable(sc.solver)
-  assert {"Bounded", "NO_LB", "NO_UB", "NotQuadratic", "Problem", "ProblemSpec", "QPData", "bounded", "problem", "qp_problem", "solver"} <= set(
-    sc.__all__
-  )
+  assert sc.opt.Bounded is Bounded
+  assert sc.opt.NLP is NLP
+  assert sc.opt.ProblemSpec is ProblemSpec
+  assert sc.opt.NotQuadratic is NotQuadratic
+  assert sc.opt.NO_LB is NO_LB
+  assert sc.opt.NO_UB is NO_UB
+  assert sc.opt.QPData is QPData
+  assert sc.opt.QP is QP and issubclass(QP, NLP)
+  assert callable(sc.opt.bounded) and callable(sc.opt.problem) and callable(sc.opt.solver)
+  assert {"Bounded", "NLP", "NO_LB", "NO_UB", "NotQuadratic", "ProblemSpec", "QP", "QPData", "bounded", "problem", "solver"} <= set(sc.opt.__all__)
+  # Optimization lives in ``sc.opt`` alone.
+  assert all(not hasattr(sc, name) for name in ("problem", "solver", "qp_problem", "Problem", "ProblemSpec", "bounded", "solver_stats"))
   assert not hasattr(sc, "nlp")
   assert not hasattr(sc, "qp")
   assert not hasattr(sc, "SolverFunction")
@@ -190,3 +190,20 @@ def test_the_linalg_ops_take_only_public_names_from_the_compiler() -> None:
       if into_core:
         private += [f"{path.name}:{stmt.lineno} {alias.name}" for alias in stmt.names if alias.name.startswith("_")]
   assert not private, "linalg.ops imports private compiler names: " + ", ".join(private)
+
+
+def test_nothing_outside_scaly_opt_imports_its_private_names() -> None:
+  """``extract_qp``, ``nlp_oracles`` and the method registry are the public way into a problem's
+  normal forms and solvers; ``scaly.opt``'s underscore names stay inside it."""
+  root = Path(__file__).resolve().parents[1]
+  pattern = re.compile(r"from (?:scaly\.opt|\.+opt)(?:\.[\w.]+)? import \(?([^)\n]*)")
+  found = []
+  for folder in ("src", "tests", "plugins", "examples", "benchmarks"):
+    for path in (root / folder).rglob("*.py"):
+      if ".ipynb_checkpoints" in path.parts or path.is_relative_to(root / "src" / "scaly" / "opt"):
+        continue
+      for number, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+        match = pattern.search(line)
+        if match and any(name.strip().split(" as ")[0].startswith("_") for name in match.group(1).split(",")):
+          found.append(f"{path.relative_to(root)}:{number}")
+  assert not found, "private scaly.opt names imported outside it: " + ", ".join(found)

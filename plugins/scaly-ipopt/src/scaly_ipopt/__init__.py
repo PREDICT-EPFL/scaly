@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import platform
 from typing import TYPE_CHECKING
 
 from scaly.ext import require_ext_api
+from scaly.opt.external import External
 
 require_ext_api(1, "scaly-ipopt")
 
 if TYPE_CHECKING:
-  from scaly.solvers.wrapper import SolverWrapperCtx
+  from scaly.opt.external import SolverWrapperCtx
   from scaly.function import ConcreteFunction
 
 _RAW_BUILD_CONFIG = json.loads((Path(__file__).resolve().parent / "build_config.json").read_text())
@@ -26,14 +28,14 @@ def lib_dir() -> Path:
   return Path(__file__).resolve().parent / "lib"
 
 
-class _Backend:
-  """IPOPT solver plugin: vendored lib/header metadata + the C wrapper
-  template (``codegen.py``). Solves run through scaly's generated C wrapper."""
+@dataclass(frozen=True)
+class IPOPT(External):
+  """IPOPT, the interior-point NLP solver, vendored (with MUMPS) and called from the generated C
+  wrapper (``codegen.py``). ``options`` are IPOPT's options by name, as its C interface takes them."""
 
-  name = "ipopt"
+  name = "opt.ipopt"
   kind = "nlp"
   hess_triangle = "lower"
-  protocol_version = 8
   lib_stem = "ipopt"
   link_flags = ("-lipopt",)
   header = "coin-or/IpStdCInterface.h"
@@ -48,4 +50,4 @@ class _Backend:
     return render_wrapper(fun, ctx)
 
 
-BACKEND = _Backend()
+__all__ = ["BUILD_CONFIG", "IPOPT", "include_dir", "lib_dir"]

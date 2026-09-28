@@ -73,19 +73,19 @@ def hand_written():
     e = error(x)
     return ((sc.const(Q) * e * e).sum() + R * u[0] * u[0]).reshape((1,)) * DT
 
-  @sc.problem(vars=sc.G(sc.L("xs", (N + 1) * NX), sc.L("us", N * NU), sc.L("slack", N)), params=sc.L("x0", NX), name="hand_cartpole")
+  @sc.opt.problem(vars=sc.G(sc.L("xs", (N + 1) * NX), sc.L("us", N * NU), sc.L("slack", N)), params=sc.L("x0", NX), name="hand_cartpole")
   def swing(variables, x0):
     xs, us, slack = variables
     defects = sc.vmap(defect, N, [(xs, 0, NX), (us, 0, NU), (xs, NX, NX)])
     costs = sc.vmap(stage_cost, N, [(xs, 0, NX), (us, 0, NU)])
     positions = xs.reshape((N + 1, NX))[:N, 0]
     e = error(xs[N * NX :])
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=costs.sum() + QN * (sc.const(Q) * e * e).sum() + SOFT * slack.sum(),
       eq=(xs[:NX] - x0, defects),
-      ineq=(sc.bounded(positions - slack, hi=P_MAX), sc.bounded(positions + slack, lo=-P_MAX)),
-      lb=(sc.NO_LB, sc.const(np.full(N * NU, -U_MAX)), sc.const(np.zeros(N))),
-      ub=(sc.NO_UB, sc.const(np.full(N * NU, U_MAX)), sc.NO_UB),
+      ineq=(sc.opt.bounded(positions - slack, hi=P_MAX), sc.opt.bounded(positions + slack, lo=-P_MAX)),
+      lb=(sc.opt.NO_LB, sc.const(np.full(N * NU, -U_MAX)), sc.const(np.zeros(N))),
+      ub=(sc.opt.NO_UB, sc.const(np.full(N * NU, U_MAX)), sc.opt.NO_UB),
     )
 
   return swing
@@ -109,7 +109,7 @@ def library(transcription=None, name="lib_cartpole", *, track: bool = True, **kw
 @pytest.mark.solver("ipopt")
 def test_the_library_transcribes_the_cart_pole_as_by_hand() -> None:
   options = {"tol": 1e-12}
-  hand = sc.solver(hand_written(), "ipopt", name="hand_ipopt", options=options)
+  hand = sc.opt.solver(hand_written(), sc.opt.IPOPT(options=options), name="hand_ipopt")
   n_eq, n_ineq = (N + 1) * NX, 2 * N
   guess = (np.tile(X0, N + 1), np.zeros(N), np.zeros(N))
   (xs, us, slack), *_ = hand(guess, tuple(np.zeros(g.size) for g in guess), np.zeros(n_eq), np.zeros(n_ineq), X0)

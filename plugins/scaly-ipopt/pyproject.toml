@@ -11,8 +11,8 @@ license-files = ["LICENSE.md"]
 requires = ["hatchling", "cmake>=3.5"]
 build-backend = "hatchling.build"
 
-[project.entry-points."scaly.solvers"]
-ipopt = "scaly_ipopt:BACKEND"
+[project.entry-points."scaly.methods"]
+"opt.ipopt" = "scaly_ipopt:IPOPT"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scaly_ipopt"]

@@ -44,7 +44,7 @@ def main() -> None:
   t0 = time.perf_counter()
   prob = si.problem(c)
   options = {"tol": args.tol, "linear_solver": "mumps", "print_timing_statistics": "yes", "print_level": 5}
-  solve = sc.solver(prob, "ipopt", name=f"acopf_{c.name}", options=options)
+  solve = sc.opt.solver(prob, sc.opt.IPOPT(options=options), name=f"acopf_{c.name}")
   t_build = time.perf_counter() - t0
   x0 = si.start(c)
   zeros = tuple(np.zeros_like(a) for a in x0)
@@ -54,7 +54,7 @@ def main() -> None:
     t0 = time.perf_counter()
     (va, vm, pg, qg, p, q), *_ = solve(x0, zeros, np.zeros(prob.n_eq), np.zeros(prob.n_ineq), ())
     wall = time.perf_counter() - t0
-    st = sc.solver_stats(solve)
+    st = sc.opt.solver_stats(solve)
     runs.append({"wall": wall, "iterations": int(st.iter), "objective": float(st.obj), "status": st.to_solver_status().name, "t_total": st.t_total, "t_fe": st.t_fe})
     sys.stdout.flush()
   row = {

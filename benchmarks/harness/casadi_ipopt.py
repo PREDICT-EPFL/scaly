@@ -21,9 +21,9 @@ import numpy as np
 
 from scaly.codegen.jit import load_library, opt_flag, vectorize_flags
 from scaly.codegen.toolchain import cache_root, find_c_compiler
-from scaly.solvers.paths import backend_compile_flags, solver_paths
+from scaly.opt.external.paths import backend_compile_flags, solver_paths
 from scaly import Status
-from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, SolverStats, SolverStatus, stats_c_timing_defs
+from scaly.opt.external.stats import SCALY_SOLVER_STATS_VERSION, SolverStats, SolverStatus, stats_c_timing_defs
 from scaly.utils.env import shared_lib_ext, shared_lib_flag
 from benchmarks.harness import NATIVE_CFLAGS
 

@@ -25,9 +25,9 @@ GENERATED = Path(__file__).resolve().parent / "generated" / "tiny_qp"
 P_SWEEP = (-1.0, 0.5, 2.0, 2.4, 4.0)
 
 
-@sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+@sc.opt.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
 def tiny_qp(x, p):
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=x[0] ** 2 + x[1] ** 2 + x[0] * x[1] - (2.0 + p) * x[0] - 4.0 * x[1],
     eq=(x.sum() - 1.0,),
     lb=sc.const(np.zeros(2)),
@@ -35,7 +35,7 @@ def tiny_qp(x, p):
   )
 
 
-solve = sc.solver(tiny_qp, "piqp", name="tiny_qp_solve", options={"sparse": True})
+solve = sc.opt.solver(tiny_qp, sc.opt.PIQP(sparse=True), name="tiny_qp_solve")
 
 
 def closed_form(p: float) -> np.ndarray:
@@ -47,7 +47,7 @@ def main() -> dict:
   hess = np.array([[2.0, 1.0], [1.0, 2.0]])
   rows = []
   for p in P_SWEEP:
-    x, lam_box, lam_eq, _ = solve(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(0), np.array(p))
+    x, lam_box, lam_eq, _, _ = solve(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(0), np.array(p))
     reference = closed_form(p)
     stationarity = hess @ x + np.array([-(2.0 + p), -4.0]) + lam_eq[0] + lam_box
     rows.append((p, x, reference, lam_eq[0], float(np.abs(x - reference).max()), float(np.abs(stationarity).max())))

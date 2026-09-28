@@ -86,12 +86,12 @@ def test_a_table_calibrated_by_ipopt_is_the_least_squares_fit() -> None:
   want = np.linalg.lstsq(B.toarray(), data, rcond=None)[0].reshape(6, 5)
   for through in ("at", "batch"):
 
-    @sc.problem(vars=sc.L("v", (6, 5)), params=sc.L("d", 300), name=f"calibrate_{through}")
-    def calibrate(v: sc.Expr, d: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    @sc.opt.problem(vars=sc.L("v", (6, 5)), params=sc.L("d", 300), name=f"calibrate_{through}")
+    def calibrate(v: sc.Expr, d: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
       table = interp.interpolant(g, v)
       residual = (table.at(pts) if through == "at" else table(sc.const(pts))) - d  # noqa: B023
-      return sc.ProblemSpec(minimize=(residual * residual).sum())
+      return sc.opt.ProblemSpec(minimize=(residual * residual).sum())
 
-    solve = sc.solver(calibrate, "ipopt", name=f"calibrate_{through}_ipopt", options={"tol": 1e-12})
+    solve = sc.opt.solver(calibrate, sc.opt.IPOPT(options={"tol": 1e-12}), name=f"calibrate_{through}_ipopt")
     found = solve.numerical_call(np.zeros((6, 5)), np.zeros((6, 5)), np.zeros(0), np.zeros(0), data)[0]
     np.testing.assert_allclose(found, want, rtol=1e-8, atol=1e-8, err_msg=through)

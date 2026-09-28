@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 from ..ir.expr import Expr
-from ..solvers.problem import Bounded, bounded
+from ..opt.problem import Bounded, bounded
 from .polytope import Polytope
 
 __all__ = ["Ellipsoid", "largest_ellipsoid", "lqr", "max_invariant_set"]

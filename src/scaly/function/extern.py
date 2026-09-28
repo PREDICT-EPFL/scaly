@@ -3,7 +3,7 @@
 An ``EXTERN_CALL`` node reads one output of such a callee. Its ``extern`` attribute, which the
 Function carries as ``Function.extern``, answers what lowering, code generation and the JIT ask:
 which Functions its C calls (lowered as usual), which C sources it adds, the C that defines it, and
-what compiling and loading the translation unit takes. Solvers implement it (``scaly.solvers``);
+what compiling and loading the translation unit takes. Solvers implement it (``scaly.opt.external``);
 nothing in the compiler knows what a solver is.
 """
 

@@ -84,7 +84,7 @@ class EpisodeConfig:
 
 @dataclass(frozen=True)
 class StepTelemetry:
-  stats: sc.SolverStats
+  stats: sc.opt.SolverStats
   arc_length: float
   laps: int
   # constraint violations of the accepted solution, for the SQP-versus-IPOPT divergence report
@@ -122,7 +122,7 @@ class StepRecord:
   prediction: np.ndarray | None
   reference_horizon: np.ndarray
   oracle_input: dict[str, np.ndarray] | None
-  stats: sc.SolverStats | None
+  stats: sc.opt.SolverStats | None
   telemetry: StepTelemetry | None
 
 
@@ -238,8 +238,8 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     ub[i * NZ + NX : (i + 1) * NZ] = [T_MAX, DELTA_MAX]
   problem_name = f"race_car_closed_loop_N{n}"
 
-  @sc.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n)), name=problem_name)
-  def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+  @sc.opt.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n)), name=problem_name)
+  def problem(z: sc.Expr, p: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
     residuals = sc.vmap(
       _cost_stage,
       length=n + 1,
@@ -250,11 +250,11 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
       length=n,
       inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
     )
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=sc.dot(sc.const(weights.reshape(-1)), residuals**2),
       eq=(_race_car_eq_vmap_expr(z, p, n),),
       ineq=(
-        sc.bounded(
+        sc.opt.bounded(
           corridor,
           lo=sc.const(np.full(2 * n, -config.track_half_width)),
           hi=sc.const(np.full(2 * n, config.track_half_width)),
@@ -265,21 +265,22 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
       ub=sc.const(ub),
     )
 
-  return sc.solver(
+  return sc.opt.solver(
     problem,
-    solver,
-    name=f"{problem_name}_{solver}",
-    options=(
-      {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
-      if solver == "sqp"
-      else {
-        "print_level": 0,
-        "sb": "yes",
-        "tol": config.ipopt_tol,
-        "max_iter": config.ipopt_max_iter,
-        "warm_start_init_point": "yes",
-      }
+    sc.opt.REGISTRY.get(solver)(
+      options=(
+        {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
+        if solver == "sqp"
+        else {
+          "print_level": 0,
+          "sb": "yes",
+          "tol": config.ipopt_tol,
+          "max_iter": config.ipopt_max_iter,
+          "warm_start_init_point": "yes",
+        }
+      )
     ),
+    name=f"{problem_name}_{solver}",
   )
 
 

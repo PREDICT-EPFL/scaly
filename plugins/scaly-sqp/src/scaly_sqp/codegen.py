@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 if TYPE_CHECKING:
-  from scaly.solvers.wrapper import SolverWrapperCtx
+  from scaly.opt.external.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
 
 

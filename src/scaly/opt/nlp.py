@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -12,9 +13,12 @@ from ..function.api import gradient, sparse_jacobian
 from ..function.tree import G, L, Tree, param_list
 from ..ir.expr import Expr, ExprOp, concat, substitute
 from ..ir.types import SparsityType, TensorType
-from .model import SolverDescriptor, descriptor_function
-from .problem import Problem
-from .registry import NlpSolverBackend
+from .external.model import SolverDescriptor, descriptor_function
+from .problem import NLP
+from .method import Info
+
+if TYPE_CHECKING:
+  from .external.method import External
 
 
 def _concat_vec(exprs: tuple[Expr, ...]) -> Expr | None:
@@ -34,7 +38,7 @@ def _bound(expr: Expr | None, shape: tuple[int, ...], fill: float) -> Expr:
   raise TypeError(f"bound has shape {expr.shape}, expected scalar or {shape}")
 
 
-def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
+def _lowered(problem: NLP[Any, Any, Any, Any]) -> dict[str, Any]:
   cached = problem._cache.get("nlp")
   if cached is not None:
     return cast(dict[str, Any], cached)
@@ -159,22 +163,64 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   return cached
 
 
+@dataclass(frozen=True)
+class NLPOracles:
+  """The oracles of a problem in nonlinear normal form, as ``nlp_oracles`` builds them:
+
+      minimize f(x, p)  subject to  h(x, p) = 0,  l_ineq <= g_ineq(x, p) <= u_ineq,  x_lb <= x <= x_ub
+
+  over the variables flattened in declaration order (``x``), with ``g = [h; g_ineq]``: ``n_eq`` rows
+  of equalities, then ``n_ineq`` of inequalities. ``base`` maps ``(x, params)`` to ``f`` (and ``g``),
+  ``grad`` to the gradient of ``f``, ``jac`` to the sparse Jacobian of ``g`` (``None`` without
+  constraints; its pattern ``jac_sparsity``), and ``bounds`` maps the parameters to ``x_lb, x_ub``
+  (and ``l_ineq, u_ineq``). ``hess`` is the sparse Hessian, both triangles, of the Lagrangian
+  ``lam_f f + lam_g' g`` over ``hess_inputs``: ``x``, the parameters, ``lam_f`` and ``lam_g``."""
+
+  x: Expr
+  n_eq: int
+  n_ineq: int
+  base: ConcreteFunction[Any, Any, Any, Any]
+  grad: ConcreteFunction[Any, Any, Any, Any]
+  jac: ConcreteFunction[Any, Any, Any, Any] | None
+  jac_sparsity: SparsityType
+  hess: SparseJacobian
+  hess_inputs: tuple[Expr, ...]
+  bounds: ConcreteFunction[Any, Any, Any, Any]
+
+
+def nlp_oracles(problem: NLP[Any, Any, Any, Any]) -> NLPOracles:
+  """The nonlinear normal form of ``problem`` (``NLPOracles``), built once and kept with the problem."""
+  cached = _lowered(problem)
+  return NLPOracles(
+    x=cast(Expr, cached["x"]),
+    n_eq=problem.n_eq,
+    n_ineq=problem.n_ineq,
+    base=cast(ConcreteFunction, cached["base"]),
+    grad=cast(ConcreteFunction, cached["grad"]),
+    jac=cast(ConcreteFunction | None, cached["jac"]),
+    jac_sparsity=cast(SparsityType, cached["jac_sparsity"]),
+    hess=cast(SparseJacobian, cached["hess_full"]),
+    hess_inputs=cast(tuple[Expr, ...], cached["hess_inputs"]),
+    bounds=cast(ConcreteFunction, cached["bounds"]),
+  )
+
+
 def build_nlp[SV, NV, SP, NP](
-  problem: Problem[SV, NV, SP, NP],
-  backend: NlpSolverBackend,
+  problem: NLP[SV, NV, SP, NP],
+  method: External,
   *,
   name: str,
   options: dict[str, str | int | float] | None,
 ) -> ConcreteFunction[
   [SV, SV, Expr, Expr, SP],
   [NV, NV, np.ndarray, np.ndarray, NP],
-  tuple[SV, SV, Expr, Expr],
-  tuple[NV, NV, np.ndarray, np.ndarray],
+  tuple[SV, SV, Expr, Expr, Info],
+  tuple[NV, NV, np.ndarray, np.ndarray, Info],
 ]:
   """Build a typed plain Function around an NLP plugin descriptor."""
   cached = _lowered(problem)
   x = cast(Expr, cached["x"])
-  triangle = backend.hess_triangle
+  triangle = method.hess_triangle
   hess_key = f"hess:{triangle}"
   hess_fn = cast(ConcreteFunction | None, problem._cache.get(hess_key))
   if hess_fn is None:
@@ -218,7 +264,8 @@ def build_nlp[SV, NV, SP, NP](
 
   descriptor = SolverDescriptor(
     name=name,
-    backend=backend.name,
+    backend=method.backend,
+    method=method,
     n=sum(cast(tuple[int, ...], cached["var_sizes"])),
     n_eq=problem.n_eq,
     n_ineq=problem.n_ineq,

@@ -7,9 +7,9 @@ The solvers, each a plain Scaly ``Function`` from the problem's parameters to it
 
 | Key | Solver | Behind the generated C |
 | --- | --- | --- |
-| ``piqp_sparse``, ``piqp_dense`` | ``sc.solver(problem, "piqp")``, sparse and dense | oracles for the QP data, and a call into the vendored PIQP 0.6.2 library |
+| ``piqp_sparse``, ``piqp_dense`` | ``sc.opt.solver(problem, "piqp")``, sparse and dense | oracles for the QP data, and a call into the vendored PIQP 0.6.2 library |
 | ``scaly_sparse``, ``scaly_dense`` | ``generated_piqp.solver(problem, backend)`` | nothing: PIQP's algorithm is the generated C, specialised to the problem's sparsity |
-| ``ipopt`` | ``sc.solver(problem, "ipopt")`` | oracles, and a call into the vendored IPOPT 3.14 with MUMPS |
+| ``ipopt`` | ``sc.opt.solver(problem, "ipopt")`` | oracles, and a call into the vendored IPOPT 3.14 with MUMPS |
 
 Every (case, solver) cell runs in a fresh process with an empty JIT cache, so nothing a previous
 cell lowered or compiled is reused. Measured per cell:
@@ -84,13 +84,13 @@ def build(case: Any, key: str) -> Any:
 
   name = f"{case.name}_{key}"
   if key in ("piqp_sparse", "piqp_dense"):
-    return sc.solver(case.problem, "piqp", name=name, options={"sparse": key == "piqp_sparse"})
+    return sc.opt.solver(case.problem, sc.opt.PIQP(sparse=key == "piqp_sparse"), name=name)
   if key == REFERENCE:
-    return sc.solver(case.problem, "piqp", name=name, options={"sparse": True, **TIGHT})
+    return sc.opt.solver(case.problem, sc.opt.PIQP(sparse=True, options={**TIGHT}), name=name)
   if key in ("scaly_sparse", "scaly_dense"):
     return generated_piqp.solver(case.problem, "sparse" if key == "scaly_sparse" else "dense", name=name)
   if key == "ipopt":
-    return sc.solver(case.problem, "ipopt", name=name, options=IPOPT_OPTIONS)
+    return sc.opt.solver(case.problem, sc.opt.IPOPT(options=IPOPT_OPTIONS), name=name)
   raise KeyError(key)
 
 
@@ -162,7 +162,7 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
   from scaly.codegen import render_c_module, write_module
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
-  from scaly.solvers import solver_stats
+  from scaly.opt import solver_stats
 
   import generated_piqp
 

@@ -28,7 +28,7 @@ pattern and its factor, times Scaly's two factorization schedules, and plots the
   writes `~/.julia` on first import. OSQP and Clarabel are timed as libraries.
 - QOCO's Appendix B script is not public either. The LQR KKT matrix is rebuilt from the paper's
   description, with random `A`, `B` of the stated sizes and an unstated `eps`, here 1e-7.
-- `sc.solver`'s QP build-time growth (CS-6) did not need fixing first: the generated PIQP builds in
+- `sc.opt.solver`'s QP build-time growth (CS-6) did not need fixing first: the generated PIQP builds in
   under 2 s up to horizon 32 (the grid records every build).
 
 ## Files
@@ -37,7 +37,7 @@ pattern and its factor, times Scaly's two factorization schedules, and plots the
 | --- | --- |
 | `baseline/setup.sh` | pins qoco-benchmarks (`d7e00f5`) and qoco (`0198625`, for its vendored QDLDL) |
 | `baseline/run_qoco.py` | QOCO, Clarabel, OSQP at 1e-7 and 1e-3, and QOCOGEN, through qoco-benchmarks' own problem conversion and C timing harness, with QOCOGEN compiled with Scaly's flags |
-| `problem.py` | the family as a Scaly `sc.problem` with `Q`, `R`, `x0` as parameters, and the benchmark's random instances replayed in its draw order |
+| `problem.py` | the family as a Scaly `sc.opt.problem` with `Q`, `R`, `x0` as parameters, and the benchmark's random instances replayed in its draw order |
 | `run_scaly.py` | the generated PIQP (`examples/qp_solvers/generated_piqp.py`, Tier 4's `backend="scaly"`) and the PIQP library, timed from C |
 | `compare.py` | every solver, every horizon, fresh processes, the quiet-machine gate |
 | `ldl_bench.py` | the LDLᵀ microbenchmark: QOCOGEN's `ldl()`, QDLDL, Scaly's `SparseLDL` looped and straight-line |

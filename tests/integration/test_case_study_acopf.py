@@ -38,7 +38,7 @@ ARC_BUS = np.r_[F, T]  # arcs: all from-ends, then all to-ends
 F_ARC, T_ARC = np.arange(NBR), NBR + np.arange(NBR)
 
 
-@sc.problem(vars=sc.G(sc.L("va", NB), sc.L("vm", NB), sc.L("pg", NG), sc.L("qg", NG), sc.L("p", 2 * NBR), sc.L("q", 2 * NBR)))
+@sc.opt.problem(vars=sc.G(sc.L("va", NB), sc.L("vm", NB), sc.L("pg", NG), sc.L("qg", NG), sc.L("p", 2 * NBR), sc.L("q", 2 * NBR)))
 def opf(variables):
   va, vm, pg, qg, p, q = variables
   C = sc.const
@@ -57,12 +57,12 @@ def opf(variables):
   bal_p = sc.segment_sum(p, ARC_BUS, NB) - sc.segment_sum(pg, GEN_BUS, NB) + C(PD) + C(GS) * vm * vm
   bal_q = sc.segment_sum(q, ARC_BUS, NB) - sc.segment_sum(qg, GEN_BUS, NB) + C(QD) - C(BS) * vm * vm
   rate = np.r_[RATE, RATE]
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=(C(COST[:, 0]) * pg * pg + C(COST[:, 1]) * pg + C(COST[:, 2])).sum(),
     eq=(va[0:1], bal_p, bal_q, *eqs),
-    ineq=(sc.bounded(dva, lo=C(np.full(NBR, -ANG)), hi=C(np.full(NBR, ANG))), sc.bounded(p * p + q * q, hi=C(rate**2))),
-    lb=(sc.NO_LB, C(np.full(NB, VMIN)), C(PMIN), C(QMIN), C(-rate), C(-rate)),
-    ub=(sc.NO_UB, C(np.full(NB, VMAX)), C(PMAX), C(QMAX), C(rate), C(rate)),
+    ineq=(sc.opt.bounded(dva, lo=C(np.full(NBR, -ANG)), hi=C(np.full(NBR, ANG))), sc.opt.bounded(p * p + q * q, hi=C(rate**2))),
+    lb=(sc.opt.NO_LB, C(np.full(NB, VMIN)), C(PMIN), C(QMIN), C(-rate), C(-rate)),
+    ub=(sc.opt.NO_UB, C(np.full(NB, VMAX)), C(PMAX), C(QMAX), C(rate), C(rate)),
   )
 
 
@@ -85,12 +85,12 @@ def injection(va, vm):
 
 @pytest.mark.solver("ipopt")
 def test_polar_opf_with_a_phase_shifter_matches_an_admittance_matrix_model() -> None:
-  solve = sc.solver(opf, "ipopt", name="test_acopf_three_bus", options={"tol": 1e-10})
+  solve = sc.opt.solver(opf, sc.opt.IPOPT(options={"tol": 1e-10}), name="test_acopf_three_bus")
   x0 = (np.zeros(NB), np.ones(NB), np.clip(np.zeros(NG), PMIN, PMAX), np.zeros(NG), np.zeros(2 * NBR), np.zeros(2 * NBR))
   (va, vm, pg, qg, p, q), *_ = solve(
     x0, (np.zeros(NB), np.zeros(NB), np.zeros(NG), np.zeros(NG), np.zeros(2 * NBR), np.zeros(2 * NBR)), np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ()
   )
-  stats = sc.solver_stats(solve)
+  stats = sc.opt.solver_stats(solve)
   assert stats.to_solver_status().name == "OK"
   gen = np.zeros(NB, dtype=complex)
   np.add.at(gen, GEN_BUS, pg + 1j * qg)

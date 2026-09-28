@@ -3,7 +3,7 @@
 from time import perf_counter
 
 import numpy as np
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 
 
 def prepare_solver(controller) -> None:

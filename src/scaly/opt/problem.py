@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, cast, overload
+from typing import Any, ClassVar, cast, overload
 
 import numpy as np
 
@@ -12,6 +12,7 @@ from ..function.tree import Tree, flat_tree
 from ..ir.expr import Expr, as_expr, substitute
 from ..ir.types import TensorType
 from ._oracle import collect_free_inputs
+from .method import METHOD_API
 
 
 NO_LB: Expr = Expr.const(float("-inf"))
@@ -54,8 +55,10 @@ class ProblemSpec[SymbolicVars]:
 
 
 @dataclass(frozen=True)
-class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
+class NLP[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
   """A traced backend-free problem and its declared variable and parameter trees."""
+
+  method_api: ClassVar[int] = METHOD_API
 
   name: str
   spec: ProblemSpec[SymbolicVars]
@@ -156,21 +159,21 @@ def _substitute_spec[SV](spec: ProblemSpec[SV], vars: Tree[SV, Any], replacement
 @overload
 def problem[SV, NV, SP, NP](
   *, vars: Tree[SV, NV], params: Tree[SP, NP], name: str | None = None
-) -> Callable[[Callable[[SV, SP], ProblemSpec[SV]]], Problem[SV, NV, SP, NP]]: ...
+) -> Callable[[Callable[[SV, SP], ProblemSpec[SV]]], NLP[SV, NV, SP, NP]]: ...
 
 
 @overload
 def problem[SV, NV](
   *, vars: Tree[SV, NV], params: None = None, name: str | None = None
-) -> Callable[[Callable[[SV], ProblemSpec[SV]]], Problem[SV, NV, Any, Any]]: ...
+) -> Callable[[Callable[[SV], ProblemSpec[SV]]], NLP[SV, NV, Any, Any]]: ...
 
 
 def problem(
   *, vars: Tree[Any, Any], params: Tree[Any, Any] | None = None, name: str | None = None
-) -> Callable[[Callable[..., ProblemSpec[Any]]], Problem[Any, Any, Any, Any]]:
+) -> Callable[[Callable[..., ProblemSpec[Any]]], NLP[Any, Any, Any, Any]]:
   """Trace a backend-free problem over declared variables and parameters."""
 
-  def decorate(fn: Callable[..., ProblemSpec[Any]]) -> Problem[Any, Any, Any, Any]:
+  def decorate(fn: Callable[..., ProblemSpec[Any]]) -> NLP[Any, Any, Any, Any]:
     problem_name = name or getattr(fn, "__name__", "problem")
     symbolic_vars = vars.symbols(diff=True)
     var_exprs = vars.flatten_symbolic(symbolic_vars, f"{problem_name} variables")
@@ -185,7 +188,7 @@ def problem(
       undeclared = [expr.name or f"%{expr.id}" for expr in collect_free_inputs(_spec_exprs(spec, vars)) if expr.id not in declared]
       if undeclared:
         raise ValueError(f"problem {problem_name!r} has undeclared symbolic inputs: {undeclared}")
-      return Problem(problem_name, spec, resolved_vars, resolved_params, var_exprs, param_exprs)
+      return NLP(problem_name, spec, resolved_vars, resolved_params, var_exprs, param_exprs)
 
     spec = _normalize_spec(fn(symbolic_vars), vars)
     free = tuple(expr for expr in collect_free_inputs(_spec_exprs(spec, vars)) if expr.id not in {var.id for var in var_exprs})
@@ -197,6 +200,6 @@ def problem(
     )
     param_exprs = inferred_params.flatten_symbolic(inferred_params.symbols(diff=False), f"{problem_name} parameters")
     replacements = dict(zip(free, param_exprs, strict=True))
-    return Problem(problem_name, _substitute_spec(spec, vars, replacements), resolved_vars, inferred_params, var_exprs, param_exprs)
+    return NLP(problem_name, _substitute_spec(spec, vars, replacements), resolved_vars, inferred_params, var_exprs, param_exprs)
 
   return decorate

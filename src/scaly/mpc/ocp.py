@@ -1,4 +1,4 @@
-"""The OCP: dynamics, costs, constraints, horizon and transcription, and the ``sc.problem`` it builds."""
+"""The OCP: dynamics, costs, constraints, horizon and transcription, and the ``sc.opt.problem`` it builds."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from ..integrators.model import check_model
 from ..integrators.transcription import Interval, MultipleShooting, Transcription
 from ..ir.expr import Expr, concat, gather
 from ..ir.types import TensorType
-from ..solvers.problem import Bounded, Problem, ProblemSpec, bounded, problem
+from ..opt.problem import NLP, Bounded, ProblemSpec, bounded, problem
 
 __all__ = ["OCP", "Path", "Quadratic", "TerminalEquality", "linear"]
 
@@ -74,7 +74,7 @@ class _Param:
 
 class OCP:
   """An optimal control problem over a horizon of ``horizon`` intervals, transcribed to an
-  ``sc.problem`` whose variables are the states at the grid points, the controls, and whatever the
+  ``sc.opt.problem`` whose variables are the states at the grid points, the controls, and whatever the
   transcription adds, and whose parameters are the initial state and every parameter the Functions
   name.
 
@@ -286,7 +286,7 @@ class OCP:
       specs.append((value, 0, p.type.size if p.name in self.varying else 0))
     return specs
 
-  def _problem(self) -> Problem[Any, Any, Any, Any]:
+  def _problem(self) -> NLP[Any, Any, Any, Any]:
     layout, n, nx = self.layout, self.horizon, self.nx
     param_size = sum(self.param_size(p) for p in self.params)
     params_tree = G(L("x0", nx), L("p", param_size)) if self.params else L("x0", nx)

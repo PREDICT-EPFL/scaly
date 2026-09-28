@@ -644,7 +644,7 @@ def npmpc_nlp(
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
 ) -> NpmpcSolver:
-  """The neural-process MPC as one typed `sc.Problem`: VMAP dynamics, VMAP cost, one arm-angle slack.
+  """The neural-process MPC as one typed `sc.opt.NLP`: VMAP dynamics, VMAP cost, one arm-angle slack.
 
   `p` carries the initial state, decoder tail, time step, cost coefficients, and terminal weight in
   the order `pack_nlp_params` defines. All numerical configuration remains available to generated-C
@@ -654,8 +654,8 @@ def npmpc_nlp(
   problem_name = f"npmpc_N{horizon}"
   pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
 
-  @sc.problem(vars=sc.L("z", n_dec(horizon)), params=sc.L("p", n_param(decoder)), name=problem_name)
-  def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+  @sc.opt.problem(vars=sc.L("z", n_dec(horizon)), params=sc.L("p", n_param(decoder)), name=problem_name)
+  def problem(z: sc.Expr, p: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
     eq = sc.vmap(
       stage_function(decoder),
       length=horizon,
@@ -668,11 +668,11 @@ def npmpc_nlp(
       },
     )
     rows, l_ineq, u_ineq = npmpc_constraint_exprs(z, p[:NX], horizon)
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=npmpc_cost_expr(z, horizon, p[P_slice], p[cost_slice]),
       eq=(eq,),
       ineq=(
-        sc.bounded(
+        sc.opt.bounded(
           rows,
           lo=sc.const(l_ineq),
           hi=sc.const(u_ineq),
@@ -683,7 +683,7 @@ def npmpc_nlp(
       ub=sc.const(upper),
     )
 
-  return sc.solver(problem, solver, name=f"{problem_name}_{solver}", options=options)
+  return sc.opt.solver(problem, sc.opt.REGISTRY.get(solver)(options=options or {}), name=f"{problem_name}_{solver}")
 
 
 @functools.cache

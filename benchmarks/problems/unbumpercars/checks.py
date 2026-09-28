@@ -19,7 +19,7 @@ from itertools import product
 from typing import cast
 
 import scaly as sc
-from scaly.solvers.graph import solver_descriptor
+from scaly.opt.external.graph import solver_descriptor
 import numpy as np
 
 from benchmarks.problems.unbumpercars.common import (
@@ -493,7 +493,7 @@ def check_casadi_ipopt_is_compiled() -> None:
 
   from benchmarks.problems.unbumpercars import filters
 
-  from scaly.solvers.paths import solver_paths
+  from scaly.opt.external.paths import solver_paths
   from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
 
   loop_cfg = ClosedLoopConfig(ncars=2, steps=1)
@@ -595,7 +595,7 @@ def check_sqp_oracles_agree() -> None:
     np.testing.assert_allclose(scaly_u, casadi_u, rtol=1e-9, atol=1e-9)
     acted |= bool(np.max(np.abs(scaly_u - desired)) > 1e-3)
     for controller in (scaly_filter, casadi_filter):
-      stats = sc.solver_stats(controller.nlp)
+      stats = sc.opt.solver_stats(controller.nlp)
       report = controller.stats_history[-1]
       assert stats is not None and stats.status.name == "OK" and report.success and report.min_g >= -1e-6
       assert stats.t_qp > 0.0 and stats.n_eval_h > 0
@@ -644,7 +644,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
 
 def run_checks() -> Iterator[tuple[str, str]]:
   """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  from scaly.solvers.paths import solver_loadable
+  from scaly.opt.external.paths import solver_loadable
 
   have_ipopt = solver_loadable("ipopt")
   try:

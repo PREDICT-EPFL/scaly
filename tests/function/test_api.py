@@ -158,7 +158,7 @@ def test_seeded_derivatives_append_one_parameter() -> None:
 
 def test_an_unnamed_leaf_outside_a_decorator_is_refused() -> None:
   with pytest.raises(ValueError, match="unnamed leaf"):
-    sc.problem(vars=sc.L(3), params=sc.L("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x.sum()))
+    sc.opt.problem(vars=sc.L(3), params=sc.L("p", ()))(lambda x, p: sc.opt.ProblemSpec(minimize=x.sum()))
 
 
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:

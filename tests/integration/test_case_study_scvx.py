@@ -99,10 +99,10 @@ def generated_piqp() -> Iterator[dict]:
 
 def test_generated_qp_inside_a_while_loop(generated_piqp: dict) -> None:
   # min |x - r|^2 + |x - x_prev|^2 subject to sum(x) = 1, 0 <= x <= 0.6: each iterate is the next reference.
-  @sc.problem(vars=sc.L("x", 4), params=sc.G(sc.L("r", 4), sc.L("x_prev", 4)), name="loop_qp")
+  @sc.opt.problem(vars=sc.L("x", 4), params=sc.G(sc.L("r", 4), sc.L("x_prev", 4)), name="loop_qp")
   def qp(x, params):
     r, x_prev = params
-    return sc.ProblemSpec(
+    return sc.opt.ProblemSpec(
       minimize=((x - r) ** 2).sum() + ((x - x_prev) ** 2).sum(), eq=(x.sum() - 1.0,), lb=sc.const(np.zeros(4)), ub=sc.const(np.full(4, 0.6))
     )
 

@@ -25,7 +25,7 @@ TIMES = HP.dt * np.arange(N)
 COP = interp.interpolant(*cop_table(), kind="cubic")
 
 
-@sc.problem(
+@sc.opt.problem(
   vars=sc.G(sc.L("P", N), sc.L("T_s", N), sc.L("T", (N + 1, 2))),
   params=sc.G(sc.L("x0", 2), sc.L("price", 24), sc.L("t_out", 24)),
 )
@@ -42,7 +42,7 @@ def heat_pump(v, p):
   eq = (T[0] - x0, T[1:, 0] - room_next, T[1:, 1] - mass_next, Q - HP.k_emitter * (T_s - room))
   lo, hi = HP.t_room
   room_bounds = np.column_stack([np.full(N + 1, lo), np.full(N + 1, -np.inf)]), np.column_stack([np.full(N + 1, hi), np.full(N + 1, np.inf)])
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=HP.dt * (price_k * P).sum() + 1e-3 * (P**2).sum(),
     eq=eq,
     lb=(sc.const(0.0), sc.const(HP.t_supply[0]), sc.const(room_bounds[0])),
@@ -51,7 +51,7 @@ def heat_pump(v, p):
 
 
 def build(verbose: bool = False):
-  solve = sc.solver(heat_pump, "ipopt", options=scaly_ipopt_options(verbose, tol=1e-10))
+  solve = sc.opt.solver(heat_pump, sc.opt.IPOPT(options=scaly_ipopt_options(verbose, tol=1e-10)))
   _, price, t_out = day_ahead()
   x0 = np.array(HP.x0)
   guess = (np.full(N, 1.0), np.full(N, 40.0), np.tile(x0, (N + 1, 1)))
@@ -59,7 +59,7 @@ def build(verbose: bool = False):
 
   def run():
     (P, T_s, T), *_ = solve(guess, zeros, np.zeros(2 + 3 * N), np.zeros(0), (x0, price, t_out))
-    stats = sc.solver_stats(solve)
+    stats = sc.opt.solver_stats(solve)
     assert stats.to_solver_status().ok
     return {"P": P, "T_s": T_s, "T": T, "cost": np.array([stats.obj]), "iter": np.array([stats.iter])}
 

@@ -12,7 +12,7 @@ Three features meet here:
 
 * the Lie derivatives ``grad h_i^T g`` come from ``sc.gradient`` and ``sc.jacobian`` of the barrier
   and of the look-ahead point, so changing either needs no hand derivation;
-* the filter is a ``sc.problem`` in the variables ``u`` with the state and nominal input as
+* the filter is a ``sc.opt.problem`` in the variables ``u`` with the state and nominal input as
   parameters. PIQP accepts it because Scaly proves the cost quadratic and the constraints affine in
   ``u`` (their coefficients depend on the parameters only);
 * the solver is a ``Function``, called with ``Expr`` leaves inside ``controller``, which computes the
@@ -57,23 +57,22 @@ def barriers(p: sc.Expr) -> sc.Expr:
   return sc.stack([(p[0] - ox) ** 2 + (p[1] - oy) ** 2 - r**2 for ox, oy, r in OBSTACLES])
 
 
-@sc.problem(vars=sc.L("u", 2), params=sc.G(sc.L("state", 3), sc.L("u_nom", 2)))
-def safety_filter(u: sc.Expr, params: tuple[sc.Expr, sc.Expr]) -> sc.ProblemSpec:
+@sc.opt.problem(vars=sc.L("u", 2), params=sc.G(sc.L("state", 3), sc.L("u_nom", 2)))
+def safety_filter(u: sc.Expr, params: tuple[sc.Expr, sc.Expr]) -> sc.opt.ProblemSpec:
   state, u_nom = params
   p = lookahead(state)
   h = barriers(p)
   lie = sc.jacobian(h, p) @ input_matrix(state)  # (obstacles, 2)
-  return sc.ProblemSpec(
+  return sc.opt.ProblemSpec(
     minimize=(sc.const(WEIGHT) * (u - u_nom) ** 2).sum(),
-    ineq=(sc.bounded(lie @ u + GAMMA * h, lo=0.0, name="cbf"),),
+    ineq=(sc.opt.bounded(lie @ u + GAMMA * h, lo=0.0, name="cbf"),),
     lb=sc.const(-U_MAX),
     ub=sc.const(U_MAX),
   )
 
 
-filter_qp = sc.solver(
-  safety_filter, "piqp", name="cbf_qp", options={"eps_abs": 1e-10, "eps_rel": 1e-10, "eps_duality_gap_abs": 1e-10, "eps_duality_gap_rel": 1e-10}
-)
+filter_qp = sc.opt.solver(
+  safety_filter, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10, "eps_duality_gap_abs": 1e-10, "eps_duality_gap_rel": 1e-10}), name="cbf_qp")
 
 
 def nominal(state: sc.Expr) -> sc.Expr:
@@ -127,7 +126,7 @@ def main() -> dict:
   active = np.flatnonzero(np.abs(inputs - nominals).max(axis=1) > 1e-3)  # beyond the interior-point tolerance at an active bound
   sample = active[:: max(1, len(active) // 10)]
   check = max(np.abs(inputs[k] - scipy_filter(states[k], nominals[k])).max() for k in sample) if len(sample) else 0.0
-  return {"states": states, "inputs": inputs, "barriers": hs, "active": active, "scipy_error": check, "stats": sc.solver_stats(controller, "cbf_qp")}
+  return {"states": states, "inputs": inputs, "barriers": hs, "active": active, "scipy_error": check, "stats": sc.opt.solver_stats(controller, "cbf_qp")}
 
 
 if __name__ == "__main__":

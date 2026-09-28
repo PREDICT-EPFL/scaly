@@ -90,8 +90,8 @@ The wrappers build an auxiliary scalar named `gamma` from the declared output or
 `aux_name=` to change it. The derived output is `hess_gamma_x_x` or `sphess_gamma_x_x`. The doubled
 `wrt` name is part of the generated C symbol and sparsity-table prefix.
 
-Solver construction uses the same mechanism. Each backend selects its Hessian triangle, while the
-`Problem` cache shares the full derivative construction.
+Solver construction uses the same mechanism. Each method selects its Hessian triangle, while the
+problem's cache shares the full derivative construction.
 
 ## Build several outputs together
 

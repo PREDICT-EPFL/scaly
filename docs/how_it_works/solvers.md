@@ -7,11 +7,13 @@ wrapper drives the native solver. Python is not part of a solve.
 The usage side is [Solvers](../guide/solvers.md). The plugin contract is
 [Solver plugins](../dev/solver_plugins.md).
 
-## From a Problem to oracles
+## From a problem to oracles
 
-`@sc.problem` traces a `ProblemSpec` over declared variable and parameter trees. The resulting
-`Problem` is independent of a backend. `sc.solver(problem, backend)` selects an entry point and
-builds the descriptor family required by its `kind`.
+`@sc.opt.problem` traces a `ProblemSpec` over declared variable and parameter trees. The resulting
+`sc.opt.NLP` names no solver. `sc.opt.solver(problem, method)` resolves the method (an instance, a
+name in the `scaly.methods` registry, or `"auto"`), and the method builds the descriptor family its
+`kind` requires from one of the problem's two normal forms: `sc.opt.nlp_oracles(problem)` or
+`sc.opt.extract_qp(problem)`.
 
 Multi-block variables are concatenated into one internal decision vector for differentiation and
 native solver calls. Substitution maps each declared variable symbol to its slice of that vector.
@@ -34,21 +36,23 @@ Equalities come first in `g`, followed by bounded inequalities.
 Box-bound leaves have the variables' tree structure. Scalar leaves broadcast, and IEEE negative or
 positive infinity represents an absent lower or upper bound until the solver adapter normalizes it.
 
-The backend chooses the Hessian triangle: IPOPT asks for lower and scaly-sqp asks for upper.
-A `Problem` caches `base`, `grad`, `jac`, the full Hessian construction and `bounds`, plus one
+The method chooses the Hessian triangle: IPOPT asks for lower and scaly-sqp asks for upper.
+A problem caches `base`, `grad`, `jac`, the full Hessian construction and `bounds`, plus one
 compact Hessian function per requested triangle. Building two solver artifacts from one problem
 therefore shares all compatible machinery without giving the artifacts the same C symbols.
 
 ### Quadratic-program proof and extraction
 
-A quadratic-program (QP) backend first proves the specialization structurally:
+A quadratic-program (QP) method first proves the specialization structurally (`prove_qp`):
 
 - the objective Hessian does not depend on the variables;
 - each constraint Jacobian does not depend on the variables;
 - variable and constraint bounds do not depend on the variables.
 
-The proof uses `_jac_mask` over the real derivative expressions. It does not evaluate at sample
-values. A rejected problem raises `NotQuadratic` during solver construction.
+The proof uses structural dependency masks over the real derivative expressions. It does not
+evaluate at sample values. A rejected problem raises `NotQuadratic` during solver construction, and
+a QP method's `supports` reports it as the reason, which is how `"auto"` passes over PIQP for an
+NLP.
 
 After the proof, core substitutes `x = 0` to extract:
 
@@ -61,30 +65,33 @@ G = jacobian(g_ineq, x)
 bounds = declared bounds shifted by g_ineq at x = 0
 ```
 
-One oracle maps the problem parameters to those QP buffers. `qp_problem` is only a typed
-matrix-data declaration; it goes through the same proof and extraction.
+That is the problem's `QPForm`, with the objective's constant `f0`. One oracle maps the problem
+parameters to its buffers. An `sc.opt.QP` is only a typed matrix-data declaration; it goes through
+the same proof and extraction.
 
-With `options={"sparse": True}`, core derives fixed compressed sparse column (CSC) patterns for `P`,
-`A` and `G`. The oracle then emits only compact values in those orders.
+With `sc.opt.PIQP(sparse=True)`, core derives fixed compressed sparse column (CSC) patterns for `P`,
+`A` and `G` (`QPForm.patterns`). The oracle then emits only compact values in those orders.
 
 ## One fixed solver signature
 
-Every solver `Function` takes the same five arguments and returns four results:
+Every solver `Function` takes the same five arguments and returns the same five results:
 
 ```text
 arguments = variables, box multipliers, equality multipliers, inequality multipliers, parameters
-results   = variables, box multipliers, equality multipliers, inequality multipliers
+results   = variables, box multipliers, equality multipliers, inequality multipliers, info
 ```
 
-The backend receives them flattened, in that order. The descriptor records `n_var_blocks` so a
+The wrapper receives them flattened, in that order. The descriptor records `n_var_blocks` so a
 plugin can find the fixed groups and scatter its native flat solution into variable leaves. Empty
-multiplier categories remain zero-sized arrays. The objective and detailed status are reported
-through `SolverStats`, not through extra function outputs.
+multiplier categories remain zero-sized arrays. `info` is an `sc.opt.Info`: status, iterations,
+objective and primal residual, four scalar outputs that core's frame around the plugin's wrapper
+copies from the statistics it filled. The rest of the statistics, timings and evaluation counts
+among them, are read through `SolverStats`.
 
 `descriptor_function` creates one `ExprOp.EXTERN_CALL` node per output leaf. All nodes share the
 descriptor identity, so lowering emits one wrapper call and distributes its outputs. The
 descriptor is the node's and the Function's `extern` attribute: the compiler reaches a solver only
-through the extern-callee protocol (`function/extern.py`), and `solvers/wrapper.py` implements it.
+through the extern-callee protocol (`function/extern.py`), and `opt/external/wrapper.py` implements it.
 
 ## One solve path
 
@@ -94,24 +101,26 @@ There is exactly one solve path: generated C. The same artifact serves
 - a symbolic call nested in a larger graph;
 - ahead-of-time (AOT) C deployment.
 
-A plugin package ships a native library, headers, entry-point metadata and `render_wrapper`. It
-ships no Python numerical solver.
+A plugin package ships a native library, headers, and a method class (`opt.external.External`)
+with its metadata and `render_wrapper`, declared in the `scaly.methods` entry points. It ships no
+Python numerical solver.
 
 ## The pieces
 
 | Module | Owns |
 | --- | --- |
-| `solvers/problem.py` | `ProblemSpec`, `Problem`, bounds, and tracing |
-| `solvers/nlp.py` | shared NLP oracle construction |
-| `solvers/qp.py` | quadratic proof, extraction, sparse patterns, and `qp_problem` |
-| `solvers/solver.py` | backend selection |
-| `solvers/model.py` | `SolverDescriptor`, the extern callee of its plain `Function` |
-| `solvers/registry.py` | entry-point discovery and protocol validation |
-| `solvers/graph.py` | solver reachability and link-flag queries |
-| `solvers/paths.py` | vendored library and header discovery |
-| `solvers/stats.py` | the versioned statistics layout and statuses |
-| `solvers/wrapper.py` | the wrapper framing, statistics accessor and build requirements behind that callee |
-| `plugins/scaly-{piqp,ipopt,sqp}` | backend metadata and C wrapper generators (a Jinja template for scaly-sqp; PIQP and IPOPT emit C from Python strings) |
+| `opt/problem.py` | `ProblemSpec`, `NLP`, bounds, and tracing |
+| `opt/nlp.py` | the NLP normal form, `nlp_oracles` |
+| `opt/qp.py` | quadratic proof, the QP normal form `extract_qp`, sparse patterns, and `QP` |
+| `opt/method.py` | the method registry, `METHOD_API`, and `Info` |
+| `opt/solver.py` | `solver`: resolve the method, build the Function |
+| `opt/external/method.py` | `External`, the base of every plugin's method class |
+| `opt/external/model.py` | `SolverDescriptor`, the extern callee of its plain `Function` |
+| `opt/external/graph.py` | solver reachability and link-flag queries |
+| `opt/external/paths.py` | vendored library and header discovery |
+| `opt/external/stats.py` | the versioned statistics layout |
+| `opt/external/wrapper.py` | the wrapper framing, the `Info` outputs, statistics accessor and build requirements behind that callee |
+| `plugins/scaly-{piqp,ipopt,sqp}` | method classes and C wrapper generators (a Jinja template for scaly-sqp; PIQP and IPOPT emit C from Python strings) |
 
 ## What the generated wrapper contains
 
