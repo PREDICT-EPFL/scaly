@@ -9,15 +9,29 @@ from typing import Any, Literal
 import numpy as np
 
 from ..function.model import ConcreteFunction, Function
-from ..function.sugar import vmap
+from ..function.sugar import scan, vmap
 from ..function.tree import G, L, param_list
 from ..integrators.model import check_model
 from ..integrators.transcription import Interval, MultipleShooting, Transcription
-from ..ir.expr import Expr
+from ..ir.expr import Expr, concat, gather
 from ..ir.types import TensorType
-from ..solvers.problem import Problem, ProblemSpec, bounded, problem
+from ..solvers.problem import Bounded, Problem, ProblemSpec, bounded, problem
 
-__all__ = ["OCP", "Path", "Quadratic", "TerminalEquality"]
+__all__ = ["OCP", "Path", "Quadratic", "TerminalEquality", "linear"]
+
+
+def linear(a: Any, b: Any, *, name: str = "linear") -> ConcreteFunction[Any, Any, Any, Any]:
+  """The discrete-time map ``x_next = A x + B u``, for an OCP's ``step=``: with ``Quadratic`` costs and
+  polytopic constraints the OCP is a QP. A continuous-time pair goes through ``si.zoh`` first."""
+  a, b = np.atleast_2d(np.asarray(a, dtype=np.float64)), np.asarray(b, dtype=np.float64)
+  b = b.reshape(a.shape[0], -1)
+  if a.shape[0] != a.shape[1]:
+    raise ValueError(f"A must be square, got {a.shape}")
+
+  def body(x: Expr, u: Expr) -> Expr:
+    return Expr.const(a) @ x + Expr.const(b) @ u
+
+  return ConcreteFunction(name, body, param_list(L("x", a.shape[0]), L("u", b.shape[1])), L("xnext", a.shape[0]))
 
 
 @dataclass(frozen=True)
@@ -84,6 +98,10 @@ class OCP:
     cost: ``"points"`` or ``"integral"``, as above. By default ``"integral"`` for a transcription
       that puts controls inside an interval (``Pseudospectral``), whose controls the points alone
       would leave out of the cost, and ``"points"`` otherwise.
+    condensed: eliminate the states: they become a ``scan`` of the map from ``x0``, the variables
+      only the controls (and slacks), and state bounds inequalities. For a discrete map or multiple
+      shooting. A linear OCP is then a dense QP in the controls, smaller and denser than the sparse
+      form.
     name: the problem's name, by default ``{model}_ocp``; every generated Function is named from it.
 
   A Function's parameters are its inputs after the state and the control (after the state for a
@@ -107,6 +125,7 @@ class OCP:
     terminal: Any = None,
     varying: Sequence[str] = (),
     cost: Literal["points", "integral"] | None = None,
+    condensed: bool = False,
     name: str | None = None,
   ) -> None:
     if (ode is None) == (step is None):
@@ -131,6 +150,9 @@ class OCP:
       raise ValueError("a transcription goes with ode=; a discrete-time map is its own transcription")
     node_controls = getattr(self.transcription, "node_controls", False)
     self.cost_rule = cost if cost is not None else "integral" if node_controls else "points"
+    if condensed and not (ode is None or isinstance(self.transcription, MultipleShooting)) or (condensed and self.cost_rule == "integral"):
+      raise ValueError("the condensed form takes a discrete map, or multiple shooting with costs at the points")
+    self.condensed = bool(condensed)
     self.constraints, self.terminal, self.x_bounds, self.u_bounds = tuple(constraints), terminal, x_bounds, u_bounds
 
     # Every parameter any Function names, in order of appearance, one type per name.
@@ -153,7 +175,12 @@ class OCP:
     self.terminal_cost = None if terminal_fn is None else self._over(terminal_fn.concrete, 1, "terminal_cost", scalar=True)
     self.paths = tuple(self._over(c.fn.concrete, 2, f"path{i}") for i, c in enumerate(self.constraints))
     self.interval = self._interval()
+    self._map = self._rollout_map() if self.condensed else None
+    self.states = self._states() if self.condensed else None
     self.layout = _Layout(self)
+    # The per-stage runs of the equality and inequality multipliers, which _problem records as it builds.
+    self._eq_runs: list[tuple[int, int, int]] = []
+    self._ineq_runs: list[tuple[int, int, int]] = []
     self.problem = self._problem()
 
   # -- parameters -------------------------------------------------------------------------------
@@ -266,7 +293,7 @@ class OCP:
 
     def body(v: Any, prm: Any) -> ProblemSpec[Any]:
       leaves = dict(zip(layout.var_names, v if isinstance(v, tuple) else (v,), strict=True))
-      xs, us, zs, slack = leaves["xs"], leaves["us"], leaves.get("zs"), leaves.get("slack")
+      us, zs, slack = leaves["us"], leaves.get("zs"), leaves.get("slack")
       params: dict[str, Expr] = {}
       if self.params:
         x0, flat = prm
@@ -276,8 +303,18 @@ class OCP:
           offset += self.param_size(p)
       else:
         x0 = prm
-      mapped = vmap(self.interval.fn, n, self._stage_specs(xs, us, zs, params, with_z=True, with_next=True), output=0)
+      xs = self._rollout(x0, us, params) if self.condensed else leaves["xs"]
+      eq, ineq = _Constraints(), _Constraints()
       terms: list[Expr] = []
+      if not self.condensed:
+        eq.add(xs[:nx] - x0)
+        eq.add(vmap(self.interval.fn, n, self._stage_specs(xs, us, zs, params, with_z=True, with_next=True), output=0), self.interval.n_residual)
+      elif self.x_bounds is not None:
+        lo, hi = _pair(self.x_bounds, nx)
+        rows = np.flatnonzero(np.isfinite(lo) | np.isfinite(hi))  # the constrained coordinates, every stage after the first
+        if rows.size:
+          picked = xs.reshape((n + 1, nx))[1:, :].reshape((n * nx,)) if rows.size == nx else gather_rows(xs, rows, n, nx)
+          ineq.add(bounded(picked, lo=Expr.const(np.tile(lo[rows], n)), hi=Expr.const(np.tile(hi[rows], n)), name="states"), rows.size)
       if self.stage_cost is not None:
         if self.cost_rule == "integral":
           terms.append(vmap(self.interval.fn, n, self._stage_specs(xs, us, zs, params, with_z=True, with_next=True), output=1).sum())
@@ -288,33 +325,68 @@ class OCP:
       x_end = xs[n * nx :]
       if self.terminal_cost is not None:
         terms.append(self.terminal_cost(x_end, *at_end))
-      eq: list[Expr] = [xs[:nx] - x0, mapped]
-      ineq = []
       for i, (spec, fn) in enumerate(zip(self.constraints, self.paths, strict=True)):
         g = vmap(fn, n, self._stage_specs(xs, us, zs, params, with_z=False, with_next=False))
-        lo, hi = _tiled(spec.lo, g.size // n, n), _tiled(spec.hi, g.size // n, n)
+        rows = g.size // n
+        lo, hi = _tiled(spec.lo, rows, n), _tiled(spec.hi, rows, n)
         if spec.soft is None or slack is None:
-          ineq.append(bounded(g, lo=lo, hi=hi, name=f"path{i}"))
+          ineq.add(bounded(g, lo=lo, hi=hi, name=f"path{i}"), rows)
           continue
         s = slack[layout.slack_offsets[i] : layout.slack_offsets[i] + g.size]
         if hi is not None:
-          ineq.append(bounded(g - s, hi=hi, name=f"path{i}_upper"))
+          ineq.add(bounded(g - s, hi=hi, name=f"path{i}_upper"), rows)
         if lo is not None:
-          ineq.append(bounded(g + s, lo=lo, name=f"path{i}_lower"))
+          ineq.add(bounded(g + s, lo=lo, name=f"path{i}_lower"), rows)
         terms.append(float(spec.soft) * s.sum())
       if isinstance(self.terminal, TerminalEquality):
         ref = self.terminal.x_ref
         target = params[ref] if isinstance(ref, str) else Expr.const(np.zeros(nx) if ref is None else np.asarray(ref, dtype=np.float64))
-        eq.append(x_end - (target if ref not in self.varying else target[n * nx :]))
+        eq.add(x_end - (target if ref not in self.varying else target[n * nx :]))
       elif self.terminal is not None:
         eq_rows, ineq_rows = self.terminal.constraints(x_end)
-        eq += eq_rows
-        ineq += ineq_rows
+        for row in eq_rows:
+          eq.add(row)
+        for group in ineq_rows:
+          ineq.add(group)
+      self._eq_runs, self._ineq_runs = eq.runs, ineq.runs
       objective = sum(terms[1:], terms[0]) if terms else Expr.const(0.0)
       lb, ub = layout.bounds()
-      return ProblemSpec(minimize=objective, eq=tuple(eq), ineq=tuple(ineq), lb=lb, ub=ub)
+      return ProblemSpec(minimize=objective, eq=tuple(eq.items), ineq=tuple(ineq.items), lb=lb, ub=ub)
 
     return problem(vars=layout.vars_tree, params=params_tree, name=self.name)(body)
+
+  def _rollout_map(self) -> ConcreteFunction[Any, Any, Any, Any]:
+    """One step of the condensed form's ``scan``: ``(x, u, *params) -> (x_next, x_next)``, the carry
+    and the state it stacks."""
+    if self.transcription is None:
+      step = self.model
+    else:
+      assert isinstance(self.transcription, MultipleShooting)
+      step = self.transcription.integrator(self.model, dt=self.dt, name=f"{self.name}_step", **self.transcription.options)
+
+    def body(x: Expr, u: Expr, *params: Expr) -> tuple[Expr, Expr]:
+      nxt = step(x, u, *params)
+      return nxt, nxt
+
+    slots = param_list(L("x", self.nx), L("u", self.nu), *(L(p.name, p.type) for p in self.params))
+    return ConcreteFunction(f"{self.name}_rollout", body, slots, G(L("xnext", self.nx), L("state", self.nx)))
+
+  def _states(self) -> ConcreteFunction[Any, Any, Any, Any]:
+    """``(x0, us, *params) -> xs``: the condensed form's states, for reading a solution."""
+    slots = [L("x0", self.nx), L("us", self.horizon * self.nu), *(L(p.name, (self.param_size(p),)) for p in self.params)]
+
+    def body(x0: Expr, us: Expr, *values: Expr) -> Expr:
+      return self._rollout(x0, us, dict(zip((p.name for p in self.params), values, strict=True)))
+
+    return ConcreteFunction(f"{self.name}_states", body, param_list(*slots), L("xs", ((self.horizon + 1) * self.nx,)))
+
+  def _rollout(self, x0: Expr, us: Expr, params: dict[str, Expr]) -> Expr:
+    """The states of the condensed form, ``x_0 .. x_N``, a ``scan`` of the map from ``x0``."""
+    assert self._map is not None
+    fn = self._map
+    specs = [(us, 0, self.nu), *((params[p.name], 0, p.type.size if p.name in self.varying else 0) for p in self.params)]
+    _, stacked = scan(fn, x0, specs, length=self.horizon)
+    return concat([x0, stacked])
 
   def _at_end(self, params: dict[str, Expr], p: _Param) -> Expr:
     value = params[p.name]
@@ -324,6 +396,28 @@ class OCP:
   def times(self) -> np.ndarray:
     """The grid times ``0, dt, ..., N dt`` (steps of 1 for a discrete map without ``dt``)."""
     return np.arange(self.horizon + 1) * (self.dt if self.dt is not None else 1.0)
+
+
+class _Constraints:
+  """Constraint groups as the problem lists them, and the ``(offset, size, block)`` runs of those
+  that repeat per stage, for the warm start's shift."""
+
+  def __init__(self) -> None:
+    self.items: list[Any] = []
+    self.runs: list[tuple[int, int, int]] = []
+    self.size = 0
+
+  def add(self, item: Any, block: int = 0) -> None:
+    size = (item.expr if isinstance(item, Bounded) else item).size
+    if block:
+      self.runs.append((self.size, size, block))
+    self.items.append(item)
+    self.size += size
+
+
+def gather_rows(xs: Expr, rows: np.ndarray, n: int, nx: int) -> Expr:
+  """``xs[k nx + rows]`` for every stage ``k`` after the first, flat."""
+  return gather(xs, (np.arange(1, n + 1)[:, None] * nx + rows[None, :]).reshape(-1))
 
 
 def _tiled(bound: Any, rows: int, n: int) -> Expr | None:
@@ -345,7 +439,8 @@ class _Layout:
       rows_per_stage = ocp.paths[i].outputs[0].size
       self.slack_offsets.append(rows if spec.soft is not None else -1)
       rows += rows_per_stage * n if spec.soft is not None else 0
-    leaves = [("xs", (n + 1) * nx, nx), ("us", n * nu, nu), *([("zs", n * k, k)] if k else []), *([("slack", rows, rows // n)] if rows else [])]
+    states = [] if ocp.condensed else [("xs", (n + 1) * nx, nx)]
+    leaves = [*states, ("us", n * nu, nu), *([("zs", n * k, k)] if k else []), *([("slack", rows, rows // n)] if rows else [])]
     self.var_names = tuple(name for name, _, _ in leaves)
     self.var_sizes = tuple(size for _, size, _ in leaves)
     self.var_blocks = tuple(block for _, _, block in leaves)  # the size of one stage's block
@@ -376,18 +471,10 @@ class _Layout:
     return (tuple(lower), tuple(upper)) if len(lower) > 1 else (lower[0], upper[0])
 
   def multiplier_blocks(self) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
-    """``(offset, size, stage block)`` runs of the equality and inequality multipliers that are
-    per stage and so shift; the rest (the initial state's, the terminal set's) stay."""
-    ocp, n = self.ocp, self.ocp.horizon
-    eq = [(ocp.nx, n * ocp.interval.n_residual, ocp.interval.n_residual)]
-    ineq, offset = [], 0
-    for spec, fn in zip(ocp.constraints, ocp.paths, strict=True):
-      rows = fn.outputs[0].size
-      groups = 1 if spec.soft is None else int(spec.hi is not None) + int(spec.lo is not None)
-      for _ in range(groups):
-        ineq.append((offset, n * rows, rows))
-        offset += n * rows
-    return eq, ineq
+    """``(offset, size, stage block)`` runs of the equality and inequality multipliers that are per
+    stage and so shift, as the problem recorded them when it was built; the rest (the initial
+    state's, a terminal set's) stay."""
+    return self.ocp._eq_runs, self.ocp._ineq_runs
 
 
 def _pair(bounds: tuple[Any, Any] | None, size: int) -> tuple[np.ndarray, np.ndarray]:

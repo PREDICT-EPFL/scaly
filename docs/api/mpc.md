@@ -19,3 +19,17 @@
 ::: scaly.mpc.controller.simulate
 
 ::: scaly.mpc.controller.ClosedLoop
+
+## Linear MPC and terminal sets
+
+::: scaly.mpc.ocp.linear
+
+::: scaly.mpc.terminal.lqr
+
+::: scaly.mpc.polytope.Polytope
+
+::: scaly.mpc.terminal.max_invariant_set
+
+::: scaly.mpc.terminal.Ellipsoid
+
+::: scaly.mpc.terminal.largest_ellipsoid

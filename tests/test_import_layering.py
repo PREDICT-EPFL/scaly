@@ -99,6 +99,8 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.mpc": 5,
   "scaly.mpc.controller": 5,
   "scaly.mpc.ocp": 5,
+  "scaly.mpc.polytope": 5,
+  "scaly.mpc.terminal": 5,
   "scaly.passes.program": 6,
   "scaly.passes.program._common": 6,
   "scaly.passes.program.combine_scatter_sums": 6,

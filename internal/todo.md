@@ -156,8 +156,15 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - [ ] **API-157. Warm starts for a global pseudospectral horizon:** a shift by a sampling time shorter
       than the one interval, by interpolation on the nodes (plan §4.1); segments shift by whole
       intervals today.
-- [ ] **API-148. Linear MPC and linear terminal ingredients** (plan M2): LQR, polytopes, maximal
-      invariant sets, ellipsoids, the condensed form.
+- [x] **API-148. Linear MPC and linear terminal ingredients** (plan M2): `mpc.linear`, `mpc.lqr`,
+      `Polytope`, `max_invariant_set`, `Ellipsoid` and `largest_ellipsoid` as terminal sets, and the
+      condensed form (`OCP(condensed=True)`: the states a `scan` from `x0`, a dense QP in the
+      controls). Unconstrained MPC with the LQR terminal cost returns `u = Kx` to 1e-11; the maximal
+      invariant set matches a brute-force closed loop point for point; a closed loop stays feasible
+      and its cost falls at every step; the library's sparse QP matches a hand-written one
+      (`perf_2026_09_27_mpc/bench_linear.py`). `mpc.MPC` runs PIQP's sparse backend on a sparse OCP
+      (the dense default was 20 to 35x slower there), and `Solution.cost` is the problem's own
+      objective, since a QP solver's leaves out the constants. No report was written.
 - [ ] **API-149. Nonlinear terminal ingredients** (plan M3): quasi-infinite horizon, certification,
       steady-state targets.
 - [ ] **API-150. Real-time iteration, deployment example, docs** (plan M4).
