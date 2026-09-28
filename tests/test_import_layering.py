@@ -92,6 +92,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.integrators.tableau": 5,
   "scaly.integrators.transcription": 5,
   "scaly.interp": 5,
+  "scaly.interp.constrained": 5,
   "scaly.interp.fit": 5,
   "scaly.interp.grid": 5,
   "scaly.interp.spline": 5,

@@ -279,32 +279,20 @@ def _concat_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sp
 
 
 def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+  """``out[i, j]`` depends on the whole row ``i`` of ``x`` and the whole column ``j`` of ``y``: the
+  ``K`` rows of each operand's pattern that meet there are ORed once, then repeated along the other
+  operand's free axis. A vector is a one-row ``x`` or a one-column ``y``. Sparse products throughout,
+  so a dense ``(m, K) @ (K, n)`` costs its output pattern, not ``m * n * K`` Python steps."""
   x, y = expr.args
-  xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
-  x_rows: list[int] = []
-  y_rows: list[int] = []
-  out_rows: list[int] = []
-  if len(x.shape) == 1 and len(y.shape) == 1:
-    entries = ((0, k, k) for k in range(x.shape[0]))
-  elif len(x.shape) == 2 and len(y.shape) == 1:
-    entries = ((i, i * x.shape[1] + k, k) for i in range(x.shape[0]) for k in range(x.shape[1]))
-  elif len(x.shape) == 1 and len(y.shape) == 2:
-    entries = ((j, k, k * y.shape[1] + j) for j in range(y.shape[1]) for k in range(x.shape[0]))
-  elif len(x.shape) == 2 and len(y.shape) == 2:
-    entries = (
-      (i * y.shape[1] + j, i * x.shape[1] + k, k * y.shape[1] + j) for i in range(x.shape[0]) for j in range(y.shape[1]) for k in range(x.shape[1])
-    )
-  else:  # pragma: no cover
+  if len(x.shape) not in (1, 2) or len(y.shape) not in (1, 2):  # pragma: no cover
     raise NotImplementedError(f"matmul sparsity for {x.shape} @ {y.shape}")
-  for out, xr, yr in entries:
-    out_rows.append(out)
-    x_rows.append(xr)
-    y_rows.append(yr)
-  out = np.asarray(out_rows, dtype=np.int64)
-  return _or(
-    _compose(_incidence((expr.size, x.size), out, np.asarray(x_rows, dtype=np.int64)), xm),
-    _compose(_incidence((expr.size, y.size), out, np.asarray(y_rows, dtype=np.int64)), ym),
-  )
+  m, k = (x.shape[0] if len(x.shape) == 2 else 1), x.shape[-1]
+  n = y.shape[1] if len(y.shape) == 2 else 1
+  ones = lambda rows, cols: sparse.csr_array(np.ones((rows, cols), dtype=bool))
+  eye = lambda size: sparse.eye_array(size, dtype=bool, format="csr")
+  rows_of_x = _compose(sparse.kron(eye(m), ones(1, k), format="csr"), _jac_mask(x, wrt, memo))  # (m, wrt)
+  cols_of_y = _compose(sparse.kron(ones(1, k), eye(n), format="csr"), _jac_mask(y, wrt, memo))  # (n, wrt)
+  return _or(sparse.kron(rows_of_x, ones(n, 1), format="csr"), sparse.kron(ones(m, 1), cols_of_y, format="csr"))
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:

@@ -555,6 +555,43 @@ def test_star_recovery_rejects_ambiguous_orientation() -> None:
     _star_recovery_indices(sparsity, (0, 0, 0))
 
 
+def _star_recovery_by_neighbour_sets(sparsity: sc.SparsityType, colors: tuple[int, ...]) -> list[int]:
+  """Each entry read from the row whose only neighbour of the column's colour is that column, else
+  the transpose: the definition, one entry at a time."""
+  ncolors = max(colors) + 1
+  neighbours: list[set[int]] = [set() for _ in range(sparsity.shape[0])]
+  for row, col in zip(sparsity.rows, sparsity.cols, strict=True):
+    if row != col:
+      neighbours[row].add(col)
+      neighbours[col].add(row)
+  flat = []
+  for row, col in zip(sparsity.rows, sparsity.cols, strict=True):
+    if row == col:
+      flat.append(row * ncolors + colors[row])
+    elif sum(colors[v] == colors[col] for v in neighbours[row]) == 1:
+      flat.append(row * ncolors + colors[col])
+    else:
+      assert sum(colors[v] == colors[row] for v in neighbours[col]) == 1
+      flat.append(col * ncolors + colors[row])
+  return flat
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_star_recovery_reads_each_entry_where_its_colour_is_unique(seed: int) -> None:
+  from scaly.ad.sparse import _star_recovery_indices
+
+  rng = np.random.default_rng(seed)
+  n = int(rng.integers(2, 40))
+  mask = rng.random((n, n)) < rng.uniform(0.05, 0.6)
+  mask |= mask.T
+  if seed % 2:  # one triangle only: every off-diagonal entry is given once
+    mask = np.triu(mask)
+  np.fill_diagonal(mask, rng.random(n) < 0.7)
+  sparsity = sc.SparsityType.from_mask(mask)
+  colors = sc.star_coloring(sparsity)
+  np.testing.assert_array_equal(_star_recovery_indices(sparsity, colors), _star_recovery_by_neighbour_sets(sparsity, colors))
+
+
 def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   star_widths: list[int] = []
@@ -772,3 +809,26 @@ def test_a_map_over_runs_of_one_variable_is_differentiated_in_one_structured_pas
   values, dense = fn._flat_numerical_call(np.random.default_rng(8).normal(size=size))
   np.testing.assert_allclose(values, dense[jac.sparsity.rows, jac.sparsity.cols], rtol=1e-14, atol=1e-15)
   assert np.count_nonzero(dense) == jac.sparsity.nnz
+
+
+@pytest.mark.parametrize("shapes", [((5,), (5,)), ((3, 5), (5,)), ((5,), (5, 4)), ((3, 5), (5, 4)), ((1, 0), (0, 2))])
+def test_matmul_pattern_is_the_union_over_the_contracted_axis(shapes: tuple[tuple[int, ...], tuple[int, ...]]) -> None:
+  rng = np.random.default_rng(len(shapes[0]) * 3 + len(shapes[1]))
+  v = sc.sym("v", 6)
+  padded = sc.concat([v, sc.const(np.zeros(1))])  # index 6 reads a constant: no dependence
+
+  def operand(shape: tuple[int, ...]) -> tuple[sc.Expr, np.ndarray]:
+    idx = rng.integers(0, 7, size=int(np.prod(shape)))
+    deps = np.zeros((idx.size, 6), dtype=bool)
+    deps[idx < 6, idx[idx < 6]] = True
+    return sc.gather(padded, idx.tolist()).reshape(shape), deps
+
+  (x, dx), (y, dy) = operand(shapes[0]), operand(shapes[1])
+  m, k = (shapes[0][0] if len(shapes[0]) == 2 else 1), shapes[0][-1]
+  n = shapes[1][1] if len(shapes[1]) == 2 else 1
+  expected = np.zeros((m * n, 6), dtype=bool)
+  for i in range(m):
+    for j in range(n):
+      for kk in range(k):
+        expected[i * n + j] |= dx[i * k + kk] | dy[kk * n + j]
+  np.testing.assert_array_equal(sc.jacobian_sparsity(x @ y, v).to_mask(), expected)

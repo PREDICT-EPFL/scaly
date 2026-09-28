@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import numpy as np
+from scipy import sparse
 
 from ..function.sugar import vmap
 from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substitute
@@ -134,27 +135,30 @@ def _star_recovery_indices(sparsity: SparsityType, colors: tuple[int, ...]) -> n
   if len(colors) != sparsity.shape[1]:
     raise ValueError(f"star recovery colors have length {len(colors)}, expected {sparsity.shape[1]}")
   ncolors = max(colors) + 1 if colors else 0
-  neighbors = [set() for _ in range(sparsity.shape[0])]
-  for row, col in zip(sparsity.rows, sparsity.cols, strict=True):
-    if row != col:
-      neighbors[row].add(col)
-      neighbors[col].add(row)
-  flat: list[int] = []
-  for row, col in zip(sparsity.rows, sparsity.cols, strict=True):
-    if row == col:
-      flat.append(row * ncolors + colors[row])
-      continue
-    forward_color = colors[col]
-    forward_unique = sum(colors[neighbor] == forward_color for neighbor in neighbors[row]) == 1
-    reverse_color = colors[row]
-    reverse_unique = sum(colors[neighbor] == reverse_color for neighbor in neighbors[col]) == 1
-    if forward_unique:
-      flat.append(row * ncolors + forward_color)
-    elif reverse_unique:
-      flat.append(col * ncolors + reverse_color)
-    else:
-      raise ValueError(f"star coloring cannot recover Hessian entry ({row}, {col})")
-  return np.asarray(flat, dtype=np.int64)
+  n = sparsity.shape[0]
+  rows, cols = np.asarray(sparsity.rows, dtype=np.int64), np.asarray(sparsity.cols, dtype=np.int64)
+  color = np.asarray(colors, dtype=np.int64)
+  off = rows != cols
+  ends = (np.concatenate([rows[off], cols[off]]), np.concatenate([cols[off], rows[off]]))
+  adjacency = sparse.csr_array((np.ones(ends[0].size), ends), shape=(n, n)) > 0  # each edge once, either orientation given
+  onehot = sparse.csr_array((np.ones(n), (np.arange(n), color)), shape=(n, ncolors))
+  counts = sparse.csr_array(adjacency.astype(np.float64) @ onehot).tocoo()  # neighbours of each vertex in each colour
+  keys = counts.row.astype(np.int64) * ncolors + counts.col
+  order = np.argsort(keys)
+  keys, tally = keys[order], counts.data[order]
+
+  def neighbours_in(vertex: np.ndarray, colour: np.ndarray) -> np.ndarray:
+    query = vertex * ncolors + colour
+    at = np.minimum(np.searchsorted(keys, query), max(keys.size - 1, 0))
+    return np.where(keys[at] == query, tally[at], 0.0) if keys.size else np.zeros(query.size)
+
+  forward = neighbours_in(rows, color[cols]) == 1  # the row's only neighbour of the column's colour
+  reverse = neighbours_in(cols, color[rows]) == 1
+  stuck = off & ~forward & ~reverse
+  if stuck.any():
+    k = int(np.argmax(stuck))
+    raise ValueError(f"star coloring cannot recover Hessian entry ({rows[k]}, {cols[k]})")
+  return np.where(~off | forward, rows * ncolors + color[np.where(off, cols, rows)], cols * ncolors + color[rows]).astype(np.int64)
 
 
 def sparse_jacobian(expr: Expr, wrt: Expr) -> SparseJacobian:

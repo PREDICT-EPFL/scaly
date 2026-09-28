@@ -211,7 +211,14 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       interpolant, bspline node and blazing_spline: 0.03x to 0.30x per point, 25x on batches. The
       dedicated-op gate is not tripped. Hint search not built. 12/12 mutants killed. Report:
       `notes/interp_sp4_report.html`.
-- [ ] **API-175. Shape-constrained fitting** (interp plan SP5): `interp.constrained`, a QP through PIQP.
+- [x] **API-175. Shape-constrained fitting** (interp plan SP5). `interp.constrained`: least squares
+      over a B-spline's coefficients with monotone, convex/concave (per axis), bounds, pinned values
+      and derivatives and periodic ends as sufficient linear conditions, solved by PIQP when the
+      graph is built, one solver per problem size. An active-set polish after the interior point
+      makes an inactive-constraint fit equal least squares to rounding (3.5e-10 before). The 2-D
+      fits exposed two Python loops in the core sparsity code, now sparse products: the matmul
+      pattern and the star-colouring recovery (a 16x16 map's first call 56 s to 6.4 s). 27/27
+      mutants killed, three after a test change. Report: `notes/interp_sp5_report.html`.
 - [ ] **API-176. Interpolation notebooks and CasADi pairs** (interp plan SP6).
 - [ ] **API-178. Interpolation review round** (interp plan SPR).
 
