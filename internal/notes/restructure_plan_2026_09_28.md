@@ -36,7 +36,7 @@
 | 1.2 | Output-adapter registry (C++, CasADi) | ☑ |
 | 1.3 | Core stops importing solvers | ☑ |
 | 2.1 | Op registry, builtins registered through it | ☑ |
-| 2.2 | Table-driven AD, sparsity, folding, verification | ☐ |
+| 2.2 | Table-driven AD, sparsity, folding, verification | ☑ |
 | 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☐ |
 | 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☐ |
 | 3.1 | Linear-algebra ops move into `scaly.linalg` | ☐ |
@@ -472,6 +472,14 @@ arrive with 2.2.
 `CALL`, `VMAP`, `SCAN`, `WHILE` as core special cases.
 Gate: byte-identical snapshots; benchmark smoke medians within noise; an out-of-tree toy op defined
 in a test differentiates (forward, reverse, multi-seed), reports sparsity, lowers and compiles.
+Log: done 2026-09-28. `OpDef` carries `jvp`, `jvp_many`, `vjp`, `sparsity`, `fold`, `verify` and
+`lower`, set by `register_op(..., **rules)` or `define_rules` (a second definition raises). Each
+chain became a table of rule functions in the module that owns the kind (generated from the
+branches, then reviewed); `CALL`, `VMAP`, `SCAN`, `WHILE`, `INPUT`, `CONST` and predicates stay
+special. Defaults: `jvp_many` stacks per-seed `jvp` (builtins without one keep the whole-graph
+fallback, marked explicitly so output is unchanged), sparsity is dense in what the arguments read,
+`fold` applies `numpy`. `spec_expr` reads per-op verify rules from the registry. The toy op test is
+`tests/ir/test_op_registry.py`; AD build time unchanged.
 
 **2.3 Lowering context, traits, option namespaces, pass slots.** As §3.2 items 2–5. Replace
 `_UPDATE_OPS`, `_EXACT_READS`, `RUNTIME_INDEX_OPS`, `_EXPENSIVE_OPS`, `_Ragged` with traits;

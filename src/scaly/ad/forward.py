@@ -6,6 +6,7 @@ to unrolling ``jvp`` per seed unless ``SCALY_STRICT_JVP_MANY`` forbids it.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import itertools
 import operator
@@ -26,9 +27,11 @@ from ..ir.expr import (
   cast,
   concat,
   copysign,
+  define_rules,
   equal,
   not_equal,
   gather,
+  op_def,
   maximum,
   put,
   put_add,
@@ -206,117 +209,300 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     memo[expr.id] = ret
     return ret
 
+  d = [_jvp(a, seeds, memo, dep_memo) for a in expr.args]
+  rule = op_def(expr.op).jvp
+  if rule is None:
+    raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
+  return save(rule(expr, d))
+
+
+# The tangent rules of the builtin ops, each ``(expr, d) -> tangent`` with ``d`` one tangent per
+# argument (``OpDef.jvp``).
+
+
+def _jvp_neg(expr: Expr, d: list[Expr]) -> Expr:
+  return -d[0]
+
+
+def _jvp_add(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0] + d[1]
+
+
+def _jvp_sub(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0] - d[1]
+
+
+def _jvp_mul(expr: Expr, d: list[Expr]) -> Expr:
   args = expr.args
-  d = [_jvp(a, seeds, memo, dep_memo) for a in args]
-  if expr.op == ExprOp.NEG:
-    return save(-d[0])
-  if expr.op == ExprOp.ADD:
-    return save(d[0] + d[1])
-  if expr.op == ExprOp.SUB:
-    return save(d[0] - d[1])
-  if expr.op == ExprOp.MUL:
-    return save((2 * args[0]) * d[0] if args[0] is args[1] else _bilinear_tangent(expr, d, operator.mul))
-  if expr.op == ExprOp.DIV:  # a zero tangent's term is left out, as in _bilinear_tangent
-    dx, dy = (None if _is_zero_const(t) else t for t in d)
-    num = dx if dy is None else -(expr * dy) if dx is None else dx - expr * dy
-    return save(zeros_like(expr) if num is None else num * (1.0 / args[1]))
-  if expr.op == ExprOp.POW:
-    if args[1].op == ExprOp.CONST:
-      return save(args[1] * (args[0] ** _minus_one(args[1])) * d[0])
-    return save(expr * (d[1] * args[0].log() + args[1] * d[0] / args[0]))
-  if expr.op == ExprOp.SIN:
-    return save(args[0].cos() * d[0])
-  if expr.op == ExprOp.COS:
-    return save(-args[0].sin() * d[0])
-  if expr.op == ExprOp.TAN:
-    return save(d[0] / (args[0].cos() ** 2))
-  if expr.op == ExprOp.ASIN:
-    return save(d[0] / (1 - args[0] ** 2).sqrt())
-  if expr.op == ExprOp.ACOS:
-    return save(-d[0] / (1 - args[0] ** 2).sqrt())
-  if expr.op == ExprOp.ATAN:
-    return save(d[0] / (1 + args[0] ** 2))
-  if expr.op == ExprOp.ATAN2:
-    y, x = args
-    dy, dx = d
-    return save((x * dy - y * dx) / (x * x + y * y))
-  if expr.op == ExprOp.SINH:
-    return save(args[0].cosh() * d[0])
-  if expr.op == ExprOp.COSH:
-    return save(args[0].sinh() * d[0])
-  if expr.op == ExprOp.TANH:
-    return save(d[0] * (1 - expr * expr))
-  if expr.op == ExprOp.ERF:
-    return save((2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp() * d[0])
-  if expr.op == ExprOp.EXP:
-    return save(expr * d[0])
-  if expr.op == ExprOp.LOG:
-    return save(d[0] / args[0])
-  if expr.op == ExprOp.SQRT:
-    return save(d[0] * (0.5 / expr))
-  if expr.op == ExprOp.ABS:
-    return save(sign(args[0]) * d[0])
-  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
-    return save(floor_tangent(expr))
-  if expr.op in {ExprOp.MINIMUM, ExprOp.MAXIMUM}:
-    w = extremum_weight(expr)
-    return save(w * d[0] + (1.0 - w) * d[1])
-  if expr.op in {ExprOp.MAX, ExprOp.MIN}:
-    return save((reduce_weights(expr) * d[0]).sum())
-  if expr.op in {ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
-    return save(segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size))
-  if expr.op in {ExprOp.INDEX_ADD, ExprOp.INDEX_SET}:
-    return save(Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering))
-  if expr.op == ExprOp.TAKE:  # linear in x; a fill is a constant
-    return save(take(d[0], args[1], in_range=bool(expr.attrs.get("in_range"))))
-  if expr.op in {ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT}:
-    return save(ragged_tangent(expr, [None if _is_zero_const(t) else t for t in d]))
-  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
-    return save(zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0]))
-  if expr.op == ExprOp.SPARSE_LDL:  # reached only with a tangent: without one, the dependence check gave zero
+  return (2 * args[0]) * d[0] if args[0] is args[1] else _bilinear_tangent(expr, d, operator.mul)
+
+
+def _jvp_div(expr: Expr, d: list[Expr]) -> Expr:
+  # a zero tangent's term is left out, as in _bilinear_tangent
+  args = expr.args
+  dx, dy = (None if _is_zero_const(t) else t for t in d)
+  num = dx if dy is None else -(expr * dy) if dx is None else dx - expr * dy
+  return zeros_like(expr) if num is None else num * (1.0 / args[1])
+
+
+def _jvp_pow(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  if args[1].op == ExprOp.CONST:
+    return args[1] * (args[0] ** _minus_one(args[1])) * d[0]
+  return expr * (d[1] * args[0].log() + args[1] * d[0] / args[0])
+
+
+def _jvp_sin(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return args[0].cos() * d[0]
+
+
+def _jvp_cos(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return -args[0].sin() * d[0]
+
+
+def _jvp_tan(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return d[0] / (args[0].cos() ** 2)
+
+
+def _jvp_asin(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return d[0] / (1 - args[0] ** 2).sqrt()
+
+
+def _jvp_acos(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return -d[0] / (1 - args[0] ** 2).sqrt()
+
+
+def _jvp_atan(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return d[0] / (1 + args[0] ** 2)
+
+
+def _jvp_atan2(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  y, x = args
+  dy, dx = d
+  return (x * dy - y * dx) / (x * x + y * y)
+
+
+def _jvp_sinh(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return args[0].cosh() * d[0]
+
+
+def _jvp_cosh(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return args[0].sinh() * d[0]
+
+
+def _jvp_tanh(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0] * (1 - expr * expr)
+
+
+def _jvp_erf(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return (2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp() * d[0]
+
+
+def _jvp_exp(expr: Expr, d: list[Expr]) -> Expr:
+  return expr * d[0]
+
+
+def _jvp_log(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return d[0] / args[0]
+
+
+def _jvp_sqrt(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0] * (0.5 / expr)
+
+
+def _jvp_abs(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return sign(args[0]) * d[0]
+
+
+def _jvp_floor_ceil(expr: Expr, d: list[Expr]) -> Expr:
+  return floor_tangent(expr)
+
+
+def _jvp_minimum_maximum(expr: Expr, d: list[Expr]) -> Expr:
+  w = extremum_weight(expr)
+  return w * d[0] + (1.0 - w) * d[1]
+
+
+def _jvp_max_min(expr: Expr, d: list[Expr]) -> Expr:
+  return (reduce_weights(expr) * d[0]).sum()
+
+
+def _jvp_segment_max_segment_min(expr: Expr, d: list[Expr]) -> Expr:
+  return segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size)
+
+
+def _jvp_index_add_index_set(expr: Expr, d: list[Expr]) -> Expr:
+  return Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering)
+
+
+def _jvp_take(expr: Expr, d: list[Expr]) -> Expr:
+  # linear in x; a fill is a constant
+  args = expr.args
+  return take(d[0], args[1], in_range=bool(expr.attrs.get("in_range")))
+
+
+def _jvp_ragged_add_ragged_dot(expr: Expr, d: list[Expr]) -> Expr:
+  return ragged_tangent(expr, [None if _is_zero_const(t) else t for t in d])
+
+
+def _jvp_cholesky_ldl(expr: Expr, d: list[Expr]) -> Expr:
+  return zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0])
+
+
+def _jvp_sparse_ldl(expr: Expr, d: list[Expr]) -> Expr:
+  # reached only with a tangent: without one, the dependence check gave zero
+  raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+
+
+def _jvp_lu(expr: Expr, d: list[Expr]) -> Expr:
+  raise NotImplementedError(LU_NO_DERIVATIVE)
+
+
+def _jvp_sparse_ldl_solve(expr: Expr, d: list[Expr]) -> Expr:
+  # linear in b; in the factor, not implemented
+  args = expr.args
+  if not _is_zero_const(d[0]):
     raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-  if expr.op == ExprOp.LU:
-    raise NotImplementedError(LU_NO_DERIVATIVE)
-  if expr.op == ExprOp.SPARSE_LDL_SOLVE:  # linear in b; in the factor, not implemented
-    if not _is_zero_const(d[0]):
-      raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-    return save(sparse_ldl_solve(args[0], d[1], dict(expr.attrs)))
-  if expr.op == ExprOp.TRISOLVE:
-    dt, db = (None if _is_zero_const(t) else t for t in d)
-    return save(zeros_like(expr) if dt is None and db is None else trisolve_tangent(expr, dt, db))
-  if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
-    return save((put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range"))))
-  if expr.op == ExprOp.SELECT:
-    return save(where(args[0], d[1], d[2]))
-  if expr.op == ExprOp.COPYSIGN:
-    return save(_copysign_slope(args[0], args[1]) * d[0])
-  if expr.op == ExprOp.CAST:
-    return save(cast(d[0], expr.type.dtype) if expr.type.diff else zeros_like(expr))
-  if expr.op == ExprOp.SUM:
-    return save(d[0].sum())
-  if expr.op == ExprOp.RESHAPE:
-    return save(d[0].reshape(expr.shape))
-  if expr.op == ExprOp.TRANSPOSE:
-    return save(d[0].transpose(expr.attrs["axes"]))
-  if expr.op == ExprOp.SLICE:
-    return save(Expr.const(d[0].value[expr.attrs["index"]]) if d[0].op == ExprOp.CONST and d[0].value is not None else d[0][expr.attrs["index"]])
-  if expr.op == ExprOp.GATHER:
-    return save(
-      Expr.const(np.take(d[0].value.reshape(-1), expr.attrs["indices"]).reshape(expr.attrs["indices"].shape))
-      if d[0].op == ExprOp.CONST and d[0].value is not None
-      else gather(d[0], expr.attrs["indices"])
-    )
-  if expr.op == ExprOp.SCATTER:
-    return save(scatter(d[0], expr.attrs["indices"], expr.shape))
-  if expr.op == ExprOp.STACK:
-    return save(stack(d, axis=expr.attrs.get("axis", 0)))
-  if expr.op == ExprOp.CONCAT:
-    return save(concat(d, axis=expr.attrs.get("axis", 0)))
-  if expr.op == ExprOp.MATMUL:
-    if args[0] is args[1] and len(args[0].shape) == 1:
-      return save(2 * (args[0] @ d[0]))
-    return save(_bilinear_tangent(expr, d, operator.matmul))
-  raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
+  return sparse_ldl_solve(args[0], d[1], dict(expr.attrs))
+
+
+def _jvp_trisolve(expr: Expr, d: list[Expr]) -> Expr:
+  dt, db = (None if _is_zero_const(t) else t for t in d)
+  return zeros_like(expr) if dt is None and db is None else trisolve_tangent(expr, dt, db)
+
+
+def _jvp_put_add_put(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range")))
+
+
+def _jvp_select(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return where(args[0], d[1], d[2])
+
+
+def _jvp_copysign(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  return _copysign_slope(args[0], args[1]) * d[0]
+
+
+def _jvp_cast(expr: Expr, d: list[Expr]) -> Expr:
+  return cast(d[0], expr.type.dtype) if expr.type.diff else zeros_like(expr)
+
+
+def _jvp_sum(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0].sum()
+
+
+def _jvp_reshape(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0].reshape(expr.shape)
+
+
+def _jvp_transpose(expr: Expr, d: list[Expr]) -> Expr:
+  return d[0].transpose(expr.attrs["axes"])
+
+
+def _jvp_slice(expr: Expr, d: list[Expr]) -> Expr:
+  return Expr.const(d[0].value[expr.attrs["index"]]) if d[0].op == ExprOp.CONST and d[0].value is not None else d[0][expr.attrs["index"]]
+
+
+def _jvp_gather(expr: Expr, d: list[Expr]) -> Expr:
+  return (
+    Expr.const(np.take(d[0].value.reshape(-1), expr.attrs["indices"]).reshape(expr.attrs["indices"].shape))
+    if d[0].op == ExprOp.CONST and d[0].value is not None
+    else gather(d[0], expr.attrs["indices"])
+  )
+
+
+def _jvp_scatter(expr: Expr, d: list[Expr]) -> Expr:
+  return scatter(d[0], expr.attrs["indices"], expr.shape)
+
+
+def _jvp_stack(expr: Expr, d: list[Expr]) -> Expr:
+  return stack(d, axis=expr.attrs.get("axis", 0))
+
+
+def _jvp_concat(expr: Expr, d: list[Expr]) -> Expr:
+  return concat(d, axis=expr.attrs.get("axis", 0))
+
+
+def _jvp_matmul(expr: Expr, d: list[Expr]) -> Expr:
+  args = expr.args
+  if args[0] is args[1] and len(args[0].shape) == 1:
+    return 2 * (args[0] @ d[0])
+  return _bilinear_tangent(expr, d, operator.matmul)
+
+
+_JVP_RULES = {
+  ExprOp.NEG: _jvp_neg,
+  ExprOp.ADD: _jvp_add,
+  ExprOp.SUB: _jvp_sub,
+  ExprOp.MUL: _jvp_mul,
+  ExprOp.DIV: _jvp_div,
+  ExprOp.POW: _jvp_pow,
+  ExprOp.SIN: _jvp_sin,
+  ExprOp.COS: _jvp_cos,
+  ExprOp.TAN: _jvp_tan,
+  ExprOp.ASIN: _jvp_asin,
+  ExprOp.ACOS: _jvp_acos,
+  ExprOp.ATAN: _jvp_atan,
+  ExprOp.ATAN2: _jvp_atan2,
+  ExprOp.SINH: _jvp_sinh,
+  ExprOp.COSH: _jvp_cosh,
+  ExprOp.TANH: _jvp_tanh,
+  ExprOp.ERF: _jvp_erf,
+  ExprOp.EXP: _jvp_exp,
+  ExprOp.LOG: _jvp_log,
+  ExprOp.SQRT: _jvp_sqrt,
+  ExprOp.ABS: _jvp_abs,
+  ExprOp.FLOOR: _jvp_floor_ceil,
+  ExprOp.CEIL: _jvp_floor_ceil,
+  ExprOp.MINIMUM: _jvp_minimum_maximum,
+  ExprOp.MAXIMUM: _jvp_minimum_maximum,
+  ExprOp.MAX: _jvp_max_min,
+  ExprOp.MIN: _jvp_max_min,
+  ExprOp.SEGMENT_MAX: _jvp_segment_max_segment_min,
+  ExprOp.SEGMENT_MIN: _jvp_segment_max_segment_min,
+  ExprOp.INDEX_ADD: _jvp_index_add_index_set,
+  ExprOp.INDEX_SET: _jvp_index_add_index_set,
+  ExprOp.TAKE: _jvp_take,
+  ExprOp.RAGGED_ADD: _jvp_ragged_add_ragged_dot,
+  ExprOp.RAGGED_DOT: _jvp_ragged_add_ragged_dot,
+  ExprOp.CHOLESKY: _jvp_cholesky_ldl,
+  ExprOp.LDL: _jvp_cholesky_ldl,
+  ExprOp.SPARSE_LDL: _jvp_sparse_ldl,
+  ExprOp.LU: _jvp_lu,
+  ExprOp.SPARSE_LDL_SOLVE: _jvp_sparse_ldl_solve,
+  ExprOp.TRISOLVE: _jvp_trisolve,
+  ExprOp.PUT_ADD: _jvp_put_add_put,
+  ExprOp.PUT: _jvp_put_add_put,
+  ExprOp.SELECT: _jvp_select,
+  ExprOp.COPYSIGN: _jvp_copysign,
+  ExprOp.CAST: _jvp_cast,
+  ExprOp.SUM: _jvp_sum,
+  ExprOp.RESHAPE: _jvp_reshape,
+  ExprOp.TRANSPOSE: _jvp_transpose,
+  ExprOp.SLICE: _jvp_slice,
+  ExprOp.GATHER: _jvp_gather,
+  ExprOp.SCATTER: _jvp_scatter,
+  ExprOp.STACK: _jvp_stack,
+  ExprOp.CONCAT: _jvp_concat,
+  ExprOp.MATMUL: _jvp_matmul,
+}
+for _op, _rule in _JVP_RULES.items():
+  define_rules(_op, jvp=_rule)
 
 
 _SCAN_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], ConcreteFunction]] = weakref.WeakKeyDictionary()
@@ -1240,76 +1426,6 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
     memo[expr.id] = ret = _zeros_many(expr, nseed)
     return ret
-  if expr.op == ExprOp.SELECT:
-    cond, a, b = expr.args
-    da = _broadcast_tangent(_jvp_many_structural(a, wrt, seeds, memo, dep_memo), a, expr, nseed)
-    db = _broadcast_tangent(_jvp_many_structural(b, wrt, seeds, memo, dep_memo), b, expr, nseed)
-    memo[expr.id] = ret = where(cond, da, db)
-    return ret
-  if expr.op == ExprOp.SLICE:
-    memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)[(slice(None), *expr.attrs["index"])]
-    return ret
-  if expr.op == ExprOp.RESHAPE:
-    memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo).reshape((nseed, *expr.shape))
-    return ret
-  if expr.op == ExprOp.TRANSPOSE:
-    if len(expr.shape) > 3:
-      raise _JVPManyUnsupported(str(expr.op))  # seed axis would make a rank-5 TRANSPOSE, beyond the rank-4 lowering limit
-    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = d0.transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
-    return ret
-  if expr.op == ExprOp.ADD:
-    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
-    if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
-      memo[expr.id] = ret = d1
-    elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
-      memo[expr.id] = ret = d0
-    else:
-      memo[expr.id] = ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) + _broadcast_tangent(d1, expr.args[1], expr, nseed)
-    return ret
-  if expr.op == ExprOp.SUB:
-    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
-    if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
-      memo[expr.id] = ret = -d1
-    elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
-      memo[expr.id] = ret = d0
-    else:
-      memo[expr.id] = ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) - _broadcast_tangent(d1, expr.args[1], expr, nseed)
-    return ret
-  if expr.op == ExprOp.NEG:
-    memo[expr.id] = ret = -_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    return ret
-  if expr.op == ExprOp.CONCAT:
-    memo[expr.id] = ret = concat([_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) for arg in expr.args], axis=expr.attrs.get("axis", 0) + 1)
-    return ret
-  if expr.op == ExprOp.STACK:
-    memo[expr.id] = ret = stack([_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) for arg in expr.args], axis=expr.attrs.get("axis", 0) + 1)
-    return ret
-  if expr.op == ExprOp.GATHER:
-    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    indices = expr.attrs["indices"].reshape(-1)
-    full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.args[0].size + indices[None, :]).reshape(-1)
-    memo[expr.id] = ret = gather(d0.reshape((nseed * expr.args[0].size,)), full).reshape((nseed, *expr.shape))
-    return ret
-  if expr.op == ExprOp.SCATTER:
-    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    indices = expr.attrs["indices"].reshape(-1)
-    full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
-    memo[expr.id] = ret = scatter(d0.reshape((nseed * expr.args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
-    return ret
-  if expr.op == ExprOp.CAST:
-    if not expr.type.diff:
-      memo[expr.id] = ret = _zeros_many(expr, nseed)
-    else:
-      memo[expr.id] = ret = cast(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo), expr.type.dtype)
-    return ret
-  if expr.op == ExprOp.SUM:
-    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
-    memo[expr.id] = ret = d0.reshape((nseed, expr.args[0].size)) @ ones
-    return ret
   if expr.op == ExprOp.CALL and expr.attrs["callee"].custom_jvp is not None:
     # The rule once per seed, as one map: primal arguments broadcast, tangents sliced by seed.
     rule = expr.attrs["callee"].custom_jvp
@@ -1495,104 +1611,320 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret
     return ret
 
+  rule = op_def(expr.op).jvp_many
+  tan = functools.partial(_jvp_many_structural, wrt=wrt, seeds=seeds, memo=memo, dep_memo=dep_memo)
+  memo[expr.id] = ret = (_jvp_many_per_seed if rule is None else rule)(expr, tan, nseed)
+  return ret
+
+
+# The multi-seed tangent rules of the builtin ops (``OpDef.jvp_many``): ``tan(arg)`` forms the
+# tangents of an argument, one row per seed, so a rule forms only the ones it reads.
+
+
+def _jvp_many_select(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  cond, a, b = expr.args
+  da = _broadcast_tangent(tan(a), a, expr, nseed)
+  db = _broadcast_tangent(tan(b), b, expr, nseed)
+  return where(cond, da, db)
+
+
+def _jvp_many_slice(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  return tan(expr.args[0])[(slice(None), *expr.attrs["index"])]
+
+
+def _jvp_many_reshape(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  return tan(expr.args[0]).reshape((nseed, *expr.shape))
+
+
+def _jvp_many_transpose(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  if len(expr.shape) > 3:
+    raise _JVPManyUnsupported(str(expr.op))  # seed axis would make a rank-5 TRANSPOSE, beyond the rank-4 lowering limit
+  d0 = tan(expr.args[0])
+  return d0.transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
+
+
+def _jvp_many_add(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  d0 = tan(expr.args[0])
+  d1 = tan(expr.args[1])
+  if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+    ret = d1
+  elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+    ret = d0
+  else:
+    ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) + _broadcast_tangent(d1, expr.args[1], expr, nseed)
+  return ret
+
+
+def _jvp_many_sub(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  d0 = tan(expr.args[0])
+  d1 = tan(expr.args[1])
+  if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+    ret = -d1
+  elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+    ret = d0
+  else:
+    ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) - _broadcast_tangent(d1, expr.args[1], expr, nseed)
+  return ret
+
+
+def _jvp_many_neg(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  return -tan(expr.args[0])
+
+
+def _jvp_many_concat(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  return concat([tan(arg) for arg in expr.args], axis=expr.attrs.get("axis", 0) + 1)
+
+
+def _jvp_many_stack(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  return stack([tan(arg) for arg in expr.args], axis=expr.attrs.get("axis", 0) + 1)
+
+
+def _jvp_many_gather(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  d0 = tan(expr.args[0])
+  indices = expr.attrs["indices"].reshape(-1)
+  full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.args[0].size + indices[None, :]).reshape(-1)
+  return gather(d0.reshape((nseed * expr.args[0].size,)), full).reshape((nseed, *expr.shape))
+
+
+def _jvp_many_scatter(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  d0 = tan(expr.args[0])
+  indices = expr.attrs["indices"].reshape(-1)
+  full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
+  return scatter(d0.reshape((nseed * expr.args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
+
+
+def _jvp_many_cast(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  if not expr.type.diff:
+    ret = _zeros_many(expr, nseed)
+  else:
+    ret = cast(tan(expr.args[0]), expr.type.dtype)
+  return ret
+
+
+def _jvp_many_sum(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  d0 = tan(expr.args[0])
+  ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
+  return d0.reshape((nseed, expr.args[0].size)) @ ones
+
+
+def _jvp_many_mul(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   args = expr.args
-  d = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) for arg in args]
-  if expr.op == ExprOp.MUL:
-    if args[0] is args[1]:
-      memo[expr.id] = ret = _seed_axis(2 * args[0], nseed) * d[0]
-      return ret
-    # A zero tangent's term is left out, as in _bilinear_tangent.
-    terms = [] if _is_zero_const(d[0]) else [_broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr)]
-    if not _is_zero_const(d[1]):
-      terms.append(_seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed))
-    memo[expr.id] = ret = _zeros_many(expr, nseed) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
-    return ret
-  if expr.op == ExprOp.DIV:
-    num = None if _is_zero_const(d[0]) else _broadcast_tangent(d[0], args[0], expr, nseed)
-    if not _is_zero_const(d[1]):
-      term = _seed_axis(expr, nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
-      num = -term if num is None else num - term
-    memo[expr.id] = ret = _zeros_many(expr, nseed) if num is None else num * _seed_axis(1.0 / args[1], nseed, expr)
-    return ret
-  if expr.op == ExprOp.POW:
-    if args[1].op == ExprOp.CONST:
-      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** _minus_one(args[1])), nseed, expr) * _broadcast_tangent(d[0], args[0], expr, nseed)
-    else:
-      x = _seed_axis(args[0], nseed, expr)
-      y = _seed_axis(args[1], nseed, expr)
-      dx = _broadcast_tangent(d[0], args[0], expr, nseed)
-      dy = _broadcast_tangent(d[1], args[1], expr, nseed)
-      memo[expr.id] = ret = _seed_axis(expr, nseed) * (dy * x.log() + y * dx / x)
-    return ret
-  if expr.op == ExprOp.SIN:
-    memo[expr.id] = ret = _seed_axis(args[0].cos(), nseed) * d[0]
-    return ret
-  if expr.op == ExprOp.COS:
-    memo[expr.id] = ret = -_seed_axis(args[0].sin(), nseed) * d[0]
-    return ret
-  if expr.op == ExprOp.TAN:
-    memo[expr.id] = ret = d[0] / (_seed_axis(args[0].cos(), nseed) ** 2)
-    return ret
-  if expr.op == ExprOp.EXP:
-    memo[expr.id] = ret = _seed_axis(expr, nseed) * d[0]
-    return ret
-  if expr.op == ExprOp.LOG:
-    memo[expr.id] = ret = d[0] / _seed_axis(args[0], nseed)
-    return ret
-  if expr.op == ExprOp.SQRT:
-    memo[expr.id] = ret = d[0] * _seed_axis(0.5 / expr, nseed)
-    return ret
-  if expr.op == ExprOp.TANH:
-    memo[expr.id] = ret = d[0] * (1 - _seed_axis(expr * expr, nseed))
-    return ret
-  if expr.op == ExprOp.ERF:
-    memo[expr.id] = ret = _seed_axis((2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(), nseed) * d[0]
-    return ret
-  if expr.op == ExprOp.COSH:
-    memo[expr.id] = ret = _seed_axis(args[0].sinh(), nseed) * d[0]
-    return ret
-  if expr.op == ExprOp.SINH:
-    memo[expr.id] = ret = _seed_axis(args[0].cosh(), nseed) * d[0]
-    return ret
-  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL, ExprOp.TRISOLVE}:
-    memo[expr.id] = ret = _jvp_many_dense(expr, d, nseed)
-    return ret
-  if expr.op == ExprOp.SPARSE_LDL:
+  d = [tan(arg) for arg in args]
+  if args[0] is args[1]:
+    return _seed_axis(2 * args[0], nseed) * d[0]
+  # A zero tangent's term is left out, as in _bilinear_tangent.
+  terms = [] if _is_zero_const(d[0]) else [_broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr)]
+  if not _is_zero_const(d[1]):
+    terms.append(_seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed))
+  return _zeros_many(expr, nseed) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
+
+
+def _jvp_many_div(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  num = None if _is_zero_const(d[0]) else _broadcast_tangent(d[0], args[0], expr, nseed)
+  if not _is_zero_const(d[1]):
+    term = _seed_axis(expr, nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
+    num = -term if num is None else num - term
+  return _zeros_many(expr, nseed) if num is None else num * _seed_axis(1.0 / args[1], nseed, expr)
+
+
+def _jvp_many_pow(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  if args[1].op == ExprOp.CONST:
+    ret = _seed_axis(args[1] * (args[0] ** _minus_one(args[1])), nseed, expr) * _broadcast_tangent(d[0], args[0], expr, nseed)
+  else:
+    x = _seed_axis(args[0], nseed, expr)
+    y = _seed_axis(args[1], nseed, expr)
+    dx = _broadcast_tangent(d[0], args[0], expr, nseed)
+    dy = _broadcast_tangent(d[1], args[1], expr, nseed)
+    ret = _seed_axis(expr, nseed) * (dy * x.log() + y * dx / x)
+  return ret
+
+
+def _jvp_many_sin(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return _seed_axis(args[0].cos(), nseed) * d[0]
+
+
+def _jvp_many_cos(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return -_seed_axis(args[0].sin(), nseed) * d[0]
+
+
+def _jvp_many_tan(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return d[0] / (_seed_axis(args[0].cos(), nseed) ** 2)
+
+
+def _jvp_many_exp(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return _seed_axis(expr, nseed) * d[0]
+
+
+def _jvp_many_log(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return d[0] / _seed_axis(args[0], nseed)
+
+
+def _jvp_many_sqrt(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return d[0] * _seed_axis(0.5 / expr, nseed)
+
+
+def _jvp_many_tanh(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return d[0] * (1 - _seed_axis(expr * expr, nseed))
+
+
+def _jvp_many_erf(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return _seed_axis((2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(), nseed) * d[0]
+
+
+def _jvp_many_cosh(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return _seed_axis(args[0].sinh(), nseed) * d[0]
+
+
+def _jvp_many_sinh(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return _seed_axis(args[0].cosh(), nseed) * d[0]
+
+
+def _jvp_many_cholesky_ldl_trisolve(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return _jvp_many_dense(expr, d, nseed)
+
+
+def _jvp_many_sparse_ldl(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+
+
+def _jvp_many_lu(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  raise NotImplementedError(LU_NO_DERIVATIVE)
+
+
+def _jvp_many_sparse_ldl_solve(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  if not _is_zero_const(d[0]):
     raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-  if expr.op == ExprOp.LU:
-    raise NotImplementedError(LU_NO_DERIVATIVE)
-  if expr.op == ExprOp.SPARSE_LDL_SOLVE:
-    if not _is_zero_const(d[0]):
-      raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-    if nseed > 64:
-      raise _JVPManyUnsupported(str(expr.op))  # one solve per seed would outgrow the per-seed fallback
-    memo[expr.id] = ret = stack([sparse_ldl_solve(args[0], d[1][k], dict(expr.attrs)) for k in range(nseed)], axis=0)
-    return ret
-  if expr.op in {ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT}:
-    if nseed > 64:
-      raise _JVPManyUnsupported(str(expr.op))  # one tangent op per seed would outgrow the per-seed fallback
-    rows = [ragged_tangent(expr, [None if _is_zero_const(t) else t[k] for t in d]) for k in range(nseed)]
-    memo[expr.id] = ret = stack(rows, axis=0)
-    return ret
-  if expr.op == ExprOp.TAKE:  # the seed axis leads and ``take`` indexes the last one
-    memo[expr.id] = ret = take(d[0], args[1], in_range=bool(expr.attrs.get("in_range")))
-    return ret
-  if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
-    memo[expr.id] = ret = (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range")))
-    return ret
-  if expr.op == ExprOp.MATMUL:
-    if args[0] is args[1] and len(args[0].shape) == 1:
-      memo[expr.id] = ret = 2 * (d[0] @ args[0])
-      return ret
-    ret: Expr | None = None
-    if not _is_zero_const(d[0]):
-      ret = _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
-    if not _is_zero_const(d[1]):
-      term = _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
-      ret = term if ret is None else ret + term
-    memo[expr.id] = ret = _zeros_many(expr, nseed) if ret is None else ret
-    return ret
+  if nseed > 64:
+    raise _JVPManyUnsupported(str(expr.op))  # one solve per seed would outgrow the per-seed fallback
+  return stack([sparse_ldl_solve(args[0], d[1][k], dict(expr.attrs)) for k in range(nseed)], axis=0)
+
+
+def _jvp_many_ragged_add_ragged_dot(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  if nseed > 64:
+    raise _JVPManyUnsupported(str(expr.op))  # one tangent op per seed would outgrow the per-seed fallback
+  rows = [ragged_tangent(expr, [None if _is_zero_const(t) else t[k] for t in d]) for k in range(nseed)]
+  return stack(rows, axis=0)
+
+
+def _jvp_many_take(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  # the seed axis leads and ``take`` indexes the last one
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return take(d[0], args[1], in_range=bool(expr.attrs.get("in_range")))
+
+
+def _jvp_many_put_add_put(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  return (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range")))
+
+
+def _jvp_many_matmul(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  args = expr.args
+  d = [tan(arg) for arg in args]
+  if args[0] is args[1] and len(args[0].shape) == 1:
+    return 2 * (d[0] @ args[0])
+  ret: Expr | None = None
+  if not _is_zero_const(d[0]):
+    ret = _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
+  if not _is_zero_const(d[1]):
+    term = _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
+    ret = term if ret is None else ret + term
+  return _zeros_many(expr, nseed) if ret is None else ret
+
+
+_JVP_MANY_RULES = {
+  ExprOp.SELECT: _jvp_many_select,
+  ExprOp.SLICE: _jvp_many_slice,
+  ExprOp.RESHAPE: _jvp_many_reshape,
+  ExprOp.TRANSPOSE: _jvp_many_transpose,
+  ExprOp.ADD: _jvp_many_add,
+  ExprOp.SUB: _jvp_many_sub,
+  ExprOp.NEG: _jvp_many_neg,
+  ExprOp.CONCAT: _jvp_many_concat,
+  ExprOp.STACK: _jvp_many_stack,
+  ExprOp.GATHER: _jvp_many_gather,
+  ExprOp.SCATTER: _jvp_many_scatter,
+  ExprOp.CAST: _jvp_many_cast,
+  ExprOp.SUM: _jvp_many_sum,
+  ExprOp.MUL: _jvp_many_mul,
+  ExprOp.DIV: _jvp_many_div,
+  ExprOp.POW: _jvp_many_pow,
+  ExprOp.SIN: _jvp_many_sin,
+  ExprOp.COS: _jvp_many_cos,
+  ExprOp.TAN: _jvp_many_tan,
+  ExprOp.EXP: _jvp_many_exp,
+  ExprOp.LOG: _jvp_many_log,
+  ExprOp.SQRT: _jvp_many_sqrt,
+  ExprOp.TANH: _jvp_many_tanh,
+  ExprOp.ERF: _jvp_many_erf,
+  ExprOp.COSH: _jvp_many_cosh,
+  ExprOp.SINH: _jvp_many_sinh,
+  ExprOp.CHOLESKY: _jvp_many_cholesky_ldl_trisolve,
+  ExprOp.LDL: _jvp_many_cholesky_ldl_trisolve,
+  ExprOp.TRISOLVE: _jvp_many_cholesky_ldl_trisolve,
+  ExprOp.SPARSE_LDL: _jvp_many_sparse_ldl,
+  ExprOp.LU: _jvp_many_lu,
+  ExprOp.SPARSE_LDL_SOLVE: _jvp_many_sparse_ldl_solve,
+  ExprOp.RAGGED_ADD: _jvp_many_ragged_add_ragged_dot,
+  ExprOp.RAGGED_DOT: _jvp_many_ragged_add_ragged_dot,
+  ExprOp.TAKE: _jvp_many_take,
+  ExprOp.PUT_ADD: _jvp_many_put_add_put,
+  ExprOp.PUT: _jvp_many_put_add_put,
+  ExprOp.MATMUL: _jvp_many_matmul,
+}
+
+
+def _jvp_many_unsupported(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  """A builtin with no multi-seed rule: the whole ``jvp_many`` falls back to one ``jvp`` per seed."""
   raise _JVPManyUnsupported(str(expr.op))
+
+
+def _jvp_many_per_seed(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  """The default for an op with a tangent rule and no multi-seed one: the rule once per seed, stacked."""
+  rule = op_def(expr.op).jvp
+  if rule is None:
+    raise _JVPManyUnsupported(str(expr.op))
+  d = [tan(arg) for arg in expr.args]
+  return stack([rule(expr, [t[k] for t in d]) for k in range(nseed)], axis=0)
+
+
+for _op, _rule in _JVP_MANY_RULES.items():
+  define_rules(_op, jvp_many=_rule)
+# Builtins without a rule of their own keep the whole-graph fallback rather than the per-seed default.
+for _op in ExprOp:
+  if _op not in _JVP_MANY_RULES and op_def(_op).jvp is not None:
+    define_rules(_op, jvp_many=_jvp_many_unsupported)
 
 
 def _zeros_many(expr: Expr, nseed: int) -> Expr:

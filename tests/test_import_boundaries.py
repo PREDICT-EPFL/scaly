@@ -186,6 +186,7 @@ def test_both_dialects_use_the_shared_spec_types() -> None:
   assert all(
     type(rule) is Rule for spec in (spec_expr, spec_program_full) for rule in (*spec.any, *(r for rules in spec.by_op.values() for r in rules))
   )
+  assert all(type(rule) is Rule for rules in spec_expr.op_rules().values() for rule in rules)  # the per-op rules live on each OpDef
   assert __import__("scaly.ir.expr_spec", fromlist=["VerifyError"]).VerifyError is VerifyError
   assert __import__("scaly.ir.program_spec", fromlist=["VerifyError"]).VerifyError is VerifyError
 

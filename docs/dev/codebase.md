@@ -204,8 +204,9 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 
 | To add | Touch |
 | --- | --- |
-| A scalar math op | an `ExprOp` name and a `_BUILTIN_OPS` row (the op's registration) in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
-| A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` and a structural rule in `ad/sparsity.py` |
+| A scalar math op | an `ExprOp` name and a `_BUILTIN_OPS` row (the op's registration) in `ir/expr.py`; its rules, each a row in the table of the module that owns the kind: a verify rule in `_BUILTIN_RULES` in `ir/expr_spec.py`, `jvp` and `jvp_many` in `ad/forward.py`, `vjp` in `ad/reverse.py`, a pattern in `ad/sparsity.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
+| A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` |
+| An op outside the compiler (a library's) | `register_op(name, arity=..., jvp=..., vjp=..., sparsity=..., verify=..., lower=...)` in the module that provides its builder; `OpDef` in `ir/expr.py` gives each rule's signature and its default. Nothing in the compiler changes |
 | An expression rewrite | a pattern in `passes/expr.py` |
 | An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |
 | A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |

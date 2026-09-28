@@ -3,14 +3,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.ad import jvp, jvp_many, vjp
+from scaly.ir import program as p
 from scaly.ir.expr import Expr, ExprOp, OpDef, op_def, register_op, registered_ops
 from scaly.ir.expr_spec import verify_expr
-from scaly.ir.spec import VerifyError
+from scaly.ir.program import RangeKind
+from scaly.ir.spec import Rule, VerifyError
 from scaly.ir.types import TensorType
+from scaly.passes.expr import simplify
 
 # Registered at import, once per process, as an extension would: before any Expr uses it.
 TOY = register_op("test_registry_toy", arity=1, numpy=lambda x: 2.0 * x)
@@ -49,3 +55,68 @@ def test_a_name_registers_once_and_an_unknown_one_is_refused() -> None:
     Expr("nope", (), TensorType())
   assert isinstance(TOY, OpDef) and TOY.numpy is not None
   np.testing.assert_allclose(TOY.numpy(np.ones(2)), [2.0, 2.0])
+
+
+# An op defined wholly outside the compiler, as a library would: ``x ** 3`` elementwise, with the
+# rules a derivative, a sparsity query, verification and lowering ask for. It has no multi-seed rule,
+# so ``jvp_many`` takes the per-seed default.
+def _cube_lower(ctx: Any, node: Expr) -> None:
+  out = ctx.alloc_tmp(node)
+  name = f"i_{out.attrs['name']}"
+  i = p.var(name)
+  x = p.load(p.view(ctx.buf_of(node.args[0]), [i]))
+  ctx.statements.append(p.for_(p.range_(name, 0, node.size, kind=RangeKind.GLOBAL), [p.store(p.view(out, [i]), p.mul(p.mul(x, x), x))]))
+
+
+CUBE = register_op(
+  "test_registry_cube",
+  arity=1,
+  numpy=lambda x: x**3,
+  jvp=lambda e, d: 3.0 * (e.args[0] * e.args[0]) * d[0],
+  vjp=lambda e, cot: (cot * 3.0 * (e.args[0] * e.args[0]),),
+  sparsity=lambda e, mask, ncols: mask(e.args[0]),
+  verify=(Rule(None, "cube-keeps-shape", lambda e: None if e.shape == e.args[0].shape else "shape changed"),),
+  lower=_cube_lower,
+)
+
+
+def _cube(x: sc.Expr) -> sc.Expr:
+  return Expr(CUBE.name, (x,), x.type)
+
+
+def test_an_extension_op_differentiates_reports_sparsity_lowers_and_compiles() -> None:
+  x = sc.sym("x", 3)
+  seed = sc.sym("seed", 3)
+  y = _cube(x)
+  fn = sc.Function._from_exprs(
+    "registry_cube",
+    [x, seed],
+    [y, jvp(y, x, seed), vjp([y.sum()], [x], [sc.const(1.0)])[0], jvp_many(y, x, sc.const(np.eye(3)))],
+    ["x", "seed"],
+    ["y", "fwd", "grad", "many"],
+  )
+  xv, sv = np.array([0.5, -1.0, 2.0]), np.array([1.0, 2.0, -1.0])
+  value, forward, gradient, many = fn((xv, sv))
+  np.testing.assert_allclose(value, xv**3)
+  np.testing.assert_allclose(forward, 3 * xv**2 * sv)
+  np.testing.assert_allclose(gradient, 3 * xv**2)
+  np.testing.assert_allclose(many, np.diag(3 * xv**2))
+  pattern = sc.jacobian_sparsity(y, x)
+  assert list(zip(pattern.rows, pattern.cols, strict=True)) == [(0, 0), (1, 1), (2, 2)]
+  np.testing.assert_allclose(sc.jacobian(sc.Function._from_exprs("registry_cube_y", [x], [y], ["x"], ["y"]), "y", "x")(xv), np.diag(3 * xv**2))
+  folded = simplify(_cube(sc.const(np.array([2.0]))))
+  assert folded.op == ExprOp.CONST and folded.value is not None and folded.value[0] == 8.0
+
+
+def test_an_extension_op_is_verified_by_its_own_rules() -> None:
+  x = sc.sym("x", 3)
+  verify_expr(_cube(x))
+  with pytest.raises(VerifyError, match="cube-keeps-shape"):
+    verify_expr(Expr(CUBE.name, (x,), TensorType((2,))))
+
+
+def test_an_op_without_a_pattern_rule_is_dense_in_what_it_reads() -> None:
+  x = sc.sym("x", 4)
+  toy = Expr(TOY.name, (x[1:3],), TensorType((2,)))
+  pattern = sc.jacobian_sparsity(toy, x)
+  assert list(zip(pattern.rows, pattern.cols, strict=True)) == [(0, 1), (0, 2), (1, 1), (1, 2)]

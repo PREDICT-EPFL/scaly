@@ -186,24 +186,56 @@ CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE}
 COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_CONTROL
 
 
-@dataclass(frozen=True, eq=False)
+_RULE_KINDS = ("jvp", "jvp_many", "vjp", "sparsity", "fold", "verify", "lower")
+
+
 class OpDef:
   """One expression op: its name, arity (``None`` for variadic), NumPy evaluation rule for constant
-  folding (``None`` when it has none), and whether a derivative can flow through it.
+  folding (``None`` when it has none), whether a derivative can flow through it, and its rules.
+
+  The rules are what the compiler asks of an op; each is ``None`` until a module defines it with
+  ``define_rules``, and an op without one gets the default named here:
+
+  - ``jvp(expr, d)``: the tangent of ``expr`` from ``d``, one tangent per argument. None: an error.
+  - ``jvp_many(expr, tan, nseed)``: tangents with a leading seed axis; ``tan(arg)`` forms an
+    argument's, so a rule forms only those it reads. None: ``jvp`` once per seed, stacked.
+  - ``vjp(expr, cot)``: one cotangent per argument. None: an error.
+  - ``sparsity(expr, mask, ncols)``: the structural Jacobian pattern, a boolean CSR array of
+    ``(expr.size, ncols)`` from ``mask(arg)``, each argument's. None: every entry of the output on
+    every column any argument reads.
+  - ``fold(expr, values)``: the value from constant arguments, or ``None`` to leave the node. None:
+    ``numpy`` applied to the values, when there is one.
+  - ``verify``: rules (``ir.spec.Rule``) a node with this op must pass, beyond the shared ones.
+  - ``lower(ctx, node)``: the lowering to the program dialect (``passes/lowering.py``). None: the
+    op cannot be lowered.
 
   Compared and hashed by identity: the registry holds one per name."""
 
-  name: str
-  arity: int | None
-  numpy: Callable[..., Any] | None = None
-  differentiable: bool = True
+  __slots__ = ("name", "arity", "numpy", "differentiable", *_RULE_KINDS)
+
+  def __init__(self, name: str, arity: int | None, numpy: Callable[..., Any] | None = None, differentiable: bool = True) -> None:
+    self.name = name
+    self.arity = arity
+    self.numpy = numpy
+    self.differentiable = differentiable
+    self.jvp: Callable[..., Any] | None = None
+    self.jvp_many: Callable[..., Any] | None = None
+    self.vjp: Callable[..., Any] | None = None
+    self.sparsity: Callable[..., Any] | None = None
+    self.fold: Callable[..., Any] | None = None
+    self.verify: tuple[Any, ...] = ()
+    self.lower: Callable[..., Any] | None = None
+
+  def __repr__(self) -> str:
+    return f"OpDef({str(self.name)!r})"
 
 
 _OPS: dict[str, OpDef] = {}
 
 
-def register_op(name: str, *, arity: int | None, numpy: Callable[..., Any] | None = None, differentiable: bool = True) -> OpDef:
-  """Add the op ``name`` to the expression dialect; registering a name twice raises.
+def register_op(name: str, *, arity: int | None, numpy: Callable[..., Any] | None = None, differentiable: bool = True, **rules: Any) -> OpDef:
+  """Add the op ``name`` to the expression dialect, with any of its rules (``OpDef``); registering
+  a name twice raises.
 
   Registration has to happen before an ``Expr`` with the op is built, which holds by construction
   when the module that registers the op is the one that provides its builder."""
@@ -211,6 +243,21 @@ def register_op(name: str, *, arity: int | None, numpy: Callable[..., Any] | Non
     raise ValueError(f"expression op {name!r} is already registered")
   definition = OpDef(name, arity, numpy, differentiable)
   _OPS[name] = definition
+  if rules:
+    define_rules(name, **rules)
+  return definition
+
+
+def define_rules(op: str, **rules: Any) -> OpDef:
+  """Give the registered op ``op`` rules it does not have yet (``OpDef`` names them); defining one
+  twice raises, so two modules cannot silently disagree about an op."""
+  definition = op_def(op)
+  for kind, rule in rules.items():
+    if kind not in _RULE_KINDS:
+      raise TypeError(f"unknown op rule {kind!r}; the rules are {', '.join(_RULE_KINDS)}")
+    if getattr(definition, kind):
+      raise ValueError(f"the {kind} rule of expression op {op!r} is already defined")
+    setattr(definition, kind, tuple(rule) if kind == "verify" else rule)
   return definition
 
 

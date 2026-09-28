@@ -21,6 +21,7 @@ negative-test harness for those passes.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 
@@ -32,7 +33,9 @@ from .expr import (
   SPARSE_LDL_TABLES,
   Expr,
   ExprOp,
+  define_rules,
   op_def,
+  registered_ops,
   topo,
 )
 from .spec import Rule, Spec, VerifyError
@@ -507,43 +510,65 @@ _unary_rules = [Rule(op, "unary-shape-dtype-match", _unary_shape_dtype) for op i
 _binary_rules = [Rule(op, "binary-shape-dtype-match", _binary_shape_dtype) for op in COMMON_ELEMENTWISE_BINARY]
 
 
-spec_expr = Spec(
-  [
-    *spec_expr_shared.any,
-    Rule(ExprOp.INPUT, "input-has-name", _input_has_name),
-    Rule(ExprOp.CONST, "const-value-present", _const_value_present),
-    *_unary_rules,
-    *_binary_rules,
-    *(Rule(op, "compare-types", _compare_types) for op in COMPARE_OPS),
-    *(Rule(op, "logical-types", _logical_types) for op in (ExprOp.AND, ExprOp.OR, ExprOp.NOT)),
-    Rule(ExprOp.ISFINITE, "isfinite-types", _isfinite_types),
-    Rule(ExprOp.SELECT, "select-types", _select_types),
-    Rule(ExprOp.CAST, "cast-types", _cast_types),
-    Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
-    *(Rule(op, "reduce-output-scalar", _reduce_shape) for op in (ExprOp.MAX, ExprOp.MIN)),
-    Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
-    Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
-    Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
-    Rule(ExprOp.CALL, "call-attrs", _call_attrs),
-    Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
-    Rule(ExprOp.SCAN, "scan-attrs", _scan_attrs),
-    Rule(ExprOp.WHILE, "while-attrs", _while_attrs),
-    Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
-    Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
-    *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
-    Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
-    *(Rule(op, "factor-shape", _factor_shape) for op in (ExprOp.CHOLESKY, ExprOp.LDL)),
-    Rule(ExprOp.LU, "lu-shape", _lu_shape),
-    Rule(ExprOp.SPARSE_LDL, "sparse-ldl-tables", _sparse_ldl_tables),
-    Rule(ExprOp.SPARSE_LDL_SOLVE, "sparse-ldl-solve-tables", _sparse_ldl_solve_tables),
-    Rule(ExprOp.TRISOLVE, "trisolve-shapes", _trisolve_shapes),
-    *(Rule(op, "ragged-shapes", _ragged_shapes) for op in (ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT)),
-    *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),
-    *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
-    Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
-    Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
-  ]
-)
+_BUILTIN_RULES: list[Rule[Expr, Any]] = [
+  Rule(ExprOp.INPUT, "input-has-name", _input_has_name),
+  Rule(ExprOp.CONST, "const-value-present", _const_value_present),
+  *_unary_rules,
+  *_binary_rules,
+  *(Rule(op, "compare-types", _compare_types) for op in COMPARE_OPS),
+  *(Rule(op, "logical-types", _logical_types) for op in (ExprOp.AND, ExprOp.OR, ExprOp.NOT)),
+  Rule(ExprOp.ISFINITE, "isfinite-types", _isfinite_types),
+  Rule(ExprOp.SELECT, "select-types", _select_types),
+  Rule(ExprOp.CAST, "cast-types", _cast_types),
+  Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
+  *(Rule(op, "reduce-output-scalar", _reduce_shape) for op in (ExprOp.MAX, ExprOp.MIN)),
+  Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
+  Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
+  Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
+  Rule(ExprOp.CALL, "call-attrs", _call_attrs),
+  Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
+  Rule(ExprOp.SCAN, "scan-attrs", _scan_attrs),
+  Rule(ExprOp.WHILE, "while-attrs", _while_attrs),
+  Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
+  Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
+  *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
+  Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
+  *(Rule(op, "factor-shape", _factor_shape) for op in (ExprOp.CHOLESKY, ExprOp.LDL)),
+  Rule(ExprOp.LU, "lu-shape", _lu_shape),
+  Rule(ExprOp.SPARSE_LDL, "sparse-ldl-tables", _sparse_ldl_tables),
+  Rule(ExprOp.SPARSE_LDL_SOLVE, "sparse-ldl-solve-tables", _sparse_ldl_solve_tables),
+  Rule(ExprOp.TRISOLVE, "trisolve-shapes", _trisolve_shapes),
+  *(Rule(op, "ragged-shapes", _ragged_shapes) for op in (ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT)),
+  *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),
+  *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
+  Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
+  Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
+]
+_by_op: dict[str, list[Rule[Expr, Any]]] = {}
+for _rule in _BUILTIN_RULES:
+  assert _rule.op is not None
+  _by_op.setdefault(_rule.op, []).append(_rule)
+for _op, _rules in _by_op.items():
+  define_rules(_op, verify=_rules)
+
+
+class _RegistrySpec(Spec[Expr, str]):
+  """The expression dialect's spec: the shared rules, then each op's own from the registry
+  (``OpDef.verify``), so an op an extension registers is verified like a builtin."""
+
+  def __init__(self, shared: Iterable[Rule[Expr, str]]) -> None:
+    super().__init__(shared)
+
+  def candidates(self, op: str) -> Iterable[Rule[Expr, str]]:
+    yield from self.any
+    yield from op_def(op).verify
+
+  def op_rules(self) -> dict[str, list[Rule[Expr, str]]]:
+    """Every registered op with rules of its own, and those rules."""
+    return {name: list(op_def(name).verify) for name in registered_ops() if op_def(name).verify}
+
+
+spec_expr = _RegistrySpec(spec_expr_shared.any)
 
 
 __all__ = [

@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _attrs_key, gather, matmul, op_def, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _attrs_key, define_rules, gather, matmul, op_def, stack, topo, zeros_like
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -100,46 +100,60 @@ def _constant_fold(e: Expr) -> Expr:
 
 
 def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None:
-  if e.op == ExprOp.RESHAPE:
-    out = args[0].reshape(e.attrs["shape"])
-  elif e.op == ExprOp.TRANSPOSE:
-    out = np.transpose(args[0], axes=e.attrs["axes"])
-  elif e.op == ExprOp.SLICE:
-    out = args[0][e.attrs["index"]]
-  elif e.op == ExprOp.GATHER:
-    indices = e.attrs["indices"]
-    out = np.take(args[0].reshape(-1), indices).reshape(indices.shape)
-  elif e.op == ExprOp.SCATTER:
-    out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
-    np.add.at(out, e.attrs["indices"].reshape(-1), args[0].reshape(-1))
-    out = out.reshape(e.shape)
-  elif e.op == ExprOp.INDEX_ADD:
-    out = args[0].astype(np.float64, copy=True).reshape(-1)
-    np.add.at(out, e.attrs["indices"], args[1])
-    out = out.reshape(e.shape)
-  elif e.op == ExprOp.INDEX_SET:
-    out = args[0].astype(np.float64, copy=True).reshape(-1)
-    out[e.attrs["indices"]] = args[1]
-    out = out.reshape(e.shape)
-  elif e.op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN):
-    out = np.full(e.shape, e.attrs["fill"], dtype=np.float64)
-    (np.maximum if e.op == ExprOp.SEGMENT_MAX else np.minimum).at(out, e.attrs["indices"], args[0])
-  elif e.op == ExprOp.STACK:
-    out = np.stack(args, axis=e.attrs.get("axis", 0))
-  elif e.op == ExprOp.CONCAT:
-    out = np.concatenate(args, axis=e.attrs.get("axis", 0))
-  elif e.op == ExprOp.SUM:
-    out = np.asarray(np.sum(args[0]), dtype=np.float64)
-  elif e.op == ExprOp.MATMUL:
-    out = args[0] @ args[1]
-  elif e.op == ExprOp.CAST:
-    out = args[0].astype(e.type.dtype.numpy())
-  else:
-    info = op_def(e.op)
-    if info.numpy is None:
-      return None
-    out = info.numpy(*args)
+  info = op_def(e.op)
+  if info.fold is not None:
+    return info.fold(e, args)
+  return None if info.numpy is None else info.numpy(*args)
+
+
+def _fold_scatter(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
+  np.add.at(out, e.attrs["indices"].reshape(-1), args[0].reshape(-1))
+  return out.reshape(e.shape)
+
+
+def _fold_index_add(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  out = args[0].astype(np.float64, copy=True).reshape(-1)
+  np.add.at(out, e.attrs["indices"], args[1])
+  return out.reshape(e.shape)
+
+
+def _fold_index_set(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  out = args[0].astype(np.float64, copy=True).reshape(-1)
+  out[e.attrs["indices"]] = args[1]
+  return out.reshape(e.shape)
+
+
+def _fold_segment_extremum(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  out = np.full(e.shape, e.attrs["fill"], dtype=np.float64)
+  (np.maximum if e.op == ExprOp.SEGMENT_MAX else np.minimum).at(out, e.attrs["indices"], args[0])
   return out
+
+
+def _fold_gather(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  indices = e.attrs["indices"]
+  return np.take(args[0].reshape(-1), indices).reshape(indices.shape)
+
+
+# How the builtin ops that need their attributes fold (``OpDef.fold``); the rest apply ``OpDef.numpy``.
+_FOLD_RULES = {
+  ExprOp.RESHAPE: lambda e, args: args[0].reshape(e.attrs["shape"]),
+  ExprOp.TRANSPOSE: lambda e, args: np.transpose(args[0], axes=e.attrs["axes"]),
+  ExprOp.SLICE: lambda e, args: args[0][e.attrs["index"]],
+  ExprOp.GATHER: _fold_gather,
+  ExprOp.SCATTER: _fold_scatter,
+  ExprOp.INDEX_ADD: _fold_index_add,
+  ExprOp.INDEX_SET: _fold_index_set,
+  ExprOp.SEGMENT_MAX: _fold_segment_extremum,
+  ExprOp.SEGMENT_MIN: _fold_segment_extremum,
+  ExprOp.STACK: lambda e, args: np.stack(args, axis=e.attrs.get("axis", 0)),
+  ExprOp.CONCAT: lambda e, args: np.concatenate(args, axis=e.attrs.get("axis", 0)),
+  ExprOp.SUM: lambda e, args: np.asarray(np.sum(args[0]), dtype=np.float64),
+  ExprOp.MATMUL: lambda e, args: args[0] @ args[1],
+  ExprOp.CAST: lambda e, args: args[0].astype(e.type.dtype.numpy()),
+}
+for _op, _rule in _FOLD_RULES.items():
+  define_rules(_op, fold=_rule)
 
 
 def _const_value(e: Expr) -> np.ndarray | None:

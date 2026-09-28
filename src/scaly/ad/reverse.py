@@ -22,9 +22,11 @@ from ..ir.expr import (
   cast,
   concat,
   copysign,
+  define_rules,
   equal,
   gather,
   index_set,
+  op_def,
   put,
   put_add,
   ragged_add,
@@ -569,144 +571,337 @@ def _factor_cotangent(expr: Expr, cot: Expr) -> Expr:
 
 
 def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  rule = op_def(expr.op).vjp
+  if rule is None:
+    raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
+  return rule(expr, cot)
+
+
+# The adjoint rules of the builtin ops, each ``(expr, cot) -> one cotangent per argument``
+# (``OpDef.vjp``).
+
+
+def _vjp_neg(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (-cot,)
+
+
+def _vjp_add(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   args = expr.args
-  if expr.op == ExprOp.NEG:
-    return (-cot,)
-  if expr.op == ExprOp.ADD:
-    return (_unbroadcast(cot, args[0].shape, expr.shape), _unbroadcast(cot, args[1].shape, expr.shape))
-  if expr.op == ExprOp.SUB:
-    return (_unbroadcast(cot, args[0].shape, expr.shape), _unbroadcast(-cot, args[1].shape, expr.shape))
-  if expr.op == ExprOp.MUL:
-    return (_unbroadcast(cot * args[1], args[0].shape, expr.shape), _unbroadcast(cot * args[0], args[1].shape, expr.shape))
-  if expr.op == ExprOp.DIV:
-    return (
-      _unbroadcast(cot / args[1], args[0].shape, expr.shape),
-      _unbroadcast(-((cot / args[1]) * expr), args[1].shape, expr.shape),
-    )
-  if expr.op == ExprOp.POW:
-    return (
-      _unbroadcast(cot * args[1] * (args[0] ** _minus_one(args[1])), args[0].shape, expr.shape),
-      _unbroadcast(cot * expr * args[0].log(), args[1].shape, expr.shape),
-    )
-  if expr.op == ExprOp.SIN:
-    return (cot * args[0].cos(),)
-  if expr.op == ExprOp.COS:
-    return (-cot * args[0].sin(),)
-  if expr.op == ExprOp.TAN:
-    return (cot / (args[0].cos() ** 2),)
-  if expr.op == ExprOp.ASIN:
-    return (cot / (1 - args[0] ** 2).sqrt(),)
-  if expr.op == ExprOp.ACOS:
-    return (-cot / (1 - args[0] ** 2).sqrt(),)
-  if expr.op == ExprOp.ATAN:
-    return (cot / (1 + args[0] ** 2),)
-  if expr.op == ExprOp.ATAN2:
-    y, x = args
-    denom = x * x + y * y
-    return (_unbroadcast(cot * x / denom, y.shape, expr.shape), _unbroadcast(-cot * y / denom, x.shape, expr.shape))
-  if expr.op == ExprOp.SINH:
-    return (cot * args[0].cosh(),)
-  if expr.op == ExprOp.COSH:
-    return (cot * args[0].sinh(),)
-  if expr.op == ExprOp.TANH:
-    return (cot * (1 - expr * expr),)
-  if expr.op == ExprOp.ERF:
-    return (cot * (2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(),)
-  if expr.op == ExprOp.EXP:
-    return (cot * expr,)
-  if expr.op == ExprOp.LOG:
-    return (cot / args[0],)
-  if expr.op == ExprOp.SQRT:
-    return (cot / (2 * expr),)
-  if expr.op == ExprOp.ABS:
-    return (cot * sign(args[0]),)
-  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
-    return (floor_tangent(expr),)
-  if expr.op in {ExprOp.MINIMUM, ExprOp.MAXIMUM}:
-    w = extremum_weight(expr)
-    return (_unbroadcast(cot * w, args[0].shape, expr.shape), _unbroadcast(cot * (1.0 - w), args[1].shape, expr.shape))
-  if expr.op in {ExprOp.MAX, ExprOp.MIN}:
-    return (cot * reduce_weights(expr),)
-  if expr.op in {ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
-    return (gather(cot, expr.attrs["indices"]) * segment_weights(expr),)
-  if expr.op == ExprOp.INDEX_ADD:
-    return (cot, gather(cot, expr.attrs["indices"]))
-  if expr.op == ExprOp.INDEX_SET:
-    return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
-  if expr.op == ExprOp.TRISOLVE:
-    t, b = args
-    lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
-    b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit)
-    x2, bb2 = (expr.reshape((expr.size, 1)), b_bar.reshape((b_bar.size, 1))) if len(expr.shape) == 1 else (expr, b_bar)
-    outer = x2 @ bb2.T if trans else bb2 @ x2.T
-    return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
-  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
-    return (_factor_cotangent(expr, cot),)
-  if expr.op == ExprOp.SPARSE_LDL:
-    raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-  if expr.op == ExprOp.LU:
-    raise NotImplementedError(LU_NO_DERIVATIVE)
-  if expr.op == ExprOp.RAGGED_ADD:
-    base, src, lo, hi, scale = args
-    dmap, smap = expr.attrs["dst_map"], expr.attrs["src_map"]
-    src_bar = ragged_add(zeros_like(src), cot, lo, hi, scale, dst_map=smap, src_map=dmap)
-    scale_bar = ragged_dot(src, cot, lo, hi, a_map=smap, b_map=dmap)
-    return (cot, src_bar, zeros_like(lo), zeros_like(hi), scale_bar)
-  if expr.op == ExprOp.RAGGED_DOT:
-    a, b, lo, hi = args
-    amap, bmap = expr.attrs["a_map"], expr.attrs["b_map"]
-    a_bar = ragged_add(zeros_like(a), b, lo, hi, cot, dst_map=amap, src_map=bmap)
-    b_bar = ragged_add(zeros_like(b), a, lo, hi, cot, dst_map=bmap, src_map=amap)
-    return (a_bar, b_bar, zeros_like(lo), zeros_like(hi))
-  if expr.op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT):
-    ok = bool(expr.attrs.get("in_range"))
-    if expr.op == ExprOp.TAKE:
-      return (put_add(zeros_like(args[0]), args[1], cot, in_range=ok), zeros_like(args[1]))
-    if expr.op == ExprOp.PUT_ADD:
-      return (cot, zeros_like(args[1]), take(cot, args[1], in_range=ok))
-    # A put's written entries of the base do not reach the output, and only the last lane writing
-    # an entry does.
-    return (
-      put(cot, args[1], zeros_like(args[2]), in_range=ok),
-      zeros_like(args[1]),
-      _put_winners(args[0], args[1], take(cot, args[1], in_range=ok), ok),
-    )
-  if expr.op == ExprOp.SELECT:
-    cond, a, b = args
-    return (
-      zeros_like(cond),
-      _unbroadcast(where(cond, cot, 0.0), a.shape, expr.shape),
-      _unbroadcast(where(cond, 0.0, cot), b.shape, expr.shape),
-    )
-  if expr.op == ExprOp.COPYSIGN:
-    x, s = args
-    return (_unbroadcast(cot * copysign(1.0, x) * copysign(1.0, s), x.shape, expr.shape), zeros_like(s))
-  if expr.op == ExprOp.CAST:
-    return (cast(cot, args[0].type.dtype) if expr.type.diff else zeros_like(args[0]),)
-  if expr.op == ExprOp.SUM:
-    return (cot * _ones_like(args[0]),)
-  if expr.op == ExprOp.RESHAPE:
-    return (cot.reshape(args[0].shape),)
-  if expr.op == ExprOp.TRANSPOSE:
-    axes = expr.attrs["axes"]
-    inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))
-    return (cot.transpose(inv),)
-  if expr.op == ExprOp.SLICE:
-    indices = np.arange(args[0].size).reshape(args[0].shape)[expr.attrs["index"]]
-    return (scatter(cot, indices, args[0].shape),)
-  if expr.op == ExprOp.GATHER:
-    return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
-  if expr.op == ExprOp.SCATTER:
-    return (gather(cot, expr.attrs["indices"]),)
-  if expr.op == ExprOp.STACK:
-    return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
-  if expr.op == ExprOp.CONCAT:
-    return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
-  if expr.op == ExprOp.MATMUL:
-    return _matmul_vjp(args[0], args[1], cot)
-  if expr.op == ExprOp.EXTERN_CALL:
-    raise NotImplementedError(extern_no_derivative(expr))  # see the matching JVP rule
-  raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
+  return (_unbroadcast(cot, args[0].shape, expr.shape), _unbroadcast(cot, args[1].shape, expr.shape))
+
+
+def _vjp_sub(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (_unbroadcast(cot, args[0].shape, expr.shape), _unbroadcast(-cot, args[1].shape, expr.shape))
+
+
+def _vjp_mul(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (_unbroadcast(cot * args[1], args[0].shape, expr.shape), _unbroadcast(cot * args[0], args[1].shape, expr.shape))
+
+
+def _vjp_div(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (
+    _unbroadcast(cot / args[1], args[0].shape, expr.shape),
+    _unbroadcast(-((cot / args[1]) * expr), args[1].shape, expr.shape),
+  )
+
+
+def _vjp_pow(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (
+    _unbroadcast(cot * args[1] * (args[0] ** _minus_one(args[1])), args[0].shape, expr.shape),
+    _unbroadcast(cot * expr * args[0].log(), args[1].shape, expr.shape),
+  )
+
+
+def _vjp_sin(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot * args[0].cos(),)
+
+
+def _vjp_cos(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (-cot * args[0].sin(),)
+
+
+def _vjp_tan(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot / (args[0].cos() ** 2),)
+
+
+def _vjp_asin(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot / (1 - args[0] ** 2).sqrt(),)
+
+
+def _vjp_acos(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (-cot / (1 - args[0] ** 2).sqrt(),)
+
+
+def _vjp_atan(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot / (1 + args[0] ** 2),)
+
+
+def _vjp_atan2(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  y, x = args
+  denom = x * x + y * y
+  return (_unbroadcast(cot * x / denom, y.shape, expr.shape), _unbroadcast(-cot * y / denom, x.shape, expr.shape))
+
+
+def _vjp_sinh(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot * args[0].cosh(),)
+
+
+def _vjp_cosh(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot * args[0].sinh(),)
+
+
+def _vjp_tanh(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (cot * (1 - expr * expr),)
+
+
+def _vjp_erf(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot * (2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(),)
+
+
+def _vjp_exp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (cot * expr,)
+
+
+def _vjp_log(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot / args[0],)
+
+
+def _vjp_sqrt(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (cot / (2 * expr),)
+
+
+def _vjp_abs(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot * sign(args[0]),)
+
+
+def _vjp_floor_ceil(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (floor_tangent(expr),)
+
+
+def _vjp_minimum_maximum(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  w = extremum_weight(expr)
+  return (_unbroadcast(cot * w, args[0].shape, expr.shape), _unbroadcast(cot * (1.0 - w), args[1].shape, expr.shape))
+
+
+def _vjp_max_min(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (cot * reduce_weights(expr),)
+
+
+def _vjp_segment_max_segment_min(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (gather(cot, expr.attrs["indices"]) * segment_weights(expr),)
+
+
+def _vjp_index_add(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (cot, gather(cot, expr.attrs["indices"]))
+
+
+def _vjp_index_set(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
+
+
+def _vjp_trisolve(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  t, b = args
+  lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
+  b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit)
+  x2, bb2 = (expr.reshape((expr.size, 1)), b_bar.reshape((b_bar.size, 1))) if len(expr.shape) == 1 else (expr, b_bar)
+  outer = x2 @ bb2.T if trans else bb2 @ x2.T
+  return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
+
+
+def _vjp_cholesky_ldl(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (_factor_cotangent(expr, cot),)
+
+
+def _vjp_sparse_ldl(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+
+
+def _vjp_lu(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  raise NotImplementedError(LU_NO_DERIVATIVE)
+
+
+def _vjp_ragged_add(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  base, src, lo, hi, scale = args
+  dmap, smap = expr.attrs["dst_map"], expr.attrs["src_map"]
+  src_bar = ragged_add(zeros_like(src), cot, lo, hi, scale, dst_map=smap, src_map=dmap)
+  scale_bar = ragged_dot(src, cot, lo, hi, a_map=smap, b_map=dmap)
+  return (cot, src_bar, zeros_like(lo), zeros_like(hi), scale_bar)
+
+
+def _vjp_ragged_dot(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  a, b, lo, hi = args
+  amap, bmap = expr.attrs["a_map"], expr.attrs["b_map"]
+  a_bar = ragged_add(zeros_like(a), b, lo, hi, cot, dst_map=amap, src_map=bmap)
+  b_bar = ragged_add(zeros_like(b), a, lo, hi, cot, dst_map=bmap, src_map=amap)
+  return (a_bar, b_bar, zeros_like(lo), zeros_like(hi))
+
+
+def _vjp_take_put_add_put(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  ok = bool(expr.attrs.get("in_range"))
+  if expr.op == ExprOp.TAKE:
+    return (put_add(zeros_like(args[0]), args[1], cot, in_range=ok), zeros_like(args[1]))
+  if expr.op == ExprOp.PUT_ADD:
+    return (cot, zeros_like(args[1]), take(cot, args[1], in_range=ok))
+  # A put's written entries of the base do not reach the output, and only the last lane writing
+  # an entry does.
+  return (
+    put(cot, args[1], zeros_like(args[2]), in_range=ok),
+    zeros_like(args[1]),
+    _put_winners(args[0], args[1], take(cot, args[1], in_range=ok), ok),
+  )
+
+
+def _vjp_select(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  cond, a, b = args
+  return (
+    zeros_like(cond),
+    _unbroadcast(where(cond, cot, 0.0), a.shape, expr.shape),
+    _unbroadcast(where(cond, 0.0, cot), b.shape, expr.shape),
+  )
+
+
+def _vjp_copysign(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  x, s = args
+  return (_unbroadcast(cot * copysign(1.0, x) * copysign(1.0, s), x.shape, expr.shape), zeros_like(s))
+
+
+def _vjp_cast(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cast(cot, args[0].type.dtype) if expr.type.diff else zeros_like(args[0]),)
+
+
+def _vjp_sum(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot * _ones_like(args[0]),)
+
+
+def _vjp_reshape(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (cot.reshape(args[0].shape),)
+
+
+def _vjp_transpose(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  axes = expr.attrs["axes"]
+  inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))
+  return (cot.transpose(inv),)
+
+
+def _vjp_slice(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  indices = np.arange(args[0].size).reshape(args[0].shape)[expr.attrs["index"]]
+  return (scatter(cot, indices, args[0].shape),)
+
+
+def _vjp_gather(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
+
+
+def _vjp_scatter(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  return (gather(cot, expr.attrs["indices"]),)
+
+
+def _vjp_stack(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
+
+
+def _vjp_concat(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
+
+
+def _vjp_matmul(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  args = expr.args
+  return _matmul_vjp(args[0], args[1], cot)
+
+
+def _vjp_extern_call(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  raise NotImplementedError(extern_no_derivative(expr))  # see the matching JVP rule
+
+
+_VJP_RULES = {
+  ExprOp.NEG: _vjp_neg,
+  ExprOp.ADD: _vjp_add,
+  ExprOp.SUB: _vjp_sub,
+  ExprOp.MUL: _vjp_mul,
+  ExprOp.DIV: _vjp_div,
+  ExprOp.POW: _vjp_pow,
+  ExprOp.SIN: _vjp_sin,
+  ExprOp.COS: _vjp_cos,
+  ExprOp.TAN: _vjp_tan,
+  ExprOp.ASIN: _vjp_asin,
+  ExprOp.ACOS: _vjp_acos,
+  ExprOp.ATAN: _vjp_atan,
+  ExprOp.ATAN2: _vjp_atan2,
+  ExprOp.SINH: _vjp_sinh,
+  ExprOp.COSH: _vjp_cosh,
+  ExprOp.TANH: _vjp_tanh,
+  ExprOp.ERF: _vjp_erf,
+  ExprOp.EXP: _vjp_exp,
+  ExprOp.LOG: _vjp_log,
+  ExprOp.SQRT: _vjp_sqrt,
+  ExprOp.ABS: _vjp_abs,
+  ExprOp.FLOOR: _vjp_floor_ceil,
+  ExprOp.CEIL: _vjp_floor_ceil,
+  ExprOp.MINIMUM: _vjp_minimum_maximum,
+  ExprOp.MAXIMUM: _vjp_minimum_maximum,
+  ExprOp.MAX: _vjp_max_min,
+  ExprOp.MIN: _vjp_max_min,
+  ExprOp.SEGMENT_MAX: _vjp_segment_max_segment_min,
+  ExprOp.SEGMENT_MIN: _vjp_segment_max_segment_min,
+  ExprOp.INDEX_ADD: _vjp_index_add,
+  ExprOp.INDEX_SET: _vjp_index_set,
+  ExprOp.TRISOLVE: _vjp_trisolve,
+  ExprOp.CHOLESKY: _vjp_cholesky_ldl,
+  ExprOp.LDL: _vjp_cholesky_ldl,
+  ExprOp.SPARSE_LDL: _vjp_sparse_ldl,
+  ExprOp.LU: _vjp_lu,
+  ExprOp.RAGGED_ADD: _vjp_ragged_add,
+  ExprOp.RAGGED_DOT: _vjp_ragged_dot,
+  ExprOp.TAKE: _vjp_take_put_add_put,
+  ExprOp.PUT_ADD: _vjp_take_put_add_put,
+  ExprOp.PUT: _vjp_take_put_add_put,
+  ExprOp.SELECT: _vjp_select,
+  ExprOp.COPYSIGN: _vjp_copysign,
+  ExprOp.CAST: _vjp_cast,
+  ExprOp.SUM: _vjp_sum,
+  ExprOp.RESHAPE: _vjp_reshape,
+  ExprOp.TRANSPOSE: _vjp_transpose,
+  ExprOp.SLICE: _vjp_slice,
+  ExprOp.GATHER: _vjp_gather,
+  ExprOp.SCATTER: _vjp_scatter,
+  ExprOp.STACK: _vjp_stack,
+  ExprOp.CONCAT: _vjp_concat,
+  ExprOp.MATMUL: _vjp_matmul,
+  ExprOp.EXTERN_CALL: _vjp_extern_call,
+}
+for _op, _rule in _VJP_RULES.items():
+  define_rules(_op, vjp=_rule)
 
 
 def _ones_like(expr: Expr) -> Expr:

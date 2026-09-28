@@ -238,7 +238,7 @@ def test_the_corpus_reaches_every_new_op() -> None:
 def test_every_op_has_a_rule_of_its_own() -> None:
   """``docs/dev/codebase.md``: adding an op includes a verify rule in ``ir/expr_spec.py``."""
   unchecked = {ExprOp.SLICE, ExprOp.EXTERN_CALL}
-  assert {op for op in ExprOp if op not in spec_expr.by_op} == unchecked
+  assert {op for op in ExprOp if op not in spec_expr.op_rules()} == unchecked
 
 
 # --- forged nodes --------------------------------------------------------------------------------

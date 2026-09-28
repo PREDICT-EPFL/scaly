@@ -37,6 +37,8 @@ from ..ir.expr import (
   Expr,
   ExprOp,
   callees_of,
+  define_rules,
+  op_def,
   topo,
 )
 from ..function import ConcreteFunction, Function
@@ -97,15 +99,14 @@ _BINARY: dict[str, ProgramOp] = {
 }
 
 LowerRule = Callable[["LowerCtx", Expr], None]
-_RULES: dict[str, LowerRule] = {}
 
 
 def lowers(*ops: str) -> Callable[[LowerRule], LowerRule]:
-  """Register ``fn`` as the lowering rule for each expression op in ``ops``."""
+  """Define ``fn`` as the lowering rule (``OpDef.lower``) of each expression op in ``ops``."""
 
   def deco(fn: LowerRule) -> LowerRule:
     for op in ops:
-      _RULES[op] = fn
+      define_rules(op, lower=fn)
     return fn
 
   return deco
@@ -388,7 +389,7 @@ class LowerCtx:
     for node in topo(self.fun.outputs):
       if node.id in self.value_buffers:
         continue  # input (or already lowered)
-      rule = _RULES.get(node.op)
+      rule = op_def(node.op).lower
       if rule is None:
         raise LoweringError(f"Expression op {node.op!r} is not yet lowered to Program IR")
       rule(self, node)
