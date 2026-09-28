@@ -92,10 +92,15 @@ versions. See [versioning policy](https://github.com/PREDICT-EPFL/scaly/blob/mai
 
 ## Acknowledgements 
 
-Scaly is developed at EPFL in the [PREDICT](https://www.epfl.ch/labs/la3/)
-group. The research behind it is funded by the [Swiss National Science
-Foundation](https://www.snf.ch) through the [NCCR
-Automation](https://nccr-automation.ch).
+Scaly is developed by:
+
+- Tudor Oancea (main developer)
+- Colin N. Jones (methods and math)
+
+All contributors are part of the [Predictive control
+lab](https://www.epfl.ch/labs/la3/) from EPFL. This project is funded by the
+[Swiss National Science Foundation](https://www.snf.ch) through the [NCCR
+Automation](https://nccr-automation.ch) (grant agreement 51NF40_180545).
 
 ## AI usage disclosure 
 
