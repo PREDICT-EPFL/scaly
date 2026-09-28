@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import numpy as np
-from scipy import sparse
 
 import scaly as sc
 from scaly.ir.expr import substitute
@@ -29,12 +28,6 @@ OUTPUTS = ("x", "y", "z_l", "z_u", "status", "iter", "obj")
 """The generated Function's outputs: the stacked variables, the equality multipliers, the
 inequality multipliers of the lower and upper sides, PIQP's status code (1 is solved), the
 iteration count and the objective at ``x``."""
-
-
-def _mask(sp: sc.SparsityType | None, shape: tuple[int, int]) -> sparse.csc_array:
-  if sp is None or shape[0] == 0:
-    return sparse.csc_array(shape, dtype=bool)
-  return sparse.csc_array((np.ones(len(sp.rows), dtype=bool), (np.array(sp.rows), np.array(sp.cols))), shape=shape)
 
 
 def solver(
@@ -66,7 +59,8 @@ def solver(
   A_sp = _qp_matrix_sparsity(A, params, a_val) if p else None
   G_sp = _qp_matrix_sparsity(G, params, g_val) if m else None
   h_l, h_u, xl, xu = (np.asarray(v, dtype=float) for v in bounds)
-  s = QPStructure.from_patterns(_mask(P_sp, (n, n)), _mask(A_sp, (p, n)), _mask(G_sp, (m, n)), h_l=h_l, h_u=h_u, x_l=xl, x_u=xu)
+  A_pat, G_pat = (np.zeros(shape, dtype=bool) if sp is None else sp for sp, shape in ((A_sp, (p, n)), (G_sp, (m, n))))
+  s = QPStructure.from_patterns(P_sp, A_pat, G_pat, h_l=h_l, h_u=h_u, x_l=xl, x_u=xu)
   for got, want in ((s.P_rows, P_sp), (s.A_rows, A_sp), (s.G_rows, G_sp)):
     assert want is None or np.array_equal(got, want.rows), "pattern order differs from the gathered values"
 

@@ -39,6 +39,24 @@ def _pattern_arrays(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) 
   return np.cumsum(indptr), rows[order], order
 
 
+def csc_coordinates(pattern: Any, shape: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray]:
+  """The coordinates ``(rows, cols)`` of a pattern's entries, once each, in CSC order (by column,
+  then row): of a ``SparsityType``, a ``SparseMatrix``, a SciPy matrix (its stored entries, explicit
+  zeros included) or a boolean mask (its nonzeros). ``shape``, when given, is checked against the
+  pattern's own. This is the one place a pattern given in any of those forms is normalized."""
+  rows, cols, own = _csc(pattern)
+  if shape is not None and tuple(int(d) for d in shape) != own:
+    raise ValueError(f"a pattern of shape {own} where {tuple(shape)} was expected")
+  return rows, cols
+
+
+def _csc(pattern: Any) -> tuple[np.ndarray, np.ndarray, tuple[int, int]]:
+  rows, cols, shape = _coordinates(pattern)
+  m = max(shape[0], 1)
+  keys = np.unique(cols * m + rows)
+  return keys % m, keys // m, shape
+
+
 def _zero(dtype: Any) -> Expr:
   return Expr.const(np.zeros(1), dtype=dtype)
 
@@ -127,7 +145,7 @@ class SparseMatrix(SymbolicValue):
   def symbol(name: str, pattern: SparsityType | np.ndarray | sparse.sparray | sparse.spmatrix) -> SparseMatrix:
     """A matrix whose values are a new input symbol ``name`` of shape ``(nnz,)``, in CSC order. As
     a ``Function`` input it is just that vector."""
-    rows, cols, shape = _coordinates(pattern)
+    rows, cols, shape = _csc(pattern)
     indptr, indices, _ = _pattern_arrays(shape, rows, cols)
     return SparseMatrix(shape, indptr, indices, Expr.sym(name, (indices.size,)))
 

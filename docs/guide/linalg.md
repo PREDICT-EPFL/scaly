@@ -214,3 +214,47 @@ measurements is the Kalman gain. `examples/heat_control.py` steps a heat equatio
 factorization and optimizes the heating through the solves' implicit rules;
 `examples/truss_sizing.py`, `examples/lasso_admm.py`, `examples/lqr_tuning.py` and
 `examples/hanging_chain.py` use the dense kernels. `examples/README.md` lists them all.
+
+## Banded systems
+
+`linalg.banded` solves tridiagonal systems whose matrix is known when the graph is built, as a
+spline fit's is: `solve_tridiagonal(lower, diag, upper, b)` with `lower[i] = A[i, i-1]`,
+`diag[i] = A[i, i]` and `upper[i] = A[i, i+1]` as NumPy arrays, and
+`solve_cyclic_tridiagonal(...)` with `lower[0] = A[0, n-1]` and `upper[-1] = A[n-1, 0]` in the
+corners. The Thomas algorithm's pivots are computed when the graph is built and the generated code
+is two `scan`s over the rows of `b`, which may have any trailing shape. Both are linear in `b` and
+differentiable in it; neither pivots, so the matrix should be diagonally dominant. The cubic
+interpolants of `scaly.interp` use them for Expr data along an axis of more than 40 sites.
+
+## Stage-structured problems
+
+`linalg.stagewise.Riccati` factors the KKT system of a linear-quadratic problem over `N` stages,
+
+```text
+minimize    sum_k 1/2 x_k' Q_k x_k + u_k' S_k x_k + 1/2 u_k' R_k u_k + q_k' x_k + r_k' u_k  +  1/2 x_N' Q_N x_N + q_N' x_N
+subject to  x_{k+1} = A_k x_k + B_k u_k + c_k,   x_0 given,
+```
+
+by the backward Riccati recursion, one `scan` over the stages, and solves it for any initial state
+and linear terms:
+
+```python
+from scaly.linalg.stagewise import Riccati
+
+fact = Riccati(A, B, Q, R, QN, N=40)       # one matrix for every stage, or a stack of N
+x, u, lam = fact.solve(x0, q=q, r=r, c=c)  # (N + 1, nx), (N, nu), (N + 1, nx)
+fact.gains, fact.cost_to_go                # K_k with u_k = K_k x_k + k_k, and P_0 .. P_N
+```
+
+Each of `A`, `B`, `Q`, `R` and the cross term `S` (zero when omitted) is one matrix shared by every
+stage or `N` of them; `Q`, `R` and `QN` enter through their symmetric parts, and each stage's
+`R_k + B_k' P_{k+1} B_k` must be positive definite. `lam_k = P_k x_k + p_k` are the multipliers of
+the dynamics and of the initial state, the gradient of the optimal cost-to-go.
+
+**Derivatives.** The solution is differentiable in every matrix and linear term by the implicit
+rule on the KKT system: the system is symmetric, so a tangent or a cotangent is one more solve with
+the same factorization, and the derivatives in the matrices are outer products of that solve with
+the solution, summed over the stages for a matrix they share. The recursion itself is never
+differentiated for the solution; `gains` and `cost_to_go` differentiate through it like any other
+loop. The factorization of the TinyMPC example's Riccati cache is the recursion from `P = rho I`,
+and `tests/linalg/test_stagewise.py` checks the two agree.

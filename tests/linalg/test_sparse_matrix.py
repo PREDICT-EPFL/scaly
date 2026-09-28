@@ -267,3 +267,21 @@ def test_scalars_and_misfit_selections_are_refused() -> None:
   with pytest.raises(ValueError, match="one flag per stored entry"):
     a.select(np.ones(2, dtype=bool))
   assert (a + np.eye(3)).nnz == 3 and SparseMatrix.block([[a, None], [None, np.zeros((2, 2))]]).nnz == 3
+
+
+def test_every_pattern_form_normalizes_to_the_same_csc_coordinates() -> None:
+  """``csc_coordinates``: a mask, a SciPy matrix (repeated coordinates once, explicit zeros kept),
+  a ``SparsityType`` and a ``SparseMatrix`` of one pattern give one CSC-ordered list."""
+  from scaly.linalg.sparse import csc_coordinates
+
+  mask = np.array([[1, 0, 1], [0, 0, 1], [1, 1, 0]], dtype=bool)
+  rows, cols = np.nonzero(mask)
+  twice = sparse.coo_array((np.r_[np.ones(rows.size), 0.0], (np.r_[rows, rows[:1]], np.r_[cols, cols[:1]])), shape=mask.shape)
+  forms = [mask, sparse.csr_array(mask.astype(float)), twice, SparseMatrix.symbol("A", mask).sparsity, SparseMatrix.symbol("B", mask)]
+  want = (np.array([0, 2, 2, 0, 1]), np.array([0, 0, 1, 2, 2]))
+  for form in forms:
+    got = csc_coordinates(form)
+    np.testing.assert_array_equal(np.stack(got), np.stack(want))
+  np.testing.assert_array_equal(SparseMatrix.symbol("C", twice).indices, SparseMatrix.symbol("D", mask).indices)
+  with pytest.raises(ValueError, match=r"shape \(3, 3\) where \(3, 4\)"):
+    csc_coordinates(mask, (3, 4))

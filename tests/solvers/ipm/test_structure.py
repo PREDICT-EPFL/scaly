@@ -73,3 +73,19 @@ def test_preprocessing_zeroes_free_rows_and_packs_the_box_bounds() -> None:
 def test_a_value_at_inf_counts_as_absent(bad: float) -> None:
   s = QPStructure.from_patterns(np.eye(1), np.zeros((0, 1)), np.zeros((0, 1)), h_l=np.zeros(0), h_u=np.zeros(0), x_l=[-bad], x_u=[bad])
   assert s.x_l_idx.size == 0 and s.x_u_idx.size == 0
+
+
+def test_every_pattern_form_declares_the_same_structure() -> None:
+  """``from_patterns`` reads patterns as ``SparseMatrix`` does: SciPy, masks, ``SparsityType`` and
+  ``SparseMatrix`` give one structure, and ``P``'s lower triangle is ignored."""
+  from scaly.linalg import SparseMatrix
+
+  P = np.array([[2.0, 1.0, 0.0], [1.0, 3.0, 0.0], [0.0, 0.0, 1.0]])
+  G = np.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+  bounds = dict(h_l=np.zeros(2), h_u=np.ones(2), x_l=np.zeros(3), x_u=np.ones(3))
+  want = QPStructure.from_patterns(sparse.csc_array(P), np.zeros((0, 3)), sparse.csc_array(G), **bounds)
+  for form in (lambda a: a != 0, lambda a: SparseMatrix.symbol("M", a != 0), lambda a: SparseMatrix.symbol("M", a != 0).sparsity):
+    got = QPStructure.from_patterns(form(P), np.zeros((0, 3), dtype=bool), form(G), **bounds)
+    for field in ("P_rows", "P_cols", "G_rows", "G_cols"):
+      np.testing.assert_array_equal(getattr(got, field), getattr(want, field))
+  np.testing.assert_array_equal(np.stack([want.P_rows, want.P_cols]), [[0, 0, 1, 2], [0, 1, 1, 2]])

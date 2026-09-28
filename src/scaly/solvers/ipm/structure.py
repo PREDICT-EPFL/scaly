@@ -6,21 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from scipy import sparse
 
 from ...ir.expr import Expr, as_expr, gather, where
+from ...linalg.sparse import csc_coordinates
 
 INF = 1e30
 """PIQP's infinity: a bound at or beyond it is absent."""
-
-
-def _pattern(a: Any, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
-  """``(rows, cols)`` of the stored entries of a SciPy matrix or boolean mask, in CSC order."""
-  csc = sparse.csc_array(a if sparse.issparse(a) else sparse.csc_array(np.asarray(a, dtype=bool)), shape=shape)
-  csc.sum_duplicates()
-  csc.sort_indices()
-  cols = np.repeat(np.arange(shape[1]), np.diff(csc.indptr))
-  return csc.indices.astype(np.int64), cols.astype(np.int64)
 
 
 @dataclass(frozen=True, eq=False)
@@ -51,12 +42,15 @@ class QPStructure:
 
   @staticmethod
   def from_patterns(P: Any, A: Any, G: Any, *, h_l: Any, h_u: Any, x_l: Any, x_u: Any) -> QPStructure:
-    """From the patterns of ``P`` (its upper triangle is used), ``A`` and ``G`` and the finiteness of
-    the bounds: boolean masks, or bound vectors whose entries at or beyond ``INF`` are absent."""
+    """From the patterns of ``P`` (its upper triangle is used), ``A`` and ``G``, in any form
+    ``linalg.sparse.csc_coordinates`` reads (a ``SparsityType``, a ``SparseMatrix``, a SciPy matrix or a
+    boolean mask), and the finiteness of the bounds: boolean masks, or bound vectors whose entries at
+    or beyond ``INF`` are absent."""
     n = int(P.shape[0])
     p, m = int(A.shape[0]), int(G.shape[0])
-    upper = sparse.triu(sparse.csc_array(P if sparse.issparse(P) else np.asarray(P, dtype=bool)), format="csc")
-    pr, pc = _pattern(upper, (n, n))
+    pr, pc = csc_coordinates(P, (n, n))
+    upper = pr <= pc
+    pr, pc = pr[upper], pc[upper]
 
     def given(v: Any, size: int, sign: float) -> np.ndarray:
       arr = np.asarray(v)
@@ -64,8 +58,8 @@ class QPStructure:
         return arr.reshape(size).copy()
       return (sign * arr.reshape(size) < INF) & np.isfinite(arr.reshape(size))
 
-    ar, ac = _pattern(A, (p, n))
-    gr, gc = _pattern(G, (m, n))
+    ar, ac = csc_coordinates(A, (p, n))
+    gr, gc = csc_coordinates(G, (m, n))
     return QPStructure(n, p, m, pr, pc, ar, ac, gr, gc, given(h_l, m, -1.0), given(h_u, m, 1.0), given(x_l, n, -1.0), given(x_u, n, 1.0))
 
   @property

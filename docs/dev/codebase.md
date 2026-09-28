@@ -70,6 +70,8 @@ src/scaly/
       ragged.py          ragged_add and ragged_dot, the run-time ranges of a sparse column update
     options.py           the linalg option namespace (dense_unroll, sparse_unroll)
     dense.py             the solves built from cholesky, ldl, lu and solve_triangular
+    banded.py            tridiagonal and cyclic tridiagonal solves (Thomas) for a matrix known at build time
+    stagewise.py         Riccati: the factorization, solve and implicit derivative of a stage-structured LQ problem
     sparse.py            SparseMatrix: a static CSC pattern with Expr values
     symbolic.py          orderings, elimination tree, the pattern of L, left-looking tables, segments
     sparse_factor.py     SparseLDL: the generated left-looking factorization, its solves, implicit derivatives

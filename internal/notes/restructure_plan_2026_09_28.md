@@ -40,7 +40,7 @@
 | 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☑ |
 | 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☑ |
 | 3.1 | Linear-algebra ops move into `scaly.linalg` | ☑ |
-| 3.2 | `linalg.banded` and `linalg.stagewise` | ☐ |
+| 3.2 | `linalg.banded` and `linalg.stagewise` | ☑ |
 | 4.1 | Method registry and the common `Info`/`Status` | ☐ |
 | 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☐ |
 | 4.3 | IPM as the method `opt.ipm` | ☐ |
@@ -544,6 +544,19 @@ factorization for block-tridiagonal KKT systems with its implicit derivative; un
 `ipm.QPStructure`'s COO normalizer with `SparseMatrix`.
 Gate: `interp` results unchanged; `stagewise` differential tests against dense solves and against
 the TinyMPC Riccati cache.
+Log: done 2026-09-28. `linalg/banded.py` holds the Thomas and cyclic sweeps, public as
+`solve_tridiagonal` and `solve_cyclic_tridiagonal` (scan bodies renamed `linalg_thomas_*`); Expr-data
+cubic fits past `DENSE_FIT`, every boundary, give bit-identical values and gradients to 3.1's.
+`linalg/stagewise.py`: `Riccati(A, B, Q, R, QN, S=, N=)` factors a stage-structured LQ problem's KKT
+system by a backward `scan` (each matrix shared or per stage), `solve(x0, q, r, c, qN)` returns
+states, controls and multipliers, and the implicit rules, two levels deep as `SparseLDL`'s, make a
+tangent or cotangent one more solve with the same factorization plus per-stage outer products
+(summed for a shared matrix). Tested against the dense KKT solve, complex-step Jacobians of it in
+both modes, Hessians against differences, a NumPy recursion, and the TinyMPC cache in three
+scenarios; the examples' Riccati copies move onto it in 6.1. `QPStructure.from_patterns` and
+`SparseMatrix.symbol` share `linalg.sparse.csc_coordinates`, so a QP pattern may take any form a
+`SparseMatrix` reads, and `generated_piqp.py` lost its own converter; the IPM harness's 36 quick
+solvers are byte-identical.
 
 ### Phase 4: the method interface
 

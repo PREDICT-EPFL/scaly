@@ -19,6 +19,7 @@ def test_the_linalg_surface() -> None:
     "SparseMatrix",
     "SymbolicLDL",
     "analyze",
+    "banded",
     "cho_solve",
     "cholesky",
     "ldl",
@@ -30,6 +31,7 @@ def test_the_linalg_surface() -> None:
     "solve",
     "solve_triangular",
     "sparse_ldl",
+    "stagewise",
   ]
   # The sparse tree spec and matrix are linalg's own; the core names neither.
   assert "linalg" not in sc.__all__ and not hasattr(sc, "S") and not hasattr(sc, "SparseMatrix")

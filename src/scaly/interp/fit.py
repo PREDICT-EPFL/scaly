@@ -11,10 +11,9 @@ from typing import Any, Literal
 import numpy as np
 from scipy import sparse
 
-from ..function.model import ConcreteFunction
-from ..function.sugar import scan
-from ..ir.expr import Expr, cast, concat, equal, gather, minimum, not_equal, reduce_max, stack, where
+from ..ir.expr import Expr, cast, concat, equal, minimum, not_equal, reduce_max, stack, where
 from ..ir.types import DType, dtypes
+from ..linalg.banded import solve_cyclic_tridiagonal, solve_tridiagonal
 from .grid import Axis, Extrap, Search, Side, check_sites
 from .spline import LARGE_TABLE, BSpline, Strategy, _along, _per_axis, design_matrix
 
@@ -358,7 +357,7 @@ def cubic_slopes(sites: np.ndarray, bc: str, values: Expr) -> Expr:
     d_prev, d_next = np.roll(dx, 1), dx  # the spacing before and after each unknown's site
     s_prev = concat([slope[-1:], slope[:-1]])
     rhs = 3.0 * (shape(d_next) * s_prev + shape(d_prev) * slope)
-    solved = _cyclic_solve(d_next, 2.0 * (d_prev + d_next), d_prev, rhs)
+    solved = solve_cyclic_tridiagonal(d_next, 2.0 * (d_prev + d_next), d_prev, rhs)
     return concat([solved, solved[0:1]])
   lower, diag, upper = np.zeros(n), np.zeros(n), np.zeros(n)
   lower[1:-1], diag[1:-1], upper[1:-1] = dx[1:], 2.0 * (dx[:-1] + dx[1:]), dx[:-1]
@@ -375,71 +374,7 @@ def cubic_slopes(sites: np.ndarray, bc: str, values: Expr) -> Expr:
   else:  # natural: zero second derivative
     diag[0], upper[0], diag[-1], lower[-1] = 2 * dx[0], dx[0], 2 * dx[-1], dx[-1]
     first, last = 3.0 * dx[0] * slope[0:1], 3.0 * dx[-1] * slope[-1:]
-  return _tridiagonal_solve(lower, diag, upper, concat([first, inner, last]))
-
-
-def _tridiagonal_solve(lower: np.ndarray, diag: np.ndarray, upper: np.ndarray, rhs: Expr) -> Expr:
-  """``A s = rhs`` for a constant tridiagonal ``A`` (``lower[i] = A[i, i-1]``, ``upper[i] = A[i,
-  i+1]``) and rows of ``rhs`` along its first axis: the Thomas algorithm, its pivots found now, as a
-  forward scan and a backward one."""
-  n = diag.size
-  width = rhs.size // n
-  pivot, ratio = np.empty(n), np.empty(n)
-  pivot[0], ratio[0] = diag[0], upper[0] / diag[0]
-  for i in range(1, n):
-    pivot[i] = diag[i] - lower[i] * ratio[i - 1]
-    ratio[i] = upper[i] / pivot[i]
-  forward = np.stack([lower, 1.0 / pivot], axis=1).reshape(-1)
-  flat = rhs.reshape((rhs.size,))
-  (_, reduced) = scan(_sweep(width, "forward"), Expr.const(np.zeros(width)), [(flat, 0, width), (Expr.const(forward), 0, 2)], length=n)
-  back = np.arange(n)[::-1]
-  rows = (back[:, None] * width + np.arange(width)[None, :]).reshape(-1)
-  (_, out) = scan(
-    _sweep(width, "backward"), Expr.const(np.zeros(width)), [(gather(reduced, rows), 0, width), (Expr.const(ratio[back]), 0, 1)], length=n
-  )
-  return gather(out, rows).reshape(rhs.shape)
-
-
-def _cyclic_solve(lower: np.ndarray, diag: np.ndarray, upper: np.ndarray, rhs: Expr) -> Expr:
-  """A cyclic tridiagonal system (``lower[0]`` and ``upper[-1]`` in the corners) by Sherman and
-  Morrison: one tridiagonal solve of the data, and a correction along a vector found now."""
-  n = diag.size
-  alpha, beta, gamma = upper[-1], lower[0], -diag[0]  # A[n-1, 0], A[0, n-1]
-  corrected = diag.copy()
-  corrected[0], corrected[-1] = diag[0] - gamma, diag[-1] - alpha * beta / gamma
-  inner_lower, inner_upper = lower.copy(), upper.copy()
-  inner_lower[0], inner_upper[-1] = 0.0, 0.0
-  from scipy.linalg import solve_banded
-
-  u = np.zeros(n)
-  u[0], u[-1] = gamma, alpha
-  banded = np.stack([np.concatenate([[0.0], inner_upper[:-1]]), corrected, np.concatenate([inner_lower[1:], [0.0]])])
-  z = solve_banded((1, 1), banded, u)
-  x = _tridiagonal_solve(inner_lower, corrected, inner_upper, rhs)
-  factor = z / (1.0 + z[0] + beta * z[-1] / gamma)
-  weight = x[0:1] + (beta / gamma) * x[-1:]
-  return x - Expr.const(factor.reshape(-1, *(1,) * (len(rhs.shape) - 1))) * weight
-
-
-_SWEEPS: dict[tuple[int, str], ConcreteFunction[Any, Any, Any, Any]] = {}
-
-
-def _sweep(width: int, direction: str) -> ConcreteFunction[Any, Any, Any, Any]:
-  """One row of the Thomas algorithm, as a scan body: forward ``r_i = (b_i - l_i r_{i-1}) / p_i``,
-  backward ``s_i = r_i - c_i s_{i+1}``; the carry is the previous row."""
-  key = (width, direction)
-  if key not in _SWEEPS:
-    prev, row = Expr.sym("prev", (width,)), Expr.sym("row", (width,))
-    if direction == "forward":
-      coef = Expr.sym("coef", (2,))
-      nxt = (row - coef[0] * prev) * coef[1]
-    else:
-      coef = Expr.sym("coef", (1,))
-      nxt = row - coef[0] * prev
-    _SWEEPS[key] = ConcreteFunction.from_exprs(
-      f"interp_thomas_{direction}_{width}", [prev, row, coef], [nxt, nxt], ["prev", "row", "coef"], ["next", "out"]
-    )
-  return _SWEEPS[key]
+  return solve_tridiagonal(lower, diag, upper, concat([first, inner, last]))
 
 
 def _moved(values: Expr, axis: int) -> Expr:
