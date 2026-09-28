@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
@@ -28,6 +29,19 @@ def _shared_lib_name(system: str, base: str) -> str:
   if system == "Linux":
     return f"lib{base}.so"
   raise RuntimeError(f"Unsupported platform: {system}")
+
+
+def _wheel_tag() -> str:
+  """`py3-none-<platform>`: the solvers load through ctypes, so one wheel serves every Python.
+
+  The platform part is the one hatchling's `infer_tag` would pick."""
+  from hatchling.builders.macos import process_macos_plat_tag
+  from packaging.tags import sys_tags
+
+  plat = next(t.platform for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform)
+  if sys.platform == "darwin":
+    plat = process_macos_plat_tag(plat, compat=False)
+  return f"py3-none-{plat}"
 
 
 _BUILD_SOLVER_SKIP = {"0", "false", "no", "off", "skip"}
@@ -296,7 +310,7 @@ class BuildHook(BuildHookInterface):
 
     if mode != "skip" or any(lib_dir.glob("lib*")):
       build_data["pure_python"] = False
-      build_data["infer_tag"] = True
+      build_data["tag"] = _wheel_tag()
     if mode == "skip":
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
       return
