@@ -177,9 +177,17 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       0.04x to 0.29x CasADi's generated `interpolant` time per point (`perf_2026_09_28_interp/`); the
       count search never won, so `auto` is uniform or binary. 21/22 mutants killed, the survivor dead
       code now removed. Report: `notes/interp_sp1_report.html`.
-- [ ] **API-172. Shape-preserving kinds, smoothing splines and spline calculus** (interp plan SP2):
-      `pchip`, `akima`, `makima`, `steffen`, `smooth_linear`, `interp.smoothing`, `derivative`,
-      `antiderivative`, `integrate`, `inverse`.
+- [x] **API-172. Shape-preserving kinds, smoothing splines and spline calculus** (interp plan SP2).
+      `pchip`, `akima` and `makima` (SciPy's formulas, 1e-13) and `steffen` (the paper's, monotone on
+      1e4 random data sets) as C1 cubics on doubled knots, 1-D; `smooth_linear` as CasADi builds it
+      (from its source; 9e-16). `interp.smoothing`: P-splines of any degree and dimension, gridded or
+      scattered, lambda by GCV (9 ms at 2e4 points, where SciPy's GCV fails), and
+      `make_smoothing_spline`. `derivative` and `antiderivative` as splines on the same partition,
+      with the extrapolation their operation implies; `integrate` exact in every mode; `inverse()` of
+      a strictly monotone curve, Newton bisecting to stay in its cell, `1/f'` by
+      `custom_derivative`, a flat end held. 26/26 mutants killed, five after a test was added (the
+      bisection needed a searched-for quintic); a dead ulp tolerance removed. Report:
+      `notes/interp_sp2_report.html`.
 - [ ] **API-173. Coefficients and data as expressions** (interp plan SP3): `interp.BSpline(coeffs=)`,
       in-graph fits for every kind, `basis()` and `at()` for points known when the graph is built.
 - [ ] **API-174. Interpolation performance** (interp plan SP4): the `bucket` search, the `auto`

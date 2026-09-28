@@ -129,7 +129,7 @@ def test_the_mpc_surface() -> None:
 def test_the_interp_surface() -> None:
   interp = importlib.import_module("scaly.interp")
   assert sc.interp is interp
-  assert interp.__all__ == ["BOUNDARIES", "KINDS", "PP_BUDGET", "Axis", "BSpline", "Index", "interpolant"]
+  assert interp.__all__ == ["BOUNDARIES", "KINDS", "PP_BUDGET", "Axis", "BSpline", "Index", "Inverse", "interpolant", "smoothing"]
   assert "interp" not in sc.__all__ and not hasattr(sc, "interpolant")
 
 

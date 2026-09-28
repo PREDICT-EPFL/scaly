@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interp SP2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP2 report</h1>
+<p class="sub">API-172 · shape-preserving kinds, <code>smooth_linear</code>, smoothing splines, spline calculus, the inverse · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The kinds whose fits are not a plain interpolation, and what can be done with a spline besides evaluating it.</p>
+<ul>
+<li><b>Five new kinds</b>: <code>pchip</code>, <code>akima</code>, <code>makima</code> equal SciPy's to 1e-13; <code>steffen</code> equals the paper's formulas, and on 10⁴ random monotone data sets it is monotone and never leaves an interval's range; <code>smooth_linear</code> equals CasADi's to 1e-15, its algorithm read from CasADi's source.</li>
+<li><b><code>interp.smoothing</code></b>: P-splines of any degree and dimension, gridded or scattered, λ by generalized cross-validation; <code>method="cubic"</code> is <code>make_smoothing_spline</code>. At 20 000 points the P-spline takes 9 ms; SciPy's own GCV gives up there.</li>
+<li><b>Calculus</b>: <code>derivative</code> and <code>antiderivative</code> as splines on the same partition (the derivative shares the spline's search), <code>integrate</code> exact in every extrapolation mode, and <code>inverse()</code> of a strictly monotone curve by safeguarded Newton with <code>dx/dy = 1/f'</code> as its derivative.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 824 passed, 45 skipped. ruff clean; ty clean on <code>src/</code> and the new tests. <b>Mutation checks:</b> 26 of 26 killed, five only after a test was added; one guard found dead and removed.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td>Shape-preserving kinds (<code>fit.py</code>)</td><td>
+<ul>
+<li>Slopes by SciPy's formulas operation for operation (PCHIP's weighted harmonic mean and Moler's end rule; Akima's extrapolated secants, the <code>1e-9</code> break and makima's weights) and by Steffen (1990) eqs. 11 and 26–27.</li>
+<li>Each is a C¹ cubic on knots with every interior site doubled: the B-coefficients are the Bézier points <code>y_i ∓ h d_i / 3</code>, so the evaluation, search, derivatives and calculus are the ones every spline has. 1-D only: in n-D they are not tensor products (API-185).</li>
+</ul></td></tr>
+<tr><td><code>smooth_linear</code></td><td>From <code>casadi/solvers/bspline_interpolant.hpp</code>: a cubic with knots at each site and at <code>± frac ·</code> the smallest spacing around it, coefficients the linear interpolant at the Greville points (summed in CasADi's order). Linear away from the sites, rounded within <code>frac</code> of them, not through the data.</td></tr>
+<tr><td><code>interp.smoothing</code></td><td>P-spline: uniform knots running <code>k</code> past the data (the base interval exactly the data's range), the design matrix as a row-wise product of the axes' (SciPy's <code>NdBSpline.design_matrix</code> sizes its columns by the last one used), difference penalties per axis, a Cholesky solve; GCV on a coarse grid of <code>log10 λ</code> then a bounded search.</td></tr>
+<tr><td>Calculus (<code>spline.py</code>)</td><td>
+<ul>
+<li><code>derivative(nu, axis)</code>: de Boor differencing. Outside, the derivative of the extrapolation: <code>linear</code> gives the end slope held, <code>clamp</code> and <code>fill</code> give zero. It equals differentiating the spline's graph at every point but the knots, in every mode.</li>
+<li><code>antiderivative(axis)</code>: zero at the base interval's start (for unclamped knots too, as a P-spline's), and the antiderivative of the extrapolation where that is a mode (<code>clamp</code> → <code>linear</code>, zero <code>fill</code> → <code>clamp</code>).</li>
+<li><code>integrate(a, b)</code>: numbers give a number, exact in every mode in 1-D (clamped, linear and filled tails in closed form, periodic by SciPy), inside the box in n-D; <code>Expr</code> bounds go through the antiderivative, <code>2^D</code> corners in n-D.</li>
+<li><code>inverse()</code>: monotonicity checked exactly (the derivative's sign at the cell ends and at its own extrema). Degree 1 gives the swapped table; above, an <code>Inverse</code>: Newton from the linear table's guess on the cell it names, bisecting when a step would leave the cell, in a <code>while_loop</code>; <code>custom_derivative</code> supplies <code>1/f'</code>, so Hessians work and never reach the iterations. Outside the range it continues along the end tangent, and holds a flat end.</li>
+</ul></td></tr>
+<tr><td>Along the way</td><td><code>Axis</code> builds in linear time for sorted knots (no <code>np.unique</code>/<code>np.isin</code> sorts); its local tables are extracted from the sparse basis without densifying it (a (cells × n) dense array ran a 10⁶-site fit out of memory); <code>auto</code> strategy compares the two tables' sizes, since <code>basis</code> stores <code>(k+1)²</code> values per cell in 1-D against <code>pp</code>'s <code>k+1</code>; spline fits call <code>make_interp_spline</code> once.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<ul>
+<li><code>test_fit.py</code> (+19): the three SciPy kinds on steps and plateaus, uniform and not, vector-valued, extended, derivatives in both modes, two points; data that reach each rare branch; Steffen against a site-by-site implementation of the paper and the 10⁴-set property test (Fritsch and Carlson's sufficient square, dense sampling within each interval's range); no ringing where a cubic rings by 5 %; <code>smooth_linear</code> linear away from the sites; the P-spline against an independent least squares, its GCV choice a minimum, exact knot ends, 2-D gridded and scattered; <code>method="cubic"</code>.</li>
+<li><code>test_calculus.py</code> (29): derivative splines against SciPy and against the graph's own derivatives in all five modes; a shared search (one <code>floor</code> for the value and two derivatives); antiderivatives, unclamped knots included; integrals against <code>quad</code> in every mode and against <code>dblquad</code> in 2-D, with <code>Expr</code> bounds; the inverse round-tripping to 1e-12 with <code>1/f'</code> in both modes and <code>-f''/f'^3</code> for its second derivative, a flat end, and a quintic on which plain Newton diverges.</li>
+<li><code>test_casadi_parity.py</code> (+6): <code>smooth_linear</code> in 1-D to 3-D at two <code>frac</code>.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Result</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>PCHIP harmonic-mean weights swapped</td><td class="ok">killed</td><td>PCHIP end limiter 3 → 2</td><td class="warn">killed after a test</td></tr>
+<tr><td>Akima extrapolated secant</td><td class="ok">killed</td><td>makima half weight</td><td class="ok">killed</td></tr>
+<tr><td>Akima break 1e-9 → 0</td><td class="warn">killed after a test</td><td>Steffen limiter ½ → 1</td><td class="ok">killed</td></tr>
+<tr><td>Steffen end limit 2 → 3</td><td class="warn">killed after a test</td><td>Hermite knot multiplicity 2 → 3</td><td class="ok">killed</td></tr>
+<tr><td>Bézier third → half</td><td class="ok">killed</td><td><code>smooth_linear</code> step, Greville points</td><td class="ok">killed (2)</td></tr>
+<tr><td>P-spline penalty order</td><td class="ok">killed</td><td>GCV trace</td><td class="ok">killed</td></tr>
+<tr><td>P-spline knot ends</td><td class="ok">killed</td><td>derivative extrapolation (2)</td><td class="ok">killed</td></tr>
+<tr><td>antiderivative factor, clamp mapping</td><td class="ok">killed (2)</td><td>antiderivative offset</td><td class="warn">killed after a test</td></tr>
+<tr><td>integral fill, linear tail</td><td class="ok">killed (2)</td><td>monotone threshold</td><td class="ok">killed</td></tr>
+<tr><td>Newton without bisection</td><td class="warn">killed after a test</td><td>inverse outside, flat end, vjp</td><td class="ok">killed (3)</td></tr>
+</table></div>
+<ul>
+<li>The first inverse test "needing" the bisection failed for another reason: at a PCHIP curve's flat top, the spline's end value is an ulp below the data's, and the continuation along a tangent of slope 3e-15 sent that ulp 0.3 away. The inverse now holds a flat end outside. The bisection then needed a curve of its own, found by search: a quintic cell whose coefficients rise by steps from 1e-7 to 1, on which plain Newton diverges to 5e23.</li>
+<li>A tolerance treating values within an ulp of the range as inside survived its mutant: with flat ends held, an ulp outside moves the result by an ulp over the end slope. It was removed.</li>
+</ul>
+
+<h2>3. Benchmarks</h2>
+<div class="scroll"><table>
+<tr><th>Evaluation, one point, value + derivative</th><th>Scaly ns</th><th>CasADi ns</th></tr>
+<tr><td>pchip / akima / steffen, 1 024 clustered sites</td><td class="r">5.8 / 5.8 / 6.2</td><td class="r">—</td></tr>
+<tr><td>smooth_linear, 1 024 clustered sites</td><td class="r">7.3</td><td class="r">69.4 (binary)</td></tr>
+<tr><td>inverse of the pchip curve</td><td class="r">58.3</td><td class="r">—</td></tr>
+</table></div>
+<ul>
+<li>The shape-preserving kinds cost what a cubic does. The inverse costs about ten evaluations (a loop of Newton steps, each a value and a slope); SP4 may unroll a fixed count.</li>
+<li>Fitting (<code>bench_fit.py</code>): 0.04 to 0.1 ms at 100 sites, 0.2 to 1.6 ms at 10⁴, 26 to 183 ms at 10⁶ (SciPy's constructors: 0.8 to 87 ms). The first trace adds the per-cell tables: 7 to 16 ms at 10⁴.</li>
+</ul>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate</th><th>Status</th></tr>
+<tr><td>PCHIP, Akima and makima against SciPy to 1e-13</td><td class="ok">met</td></tr>
+<tr><td>Steffen against the published formulas; monotone on 10⁴ random monotone data sets</td><td class="ok">met</td></tr>
+<tr><td><code>smooth_linear</code> against CasADi to 1e-12</td><td class="ok">met (9e-16); the algorithm is CasADi's own, not the fallback</td></tr>
+<tr><td>Integrals against <code>quad</code> of the SciPy spline</td><td class="ok">met, every extrapolation mode</td></tr>
+<tr><td>The inverse round-trips to 1e-12 and its derivative is 1/f′</td><td class="ok">met</td></tr>
+</table></div>
+
+<h2>5. Next</h2>
+<p>SP3 (API-173): coefficients and data as expressions. <code>BSpline</code> with <code>Expr</code> coefficients, in-graph fits for every kind (constant maps, a tridiagonal solve for large cubics, the slope formulas as expressions), <code>basis()</code> and <code>at()</code> for points known now, and a fit that runs once per call when a table is broadcast into a map.</p>
+</main></body></html>

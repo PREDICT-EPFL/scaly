@@ -9,7 +9,10 @@ accepts, the fastest kept and named (`docs/results/fairness.md`). Configurations
 
 - 1-D: `linear` and `cubic`, 32 and 1 024 sites, uniform and clustered;
 - 2-D: a 64 x 64 uniform bicubic;
-- 3-D: a 20 x 20 x 20 uniform trilinear (value only, as CasADi's `linear` has no cheaper mode for it).
+- 3-D: a 20 x 20 x 20 uniform trilinear (value only, as CasADi's `linear` has no cheaper mode for it);
+- SP2's kinds on 1 024 clustered sites: `pchip`, `akima`, `steffen` (no CasADi counterpart) and
+  `smooth_linear` (CasADi's `bspline` with `algorithm="smooth_linear"`); and `inverse()` of the
+  `pchip` curve (safeguarded Newton; the forward evaluation of the same curve is its reference).
 
 Values are checked against SciPy before timing (CasADi's bspline fit is compared at 1e-9: it misses
 its own data by more than rounding, see `tests/interp/test_casadi_parity.py`).
@@ -47,6 +50,11 @@ def configurations() -> list[dict]:
   out.append({"name": "2d_cubic_64", "dims": 2, "grid": (g2, g2), "values": np.sin(3 * g2)[:, None] * np.cos(2 * g2)[None, :] + rng.normal(scale=0.01, size=(64, 64)), "kind": "cubic", "point": np.array([0.3712, 0.6093])})
   g3 = np.arange(20) / 16.0
   out.append({"name": "3d_linear_20", "dims": 3, "grid": (g3, g3, g3), "values": rng.normal(size=(20, 20, 20)), "kind": "linear", "point": np.array([0.371, 0.911, 0.107])})
+  g = clustered(1024)
+  monotone = np.cumsum(rng.uniform(0.0, 1.0, 1024))
+  for kind in ("pchip", "akima", "steffen", "smooth_linear"):
+    out.append({"name": f"1d_{kind}_1024_clustered", "dims": 1, "grid": (g,), "values": monotone, "kind": kind, "point": np.array([0.4137])})
+  out.append({"name": "1d_inverse_pchip_1024", "dims": 1, "grid": (g,), "values": monotone, "kind": "pchip", "inverse": True, "point": np.array([0.4137 * monotone[-1]])})
   return out
 
 
@@ -56,6 +64,11 @@ def scaly_variants(cfg: dict) -> dict[str, object]:
 
   grid = cfg["grid"] if cfg["dims"] > 1 else cfg["grid"][0]
   auto = interp.interpolant(grid, cfg["values"], kind=cfg["kind"])
+  if cfg.get("inverse"):
+    point = sc.sym("y")
+    inv = auto.inverse()
+    x = inv(point)
+    return {"fns": {"auto": sc.Function._from_exprs(f"b_{cfg['name']}", [point], [x, sc.gradient(x, point)], ["y"], ["x", "g"])}, "auto": "newton"}
   variants = {"auto": auto}
   searches = ["count", "binary"] + (["uniform"] if all(ax.search == "uniform" or ax._uniform is not None for ax in auto.axes) else [])
   for search in searches:
@@ -75,13 +88,17 @@ def scaly_variants(cfg: dict) -> dict[str, object]:
 def casadi_variants(cfg: dict) -> dict[str, object]:
   import casadi as ca
 
+  if cfg["kind"] not in ("linear", "cubic", "smooth_linear") or cfg.get("inverse"):
+    return {}
   method = "linear" if cfg["kind"] == "linear" else "bspline"
   modes = ["linear", "binary"] + (["exact"] if method == "linear" and "uniform" in cfg["name"] or cfg["dims"] == 3 else [])
   if cfg["dims"] == 2:
     modes = ["linear", "binary"]
+  extra = {"algorithm": "smooth_linear"} if cfg["kind"] == "smooth_linear" else {}
   out = {}
   for mode in modes:
-    itp = ca.interpolant(f"itp_{mode}", method, [list(g) for g in cfg["grid"]], np.ravel(cfg["values"], order="F"), {"lookup_mode": [mode] * cfg["dims"]})
+    opts = {"lookup_mode": [mode] * cfg["dims"], **extra}
+    itp = ca.interpolant(f"itp_{mode}", method, [list(g) for g in cfg["grid"]], np.ravel(cfg["values"], order="F"), opts)
     x = ca.MX.sym("x", cfg["dims"])
     y = itp(x)
     outs = [y] if cfg["name"].startswith("3d") else [y, ca.jacobian(y, x)]
@@ -127,11 +144,12 @@ def main() -> None:
     name = cfg["name"]
     scaly = {k.split(":", 1)[1]: v for (n, k), v in best.items() if n == name and k.startswith("scaly")}
     casadi = {k.split(":", 1)[1]: v for (n, k), v in best.items() if n == name and k.startswith("casadi")}
-    top = min((k for k in scaly if k != "auto"), key=scaly.__getitem__)
-    ca_top = min(casadi, key=casadi.__getitem__)
-    lines = f"{cells[name]['scaly:auto']['c_lines']} / {cells[name][f'casadi:{ca_top}']['c_lines']}"
+    top = min((k for k in scaly if k != "auto"), key=scaly.__getitem__, default="auto")
+    ca_top = min(casadi, key=casadi.__getitem__, default=None)
+    ca_lines = cells[name][f"casadi:{ca_top}"]["c_lines"] if ca_top else "—"
+    ca_cell = f"{casadi[ca_top]:.1f} ({ca_top}) | {scaly[top] / casadi[ca_top]:.2f}" if ca_top else "— | —"
     print(
-      f"| {name} | {scaly[top]:.1f} ({top}) | {scaly['auto']:.1f} ({autos[name]}) | {scaly['auto'] / scaly[top]:.2f} | {casadi[ca_top]:.1f} ({ca_top}) | {scaly[top] / casadi[ca_top]:.2f} | {lines} |"
+      f"| {name} | {scaly[top]:.1f} ({top}) | {scaly['auto']:.1f} ({autos[name]}) | {scaly['auto'] / scaly[top]:.2f} | {ca_cell} | {cells[name]['scaly:auto']['c_lines']} / {ca_lines} |"
     )
     rows.append({"configuration": name, "scaly_ns": scaly, "casadi_ns": casadi, "auto": autos[name], "meta": cells[name]})
   (OUT / "results.json").write_text(json.dumps(rows, indent=1))

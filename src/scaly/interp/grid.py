@@ -96,9 +96,11 @@ class Axis:
       raise ValueError(f"knots must be a finite non-decreasing vector of at least {degree + 2} entries for degree {degree}")
     if knots[degree] >= knots[n]:
       raise ValueError("the base interval [t[k], t[n]] of the knots is empty")
-    breaks = np.unique(knots[degree : n + 1])
+    span = knots[degree : n + 1]
+    breaks = span[np.concatenate([[True], np.diff(span) > 0])]  # sorted already: no need for unique's sort
     edges = breaks if edges is None else check_sites(edges, "the partition")
-    if edges[0] != breaks[0] or edges[-1] != breaks[-1] or not np.all(np.isin(breaks, edges)):
+    found = np.minimum(np.searchsorted(edges, breaks), edges.size - 1)
+    if edges[0] != breaks[0] or edges[-1] != breaks[-1] or not np.array_equal(edges[found], breaks):
       raise ValueError("the partition must span the base interval and contain every distinct knot in it")
     extrap = extrap if extrap is not None else ("clamp" if degree == 0 else "linear")
     if extrap not in EXTRAPS:
@@ -161,7 +163,14 @@ class Axis:
       k, centers = self.degree, self.centers
       rows = np.arange(centers.size)[:, None]
       cols = self.offsets[:, None] + np.arange(k + 1)[None, :]
-      self._local = np.stack([basis_derivatives(self.knots, k, centers, m).toarray()[rows, cols] / math.factorial(m) for m in range(k + 1)], axis=-1)
+      rows, cols = np.broadcast_arrays(rows, cols)
+      self._local = np.stack(
+        [
+          np.asarray(basis_derivatives(self.knots, k, centers, m)[rows.ravel(), cols.ravel()]).reshape(rows.shape) / math.factorial(m)
+          for m in range(k + 1)
+        ],
+        axis=-1,
+      )
     return self._local
 
   def taylor(self, coeffs: np.ndarray) -> np.ndarray:

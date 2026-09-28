@@ -86,6 +86,21 @@ def test_bspline_interpolant_matches_within_casadis_own_fit_error(k: int, dims: 
     np.testing.assert_allclose(evaluate(cubic, pts)["y"], evaluate(f, pts)["y"], rtol=0, atol=1e-13 * scale(v))
 
 
+@pytest.mark.parametrize("frac", [0.1, 0.35])
+@pytest.mark.parametrize("dims", [(11,), (8, 6), (5, 4, 6)])
+def test_smooth_linear_matches(frac: float, dims: tuple[int, ...]) -> None:
+  """CasADi's ``smooth_linear`` builds no fit to solve (the coefficients are the linear interpolant at
+  the Greville points), so the two agree to rounding."""
+  rng = np.random.default_rng(len(dims))
+  g = tuple(np.sort(rng.uniform(0.0, 1.0 + d, n)) for d, n in enumerate(dims))
+  v = rng.normal(size=dims)
+  f = interp.interpolant(g if len(g) > 1 else g[0], v, kind="smooth_linear", frac=frac)
+  opts = {"algorithm": "smooth_linear", "smooth_linear_frac": frac}
+  F = ca.interpolant("sl", "bspline", [list(a) for a in g], ca_values(v), opts)
+  pts = inside_points(g, rng, 400)
+  np.testing.assert_allclose(evaluate(f, pts)["y"], ca_eval(F, pts), rtol=0, atol=1e-12 * scale(v))
+
+
 def test_casadi_quirks_are_what_the_comparisons_assume() -> None:
   """The bspline interpolant is zero outside its grid, its derivative with respect to the data is
   zero unless inlined, and it refuses degrees 2 and 4."""

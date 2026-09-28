@@ -171,3 +171,217 @@ def test_interpolant_validation() -> None:
     interp.interpolant((g, g), g)
   with pytest.raises(ValueError, match="strictly increasing"):
     interp.interpolant(g[::-1], g)
+
+
+def steps_and_plateau(rng: np.random.Generator, n: int) -> tuple[np.ndarray, np.ndarray]:
+  """Data with a jump, a plateau and a monotone run: where C2 splines ring."""
+  x = np.sort(rng.uniform(0.0, 10.0, n))
+  y = np.concatenate([np.zeros(n // 3), np.ones(n // 3), np.linspace(1.0, 3.0, n - 2 * (n // 3))]) + 0.01 * rng.normal(size=n)
+  return x, y
+
+
+@pytest.mark.parametrize("kind", ["pchip", "akima", "makima"])
+@pytest.mark.parametrize("uniform", [True, False])
+def test_shape_preserving_kinds_are_scipys(kind: str, uniform: bool) -> None:
+  from scipy.interpolate import Akima1DInterpolator, PchipInterpolator
+
+  rng = np.random.default_rng(len(kind) + uniform)
+  x, y = steps_and_plateau(rng, 16)
+  if uniform:
+    x = np.linspace(0.0, 10.0, 16)
+  values = np.column_stack([y, np.sin(x)])
+  ref = PchipInterpolator(x, values) if kind == "pchip" else Akima1DInterpolator(x, values, method=kind, extrapolate=True)  # ty: ignore[invalid-argument-type]
+  f = interp.interpolant(x, values, kind=kind, extrap="extend")  # ty: ignore[invalid-argument-type]
+  assert f.degree == (3,) and f.axes[0].search == ("uniform" if uniform else "binary")
+  pts = np.concatenate([inside_points((x,), rng, 1500), [-2.0, 12.5]])
+  got = evaluate(f, pts, derivatives=True)
+  np.testing.assert_allclose(got["y"], ref(pts), rtol=0, atol=1e-13 * scale(ref(pts)))
+  np.testing.assert_allclose(got["jvp"], ref(pts, 1).sum(axis=1), rtol=0, atol=1e-11 * scale(ref(pts, 1)))
+  np.testing.assert_allclose(got["hess"], ref(pts, 2).sum(axis=1), rtol=0, atol=1e-10 * scale(ref(pts, 2)))
+  two = interp.interpolant(x[:2], values[:2], kind=kind, extrap="extend")  # ty: ignore[invalid-argument-type]
+  beyond = 2 * x[1] - x[0]  # two points: the line through them, continued
+  np.testing.assert_allclose(
+    evaluate(two, np.array([x[0], 0.5 * (x[0] + x[1]), beyond]))["y"],
+    np.array([values[0], values[:2].mean(0), 2 * values[1] - values[0]]),
+    rtol=1e-12,
+    atol=1e-14,
+  )
+
+
+# Data that reach the rarely taken branches: PCHIP's end limiter (at the start the three-point slope
+# lies between two and three times the first secant, so only the threshold 3 decides; at the end it is
+# more than three times, so the limiter acts), Akima's break (the outer secants differ by 1e-12 on one side and not at all on
+# the other: below 1e-9 of the largest weight, so the slope is the fill value), Steffen's end limit
+# (the parabola through the first three points more than twice as steep as the first secant).
+EDGE_CASES = {
+  "pchip": (np.arange(8.0), np.array([0.0, 0.1, -0.1, 1.0, 2.0, 4.0, 4.5, 4.4])),
+  "akima": (np.arange(9.0), np.array([0.0, 0.0, 0.0, 1.0, 2.0 + 1e-12, 3.0 + 2e-12, -2.0, 5.0, 0.0])),
+  "makima": (np.arange(9.0), np.array([0.0, 0.0, 0.0, 1.0, 2.0 + 1e-12, 3.0 + 2e-12, -2.0, 5.0, 0.0])),
+  "steffen": (np.arange(6.0), np.array([0.0, 1.0, -9.0, -8.0, 2.0, 3.0])),
+}
+
+
+@pytest.mark.parametrize("kind", ["pchip", "akima", "makima"])
+def test_shape_preserving_edge_branches_are_scipys(kind: str) -> None:
+  from scipy.interpolate import Akima1DInterpolator, PchipInterpolator
+
+  x, y = EDGE_CASES[kind]
+  ref = PchipInterpolator(x, y) if kind == "pchip" else Akima1DInterpolator(x, y, method=kind, extrapolate=True)  # ty: ignore[invalid-argument-type]
+  pts = np.linspace(x[0], x[-1], 241)
+  got = evaluate(interp.interpolant(x, y, kind=kind), pts, derivatives=True)  # ty: ignore[invalid-argument-type]
+  np.testing.assert_allclose(got["y"], ref(pts), rtol=0, atol=1e-13 * scale(y))
+  np.testing.assert_allclose(got["jvp"], ref(pts, 1), rtol=0, atol=1e-12 * scale(ref(pts, 1)))
+
+
+def steffen_reference(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+  """Steffen (1990), eqs. 11 and 26-27, one site at a time."""
+  n = x.size
+  h = [x[i + 1] - x[i] for i in range(n - 1)]
+  s = [(y[i + 1] - y[i]) / h[i] for i in range(n - 1)]
+  d = np.zeros(n)
+  for i in range(1, n - 1):
+    p = (s[i - 1] * h[i] + s[i] * h[i - 1]) / (h[i - 1] + h[i])
+    d[i] = (np.sign(s[i - 1]) + np.sign(s[i])) * min(abs(s[i - 1]), abs(s[i]), 0.5 * abs(p))
+  for i, (h0, h1, s0, s1) in ((0, (h[0], h[1], s[0], s[1])), (n - 1, (h[-1], h[-2], s[-1], s[-2]))):
+    p = s0 * (1 + h0 / (h0 + h1)) - s1 * h0 / (h0 + h1)
+    d[i] = 0.0 if p * s0 <= 0 else 2 * s0 if abs(p) > 2 * abs(s0) else p
+  return d
+
+
+def test_steffen_follows_the_paper_and_is_monotone_without_overshoot() -> None:
+  from scipy.interpolate import CubicHermiteSpline
+
+  from scaly.interp.fit import hermite_slopes
+
+  rng = np.random.default_rng(3)
+  x, y = steps_and_plateau(rng, 14)
+  np.testing.assert_allclose(hermite_slopes("steffen", x, y), steffen_reference(x, y), rtol=1e-15, atol=1e-15)
+  np.testing.assert_allclose(hermite_slopes("steffen", *EDGE_CASES["steffen"]), steffen_reference(*EDGE_CASES["steffen"]), rtol=1e-15, atol=1e-15)
+  f = interp.interpolant(x, y, kind="steffen")
+  pts = inside_points((x,), rng, 1000)
+  np.testing.assert_allclose(evaluate(f, pts)["y"], CubicHermiteSpline(x, y, steffen_reference(x, y))(pts), rtol=0, atol=1e-13 * scale(y))
+  u = np.linspace(0.0, 1.0, 41)
+  for trial in range(10_000):  # monotone data: a monotone interpolant that never leaves an interval's range
+    n = int(rng.integers(3, 12))
+    xs = np.cumsum(rng.uniform(0.01, 1.0, n))
+    sign = 1.0 if trial % 2 else -1.0
+    ys = sign * np.cumsum(rng.exponential(size=n) * (rng.uniform(size=n) > 0.3))
+    slopes, secants = hermite_slopes("steffen", xs, ys), np.diff(ys) / np.diff(xs)
+    ratio = np.divide(np.stack([slopes[:-1], slopes[1:]]), secants, out=np.zeros((2, n - 1)), where=secants != 0)
+    assert np.all((ratio >= 0) & (ratio <= 3)), trial  # Fritsch and Carlson's sufficient square
+    assert np.all(slopes[:-1][secants == 0] == 0) and np.all(slopes[1:][secants == 0] == 0), trial
+    dense = interp.interpolant(xs, ys, kind="steffen").to_scipy()(xs[:-1, None] + u[None, :] * np.diff(xs)[:, None])
+    assert np.all(sign * np.diff(dense, axis=1) >= -1e-12), trial
+    lo, hi = np.minimum(ys[:-1], ys[1:]), np.maximum(ys[:-1], ys[1:])
+    assert np.all(dense >= lo[:, None] - 1e-12) and np.all(dense <= hi[:, None] + 1e-12), trial
+
+
+@pytest.mark.parametrize("kind", ["pchip", "akima", "steffen"])
+def test_shape_preserving_kinds_do_not_ring_where_a_cubic_does(kind: str) -> None:
+  x = np.arange(10.0)
+  y = np.where(x < 5, 0.0, 1.0)
+  pts = np.linspace(0.0, 9.0, 901)
+  flat = evaluate(interp.interpolant(x, y, kind=kind), pts)["y"]  # ty: ignore[invalid-argument-type]
+  assert flat.min() >= -1e-15 and flat.max() <= 1.0 + 1e-15
+  assert evaluate(interp.interpolant(x, y, kind="cubic"), pts)["y"].min() < -0.05
+
+
+def test_shape_preserving_kinds_are_1d_only() -> None:
+  with pytest.raises(ValueError, match="1-D only"):
+    interp.interpolant((np.arange(4.0), np.arange(3.0)), np.zeros((4, 3)), kind=("pchip", "linear"))
+  with pytest.raises(ValueError, match="bc applies"):
+    interp.interpolant(np.arange(4.0), np.zeros(4), kind="pchip", bc="natural")
+
+
+def test_smooth_linear_is_linear_away_from_the_sites() -> None:
+  rng = np.random.default_rng(4)
+  g = np.sort(rng.uniform(0.0, 5.0, 8))
+  y = rng.normal(size=8)
+  f = interp.interpolant(g, y, kind="smooth_linear", frac=0.2)
+  step = 0.2 * np.min(np.diff(g))
+  mid = 0.5 * (g[:-1] + g[1:])
+  away = np.concatenate([np.linspace(g[i] + step, g[i + 1] - step, 7) for i in range(7)])
+  np.testing.assert_allclose(evaluate(f, away)["y"], np.interp(away, g, y), rtol=0, atol=1e-13)
+  assert np.abs(evaluate(f, g[1:-1])["y"] - y[1:-1]).max() > 1e-3  # rounded at the sites, not through them
+  np.testing.assert_allclose(evaluate(f, mid)["y"], np.interp(mid, g, y), rtol=0, atol=1e-13)
+  with pytest.raises(ValueError, match="frac"):
+    interp.interpolant(g, y, kind="smooth_linear", frac=0.5)
+
+
+def test_pspline_is_the_penalized_least_squares_fit() -> None:
+  from scipy.interpolate import BSpline
+
+  from scaly.interp.fit import pspline_fit
+
+  rng = np.random.default_rng(5)
+  x = np.sort(rng.uniform(0.0, 1.0, 120))
+  y = np.column_stack([np.sin(6 * x), np.cos(3 * x)]) + 0.1 * rng.normal(size=(120, 2))
+  lam = 0.37
+  f = interp.smoothing(x, y, degree=2, segments=12, penalty=3, lam=lam)
+  t = f.knots[0]
+  B = BSpline.design_matrix(x, t, 2).toarray()
+  D = np.diff(np.eye(B.shape[1]), n=3, axis=0)
+  want = np.linalg.lstsq(np.vstack([B, np.sqrt(lam) * D]), np.vstack([y, np.zeros((D.shape[0], 2))]), rcond=None)[0]
+  np.testing.assert_allclose(f.coeffs, want, rtol=1e-9, atol=1e-10)
+  np.testing.assert_allclose(evaluate(f, x)["y"], B @ want, rtol=0, atol=1e-9)
+  assert (t[2], t[-3]) == (x.min(), x.max()) and f.axes[0].search == "uniform"
+  # GCV: the weight chosen is a minimum of the criterion along log lam
+  coeffs, chosen = pspline_fit([t], [2], x[:, None], y, 3, "gcv")
+
+  def gcv(weight: float) -> float:
+    c = np.linalg.solve(B.T @ B + weight * D.T @ D, B.T @ y)
+    trace = np.trace(np.linalg.solve(B.T @ B + weight * D.T @ D, B.T @ B))
+    return 120 * np.sum((y - B @ c) ** 2) / (120 - trace) ** 2
+
+  assert all(gcv(chosen) <= gcv(chosen * factor) for factor in (0.7, 1.4, 0.1, 10.0))
+  assert chosen > 0
+
+
+def test_pspline_knots_span_the_data_exactly() -> None:
+  """``lo + segments * step`` can round below the largest site, which would then lie outside the base
+  interval; the knots are laid so that it is exactly ``[min x, max x]``."""
+  rng = np.random.default_rng(8)
+  x = np.sort(rng.uniform(0.0, 1.0, 2000))
+  for segments in (20, 80, 97):
+    f = interp.smoothing(x, np.sin(6 * x), segments=segments, lam=1e-3)
+    assert (f.axes[0].lo, f.axes[0].hi) == (x[0], x[-1]) and f.axes[0].search == "uniform"
+
+
+def test_pspline_smooths_in_2d_and_from_scattered_points() -> None:
+  rng = np.random.default_rng(6)
+  g = (np.linspace(0.0, 1.0, 17), np.linspace(-1.0, 1.0, 13))
+  truth = np.sin(3 * g[0])[:, None] * np.cos(2 * g[1])[None, :]
+  noisy = truth + 0.05 * rng.normal(size=truth.shape)
+  f = interp.smoothing(g, noisy, segments=(8, 6))
+  nodes = np.stack(np.meshgrid(*g, indexing="ij"), axis=-1).reshape(-1, 2)
+  err = np.sqrt(np.mean((evaluate(f, nodes)["y"] - truth.reshape(-1)) ** 2))
+  assert err < 0.5 * np.sqrt(np.mean((noisy - truth) ** 2))
+  scattered = interp.smoothing(nodes, noisy.reshape(-1), segments=(8, 6))
+  np.testing.assert_allclose(scattered.coeffs, f.coeffs, rtol=1e-10, atol=1e-12)
+
+
+def test_cubic_smoothing_is_make_smoothing_spline() -> None:
+  from scipy.interpolate import make_smoothing_spline
+
+  rng = np.random.default_rng(7)
+  x = np.sort(rng.uniform(0.0, 2.0, 60))
+  y = np.exp(-x) + 0.02 * rng.normal(size=60)
+  for lam in ("gcv", 1e-3):
+    f = interp.smoothing(x, y, method="cubic", lam=lam)
+    ref = make_smoothing_spline(x, y, lam=None if lam == "gcv" else lam)
+    pts = inside_points((f.axes[0].edges,), rng, 500)
+    np.testing.assert_allclose(evaluate(f, pts)["y"], ref(pts), rtol=0, atol=1e-13)
+
+
+def test_smoothing_validation() -> None:
+  x = np.linspace(0.0, 1.0, 20)
+  with pytest.raises(ValueError, match="method"):
+    interp.smoothing(x, x, method="loess")  # ty: ignore[invalid-argument-type]
+  with pytest.raises(ValueError, match="lam"):
+    interp.smoothing(x, x, lam=-1.0)
+  with pytest.raises(ValueError, match="1-D"):
+    interp.smoothing(np.column_stack([x, x]), x, method="cubic")
+  with pytest.raises(ValueError, match="points"):
+    interp.smoothing(x, x[:5])
+  with pytest.raises(ValueError, match="more than 2 coefficients"):
+    interp.smoothing(x, x, degree=0, segments=2)

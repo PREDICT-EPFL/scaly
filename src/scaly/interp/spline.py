@@ -10,19 +10,20 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
+from scipy import sparse
 
 from ..function.model import ConcreteFunction
 from ..function.tree import L, param_list
-from ..function.sugar import vmap
-from ..ir.expr import Expr, as_expr, cast, not_equal, stack, take, where
+from ..function.sugar import custom_derivative, vmap, while_loop
+from ..ir.expr import Expr, as_expr, cast, equal, not_equal, stack, take, where
 from ..ir.types import dtypes
-from .grid import Axis, Extrap, Search
+from .grid import Axis, Extrap, Search, derivative_matrix
 
 type Strategy = Literal["auto", "pp", "basis"]
 
 PP_BUDGET = 1 << 20
-"""The most bytes of piecewise-polynomial table ``strategy="auto"`` generates; a larger spline is
-evaluated from its B-spline coefficients and local bases instead."""
+"""The most bytes of piecewise-polynomial table ``strategy="auto"`` generates when the B-spline
+coefficients and local bases would be smaller; past it such a spline is evaluated from those."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -67,7 +68,8 @@ class BSpline:
     strategy: ``"pp"`` evaluates per-cell polynomial coefficients by nested Horner, the fastest,
       storing ``prod (k_d + 1)`` values per cell; ``"basis"`` stores the B-spline coefficients and
       combines the ``k + 1`` local basis functions of each axis. ``"auto"`` takes ``pp`` while its
-      table fits ``PP_BUDGET``.
+      table fits ``PP_BUDGET`` or is the smaller of the two (as in 1-D, where ``basis`` stores
+      ``(k + 1)^2`` values per cell).
     name: the base of the name of ``function()``.
 
   Calling the spline evaluates it: at a point (a scalar in 1-D, a ``(D,)`` vector) or at a batch
@@ -115,8 +117,10 @@ class BSpline:
       raise ValueError(f"strategy must be 'auto', 'pp' or 'basis', got {strategy!r}")
     self.axes, self.coeffs, self.name = axes, coeffs, name
     self.out_shape: tuple[int, ...] = coeffs.shape[len(axes) :]
-    pp_bytes = 8 * math.prod(ax.cells * (ax.degree + 1) for ax in axes) * math.prod(self.out_shape)
-    self.strategy: Literal["pp", "basis"] = ("pp" if pp_bytes <= PP_BUDGET else "basis") if strategy == "auto" else strategy
+    out = math.prod(self.out_shape)
+    pp_bytes = 8 * math.prod(ax.cells * (ax.degree + 1) for ax in axes) * out
+    basis_bytes = 8 * (math.prod(ax.n for ax in axes) * out + sum(ax.cells * ((ax.degree + 1) ** 2 + 1) for ax in axes))
+    self.strategy: Literal["pp", "basis"] = ("pp" if pp_bytes <= max(PP_BUDGET, basis_bytes) else "basis") if strategy == "auto" else strategy
     self._pp: np.ndarray | None = None
 
   @property
@@ -294,6 +298,113 @@ class BSpline:
     fname = name or f"{self.name}_{self.digest}"
     return _interned(fname, lambda: ConcreteFunction(fname, lambda x: self(x), param_list(L("x", point)), L("y", self.out_shape)))
 
+  def _with_axis(self, axis: int, new: Axis, coeffs: np.ndarray, suffix: str) -> BSpline:
+    axes = (*self.axes[:axis], new, *self.axes[axis + 1 :])
+    return BSpline.from_axes(axes, coeffs, strategy=self.strategy, name=f"{self.name}_{suffix}")
+
+  def derivative(self, nu: int = 1, axis: int = 0) -> BSpline:
+    """The ``nu``-th partial derivative along ``axis``, as a spline of degree ``k - nu``: its
+    coefficients by de Boor's differencing, on the same partition, so an ``index`` found for this
+    spline serves it too. Outside, it is the derivative of this spline's extrapolation: ``linear``
+    gives the end slope held (``clamp``), ``clamp`` and ``fill`` give zero (``fill``),
+    ``extend`` and ``periodic`` carry over. For a Jacobian, differentiate the spline instead; this
+    is for when the derivative must itself be a spline (a curvature table, a bound on ``f'``)."""
+    ax = self.axes[axis]
+    if not 0 <= nu <= ax.degree:
+      raise ValueError(f"nu must be 0 to the axis's degree {ax.degree}, got {nu}")
+    t, k, coeffs, extrap, fill = ax.knots, ax.degree, self.coeffs, ax.extrap, ax.fill
+    for _ in range(nu):
+      coeffs = _along(derivative_matrix(t, k), coeffs, axis)
+      t, k = t[1:-1], k - 1
+      extrap, fill = {"linear": ("clamp", fill), "clamp": ("fill", 0.0), "fill": ("fill", 0.0)}.get(extrap, (extrap, fill))
+    new = Axis(t, k, edges=ax.edges, side=ax.side, extrap=extrap, fill=fill, search=ax.search)
+    return self if nu == 0 else self._with_axis(axis, new, coeffs, f"d{nu}{axis}")
+
+  def antiderivative(self, axis: int = 0) -> BSpline:
+    """The integral along ``axis`` from the start of the base interval, a spline of degree
+    ``k + 1`` on the same partition. Outside, it integrates this spline's extrapolation where that is
+    a spline extrapolation too: ``extend`` stays ``extend``, ``clamp`` becomes ``linear``, a zero
+    ``fill`` becomes ``clamp`` and a NaN one stays. For ``linear`` it continues its end polynomials
+    (``extend``), which integrate the end tangent only to first order; a periodic or other constant
+    fill has no such form and is refused."""
+    ax = self.axes[axis]
+    if ax.extrap == "periodic" or (ax.extrap == "fill" and ax.fill != 0.0 and not math.isnan(ax.fill)):
+      raise ValueError(f"the antiderivative of a spline with extrap={ax.extrap!r} (fill={ax.fill}) is not a spline extrapolation")
+    t, k, n = ax.knots, ax.degree, ax.n
+    step = ((t[k + 1 : k + 1 + n] - t[:n]) / (k + 1)).reshape(n, *(1,) * (self.coeffs.ndim - 1))
+    moved = np.moveaxis(self.coeffs, axis, 0)
+    cum = np.concatenate([np.zeros((1, *moved.shape[1:])), np.cumsum(moved * step, axis=0)])
+    knots = np.concatenate([t[:1], t, t[-1:]])
+    at_lo = np.tensordot(design_matrix([knots], [k + 1], np.array([[ax.lo]])).toarray()[0], cum, axes=(0, 0))
+    after: dict[str, tuple[Extrap, float]] = {
+      "extend": ("extend", ax.fill),
+      "linear": ("extend", ax.fill),
+      "clamp": ("linear", ax.fill),
+      "fill": ("clamp" if ax.fill == 0.0 else "fill", ax.fill),
+    }
+    extrap, fill = after[ax.extrap]
+    new = Axis(knots, k + 1, edges=ax.edges, side=ax.side, extrap=extrap, fill=fill, search=ax.search)
+    return self._with_axis(axis, new, np.moveaxis(cum - at_lo, 0, axis), f"i{axis}")
+
+  def integrate(self, a: Any, b: Any) -> Any:
+    """The integral over ``[a, b]`` (a box ``a <= x <= b`` in n-D). Numbers give a number, or an
+    array for a vector-valued spline, exact for every extrapolation mode in 1-D and inside the base
+    box in n-D; ``Expr`` bounds give an ``Expr``, the antiderivative at the bounds (see
+    ``antiderivative`` for what that integrates outside the base interval)."""
+    numeric = all(
+      not isinstance(v, Expr)
+      for v in (np.ravel(a).tolist() if not isinstance(a, Expr) else [a]) + (np.ravel(b).tolist() if not isinstance(b, Expr) else [b])
+    )
+    if numeric and self.ndim == 1:
+      return _integrate_1d(self, float(np.asarray(a)), float(np.asarray(b)))
+    if numeric:
+      lo, hi = np.asarray(a, dtype=np.float64).reshape(-1), np.asarray(b, dtype=np.float64).reshape(-1)
+      if lo.size != self.ndim or hi.size != self.ndim:
+        raise ValueError(f"a {self.ndim}-D integral needs {self.ndim} lower and upper bounds")
+      from scipy.interpolate import BSpline as SciBSpline
+
+      out = self.coeffs
+      for ax, u, v in zip(self.axes, lo, hi, strict=True):
+        if min(u, v) < ax.lo or max(u, v) > ax.hi:
+          raise ValueError("an n-D integral with numeric bounds must lie inside the base box")
+        weights = SciBSpline(ax.knots, np.eye(ax.n), ax.degree).integrate(u, v)
+        out = np.tensordot(weights, out, axes=(0, 0))
+      return out
+    total = self
+    for d in range(self.ndim):
+      total = total.antiderivative(d)
+    corners = []
+    for signs in np.ndindex(*(2,) * self.ndim):
+      point = [as_expr(b if bit else a) if self.ndim == 1 else as_expr((b if bit else a)[d]) for d, bit in enumerate(signs)]
+      value = total(point[0] if self.ndim == 1 else stack(point))
+      corners.append(value if (self.ndim - sum(signs)) % 2 == 0 else -value)
+    result = corners[0]
+    for c in corners[1:]:
+      result = result + c
+    return result
+
+  def inverse(self, *, tol: float = 1e-14, max_iter: int = 60) -> BSpline | Inverse:
+    """``x = f^{-1}(y)`` for a 1-D scalar spline that is strictly monotone (checked). Degree 1 gives
+    the exact table with the axes swapped, a ``BSpline``; a higher degree an ``Inverse``, solved by
+    safeguarded Newton. Outside the spline's range the inverse continues linearly."""
+    if self.ndim != 1 or self.out_shape:
+      raise ValueError("inverse() needs a 1-D scalar spline")
+    ax = self.axes[0]
+    if ax.extrap == "periodic" or ax.degree == 0:
+      raise ValueError(f"a spline of degree {ax.degree} with extrap={ax.extrap!r} is not invertible")
+    sign = _monotone_sign(self)
+    values = self.to_scipy()(ax.edges)
+    if ax.degree == 1:
+      order = slice(None) if sign > 0 else slice(None, None, -1)
+      extrap = {"extend": "extend", "clamp": "clamp"}.get(ax.extrap, "fill")
+      return BSpline.from_axes(
+        [Axis(np.concatenate([values[order][:1], values[order], values[order][-1:]]), 1, edges=values[order], extrap=extrap)],  # ty: ignore[invalid-argument-type]
+        ax.edges[order],
+        strategy=self.strategy,
+        name=f"{self.name}_inv",
+      )
+    return Inverse(self, sign, values, tol, max_iter)
+
   def to_scipy(self) -> Any:
     """The same spline as a SciPy ``BSpline`` (1-D) or ``NdBSpline``, extrapolating by its end
     polynomials; for tests and plotting."""
@@ -303,6 +414,169 @@ class BSpline:
     if self.ndim == 1:
       return SciBSpline(self.axes[0].knots, self.coeffs, self.axes[0].degree)
     return NdBSpline(self.knots, self.coeffs, self.degree)
+
+
+def _along(matrix: Any, values: np.ndarray, axis: int) -> np.ndarray:
+  """``matrix`` (dense or sparse) applied to ``values`` along ``axis``."""
+  moved = np.moveaxis(values, axis, 0)
+  out = np.asarray(matrix @ moved.reshape(moved.shape[0], -1)).reshape(matrix.shape[0], *moved.shape[1:])
+  return np.moveaxis(out, 0, axis)
+
+
+def _integrate_1d(f: BSpline, a: float, b: float) -> Any:
+  """The exact integral over ``[a, b]`` of a 1-D spline and its extrapolation."""
+  if a > b:
+    return -_integrate_1d(f, b, a)
+  ax, s = f.axes[0], f.to_scipy()
+  if ax.extrap in ("extend", "periodic"):
+    return s.integrate(a, b, extrapolate=True if ax.extrap == "extend" else "periodic")
+  total = s.integrate(max(a, ax.lo), min(b, ax.hi)) if a < ax.hi and b > ax.lo else np.zeros(f.out_shape)
+  for end, length, slope_sign in ((ax.lo, max(0.0, min(b, ax.lo) - a), -1.0), (ax.hi, max(0.0, b - max(a, ax.hi)), 1.0)):
+    if length > 0.0:
+      if ax.extrap == "fill":
+        total = total + ax.fill * length
+      else:  # clamp: the end value; linear: the end value and slope
+        total = total + s(end) * length + (slope_sign * s(end, 1) * length**2 / 2 if ax.extrap == "linear" else 0.0)
+  return total
+
+
+def _monotone_sign(f: BSpline) -> int:
+  """+1 or -1 when the 1-D spline is strictly monotone: its derivative keeps one sign on every cell
+  (checked at the cell ends and at the derivative's own extrema) and its values at the partition
+  edges are strictly monotone."""
+  ax = f.axes[0]
+  values = f.to_scipy()(ax.edges)
+  steps = np.diff(values)
+  sign = 1 if np.all(steps > 0) else -1 if np.all(steps < 0) else 0
+  if sign == 0:
+    raise ValueError("inverse() needs a strictly monotone spline; its values at the knots are not")
+  if ax.degree >= 2:
+    from scipy.interpolate import PPoly
+
+    deriv = f.derivative().to_scipy()
+    probe = [ax.edges, np.nextafter(ax.edges[1:], -np.inf)]
+    if ax.degree >= 3:  # the derivative's extrema inside a cell are roots of the second derivative
+      roots = PPoly.from_spline(f.derivative(2).to_scipy()).roots(extrapolate=False)
+      probe.append(roots[np.isfinite(roots)])
+    slopes = sign * deriv(np.concatenate(probe))
+    if np.min(slopes) < -1e-12 * max(1.0, float(np.max(np.abs(slopes)))):
+      raise ValueError("inverse() needs a strictly monotone spline; its derivative changes sign")
+  return sign
+
+
+class Inverse:
+  """``x = f^{-1}(y)`` for a strictly monotone 1-D spline of degree 2 or more, from
+  ``BSpline.inverse``. Newton's method on the cell the linear table through the spline's values at
+  its partition edges names, bisecting whenever a step would leave the cell, in a ``while_loop``;
+  the derivative is ``dx/dy = 1/f'(x)`` by ``custom_derivative``, so it never differentiates the
+  iterations. Outside the range of ``f`` the inverse continues along its end tangent. Calling it
+  works as for a spline: a scalar, or a batch ``(N,)`` as one map."""
+
+  def __init__(self, f: BSpline, sign: int, values: np.ndarray, tol: float, max_iter: int) -> None:
+    self.f, self.sign, self.tol, self.max_iter = f, sign, tol, max_iter
+    self._levels = sign * values  # increasing: the values of sign * f at the edges
+    self._table = Axis(self._levels, 0, extrap="clamp")
+
+  def __repr__(self) -> str:
+    return f"Inverse({self.f!r})"
+
+  def function(self) -> ConcreteFunction[Any, Any, Any, Any]:
+    """The inverse as a Function of one value, ``y -> x``, with its derivative rule attached."""
+    name = f"{self.f.name}_{self.f.digest}_inv"
+    return _interned(name, lambda: self._build(name))
+
+  def __call__(self, y: Any) -> Expr:
+    y = as_expr(y)
+    if y.type.dtype != dtypes.float64:
+      y = cast(y, dtypes.float64)
+    if not y.shape:
+      return self.function()(y)
+    if len(y.shape) != 1:
+      raise ValueError(f"an inverse takes a scalar or a batch (N,), got shape {y.shape}")
+    return vmap(self.function(), y.shape[0], [(y, 0, 1)])
+
+  def _build(self, name: str) -> ConcreteFunction[Any, Any, Any, Any]:
+    f, sign, edges, levels = self.f, float(self.sign), self.f.axes[0].edges, self._levels
+    deriv = f.derivative()
+
+    def g(x: Expr, j: Expr) -> Expr:
+      return sign * f._at([x], (j,))
+
+    def dg(x: Expr, j: Expr) -> Expr:
+      return sign * deriv._at([x], (j,))
+
+    def cond(c: Expr, z: Expr, j: Expr) -> Expr:
+      x, lo, hi = c[0], c[1], c[2]
+      return ((g(x, j) - z).abs() > self.tol * (1.0 + z.abs())) & (hi - lo > 1e-15 * (1.0 + x.abs()))
+
+    def body(c: Expr, z: Expr, j: Expr) -> Expr:
+      x, lo, hi = c[0], c[1], c[2]
+      r, d = g(x, j) - z, dg(x, j)
+      lo, hi = where(r < 0.0, x, lo), where(r > 0.0, x, hi)
+      step = x - r / d
+      inside = (d > 0.0) & (step > lo) & (step < hi)
+      return stack([where(inside, step, 0.5 * (lo + hi)), lo, hi])
+
+    carry, pz, pj = L("c", (3,)), L("z", ()), L("j", ())
+    cond_fn = ConcreteFunction(f"{name}_go", cond, param_list(carry, pz, pj), L("go", (), dtype=dtypes.bool_))
+    body_fn = ConcreteFunction(f"{name}_step", body, param_list(carry, pz, pj), L("c_next", (3,)))
+
+    # Outside the range the inverse continues along the end tangents of sign * f, whose slopes are
+    # known now; a flat end (a slope negligible against the mean) holds the end instead, as the
+    # tangent there never reaches a value outside, and an ulp past the end (the spline's value at its
+    # end and the data's can differ by one) would otherwise go a long way.
+    mean = (levels[-1] - levels[0]) / (edges[-1] - edges[0])
+    ends = [sign * float(v) for v in deriv.to_scipy()(edges[[0, -1]])]
+    rates = [1.0 / e if e > 1e-12 * mean else 0.0 for e in ends]
+
+    def clamp(y: Expr) -> tuple[Expr, Expr, Expr]:
+      z = sign * y
+      zc = where(z < float(levels[0]), float(levels[0]), where(z > float(levels[-1]), float(levels[-1]), z))
+      return z, zc, equal(z, zc)
+
+    def outside_rate(z: Expr, zc: Expr) -> Expr:
+      return where(z < zc, rates[0], rates[1])
+
+    def solve(y: Expr) -> Expr:
+      z, zc, inside = clamp(y)
+      j = self._table.cell(zc)
+      i = cast(j, dtypes.int64)
+      x_lo, x_hi = _gather(edges, i), _gather(edges, i + 1)
+      z_lo, z_hi = _gather(levels, i), _gather(levels, i + 1)
+      x0 = x_lo + (zc - z_lo) * (x_hi - x_lo) / (z_hi - z_lo)
+      (c, _) = while_loop(cond_fn, body_fn, stack([x0, x_lo, x_hi]), max_iter=self.max_iter, params=[zc, j])
+      return where(inside, c[0], c[0] + (z - zc) * outside_rate(z, zc))
+
+    slope = deriv.function()
+
+    def rate(y: Expr, x: Expr) -> Expr:
+      """``dx/dy``: ``1/f'(x)`` inside, the end tangent's (zero at a flat end) outside."""
+      z, zc, inside = clamp(y)
+      return where(inside, 1.0 / slope(x), sign * outside_rate(z, zc))
+
+    primal = ConcreteFunction(f"{name}_solve", solve, param_list(L("y", ())), L("x", ()))
+    jvp = ConcreteFunction(f"{name}_jvp", lambda y, dy: dy * rate(y, as_expr(primal(y))), param_list(L("y", ()), L("dy", ())), L("dx", ()))
+    vjp = ConcreteFunction(f"{name}_vjp", lambda y, x, xbar: xbar * rate(y, x), param_list(L("y", ()), L("x", ()), L("xbar", ())), L("ybar", ()))
+    return custom_derivative(primal, jvp=jvp, vjp=vjp)
+
+
+def design_matrix(knots: Sequence[np.ndarray], degrees: Sequence[int], points: np.ndarray) -> sparse.csr_array:
+  """The ``(m, prod n_d)`` matrix of the tensor-product basis at ``m`` points ``(m, D)`` inside the
+  base box, columns in the coefficients' C order: the rows of the axes' design matrices multiplied
+  out. (SciPy's ``NdBSpline.design_matrix`` sizes its columns by the last one used.)"""
+  from scipy.interpolate import BSpline as SciBSpline
+
+  m = points.shape[0]
+  cols, vals, width = np.zeros((m, 1), dtype=np.int64), np.ones((m, 1)), 1
+  for d, (t, k) in enumerate(zip(knots, degrees, strict=True)):
+    b = SciBSpline.design_matrix(points[:, d], t, k).tocsr()
+    n = t.size - k - 1
+    idx, val = b.indices.reshape(m, k + 1), b.data.reshape(m, k + 1)
+    cols = (cols[:, :, None] * n + idx[:, None, :]).reshape(m, -1)
+    vals = (vals[:, :, None] * val[:, None, :]).reshape(m, -1)
+    width *= n
+  rows = np.repeat(np.arange(m), cols.shape[1])
+  return sparse.csr_array((vals.reshape(-1), (rows, cols.reshape(-1))), shape=(m, width))
 
 
 _FUNCTIONS: weakref.WeakValueDictionary[str, ConcreteFunction[Any, Any, Any, Any]] = weakref.WeakValueDictionary()
