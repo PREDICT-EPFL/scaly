@@ -515,12 +515,8 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   np.testing.assert_allclose(dyv, np.dot(2 * xv, sv))
   np.testing.assert_allclose(gradv, 2 * xv)
 
-  try:
-    _ = sc.jvp(x.floor().sum(), x, seed)
-  except NotImplementedError as e:
-    assert "nonsmooth" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("nonsmooth JVP through wrt should still fail")
+  with sc.options(nonsmooth="error"), pytest.raises(NotImplementedError, match="nonsmooth"):
+    sc.jvp(x.floor().sum(), x, seed)
 
 
 def _piecewise(x: sc.Expr) -> sc.Expr:

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interp SP0 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP0 report</h1>
+<p class="sub">C-170 · a zero derivative for <code>floor</code> and <code>ceil</code>, forward mode through integer index arithmetic, the feasibility spike · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The compiler changes the interpolation package relies on, and the measurement behind the plan's kill criterion.</p>
+<ul>
+<li><b><code>floor</code> and <code>ceil</code> differentiate.</b> Their derivative is zero, exact off the jumps. A periodic wrap <code>sin(x − T floor(x/T))</code> gives the gradient, Jacobian and Hessian of <code>sin</code> at the wrapped point to 1e-14. <code>nonsmooth="error"</code> still refuses them.</li>
+<li><b>Integer index arithmetic in forward mode.</b> An index vector built by broadcast <code>int64</code> arithmetic (<code>arange(4) + [cell]·4</code>, or a batch's <code>(N,1)·4 + (1,4)</code>) now differentiates under <code>sc.jacobian</code>, <code>sc.hessian</code>, <code>sc.jvp</code> and <code>sc.sparse_jacobian</code>. It failed on a mixed-dtype product.</li>
+<li><b>Spike.</b> A spline evaluation made of existing ops runs in <b>0.06×</b> (1-D cubic, 1 000 knots), <b>0.03×</b> (2-D bicubic, 64²) and <b>0.39×</b> (3-D trilinear, 20³) the time of CasADi's generated <code>interpolant</code>, with a tenth of the C lines and lowering under 0.05 s. The dedicated op of §10 is not needed on these numbers; SP4 re-measures with the library.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 652 passed, 45 skipped (baseline 2 644 and 45). <b>Mutation checks:</b> 9 of 9 killed, one only after the clamp test was strengthened.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>ir/expr.py</code></td><td><code>FLOOR</code> and <code>CEIL</code> become differentiable in <code>OP_INFO</code>, as <code>minimum</code> did when its tie convention arrived, so the type says a derivative (zero) flows and the AD rules decide it. <code>cast</code>'s docstring states that a non-finite or out-of-range float cast to an integer is undefined in the generated C, and that clamping with <code>minimum</code>/<code>maximum</code> first leaves a finite value.</td></tr>
+<tr><td><code>ad/forward.py</code></td><td>
+<ul>
+<li><code>floor_tangent</code>: zero, after <code>_nonsmooth_mode</code>, which raises under <code>"error"</code>. Used by the single-seed JVP, the multi-seed structural JVP and reverse mode.</li>
+<li><code>_jvp</code> and <code>_jvp_many_structural</code> give a node of integer or bool dtype a zero tangent before dispatching on its op. The float tangent of an index cannot combine with the <code>int64</code> arithmetic above it, and has no meaning anyway. The guard is on dtype rather than on <code>diff=False</code>: a float node with <code>diff=False</code> keeps today's behaviour.</li>
+</ul></td></tr>
+<tr><td><code>ad/reverse.py</code></td><td>The VJP of <code>floor</code>/<code>ceil</code> is <code>floor_tangent</code>'s zero.</td></tr>
+<tr><td><code>ad/sparsity.py</code></td><td>No dependence through <code>floor</code>/<code>ceil</code>, so a Jacobian pattern carries no structural entry that is always zero. Under <code>"error"</code> the dependence is kept, so that <code>sparse_jacobian</code> still reaches the refusal instead of silently skipping it.</td></tr>
+<tr><td>Docs</td><td><code>docs/guide/options.md</code> and the <code>Options</code> docstring gain the <code>floor</code>/<code>ceil</code> line.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<ul>
+<li><code>tests/ad/test_floor_and_index_derivatives.py</code> (7 tests):
+<ul>
+<li>the periodic wrap for <code>floor</code> and <code>ceil</code>: value, reverse gradient, forward Jacobian and Hessian against <code>cos</code> and <code>−sin</code> at the wrapped point, at ordinary points and near ±1 000, through the JIT;</li>
+<li><code>"error"</code> refuses <code>gradient</code>, <code>jacobian</code>, <code>jvp</code> and <code>sparse_jacobian</code>;</li>
+<li>the sparsity pattern with and without <code>"error"</code>;</li>
+<li>the <code>int64</code> index build for one point (value, gradient, Jacobian, Hessian, JVP) and for a batch of six (Jacobian, Hessian, and <code>sparse_jacobian</code>'s diagonal pattern and values), against a NumPy piecewise cubic.</li>
+</ul></li>
+<li><code>tests/codegen/test_float_to_index.py</code>: NaN, ±inf, ±1e300, a knot and −0 through the clamp and the cast in the generated C. The clamped float is checked as well as the table read.</li>
+<li>Updated: <code>tests/ir/test_expr.py</code> (<code>floor</code> is differentiable) and <code>tests/ad/test_derivatives.py</code> (the JVP through <code>floor</code> is refused under <code>"error"</code>, not by default).</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Result</th></tr>
+<tr><td>no integer-dtype guard in <code>_jvp</code></td><td class="ok">killed</td></tr>
+<tr><td>no integer-dtype guard in <code>_jvp_many_structural</code></td><td class="ok">killed</td></tr>
+<tr><td><code>floor_tangent</code> without the <code>"error"</code> check</td><td class="ok">killed</td></tr>
+<tr><td>structural <code>floor</code> branch without the check</td><td class="ok">killed</td></tr>
+<tr><td>reverse rule passes the cotangent through</td><td class="ok">killed</td></tr>
+<tr><td>forward rule passes the tangent through</td><td class="ok">killed</td></tr>
+<tr><td>sparsity keeps the dependence</td><td class="ok">killed</td></tr>
+<tr><td>sparsity drops it under <code>"error"</code> too</td><td class="ok">killed</td></tr>
+<tr><td><code>fmin</code>/<code>fmax</code> rendered as NaN-propagating ternaries</td><td class="ok">killed</td> </tr>
+</table></div>
+<p>The last mutant first survived. AArch64 converts NaN to the integer 0, so the table read was right by accident; the test now also checks the clamped float before the cast.</p>
+
+<h2>3. Spike</h2>
+<p><code>perf_2026_09_28_interp/bench_spike.py</code>. It uses a prototype, not the library: a branch-free binary search (1-D, 10 halvings on knots padded with +inf) or the uniform search with its one-step correction (2-D, 3-D); one <code>take</code> of the cell's coefficients; Horner. CasADi 3.8's <code>interpolant</code> is code-generated at each lookup mode and the faster is kept. One point per call, 7 rounds.</p>
+<div class="scroll"><table>
+<tr><th>Cell</th><th>Scaly ns</th><th>CasADi ns (lookup)</th><th>Ratio</th><th>C lines</th><th>Lowering s</th></tr>
+<tr><td>cubic1d, value + derivative</td><td class="r">4.0</td><td class="r">67.3 (binary)</td><td class="r">0.06</td><td class="r">82 / 820</td><td class="r">0.020</td></tr>
+<tr><td>bicubic2d, value + gradient</td><td class="r">6.2</td><td class="r">241.0 (binary)</td><td class="r">0.03</td><td class="r">114 / 1 999</td><td class="r">0.048</td></tr>
+<tr><td>trilinear3d, value</td><td class="r">5.2</td><td class="r">13.3 (exact)</td><td class="r">0.39</td><td class="r">72 / 1 273</td><td class="r">0.018</td></tr>
+</table></div>
+<ul>
+<li>CasADi refuses <code>lookup_mode="exact"</code> for a <code>bspline</code> even on an exactly uniform grid. It applies the mode to the B-spline's knot vector, which not-a-knot leaves unequally spaced. Its <code>linear</code> mode was slower than <code>binary</code> at 64 knots.</li>
+<li>The bicubic's piecewise-polynomial table makes 1.3 MB of C source against CasADi's 0.32 MB: 16 values per cell against about one per point. SP1's <code>basis</code> strategy is the lean form, and SP4 sets the storage budget above which <code>auto</code> uses it.</li>
+</ul>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate</th><th>Status</th></tr>
+<tr><td>Periodic wrap: gradient and Hessian to 1e-14 off the jumps</td><td class="ok">met</td></tr>
+<tr><td><code>nonsmooth="error"</code> still raises</td><td class="ok">met</td></tr>
+<tr><td>Broadcast <code>int64</code> index build under <code>jacobian</code> and <code>hessian</code>, point and batch</td><td class="ok">met</td></tr>
+<tr><td>Full suite green</td><td class="ok">met</td></tr>
+<tr><td>Spike numbers recorded for §10</td><td class="ok">met (0.03–0.39×; the op is not needed on these)</td></tr>
+</table></div>
+
+<h2>5. Next</h2>
+<p>SP1 (API-171): the <code>scaly.interp</code> package, the grid and its searches, the tensor-product B-spline with both evaluation strategies and the five extrapolation modes, and the fits of NumPy data for <code>nearest</code>, <code>zoh</code>, <code>linear</code>, <code>cubic</code> and <code>spline</code>.</p>
+</main></body></html>

@@ -115,7 +115,9 @@ def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
 def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> Expr:
   if expr.id in memo:
     return memo[expr.id]
-  if not any(not _is_zero_const(seed) and _depends_on(expr, wrt, dep_memo) for wrt, seed in seeds.items()):
+  # An integer or bool value (an index built from a cast) carries no derivative: stop here rather
+  # than form a float tangent the integer arithmetic above it could not combine with.
+  if not expr.type.dtype.is_floating or not any(not _is_zero_const(seed) and _depends_on(expr, wrt, dep_memo) for wrt, seed in seeds.items()):
     memo[expr.id] = ret = zeros_like(expr)
     return ret
   if expr.op == ExprOp.INPUT:
@@ -222,7 +224,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.ABS:
     return save(sign(args[0]) * d[0])
   if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
-    raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} is not implemented")
+    return save(floor_tangent(expr))
   if expr.op in {ExprOp.MINIMUM, ExprOp.MAXIMUM}:
     w = extremum_weight(expr)
     return save(w * d[0] + (1.0 - w) * d[1])
@@ -578,6 +580,13 @@ def _nonsmooth_mode(op: ExprOp | str) -> str:
   if mode == "error":
     raise NotImplementedError(f"derivative of nonsmooth op {ExprOp(op).value!r} refused under sc.options(nonsmooth='error')")
   return mode
+
+
+def floor_tangent(expr: Expr) -> Expr:
+  """The derivative of ``floor`` or ``ceil``: zero, which is exact everywhere but at the jumps, and
+  refused under ``sc.options(nonsmooth="error")``."""
+  _nonsmooth_mode(expr.op)
+  return zeros_like(expr)
 
 
 def extremum_weight(expr: Expr) -> Expr:
@@ -1163,7 +1172,11 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.id in memo:
     return memo[expr.id]
   nseed = seeds.shape[0]
-  if _is_zero_const(seeds) or not _depends_on(expr, wrt, dep_memo):
+  if not expr.type.dtype.is_floating or _is_zero_const(seeds) or not _depends_on(expr, wrt, dep_memo):  # see ``_jvp``
+    memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    return ret
+  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
+    floor_tangent(expr)
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
     return ret
   if expr.op == ExprOp.INPUT:

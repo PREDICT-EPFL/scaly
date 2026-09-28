@@ -25,6 +25,8 @@ class Options:
       arguments tie. ``"split"`` shares it equally among the tied arguments, ``"first"`` gives it
       all to the first (the left operand, or the lowest index), and ``"error"`` refuses to
       differentiate these operations at all. Away from ties every convention gives the same value.
+      ``floor`` and ``ceil`` have a zero derivative, exact but at their jumps, under ``"split"``
+      and ``"first"``; ``"error"`` refuses them too.
     dense_unroll: the largest order at which ``cholesky``, ``ldl`` and ``solve_triangular`` become
       straight-line code instead of loops.
     sparse_unroll: the most multiply-adds and divisions a sparse ``L D L^T`` may take and still be

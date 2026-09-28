@@ -24,7 +24,8 @@ print(sc.get_options().nonsmooth)
 | `"error"` | differentiating any of these operations raises `NotImplementedError` |
 
 Away from ties every convention gives the same derivative. `abs` is differentiable with
-`abs'(0) = 0` under every setting.
+`abs'(0) = 0` under every setting. `floor` and `ceil` have a zero derivative, exact everywhere but
+at their jumps, under `"split"` and `"first"`, and `"error"` refuses them like the others.
 
 | Option | Default | Meaning |
 | --- | --- | --- |

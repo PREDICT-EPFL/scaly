@@ -149,7 +149,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert sc.scatter(p.gather([1, 2]), [0, 2], 3).type.diff is False
   assert sc.stack([p, c]).type.diff is False
   assert sc.concat([x[:1], p[:1]]).type.diff
-  assert not x.floor().type.diff
+  assert x.floor().type.diff  # a zero derivative, following the nonsmooth option like minimum's
   assert sc.minimum(x, p).type.diff  # differentiable since the nonsmooth option (tie convention) exists
   assert not sc.minimum(p, c).type.diff
 

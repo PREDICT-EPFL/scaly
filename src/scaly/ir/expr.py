@@ -215,8 +215,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.LOG: OpInfo(ExprOp.LOG, 1, np.log),
   ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1, np.sqrt),
   ExprOp.ABS: OpInfo(ExprOp.ABS, 1, np.abs),
-  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, np.floor, False),
-  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, np.ceil, False),
+  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, np.floor),
+  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, np.ceil),
   ExprOp.ADD: OpInfo(ExprOp.ADD, 2, np.add),
   ExprOp.SUB: OpInfo(ExprOp.SUB, 2, np.subtract),
   ExprOp.MUL: OpInfo(ExprOp.MUL, 2, np.multiply),
@@ -880,7 +880,10 @@ def where(cond: Any, x: Any, y: Any) -> Expr:
 def cast(x: Any, dtype: DType | str) -> Expr:
   """Convert ``x`` to ``dtype``. To ``bool`` it means ``x != 0``; from ``bool`` it gives 0 or 1.
 
-  A cast between floating types keeps the derivative; any other cast has none.
+  A cast between floating types keeps the derivative; any other cast has none. A float to integer
+  cast truncates toward zero, as in C, and a NaN, an infinity or a value out of the integer type's
+  range is undefined behaviour in the generated C: clamp with ``minimum`` and ``maximum`` first,
+  which map NaN to the other operand and so leave a finite value.
   """
   x, target = as_expr(x), as_dtype(dtype)
   if x.type.dtype == target:

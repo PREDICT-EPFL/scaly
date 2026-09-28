@@ -14,6 +14,7 @@ from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, PREDICATE_OPS, Expr, ExprOp, independent
 from ..ir.types import SparsityType, broadcast_shape
+from ..utils.options import get_options
 
 
 def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> bool:
@@ -124,7 +125,9 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spars
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
     return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
-  if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
+  # floor and ceil have a zero derivative, except under nonsmooth="error", where the dependence is
+  # kept so that differentiating it reaches the rule that refuses.
+  if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS or (expr.op in {ExprOp.FLOOR, ExprOp.CEIL} and get_options().nonsmooth != "error"):
     return _empty((expr.size, wrt.size))
   if expr.op == ExprOp.COPYSIGN:
     # The sign operand only flips the result, so its derivative is zero wherever it exists.

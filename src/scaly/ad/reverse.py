@@ -46,6 +46,7 @@ from .forward import (
   claim_name,
   custom_vjp_call,
   extremum_weight,
+  floor_tangent,
   reduce_weights,
   segment_weights,
   sign,
@@ -547,7 +548,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   if expr.op == ExprOp.ABS:
     return (cot * sign(args[0]),)
   if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
-    raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
+    return (floor_tangent(expr),)
   if expr.op in {ExprOp.MINIMUM, ExprOp.MAXIMUM}:
     w = extremum_weight(expr)
     return (_unbroadcast(cot * w, args[0].shape, expr.shape), _unbroadcast(cot * (1.0 - w), args[1].shape, expr.shape))

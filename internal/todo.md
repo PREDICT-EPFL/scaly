@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 158**
+**Next id: 186**
 
 | Prefix | Section |
 |---|---|
@@ -163,6 +163,22 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - [ ] **API-151. Integrators/MPC review round** (plan R).
 - [ ] **API-152. Indirect methods** (plan X): Pontryagin's boundary value problem by indirect
       multiple shooting.
+- [ ] **API-171. `scaly.interp`: tables and interpolating splines** (interp plan SP1,
+      `notes/interp_plan_2026_09_28.md`): the tensor-product B-spline, the `uniform`, `count` and
+      `binary` searches, the `pp` and `basis` strategies, batches and vector outputs, the five
+      extrapolation modes; `nearest`, `zoh`, `linear`, `cubic` and `spline` fits of NumPy data in 1-D
+      to 4-D, against SciPy and CasADi.
+- [ ] **API-172. Shape-preserving kinds, smoothing splines and spline calculus** (interp plan SP2):
+      `pchip`, `akima`, `makima`, `steffen`, `smooth_linear`, `interp.smoothing`, `derivative`,
+      `antiderivative`, `integrate`, `inverse`.
+- [ ] **API-173. Coefficients and data as expressions** (interp plan SP3): `interp.BSpline(coeffs=)`,
+      in-graph fits for every kind, `basis()` and `at()` for points known when the graph is built.
+- [ ] **API-174. Interpolation performance** (interp plan SP4): the `bucket` search, the `auto`
+      thresholds by measurement, large-table code generation, tables as inputs for AOT, `float32`,
+      and the dedicated-op gate.
+- [ ] **API-175. Shape-constrained fitting** (interp plan SP5): `interp.constrained`, a QP through PIQP.
+- [ ] **API-176. Interpolation notebooks and CasADi pairs** (interp plan SP6).
+- [ ] **API-178. Interpolation review round** (interp plan SPR).
 
 ### Deferred
 
@@ -207,6 +223,17 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - **API-155. The generated IPM as an MPC backend,** once Tier 4 #30 (`backend="scaly"`) lands.
 - **API-156. Migrate the benchmark problems' hand-written integrators and NumPy plants** onto
   `scaly.integrators`, keeping their `checks.py` gates and CasADi parity.
+- **API-179. `ExprOp.SPLINE_EVAL`,** a dedicated interpolation op, only if the gate of the interp
+  plan (§10) trips.
+- **API-180. Scattered-data interpolants** (radial basis functions, the Gaussian-process posterior
+  mean) behind `scaly.interp`'s calling convention.
+- **API-181. Piecewise-affine functions on polyhedral or simplicial partitions** (explicit MPC laws,
+  PWA models), with point location by a search tree.
+- **API-182. B-spline input parametrizations as a transcription option in `scaly.mpc`.**
+- **API-183. Shape-constrained fitting online,** through the generated IPM once Tier 4 #30 lands.
+- **API-184. Knots as expressions** (CasADi's parametric grid) and free-knot fitting.
+- **API-185. Shape-preserving interpolation in n-D,** as a tensor-product Hermite spline with a
+  stated definition; SciPy's RGI `"pchip"` is not one (interp plan §3.4).
 
 ## Compiler internals
 
@@ -784,6 +811,20 @@ protocol's compile flags.
       Hessians never reach the factorization, which refuses a derivative in both modes. Against
       Accelerate's `dgesv`: 0.12x at order 4, 0.51x at 8, 0.94 to 1.05x from 12 to 40. 24/24 mutants
       killed, three after a test was added. Report: `notes/integrators_i2_report.html`.
+- [x] **C-170. A zero derivative for `floor` and `ceil`, and forward mode through integer index
+      arithmetic** (interp plan SP0, `notes/interp_plan_2026_09_28.md`). `floor` and `ceil` are
+      differentiable, with a zero derivative in forward and reverse mode, refused under
+      `nonsmooth="error"`; a sparsity pattern records no dependence through them, except under
+      `"error"`, so that differentiating still reaches the refusal. A periodic wrap
+      `sin(x - T floor(x / T))` differentiates to 1e-14. Forward mode (`_jvp`, `_jvp_many_structural`)
+      gives an integer or bool node no tangent, so an index vector built by broadcast `int64`
+      arithmetic no longer fails `sc.jacobian` and `sc.hessian` on a mixed-dtype product. A test pins
+      the clamp-before-cast order through the generated C (NaN, ±inf, 1e300), and `cast`'s docstring
+      states the undefined behaviour it avoids. Spike for the plan's kill criterion: a spline evaluation
+      composed from existing ops runs in 0.06x, 0.03x and 0.39x the time of CasADi's generated
+      `interpolant` (1-D cubic, 2-D bicubic, 3-D trilinear) with a tenth of the C lines
+      (`perf_2026_09_28_interp/`). 9/9 mutants killed, one after the clamp test was strengthened.
+      Report: `notes/interp_sp0_report.html`.
 
 ### Deferred
 
@@ -1079,6 +1120,8 @@ the code does.
       permissions on a tag trigger. Cloudflare Pages publishes the latest docs from `main` and a
       preview per branch, which the existing every-branch build already produces. Each site carries
       a banner or version switcher saying which one it is.
+- [ ] **D-177. Interpolation docs** (interp plan SP7): the guide page `docs/guide/interp.md`, the
+      API page, nav entries, the examples README section.
 - [x] **D-35. Reconcile the problem READMEs with the audit.** Completed 2026-09-11. The problem
       READMEs now describe only the current formulations and link measured comparisons to the
       canonical result pages.
