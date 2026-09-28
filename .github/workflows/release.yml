@@ -50,7 +50,7 @@ jobs:
               echo "::error::$workflow has no successful push run for $GITHUB_SHA: ${run:-none}"
               exit 1
             fi
-            [ "$workflow" = ci.yml ] && echo "ci-run=$(jq -r .databaseId <<<"$run")" >> "$GITHUB_OUTPUT"
+            if [ "$workflow" = ci.yml ]; then echo "ci-run=$(jq -r .databaseId <<<"$run")" >> "$GITHUB_OUTPUT"; fi
           done
 
       - name: Choose the packages to release
