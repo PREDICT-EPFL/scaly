@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 195**
+**Next id: 196**
 
 | Prefix | Section |
 |---|---|
@@ -263,11 +263,22 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       float literals in the AD rules become float64 constants (`Expr._operand` weak-types only
       ints), and the seeds of `jacobian` and `_jvp_many_structural` are float64, so forward and
       reverse mode both fail on float32 graphs. float32 splines evaluate but do not differentiate
-      until this lands.
-- [ ] **C-193. Derivative caches keyed on `nonsmooth`.** The call, map, scan and while caches in
+      until this lands. C-158 has since given `zeros_like`, `_ones_like` and a Python number beside
+      a float expression the value's dtype (`tangent_dtype`); what remains starts with checking a
+      float32 spline's derivatives.
+- [x] **C-193. Derivative caches keyed on `nonsmooth`.** The call, map, scan and while caches in
       `ad/forward.py` and `ad/reverse.py` ignore `sc.options(nonsmooth=...)`, so a derivative
       built under one setting is reused under another (a gradient at a `maximum` tie, a refusal
-      under `"error"`). Key them on the setting, and name non-default derivatives apart.
+      under `"error"`). Key them on the setting, and name non-default derivatives apart. Done by
+      C-158's `options_tag`, which keys the caches on every option in force;
+      `tests/ad/test_nonsmooth_derivative_caches.py` reproduces both cases through `vmap`, `scan`
+      and `while_loop` under `sc.gradient`, `sc.jvp` and `sc.jacobian`. The narrower key is C-195.
+- [ ] **C-195. Key a derivative helper only on the options its callee reads.** `options_tag` keys
+      every helper cache on all options and tags the names under any non-default one, so under
+      `nonsmooth="first"` a smooth callee's derivatives are built again, as new C symbols. Tag a
+      callee with `nonsmooth` only when its graph, callees included, holds one of the eight
+      nonsmooth ops, and likewise `dense_unroll`/`sparse_unroll` and `max_trajectory` only where
+      they are read. `test_a_smooth_derivative_is_shared_across_settings` is its strict xfail.
 - [ ] **API-194. A leaner `inverse()` loop.** It costs about 20 forward evaluations per point in a
       batch: the condition recomputes the residual the step just evaluated, and every evaluation
       repeats the clamp and outer-cell shift of a cell already fixed. Carry the residual, evaluate
