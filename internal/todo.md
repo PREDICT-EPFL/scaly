@@ -1176,8 +1176,14 @@ the code does.
       permissions on a tag trigger. Cloudflare Pages publishes the latest docs from `main` and a
       preview per branch, which the existing every-branch build already produces. Each site carries
       a banner or version switcher saying which one it is.
-- [ ] **D-177. Interpolation docs** (interp plan SP7): the guide page `docs/guide/interp.md`, the
-      API page, nav entries, the examples README section.
+- [x] **D-177. Interpolation docs** (interp plan SP7). `docs/guide/interp.md` (the kinds, the
+      extrapolation modes, evaluation, derivatives and the Jacobian's pattern at known against
+      symbolic points, where coefficients come from, generated code, a section for CasADi users),
+      `docs/api/interp.md`, the nav, the API index row, `interp/` in the codebase map, a section in
+      `examples/README.md`. `test_import_boundaries.py` now checks that every interp name, method,
+      property and constant is documented, which found eight undocumented properties. The stale
+      `BSpline` search docstring is fixed. `zensical build`: no issues, and no griffe warning from
+      interp. Report: `notes/interp_sp7_report.html`.
 - [x] **D-35. Reconcile the problem READMEs with the audit.** Completed 2026-09-11. The problem
       READMEs now describe only the current formulations and link measured comparisons to the
       canonical result pages.

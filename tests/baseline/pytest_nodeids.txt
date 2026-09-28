@@ -2744,6 +2744,7 @@ tests/test_c_snapshot.py::test_generated_c_matches_snapshot[wide]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[workspace]
 tests/test_c_snapshot.py::test_generated_solver_c_matches_snapshot[solver]
 tests/test_import_boundaries.py::test_both_dialects_use_the_shared_spec_types
+tests/test_import_boundaries.py::test_every_interp_name_is_documented
 tests/test_import_boundaries.py::test_obsolete_module_paths_and_vocabulary_are_absent
 tests/test_import_boundaries.py::test_public_exports_are_canonical
 tests/test_import_boundaries.py::test_tests_do_not_import_benchmark_problems

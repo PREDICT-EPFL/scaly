@@ -71,8 +71,10 @@ class BSpline:
       and the axis records it so. NaN gives NaN in every mode.
     fill: the value outside for ``extrap="fill"``, NaN by default.
     search: how the cell of a point is found, per axis: ``"uniform"`` (a floor and one correction,
-      for uniform knots), ``"binary"`` (branch-free halvings) or ``"count"`` (a branch-free count
-      of the knots passed); ``"auto"`` picks uniform when it is exact, else binary.
+      for uniform knots), ``"bucket"`` (a uniform bucket index, the bucket's first cell from a
+      table, then as many compares as the fullest bucket needs), ``"binary"`` (branch-free
+      halvings) or ``"count"`` (a branch-free count of the knots passed). ``"auto"`` takes binary up
+      to 32 cells, then bucket, uniform or binary, the first the partition allows.
     strategy: ``"pp"`` evaluates per-cell polynomial coefficients by nested Horner, the fastest,
       storing ``prod (k_d + 1)`` values per cell; ``"basis"`` stores the B-spline coefficients and
       combines the ``k + 1`` local basis functions of each axis. ``"auto"`` takes ``pp`` while its
@@ -170,14 +172,17 @@ class BSpline:
 
   @property
   def ndim(self) -> int:
+    """The number of axes, the dimension of a point."""
     return len(self.axes)
 
   @property
   def degree(self) -> tuple[int, ...]:
+    """The degree along each axis."""
     return tuple(ax.degree for ax in self.axes)
 
   @property
   def knots(self) -> tuple[np.ndarray, ...]:
+    """The knot vector of each axis."""
     return tuple(ax.knots for ax in self.axes)
 
   def __repr__(self) -> str:

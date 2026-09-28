@@ -20,7 +20,9 @@ type Kind = Literal["nearest", "zoh", "linear", "cubic", "spline", "pchip", "aki
 type Boundary = Literal["not-a-knot", "natural", "clamped", "periodic"]
 
 KINDS = ("nearest", "zoh", "linear", "cubic", "spline", "pchip", "akima", "makima", "steffen", "smooth_linear")
+"""The ``kind`` values ``interpolant`` takes, per axis."""
 BOUNDARIES = ("not-a-knot", "natural", "clamped", "periodic")
+"""The boundary conditions ``bc`` a ``"cubic"`` interpolant takes (``"spline"`` takes the first and the last)."""
 HERMITE = ("pchip", "akima", "makima", "steffen")
 DENSE_FIT = 40
 """The most sites along an axis whose fit, for ``Expr`` data, is a dense constant map; a C2 cubic
@@ -75,13 +77,14 @@ def interpolant(
       ``"clamped"`` (zero first derivative) or ``"periodic"``; ``"spline"`` takes ``"not-a-knot"``
       or ``"periodic"``.
     degree: for ``"spline"``.
-    extrap, fill, search, strategy, dtype, name: as for ``BSpline``. ``extrap`` defaults to
-      ``"periodic"`` on a periodic axis, ``"clamp"`` for ``nearest`` and ``zoh``, ``"linear"``
-      otherwise. A periodic axis of any kind but ``nearest`` and ``zoh`` needs its first and last
-      values equal.
+    extrap: as for ``BSpline``; by default ``"periodic"`` on a periodic axis, ``"clamp"`` for
+      ``nearest`` and ``zoh``, ``"linear"`` otherwise. A periodic axis of any kind but ``nearest``
+      and ``zoh`` needs its first and last values equal.
     period: for ``"zoh"`` with ``extrap="periodic"``, the period; the last value holds until the
       first site plus it.
     frac: for ``"smooth_linear"``, in ``(0, 0.5)``; CasADi's default.
+
+  ``fill``, ``search``, ``strategy``, ``dtype`` and ``name`` are as for ``BSpline``.
 
   The fit is done per axis, so an n-D interpolant is the tensor product of the 1-D ones (SciPy's
   ``NdBSpline`` of per-axis ``make_interp_spline`` fits).
@@ -465,7 +468,8 @@ def smoothing(
       |D_d c|^2``; any degree and dimension. ``"cubic"``: SciPy's ``make_smoothing_spline``, the
       cubic with knots at the data minimizing ``|y - f|^2 + lam int f''^2`` (1-D).
     lam: the weight of the penalty, or ``"gcv"`` to choose it by generalized cross-validation.
-    extrap, fill, search, strategy, dtype, name: as for ``BSpline``.
+
+  ``extrap``, ``fill``, ``search``, ``strategy``, ``dtype`` and ``name`` are as for ``BSpline``.
   """
   if method not in ("pspline", "cubic"):
     raise ValueError(f"method must be 'pspline' or 'cubic', got {method!r}")

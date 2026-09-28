@@ -66,10 +66,11 @@ def constrained(
     knots: per axis, the number of equal intervals spanning the data, or the interior knots; the
       ends are clamped.
     weights: of the data in the least-squares term.
-    penalty, lam: ``lam`` times the squared ``penalty``-th differences of the coefficients along
-      each axis is added to the objective; needed when the data leave some coefficient free.
-    extrap, fill, search, strategy, dtype, name: as for ``BSpline``.
+    penalty: the order of the differences of the coefficients that ``lam`` penalizes.
+    lam: the weight of the squared ``penalty``-th differences along each axis in the objective;
+      needed when the data leave some coefficient free.
 
+  ``extrap``, ``fill``, ``search``, ``strategy``, ``dtype`` and ``name`` are as for ``BSpline``.
   A constraint the data do not press on is inactive, and the fit is then the plain penalized least
   squares. The solver is generated once per problem size and reused.
   """

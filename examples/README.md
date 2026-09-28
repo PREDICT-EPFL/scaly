@@ -119,6 +119,13 @@ They use Matplotlib (in the dev group) and a Jupyter kernel, which the dev group
 `uv run --with jupyterlab jupyter lab examples/notebooks` works without changing the lock file.
 `plotstyle.py` holds the shared colours and Matplotlib settings.
 
+## Interpolation and lookup tables
+
+| Example | Size | Problem | What it shows |
+| --- | --- | --- | --- |
+| `interp/` | L | Six notebooks on `scaly.interp`: interpolation kinds, n-D lookup tables, tables learned from data, shape-constrained fits, contouring control around a race track, and spline trajectories, *solver* | every kind against SciPy; search strategies, table layouts and batches timed; a table passed to C at run time; calibration and identification with `Expr` data and coefficients, and the Jacobian's pattern at known against symbolic points; monotone, convex and bounded fits by PIQP; a closed-loop MPCC lap on one periodic spline; a last cell of assertions in each; see `interp/README.md` |
+| `interp/pairs/` | L | Five problems written in CasADi and in Scaly: batched lookups, table calibration, Hammerstein identification, contouring MPC, heat-pump MPC, *solver* | `uv run examples/casadi/compare.py --dir examples/interp/pairs` checks they agree and compares code lines, setup and run time |
+
 ## Ideas not written yet
 
 - `nonsmooth_conventions.py` (S): how `sc.options(nonsmooth=...)` changes the generated derivative of

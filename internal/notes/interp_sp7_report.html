@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpolation SP7 report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP7 report</h1>
+<p class="sub">D-177 · documentation · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.interp</code> is documented: a guide page, an API page generated from the docstrings, the nav, the API index, the codebase map and the examples index.</p>
+<ul>
+<li><b>A new gate.</b> The plan's gate for docstrings is <code>test_import_boundaries.py</code>, but that test only pinned the names. It now checks that every public interp name has a docstring of its own, as do its classes' public methods and properties and its constants (attribute docstrings read from the source). The check found eight undocumented properties.</li>
+<li><b>The build.</b> <code>zensical build</code> reports no issues. The interp docstrings no longer draw any griffe warning: grouped <code>Args</code> entries such as "<code>extrap, fill, ...: as for BSpline</code>" became a sentence after the list.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 901 passed, 45 skipped. ruff and ty clean. <b>Mutation checks:</b> 3 of 3 killed.</p>
+</div>
+
+<h2>1. What changed</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>docs/guide/interp.md</code> (new)</td><td>
+<p>It covers the plan's list:</p>
+<ul>
+<li>the kinds table, with continuity and the SciPy or CasADi object each one matches;</li>
+<li>the five extrapolation modes;</li>
+<li>evaluation: points and batches, <code>search</code>, <code>strategy</code>, <code>index</code>;</li>
+<li>derivatives and the Jacobian's pattern at known against symbolic points, with the interpolating cubic's dense pattern and the advice that follows from it;</li>
+<li>where coefficients come from: interpolation, smoothing, shape constraints, your own, data at run time;</li>
+<li>calculus;</li>
+<li>generated code: the large-table warning, a table as an input with its header comment and <code>pack</code>, <code>float32</code>, <code>function()</code>, and the per-function table copies of C-187;</li>
+<li>a section for CasADi users: data order, the zero derivative without <code>inline</code>, the zero outside, degrees and lookup.</li>
+</ul>
+<p>The opening example was run.</p></td></tr>
+<tr><td><code>docs/api/interp.md</code> (new)</td><td><code>interpolant</code>, <code>smoothing</code>, <code>constrained</code>, <code>KINDS</code>, <code>BOUNDARIES</code>; <code>BSpline</code>, <code>Index</code>, <code>Inverse</code>, <code>PP_BUDGET</code>, <code>Axis</code>.</td></tr>
+<tr><td><code>zensical.toml</code>, <code>docs/api/index.md</code></td><td>"Interpolation and lookup tables" in the guide nav and "Interpolation" in the API nav, after Integrators. A row in the API index.</td></tr>
+<tr><td><code>docs/dev/codebase.md</code></td><td><code>interp/</code> in the package tree, one line per module, and in import layer 5's row. The tree also lacks <code>integrators/</code> and <code>mpc/</code>, which predate this branch; that is left to a separate task.</td></tr>
+<tr><td><code>examples/README.md</code></td><td>An "Interpolation and lookup tables" section for <code>interp/</code> and <code>interp/pairs/</code>. It sits before "Ideas not written yet", away from the section the main checkout's pending MPC change adds, so the two merge cleanly.</td></tr>
+<tr><td>Docstrings</td><td>
+<ul>
+<li><code>BSpline</code>'s <code>search</code> now lists <code>bucket</code> and the <code>auto</code> rule as SP4 left them.</li>
+<li><code>KINDS</code> and <code>BOUNDARIES</code> got attribute docstrings.</li>
+<li>Eight properties got one line each: <code>Axis.cells</code>, <code>lo</code>, <code>hi</code>, <code>table_cells</code>, <code>table_offsets</code>, and <code>BSpline.ndim</code>, <code>degree</code>, <code>knots</code>.</li>
+<li>The grouped <code>Args</code> entries of <code>interpolant</code>, <code>smoothing</code> and <code>constrained</code> were split.</li>
+</ul></td></tr>
+<tr><td><code>tests/test_import_boundaries.py</code></td><td><code>test_every_interp_name_is_documented</code>, with <code>_attribute_docstring</code> reading a constant's docstring from the module source.</td></tr>
+</table></div>
+
+<h2>2. Mutation checks</h2>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Result</th></tr>
+<tr><td><code>KINDS</code>'s attribute docstring removed</td><td class="ok">killed</td></tr>
+<tr><td><code>BSpline.pack</code>'s docstring removed</td><td class="ok">killed</td></tr>
+<tr><td><code>Axis.lo</code>'s docstring removed</td><td class="ok">killed</td></tr>
+</table></div>
+
+<h2>3. Next</h2>
+<p>SPR (API-178): the review round with five agents, then fixes, a summary report and the tag. Items for it are gathered in the SP6 report's §5.</p>
+</main></body></html>

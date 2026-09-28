@@ -140,14 +140,17 @@ class Axis:
 
   @property
   def cells(self) -> int:
+    """The number of cells of the partition."""
     return self.edges.size - 1
 
   @property
   def lo(self) -> float:
+    """The start of the base interval, ``t[k]``."""
     return float(self.edges[0])
 
   @property
   def hi(self) -> float:
+    """The end of the base interval, ``t[n]``."""
     return float(self.edges[-1])
 
   @property
@@ -211,6 +214,7 @@ class Axis:
 
   @property
   def table_cells(self) -> int:
+    """The number of tabulated cells: the partition's, and the outer ones."""
     return self.cells + 2 * self.outer
 
   @property
@@ -220,6 +224,7 @@ class Axis:
 
   @property
   def table_offsets(self) -> np.ndarray:
+    """The first coefficient each tabulated cell reads: the offsets, repeated for the outer cells."""
     return np.concatenate([self.offsets[:1], self.offsets, self.offsets[-1:]]) if self.outer else self.offsets
 
   def _tangents(self, table: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
