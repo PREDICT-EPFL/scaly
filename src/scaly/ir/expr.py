@@ -1,4 +1,4 @@
-"""Expression dialect vocabulary: ``ExprOp``, ``OP_INFO``, ``Expr``, interning, builders, topo.
+"""Expression dialect vocabulary: the op registry (``OpDef``, ``register_op``), ``Expr``, interning, builders, topo.
 
 The verify rules are ``ir/expr_spec.py`` and the one builder that needs a ``Function`` — ``vmap``
 — is ``function/sugar.py``. The printers are ``ir/text.py``, with one exception: ``format_expr``
@@ -21,10 +21,12 @@ from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_sh
 
 
 class ExprOp(StrEnum):
-  """The expression dialect's operation set.
+  """The names of the builtin expression ops.
 
-  A ``StrEnum``, so an op is a proper enum value and still prints and serializes as its name.
-  ``OP_INFO`` carries the arity, the NumPy evaluation rule and the differentiability of each.
+  A ``StrEnum``, so ``ExprOp.ADD`` is the string ``"add"`` and compares, hashes and prints as it.
+  The op set itself is the registry (``register_op``): every op, builtin or registered by an
+  extension, has an ``OpDef`` there, and an ``Expr`` holds its op's registered name. Extension ops
+  have no member here.
   """
 
   INPUT = "input"
@@ -184,90 +186,123 @@ CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE}
 COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_CONTROL
 
 
-@dataclass(frozen=True, slots=True)
-class OpInfo:
-  op: ExprOp
+@dataclass(frozen=True, eq=False)
+class OpDef:
+  """One expression op: its name, arity (``None`` for variadic), NumPy evaluation rule for constant
+  folding (``None`` when it has none), and whether a derivative can flow through it.
+
+  Compared and hashed by identity: the registry holds one per name."""
+
+  name: str
   arity: int | None
-  numpy: Callable[..., np.ndarray | np.generic] | None = None
+  numpy: Callable[..., Any] | None = None
   differentiable: bool = True
 
-  @property
-  def name(self) -> str:
-    return self.op.value
+
+_OPS: dict[str, OpDef] = {}
 
 
-OP_INFO: dict[ExprOp, OpInfo] = {
-  ExprOp.INPUT: OpInfo(ExprOp.INPUT, 0, None),
-  ExprOp.CONST: OpInfo(ExprOp.CONST, 0, None, False),
-  ExprOp.NEG: OpInfo(ExprOp.NEG, 1, np.negative),
-  ExprOp.SIN: OpInfo(ExprOp.SIN, 1, np.sin),
-  ExprOp.COS: OpInfo(ExprOp.COS, 1, np.cos),
-  ExprOp.TAN: OpInfo(ExprOp.TAN, 1, np.tan),
-  ExprOp.ASIN: OpInfo(ExprOp.ASIN, 1, np.arcsin),
-  ExprOp.ACOS: OpInfo(ExprOp.ACOS, 1, np.arccos),
-  ExprOp.ATAN: OpInfo(ExprOp.ATAN, 1, np.arctan),
-  ExprOp.SINH: OpInfo(ExprOp.SINH, 1, np.sinh),
-  ExprOp.COSH: OpInfo(ExprOp.COSH, 1, np.cosh),
-  ExprOp.TANH: OpInfo(ExprOp.TANH, 1, np.tanh),
+def register_op(name: str, *, arity: int | None, numpy: Callable[..., Any] | None = None, differentiable: bool = True) -> OpDef:
+  """Add the op ``name`` to the expression dialect; registering a name twice raises.
+
+  Registration has to happen before an ``Expr`` with the op is built, which holds by construction
+  when the module that registers the op is the one that provides its builder."""
+  if name in _OPS:
+    raise ValueError(f"expression op {name!r} is already registered")
+  definition = OpDef(name, arity, numpy, differentiable)
+  _OPS[name] = definition
+  return definition
+
+
+def op_def(op: str) -> OpDef:
+  """The registered definition of ``op``."""
+  definition = _OPS.get(op)
+  if definition is None:
+    raise ValueError(f"unknown expression op {op!r}; register it with register_op first")
+  return definition
+
+
+def registered_ops() -> tuple[str, ...]:
+  """Every registered op name, builtins first, in registration order."""
+  return tuple(d.name for d in _OPS.values())
+
+
+# name, arity, NumPy rule[, differentiable]
+_BUILTIN_OPS: tuple[tuple[Any, ...], ...] = (
+  (ExprOp.INPUT, 0, None),
+  (ExprOp.CONST, 0, None, False),
+  (ExprOp.NEG, 1, np.negative),
+  (ExprOp.SIN, 1, np.sin),
+  (ExprOp.COS, 1, np.cos),
+  (ExprOp.TAN, 1, np.tan),
+  (ExprOp.ASIN, 1, np.arcsin),
+  (ExprOp.ACOS, 1, np.arccos),
+  (ExprOp.ATAN, 1, np.arctan),
+  (ExprOp.SINH, 1, np.sinh),
+  (ExprOp.COSH, 1, np.cosh),
+  (ExprOp.TANH, 1, np.tanh),
   # NumPy has no erf; frompyfunc keeps constant folding vectorized without adding SciPy.
-  ExprOp.ERF: OpInfo(ExprOp.ERF, 1, lambda x: np.asarray(np.frompyfunc(math.erf, 1, 1)(x), dtype=np.float64)),
-  ExprOp.EXP: OpInfo(ExprOp.EXP, 1, np.exp),
-  ExprOp.LOG: OpInfo(ExprOp.LOG, 1, np.log),
-  ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1, np.sqrt),
-  ExprOp.ABS: OpInfo(ExprOp.ABS, 1, np.abs),
-  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, np.floor),
-  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, np.ceil),
-  ExprOp.ADD: OpInfo(ExprOp.ADD, 2, np.add),
-  ExprOp.SUB: OpInfo(ExprOp.SUB, 2, np.subtract),
-  ExprOp.MUL: OpInfo(ExprOp.MUL, 2, np.multiply),
-  ExprOp.DIV: OpInfo(ExprOp.DIV, 2, np.divide),
-  ExprOp.POW: OpInfo(ExprOp.POW, 2, np.power),
-  ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2, np.arctan2),
-  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.fmin),  # as C's fmin: a NaN operand gives the other
-  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.fmax),
-  ExprOp.COPYSIGN: OpInfo(ExprOp.COPYSIGN, 2, np.copysign),
-  ExprOp.LT: OpInfo(ExprOp.LT, 2, np.less, False),
-  ExprOp.LE: OpInfo(ExprOp.LE, 2, np.less_equal, False),
-  ExprOp.EQ: OpInfo(ExprOp.EQ, 2, np.equal, False),
-  ExprOp.NE: OpInfo(ExprOp.NE, 2, np.not_equal, False),
-  ExprOp.AND: OpInfo(ExprOp.AND, 2, np.logical_and, False),
-  ExprOp.OR: OpInfo(ExprOp.OR, 2, np.logical_or, False),
-  ExprOp.NOT: OpInfo(ExprOp.NOT, 1, np.logical_not, False),
-  ExprOp.ISFINITE: OpInfo(ExprOp.ISFINITE, 1, np.isfinite, False),
-  ExprOp.SELECT: OpInfo(ExprOp.SELECT, 3, np.where),
-  ExprOp.CAST: OpInfo(ExprOp.CAST, 1, None),
-  ExprOp.SUM: OpInfo(ExprOp.SUM, 1, np.sum),
-  ExprOp.MAX: OpInfo(ExprOp.MAX, 1, np.max),
-  ExprOp.MIN: OpInfo(ExprOp.MIN, 1, np.min),
-  ExprOp.SEGMENT_MAX: OpInfo(ExprOp.SEGMENT_MAX, 1, None),
-  ExprOp.SEGMENT_MIN: OpInfo(ExprOp.SEGMENT_MIN, 1, None),
-  ExprOp.INDEX_ADD: OpInfo(ExprOp.INDEX_ADD, 2, None),
-  ExprOp.INDEX_SET: OpInfo(ExprOp.INDEX_SET, 2, None),
-  ExprOp.TAKE: OpInfo(ExprOp.TAKE, 2, None),
-  ExprOp.PUT_ADD: OpInfo(ExprOp.PUT_ADD, 3, None),
-  ExprOp.PUT: OpInfo(ExprOp.PUT, 3, None),
-  ExprOp.RAGGED_ADD: OpInfo(ExprOp.RAGGED_ADD, 5, None),
-  ExprOp.RAGGED_DOT: OpInfo(ExprOp.RAGGED_DOT, 4, None),
-  ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
-  ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
-  ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
-  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 1, None),
-  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1, None),
-  ExprOp.STACK: OpInfo(ExprOp.STACK, None, np.stack),
-  ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, np.concatenate),
-  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
-  ExprOp.CHOLESKY: OpInfo(ExprOp.CHOLESKY, 1, None),
-  ExprOp.LDL: OpInfo(ExprOp.LDL, 1, None),
-  ExprOp.LU: OpInfo(ExprOp.LU, 1, None),
-  ExprOp.SPARSE_LDL: OpInfo(ExprOp.SPARSE_LDL, 1, None),
-  ExprOp.SPARSE_LDL_SOLVE: OpInfo(ExprOp.SPARSE_LDL_SOLVE, 2, None),
-  ExprOp.TRISOLVE: OpInfo(ExprOp.TRISOLVE, 2, None),
-  ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
-  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
-  ExprOp.SCAN: OpInfo(ExprOp.SCAN, None, None),
-  ExprOp.WHILE: OpInfo(ExprOp.WHILE, None, None),
-  ExprOp.EXTERN_CALL: OpInfo(ExprOp.EXTERN_CALL, None, None, differentiable=False),
-}
+  (ExprOp.ERF, 1, lambda x: np.asarray(np.frompyfunc(math.erf, 1, 1)(x), dtype=np.float64)),
+  (ExprOp.EXP, 1, np.exp),
+  (ExprOp.LOG, 1, np.log),
+  (ExprOp.SQRT, 1, np.sqrt),
+  (ExprOp.ABS, 1, np.abs),
+  (ExprOp.FLOOR, 1, np.floor),
+  (ExprOp.CEIL, 1, np.ceil),
+  (ExprOp.ADD, 2, np.add),
+  (ExprOp.SUB, 2, np.subtract),
+  (ExprOp.MUL, 2, np.multiply),
+  (ExprOp.DIV, 2, np.divide),
+  (ExprOp.POW, 2, np.power),
+  (ExprOp.ATAN2, 2, np.arctan2),
+  (ExprOp.MINIMUM, 2, np.fmin),  # as C's fmin: a NaN operand gives the other
+  (ExprOp.MAXIMUM, 2, np.fmax),
+  (ExprOp.COPYSIGN, 2, np.copysign),
+  (ExprOp.LT, 2, np.less, False),
+  (ExprOp.LE, 2, np.less_equal, False),
+  (ExprOp.EQ, 2, np.equal, False),
+  (ExprOp.NE, 2, np.not_equal, False),
+  (ExprOp.AND, 2, np.logical_and, False),
+  (ExprOp.OR, 2, np.logical_or, False),
+  (ExprOp.NOT, 1, np.logical_not, False),
+  (ExprOp.ISFINITE, 1, np.isfinite, False),
+  (ExprOp.SELECT, 3, np.where),
+  (ExprOp.CAST, 1, None),
+  (ExprOp.SUM, 1, np.sum),
+  (ExprOp.MAX, 1, np.max),
+  (ExprOp.MIN, 1, np.min),
+  (ExprOp.SEGMENT_MAX, 1, None),
+  (ExprOp.SEGMENT_MIN, 1, None),
+  (ExprOp.INDEX_ADD, 2, None),
+  (ExprOp.INDEX_SET, 2, None),
+  (ExprOp.TAKE, 2, None),
+  (ExprOp.PUT_ADD, 3, None),
+  (ExprOp.PUT, 3, None),
+  (ExprOp.RAGGED_ADD, 5, None),
+  (ExprOp.RAGGED_DOT, 4, None),
+  (ExprOp.RESHAPE, 1, np.reshape),
+  (ExprOp.TRANSPOSE, 1, np.transpose),
+  (ExprOp.SLICE, 1, None),
+  (ExprOp.GATHER, 1, None),
+  (ExprOp.SCATTER, 1, None),
+  (ExprOp.STACK, None, np.stack),
+  (ExprOp.CONCAT, None, np.concatenate),
+  (ExprOp.MATMUL, 2, np.matmul),
+  (ExprOp.CHOLESKY, 1, None),
+  (ExprOp.LDL, 1, None),
+  (ExprOp.LU, 1, None),
+  (ExprOp.SPARSE_LDL, 1, None),
+  (ExprOp.SPARSE_LDL_SOLVE, 2, None),
+  (ExprOp.TRISOLVE, 2, None),
+  (ExprOp.CALL, None, None),
+  (ExprOp.VMAP, None, None),
+  (ExprOp.SCAN, None, None),
+  (ExprOp.WHILE, None, None),
+  (ExprOp.EXTERN_CALL, None, None, False),
+)
+for _op, _arity, _numpy, *_diff in _BUILTIN_OPS:
+  register_op(_op, arity=_arity, numpy=_numpy, differentiable=_diff[0] if _diff else True)
+del _op, _arity, _numpy, _diff
 
 
 def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
@@ -287,7 +322,7 @@ _NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "Expr"] = weakref.Weak
 
 
 def _intern_key(
-  op: ExprOp | str,
+  op: str,
   args: tuple["Expr", ...],
   type_: "TensorType",
   name: str | None,
@@ -295,15 +330,14 @@ def _intern_key(
   attrs: dict[str, Any],
   lowering: Lowering,
 ) -> tuple[Any, ...]:
-  op_norm = op if isinstance(op, ExprOp) else ExprOp(op)
   args_key = tuple(weakref.ref(a) for a in args)
   value_key = None if value is None else (value.shape, str(value.dtype), value.tobytes())
-  return (op_norm.value, args_key, type_, name, value_key, _attrs_key(attrs), lowering)
+  return (str(op), args_key, type_, name, value_key, _attrs_key(attrs), lowering)
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class Expr:
-  op: ExprOp | str
+  op: str  # a registered name: the ``ExprOp`` member for a builtin
   args: tuple[Expr, ...] = ()
   type: TensorType = field(default_factory=TensorType)
   name: str | None = None
@@ -326,7 +360,7 @@ class Expr:
 
   def __new__(
     cls,
-    op: ExprOp | str | None = None,
+    op: str | None = None,
     args: tuple["Expr", ...] = (),
     type: TensorType | None = None,
     name: str | None = None,
@@ -338,7 +372,7 @@ class Expr:
       return object.__new__(cls)
     type_eff = type if type is not None else TensorType()
     attrs_eff = attrs if attrs is not None else {}
-    key = _intern_key(op, args, type_eff, name, value, attrs_eff, lowering)
+    key = _intern_key(op_def(op).name, args, type_eff, name, value, attrs_eff, lowering)
     cached = _NODE_CACHE.get(key)
     if cached is not None:
       return cached
@@ -351,8 +385,7 @@ class Expr:
     # idempotent, so we only need to mark ``_initialized`` on the first construction.
     if self._initialized:
       return
-    if not isinstance(self.op, ExprOp):
-      object.__setattr__(self, "op", ExprOp(self.op))
+    object.__setattr__(self, "op", op_def(self.op).name)
     object.__setattr__(self, "_initialized", True)
 
   @staticmethod
@@ -399,7 +432,7 @@ class Expr:
       return cached
     value_key = None if self.value is None else (self.value.shape, str(self.value.dtype), self.value.tobytes())
     key = (
-      ExprOp(self.op).value,
+      str(self.op),
       self.name,
       self.type.shape,
       self.type.dtype,
@@ -716,8 +749,8 @@ def diff_any(*exprs: Expr) -> bool:
   return any(e.type.diff for e in exprs)
 
 
-def op_diff(op: ExprOp | str, *exprs: Expr) -> bool:
-  return OP_INFO[ExprOp(op)].differentiable and diff_any(*exprs)
+def op_diff(op: str, *exprs: Expr) -> bool:
+  return op_def(op).differentiable and diff_any(*exprs)
 
 
 def promote_dtype(*exprs: Expr) -> DType:
@@ -1530,7 +1563,7 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       index = " index" if e.attrs.get("index") else ""
       rhs = f"while[{e.attrs['max_iter']}{index}] {e.attrs['cond'].name} {e.attrs['callee'].name}[{e.attrs['output']}]({bindings})"
     else:
-      rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
+      rhs = f"{e.op}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")
   lines.append("outputs " + ", ".join(f"%{loc[e.id]}" for e in outs))
   return "\n".join(lines)

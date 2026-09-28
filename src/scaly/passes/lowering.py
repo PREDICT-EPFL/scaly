@@ -55,7 +55,7 @@ class LoweringError(NotImplementedError):
 
 
 # Expression ExprOp -> Program IR scalar ProgramOp. The op vocabulary grows here as ops migrate.
-_UNARY: dict[ExprOp, ProgramOp] = {
+_UNARY: dict[str, ProgramOp] = {
   ExprOp.NEG: ProgramOp.NEG,
   ExprOp.SIN: ProgramOp.SIN,
   ExprOp.COS: ProgramOp.COS,
@@ -78,7 +78,7 @@ _UNARY: dict[ExprOp, ProgramOp] = {
   ExprOp.CAST: ProgramOp.CAST,
 }
 
-_BINARY: dict[ExprOp, ProgramOp] = {
+_BINARY: dict[str, ProgramOp] = {
   ExprOp.ADD: ProgramOp.ADD,
   ExprOp.SUB: ProgramOp.SUB,
   ExprOp.MUL: ProgramOp.MUL,
@@ -97,10 +97,10 @@ _BINARY: dict[ExprOp, ProgramOp] = {
 }
 
 LowerRule = Callable[["LowerCtx", Expr], None]
-_RULES: dict[ExprOp, LowerRule] = {}
+_RULES: dict[str, LowerRule] = {}
 
 
-def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
+def lowers(*ops: str) -> Callable[[LowerRule], LowerRule]:
   """Register ``fn`` as the lowering rule for each expression op in ``ops``."""
 
   def deco(fn: LowerRule) -> LowerRule:
@@ -388,7 +388,7 @@ class LowerCtx:
     for node in topo(self.fun.outputs):
       if node.id in self.value_buffers:
         continue  # input (or already lowered)
-      rule = _RULES.get(ExprOp(node.op))
+      rule = _RULES.get(node.op)
       if rule is None:
         raise LoweringError(f"Expression op {node.op!r} is not yet lowered to Program IR")
       rule(self, node)
@@ -578,12 +578,12 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...]) -> Pr
 
 @lowers(*_UNARY)
 def _lower_unary(ctx: LowerCtx, node: Expr) -> None:
-  ctx.emit_elementwise(node, _UNARY[ExprOp(node.op)], arity=1)
+  ctx.emit_elementwise(node, _UNARY[node.op], arity=1)
 
 
 @lowers(*_BINARY)
 def _lower_binary(ctx: LowerCtx, node: Expr) -> None:
-  ctx.emit_elementwise(node, _BINARY[ExprOp(node.op)], arity=2)
+  ctx.emit_elementwise(node, _BINARY[node.op], arity=2)
 
 
 @lowers(ExprOp.SELECT)

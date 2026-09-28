@@ -3,7 +3,7 @@
 The public API, grouped by what it is for and generated from the source docstrings.
 
 These pages are the public API. `scaly.__all__` is the subset re-exported in the `scaly` namespace;
-a few of its members (`BACKEND_SUPPORT`, `COMMON_OPS`, `OP_INFO`,
+a few of its members (`BACKEND_SUPPORT`, `COMMON_OPS`,
 `SCALY_SOLVER_STATS_VERSION`, `factory`, `spec_expr`, `spec_expr_shared`, `C_API_SIGNATURE`) have
 no docstring of their own and are not listed here. `sc.sym` and `sc.const` are `Expr.sym` and
 `Expr.const`, documented under [Core](core.md).

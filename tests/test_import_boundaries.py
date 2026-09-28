@@ -215,6 +215,8 @@ def test_obsolete_module_paths_and_vocabulary_are_absent() -> None:
   assert not hasattr(sc, "Ops")
   assert not hasattr(sc, "VerifyRule")
   assert not hasattr(sc.ExprOp, "SOLVER_CALL")
+  assert not hasattr(sc, "OP_INFO")  # the op registry replaced the table: scaly.ir.expr.op_def
+  assert not hasattr(__import__("scaly.ir.expr", fromlist=["OpDef"]), "OpInfo")
   program = __import__("scaly.ir.program", fromlist=["ProgramNode"])
   assert not hasattr(program, "PNode")
   assert not hasattr(program, "POps")

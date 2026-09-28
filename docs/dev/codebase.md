@@ -18,7 +18,7 @@ src/scaly/
 
   ir/                    dialect definitions, verification, text, pass infrastructure
     types.py             DType, DeviceSpec, TensorType, SparsityType, ScalarType, backend support
-    expr.py              ExprOp, OP_INFO, Expr, interning, builders, topo, format_expr
+    expr.py              the op registry (OpDef, register_op), ExprOp names, Expr, interning, builders, topo, format_expr
     expr_spec.py         expression-dialect verify rules, verify_expr
     program.py           ProgramOp, RangeKind, ProgramNode, interning, builders
     program_spec.py      program-dialect verify rules, verify_program
@@ -204,7 +204,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 
 | To add | Touch |
 | --- | --- |
-| A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
+| A scalar math op | an `ExprOp` name and a `_BUILTIN_OPS` row (the op's registration) in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
 | A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` and a structural rule in `ad/sparsity.py` |
 | An expression rewrite | a pattern in `passes/expr.py` |
 | An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |

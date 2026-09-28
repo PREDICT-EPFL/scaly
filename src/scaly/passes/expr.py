@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, gather, matmul, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _attrs_key, gather, matmul, op_def, stack, topo, zeros_like
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -70,7 +70,7 @@ def _structural_key(expr: Expr) -> tuple[Any, ...]:
   if expr.op in {ExprOp.ADD, ExprOp.MUL}:
     children = tuple(sorted(children))
   return (
-    ExprOp(expr.op).value,
+    str(expr.op),
     expr.name,
     expr.type.shape,
     expr.type.dtype,
@@ -135,7 +135,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
   elif e.op == ExprOp.CAST:
     out = args[0].astype(e.type.dtype.numpy())
   else:
-    info = OP_INFO[ExprOp(e.op)]
+    info = op_def(e.op)
     if info.numpy is None:
       return None
     out = info.numpy(*args)

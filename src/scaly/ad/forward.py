@@ -621,10 +621,10 @@ def sign(x: Expr) -> Expr:
   return where(x > 0.0, one, where(x < 0.0, -one, zero))
 
 
-def _nonsmooth_mode(op: ExprOp | str) -> str:
+def _nonsmooth_mode(op: str) -> str:
   mode = get_options().nonsmooth
   if mode == "error":
-    raise NotImplementedError(f"derivative of nonsmooth op {ExprOp(op).value!r} refused under sc.options(nonsmooth='error')")
+    raise NotImplementedError(f"derivative of nonsmooth op {str(op)!r} refused under sc.options(nonsmooth='error')")
   return mode
 
 

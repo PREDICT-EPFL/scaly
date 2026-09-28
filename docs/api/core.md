@@ -25,7 +25,13 @@ The expression graph and the types on it.
 
 ::: scaly.ir.expr.ExprOp
 
-::: scaly.ir.expr.OpInfo
+::: scaly.ir.expr.OpDef
+
+::: scaly.ir.expr.register_op
+
+::: scaly.ir.expr.op_def
+
+::: scaly.ir.expr.registered_ops
 
 ## Functions
 

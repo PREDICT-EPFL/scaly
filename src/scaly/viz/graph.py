@@ -86,8 +86,8 @@ def expr_graph(obj: Function | Expr | Iterable[Expr]) -> dict[str, Any]:
   graph_nodes = []
   edges = []
   for i, e in enumerate(nodes):
-    op = ExprOp(e.op)
-    label = f"{op.value.upper()}\n%{i}\n{e.type.dtype.name}{e.shape}"
+    op = e.op
+    label = f"{op.upper()}\n%{i}\n{e.type.dtype.name}{e.shape}"
     if e.name:
       label += f"\n{e.name}"
     if op == ExprOp.CONST and e.value is not None and e.value.size <= 4:

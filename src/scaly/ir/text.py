@@ -132,7 +132,7 @@ def _render_expr_region(outputs: Iterable[Expr], *, name: str | None = None) -> 
   pad = "  " if name else ""
   for i, e in enumerate(nodes):
     args = ", ".join(f"%{loc[a.id]}" for a in e.args)
-    op = ExprOp(e.op)
+    op = e.op
     attrs = dict(e.attrs)
     if op == ExprOp.INPUT:
       attrs = {**attrs, "name": e.name, "lowering": e.lowering}
@@ -141,7 +141,7 @@ def _render_expr_region(outputs: Iterable[Expr], *, name: str | None = None) -> 
     elif op in CALLEE_OPS:
       attrs = {**attrs, **{k: getattr(attrs[k], "name", attrs[k]) for k in ("callee", "cond") if k in attrs}}
     text_args = f"({args})" if args else ""
-    lines.append(f"{pad}%{i} = expr.{op.value}{text_args}{_attrs_asm(attrs)} : {type_asm(e.type)}")
+    lines.append(f"{pad}%{i} = expr.{op}{text_args}{_attrs_asm(attrs)} : {type_asm(e.type)}")
   lines.append(f"{pad}expr.return " + ", ".join(f"%{loc[e.id]}" for e in outs))
   if name:
     lines.append("}")

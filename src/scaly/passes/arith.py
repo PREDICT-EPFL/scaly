@@ -134,7 +134,7 @@ ARITH_EXPR: Arith[Expr] = Arith(
   fits=lambda arg, result: arg.shape == result.shape and arg.type.dtype == result.type.dtype,
   scalar=lambda value, like: Expr.const(value, dtype=like.type.dtype, lowering=like.lowering),
   full=_expr_full,
-  build=lambda kind, args, like: Expr(ExprOp(kind), args, like.type, lowering=like.lowering),
+  build=lambda kind, args, like: Expr(kind, args, like.type, lowering=like.lowering),
 )
 
 

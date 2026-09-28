@@ -35,7 +35,7 @@
 | 1.1 | `EXTERN_CALL` and the extern-callee protocol | ☑ |
 | 1.2 | Output-adapter registry (C++, CasADi) | ☑ |
 | 1.3 | Core stops importing solvers | ☑ |
-| 2.1 | Op registry, builtins registered through it | ☐ |
+| 2.1 | Op registry, builtins registered through it | ☑ |
 | 2.2 | Table-driven AD, sparsity, folding, verification | ☐ |
 | 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☐ |
 | 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☐ |
@@ -461,6 +461,11 @@ fail on a function-local import.
 builtins registered through it; `Expr` interning keyed by the registered name.
 Gate: C snapshots byte-identical; `tests/test_import_boundaries.py` updated; interning identity
 tests pass.
+Log: done 2026-09-28. `OpDef` records in a name-keyed registry (`register_op`, `op_def`,
+`registered_ops`) in `ir/expr.py`; builtins register through it from a table, and `ExprOp` stays
+as the `StrEnum` of builtin names (a member hashes and compares as its string, so an `Expr.op` is
+always a plain registered name). `OP_INFO`/`OpInfo` retired. Registry rules (`jvp`, `lower`, ...)
+arrive with 2.2.
 
 **2.2 Table-driven rules.** Convert the if-chains in `_jvp`, `_jvp_many_structural`, `_local_vjp`,
 `_jac_mask_uncached`, `passes/expr._evaluate` and the verify table into lookups on `OpDef`; keep

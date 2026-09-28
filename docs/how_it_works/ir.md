@@ -30,7 +30,7 @@ Every node has:
 
 | Field | Meaning |
 | --- | --- |
-| `op` | an `ExprOp`, the operation this node performs |
+| `op` | the registered name of the operation this node performs: an `ExprOp` for a builtin, or a name an extension registered with `register_op` |
 | `args` | the operand nodes, in order |
 | `type` | a `TensorType`: shape, dtype, sparsity, and the differentiability flag |
 | `attrs` | per-op data that is not an operand, such as the callee of a `CALL` or the index table of a `GATHER` |
@@ -216,7 +216,7 @@ The verifier walks the graph in topological order and raises `VerifyError` at th
 node, naming the node, its op and the rule it failed. Two specs are exported:
 
 - `spec_expr_shared` is what every node must satisfy: non-negative shape, a real `DType`, arity
-  matching `OP_INFO`, sparsity shape agreeing with tensor shape.
+  matching the op's registered `OpDef`, sparsity shape agreeing with tensor shape.
 - `spec_expr` adds the per-op rules: `reshape` preserves size, `transpose` axes are a permutation,
   `matmul` contracting dimensions agree, `call` argument shapes match the callee, `VMAP` outer
   tensors are rank 1 with a consistent slice size, `const` value shape and dtype match the declared

@@ -28,11 +28,11 @@ from .expr import (
   COMMON_ELEMENTWISE_BINARY,
   COMMON_ELEMENTWISE_UNARY,
   COMPARE_OPS,
-  OP_INFO,
   SPARSE_LDL_SOLVE_TABLES,
   SPARSE_LDL_TABLES,
   Expr,
   ExprOp,
+  op_def,
   topo,
 )
 from .spec import Rule, Spec, VerifyError
@@ -52,7 +52,7 @@ def verify_expr(root: Expr | Iterable[Expr], spec: "Spec | None" = None) -> None
     if result is not None:
       rule, diag = result
       label = node.name or f"%{node.id}"
-      raise VerifyError(f"verify_expr: node {label} op={ExprOp(node.op).value} failed rule {rule.description!r}: {diag}")
+      raise VerifyError(f"verify_expr: node {label} op={node.op} failed rule {rule.description!r}: {diag}")
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +73,8 @@ def _dtype_is_dtype(expr: Expr) -> str | None:
 
 
 def _arity_matches(expr: Expr) -> str | None:
-  info = OP_INFO.get(ExprOp(expr.op))
-  if info is None or info.arity is None:
+  info = op_def(expr.op)
+  if info.arity is None:
     return None
   if len(expr.args) != info.arity:
     return f"op {expr.op} expects {info.arity} args, got {len(expr.args)}"
