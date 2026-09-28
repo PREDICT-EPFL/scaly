@@ -50,7 +50,7 @@ def test_cubic_is_cubicspline(bc: str, uniform: bool) -> None:
   ref = CubicSpline(g, y, bc_type=bc, extrapolate="periodic" if bc == "periodic" else True)
   for strategy in ("pp", "basis"):
     f = interp.interpolant(g, y, kind="cubic", bc=bc, strategy=strategy)  # ty: ignore[invalid-argument-type]
-    assert f.axes[0].search == ("uniform" if uniform else "binary")
+    assert f.axes[0].search == "binary"  # 13 cells: small enough for the halvings
     x = inside_points((g,), rng, 2000)
     got = evaluate(f, x, derivatives=True)
     np.testing.assert_allclose(got["y"], ref(x), rtol=0, atol=1e-13 * scale(ref(x)))
@@ -192,7 +192,7 @@ def test_shape_preserving_kinds_are_scipys(kind: str, uniform: bool) -> None:
   values = np.column_stack([y, np.sin(x)])
   ref = PchipInterpolator(x, values) if kind == "pchip" else Akima1DInterpolator(x, values, method=kind, extrapolate=True)  # ty: ignore[invalid-argument-type]
   f = interp.interpolant(x, values, kind=kind, extrap="extend")  # ty: ignore[invalid-argument-type]
-  assert f.degree == (3,) and f.axes[0].search == ("uniform" if uniform else "binary")
+  assert f.degree == (3,) and f.axes[0].search == "binary"
   pts = np.concatenate([inside_points((x,), rng, 1500), [-2.0, 12.5]])
   got = evaluate(f, pts, derivatives=True)
   np.testing.assert_allclose(got["y"], ref(pts), rtol=0, atol=1e-13 * scale(ref(pts)))
@@ -324,7 +324,7 @@ def test_pspline_is_the_penalized_least_squares_fit() -> None:
   want = np.linalg.lstsq(np.vstack([B, np.sqrt(lam) * D]), np.vstack([y, np.zeros((D.shape[0], 2))]), rcond=None)[0]
   np.testing.assert_allclose(numbers(f.coeffs), want, rtol=1e-9, atol=1e-10)
   np.testing.assert_allclose(evaluate(f, x)["y"], B @ want, rtol=0, atol=1e-9)
-  assert (t[2], t[-3]) == (x.min(), x.max()) and f.axes[0].search == "uniform"
+  assert (t[2], t[-3]) == (x.min(), x.max())
   # GCV: the weight chosen is a minimum of the criterion along log lam
   coeffs, chosen = pspline_fit([t], [2], x[:, None], y, 3, "gcv")
 
@@ -344,7 +344,7 @@ def test_pspline_knots_span_the_data_exactly() -> None:
   x = np.sort(rng.uniform(0.0, 1.0, 2000))
   for segments in (20, 80, 97):
     f = interp.smoothing(x, np.sin(6 * x), segments=segments, lam=1e-3)
-    assert (f.axes[0].lo, f.axes[0].hi) == (x[0], x[-1]) and f.axes[0].search == "uniform"
+    assert (f.axes[0].lo, f.axes[0].hi) == (x[0], x[-1]) and f.axes[0].search == ("binary" if segments <= 32 else "bucket")
 
 
 def test_pspline_smooths_in_2d_and_from_scattered_points() -> None:

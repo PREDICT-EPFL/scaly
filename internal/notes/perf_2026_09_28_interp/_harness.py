@@ -20,12 +20,12 @@ def blob(flat: list[np.ndarray], out_sizes: list[int], workspace: int) -> bytes:
   return head + b"".join(np.ascontiguousarray(a, dtype="<f8").tobytes() for a in flat)
 
 
-def _compile(source: Path, out: Path) -> float:
+def _compile(source: Path, out: Path, extra: tuple[str, ...] = ()) -> float:
   from scaly.codegen.jit import compile_flags
   from scaly.codegen.toolchain import find_c_compiler
 
   t0 = time.perf_counter()
-  subprocess.run([find_c_compiler().cc, *compile_flags(), "-fPIC", "-shared", str(source), "-lm", "-o", str(out)], check=True)
+  subprocess.run([find_c_compiler().cc, *compile_flags(), *extra, "-fPIC", "-shared", str(source), "-lm", "-o", str(out)], check=True)
   return time.perf_counter() - t0
 
 
@@ -57,7 +57,8 @@ def build_casadi(fn, args: list[np.ndarray], out: Path) -> dict:
   gen.add(fn)
   gen.generate(str(out) + "/")
   generate = time.perf_counter() - t0
-  compile_s = _compile(out / "f.c", out / "lib.so")
+  include = Path(ca.__file__).parent / "include"  # blazing_spline's C includes SIMDe, shipped in the wheel
+  compile_s = _compile(out / "f.c", out / "lib.so", (f"-I{include}",))
   # CasADi uses the argument and result arrays past n_in and n_out as pointer scratch for nested
   # calls: empty dummy slots up to sz_arg and sz_res give it room.
   sizes = [fn.nnz_out(i) for i in range(fn.n_out())] + [0] * (fn.sz_res() - fn.n_out())

@@ -12,7 +12,7 @@ from scipy import sparse
 from ..function.model import ConcreteFunction
 from ..function.sugar import scan
 from ..ir.expr import Expr, cast, concat, equal, gather, minimum, not_equal, reduce_max, stack, where
-from ..ir.types import dtypes
+from ..ir.types import DType, dtypes
 from .grid import Axis, Extrap, Search, Side, check_sites
 from .spline import BSpline, Strategy, _along, _per_axis, design_matrix
 
@@ -22,9 +22,10 @@ type Boundary = Literal["not-a-knot", "natural", "clamped", "periodic"]
 KINDS = ("nearest", "zoh", "linear", "cubic", "spline", "pchip", "akima", "makima", "steffen", "smooth_linear")
 BOUNDARIES = ("not-a-knot", "natural", "clamped", "periodic")
 HERMITE = ("pchip", "akima", "makima", "steffen")
-DENSE_FIT = 256
+DENSE_FIT = 40
 """The most sites along an axis whose fit, for ``Expr`` data, is a dense constant map; a C2 cubic
-with more solves its tridiagonal system in scans instead."""
+with more solves its tridiagonal system in scans instead. Measured (perf_2026_09_28_interp/
+bench_param.py): the scans cost 1.3x the map at 32 sites and 0.38x at 64."""
 
 _SCIPY_BC = {"not-a-knot": None, "natural": "natural", "clamped": "clamped", "periodic": "periodic"}
 
@@ -42,6 +43,7 @@ def interpolant(
   frac: float = 0.1,
   search: Search | Literal["auto"] | tuple[Search | Literal["auto"], ...] = "auto",
   strategy: Strategy = "auto",
+  dtype: DType | str = "float64",
   name: str = "interp",
 ) -> BSpline:
   """A lookup table or interpolating spline through ``values`` on a rectilinear grid.
@@ -73,7 +75,7 @@ def interpolant(
       ``"clamped"`` (zero first derivative) or ``"periodic"``; ``"spline"`` takes ``"not-a-knot"``
       or ``"periodic"``.
     degree: for ``"spline"``.
-    extrap, fill, search, strategy, name: as for ``BSpline``. ``extrap`` defaults to
+    extrap, fill, search, strategy, dtype, name: as for ``BSpline``. ``extrap`` defaults to
       ``"periodic"`` on a periodic axis, ``"clamp"`` for ``nearest`` and ``zoh``, ``"linear"``
       otherwise. A periodic axis of any kind but ``nearest`` and ``zoh`` needs its first and last
       values equal.
@@ -129,7 +131,7 @@ def interpolant(
     axes.append(
       Axis(knots, k, edges=edges, side=side, extrap=ext if ext is not None else "periodic" if bcd == "periodic" else None, fill=fill, search=srch)
     )
-  return BSpline.from_axes(axes, coeffs, strategy=strategy, name=name)
+  return BSpline.from_axes(axes, coeffs, strategy=strategy, dtype=dtype, name=name)
 
 
 def _axis_fit(
@@ -448,6 +450,7 @@ def smoothing(
   fill: float = math.nan,
   search: Search | Literal["auto"] | tuple[Search | Literal["auto"], ...] = "auto",
   strategy: Strategy = "auto",
+  dtype: DType | str = "float64",
   name: str = "interp",
 ) -> BSpline:
   """A smoothing spline through noisy data: it trades closeness to ``y`` for smoothness, by ``lam``.
@@ -462,7 +465,7 @@ def smoothing(
       |D_d c|^2``; any degree and dimension. ``"cubic"``: SciPy's ``make_smoothing_spline``, the
       cubic with knots at the data minimizing ``|y - f|^2 + lam int f''^2`` (1-D).
     lam: the weight of the penalty, or ``"gcv"`` to choose it by generalized cross-validation.
-    extrap, fill, search, strategy, name: as for ``BSpline``.
+    extrap, fill, search, strategy, dtype, name: as for ``BSpline``.
   """
   if method not in ("pspline", "cubic"):
     raise ValueError(f"method must be 'pspline' or 'cubic', got {method!r}")
@@ -491,9 +494,9 @@ def smoothing(
     sites = check_sites(points[:, 0], "x", minimum_points=5)
     if isinstance(values, Expr):  # linear in y for a given lam: the fit of the identity
       spl = make_smoothing_spline(sites, np.eye(sites.size), lam=float(lam))
-      return BSpline(spl.t, _along(spl.c, values, 0), 3, extrap=extrap, fill=fill, search=search, strategy=strategy, name=name)
+      return BSpline(spl.t, _along(spl.c, values, 0), 3, extrap=extrap, fill=fill, search=search, strategy=strategy, dtype=dtype, name=name)
     spl = make_smoothing_spline(sites, values, lam=None if lam == "gcv" else float(lam))
-    return BSpline(spl.t, spl.c, 3, extrap=extrap, fill=fill, search=search, strategy=strategy, name=name)
+    return BSpline(spl.t, spl.c, 3, extrap=extrap, fill=fill, search=search, strategy=strategy, dtype=dtype, name=name)
   degrees, pieces = _per_axis(degree, ndim, "degree"), _per_axis(segments, ndim, "segments")
   knots = []
   for d, (k, nseg) in enumerate(zip(degrees, pieces, strict=True)):

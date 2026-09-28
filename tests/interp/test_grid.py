@@ -7,7 +7,7 @@ import pytest
 from scipy.interpolate import BSpline, PPoly
 
 import scaly as sc
-from scaly.interp.grid import Axis, Search, Side, basis_derivatives, check_sites, derivative_matrix, uniform_step
+from scaly.interp.grid import Axis, Search, Side, basis_derivatives, bucket_table, check_sites, derivative_matrix, uniform_step
 
 
 def adversarial(edges: np.ndarray, rng: np.random.Generator, n_random: int) -> np.ndarray:
@@ -50,21 +50,21 @@ def grids(rng: np.random.Generator) -> dict[str, np.ndarray]:
 
 
 @pytest.mark.parametrize("side", ["right", "left"])
-@pytest.mark.parametrize("search", ["uniform", "count", "binary"])
+@pytest.mark.parametrize("search", ["uniform", "bucket", "count", "binary"])
 def test_every_search_finds_the_searchsorted_cell(search: Search, side: Side) -> None:
   """1e6 adversarial and random points over six partitions, against ``searchsorted``: the tie at an
   edge follows the side, points outside get the end cells and NaN the first."""
   rng = np.random.default_rng(0)
   checked = 0
   for name, edges in grids(rng).items():
-    if search == "uniform" and uniform_step(edges) is None:
+    if (search == "uniform" and uniform_step(edges) is None) or (search == "bucket" and bucket_table(edges, side) is None):
       continue
     axis = Axis(edges, 0, side=side, search=search)  # degree 0 on the partition: the knots are the edges
     x = adversarial(edges, rng, 170_000 - 3 * edges.size)
     got = search_fn(axis, x.size)(x)
     np.testing.assert_array_equal(got, expected_cell(edges, x, side), err_msg=name)
     checked += x.size
-  assert checked >= (1_000_000 if search != "uniform" else 500_000)
+  assert checked >= (1_000_000 if search in ("count", "binary") else 500_000)
 
 
 def test_a_scalar_point_searches_like_a_batch() -> None:
@@ -101,11 +101,16 @@ def test_uniform_step_accepts_every_linspace_and_rejects_non_uniform_partitions(
     np.testing.assert_array_equal(search_fn(axis, x.size)(x), expected_cell(zigzag, x, side))
 
 
-def test_auto_search_is_uniform_else_binary() -> None:
-  assert Axis(np.linspace(0, 1, 500), 0).search == "uniform"
-  clustered = np.cumsum(np.arange(1.0, 30.0))
-  assert Axis(clustered, 0).search == "binary"
+def test_auto_search_is_binary_when_small_then_bucket_then_uniform_then_binary() -> None:
+  assert Axis(np.linspace(0, 1, 500), 0).search == "bucket"
+  assert Axis(np.linspace(0, 1, 33), 0).search == "binary"  # 32 cells
+  clustered = np.cumsum(np.arange(1.0, 100.0))
+  assert Axis(clustered, 0).search == "bucket"
+  crowded = np.concatenate([np.arange(50.0), 50.0 + 1e-6 * np.arange(1, 12)])  # 11 knots within 1e-5
+  assert bucket_table(crowded) is None and Axis(crowded, 0).search == "binary"
   assert Axis(clustered, 0, search="count").search == "count"
+  with pytest.raises(ValueError, match="bucket"):
+    Axis(crowded, 0, search="bucket")
   with pytest.raises(ValueError, match="uniform"):
     Axis(clustered, 0, search="uniform")
 

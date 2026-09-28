@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import warnings
 import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -16,14 +17,21 @@ from ..function.model import ConcreteFunction
 from ..function.tree import L, param_list
 from ..function.sugar import custom_derivative, vmap, while_loop
 from ..ir.expr import Expr, as_expr, cast, equal, not_equal, stack, take, where
-from ..ir.types import dtypes
-from .grid import Axis, Extrap, Search, derivative_matrix
+from ..ir.types import DType, as_dtype, dtypes
+from .grid import Axis, Extrap, Search, derivative_matrix, num
 
 type Strategy = Literal["auto", "pp", "basis"]
 
-PP_BUDGET = 1 << 20
+LARGE_TABLE = 1 << 20
+"""The most values a spline tabulates in the generated C before it warns: about 20 MB of source,
+a second or more to compile (perf_2026_09_28_interp/bench_codegen.py)."""
+
+PP_BUDGET = 1 << 22
 """The most bytes of piecewise-polynomial table ``strategy="auto"`` generates when the B-spline
-coefficients and local bases would be smaller; past it such a spline is evaluated from those."""
+coefficients and local bases would be smaller; past it such a spline is evaluated from those.
+Measured (perf_2026_09_28_interp/bench_batch.py, bench_codegen.py): per-cell polynomials read at
+random stay 1.7x faster than local bases even at 8 MB of table, but cost 14x the C source and 10x
+the compile time; 4 MB is where the source reaches about 10 MB."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -70,6 +78,8 @@ class BSpline:
       combines the ``k + 1`` local basis functions of each axis. ``"auto"`` takes ``pp`` while its
       table fits ``PP_BUDGET`` or is the smaller of the two (as in 1-D, where ``basis`` stores
       ``(k + 1)^2`` values per cell).
+    dtype: ``float32`` evaluates in single precision with the tables stored so, for embedded
+      targets; fits and tables are computed in double precision first.
     name: the base of the name of ``function()``.
 
   Calling the spline evaluates it: at a point (a scalar in 1-D, a ``(D,)`` vector) or at a batch
@@ -87,6 +97,7 @@ class BSpline:
     fill: float = math.nan,
     search: Search | Literal["auto"] | tuple[Search | Literal["auto"], ...] = "auto",
     strategy: Strategy = "auto",
+    dtype: DType | str = "float64",
     name: str = "interp",
   ) -> None:
     grids = knots if isinstance(knots, tuple) else (knots,)
@@ -95,23 +106,28 @@ class BSpline:
     axes = tuple(
       Axis(np.asarray(t, dtype=np.float64), k, extrap=e, fill=fill, search=s) for t, k, e, s in zip(grids, degrees, extraps, searches, strict=True)
     )
-    self._setup(axes, coeffs, strategy, name)
+    self._setup(axes, coeffs, strategy, name, dtype)
 
   @classmethod
-  def from_axes(cls, axes: Sequence[Axis], coeffs: np.ndarray | Expr, *, strategy: Strategy = "auto", name: str = "interp") -> BSpline:
+  def from_axes(
+    cls, axes: Sequence[Axis], coeffs: np.ndarray | Expr, *, strategy: Strategy = "auto", dtype: DType | str = "float64", name: str = "interp"
+  ) -> BSpline:
     """A spline over prepared axes (a fit's, whose partitions its data sites refine)."""
     self = cls.__new__(cls)
-    self._setup(tuple(axes), coeffs, strategy, name)
+    self._setup(tuple(axes), coeffs, strategy, name, dtype)
     return self
 
-  def _setup(self, axes: tuple[Axis, ...], coeffs: Any, strategy: Strategy, name: str) -> None:
+  def _setup(self, axes: tuple[Axis, ...], coeffs: Any, strategy: Strategy, name: str, dtype: DType | str) -> None:
     if not axes:
       raise ValueError("a spline needs at least one axis")
+    self.dtype = as_dtype(dtype)
+    if self.dtype not in (dtypes.float32, dtypes.float64):
+      raise ValueError(f"dtype must be float32 or float64, got {self.dtype}")
     if strategy not in ("auto", "pp", "basis"):
       raise ValueError(f"strategy must be 'auto', 'pp' or 'basis', got {strategy!r}")
     shape = tuple(ax.n for ax in axes)
     if isinstance(coeffs, Expr):
-      coeffs = coeffs if coeffs.type.dtype == dtypes.float64 else cast(coeffs, dtypes.float64)
+      coeffs = coeffs if coeffs.type.dtype == self.dtype else cast(coeffs, self.dtype)
       if strategy == "pp":
         raise ValueError("strategy='pp' tabulates constant coefficients; an Expr's are evaluated from the local bases")
       strategy = "basis"
@@ -125,10 +141,17 @@ class BSpline:
     self.coeffs: np.ndarray | Expr = coeffs
     self.out_shape: tuple[int, ...] = coeffs.shape[len(axes) :]
     out = math.prod(self.out_shape)
-    pp_bytes = 8 * math.prod(ax.cells * (ax.degree + 1) for ax in axes) * out
-    basis_bytes = 8 * (math.prod(ax.n for ax in axes) * out + sum(ax.cells * ((ax.degree + 1) ** 2 + 1) for ax in axes))
+    pp_bytes = 8 * math.prod(ax.table_cells * (ax.degree + 1) for ax in axes) * out
+    basis_bytes = 8 * (math.prod(ax.n for ax in axes) * out + sum(ax.table_cells * ((ax.degree + 1) ** 2 + 1) for ax in axes))
     self.strategy: Literal["pp", "basis"] = ("pp" if pp_bytes <= max(PP_BUDGET, basis_bytes) else "basis") if strategy == "auto" else strategy
     self._pp: np.ndarray | None = None
+    table = pp_bytes if self.strategy == "pp" else basis_bytes
+    if self.constant and table // 8 > LARGE_TABLE:
+      warnings.warn(
+        f"{name}: {table // 8} tabulated values, about {20 * table // 8 >> 20} MB of C source to compile; "
+        "an Expr for the data (a Function input) keeps the table out of the code",
+        stacklevel=3,
+      )
 
   @property
   def constant(self) -> bool:
@@ -141,7 +164,9 @@ class BSpline:
     return self.coeffs
 
   def _flat_coeffs(self) -> Expr:
-    return Expr.const(self.coeffs.reshape(-1)) if isinstance(self.coeffs, np.ndarray) else self.coeffs.reshape((self.coeffs.size,))
+    if isinstance(self.coeffs, np.ndarray):
+      return Expr.const(self.coeffs.reshape(-1), dtype=self.dtype)
+    return self.coeffs.reshape((self.coeffs.size,))
 
   @property
   def ndim(self) -> int:
@@ -157,13 +182,14 @@ class BSpline:
 
   def __repr__(self) -> str:
     grid = " x ".join(f"{ax.cells}" for ax in self.axes)
-    return f"BSpline({self.name!r}, degree={self.degree}, cells={grid}, out_shape={self.out_shape}, strategy={self.strategy!r})"
+    kind = "" if self.dtype == dtypes.float64 else f", dtype={self.dtype.name}"
+    return f"BSpline({self.name!r}, degree={self.degree}, cells={grid}, out_shape={self.out_shape}, strategy={self.strategy!r}{kind})"
 
   def _points(self, x: Any) -> tuple[Expr, bool]:
-    """``x`` as float64, and whether it is a batch."""
+    """``x`` in the spline's float type, and whether it is a batch."""
     x = as_expr(x)
-    if x.type.dtype != dtypes.float64:
-      x = cast(x, dtypes.float64)
+    if x.type.dtype != self.dtype:
+      x = cast(x, self.dtype)
     point = () if self.ndim == 1 else (self.ndim,)
     if x.shape == point:
       return x, False
@@ -210,21 +236,25 @@ class BSpline:
 
   def _at(self, coords: list[Expr], cells: tuple[Expr, ...]) -> Expr:
     """The value at one point, from its coordinates and cells."""
-    local: list[tuple[Expr, Expr, Expr | None]] = []  # per axis: the int cell, s, and the step outside for "linear"
+    local: list[tuple[Expr, Expr]] = []  # per axis: the tabulated cell, and s
     guards: list[tuple[Expr, float]] = []
     for ax, p, j in zip(self.axes, coords, cells, strict=True):
       if ax.degree == 0:  # a constant never reads its coordinate, so NaN is passed on by hand
         guards.append((not_equal(p, p), math.nan))
-      i = cast(j, dtypes.int64)
-      delta = None
-      if ax.extrap in ("clamp", "fill", "linear"):
-        clamped = where(p < ax.lo, ax.lo, where(p > ax.hi, ax.hi, p))  # NaN passes through
-        if ax.extrap == "linear":
-          delta = p - clamped
+      if ax.extrap in ("clamp", "fill"):
         if ax.extrap == "fill":
           guards.append(((p < ax.lo) | (p > ax.hi), ax.fill))
-        p = clamped
-      local.append((i, p - _gather(ax.centers, i), delta))
+        p = where(p < ax.lo, ax.lo, where(p > ax.hi, ax.hi, p))  # NaN passes through
+      if ax.outer:  # an infinity would meet the tangent's zero higher powers as 0 * inf
+        huge = float(np.finfo(np.float32 if self.dtype == dtypes.float32 else np.float64).max)
+        p = where(p < -huge, -huge, where(p > huge, huge, p))
+      i = cast(ax.table_cell(p, j), dtypes.int64)
+      spacing = None if ax.outer else ax.spacing
+      if spacing is not None:  # the centers of uniform cells are arithmetic: no table
+        center = num(spacing[0], p) + cast(i, self.dtype) * num(spacing[1], p)
+      else:
+        center = _gather(ax.table_centers, i, self.dtype)
+      local.append((i, p - center))
     value = self._pp_eval(local) if self.strategy == "pp" else self._basis_eval(local)
     for out, fill in reversed(guards):
       value = where(out, fill, value)
@@ -236,32 +266,31 @@ class BSpline:
     if self._pp is None:
       t = self._numeric("strategy='pp'")
       for d, ax in enumerate(self.axes):
-        t = np.moveaxis(ax.taylor(np.moveaxis(t, 2 * d, 0)), [0, 1], [2 * d, 2 * d + 1])
+        t = np.moveaxis(ax.table_taylor(np.moveaxis(t, 2 * d, 0)), [0, 1], [2 * d, 2 * d + 1])
       nd = self.ndim
       self._pp = np.ascontiguousarray(t.transpose([*range(0, 2 * nd, 2), *range(1, 2 * nd, 2), *range(2 * nd, t.ndim)])).reshape(-1)
     return self._pp
 
-  def _pp_eval(self, local: list[tuple[Expr, Expr, Expr | None]]) -> Expr:
+  def _pp_eval(self, local: list[tuple[Expr, Expr]]) -> Expr:
     orders = [ax.degree + 1 for ax in self.axes]
     base = local[0][0]
-    for (i, _, _), ax in zip(local[1:], self.axes[1:], strict=True):
-      base = base * ax.cells + i
-    coef = _block(self._pp_table(), base, math.prod(orders) * math.prod(self.out_shape)).reshape((*orders, *self.out_shape))
+    for (i, _), ax in zip(local[1:], self.axes[1:], strict=True):
+      base = base * ax.table_cells + i
+    coef = _block(self._pp_table(), base, math.prod(orders) * math.prod(self.out_shape), self.dtype).reshape((*orders, *self.out_shape))
     for d in reversed(range(self.ndim)):  # nested Horner, the last axis innermost
-      _, s, delta = local[d]
-      coef = _horner([coef[(*(slice(None),) * d, m)] for m in range(orders[d])], s, delta)
+      coef = _horner([coef[(*(slice(None),) * d, m)] for m in range(orders[d])], local[d][1])
     return coef
 
-  def _basis_eval(self, local: list[tuple[Expr, Expr, Expr | None]]) -> Expr:
+  def _basis_eval(self, local: list[tuple[Expr, Expr]]) -> Expr:
     orders = [ax.degree + 1 for ax in self.axes]
     out_size = math.prod(self.out_shape)
     strides = [math.prod(ax.n for ax in self.axes[d + 1 :]) * out_size for d in range(self.ndim)]
     bases, first = [], []
-    for (i, s, delta), ax, stride in zip(local, self.axes, strides, strict=True):
+    for (i, s), ax, stride in zip(local, self.axes, strides, strict=True):
       k1 = ax.degree + 1
-      mats = _block(ax.local.reshape(-1), i, k1 * k1).reshape((k1, k1))
-      bases.append(_horner([mats[:, m] for m in range(k1)], s, delta))
-      first.append(cast(_gather(ax.offsets.astype(np.float64), i), dtypes.int64) * stride)
+      mats = _block(ax.table_local.reshape(-1), i, k1 * k1, self.dtype).reshape((k1, k1))
+      bases.append(_horner([mats[:, m] for m in range(k1)], s))
+      first.append(cast(_gather(ax.table_offsets.astype(np.float64), i, self.dtype), dtypes.int64) * stride)  # exact below 2^24 in float32
     offsets = sum(
       np.arange(k).reshape((*(1,) * d, k, *(1,) * (self.ndim - d - 1))) * stride for d, (k, stride) in enumerate(zip(orders, strides, strict=True))
     )
@@ -282,8 +311,8 @@ class BSpline:
       lambda: ConcreteFunction(
         f"{self.name}_{self.digest}_cell",
         lambda x: stack([ax.cell(p) for ax, p in zip(self.axes, self._coordinates(x), strict=True)]),
-        param_list(L("x", point)),
-        L("cell", (self.ndim,)),
+        param_list(L("x", point, dtype=self.dtype)),
+        L("cell", (self.ndim,), dtype=self.dtype),
       ),
     )
 
@@ -296,8 +325,8 @@ class BSpline:
         lambda: ConcreteFunction(
           name,
           lambda x, cell: self._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
-          param_list(L("x", point), L("cell", (self.ndim,))),
-          L("y", self.out_shape),
+          param_list(L("x", point, dtype=self.dtype), L("cell", (self.ndim,), dtype=self.dtype)),
+          L("y", self.out_shape, dtype=self.dtype),
         ),
       )
     return _interned(
@@ -305,21 +334,21 @@ class BSpline:
       lambda: ConcreteFunction(
         name,
         lambda x, cell, c: self._rebound(c)._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
-        param_list(L("x", point), L("cell", (self.ndim,)), L("c", (self.coeffs.size,))),
-        L("y", self.out_shape),
+        param_list(L("x", point, dtype=self.dtype), L("cell", (self.ndim,), dtype=self.dtype), L("c", (self.coeffs.size,), dtype=self.dtype)),
+        L("y", self.out_shape, dtype=self.dtype),
       ),
     )
 
   def _rebound(self, flat: Expr) -> BSpline:
     """This spline over other coefficients, given flat: a Function's own input."""
-    return BSpline.from_axes(self.axes, flat.reshape(self.coeffs.shape), strategy="basis", name=self.name)
+    return BSpline.from_axes(self.axes, flat.reshape(self.coeffs.shape), strategy="basis", dtype=self.dtype, name=self.name)
 
   @property
   def digest(self) -> str:
     """Eight hex digits naming the spline's content, for ``function()`` names that never collide:
     the axes and the coefficients, or for ``Expr`` coefficients (an input of the Function) their
     shape."""
-    h = hashlib.sha1(self.strategy.encode())
+    h = hashlib.sha1(f"{self.strategy} {self.dtype.name}".encode())
     for ax in self.axes:
       h.update(repr((ax.degree, ax.side, ax.extrap, ax.fill, ax.search)).encode())
       h.update(ax.knots.tobytes())
@@ -337,17 +366,31 @@ class BSpline:
     point = () if self.ndim == 1 else (self.ndim,)
     fname = name or f"{self.name}_{self.digest}"
     if self.constant:
-      return _interned(fname, lambda: ConcreteFunction(fname, lambda x: self(x), param_list(L("x", point)), L("y", self.out_shape)))
+      return _interned(
+        fname,
+        lambda: ConcreteFunction(fname, lambda x: self(x), param_list(L("x", point, dtype=self.dtype)), L("y", self.out_shape, dtype=self.dtype)),
+      )
     return _interned(
       fname,
       lambda: ConcreteFunction(
-        fname, lambda x, c: self._rebound(c)(x), param_list(L("x", point), L("c", (self.coeffs.size,))), L("y", self.out_shape)
+        fname,
+        lambda x, c: self._rebound(c)(x),
+        param_list(L("x", point, dtype=self.dtype), L("c", (self.coeffs.size,), dtype=self.dtype)),
+        L("y", self.out_shape, dtype=self.dtype),
       ),
     )
 
+  def pack(self, coeffs: Any) -> np.ndarray:
+    """The flat buffer ``function()`` takes as its coefficient input ``c``: coefficients of this
+    spline's shape, in C order. For callers of generated code that fill the table at run time."""
+    arr = np.asarray(coeffs, dtype=np.float64)
+    if arr.shape != self.coeffs.shape:
+      raise ValueError(f"pack() takes coefficients of shape {self.coeffs.shape}, got {arr.shape}")
+    return np.ascontiguousarray(arr).reshape(-1)
+
   def _with_axis(self, axis: int, new: Axis, coeffs: Any, suffix: str) -> BSpline:
     axes = (*self.axes[:axis], new, *self.axes[axis + 1 :])
-    return BSpline.from_axes(axes, coeffs, strategy=self.strategy, name=f"{self.name}_{suffix}")
+    return BSpline.from_axes(axes, coeffs, strategy=self.strategy, dtype=self.dtype, name=f"{self.name}_{suffix}")
 
   def derivative(self, nu: int = 1, axis: int = 0) -> BSpline:
     """The ``nu``-th partial derivative along ``axis``, as a spline of degree ``k - nu``: its
@@ -447,6 +490,8 @@ class BSpline:
     if self.ndim != 1 or self.out_shape:
       raise ValueError("inverse() needs a 1-D scalar spline")
     self._numeric("inverse()")
+    if self.dtype != dtypes.float64:
+      raise ValueError("inverse() evaluates in float64")
     ax = self.axes[0]
     if ax.extrap == "periodic" or ax.degree == 0:
       raise ValueError(f"a spline of degree {ax.degree} with extrap={ax.extrap!r} is not invertible")
@@ -510,11 +555,13 @@ class BSpline:
         fills = np.where((pts[:, d] < ax.lo) | (pts[:, d] > ax.hi), ax.fill, fills)
     fills = fills[:, None]
     if isinstance(self.coeffs, np.ndarray):
-      return Expr.const(((B @ self.coeffs.reshape(-1, out_size)) + fills).reshape((m, *self.out_shape)))
+      return Expr.const(((B @ self.coeffs.reshape(-1, out_size)) + fills).reshape((m, *self.out_shape)), dtype=self.dtype)
     from ..linalg.sparse import SparseMatrix
 
-    values = SparseMatrix.from_scipy(B) @ self.coeffs.reshape((B.shape[1], out_size))
-    return (values + Expr.const(fills) if np.any(fills) else values).reshape((m, *self.out_shape))
+    coeffs = self.coeffs if self.dtype == dtypes.float64 else cast(self.coeffs, dtypes.float64)  # the product's values are float64
+    values = SparseMatrix.from_scipy(B) @ coeffs.reshape((B.shape[1], out_size))
+    values = (values + Expr.const(fills) if np.any(fills) else values).reshape((m, *self.out_shape))
+    return values if self.dtype == dtypes.float64 else cast(values, self.dtype)
 
 
 def _along(matrix: Any, values: Any, axis: int) -> Any:
@@ -530,7 +577,11 @@ def _along(matrix: Any, values: Any, axis: int) -> Any:
   moved = values.transpose(order) if axis else values
   rows = moved.shape[0]
   flat = moved.reshape((rows, moved.size // rows))
-  out = SparseMatrix.from_scipy(sparse.csr_array(matrix)) @ flat if sparse.issparse(matrix) else Expr.const(np.asarray(matrix)) @ flat
+  if sparse.issparse(matrix) and values.type.dtype == dtypes.float64:
+    out = SparseMatrix.from_scipy(sparse.csr_array(matrix)) @ flat
+  else:
+    dense = matrix.toarray() if sparse.issparse(matrix) else np.asarray(matrix)
+    out = Expr.const(dense, dtype=values.type.dtype) @ flat
   out = out.reshape((matrix.shape[0], *moved.shape[1:]))
   return out.transpose(tuple(int(i) for i in np.argsort(order))) if axis else out
 
@@ -703,21 +754,19 @@ def _interned(name: str, build: Callable[[], ConcreteFunction[Any, Any, Any, Any
   return fn
 
 
-def _gather(table: np.ndarray, i: Expr) -> Expr:
+def _gather(table: np.ndarray, i: Expr, dtype: DType = dtypes.float64) -> Expr:
   """``table[i]`` for a constant vector and a scalar ``int64`` index in range."""
-  return take(Expr.const(np.ascontiguousarray(table, dtype=np.float64)), stack([i]), in_range=True)[0]
+  return take(Expr.const(np.ascontiguousarray(table, dtype=np.float64), dtype=dtype), stack([i]), in_range=True)[0]
 
 
-def _block(table: np.ndarray, base: Expr, width: int) -> Expr:
+def _block(table: np.ndarray, base: Expr, width: int, dtype: DType = dtypes.float64) -> Expr:
   """``table[base * width + arange(width)]`` for a scalar ``int64`` ``base``."""
-  return take(Expr.const(table), stack([base]) * width + Expr.const(np.arange(width), dtype=dtypes.int64), in_range=True)
+  return take(Expr.const(table, dtype=dtype), stack([base]) * width + Expr.const(np.arange(width), dtype=dtypes.int64), in_range=True)
 
 
-def _horner(coef: list[Expr], s: Expr, delta: Expr | None) -> Expr:
-  """``sum_m coef[m] s^m``, and with ``delta`` its linear continuation ``p(s) + delta p'(s)``."""
-  q, dq = coef[-1], None
+def _horner(coef: list[Expr], s: Expr) -> Expr:
+  """``sum_m coef[m] s^m``."""
+  q = coef[-1]
   for c in reversed(coef[:-1]):
-    if delta is not None:
-      dq = q if dq is None else dq * s + q
     q = q * s + c
-  return q if delta is None or dq is None else q + delta * dq
+  return q

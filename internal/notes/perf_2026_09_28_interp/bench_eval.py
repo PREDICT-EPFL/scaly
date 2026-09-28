@@ -70,7 +70,8 @@ def scaly_variants(cfg: dict) -> dict[str, object]:
     x = inv(point)
     return {"fns": {"auto": sc.Function._from_exprs(f"b_{cfg['name']}", [point], [x, sc.gradient(x, point)], ["y"], ["x", "g"])}, "auto": "newton"}
   variants = {"auto": auto}
-  searches = ["count", "binary"] + (["uniform"] if all(ax.search == "uniform" or ax._uniform is not None for ax in auto.axes) else [])
+  searches = ["count", "binary"] + (["uniform"] if all(ax._uniform is not None for ax in auto.axes) else [])
+  searches += ["bucket"] if all(ax._bucket is not None for ax in auto.axes) else []
   for search in searches:
     if search == "count" and max(ax.cells for ax in auto.axes) > 256:
       continue
@@ -96,6 +97,17 @@ def casadi_variants(cfg: dict) -> dict[str, object]:
     modes = ["linear", "binary"]
   extra = {"algorithm": "smooth_linear"} if cfg["kind"] == "smooth_linear" else {}
   out = {}
+  if cfg["kind"] == "cubic":  # the bspline node and blazing_spline on the same knots and coefficients
+    from scaly import interp
+
+    fitted = interp.interpolant(cfg["grid"] if cfg["dims"] > 1 else cfg["grid"][0], cfg["values"], kind="cubic")
+    knots, coeffs = [list(t) for t in fitted.knots], ca.DM(np.ravel(fitted.coeffs, order="F"))
+    x = ca.MX.sym("x", cfg["dims"])
+    node = ca.bspline(x, coeffs, knots, [3] * cfg["dims"], 1, {"lookup_mode": ["binary"] * cfg["dims"]})
+    out["bspline_node"] = ca.Function(f"ca_{cfg['name']}_node", [x], [node, ca.jacobian(node, x)])
+    blazing = ca.blazing_spline(f"bz_{cfg['name']}", knots, {"pedantic_mode_size": "ignore"})  # it refuses power-of-two extents otherwise
+    value = blazing(x, coeffs)
+    out["blazing"] = ca.Function(f"ca_{cfg['name']}_blazing", [x], [value, ca.jacobian(value, x)])
   for mode in modes:
     opts = {"lookup_mode": [mode] * cfg["dims"], **extra}
     itp = ca.interpolant(f"itp_{mode}", method, [list(g) for g in cfg["grid"]], np.ravel(cfg["values"], order="F"), opts)
@@ -109,7 +121,7 @@ def casadi_variants(cfg: dict) -> dict[str, object]:
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
   parser.add_argument("--rounds", type=int, default=7)
-  parser.add_argument("--reps", type=int, default=300)
+  parser.add_argument("--reps", type=int, default=100)
   parser.add_argument("--only", choices=["1d", "2d", "3d"])
   args = parser.parse_args()
   cfgs = [c for c in configurations() if args.only is None or c["name"].startswith(args.only)]
@@ -129,7 +141,7 @@ def main() -> None:
       expected = None
       for label, meta in cells[cfg["name"]].items():
         folder = OUT / cfg["name"] / label.replace(":", "_").replace("/", "_")
-        t, values = time_cell(folder, meta, args.reps, 200)
+        t, values = time_cell(folder, meta, args.reps, 2000)  # 2000 calls a sample: a clock tick is 0.02 ns a call
         best[cfg["name"], label] = min(best.get((cfg["name"], label), np.inf), t)
         if label.startswith("scaly"):
           expected = np.load(folder / "expected.npy") if expected is None else expected

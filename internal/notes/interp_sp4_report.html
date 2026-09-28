@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interp SP4 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP4 report</h1>
+<p class="sub">API-174 · interpolation performance · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Measured, then tuned; nothing in the gate calls for a dedicated op.</p>
+<ul>
+<li><b>A bucket search</b>: a uniform bucket index, the bucket's first cell from a table, then as many compares as the fullest bucket holds (at most four). Clustered 1 024-site tables drop from 5.4 to 1.9 ns (linear) and 5.8 to 3.1 ns (cubic); on uniform grids it beats the uniform search too. <code>auto</code>: binary up to 32 cells, then bucket, uniform, binary; within 5 % of the best fixed choice everywhere but one row that compares two builds of the same variant.</li>
+<li><b>The default <code>linear</code> extrapolation, tabulated</b>: two cells beyond each end hold the end tangents as polynomials, so it costs a lookup instead of a clamp and a slope at every point (bicubic: 11.7 to 8.2 ns).</li>
+<li><b>Thresholds by measurement</b>: <code>DENSE_FIT</code> 256 → 40 (the scans win from ~40 sites), <code>PP_BUDGET</code> 1 → 4 MB (per-cell polynomials stay faster even at 8 MB, but cost 14× the C), a warning at 2²⁰ tabulated values. Uniform cells compute their centers (the 1e6-point table: 84 → 63 MB of C).</li>
+<li><b>Deployment</b>: <code>float32</code> tables and evaluation (to 1e-6), <code>BSpline.pack</code>, tables as inputs compiled from a C <code>main</code>, and the header states the shape and order of multi-axis buffers.</li>
+<li><b>Against CasADi</b>, now with its <code>bspline</code> node and <code>blazing_spline</code> too: 0.03× to 0.09× its fastest per point in 1-D and 2-D, 0.30× on the 3-D trilinear; batches 25× faster than its map; SciPy's legacy cubic grid interpolator costs 32 µs a point.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 873 passed, 45 skipped. ruff and ty clean. <b>Mutation checks:</b> 12 of 12 killed, one after the bucket search stopped making a compare no bucket needed.</p>
+</div>
+
+<h2>1. What changed</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>grid.py</code></td><td>
+<ul>
+<li><code>bucket_table</code>: the fewest equal buckets (one to eight per cell) none holding more than four interior knots, each widened by a margin that covers the rounding of its index; <code>starts</code> and the width, the most knots a bucket holds.</li>
+<li>Outer cells for <code>extrap="linear"</code>: <code>table_cells</code>, <code>table_centers</code>, <code>table_offsets</code>, <code>table_local</code>, <code>table_taylor</code> add the end tangents; <code>table_cell</code> shifts the searched cell by two compares.</li>
+<li><code>spacing</code>: a uniform partition's centers are <code>c_0 + j h</code> when they match the stored ones to a few ulps (a jittered grid the uniform search accepts does not qualify).</li>
+<li>Every constant of a search takes the point's float type (<code>num</code>, <code>gather(..., dtype)</code>): a Python float in an expression is a float64 constant.</li>
+</ul></td></tr>
+<tr><td><code>spline.py</code></td><td><code>dtype</code> (float32 or float64) for the tables, the evaluation and the Functions' types; an infinite point on a linear axis is clamped to the largest finite float first (the tangent's zero higher powers would meet it as <code>0·∞</code>); <code>pack</code>; the large-table warning.</td></tr>
+<tr><td><code>codegen/aot.py</code></td><td>A typed buffer of two or more axes gets <code>// 6 x 5, row-major (C order)</code>; <code>docs/how_it_works/generated_interface.md</code> says so. One C snapshot header changed accordingly (a Jacobian's 4×4 output), and the table snapshot follows the new searches.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<ul>
+<li>The search parity test covers the bucket search on 5·10⁵ adversarial points per side; <code>auto</code>'s order is pinned.</li>
+<li><code>tests/interp/test_deployment.py</code>: <code>float32</code> against <code>float64</code> at the same (rounded) points, both strategies, four extrapolation modes, and no <code>double</code> table in its C; <code>pack</code>'s order; a 6×5 table passed in by a C <code>main</code>, checked against the JIT; the warning, and none for an <code>Expr</code> table.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Result</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>bucket margin removed</td><td class="ok">killed</td><td>bucket padding +inf</td><td class="ok">killed</td></tr>
+<tr><td>bucket candidates off by one</td><td class="ok">killed</td><td>one compare fewer</td><td class="warn">killed after a change</td></tr>
+<tr><td>outer cell shift <code>&lt;=</code></td><td class="ok">killed</td><td>outer tangent's slope</td><td class="ok">killed</td></tr>
+<tr><td>no infinity clamp</td><td class="ok">killed</td><td>arithmetic centers for any uniform-ish grid</td><td class="ok">killed</td></tr>
+<tr><td>float32 constant as float64</td><td class="ok">killed</td><td>no large-table warning</td><td class="ok">killed</td></tr>
+<tr><td><code>pack</code> in Fortran order</td><td class="ok">killed</td><td>no layout comment</td><td class="ok">killed</td></tr>
+</table></div>
+<p>The survivor was the fourth compare: no tested grid had a bucket holding four knots, so it was dead. The search now makes as many compares as the fullest bucket needs, which is cheaper and makes the last one live on every grid.</p>
+
+<h2>3. Benchmarks</h2>
+<div class="scroll"><table>
+<tr><th>One point, value + derivative</th><th>Scaly <code>auto</code> ns</th><th>CasADi fastest ns</th><th>Ratio</th></tr>
+<tr><td>1-D linear, 1 024 clustered</td><td class="r">1.9 (bucket)</td><td class="r">32.3 (binary)</td><td class="r">0.06</td></tr>
+<tr><td>1-D cubic, 32 clustered</td><td class="r">2.9 (binary)</td><td class="r">35.4 (blazing)</td><td class="r">0.08</td></tr>
+<tr><td>1-D cubic, 1 024 clustered</td><td class="r">3.1 (bucket)</td><td class="r">66.5 (bspline node)</td><td class="r">0.05</td></tr>
+<tr><td>2-D bicubic, 64²</td><td class="r">8.2 (bucket)</td><td class="r">242.7 (bspline node)</td><td class="r">0.03</td></tr>
+<tr><td>3-D trilinear, 20³ (value)</td><td class="r">4.1 (binary)</td><td class="r">13.5 (exact)</td><td class="r">0.30</td></tr>
+</table></div>
+<ul>
+<li>Batches of random points (<code>bench_batch.py</code>): 3.0 to 3.3 ns a point in 1-D and 6.3 to 7.0 in 2-D for 10³ to 10⁶ points, against 60 to 82 and 121 to 129 for CasADi's map.</li>
+<li>Large tables (<code>bench_codegen.py</code>): a 10⁶-point linear table is 63 MB of C and 2.8 s to compile (CasADi: 49 MB, 1.8 s); the 256² bicubic as local bases 1.5 MB and 0.1 s; the 64³ tricubic 5.4 MB, where CasADi spends 15 s fitting it.</li>
+<li>The inverse costs about 17 evaluations (54 ns); left as is.</li>
+<li><b>Not done: hint search.</b> With the bucket and uniform searches at one to two nanoseconds, a search from a carried index could save less than that, so it was not built.</li>
+</ul>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate</th><th>Status</th></tr>
+<tr><td>C timings against CasADi <code>interpolant</code> (all lookup modes), <code>bspline</code> and <code>blazing_spline</code> across sizes and dimensions</td><td class="ok">met</td></tr>
+<tr><td><code>auto</code> never more than 10 % slower than the best fixed choice</td><td class="ok">met, bar one row whose two sides are builds of the same variant (0.3 ns of layout)</td></tr>
+<tr><td>The dedicated-op gate (§10) evaluated and recorded</td><td class="ok">not tripped: 0.035× CasADi's time (1.5× allowed), 0.08× its C lines (3× allowed), 0.06 s lowering (1 s allowed); API-179 is not needed</td></tr>
+</table></div>
+<ul>
+<li><b><code>float32</code> derivatives wait on the core AD.</b> On this base, reverse mode seeds a float64 cotangent, so a float32 gradient fails on a mixed-dtype product. <code>claude/edge-case-fixes</code> changes the tangent dtypes in that code and may carry the fix. Values work.</li>
+</ul>
+
+<h2>5. Next</h2>
+<p>SP5 (API-175): <code>interp.constrained</code>, shape-constrained least squares as a QP through PIQP.</p>
+</main></body></html>

@@ -9,13 +9,17 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import Expr, cast, logical_not, maximum, minimum, stack, take, where
-from ..ir.types import dtypes
+from ..ir.types import DType, dtypes
 
-type Search = Literal["uniform", "count", "binary"]
+type Search = Literal["uniform", "bucket", "count", "binary"]
 type Extrap = Literal["extend", "linear", "clamp", "periodic", "fill"]
 type Side = Literal["right", "left"]
 
-SEARCHES = ("uniform", "count", "binary")
+SEARCHES = ("uniform", "bucket", "count", "binary")
+SMALL = 32
+"""Up to this many cells ``search="auto"`` takes the binary search."""
+BUCKET_WIDTH = 4
+"""The most knots one bucket of the ``bucket`` search compares against."""
 EXTRAPS = ("extend", "linear", "clamp", "periodic", "fill")
 
 
@@ -74,7 +78,7 @@ class Axis:
   or ``(e_j, e_{j+1}]`` with the first closed (``side="left"``, for ``nearest``'s midpoints).
   """
 
-  __slots__ = ("knots", "degree", "edges", "side", "extrap", "fill", "search", "_uniform", "_local", "_offsets")
+  __slots__ = ("knots", "degree", "edges", "side", "extrap", "fill", "search", "_uniform", "_bucket", "_local", "_offsets")
 
   def __init__(
     self,
@@ -111,16 +115,22 @@ class Axis:
       raise ValueError(f"side must be 'right' or 'left', got {side!r}")
     self.knots, self.degree, self.edges, self.side, self.extrap, self.fill = knots, degree, edges, side, extrap, float(fill)
     self._uniform = uniform_step(edges)
+    self._bucket = bucket_table(edges, side)
     self._local: np.ndarray | None = None
     self._offsets: np.ndarray | None = None
     if search == "auto":
-      # Measured (perf_2026_09_28_interp/bench_eval.py): the binary search beats the count from two
-      # cells up, one point per call; the count stays for an explicit choice.
-      search = "uniform" if self._uniform is not None else "binary"
+      # Measured (perf_2026_09_28_interp/bench_eval.py): up to SMALL cells the binary search's few
+      # halvings beat the others' fixed cost; above, the bucket search, which beats even the
+      # uniform one on a uniform grid (its correction is leaner), then uniform, then binary. Binary
+      # beats the count from two cells up; the count stays for an explicit choice.
+      small = self.cells <= SMALL
+      search = "binary" if small else "bucket" if self._bucket is not None else "uniform" if self._uniform is not None else "binary"
     if search not in SEARCHES:
       raise ValueError(f"search must be 'auto' or one of {SEARCHES}, got {search!r}")
     if search == "uniform" and self._uniform is None:
       raise ValueError("search='uniform' needs a uniform partition")
+    if search == "bucket" and self._bucket is None:
+      raise ValueError(f"search='bucket' needs a partition no {BUCKET_WIDTH} of whose knots crowd into one of up to 8 buckets per cell")
     self.search: Search = search
 
   @property
@@ -180,6 +190,73 @@ class Axis:
     out = np.stack([basis_derivatives(self.knots, self.degree, self.centers, m) @ flat / math.factorial(m) for m in range(self.degree + 1)], axis=1)
     return out.reshape(self.cells, self.degree + 1, *coeffs.shape[1:])
 
+  @property
+  def spacing(self) -> tuple[float, float] | None:
+    """``(c_0, h)`` when the cell centers are ``c_0 + j h`` to a few ulps (a uniform partition, not
+    only one close enough for the uniform search), so evaluation computes them instead of reading
+    a table; else ``None``."""
+    if self._uniform is None or self.cells < 2:
+      return None
+    h = (self.edges[-1] - self.edges[0]) / self.cells
+    c0 = float(self.edges[0] + 0.5 * h)
+    arithmetic = c0 + h * np.arange(self.cells)
+    return (c0, float(h)) if np.max(np.abs(arithmetic - self.centers)) <= 8 * np.spacing(np.max(np.abs(self.edges))) else None
+
+  @property
+  def outer(self) -> bool:
+    """Whether evaluation adds a cell beyond each end: ``extrap="linear"``, whose continuation along
+    the end tangent is a polynomial of its own, so it costs a lookup where it would cost a clamp
+    and a slope at every point."""
+    return self.extrap == "linear"
+
+  @property
+  def table_cells(self) -> int:
+    return self.cells + 2 * self.outer
+
+  @property
+  def table_centers(self) -> np.ndarray:
+    """The expansion point of every tabulated cell: the centers, and the ends for the outer cells."""
+    return np.concatenate([[self.lo], self.centers, [self.hi]]) if self.outer else self.centers
+
+  @property
+  def table_offsets(self) -> np.ndarray:
+    return np.concatenate([self.offsets[:1], self.offsets, self.offsets[-1:]]) if self.outer else self.offsets
+
+  def _tangents(self, table: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The end cells' polynomials of ``table`` (per cell, powers on axis 1) as first-order Taylor
+    polynomials at the ends, in the same layout."""
+    powers = np.arange(self.degree + 1).reshape(-1, *(1,) * (table.ndim - 2))
+    ends = []
+    for cell, s in ((table[0], self.lo - self.centers[0]), (table[-1], self.hi - self.centers[-1])):
+      tangent = np.zeros_like(cell)
+      tangent[0] = np.sum(cell * s**powers, axis=0)
+      tangent[1] = np.sum(cell * powers * s ** np.maximum(powers - 1, 0), axis=0)
+      ends.append(tangent)
+    return ends[0], ends[1]
+
+  @property
+  def table_local(self) -> np.ndarray:
+    """``local``, with the outer cells' tangent polynomials of the end basis functions."""
+    if not self.outer:
+      return self.local
+    first, last = self._tangents(np.moveaxis(self.local, 2, 1))
+    return np.concatenate([np.moveaxis(first, 0, 1)[None], self.local, np.moveaxis(last, 0, 1)[None]])
+
+  def table_taylor(self, coeffs: np.ndarray) -> np.ndarray:
+    """``taylor``, with the outer cells' tangent polynomials."""
+    inner = self.taylor(coeffs)
+    if not self.outer:
+      return inner
+    first, last = self._tangents(inner)
+    return np.concatenate([first[None], inner, last[None]])
+
+  def table_cell(self, x: Expr, cell: Expr) -> Expr:
+    """The tabulated cell of ``x`` from its searched ``cell``: shifted past the lower outer cell,
+    and onto an outer cell beyond an end (NaN stays in the first real cell)."""
+    if not self.outer:
+      return cell
+    return cell + num(1.0, cell) - cast(x < self.lo, x.type.dtype) + cast(x > self.hi, x.type.dtype)
+
   def local_basis(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """At points known now, in NumPy, what evaluation computes at run time: the values of each
     point's ``k + 1`` non-zero basis functions with this axis's extrapolation, their indices, and
@@ -204,17 +281,19 @@ class Axis:
   def wrap(self, x: Expr) -> Expr:
     """``x`` moved by whole periods into ``[lo, hi]``, for ``extrap="periodic"``."""
     period = self.hi - self.lo
-    return x - period * ((x - self.lo) * (1.0 / period)).floor()
+    return x - num(period, x) * ((x - num(self.lo, x)) * num(1.0 / period, x)).floor()
 
   def cell(self, x: Expr) -> Expr:
     """The cell of ``x`` as a float index in ``[0, cells - 1]``, elementwise: a point left of the
     partition gets the first cell, one right of it the last, and NaN the first (the comparisons fail)."""
     if self.cells == 1:
-      return Expr.const(np.zeros(x.shape))
+      return Expr.const(np.zeros(x.shape), dtype=x.type.dtype)
     if self.search == "uniform":
       return self._uniform_cell(x)
     if self.search == "count":
       return self._count_cell(x)
+    if self.search == "bucket":
+      return self._bucket_cell(x)
     return self._binary_cell(x)
 
   def _above(self, x: Expr, edge: Expr) -> Expr:
@@ -228,21 +307,37 @@ class Axis:
     assert self._uniform is not None
     t0, inv_h = self._uniform
     last = float(self.cells - 1)
-    j0 = minimum(maximum(((x - t0) * inv_h).floor(), 0.0), last)
+    j0 = minimum(maximum(((x - num(t0, x)) * num(inv_h, x)).floor(), 0.0), last)
     i0 = cast(j0, dtypes.int64)
-    both = gather(self.edges, stack([i0, i0 + 1], axis=len(x.shape)))
+    both = gather(self.edges, stack([i0, i0 + 1], axis=len(x.shape)), x.type.dtype)
     lo, hi = (both[(..., 0)], both[(..., 1)])
     down = logical_not(self._above(x, lo)) & (j0 > 0.0)
     up = self._above(x, hi) & (j0 < last)
-    return j0 - cast(down, dtypes.float64) + cast(up, dtypes.float64)
+    return j0 - cast(down, x.type.dtype) + cast(up, x.type.dtype)
+
+  def _bucket_cell(self, x: Expr) -> Expr:
+    # A uniform bucket index (clamped before the cast), the bucket's first cell from a table, then a
+    # branch-free count of the few knots inside the bucket, read from the edges padded with NaN.
+    assert self._bucket is not None
+    t0, inv_w, starts, width = self._bucket
+    b = cast(minimum(maximum(((x - num(t0, x)) * num(inv_w, x)).floor(), 0.0), float(starts.size - 1)), dtypes.int64)
+    start = gather(starts, b, x.type.dtype)
+    first = cast(start, dtypes.int64)
+    padded = np.full(self.cells + width + 1, np.nan)
+    padded[1 : self.cells] = self.edges[1:-1]
+    knots = gather(padded, stack([first + (k + 1) for k in range(width)], axis=len(x.shape)), x.type.dtype)
+    j = start
+    for k in range(width):
+      j = j + cast(self._above(x, knots[(..., k)]), x.type.dtype)
+    return j
 
   def _count_cell(self, x: Expr) -> Expr:
-    inner = Expr.const(self.edges[1:-1])
+    inner = Expr.const(self.edges[1:-1], dtype=x.type.dtype)
     if not x.shape:
-      return cast(self._above(x, inner), dtypes.float64).sum()
+      return cast(self._above(x, inner), x.type.dtype).sum()
     flat = x.reshape((x.size, 1))
-    hits = cast(self._above(flat, inner.reshape((1, inner.size))), dtypes.float64)
-    return (hits @ Expr.const(np.ones(inner.size))).reshape(x.shape)
+    hits = cast(self._above(flat, inner.reshape((1, inner.size))), x.type.dtype)
+    return (hits @ Expr.const(np.ones(inner.size), dtype=x.type.dtype)).reshape(x.shape)
 
   def _binary_cell(self, x: Expr) -> Expr:
     # Halvings on the left edges padded to a power of two with NaN, which every compare fails (+inf
@@ -253,8 +348,8 @@ class Axis:
     lo = Expr.const(np.zeros(x.shape, dtype=np.int64), dtype=dtypes.int64)
     for m in reversed(range(levels)):
       cand = lo + Expr.const(np.full(x.shape, 1 << m, dtype=np.int64), dtype=dtypes.int64)
-      lo = where(self._above(x, gather(padded, cand)), cand, lo)
-    return cast(lo, dtypes.float64)
+      lo = where(self._above(x, gather(padded, cand, x.type.dtype)), cand, lo)
+    return cast(lo, x.type.dtype)
 
 
 def uniform_step(edges: np.ndarray) -> tuple[float, float] | None:
@@ -275,8 +370,34 @@ def uniform_step(edges: np.ndarray) -> tuple[float, float] | None:
   return float(edges[0]), float(1.0 / h)
 
 
-def gather(table: np.ndarray, index: Expr) -> Expr:
+def bucket_table(edges: np.ndarray, side: Side = "right") -> tuple[float, float, np.ndarray, int] | None:
+  """``(e_0, 1 / w, starts, width)`` for the bucket search: the fewest equal buckets (one to eight per
+  cell) none of which holds more than ``BUCKET_WIDTH`` interior knots, each widened by a margin that
+  covers the rounding of its index; ``starts[b]`` is the cell of the bucket's (widened) left end, and
+  ``width`` the most knots a bucket holds, the compares evaluation makes. ``None`` when no such
+  bucketing exists (knots crowded far below the mean spacing) or there is one cell."""
+  cells = edges.size - 1
+  if cells < 2:
+    return None
+  for per_cell in (1, 2, 4, 8):
+    count = per_cell * cells
+    width = (edges[-1] - edges[0]) / count
+    margin = 1e-9 * width
+    lefts = edges[0] + width * np.arange(count)
+    first = np.clip(np.searchsorted(edges, lefts - margin, side=side) - 1, 0, cells - 1)
+    last = np.clip(np.searchsorted(edges, lefts + width + margin, side=side) - 1, 0, cells - 1)
+    if np.max(last - first) <= BUCKET_WIDTH:
+      return float(edges[0]), float(1.0 / width), first.astype(np.float64), max(1, int(np.max(last - first)))
+  return None
+
+
+def num(value: float, like: Expr) -> Expr:
+  """A number as a constant of ``like``'s float type (a Python float would make a float64 one)."""
+  return Expr.const(np.asarray(value, dtype=np.float64), dtype=like.type.dtype)
+
+
+def gather(table: np.ndarray, index: Expr, dtype: DType = dtypes.float64) -> Expr:
   """``table[index]`` for a constant vector and an ``int64`` index of any shape, in range."""
   flat = index.reshape((index.size,)) if index.shape != (index.size,) else index
-  out = take(Expr.const(np.ascontiguousarray(table, dtype=np.float64)), flat, in_range=True)
+  out = take(Expr.const(np.ascontiguousarray(table, dtype=np.float64), dtype=dtype), flat, in_range=True)
   return out.reshape(index.shape) if index.shape != (index.size,) else out

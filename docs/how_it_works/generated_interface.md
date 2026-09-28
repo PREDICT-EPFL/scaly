@@ -104,7 +104,8 @@ static inline int f_call(const f_x_t* x, f_y_t* y, f_workspace_t* workspace);
 The struct is `f_<name>_t`. Only when the same name is both an input and an output, as a solver
 Function's warm start and solution are, does it split into `f_<name>_in_t` and `f_<name>_out_t`,
 and the C++ aliases and `call` parameters follow (`w_in`, `w_out`). An empty buffer gets a
-one-element array so the struct stays valid C.
+one-element array so the struct stays valid C. A buffer of more than one axis carries its shape in
+a comment, `// 6 x 5, row-major (C order)`, since its struct is flat.
 The workspace is a struct the caller places where it likes: on the stack, in a `static`, on the
 heap. `f_call` builds the pointer arrays and passes `workspace->data`; for a function with
 `f_SZ_W == 0` it accepts `NULL`.

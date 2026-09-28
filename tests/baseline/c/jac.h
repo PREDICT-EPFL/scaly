@@ -43,7 +43,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
 // Typed buffers: one struct per input and output, and the caller-owned workspace.
 typedef struct { SCALY_ALIGNAS(16) double data[4]; } dynamics_jac_znext_z_z_t;
 typedef struct { SCALY_ALIGNAS(16) double data[2]; } dynamics_jac_znext_z_u_t;
-typedef struct { SCALY_ALIGNAS(16) double data[16]; } dynamics_jac_znext_z_jac_znext_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[16]; } dynamics_jac_znext_z_jac_znext_z_t;  // 4 x 4, row-major (C order)
 typedef struct { SCALY_ALIGNAS(16) double data[dynamics_jac_znext_z_SZ_W > 0 ? dynamics_jac_znext_z_SZ_W : 1]; } dynamics_jac_znext_z_workspace_t;
 static inline int dynamics_jac_znext_z_call(const dynamics_jac_znext_z_z_t* z, const dynamics_jac_znext_z_u_t* u, dynamics_jac_znext_z_jac_znext_z_t* jac_znext_z, dynamics_jac_znext_z_workspace_t* workspace) {
   const double* arg[dynamics_jac_znext_z_SZ_ARG > 0 ? dynamics_jac_znext_z_SZ_ARG : 1] = {z->data, u->data};

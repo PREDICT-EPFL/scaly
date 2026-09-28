@@ -200,9 +200,17 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       test had looked only at the sites). Report: `notes/interp_sp3_report.html`.
 - [ ] **API-186. `inverse()` of a spline with `Expr` coefficients:** the bracket from the curve's
       values at run time, the Newton loop carrying the coefficients, and the derivative in them.
-- [ ] **API-174. Interpolation performance** (interp plan SP4): the `bucket` search, the `auto`
-      thresholds by measurement, large-table code generation, tables as inputs for AOT, `float32`,
-      and the dedicated-op gate.
+- [x] **API-174. Interpolation performance** (interp plan SP4). The `bucket` search (a uniform
+      bucket index, a start table, as many compares as the fullest bucket needs): clustered tables
+      5.4 to 1.9 ns; `auto` is binary up to 32 cells, then bucket, uniform, binary, within 5% of the
+      best fixed choice. The default `linear` extrapolation tabulated as two outer cells (11.7 to
+      8.2 ns on a bicubic). Thresholds measured: `DENSE_FIT` 40, `PP_BUDGET` 4 MB, a warning at 2^20
+      tabulated values; uniform cells compute their centers. `float32` tables and evaluation (to
+      1e-6; derivatives wait on the core AD's float32 tangents), `BSpline.pack`, a table as an input
+      of AOT code from a C `main`, the header stating multi-axis buffer layouts. Against CasADi's
+      interpolant, bspline node and blazing_spline: 0.03x to 0.30x per point, 25x on batches. The
+      dedicated-op gate is not tripped. Hint search not built. 12/12 mutants killed. Report:
+      `notes/interp_sp4_report.html`.
 - [ ] **API-175. Shape-constrained fitting** (interp plan SP5): `interp.constrained`, a QP through PIQP.
 - [ ] **API-176. Interpolation notebooks and CasADi pairs** (interp plan SP6).
 - [ ] **API-178. Interpolation review round** (interp plan SPR).
@@ -251,7 +259,8 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - **API-156. Migrate the benchmark problems' hand-written integrators and NumPy plants** onto
   `scaly.integrators`, keeping their `checks.py` gates and CasADi parity.
 - **API-179. `ExprOp.SPLINE_EVAL`,** a dedicated interpolation op, only if the gate of the interp
-  plan (§10) trips.
+  plan (§10) trips. Evaluated at SP4 (`notes/interp_sp4_report.html`): not tripped, the composite
+  evaluation at 0.03x to 0.30x CasADi's time.
 - **API-180. Scattered-data interpolants** (radial basis functions, the Gaussian-process posterior
   mean) behind `scaly.interp`'s calling convention.
 - **API-181. Piecewise-affine functions on polyhedral or simplicial partitions** (explicit MPC laws,

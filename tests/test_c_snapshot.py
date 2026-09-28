@@ -98,7 +98,7 @@ def _qp_host() -> sc.Function:
 
 
 def _table() -> sc.Function:
-  """A 1-D linear lookup table of five points: the uniform search, one take, the linear extrapolation."""
+  """A 1-D linear lookup table of five points: the binary search, one take, the end segments continued."""
   return sc.interp.interpolant(np.arange(5.0), np.array([0.0, 1.0, 0.5, -0.25, 2.0]), kind="linear").function("table")
 
 

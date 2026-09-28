@@ -173,12 +173,14 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   res_values: list[str] = []
   lines = ["", "// Typed buffers: one struct per input and output, and the caller-owned workspace."]
   inputs, outputs = buffer_idents(fun)
+  # An array of more than one axis is flat in the buffer; its shape and order are stated beside it.
+  layout = lambda expr: f"  // {' x '.join(map(str, expr.shape))}, row-major (C order)" if len(expr.shape) > 1 else ""
   for ident, expr in zip(inputs, fun.inputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;")
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;{layout(expr)}")
     params.append(f"const {symbol}_{ident}_t* {ident}")
     arg_values.append(f"{ident}->data")
   for ident, expr in zip(outputs, fun.outputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;")
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;{layout(expr)}")
     params.append(f"{symbol}_{ident}_t* {ident}")
     res_values.append(f"{ident}->data")
   params.append(f"{symbol}_workspace_t* workspace")

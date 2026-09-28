@@ -10,9 +10,9 @@ Two studies, each a Function of the coefficients (or data) evaluated at points f
   sparse product whose Jacobian has `4m` entries (`sc.sparse_jacobian`), and (c) CasADi 3.8's
   parametric `bspline` interpolant, inlined (its default derivative in the data is zero), mapped
   over the points, with its dense Jacobian.
-- `fit_jac`: a cubic interpolant whose 300 data are the input, at one point, value and gradient in
-  the data: the fit as a dense constant map (`DENSE_FIT` raised) against the tridiagonal solve in
-  two scans (the default above 256 sites).
+- `fit_jac`: a cubic interpolant whose 16 to 300 data are the input, at one point, value and
+  gradient in the data: the fit as a dense constant map against the tridiagonal solve in two scans,
+  each forced by setting `DENSE_FIT`, which this study sets.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def fit_cells(n: int) -> dict:
 
   g = np.linspace(0.0, 10.0, n)
   out = {}
-  for label, threshold in (("dense_map", 10**9), ("scans", fit.DENSE_FIT)):
+  for label, threshold in (("dense_map", 10**9), ("scans", 0)):
     saved, fit.DENSE_FIT = fit.DENSE_FIT, threshold
     try:
       y = sc.sym("y", n)
@@ -75,7 +75,8 @@ def main() -> None:
   parser.add_argument("--rounds", type=int, default=7)
   parser.add_argument("--reps", type=int, default=100)
   args = parser.parse_args()
-  studies = {f"coeff_jac_{n}x{m}": coeff_cells(n, m) for n, m in ((20, 200), (100, 2000))} | {"fit_jac_300": fit_cells(300)}
+  studies = {f"coeff_jac_{n}x{m}": coeff_cells(n, m) for n, m in ((20, 200), (100, 2000))}
+  studies |= {f"fit_jac_{n}": fit_cells(n) for n in (16, 32, 64, 128, 300)}  # where the scans overtake the dense map
   metas: dict[tuple[str, str], dict] = {}
   for study, cells in studies.items():
     arg = cells["_input"]

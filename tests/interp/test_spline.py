@@ -159,8 +159,8 @@ def test_fill_gives_the_constant_outside_and_the_spline_on_the_closed_interval()
 @pytest.mark.parametrize("k", [0, 1, 3])
 def test_non_finite_points(extrap: str, k: int) -> None:
   """NaN gives NaN in every mode. An infinity gives the end value (clamp), the fill value, NaN
-  (periodic: inf - inf), or the IEEE value of the formula: an infinity signed by the leading
-  coefficient (extend) or by the end slope (linear)."""
+  (periodic: inf - inf), or the IEEE value of the continuation: an infinity signed by the leading
+  coefficient (extend) or by the end slope (linear, the end value where that slope is zero)."""
   f, ref = _spline_1d(extrap, fill=4.0, k=k)
   got = evaluate(f, np.array([np.nan, np.inf, -np.inf]))["y"]
   assert np.isnan(got[0])
@@ -181,8 +181,7 @@ def test_non_finite_points(extrap: str, k: int) -> None:
 def test_an_index_is_shared_and_found_once() -> None:
   """Value, gradient and Hessian at the same point search once: the index path carries no derivative,
   so every derivative graph reuses the value's search node, and the program has one ``floor``."""
-  f = interp.interpolant(np.linspace(0.0, 1.0, 17), np.sin(np.linspace(0.0, 3.0, 17)), kind="cubic")
-  assert f.axes[0].search == "uniform"
+  f = interp.interpolant(np.linspace(0.0, 1.0, 17), np.sin(np.linspace(0.0, 3.0, 17)), kind="cubic", search="uniform")
   x = sc.sym("x")
   y = f(x)
   fn = sc.Function._from_exprs("shared_search", [x], [y, sc.gradient(y, x), sc.hessian(y, x)], ["x"], ["y", "g", "h"])

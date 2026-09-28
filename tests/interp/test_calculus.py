@@ -50,7 +50,7 @@ def test_a_derivative_spline_is_the_derivative_of_the_spline_everywhere(extrap: 
 
 
 def test_a_derivative_shares_the_splines_search() -> None:
-  f = interp.interpolant(np.linspace(0.0, 1.0, 33), np.sin(np.linspace(0.0, 4.0, 33)), kind="cubic")
+  f = interp.interpolant(np.linspace(0.0, 1.0, 33), np.sin(np.linspace(0.0, 4.0, 33)), kind="cubic", search="uniform")
   x = sc.sym("x")
   i = f.index(x)
   d, dd = f.derivative(), f.derivative(2)
