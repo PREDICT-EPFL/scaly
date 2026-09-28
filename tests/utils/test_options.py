@@ -9,13 +9,19 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.ad.forward import options_tag
 from scaly.codegen import render_c_source
+from scaly.utils.options import register_option_namespace
 
 
 @pytest.fixture(autouse=True)
 def _restore_default():
   yield
-  sc.set_options(**{f.name: getattr(sc.Options(), f.name) for f in dataclasses.fields(sc.Options)})
+  defaults = sc.Options()
+  sc.set_options(
+    **{f.name: getattr(defaults, f.name) for f in dataclasses.fields(sc.Options) if f.name != "changed"},
+    linalg=dataclasses.asdict(defaults.namespace("linalg")),
+  )
 
 
 def test_default_nesting_and_restoration_after_an_exception() -> None:
@@ -42,12 +48,21 @@ def test_unknown_names_and_values_raise_at_the_call() -> None:
   with pytest.raises(ValueError, match="is not one of"):
     sc.set_options(nonsmooth="average")
   assert sc.get_options().nonsmooth == "split"
-  for name in ("dense_unroll", "sparse_unroll", "max_trajectory"):
-    for bad in (-1, 2.5, True, "8"):
+  for bad in (-1, 2.5, True, "8"):
+    with pytest.raises(ValueError, match="non-negative integer"):
+      sc.set_options(max_trajectory=bad)
+    for name in ("dense_unroll", "sparse_unroll"):
       with pytest.raises(ValueError, match="non-negative integer"):
-        sc.set_options(**{name: bad})
-    with sc.options(**{name: 0}) as inside:
-      assert getattr(inside, name) == 0
+        sc.set_options(linalg={name: bad})
+  with sc.options(max_trajectory=0) as inside:
+    assert inside.max_trajectory == 0
+  for name in ("dense_unroll", "sparse_unroll"):
+    with sc.options(linalg={name: 0}) as inside:
+      assert getattr(inside.namespace("linalg"), name) == 0
+  with pytest.raises(TypeError, match=r"unknown option linalg.'unroll'"):
+    sc.set_options(linalg={"unroll": 3})
+  with pytest.raises(TypeError, match="takes a dict"):
+    sc.set_options(linalg=3)
   assert sc.get_options() == sc.Options()
 
 
@@ -90,7 +105,7 @@ def test_the_convention_is_part_of_the_graph_and_the_generated_code() -> None:
 
 def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
   a, b = sc.sym("a", (4, 4)), sc.sym("b", 4)
-  with sc.options(dense_unroll=0):
+  with sc.options(linalg=dict(dense_unroll=0)):
     looped = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
   unrolled = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
   assert all(not e.attrs["unroll"] for e in looped) and all(e.attrs["unroll"] for e in unrolled)
@@ -103,7 +118,7 @@ def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
   av, bv = m @ m.T + 4 * np.eye(4), np.arange(4.0)
   for got, ref in zip(fns["loop"]._flat_numerical_call(av, bv), fns["flat"]._flat_numerical_call(av, bv), strict=True):
     np.testing.assert_allclose(got, ref, rtol=1e-13, atol=1e-14)
-  with sc.options(dense_unroll=16):
+  with sc.options(linalg=dict(dense_unroll=16)):
     assert sc.linalg.cholesky(sc.sym("big", (12, 12))).attrs["unroll"]
 
 
@@ -120,3 +135,25 @@ def test_max_trajectory_refuses_a_reverse_pass_that_stores_too_much() -> None:
         sc.vjp((out.sum(),), (x,), (sc.const(1.0),))
     with sc.options(max_trajectory=5000):
       sc.vjp((out.sum(),), (x,), (sc.const(1.0),))
+
+
+@dataclasses.dataclass(frozen=True)
+class _Shaping:
+  level: int = 0
+
+
+# A namespace a derivative depends on, declared once per process as a package would.
+register_option_namespace("test_shaping", _Shaping(), affects_derivatives=True)
+
+
+def test_only_namespaces_that_affect_derivatives_name_helpers_apart() -> None:
+  assert options_tag() == ""
+  with sc.options(linalg=dict(dense_unroll=0, sparse_unroll=3)):
+    assert options_tag() == ""
+  with sc.options(test_shaping=dict(level=2)) as inside:
+    assert inside.namespace("test_shaping") == _Shaping(2)
+    assert options_tag().startswith("_o")
+  with sc.options(test_shaping=dict(level=0)) as inside:
+    assert inside.changed == () and options_tag() == ""
+  with pytest.raises(ValueError, match="already declared"):
+    register_option_namespace("linalg", _Shaping(), affects_derivatives=False)

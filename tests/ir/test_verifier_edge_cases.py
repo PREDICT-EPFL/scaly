@@ -122,7 +122,7 @@ def _dense() -> tuple[Expr, Expr]:
 
 
 def _dense_looped() -> tuple[Expr, Expr]:
-  with sc.options(dense_unroll=0):
+  with sc.options(linalg=dict(dense_unroll=0)):
     return _dense()
 
 

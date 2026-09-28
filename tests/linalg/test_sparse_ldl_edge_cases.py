@@ -212,7 +212,7 @@ def test_auto_schedule_on_either_side_of_the_option() -> None:
   assert work == 156  # 120 update multiply-adds and 36 entries of L
   picks = {}
   for limit in (0, work - 1, work, 10 * work):
-    with sc.options(sparse_unroll=limit):
+    with sc.options(linalg=dict(sparse_unroll=limit)):
       picks[limit] = SparseLDL(mat, name=f"sle_auto_{limit}")
   assert {k: f.schedule for k, f in picks.items()} == {0: "loop", work - 1: "loop", work: "unroll", 10 * work: "unroll"}
   unroll, loop = SparseLDL(mat, schedule="unroll", name="sle_auto_u"), SparseLDL(mat, schedule="loop", name="sle_auto_l")
@@ -222,9 +222,9 @@ def test_auto_schedule_on_either_side_of_the_option() -> None:
   for x, f in zip(out[:4], picks.values(), strict=True):
     _assert_bits(x, out[4] if f.schedule == "unroll" else out[5])
   for pattern in (np.eye(4, dtype=bool), np.ones((1, 1), dtype=bool)):  # nothing below the diagonal: no work
-    with sc.options(sparse_unroll=0):
+    with sc.options(linalg=dict(sparse_unroll=0)):
       assert SparseLDL(SparseMatrix.symbol("D", pattern)).schedule == "unroll"
-  with pytest.raises(ValueError, match="non-negative integer"), sc.options(sparse_unroll=-1):
+  with pytest.raises(ValueError, match="non-negative integer"), sc.options(linalg=dict(sparse_unroll=-1)):
     pass
 
 

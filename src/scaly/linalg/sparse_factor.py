@@ -119,7 +119,7 @@ class SparseLDL:
     self.d_offset = s.nnz_l
     self.w_offset = s.nnz_l + s.n
     if schedule == "auto":
-      schedule = "unroll" if self.work <= get_options().sparse_unroll else "loop"
+      schedule = "unroll" if self.work <= get_options().namespace("linalg").sparse_unroll else "loop"
     self.schedule: Schedule = schedule
     self._sweeps: dict[bool, ConcreteFunction] = {}
     self._solvers: dict[tuple[int, float | None], ConcreteFunction] = {}
@@ -162,7 +162,7 @@ class SparseLDL:
   @property
   def work(self) -> int:
     """Multiply-adds and divisions of the factorization: what ``schedule="auto"`` compares with
-    ``sc.options(sparse_unroll=...)``."""
+    ``sc.options(linalg=dict(sparse_unroll=...))``."""
     return self.symbolic.update_lanes + self.symbolic.nnz_l
 
   # --- the factorization ----------------------------------------------------------------------

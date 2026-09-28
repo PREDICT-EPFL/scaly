@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from ..function import Function
-from ..ir.expr import Expr, ExprOp, topo
+from ..ir.expr import Expr, ExprOp, op_def, topo
 from ..ir.program import ProgramNode, ProgramOp
 
 
@@ -22,11 +22,6 @@ _EXPR_COLORS = {
   ExprOp.CALL: "#00b7c8",
   ExprOp.VMAP: "#f6ccff",
   ExprOp.SCAN: "#e6b3ff",
-  ExprOp.ADD: "#ffffc0",
-  ExprOp.SUB: "#ffffc0",
-  ExprOp.MUL: "#ffffc0",
-  ExprOp.DIV: "#ffffc0",
-  ExprOp.NEG: "#ffffc0",
   ExprOp.SUM: "#ffb0b0",
   ExprOp.MATMUL: "#ffb0b0",
   ExprOp.RESHAPE: "#d8f9e4",
@@ -37,6 +32,18 @@ _EXPR_COLORS = {
   ExprOp.STACK: "#ffc14d",
   ExprOp.CONCAT: "#ffc14d",
 }
+
+# An op not named above is coloured by its traits (``OpDef.traits``), so one an extension registers
+# gets the colour of its kind: updates, run-time indexing, libm calls, other elementwise arithmetic.
+_TRAIT_COLORS = (("update", "#ffd0a0"), ("runtime_index", "#d0dcff"), ("expensive", "#ffe680"), ("elementwise", "#ffffc0"))
+
+
+def _expr_color(op: str) -> str:
+  if op in _EXPR_COLORS:
+    return _EXPR_COLORS[op]
+  traits = op_def(op).traits
+  return next((color for trait, color in _TRAIT_COLORS if trait in traits), "#ffffff")
+
 
 _PROGRAM_NODE_COLORS = {
   ProgramOp.PROGRAM: "#c07788",
@@ -92,7 +99,7 @@ def expr_graph(obj: Function | Expr | Iterable[Expr]) -> dict[str, Any]:
       label += f"\n{e.name}"
     if op == ExprOp.CONST and e.value is not None and e.value.size <= 4:
       label += "\n" + np.array2string(e.value, separator=", ")
-    graph_nodes.append({"id": loc[e.id], "label": label, "color": _EXPR_COLORS.get(op, "#ffffff")})
+    graph_nodes.append({"id": loc[e.id], "label": label, "color": _expr_color(op)})
     for pos, arg in enumerate(e.args):
       edges.append({"from": loc[arg.id], "to": loc[e.id], "label": str(pos)})
   return {"nodes": graph_nodes, "edges": edges, "outputs": [loc[e.id] for e in outs]}

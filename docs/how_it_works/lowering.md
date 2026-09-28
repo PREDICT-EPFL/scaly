@@ -15,9 +15,9 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
     ...
 ```
 
-The elementwise family is the exception: every unary op shares a single rule driven by the
-`_UNARY` map from `ExprOp` to `ProgramOp`, and every binary op shares another. Adding `asinh` is
-therefore a map entry; adding a new structural operation is a rule.
+The elementwise family is the exception: an op with the `elementwise` trait shares a single rule,
+and the trait's value is the `ProgramOp` that computes one entry. Adding `asinh` is therefore a
+trait; adding a new structural operation is a rule.
 
 `lower_function` walks the graph in topological order, emits one procedure per reached `Function`,
 deduplicates callees so a block used a hundred times is lowered once, runs the optimization
@@ -53,7 +53,8 @@ or disabling optimization.
 `optimize_program` runs the explicit `PASS_PIPELINE` sequence in `passes/program/__init__.py`
 at the tail of lowering, between the initial program and the verifier. Each pass has its own
 module. Adding an optimization means adding its function to this sequence at the required
-position. Imports do not determine execution order.
+position; a package outside the compiler inserts its pass at a named slot instead
+(`insert_after`, `insert_before`). Imports do not determine execution order.
 
 The sequence starts with hoisting and scalar expansion, then cleans up loops and storage, and
 ends with explicit store pairing and scalar preparation.

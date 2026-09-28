@@ -10,8 +10,6 @@ import numpy as np
 from ..function import ConcreteFunction
 from ..function.sugar import _scan_node, _while_node, vmap, while_parts
 from ..ir.expr import (
-  COMMON_ELEMENTWISE_BINARY,
-  COMMON_ELEMENTWISE_UNARY,
   PREDICATE_OPS,
   Expr,
   ExprOp,
@@ -83,7 +81,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
   """The adjoint of one map lane for the ``active_formals``, the inputs it reads, and the formals
   whose cotangent is a constant zero (an implicit rule's for a factor it treats as constant): the
   map's adjoint leaves those out, so reverse mode does not walk back into what produced them."""
-  key = (output_index, active_formals, get_options())
+  key = (output_index, active_formals, get_options().derivative_key())
   cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     out = callee.outputs[output_index]
@@ -161,7 +159,7 @@ def _scan_adj_function(callee: Any, extras: tuple[int, ...], active: tuple[int, 
   cotangent of the entering carry and of each ``active`` slice. Every output of a scan that has a
   cotangent goes through this one step, so a scan has one backward scan however many of its outputs
   are used."""
-  key = (extras, active, get_options())
+  key = (extras, active, get_options().derivative_key())
   cache = _SCAN_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
@@ -276,7 +274,7 @@ def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int
   params' cotangents plus this step's share; otherwise ``lam`` unchanged, so steps the loop never
   took contribute nothing."""
   cache = _WHILE_ADJ_CACHE.setdefault(body, {})
-  key = (index, n_params, active, get_options())
+  key = (index, n_params, active, get_options().derivative_key())
   if key not in cache:
     carry = body.inputs[0]
     cs = carry.size
@@ -458,7 +456,10 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
 # Ops whose adjoint in each argument of the output's shape is the cotangent times a local
 # derivative, entry by entry.
-_MASKABLE = (COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | {ExprOp.CAST}) - {ExprOp.FLOOR, ExprOp.CEIL}
+def _maskable(op: str) -> bool:
+  """An elementwise op a derivative flows through (``floor`` and ``ceil`` have none)."""
+  definition = op_def(op)
+  return "elementwise" in definition.traits and definition.differentiable and op not in (ExprOp.FLOOR, ExprOp.CEIL)
 
 
 def _masked(cot: Expr) -> tuple[Expr, Expr, bool] | None:
@@ -498,7 +499,7 @@ def _masked_local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   choose then stays zero even where ``f'`` is infinite or NaN (``sqrt``, ``log`` or ``1 / x`` at 0),
   so the derivative flows through the chosen branch only, as it does in forward mode. An argument
   broadcast to the output's shape sums the cotangent over entries, and keeps the plain rule."""
-  if expr.op not in _MASKABLE:
+  if not _maskable(expr.op):
     return _local_vjp(expr, cot)
   terms = _sum_terms(cot)
   if len(terms) > 1 and any(_masked(t) is not None for t in terms):
@@ -565,8 +566,9 @@ def _factor_cotangent(expr: Expr, cot: Expr) -> Expr:
     inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
     inner = (unit_l.T @ ((cot * Expr.const(stril)) * inv_d.reshape((1, n)))) * Expr.const(stril) + cot * Expr.const(eye)
     unit = True
-  w = solve_triangular(expr, inner, lower=True, trans=True, unit_diagonal=unit)
-  g = solve_triangular(expr, w.T, lower=True, trans=True, unit_diagonal=unit).T
+  unroll = bool(expr.attrs["unroll"])
+  w = solve_triangular(expr, inner, lower=True, trans=True, unit_diagonal=unit, unroll=unroll)
+  g = solve_triangular(expr, w.T, lower=True, trans=True, unit_diagonal=unit, unroll=unroll).T
   return g * Expr.const(tril) + (g * Expr.const(stril.T)).T
 
 
@@ -721,7 +723,7 @@ def _vjp_trisolve(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   args = expr.args
   t, b = args
   lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
-  b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit)
+  b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
   x2, bb2 = (expr.reshape((expr.size, 1)), b_bar.reshape((b_bar.size, 1))) if len(expr.shape) == 1 else (expr, b_bar)
   outer = x2 @ bb2.T if trans else bb2 @ x2.T
   return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 from bisect import bisect_right
 
+from ...ir.expr import op_def, registered_ops, registry_version
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ._common import (
@@ -24,29 +26,18 @@ from ._common import (
   rebuild_program,
 )
 
-_EXPENSIVE_OPS: frozenset[ProgramOp] = frozenset(
-  {
-    ProgramOp.SIN,
-    ProgramOp.COS,
-    ProgramOp.TAN,
-    ProgramOp.ASIN,
-    ProgramOp.ACOS,
-    ProgramOp.ATAN,
-    ProgramOp.SINH,
-    ProgramOp.COSH,
-    ProgramOp.TANH,
-    ProgramOp.ERF,
-    ProgramOp.EXP,
-    ProgramOp.LOG,
-    ProgramOp.SQRT,
-    ProgramOp.POW,
-    ProgramOp.ATAN2,
-  }
-)
+
+@functools.cache
+def _expensive_ops(version: int) -> frozenset[ProgramOp]:
+  """The program ops of the expression ops with both the ``elementwise`` and the ``expensive``
+  trait: libm calls, which fusion does not duplicate. Keyed by the registry's version."""
+  traits = [op_def(op).traits for op in registered_ops()]
+  return frozenset(t["elementwise"] for t in traits if t.get("expensive") and "elementwise" in t)
 
 
 def _has_expensive(node: ProgramNode) -> bool:
-  return any(n.op in _EXPENSIVE_OPS for n in _walk(node))
+  expensive = _expensive_ops(registry_version())
+  return any(n.op in expensive for n in _walk(node))
 
 
 def _max_load_executions(node: ProgramNode, buf: str, factor: int) -> int | None:

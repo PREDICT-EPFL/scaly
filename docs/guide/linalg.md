@@ -43,7 +43,7 @@ mode and to second order.
 - Their sparsity is conservative: the factor's lower triangle may depend on all of the lower
   triangle it reads, and each column of a solution on its whole column of right-hand sides.
 
-**Generated code.** Orders up to `sc.options(dense_unroll=...)` (8 by default, decided when the
+**Generated code.** Orders up to `sc.options(linalg=dict(dense_unroll=...))` (8 by default, decided when the
 op is built) become straight-line code, which scalar expansion keeps in registers. Larger orders
 become loops with triangular bounds that do not grow with the order:
 
@@ -86,7 +86,7 @@ singular matrix gives a zero pivot, and inf or NaN in what follows it.
 all with the one factorization. Its second derivatives are implicit too. `lu_solve` is
 differentiable in `b`.
 
-**Generated code.** Up to `sc.options(dense_unroll=...)` the factorization is straight-line code
+**Generated code.** Up to `sc.options(linalg=dict(dense_unroll=...))` the factorization is straight-line code
 with every access at a fixed address, and the row swap selects on the run-time pivot. Larger
 orders loop, swapping through the pivot row's run-time address. Against LAPACK's `dgesv` from
 Apple's Accelerate, the generated solve takes 0.12 of its time at order 4, 0.51 at order 8 and
@@ -122,7 +122,7 @@ keeps its own order.
 
 **Generated code.** `schedule="loop"` generates the factorization as one loop nest,
 `schedule="scan"` as `scan`s over its columns, and `schedule="unroll"` as straight-line code. The
-default, `"auto"`, unrolls when the factorization takes at most `sc.options(sparse_unroll=...)`
+default, `"auto"`, unrolls when the factorization takes at most `sc.options(linalg=dict(sparse_unroll=...))`
 multiply-adds and divisions (1000 by default; `fact.work` has the count) and loops otherwise.
 Straight-line code has no loop overhead, which dominates small systems:
 

@@ -185,7 +185,7 @@ def test_small_orders_are_straight_line_and_large_ones_loops() -> None:
   assert "for (" not in srcs[DENSE_UNROLL].split("int lushape")[1]
   lines = {n: len(src.splitlines()) for n, src in srcs.items()}
   assert lines[24] == lines[48], "the loop code does not grow with the order"
-  with sc.options(dense_unroll=0):
+  with sc.options(linalg=dict(dense_unroll=0)):
     a_s = sc.sym("a", (DENSE_UNROLL, DENSE_UNROLL))
     looped = _fn("lu_forced_loops", [a_s], [lu(a_s)])
   assert "for (" in str(render_c_module(looped).body).split("int lu_forced_loops")[1]

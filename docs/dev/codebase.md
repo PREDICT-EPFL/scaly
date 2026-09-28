@@ -32,7 +32,7 @@ src/scaly/
     expr.py              simplify, constant folding, CSE            (Expr -> Expr)
     lowering.py          lower_function, the per-ExprOp rule registry (Expr -> ProgramNode)
     program/             program optimizations                    (ProgramNode -> ProgramNode)
-      __init__.py        explicit PASS_PIPELINE and optimize_program
+      __init__.py        explicit PASS_PIPELINE, the slots passes are inserted at, and optimize_program
       _common.py         shared buffer references, loop helpers, names, and reachability
       hoist_invariant.py loop-invariant callee work moved before a mapped loop
       scalarize.py       bounded scalar expansion, folding, and scheduling
@@ -204,12 +204,13 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 
 | To add | Touch |
 | --- | --- |
-| A scalar math op | an `ExprOp` name and a `_BUILTIN_OPS` row (the op's registration) in `ir/expr.py`; its rules, each a row in the table of the module that owns the kind: a verify rule in `_BUILTIN_RULES` in `ir/expr_spec.py`, `jvp` and `jvp_many` in `ad/forward.py`, `vjp` in `ad/reverse.py`, a pattern in `ad/sparsity.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
-| A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` |
+| A scalar math op | an `ExprOp` name and a `_BUILTIN_OPS` row (the op's registration) in `ir/expr.py`, with its traits there: `elementwise` naming the `ProgramOp` it computes (which is its lowering), and `expensive` if that is a libm call; its rules, each a row in the table of the module that owns the kind: a verify rule in `_BUILTIN_RULES` in `ir/expr_spec.py`, `jvp` and `jvp_many` in `ad/forward.py`, `vjp` in `ad/reverse.py`, a pattern in `ad/sparsity.py`; a matching `ProgramOp` in `ir/program.py` and its category set; and the C spelling in `codegen/c.py` |
+| A structural expression op | the same, minus the `elementwise` trait, plus its own `@lowers` rule in `passes/lowering.py` and the traits that fit (`runtime_index`, `exact_reads`, `update`, `reads`) |
 | An op outside the compiler (a library's) | `register_op(name, arity=..., jvp=..., vjp=..., sparsity=..., verify=..., lower=...)` in the module that provides its builder; `OpDef` in `ir/expr.py` gives each rule's signature and its default. Nothing in the compiler changes |
 | An expression rewrite | a pattern in `passes/expr.py` |
 | An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |
 | A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |
+| A program-dialect pass from outside the compiler | `insert_after(anchor, name, fn)` or `insert_before` in `passes/program/__init__.py` |
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, ...) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` for a statement op (scalars need none); the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |

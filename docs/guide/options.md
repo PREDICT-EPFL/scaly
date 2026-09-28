@@ -29,22 +29,29 @@ at their jumps, under `"split"` and `"first"`, and `"error"` refuses them like t
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `dense_unroll` | 8 | the largest order at which `linalg.cholesky`, `ldl` and `solve_triangular` become straight-line code instead of loops |
-| `sparse_unroll` | 1000 | the most multiply-adds and divisions a `linalg.SparseLDL` factorization may take and still become straight-line code (`schedule="auto"`) |
 | `max_trajectory` | 50 000 000 | the most values reverse mode may store for the carries of one `scan` or `while_loop` |
+| `linalg=dict(dense_unroll=...)` | 8 | the largest order at which `linalg.cholesky`, `ldl` and `solve_triangular` become straight-line code instead of loops |
+| `linalg=dict(sparse_unroll=...)` | 1000 | the most multiply-adds and divisions a `linalg.SparseLDL` factorization may take and still become straight-line code (`schedule="auto"`) |
 
-The two unroll thresholds trade generation time for speed: straight-line code runs several times
-faster than a loop at these sizes, but costs about a millisecond of generation per operation. A
-reverse pass over a loop stores its carry at every step; building one that would exceed
+A reverse pass over a loop stores its carry at every step; building one that would exceed
 `max_trajectory` values raises `ValueError` and names the loop. The usual fix is an implicit
-derivative ([Custom derivatives](derivatives.md#custom-derivatives)), not a larger limit. These
-three options take non-negative integers.
+derivative ([Custom derivatives](derivatives.md#custom-derivatives)), not a larger limit. The two
+unroll thresholds trade generation time for speed: straight-line code runs several times faster
+than a loop at these sizes, but costs about a millisecond of generation per operation. These three
+options take non-negative integers.
+
+The unroll thresholds belong to the `linalg` namespace: `sc.options(linalg=dict(dense_unroll=4))`.
+A package declares its own namespace with `scaly.utils.options.register_option_namespace` and says
+whether its options can change a derivative. The `linalg` ones cannot: a derivative takes each
+factorization's choice from the node it differentiates, so a gradient built under
+`dense_unroll=0` is the default one, node for node.
 
 An option is read when a graph is built, not when it is compiled. A derivative built inside a
 `with sc.options(...)` block keeps its convention after the block ends, because the convention is
 part of that graph, and a graph built under a different setting generates different C and gets its
 own JIT cache entry. The derivative of a call, a map or a loop is built once per callee and per
-setting, so one Function differentiated under two settings gets two derivative bodies, named apart,
-which can sit in one graph. `sc.options` changes the setting for the current thread or task only;
+setting of the options a derivative depends on (`nonsmooth`, `max_trajectory` and namespaces that
+declare it), so one Function differentiated under two such settings gets two derivative bodies,
+named apart, which can sit in one graph. `sc.options` changes the setting for the current thread or task only;
 `sc.set_options` changes the default outside any block. An unknown option name or value raises at
 the call.

@@ -102,13 +102,14 @@ def _is_zero_const(expr: Expr) -> bool:
 
 
 def options_tag() -> str:
-  """A name suffix for derivative helpers built under options other than the defaults. The options
-  in force shape a helper (``nonsmooth`` its tie rules, ``dense_unroll`` its factorizations,
-  ``max_trajectory`` the checks of its loops), so they are part of every helper cache's key, and
-  helpers built from one callee under two settings can meet in one graph only under two names.
-  Under the defaults the tag is empty and names are unchanged."""
-  options = get_options()
-  return "" if options == Options() else "_o" + hashlib.sha1(repr(options).encode()).hexdigest()[:8]
+  """A name suffix for derivative helpers built under options other than the defaults, counting only
+  the options a derivative depends on (``Options.derivative_key``: ``nonsmooth`` its tie rules,
+  ``max_trajectory`` the checks of its loops, and the namespaces declaring they affect derivatives).
+  They are part of every helper cache's key, and helpers built from one callee under two settings
+  can meet in one graph only under two names. Under the defaults the tag is empty and names are
+  unchanged."""
+  key = get_options().derivative_key()
+  return "" if key == Options().derivative_key() else "_o" + hashlib.sha1(repr(key).encode()).hexdigest()[:8]
 
 
 def _bilinear_tangent(expr: Expr, d: Sequence[Expr], product: Callable[[Expr, Expr], Expr]) -> Expr:
@@ -513,7 +514,7 @@ def _scan_jvp_body(callee: ConcreteFunction, active: tuple[int, ...]) -> Concret
   ones then the tangents of the ``active`` ones, and the outputs are ``[c', dc']``, the primal
   stacked outputs, then their tangents."""
   cache = _SCAN_JVP_CACHE.setdefault(callee, {})
-  key = (active, get_options())
+  key = (active, get_options().derivative_key())
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     cs = carry.size
@@ -615,7 +616,7 @@ def _while_jvp_functions(
   tangents of the ``active`` params as extra params: the condition reads ``c`` and the params only,
   so the tangent loop takes exactly the primal's steps."""
   cache = _WHILE_JVP_CACHE.setdefault(body, {})
-  key = (index, active, get_options())
+  key = (index, active, get_options().derivative_key())
   suffix = _loop_suffix(index, active)
   cs = body.inputs[0].size
   if key not in cache:
@@ -676,9 +677,11 @@ def _lower_as_symmetric(d: Expr) -> Expr:
 
 
 def _sandwich(t: Expr, s: Expr, *, unit: bool) -> Expr:
-  """``L^{-1} S L^{-T}`` for a symmetric ``S`` and the lower triangle of ``t``."""
-  z = solve_triangular(t, s, lower=True, unit_diagonal=unit)
-  return solve_triangular(t, z.T, lower=True, unit_diagonal=unit).T
+  """``L^{-1} S L^{-T}`` for a symmetric ``S`` and the lower triangle of ``t``, a factorization's
+  result, whose choice between straight-line code and loops the solves keep."""
+  unroll = bool(t.attrs["unroll"])
+  z = solve_triangular(t, s, lower=True, unit_diagonal=unit, unroll=unroll)
+  return solve_triangular(t, z.T, lower=True, unit_diagonal=unit, unroll=unroll).T
 
 
 def ragged_tangent(expr: Expr, d: list[Expr | None]) -> Expr:
@@ -729,7 +732,7 @@ def trisolve_tangent(expr: Expr, dt: Expr | None, db: Expr | None) -> Expr:
     term = (masked.T if trans else masked) @ expr
     rhs = -term if rhs is None else rhs - term
   assert rhs is not None
-  return solve_triangular(t, rhs, lower=lower, trans=trans, unit_diagonal=unit)
+  return solve_triangular(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
 
 
 def _seeds_as_columns(x: Expr) -> tuple[Expr, tuple[int, ...]]:
@@ -777,13 +780,14 @@ def _jvp_many_dense(expr: Expr, d: list[Expr], nseed: int) -> Expr:
       rhs = -term if rhs is None else rhs - term
     if rhs is None:
       return _zeros_many(expr, nseed)
-    return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit)
+    return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
   if _is_zero_const(d[0]):
     return _zeros_many(expr, nseed)
   s = _lower_as_symmetric(d[0])
   unit = expr.op == ExprOp.LDL
-  z = _seed_solve(expr, s, lower=True, unit_diagonal=unit)
-  x = _seed_transpose(_seed_solve(expr, _seed_transpose(z), lower=True, unit_diagonal=unit))
+  unroll = bool(expr.attrs["unroll"])
+  z = _seed_solve(expr, s, lower=True, unit_diagonal=unit, unroll=unroll)
+  x = _seed_transpose(_seed_solve(expr, _seed_transpose(z), lower=True, unit_diagonal=unit, unroll=unroll))
   if expr.op == ExprOp.CHOLESKY:
     phi = np.tril(np.ones((n, n)))
     np.fill_diagonal(phi, 0.5)
@@ -1082,7 +1086,7 @@ def _scan_jvp_many_body(callee: ConcreteFunction, active: tuple[int, ...], nseed
   outputs, then their tangents, each flat and seed-major."""
   # Strict mode is part of the key: a body built with a per-seed fallback inside must not satisfy a
   # later strict build, which would then skip the check it asked for.
-  key = (active, nseed, env_bool("SCALY_STRICT_JVP_MANY", False), get_options())
+  key = (active, nseed, env_bool("SCALY_STRICT_JVP_MANY", False), get_options().derivative_key())
   cache = _SCAN_JVP_MANY_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
@@ -1154,7 +1158,7 @@ def _while_jvp_many_functions(
   params' seeded tangents (``(nseed, *shape)``) as extra params; the condition reads ``c`` and the
   params only, so the loop takes exactly the primal's steps."""
   cache = _WHILE_JVP_MANY_CACHE.setdefault(body, {})
-  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False), index, active, get_options())
+  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False), index, active, get_options().derivative_key())
   suffix = f"{nseed}" + _loop_suffix(index, active)
   cs = body.inputs[0].size
   if key not in cache:
@@ -1203,7 +1207,7 @@ def _call_jvp_many_function(
   callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
   seeded = (output_index, formal_indices, nseed, tuple(None if value is None else value.tobytes() for value in constants))
-  key = (*seeded, get_options())
+  key = (*seeded, get_options().derivative_key())
   cache = _CALL_JVP_MANY_CACHE.setdefault(callee, {})
   if key not in cache:
     active = tuple(range(nseed))
@@ -1258,7 +1262,7 @@ def _call_jvp_many_const_function(
 
 
 def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int, ...]) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  key = (output_index, formal_indices, get_options())
+  key = (output_index, formal_indices, get_options().derivative_key())
   cache = _CALL_JVP_CACHE.setdefault(callee, {})
   if key not in cache:
     taken = {*callee.input_names, *callee.output_names}

@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable, Mapping
 import numpy as np
 
 from ..utils.options import get_options
+from .program import ProgramOp
 from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes
 
 
@@ -209,9 +210,25 @@ class OpDef:
   - ``lower(ctx, node)``: the lowering to the program dialect (``passes/lowering.py``). None: the
     op cannot be lowered.
 
+  ``traits`` are what passes ask about an op beyond its rules (``define_traits`` sets them):
+
+  - ``elementwise``: entry ``i`` of the result reads entry ``i`` of each (broadcast) argument, as
+    the program op this names computes it; such an op needs no lowering rule of its own.
+  - ``expensive``: an elementwise op that costs a libm call, which fusion does not duplicate.
+  - ``runtime_index``: addresses memory through an index known only at run time.
+  - ``exact_reads``: its structural pattern is exactly the entries it reads, so an in-place loop
+    body may be proven safe through it.
+  - ``update(node, value, length)``: an op that writes some entries of its first argument and keeps
+    the rest; the callback gives the positions it writes at each of ``length`` steps.
+  - ``reads(node, position, value, length)``: the positions it reads of argument ``position`` at
+    each step, when that argument is a loop carry updated in place.
+
+  Positions are a ``(length, lanes)`` integer array, -1 for a dropped lane, or an object with
+  ``bounds()`` and ``explicit()`` (``passes/lowering.py``); ``None`` when they cannot be bounded.
+
   Compared and hashed by identity: the registry holds one per name."""
 
-  __slots__ = ("name", "arity", "numpy", "differentiable", *_RULE_KINDS)
+  __slots__ = ("name", "arity", "numpy", "differentiable", "traits", *_RULE_KINDS)
 
   def __init__(self, name: str, arity: int | None, numpy: Callable[..., Any] | None = None, differentiable: bool = True) -> None:
     self.name = name
@@ -225,15 +242,30 @@ class OpDef:
     self.fold: Callable[..., Any] | None = None
     self.verify: tuple[Any, ...] = ()
     self.lower: Callable[..., Any] | None = None
+    self.traits: dict[str, Any] = {}
 
   def __repr__(self) -> str:
     return f"OpDef({str(self.name)!r})"
 
 
 _OPS: dict[str, OpDef] = {}
+_VERSION = [0]  # bumped by every registration, rule and trait: a key for caches derived from the registry
 
 
-def register_op(name: str, *, arity: int | None, numpy: Callable[..., Any] | None = None, differentiable: bool = True, **rules: Any) -> OpDef:
+def registry_version() -> int:
+  """A number that changes whenever an op, a rule or a trait is added, for caches derived from them."""
+  return _VERSION[0]
+
+
+def register_op(
+  name: str,
+  *,
+  arity: int | None,
+  numpy: Callable[..., Any] | None = None,
+  differentiable: bool = True,
+  traits: dict[str, Any] | None = None,
+  **rules: Any,
+) -> OpDef:
   """Add the op ``name`` to the expression dialect, with any of its rules (``OpDef``); registering
   a name twice raises.
 
@@ -243,8 +275,11 @@ def register_op(name: str, *, arity: int | None, numpy: Callable[..., Any] | Non
     raise ValueError(f"expression op {name!r} is already registered")
   definition = OpDef(name, arity, numpy, differentiable)
   _OPS[name] = definition
+  _VERSION[0] += 1
   if rules:
     define_rules(name, **rules)
+  if traits:
+    define_traits(name, **traits)
   return definition
 
 
@@ -258,7 +293,29 @@ def define_rules(op: str, **rules: Any) -> OpDef:
     if getattr(definition, kind):
       raise ValueError(f"the {kind} rule of expression op {op!r} is already defined")
     setattr(definition, kind, tuple(rule) if kind == "verify" else rule)
+  _VERSION[0] += 1
   return definition
+
+
+_TRAITS = ("elementwise", "expensive", "runtime_index", "exact_reads", "update", "reads")
+
+
+def define_traits(op: str, **traits: Any) -> OpDef:
+  """Give the registered op ``op`` traits (``OpDef``); setting one twice raises."""
+  definition = op_def(op)
+  for name, value in traits.items():
+    if name not in _TRAITS:
+      raise TypeError(f"unknown op trait {name!r}; the traits are {', '.join(_TRAITS)}")
+    if name in definition.traits:
+      raise ValueError(f"the {name} trait of expression op {op!r} is already defined")
+    definition.traits[name] = value
+  _VERSION[0] += 1
+  return definition
+
+
+def has_trait(op: str, name: str) -> bool:
+  """Whether the registered op ``op`` has the trait ``name``."""
+  return bool(op_def(op).traits.get(name))
 
 
 def op_def(op: str) -> OpDef:
@@ -350,6 +407,80 @@ _BUILTIN_OPS: tuple[tuple[Any, ...], ...] = (
 for _op, _arity, _numpy, *_diff in _BUILTIN_OPS:
   register_op(_op, arity=_arity, numpy=_numpy, differentiable=_diff[0] if _diff else True)
 del _op, _arity, _numpy, _diff
+
+# The ops that lower one entry at a time, each to the program op named (the shared elementwise
+# lowering in ``passes/lowering.py``).
+for _op, _program_op in (
+  (ExprOp.NEG, ProgramOp.NEG),
+  (ExprOp.SIN, ProgramOp.SIN),
+  (ExprOp.COS, ProgramOp.COS),
+  (ExprOp.TAN, ProgramOp.TAN),
+  (ExprOp.ASIN, ProgramOp.ASIN),
+  (ExprOp.ACOS, ProgramOp.ACOS),
+  (ExprOp.ATAN, ProgramOp.ATAN),
+  (ExprOp.SINH, ProgramOp.SINH),
+  (ExprOp.COSH, ProgramOp.COSH),
+  (ExprOp.TANH, ProgramOp.TANH),
+  (ExprOp.ERF, ProgramOp.ERF),
+  (ExprOp.EXP, ProgramOp.EXP),
+  (ExprOp.LOG, ProgramOp.LOG),
+  (ExprOp.SQRT, ProgramOp.SQRT),
+  (ExprOp.ABS, ProgramOp.ABS),
+  (ExprOp.FLOOR, ProgramOp.FLOOR),
+  (ExprOp.CEIL, ProgramOp.CEIL),
+  (ExprOp.NOT, ProgramOp.NOT),
+  (ExprOp.ISFINITE, ProgramOp.ISFINITE),
+  (ExprOp.CAST, ProgramOp.CAST),
+  (ExprOp.ADD, ProgramOp.ADD),
+  (ExprOp.SUB, ProgramOp.SUB),
+  (ExprOp.MUL, ProgramOp.MUL),
+  (ExprOp.DIV, ProgramOp.DIV),
+  (ExprOp.POW, ProgramOp.POW),
+  (ExprOp.ATAN2, ProgramOp.ATAN2),
+  (ExprOp.MINIMUM, ProgramOp.MINIMUM),
+  (ExprOp.MAXIMUM, ProgramOp.MAXIMUM),
+  (ExprOp.COPYSIGN, ProgramOp.COPYSIGN),
+  (ExprOp.LT, ProgramOp.LT),
+  (ExprOp.LE, ProgramOp.LE),
+  (ExprOp.EQ, ProgramOp.EQ),
+  (ExprOp.NE, ProgramOp.NE),
+  (ExprOp.AND, ProgramOp.AND),
+  (ExprOp.OR, ProgramOp.OR),
+):
+  define_traits(_op, elementwise=_program_op)
+del _program_op
+# Elementwise ops that cost a libm call.
+for _op in (ExprOp.SIN, ExprOp.COS, ExprOp.TAN, ExprOp.ASIN, ExprOp.ACOS, ExprOp.ATAN, ExprOp.SINH, ExprOp.COSH, ExprOp.TANH):
+  define_traits(_op, expensive=True)
+for _op in (ExprOp.ERF, ExprOp.EXP, ExprOp.LOG, ExprOp.SQRT, ExprOp.POW, ExprOp.ATAN2):
+  define_traits(_op, expensive=True)
+for _op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT, ExprOp.SPARSE_LDL, ExprOp.SPARSE_LDL_SOLVE):
+  define_traits(_op, runtime_index=True)
+# Ops whose structural pattern is exactly the entries they read, so the pattern can stand in for a
+# read set. Everything else (predicates, ``select``'s condition, ``copysign``'s sign, casts, calls,
+# maps and loops) may read entries its pattern omits.
+for _op in (
+  ExprOp.INPUT,
+  ExprOp.CONST,
+  *(COMMON_ELEMENTWISE_UNARY | (COMMON_ELEMENTWISE_BINARY - {ExprOp.COPYSIGN})),
+  ExprOp.SUM,
+  ExprOp.MAX,
+  ExprOp.MIN,
+  ExprOp.RESHAPE,
+  ExprOp.TRANSPOSE,
+  ExprOp.SLICE,
+  ExprOp.GATHER,
+  ExprOp.SCATTER,
+  ExprOp.SEGMENT_MAX,
+  ExprOp.SEGMENT_MIN,
+  ExprOp.STACK,
+  ExprOp.CONCAT,
+  ExprOp.MATMUL,
+  ExprOp.INDEX_ADD,
+  ExprOp.INDEX_SET,
+):
+  define_traits(_op, exact_reads=True)
+del _op
 
 
 def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
@@ -1036,10 +1167,12 @@ def _square(a: Any, what: str) -> Expr:
   return a
 
 
-def _unroll_attr(n: int) -> dict[str, bool]:
+def _unroll_attr(n: int, unroll: bool | None = None) -> dict[str, bool]:
   """Whether a dense factorization or solve of order ``n`` becomes straight-line code, decided when
-  the graph is built (``sc.options(dense_unroll=...)``), so the choice is part of the graph."""
-  return {"unroll": n <= get_options().dense_unroll}
+  the graph is built (``sc.options(linalg=dict(dense_unroll=...))``), so the choice is part of the
+  graph. A derivative passes ``unroll``, the choice of the node it differentiates, so that no option
+  in force when it is built changes it."""
+  return {"unroll": n <= get_options().namespace("linalg").dense_unroll if unroll is None else bool(unroll)}
 
 
 def cholesky(a: Any) -> Expr:
@@ -1207,10 +1340,11 @@ def sparse_ldl_solve(factor: Any, b: Any, tables: dict[str, Any]) -> Expr:
   )
 
 
-def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False) -> Expr:
+def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False, unroll: bool | None = None) -> Expr:
   """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
   matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
-  when ``unit_diagonal`` is false."""
+  when ``unit_diagonal`` is false. ``unroll`` overrides the ``linalg`` option's choice between
+  straight-line code and loops, as a derivative does to keep its factorization's."""
   t = _square(t, "solve_triangular")
   b = as_expr(b)
   if len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0]:
@@ -1219,7 +1353,7 @@ def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False,
     ExprOp.TRISOLVE,
     (t, b),
     TensorType(b.shape, dtype=promote_dtype(t, b), diff=diff_any(t, b)),
-    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal), **_unroll_attr(t.shape[0])},
+    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal), **_unroll_attr(t.shape[0], unroll)},
     lowering=common_lowering(t, b),
   )
 
@@ -1309,12 +1443,6 @@ def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
     attrs={"indices": idx},
     lowering=common_lowering(base, values),
   )
-
-
-# Ops that address memory through an index computed at run time.
-RUNTIME_INDEX_OPS = frozenset(
-  {ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT, ExprOp.SPARSE_LDL, ExprOp.SPARSE_LDL_SOLVE}
-)
 
 
 def _runtime_indices(indices: Any, op: str) -> Expr:

@@ -16,7 +16,7 @@ from ..function.model import ConcreteFunction
 from ..function.sugar import custom_derivative, vmap
 from ..ir.expr import Expr, as_expr, cast, cholesky, gather, ldl, lu, put, solve_triangular, take
 from ..ir.types import DType, dtypes
-from ..utils.options import Options, get_options
+from ..utils.options import LinalgOptions, get_options
 
 __all__ = ["cho_solve", "cholesky", "ldl", "ldl_solve", "ldl_unpack", "lu", "lu_solve", "solve", "solve_triangular"]
 
@@ -108,13 +108,13 @@ def _general_solvers(n: int, dtype: DType) -> tuple[ConcreteFunction, ConcreteFu
   solve with the same factor through the other Function. Two levels of rules, as ``SparseLDL``'s:
   second derivatives are implicit too, and only a third would reach the factorization.
 
-  The triangular solves inside are straight-line code or loops as ``sc.options(dense_unroll=...)``
+  The triangular solves inside are straight-line code or loops as ``sc.options(linalg=dict(dense_unroll=...))``
   decides when the solve is built, so each decision has its own pair, named apart from the default's."""
-  unroll = n <= get_options().dense_unroll
+  unroll = n <= get_options().namespace("linalg").dense_unroll
   key = (n, dtype, unroll)
   if key not in _GENERAL:
     tag = f"lu_solve{n}" + ("" if dtype == dtypes.float64 else f"_{dtype.name}")
-    if unroll != (n <= Options().dense_unroll):
+    if unroll != (n <= LinalgOptions().dense_unroll):
       tag += "_unrolled" if unroll else "_looped"
 
     def syms(*names: str) -> list[Expr]:

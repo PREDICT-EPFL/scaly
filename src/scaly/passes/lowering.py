@@ -24,20 +24,19 @@ GPU placement and the new ops tracked in the migration roadmap.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
 from ..ir import program as p
 from ..ir.expr import (
   CALLEE_OPS,
-  COMMON_ELEMENTWISE_BINARY,
-  COMMON_ELEMENTWISE_UNARY,
-  RUNTIME_INDEX_OPS,
   Expr,
   ExprOp,
   callees_of,
   define_rules,
+  define_traits,
+  has_trait,
   op_def,
   topo,
 )
@@ -55,48 +54,6 @@ from ..utils.names import c_ident
 class LoweringError(NotImplementedError):
   """The lowerer (or Program-IR renderer) does not yet cover this op / case."""
 
-
-# Expression ExprOp -> Program IR scalar ProgramOp. The op vocabulary grows here as ops migrate.
-_UNARY: dict[str, ProgramOp] = {
-  ExprOp.NEG: ProgramOp.NEG,
-  ExprOp.SIN: ProgramOp.SIN,
-  ExprOp.COS: ProgramOp.COS,
-  ExprOp.TAN: ProgramOp.TAN,
-  ExprOp.ASIN: ProgramOp.ASIN,
-  ExprOp.ACOS: ProgramOp.ACOS,
-  ExprOp.ATAN: ProgramOp.ATAN,
-  ExprOp.SINH: ProgramOp.SINH,
-  ExprOp.COSH: ProgramOp.COSH,
-  ExprOp.TANH: ProgramOp.TANH,
-  ExprOp.ERF: ProgramOp.ERF,
-  ExprOp.EXP: ProgramOp.EXP,
-  ExprOp.LOG: ProgramOp.LOG,
-  ExprOp.SQRT: ProgramOp.SQRT,
-  ExprOp.ABS: ProgramOp.ABS,
-  ExprOp.FLOOR: ProgramOp.FLOOR,
-  ExprOp.CEIL: ProgramOp.CEIL,
-  ExprOp.NOT: ProgramOp.NOT,
-  ExprOp.ISFINITE: ProgramOp.ISFINITE,
-  ExprOp.CAST: ProgramOp.CAST,
-}
-
-_BINARY: dict[str, ProgramOp] = {
-  ExprOp.ADD: ProgramOp.ADD,
-  ExprOp.SUB: ProgramOp.SUB,
-  ExprOp.MUL: ProgramOp.MUL,
-  ExprOp.DIV: ProgramOp.DIV,
-  ExprOp.POW: ProgramOp.POW,
-  ExprOp.ATAN2: ProgramOp.ATAN2,
-  ExprOp.MINIMUM: ProgramOp.MINIMUM,
-  ExprOp.MAXIMUM: ProgramOp.MAXIMUM,
-  ExprOp.COPYSIGN: ProgramOp.COPYSIGN,
-  ExprOp.LT: ProgramOp.LT,
-  ExprOp.LE: ProgramOp.LE,
-  ExprOp.EQ: ProgramOp.EQ,
-  ExprOp.NE: ProgramOp.NE,
-  ExprOp.AND: ProgramOp.AND,
-  ExprOp.OR: ProgramOp.OR,
-}
 
 LowerRule = Callable[["LowerCtx", Expr], None]
 
@@ -271,7 +228,7 @@ def _lower_to_proc(
       if not in_place
       and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
       # Scalar expansion follows every address at generation time; a run-time index has none.
-      and not any(n.op in RUNTIME_INDEX_OPS for n in nodes)
+      and not any(has_trait(n.op, "runtime_index") for n in nodes)
       and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
       else "disabled",
       **({"in_place": True} if in_place else {}),
@@ -289,6 +246,18 @@ _SCALARIZABLE = (dtypes.float64, dtypes.bool_, dtypes.int64)
 
 class LowerCtx:
   """Per-Function lowering state: buffers, statements, and the Expr-id -> buffer map.
+
+  An op's lowering rule (``OpDef.lower``) receives this context and the node, and programs against
+  its public part, which with ``scaly.ir.program``'s builders is all a rule needs:
+
+  - ``buf_of(expr)`` the buffer holding an argument; ``alloc_tmp(node)`` the buffer to write the
+    node into (its output buffer when it is one); ``bind(node, name)`` makes an existing buffer the
+    node's value instead;
+  - ``new_private``, ``new_alias`` and ``new_const_index`` for scratch, views and index tables;
+  - ``emit(*statements)`` appends to the procedure; ``fresh_id()`` and ``fresh_name(prefix)`` give
+    names no other statement uses;
+  - ``copy_loop``, ``blocked_sum`` and ``lane_loops`` build the loops rules share;
+  - ``fun`` the Function being lowered and ``in_place`` whether its carry is updated in place.
 
   ``entry`` marks the Function whose procedure becomes the pointer-ABI entry. Its parameters are the
   caller's ``double`` arrays whatever the declared dtype, so a ``bool`` input is read into a typed
@@ -360,7 +329,7 @@ class LowerCtx:
     for out_name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
       # An output may share its name with an input (``(x, y) -> (y, z)``); buffers are keyed by
       # name, so such an output gets one of its own, or it would stand for the input everywhere.
-      name = out_name if out_name not in self.buffers else self._fresh(f"{out_name}_out")
+      name = out_name if out_name not in self.buffers else self.fresh_name(f"{out_name}_out")
       self.output_buffer_names.append(name)
       buf = p.buffer(name, self._abi_dtype(expr.type.dtype), _shape_or_scalar(expr.shape), address_space="global")
       self.params.append(buf)
@@ -389,7 +358,8 @@ class LowerCtx:
     for node in topo(self.fun.outputs):
       if node.id in self.value_buffers:
         continue  # input (or already lowered)
-      rule = op_def(node.op).lower
+      definition = op_def(node.op)
+      rule = definition.lower or (_lower_elementwise if "elementwise" in definition.traits else None)
       if rule is None:
         raise LoweringError(f"Expression op {node.op!r} is not yet lowered to Program IR")
       rule(self, node)
@@ -399,18 +369,42 @@ class LowerCtx:
   def buf_of(self, expr: Expr) -> ProgramNode:
     return self.buffers[self.value_buffers[expr.id]]
 
-  def _fresh(self, prefix: str) -> str:
+  def fresh_id(self) -> int:
+    """A number no other generated name in this procedure carries."""
+    self._tmp += 1
+    return self._tmp - 1
+
+  def fresh_name(self, prefix: str) -> str:
     """A buffer name not yet taken in this procedure: generated names share one namespace with
     the parameters, which are the Function's own input and output names."""
     while True:
-      name = f"{prefix}{self._tmp}"
-      self._tmp += 1
+      name = f"{prefix}{self.fresh_id()}"
       if name not in self.buffers:
         return name
 
+  def emit(self, *statements: ProgramNode) -> None:
+    """Append ``statements`` to the procedure."""
+    self.statements.extend(statements)
+
+  def bind(self, expr: Expr, name: str) -> None:
+    """Make the buffer ``name`` hold ``expr``'s value: an alias, or a buffer a rule wrote."""
+    self.value_buffers[expr.id] = name
+
+  def copy_loop(self, src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...]) -> ProgramNode:
+    """A loop copying ``src`` into ``dst`` entry by entry, converting to ``dst``'s dtype."""
+    return _copy_loop(src, dst, shape)
+
+  def blocked_sum(self, tag: str, start: ProgramNode, stop: ProgramNode, term: Any, dtype: DType) -> tuple[list[ProgramNode], ProgramNode]:
+    """The sum of ``term(k)`` over ``[start, stop)`` in blocks: see ``_blocked_sum``."""
+    return _blocked_sum(self, tag, start, stop, term, dtype)
+
+  def lane_loops(self, tag: str, rows: int, lanes: int, kind: RangeKind, body: Any) -> None:
+    """Loops over ``rows`` and ``lanes`` emitting ``body``: see ``_lane_loops``."""
+    _lane_loops(self, tag, rows, lanes, kind, body)
+
   def new_private(self, dtype: DType, shape: tuple[int, ...]) -> ProgramNode:
     """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
-    name = self._fresh("t")
+    name = self.fresh_name("t")
     buf = p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private")
     self.buffers[name] = buf
     self.statements.append(buf)  # marks the local-array declaration for the renderer
@@ -431,7 +425,7 @@ class LowerCtx:
     ``const T* tN = <src> + offset;``). Carries ``alias_of`` / ``alias_offset`` so the workspace
     pass leaves it unpacked and keeps its source live. Port of ``codegen/c.py``'s contiguous
     SLICE / RESHAPE pointer aliasing."""
-    name = self._fresh("t")
+    name = self.fresh_name("t")
     buf = ProgramNode(
       ProgramOp.BUFFER,
       (),
@@ -456,7 +450,7 @@ class LowerCtx:
     key = tuple(values)
     if key in self._const_tables:
       return self._const_tables[key]
-    buf = p.const_buffer(self._fresh("k"), dtypes.int64, (len(values),), values)
+    buf = p.const_buffer(self.fresh_name("k"), dtypes.int64, (len(values),), values)
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)
     self._const_tables[key] = buf
@@ -577,14 +571,9 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...]) -> Pr
 # ---------------------------------------------------------------------------
 
 
-@lowers(*_UNARY)
-def _lower_unary(ctx: LowerCtx, node: Expr) -> None:
-  ctx.emit_elementwise(node, _UNARY[node.op], arity=1)
-
-
-@lowers(*_BINARY)
-def _lower_binary(ctx: LowerCtx, node: Expr) -> None:
-  ctx.emit_elementwise(node, _BINARY[node.op], arity=2)
+def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
+  """The lowering of every op with the ``elementwise`` trait, whose value is its program op."""
+  ctx.emit_elementwise(node, op_def(node.op).traits["elementwise"], arity=len(node.args))
 
 
 @lowers(ExprOp.SELECT)
@@ -606,11 +595,11 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   # (rendered ``static const``). Output-aliasing never applies to CONST, so
   # emit_outputs inserts a copy when a CONST is itself an output. ``tolist`` keeps an int64 exact,
   # where ``float`` would round one above 2**53.
-  name = ctx._fresh("k")
+  name = ctx.fresh_name("k")
   buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), value.reshape(-1).tolist())
   ctx.buffers[name] = buf
   ctx.value_buffers[node.id] = name
-  ctx.statements.append(buf)
+  ctx.emit(buf)
 
 
 def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:
@@ -679,7 +668,7 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     coords.append(c if (start == 0 and step == 1) else p.add(p.const_int(start), c))
     out_dim += 1
   src_idx = _flat_index_p(coords, src_shape)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
+  ctx.emit(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
 @lowers(ExprOp.SUM)
@@ -688,11 +677,11 @@ def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
   src = node.args[0]
   acc = ctx.alloc_tmp(node)
   z = p.const_int(0)
-  ctx.statements.append(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
+  ctx.emit(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
   name = f"i_{acc.attrs['name']}"
   rng = p.range_(name, 0, _size_of(src.shape), kind=RangeKind.REDUCE)
   i = p.var(name)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))
+  ctx.emit(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))
 
 
 @lowers(ExprOp.MAX, ExprOp.MIN)
@@ -719,7 +708,7 @@ def _lower_extremum(ctx: LowerCtx, node: Expr) -> None:
   def reads(stmts: list[ProgramNode]) -> None:
     # Every read of the source in one statement, a loop run once, so that ``fuse_elementwise`` can
     # inline an elementwise producer into the reduction; ``unroll_unit_loops`` then removes the loop.
-    ctx.statements.append(p.for_(p.range_(f"ko_{acc.attrs['name']}", 0, 1), stmts))
+    ctx.emit(p.for_(p.range_(f"ko_{acc.attrs['name']}", 0, 1), stmts))
 
   if n < 8:
     slot = p.view(acc, [c(0)])
@@ -742,7 +731,7 @@ def _lower_extremum(ctx: LowerCtx, node: Expr) -> None:
   total = p.load(slots[0])
   for s in slots[1:]:
     total = pick(total, p.load(s))
-  ctx.statements.append(p.store(p.view(acc, [c(0)]), total))
+  ctx.emit(p.store(p.view(acc, [c(0)]), total))
 
 
 @lowers(ExprOp.TRANSPOSE)
@@ -766,7 +755,7 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   stmt: ProgramNode = p.store(p.view(out, [out_idx]), p.load(p.view(ctx.buf_of(src), [src_idx])))
   for rng in reversed(ranges):
     stmt = p.for_(rng, [stmt])
-  ctx.statements.append(stmt)
+  ctx.emit(stmt)
 
 
 def _nest(ranges: list[ProgramNode], body: list[ProgramNode]) -> list[ProgramNode]:
@@ -800,8 +789,8 @@ def _mm_accumulate(
   terms in the same order, so the result is bit-identical to the dot form. Use it when the reduction axis
   is the matrix's slow axis; a contiguous reduction axis would make the compiler gather under -march=native.
   """
-  ctx.statements.extend(_nest(outer, [_mm_init(out, out_idx, dtype)]))
-  ctx.statements.extend(_nest([k_rng, *outer], [_mm_accum(out, out_idx, a_load, b_load)]))
+  ctx.emit(*_nest(outer, [_mm_init(out, out_idx, dtype)]))
+  ctx.emit(*_nest([k_rng, *outer], [_mm_accum(out, out_idx, a_load, b_load)]))
 
 
 @lowers(ExprOp.MATMUL)
@@ -822,7 +811,7 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     k = p.var(f"k_{nm}")
     krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
     row_dot = lambda row: _mm_accum(out, row, p.load(p.view(a_buf, [p.add(p.mul(row, p.const_int(kk)), k)])), p.load(p.view(b_buf, [k])))
-    ctx.statements.extend(_nest([irng], [_mm_init(out, i, dt)]))
+    ctx.emit(*_nest([irng], [_mm_init(out, i, dt)]))
     # Four output rows per pass as four unrolled statements, so the compiler keeps four independent
     # accumulators; a four-trip inner loop over the rows becomes gathers under -march=native.
     blocks, tail = divmod(m, 4)
@@ -830,11 +819,11 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
       ib = p.var(f"ib_{nm}")
       ibrng = p.range_(f"ib_{nm}", 0, blocks, kind=RangeKind.GLOBAL)
       rows = [p.add(p.mul(ib, p.const_int(4)), p.const_int(r)) for r in range(4)]
-      ctx.statements.extend(_nest([ibrng, krng], [row_dot(row) for row in rows]))
+      ctx.emit(*_nest([ibrng, krng], [row_dot(row) for row in rows]))
     if tail:
       it = p.var(f"it_{nm}")
       itrng = p.range_(f"it_{nm}", 4 * blocks, m, kind=RangeKind.GLOBAL)
-      ctx.statements.extend(_nest([itrng, krng], [row_dot(it)]))
+      ctx.emit(*_nest([itrng, krng], [row_dot(it)]))
   elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
     kk, n = sb
     j = p.var(f"j_{nm}")
@@ -862,7 +851,7 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 
 # Factorizations and triangular solves of order at most this are straight-line code, which scalar
 # expansion then turns into registers; larger ones are loops with triangular bounds. The graph
-# carries the decision (``sc.options(dense_unroll=...)``); this is the default for a node without it.
+# carries the decision (``sc.options(linalg=dict(dense_unroll=...))``); this is the default for a node without it.
 DENSE_UNROLL = 8
 
 
@@ -929,8 +918,8 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
         value = p.load(_entry(src, n, c(i), c(j)))
         for k in range(j):
           value = p.sub(value, term(c(i), c(j), c(k)))
-        ctx.statements.extend(finish(c(i), c(j), value, i == j))
-      ctx.statements.extend(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n))
+        ctx.emit(*finish(c(i), c(j), value, i == j))
+      ctx.emit(*(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n)))
     return
   if chol:
     _cholesky_tiles(ctx, src, out, n, dt)
@@ -943,7 +932,7 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
   diag = [*diag_sum, *finish(i, i, p.sub(p.load(_entry(src, n, i, i)), diag_total), True)]
   zeros = p.for_(p.range_(z.attrs["name"], p.add(i, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, i, z), zero)])
   row = [p.for_(p.range_(j.attrs["name"], 0, i, kind=RangeKind.SERIAL), off), *diag, zeros]
-  ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.SERIAL), row))
+  ctx.emit(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.SERIAL), row))
 
 
 @lowers(ExprOp.LU)
@@ -984,29 +973,29 @@ def _lower_lu(ctx: LowerCtx, node: Expr) -> None:
 
   if node.attrs.get("unroll", n <= DENSE_UNROLL):
     for i in range(n):
-      ctx.statements.extend(p.store(at(c(i), c(j)), p.load(_entry(src, n, c(i), c(j)))) for j in range(n))
-    ctx.statements.extend(p.store(at(c(n), c(j)), p.const_float(float(j), dtype=dt)) for j in range(n))
+      ctx.emit(*(p.store(at(c(i), c(j)), p.load(_entry(src, n, c(i), c(j)))) for j in range(n)))
+    ctx.emit(*(p.store(at(c(n), c(j)), p.const_float(float(j), dtype=dt)) for j in range(n)))
     for k in range(n - 1):
-      ctx.statements += [p.store(pivot, c(k)), p.store(largest, magnitude(c(k), c(k)))]
+      ctx.emit(p.store(pivot, c(k)), p.store(largest, magnitude(c(k), c(k))))
       for i in range(k + 1, n):
-        ctx.statements.extend(search(c(k), c(i)))
+        ctx.emit(*search(c(k), c(i)))
       is_pivot = {i: p.compare(ProgramOp.EQ, p.load(pivot), c(i)) for i in range(k + 1, n)}
       for j in range(n + 1):  # every column, then (j = n) the permutation, entry i of row n
         cells = {i: at(c(i), c(j)) if j < n else p.view(out, [c(n * n + i)]) for i in range(k, n)}
         chosen = p.load(cells[k])
         for i in range(k + 1, n):
           chosen = p.select(is_pivot[i], p.load(cells[i]), chosen)
-        ctx.statements += [p.store(keep, p.load(cells[k])), p.store(cells[k], chosen)]
-        ctx.statements.extend(p.store(cells[i], p.select(is_pivot[i], p.load(keep), p.load(cells[i]))) for i in range(k + 1, n))
+        ctx.emit(p.store(keep, p.load(cells[k])), p.store(cells[k], chosen))
+        ctx.emit(*(p.store(cells[i], p.select(is_pivot[i], p.load(keep), p.load(cells[i]))) for i in range(k + 1, n)))
       for i in range(k + 1, n):
-        ctx.statements.append(scale(c(k), c(i)))
-        ctx.statements.extend(eliminate(c(k), c(i), c(j)) for j in range(k + 1, n))
+        ctx.emit(scale(c(k), c(i)))
+        ctx.emit(*(eliminate(c(k), c(i), c(j)) for j in range(k + 1, n)))
     return
   nm = out.attrs["name"]
   i, j, k = (p.var(f"{v}_{nm}") for v in ("ui", "uj", "uk"))
   copy = p.for_(p.range_(j.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [p.store(at(i, j), p.load(_entry(src, n, i, j)))])
-  ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [copy]))
-  ctx.statements.append(p.for_(p.range_(j.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [p.store(at(c(n), j), p.cast(j, dt))]))
+  ctx.emit(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [copy]))
+  ctx.emit(p.for_(p.range_(j.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [p.store(at(c(n), j), p.cast(j, dt))]))
 
   def swap(cell_k: ProgramNode, cell_p: ProgramNode) -> list[ProgramNode]:
     return [p.store(keep, p.load(cell_k)), p.store(cell_k, p.load(cell_p)), p.store(cell_p, p.load(keep))]
@@ -1021,7 +1010,7 @@ def _lower_lu(ctx: LowerCtx, node: Expr) -> None:
     *swap(at(c(n), k), at(c(n), row)),
     p.for_(p.range_(i.attrs["name"], p.add(k, c(1)), n, kind=RangeKind.GLOBAL), [scale(k, i), update]),
   ]
-  ctx.statements.append(p.for_(p.range_(k.attrs["name"], 0, n - 1), column))
+  ctx.emit(p.for_(p.range_(k.attrs["name"], 0, n - 1), column))
 
 
 CHOLESKY_TILE = 4
@@ -1058,8 +1047,7 @@ def _cholesky_tiles(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, d
     pairs = [(a, b) for a in range(rows) for b in range(cols) if not diagonal or a >= b]
     stmts: list[ProgramNode] = []
     for quarter in range(side):  # the dot products over columns [quarter * bj, (quarter + 1) * bj)
-      k = p.var(f"tk{ctx._tmp}_{nm}")
-      ctx._tmp += 1
+      k = p.var(f"tk{ctx.fresh_id()}_{nm}")
       dots = [
         p.store(sums[a][b], p.add(p.load(sums[a][b]), p.mul(p.load(_entry(out, n, p.add(i0, c(a)), k)), p.load(_entry(out, n, p.add(j0, c(b)), k)))))
         for a, b in pairs
@@ -1086,14 +1074,14 @@ def _cholesky_tiles(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, d
   bi, bj = p.var(f"tbi_{nm}"), p.var(f"tbj_{nm}")
   if full:
     left = p.for_(p.range_(bj.attrs["name"], 0, bi), tile(bi, bj, side, side, False))
-    ctx.statements.append(p.for_(p.range_(bi.attrs["name"], 0, full), [left, *tile(bi, bi, side, side, True)]))
+    ctx.emit(p.for_(p.range_(bi.attrs["name"], 0, full), [left, *tile(bi, bi, side, side, True)]))
   if rest:
     if full:
-      ctx.statements.append(p.for_(p.range_(bj.attrs["name"], 0, full), tile(c(full), bj, rest, side, False)))
-    ctx.statements.extend(tile(c(full), c(full), rest, rest, True))
+      ctx.emit(p.for_(p.range_(bj.attrs["name"], 0, full), tile(c(full), bj, rest, side, False)))
+    ctx.emit(*tile(c(full), c(full), rest, rest, True))
   zi, zj = p.var(f"tzi_{nm}"), p.var(f"tzj_{nm}")
   upper = p.for_(p.range_(zj.attrs["name"], p.add(zi, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, zi, zj), zero)])
-  ctx.statements.append(p.for_(p.range_(zi.attrs["name"], 0, n, kind=RangeKind.SERIAL), [upper]))
+  ctx.emit(p.for_(p.range_(zi.attrs["name"], 0, n, kind=RangeKind.SERIAL), [upper]))
 
 
 @lowers(ExprOp.SPARSE_LDL)
@@ -1129,7 +1117,7 @@ def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
   work = ctx.new_private(dt, (n,))
   zero = p.const_float(0.0, dtype=dt)
   i0 = p.var(f"lz_{nm}")
-  ctx.statements.append(p.for_(p.range_(i0.attrs["name"], 0, n), [p.store(p.view(work, [i0]), zero)]))
+  ctx.emit(p.for_(p.range_(i0.attrs["name"], 0, n), [p.store(p.view(work, [i0]), zero)]))
   j = p.var(f"lj_{nm}")
   j1 = p.add(j, c(1))
   pa = p.var(f"la_{nm}")
@@ -1169,7 +1157,7 @@ def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
       [p.store(p.view(out, [pl]), p.mul(p.load(entry), p.load(inverse))), p.store(entry, zero)],
     ),
   ]
-  ctx.statements.append(p.for_(p.range_(j.attrs["name"], 0, n), [column, updates, *finish]))
+  ctx.emit(p.for_(p.range_(j.attrs["name"], 0, n), [column, updates, *finish]))
 
 
 @lowers(ExprOp.SPARSE_LDL_SOLVE)
@@ -1204,7 +1192,7 @@ def _lower_sparse_ldl_solve(ctx: LowerCtx, node: Expr) -> None:
 
   y = ctx.new_private(dt, (n,))
   i0 = p.var(f"sp_{nm}")
-  ctx.statements.append(p.for_(p.range_(i0.attrs["name"], 0, n), [p.store(p.view(y, [i0]), p.load(p.view(ctx.buf_of(b), [at("perm", i0)])))]))
+  ctx.emit(p.for_(p.range_(i0.attrs["name"], 0, n), [p.store(p.view(y, [i0]), p.load(p.view(ctx.buf_of(b), [at("perm", i0)])))]))
   r = p.var(f"sr_{nm}")
   j = at("sn_first", r)
   widths = []
@@ -1232,7 +1220,7 @@ def _lower_sparse_ldl_solve(ctx: LowerCtx, node: Expr) -> None:
     once = p.var(f"sw{width}_{nm}")
     taken = p.select(p.compare(ProgramOp.EQ, at("sn_width", r), c(width)), c(1), c(0))
     widths.append(p.for_(p.range_(once.attrs["name"], 0, taken), body))
-  ctx.statements.append(p.for_(p.range_(r.attrs["name"], 0, a["sn_first"].size), widths))
+  ctx.emit(p.for_(p.range_(r.attrs["name"], 0, a["sn_first"].size), widths))
   step = p.var(f"sb_{nm}")
   jb = p.sub(c(n - 1), step)
   sums, total = _blocked_sum(
@@ -1245,7 +1233,7 @@ def _lower_sparse_ldl_solve(ctx: LowerCtx, node: Expr) -> None:
     p.store(p.view(y, [jb]), p.load(unknown)),
     p.store(p.view(out, [at("perm", jb)]), p.load(unknown)),
   ]
-  ctx.statements.append(p.for_(p.range_(step.attrs["name"], 0, n), back))
+  ctx.emit(p.for_(p.range_(step.attrs["name"], 0, n), back))
 
 
 @lowers(ExprOp.TRISOLVE)
@@ -1273,8 +1261,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
     """``body(column)`` for every right-hand side: one statement for a vector, a loop otherwise."""
     if m == 1:
       return body(c(0))
-    name = f"sc_{nm}_{ctx._tmp}"
-    ctx._tmp += 1
+    name = f"sc_{nm}_{ctx.fresh_id()}"
     return [p.for_(p.range_(name, 0, m, kind=RangeKind.GLOBAL), body(p.var(name)))]
 
   def scale(i: ProgramNode) -> list[ProgramNode]:
@@ -1288,12 +1275,12 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   if node.attrs.get("unroll", n <= DENSE_UNROLL):
     steps = range(n) if forward else range(n - 1, -1, -1)
     if trans:
-      ctx.statements.append(_copy_loop(bb, out, b.shape))
+      ctx.emit(_copy_loop(bb, out, b.shape))
       for r in steps:
-        ctx.statements.extend(scale(c(r)))
+        ctx.emit(*scale(c(r)))
         for k in range(r) if lower else range(r + 1, n):
-          ctx.statements.extend(
-            per_col(
+          ctx.emit(
+            *per_col(
               lambda cc, r=r, k=k: [p.store(x(c(k), cc), p.sub(p.load(x(c(k), cc)), p.mul(p.load(_entry(tb, n, c(r), c(k))), p.load(x(c(r), cc)))))]
             )
           )
@@ -1308,7 +1295,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
           value = p.div(value, p.load(_entry(tb, n, c(r), c(r))))
         return [p.store(x(c(r), cc), value)]
 
-      ctx.statements.extend(per_col(solve_row))
+      ctx.emit(*per_col(solve_row))
     return
   s, k = p.var(f"ss_{nm}"), p.var(f"sk_{nm}")
   i = row_at(s)
@@ -1316,7 +1303,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
     (lambda kind: p.range_(k.attrs["name"], 0, i, kind=kind)) if lower else (lambda kind: p.range_(k.attrs["name"], p.add(i, c(1)), n, kind=kind))
   )  # noqa: E731
   if trans:
-    ctx.statements.append(_copy_loop(bb, out, b.shape))
+    ctx.emit(_copy_loop(bb, out, b.shape))
     sweep = per_col(lambda cc: [p.store(x(k, cc), p.sub(p.load(x(k, cc)), p.mul(p.load(_entry(tb, n, i, k)), p.load(x(i, cc)))))])
     body = [*scale(i), p.for_(k_rng(RangeKind.GLOBAL), sweep)]
   elif m == 1:
@@ -1343,7 +1330,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
       p.for_(p.range_(k.attrs["name"], tail, hi, kind=RangeKind.SERIAL), per_col(one)),
       *scale(i),
     ]
-  ctx.statements.append(p.for_(p.range_(s.attrs["name"], 0, n, kind=RangeKind.SERIAL), body))
+  ctx.emit(p.for_(p.range_(s.attrs["name"], 0, n, kind=RangeKind.SERIAL), body))
 
 
 def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict[int, np.ndarray] | None = None) -> tuple[str, int] | None:
@@ -1413,7 +1400,7 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
     _ensure_callee(ctx, callee)
     out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in callee.outputs]
     in_bufs = [ctx.buffers[n] for n in arg_names]
-    ctx.statements.append(
+    ctx.emit(
       ProgramNode(
         ProgramOp.CALL, tuple(in_bufs + out_bufs), attrs={"callee": callee.name, "n_in": len(in_bufs), "n_out": len(out_bufs), "returns": ()}
       )
@@ -1455,7 +1442,7 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   call = ProgramNode(
     ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
-  ctx.statements.append(p.for_(rng, [call]))
+  ctx.emit(p.for_(rng, [call]))
 
 
 def _scan_key(node: Expr) -> tuple[object, ...]:
@@ -1499,7 +1486,7 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
   if in_place is None:
     _ensure_callee(ctx, callee)
   store = ctx.new_private(dtype, ((length + 1 if trajectory else 1 if in_place else 2) * cs + scratch,))
-  ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
+  ctx.emit(_copy_loop(ctx.buf_of(init), store, (cs,)))
   name = f"k_{store.attrs['name']}"
   k = p.var(name)
   if in_place is not None:
@@ -1529,7 +1516,7 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
   call = ProgramNode(
     ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": in_place or callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
-  ctx.statements.append(p.for_(p.range_(name, 0, length, kind=RangeKind.SERIAL), [*counters, call]))
+  ctx.emit(p.for_(p.range_(name, 0, length, kind=RangeKind.SERIAL), [*counters, call]))
   bufs[0] = ctx.new_alias(dtype, carry.shape, store.attrs["name"], final).attrs["name"]
   if trajectory:
     bufs[-1] = ctx.new_alias(dtype, (length * cs,), store.attrs["name"], 0).attrs["name"]
@@ -1610,7 +1597,7 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   _ensure_callee(ctx, cond)
   store = ctx.new_private(dtype, ((max_iter + 1 if trajectory else 1 if in_place else 2) * cs + scratch,))
   flag = ctx.new_private(dtypes.bool_, (1,))
-  ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
+  ctx.emit(_copy_loop(ctx.buf_of(init), store, (cs,)))
   name = f"k_{store.attrs['name']}"
   k = p.var(name)
 
@@ -1631,9 +1618,9 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
     (read, *extra, *views, p.view(store, [slot(p.add(k, p.const_int(1)))])),
     attrs={"callee": in_place or body.name, "n_in": 1 + len(extra) + len(views), "n_out": 1, "returns": ()},
   )
-  ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, *counters, step], exit_var=True))
+  ctx.emit(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, *counters, step], exit_var=True))
   count = ctx.new_private(dtypes.float64, ())
-  ctx.statements.append(p.store(p.view(count, [p.const_int(0)]), p.cast(k, dtypes.float64)))
+  ctx.emit(p.store(p.view(count, [p.const_int(0)]), p.cast(k, dtypes.float64)))
   if not trajectory:
     # The final carry is the first slot, read in place: an in-place loop only has that one, and a
     # loop that stopped on an odd step moves its second slot there first (a loop of zero trips, a
@@ -1641,13 +1628,13 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
     if in_place is None:
       c = p.var(f"c_{store.attrs['name']}")
       moved = p.store(p.view(store, [c]), p.load(p.view(store, [p.add(p.const_int(cs), c)])))
-      ctx.statements.append(p.for_(p.range_(c.attrs["name"], 0, p.mul(p.mod(k, p.const_int(2)), p.const_int(cs)), kind=RangeKind.GLOBAL), [moved]))
+      ctx.emit(p.for_(p.range_(c.attrs["name"], 0, p.mul(p.mod(k, p.const_int(2)), p.const_int(cs)), kind=RangeKind.GLOBAL), [moved]))
     final = ctx.new_alias(dtype, carry.shape, store.attrs["name"], 0)
     return {0: final.attrs["name"], 1: count.attrs["name"]}
   final = ctx.new_private(dtype, carry.shape)
   c = p.var(f"c_{final.attrs['name']}")
   source = p.load(p.view(store, [p.add(slot(k), c)]))
-  ctx.statements.append(p.for_(p.range_(c.attrs["name"], 0, cs, kind=RangeKind.GLOBAL), [p.store(p.view(final, [c]), source)]))
+  ctx.emit(p.for_(p.range_(c.attrs["name"], 0, cs, kind=RangeKind.GLOBAL), [p.store(p.view(final, [c]), source)]))
   bufs = {0: final.attrs["name"], 1: count.attrs["name"]}
   if trajectory:
     # Slots past the last step taken hold the final carry, so a backward pass that reads them sees
@@ -1655,7 +1642,7 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
     j = p.var(f"j_{store.attrs['name']}")
     fill = p.store(p.view(store, [p.add(p.mul(j, p.const_int(cs)), c)]), p.load(p.view(final, [c])))
     rng = p.range_(j.attrs["name"], p.add(k, p.const_int(1)), max_iter, kind=RangeKind.GLOBAL)
-    ctx.statements.append(p.for_(rng, [p.for_(p.range_(c.attrs["name"], 0, cs, kind=RangeKind.GLOBAL), [fill])]))
+    ctx.emit(p.for_(rng, [p.for_(p.range_(c.attrs["name"], 0, cs, kind=RangeKind.GLOBAL), [fill])]))
     bufs[-1] = ctx.new_alias(dtype, (max_iter * cs,), store.attrs["name"], 0).attrs["name"]
   return bufs
 
@@ -1670,7 +1657,7 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   k = p.var(vname)
   src_idx = ctx.index_at(idx, k)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
+  ctx.emit(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
 @lowers(ExprOp.SCATTER)
@@ -1685,16 +1672,16 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
   zname = f"z_{out.attrs['name']}"
   zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   z = p.var(zname)
-  ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
+  ctx.emit(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
   iname = f"i_{out.attrs['name']}"
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
   value = p.load(p.view(ctx.buf_of(src), [i]))
   if scatter_is_unique(idx):
-    ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL), [p.store(p.view(out, [dst]), value)]))
+    ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL), [p.store(p.view(out, [dst]), value)]))
     return
   accumulate = p.store(p.view(out, [dst]), p.add(p.load(p.view(out, [dst])), value))
-  ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE), [accumulate]))
+  ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE), [accumulate]))
 
 
 @lowers(ExprOp.INDEX_ADD, ExprOp.INDEX_SET)
@@ -1711,16 +1698,15 @@ def _lower_index_update(ctx: LowerCtx, node: Expr) -> None:
   else:
     out = ctx.alloc_tmp(node)
     if ctx.value_buffers[base.id] != out.attrs["name"]:
-      ctx.statements.append(_copy_loop(ctx.buf_of(base), out, node.shape))
-  iname = f"u_{out.attrs['name']}_{ctx._tmp}"
-  ctx._tmp += 1
+      ctx.emit(_copy_loop(ctx.buf_of(base), out, node.shape))
+  iname = f"u_{out.attrs['name']}_{ctx.fresh_id()}"
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
   value = p.load(p.view(ctx.buf_of(values), [i]))
   if node.op == ExprOp.INDEX_ADD:
     value = p.add(p.load(p.view(out, [dst])), value)
   kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
-  ctx.statements.append(p.for_(p.range_(iname, 0, idx.size, kind=kind), [p.store(p.view(out, [dst]), value)]))
+  ctx.emit(p.for_(p.range_(iname, 0, idx.size, kind=kind), [p.store(p.view(out, [dst]), value)]))
 
 
 def _runtime_index(ctx: LowerCtx, idx: Expr, j: ProgramNode, n: int, *, in_range: bool = False) -> tuple[ProgramNode, ProgramNode | None]:
@@ -1738,12 +1724,12 @@ def _lane_loops(ctx: LowerCtx, tag: str, rows: int, lanes: int, kind: RangeKind,
   jname = f"j_{tag}"
   j = p.var(jname)
   if rows == 1:
-    ctx.statements.append(p.for_(p.range_(jname, 0, lanes, kind=kind), body(p.const_int(0), j)))
+    ctx.emit(p.for_(p.range_(jname, 0, lanes, kind=kind), body(p.const_int(0), j)))
     return
   bname = f"b_{tag}"
   b = p.var(bname)
   inner = p.for_(p.range_(jname, 0, lanes, kind=kind), body(b, j))
-  ctx.statements.append(p.for_(p.range_(bname, 0, rows, kind=RangeKind.GLOBAL), [inner]))
+  ctx.emit(p.for_(p.range_(bname, 0, rows, kind=RangeKind.GLOBAL), [inner]))
 
 
 @lowers(ExprOp.TAKE)
@@ -1794,7 +1780,7 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
     store = ctx.new_private(node.type.dtype, (size + rows * lanes,))
     ctx.value_buffers[node.id] = store.attrs["name"]
     if size:
-      ctx.statements.append(_copy_loop(ctx.buf_of(base), store, node.shape))
+      ctx.emit(_copy_loop(ctx.buf_of(base), store, node.shape))
   if not rows or not lanes:
     return
 
@@ -1830,12 +1816,11 @@ def _lower_ragged_add(ctx: LowerCtx, node: Expr) -> None:
   else:
     out = ctx.new_private(node.type.dtype, node.shape)
     ctx.value_buffers[node.id] = out.attrs["name"]
-    ctx.statements.append(_copy_loop(ctx.buf_of(base), out, node.shape))
+    ctx.emit(_copy_loop(ctx.buf_of(base), out, node.shape))
   groups = lo.size
   if not groups:
     return
-  nm = f"{out.attrs['name']}_{ctx._tmp}"
-  ctx._tmp += 1
+  nm = f"{out.attrs['name']}_{ctx.fresh_id()}"
   g, q = p.var(f"rg_{nm}"), p.var(f"rp_{nm}")
   dst = _mapped(ctx, node.attrs["dst_map"], q)
   src_i = _mapped(ctx, node.attrs["src_map"], q)
@@ -1843,7 +1828,7 @@ def _lower_ragged_add(ctx: LowerCtx, node: Expr) -> None:
   view = p.view(out, [dst])
   update = p.store(view, p.add(p.load(view), p.mul(p.load(p.view(ctx.buf_of(src), [src_i])), weight)))
   inner = p.for_(p.range_(q.attrs["name"], p.load(p.view(ctx.buf_of(lo), [g])), p.load(p.view(ctx.buf_of(hi), [g])), kind=RangeKind.REDUCE), [update])
-  ctx.statements.append(p.for_(p.range_(g.attrs["name"], 0, groups, kind=RangeKind.SERIAL), [inner]))
+  ctx.emit(p.for_(p.range_(g.attrs["name"], 0, groups, kind=RangeKind.SERIAL), [inner]))
 
 
 @lowers(ExprOp.RAGGED_DOT)
@@ -1854,8 +1839,7 @@ def _lower_ragged_dot(ctx: LowerCtx, node: Expr) -> None:
   groups = lo.size
   if not groups:
     return
-  nm = f"{out.attrs['name']}_{ctx._tmp}"
-  ctx._tmp += 1
+  nm = f"{out.attrs['name']}_{ctx.fresh_id()}"
   g = p.var(f"rg_{nm}")
   a_map, b_map = node.attrs["a_map"], node.attrs["b_map"]
   a_tab = None if a_map is None else ctx.new_const_index(a_map)
@@ -1868,7 +1852,7 @@ def _lower_ragged_dot(ctx: LowerCtx, node: Expr) -> None:
 
   sums, total = _blocked_sum(ctx, f"r_{nm}", p.load(p.view(ctx.buf_of(lo), [g])), p.load(p.view(ctx.buf_of(hi), [g])), term, node.type.dtype)
   body = [*sums, p.store(p.view(out, [g]), total)]
-  ctx.statements.append(p.for_(p.range_(g.attrs["name"], 0, groups, kind=RangeKind.SERIAL), body))
+  ctx.emit(p.for_(p.range_(g.attrs["name"], 0, groups, kind=RangeKind.SERIAL), body))
 
 
 # Tests switch this off to compare every in-place loop with its two-slot version.
@@ -1887,7 +1871,8 @@ def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
   - no other output reads any chain link.
 
   Which entries the values read is the structural pattern of the values with respect to
-  ``u_{i-1}``, taken only over operations whose pattern is exactly what they read (``_EXACT_READS``).
+  ``u_{i-1}``, taken only over operations whose pattern is exactly what they read (the
+  ``exact_reads`` trait).
   A path through anything else (a comparison, a ``select`` condition, ``copysign``'s sign, a call)
   counts as reading every entry. These are sufficient, not necessary; anything else keeps the
   two-slot carry.
@@ -1934,15 +1919,12 @@ def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
       for n in topo([cut]):  # children first, so one pass finds every node with the link below it
         if n is stand_in or any(a.id in reaching for a in n.args):
           reaching.add(n.id)
-          if n.op not in _EXACT_READS:
+          if not has_trait(n.op, "exact_reads"):
             return None
       read = set(jacobian_sparsity(cut, stand_in).cols)
       if read & set(update.attrs["indices"].tolist()):
         return None
   return tuple(e.id for e in chain)
-
-
-_UPDATE_OPS = (ExprOp.INDEX_ADD, ExprOp.INDEX_SET, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD)
 
 
 def update_chain(fun: ConcreteFunction) -> list[Expr] | None:
@@ -1951,7 +1933,7 @@ def update_chain(fun: ConcreteFunction) -> list[Expr] | None:
   carry, node = fun.inputs[0], fun.outputs[0]
   chain: list[Expr] = []
   while node is not carry:
-    if node.op not in _UPDATE_OPS:
+    if not has_trait(node.op, "update"):
       return None
     chain.append(node)
     node = node.args[0]
@@ -1987,27 +1969,11 @@ def in_place_steps(fun: ConcreteFunction, steps: dict[int, np.ndarray]) -> bool:
   def value(e: Expr) -> np.ndarray | None:
     return _step_value(e, steps, inputs, length, memo)
 
-  def ranges(node: Expr, table: np.ndarray | None) -> _Ragged | None:
-    """The mapped positions a ragged op visits at each step, kept as ranges until needed."""
-    lo, hi = value(node.args[2]), value(node.args[3])
-    if lo is None or hi is None:
-      return None
-    return _Ragged(lo.reshape(length, -1), hi.reshape(length, -1), table)
-
-  writes: list[np.ndarray | _Ragged] = []  # per update: (length, lanes) flat positions, -1 for a dropped lane
+  writes: list[Positions] = []  # per update: the positions it writes at each step
   for update in chain:
-    if update.op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
-      w = np.broadcast_to(np.asarray(update.attrs["indices"], dtype=np.int64).reshape(1, -1), (length, update.attrs["indices"].size))
-    elif update.op == ExprOp.RAGGED_ADD:
-      found = ranges(update, update.attrs["dst_map"])
-      if found is None:
-        return False
-      w = found
-    else:
-      idx = value(update.args[1])
-      if idx is None:
-        return False
-      w = _flat_positions(idx, update.shape)
+    w = op_def(update.op).traits["update"](update, value, length)
+    if w is None:
+      return False
     writes.append(w)
 
   def link_of(e: Expr) -> int | None:
@@ -2015,7 +1981,7 @@ def in_place_steps(fun: ConcreteFunction, steps: dict[int, np.ndarray]) -> bool:
       e = e.args[0]
     return position.get(e.id)
 
-  reads: list[tuple[int, int, np.ndarray | _Ragged]] = []  # (update i, link j, positions)
+  reads: list[tuple[int, int, Positions]] = []  # (update i, link j, positions)
   for i, update in enumerate(chain, start=1):
     # Everything the update reads but its base: its values, and for a ragged update its source.
     seen: set[int] = {update.id}
@@ -2035,27 +2001,11 @@ def in_place_steps(fun: ConcreteFunction, steps: dict[int, np.ndarray]) -> bool:
         if j is None:
           pending.append(arg)
           continue
-        if node.op == ExprOp.RAGGED_ADD and a_pos == 1 or node.op == ExprOp.RAGGED_DOT and a_pos in (0, 1):
-          table = node.attrs["src_map"] if node.op == ExprOp.RAGGED_ADD else node.attrs["a_map" if a_pos == 0 else "b_map"]
-          found = ranges(node, table)
-          if found is None:
-            return False
-          positions = found
-        elif node.op == ExprOp.TAKE and a_pos == 0:
-          idx = value(node.args[1])
-          if idx is None:
-            return False
-          positions = _flat_positions(idx, arg.shape)
-        elif node.op == ExprOp.GATHER:
-          positions = np.broadcast_to(np.asarray(node.attrs["indices"], dtype=np.int64).reshape(1, -1), (length, node.attrs["indices"].size))
-        elif node.op == ExprOp.SLICE:
-          flat = np.arange(arg.size).reshape(arg.shape)[node.attrs["index"]].reshape(1, -1)
-          positions = np.broadcast_to(flat, (length, flat.size))
-        else:
+        read = op_def(node.op).traits.get("reads")
+        positions = None if read is None else read(node, a_pos, value, length)
+        if positions is None:
           return False
         reads.append((i, j, positions))
-        if node.op == ExprOp.TAKE:
-          pending.append(node.args[1])
   for y in fun.outputs[1:]:
     for node in topo([y]):
       if any(link_of(a) is not None for a in node.args) or link_of(node) is not None:
@@ -2065,6 +2015,20 @@ def in_place_steps(fun: ConcreteFunction, steps: dict[int, np.ndarray]) -> bool:
       if _may_overlap(positions, writes[w - 1]):
         return False
   return True
+
+
+class PositionRanges(Protocol):
+  """Positions kept in a compact form: per-step ``bounds()`` and, only where those meet another's,
+  ``explicit()`` positions as a ``(length, lanes)`` array padded with -1."""
+
+  def bounds(self) -> tuple[np.ndarray, np.ndarray]: ...
+
+  def explicit(self) -> np.ndarray: ...
+
+
+Positions = np.ndarray | PositionRanges
+"""What an op's ``update`` or ``reads`` trait gives (``OpDef``): the positions it touches at each
+step, a ``(length, lanes)`` array with -1 for a dropped lane, or ranges that produce one."""
 
 
 class _Ragged:
@@ -2091,8 +2055,8 @@ class _Ragged:
     return _ragged_positions(self.lo, self.hi, self.table)
 
 
-def _bounds(x: np.ndarray | _Ragged) -> tuple[np.ndarray, np.ndarray]:
-  if isinstance(x, _Ragged):
+def _bounds(x: Positions) -> tuple[np.ndarray, np.ndarray]:
+  if not isinstance(x, np.ndarray):
     return x.bounds()
   valid = x >= 0
   low = np.where(valid, x, np.iinfo(np.int64).max).min(axis=1) if x.size else np.ones(x.shape[0], dtype=np.int64)
@@ -2100,15 +2064,15 @@ def _bounds(x: np.ndarray | _Ragged) -> tuple[np.ndarray, np.ndarray]:
   return low, high
 
 
-def _may_overlap(a: np.ndarray | _Ragged, b: np.ndarray | _Ragged) -> bool:
+def _may_overlap(a: Positions, b: Positions) -> bool:
   """Whether any step's positions in ``a`` and ``b`` share an entry: first by per-step intervals,
   and only where those meet, entry by entry."""
   (alo, ahi), (blo, bhi) = _bounds(a), _bounds(b)
   meet = (alo <= ahi) & (blo <= bhi) & (alo <= bhi) & (blo <= ahi)
   if not meet.any():
     return False
-  ea = a.explicit() if isinstance(a, _Ragged) else a
-  eb = b.explicit() if isinstance(b, _Ragged) else b
+  ea = a if isinstance(a, np.ndarray) else a.explicit()
+  eb = b if isinstance(b, np.ndarray) else b.explicit()
   return _overlap(ea, eb)
 
 
@@ -2133,6 +2097,58 @@ def _flat_positions(idx: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
   inside = (idx >= 0) & (idx < n)
   flat = np.arange(rows)[None, :, None] * n + idx[:, None, :]
   return np.where(inside[:, None, :], flat, -1).reshape(idx.shape[0], -1)
+
+
+StepValue = Callable[[Expr], "np.ndarray | None"]
+"""An index's value at every step of the loop, or None when it is not computable from constants."""
+
+
+def _constant_positions(indices: np.ndarray, length: int) -> np.ndarray:
+  return np.broadcast_to(np.asarray(indices, dtype=np.int64).reshape(1, -1), (length, indices.size))
+
+
+def _ragged_ranges(node: Expr, table: np.ndarray | None, value: StepValue, length: int) -> _Ragged | None:
+  """The mapped positions a ragged op visits at each step, kept as ranges until needed."""
+  lo, hi = value(node.args[2]), value(node.args[3])
+  if lo is None or hi is None:
+    return None
+  return _Ragged(lo.reshape(length, -1), hi.reshape(length, -1), table)
+
+
+def _put_writes(node: Expr, value: StepValue, length: int) -> Positions | None:
+  idx = value(node.args[1])
+  return None if idx is None else _flat_positions(idx, node.shape)
+
+
+def _take_reads(node: Expr, position: int, value: StepValue, length: int) -> Positions | None:
+  idx = value(node.args[1]) if position == 0 else None
+  return None if idx is None else _flat_positions(idx, node.args[0].shape)
+
+
+def _slice_reads(node: Expr, position: int, value: StepValue, length: int) -> Positions:
+  arg = node.args[0]
+  flat = np.arange(arg.size).reshape(arg.shape)[node.attrs["index"]].reshape(1, -1)
+  return np.broadcast_to(flat, (length, flat.size))
+
+
+def _ragged_reads(node: Expr, position: int, value: StepValue, length: int) -> Positions | None:
+  if node.op == ExprOp.RAGGED_ADD:
+    return _ragged_ranges(node, node.attrs["src_map"], value, length) if position == 1 else None
+  return _ragged_ranges(node, node.attrs["a_map" if position == 0 else "b_map"], value, length) if position in (0, 1) else None
+
+
+# How the builtin updates and partial reads bound what they touch (the ``update`` and ``reads``
+# traits): what lets a loop's carry be updated in place.
+for _op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
+  define_traits(_op, update=lambda node, value, length: _constant_positions(node.attrs["indices"], length))
+for _op in (ExprOp.PUT_ADD, ExprOp.PUT):
+  define_traits(_op, update=_put_writes)
+define_traits(ExprOp.RAGGED_ADD, update=lambda node, value, length: _ragged_ranges(node, node.attrs["dst_map"], value, length), reads=_ragged_reads)
+define_traits(ExprOp.RAGGED_DOT, reads=_ragged_reads)
+define_traits(ExprOp.TAKE, reads=_take_reads)
+define_traits(ExprOp.GATHER, reads=lambda node, position, value, length: _constant_positions(node.attrs["indices"], length))
+define_traits(ExprOp.SLICE, reads=_slice_reads)
+del _op
 
 
 def _overlap(a: np.ndarray, b: np.ndarray) -> bool:
@@ -2201,34 +2217,6 @@ def _step_value(e: Expr, steps: dict[int, np.ndarray], inputs: dict[int, int], l
   return out
 
 
-# Operations whose structural sparsity pattern is exactly the set of entries they read, so the pattern
-# can stand in for a read set. Everything else (predicates, ``select``'s condition, ``copysign``'s
-# sign, casts, calls, maps and loops) may read entries its pattern omits.
-_EXACT_READS = frozenset(
-  {
-    ExprOp.INPUT,
-    ExprOp.CONST,
-    *(op for op in COMMON_ELEMENTWISE_UNARY),
-    *(op for op in COMMON_ELEMENTWISE_BINARY if op != ExprOp.COPYSIGN),
-    ExprOp.SUM,
-    ExprOp.MAX,
-    ExprOp.MIN,
-    ExprOp.RESHAPE,
-    ExprOp.TRANSPOSE,
-    ExprOp.SLICE,
-    ExprOp.GATHER,
-    ExprOp.SCATTER,
-    ExprOp.SEGMENT_MAX,
-    ExprOp.SEGMENT_MIN,
-    ExprOp.STACK,
-    ExprOp.CONCAT,
-    ExprOp.MATMUL,
-    ExprOp.INDEX_ADD,
-    ExprOp.INDEX_SET,
-  }
-)
-
-
 def scatter_is_unique(idx: np.ndarray) -> bool:
   """Whether every destination of a fixed index table is distinct, so a plain store suffices."""
   return np.unique(idx).size == idx.size
@@ -2243,7 +2231,7 @@ def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
   fname = f"z_{out.attrs['name']}"
   f = p.var(fname)
   fill = p.const_float(float(node.attrs["fill"]), dtype=node.type.dtype)
-  ctx.statements.append(p.for_(p.range_(fname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL), [p.store(p.view(out, [f]), fill)]))
+  ctx.emit(p.for_(p.range_(fname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL), [p.store(p.view(out, [f]), fill)]))
   iname = f"i_{out.attrs['name']}"
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
@@ -2267,10 +2255,10 @@ def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
     step = p.store(run, pick(p.load(run), p.load(p.view(ctx.buf_of(src), [i]))))
     inner = p.for_(p.range_(iname, ctx.index_at(starts, r), ctx.index_at(stops, r), kind=RangeKind.REDUCE), [step])
     last = p.store(p.view(out, [ctx.index_at(idx[starts], r)]), p.load(run))
-    ctx.statements.append(p.for_(p.range_(rname, 0, starts.size, kind=RangeKind.GLOBAL), [first, inner, last]))
+    ctx.emit(p.for_(p.range_(rname, 0, starts.size, kind=RangeKind.GLOBAL), [first, inner, last]))
     return
   kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
-  ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=kind), [p.store(p.view(out, [dst]), pick(cur, value))]))
+  ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=kind), [p.store(p.view(out, [dst]), pick(cur, value))]))
 
 
 @lowers(ExprOp.STACK)
@@ -2289,7 +2277,7 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
     src_coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]
     out_coords = src_coords[:axis] + [p.const_int(i)] + src_coords[axis:]
     dst = _flat_index_p(out_coords, out_shape)
-    ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
+    ctx.emit(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
 
 
 @lowers(ExprOp.CONCAT)
@@ -2309,7 +2297,7 @@ def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
     if offset:
       coords[axis] = p.add(p.const_int(offset), coords[axis])
     dst = _flat_index_p(coords, out_shape)
-    ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
+    ctx.emit(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
     offset += int(src_shape[axis])
 
 

@@ -37,7 +37,7 @@
 | 1.3 | Core stops importing solvers | ☑ |
 | 2.1 | Op registry, builtins registered through it | ☑ |
 | 2.2 | Table-driven AD, sparsity, folding, verification | ☑ |
-| 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☐ |
+| 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☑ |
 | 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☐ |
 | 3.1 | Linear-algebra ops move into `scaly.linalg` | ☐ |
 | 3.2 | `linalg.banded` and `linalg.stagewise` | ☐ |
@@ -485,6 +485,15 @@ fallback, marked explicitly so output is unchanged), sparsity is dense in what t
 `_UPDATE_OPS`, `_EXACT_READS`, `RUNTIME_INDEX_OPS`, `_EXPENSIVE_OPS`, `_Ragged` with traits;
 `viz/graph.py` colours by trait.
 Gate: byte-identical snapshots; changing a `linalg` option no longer renames AD helpers (test).
+Log: done 2026-09-28. `LowerCtx` has a documented public part (`emit`, `fresh_id`, `fresh_name`,
+`bind`, `copy_loop`, `blocked_sum`, `lane_loops` beside the buffer methods), so a rule outside
+`passes/` needs only `ctx` and `ir.program`. Traits on `OpDef` (`elementwise` naming its program
+op, which replaces `_UNARY`/`_BINARY`; `expensive`; `runtime_index`; `exact_reads`; `update` and
+`reads` position callbacks, `_Ragged` behind a `PositionRanges` protocol). Option namespaces with
+`affects_derivatives`; `linalg` holds `dense_unroll`/`sparse_unroll` (declared in core until 3.1)
+and derivatives now keep each factorization's unroll choice, so a `linalg` option cannot change a
+derivative. Pass slots `insert_after`/`insert_before`. 2.2's smoke ran on a loaded machine: every
+runtime, CasADi's too, +45%, the ratios unchanged.
 
 **2.4 `scaly.ext`.** Public module collecting §3.2; `from_exprs`, `lift`, tokens, public loader;
 `EXT_API_VERSION`; extension versions in the JIT cache key (bump `_JIT_CACHE_VERSION`). Replace

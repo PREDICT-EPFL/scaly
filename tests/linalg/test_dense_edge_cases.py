@@ -101,7 +101,7 @@ def test_factorizations_agree_looped_unrolled_and_with_references(rng: np.random
   s, k, g = _spd(rng, n), _quasi_definite(rng, n - n // 2, n // 2), _cyclic(rng, n)
   got = []
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, q, m = sc.sym("a", (n, n)), sc.sym("q", (n, n)), sc.sym("m", (n, n))
       outs = [cholesky(a), ldl(q), lu(m)]
     assert [o.attrs["unroll"] for o in outs] == [unroll >= n] * 3
@@ -130,7 +130,7 @@ def test_triangular_solves_read_only_their_triangle_across_the_threshold(rng: np
   keys = [(lower, unit) for lower in (True, False) for unit in (False, True)]
   got = []
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       ts = {key: sc.sym(f"t{int(key[0])}{int(key[1])}", (n, n)) for key in keys}
       bs = {name: sc.sym(name, v.shape) for name, v in rhs.items()}
       outs = [
@@ -150,7 +150,7 @@ def test_solves_built_on_the_factorizations_across_the_threshold(rng: np.random.
   b, bc, bm = rng.standard_normal(n), rng.standard_normal((n, 1)), rng.standard_normal((n, 3))
   got = []
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, q, m = sc.sym("a", (n, n)), sc.sym("q", (n, n)), sc.sym("m", (n, n))
       v, c, w = sc.sym("b", n), sc.sym("c", (n, 1)), sc.sym("w", (n, 3))
       outs = [
@@ -181,7 +181,7 @@ def test_diagonal_triangular_and_permutation_matrices_give_exact_results(rng: np
   perms = [np.eye(n)[::-1], np.roll(np.eye(n), 1, axis=1)]
   b = rng.standard_normal(n)
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, x = sc.sym("a", (n, n)), sc.sym("b", n)
       tri = [solve_triangular(a, x, lower=lower, trans=trans, unit_diagonal=unit) for lower, trans, unit in FLAGS]
       fn = _fn(f"de_exact{n}_{unroll}", [a, x], [cholesky(a), ldl(a), lu(a), solve(a, x, assume="gen"), lu_solve(lu(a), x, trans=True), *tri])
@@ -216,7 +216,7 @@ def test_tied_pivots_choose_the_first_row_as_lapack_does(rng: np.random.Generato
   explicit = np.ones((5, 5)) + 4 * np.eye(5)
   explicit[:, 0] = [0.5, -3.0, 3.0, -3.0, 1.0]  # -3 in row 1 ties +3 in row 2 and -3 in row 3
   for unroll in _forms(n) if n <= DENSE_UNROLL else (n - 1,):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, e = sc.sym("a", (n, n)), sc.sym("e", (5, 5))
       fac, first = _fn(f"de_ties{n}_{unroll}", [a, e], [lu(a), lu(e)])._flat_numerical_call(h, explicit)
     perm, unit_l, upper = _unpack_lu(fac)
@@ -235,7 +235,7 @@ def test_singular_matrices_give_a_zero_pivot_and_nonfinite_values_after_it(rng: 
   duplicate[n - 1] = duplicate[1]
   b = rng.standard_normal(n)
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, x = sc.sym("a", (n, n)), sc.sym("b", n)
       fn = _fn(f"de_singular{n}_{unroll}", [a, x], [lu(a), solve(a, x, assume="gen"), cholesky(a), ldl(a), solve(a, x)])
     fac, x_gen, *_ = fn._flat_numerical_call(zero_column, b)
@@ -259,7 +259,7 @@ def test_power_of_two_scaling_to_the_ends_of_the_exponent_range_is_exact(rng: np
   s, g, t, b = _spd(rng, n), _cyclic(rng, n), _triangle_operand(rng, n), rng.standard_normal(n)
   combos = [(lower, trans) for lower in (True, False) for trans in (False, True)]
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, m, tt, x, c = sc.sym("a", (n, n)), sc.sym("m", (n, n)), sc.sym("t", (n, n)), sc.sym("b", n), sc.sym("c", n)
       tri = [solve_triangular(tt, x if trans else c, lower=lower, trans=trans) for lower, trans in combos]
       fn = _fn(f"de_scaled{n}_{unroll}", [a, m, tt, x, c], [cholesky(a), ldl(a), lu(m), solve(m, x, assume="gen"), *tri])
@@ -282,7 +282,7 @@ def test_hilbert_matrices_factor_and_solve_with_a_small_backward_error(rng: np.r
   h, b = sl.hilbert(n), rng.standard_normal(n)
   norm = np.linalg.norm(h, 2)
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, x = sc.sym("a", (n, n)), sc.sym("b", n)
       outs = [cholesky(a), ldl(a), lu(a), solve(a, x), solve(a, x, assume="sym"), solve(a, x, assume="gen")]
     chol, packed, fac, *xs = _fn(f"de_hilbert{n}_{unroll}", [a, x], outs)._flat_numerical_call(h, b)
@@ -303,7 +303,7 @@ def test_a_nan_entry_poisons_only_what_is_computed_from_it(rng: np.random.Genera
   bad_s, bad_g, bad_b = s.copy(), g.copy(), b.copy()
   bad_s[i, j] = bad_g[i, j] = bad_b[j] = np.nan
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, m, x = sc.sym("a", (n, n)), sc.sym("m", (n, n)), sc.sym("b", n)
       fn = _fn(f"de_nan{n}_{unroll}", [a, m, x], [cholesky(a), ldl(a), solve(m, x, assume="gen")])
     clean_chol, clean_packed, _ = fn._flat_numerical_call(s, g, b)
@@ -324,7 +324,7 @@ def test_triangular_solves_carry_nonfinite_values_only_to_later_unknowns(rng: np
   b_inf, bm_nan, t_zero = b.copy(), bm.copy(), t.copy()
   b_inf[i], bm_nan[i, col], t_zero[i, i] = np.inf, np.nan, 0.0
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       tt, x, xm = sc.sym("t", (n, n)), sc.sym("b", n), sc.sym("bm", (n, 4))
       outs = [solve_triangular(tt, rhs, lower=lower, trans=trans, unit_diagonal=unit) for lower, trans, unit in FLAGS for rhs in (x, xm)]
     fn = _fn(f"de_inf{n}_{unroll}", [tt, x, xm], outs)
@@ -352,7 +352,7 @@ def test_ldl_factors_quasi_definite_matrices_where_cholesky_gives_nan(rng: np.ra
   n = p + q
   b = rng.standard_normal(n)
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, x = sc.sym("a", (n, n)), sc.sym("b", n)
       fn = _fn(f"de_quasi{p}{q}_{unroll}", [a, x], [ldl(a), *ldl_unpack(ldl(a)), solve(a, x, assume="sym"), cholesky(a)])
     for negative_first in (False, True):
@@ -377,7 +377,7 @@ def test_float32_ops_compute_in_single_precision(rng: np.random.Generator, n: in
   b, bm = rng.standard_normal(n).astype(f32), rng.standard_normal((n, 2)).astype(f32)
   s64, g64, t64, b64, bm64 = (x.astype(np.float64) for x in (s, g, t, b, bm))
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, m, tt = (sc.sym(v, (n, n), dtype="float32") for v in ("a", "m", "t"))
       x, w = sc.sym("b", n, dtype="float32"), sc.sym("w", (n, 2), dtype="float32")
       outs = [
@@ -422,7 +422,7 @@ def test_float32_ldl_solve() -> None:
 
 @pytest.mark.parametrize("unroll", [0, DENSE_UNROLL])
 def test_empty_orders_and_right_hand_sides_give_empty_results(unroll: int) -> None:
-  with sc.options(dense_unroll=unroll):
+  with sc.options(linalg=dict(dense_unroll=unroll)):
     e, z, t, bz = sc.sym("e", (0, 0)), sc.sym("z", 0), sc.sym("t", (3, 3)), sc.sym("bz", (3, 0))
     empty = [cholesky(e), ldl(e), lu(e), solve_triangular(e, z), cho_solve(cholesky(e), z), lu_solve(lu(e), z), solve(e, z, assume="gen")]
     tri = [solve_triangular(t, bz, lower=lower, trans=trans, unit_diagonal=unit) for lower, trans, unit in FLAGS]
@@ -524,7 +524,7 @@ def test_the_general_solve_follows_dense_unroll() -> None:
   a, b = sc.sym("a", (n, n)), sc.sym("b", n)
   xs = []
   for unroll in (n, n - 1, n):  # whichever form the cache holds, one of these differs from it
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       xs.append(solve(a, b, assume="gen"))
       assert _trisolve_unroll_flags(xs[-1]) == {unroll >= n}
   # Both forms in one graph: their Functions are named apart, and agree.
@@ -534,20 +534,21 @@ def test_the_general_solve_follows_dense_unroll() -> None:
   np.testing.assert_allclose(got[0], np.linalg.solve(av, np.arange(1.0, n + 1)), rtol=1e-12)
 
 
-def test_derivatives_built_under_two_unroll_settings_share_one_graph() -> None:
-  """A map's derivative helpers are built under the options in force, so a gradient under
-  ``dense_unroll=0`` and one under the default are two helpers, named apart, and one Function holds
-  both with equal values."""
+def test_a_linalg_option_leaves_derivative_helpers_alone() -> None:
+  """A derivative takes each factorization's choice from the node it differentiates, so the
+  ``linalg`` options in force when it is built change neither its helpers nor their names: the
+  gradient built under ``dense_unroll=0`` is the default one, node for node."""
   a = sc.sym("a", (3, 3))
   lane = _fn("de_two_unroll_lane", [a], [cholesky(a @ a.T + 3.0 * sc.const(np.eye(3))).sum().reshape((1,))])
   flat = sc.sym("flat", 18)
   cost = sc.vmap(lane, 2, [(flat, 0, 9)]).sum()
   grads = []
   for unroll in (DENSE_UNROLL, 0):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       grads.append(gradient(cost, flat))
   names = {e.attrs["callee"].name for g in grads for e in _nodes(g) if e.op == ExprOp.VMAP}
-  assert len(names) == 2
+  assert len(names) == 1 and not any("_o" in name for name in names)
+  assert grads[0] is grads[1]
   got = _fn("de_two_unroll", [flat], grads)(np.linspace(-1.0, 1.0, 18))
   np.testing.assert_allclose(got[0], got[1], rtol=1e-13)
 
@@ -567,7 +568,7 @@ def test_order_one_derivatives_are_the_scalar_closed_forms(monkeypatch: pytest.M
   one seed and with many, reverse, and second order, looped (``dense_unroll=0``) and straight-line."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   av, tv, bv = 2.5, -0.8, -1.5
-  with sc.options(dense_unroll=unroll):
+  with sc.options(linalg=dict(dense_unroll=unroll)):
     a, t, b = sc.sym("a", (1, 1)), sc.sym("t", (1, 1)), sc.sym("b", 1)
     cases = {
       "chol": (cholesky(a), a, [np.sqrt(av), 0.5 / np.sqrt(av), 0.0, -0.25 * av**-1.5]),
@@ -600,7 +601,7 @@ def test_jacobians_agree_across_forms_and_with_finite_differences(monkeypatch: p
   weights = rng.standard_normal(2 * n * n + 2 * n)
   got, fns = [], []
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       a, b = sc.sym("a", (n, n)), sc.sym("b", n)
       y = sc.concat(
         [cholesky(a).reshape((n * n,)), ldl(a).reshape((n * n,)), solve_triangular(a, b, lower=False, trans=True), solve(a, b, assume="gen")]
@@ -713,7 +714,7 @@ def test_batched_ops_under_vmap_match_single_calls(rng: np.random.Generator, n: 
   data = [(_spd(rng, n), _quasi_definite(rng, n - n // 2, n // 2), _cyclic(rng, n), rng.standard_normal(n)) for _ in range(batch)]
   sizes = [n * n, n * n, n * n, n]
   for unroll in _forms(n):
-    with sc.options(dense_unroll=unroll):
+    with sc.options(linalg=dict(dense_unroll=unroll)):
       s, q, g, b = sc.sym("s", (n, n)), sc.sym("q", (n, n)), sc.sym("g", (n, n)), sc.sym("b", n)
       outs = [
         cholesky(s),

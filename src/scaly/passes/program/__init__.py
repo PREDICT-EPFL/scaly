@@ -1,4 +1,4 @@
-"""Ordered Program IR optimization pipeline and its observer interface."""
+"""Ordered Program IR optimization pipeline, the slots extensions insert passes at, and its observer interface."""
 
 from __future__ import annotations
 
@@ -36,10 +36,47 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
 )
 
 
+# Passes extensions insert, as (after or before, anchor, name, pass), in the order inserted.
+_INSERTED: list[tuple[bool, str, str, PassFn]] = []
+
+
+def _names() -> list[str]:
+  return [name for name, _ in pipeline()]
+
+
+def _insert(after: bool, anchor: str, name: str, fn: PassFn) -> None:
+  names = _names()
+  if anchor not in names:
+    raise ValueError(f"no pass {anchor!r} to insert {name!r} at; the pipeline is {names}")
+  if name in names:
+    raise ValueError(f"a pass named {name!r} is already in the pipeline")
+  _INSERTED.append((after, anchor, name, fn))
+
+
+def insert_after(anchor: str, name: str, fn: PassFn) -> None:
+  """Run the pass ``fn``, named ``name``, right after the pass ``anchor`` (a ``PASS_PIPELINE`` name
+  or one inserted before). Its name is what an observer sees as ``pass:<name>``."""
+  _insert(True, anchor, name, fn)
+
+
+def insert_before(anchor: str, name: str, fn: PassFn) -> None:
+  """Run the pass ``fn``, named ``name``, right before the pass ``anchor``."""
+  _insert(False, anchor, name, fn)
+
+
+def pipeline() -> tuple[tuple[str, PassFn], ...]:
+  """The passes in the order they run: ``PASS_PIPELINE`` with the inserted ones at their slots."""
+  passes = list(PASS_PIPELINE)
+  for after, anchor, name, fn in _INSERTED:
+    at = next(i for i, (n, _) in enumerate(passes) if n == anchor)
+    passes.insert(at + 1 if after else at, (name, fn))
+  return tuple(passes)
+
+
 def optimize_program(prog: ProgramNode, observe: ProgramObserver | None = None) -> ProgramNode:
   """Run the Program IR optimization pipeline in its declared order."""
   verify_program(prog)
-  for name, fn in PASS_PIPELINE:
+  for name, fn in pipeline():
     prog = fn(prog)
     if observe is not None:
       observe(f"pass:{name}", prog)
@@ -56,8 +93,11 @@ __all__ = [
   "fold_arith",
   "fuse_elementwise",
   "hoist_invariant",
+  "insert_after",
+  "insert_before",
   "optimize_program",
   "pack_workspace",
+  "pipeline",
   "prepare_scalar_expressions",
   "prune_procedures",
   "unroll_unit_loops",

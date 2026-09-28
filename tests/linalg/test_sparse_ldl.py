@@ -224,9 +224,9 @@ def test_auto_schedule_follows_the_option() -> None:
   mat = SparseMatrix.symbol("K", _triangle(MATRICES["kkt"](), "lower"))
   work = SparseLDL(mat, schedule="scan").work
   assert work == SparseLDL(mat, schedule="scan").symbolic.update_lanes + SparseLDL(mat, schedule="scan").symbolic.nnz_l
-  with sc.options(sparse_unroll=work):
+  with sc.options(linalg=dict(sparse_unroll=work)):
     assert SparseLDL(mat).schedule == "unroll"
-  with sc.options(sparse_unroll=work - 1):
+  with sc.options(linalg=dict(sparse_unroll=work - 1)):
     assert SparseLDL(mat).schedule == "loop"
   with pytest.raises(ValueError, match="schedule must be one of"):
     SparseLDL(mat, schedule="blocked")  # ty: ignore[invalid-argument-type]

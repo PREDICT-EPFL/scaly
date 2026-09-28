@@ -11,9 +11,9 @@ import pytest
 import scaly as sc
 from scaly.ad import jvp, jvp_many, vjp
 from scaly.ir import program as p
-from scaly.ir.expr import Expr, ExprOp, OpDef, op_def, register_op, registered_ops
+from scaly.ir.expr import Expr, ExprOp, OpDef, define_traits, has_trait, op_def, register_op, registered_ops
 from scaly.ir.expr_spec import verify_expr
-from scaly.ir.program import RangeKind
+from scaly.ir.program import ProgramOp, RangeKind
 from scaly.ir.spec import Rule, VerifyError
 from scaly.ir.types import TensorType
 from scaly.passes.expr import simplify
@@ -120,3 +120,31 @@ def test_an_op_without_a_pattern_rule_is_dense_in_what_it_reads() -> None:
   toy = Expr(TOY.name, (x[1:3],), TensorType((2,)))
   pattern = sc.jacobian_sparsity(toy, x)
   assert list(zip(pattern.rows, pattern.cols, strict=True)) == [(0, 1), (0, 2), (1, 1), (1, 2)]
+
+
+# An elementwise op that needs no lowering rule: its trait names the program op it computes.
+HALF_SINE = register_op(
+  "test_registry_half_sine",
+  arity=1,
+  numpy=lambda x: np.sin(x),
+  jvp=lambda e, d: e.args[0].cos() * d[0],
+  traits={"elementwise": ProgramOp.SIN, "expensive": True},
+)
+
+
+def test_an_elementwise_trait_lowers_the_op_and_colours_it() -> None:
+  x = sc.sym("x", 3)
+  fn = sc.Function._from_exprs("registry_half_sine", [x], [Expr(HALF_SINE.name, (x,), x.type)], ["x"], ["y"])
+  xv = np.array([0.1, 0.2, 0.3])
+  np.testing.assert_allclose(fn(xv), np.sin(xv))
+  assert has_trait(HALF_SINE.name, "expensive") and not has_trait(TOY.name, "elementwise")
+  from scaly.viz.graph import _expr_color
+
+  assert _expr_color(HALF_SINE.name) == _expr_color(ExprOp.SIN) != _expr_color(ExprOp.ADD)
+
+
+def test_traits_are_checked() -> None:
+  with pytest.raises(ValueError, match="elementwise trait of expression op 'test_registry_half_sine' is already defined"):
+    define_traits(HALF_SINE.name, elementwise=ProgramOp.COS)
+  with pytest.raises(TypeError, match="unknown op trait 'shiny'"):
+    define_traits(TOY.name, shiny=True)

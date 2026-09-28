@@ -149,9 +149,11 @@ stage.
 
 ### Lowering: `passes/lowering.py`
 
-Dispatch is a registry keyed by `ExprOp`: each op's lowering is a self-contained rule registered
-with `@lowers(...)`. The elementwise family shares one rule driven by the `_UNARY` / `_BINARY` op
-maps, so adding a scalar math op is a map entry and adding a structural op is a rule.
+Dispatch goes through the op registry: each op's lowering is a self-contained rule on its `OpDef`
+(`@lowers(...)` for the builtins). An op with the `elementwise` trait needs no rule of its own: the
+trait names the program op it computes and one shared rule lowers them all, so adding a scalar math
+op is a trait and adding a structural op is a rule. The rule gets a `LowerCtx` whose public part
+(buffers, `emit`, fresh names, the shared loops) is all an op defined outside the compiler needs.
 `lower_function` normalizes private copies of the outputs while preserving Function policy and
 metadata, walks the DAG topologically, emits one procedure per reached `Function`, deduplicates
 callees, runs the optimization pipeline, and verifies.
@@ -162,7 +164,9 @@ what keeps generated C and Python agreeing.
 ### Optimizing: `passes/program/`
 
 `PASS_PIPELINE` is an explicit tuple in `passes/program/__init__.py`; `optimize_program` runs it
-at the tail of lowering. Imports do not determine execution order.
+at the tail of lowering. Imports do not determine execution order. An extension adds a pass at a
+named slot, `insert_after("fuse_elementwise", name, fn)` or `insert_before`, and `pipeline()` is
+the order that results.
 
 - `hoist_invariant` splits a mapped callee whose arguments are partly the same at every trip into
   a prologue called once before the loop and a body that receives the prologue's buffers as extra
