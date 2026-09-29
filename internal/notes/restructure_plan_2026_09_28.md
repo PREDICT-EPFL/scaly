@@ -56,7 +56,7 @@
 | 8.1 | `distributions.toml`, manifests, metapackage | ☑ |
 | 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☑ |
 | 8.3 | CI: isolation jobs, plugin jobs, release job, release script | ☑ |
-| 9.1 | Optional: indexing consolidation | ☐ |
+| 9.1 | Optional: indexing consolidation | ☑ |
 
 ## 1. Settled decisions
 
@@ -106,7 +106,7 @@ machinery arrives).
 | predicates | `LT LE EQ NE AND OR NOT ISFINITE SELECT CAST` |
 | reductions | `SUM MAX MIN` |
 | layout | `RESHAPE TRANSPOSE SLICE STACK CONCAT MATMUL` |
-| indexing | `GATHER SCATTER SEGMENT_MAX SEGMENT_MIN INDEX_ADD INDEX_SET TAKE PUT PUT_ADD` (9 → 5 in optional step 9.1) |
+| indexing | `GATHER SCATTER SEGMENT_MAX SEGMENT_MIN INDEX_ADD INDEX_SET TAKE PUT PUT_ADD` (9; 5 since step 9.1: `GATHER SEGMENT_REDUCE TAKE PUT PUT_ADD`) |
 | structure | `CALL VMAP SCAN WHILE EXTERN_CALL` |
 
 Registered by `scaly.linalg`: `CHOLESKY LDL LU TRISOLVE SPARSE_LDL SPARSE_LDL_SOLVE RAGGED_ADD RAGGED_DOT`.
@@ -1037,6 +1037,40 @@ skipped (the conformance refusals).
 **9.1 Indexing consolidation.** `SCATTER`, `SEGMENT_MAX`, `SEGMENT_MIN` become one
 `SEGMENT_REDUCE{add,max,min}`; `INDEX_ADD`/`INDEX_SET` become `PUT_ADD`/`PUT` with constant
 indices. Snapshots may change only where these ops appear; differential tests against NumPy.
+Log: done 2026-09-29, written in a worktree by a parallel agent and gated in the main checkout after
+8.3.
+`SEGMENT_REDUCE` carries `reduce` (`add`, `max`, `min`), `indices` and `fill`: every bin starts at
+`fill` and each value folds into its bin in order. `scatter` and `segment_sum` build the sum into
+zeros, `segment_max`/`segment_min` the extrema; values and result take any shape, scatter's contract,
+and the rules handle it (a gradient of values shaped unlike their ids used to come back shaped like
+the ids). `index_add`/`index_set` build `put_add`/`put` at a constant index vector, through the flat
+view of a base with more than one axis. `put_lanes` (`ir/expr.py`) gives a constant put's landing
+lanes (inside the axis; for `put` the last per entry), and each rule reads it: lowering
+(`_lower_put_constant`, the old index-update loop: no range check, no scratch slot, dropped lanes
+left out when the code is generated, a matrix `index_add` written into the output its reshape
+aliases), sparsity (exact, as `index_set`'s was), reverse mode (a gather where every lane lands, as
+before), folding (new for puts) and the in-place proof (`in_place_chain` takes constant puts,
+`update_chain` looks through reshapes). The `runtime_index` and `exact_reads` traits may be a
+predicate on the node (`expr_has_trait`, in `scaly.ext`), so a constant put scalarizes and is an
+exact read. Messages keep the builder names (`segment_max` under `nonsmooth="error"`). Snapshots: no
+corpus entry holds `index_add`, `index_set` or a constant put, and the sum and extremum lowerings
+are unchanged, so none should move (the snapshot test passed in the worktree before the tests were
+updated). A probe rendering 80 functions and their derivatives (scatters, segment sums, extrema
+under both tie conventions, loop adjoints that scatter, `SparseMatrix` and `SparseLDL` in both
+schedules, the IPM dense and sparse) gave byte-identical C; the index-update functions differ in
+buffer names (the constant index takes a fresh one), their Jacobians and Hessians take `put`'s
+multi-seed rule where `INDEX_ADD` fell back to one pass per seed, and a constant `put`'s C loses its
+checks and scratch lanes. `_JIT_CACHE_VERSION` 6; `EXT_API_VERSION` stays 1 (the registry API is
+unchanged and the trait predicate compatible; 3.1 retired builtin ops without a bump). Tests:
+`tests/core/integration/test_indexing_ops.py` (21, against NumPy: values under both hints, folding,
+Jacobians three ways and exact patterns, constant against run-time puts bit for bit, a matrix carry
+in place); the verifier, index and reduction suites follow the renamed ops. Todo C-160 no longer lists
+`index_add`/`index_set`. Gated in the main checkout: the suite 4391 passed, 54 skipped, with the C
+snapshots unchanged as predicted; `bench/run.py smoke` passed; the core-only run 1529 passed; ty
+within the ratchet (142) after unpacking the test's case tuples explicitly, since ty cannot count a
+star-unpacked list; the maximum and minimum swapped in the extremum lowering, `put_lanes` keeping
+the first lane, the fold's ufunc fixed to `add` and `update_chain` no longer looking through a
+reshape each fail the new tests.
 
 ## 5. Traps
 

@@ -19,7 +19,19 @@ from .function.method import METHOD_ENTRY_POINTS, Info, Method, MethodError, Met
 from .function.model import ConcreteFunction, Function
 from .function.tree import Record, SymbolicValue
 from .ir import program
-from .ir.expr import Expr, ExprOp, OpDef, define_rules, define_traits, has_trait, op_def, register_op, registered_ops, registry_version
+from .ir.expr import (
+  Expr,
+  ExprOp,
+  OpDef,
+  define_rules,
+  define_traits,
+  expr_has_trait,
+  has_trait,
+  op_def,
+  register_op,
+  registered_ops,
+  registry_version,
+)
 from .ir.spec import Rule
 from .passes.lowering import LowerCtx, LoweringError, PositionRanges, Positions, lowers
 from .passes.program import insert_after, insert_before, pipeline
@@ -66,6 +78,7 @@ __all__ = [
   "define_rules",
   "define_traits",
   "empty_mask",
+  "expr_has_trait",
   "extern_function",
   "extern_functions",
   "from_exprs",

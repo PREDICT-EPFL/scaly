@@ -39,10 +39,7 @@ NEW_OPS = frozenset(
     ExprOp.CAST,
     ExprOp.MAX,
     ExprOp.MIN,
-    ExprOp.SEGMENT_MAX,
-    ExprOp.SEGMENT_MIN,
-    ExprOp.INDEX_ADD,
-    ExprOp.INDEX_SET,
+    ExprOp.SEGMENT_REDUCE,
     ExprOp.TAKE,
     ExprOp.PUT_ADD,
     ExprOp.PUT,
@@ -223,6 +220,7 @@ def _forged() -> dict[str, list[Expr]]:
   put = sc.put_add(x2, _i64([0, 4, 9]), sc.sym("pv", (2, 3)))
   added = sc.index_add(x, [0, 0, 4], v)
   seg = sc.segment_max(x, [0, 1, 0, 1, 2], 3)
+  summed = sc.scatter(v, [0, 2, 2], (4,))
   loops = _loop_parts()
   final, carry, mapped = loops["final"], loops["carry"], loops["mapped"]
   return {
@@ -236,19 +234,14 @@ def _forged() -> dict[str, list[Expr]]:
     ],
     "cast-types": [_forge(sc.cast(x, "float32"), shape=(4,))],
     "reduce-output-scalar": [_forge(x.max(), dtype=dtypes.float32)],
-    "segment-extremum": [
+    "segment-reduce": [
       _forge(seg, drop=("fill",)),
+      _forge(seg, drop=("reduce",)),
+      _forge(seg, attrs={"reduce": "mean"}),
       _forge(seg, attrs={"indices": np.array([0, 1, 0])}),
-      _forge(seg, args=(sc.sym("m", (5, 1)),)),
       _forge(seg, attrs={"indices": np.array([0, 1, 0, 1, -1])}),
-    ],
-    "index-update": [
-      _forge(added, attrs={"indices": np.array([0, 4])}),
-      _forge(added, attrs={"indices": np.array([0, 4, 5])}),
-      _forge(sc.index_set(x, [0, 1, 4], v), attrs={"indices": np.array([0, 1, 1])}),
-      _forge(added, args=(x, v.cast("float32"))),
-      _forge(added, args=(x, sc.sym("v", (3, 1)))),
-      _forge(added, shape=(6,)),
+      _forge(seg, dtype=dtypes.float32),
+      _forge(summed, attrs={"indices": np.array([0, 2, 4])}),
     ],
     "take-shapes": [
       _forge(take, args=(x2, sc.sym("fi", 3))),
@@ -261,6 +254,8 @@ def _forged() -> dict[str, list[Expr]]:
       _forge(put, args=(x2, put.args[1], sc.sym("pv", (2, 4)))),
       _forge(put, args=(x2, sc.sym("fi", 3), put.args[2])),
       _forge(put, shape=(2, 6)),
+      _forge(added, args=(x, added.args[1], sc.sym("v", (3, 1)))),
+      _forge(added, args=(x, _i64([[0, 0, 4]]), v)),
     ],
     "vmap-attrs": [
       _forge(mapped, drop=("strides",)),
@@ -313,6 +308,7 @@ def test_forged_nodes_are_forged_from_verified_ones() -> None:
       sc.put_add(x2, _i64([0, 4, 9]), sc.sym("pv", (2, 3))),
       sc.index_add(x, [0, 0, 4], sc.sym("v", 3)),
       sc.segment_max(x, [0, 1, 0, 1, 2], 3),
+      sc.scatter(sc.sym("v", 3), [0, 2, 2], (4,)),
       loops["final"],
       loops["count"],
       loops["carry"],

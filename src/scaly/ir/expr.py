@@ -70,10 +70,6 @@ class ExprOp(StrEnum):
   SUM = "sum"
   MAX = "max"
   MIN = "min"
-  SEGMENT_MAX = "segment_max"
-  SEGMENT_MIN = "segment_min"
-  INDEX_ADD = "index_add"
-  INDEX_SET = "index_set"
   TAKE = "take"
   PUT_ADD = "put_add"
   PUT = "put"
@@ -81,7 +77,7 @@ class ExprOp(StrEnum):
   TRANSPOSE = "transpose"
   SLICE = "slice"
   GATHER = "gather"
-  SCATTER = "scatter"
+  SEGMENT_REDUCE = "segment_reduce"
   STACK = "stack"
   CONCAT = "concat"
   MATMUL = "matmul"
@@ -138,10 +134,6 @@ COMMON_STRUCTURAL = {
   ExprOp.SUM,
   ExprOp.MAX,
   ExprOp.MIN,
-  ExprOp.SEGMENT_MAX,
-  ExprOp.SEGMENT_MIN,
-  ExprOp.INDEX_ADD,
-  ExprOp.INDEX_SET,
   ExprOp.TAKE,
   ExprOp.PUT_ADD,
   ExprOp.PUT,
@@ -149,7 +141,7 @@ COMMON_STRUCTURAL = {
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
   ExprOp.GATHER,
-  ExprOp.SCATTER,
+  ExprOp.SEGMENT_REDUCE,
   ExprOp.STACK,
   ExprOp.CONCAT,
   ExprOp.MATMUL,
@@ -208,6 +200,9 @@ class OpDef:
 
   Positions are a ``(length, lanes)`` integer array, -1 for a dropped lane, or an object with
   ``bounds()`` and ``explicit()`` (``passes/lowering.py``); ``None`` when they cannot be bounded.
+  ``runtime_index`` and ``exact_reads`` may be a predicate on the node instead of a flag, when the
+  answer depends on the node's arguments: a ``put`` at constant indices has no run-time index.
+  ``expr_has_trait`` asks about one node, ``has_trait`` about the op.
 
   Compared and hashed by identity: the registry holds one per name."""
 
@@ -297,8 +292,16 @@ def define_traits(op: str, **traits: Any) -> OpDef:
 
 
 def has_trait(op: str, name: str) -> bool:
-  """Whether the registered op ``op`` has the trait ``name``."""
+  """Whether the registered op ``op`` has the trait ``name``; for a flag given as a predicate, whether
+  some node of the op may have it (``expr_has_trait`` asks about one)."""
   return bool(op_def(op).traits.get(name))
+
+
+def expr_has_trait(expr: Expr, name: str) -> bool:
+  """Whether the node ``expr`` has the flag trait ``name`` (``runtime_index``, ``exact_reads``): its
+  op's flag, or the predicate's answer for this node where the op gives one (``OpDef``)."""
+  value = op_def(expr.op).traits.get(name)
+  return bool(value(expr)) if callable(value) else bool(value)
 
 
 def op_def(op: str) -> OpDef:
@@ -358,10 +361,6 @@ _BUILTIN_OPS: tuple[tuple[Any, ...], ...] = (
   (ExprOp.SUM, 1, np.sum),
   (ExprOp.MAX, 1, np.max),
   (ExprOp.MIN, 1, np.min),
-  (ExprOp.SEGMENT_MAX, 1, None),
-  (ExprOp.SEGMENT_MIN, 1, None),
-  (ExprOp.INDEX_ADD, 2, None),
-  (ExprOp.INDEX_SET, 2, None),
   (ExprOp.TAKE, 2, None),
   (ExprOp.PUT_ADD, 3, None),
   (ExprOp.PUT, 3, None),
@@ -369,7 +368,7 @@ _BUILTIN_OPS: tuple[tuple[Any, ...], ...] = (
   (ExprOp.TRANSPOSE, 1, np.transpose),
   (ExprOp.SLICE, 1, None),
   (ExprOp.GATHER, 1, None),
-  (ExprOp.SCATTER, 1, None),
+  (ExprOp.SEGMENT_REDUCE, 1, None),
   (ExprOp.STACK, None, np.stack),
   (ExprOp.CONCAT, None, np.concatenate),
   (ExprOp.MATMUL, 2, np.matmul),
@@ -429,8 +428,11 @@ for _op in (ExprOp.SIN, ExprOp.COS, ExprOp.TAN, ExprOp.ASIN, ExprOp.ACOS, ExprOp
   define_traits(_op, expensive=True)
 for _op in (ExprOp.ERF, ExprOp.EXP, ExprOp.LOG, ExprOp.SQRT, ExprOp.POW, ExprOp.ATAN2):
   define_traits(_op, expensive=True)
-for _op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT):
-  define_traits(_op, runtime_index=True)
+define_traits(ExprOp.TAKE, runtime_index=True)
+# A put at constant indices addresses fixed entries, which lowering resolves as it does a gather's;
+# its structural pattern is then exactly what it reads, as below.
+for _op in (ExprOp.PUT_ADD, ExprOp.PUT):
+  define_traits(_op, runtime_index=lambda node: node.args[1].op != ExprOp.CONST, exact_reads=lambda node: node.args[1].op == ExprOp.CONST)
 # Ops whose structural pattern is exactly the entries they read, so the pattern can stand in for a
 # read set. Everything else (predicates, ``select``'s condition, ``copysign``'s sign, casts, calls,
 # maps and loops) may read entries its pattern omits.
@@ -445,14 +447,10 @@ for _op in (
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
   ExprOp.GATHER,
-  ExprOp.SCATTER,
-  ExprOp.SEGMENT_MAX,
-  ExprOp.SEGMENT_MIN,
+  ExprOp.SEGMENT_REDUCE,
   ExprOp.STACK,
   ExprOp.CONCAT,
   ExprOp.MATMUL,
-  ExprOp.INDEX_ADD,
-  ExprOp.INDEX_SET,
 ):
   define_traits(_op, exact_reads=True)
 del _op
@@ -1177,47 +1175,62 @@ def gather(x: Any, indices: Any) -> Expr:
 def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
   """Place ``values`` at flat ``indices`` in a zero tensor of ``shape``.
 
-  Repeated indices accumulate. ``indices`` must have as many entries as ``values``.
+  Repeated indices accumulate. ``indices`` must have as many entries as ``values``. The ``add``
+  reduction of the ``segment_reduce`` op, as ``segment_sum`` is.
   """
   values = as_expr(values)
   shape = as_shape(shape)
   idx = _index_array(indices, int(np.prod(shape, dtype=int)))
   if idx.size != values.size:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
+  return _segment_reduce("add", values, idx, shape, 0.0)
+
+
+SEGMENT_REDUCTIONS = ("add", "max", "min")
+"""The reductions of the ``segment_reduce`` op: ``scatter`` and ``segment_sum`` add, ``segment_max``
+and ``segment_min`` keep the extremum."""
+
+
+def _segment_reduce(reduce: str, values: Expr, idx: np.ndarray, shape: tuple[int, ...], fill: float) -> Expr:
+  """``out = full(shape, fill)``, then ``out.flat[idx.flat[k]] = reduce(out.flat[idx.flat[k]], values.flat[k])`` in order."""
   return Expr(
-    ExprOp.SCATTER, (values,), TensorType(shape, dtype=values.type.dtype, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering
+    ExprOp.SEGMENT_REDUCE,
+    (values,),
+    TensorType(shape, dtype=values.type.dtype, diff=values.type.diff),
+    attrs={"reduce": reduce, "indices": idx, "fill": float(fill)},
+    lowering=values.lowering,
   )
 
 
 def index_add(base: Any, indices: Any, values: Any) -> Expr:
   """``base`` with ``values`` added at flat ``indices`` (repeated indices accumulate).
 
-  The same value as ``base + scatter(values, indices, base.shape)``, kept as one update so that a
-  loop whose carry is changed only this way can update the carry in place: see ``sc.scan``.
+  ``put_add`` at constant indices, through the flat view of a base with more than one axis: the
+  same value as ``base + scatter(values, indices, base.shape)``, kept as one update so that a loop
+  whose carry is changed only this way can update the carry in place: see ``sc.scan``.
   """
-  return _index_update(ExprOp.INDEX_ADD, base, indices, values)
+  return _index_update("index_add", base, indices, values)
 
 
 def index_set(base: Any, indices: Any, values: Any) -> Expr:
-  """``base`` with the entries at flat ``indices`` replaced by ``values``; the indices must be distinct."""
-  return _index_update(ExprOp.INDEX_SET, base, indices, values)
+  """``base`` with the entries at flat ``indices`` replaced by ``values``; the indices must be distinct.
+
+  ``put`` at constant indices, through the flat view of a base with more than one axis."""
+  return _index_update("index_set", base, indices, values)
 
 
-def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
+def _index_update(name: str, base: Any, indices: Any, values: Any) -> Expr:
   base, values = _operands(base, values)
   idx = _index_array(np.asarray(indices).reshape(-1), base.size)
   if idx.size != values.size:
-    raise ValueError(f"{op.value} has {idx.size} indices for {values.size} values")
-  if op == ExprOp.INDEX_SET and np.unique(idx).size != idx.size:
+    raise ValueError(f"{name} has {idx.size} indices for {values.size} values")
+  if name == "index_set" and np.unique(idx).size != idx.size:
     raise ValueError("index_set indices must be distinct")
   promote_dtype(base, values)
-  return Expr(
-    op,
-    (base, values.reshape((values.size,))),
-    TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
-    attrs={"indices": idx},
-    lowering=common_lowering(base, values),
-  )
+  flat = base if len(base.shape) == 1 else base.reshape((base.size,))
+  lanes = values if len(values.shape) == 1 else values.reshape((values.size,))
+  out = (put_add if name == "index_add" else put)(flat, idx, lanes)
+  return out if out.shape == base.shape else out.reshape(base.shape)
 
 
 def _runtime_indices(indices: Any, op: str) -> Expr:
@@ -1294,6 +1307,23 @@ def _put(op: ExprOp, base: Any, indices: Any, values: Any, in_range: bool = Fals
   )
 
 
+def put_lanes(expr: Expr) -> tuple[np.ndarray, np.ndarray] | None:
+  """For a ``put`` or ``put_add`` at constant indices, the lanes whose values land, in lane order,
+  and the entries of the last axis they land at; None when the indices are known only at run time.
+
+  A lane whose index is outside ``[0, n)`` drops its value, and of the ``put`` lanes writing one
+  entry only the last lands: a ``put``'s entries are distinct, a ``put_add``'s may repeat."""
+  idx = expr.args[1]
+  if idx.op != ExprOp.CONST or idx.value is None:
+    return None
+  known = np.asarray(idx.value, dtype=np.int64).reshape(-1)
+  lanes = np.flatnonzero((known >= 0) & (known < expr.args[0].shape[-1]))
+  if expr.op == ExprOp.PUT and lanes.size:
+    _, last = np.unique(known[lanes][::-1], return_index=True)
+    lanes = np.sort(lanes[::-1][last])
+  return lanes, known[lanes]
+
+
 def segment_sum(values: Any, segment_ids: Any, num_segments: int) -> Expr:
   """Sum ``values`` into ``num_segments`` bins: entry ``k`` adds into bin ``segment_ids[k]``.
 
@@ -1305,33 +1335,30 @@ def segment_sum(values: Any, segment_ids: Any, num_segments: int) -> Expr:
   return scatter(values.reshape((values.size,)), np.asarray(segment_ids).reshape(-1), (int(num_segments),))
 
 
-def _segment_extremum(op: ExprOp, values: Any, segment_ids: Any, num_segments: int, fill: float | None) -> Expr:
+def _segment_extremum(reduce: str, values: Any, segment_ids: Any, num_segments: int, fill: float | None) -> Expr:
   values = as_expr(values)
   ids = _index_array(np.asarray(segment_ids).reshape(-1), int(num_segments))
   if ids.size != values.size:
-    raise ValueError(f"{op.value} has {ids.size} segment ids for {values.size} values")
+    raise ValueError(f"segment_{reduce} has {ids.size} segment ids for {values.size} values")
   if fill is None:
-    fill = -math.inf if op == ExprOp.SEGMENT_MAX else math.inf
-  return Expr(
-    op,
-    (values.reshape((values.size,)),),
-    TensorType((int(num_segments),), dtype=values.type.dtype, diff=values.type.diff),
-    attrs={"indices": ids, "fill": float(fill)},
-    lowering=values.lowering,
-  )
+    fill = -math.inf if reduce == "max" else math.inf
+  return _segment_reduce(reduce, values.reshape((values.size,)), ids, (int(num_segments),), fill)
 
 
 def segment_max(values: Any, segment_ids: Any, num_segments: int, *, fill: float | None = None) -> Expr:
   """Largest value in each of ``num_segments`` bins; ``fill`` (default ``-inf``) where a bin is empty.
 
-  NaN propagates within its bin. Ties follow ``sc.options(nonsmooth=...)``.
+  NaN propagates within its bin. Ties follow ``sc.options(nonsmooth=...)``. The ``max`` reduction
+  of the ``segment_reduce`` op.
   """
-  return _segment_extremum(ExprOp.SEGMENT_MAX, values, segment_ids, num_segments, fill)
+  return _segment_extremum("max", values, segment_ids, num_segments, fill)
 
 
 def segment_min(values: Any, segment_ids: Any, num_segments: int, *, fill: float | None = None) -> Expr:
-  """Smallest value in each of ``num_segments`` bins; ``fill`` (default ``inf``) where a bin is empty."""
-  return _segment_extremum(ExprOp.SEGMENT_MIN, values, segment_ids, num_segments, fill)
+  """Smallest value in each of ``num_segments`` bins; ``fill`` (default ``inf``) where a bin is empty.
+
+  The ``min`` reduction of the ``segment_reduce`` op."""
+  return _segment_extremum("min", values, segment_ids, num_segments, fill)
 
 
 def split(x: Any, sections: int | Iterable[int], *, axis: int = 0) -> tuple[Expr, ...]:

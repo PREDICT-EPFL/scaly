@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, define_rules, independent, op_def
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, define_rules, independent, op_def, put_lanes
 from ..ir.types import SparsityType, broadcast_shape
 from ..utils.options import get_options
 
@@ -186,27 +186,29 @@ def _sparsity_take(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: 
 
 
 def _sparsity_put_add_put(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  # Every entry keeps its base entry (a put may replace it; the pattern stays conservative) and may
-  # receive any value of its row.
   base, _, values = expr.args
   n, lanes = base.shape[-1], values.shape[-1]
-  rows, cols = _row_blocks(base.size // n if n else 0, n, lanes)
-  return mask_or(mask(base), mask_compose(incidence((expr.size, values.size), rows, cols), mask(values)))
-
-
-def _sparsity_index_add_index_set(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  base, values = expr.args
-  indices = expr.attrs["indices"]
+  rows = base.size // n if n else 0
+  landing = put_lanes(expr)
+  if landing is None:
+    # Every entry keeps its base entry (a put may replace it; the pattern stays conservative) and
+    # may receive any value of its row.
+    r, c = _row_blocks(rows, n, lanes)
+    return mask_or(mask(base), mask_compose(incidence((expr.size, values.size), r, c), mask(values)))
+  # At constant indices the pattern is exact: each landing lane reaches its entry in every row, and
+  # the base entries a put overwrites are gone.
+  landed, entries = landing
   kept = mask(base)
-  if expr.op == ExprOp.INDEX_SET:
+  written = (np.arange(rows)[:, None] * n + entries[None, :]).reshape(-1)
+  if expr.op == ExprOp.PUT and written.size:
     keep = np.ones(expr.size, dtype=bool)
-    keep[indices] = False
+    keep[written] = False
     kept = mask_compose(incidence((expr.size, expr.size), np.flatnonzero(keep), np.flatnonzero(keep)), kept)
-  child = mask(values)
-  return mask_or(kept, mask_compose(incidence((expr.size, values.size), indices, np.arange(values.size)), child))
+  read = (np.arange(rows)[:, None] * lanes + landed[None, :]).reshape(-1)
+  return mask_or(kept, mask_compose(incidence((expr.size, values.size), written, read), mask(values)))
 
 
-def _sparsity_scatter_segment_max_segment_min(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
+def _sparsity_segment_reduce(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
   child = mask(expr.args[0])
   indices = expr.attrs["indices"].reshape(-1)
   return mask_compose(incidence((expr.size, child.shape[0]), indices, np.arange(child.shape[0])), child)
@@ -263,11 +265,7 @@ _SPARSITY_RULES = {
   ExprOp.TAKE: _sparsity_take,
   ExprOp.PUT_ADD: _sparsity_put_add_put,
   ExprOp.PUT: _sparsity_put_add_put,
-  ExprOp.INDEX_ADD: _sparsity_index_add_index_set,
-  ExprOp.INDEX_SET: _sparsity_index_add_index_set,
-  ExprOp.SCATTER: _sparsity_scatter_segment_max_segment_min,
-  ExprOp.SEGMENT_MAX: _sparsity_scatter_segment_max_segment_min,
-  ExprOp.SEGMENT_MIN: _sparsity_scatter_segment_max_segment_min,
+  ExprOp.SEGMENT_REDUCE: _sparsity_segment_reduce,
   ExprOp.STACK: _sparsity_stack,
   ExprOp.CONCAT: _sparsity_concat,
   ExprOp.MATMUL: _sparsity_matmul,

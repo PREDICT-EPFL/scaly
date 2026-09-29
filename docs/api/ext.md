@@ -32,6 +32,8 @@ compiler asks for; `OpDef` lists each one's signature and default.
 
 ::: scaly.ir.expr.has_trait
 
+::: scaly.ir.expr.expr_has_trait
+
 ## Derivative and sparsity rules
 
 A rule skips what a zero tangent or cotangent contributes, gives a ``NoAdjoint`` for an argument

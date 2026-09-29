@@ -106,28 +106,27 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
   return None if info.numpy is None else info.numpy(*args)
 
 
-def _fold_scatter(e: Expr, args: list[np.ndarray]) -> np.ndarray:
-  out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
-  np.add.at(out, e.attrs["indices"].reshape(-1), args[0].reshape(-1))
+_SEGMENT_UFUNCS = {"add": np.add, "max": np.maximum, "min": np.minimum}
+
+
+def _fold_segment_reduce(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  out = np.full(e.size, e.attrs["fill"], dtype=np.float64)
+  _SEGMENT_UFUNCS[e.attrs["reduce"]].at(out, e.attrs["indices"].reshape(-1), args[0].reshape(-1))
   return out.reshape(e.shape)
 
 
-def _fold_index_add(e: Expr, args: list[np.ndarray]) -> np.ndarray:
-  out = args[0].astype(np.float64, copy=True).reshape(-1)
-  np.add.at(out, e.attrs["indices"], args[1])
+def _fold_put(e: Expr, args: list[np.ndarray]) -> np.ndarray:
+  """A put or put_add of constants, lane by lane in order; a lane outside the last axis drops."""
+  base, idx, values = args
+  n = e.shape[-1]
+  if not e.size:
+    return base.astype(np.float64).reshape(e.shape)
+  out = base.astype(np.float64, copy=True).reshape(-1, n)
+  vals = np.asarray(values, dtype=np.float64).reshape(out.shape[0], -1)
+  for j, i in enumerate(np.asarray(idx, dtype=np.int64).reshape(-1)):
+    if 0 <= i < n:
+      out[:, i] = out[:, i] + vals[:, j] if e.op == ExprOp.PUT_ADD else vals[:, j]
   return out.reshape(e.shape)
-
-
-def _fold_index_set(e: Expr, args: list[np.ndarray]) -> np.ndarray:
-  out = args[0].astype(np.float64, copy=True).reshape(-1)
-  out[e.attrs["indices"]] = args[1]
-  return out.reshape(e.shape)
-
-
-def _fold_segment_extremum(e: Expr, args: list[np.ndarray]) -> np.ndarray:
-  out = np.full(e.shape, e.attrs["fill"], dtype=np.float64)
-  (np.maximum if e.op == ExprOp.SEGMENT_MAX else np.minimum).at(out, e.attrs["indices"], args[0])
-  return out
 
 
 def _fold_gather(e: Expr, args: list[np.ndarray]) -> np.ndarray:
@@ -141,11 +140,9 @@ _FOLD_RULES = {
   ExprOp.TRANSPOSE: lambda e, args: np.transpose(args[0], axes=e.attrs["axes"]),
   ExprOp.SLICE: lambda e, args: args[0][e.attrs["index"]],
   ExprOp.GATHER: _fold_gather,
-  ExprOp.SCATTER: _fold_scatter,
-  ExprOp.INDEX_ADD: _fold_index_add,
-  ExprOp.INDEX_SET: _fold_index_set,
-  ExprOp.SEGMENT_MAX: _fold_segment_extremum,
-  ExprOp.SEGMENT_MIN: _fold_segment_extremum,
+  ExprOp.SEGMENT_REDUCE: _fold_segment_reduce,
+  ExprOp.PUT_ADD: _fold_put,
+  ExprOp.PUT: _fold_put,
   ExprOp.STACK: lambda e, args: np.stack(args, axis=e.attrs.get("axis", 0)),
   ExprOp.CONCAT: lambda e, args: np.concatenate(args, axis=e.attrs.get("axis", 0)),
   ExprOp.SUM: lambda e, args: np.asarray(np.sum(args[0]), dtype=np.float64),
@@ -341,6 +338,11 @@ def _transpose_of_gather(e: Expr) -> Expr:
   return gather(inner.args[0], np.ascontiguousarray(table))
 
 
+def _is_scatter(e: Expr) -> bool:
+  """A ``segment_reduce`` that adds into zeros: what ``scatter`` builds."""
+  return e.attrs["reduce"] == "add" and e.attrs["fill"] == 0.0
+
+
 def _is_permutation(e: Expr) -> bool:
   indices = np.asarray(e.attrs["indices"]).reshape(-1)
   return indices.size == e.size and bool(np.array_equal(np.sort(indices), np.arange(e.size)))
@@ -367,9 +369,9 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.GATHER, _compose_gathers),
-  Pattern(ExprOp.SCATTER, lambda e: not _is_zero(e.args[0]) and _is_permutation(e), _scatter_to_gather),
+  Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and not _is_zero(e.args[0]) and _is_permutation(e), _scatter_to_gather),
   Pattern(ExprOp.TRANSPOSE, lambda e: _source(e.args[0]).op == ExprOp.GATHER, _transpose_of_gather),
-  Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.STACK, _all_args_zero, _zero_unary),
   Pattern(ExprOp.CONCAT, _all_args_zero, _zero_unary),
   Pattern(ExprOp.SLICE, _slice_of_stack_full, _slice_of_stack),

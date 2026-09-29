@@ -28,7 +28,7 @@ _EXPR_COLORS = {
   ExprOp.TRANSPOSE: "#d8f9e4",
   ExprOp.SLICE: "#e5eaff",
   ExprOp.GATHER: "#e5eaff",
-  ExprOp.SCATTER: "#e5eaff",
+  ExprOp.SEGMENT_REDUCE: "#e5eaff",
   ExprOp.STACK: "#ffc14d",
   ExprOp.CONCAT: "#ffc14d",
 }
@@ -65,6 +65,16 @@ _PROGRAM_NODE_COLORS = {
 }
 
 
+def _variant(e: Expr) -> str:
+  """What a label adds to the op name: a segment reduction's reduction (``{max}``), and ``{const}``
+  for a put at constant indices, which is what ``index_add`` and ``index_set`` build."""
+  if e.op == ExprOp.SEGMENT_REDUCE:
+    return "{" + e.attrs["reduce"] + "}"
+  if e.op in (ExprOp.PUT, ExprOp.PUT_ADD) and e.args[1].op == ExprOp.CONST:
+    return "{const}"
+  return ""
+
+
 def _program_node_topo(root: ProgramNode) -> list[ProgramNode]:
   seen: set[int] = set()
   out: list[ProgramNode] = []
@@ -94,7 +104,7 @@ def expr_graph(obj: Function | Expr | Iterable[Expr]) -> dict[str, Any]:
   edges = []
   for i, e in enumerate(nodes):
     op = e.op
-    label = f"{op.upper()}\n%{i}\n{e.type.dtype.name}{e.shape}"
+    label = f"{op.upper()}{_variant(e)}\n%{i}\n{e.type.dtype.name}{e.shape}"
     if e.name:
       label += f"\n{e.name}"
     if op == ExprOp.CONST and e.value is not None and e.value.size <= 4:

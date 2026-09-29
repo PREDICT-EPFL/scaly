@@ -37,7 +37,7 @@ def test_common_ops_contains_modeling_basics() -> None:
     sc.ExprOp.TRANSPOSE,
     sc.ExprOp.SLICE,
     sc.ExprOp.GATHER,
-    sc.ExprOp.SCATTER,
+    sc.ExprOp.SEGMENT_REDUCE,
     sc.ExprOp.CONCAT,
     sc.ExprOp.MATMUL,
     sc.ExprOp.CALL,

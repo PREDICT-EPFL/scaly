@@ -29,6 +29,7 @@ from .expr import (
   COMMON_ELEMENTWISE_BINARY,
   COMMON_ELEMENTWISE_UNARY,
   COMPARE_OPS,
+  SEGMENT_REDUCTIONS,
   Expr,
   ExprOp,
   define_rules,
@@ -313,14 +314,17 @@ def _while_attrs(expr: Expr) -> str | None:
   return None
 
 
-def _scatter_indices(expr: Expr) -> str | None:
-  if "indices" not in expr.attrs:
-    return "SCATTER missing 'indices' attr"
-  idx = expr.attrs["indices"]
-  if not expr.args:
-    return "SCATTER missing values arg"
-  if int(np.asarray(idx).size) != expr.args[0].size:
-    return f"SCATTER indices size {np.asarray(idx).size} != values size {expr.args[0].size}"
+def _segment_reduce(expr: Expr) -> str | None:
+  idx, reduce = expr.attrs.get("indices"), expr.attrs.get("reduce")
+  if idx is None or "fill" not in expr.attrs or reduce not in SEGMENT_REDUCTIONS:
+    return f"SEGMENT_REDUCE needs 'indices', 'fill' and a 'reduce' of {', '.join(SEGMENT_REDUCTIONS)}"
+  idx = np.asarray(idx)
+  if idx.size != expr.args[0].size:
+    return f"SEGMENT_REDUCE has {idx.size} indices for {expr.args[0].size} values"
+  if idx.size and (idx.min() < 0 or idx.max() >= expr.size):
+    return f"SEGMENT_REDUCE indices must lie in [0, {expr.size})"
+  if expr.type.dtype != expr.args[0].type.dtype:
+    return f"SEGMENT_REDUCE keeps its values' dtype, got {expr.args[0].type.dtype} -> {expr.type.dtype}"
   return None
 
 
@@ -409,33 +413,6 @@ def _cast_types(expr: Expr) -> str | None:
   return None
 
 
-def _index_update(expr: Expr) -> str | None:
-  base, values = expr.args
-  idx = expr.attrs.get("indices")
-  if idx is None or idx.size != values.size or len(values.shape) != 1:
-    return f"{expr.op} needs one rank-1 value per index"
-  if idx.size and (idx.min() < 0 or idx.max() >= base.size):
-    return f"{expr.op} indices must lie in [0, {base.size})"
-  if expr.op == ExprOp.INDEX_SET and np.unique(idx).size != idx.size:
-    return "INDEX_SET indices must be distinct"
-  if expr.shape != base.shape or expr.type.dtype != base.type.dtype or values.type.dtype != base.type.dtype:
-    return f"{expr.op} keeps the base's shape and dtype"
-  return None
-
-
-def _segment_extremum(expr: Expr) -> str | None:
-  idx = expr.attrs.get("indices")
-  if idx is None or "fill" not in expr.attrs:
-    return f"{expr.op} needs 'indices' and 'fill' attrs"
-  if len(expr.shape) != 1 or len(expr.args[0].shape) != 1:
-    return f"{expr.op} maps a rank-1 operand to a rank-1 result, got {expr.args[0].shape} -> {expr.shape}"
-  if idx.size != expr.args[0].size:
-    return f"{expr.op} has {idx.size} segment ids for {expr.args[0].size} values"
-  if idx.size and (idx.min() < 0 or idx.max() >= expr.shape[0]):
-    return f"{expr.op} segment ids must lie in [0, {expr.shape[0]})"
-  return None
-
-
 def _reduce_shape(expr: Expr) -> str | None:
   if expr.shape != ():
     return f"{expr.op} output must be a scalar, got shape {expr.shape}"
@@ -471,11 +448,9 @@ _BUILTIN_RULES: list[Rule[Expr, Any]] = [
   Rule(ExprOp.SCAN, "scan-attrs", _scan_attrs),
   Rule(ExprOp.WHILE, "while-attrs", _while_attrs),
   Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
-  Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
-  *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
+  Rule(ExprOp.SEGMENT_REDUCE, "segment-reduce", _segment_reduce),
   Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
   *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),
-  *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
   Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
   Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
 ]

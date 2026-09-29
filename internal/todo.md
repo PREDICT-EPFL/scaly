@@ -963,9 +963,10 @@ protocol's compile flags.
       cotangent with the params'. A float32 carry beside float64 slices or params cannot share one,
       so both raise (strict xfails in `tests/core/integration/test_loop_edge_cases.py`).
 - [ ] **C-160. Multi-seed forward rules for `maximum`, `minimum`, `copysign`, the `max`/`min`
-      reductions, `segment_max`/`segment_min` and `index_add`/`index_set`.** They fall back to one pass
-      per seed, and `SCALY_STRICT_JVP_MANY=1` refuses them. The notes in `docs/how_it_works/ir.md` list
-      only `atan2`, `asin`/`acos`/`atan` and `abs`.
+      reductions and `segment_max`/`segment_min` (`segment_reduce`'s extrema).** They fall back to
+      one pass per seed, and `SCALY_STRICT_JVP_MANY=1` refuses them. The notes in
+      `docs/how_it_works/ir.md` list only `atan2`, `asin`/`acos`/`atan` and `abs`. (`index_add` and
+      `index_set` have `put_add`'s and `put`'s rule since restructure step 9.1.)
 - [ ] **C-161. Truncation and signed zeros left over from C-158.** `_operands` gives a Python float
       beside an integer expression that expression's dtype, so `i64 < 0.5` compares with 0.
       `_attrs_key` in `ir/expr.py` merges `take(..., fill=0.0)` with `fill=-0.0`. int64

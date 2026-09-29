@@ -23,9 +23,9 @@ from ..ir.expr import (
   define_rules,
   equal,
   gather,
-  index_set,
   op_def,
   put,
+  put_lanes,
   put_add,
   scatter,
   stack,
@@ -691,17 +691,12 @@ def _vjp_max_min(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   return (cot * reduce_weights(expr),)
 
 
-def _vjp_segment_max_segment_min(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  return (gather(cot, expr.attrs["indices"]) * segment_weights(expr),)
-
-
-def _vjp_index_add(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  return (cot, gather(cot, expr.attrs["indices"]))
-
-
-def _vjp_index_set(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  args = expr.args
-  return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
+def _vjp_segment_reduce(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  # Entry k of the values reaches bin ``indices.flat[k]``: its cotangent is that bin's, shaped like
+  # the values, weighted by who wins the bin for an extremum.
+  ids = np.asarray(expr.attrs["indices"])
+  gathered = gather(cot, ids if ids.shape == expr.args[0].shape else ids.reshape(expr.args[0].shape))
+  return (gathered if expr.attrs["reduce"] == "add" else gathered * segment_weights(expr),)
 
 
 def _vjp_take_put_add_put(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
@@ -709,15 +704,30 @@ def _vjp_take_put_add_put(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   ok = bool(expr.attrs.get("in_range"))
   if expr.op == ExprOp.TAKE:
     return (put_add(zeros_like(args[0]), args[1], cot, in_range=ok), zeros_like(args[1]))
+  lanes = _landing_lanes(expr, cot)
   if expr.op == ExprOp.PUT_ADD:
-    return (cot, zeros_like(args[1]), take(cot, args[1], in_range=ok))
+    return (cot, zeros_like(args[1]), take(cot, args[1], in_range=ok) if lanes is None else lanes)
   # A put's written entries of the base do not reach the output, and only the last lane writing
   # an entry does.
   return (
     put(cot, args[1], zeros_like(args[2]), in_range=ok),
     zeros_like(args[1]),
-    _put_winners(args[0], args[1], take(cot, args[1], in_range=ok), ok),
+    _put_winners(args[0], args[1], take(cot, args[1], in_range=ok), ok) if lanes is None else lanes,
   )
+
+
+def _landing_lanes(expr: Expr, cot: Expr) -> Expr | None:
+  """The lane cotangents of a ``put`` or ``put_add`` at constant indices where every lane lands: the
+  entries of ``cot`` they land at, a gather at indices fixed now, as ``index_add`` and ``index_set``
+  had. None otherwise, and the run-time rule applies."""
+  landing = put_lanes(expr)
+  lanes = expr.args[2].shape[-1]
+  if landing is None or landing[0].size != lanes:
+    return None
+  n = expr.shape[-1]
+  rows = expr.size // n if n else 0
+  table = (np.arange(rows, dtype=np.int64)[:, None] * n + landing[1][None, :]).reshape(expr.args[2].shape)
+  return gather(cot, table)
 
 
 def _vjp_select(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
@@ -768,10 +778,6 @@ def _vjp_gather(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
 
 
-def _vjp_scatter(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  return (gather(cot, expr.attrs["indices"]),)
-
-
 def _vjp_stack(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   args = expr.args
   return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
@@ -819,10 +825,7 @@ _VJP_RULES = {
   ExprOp.MAXIMUM: _vjp_minimum_maximum,
   ExprOp.MAX: _vjp_max_min,
   ExprOp.MIN: _vjp_max_min,
-  ExprOp.SEGMENT_MAX: _vjp_segment_max_segment_min,
-  ExprOp.SEGMENT_MIN: _vjp_segment_max_segment_min,
-  ExprOp.INDEX_ADD: _vjp_index_add,
-  ExprOp.INDEX_SET: _vjp_index_set,
+  ExprOp.SEGMENT_REDUCE: _vjp_segment_reduce,
   ExprOp.TAKE: _vjp_take_put_add_put,
   ExprOp.PUT_ADD: _vjp_take_put_add_put,
   ExprOp.PUT: _vjp_take_put_add_put,
@@ -834,7 +837,6 @@ _VJP_RULES = {
   ExprOp.TRANSPOSE: _vjp_transpose,
   ExprOp.SLICE: _vjp_slice,
   ExprOp.GATHER: _vjp_gather,
-  ExprOp.SCATTER: _vjp_scatter,
   ExprOp.STACK: _vjp_stack,
   ExprOp.CONCAT: _vjp_concat,
   ExprOp.MATMUL: _vjp_matmul,

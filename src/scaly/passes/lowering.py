@@ -13,7 +13,7 @@ later, a GPU schedule) is a local change — a new rule, not an edit to a monoli
 Covered: elementwise unary/binary (with numpy broadcasting), ``RESHAPE`` (alias),
 ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer / multi-dim /
 strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER`` /
-``SCATTER`` (any size, affine indices as arithmetic on the trip index and
+``SEGMENT_REDUCE`` (any size, affine indices as arithmetic on the trip index and
 whatever is left as a ``static const`` table), ``STACK`` / ``CONCAT`` (any axis),
 ``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``CALL`` to a Function with an extern body is
 opaque (see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
@@ -36,8 +36,10 @@ from ..ir.expr import (
   callees_of,
   define_rules,
   define_traits,
+  expr_has_trait,
   has_trait,
   op_def,
+  put_lanes,
   topo,
 )
 from ..function import ConcreteFunction, Function
@@ -228,7 +230,7 @@ def _lower_to_proc(
       if not in_place
       and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
       # Scalar expansion follows every address at generation time; a run-time index has none.
-      and not any(has_trait(n.op, "runtime_index") for n in nodes)
+      and not any(expr_has_trait(n, "runtime_index") for n in nodes)
       and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
       else "disabled",
       **({"in_place": True} if in_place else {}),
@@ -444,8 +446,8 @@ class LowerCtx:
     return buf
 
   def new_const_index(self, idx: Iterable[int]) -> ProgramNode:
-    """A read-only int64 index table (for GATHER/SCATTER), declared ``static const``; one table per
-    distinct content in a procedure."""
+    """A read-only int64 index table (for the ops at constant indices), declared ``static const``; one
+    table per distinct content in a procedure."""
     values = [int(v) for v in idx]
     key = tuple(values)
     if key in self._const_tables:
@@ -457,7 +459,7 @@ class LowerCtx:
     return buf
 
   def index_at(self, idx: np.ndarray, k: ProgramNode) -> ProgramNode:
-    """The GATHER source (or SCATTER destination) for element ``k``, as arithmetic where it can be.
+    """The GATHER source (or SEGMENT_REDUCE destination) for element ``k``, as arithmetic where it can be.
 
     Every range whose contribution is affine becomes a term over ``k``; only the non-affine
     residual is materialized, and a residual of one element is a constant, so a fully affine index
@@ -893,7 +895,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict
 
 def _put_scratch(chain: Iterable[Expr]) -> int:
   """The scratch slots after the carry's entries that its run-time-index updates write padded lanes to."""
-  puts = (e for e in chain if e.op in (ExprOp.PUT_ADD, ExprOp.PUT) and e.shape[-1] and not e.attrs.get("in_range"))
+  puts = (e for e in chain if e.op in (ExprOp.PUT_ADD, ExprOp.PUT) and put_lanes(e) is None and e.shape[-1] and not e.attrs.get("in_range"))
   return max((e.size // e.shape[-1] * e.args[1].size for e in puts), default=0)
 
 
@@ -1197,53 +1199,40 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   ctx.emit(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
-@lowers(ExprOp.SCATTER)
+@lowers(ExprOp.SEGMENT_REDUCE)
+def _lower_segment_reduce(ctx: LowerCtx, node: Expr) -> None:
+  """Fill the output, then fold each value into its bin in order: a sum (``scatter``, ``segment_sum``)
+  or an extremum (``segment_max``, ``segment_min``)."""
+  if node.attrs["reduce"] == "add":
+    _lower_scatter(ctx, node)
+  else:
+    _lower_segment_extremum(ctx, node)
+
+
 def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
-  """Zero the output, then ``out[indices[k]] = src[k]``, with the destination as arithmetic on ``k``
-  where it is affine and a ``static const`` table otherwise. The indices are fixed, so their pattern
-  picks the loop: distinct destinations store (a parallel ``GLOBAL`` loop), and repeated ones
-  accumulate ``out[d] = out[d] + src[k]`` in a ``REDUCE`` loop."""
+  """Fill the output (with zeros, as ``scatter`` builds it), then ``out[indices[k]] += src[k]``, with
+  the destination as arithmetic on ``k`` where it is affine and a ``static const`` table otherwise.
+  The indices are fixed, so their pattern picks the loop: distinct destinations of a zero fill store
+  (a parallel ``GLOBAL`` loop), and repeated ones accumulate ``out[d] = out[d] + src[k]`` in a
+  ``REDUCE`` loop."""
   src = node.args[0]
   idx = node.attrs["indices"].reshape(-1)
   out = ctx.alloc_tmp(node)
   zname = f"z_{out.attrs['name']}"
   zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   z = p.var(zname)
-  ctx.emit(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
+  fill = float(node.attrs["fill"])
+  ctx.emit(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(fill, dtype=node.type.dtype))]))
   iname = f"i_{out.attrs['name']}"
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
   value = p.load(p.view(ctx.buf_of(src), [i]))
-  if scatter_is_unique(idx):
+  unique = scatter_is_unique(idx)
+  if unique and fill == 0.0:
     ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL), [p.store(p.view(out, [dst]), value)]))
     return
   accumulate = p.store(p.view(out, [dst]), p.add(p.load(p.view(out, [dst])), value))
-  ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE), [accumulate]))
-
-
-@lowers(ExprOp.INDEX_ADD, ExprOp.INDEX_SET)
-def _lower_index_update(ctx: LowerCtx, node: Expr) -> None:
-  """Copy the base, then add (or store) each value at its index. In a procedure that updates its
-  carry in place (``LowerCtx.in_place``) every link of the update chain is the carry output itself,
-  which the caller passes aliased to the carry input, so nothing is copied and only the indexed
-  entries are touched."""
-  base, values = node.args
-  idx = node.attrs["indices"]
-  if ctx.in_place is not None and node.id in ctx.in_place:
-    out = ctx.output_buffer(0)
-    ctx.value_buffers[node.id] = out.attrs["name"]
-  else:
-    out = ctx.alloc_tmp(node)
-    if ctx.value_buffers[base.id] != out.attrs["name"]:
-      ctx.emit(_copy_loop(ctx.buf_of(base), out, node.shape))
-  iname = f"u_{out.attrs['name']}_{ctx.fresh_id()}"
-  i = p.var(iname)
-  dst = ctx.index_at(idx, i)
-  value = p.load(p.view(ctx.buf_of(values), [i]))
-  if node.op == ExprOp.INDEX_ADD:
-    value = p.add(p.load(p.view(out, [dst])), value)
-  kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
-  ctx.emit(p.for_(p.range_(iname, 0, idx.size, kind=kind), [p.store(p.view(out, [dst]), value)]))
+  ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL if unique else RangeKind.REDUCE), [accumulate]))
 
 
 def _runtime_index(ctx: LowerCtx, idx: Expr, j: ProgramNode, n: int, *, in_range: bool = False) -> tuple[ProgramNode, ProgramNode | None]:
@@ -1304,7 +1293,12 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
   The result buffer has one scratch slot per lane after the ``rows * n`` entries, and a lane whose
   index is outside ``[0, n)`` writes its own slot. The write is then unconditional, and padded
   lanes never update one address in turn, which would chain every lane's read-modify-write through
-  memory. Lanes run in order: repeated indices accumulate (``put_add``) or keep the last value."""
+  memory. Lanes run in order: repeated indices accumulate (``put_add``) or keep the last value.
+  Constant indices lower through ``_lower_put_constant`` instead."""
+  landing = put_lanes(node)
+  if landing is not None:
+    _lower_put_constant(ctx, node, *landing)
+    return
   base, idx, values = node.args
   n, lanes = base.shape[-1], idx.size
   size = _size_of(node.shape)
@@ -1334,6 +1328,51 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
   _lane_loops(ctx, store.attrs["name"], rows, lanes, RangeKind.REDUCE, body)
 
 
+def _lower_put_constant(ctx: LowerCtx, node: Expr, lanes: np.ndarray, entries: np.ndarray) -> None:
+  """A put at constant indices (``index_add``, ``index_set``): copy the base, then add (or store) each
+  landing lane at its entry of every row, the entry as arithmetic on the lane where it is affine and
+  a ``static const`` table otherwise, as a gather's source is. The lanes that drop are left out when
+  the code is generated, so no lane is checked or needs a scratch slot, and distinct entries make a
+  parallel ``GLOBAL`` loop. In a procedure that updates its carry in place (``LowerCtx.in_place``)
+  every link of the update chain is the carry output itself, which the caller passes aliased to the
+  carry input, so nothing is copied and only the indexed entries are touched."""
+  base, _, values = node.args
+  if ctx.in_place is not None and node.id in ctx.in_place:
+    out = ctx.output_buffer(0)
+    ctx.value_buffers[node.id] = out.attrs["name"]
+  else:
+    out = _reshaped_output(ctx, node) or ctx.alloc_tmp(node)
+    if ctx.value_buffers[base.id] != out.attrs["name"]:
+      ctx.emit(_copy_loop(ctx.buf_of(base), out, node.shape))
+  n, width = node.shape[-1], values.shape[-1]
+  rows = node.size // n if n else 0
+  iname = f"u_{out.attrs['name']}_{ctx.fresh_id()}"
+  i = p.var(iname)
+  dst, src = ctx.index_at(entries, i), i if np.array_equal(lanes, np.arange(width)) else ctx.index_at(lanes, i)
+  if rows != 1:
+    b = p.var(f"b_{iname}")
+    dst, src = p.add(p.mul(b, p.const_int(n)), dst), p.add(p.mul(b, p.const_int(width)), src)
+  value = p.cast(p.load(p.view(ctx.buf_of(values), [src])), node.type.dtype)
+  if node.op == ExprOp.PUT_ADD:
+    value = p.add(p.load(p.view(out, [dst])), value)
+  kind = RangeKind.GLOBAL if scatter_is_unique(entries) else RangeKind.REDUCE
+  loop = p.for_(p.range_(iname, 0, lanes.size, kind=kind), [p.store(p.view(out, [dst]), value)])
+  ctx.emit(loop if rows == 1 else p.for_(p.range_(f"b_{iname}", 0, rows, kind=RangeKind.GLOBAL), [loop]))
+
+
+def _reshaped_output(ctx: LowerCtx, node: Expr) -> ProgramNode | None:
+  """The buffer of an output that is ``node`` reshaped, now holding ``node``'s value, when ``node``
+  is no output itself: ``index_add`` on a matrix returns its flat update reshaped, and the update
+  written there directly needs no copy into the output, which the reshape aliases."""
+  if node.id in ctx._output_alias:
+    return None
+  for expr in ctx.fun.outputs:
+    if expr.op == ExprOp.RESHAPE and expr.args[0] is node and (name := ctx._output_alias.get(expr.id)) is not None:
+      ctx.value_buffers[node.id] = name
+      return ctx.buffers[name]
+  return None
+
+
 # Tests switch this off to compare every in-place loop with its two-slot version.
 DONATE_CARRIES = True
 
@@ -1342,8 +1381,9 @@ def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
   """The update nodes (by id) through which ``fun`` may overwrite its carry in place, or None.
 
   ``fun`` takes the carry first and returns the next carry first. The next carry must be a chain
-  of ``index_add``/``index_set`` rooted at the carry input, ``u_0 = carry, u_i = update(u_{i-1})``,
-  and each read of the chain must happen before the write that would change what it reads:
+  of ``put``/``put_add`` at constant indices (``index_add``, ``index_set``) rooted at the carry
+  input, ``u_0 = carry, u_i = update(u_{i-1})``, and each read of the chain must happen before the
+  write that would change what it reads:
 
   - the values of update ``i`` read no chain link but ``u_{i-1}``, and none of the entries update
     ``i`` writes;
@@ -1360,7 +1400,7 @@ def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
   from ..ir.expr import substitute
 
   chain = update_chain(fun)
-  if chain is None or any(e.op not in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET) for e in chain):
+  if chain is None or any(e.op not in (ExprOp.PUT_ADD, ExprOp.PUT) or put_lanes(e) is None for e in chain):
     return None
   carry = fun.inputs[0]
   links = [carry, *chain]
@@ -1386,7 +1426,7 @@ def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
   if any(reads(y) for y in fun.outputs[1:]):
     return None
   for before, update in zip(links[:-1], chain, strict=True):
-    values = update.args[1]
+    values = update.args[2]
     touched = reads(values)
     if touched - {before.id}:
       return None
@@ -1398,20 +1438,34 @@ def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
       for n in topo([cut]):  # children first, so one pass finds every node with the link below it
         if n is stand_in or any(a.id in reaching for a in n.args):
           reaching.add(n.id)
-          if not has_trait(n.op, "exact_reads"):
+          if not expr_has_trait(n, "exact_reads"):
             return None
       read = set(jacobian_sparsity(cut, stand_in).cols)
-      if read & set(update.attrs["indices"].tolist()):
+      if read & set(_constant_writes(update).tolist()):
         return None
   return tuple(e.id for e in chain)
 
 
+def _constant_writes(update: Expr) -> np.ndarray:
+  """The flat entries a put at constant indices writes, in every row."""
+  landing = put_lanes(update)
+  assert landing is not None
+  n = update.shape[-1]
+  rows = update.size // n if n else 0
+  return (np.arange(rows, dtype=np.int64)[:, None] * n + landing[1][None, :]).reshape(-1)
+
+
 def update_chain(fun: ConcreteFunction) -> list[Expr] | None:
   """The next carry as a chain of updates rooted at the carry input, ``u_1 ... u_m`` in order, or
-  None when it is not one. Structure only: whether the chain may run in place is proven apart."""
+  None when it is not one. A reshape between two links is looked through: it keeps the flat order
+  and lowers to an alias, so ``index_add`` on the flat view of a matrix carry is a link. Structure
+  only: whether the chain may run in place is proven apart."""
   carry, node = fun.inputs[0], fun.outputs[0]
   chain: list[Expr] = []
   while node is not carry:
+    if node.op == ExprOp.RESHAPE:
+      node = node.args[0]
+      continue
     if not has_trait(node.op, "update"):
       return None
     chain.append(node)
@@ -1569,8 +1623,6 @@ def _slice_reads(node: Expr, position: int, value: StepValue, length: int) -> Po
 
 # How the builtin updates and partial reads bound what they touch (the ``update`` and ``reads``
 # traits): what lets a loop's carry be updated in place.
-for _op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
-  define_traits(_op, update=lambda node, value, length: _constant_positions(node.attrs["indices"], length))
 for _op in (ExprOp.PUT_ADD, ExprOp.PUT):
   define_traits(_op, update=_put_writes)
 define_traits(ExprOp.TAKE, reads=_take_reads)
@@ -1650,7 +1702,6 @@ def scatter_is_unique(idx: np.ndarray) -> bool:
   return np.unique(idx).size == idx.size
 
 
-@lowers(ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)
 def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
   """Fill the output, then each value replaces its bin's entry when it is larger (smaller) or NaN."""
   src = node.args[0]
@@ -1666,7 +1717,7 @@ def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
   cur, value = p.load(p.view(out, [dst])), p.load(p.view(ctx.buf_of(src), [i]))
 
   def pick(cur: ProgramNode, value: ProgramNode) -> ProgramNode:
-    better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.SEGMENT_MAX else p.compare(ProgramOp.LT, value, cur)
+    better = p.compare(ProgramOp.LT, cur, value) if node.attrs["reduce"] == "max" else p.compare(ProgramOp.LT, value, cur)
     take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
     return p.select(take, value, cur)
 

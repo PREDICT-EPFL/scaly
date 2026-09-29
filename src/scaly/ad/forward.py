@@ -327,12 +327,13 @@ def _jvp_max_min(expr: Expr, d: list[Expr]) -> Expr:
   return (reduce_weights(expr) * d[0]).sum()
 
 
-def _jvp_segment_max_segment_min(expr: Expr, d: list[Expr]) -> Expr:
-  return segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size)
-
-
-def _jvp_index_add_index_set(expr: Expr, d: list[Expr]) -> Expr:
-  return Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering)
+def _jvp_segment_reduce(expr: Expr, d: list[Expr]) -> Expr:
+  # The fill is a constant: a sum's tangent is the scatter of the values' tangents, an extremum's
+  # the tangents weighted by who wins each bin.
+  if expr.attrs["reduce"] == "add":
+    return scatter(d[0], expr.attrs["indices"], expr.shape)
+  tangent = segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size)
+  return tangent if tangent.shape == expr.shape else tangent.reshape(expr.shape)
 
 
 def _jvp_take(expr: Expr, d: list[Expr]) -> Expr:
@@ -384,10 +385,6 @@ def _jvp_gather(expr: Expr, d: list[Expr]) -> Expr:
   )
 
 
-def _jvp_scatter(expr: Expr, d: list[Expr]) -> Expr:
-  return scatter(d[0], expr.attrs["indices"], expr.shape)
-
-
 def _jvp_stack(expr: Expr, d: list[Expr]) -> Expr:
   return stack(d, axis=expr.attrs.get("axis", 0))
 
@@ -431,10 +428,7 @@ _JVP_RULES = {
   ExprOp.MAXIMUM: _jvp_minimum_maximum,
   ExprOp.MAX: _jvp_max_min,
   ExprOp.MIN: _jvp_max_min,
-  ExprOp.SEGMENT_MAX: _jvp_segment_max_segment_min,
-  ExprOp.SEGMENT_MIN: _jvp_segment_max_segment_min,
-  ExprOp.INDEX_ADD: _jvp_index_add_index_set,
-  ExprOp.INDEX_SET: _jvp_index_add_index_set,
+  ExprOp.SEGMENT_REDUCE: _jvp_segment_reduce,
   ExprOp.TAKE: _jvp_take,
   ExprOp.PUT_ADD: _jvp_put_add_put,
   ExprOp.PUT: _jvp_put_add_put,
@@ -446,7 +440,6 @@ _JVP_RULES = {
   ExprOp.TRANSPOSE: _jvp_transpose,
   ExprOp.SLICE: _jvp_slice,
   ExprOp.GATHER: _jvp_gather,
-  ExprOp.SCATTER: _jvp_scatter,
   ExprOp.STACK: _jvp_stack,
   ExprOp.CONCAT: _jvp_concat,
   ExprOp.MATMUL: _jvp_matmul,
@@ -665,15 +658,22 @@ def reduce_weights(expr: Expr) -> Expr:
   return count / maximum(count.sum(), 1.0)
 
 
+def segment_label(expr: Expr) -> str:
+  """The builder a ``segment_reduce`` node spells, ``segment_max`` say, for messages."""
+  return f"segment_{expr.attrs['reduce']}"
+
+
 def segment_weights(expr: Expr) -> Expr:
-  """``reduce_weights`` bin by bin for ``segment_max`` and ``segment_min``: the share of each bin's
-  derivative that each value receives. A bin whose ``fill`` wins, or whose result is NaN, has no
-  value equal to it and gives none any share."""
-  x, ids, n = expr.args[0], expr.attrs["indices"], expr.size
-  mode = _nonsmooth_mode(expr.op)
+  """``reduce_weights`` bin by bin for ``segment_max`` and ``segment_min`` (the extremum reductions
+  of ``segment_reduce``): the share of each bin's derivative that each value receives, shaped like
+  the values. A bin whose ``fill`` wins, or whose result is NaN, has no value equal to it and gives
+  none any share."""
+  x, n = expr.args[0], expr.size
+  ids = np.asarray(expr.attrs["indices"]).reshape(x.shape)  # entry k of the values goes to bin ids.flat[k]
+  mode = _nonsmooth_mode(segment_label(expr))
   hit = equal(x, gather(expr, ids))
   if mode == "first":
-    index = Expr.const(np.arange(x.size, dtype=np.float64))
+    index = Expr.const(np.arange(x.size, dtype=np.float64).reshape(x.shape))
     first = segment_min(where(hit, index, float(x.size)), ids, n, fill=float(x.size))
     return cast(equal(index, gather(first, ids)), x.type.dtype)
   count = cast(hit, x.type.dtype)
@@ -1503,7 +1503,9 @@ def _jvp_many_gather(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Exp
   return gather(d0.reshape((nseed * expr.args[0].size,)), full).reshape((nseed, *expr.shape))
 
 
-def _jvp_many_scatter(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+def _jvp_many_segment_reduce(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
+  if expr.attrs["reduce"] != "add":
+    raise JVPManyUnsupported(segment_label(expr))  # the extrema keep the per-seed fallback
   d0 = tan(expr.args[0])
   indices = expr.attrs["indices"].reshape(-1)
   full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
@@ -1658,7 +1660,7 @@ _JVP_MANY_RULES = {
   ExprOp.CONCAT: _jvp_many_concat,
   ExprOp.STACK: _jvp_many_stack,
   ExprOp.GATHER: _jvp_many_gather,
-  ExprOp.SCATTER: _jvp_many_scatter,
+  ExprOp.SEGMENT_REDUCE: _jvp_many_segment_reduce,
   ExprOp.CAST: _jvp_many_cast,
   ExprOp.SUM: _jvp_many_sum,
   ExprOp.MUL: _jvp_many_mul,

@@ -32,7 +32,9 @@ stay intact.
 Covered today: elementwise unary and binary with NumPy broadcasting; `reshape` as an alias;
 `const` of any size through a constant buffer; general `slice` including integer,
 multi-dimensional and strided forms; `sum`; `matmul` up to rank 2; `transpose` up to rank 4;
-`gather` and `scatter` of any size through a `static const` index table; `stack` and `concat` on
+`gather`, `segment_reduce` and `put`/`put_add` at constant indices, of any size, through indices
+that are arithmetic on the loop index where they are affine and a `static const` table where they
+are not; `put`/`put_add` and `take` at run-time indices; `stack` and `concat` on
 any axis; `call` across multiple procedures; and `VMAP`. A call to a Function with an extern body
 (`ExprOp.EXTERN_CALL`, a solver for instance) stays opaque: its callee renders its C separately,
 while the Functions that C calls lower normally.

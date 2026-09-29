@@ -263,13 +263,14 @@ reverse mode passes the same numbers counting down. The index has no derivative.
 `sc.equal(k, 0)`, not `k == 0`: `==` between expressions is Python identity, not a comparison.
 
 When a step changes only a few entries of a large carry, write the change with `sc.index_add` and
-`sc.index_set` instead of rebuilding the carry. If the next carry is such a chain of updates rooted
-at the carry, each update's values read only the carry as it stands just before that update and
-none of the entries it writes (a read through a comparison, a `where` condition or `copysign`'s
-sign counts as reading every entry), and no other output reads the carry, the body updates one
-carry slot in place: each step touches only the indexed entries. Otherwise the two slots are kept,
-with the same results. A loop differentiated in reverse mode stores every carry and does not update
-in place.
+`sc.index_set` instead of rebuilding the carry. They are `sc.put_add` and `sc.put` at indices fixed
+when the graph is built, on the flat view of a carry with more than one axis. If the next carry is
+such a chain of updates rooted at the carry, each update's values read only the carry as it stands
+just before that update and none of the entries it writes (a read through a comparison, a `where`
+condition or `copysign`'s sign counts as reading every entry), and no other output reads the carry,
+the body updates one carry slot in place: each step touches only the indexed entries. Otherwise the
+two slots are kept, with the same results. A loop differentiated in reverse mode stores every carry
+and does not update in place.
 
 ### Indices known only at run time
 

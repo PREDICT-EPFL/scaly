@@ -222,12 +222,15 @@ def test_reduction_extremum_rules() -> None:
     verify_expr(Expr(ExprOp.MIN, (sc.sym("e", 0),), TensorType((), dtype=dtypes.float64)))
 
 
-def test_segment_extremum_rule() -> None:
+def test_segment_reduce_rule() -> None:
   x = sc.sym("x", 3)
-  verify_expr(sc.segment_max(x, [0, 1, 0], 2) + sc.segment_min(x, [1, 1, 1], 2))
-  bad = Expr(ExprOp.SEGMENT_MAX, (x,), TensorType((2,), dtype=dtypes.float64), attrs={"indices": np.array([0, 5, 1]), "fill": 0.0})
-  with pytest.raises(VerifyError, match="segment-extremum"):
-    verify_expr(bad)
+  verify_expr(sc.segment_max(x, [0, 1, 0], 2) + sc.segment_min(x, [1, 1, 1], 2) + sc.segment_sum(x, [1, 0, 0], 2))
+  attrs = {"reduce": "max", "indices": np.array([0, 5, 1]), "fill": 0.0}
+  with pytest.raises(VerifyError, match="segment-reduce"):
+    verify_expr(Expr(ExprOp.SEGMENT_REDUCE, (x,), TensorType((2,), dtype=dtypes.float64), attrs=attrs))
+  mean = {**attrs, "reduce": "mean", "indices": np.array([0, 1, 1])}
+  with pytest.raises(VerifyError, match="segment-reduce"):
+    verify_expr(Expr(ExprOp.SEGMENT_REDUCE, (x,), TensorType((2,), dtype=dtypes.float64), attrs=mean))
   with pytest.raises(ValueError, match="segment ids"):
     sc.segment_max(x, [0, 1], 2)
 

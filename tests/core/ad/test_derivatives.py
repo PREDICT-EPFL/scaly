@@ -290,7 +290,7 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   assert structural.shape == (3, *expr.shape)
   nodes = topo((structural,))
   assert sum(node.op == sc.ExprOp.GATHER for node in nodes) == 1
-  assert sum(node.op == sc.ExprOp.SCATTER for node in nodes) == 1
+  assert sum(node.op == sc.ExprOp.SEGMENT_REDUCE for node in nodes) == 1
   fn = sc.Function.from_exprs("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(12).normal(size=6)
   seedv = np.random.default_rng(13).normal(size=(3, 6))

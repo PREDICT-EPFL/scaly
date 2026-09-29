@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Scaly version.
-_JIT_CACHE_VERSION = "5"
+_JIT_CACHE_VERSION = "6"
 
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1

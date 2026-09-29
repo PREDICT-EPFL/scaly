@@ -152,11 +152,10 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `reshape` | 1 | size-preserving |
 | `transpose` | 1 | axes must be a permutation |
 | `slice` | 1 | integer, multi-dimensional and strided indexing |
-| `gather` `scatter` | 1 | flat index tables fixed at build time; repeated `scatter` destinations accumulate (`segment_sum` is `scatter` into a vector) |
-| `segment_max` `segment_min` | 1 | per-bin extremum over fixed segment ids; `fill` where a bin is empty; NaN propagates within its bin |
-| `index_add` `index_set` | 2 | the base with values added at (or stored to) fixed flat indices; a loop body whose carry changes only this way updates it in place |
+| `gather` | 1 | reads a flat index table fixed at build time; the result takes the table's shape |
+| `segment_reduce` | 1 | `reduce` of `add`, `max` or `min` over bins at a flat index table fixed at build time: every bin starts at `fill` and each value folds into its bin in order. `scatter` and `segment_sum` are the sum into zeros; `segment_max` and `segment_min` the extrema, whose `fill` shows where a bin is empty, NaN propagating within its bin and ties following `sc.options(nonsmooth=...)` |
 | `take` | 2 | `x[..., i]` for an `int64` index vector known at run time, on the last axis; an index outside `[0, n)` reads `fill` |
-| `put_add` `put` | 3 | the base with values added at (or stored to) run-time `int64` indices on the last axis; an index outside `[0, n)` drops its value into a scratch slot of its own lane |
+| `put_add` `put` | 3 | the base with values added at (or stored to) `int64` indices on the last axis; at run-time indices a lane outside `[0, n)` drops its value into a scratch slot of its own. At constant indices the lanes that land are known when the code is generated: `index_add` and `index_set` are these, on the flat view of a base with more than one axis, and a loop body whose carry changes only this way updates it in place |
 | `stack` `concat` | n | along any axis |
 | `matmul` | 2 | rank at most 2 |
 

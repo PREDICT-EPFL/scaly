@@ -1,5 +1,6 @@
 """Edge cases of the indexed updates: ``index_add``/``index_set`` at indices fixed when the graph is
-built, and ``take``/``put_add``/``put`` at ``int64`` indices known only at run time.
+built (``put_add``/``put`` at constant indices), and ``take``/``put_add``/``put`` at ``int64`` indices
+known only at run time.
 
 Indices at and past both ends of the axis (up to ``2**62`` and the ``int64`` extremes), every lane
 padded, empty and complete index lists, repeated indices, leading axes, ``float32``, indices cast
@@ -146,15 +147,15 @@ def test_index_update_refusals() -> None:
     sc.index_set(x, [], 3.0)
   with pytest.raises(TypeError, match="mixed-dtype"):
     sc.index_add(sc.sym("f", 4, dtype="float32"), [0], sc.sym("d", 1))
-  v2 = sc.sym("v2", 2)
+  # A node forged past the builders is a put at constant indices, and verified as one.
+  v2, fixed = sc.sym("v2", 2), sc.const(np.array([0, 1]), dtype="int64")
   for op, idx, values, message in (
-    (ExprOp.INDEX_SET, [1, 1], v2, "distinct"),
-    (ExprOp.INDEX_ADD, [0, 4], v2, r"\[0, 4\)"),
-    (ExprOp.INDEX_ADD, [0], v2, "one rank-1 value per index"),
-    (ExprOp.INDEX_SET, [0, 1], sc.sym("v22", (1, 2)), "one rank-1 value per index"),
+    (ExprOp.PUT_ADD, fixed, sc.sym("v3", 3), r"needs values \(2,\)"),
+    (ExprOp.PUT, fixed, sc.sym("v12", (1, 2)), r"needs values \(2,\)"),
+    (ExprOp.PUT, sc.const(np.array([[0, 1]]), dtype="int64"), v2, "rank-1 int64"),
   ):
     with pytest.raises(sc.VerifyError, match=message):
-      sc.verify_expr(Expr(op, (x, values), TensorType((4,)), attrs={"indices": np.array(idx)}))
+      sc.verify_expr(Expr(op, (x, idx, values), TensorType((4,))))
 
 
 def test_index_update_derivatives() -> None:
