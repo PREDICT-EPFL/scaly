@@ -123,7 +123,14 @@ def main(max_iter: int = 200) -> dict[str, Any]:
   # The two Functions also compose numerically: the SciPy matrix ``system`` returns is what ``simulate`` takes.
   k = system(KAPPA)
   t_final = simulate(k, u)
-  return {"u": u, "t_final": t_final, "k": k, "initial_cost": np.array(fun(zero)[0]), "cost": np.array(result.fun), "iterations": np.array(result.nit)}
+  return {
+    "u": u,
+    "t_final": t_final,
+    "k": k,
+    "initial_cost": np.array(fun(zero)[0]),
+    "cost": np.array(result.fun),
+    "iterations": np.array(result.nit),
+  }
 
 
 if __name__ == "__main__":

@@ -207,7 +207,8 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       hoisted out of a map. 16/16 mutants killed, ten after a test was added or fixed (the scan-solve
       test had looked only at the sites). Report: `notes/interp_sp3_report.html`.
 - [ ] **API-186. `inverse()` of a spline with `Expr` coefficients:** the bracket from the curve's
-      values at run time, the Newton loop carrying the coefficients, and the derivative in them.
+      values at run time, the Newton loop carrying the coefficients, and the derivative in them:
+      `roots.NewtonBisection.iterate` with the coefficients as parameters, `roots.custom_root` for it.
 - [x] **API-174. Interpolation performance** (interp plan SP4). The `bucket` search (a uniform
       bucket index, a start table, as many compares as the fullest bucket needs): clustered tables
       5.4 to 1.9 ns; `auto` is binary up to 32 cells, then bucket, uniform, binary, within 5% of the

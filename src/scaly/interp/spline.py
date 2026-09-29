@@ -16,9 +16,10 @@ from scipy import sparse
 
 from ..function.model import ConcreteFunction
 from ..function.tree import L, param_list
-from ..function.sugar import custom_derivative, vmap, while_loop
-from ..ir.expr import Expr, as_expr, cast, equal, maximum, not_equal, stack, take, where
+from ..function.sugar import custom_derivative, vmap
+from ..ir.expr import Expr, as_expr, cast, equal, not_equal, stack, take, where
 from ..ir.types import DType, as_dtype, dtypes
+from ..roots.newton import NewtonBisection
 from .grid import Axis, Extrap, Search, derivative_matrix, num
 
 type Strategy = Literal["auto", "pp", "basis"]
@@ -709,7 +710,7 @@ def _monotone_sign(f: BSpline) -> int:
 class Inverse:
   """``x = f^{-1}(y)`` for a strictly monotone 1-D spline of degree 2 or more, from
   ``BSpline.inverse``. Newton's method on the cell the linear table through the spline's values at
-  its partition edges names, bisecting whenever a step would leave the cell, in a ``while_loop``;
+  its partition edges names, bisecting whenever a step would leave the cell (``roots.NewtonBisection``);
   the derivative is ``dx/dy = 1/f'(x)`` by ``custom_derivative``, so it never differentiates the
   iterations. Outside the range of ``f`` the inverse continues along its end tangent. Calling it
   works as for a spline: a scalar, or a batch ``(N,)`` as one map."""
@@ -748,28 +749,6 @@ class Inverse:
     def dg(x: Expr, j: Expr) -> Expr:
       return sign * deriv._at([x], (j,))
 
-    # The carry is (x, lo, hi, last step, scale): the loop stops once a step moves x by no more
-    # than tol times the scale, the larger of |x| and the cell's width (Newton's error is then of
-    # the order of that step squared), or the bracket closes to that, or the residual is zero.
-    # Both are relative, so neither the scale of y nor that of x changes when it stops.
-    def cond(c: Expr, z: Expr, j: Expr) -> Expr:
-      x, lo, hi, last, scale = c[0], c[1], c[2], c[3], c[4]
-      small = self.tol * maximum(x.abs(), scale)
-      return (last.abs() > small) & (hi - lo > small)
-
-    def body(c: Expr, z: Expr, j: Expr) -> Expr:
-      x, lo, hi, scale = c[0], c[1], c[2], c[4]
-      r, d = g(x, j) - z, dg(x, j)
-      lo, hi = where(r < 0.0, x, lo), where(r > 0.0, x, hi)
-      step = x - r / d
-      inside = (d > 0.0) & (step > lo) & (step < hi)
-      nxt = where(equal(r, 0.0), x, where(inside, step, 0.5 * (lo + hi)))
-      return stack([nxt, lo, hi, nxt - x, scale])
-
-    carry, pz, pj = L("c", (5,)), L("z", ()), L("j", ())
-    cond_fn = ConcreteFunction(f"{name}_go", cond, param_list(carry, pz, pj), L("go", (), dtype=dtypes.bool_))
-    body_fn = ConcreteFunction(f"{name}_step", body, param_list(carry, pz, pj), L("c_next", (5,)))
-
     # Outside the range the inverse continues along the end tangents of sign * f, whose slopes are
     # known now; a flat end (a slope negligible against the mean) holds the end instead, as the
     # tangent there never reaches a value outside, and an ulp past the end (the spline's value at its
@@ -793,9 +772,12 @@ class Inverse:
       x_lo, x_hi = _gather(edges, i), _gather(edges, i + 1)
       z_lo, z_hi = _gather(levels, i), _gather(levels, i + 1)
       x0 = x_lo + (zc - z_lo) * (x_hi - x_lo) / (z_hi - z_lo)
-      start = stack([x0, x_lo, x_hi, x_hi - x_lo, x_hi - x_lo])
-      (c, _) = while_loop(cond_fn, body_fn, start, max_iter=self.max_iter, params=[zc, j])
-      return where(inside, c[0], c[0] + (z - zc) * outside_rate(z, zc))
+      # Safeguarded Newton on the cell: it stops once a step moves x by no more than tol times the
+      # larger of |x| and the cell's width, or the bracket closes to that, or the residual is zero.
+      x, _ = NewtonBisection(tol=self.tol, max_iter=self.max_iter).iterate(
+        lambda x, p: g(x, p[1]) - p[0], x0, x_lo, x_hi, [zc, j], name=name, names=("z", "j"), slope=lambda x, p: dg(x, p[1])
+      )
+      return where(inside, x, x + (z - zc) * outside_rate(z, zc))
 
     slope = deriv.function()
 

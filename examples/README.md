@@ -25,15 +25,15 @@ a rough guide: **S** is a first read, **L** a complete application.
 | --- | --- | --- | --- |
 | `derivatives_tour.py` | S | A Lennard-Jones cluster of seven atoms: forces, normal modes, rigidity, the global minimum | `gradient`, `hessian`, `forward` (Hessian-vector products), `jacobian` and `sparse_jacobian` (the rigidity matrix), `adjoint`, a `factory` of E, grad and Hess driving SciPy's `trust-exact`; static `gather` tables |
 | `lagrangian_mechanics.py` | M | An n-link pendulum's equations of motion from its Lagrangian alone | derivatives with respect to expressions (`M(q)` as a Hessian in `qd`, the Coriolis terms as a Jacobian of a gradient), forward dynamics by dense `cholesky`, an RK4 `scan` recording the energy, the finite-time Lyapunov exponent from `jacobian` through the scan |
-| `option_greeks.py` | S/M | Black-Scholes prices, Greeks and implied volatilities for a book of options | `factory` with `Grad` and `Hess` per option, `vmap` over the book, a safeguarded Newton `while_loop` with `sc.gradient` inside, vmapped; one reverse sweep for all the book's sensitivities; `erf` |
-| `hanging_chain.py` | M | Calibrating a hanging chain's stiffness and mass from two photographs | Newton in a `while_loop` with AD inside the body, a step safeguarded by `isfinite`, `sc.custom_derivative` with the implicit-function rule |
+| `option_greeks.py` | S/M | Black-Scholes prices, Greeks and implied volatilities for a book of options | `factory` with `Grad` and `Hess` per option, `vmap` over the book, the implied volatility by `sc.roots.NewtonBisection` in a bracket, vmapped; one reverse sweep for all the book's sensitivities; `erf` |
+| `hanging_chain.py` | M | Calibrating a hanging chain's stiffness and mass from two photographs | the equilibrium as an `sc.roots.root` of the energy's gradient, `sc.roots.Newton` with capped steps, the fit through the solver's implicit-function derivative |
 | `gaussian_process.py` | M | Gaussian-process regression: hyperparameters by maximum marginal likelihood | gradient and Hessian *through* a dense `cholesky` and `solve_triangular` (loops at order 120), checked against the trace formula; the Laplace posterior; a generated predictive mean and variance |
 
 ## Sparsity
 
 | Example | Size | Problem | What it shows |
 | --- | --- | --- | --- |
-| `bratu_newton.py` | M | The Bratu PDE (solid-fuel ignition) by Newton with continuation in lambda | `jacobian_sparsity` and `column_coloring` finding the five-point stencil (colors constant in the grid size), `sparse_jacobian` into `SparseMatrix.from_sparse_jacobian`, `SparseLDL` and `inertia()` inside a `while_loop` |
+| `bratu_newton.py` | M | The Bratu PDE (solid-fuel ignition) by Newton with continuation in lambda | `jacobian_sparsity` and `column_coloring` finding the five-point stencil (colors constant in the grid size), `sc.roots.Newton(linear="sparse_ldl")`, the compact Jacobian factored by `SparseLDL` at every step, `inertia()` at the solution |
 | `sqp_newton_sparse.py` | M | Pendulum swing-up: SQP Newton steps on a sparse KKT system | `sparse_hessian`, `sparse_jacobian`, `SparseLDL` with `inertia()` and `health()` |
 | `kalman_update.py` | M | A Kalman update of a spatial field with a sparse information prior | a quasi-definite `SparseLDL` solve and its Jacobians (the Kalman gain) |
 | `heat_control.py` | M | Optimal heating of a plate made of two materials | `SparseMatrix` assembly, `SparseLDL` implicit time stepping, `sc.linalg.S` passing the sparse system matrix between `Function`s, adjoint gradients from the solves' implicit rules |
@@ -43,7 +43,7 @@ a rough guide: **S** is a first read, **L** a complete application.
 | Example | Size | Problem | What it shows |
 | --- | --- | --- | --- |
 | `robot_arm_ik.py` | S/M | Forward and inverse kinematics of a 7-joint arm, for 500 targets at once | forward kinematics as a `scan` over a Denavit-Hartenberg table, `jacobian` through it, damped least squares in a `while_loop` with `params`, the IK solver `vmap`ped over a batch |
-| `periodic_orbit.py` | M | The Van der Pol limit cycle by single shooting, and its Floquet multipliers | an RK4 `scan` with a broadcast (stride-0) step size, `jacobian` through it (the monodromy matrix), Newton on `(amplitude, period)` in a `while_loop`, Liouville's formula as a check |
+| `periodic_orbit.py` | M | The Van der Pol limit cycle by single shooting, and its Floquet multipliers | an RK4 `scan` with a broadcast (stride-0) step size, `jacobian` through it (the monodromy matrix), `sc.roots.Newton` with capped steps on `(amplitude, period)`, Liouville's formula as a check |
 | `ekf_identification.py` | M/L | Maximum-likelihood identification of a forced Duffing oscillator | a whole extended Kalman filter as one `scan` (step Jacobians from `jacobian`, Joseph-form update), reverse mode through all 600 steps, L-BFGS |
 | `lqr_tuning.py` | M | Tuning LQR weights for a quadrotor in a gust, on a heavier vehicle than modelled | two `scan`s (the Riccati recursion backwards, the closed loop forwards with a negative stride), the step number (`index=True`), reverse mode through both scans and the small solves in them |
 | `ilqr.py` | L | Parking a car-like robot past two obstacles by iterative LQR | a complete trajectory optimizer as one C function: rollout `scan`, backward-pass `scan` with negative strides and AD-built local models, a line search `while_loop` (`index=True`) inside an outer `while_loop` adapting the regularization, NaN from a failed `cholesky` as the rejection signal |

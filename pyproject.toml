@@ -77,6 +77,10 @@ casadi = "scaly.codegen.casadi"
 
 [project.entry-points."scaly.methods"]
 "opt.ipm" = "scaly.opt.ipm:IPM"
+"roots.newton" = "scaly.roots.newton:Newton"
+"roots.newton_bisection" = "scaly.roots.newton:NewtonBisection"
+"roots.gauss_newton" = "scaly.roots.least_squares:GaussNewton"
+"roots.levenberg_marquardt" = "scaly.roots.least_squares:LevenbergMarquardt"
 
 [project.entry-points."scaly.toolchain_report"]
 solvers = "scaly.opt.external.paths:toolchain_report"

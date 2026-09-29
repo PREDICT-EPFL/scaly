@@ -79,7 +79,7 @@ step = si.implicit(cartpole, "sdirk3", dt=0.05, tol=1e-12, max_iter=20)  # to a 
 ```
 
 **Newton.** The stage equations `G(K) = K - f(x + h (A ⊗ I) K) = 0` are solved from `f(x)` at every
-stage.
+stage, by `sc.roots.Newton` ([Nonlinear equations](roots.md)) with a solve for the stage matrix.
 
 - `newton_iters` fixes the number of iterations, the choice for control, where every call should
   take the same time.
@@ -95,7 +95,7 @@ stage.
   size, and simplified Newton factors one matrix for all of them.
 
 **Derivatives.** The derivative of the map does not go through the iterations. At the stages the
-step found, the implicit function theorem gives `dK = -G_K^{-1} (G_x dx + G_u du + ...)`, with one
+step found, the implicit function theorem (`sc.roots.custom_root`) gives `dK = -G_K^{-1} (G_x dx + G_u du + ...)`, with one
 factorization of `G_K` shared by every direction; in a Jacobian, the factorization runs once and
 each column is one solve. Reverse mode is one transposed solve. Second derivatives are implicit
 too, so a solver's Lagrangian Hessian through the map is exact at the stages found. A third

@@ -138,7 +138,9 @@ def main(max_iter: int = 60) -> dict[str, np.ndarray]:
 
 if __name__ == "__main__":
   out = main()
-  print(f"closed-loop cost: Q = I, R = I gives {float(out['initial_cost']):.3f}; tuned {float(out['tuned_cost']):.3f} after {len(out['history'])} evaluations")
+  print(
+    f"closed-loop cost: Q = I, R = I gives {float(out['initial_cost']):.3f}; tuned {float(out['tuned_cost']):.3f} after {len(out['history'])} evaluations"
+  )
   names = ["x", "z", "theta", "vx", "vz", "omega", "r"]
   print("tuned weights: " + ", ".join(f"{n} {np.exp(w):.3g}" for n, w in zip(names, out["weights"], strict=True)))
   write_module(tuning_objective, GENERATED)

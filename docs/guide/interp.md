@@ -135,8 +135,8 @@ and where the points are read decides the Jacobian's pattern.
 `f.integrate(a, b)` integrates exactly, and an `Expr` bound gives an expression, exact in 1-D in
 every extrapolation mode, whose derivative in the bound is the spline there. `f.antiderivative()`
 is the integral as a spline. `f.inverse()` reads a strictly monotone 1-D spline backwards, by
-safeguarded Newton in a loop that stops relative to the cell's width, with the derivative `1/f'`
-supplied directly.
+safeguarded Newton (`sc.roots.NewtonBisection` on the cell) in a loop that stops relative to the
+cell's width, with the derivative `1/f'` supplied directly.
 
 ## Generated code
 

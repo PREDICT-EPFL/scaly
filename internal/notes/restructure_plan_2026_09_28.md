@@ -44,7 +44,7 @@
 | 4.1 | Method registry and the common `Info`/`Status` | ☑ |
 | 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☑ |
 | 4.3 | IPM as the method `opt.ipm` | ☑ |
-| 4.4 | `scaly.roots` | ☐ |
+| 4.4 | `scaly.roots` | ☑ |
 | 4.5 | `integrators` and `interp` as method registries | ☐ |
 | 5.1 | `scaly.sets` | ☐ |
 | 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☐ |
@@ -638,6 +638,33 @@ solvers of the IPM quick set render byte-identical C to the tree before the move
 `NewtonBisection`, `GaussNewton`, `LevenbergMarquardt`; `custom_root`. `integrators/implicit.py`
 and `interp/spline.Inverse` use them; four gallery examples switch from hand-written Newton loops.
 Gate: integrator and interp results unchanged to recorded tolerances.
+Log: done 2026-09-29. `scaly.roots` (lazy, layer 5): `root`/`least_squares` trace `Root` and
+`LeastSquares` (`RootSpec` bounds the unknowns); `Newton` (`tol` absolute plus `rtol`, fixed
+iterations with `tol=None`, `linear` of `"lu"`, `"cholesky"`, `"sparse_ldl"`, `simplified`,
+`max_step`), `NewtonBisection`, `GaussNewton`, `LevenbergMarquardt` (Nielsen's damping), declared by
+core under `roots.<name>`; `sc.roots.solver` returns the warm start and parameters to the solution
+and `roots.Info` (status, iter, residual). The derivative is the problem class's: `custom_root`, the
+integrator's two-level implicit-function identity made generic, attached by `Root.function`
+(through the stationarity condition for least squares), solving with Newton's `linear` when it is
+symmetric so a sparse problem's derivative stays sparse. Each method's `iterate` works on
+expressions, and an `Info` the caller ignores costs nothing: `integrators/implicit.py` now runs
+`Newton.iterate` with its stage-matrix `Linear` (its `_Linear` and `_EigenSplit` stay) and
+`custom_root`, and renders byte-identical C for every Newton variant and its first and second
+derivatives (48 files). `BSpline.inverse` runs `NewtonBisection.iterate`; that loop bisected when a
+converged Newton step rounded to x itself (x then the bracket's end), throwing the root away, and
+now stops there instead, which moves about a third of inverse values by up to 9 ulps and the
+median error from 0.75 to 0.4 ulp; the interp suite passes. Newton's residual test relative to |z|
+(the integrator's, kept there as `rtol = tol`) passed on a diverging iterate, hence `rtol=0` by
+default; every method now reports OK only at a finite solution (Gauss-Newton had called x = inf
+converged). The four examples are `bratu_newton`, `periodic_orbit`, `option_greeks` and
+`hanging_chain`, not `sqp_newton_sparse`, whose loop is an SQP with inertia correction in Python:
+Bratu reproduces bit for bit, the periodic orbit to the last digit, the chain fit to 1e-12 (with
+LU steps: its Hessian is indefinite at the initial guess, where the old loop fell back to a gradient
+step), implied vols to 1e-13 instead of 5e-10. `tests/roots` checks every method against SciPy
+(`root`, `brentq`, `least_squares`) and the derivatives against finite differences or the NumPy
+implicit formula; ten mutations each fail it, three after a test was added (LM's rejection, `rtol`, the
+stuck step).
+Guide and API pages, the codebase map; API-186 notes its route.
 
 **4.5 `integrators` and `interp` as registries.** `TABLEAUS` and `KINDS` become method registries;
 `tsit5` and LGL added.

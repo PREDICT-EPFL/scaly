@@ -6,17 +6,17 @@ energy
     E(p; k, m, w) = sum_i k/2 (|p_{i+1} - p_i| - rest)^2 + m g sum_i y_i + w g y_middle
 
 over the free node positions ``p``, for spring stiffness ``k``, node mass ``m`` and an extra weight
-``w`` hung from the middle node. The equilibrium ``p*(k, m, w)`` is found by Newton's method in a ``sc.while_loop``: the gradient and Hessian of ``E``
-come from Scaly's AD inside the loop body, the step from the generated dense ``cholesky`` and
-``cho_solve``. The step is safeguarded: if the factorization breaks down (a Hessian that is not
-positive definite gives a non-finite step, which ``sc.isfinite`` detects) the body takes a short
-gradient step instead, and every step is capped in length with ``sc.minimum``.
+``w`` hung from the middle node. The equilibrium ``p*(k, m, w)`` is where ``grad_p E = 0``, an
+``sc.roots.root`` solved by ``sc.roots.Newton``: the gradient and Hessian of ``E`` come from Scaly's
+AD, the step from the generated dense LU, every step capped in length (``max_step``). At the initial
+guess the middle springs are compressed and the Hessian is indefinite, so a Cholesky step would fail
+there; the capped Newton steps carry the chain to the minimum, where it is positive definite.
 
 Two photographs, one without and one with a known 50 g weight at the middle node, give the
 positions of a few nodes, with noise. (One photograph would not do: without the weight the shape
 depends on ``m / k`` only.) Fitting ``theta = (log k, log m)`` to them means differentiating ``p*`` in ``theta``, and differentiating through the Newton iterations
-would be both costly and wrong in the early ones. ``sc.custom_derivative`` attaches the
-implicit-function rule instead: at the equilibrium ``grad_p E(p*, theta) = 0``, so
+would be both costly and wrong in the early ones. A roots solver's solution carries the
+implicit-function derivative instead: at the equilibrium ``grad_p E(p*, theta) = 0``, so
 
     dp*/d(theta, w) = -H^{-1} d(grad_p E)/d(theta, w),
 
@@ -31,7 +31,6 @@ import numpy as np
 from scipy import optimize
 
 import scaly as sc
-from scaly import linalg
 from scaly.codegen import write_module
 
 GENERATED = Path(__file__).resolve().parent / "generated" / "hanging_chain"
@@ -56,40 +55,21 @@ def energy(p: sc.Expr, params: sc.Expr) -> sc.Expr:
 
 def initial_guess() -> np.ndarray:
   s = np.linspace(0.0, 1.0, SEGMENTS + 1)[1:-1]
-  return np.stack([SPAN * s, -2.4 * s * (1 - s)], axis=1).reshape(-1)  # sagging 0.6, every spring stretched
+  return np.stack([SPAN * s, -2.4 * s * (1 - s)], axis=1).reshape(-1)  # sagging 0.6
 
 
-# A loop body reads only its carry, so the parameters travel in it: carry = [p (NP) | params (3) | |grad E|].
-_carry = sc.sym("carry", NP + 4)
-_p, _theta = _carry[:NP], _carry[NP : NP + 3]
-_grad = sc.gradient(energy(_p, _theta), _p)
-_newton = -linalg.cho_solve(linalg.cholesky(sc.hessian(energy(_p, _theta), _p)), _grad)
-_step = sc.where(sc.isfinite(sc.norm_inf(_newton)), _newton, -0.01 * _grad)
-_step = _step * sc.minimum(1.0, MAX_STEP / sc.maximum(sc.norm_inf(_step), 1e-300))
-newton_iteration = sc.Function.from_exprs(
-  "chain_newton", [_carry], [sc.concat([_p + _step, _theta, sc.norm_inf(_grad).reshape((1,))])], ["carry"], ["next"]
-)
-not_converged = sc.Function.from_exprs("chain_not_converged", [_carry], [sc.greater(_carry[NP + 3], TOL)], ["carry"], ["go_on"])
+@sc.roots.root(vars=sc.L("p", NP), params=sc.L("params", 3), name="chain")
+def stationary(p: sc.Expr, params: sc.Expr) -> sc.Expr:
+  return sc.gradient(energy(p, params), p)
 
 
-def _equilibrium() -> sc.Function:
-  params = sc.sym("params", 3)
-  start = sc.concat([sc.const(initial_guess()), params, sc.const(np.ones(1))])
-  carry, _ = sc.while_loop(not_converged, newton_iteration, start, max_iter=MAX_NEWTON)
-  return sc.Function.from_exprs("chain_equilibrium", [params], [carry[:NP]], ["params"], ["p"])
+_solve = sc.roots.solver(stationary, sc.roots.Newton(tol=TOL, max_iter=MAX_NEWTON, max_step=MAX_STEP), name="chain_newton")
 
 
-def _implicit_vjp() -> sc.Function:
-  """``(params, p*, p_bar) -> params_bar = -(d grad_p E / d params)^T H^{-1} p_bar``."""
-  params, p, p_bar = sc.sym("params", 3), sc.sym("p", NP), sc.sym("p_bar", NP)
-  grad = sc.gradient(energy(p, params), p)
-  w = linalg.cho_solve(linalg.cholesky(sc.jacobian(grad, p)), p_bar)
-  return sc.Function.from_exprs(
-    "chain_equilibrium_vjp", [params, p, p_bar], [-(sc.jacobian(grad, params).T @ w)], ["params", "p", "p_bar"], ["params_bar"]
-  )
-
-
-equilibrium = sc.custom_derivative(_equilibrium(), vjp=_implicit_vjp())
+@sc.function(3, output="p")
+def equilibrium(params: sc.Expr) -> sc.Expr:
+  p, _ = _solve(sc.const(initial_guess()), params)
+  return p
 
 
 @sc.function(2, (2, len(OBSERVED), 2), output=sc.G("loss", "gradient"))
@@ -122,7 +102,9 @@ if __name__ == "__main__":
   k, m = np.exp(out["theta"])
   kt, mt = np.exp(out["truth"])
   print(f"start k = {k0:.1f}, m = {m0:.3f}; fitted k = {k:.2f}, m = {m:.4f}; true k = {kt:.1f}, m = {mt:.3f}")
-  print(f"{int(out['evaluations'])} equilibrium solves with gradients; residual {np.sqrt(2 * float(out['loss']) / out['photo'].size):.1e} per coordinate")
+  print(
+    f"{int(out['evaluations'])} equilibrium solves with gradients; residual {np.sqrt(2 * float(out['loss']) / out['photo'].size):.1e} per coordinate"
+  )
   print(f"lowest point of the fitted chain: {shape(out['theta'])[:, 1].min():.3f} m")
   write_module(misfit, GENERATED)
   print(f"generated C in {GENERATED}")

@@ -72,7 +72,8 @@ def safety_filter(u: sc.Expr, params: tuple[sc.Expr, sc.Expr]) -> sc.opt.Problem
 
 
 filter_qp = sc.opt.solver(
-  safety_filter, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10, "eps_duality_gap_abs": 1e-10, "eps_duality_gap_rel": 1e-10}), name="cbf_qp")
+  safety_filter, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10, "eps_duality_gap_abs": 1e-10, "eps_duality_gap_rel": 1e-10}), name="cbf_qp"
+)
 
 
 def nominal(state: sc.Expr) -> sc.Expr:
@@ -126,7 +127,14 @@ def main() -> dict:
   active = np.flatnonzero(np.abs(inputs - nominals).max(axis=1) > 1e-3)  # beyond the interior-point tolerance at an active bound
   sample = active[:: max(1, len(active) // 10)]
   check = max(np.abs(inputs[k] - scipy_filter(states[k], nominals[k])).max() for k in sample) if len(sample) else 0.0
-  return {"states": states, "inputs": inputs, "barriers": hs, "active": active, "scipy_error": check, "stats": sc.opt.solver_stats(controller, "cbf_qp")}
+  return {
+    "states": states,
+    "inputs": inputs,
+    "barriers": hs,
+    "active": active,
+    "scipy_error": check,
+    "stats": sc.opt.solver_stats(controller, "cbf_qp"),
+  }
 
 
 if __name__ == "__main__":

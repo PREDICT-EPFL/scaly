@@ -1,4 +1,4 @@
-"""Implicit Runge-Kutta steps: Newton on the stage equations, derivatives by the implicit function theorem."""
+"""Implicit Runge-Kutta steps: ``roots.Newton`` on the stage equations, derivatives by the implicit function theorem (``roots.custom_root``)."""
 
 from __future__ import annotations
 
@@ -8,13 +8,12 @@ from typing import Any, Literal
 import numpy as np
 
 from ..ad.derivatives import jacobian
-from ..ad.forward import jvp
-from ..ad.reverse import vjp
 from ..function.model import ConcreteFunction, Function
-from ..function.sugar import custom_derivative, while_loop
-from ..ir.expr import Expr, concat, norm_inf, stack, substitute
+from ..ir.expr import Expr, concat, stack
 from ..ir.types import dtypes
-from ..linalg.dense import lu, lu_solve, solve
+from ..linalg.dense import lu, lu_solve
+from ..roots import Newton, custom_root
+from ..roots.implicit import Residual
 from .explicit import increment
 from .model import discrete_map, model_rhs
 from .tableau import Tableau, tableau
@@ -76,17 +75,14 @@ def implicit(
     raise ValueError(f"newton_iters must be a positive integer, got {newton_iters}")
   if tol is not None and (not tol > 0 or int(max_iter) != max_iter or max_iter < 1):
     raise ValueError(f"tol must be positive and max_iter a positive integer, got tol={tol}, max_iter={max_iter}")
-  solver = _Newton(int(newton_iters), tol, int(max_iter), newton == "full")
+  solver = Newton(tol, int(newton_iters) if tol is None else int(max_iter), rtol=tol or 0.0, simplified=newton == "simplified")
   return discrete_map(f, tab.name, dt, steps, name, lambda model, fname, h: _Stages(tab, model, fname, h, solver).step)
 
 
-type Residual = Callable[[Expr, Sequence[Expr]], Expr]
-"""``(z, params) -> residual``, every quantity besides ``z`` read from ``params``."""
-
-
 class _Linear:
-  """How a Newton step solves with its matrix: ``factor(z, params)`` gives the factors, and
-  ``solve(factors, r)`` applies the inverse; by default one ``lu`` of ``matrix(z, params)``."""
+  """How a Newton step on the stage equations solves with its matrix (a ``roots.Linear``):
+  ``factor(z, params)`` gives the factors, and ``solve(factors, r)`` applies the inverse; by default
+  one ``lu`` of ``matrix(z, params)``."""
 
   def __init__(self, matrix: Residual | None = None) -> None:
     self.matrix = matrix
@@ -97,35 +93,6 @@ class _Linear:
 
   def solve(self, factors: Sequence[Expr], r: Expr) -> Expr:
     return lu_solve(factors[0], r)
-
-
-class _Newton:
-  """How a system of stage equations is solved: a fixed number of iterations, or to a tolerance."""
-
-  def __init__(self, iters: int, tol: float | None, max_iter: int, full: bool) -> None:
-    self.iters, self.tol, self.max_iter, self.full = iters, tol, max_iter, full
-
-  def run(self, name: str, residual: Residual, linear: _Linear, z0: Expr, params: Sequence[Expr]) -> Expr:
-    """``z`` with ``residual(z, params) = 0`` from ``z0``, factoring with ``linear``: once at ``z0``,
-    or at every iterate when ``full``. With a tolerance the iterations are a ``while_loop`` whose
-    body and condition are Functions over ``params`` (and the factors), named from ``name``; the
-    carry holds the iterate and its residual, so each iteration evaluates the residual once."""
-    if self.tol is None:
-      z, factors = z0, None if self.full else linear.factor(z0, params)
-      for _ in range(self.iters):
-        z = z - linear.solve(linear.factor(z, params) if factors is None else factors, residual(z, params))
-      return z
-    m, tol = z0.size, self.tol
-    held = [*params, *([] if self.full else linear.factor(z0, params))]
-    syms = [Expr.sym(f"q{i}", p.shape, dtype=p.type.dtype) for i, p in enumerate(held)]
-    fixed, carry = syms[: len(params)], Expr.sym("zr", (2 * m,))
-    z, r = carry[:m], carry[m:]
-    znew = z - linear.solve(linear.factor(z, fixed) if self.full else syms[len(params) :], r)
-    labels = ["zr", *(f"q{i}" for i in range(len(syms)))]
-    body = ConcreteFunction.from_exprs(f"{name}_newton", [carry, *syms], [concat([znew, residual(znew, fixed)])], labels, ["zr_next"])
-    cond = ConcreteFunction.from_exprs(f"{name}_unconverged", [carry, *syms], [norm_inf(r) > tol * (1.0 + norm_inf(z))], labels, ["go"])
-    out, _ = while_loop(cond, body, concat([z0, residual(z0, params)]), max_iter=self.max_iter, params=held)
-    return out[:m]
 
 
 class _EigenSplit(_Linear):
@@ -202,7 +169,7 @@ class _Stages:
   A step's quantities travel as one list, ``[x, *others, h]`` (``h`` only when it is an input): the
   rules and the loop bodies are Functions over them, and read them back with ``unpack``."""
 
-  def __init__(self, tab: Tableau, model: ConcreteFunction[Any, Any, Any, Any], name: str, h: float | None, solver: _Newton) -> None:
+  def __init__(self, tab: Tableau, model: ConcreteFunction[Any, Any, Any, Any], name: str, h: float | None, solver: Newton) -> None:
     self.tab, self.model, self.name, self.h, self.solver = tab, model, name, h, solver
     self.n, self.s, self.others = model.inputs[0].size, tab.stages, len(model.inputs) - 1
     self.stage_fn = self._stage_function()
@@ -244,14 +211,14 @@ class _Stages:
       x, others, _ = self.unpack(params)
       return jacobian(model_rhs(self.model, others)(x), x)
 
-    split = None if self.solver.full else eigen_split(a)
+    split = eigen_split(a) if self.solver.simplified else None
     if split is not None:
       linear: _Linear = _EigenSplit(split, start_jacobian, lambda params: self.unpack(params)[2], self.n)
-    elif self.solver.full:
+    elif not self.solver.simplified:
       linear = _Linear(self.stage_matrix)
     else:
       linear = _Linear(lambda k, params: _block_matrix(a, [start_jacobian(k, params)] * self.s, self.unpack(params)[2]))
-    return self.solver.run(f"{self.name}_stages", self.residual, linear, concat([fx] * self.s), held)
+    return self.solver.iterate(self.residual, concat([fx] * self.s), held, name=f"{self.name}_stages", linear=linear)[0]
 
   def _dirk(self, held: list[Expr], fx: Expr) -> Expr:
     """One stage after another: stage ``i`` solves ``z = f(x + h sum_{j<i} a_ij k_j + h a_ii z)``, a
@@ -270,56 +237,22 @@ class _Stages:
 
       def matrix(z: Expr, params: Sequence[Expr], i: int = i) -> Expr:
         _, others, h, y = state(z, params, i)
-        at = y if self.solver.full else self.unpack(params)[0]
+        at = self.unpack(params)[0] if self.solver.simplified else y
         return _block_matrix(a[i : i + 1, i : i + 1], [jacobian(model_rhs(self.model, others)(at), at)], h)
 
       earlier = [concat([*ks, *([fx] * (self.s - i))])] if i else []
-      ks.append(self.solver.run(f"{self.name}_stage{i}", residual, _Linear(matrix), fx, [*held, *earlier]))
+      ks.append(self.solver.iterate(residual, fx, [*held, *earlier], name=f"{self.name}_stage{i}", linear=_Linear(matrix))[0])
     return concat(ks)
 
   def _stage_function(self) -> ConcreteFunction[Any, Any, Any, Any]:
     """``(x, others..., [h], kstar) -> K``, the identity on ``kstar``, with rules from the implicit
-    function theorem at ``G(K; x, others, h) = 0``. The rules never read ``kstar``'s tangent and give
-    it a zero cotangent, so neither mode differentiates the Newton iterations that produced it.
-
-    Two levels, as ``SparseLDL.solve``: the level-2 rules find the stages through the level-1
-    Function, so a second derivative applies the level-1 rules and is exact; only a third would
-    reach the iterations, whose ``lu`` refuses it. Every solve is ``solve(..., assume="gen")``."""
-    m = self.n * self.s
+    function theorem at ``G(K; x, others, h) = 0`` (``roots.custom_root``, with the structured
+    ``G_K``): neither mode differentiates the Newton iterations that produced ``kstar``."""
     kinds = [(e.shape, e.type.dtype) for e in self.model.inputs] + ([((), dtypes.float64)] if self.h is None else [])
     names = ["x", *(f"a{i}" for i in range(self.others)), *(["h"] if self.h is None else [])]
-
-    def symbols(prefix: str = "") -> list[Expr]:
-      return [Expr.sym(f"{prefix}{nm}", shape, dtype=dtype) for nm, (shape, dtype) in zip(names, kinds, strict=True)]
-
-    held, kstar = symbols(), Expr.sym("kstar", (m,))
-    base = ConcreteFunction.from_exprs(f"{self.name}_k", [*held, kstar], [kstar + 0.0], [*names, "kstar"], ["k"])
-
-    def jvp_rule(inner: ConcreteFunction[Any, Any, Any, Any], level: int) -> ConcreteFunction[Any, Any, Any, Any]:
-      held, kstar, tangents, dkstar = symbols(), Expr.sym("kstar", (m,)), symbols("d"), Expr.sym("dkstar", (m,))
-      k = inner.symbolic_call(tuple([*held, kstar]))
-      k = k[0] if isinstance(k, tuple) else k
-      # G's partial derivatives hold K fixed: differentiate at a free K, then put the stages back. At
-      # level 2, k depends on the inputs through the level-1 rules, and differentiating through it
-      # would give the total derivative of G(K(x), x), which is zero.
-      free = Expr.sym("kfree", (m,))
-      g = self.residual(free, held)
-      push = substitute(sum((jvp(g, p, t) for p, t in zip(held, tangents, strict=True)), Expr.const(np.zeros(m))), {free: k})
-      dk = -solve(self.stage_matrix(k, held), push, assume="gen")
-      labels = [*names, "kstar", *(f"d{nm}" for nm in names), "dkstar"]
-      return ConcreteFunction.from_exprs(f"{self.name}_k_jvp{level}", [*held, kstar, *tangents, dkstar], [dk], labels, ["dk"])
-
-    # The reverse rule reads the stages from the Function's output, whose derivative is the Function's
-    # own, so one rule serves both levels.
-    held, kstar, k, kbar = symbols(), Expr.sym("kstar", (m,)), Expr.sym("ko", (m,)), Expr.sym("kbar", (m,))
-    lam = solve(self.stage_matrix(k, held).T, kbar, assume="gen")
-    grads = [-g for g in vjp([self.residual(k, held)], held, [lam])]
-    labels, outs = [*names, "kstar", "ko", "kbar"], [*grads, Expr.const(np.zeros(m))]
-    vjp_rule = ConcreteFunction.from_exprs(f"{self.name}_k_vjp", [*held, kstar, k, kbar], outs, labels, [f"{nm}bar" for nm in (*names, "kstar")])
-    inner = base
-    for level in (1, 2):
-      inner = custom_derivative(base, jvp=jvp_rule(inner, level), vjp=vjp_rule)
-    return inner
+    held = [Expr.sym(nm, shape, dtype=dtype) for nm, (shape, dtype) in zip(names, kinds, strict=True)]
+    k = Expr.sym("kstar", (self.n * self.s,))
+    return custom_root(self.residual, k, held, name=f"{self.name}_k", names=names, z_name="k", jacobian=self.stage_matrix)
 
 
 def _block_matrix(a: np.ndarray, jacobians: list[Expr], h: Expr | float) -> Expr:

@@ -12,11 +12,12 @@ way one would write it in NumPy. Nothing about the stencil is declared, yet:
   ``sc.column_coloring`` colors it with the same handful of colors (7, greedily) whatever the grid
   size, so the compact Jacobian (``sc.sparse_jacobian``) costs seven forward sweeps rather than
   ``n^2``;
-* ``SparseMatrix.from_sparse_jacobian`` turns the compact values into a sparse matrix that the
-  generated sparse ``L D L^T`` (``linalg.SparseLDL``, with its fill-reducing ordering chosen when
-  the graph is built) factors inside the Newton loop;
-* the Newton loop is a ``sc.while_loop`` with ``lambda`` as a loop parameter, so the whole solve is
-  one C function. Natural-parameter continuation in ``lambda`` calls it repeatedly, warm-started.
+* the equations are an ``sc.roots.root`` with ``lambda`` its parameter, and ``sc.roots.Newton`` with
+  ``linear="sparse_ldl"`` solves them: each step turns the compact Jacobian into a
+  ``SparseMatrix`` that the generated sparse ``L D L^T`` (``linalg.SparseLDL``, with its
+  fill-reducing ordering chosen when the graph is built) factors;
+* the Newton iteration is a ``while_loop`` in the generated code, so the whole solve is one C
+  function. Natural-parameter continuation in ``lambda`` calls it repeatedly, warm-started.
 
 ``fact.inertia()`` confirms that the Jacobian stays positive definite on the lower solution
 branch. The generated C lands in ``examples/generated/bratu_newton/``.
@@ -49,33 +50,27 @@ def residual(u: sc.Expr, lam: sc.Expr, n: int) -> sc.Expr:
   return (lap - lam * grid.exp()).reshape((n * n,))
 
 
-def newton_functions(n: int) -> tuple[sc.Function, sc.Function]:
-  nn = n * n
+def bratu(n: int) -> sc.roots.Root:
+  """The discretized PDE on an ``n x n`` grid as a system of equations in ``u`` with parameter ``lambda``."""
 
-  @sc.function
-  def newton_step(u: sc.Expr, lam: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    f = residual(u, lam, n)
-    jac = linalg.SparseMatrix.from_sparse_jacobian(sc.sparse_jacobian(f, u))
-    fact = linalg.SparseLDL(jac, name="bratu")
-    return u - fact.solve(f), fact.inertia()
+  @sc.roots.root(vars=sc.L("u", n * n), params=sc.L("lam", ()), name="bratu")
+  def equations(u: sc.Expr, lam: sc.Expr) -> sc.Expr:
+    return residual(u, lam, n)
 
-  @sc.function
-  def body(carry: sc.Expr, lam: sc.Expr) -> sc.Expr:
-    u_next, _ = newton_step(carry[:nn], lam)
-    return sc.concat([u_next, sc.norm_inf(residual(u_next, lam, n)).reshape((1,))])
+  return equations
 
-  @sc.function
-  def not_converged(carry: sc.Expr, lam: sc.Expr) -> sc.Expr:
-    return sc.greater(carry[nn], TOL)
 
-  @sc.function(nn, (), output=sc.G("u", "residual", "iterations", "inertia"))
+def newton_function(n: int) -> sc.Function:
+  """The Newton solve from a warm start, and the pivot signs of ``L D L^T`` of the Jacobian at the solution."""
+  solve = sc.roots.solver(bratu(n), sc.roots.Newton(tol=TOL, max_iter=MAX_NEWTON, linear="sparse_ldl"), name="bratu_newton")
+
+  @sc.function(n * n, (), output=sc.G("u", "residual", "iterations", "inertia"))
   def bratu_solve(u0: sc.Expr, lam: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-    start = sc.concat([u0, sc.norm_inf(residual(u0, lam, n)).reshape((1,))])
-    carry, n_iter = sc.while_loop(not_converged, body, start, max_iter=MAX_NEWTON, params=(lam,))
-    _, inertia = newton_step(carry[:nn], lam)
-    return carry[:nn], carry[nn], n_iter, inertia
+    u, info = solve(u0, lam)
+    jac = linalg.SparseMatrix.from_sparse_jacobian(sc.sparse_jacobian(residual(u, lam, n), u))
+    return u, info.residual, info.iter, linalg.SparseLDL(jac, name="bratu").inertia()
 
-  return newton_step, bratu_solve
+  return bratu_solve
 
 
 def coloring_table(sizes: tuple[int, ...] = (10, 20, 40, 80)) -> list[tuple[int, int, int]]:
@@ -103,7 +98,7 @@ def reference_solve(lam: float, n: int = N_GRID) -> np.ndarray:
 
 
 def main() -> dict:
-  _, bratu_solve = newton_functions(N_GRID)
+  bratu_solve = newton_function(N_GRID)
   u = np.zeros(N_GRID * N_GRID)
   rows = []
   for lam in LAMBDAS:

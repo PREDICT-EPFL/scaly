@@ -11,9 +11,11 @@ with ``Phi`` written through ``erf``. One option is a ``Function`` of its five i
 vega, rho, and the strike sensitivity) and its Hessian (gamma, vanna, volga, ...) in one C
 function, and ``sc.vmap`` maps that over the whole book as one loop.
 
-The inverse problem, the implied volatility that reproduces a quoted price, is a safeguarded Newton
-iteration in ``sc.while_loop`` with the vega from ``sc.gradient`` inside the body; the per-option
-solver is again ``vmap``-ped over the book. Checked against SciPy's ``brentq``.
+The inverse problem, the implied volatility that reproduces a quoted price, is an ``sc.roots.root``
+in ``sigma`` bracketed by ``[SIGMA_LO, SIGMA_HI]``, solved by ``sc.roots.NewtonBisection``: Newton
+steps with the vega from forward mode, a bisection whenever one would leave the bracket, which
+shrinks as the price error changes sign. The per-option solver is again ``vmap``-ped over the book.
+Checked against SciPy's ``brentq``.
 
 Finally, the total value of the book and its gradient with respect to every market input come from
 one reverse sweep through the ``vmap``, the adjoint-algorithmic-differentiation trick risk desks
@@ -37,6 +39,7 @@ GENERATED = Path(__file__).resolve().parent / "generated" / "option_greeks"
 M = 2000  # options in the book
 NAMES = ("S", "K", "T", "sigma", "r")
 MAX_NEWTON = 40
+SIGMA_LO, SIGMA_HI = 1e-4, 5.0  # the bracket, as brentq's below
 
 
 def call_price(p: sc.Expr) -> sc.Expr:
@@ -69,35 +72,21 @@ def book_value(book: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return value, sc.gradient(value, book)
 
 
-# Implied volatility. The quote is (S, K, T, r, C_market); the price error and the vega at a trial sigma:
-@sc.function
-def iv_residual(sigma: sc.Expr, quote: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+# Implied volatility. The quote is (S, K, T, r, C_market); the price error increases with sigma.
+@sc.roots.root(vars=sc.L("sigma", ()), params=sc.L("quote", 5), name="implied_vol")
+def iv_equation(sigma: sc.Expr, quote: sc.Expr) -> sc.roots.RootSpec:
   price = call_price(sc.stack([quote[0], quote[1], quote[2], sigma, quote[3]]))
-  return price - quote[4], sc.gradient(price, sigma)
+  return sc.roots.RootSpec(price - quote[4], lb=sc.const(SIGMA_LO), ub=sc.const(SIGMA_HI))
 
 
-# The Newton carry is (sigma, price error); the quote is a loop parameter.
-@sc.function
-def newton_step(carry: sc.Expr, quote: sc.Expr) -> sc.Expr:
-  residual, vega = iv_residual(carry[0], quote)
-  step = residual / sc.maximum(vega, 1e-8)
-  sigma_next = sc.minimum(sc.maximum(carry[0] - step, 0.5 * carry[0]), 2.0 * carry[0])  # at most halve or double
-  residual_next, _ = iv_residual(sigma_next, quote)
-  return sc.stack([sigma_next, residual_next])
-
-
-@sc.function
-def not_converged(carry: sc.Expr, quote: sc.Expr) -> sc.Expr:
-  return sc.greater(carry[1].abs(), 1e-12 * quote[0])
+iv_solve = sc.roots.solver(iv_equation, sc.roots.NewtonBisection(tol=1e-12, max_iter=MAX_NEWTON), name="iv_newton")
 
 
 @sc.function(5, output=sc.G("sigma", "iterations"))
 def implied_vol(quote: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   guess = (2 * np.pi / quote[2]).sqrt() * quote[4] / quote[0]  # Brenner-Subrahmanyam
-  guess = sc.minimum(sc.maximum(guess, 0.05), 2.0)
-  start = sc.stack([guess, sc.const(1.0)])
-  carry, n_iter = sc.while_loop(not_converged, newton_step, start, max_iter=MAX_NEWTON, params=(quote,))
-  return carry[0].reshape((1,)), n_iter.reshape((1,))
+  sigma, info = iv_solve(sc.minimum(sc.maximum(guess, 0.05), 2.0), quote)
+  return sigma.reshape((1,)), info.iter.reshape((1,))
 
 
 @sc.function(5 * M, output=sc.G("sigma", "iterations"))
@@ -172,7 +161,7 @@ if __name__ == "__main__":
   )
   print(f"all five first derivatives vs central differences {out['gradient_vs_fd']:.1e}; Hessians symmetric to {out['hessian_symmetry']:.1e}")
   print(
-    f"implied vols recovered to {out['iv_error']:.1e} (brentq agrees to {out['iv_brentq_error']:.1e}) in {out['iterations'].mean():.1f} Newton steps on average, at most {int(out['iterations'].max())}"
+    f"implied vols recovered to {out['iv_error']:.1e} (brentq agrees to {out['iv_brentq_error']:.1e}) in {out['iterations'].mean():.1f} steps on average, at most {int(out['iterations'].max())}"
   )
   print(
     f"book value {float(out['value']):.2f}; its 5 x {M} sensitivities from one reverse sweep match the per-option gradients to {out['sensitivities_error']:.1e}"

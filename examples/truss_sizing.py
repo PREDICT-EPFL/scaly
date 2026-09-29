@@ -100,7 +100,9 @@ def optimality_criteria(mean_area: float = 0.1, iterations: int = 80, move: floa
     lo, hi = 1e-12, 1e12
     while hi / lo > 1 + 1e-10:  # bisection on the volume multiplier
       eta = np.sqrt(lo * hi)
-      trial = np.clip(areas * np.sqrt(np.maximum(-grad, 0.0) / (eta * lengths)), np.maximum(A_MIN, areas * (1 - move)), np.minimum(A_MAX, areas * (1 + move)))
+      trial = np.clip(
+        areas * np.sqrt(np.maximum(-grad, 0.0) / (eta * lengths)), np.maximum(A_MIN, areas * (1 - move)), np.minimum(A_MAX, areas * (1 + move))
+      )
       lo, hi = (eta, hi) if trial @ lengths > volume else (lo, eta)
     areas = trial
   return {"areas": areas, "lengths": lengths, "history": np.array(history), "volume": np.array(volume)}

@@ -109,6 +109,14 @@ src/scaly/
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
     toolchain.py         C compiler discovery, cache root, the diagnostics report
 
+  roots/                 nonlinear equations and least squares, the Newton family as generated loops
+    problem.py           Root, LeastSquares, root() and least_squares(), the solver Function with its implicit derivative
+    method.py            the roots method registry, METHOD_API and Info
+    solver.py            solver(problem, method): resolve the method, build the Function
+    newton.py            Newton and NewtonBisection, and the linear solves a Newton step makes
+    least_squares.py     GaussNewton and LevenbergMarquardt
+    implicit.py          custom_root: the implicit-function derivative of a root however it was found
+
   opt/                   optimization problems and the methods that solve them
     problem.py           typed NLP declarations and ProblemSpec
     qp.py nlp.py         the normal forms: quadratic proof and extract_qp, the QP class; nlp_oracles
@@ -158,7 +166,7 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites and structural sparsity. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree,extern,method}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, the protocol a Function with an extern body implements, and the method interface every domain shares. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
-| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
+| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `roots/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, nonlinear equations, splines, integrators and MPC. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |

@@ -60,9 +60,7 @@ _x = x_step(_l, _atb, _z, _u, _rho)
 _z_new = soft(_x + _u, _lam / _rho)
 _u_new = _u + _x - _z_new
 _residuals = sc.stack([sc.norm_inf(_x - _z_new), _rho * sc.norm_inf(_z_new - _z)])
-admm_iteration = sc.Function.from_exprs(
-  "admm_iteration", [_carry], [sc.concat([_carry[:_Z], _z_new, _u_new, _residuals])], ["carry"], ["next"]
-)
+admm_iteration = sc.Function.from_exprs("admm_iteration", [_carry], [sc.concat([_carry[:_Z], _z_new, _u_new, _residuals])], ["carry"], ["next"])
 not_converged = sc.Function.from_exprs(
   "admm_not_converged", [_carry], [sc.logical_or(sc.greater(_carry[_RES], TOL), sc.greater(_carry[_RES + 1], TOL))], ["carry"], ["go_on"]
 )
@@ -72,14 +70,16 @@ not_converged = sc.Function.from_exprs(
 def lasso(b: sc.Expr, lam: sc.Expr, rho: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   a = sc.const(A_CONST)
   l_factor = linalg.cholesky(a @ a.T + rho * sc.const(np.eye(M)))
-  start = sc.concat([
-    l_factor.reshape((M * M,)),
-    a.T @ b,
-    lam.reshape((1,)),
-    rho.reshape((1,)),
-    sc.const(np.zeros(2 * N)),
-    sc.const(np.full(2, np.inf)),
-  ])
+  start = sc.concat(
+    [
+      l_factor.reshape((M * M,)),
+      a.T @ b,
+      lam.reshape((1,)),
+      rho.reshape((1,)),
+      sc.const(np.zeros(2 * N)),
+      sc.const(np.full(2, np.inf)),
+    ]
+  )
   carry, iterations = sc.while_loop(not_converged, admm_iteration, start, max_iter=MAX_ITER)
   z = carry[_Z:_U]
   return z, iterations, sc.not_equal(z, 0.0)

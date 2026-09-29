@@ -6,10 +6,11 @@ Single shooting finds it as a root of
     F(a, T) = phi_T((a, 0); mu) - (a, 0) = 0,
 
 the flow over one period ``T`` from a point on the axis ``x2 = 0`` (the phase condition), with two
-unknowns ``(a, T)``, solved by Newton steps capped in length. The flow map is ``K`` classical RK4 steps written as one ``sc.scan`` whose step
-size ``T / K`` enters every step as a broadcast (stride-0) input, so ``sc.jacobian`` of the final state
-in ``(a, T)`` is forward mode through the loop. The Newton iteration around it is a
-``sc.while_loop`` with ``mu`` as a loop parameter: the whole shooting solver is one C function.
+unknowns ``(a, T)``: an ``sc.roots.root`` with ``mu`` its parameter, solved by ``sc.roots.Newton``
+with its steps capped in length (``max_step``). The flow map is ``K`` classical RK4 steps written as
+one ``sc.scan`` whose step size ``T / K`` enters every step as a broadcast (stride-0) input, so the
+Newton step's Jacobian in ``(a, T)`` is forward mode through the loop. The Newton iteration around it
+is a ``while_loop`` in the generated code: the whole shooting solver is one C function.
 
 At the solution, the Jacobian of the flow in the initial state is the monodromy matrix. Its
 eigenvalues are the Floquet multipliers: one is exactly 1 (a shift along the orbit), and by
@@ -59,36 +60,23 @@ def flow(x0: sc.Expr, period: sc.Expr, mu: sc.Expr) -> sc.Expr:
   return sc.scan(rk4, z0, [(mu_dt, 0, 0)], length=K)[0]
 
 
-@sc.function
-def shooting(y: sc.Expr, mu: sc.Expr) -> tuple[sc.Expr, sc.Expr]:  # y = (a, T)
+@sc.roots.root(vars=sc.L("y", 2), params=sc.L("mu", ()), name="shooting")
+def shooting(y: sc.Expr, mu: sc.Expr) -> sc.Expr:  # y = (a, T)
   x0 = sc.stack([y[0], sc.const(0.0)])
-  f = flow(x0, y[1], mu)[:2] - x0
-  return f, sc.jacobian(f, y)
+  return flow(x0, y[1], mu)[:2] - x0
 
 
-@sc.function
-def newton_step(carry: sc.Expr, mu: sc.Expr) -> sc.Expr:
-  y = carry[:2]
-  f, j = shooting(y, mu)
-  det = j[0, 0] * j[1, 1] - j[0, 1] * j[1, 0]
-  step = sc.stack([j[1, 1] * f[0] - j[0, 1] * f[1], j[0, 0] * f[1] - j[1, 0] * f[0]]) / det  # the 2 x 2 inverse
-  y_next = y - step * sc.minimum(1.0, MAX_STEP / sc.norm_inf(step))  # a damped step far from the orbit
-  f_next, _ = shooting(y_next, mu)
-  return sc.concat([y_next, sc.norm_inf(f_next).reshape((1,))])
-
-
-@sc.function
-def not_converged(carry: sc.Expr, mu: sc.Expr) -> sc.Expr:
-  return sc.greater(carry[2], TOL)
+# Steps capped at MAX_STEP in their largest entry: a damped Newton far from the orbit.
+shoot = sc.roots.solver(shooting, sc.roots.Newton(tol=TOL, max_iter=MAX_NEWTON, max_step=MAX_STEP), name="shooting_newton")
 
 
 @sc.function(2, (), output=sc.G("amplitude", "period", "monodromy", "liouville", "iterations"))
 def limit_cycle(guess: sc.Expr, mu: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-  carry, n_iter = sc.while_loop(not_converged, newton_step, sc.concat([guess, sc.const(np.ones(1))]), max_iter=MAX_NEWTON, params=(mu,))
-  x0 = sc.stack([carry[0], sc.const(0.0)])
-  z_final = flow(x0, carry[1], mu)
+  y, info = shoot(guess, mu)
+  x0 = sc.stack([y[0], sc.const(0.0)])
+  z_final = flow(x0, y[1], mu)
   monodromy = sc.jacobian(z_final[:2], x0)
-  return carry[0], carry[1], monodromy, z_final[2].exp(), n_iter
+  return y[0], y[1], monodromy, z_final[2].exp(), info.iter
 
 
 def main() -> dict:
