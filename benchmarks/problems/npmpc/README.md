@@ -116,7 +116,7 @@ recovered latent code both belong to: `l_p = 0.1378`, `m_p = 0.00881`, `l_r = 0.
 
 | file | what |
 |---|---|
-| `data/cnp_model.pth` | their trained checkpoint, read without torch by `scaly.utils.load_torch_state_dict` |
+| `data/cnp_model.pth` | their trained checkpoint, read without torch by `scaly.nn.load_torch_state_dict` |
 | `data/reference_config.json` | their `model/furuta_mpc.json`, verbatim — the authoritative source for every weight and bound |
 | `data/reference_episode.npz` | their released `experiment_np_m3.npz`, trimmed |
 

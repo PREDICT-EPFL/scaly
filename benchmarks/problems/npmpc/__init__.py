@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, assert_type
 import numpy as np
 
 import scaly as sc
-from scaly.utils import load_torch_state_dict
+from scaly import nn
+from scaly.nn import load_torch_state_dict
 
 type StageFunction = sc.Function[
   [tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]],
@@ -331,12 +332,11 @@ def stage_function(decoder: Decoder = Decoder()) -> StageFunction:
     x, xnext, u, pw, dt = inputs
     feat = sc.stack([x[0].sin(), x[0].cos(), x[2], x[3], u[0]]) * pw[decoder.slice("x_scale_w")] + pw[decoder.slice("x_scale_b")]
     h = sc.concat([feat, pw[decoder.slice("latent")]])
-    for i, shape in enumerate(shapes[:-1]):
-      h = 1.0 / (1.0 + (-(pw[decoder.slice(f"w{i}")].reshape(shape) @ h)).exp())
+    # Bias-free sigmoid layers, then one linear layer with the only bias.
     last = len(shapes) - 1
-    y = (pw[decoder.slice(f"w{last}")].reshape(shapes[last]) @ h + pw[decoder.slice("bias")]) * pw[decoder.slice("y_inv_w")] + pw[
-      decoder.slice("y_inv_b")
-    ]
+    layers = [(pw[decoder.slice(f"w{i}")].reshape(shape), None) for i, shape in enumerate(shapes[:-1])]
+    layers.append((pw[decoder.slice(f"w{last}")].reshape(shapes[last]), pw[decoder.slice("bias")]))
+    y = nn.mlp(h, layers, nn.sigmoid) * pw[decoder.slice("y_inv_w")] + pw[decoder.slice("y_inv_b")]
     return x + sc.concat([dt * (x[2:4] + y / 2.0), y]) - xnext
 
   return stage

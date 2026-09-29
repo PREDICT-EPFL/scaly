@@ -109,16 +109,28 @@ src/scaly/
     warmstart.py         the warm start of a receding horizon: shift and initial_guess
     terminal.py          terminal ingredients: the LQR gain and cost, ellipsoidal and maximal invariant sets
 
+  geometry/              geometry as expressions (experimental)
+    vectors.py           three-vectors: the cross product and its matrix
+    quaternion.py        unit quaternions (Hamilton, scalar last): product, rotation, exp and log of SO(3)
+    manifold.py          manifolds with a retraction and local coordinates: Euclidean, SO3, Pose3
+
+  nn/                    neural networks as expressions (experimental)
+    layers.py            multilayer perceptrons: dense layers, activations, weights packed in one vector
+    torch.py             PyTorch checkpoints read without torch, and their linear layers as (W, b)
+
   sets/                  sets in state space, the constraints that keep a point inside, as (expr, lo, hi)
     polytope.py          polytopes in halfspace form and the linear programs on them (SciPy's HiGHS)
     ellipsoid.py         ellipsoids x'Px <= alpha
+
+  export/                code for other tools, each an output adapter or built on them
+    cpp.py               the cpp adapter: the C++ header, the Buffer template and a namespace per function
+    casadi.py            the casadi adapter: CasADi 3.8 query functions, CSC encoding, the gather
+    acados.py            the acados drop-in: a model's explicit-integrator functions over acados' generated sources
 
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling
     c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
     adapter.py           output adapters: named layers over a rendered module, their hooks and registry
-    cpp.py               the cpp adapter: the C++ header, the Buffer template and a namespace per function
-    casadi.py            the casadi adapter: CasADi 3.8 query functions, CSC encoding, the gather
     __main__.py          compatibility shim for `python -m scaly.codegen`
     aot.py               one lowering -> CModule, the extern callees' requirements merged, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
@@ -162,7 +174,6 @@ src/scaly/
     ext_api.py           EXT_API_VERSION and the check a package runs against it
     names.py             C identifier spelling shared by passes and code generation
     options.py           sc.options and sc.set_options: user conventions read when a graph is built
-    torch_state_dict.py  reading PyTorch checkpoints without depending on torch
 ```
 
 Solver libraries are not in this tree. Each is a separate distribution under `plugins/`
@@ -181,9 +192,9 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites and structural sparsity. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree,extern,method}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, the protocol a Function with an extern body implements, and the method interface every domain shares. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
-| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `roots/*`, `interp/*`, `integrators/*`, `sets/*`, `ocp/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, nonlinear equations, splines, integrators and optimal control. |
+| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `roots/*`, `interp/*`, `integrators/*`, `sets/*`, `ocp/*`, `nn/*`, `geometry/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, nonlinear equations, splines, integrators and optimal control. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
-| 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
+| 7 | `codegen/*`, `export/*` | The backend: render, compile, load, dispatch; and the output adapters and drop-ins for other tools. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `scaly/__init__`, `scaly/ext` | The public names sit above everything they re-export, the extension API with them. |
 
@@ -255,7 +266,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |
 | A Function with a hand-written C body | an object implementing `ExternCallee` in `function/extern.py`, passed to `extern_function`; nothing in the compiler changes |
 | A public name | the re-export and `__all__` entry in `scaly/__init__.py` |
-| An output adapter (another header language, another consumer's symbols) | a module calling `register_adapter` in `codegen/adapter.py`, and an entry point under `scaly.adapters` naming it |
+| An output adapter (another header language, another consumer's symbols) | a module in `export/` calling `register_adapter` from `codegen/adapter.py`, and an entry point under `scaly.adapters` naming it |
 | A module | an entry in `IMPORT_LAYERS` in `tests/test_import_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
 
 ## The rules that keep it this way

@@ -15,7 +15,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, render_c_source, workspace_size
-from scaly.codegen.casadi import CASADI_QUERIES
+from scaly.export.casadi import CASADI_QUERIES
 
 casadi = pytest.importorskip("casadi")
 

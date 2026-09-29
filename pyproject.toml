@@ -72,8 +72,8 @@ dev = [
 docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 
 [project.entry-points."scaly.adapters"]
-cpp = "scaly.codegen.cpp"
-casadi = "scaly.codegen.casadi"
+cpp = "scaly.export.cpp"
+casadi = "scaly.export.casadi"
 
 [project.entry-points."scaly.methods"]
 "ocp.altro" = "scaly.ocp.altro:ALTRO"

@@ -8,6 +8,7 @@ from typing import Any, Protocol
 import numpy as np
 
 import scaly as sc
+from scaly import nn
 from scaly.codegen import render_c_module
 from scaly.opt.external.graph import solver_descriptor
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
@@ -470,19 +471,9 @@ def build_casadi_sqp(
 # ---------------------------------------------------------------------------
 
 
-def _silu_expr(x: sc.Expr) -> sc.Expr:
-  return x / (1.0 + (-x).exp())
-
-
-def _unpack_pw_expr(pw: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-  x_scale = pw[OFFSETS[0] : OFFSETS[1]]
-  w0 = pw[OFFSETS[1] : OFFSETS[2]].reshape(W0_SHAPE)
-  b0 = pw[OFFSETS[2] : OFFSETS[3]]
-  w1 = pw[OFFSETS[3] : OFFSETS[4]].reshape(W1_SHAPE)
-  b1 = pw[OFFSETS[4] : OFFSETS[5]]
-  w2 = pw[OFFSETS[5] : OFFSETS[6]].reshape(W2_SHAPE)
-  b2 = pw[OFFSETS[6] : OFFSETS[7]]
-  return x_scale, w0, b0, w1, b1, w2, b2
+# The learned models' layers in their packed parameter vectors: x_scale, then (W, b) per layer.
+CT_WIDTHS = (W0_SHAPE[1], W0_SHAPE[0], W1_SHAPE[0], W2_SHAPE[0])
+DT_WIDTHS = (DT_W0_SHAPE[1], DT_W0_SHAPE[0], DT_W1_SHAPE[0], DT_W2_SHAPE[0])
 
 
 def _world_vel_expr(state: sc.Expr, physics: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
@@ -503,11 +494,8 @@ def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc
   delta = state[6]
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   delta_dot = (u[1] * max_delta - delta) / (steering_time_constant * 3.0)
-  x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_expr(pw)
-  phi = sc.concat([state[3:7] / x_scale, u])
-  h = _silu_expr((w0 @ phi + b0))
-  h = _silu_expr((w1 @ h + b1))
-  learned = w2 @ h + b2
+  phi = sc.concat([state[3:7] / pw[OFFSETS[0] : OFFSETS[1]], u])
+  learned = nn.mlp(phi, nn.unpack(pw, CT_WIDTHS, offset=OFFSETS[1]), nn.silu)
   return sc.stack([x_dot, y_dot, omega, learned[0], learned[1], learned[2], delta_dot])
 
 
@@ -524,22 +512,6 @@ def scaly_ctfull_rk4_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Exp
   k3 = scaly_ctfull_ode_fn((state + 0.5 * h * k2, u, pw, physics))
   k4 = scaly_ctfull_ode_fn((state + h * k3, u, pw, physics))
   return state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-
-
-def _smooth_relu_expr(x: sc.Expr) -> sc.Expr:
-  return 0.5 * (x + (x * x + DT_RELU_EPS**2).sqrt())
-
-
-def _unpack_pw_dt_expr(pw: sc.Expr) -> tuple[sc.Expr, ...]:
-  return (
-    pw[DT_OFFSETS[0] : DT_OFFSETS[1]],
-    pw[DT_OFFSETS[1] : DT_OFFSETS[2]].reshape(DT_W0_SHAPE),
-    pw[DT_OFFSETS[2] : DT_OFFSETS[3]],
-    pw[DT_OFFSETS[3] : DT_OFFSETS[4]].reshape(DT_W1_SHAPE),
-    pw[DT_OFFSETS[4] : DT_OFFSETS[5]],
-    pw[DT_OFFSETS[5] : DT_OFFSETS[6]].reshape(DT_W2_SHAPE),
-    pw[DT_OFFSETS[6] : DT_OFFSETS[7]],
-  )
 
 
 @sc.function(sc.G(sc.L("state", NSTATE), sc.L("physics", N_PHYSICS)), output=sc.L("posedot", ...), name="ctdt_pose_dot")
@@ -566,11 +538,9 @@ def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Ex
   k3 = scaly_pose_dot_fn((state + 0.5 * h_dt * k2, physics))
   k4 = scaly_pose_dot_fn((state + h_dt * k3, physics))
   pose = state + (h_dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-  x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_dt_expr(pw)
+  x_scale = pw[DT_OFFSETS[0] : DT_OFFSETS[1]]
   phi = sc.concat([sc.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, sc.stack([u[1], u[0]])])
-  h = _smooth_relu_expr((w0 @ phi + b0))
-  h = _smooth_relu_expr((w1 @ h + b1))
-  learned = w2 @ h + b2
+  learned = nn.mlp(phi, nn.unpack(pw, DT_WIDTHS, offset=DT_OFFSETS[1]), lambda z: nn.smooth_relu(z, DT_RELU_EPS))
   delta_next = delta + h_dt * (u[1] * max_delta - delta) / steering_time_constant
   return sc.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 

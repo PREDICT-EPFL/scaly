@@ -50,7 +50,7 @@
 | 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☑ |
 | 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☑ |
 | 6.1 | Library code promoted from examples | ☑ |
-| 6.2 | `nn`, `geometry`, `export` namespaces | ☐ |
+| 6.2 | `nn`, `geometry`, `export` namespaces | ☑ |
 | 7.1 | Conformance suites and the `method` marker | ☐ |
 | 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☐ |
 | 8.1 | `distributions.toml`, manifests, metapackage | ☐ |
@@ -806,6 +806,26 @@ teach. Suite: 3876 passed, 44 skipped; C snapshots unchanged; ty within the ratc
 
 **6.2** `scaly.nn`, `scaly.geometry`, `scaly.export` (C++, CasADi, acados) populated per §3.5;
 duplicated MLP code removed from examples, benchmarks and tests.
+Log: done 2026-09-29. `scaly.export`: the `cpp` and `casadi` adapters moved from `codegen/` (entry
+points `scaly.export.*`, so `codegen` names no adapter and the layering test lost its exemption), and
+`export/acados.py`, the neural MPC study's `acados_functions` and `install_dropin` generalized to any
+model (`xdot(x, u, p)` built into each body, as the study found a call node costs twice) and to
+several controls, whose `Sp` the study's version treated as a vector; a new test checks two controls
+and a parameter against NumPy and compiles the drop-in. `scaly.nn`: `load_torch_state_dict` moved
+from `utils` (`nn/torch.py`, with `layers_from_state_dict`), and `nn/layers.py` with `mlp`, `dense`,
+the activations the code uses (tanh, sigmoid, SiLU, ReLU, smooth ReLU, spelled as it spells them),
+and `unpack`/`pack`/`size` for weights in one vector. The neural MPC study, both benchmarks'
+networks (unbumpercars' SiLU and smooth-ReLU models, npmpc's bias-free sigmoid decoder) and the
+surrogate notebook use them, the C of every changed function byte-identical, so the benchmarks'
+recorded timings stand; the surrogate notebook, re-executed, already differed from its recorded
+outputs at HEAD (1304 L-BFGS iterations, not 1435, from earlier numerics), unchanged by the move.
+`scaly.geometry`: unit quaternions (Hamilton, scalar last, SymForce's and SciPy's order),
+`cross`/`skew`, and manifolds with a retraction and local coordinates (`Euclidean`, `SO3`, `Pose3`
+as SymForce's SO(3) x R^3), tested against SciPy's rotations; the SymForce study (bit-identical, its
+C byte-identical) and the SCvx model's `cross` use them, and the study's replica test checks the
+library's SO(3). Left: `deploy_in_c.py`'s scalar-first quaternion kinematics and the SE(2) of
+`pose_graph_slam`, other conventions, and the test fixtures that copy networks on purpose
+(`test_vmap_mlp`). Suite: 3902 passed, 44 skipped; C snapshots unchanged; ty within the ratchet.
 
 ### Phase 7: tests and examples
 

@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
-from .adapter import HeaderSpec, register_adapter
+from ..codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
+from ..codegen.adapter import HeaderSpec, register_adapter
 
 if TYPE_CHECKING:
   from ..ir.types import SparsityType

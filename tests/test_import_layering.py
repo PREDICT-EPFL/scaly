@@ -36,7 +36,6 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.utils.ext_api": 0,
   "scaly.utils.names": 0,
   "scaly.utils.options": 0,
-  "scaly.utils.torch_state_dict": 0,
   "scaly.ir": 1,
   "scaly.ir.types": 1,
   "scaly.ir.expr": 1,
@@ -65,6 +64,13 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.function.sugar": 4,
   "scaly.function.api": 5,
   "scaly.function.factory": 5,
+  "scaly.geometry": 5,
+  "scaly.geometry.manifold": 5,
+  "scaly.geometry.quaternion": 5,
+  "scaly.geometry.vectors": 5,
+  "scaly.nn": 5,
+  "scaly.nn.layers": 5,
+  "scaly.nn.torch": 5,
   "scaly.ocp": 5,
   "scaly.ocp.altro": 5,
   "scaly.ocp.direct": 5,
@@ -159,8 +165,10 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.codegen.__main__": 7,
   "scaly.codegen.aot": 7,
   "scaly.codegen.c": 7,
-  "scaly.codegen.casadi": 7,
-  "scaly.codegen.cpp": 7,
+  "scaly.export": 7,
+  "scaly.export.acados": 7,
+  "scaly.export.casadi": 7,
+  "scaly.export.cpp": 7,
   "scaly.viz": 8,
   "scaly.viz.graph": 8,
   "scaly.viz.recording": 8,
@@ -267,7 +275,18 @@ def test_module_imports_standalone(module: str) -> None:
 
 
 # The packages built on the compiler, which ``import scaly`` leaves unloaded (``sc.<name>`` loads one).
-BUILT_ON_THE_CORE = ("scaly.integrators", "scaly.interp", "scaly.linalg", "scaly.ocp", "scaly.opt", "scaly.roots", "scaly.sets")
+BUILT_ON_THE_CORE = (
+  "scaly.export",
+  "scaly.geometry",
+  "scaly.integrators",
+  "scaly.interp",
+  "scaly.linalg",
+  "scaly.nn",
+  "scaly.ocp",
+  "scaly.opt",
+  "scaly.roots",
+  "scaly.sets",
+)
 
 
 def test_import_scaly_is_the_compiler_alone() -> None:
@@ -339,9 +358,9 @@ def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
 # The compiler's packages, and what none of them may name: solvers reach the compiler only through the
 # extern-callee protocol (``function/extern.py``), output adapters only through their registry
 # (``codegen/adapter.py``), and the packages built on the compiler (``linalg`` and its ops) through
-# the op registry. The adapters themselves still live under ``codegen/`` and are exempt.
+# the op registry. The adapters themselves live in ``scaly.export``.
 CORE_PACKAGES = ("scaly.ir", "scaly.ad", "scaly.function", "scaly.passes", "scaly.codegen", "scaly.utils")
-NOT_FROM_CORE = ("scaly.codegen.cpp", "scaly.codegen.casadi", *BUILT_ON_THE_CORE)
+NOT_FROM_CORE = BUILT_ON_THE_CORE
 
 
 def _named_modules(name: str, path: Path, stmt: ast.Import | ast.ImportFrom) -> list[str]:

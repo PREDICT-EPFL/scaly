@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from scaly.utils import load_torch_state_dict
+from scaly.nn import load_torch_state_dict
 
 NSTATE = 7
 NCTRL = 2

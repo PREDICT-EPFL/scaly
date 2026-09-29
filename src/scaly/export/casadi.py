@@ -5,8 +5,8 @@ to the caller in compressed-column order (``docs/how_it_works/generated_interfac
 
 from __future__ import annotations
 
-from .abi import c_ident
-from .adapter import EntryHook, register_adapter
+from ..codegen.abi import c_ident
+from ..codegen.adapter import EntryHook, register_adapter
 from ..function import ConcreteFunction
 from ..ir.types import SparsityType
 

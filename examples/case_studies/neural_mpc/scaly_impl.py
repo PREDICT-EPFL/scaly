@@ -1,7 +1,7 @@
 """The Real-time Neural MPC benchmark (Table II) with Scaly generating the network's code.
 
 The model is the paper's: a double integrator `x = (s, s_dot)`, `u = s_ddot`, plus an MLP residual
-`f_D(x)` read from the PyTorch state dict the baseline trains nothing into (`load_torch_state_dict`, so
+`f_D(x)` read from the PyTorch state dict the baseline trains nothing into (`nn.load_torch_state_dict`, so
 this file never imports torch). The layers stay dense matrix-vector loops in the generated C, and
 their derivatives go through those loops.
 
@@ -21,89 +21,38 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
-from scaly.codegen import write_module
-from scaly.utils import load_torch_state_dict
+from scaly import export, nn
 
 NX, NU, N = 2, 1, 10
 
 
-def layers(state_dict: dict[str, np.ndarray]) -> list[tuple[np.ndarray, np.ndarray]]:
+def layers(state_dict: dict[str, np.ndarray]) -> list[tuple[np.ndarray, np.ndarray | None]]:
   """`(W, b)` per linear layer, input first, in float64, from ml-casadi's MultiLayerPerceptron keys."""
   hidden = sorted({".".join(k.split(".")[:2]) for k in state_dict if k.startswith("hidden_layers.")}, key=lambda k: int(k.split(".")[1]))
-  names = ["input_layer", *hidden, "output_layer"]
-  return [(np.asarray(state_dict[f"{n}.weight"], np.float64), np.asarray(state_dict[f"{n}.bias"], np.float64)) for n in names]
+  return nn.layers_from_state_dict(state_dict, ["input_layer", *hidden, "output_layer"])
 
 
-def load(path: str | Path) -> list[tuple[np.ndarray, np.ndarray]]:
-  return layers(load_torch_state_dict(path))
-
-
-def mlp(params: list[tuple[np.ndarray, np.ndarray]], x: sc.Expr) -> sc.Expr:
-  h = x
-  for W, b in params[:-1]:
-    h = (sc.const(W) @ h + sc.const(b)).tanh()
-  W, b = params[-1]
-  return sc.const(W) @ h + sc.const(b)
+def load(path: str | Path) -> list[tuple[np.ndarray, np.ndarray | None]]:
+  return layers(nn.load_torch_state_dict(path))
 
 
 def xdot(params, x: sc.Expr, u: sc.Expr) -> sc.Expr:
-  """`[s_dot, u] + f_D(x)`."""
-  return sc.concat([x[1:2], u]) + mlp(params, x)
+  """`[s_dot, u] + f_D(x)`, `f_D` the network: tanh on its hidden layers, linear out."""
+  return sc.concat([x[1:2], u]) + nn.mlp(x, params)
 
 
 def acados_functions(params, n_p: int = 0) -> dict[str, sc.Function]:
   """The three functions acados' ERK integrator calls, under the names and argument lists its generated
-  model header declares; `p` is acados' parameter vector, unused (length 0 in the naive OCP).
-
-  CasADi passes the sensitivity `Sx` as a dense 2x2 matrix; Scaly's CasADi layer refuses dense matrices
-  (Scaly is row-major, CasADi column-major), so `Sx` and its derivative travel as flat column-major
-  vectors, which acados copies the same way (`external_function_generic.c`, `d_cvt_colmaj_to_casadi`:
-  a dense argument is `nrow * ncol` contiguous values).
-
-  The network is written into each body, not called as a model `Function`: the derivative of a call
-  node recomputes the callee's forward pass beside the call's own value, which costs 2x at 5 x 128
-  (`todo.md`, CS-10)."""
-
-  @sc.function(sc.L("x", NX), sc.L("u", NU), sc.L("p", n_p), name="wr_expl_ode_fun")
-  def ode(x, u, p):
-    return xdot(params, x, u)
-
-  @sc.function(
-    sc.L("x", NX),
-    sc.L("Sx", NX * NX),
-    sc.L("Sp", NX * NU),
-    sc.L("u", NU),
-    sc.L("p", n_p),
-    output=sc.G("f", "Sx_dot", "Sp_dot"),
-    name="wr_expl_vde_forw",
-  )
-  def vde_forw(x, Sx, Sp, u, p):
-    f = xdot(params, x, u)
-    jx, ju = sc.jacobian(f, x), sc.jacobian(f, u)
-    sx = Sx.reshape((NX, NX)).T  # column-major in, so the row-major reshape is the transpose
-    return f, (jx @ sx).T.reshape((NX * NX,)), jx @ Sp + ju.reshape((NX * NU,))
-
-  @sc.function(sc.L("x", NX), sc.L("lam", NX), sc.L("u", NU), sc.L("p", n_p), name="wr_expl_vde_adj")
-  def vde_adj(x, lam, u, p):
-    f = xdot(params, x, u)
-    return sc.concat([sc.jacobian(f, x).T @ lam, sc.jacobian(f, u).T @ lam])
-
-  return {"wr_expl_ode_fun": ode, "wr_expl_vde_forw": vde_forw, "wr_expl_vde_adj": vde_adj}
+  model header declares (`scaly.export.acados_functions` for the model `wr`); `p` is acados' parameter
+  vector, unused (length 0 in the naive OCP). The network is written into each body, not called as a
+  model `Function`: the derivative of a call node recomputes the callee's forward pass beside the
+  call's own value, which costs 2x at 5 x 128 (`todo.md`, CS-10)."""
+  return export.acados_functions(lambda x, u, p: xdot(params, x, u), NX, NU, name="wr", n_p=n_p)
 
 
 def install_dropin(params, code_dir: Path, n_p: int = 0) -> list[Path]:
-  """Replace acados' generated model sources in `code_dir/wr_model` by Scaly's. acados builds its C with
-  `casadi_int` as `int`; the Scaly layer defaults it to CasADi's `long long` unless defined, so each
-  file is prefixed with the definition."""
-  written = []
-  for name, fn in acados_functions(params, n_p).items():
-    module = write_module(fn, code_dir / "wr_model" / "scaly", adapters=("casadi",))
-    target = code_dir / "wr_model" / f"{name}.c"
-    header = (code_dir / "wr_model" / "scaly" / module.header_name).read_text()
-    source = (code_dir / "wr_model" / "scaly" / module.source_name).read_text().replace(f'#include "{module.header_name}"', header)
-    target.write_text("#define casadi_int int\n" + source)
-    written.append(target)
-  return written
+  """Replace acados' generated model sources in `code_dir/wr_model` by Scaly's (`scaly.export.install_dropin`)."""
+  return export.install_dropin(acados_functions(params, n_p), code_dir / "wr_model")
 
 
 def taylor_function(params, nodes: int = N) -> sc.Function:
@@ -112,7 +61,7 @@ def taylor_function(params, nodes: int = N) -> sc.Function:
 
   @sc.function(sc.L("x", NX), name="taylor_node")
   def node(a):
-    y = mlp(params, a)
+    y = nn.mlp(a, params)
     return sc.concat([a, y, sc.jacobian(y, a).T.reshape((NX * NX,))])
 
   @sc.function(sc.L("xs", nodes * NX), name="taylor_params")

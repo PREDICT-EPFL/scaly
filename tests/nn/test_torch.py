@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from scaly.utils import load_torch_state_dict
+from scaly.nn import load_torch_state_dict
 
 
 def test_load_torch_state_dict_reads_modern_torch_zip_without_torch(tmp_path) -> None:

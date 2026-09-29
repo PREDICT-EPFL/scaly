@@ -207,8 +207,8 @@ exported and nested calls are direct.
 
 `codegen/abi.py` owns the ABI itself: the entry signature, the status codes and symbol mangling.
 The typed layers on top are an API, not the ABI: the C header's structs render in `codegen/aot.py`,
-the C++ `Buffer` and namespace in `codegen/cpp.py`, and the CasADi 3.8 compatible symbols in
-`codegen/casadi.py`. The signature follows CasADi's and everything is specified in
+the C++ `Buffer` and namespace in `export/cpp.py`, and the CasADi 3.8 compatible symbols in
+`export/casadi.py`. The signature follows CasADi's and everything is specified in
 [The generated interface](generated_interface.md).
 
 ### Compiling: `codegen/aot.py`, `codegen/jit.py`

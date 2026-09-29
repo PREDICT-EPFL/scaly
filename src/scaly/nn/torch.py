@@ -1,4 +1,4 @@
-"""Read a PyTorch ``.pt`` checkpoint into NumPy arrays, so a workload can use one without torch."""
+"""PyTorch checkpoints without torch: a ``.pt`` state dict read into NumPy arrays, and its linear layers as ``(W, b)`` pairs."""
 
 from __future__ import annotations
 
@@ -116,4 +116,14 @@ def load_torch_state_dict(path: str | Path) -> dict[str, np.ndarray]:
   return {k: v.tensor if isinstance(v, Parameter) else v for k, v in state.items()}
 
 
-__all__ = ["load_torch_state_dict"]
+def layers_from_state_dict(state_dict: dict[str, np.ndarray], names: list[str] | tuple[str, ...]) -> list[tuple[np.ndarray, np.ndarray | None]]:
+  """The ``(W, b)`` of each named linear layer, in float64, as ``mlp`` takes them: ``{name}.weight``
+  (PyTorch's ``(out, in)``) and ``{name}.bias``, ``None`` for a layer without one."""
+  out = []
+  for name in names:
+    bias = state_dict.get(f"{name}.bias")
+    out.append((np.asarray(state_dict[f"{name}.weight"], np.float64), None if bias is None else np.asarray(bias, np.float64)))
+  return out
+
+
+__all__ = ["layers_from_state_dict", "load_torch_state_dict"]

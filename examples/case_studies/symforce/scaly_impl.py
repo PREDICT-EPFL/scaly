@@ -35,6 +35,8 @@ import numpy as np
 
 import scaly as sc
 from scaly import linalg
+from scaly.geometry import Pose3
+from scaly.geometry import quaternion as quat
 
 EPS = 10 * np.finfo(np.float64).eps
 MATCH_SIGMA = 0.1
@@ -133,67 +135,22 @@ def np_exp(v):
   return np.r_[np.sin(theta / 2) / theta * v, np.cos(theta / 2)]
 
 
-# --- the same in Scaly expressions ---
+# --- the same in Scaly expressions: `scaly.geometry`, SymForce's conventions (Hamilton, scalar last,
+# the rotation perturbed on the right, Pose3 as SO(3) x R^3) ---
 
-
-def q_mul(a, b):
-  ax, ay, az, aw = a[0], a[1], a[2], a[3]
-  bx, by, bz, bw = b[0], b[1], b[2], b[3]
-  return sc.stack(
-    [
-      aw * bx + ax * bw + ay * bz - az * by,
-      aw * by - ax * bz + ay * bw + az * bx,
-      aw * bz + ax * by - ay * bx + az * bw,
-      aw * bw - ax * bx - ay * by - az * bz,
-    ]
-  )
-
-
-def q_conj(q):
-  return sc.stack([-q[0], -q[1], -q[2], q[3]])
-
-
-def q_rotate(q, v):
-  """`R(q) v` through the rotation matrix, as SymForce's generated code computes it."""
-  x, y, z, w = q[0], q[1], q[2], q[3]
-  r = [
-    [1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * z * w, 2 * x * z + 2 * y * w],
-    [2 * x * y + 2 * z * w, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * x * w],
-    [2 * x * z - 2 * y * w, 2 * y * z + 2 * x * w, 1 - 2 * x * x - 2 * y * y],
-  ]
-  return sc.stack([r[i][0] * v[0] + r[i][1] * v[1] + r[i][2] * v[2] for i in range(3)])
-
-
-def q_exp(v):
-  theta = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + EPS * EPS).sqrt()
-  s = (0.5 * theta).sin() / theta
-  return sc.stack([s * v[0], s * v[1], s * v[2], (0.5 * theta).cos()])
-
-
-def q_log(q):
-  """SymForce's `Rot3.to_tangent`: `w` clamped to `1 - eps`, the sign of `w` taken with `sign(0) = 1`."""
-  w = q[3]
-  sign = sc.where(sc.less(w, 0.0), -1.0, 1.0)
-  ws = sc.minimum(w.abs(), 1.0 - EPS)
-  scale = sign * 2.0 * ws.acos() / (1.0 - ws * ws).sqrt()
-  return sc.stack([scale * q[0], scale * q[1], scale * q[2]])
-
-
-def retract(pose, delta):
-  """SymForce's `Pose3.retract`: rotation on the right by `Exp`, translation added."""
-  return sc.concat([q_mul(pose[:4], q_exp(delta[:3])), pose[4:] + delta[3:]])
+POSE = Pose3()
 
 
 def matching_residual(pose, landmark, measured):
-  return (q_rotate(q_conj(pose[:4]), landmark - pose[4:]) - measured) / MATCH_SIGMA
+  return (quat.rotate(quat.conj(pose[:4]), landmark - pose[4:]) - measured) / MATCH_SIGMA
 
 
 def odometry_residual(pose_a, pose_b, measured):
-  qa_inv = q_conj(pose_a[:4])
-  pred_q = q_mul(qa_inv, pose_b[:4])
-  pred_t = q_rotate(qa_inv, pose_b[4:] - pose_a[4:])
+  qa_inv = quat.conj(pose_a[:4])
+  pred_q = quat.mul(qa_inv, pose_b[:4])
+  pred_t = quat.rotate(qa_inv, pose_b[4:] - pose_a[4:])
   # local_coordinates(pred, measured) = [Log(pred.R^-1 measured.R); measured.t - pred.t]
-  rot = q_log(q_mul(q_conj(pred_q), measured[:4]))
+  rot = quat.log(quat.mul(quat.conj(pred_q), measured[:4]))
   return sc.concat([rot, measured[4:] - pred_t]) / sc.const(ODOM_SIGMAS)
 
 
@@ -212,14 +169,14 @@ def gauss_newton(r, J, low):
 # One matching factor at pose `pose` (the tangent offset `delta` is evaluated at zero).
 @sc.function(sc.L("pose", 7), sc.L("delta", 6), sc.L("landmark", 3), sc.L("measured", 3), name="symforce_matching_factor")
 def matching_factor(pose, delta, landmark, measured):
-  r = matching_residual(retract(pose, delta), landmark, measured)
+  r = matching_residual(POSE.retract(pose, delta), landmark, measured)
   return gauss_newton(r, sc.jacobian(r, delta), LOW6)
 
 
 # One odometry factor between two poses.
 @sc.function(sc.L("pose_a", 7), sc.L("pose_b", 7), sc.L("delta", 12), sc.L("measured", 7), name="symforce_odometry_factor")
 def odometry_factor(pose_a, pose_b, delta, measured):
-  r = odometry_residual(retract(pose_a, delta[:6]), retract(pose_b, delta[6:]), measured)
+  r = odometry_residual(POSE.retract(pose_a, delta[:6]), POSE.retract(pose_b, delta[6:]), measured)
   return gauss_newton(r, sc.jacobian(r, delta), LOW12)
 
 
@@ -229,11 +186,11 @@ def pose_matching_function(m: int) -> sc.Function:
 
   @sc.function(sc.L("pose", 7), sc.L("delta", 6), sc.L("landmarks", 3 * m), sc.L("measured", 3 * m), name=f"symforce_pose_matching_{m}")
   def pose_matching(pose, delta, landmarks, measured):
-    moved = retract(pose, delta)
-    q_inv, t = q_conj(moved[:4]), moved[4:]
+    moved = POSE.retract(pose, delta)
+    q_inv, t = quat.conj(moved[:4]), moved[4:]
     rows = []
     for j in range(m):
-      rows.append((q_rotate(q_inv, landmarks[3 * j : 3 * j + 3] - t) - measured[3 * j : 3 * j + 3]) / MATCH_SIGMA)
+      rows.append((quat.rotate(q_inv, landmarks[3 * j : 3 * j + 3] - t) - measured[3 * j : 3 * j + 3]) / MATCH_SIGMA)
     r = sc.concat(rows)
     return gauss_newton(r, sc.jacobian(r, delta), LOW6)
 
@@ -242,7 +199,7 @@ def pose_matching_function(m: int) -> sc.Function:
 
 @sc.function(sc.L("pose", 7), sc.L("delta", 6), name="symforce_retract")
 def retract_step(pose, delta):
-  return retract(pose, delta)
+  return POSE.retract(pose, delta)
 
 
 class Layout:

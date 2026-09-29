@@ -27,7 +27,7 @@ benchmarks/problems/unbumpercars/data/ct_full_xlarge.pt    # the continuous-time
 ```
 
 No `torch` dependency is required. Both are read with
-`scaly.utils.load_torch_state_dict`, then evaluated with plain NumPy for the
+`scaly.nn.load_torch_state_dict`, then evaluated with plain NumPy for the
 simulator and with CasADi / Scaly expressions inside the filters.
 
 Per car state and input are:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 import scaly as sc
+from scaly.geometry import cross
 
 N_NODES = 5
 NX, NU = 16, 4
@@ -26,10 +27,6 @@ T_MIN, T_MAX = 1.5, 6.5
 X_MAX = np.r_[2.0, [10.0] * 3, [V_MAX] * 3, [1.0] * 4, [W_MAX] * 3]
 X_MIN = np.r_[1.0, [-10.0] * 3, [-V_MAX] * 3, [-1.0] * 4, [-W_MAX] * 3]
 T_BOUNDS = (0.0, 10.0)
-
-def cross(a, b):
-  return sc.stack([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
-
 
 def norm(v):
   return (v * v).sum().sqrt()

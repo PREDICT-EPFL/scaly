@@ -16,6 +16,7 @@ import numpy as np
 from scipy import optimize
 
 import scaly as sc
+from scaly.geometry import quaternion as quat
 from scaly import linalg
 
 N, M = 3, 4
@@ -161,25 +162,10 @@ def test_lm_with_the_sparse_factor_in_the_loop_reaches_the_least_squares_optimum
   np.testing.assert_allclose(X, ref.x, atol=1e-7)
 
 
-EPS = 10 * np.finfo(np.float64).eps
-
-
-def q_exp(v):
-  theta = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + EPS * EPS).sqrt()
-  s = (0.5 * theta).sin() / theta
-  return sc.stack([s * v[0], s * v[1], s * v[2], (0.5 * theta).cos()])
-
-
-def q_log(q):
-  sign = sc.where(sc.less(q[3], 0.0), -1.0, 1.0)
-  ws = sc.minimum(q[3].abs(), 1.0 - EPS)
-  scale = sign * 2.0 * ws.acos() / (1.0 - ws * ws).sqrt()
-  return sc.stack([scale * q[0], scale * q[1], scale * q[2]])
-
-
 @sc.function(sc.L("v", 3), sc.L("q", 4), output=sc.G("exp", "log_exp", "log_q"))
 def so3(v, q):
-  return q_exp(v), q_log(q_exp(v)), q_log(q)
+  # The study's SO(3) is scaly.geometry's quaternion module.
+  return quat.exp(v), quat.log(quat.exp(v)), quat.log(q)
 
 
 def test_so3_exp_and_log_follow_symforce_conventions() -> None:
