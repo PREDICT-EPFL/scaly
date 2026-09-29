@@ -15,8 +15,9 @@ def test_group_widths_and_nesting() -> None:
   assert G(L("a", 1), L("b", 1)).names == ("a", "b")
   eight = G(*(L(f"x{i}", 1) for i in range(8)))
   assert eight.size == 8
-  with pytest.raises(TypeError, match="2 to 8"):
-    _G((L("a", 1),))
+  assert G(L("a", 1)).names == ("a",) and G(L("a", 1)).symbols() == (L("a", 1).symbols(),)  # a one-element tuple
+  with pytest.raises(TypeError, match="1 to 8"):
+    _G(())
   with pytest.raises(TypeError, match="nest for more"):
     _G(tuple(L(f"x{i}", 1) for i in range(9)))
   nested = G(G(L("a", 1), L("b", 1)), L("c", 1))

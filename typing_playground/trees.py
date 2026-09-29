@@ -1,15 +1,16 @@
 """Structure declarations: ``Tree``, ``L`` and ``G``, and the flatten/unflatten utilities over them.
 
 A leaf declaration is a shape or ``...``, a hole. Holes are how output shapes are left to the trace
-and how templates leave input shapes to the call site; ``with_shapes`` fills them and ``resolved``
-checks concrete shapes against the declaration.
+and how a declaration leaves input shapes to the call site; ``with_shapes`` fills them and ``resolved``
+checks concrete shapes against the declaration. A function's inputs are a parameter list, a group
+built by ``parameter_list`` with one tree per parameter; ``G`` is only ever structure.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from types import EllipsisType
-from typing import Any, cast, overload
+from typing import Any, TypeGuard, cast, overload
 
 from .expr import Buffer, Expr, Shape, ShapeDecl, as_shape
 
@@ -42,8 +43,8 @@ class Tree[Symbolic, Numerical]:
     """Same structure, every name prefixed (``lam:``, ``fwd:``); holes stay holes."""
     raise NotImplementedError
 
-  def with_shapes(self, shapes: tuple[Shape, ...]) -> Tree[Symbolic, Numerical]:
-    """Same structure with every decl replaced by the given shape."""
+  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> Tree[Symbolic, Numerical]:
+    """Same structure with every decl replaced by the given shape or hole."""
     raise NotImplementedError
 
   def resolved(self, shapes: tuple[Shape, ...]) -> tuple[Shape, ...]:
@@ -60,6 +61,18 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"unknown name {name!r}; declared {self.names}")
     return self.names.index(name)
 
+  def is_symbolic(self, value: Symbolic | Numerical, /) -> TypeGuard[Symbolic]:
+    """Whether ``value`` has at least one leaf and every leaf is an ``Expr``: the leaf-kind half of
+    ``__call__``'s dispatch. Structure is left to the call it dispatches to, which reports it
+    against the declared names."""
+    got = leaves(value)
+    return bool(got) and all(isinstance(v, Expr) for v in got)
+
+  def is_numerical(self, value: Symbolic | Numerical, /) -> TypeGuard[Numerical]:
+    """Whether no leaf of ``value`` is an ``Expr``. Values with no leaves land here and are reported
+    as a structure error rather than as a mixed call."""
+    return not any(isinstance(v, Expr) for v in leaves(value))
+
   def _check_unique(self) -> None:
     if len(set(self.names)) != len(self.names):
       raise ValueError(f"duplicate names in {self.names}")
@@ -67,7 +80,7 @@ class Tree[Symbolic, Numerical]:
 
 class L(Tree[Expr, Buffer]):
   """One named tensor. The real ``L`` also takes a ``TensorType`` for dtype and ``diff`` and
-  requires the shape argument today; templates need it to be optional, as here."""
+  requires the shape argument today; holes need it to be optional, as here."""
 
   def __init__(self, name: str, shape: int | ShapeDecl = ..., /) -> None:
     self.names = (name,)
@@ -79,7 +92,7 @@ class L(Tree[Expr, Buffer]):
   def relabel(self, prefix: str) -> L:
     return L(prefix + self.names[0], self.decls[0])
 
-  def with_shapes(self, shapes: tuple[Shape, ...]) -> L:
+  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> L:
     return L(self.names[0], shapes[0])
 
 
@@ -87,8 +100,8 @@ class _G(Tree[Any, Any]):
   """Runtime class behind ``G``; the static types live on ``G``'s overloads."""
 
   def __init__(self, parts: tuple[Tree[Any, Any], ...], *, public: bool = True) -> None:
-    if public and not 2 <= len(parts) <= 8:
-      raise TypeError(f"G takes 2 to 8 trees, got {len(parts)}; nest for more")
+    if public and not 1 <= len(parts) <= 8:
+      raise TypeError(f"G takes 1 to 8 trees, got {len(parts)}; nest for more")
     self.parts = parts
     self.names = tuple(n for part in parts for n in part.names)
     self.decls = tuple(d for part in parts for d in part.decls)
@@ -100,7 +113,7 @@ class _G(Tree[Any, Any]):
   def relabel(self, prefix: str) -> _G:
     return _G(tuple(part.relabel(prefix) for part in self.parts), public=False)
 
-  def with_shapes(self, shapes: tuple[Shape, ...]) -> _G:
+  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> _G:
     out: list[Tree[Any, Any]] = []
     i = 0
     for part in self.parts:
@@ -112,6 +125,8 @@ class _G(Tree[Any, Any]):
 # The one ladder in the design: deriving the Buffer structure from the Expr structure needs a
 # type-level map, which Python lacks, so each width is spelled out (README, "Why a wrapper class").
 # fmt: off
+@overload
+def G[SA, NA](a: Tree[SA, NA], /) -> Tree[tuple[SA], tuple[NA]]: ...
 @overload
 def G[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /) -> Tree[tuple[SA, SB], tuple[NA, NB]]: ...
 @overload
@@ -128,8 +143,19 @@ def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](a: Tree[SA, NA], b
 def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], h: Tree[SH, NH], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH]]: ...
 # fmt: on
 def G(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
-  """Group trees side by side: ``G(L("x", 3), L("p", ()))`` is ``tuple[Expr, Expr]`` / ``tuple[Buffer, Buffer]``."""
+  """Group trees side by side: ``G(L("x", 3), L("p", ()))`` is ``tuple[Expr, Expr]`` / ``tuple[Buffer, Buffer]``.
+  Groups are never normalized: ``G(L("x"))`` is a one-element tuple, not a leaf."""
   return _G(parts)
+
+
+def parameter_list(trees: tuple[Tree[Any, Any], ...], /) -> _G:
+  """One tree per parameter, any number of them, zero included."""
+  return _G(trees, public=False)
+
+
+def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _G:
+  """``params`` with ``tree`` as one more parameter, which is how seeded modes extend a signature."""
+  return _G((*cast(_G, params).parts, tree), public=False)
 
 
 def leaves(value: object, /) -> tuple[Expr | Buffer, ...]:
@@ -146,7 +172,7 @@ def shapes_of(value: object, /) -> tuple[Shape, ...]:
 
 
 def skeleton(value: object, /) -> Any:
-  """Nested shapes: the structure-aware key a bare template caches instances under."""
+  """Nested shapes: the structure-aware key a bare function caches instances under."""
   if isinstance(value, tuple):
     return tuple(skeleton(v) for v in value)
   return leaves(value)[0].shape
@@ -182,7 +208,7 @@ def check_structure(tree: Tree[Any, Any], value: object, what: str) -> None:
 
 def inferred_tree(value: object, names: Iterator[str], /) -> Tree[Any, Any]:
   """A declaration read off a value: its structure and leaf shapes, with the given leaf names.
-  This is what a bare template does on first call; ``flat_tree`` is the real library's analogue."""
+  This is what a bare function does on first call; ``flat_tree`` is the real library's analogue."""
   if isinstance(value, tuple):
     return _G(tuple(inferred_tree(v, names) for v in value), public=False)
   return L(next(names), leaves(value)[0].shape)

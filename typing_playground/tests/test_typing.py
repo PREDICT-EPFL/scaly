@@ -9,14 +9,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, assert_type
 
 from typing_playground.expr import Buffer, Expr
-from typing_playground.function import Function, function
+from typing_playground.concrete import ConcreteFunction
+from typing_playground.function import Function, forward, function, gradient, lagrangian_hessian, vmap
 from typing_playground.opti import Problem, ProblemSpec, QPData, problem
-from typing_playground.templates import FunctionTemplate, forward, gradient, lagrangian_hessian, template
 from typing_playground.tests.definitions import (
   adj_square_x,
   caller,
+  constant,
   cost,
   cost_batch,
+  cost_packed,
   cost_t,
   duplicate,
   filter_problem,
@@ -32,6 +34,7 @@ from typing_playground.tests.definitions import (
   quadratic,
   quadratic_ipopt,
   scale,
+  scale_annotated,
   square,
   step,
   step_flat,
@@ -41,72 +44,123 @@ from typing_playground.trees import G, L, Tree
 if TYPE_CHECKING:
   # declarations: the count of a group is static, and only trees may be grouped
   L("x", "3")  # ty: ignore[invalid-argument-type]
-  G(L("x", 3))  # ty: ignore[no-matching-overload]
+  G()  # ty: ignore[no-matching-overload]
   G(L("x", 3), L("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
+  assert_type(G(L("x", 3)), Tree[tuple[Expr], tuple[Buffer]])  # never normalized to the leaf
   assert_type(G(L("x", 3), L("p", ())), Tree[tuple[Expr, Expr], tuple[Buffer, Buffer]])
   assert_type(G(G(L("a", 1), L("b", 1)), L("c", 1)), Tree[tuple[tuple[Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], Buffer]])
 
-  # functions: structure, count and leaf kind are all checked, on both sides
-  assert_type(duplicate, Function[Expr, Buffer, tuple[Expr, Expr], tuple[Buffer, Buffer]])
+  # functions: the input types are the parameter lists; count, structure and leaf kind are checked on both sides
+  assert_type(duplicate, Function[tuple[Expr], tuple[Buffer], tuple[Expr, Expr], tuple[Buffer, Buffer]])
+  assert_type(multiply, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
   assert_type(duplicate.symbolic_call(Expr((3,))), tuple[Expr, Expr])
   assert_type(duplicate.numerical_call(Buffer((3,))), tuple[Buffer, Buffer])
-  assert_type(multiply.numerical_call((Buffer((3,)), Buffer((3,)))), Buffer)
-  assert_type(step.numerical_call(((Buffer((4,)), Buffer((2,))), (Buffer((10,)), Buffer((3,)), Buffer(())))), Buffer)
-  assert_type(step_flat.numerical_call((Buffer((4,)), Buffer((2,)), Buffer((10,)), Buffer((3,)), Buffer(()))), Buffer)
-  multiply.numerical_call((Buffer((3,)),))  # ty: ignore[invalid-argument-type]
+  assert_type(multiply.numerical_call(Buffer((3,)), Buffer((3,))), Buffer)
+  assert_type(step.numerical_call((Buffer((4,)), Buffer((2,))), (Buffer((10,)), Buffer((3,)), Buffer(()))), Buffer)
+  assert_type(step_flat.numerical_call(Buffer((4,)), Buffer((2,)), Buffer((10,)), Buffer((3,)), Buffer(())), Buffer)
   multiply.numerical_call(Buffer((3,)))  # ty: ignore[invalid-argument-type]
-  multiply.numerical_call((Expr((3,)), Expr((3,))))  # ty: ignore[invalid-argument-type]
-  multiply.symbolic_call((Buffer((3,)), Buffer((3,))))  # ty: ignore[invalid-argument-type]
-  duplicate.symbolic_call((Expr((3,)),))  # ty: ignore[invalid-argument-type]
-  step.numerical_call((Buffer((4,)), Buffer((2,)), Buffer((10,)), Buffer((3,)), Buffer(())))  # ty: ignore[invalid-argument-type]
-  step_flat.numerical_call(((Buffer((4,)), Buffer((2,))), (Buffer((10,)), Buffer((3,)), Buffer(()))))  # ty: ignore[invalid-argument-type]
+  multiply.numerical_call((Buffer((3,)), Buffer((3,))))  # ty: ignore[invalid-argument-type]
+  multiply.numerical_call(Expr((3,)), Expr((3,)))  # ty: ignore[invalid-argument-type]
+  multiply.symbolic_call(Buffer((3,)), Buffer((3,)))  # ty: ignore[invalid-argument-type]
+  duplicate.symbolic_call(Expr((3,)), Expr((3,)))  # ty: ignore[invalid-argument-type]
+  step.numerical_call(Buffer((4,)), Buffer((2,)), Buffer((10,)), Buffer((3,)), Buffer(()))  # ty: ignore[invalid-argument-type]
+  step_flat.numerical_call((Buffer((4,)), Buffer((2,))), (Buffer((10,)), Buffer((3,)), Buffer(())))  # ty: ignore[invalid-argument-type]
 
-  # decorator and body must agree
-  function(G(L("x", 3), L("y", 3)), L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
-  function(L("x", 3), G(L("a", ...), L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  # decorator and body must agree: one tree per parameter, a group being one parameter; 0 to 8 of them
+  function(L("x", 3), L("y", 3), outputs=L("z", ...))(lambda x, y: x)
+  function(G(L("x", 3), L("y", 3)), outputs=L("z", ...))(lambda xy: xy[0])
+  function(G(L("x", 3), L("y", 3)), outputs=L("z", ...))(lambda x, y: x)  # ty: ignore[invalid-argument-type]
+  assert_type(cost_packed, Function[tuple[tuple[Expr, Expr]], tuple[tuple[Buffer, Buffer]], Expr, Buffer])
+  assert_type(cost_packed.numerical_call((Buffer((3,)), Buffer(()))), Buffer)
+  function(G(L("x", 3), L("y", 3)), L("z", ...))  # ty: ignore[no-matching-overload]
+  assert_type(constant, Function[tuple[()], tuple[()], Expr, Buffer])
+  assert_type(constant(), Buffer)
+  assert_type(constant.symbolic_call(), Expr)
+  constant(Buffer(()))  # ty: ignore[no-matching-overload]
+  eight = function(L("a"), L("b"), L("c"), L("d"), L("e"), L("f"), L("g"), L("h"), outputs=L("y"))(lambda a, b, c, d, e, f, g, h: a)
+  assert_type(
+    eight,
+    Function[
+      tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr], tuple[Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer], Expr, Buffer
+    ],
+  )
+  function(L("a"), L("b"), L("c"), L("d"), L("e"), L("f"), L("g"), L("h"), L("i"), outputs=L("y"))  # ty: ignore[no-matching-overload]
+  function(L("x", 3), L("y", 3), outputs=L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  function(L("x", 3), L("y", 3), outputs=L("z", ...))(lambda inputs: inputs[0])  # ty: ignore[invalid-argument-type]
+  function(L("x", 3), outputs=L("z", ...))(lambda x, y: x)  # ty: ignore[invalid-argument-type]
+  function(L("x", 3), outputs=G(L("a", ...), L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
+
+  @function(L("x", 3), L("y", 3), outputs=L("z", ...))  # ty: ignore[invalid-argument-type]
+  def wrong_kind(x: Buffer, y: Expr) -> Expr:
+    return y
+
+  # `__call__` dispatches on the leaf kind, both sides typed; mixing them matches neither overload
+  assert_type(cost(Buffer((3,)), Buffer(())), Buffer)
+  assert_type(cost(Expr((3,)), Expr(())), Expr)
+  assert_type(duplicate(Expr((3,))), tuple[Expr, Expr])
+  assert_type(cost_t(Buffer((3,)), Buffer(())), Buffer)
+  assert_type(cost.instantiate()(Expr((3,)), Expr(())), Expr)
+  assert_type(scale_annotated(Expr((3,)), Expr(())), Any)  # the numerical overload wins on an `Any` side
+  cost(Expr((3,)), Buffer(()))  # ty: ignore[no-matching-overload]
+  cost(Buffer((3,)))  # ty: ignore[no-matching-overload]
 
   # composition preserves types
-  assert_type(multiply.symbolic_call(duplicate.symbolic_call(Expr((3,)))), Expr)
+  assert_type(multiply.symbolic_call(*duplicate.symbolic_call(Expr((3,)))), Expr)
   multiply.symbolic_call(square.symbolic_call(Expr((3,))))  # ty: ignore[invalid-argument-type]
 
-  # derivatives: the source's input tree is preserved, seeded modes pair it with the new group
+  # derivatives keep the source's parameters; seeded modes append one, flat, in a single overload
   assert_type(grad_f_x, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
   assert_type(hess_f_x, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
-  assert_type(jac_square_x, Function[Expr, Buffer, Expr, Buffer])
-  assert_type(grad_f_x.numerical_call((Buffer((3,)), Buffer(()))), Buffer)
-  assert_type(fwd_f_x, Function[tuple[tuple[Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], Buffer], Expr, Buffer])
+  assert_type(jac_square_x, Function[tuple[Expr], tuple[Buffer], Expr, Buffer])
+  assert_type(grad_f_x.numerical_call(Buffer((3,)), Buffer(())), Buffer)
+  assert_type(fwd_f_x, Function[tuple[Expr, Expr, Expr], tuple[Buffer, Buffer, Buffer], Expr, Buffer])
   assert_type(adj_square_x, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
+  assert_type(adj_square_x.numerical_call(Buffer((3,)), Buffer((3,))), Buffer)
   assert_type(hess_l, Function[tuple[Expr, tuple[Expr, Expr]], tuple[Buffer, tuple[Buffer, Buffer]], Expr, Buffer])
-  assert_type(fwd_f_x.numerical_call(((Buffer((3,)), Buffer(())), Buffer((3,)))), Buffer)
-  assert_type(hess_l.numerical_call((Buffer((3,)), (Buffer((3,)), Buffer((3,))))), Buffer)
+  assert_type(
+    forward(step, "next", "state"),
+    Function[
+      tuple[tuple[Expr, Expr], tuple[Expr, Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], tuple[Buffer, Buffer, Buffer], Buffer], Expr, Buffer
+    ],
+  )
+  assert_type(fwd_f_x.numerical_call(Buffer((3,)), Buffer(()), Buffer((3,))), Buffer)
+  assert_type(hess_l.numerical_call(Buffer((3,)), (Buffer((3,)), Buffer((3,)))), Buffer)
   grad_f_x.numerical_call(Buffer((3,)))  # ty: ignore[invalid-argument-type]
-  fwd_f_x.numerical_call((Buffer((3,)), Buffer(()), Buffer((3,))))  # ty: ignore[invalid-argument-type]
-  hess_l.numerical_call((Buffer((3,)), Buffer((6,))))  # ty: ignore[invalid-argument-type]
+  fwd_f_x.numerical_call((Buffer((3,)), Buffer(())), Buffer((3,)))  # ty: ignore[invalid-argument-type]
+  hess_l.numerical_call(Buffer((3,)), Buffer((3,)), Buffer((3,)))  # ty: ignore[invalid-argument-type]
 
-  # vmap is typed by the callee's trees
+  # vmap is typed by the callee's trees, with or without holes
   assert_type(cost_batch, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
+  assert_type(cost_batch.numerical_call(Buffer((7, 3)), Buffer((7,))), Buffer)
+  assert_type(vmap(cost_t, 4), Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
 
-  # templates: exactly Function's four variables, so calls typecheck identically
-  assert_type(cost_t, FunctionTemplate[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
-  assert_type(cost_t.numerical_call((Buffer((30, 40)), Buffer((5,)))), Buffer)
-  assert_type(cost_t.symbolic_call((Expr((3,)), Expr(()))), Expr)
-  assert_type(cost_t.instantiate(((30, 40), (5,))), Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
-  assert_type(caller, Function[Expr, Buffer, Expr, Buffer])
+  # holes are invisible to the types; shapes live on the instance, which types its calls the same way
+  assert_type(cost_t, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
+  assert_type(cost_t.numerical_call(Buffer((30, 40)), Buffer((5,))), Buffer)
+  assert_type(cost_t.symbolic_call(Expr((3,)), Expr(())), Expr)
+  assert_type(cost_t.instantiate(((30, 40), (5,))), ConcreteFunction[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
+  assert_type(cost.instantiate().numerical_call(Buffer((3,)), Buffer(())), Buffer)
+  assert_type(cost.instantiate().input_shapes, tuple[tuple[int, ...], ...])
+  cost.input_shapes  # ty: ignore[unresolved-attribute]
+  assert_type(caller, Function[tuple[Expr], tuple[Buffer], Expr, Buffer])
   cost_t.numerical_call(Buffer((3,)))  # ty: ignore[invalid-argument-type]
-  cost_t.numerical_call((Expr((3,)), Expr((3,))))  # ty: ignore[invalid-argument-type]
-  cost_t.symbolic_call((Buffer((3,)), Buffer((3,))))  # ty: ignore[invalid-argument-type]
-  template(G(L("x"), L("p")), L("f"))(lambda x, p: x)  # ty: ignore[invalid-argument-type]
+  cost_t.numerical_call(Expr((3,)), Expr((3,)))  # ty: ignore[invalid-argument-type]
+  cost_t.symbolic_call(Buffer((3,)), Buffer((3,)))  # ty: ignore[invalid-argument-type]
+  function(L("x"), L("p"), outputs=L("f"))(lambda x, p: x)
+  function(L("x"), L("p"), outputs=L("f"))(lambda inputs: inputs[0])  # ty: ignore[invalid-argument-type]
 
-  # one wrapper, two overloads: Functions stay Functions, templates stay templates
-  assert_type(gradient(cost, "f", "x"), Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
-  assert_type(gradient(cost_t, "f", "x"), FunctionTemplate[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
-  assert_type(forward(cost_t, "f", "x"), FunctionTemplate[tuple[tuple[Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], Buffer], Expr, Buffer])
-  assert_type(lagrangian_hessian(cost_t, "x"), FunctionTemplate[tuple[tuple[Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], Buffer], Expr, Buffer])
+  # one signature per wrapper, holes or not
+  assert_type(gradient(cost_t, "f", "x"), Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
+  assert_type(forward(cost_t, "f", "x"), Function[tuple[Expr, Expr, Expr], tuple[Buffer, Buffer, Buffer], Expr, Buffer])
+  assert_type(lagrangian_hessian(cost_t, "x"), Function[tuple[Expr, Expr, Expr], tuple[Buffer, Buffer, Buffer], Expr, Buffer])
   gradient(cost_t, "f", "x").numerical_call(Buffer((3,)))  # ty: ignore[invalid-argument-type]
 
-  # the bare mode is Any end to end: nothing below is an error. That is the stated trade.
-  assert_type(scale, FunctionTemplate[Any, Any, Any, Any])
-  scale.numerical_call((Expr((3,)), Buffer((3,)), "nonsense"))
+  # the bare mode checks arity; the symbolic side is the body's annotations, the numerical side Any
+  assert_type(scale_annotated, Function[tuple[Expr, Expr], Any, Expr, Any])
+  assert_type(scale_annotated.symbolic_call(Expr((3,)), Expr(())), Expr)
+  scale_annotated.symbolic_call(Buffer((3,)), Expr(()))  # ty: ignore[invalid-argument-type]
+  scale.symbolic_call(Expr((3,)))  # ty: ignore[invalid-argument-type]
+  scale.numerical_call(Expr((3,)), Buffer((3,)), "nonsense")
 
   # problems: the body's parameter types are the declared trees, the spec's bounds have the vars' structure
   assert_type(quadratic, Problem[Expr, Buffer, Expr, Buffer])
@@ -136,21 +190,19 @@ if TYPE_CHECKING:
   )
   assert_type(
     qp3_piqp.numerical_call(
-      (
-        Buffer((3,)),
-        Buffer((3,)),
-        Buffer((1,)),
-        Buffer((2,)),
-        ((Buffer((3, 3)), Buffer((3,))), (Buffer((1, 3)), Buffer((1,))), (Buffer((2, 3)), Buffer((2,)), Buffer((2,)))),
-      )
+      Buffer((3,)),
+      Buffer((3,)),
+      Buffer((1,)),
+      Buffer((2,)),
+      ((Buffer((3, 3)), Buffer((3,))), (Buffer((1, 3)), Buffer((1,))), (Buffer((2, 3)), Buffer((2,)), Buffer((2,)))),
     ),
     tuple[Buffer, Buffer, Buffer, Buffer],
   )
-  quadratic_ipopt.numerical_call((Buffer((3,)), Buffer((3,)), Buffer((0,)), Buffer((0,))))  # ty: ignore[invalid-argument-type]
-  filter_sqp.numerical_call(((Buffer((2,)),), (Buffer((2,)), Buffer((1,))), Buffer((1,)), Buffer((3,)), (Buffer((4,)), Buffer((2,)))))  # ty: ignore[invalid-argument-type]
-  filter_sqp.numerical_call(((Expr((2,)), Expr((1,))), (Buffer((2,)), Buffer((1,))), Buffer((1,)), Buffer((3,)), (Buffer((4,)), Buffer((2,)))))  # ty: ignore[invalid-argument-type]
+  quadratic_ipopt.numerical_call(Buffer((3,)), Buffer((3,)), Buffer((0,)), Buffer((0,)))  # ty: ignore[invalid-argument-type]
+  filter_sqp.numerical_call((Buffer((2,)),), (Buffer((2,)), Buffer((1,))), Buffer((1,)), Buffer((3,)), (Buffer((4,)), Buffer((2,))))  # ty: ignore[invalid-argument-type]
+  filter_sqp.numerical_call((Expr((2,)), Expr((1,))), (Buffer((2,)), Buffer((1,))), Buffer((1,)), Buffer((3,)), (Buffer((4,)), Buffer((2,))))  # ty: ignore[invalid-argument-type]
   # a solver nests in a larger graph like any Function
   assert_type(
-    filter_sqp.symbolic_call(((Expr((2,)), Expr((1,))), (Expr((2,)), Expr((1,))), Expr((1,)), Expr((3,)), (Expr((4,)), Expr((2,))))),
+    filter_sqp.symbolic_call((Expr((2,)), Expr((1,))), (Expr((2,)), Expr((1,))), Expr((1,)), Expr((3,)), (Expr((4,)), Expr((2,)))),
     tuple[tuple[Expr, Expr], tuple[Expr, Expr], Expr, Expr],
   )

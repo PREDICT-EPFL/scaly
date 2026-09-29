@@ -110,7 +110,7 @@ def _prove_quadratic(p: Problem[Any, Any, Any, Any]) -> None:
 def solver[SV, NV, SP, NP](
   p: Problem[SV, NV, SP, NP], backend: str, /, *, name: str | None = None, options: dict[str, Any] | None = None
 ) -> Function[tuple[SV, SV, Expr, Expr, SP], tuple[NV, NV, Buffer, Buffer, NP], tuple[SV, SV, Expr, Expr], tuple[NV, NV, Buffer, Buffer]]:
-  """Build a solver for ``p``: a plain ``Function`` over ``(vars_init, lam_box0, lam_eq0, lam_ineq0, params)``.
+  """Build a solver for ``p``: a plain ``Function`` with parameters ``vars_init, lam_box0, lam_eq0, lam_ineq0, params``.
   Multipliers are always present, size 0 when the category is absent, so the signature never
   depends on the problem; box multipliers have the variables' structure."""
   if backend not in BACKENDS:
@@ -122,8 +122,7 @@ def solver[SV, NV, SP, NP](
   inputs = G(p.vars, lam_box, L("lam_eq", p.n_eq), L("lam_ineq", p.n_ineq), p.params)
   outputs = G(p.vars, lam_box, L("lam_eq", p.n_eq), L("lam_ineq", p.n_ineq))
 
-  def body(args: tuple[SV, SV, Expr, Expr, SP]) -> tuple[SV, SV, Expr, Expr]:
-    vars_init, lam_box0, lam_eq0, lam_ineq0, _params = args
+  def body(vars_init: SV, lam_box0: SV, lam_eq0: Expr, lam_ineq0: Expr, _params: SP) -> tuple[SV, SV, Expr, Expr]:
     return vars_init, lam_box0, lam_eq0, lam_ineq0
 
   return Function(name or f"{p.name}_{backend}", body, inputs, outputs)
