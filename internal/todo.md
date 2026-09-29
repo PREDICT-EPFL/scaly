@@ -363,11 +363,28 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
       targeted UB comparisons before a final full study. The user approved merging the current
       implementation on 2026-09-24 with these measured regressions deferred, not resolved.
 
-- [ ] **C-80. Parameter-only oracle prologue.** An oracle whose subgraph depends only on `p`
-      runs once per solve and its result is reused across SQP iterations (the race-car cost block,
-      and the 402 `cos`/`sin` of the reference heading that the cost tangent and adjoint callees
-      each recompute per stage; they depend on `p` alone). Function or solver level, not a program
-      pass; belongs with the S items once C-77 lands.
+- [ ] **C-80. Parameter-only oracle prologue.** Every oracle subgraph that depends on `p` alone
+      gives the same result at every solver iteration but is recomputed on every call: the
+      race-car cost block, the 402 `cos`/`sin` of the reference heading that the cost tangent and
+      adjoint callees each recompute per stage, and in the bumper-car safety filter everything
+      derived from the cars' current states. Compute it once per solve, as `bounds` already is.
+      After `_lowered` in `solvers/nlp.py` has built `base`, `grad`, `jac` and the Hessians, one
+      pass over all their outputs marks every node that depends on `x` or the multipliers. The
+      parameter-only nodes that a marked node reads become the outputs of one shared `prologue`
+      Function, and each oracle takes them as extra parameter inputs in place of the subgraph.
+      Doing this after differentiation also catches derivative blocks that are constant in `x`,
+      such as the Hessian of a quadratic tracking cost. Inside a `CALL` or `VMAP`, split the
+      callee into a mapped parameter-only part and a body that takes its outputs as extra mapped
+      inputs. This is the expression-level counterpart of `hoist_invariant`, which hoists across
+      loop trips rather than across solver iterations. Leave in place any value cheaper to
+      recompute than to load (a view, a reshape, a parameter itself). Both plugins call the
+      prologue beside `bounds`, and the descriptor carries it. The marking asks the same structural
+      question that `_prove_quadratic` and `_prove_variable_independent_bounds` in `solvers/qp.py`
+      answer with `_jac_mask`, so share one implementation. A QP is the limiting case where the
+      whole oracle is prologue. Gate: on race cars and bumper cars, the factored oracles match
+      the unfactored ones at random `x`, `p` and multipliers, the prologue runs once per solve,
+      and closed-loop function evaluation time drops. Function or solver level, not a program
+      pass; belongs with the S items.
 - [x] **C-81. Re-run the 2026-09-22 variants on the x86 reference machine.** Done 2026-09-22,
       section 5 of `notes/perf_2026_09_22/README.md`, `x86_variants.sh` reproduces it. C-77 stays
       first (108.5 to 59.4 µs on gcc). A native `zig cc` links `-lmvec`. Declared
