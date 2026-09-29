@@ -17,8 +17,8 @@ from scaly.opt.external.graph import solver_descriptor
 A = np.array([[1.0, 0.1], [0.0, 1.0]])
 B = np.array([[0.005], [0.1]])
 Q, R = np.eye(2), 0.1 * np.eye(1)
-X = mpc.Polytope.box([-5, -2], [5, 2])
-U = mpc.Polytope.box([-1], [1])
+X = sc.sets.Polytope.box([-5, -2], [5, 2])
+U = sc.sets.Polytope.box([-1], [1])
 K, P = mpc.lqr(A, B, Q, R)
 A_K = A + B @ K
 PIQP = {"eps_abs": 1e-11, "eps_rel": 1e-11}
@@ -54,7 +54,7 @@ def test_the_maximal_invariant_set_is_exactly_the_safe_states() -> None:
     safe &= constraints.contains(states, tol=1e-9)
     states = states @ A_K.T
   for i in range(invariant.h.size):  # every row bounds the set: without it the set would grow
-    others = mpc.Polytope(np.delete(invariant.H, i, axis=0), np.delete(invariant.h, i))
+    others = sc.sets.Polytope(np.delete(invariant.H, i, axis=0), np.delete(invariant.h, i))
     assert others.support(invariant.H[i]) > invariant.h[i] + 1e-9
   inside = invariant.contains(grid, tol=1e-9)
   margin = np.min(invariant.h[None, :] - grid @ invariant.H.T, axis=1)
@@ -66,7 +66,7 @@ def test_a_set_that_is_not_finitely_determined_raises() -> None:
   angle = np.sqrt(2.0) / 10  # a rotation by an irrational angle: its invariant subset of a box is a disk
   rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
   with pytest.raises(ValueError, match="not finitely determined within 20 steps"):
-    mpc.max_invariant_set(rotation, mpc.Polytope.box([-1, -1], [1, 1]), max_iter=20)
+    mpc.max_invariant_set(rotation, sc.sets.Polytope.box([-1, -1], [1, 1]), max_iter=20)
 
 
 def test_the_largest_lqr_ellipsoid_touches_the_polytope_and_is_invariant() -> None:
@@ -79,12 +79,12 @@ def test_the_largest_lqr_ellipsoid_touches_the_polytope_and_is_invariant() -> No
   points *= np.sqrt(ellipsoid.alpha / np.einsum("ni,ij,nj->n", points, P, points))[:, None] * rng.uniform(0, 1, (500, 1))
   assert ellipsoid.contains(points).all() and ellipsoid.contains(points @ A_K.T).all()
   with pytest.raises(ValueError, match="origin must lie in the polytope's interior"):
-    mpc.largest_ellipsoid(P, mpc.Polytope.box([0.5, -1], [1, 1]))
-  wide = mpc.largest_ellipsoid(np.eye(2), mpc.Polytope.box([-3, -3], [3, 3]))
+    mpc.largest_ellipsoid(P, sc.sets.Polytope.box([0.5, -1], [1, 1]))
+  wide = mpc.largest_ellipsoid(np.eye(2), sc.sets.Polytope.box([-3, -3], [3, 3]))
   assert wide.alpha == pytest.approx(9.0)  # the disk of radius 3: alpha is h squared over H P^-1 H'
   x = sc.sym("x", 2)
-  _, (group,) = ellipsoid.constraints(x)
-  assert group.hi is not None and group.hi.value == pytest.approx(ellipsoid.alpha) and group.expr.shape == (1,)
+  ((row, lo, hi),) = ellipsoid.constraints(x)
+  assert lo is None and hi == pytest.approx(ellipsoid.alpha) and row.shape == (1,)
 
 
 @pytest.mark.solver("piqp")

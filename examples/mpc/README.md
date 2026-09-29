@@ -14,7 +14,7 @@ outputs, so they read on GitHub without running.
 | `nmpc_closed_loop.ipynb` | M | The cart-pole swing-up in closed loop against a pole 20% heavier than modelled, *IPOPT*, *SQP* | `mpc.MPC` with IPOPT and with scaly's SQP; `mpc.simulate` on an `si.adaptive` plant and its `mpc.ClosedLoop`; a soft `mpc.Path` track limit that gives way only where a hard one is infeasible; `ctrl.solve` returning an `mpc.Solution`, `reset` and `initial_guess`; `ctrl.law` run by hand with one guess buffer, as a C caller would |
 | `reference_tracking.ipynb` | S/M | A cart tracking a stepped and sinusoidal reference, its mass a parameter, *PIQP* | parameters by name (`mpc.Quadratic(x_ref="r")`, `mpc.TerminalEquality(x_ref="r")`, a step Function taking `mass`, `ocp.params`); a `varying=("r",)` preview against a held reference; `mpc.simulate` with a parameter that is a callable of the step; one solve checked against NumPy's KKT solve |
 | `linear_mpc.ipynb` | M | Two masses joined by a spring, and a double integrator, under linear MPC, *PIQP* | `si.zoh` into `mpc.linear` with `mpc.Quadratic` costs; `mpc.lqr` as the unconstrained limit (`u = Kx` and cost `x'Px` for N = 1, 5, 20); a `mpc.max_invariant_set` terminal set; the sparse QP against `condensed=True` (sizes, PIQP times); recursive feasibility and cost decrease in an `mpc.simulate` closed loop; `ctrl.law` written as C |
-| `terminal_sets.ipynb` | M | Terminal sets for a double integrator's MPC and the regions of attraction they give, *PIQP*, *IPOPT* | `mpc.Polytope` (`box`, `intersect`, `preimage`, `support`, `chebyshev_center`, `remove_redundancy`, `vertices`); `mpc.max_invariant_set` against a brute-force closed loop; `mpc.largest_ellipsoid`; `TerminalEquality`, the ellipsoid (IPOPT), the polytope (PIQP) and no terminal set on one grid of initial states, checked against HiGHS LPs; `NotQuadratic` for the ellipsoid on PIQP |
+| `terminal_sets.ipynb` | M | Terminal sets for a double integrator's MPC and the regions of attraction they give, *PIQP*, *IPOPT* | `sc.sets.Polytope` (`box`, `intersect`, `preimage`, `support`, `chebyshev_center`, `remove_redundancy`, `vertices`); `mpc.max_invariant_set` against a brute-force closed loop; `mpc.largest_ellipsoid`; `TerminalEquality`, the ellipsoid (IPOPT), the polytope (PIQP) and no terminal set on one grid of initial states, checked against HiGHS LPs; `NotQuadratic` for the ellipsoid on PIQP |
 
 ```bash
 uv run --with jupyterlab jupyter lab examples/mpc
@@ -39,8 +39,8 @@ generated code, so a C caller keeps one buffer of `guess_size` doubles between c
 | `MPC`, `solve`, `Solution`, `law` | all five; the law called by hand in `nmpc_closed_loop.ipynb` |
 | `initial_guess`, `reset` | `nmpc_closed_loop.ipynb`, `linear_mpc.ipynb`, `terminal_sets.ipynb`, `reference_tracking.ipynb` |
 | `simulate`, `ClosedLoop` | `nmpc_closed_loop.ipynb`, `reference_tracking.ipynb`, `linear_mpc.ipynb` |
-| `lqr`, `Polytope`, `max_invariant_set` | `linear_mpc.ipynb`, `terminal_sets.ipynb` |
-| `Ellipsoid`, `largest_ellipsoid` | `terminal_sets.ipynb` |
+| `lqr`, `sc.sets.Polytope`, `max_invariant_set` | `linear_mpc.ipynb`, `terminal_sets.ipynb` |
+| `sc.sets.Ellipsoid`, `largest_ellipsoid` | `terminal_sets.ipynb` |
 
 ## What the examples ran into
 

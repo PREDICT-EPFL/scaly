@@ -2557,10 +2557,6 @@ tests/mpc/test_ocp.py::test_shooting_and_collocation_solve_the_same_problem_and_
 tests/mpc/test_ocp.py::test_state_bounds_hold_after_the_initial_state_and_a_control_reference
 tests/mpc/test_ocp.py::test_the_condensed_form_of_a_continuous_model_rolls_out_its_shooting_method
 tests/mpc/test_ocp.py::test_the_library_transcribes_the_cart_pole_as_by_hand
-tests/mpc/test_polytope.py::test_a_box_and_its_linear_programs
-tests/mpc/test_polytope.py::test_as_a_terminal_set_it_is_one_group_of_rows
-tests/mpc/test_polytope.py::test_preimages_describe_where_a_map_lands_inside
-tests/mpc/test_polytope.py::test_redundant_rows_go_and_empty_sets_are_found
 tests/mpc/test_surface.py::test_the_mpc_surface
 tests/mpc/test_terminal.py::test_a_set_that_is_not_finitely_determined_raises
 tests/mpc/test_terminal.py::test_an_ellipsoidal_terminal_set_goes_to_an_nlp_solver_not_a_qp_one
@@ -3643,6 +3639,11 @@ tests/roots/test_problem.py::test_a_tree_of_unknowns_and_parameters_round_trips
 tests/roots/test_problem.py::test_what_a_problem_refuses
 tests/roots/test_problem.py::test_without_parameters_the_solver_takes_the_warm_start_alone
 tests/roots/test_surface.py::test_the_roots_surface
+tests/sets/test_polytope.py::test_a_box_and_its_linear_programs
+tests/sets/test_polytope.py::test_as_a_terminal_set_it_is_one_group_of_rows
+tests/sets/test_polytope.py::test_preimages_describe_where_a_map_lands_inside
+tests/sets/test_polytope.py::test_redundant_rows_go_and_empty_sets_are_found
+tests/sets/test_surface.py::test_the_sets_surface
 tests/test_c_snapshot.py::test_baseline_holds_exactly_the_corpus
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[control]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[forward]
@@ -3732,7 +3733,6 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.symbo
 tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.mpc.controller]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.mpc.ocp]
-tests/test_import_layering.py::test_module_imports_standalone[scaly.mpc.polytope]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.mpc.terminal]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.mpc]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt._oracle]
@@ -3780,6 +3780,9 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.roots.newton
 tests/test_import_layering.py::test_module_imports_standalone[scaly.roots.problem]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.roots.solver]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.roots]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.sets.ellipsoid]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.sets.polytope]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.sets]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.utils.env]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.utils.ext_api]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.utils.names]

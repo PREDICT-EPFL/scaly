@@ -7,9 +7,12 @@ from typing import Any
 import numpy as np
 
 from ..ir.expr import Expr
-from ..opt.problem import Bounded, bounded
 
-__all__ = ["Polytope"]
+__all__ = ["Constraint", "Polytope"]
+
+type Constraint = tuple[Expr, Expr | float | None, Expr | float | None]
+"""``(expr, lo, hi)``: the constraint ``lo <= expr <= hi`` entry by entry, a side ``None`` when it is
+absent. What a set gives an optimal control problem, which turns it into its own constraint group."""
 
 
 def _linprog(c: np.ndarray, h_mat: np.ndarray, h: np.ndarray) -> Any:
@@ -26,7 +29,7 @@ class Polytope:
   Built from rows (``Polytope(H, h)``) or a box (``Polytope.box(lo, hi)``), combined by
   ``intersect`` and ``preimage``, and trimmed by ``remove_redundancy``. Every question that needs an
   optimization (``support``, ``is_empty``, ``chebyshev_center``, redundancy) is a linear program. As an
-  OCP's ``terminal`` set it constrains the last state, ``H x_N <= h``, rows a QP solver takes.
+  OCP's terminal set it constrains the last state, ``H x_N <= h``, rows a QP solver takes.
   """
 
   def __init__(self, h_mat: Any, h: Any) -> None:
@@ -128,6 +131,6 @@ class Polytope:
       return np.unique(points, axis=0)
     return points[ConvexHull(points).vertices]
 
-  def constraints(self, x: Expr) -> tuple[list[Expr], list[Bounded]]:
-    """As an OCP's terminal set: no equalities, and ``H x <= h``."""
-    return [], [bounded(Expr.const(self.H) @ x, hi=Expr.const(self.h), name="terminal_set")]
+  def constraints(self, x: Expr) -> tuple[Constraint, ...]:
+    """``x`` in the set as constraints: ``H x <= h``, one group of rows."""
+    return ((Expr.const(self.H) @ x, None, Expr.const(self.h)),)

@@ -26,10 +26,6 @@
 
 ::: scaly.mpc.terminal.lqr
 
-::: scaly.mpc.polytope.Polytope
-
 ::: scaly.mpc.terminal.max_invariant_set
-
-::: scaly.mpc.terminal.Ellipsoid
 
 ::: scaly.mpc.terminal.largest_ellipsoid

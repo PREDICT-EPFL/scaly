@@ -46,7 +46,7 @@
 | 4.3 | IPM as the method `opt.ipm` | ☑ |
 | 4.4 | `scaly.roots` | ☑ |
 | 4.5 | `integrators` and `interp` as method registries | ☑ |
-| 5.1 | `scaly.sets` | ☐ |
+| 5.1 | `scaly.sets` | ☑ |
 | 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☐ |
 | 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☐ |
 | 6.1 | Library code promoted from examples | ☐ |
@@ -705,6 +705,14 @@ each fail the new tests.
 ### Phase 5: control
 
 **5.1 `scaly.sets`.** Move `Polytope` and `Ellipsoid`; constraints returned as `(expr, lo, hi)`.
+Log: done 2026-09-29. `sets/polytope.py` (moved from `mpc/`) and `sets/ellipsoid.py` (from
+`mpc/terminal.py`); `sc.sets` is lazy like the other domains. `constraints(x)` returns a tuple of
+`sets.Constraint` triples `(expr, lo, hi)`, so `sets` imports nothing from `opt`; the OCP turns each
+into its own group, named `terminal_set` (the ellipsoid's was `terminal_ellipsoid`, which the
+`terminal_sets` notebook's refusal check now reads). `mpc.Polytope`/`mpc.Ellipsoid` are gone;
+`lqr`, `max_invariant_set` and `largest_ellipsoid` stay in `mpc.terminal` until 5.3 and return
+`sets` objects. Tests, the two notebooks (the user's saved `linear_mpc` staged from HEAD), the API
+page `sets.md` and the codebase map moved with it.
 
 **5.2 `scaly.ocp` problems, transcription, formulation.** `ContinuousOCP`, `DiscreteOCP`,
 `transcribe`, `to_problem` as in §3.3; today's `OCP` arguments map onto these (the `ode=`/`step=`

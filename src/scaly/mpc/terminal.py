@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
-from ..ir.expr import Expr
-from ..opt.problem import Bounded, bounded
-from .polytope import Polytope
+from ..sets import Ellipsoid, Polytope
 
-__all__ = ["Ellipsoid", "largest_ellipsoid", "lqr", "max_invariant_set"]
+__all__ = ["largest_ellipsoid", "lqr", "max_invariant_set"]
 
 
 def lqr(a: Any, b: Any, q: Any, r: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -53,25 +50,6 @@ def max_invariant_set(closed_loop: Any, constraints: Polytope, *, max_iter: int 
   raise ValueError(
     f"the set is not finitely determined within {max_iter} steps: is the closed loop stable and the set bounded, with the origin inside?"
   )
-
-
-@dataclass(frozen=True)
-class Ellipsoid:
-  """The set ``{x : x'Px <= alpha}``. As an OCP's terminal set it constrains the last state by one
-  quadratic inequality, which an NLP solver takes and a QP solver does not: for a QP, use a
-  ``Polytope``."""
-
-  P: np.ndarray
-  alpha: float
-
-  def contains(self, x: Any, tol: float = 1e-9) -> np.ndarray:
-    """Whether ``x`` (one point, or one per row) lies inside: a bool array, 0-d for one point."""
-    x = np.asarray(x, dtype=np.float64)
-    return np.asarray(np.einsum("...i,ij,...j->...", x, self.P, x) <= self.alpha * (1 + tol))
-
-  def constraints(self, x: Expr) -> tuple[list[Expr], list[Bounded]]:
-    """As an OCP's terminal set: ``x'Px <= alpha``."""
-    return [], [bounded((x @ (Expr.const(self.P) @ x)).reshape((1,)), hi=float(self.alpha), name="terminal_ellipsoid")]
 
 
 def largest_ellipsoid(p: Any, polytope: Polytope) -> Ellipsoid:

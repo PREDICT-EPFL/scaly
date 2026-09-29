@@ -94,7 +94,7 @@ class OCP:
       ``None``; on every state but the initial one, the transcription's internal states included,
       and on every control.
     constraints: ``Path`` constraints.
-    terminal: a terminal set: ``TerminalEquality``, or a set from ``mpc.terminal``.
+    terminal: a terminal set: ``TerminalEquality``, or a set from ``scaly.sets`` (``sc.sets.Polytope``, ``sc.sets.Ellipsoid``).
     varying: names of parameters that take one value per grid point, ``N + 1`` of them: the stage
       ``k`` reads value ``k``, the terminal cost value ``N``. The others hold over the horizon.
     cost: ``"points"`` or ``"integral"``, as above. By default ``"integral"`` for a transcription
@@ -345,11 +345,9 @@ class OCP:
         target = params[ref] if isinstance(ref, str) else Expr.const(np.zeros(nx) if ref is None else np.asarray(ref, dtype=np.float64))
         eq.add(x_end - (target if ref not in self.varying else target[n * nx :]))
       elif self.terminal is not None:
-        eq_rows, ineq_rows = self.terminal.constraints(x_end)
-        for row in eq_rows:
-          eq.add(row)
-        for group in ineq_rows:
-          ineq.add(group)
+        groups = self.terminal.constraints(x_end)
+        for i, (g, lo, hi) in enumerate(groups):
+          ineq.add(bounded(g, lo=lo, hi=hi, name="terminal_set" if len(groups) == 1 else f"terminal_set{i}"))
       self._eq_runs, self._ineq_runs = eq.runs, ineq.runs
       objective = sum(terms[1:], terms[0]) if terms else Expr.const(0.0)
       lb, ub = layout.bounds()

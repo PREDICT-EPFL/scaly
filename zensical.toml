@@ -63,6 +63,7 @@ nav = [
         { "Integrators" = "api/integrators.md" },
         { "Interpolation" = "api/interp.md" },
         { "Model predictive control" = "api/mpc.md" },
+        { "Sets" = "api/sets.md" },
         { "Solvers" = "api/solvers.md" },
         { "Visualization" = "api/viz.md" },
     ] },
