@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 196**
+**Next id: 201**
 
 | Prefix | Section |
 |---|---|
@@ -802,6 +802,28 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
 - [ ] **C-96. Fuse adjacent elementwise loops.** Zeroing, copies, scaling, scatter-adds and the
       final transpose each lower to their own loop; a Hessian at N = 10 spends most of its
       non-scan time in them.
+
+### Generated-code speed review (2026-09-30)
+
+Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](notes/codegen_speed_plan_2026_09_30.html)
+(26 kernels, tiny to large; harness `notes/perf_2026_09_30_codegen/`), one commit per step on
+`perf/codegen-speed`. Rejected there with evidence: a no-alias ABI (`restrict`), dropping the macOS
+`noinline`, `-O3`, reciprocals of invariant divisors.
+
+- [ ] **C-196. Dot products and sums as independent partial sums.** Every reduction the matrix
+      products and `sum` lower to is one serial chain, latency-bound at about one multiply-add a
+      cycle; `-fassociative-math` shows the headroom (mlp_big_fwd 0.43, unbumpercars 0.61,
+      chol_solve_200 0.69, npmpc 0.71). Split them in a fixed order the generated code owns.
+- [ ] **C-197. Scalarize an entry point that calls nothing.** The entry is never expanded
+      automatically, so a standalone Jacobian runs as loops multiplying identity-seed tables C may
+      not fold: `-ffast-math` gives quat_jac 0.44, rosen_hess 0.66, cartpole_jac 0.75.
+- [ ] **C-198. FMA contraction across statements on clang.** GCC contracts across statements by
+      default, clang within one expression only; `-ffp-contract=fast` gives 0.97 in geometric mean,
+      up to 0.80 (mlp_big_fwd), and turning contraction off costs 1.09.
+- [ ] **C-199. NaN-propagating max and min without a separate NaN test.** `-ffinite-math-only`
+      gives the IPM 0.85 to 0.95; the reductions test `b != b` beside every compare.
+- [ ] **C-200. A repeated concat (a tile) as one loop fusion can inline.** Multi-seed forward mode
+      copies a primal factor once per seed, one loop each, before the elementwise use.
 
 ### Now
 

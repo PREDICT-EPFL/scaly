@@ -1,0 +1,56 @@
+<main>
+<h1>O1: scalarize an entry point that calls nothing</h1>
+<p class="sub">Step 1 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-197 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The entry point of a generated function was never scalarized automatically, only its callees were. A standalone kernel, such as the Jacobian of a small model written without calls, therefore ran as loops over buffers, multiplying by identity-seed tables of zeros and ones that C is not allowed to fold (<code>0.0 * x</code> is not zero for an infinite or NaN <code>x</code>). Scaly's own folding does, so an entry that calls nothing now expands like a callee does.</p>
+<ul>
+<li><b>Speed:</b> <span class="ok">quat_jac 1.97× faster</span> (12.2 → 6.2 ns), <span class="ok">cartpole_jac 1.28×</span> (74.9 → 58.6 ns), <span class="ok">rosen_hess 1.20×</span> (1.6 → 1.3 ns). The other 23 corpus kernels generate byte-identical C.</li>
+<li><b>Code:</b> quat_jac 115 → 73 lines, cartpole_jac 337 → 172, rosen_hess 58 → 32. Generation time unchanged (a 4 096-unit work cap keeps a doomed attempt from costing up to 2.7 s; <code>mlp_small_jac</code>'s rejected attempt had cost 0.43 s before the cap).</li>
+<li><b>Tests:</b> 4 398 passed, 57 skipped, 5 xfailed (3 new tests). Five mutants, five killed. Two C snapshots (<code>forward.c</code>, <code>jac.c</code>) regenerated as the deliberate change; nine loop-form pass tests now ask for loop form with <code>.block()</code>.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O1”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>passes/lowering.py</code>: the entry is lowered with the same scalarize mode as any procedure (the <code>auto_scalarize=False</code> special case is gone) and marked <code>entry</code> on its PROC.</li>
+<li><code>passes/program/scalarize.py</code>: under <code>auto</code>, an entry that calls a procedure, in a loop (a <code>vmap</code>, a <code>scan</code>) or once, keeps its loopy form, as before; one that calls nothing expands under the callee budgets (4 096 operations, 16 384 of growth program-wide) and a work cap of its own, <code>AUTO_EXPANSION_WORK_PER_ENTRY = 4096</code>. A rejected attempt costs about 40 µs of generation per unit of work, and the accepted entries in the corpus need at most 2 772 units; the callee cap stays 65 536.</li>
+<li><code>docs/how_it_works/lowering.md</code>: the policy.</li>
+</ul>
+<p>What the change does to a kernel, from the <code>forward</code> snapshot (a four-state step with a reduction and a concat):</p>
+<pre><code>- double s0[1]; double s1[1];
+- s0[0] = 0.0;
+- for (long long i_t7 = 0; i_t7 &lt; 2; ++i_t7) { double v0 = t2[i_t7]; s0[0] = (s0[0] + (v0 * v0)); }
+- s1[0] = (0.10000000000000001 * s0[0]);
+- for (...) { res[0][j] = (t0[j] + (0.050000000000000003 * t2[j])); }
+- for (...) { ... }
++ double v0 = arg[0][2];
++ double v1 = arg[0][3];
++ double v2 = (0.10000000000000001 * ((v0 * v0) + (v1 * v1)));
++ *(double2*)(res[0]) = (double2){(arg[0][0] + (0.050000000000000003 * v0)), (arg[0][1] + (0.050000000000000003 * v1))};
++ *(double2*)(res[0] + 2) = (double2){(v0 + (0.050000000000000003 * (arg[1][0] - (v2 * v0)))), ...};</code></pre>
+<p>In the Jacobian snapshot the 85 changed lines are the seed tables <code>k0</code>, <code>k1</code>, the four copy loops per seed and the <code>k</code>-loops multiplying by them, all folded away.</p>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li>New in <code>tests/core/passes/test_scalarize.py</code>: an entry that calls nothing expands and no seed survives as a multiplier (against the analytic Jacobian); an entry that calls a procedure once keeps the call while the callee expands; the entry's work cap against a callee's, on the file's own policy procedure whose work is exactly <code>3 * count</code>.</li>
+<li>Loop-form tests that probe a pass through a tiny entry (fusion, aliases, scatter sums, affine tables, the four-lane extremum, the viz listing, the SpMV loop bound) now request loop form with <code>.block()</code>, the documented hint, instead of relying on the entry never expanding.</li>
+<li>Snapshots <code>forward.c</code> and <code>jac.c</code> regenerated with <code>python -m tests.core.test_c_snapshot</code>; <code>wide.c</code> and the rest unchanged.</li>
+<li>Full suite: 4 398 passed, 57 skipped, 5 xfailed. <code>ruff format</code>, <code>ruff check</code> clean; <code>ty check</code> reports the same 144 diagnostics as the base worktree, none in touched files.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 no call guard (every entry may expand)</td><td class="ok"><code>test_hint_selects_callee_without_expanding_mapped_horizon[auto]</code></td></tr>
+<tr><td>M2 the entry's cap is a callee's</td><td class="ok"><code>test_the_entry_point_expands_only_within_its_work_cap</code></td></tr>
+<tr><td>M3 the entry never expands automatically (the old rule)</td><td class="ok"><code>test_an_entry_point_that_calls_nothing_expands_and_folds_its_seeds</code></td></tr>
+<tr><td>M4 the entry is not found</td><td class="ok"><code>test_hint_selects_callee_without_expanding_mapped_horizon[auto]</code></td></tr>
+<tr><td>M5 calls found only at the top level, not inside loops</td><td class="ok"><code>test_hint_selects_callee_without_expanding_mapped_horizon[auto]</code></td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>Every corpus kernel, before and after, compiled with the JIT's flags and timed from C (nine interleaved rounds, fastest sample). Kernels whose C did not change time within noise of 1.000.</p>
+{{TABLE}}
+
+<h2>Next</h2>
+<p>O2 (C-196): the reductions. It is the largest measured headroom, on the medium and large dense kernels.</p>
+</main>

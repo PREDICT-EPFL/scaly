@@ -1,0 +1,118 @@
+<meta charset="utf-8">
+<title>Codegen Speed Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}pre code{overflow-wrap:normal}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+<main>
+<h1>Generated-code speed review: the plan</h1>
+<p class="sub">Where the generated C loses time, from tiny kernels to large sparse and structured ones, what to change, ranked by measured headroom, and how far the work got · branch <code>perf/codegen-speed</code> (from <code>devrush</code>), todo C-196 … C-201 · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's <code>-O2 -mcpu=native -fno-math-errno</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> 26 kernels, from a 2×2 Hessian (1.6 ns) to a sparse MPC interior-point solve (0.64 ms), each compiled eight ways and timed from C. What the compile variants say:</p>
+<ul>
+<li><b>Aliasing, inlining and <code>-O3</code> are not what holds the code back.</b> <code>restrict</code> on every pointer (callees, entry, both), forcing every callee inline, and <code>-O3</code> each land within 0.4% of the baseline in geometric mean. <code>-O3</code> makes the 48×48 matmul 2× slower; forced inlining makes npmpc 12% slower.</li>
+<li><b>The arithmetic's shape is.</b> <code>-ffast-math</code> takes 18–23% off in geometric mean and up to 57% (mlp_big_fwd). Split into its parts, nearly all of it is <code>-fassociative-math</code>: the reductions (dot products in matrix products and dense factorizations) run as one serial chain each, latency-bound at about one multiply-add per cycle on a core that retires eight. The rest is FMA contraction across statements, and on the IPM the NaN test in max/min.</li>
+<li><b>Tiny kernels lose to a policy, not to the compiler:</b> the entry point is never scalarized, so a standalone Jacobian runs as loops that multiply by identity-seed tables of zeros and ones, which C may not fold.</li>
+</ul>
+<p style="margin-bottom:0"><b>Status:</b> see the checklist below. Every step is one commit on <code>perf/codegen-speed</code> and can be reverted on its own (<code>git revert</code>); each has its own report.</p>
+</div>
+
+<h2>The checklist, ranked by measured headroom</h2>
+<p>Rank is expected payoff times breadth, from the diagnostics below. The step number is the order of execution; O1 ran first because the diagnosis produced a working prototype of it.</p>
+<div class="scroll"><table><tr><th>rank</th><th>step</th><th>todo</th><th>change</th><th>evidence (compile-variant ratio)</th><th>status</th></tr>
+<tr><td>1</td><td>O2</td><td>C-196</td><td>Dot products and sums as independent partial sums in a fixed order: matrix products, matvecs, <code>sum</code></td><td><code>assoc</code>: mlp_big_fwd 0.43, unbumpercars 0.61, chol_solve_200 0.69, npmpc 0.71, ipm_cvxqp1_dense 0.84, mlp_small_jac 0.86</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>2</td><td>O1</td><td>C-197</td><td>Scalarize an entry point that calls nothing (under a callee's op budget, a 4 096-unit work cap)</td><td><code>fast</code>: quat_jac 0.44, rosen_hess 0.66, cartpole_jac 0.75: the identity-seed tables C may not fold</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>3</td><td>O3</td><td>C-198</td><td>FMA contraction across statements on clang, as GCC does by default (<code>-ffp-contract=fast</code>)</td><td><code>contract</code>: mlp_big_fwd 0.80, unbumpercars 0.86, rosen_hess 0.91, riccati_50 0.93; geomean 0.97. Contraction off: 1.09</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>4</td><td>O4</td><td>C-199</td><td>NaN-propagating max and min without a separate NaN test</td><td><code>finite</code>: ipm_qafiro_sparse 0.85, ipm_hs118_dense 0.90, ipm_mpc_12_4_20_sparse 0.95</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>5</td><td>O5</td><td>C-200</td><td>A concat of one value repeated (a tile) as one loop that fusion can inline</td><td>one copy loop per seed in every multi-seed forward-mode kernel (mlp_small_jac, the race cars, the <code>jac</code> snapshot)</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>6</td><td>O6</td><td>C-77</td><td>The sparse-derivative assembly fused into the mapped loop (stretch)</td><td>35% of the race-car Hessian in the 2026-09-22 study; see the CasADi comparison</td><td><span class="warn">☐ pending</span></td></tr>
+</table></div>
+
+<h3>Rejected, with the evidence</h3>
+<ul>
+<li><b>A no-alias ABI (<code>restrict</code>).</b> Geometric mean 0.996 over 26 kernels, best 0.958 (ipm_cvxqp1_dense, with inlining). Private buffers are stack arrays whose address never escapes, so clang already knows they alias nothing; the ABI buffers are read or written once per element outside the hot loops. Not worth an ABI rule (the one C-116 asks about).</li>
+<li><b>Dropping the macOS <code>noinline</code> on forward-AD helpers.</b> Geometric mean 1.003; npmpc 1.12× <i>slower</i>, race_cars_jac 0.97. Confirms the 2026-09-22 finding; the workaround costs nothing.</li>
+<li><b><code>-O3</code>.</b> Geometric mean 1.02; matmul_48 2.05× slower, cartpole and npmpc 0.88. C-107's <code>-O2</code> stands.</li>
+<li><b>Reciprocals of invariant divisors</b> (the value-changing half of C-78). <code>-freciprocal-math</code>: 0.994, nowhere better than 0.96.</li>
+</ul>
+
+<h2>How it was measured</h2>
+<ul>
+<li><b>Corpus</b> (<code>perf_2026_09_30_codegen/corpus.py</code>): tiny (Rosenbrock Hessian, a cartpole RK4 step's Jacobian, a 4-32-32-2 MLP Jacobian, a quaternion rotation's Jacobian, Cholesky n = 16), medium (Cholesky 64, a 256² matvec, a 48² matmul, a 16-256-256-4 MLP with weights as input, a scan rollout's gradient over 100 steps, Riccati N = 50, race-car Hessian and Jacobian N = 40, chain M = 5, npmpc N = 12, two small IPM solves), large (Cholesky 200, elementwise math and reductions over 10<sup>5</sup>, sparse LDL on a 30×30 grid and an MPC KKT matrix, race cars N = 200, chain M = 9, unbumpercars C = 8, IPM on CVXQP1_S dense and mpc_12_4_20 sparse). The four benchmark problems' oracles and inputs come from <code>bench/harness/sweep.py</code>, with its dense-reference check.</li>
+<li><b>Timing</b> (<code>timing.py</code>, <code>time_entry.c</code>): the universal entry called from C in a loop, no Python; each sample the mean over a batch sized to 20 µs (the Mac's clock ticks every 41.7 ns); five interleaved rounds, fastest sample. Every variant's outputs are compared with the JIT's own.</li>
+<li><b>Compile variants</b>: the JIT's flags; <code>-O3</code>; <code>-ffast-math</code> and each of its parts; <code>restrict</code> on callee parameters, on the entry's ABI pointers, and both; every callee inline.</li>
+</ul>
+
+<h3>Where the time goes: compile variants</h3>
+<p>Each variant's time over the JIT build's. <code>fast</code> is <code>-ffast-math</code>, <code>restrict</code> the callees' parameters, <code>erestrict</code> the entry's <code>arg[i]</code>, <code>res[i]</code> and <code>w</code> read into <code>restrict</code> locals, <code>arestrict</code> both.</p>
+<div class="scroll"><table><tr><th>kernel</th><th class="r">base/jit</th><th class="r">base/O3</th><th class="r">base/fast</th><th class="r">base/inline</th><th class="r">base/restrict</th><th class="r">base/erestrict</th><th class="r">base/arestrict</th><th class="r">base/arestrict_inline</th></tr>
+<tr><td>rosen_hess</td><td class="r">1.6 ns</td><td class="r">1.000</td><td class="r ok">0.667</td><td class="r">1.006</td><td class="r">1.006</td><td class="r">1.006</td><td class="r">1.006</td><td class="r">1.006</td></tr>
+<tr><td>cartpole_jac</td><td class="r">75.0 ns</td><td class="r ok">0.876</td><td class="r ok">0.749</td><td class="r">1.000</td><td class="r">1.000</td><td class="r">0.997</td><td class="r">0.999</td><td class="r">1.000</td></tr>
+<tr><td>mlp_small_jac</td><td class="r">790.6 ns</td><td class="r">1.011</td><td class="r ok">0.863</td><td class="r">1.001</td><td class="r">1.000</td><td class="r">0.998</td><td class="r">1.004</td><td class="r">1.002</td></tr>
+<tr><td>quat_jac</td><td class="r">12.2 ns</td><td class="r">1.000</td><td class="r ok">0.437</td><td class="r">1.000</td><td class="r">1.000</td><td class="r">0.994</td><td class="r">0.993</td><td class="r">0.994</td></tr>
+<tr><td>chol_solve_16</td><td class="r">448.4 ns</td><td class="r">0.988</td><td class="r">0.990</td><td class="r">0.999</td><td class="r">0.992</td><td class="r">0.971</td><td class="r">0.990</td><td class="r">0.988</td></tr>
+<tr><td>chol_solve_64</td><td class="r">6.38 µs</td><td class="r">1.003</td><td class="r ok">0.943</td><td class="r">1.013</td><td class="r">0.998</td><td class="r">0.995</td><td class="r">1.011</td><td class="r">1.016</td></tr>
+<tr><td>chol_solve_200</td><td class="r">136.00 µs</td><td class="r">0.999</td><td class="r ok">0.701</td><td class="r">0.989</td><td class="r">1.001</td><td class="r">0.999</td><td class="r">1.002</td><td class="r">1.001</td></tr>
+<tr><td>matvec_256</td><td class="r">17.67 µs</td><td class="r">1.022</td><td class="r">1.023</td><td class="r">1.010</td><td class="r">1.021</td><td class="r">1.005</td><td class="r">1.005</td><td class="r">1.011</td></tr>
+<tr><td>matmul_48</td><td class="r">12.56 µs</td><td class="r bad">2.053</td><td class="r">0.999</td><td class="r">0.999</td><td class="r">0.999</td><td class="r">0.995</td><td class="r">0.995</td><td class="r">0.995</td></tr>
+<tr><td>mlp_big_fwd</td><td class="r">18.04 µs</td><td class="r">1.005</td><td class="r ok">0.434</td><td class="r">1.013</td><td class="r">1.013</td><td class="r">1.000</td><td class="r">0.998</td><td class="r">0.995</td></tr>
+<tr><td>elementwise_1e5</td><td class="r">785.08 µs</td><td class="r">1.000</td><td class="r ok">0.935</td><td class="r">1.000</td><td class="r">0.980</td><td class="r">0.985</td><td class="r">0.985</td><td class="r">0.996</td></tr>
+<tr><td>rollout_grad_100</td><td class="r">11.44 µs</td><td class="r">1.002</td><td class="r">1.017</td><td class="r">1.000</td><td class="r">1.001</td><td class="r">0.995</td><td class="r">0.995</td><td class="r">0.998</td></tr>
+<tr><td>riccati_50</td><td class="r">8.42 µs</td><td class="r">1.001</td><td class="r ok">0.776</td><td class="r">1.006</td><td class="r">1.005</td><td class="r">0.993</td><td class="r">0.985</td><td class="r">0.995</td></tr>
+<tr><td>sparse_ldl_grid30</td><td class="r">42.29 µs</td><td class="r">0.975</td><td class="r">0.958</td><td class="r">0.993</td><td class="r">0.988</td><td class="r">0.994</td><td class="r">0.982</td><td class="r">0.995</td></tr>
+<tr><td>sparse_ldl_mpc50</td><td class="r">23.50 µs</td><td class="r">0.995</td><td class="r">0.980</td><td class="r">0.991</td><td class="r">0.989</td><td class="r">0.995</td><td class="r">0.995</td><td class="r">0.998</td></tr>
+<tr><td>race_cars_40</td><td class="r">9.75 µs</td><td class="r">1.027</td><td class="r ok">0.916</td><td class="r">0.988</td><td class="r">1.006</td><td class="r">0.996</td><td class="r">0.996</td><td class="r">0.991</td></tr>
+<tr><td>race_cars_jac_40</td><td class="r">5.89 µs</td><td class="r">0.989</td><td class="r ok">0.931</td><td class="r">0.966</td><td class="r">0.996</td><td class="r">0.998</td><td class="r">0.997</td><td class="r">0.977</td></tr>
+<tr><td>race_cars_200</td><td class="r">52.54 µs</td><td class="r">1.000</td><td class="r ok">0.902</td><td class="r">0.997</td><td class="r">0.991</td><td class="r">0.993</td><td class="r">0.989</td><td class="r">0.974</td></tr>
+<tr><td>chain_5</td><td class="r">105.83 µs</td><td class="r">1.009</td><td class="r ok">0.918</td><td class="r">1.002</td><td class="r">1.011</td><td class="r">0.995</td><td class="r">1.013</td><td class="r">1.012</td></tr>
+<tr><td>chain_9</td><td class="r">741.25 µs</td><td class="r">1.006</td><td class="r ok">0.892</td><td class="r">1.007</td><td class="r">1.002</td><td class="r">1.004</td><td class="r">1.008</td><td class="r">0.990</td></tr>
+<tr><td>npmpc_12</td><td class="r">19.50 µs</td><td class="r ok">0.878</td><td class="r ok">0.722</td><td class="r bad">1.124</td><td class="r">1.002</td><td class="r">1.006</td><td class="r">1.004</td><td class="r bad">1.117</td></tr>
+<tr><td>unbumpercars_8</td><td class="r">750.12 µs</td><td class="r">1.006</td><td class="r ok">0.600</td><td class="r">0.983</td><td class="r">0.998</td><td class="r">1.002</td><td class="r">1.000</td><td class="r">1.000</td></tr>
+<tr><td>ipm_hs118_dense</td><td class="r">26.25 µs</td><td class="r">0.968</td><td class="r ok">0.887</td><td class="r">0.997</td><td class="r">1.002</td><td class="r">1.003</td><td class="r">1.005</td><td class="r">0.998</td></tr>
+<tr><td>ipm_qafiro_sparse</td><td class="r">20.50 µs</td><td class="r bad">1.053 <span class="warn">(Δ 1e-09)</span></td><td class="r ok">0.882 <span class="warn">(Δ 5e-09)</span></td><td class="r">0.998</td><td class="r">0.992</td><td class="r">0.990</td><td class="r">0.998</td><td class="r">0.998</td></tr>
+<tr><td>ipm_cvxqp1_dense</td><td class="r">373.71 µs</td><td class="r">0.998</td><td class="r ok">0.824</td><td class="r">0.995</td><td class="r">0.984</td><td class="r">0.993</td><td class="r">0.983</td><td class="r">0.958</td></tr>
+<tr><td>ipm_mpc_12_4_20_sparse</td><td class="r">636.71 µs</td><td class="r">0.994</td><td class="r ok">0.933</td><td class="r">0.997</td><td class="r">0.976</td><td class="r">1.000</td><td class="r">0.973</td><td class="r">0.973</td></tr>
+<tr><td><b>geometric mean</b></td><td class="r">—</td><td class="r"><b>1.020</b></td><td class="r"><b>0.822</b></td><td class="r"><b>1.003</b></td><td class="r"><b>0.998</b></td><td class="r"><b>0.996</b></td><td class="r"><b>0.996</b></td><td class="r"><b>0.999</b></td></tr>
+</table></div>
+<h3>Which part of <code>-ffast-math</code></h3>
+<p><code>contract</code> is <code>-ffp-contract=fast</code>, <code>assoc</code> <code>-fassociative-math -fno-signed-zeros -fno-trapping-math</code>, <code>recip</code> <code>-freciprocal-math</code>, <code>finite</code> <code>-ffinite-math-only</code>, <code>nosz</code> <code>-fno-signed-zeros</code>; the last column turns contraction off altogether (clang's default contracts inside one expression only).</p>
+<div class="scroll"><table><tr><th>kernel</th><th class="r">base/jit</th><th class="r">base/fast</th><th class="r">base/contract</th><th class="r">base/assoc</th><th class="r">base/recip</th><th class="r">base/finite</th><th class="r">base/nosz</th><th class="r">base/noerrno_contract_off</th></tr>
+<tr><td>rosen_hess</td><td class="r">1.6 ns</td><td class="r ok">0.662</td><td class="r ok">0.906</td><td class="r ok">0.831</td><td class="r">1.000</td><td class="r ok">0.869</td><td class="r ok">0.869</td><td class="r">0.994</td></tr>
+<tr><td>cartpole_jac</td><td class="r">74.8 ns</td><td class="r ok">0.751</td><td class="r">1.020</td><td class="r">1.017</td><td class="r">1.001</td><td class="r">1.003</td><td class="r">0.999</td><td class="r bad">1.454</td></tr>
+<tr><td>mlp_small_jac</td><td class="r">789.6 ns</td><td class="r ok">0.864</td><td class="r">1.013</td><td class="r ok">0.859</td><td class="r">1.004</td><td class="r">1.003</td><td class="r">0.996</td><td class="r">1.038</td></tr>
+<tr><td>quat_jac</td><td class="r">12.2 ns</td><td class="r ok">0.437</td><td class="r">0.961</td><td class="r ok">0.942</td><td class="r">1.000</td><td class="r">1.000</td><td class="r">0.998</td><td class="r bad">1.071</td></tr>
+<tr><td>chol_solve_64</td><td class="r">6.42 µs</td><td class="r ok">0.938</td><td class="r">1.000</td><td class="r ok">0.920</td><td class="r">1.000</td><td class="r">1.002</td><td class="r">0.998</td><td class="r bad">1.396</td></tr>
+<tr><td>chol_solve_200</td><td class="r">136.50 µs</td><td class="r ok">0.701</td><td class="r">0.985</td><td class="r ok">0.691</td><td class="r">1.000</td><td class="r">0.998</td><td class="r">0.999</td><td class="r bad">1.545</td></tr>
+<tr><td>matvec_256</td><td class="r">17.71 µs</td><td class="r">1.008</td><td class="r">1.002</td><td class="r">1.002</td><td class="r">1.002</td><td class="r">1.018</td><td class="r">1.002</td><td class="r ok">0.866</td></tr>
+<tr><td>mlp_big_fwd</td><td class="r">18.00 µs</td><td class="r ok">0.435</td><td class="r ok">0.799</td><td class="r ok">0.433</td><td class="r">1.000</td><td class="r">1.000</td><td class="r">1.000</td><td class="r ok">0.799</td></tr>
+<tr><td>riccati_50</td><td class="r">8.42 µs</td><td class="r ok">0.775</td><td class="r ok">0.931</td><td class="r">0.965</td><td class="r">1.010</td><td class="r">1.000</td><td class="r">1.000</td><td class="r bad">1.173</td></tr>
+<tr><td>race_cars_40</td><td class="r">9.75 µs</td><td class="r ok">0.916</td><td class="r">1.026</td><td class="r">1.009</td><td class="r">0.974</td><td class="r">1.004</td><td class="r">1.000</td><td class="r bad">1.235</td></tr>
+<tr><td>race_cars_200</td><td class="r">51.79 µs</td><td class="r ok">0.922</td><td class="r">1.026</td><td class="r">1.025</td><td class="r">0.986</td><td class="r">1.018</td><td class="r">1.015</td><td class="r bad">1.235</td></tr>
+<tr><td>chain_5</td><td class="r">107.25 µs</td><td class="r ok">0.898</td><td class="r">1.009</td><td class="r">0.956</td><td class="r">0.958</td><td class="r">0.986</td><td class="r">0.979</td><td class="r bad">1.119</td></tr>
+<tr><td>npmpc_12</td><td class="r">19.54 µs</td><td class="r ok">0.714</td><td class="r">0.966</td><td class="r ok">0.710</td><td class="r">1.002</td><td class="r">1.000</td><td class="r">0.998</td><td class="r">1.026</td></tr>
+<tr><td>unbumpercars_8</td><td class="r">749.38 µs</td><td class="r ok">0.597</td><td class="r ok">0.863</td><td class="r ok">0.609</td><td class="r">0.982</td><td class="r">0.984</td><td class="r">1.002</td><td class="r ok">0.845</td></tr>
+<tr><td>ipm_hs118_dense</td><td class="r">26.21 µs</td><td class="r ok">0.886</td><td class="r">0.986</td><td class="r">0.992</td><td class="r">0.994</td><td class="r ok">0.903</td><td class="r">0.998</td><td class="r">1.037</td></tr>
+<tr><td>ipm_qafiro_sparse</td><td class="r">20.54 µs</td><td class="r ok">0.879 <span class="warn">(Δ 5e-09)</span></td><td class="r">0.980 <span class="warn">(Δ 1e-09)</span></td><td class="r">0.976</td><td class="r">0.992 <span class="warn">(Δ 2e-09)</span></td><td class="r ok">0.850</td><td class="r">0.998</td><td class="r">1.014</td></tr>
+<tr><td>ipm_cvxqp1_dense</td><td class="r">370.21 µs</td><td class="r ok">0.820</td><td class="r">1.003</td><td class="r ok">0.843</td><td class="r">0.983</td><td class="r">0.981</td><td class="r">1.003</td><td class="r bad">1.232</td></tr>
+<tr><td>ipm_mpc_12_4_20_sparse</td><td class="r">636.71 µs</td><td class="r ok">0.933</td><td class="r">1.009</td><td class="r">0.971</td><td class="r">1.000</td><td class="r">0.951</td><td class="r">0.997</td><td class="r">1.013</td></tr>
+<tr><td>sparse_ldl_grid30</td><td class="r">41.71 µs</td><td class="r">0.966</td><td class="r">0.988</td><td class="r">1.003</td><td class="r">1.005</td><td class="r">1.003</td><td class="r">1.006</td><td class="r">1.004</td></tr>
+<tr><td><b>geometric mean</b></td><td class="r">—</td><td class="r"><b>0.775</b></td><td class="r"><b>0.970</b></td><td class="r"><b>0.864</b></td><td class="r"><b>0.994</b></td><td class="r"><b>0.976</b></td><td class="r"><b>0.992</b></td><td class="r"><b>1.094</b></td></tr>
+</table></div>
+<p>Reading the rows: the NN-heavy oracles (mlp_big_fwd, npmpc, unbumpercars) and the dense factorizations (chol_solve_200, ipm_cvxqp1_dense) need reassociation, which only the generated code can provide without changing what the user asked for: it can split each reduction into independent partial sums in a fixed order, which is deterministic and portable where <code>-ffast-math</code> is neither. matvec_256 gains nothing from <code>assoc</code> alone because its accumulator is the ABI output, which the vectorizer must assume the inputs alias; a partial-sum lowering keeps the accumulators in registers and needs no alias rule. The sparse kernels (LDL, the sparse IPM) are bound by their index traffic and gain little from anything here.</p>
+
+<h2>The steps</h2>
+<p>None finished yet.</p>
+</main>

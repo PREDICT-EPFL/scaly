@@ -1,0 +1,46 @@
+<main>
+<h1>Generated-code speed review: the plan</h1>
+<p class="sub">Where the generated C loses time, from tiny kernels to large sparse and structured ones, what to change, ranked by measured headroom, and how far the work got · branch <code>perf/codegen-speed</code> (from <code>devrush</code>), todo C-196 … C-201 · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's <code>-O2 -mcpu=native -fno-math-errno</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> 26 kernels, from a 2×2 Hessian (1.6 ns) to a sparse MPC interior-point solve (0.64 ms), each compiled eight ways and timed from C. What the compile variants say:</p>
+<ul>
+<li><b>Aliasing, inlining and <code>-O3</code> are not what holds the code back.</b> <code>restrict</code> on every pointer (callees, entry, both), forcing every callee inline, and <code>-O3</code> each land within 0.4% of the baseline in geometric mean. <code>-O3</code> makes the 48×48 matmul 2× slower; forced inlining makes npmpc 12% slower.</li>
+<li><b>The arithmetic's shape is.</b> <code>-ffast-math</code> takes 18–23% off in geometric mean and up to 57% (mlp_big_fwd). Split into its parts, nearly all of it is <code>-fassociative-math</code>: the reductions (dot products in matrix products and dense factorizations) run as one serial chain each, latency-bound at about one multiply-add per cycle on a core that retires eight. The rest is FMA contraction across statements, and on the IPM the NaN test in max/min.</li>
+<li><b>Tiny kernels lose to a policy, not to the compiler:</b> the entry point is never scalarized, so a standalone Jacobian runs as loops that multiply by identity-seed tables of zeros and ones, which C may not fold.</li>
+</ul>
+<p style="margin-bottom:0"><b>Status:</b> see the checklist below. Every step is one commit on <code>perf/codegen-speed</code> and can be reverted on its own (<code>git revert</code>); each has its own report.</p>
+</div>
+
+<h2>The checklist, ranked by measured headroom</h2>
+<p>Rank is expected payoff times breadth, from the diagnostics below. The step number is the order of execution; O1 ran first because the diagnosis produced a working prototype of it.</p>
+<div class="scroll"><table><tr><th>rank</th><th>step</th><th>todo</th><th>change</th><th>evidence (compile-variant ratio)</th><th>status</th></tr>
+{{CHECKLIST}}
+</table></div>
+
+<h3>Rejected, with the evidence</h3>
+<ul>
+<li><b>A no-alias ABI (<code>restrict</code>).</b> Geometric mean 0.996 over 26 kernels, best 0.958 (ipm_cvxqp1_dense, with inlining). Private buffers are stack arrays whose address never escapes, so clang already knows they alias nothing; the ABI buffers are read or written once per element outside the hot loops. Not worth an ABI rule (the one C-116 asks about).</li>
+<li><b>Dropping the macOS <code>noinline</code> on forward-AD helpers.</b> Geometric mean 1.003; npmpc 1.12× <i>slower</i>, race_cars_jac 0.97. Confirms the 2026-09-22 finding; the workaround costs nothing.</li>
+<li><b><code>-O3</code>.</b> Geometric mean 1.02; matmul_48 2.05× slower, cartpole and npmpc 0.88. C-107's <code>-O2</code> stands.</li>
+<li><b>Reciprocals of invariant divisors</b> (the value-changing half of C-78). <code>-freciprocal-math</code>: 0.994, nowhere better than 0.96.</li>
+</ul>
+
+<h2>How it was measured</h2>
+<ul>
+<li><b>Corpus</b> (<code>perf_2026_09_30_codegen/corpus.py</code>): tiny (Rosenbrock Hessian, a cartpole RK4 step's Jacobian, a 4-32-32-2 MLP Jacobian, a quaternion rotation's Jacobian, Cholesky n = 16), medium (Cholesky 64, a 256² matvec, a 48² matmul, a 16-256-256-4 MLP with weights as input, a scan rollout's gradient over 100 steps, Riccati N = 50, race-car Hessian and Jacobian N = 40, chain M = 5, npmpc N = 12, two small IPM solves), large (Cholesky 200, elementwise math and reductions over 10<sup>5</sup>, sparse LDL on a 30×30 grid and an MPC KKT matrix, race cars N = 200, chain M = 9, unbumpercars C = 8, IPM on CVXQP1_S dense and mpc_12_4_20 sparse). The four benchmark problems' oracles and inputs come from <code>bench/harness/sweep.py</code>, with its dense-reference check.</li>
+<li><b>Timing</b> (<code>timing.py</code>, <code>time_entry.c</code>): the universal entry called from C in a loop, no Python; each sample the mean over a batch sized to 20 µs (the Mac's clock ticks every 41.7 ns); five interleaved rounds, fastest sample. Every variant's outputs are compared with the JIT's own.</li>
+<li><b>Compile variants</b>: the JIT's flags; <code>-O3</code>; <code>-ffast-math</code> and each of its parts; <code>restrict</code> on callee parameters, on the entry's ABI pointers, and both; every callee inline.</li>
+</ul>
+
+<h3>Where the time goes: compile variants</h3>
+<p>Each variant's time over the JIT build's. <code>fast</code> is <code>-ffast-math</code>, <code>restrict</code> the callees' parameters, <code>erestrict</code> the entry's <code>arg[i]</code>, <code>res[i]</code> and <code>w</code> read into <code>restrict</code> locals, <code>arestrict</code> both.</p>
+{{DIAG0}}
+<h3>Which part of <code>-ffast-math</code></h3>
+<p><code>contract</code> is <code>-ffp-contract=fast</code>, <code>assoc</code> <code>-fassociative-math -fno-signed-zeros -fno-trapping-math</code>, <code>recip</code> <code>-freciprocal-math</code>, <code>finite</code> <code>-ffinite-math-only</code>, <code>nosz</code> <code>-fno-signed-zeros</code>; the last column turns contraction off altogether (clang's default contracts inside one expression only).</p>
+{{DIAG1}}
+<p>Reading the rows: the NN-heavy oracles (mlp_big_fwd, npmpc, unbumpercars) and the dense factorizations (chol_solve_200, ipm_cvxqp1_dense) need reassociation, which only the generated code can provide without changing what the user asked for: it can split each reduction into independent partial sums in a fixed order, which is deterministic and portable where <code>-ffast-math</code> is neither. matvec_256 gains nothing from <code>assoc</code> alone because its accumulator is the ABI output, which the vectorizer must assume the inputs alias; a partial-sum lowering keeps the accumulators in registers and needs no alias rule. The sparse kernels (LDL, the sparse IPM) are bound by their index traffic and gain little from anything here.</p>
+
+<h2>The steps</h2>
+{{STEPS}}
+</main>
