@@ -79,7 +79,7 @@ def test_fusion_collapses_elementwise_chain() -> None:
   @sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), output=sc.L("out0", ...), name="chain")
   def f(inputs):
     x, y = inputs
-    return ((x.sin() + y) * y - x).tanh()
+    return ((x.sin() + y) * y - x).tanh().block()  # loop form: an entry that calls nothing would expand
 
   compute, aliases, loops = _classify(_main_body(f))
   assert compute == []  # every intermediate inlined into the output loop
@@ -145,7 +145,7 @@ def test_fusion_skips_matmul_operand() -> None:
   @sc.function(sc.G(sc.L("A", (4, 4)), sc.L("x", 4)), output=sc.L("out0", ...), name="mm_operand")
   def f(inputs):
     A, x = inputs
-    return A @ x.sin()  # sin(x) is the matvec operand — must stay materialized
+    return (A @ x.sin()).block()  # sin(x) is the matvec operand — must stay materialized
 
   compute, _aliases, _loops = _classify(_main_body(f))
   assert len(compute) == 1  # exactly the materialized sin(x); the A@x result aliases the output
@@ -157,7 +157,7 @@ def test_fusion_into_reduction() -> None:
 
   @sc.function(sc.L("x", 8), output=sc.L("out0", ...), name="sumf")
   def f(x):
-    return (x.sin() + x).sum()
+    return (x.sin() + x).sum().block()
 
   compute, _aliases, loops = _classify(_main_body(f))
   # Only the scalar accumulator survives; the elementwise buffer is gone (inlined into the reduce).
@@ -386,7 +386,7 @@ def test_contiguous_slice_aliases_source() -> None:
   @sc.function(sc.L("x", 8), output=sc.L("out0", ...), name="slc")
   def f(x):
     s = x[2:6]
-    return (s * s).sin()  # use s twice so it stays materialized (not inlined) -> visible alias
+    return (s * s).sin().block()  # use s twice so it stays materialized (not inlined) -> visible alias
 
   _compute, aliases, _loops = _classify(_main_body(f))
   assert len(aliases) == 1
@@ -519,7 +519,7 @@ def test_optimized_program_still_verifies() -> None:
 def test_slice_gradient_combines_pads(count: int) -> None:
   x = sc.sym("x", 4 * count)
   cost = sum(((x[2 * i : 2 * i + 3] ** 2).sum() for i in range(count)), start=sc.const(0.0))
-  f = sc.Function.from_exprs("slice_cost", [x], [cost], ["x"], ["cost"])
+  f = sc.Function.from_exprs("slice_cost", [x], [cost.block()], ["x"], ["cost"])
   grad = f.factory("slice_grad", ["x"], [sc.factory.Grad("cost", "x")])
   stages = {}
   lower_function(grad, observe=lambda name, prog: stages.__setitem__(name, prog))
@@ -605,7 +605,7 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
   x = sc.sym("x", 3)
   index_sets = [[0, 3, 6], [1, 4, 7], [2, 5, 6], [0, 1, 2]]
   terms = [scatter((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
-  f = sc.Function.from_exprs("reshaped_scatter_sum", [x], [sum(terms[1:], start=terms[0])], ["x"], ["sum"])
+  f = sc.Function.from_exprs("reshaped_scatter_sum", [x], [sum(terms[1:], start=terms[0]).block()], ["x"], ["sum"])
   _, _, loops = _classify(_main_body(f))
   zero_fills = [
     loop for loop in loops if len(loop.args) == 2 and loop.args[1].op == ProgramOp.STORE and loop.args[1].args[1].op == ProgramOp.CONST_FLOAT
@@ -867,7 +867,7 @@ def test_a_map_with_no_affine_factorization_keeps_its_table() -> None:
 
   perm = np.array([3, 0, 4, 1, 5, 2, 6])
   x = sc.sym("dn_x", 7)
-  fn = sc.Function.from_exprs("dn_perm", [x], [sc.gather(x.sin(), perm)], ["x"], ["y"])
+  fn = sc.Function.from_exprs("dn_perm", [x], [sc.gather(x.sin(), perm).block()], ["x"], ["y"])
   xv = np.linspace(0.0, 1.0, 7)
   np.testing.assert_array_equal(fn(xv), np.sin(xv)[perm])
   assert "static const" in render_c_source(fn)

@@ -104,7 +104,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
     prog = p.program([*callees.values()])
     prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "extern_root": fun.name}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, extern_fns, auto_scalarize=False, observe_expr=observe_expr, entry=True)
+    root = _lower_to_proc(fun, callees, extern_fns, observe_expr=observe_expr, entry=True)
     prog = p.program([*callees.values(), root])
   if extern_fns:
     externs = {name: ef.extern for name, ef in extern_fns.items() if ef.extern is not None}
@@ -191,7 +191,6 @@ def _lower_to_proc(
   callees: dict[str, ProgramNode],
   extern_fns: dict[str, ConcreteFunction],
   *,
-  auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
   entry: bool = False,
   in_place: bool = False,
@@ -231,9 +230,11 @@ def _lower_to_proc(
       and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
       # Scalar expansion follows every address at generation time; a run-time index has none.
       and not any(expr_has_trait(n, "runtime_index") for n in nodes)
-      and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
+      and lowering in ("scalar", "auto")
       else "disabled",
       **({"in_place": True} if in_place else {}),
+      # The entry point: automatic scalar expansion keeps its call boundaries (``scalarize``).
+      **({"entry": True} if entry else {}),
     },
     proc.dtype,
   )

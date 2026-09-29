@@ -627,7 +627,7 @@ def test_max_and_min_reductions_in_four_lanes(n: int) -> None:
   from scaly.ir.expr import reduce_max, reduce_min
 
   x = sc.sym("x", n)
-  fn = sc.Function.from_exprs(f"four_lanes_{n}", [x], [reduce_max(x), reduce_min(x)], ["x"], ["mx", "mn"])
+  fn = sc.Function.from_exprs(f"four_lanes_{n}", [x], [reduce_max(x).block(), reduce_min(x)], ["x"], ["mx", "mn"])
   rng = np.random.default_rng(n)
   for where in range(n):
     v = rng.standard_normal(n)

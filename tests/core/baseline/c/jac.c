@@ -21,78 +21,19 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  static const double k0[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
-  static const double k1[8] = {0, 0, 0, 0, 1, 0, 0, 1};
-  const double* t5 = arg[0] + 2;
-  double s0[8];
-  double s1[8];
-  double s2[16];
-  double s3[1];
-  for (long long i_t6 = 0; i_t6 < 2; ++i_t6) {
-    s0[i_t6] = (2.0 * t5[i_t6]);
-  }
-  for (long long j_t7_0 = 0; j_t7_0 < 2; ++j_t7_0) {
-    s1[j_t7_0] = s0[j_t7_0];
-  }
-  for (long long j_t7_1 = 0; j_t7_1 < 2; ++j_t7_1) {
-    s1[(2 + j_t7_1)] = s0[j_t7_1];
-  }
-  for (long long j_t7_2 = 0; j_t7_2 < 2; ++j_t7_2) {
-    s1[(4 + j_t7_2)] = s0[j_t7_2];
-  }
-  for (long long j_t7_3 = 0; j_t7_3 < 2; ++j_t7_3) {
-    s1[(6 + j_t7_3)] = s0[j_t7_3];
-  }
-  for (long long i_t10 = 0; i_t10 < 4; ++i_t10) {
-    s0[i_t10] = 0.0;
-  }
-  for (long long k_t10 = 0; k_t10 < 2; ++k_t10) {
-    s0[0] = (s0[0] + (s1[k_t10] * k1[k_t10]));
-    int64_t v0 = (2 + k_t10);
-    s0[1] = (s0[1] + (s1[v0] * k1[v0]));
-    int64_t v1 = (4 + k_t10);
-    s0[2] = (s0[2] + (s1[v1] * k1[v1]));
-    int64_t v2 = (6 + k_t10);
-    s0[3] = (s0[3] + (s1[v2] * k1[v2]));
-  }
-  for (long long i_t11 = 0; i_t11 < 4; ++i_t11) {
-    s1[i_t11] = (0.10000000000000001 * s0[i_t11]);
-  }
-  for (long long j_t12_0 = 0; j_t12_0 < 2; ++j_t12_0) {
-    s0[j_t12_0] = t5[j_t12_0];
-  }
-  for (long long j_t12_1 = 0; j_t12_1 < 2; ++j_t12_1) {
-    s0[(2 + j_t12_1)] = t5[j_t12_1];
-  }
-  for (long long j_t12_2 = 0; j_t12_2 < 2; ++j_t12_2) {
-    s0[(4 + j_t12_2)] = t5[j_t12_2];
-  }
-  for (long long j_t12_3 = 0; j_t12_3 < 2; ++j_t12_3) {
-    s0[(6 + j_t12_3)] = t5[j_t12_3];
-  }
-  s2[0] = 0.0;
-  for (long long i_t15 = 0; i_t15 < 2; ++i_t15) {
-    double v3 = t5[i_t15];
-    s2[0] = (s2[0] + (v3 * v3));
-  }
-  s3[0] = (0.10000000000000001 * s2[0]);
-  for (long long j_t21_0_0 = 0; j_t21_0_0 < 4; ++j_t21_0_0) {
-    for (long long j_t21_0_1 = 0; j_t21_0_1 < 2; ++j_t21_0_1) {
-      s2[((4 * j_t21_0_0) + j_t21_0_1)] = k0[((2 * j_t21_0_0) + j_t21_0_1)];
-    }
-  }
-  for (long long j_t21_1_0 = 0; j_t21_1_0 < 4; ++j_t21_1_0) {
-    for (long long j_t21_1_1 = 0; j_t21_1_1 < 2; ++j_t21_1_1) {
-      int64_t v4 = ((2 * j_t21_1_0) + j_t21_1_1);
-      double v5 = k1[v4];
-      s2[((2 + (4 * j_t21_1_0)) + j_t21_1_1)] = (v5 - (0.050000000000000003 * ((s1[j_t21_1_0] * s0[v4]) + (s3[0] * v5))));
-    }
-  }
-  for (long long d0_jac_znext_z = 0; d0_jac_znext_z < 4; ++d0_jac_znext_z) {
-    for (long long d1_jac_znext_z = 0; d1_jac_znext_z < 4; ++d1_jac_znext_z) {
-      res[0][((d0_jac_znext_z * 4) + d1_jac_znext_z)] = s2[(d0_jac_znext_z + (d1_jac_znext_z * 4))];
-    }
-  }
+  double v0 = arg[0][2];
+  double v1 = (0.10000000000000001 * (2.0 * v0));
+  double v2 = arg[0][3];
+  double v3 = (0.10000000000000001 * ((v0 * v0) + (v2 * v2)));
+  double v4 = (0.10000000000000001 * (2.0 * v2));
+  *(double2*)(res[0]) = (double2){1.0, 0.0};
+  *(double2*)(res[0] + 2) = (double2){0.050000000000000003, 0.0};
+  *(double2*)(res[0] + 4) = (double2){0.0, 1.0};
+  *(double2*)(res[0] + 6) = (double2){0.0, 0.050000000000000003};
+  *(double2*)(res[0] + 8) = (double2){0.0, 0.0};
+  *(double2*)(res[0] + 10) = (double2){(1.0 - (0.050000000000000003 * ((v1 * v0) + v3))), (-(0.050000000000000003 * (v4 * v0)))};
+  *(double2*)(res[0] + 12) = (double2){0.0, 0.0};
+  *(double2*)(res[0] + 14) = (double2){(-(0.050000000000000003 * (v1 * v2))), (1.0 - (0.050000000000000003 * ((v4 * v2) + v3)))};
   return SCALY_SUCCESS;
 }
 

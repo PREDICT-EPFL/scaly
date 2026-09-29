@@ -111,8 +111,12 @@ The `Expr.lowering` hint selects the containing procedure:
   makes it `scalar`, and `auto` inherits nothing. A `.scalar()` on a stage output therefore selects
   the stage's Hessian procedures too.
 
-Automatic expansion leaves the entry point's mapped horizon intact. A procedure expands only if
-all of its callees are eligible too. Solver calls keep their call boundaries. Float32 and integer
+Automatic expansion leaves the entry point's call boundaries intact, its mapped horizon among
+them: an entry point that calls a procedure, in a loop or not, keeps its loopy form. One that calls
+nothing expands under the same op budgets as a callee, but only up to 4,096 units of work, since a
+rejected attempt costs generation time for nothing. Small standalone kernels, such as a dense
+Jacobian written without calls, are then straight-line code whose identity seeds fold away. A
+procedure expands only if all of its callees are eligible too. Solver calls keep their call boundaries. Float32 and integer
 procedures keep their store boundaries because those stores can round or truncate values.
 Constant tangents already inside a body fold during expansion. Specializing a mapped callee for
 constant arguments is a separate transformation.

@@ -21,23 +21,11 @@ int dynamics(const double** arg, double** res, int* iw, double* w, int mem) {
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  const double* t0 = arg[0];
-  const double* t2 = arg[0] + 2;
-  double s0[1];
-  double s1[1];
-  s0[0] = 0.0;
-  for (long long i_t7 = 0; i_t7 < 2; ++i_t7) {
-    double v0 = t2[i_t7];
-    s0[0] = (s0[0] + (v0 * v0));
-  }
-  s1[0] = (0.10000000000000001 * s0[0]);
-  for (long long j_znext_0 = 0; j_znext_0 < 2; ++j_znext_0) {
-    res[0][j_znext_0] = (t0[j_znext_0] + (0.050000000000000003 * t2[j_znext_0]));
-  }
-  for (long long j_znext_1 = 0; j_znext_1 < 2; ++j_znext_1) {
-    double v1 = t2[j_znext_1];
-    res[0][(2 + j_znext_1)] = (v1 + (0.050000000000000003 * (arg[1][j_znext_1] - (s1[0] * v1))));
-  }
+  double v0 = arg[0][2];
+  double v1 = arg[0][3];
+  double v2 = (0.10000000000000001 * ((v0 * v0) + (v1 * v1)));
+  *(double2*)(res[0]) = (double2){(arg[0][0] + (0.050000000000000003 * v0)), (arg[0][1] + (0.050000000000000003 * v1))};
+  *(double2*)(res[0] + 2) = (double2){(v0 + (0.050000000000000003 * (arg[1][0] - (v2 * v0)))), (v1 + (0.050000000000000003 * (arg[1][1] - (v2 * v1))))};
   return SCALY_SUCCESS;
 }
 

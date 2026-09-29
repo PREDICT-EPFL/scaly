@@ -37,7 +37,7 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
     "C-197",
     "Scalarize an entry point that calls nothing (under a callee's op budget, a 4 096-unit work cap)",
     "<code>fast</code>: quat_jac 0.44, rosen_hess 0.66, cartpole_jac 0.75: the identity-seed tables C may not fold",
-    None,  # O1_STATUS
+    ("quat_jac 0.51, cartpole_jac 0.78, rosen_hess 0.83; every other kernel's C unchanged", "codegen_speed_o1_report.html"),
   ),
   (
     3,
@@ -96,7 +96,7 @@ def steps() -> str:
 
 # step report: template, output, timing result, column labels
 REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
-  # O1_REPORT
+  ("report_o1_template.html", "codegen_speed_o1_report.html", "timing_o1_all.json", {"base/jit": "before", "o1/jit": "after"}),
 ]
 
 

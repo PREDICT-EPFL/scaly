@@ -16,6 +16,7 @@ from scaly.passes.arith import fold_program
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program._common import _walk
 from scaly.passes.program.scalarize import (
+  AUTO_EXPANSION_WORK_PER_ENTRY,
   AUTO_EXPANSION_WORK_PER_PROC,
   AUTO_SCALAR_GROWTH_PER_PROGRAM,
   AUTO_SCALAR_OPS_PER_PROC,
@@ -148,6 +149,58 @@ def test_explicit_scalar_root_and_block_precedence() -> None:
   assert not main_proc(lower_function(blocked)).attrs.get("scalarized")
   data = np.arange(4, dtype=float) / 3
   np.testing.assert_array_equal(scalar(data), blocked(data))
+
+
+def test_an_entry_point_that_calls_nothing_expands_and_folds_its_seeds() -> None:
+  """A dense Jacobian written without calls is the entry point alone: under ``auto`` it expands,
+  so the identity seeds of forward mode fold away instead of multiplying tables of zeros and ones."""
+  q = sc.sym("q", 4)
+  w = q[3]
+  rot = sc.stack([q[0] * w - q[1] * q[2], q[1] * w + q[0] * q[2], q[2] * w * q[0]])
+  fn = _function("entry_jac", [q], [rot, sc.jacobian(rot, q)])
+  root = main_proc(lower_function(fn))
+  _assert_scalar(root)
+  consts = [n for stmt in _body(root) for n in _walk(stmt) if n.op == ProgramOp.CONST_FLOAT]
+  assert not any(n.attrs["value"] == 1.0 for n in consts)  # no seed survives as a multiplier
+  data = np.array([0.3, -0.2, 0.5, 0.8])
+  a, b, c, d = data
+  want = np.array([[d, -c, -b, a], [c, d, a, b], [c * d, 0.0, a * d, a * c]])
+  got_rot, got_jac = fn(data)
+  np.testing.assert_allclose(got_rot, [a * d - b * c, b * d + a * c, c * d * a], rtol=1e-15, atol=1e-16)
+  np.testing.assert_allclose(got_jac, want, rtol=1e-15, atol=1e-16)
+
+
+def test_an_entry_point_keeps_its_call_boundaries() -> None:
+  """An entry that calls a procedure keeps it, once or in a loop: ``auto`` expands the callee, never
+  the entry through it, so the named structure stays in the C."""
+  x = sc.sym("x", 3)
+  inner = _function("kept_inner", [x], [x.sin() * x])
+  once = _function("calls_once", [x], [inner(x) + 1.0])
+  prog = lower_function(once)
+  root = main_proc(prog)
+  assert not root.attrs.get("scalarized")
+  assert any(n.op == ProgramOp.CALL for stmt in _body(root) for n in _walk(stmt))
+  _assert_scalar(prog.args[0])
+  data = np.array([0.1, -0.4, 0.9])
+  np.testing.assert_allclose(once(data), np.sin(data) * data + 1.0, rtol=1e-15)
+
+
+def test_the_entry_point_expands_only_within_its_work_cap() -> None:
+  """An entry's expansion is attempted only up to its own work cap, below a callee's: a rejected
+  attempt costs generation time and an entry is never shared. ``_policy_proc(count)`` does
+  ``3 * count`` units of work (two parameters and one store per element) and ``count`` operations."""
+
+  def entry(count: int) -> ProgramNode:
+    proc = _policy_proc(f"cap_{count}", count)
+    return ProgramNode(proc.op, proc.args, {**proc.attrs, "entry": True}, proc.dtype)
+
+  under, over = AUTO_EXPANSION_WORK_PER_ENTRY // 3, AUTO_EXPANSION_WORK_PER_ENTRY // 3 + 1
+  assert 3 * under <= AUTO_EXPANSION_WORK_PER_ENTRY < 3 * over <= AUTO_EXPANSION_WORK_PER_PROC
+  _assert_scalar(scalarize_program(p.program([entry(under)])).args[0])
+  kept = entry(over)
+  assert scalarize_program(p.program([kept])).args[0] is kept
+  # The same procedure as a callee is under a callee's cap and expands.
+  _assert_scalar(scalarize_program(p.program([_policy_proc("cap_callee", over)])).args[0])
 
 
 def test_scalarization_can_be_reapplied_to_its_result() -> None:

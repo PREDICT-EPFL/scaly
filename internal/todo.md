@@ -814,9 +814,12 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       products and `sum` lower to is one serial chain, latency-bound at about one multiply-add a
       cycle; `-fassociative-math` shows the headroom (mlp_big_fwd 0.43, unbumpercars 0.61,
       chol_solve_200 0.69, npmpc 0.71). Split them in a fixed order the generated code owns.
-- [ ] **C-197. Scalarize an entry point that calls nothing.** The entry is never expanded
-      automatically, so a standalone Jacobian runs as loops multiplying identity-seed tables C may
-      not fold: `-ffast-math` gives quat_jac 0.44, rosen_hess 0.66, cartpole_jac 0.75.
+- [x] **C-197. Scalarize an entry point that calls nothing.** The entry was never expanded
+      automatically, so a standalone Jacobian ran as loops multiplying identity-seed tables C may
+      not fold. Now an entry without calls expands under a callee's op budget and its own 4 096-unit
+      work cap (a rejected attempt costs about 40 us of generation per unit); calls, mapped or not,
+      keep the entry loopy. quat_jac 0.51, cartpole_jac 0.78, rosen_hess 0.83; no other corpus
+      kernel changes (`notes/codegen_speed_o1_report.html`).
 - [ ] **C-198. FMA contraction across statements on clang.** GCC contracts across statements by
       default, clang within one expression only; `-ffp-contract=fast` gives 0.97 in geometric mean,
       up to 0.80 (mlp_big_fwd), and turning contraction off costs 1.09.

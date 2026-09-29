@@ -89,5 +89,5 @@ def test_spmv_flops_scale_with_nonzeros_not_the_dense_size() -> None:
   pattern = _random(400, 500, 0.002, 5)
   source = render_c_source(_spmv("flops", pattern))
   loop_bounds = [int(part.split(";")[0]) for part in source.split(" < ")[1:] if part.split(";")[0].isdigit()]
-  assert max(loop_bounds) <= max(pattern.nnz, 500)  # no loop runs over the 200 000 dense entries
+  assert max(loop_bounds, default=0) <= max(pattern.nnz, 500)  # no loop runs over the 200 000 dense entries
   assert "200000" not in source

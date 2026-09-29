@@ -72,7 +72,7 @@ def test_affine_gather_and_scatter_emit_no_index_table(build) -> None:
   perturbed[9] += 1
 
   def tables(indices: np.ndarray) -> list[ProgramNode]:
-    fun = sc.Function.from_exprs("affine_probe", [x], [build(x, indices)], ["x"], ["y"])
+    fun = sc.Function.from_exprs("affine_probe", [x], [build(x, indices).block()], ["x"], ["y"])
     return _const_int_buffers(lower_function(fun))
 
   assert tables(affine) == []

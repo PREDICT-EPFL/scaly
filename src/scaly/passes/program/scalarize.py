@@ -15,6 +15,10 @@ from .scheduling import ScalarNameAllocator, schedule_values
 AUTO_SCALAR_OPS_PER_PROC = 4096
 AUTO_SCALAR_GROWTH_PER_PROGRAM = 16_384
 AUTO_EXPANSION_WORK_PER_PROC = 65_536
+# The entry point expands automatically only when it calls nothing, and only at this much work: an
+# attempt the op budget rejects costs about 40 us of generation per unit of work, and an entry, unlike
+# a callee, is never shared, so a rejected attempt is pure loss.
+AUTO_EXPANSION_WORK_PER_ENTRY = AUTO_SCALAR_OPS_PER_PROC
 
 
 @dataclass(slots=True)
@@ -154,15 +158,35 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     statements = sum(node.op in {ProgramOp.ASSIGN, ProgramOp.STORE} for node in seen)
     return ops, ops + statements
 
+  def calls(proc: ProgramNode) -> bool:
+    stack = [s for s in proc.args[proc.attrs["param_count"] :] if s.op in (ProgramOp.FOR, ProgramOp.CALL)]
+    while stack:
+      node = stack.pop()
+      if node.op == ProgramOp.CALL:
+        return True
+      stack.extend(a for a in node.args if a.op in (ProgramOp.FOR, ProgramOp.CALL))
+    return False
+
+  # Lowering marks the entry point; a solver-rooted program has none, its root renders its own C.
+  entry = next((name for name, pr in procs.items() if pr.attrs.get("entry")), None)
   scalar_growth = 0
   replacements: dict[str, ProgramNode] = {}
   for name, proc in procs.items():
     body_work = [work(stmt) for stmt in proc.args[proc.attrs["param_count"] :]]
+    if name == entry and proc.attrs["lowering"] == "auto" and calls(proc):
+      # Automatic expansion keeps the entry point's call boundaries, mapped (a vmap, a scan) or
+      # not: an entry that calls nothing expands under a callee's op budgets and its own work cap.
+      expansion_work[name] = None
+      continue
     param_work = sum(math.prod(param.attrs["shape"]) for param in proc.args[: proc.attrs["param_count"]])
     total_work = param_work + sum(value for value in body_work if value is not None)
     mode = proc.attrs.get("scalarize_mode", "disabled")
     eligible = mode != "disabled" and all(value is not None for value in body_work)
-    if eligible and proc.attrs["lowering"] == "auto" and total_work > AUTO_EXPANSION_WORK_PER_PROC:
+    if (
+      eligible
+      and proc.attrs["lowering"] == "auto"
+      and total_work > (AUTO_EXPANSION_WORK_PER_ENTRY if name == entry else AUTO_EXPANSION_WORK_PER_PROC)
+    ):
       eligible = False
     if not eligible:
       expansion_work[name] = None

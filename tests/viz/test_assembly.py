@@ -8,7 +8,7 @@ from scaly.viz import clear_recordings, recordings, unvisualize_function, visual
 
 def _fun() -> Function:
   x = sym("x", (2,))
-  y = x * x + 1.0
+  y = (x * x + 1.0).block()  # loop form, so the program listing has a loop to show
   return Function.from_exprs("square_plus_one", [x], [y], output_names=["y"])
 
 
