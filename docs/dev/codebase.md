@@ -94,6 +94,7 @@ src/scaly/
     method.py            ODE, the integrator method registry, METHOD_API and solver
     methods.py           the integrator methods, one class per named method, each building a discrete map
     linear.py            exact discretization of LTI systems (ZOH, FOH), affine maps, and linearization at a point
+    variational.py       explicit Runge-Kutta steps with their sensitivities by the variational equation
 
   ocp/                   optimal control: continuous and discrete OCPs, transcription, formulation, the methods that solve them
     problem.py           ContinuousOCP, DiscreteOCP and their pieces (costs, paths, terminal equality); transcribe
@@ -101,6 +102,10 @@ src/scaly/
     formulate.py         to_problem: a DiscreteOCP as an sc.opt problem, sparse or condensed, and its Layout
     method.py            the OCP method registry, the Info every method reports, and solver
     direct.py            Direct: the formulated problem solved by an sc.opt method
+    ilqr.py              ILQR: iterative LQR on an unconstrained problem, the whole solve as loops
+    tinyadmm.py          TinyADMM: TinyMPC's ADMM with a Riccati-cached primal step, its caches and generated core
+    altro.py             ALTRO (experimental): augmented-Lagrangian iLQR and the projected Newton phase
+    scvx.py              SCvx (experimental): sequential convex programming by a penalized trust region
     warmstart.py         the warm start of a receding horizon: shift and initial_guess
     terminal.py          terminal ingredients: the LQR gain and cost, ellipsoidal and maximal invariant sets
 

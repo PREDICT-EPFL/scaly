@@ -59,6 +59,7 @@ def test_the_integrator_surface() -> None:
     "solver",
     "symplectic",
     "tableau",
+    "variational",
     "zoh",
   ]
   assert "integrators" not in sc.__all__ and not hasattr(sc, "rk4")

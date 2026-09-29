@@ -11,23 +11,23 @@ After casadi/docs/examples/python/race_car.py.
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from _common import scaly_ipopt_options, show
 
 N = 100  # control intervals
 
 
+@sc.function(2, 1, output="xdot")
+def f(x, u):
+  return sc.stack([x[1], u[0] - x[1]])
+
+
+rk4 = si.rk4(f, dt=None)  # rk4(x, u, dt) -> xnext, the interval an input
+
+
 @sc.function(2, 1, 2, 1)
 def defect(z, u, znext, T):
-  dt = T[0] / N
-
-  def f(x):
-    return sc.stack([x[1], u[0] - x[1]])
-
-  k1 = f(z)
-  k2 = f(z + dt / 2 * k1)
-  k3 = f(z + dt / 2 * k2)
-  k4 = f(z + dt * k3)
-  return z + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4) - znext
+  return rk4(z, u, T[0] / N) - znext
 
 
 @sc.opt.problem(vars=sc.G(sc.L("X", 2 * (N + 1)), sc.L("U", N), sc.L("T", 1)))

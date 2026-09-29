@@ -34,6 +34,7 @@ from .methods import (
 from .model import UNROLL_STEPS
 from .polynomial import lgl
 from .tableau import FAMILIES, TABLEAUS, Tableau, gauss_legendre, lobatto_iiia, lobatto_iiic, order_conditions, radau_iia, tableau
+from .variational import variational
 
 __all__ = [
   "BS32",
@@ -84,5 +85,6 @@ __all__ = [
   "solver",
   "symplectic",
   "tableau",
+  "variational",
   "zoh",
 ]

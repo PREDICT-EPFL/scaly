@@ -76,7 +76,11 @@ cpp = "scaly.codegen.cpp"
 casadi = "scaly.codegen.casadi"
 
 [project.entry-points."scaly.methods"]
+"ocp.altro" = "scaly.ocp.altro:ALTRO"
 "ocp.direct" = "scaly.ocp.direct:Direct"
+"ocp.ilqr" = "scaly.ocp.ilqr:ILQR"
+"ocp.scvx" = "scaly.ocp.scvx:SCvx"
+"ocp.tinyadmm" = "scaly.ocp.tinyadmm:TinyADMM"
 "opt.ipm" = "scaly.opt.ipm:IPM"
 "roots.newton" = "scaly.roots.newton:Newton"
 "roots.newton_bisection" = "scaly.roots.newton:NewtonBisection"

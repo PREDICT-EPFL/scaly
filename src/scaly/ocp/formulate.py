@@ -201,14 +201,25 @@ def _problem(ocp: DiscreteOCP, layout: Layout) -> NLP[Any, Any, Any, Any]:
   return problem(vars=layout.vars_tree, params=params_tree, name=ocp.name)(body)
 
 
+def step_map(ocp: DiscreteOCP) -> ConcreteFunction[Any, Any, Any, Any]:
+  """The discrete map ``F(x, u, *params) -> x_next`` of a problem whose stage is one (``shooting``):
+  its own model for a discrete-time map, the transcription's integrator method over ``dt`` for
+  multiple shooting. Built once per problem, so every method that rolls the map out shares it."""
+  if not ocp.shooting:
+    raise ValueError(f"{ocp.name}: only a discrete map or multiple shooting has a step map")
+  if "step" not in ocp._formulations:
+    if ocp.transcription is None:
+      ocp._formulations["step"] = ocp.model
+    else:
+      assert isinstance(ocp.transcription, MultipleShooting)
+      ocp._formulations["step"] = integrate(ODE(ocp.model, dt=ocp.dt), ocp.transcription.method, name=f"{ocp.name}_step")
+  return ocp._formulations["step"]
+
+
 def _rollout_map(ocp: DiscreteOCP) -> ConcreteFunction[Any, Any, Any, Any]:
   """One step of the condensed form's ``scan``: ``(x, u, *params) -> (x_next, x_next)``, the carry
   and the state it stacks."""
-  if ocp.transcription is None:
-    step = ocp.model
-  else:
-    assert isinstance(ocp.transcription, MultipleShooting)
-    step = integrate(ODE(ocp.model, dt=ocp.dt), ocp.transcription.method, name=f"{ocp.name}_step")
+  step = step_map(ocp)
 
   def body(x: Expr, u: Expr, *params: Expr) -> tuple[Expr, Expr]:
     nxt = step(x, u, *params)

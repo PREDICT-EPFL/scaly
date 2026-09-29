@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from scaly.codegen import write_module
 
 GENERATED = Path(__file__).resolve().parent / "generated" / "mhe"
@@ -35,20 +36,17 @@ S_Y, S_W, S_B = 0.03, 0.3, 0.05  # a small S_B makes b a slow random walk across
 P_ARRIVAL = np.array([1 / 0.05**2, 1 / 0.3**2])
 
 
-def rk4(x: sc.Expr, b: sc.Expr) -> sc.Expr:
-  def f(x: sc.Expr) -> sc.Expr:
-    return sc.stack([x[1], -G_L * x[0].sin() - b * x[1]])
+@sc.function(2, 1, output="xdot")
+def pendulum(x: sc.Expr, b: sc.Expr) -> sc.Expr:
+  return sc.stack([x[1], -G_L * x[0].sin() - b[0] * x[1]])
 
-  k1 = f(x)
-  k2 = f(x + 0.5 * DT * k1)
-  k3 = f(x + 0.5 * DT * k2)
-  k4 = f(x + DT * k3)
-  return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+rk4 = si.rk4(pendulum, dt=DT)  # rk4(x, b) -> xnext
 
 
 @sc.function(2, 1, 1, 2)
 def defect(x: sc.Expr, w: sc.Expr, b: sc.Expr, x_next: sc.Expr) -> sc.Expr:
-  return rk4(x, b[0]) + sc.stack([sc.const(0.0), DT * w[0]]) - x_next
+  return rk4(x, b) + sc.stack([sc.const(0.0), DT * w[0]]) - x_next
 
 
 @sc.opt.problem(

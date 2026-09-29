@@ -31,6 +31,7 @@ import numpy as np
 from scipy import optimize
 
 import scaly as sc
+from scaly import integrators as si
 from scaly.codegen import write_module
 
 GENERATED = Path(__file__).resolve().parent / "generated" / "ekf_identification"
@@ -38,16 +39,12 @@ T, DT, K_LIN = 600, 0.05, 1.0
 THETA_TRUE = np.log([0.3, 0.8, 0.02, 0.01])  # c, k3, q, r
 
 
+@sc.function(2, (), (), (), output="xdot")
 def dynamics(x: sc.Expr, u: sc.Expr, c: sc.Expr, k3: sc.Expr) -> sc.Expr:
   return sc.stack([x[1], -K_LIN * x[0] - k3 * x[0] * x[0] * x[0] - c * x[1] + u])
 
 
-def rk4(x: sc.Expr, u: sc.Expr, c: sc.Expr, k3: sc.Expr) -> sc.Expr:
-  k1 = dynamics(x, u, c, k3)
-  k2 = dynamics(x + 0.5 * DT * k1, u, c, k3)
-  k3_ = dynamics(x + 0.5 * DT * k2, u, c, k3)
-  k4 = dynamics(x + DT * k3_, u, c, k3)
-  return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3_ + k4)
+rk4 = si.rk4(dynamics, dt=DT)  # rk4(x, u, c, k3) -> xnext, u, c and k3 held over the step
 
 
 @sc.function(6, 2, 4)

@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from scaly import linalg
 from scaly.codegen import write_module
 
@@ -69,16 +70,15 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
 
   zero = sc.const(np.zeros(n))
 
+  @sc.function(2 * n, output="xdot")
   def f(x: sc.Expr) -> sc.Expr:
     return sc.concat([x[n:], forward_dynamics(x[:n], x[n:], zero)[0]])
 
+  rk4 = si.rk4(f, dt=DT)
+
   @sc.function(2 * n, output=sc.G("x_next", "E"))
   def rk4_step(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    k1 = f(x)
-    k2 = f(x + 0.5 * DT * k1)
-    k3 = f(x + 0.5 * DT * k2)
-    k4 = f(x + DT * k3)
-    return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4), energy(x[:n], x[n:]).reshape((1,))
+    return rk4(x), energy(x[:n], x[n:]).reshape((1,))
 
   @sc.function(2 * n, output=sc.G("x_final", "energies", "sensitivity"))
   def simulate(x0: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:

@@ -14,7 +14,7 @@ import numpy as np
 
 import scaly as sc
 from _common import scaly_ipopt_options, show
-from _lgl import lgl_nodes, lgl_setup
+from scaly import integrators as si
 
 T0, TF = 0, 2
 DEGREES = range(5, 50, 5)
@@ -31,7 +31,7 @@ def xd(x, u):
 
 
 def make_ocp(N: int, verbose: bool):
-  tau, wi, D = lgl_setup(N)
+  tau, wi, D = si.lgl(N)
 
   @sc.opt.problem(vars=sc.G(sc.L("X", 2 * (N + 1)), sc.L("U", N + 1)), name=f"lgl_N{N}")
   def ocp(variables):
@@ -49,7 +49,7 @@ def make_ocp(N: int, verbose: bool):
     (X, U), _, lam_eq, _, _ = solver((X0, np.ones(N + 1)), (np.zeros(2 * (N + 1)), np.zeros(N + 1)), np.zeros(n_eq), np.zeros(0), ())
     adjoint = -lam_eq[: 2 * (N + 1)].reshape(N + 1, 2) / wi[:, None]
     numerical = np.hstack([X.reshape(N + 1, 2), U[:, None], adjoint])
-    ts = (TF - T0) / 2 * lgl_nodes(N) + 0.5 * (TF + T0)
+    ts = (TF - T0) / 2 * tau + 0.5 * (TF + T0)
     return numerical, np.max(np.abs(analytical(ts) - numerical), axis=0), sc.opt.solver_stats(solver).iter
 
   return solve

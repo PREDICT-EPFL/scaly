@@ -5,8 +5,8 @@
 The four parameters are fitted to simulated output data (10 RK4 steps per sample), first by single
 shooting (the parameters are the only variables; the 2000 samples are a ``scan``), then by multiple
 shooting (the states at every sample are variables too, the samples one ``vmap``). The 10 RK4 steps
-of a sample are a ``scan`` too, and the data are parameters of the problems rather than constants
-baked into the generated code.
+of a sample are one ``si.rk4`` map, which runs them as a ``scan`` too, and the data are parameters of
+the problems rather than constants baked into the generated code.
 
 Scaly's IPOPT backend takes the exact Lagrangian Hessian and has no way to pass the Gauss-Newton
 one the CasADi original uses, so the iterations differ; at a zero-residual fit both reach the true
@@ -18,6 +18,7 @@ After casadi/docs/examples/python/sysid.py (Joris Gillis, 2018).
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from _common import scaly_ipopt_options, show
 
 N = 2000  # samples
@@ -26,28 +27,16 @@ STEPS_PER_SAMPLE = 10
 PARAM_TRUTH = np.array([5.625e-6, 2.3e-4, 1, 4.69])
 PARAM_GUESS = np.array([5.0, 2, 1, 5])
 SCALE = np.array([1e-6, 1e-4, 1, 1])
-DT = 1 / FS / STEPS_PER_SAMPLE
 
 
+@sc.function(2, 1, 4, output="xdot")
 def ode(x: sc.Expr, u: sc.Expr, p: sc.Expr) -> sc.Expr:
   y, dy = x[0], x[1]
   M, c, k, k_NL = p[0], p[1], p[2], p[3]
   return sc.stack([dy, (u[0] - k_NL * y**3 - k * y - c * dy) / M])
 
 
-@sc.function(2, 1, 4, output="xnext")
-def one_step(x, u, p):
-  k1 = ode(x, u, p)
-  k2 = ode(x + DT / 2.0 * k1, u, p)
-  k3 = ode(x + DT / 2.0 * k2, u, p)
-  k4 = ode(x + DT * k3, u, p)
-  return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
-
-
-@sc.function(2, 1, 4, output="xnext")
-def one_sample(x, u, p):
-  (x,) = sc.scan(one_step, x, [(u, 0, 0), (p, 0, 0)], length=STEPS_PER_SAMPLE)
-  return x
+one_sample = si.rk4(ode, dt=1 / FS, steps=STEPS_PER_SAMPLE, name="one_sample")  # one_sample(x, u, p) -> xnext
 
 
 @sc.function(2, 1, 4, output=sc.G("xnext", "y"))

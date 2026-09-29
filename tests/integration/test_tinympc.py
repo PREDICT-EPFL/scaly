@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.ocp.tinyadmm import project_cones
 
 TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "tinympc"
 # The example's modules import each other by name, so its directory goes on the path first.
@@ -97,7 +98,7 @@ def test_cone_projection_matches_the_reference_and_is_a_projection() -> None:
   pts[:4] = [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, 0.0], [0.25, 0.0, 1.0]]  # axis, polar axis, apex, boundary
   mu = 0.25
   w = sc.sym("w", pts.size)
-  fn = sc.Function.from_exprs("proj", [w], [ts._project_cones(w, len(pts), 3, (tp.Cone(0, 3, mu),))], ["w"], ["p"])
+  fn = sc.Function.from_exprs("proj", [w], [project_cones(w, len(pts), 3, (tp.Cone(0, 3, mu),))], ["w"], ["p"])
   got = np.asarray(fn(pts.reshape(-1))).reshape(pts.shape)
   want = np.array([tp.project_soc(s, mu) for s in pts])
   np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
@@ -117,11 +118,11 @@ def test_cache_is_the_penalized_riccati_fixed_point() -> None:
   s = tps.rocket_landing(4)
   p, c = s.problem, tp.cache(s.problem)
   q1, r1 = np.diag(p.Q + p.rho), np.diag(p.R + p.rho)
-  k = np.linalg.solve(r1 + p.B.T @ c.Pinf @ p.B, p.B.T @ c.Pinf @ p.A)
-  np.testing.assert_allclose(c.Kinf, k, atol=1e-4)  # the library stops once K moves by less than 1e-5
-  np.testing.assert_allclose(c.Quu_inv, np.linalg.inv(r1 + p.B.T @ c.Pinf @ p.B), rtol=1e-12)
-  np.testing.assert_allclose(c.APf, (p.A - p.B @ c.Kinf).T @ c.Pinf @ p.fdyn, rtol=1e-12)
-  np.testing.assert_allclose(c.Pinf, q1 + p.A.T @ c.Pinf @ (p.A - p.B @ c.Kinf), rtol=1e-3)
+  k = np.linalg.solve(r1 + p.B.T @ c.P @ p.B, p.B.T @ c.P @ p.A)
+  np.testing.assert_allclose(c.K, k, atol=1e-4)  # the library stops once K moves by less than 1e-5
+  np.testing.assert_allclose(c.Quu_inv, np.linalg.inv(r1 + p.B.T @ c.P @ p.B), rtol=1e-12)
+  np.testing.assert_allclose(c.APf, (p.A - p.B @ c.K).T @ c.P @ p.fdyn, rtol=1e-12)
+  np.testing.assert_allclose(c.P, q1 + p.A.T @ c.P @ (p.A - p.B @ c.K), rtol=1e-3)
 
 
 def test_random_problem_generator_reproduces_the_published_draws() -> None:

@@ -32,24 +32,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-
-@dataclass(frozen=True)
-class Cone:
-  """A second-order cone on ``dim`` consecutive entries starting at ``start``: the last one is the
-  axis, ``|s[:-1]| <= mu * s[-1]``."""
-
-  start: int
-  dim: int
-  mu: float
-
-
-@dataclass(frozen=True)
-class Settings:
-  abs_pri_tol: float = 1e-3
-  abs_dua_tol: float = 1e-3
-  max_iter: int = 1000
-  en_state_bound: bool = True
-  en_input_bound: bool = True
+from scaly.ocp.tinyadmm import STATE_FIELDS, Cone, Settings, tinympc_cache
+from scaly.ocp.tinyadmm import LQRCache as Cache
 
 
 @dataclass(frozen=True, eq=False)
@@ -80,41 +64,10 @@ class Problem:
     return np.zeros(self.nx) if self.f is None else np.asarray(self.f, dtype=float)
 
 
-@dataclass(frozen=True, eq=False)
-class Cache:
-  """What ``tiny_precompute_and_set_cache`` stores: the infinite-horizon gain and cost-to-go of the
-  penalized problem, ``(R + rho I + B'PB)^-1``, ``(A - BK)'`` and the affine-term corrections."""
-
-  Kinf: np.ndarray
-  Pinf: np.ndarray
-  Quu_inv: np.ndarray
-  AmBKt: np.ndarray
-  APf: np.ndarray
-  BPf: np.ndarray
-
-
 def cache(p: Problem) -> Cache:
-  """The library's recursion: ``P`` starts at ``rho I`` and stops when ``K`` moves by less than 1e-5."""
-  nx, nu, rho = p.nx, p.nu, p.rho
-  q1, r1 = np.diag(p.Q + rho), np.diag(p.R + rho)
-  a, b = p.A, p.B
-  k_prev, p_next = np.zeros((nu, nx)), rho * np.eye(nx)
-  kinf, pinf = k_prev, p_next
-  for _ in range(1000):
-    kinf = np.linalg.inv(r1 + b.T @ p_next @ b) @ b.T @ p_next @ a
-    pinf = q1 + a.T @ p_next @ (a - b @ kinf)
-    if np.abs(kinf - k_prev).max() < 1e-5:
-      break
-    k_prev, p_next = kinf, pinf
-  quu_inv = np.linalg.inv(r1 + b.T @ pinf @ b)
-  ambkt = (a - b @ kinf).T
-  f = p.fdyn
-  return Cache(kinf, pinf, quu_inv, ambkt, ambkt @ pinf @ f, b.T @ pinf @ f)
-
-
-STATE_FIELDS = ("x", "u", "v", "vnew", "z", "znew", "g", "y", "gc", "yc")
-"""The solver's warm-start state, in the order it is packed: trajectories, box slacks and their
-previous values, box duals, and cone duals. Arrays are stage-major, ``(N, nx)`` and ``(N - 1, nu)``."""
+  """The library's recursion (``scaly.ocp.tinyadmm.tinympc_cache``): ``P`` starts at ``rho I`` and
+  stops when ``K`` moves by less than 1e-5."""
+  return tinympc_cache(p.A, p.B, p.Q, p.R, p.rho, p.fdyn)
 
 
 def zero_state(p: Problem) -> dict[str, np.ndarray]:
@@ -174,7 +127,7 @@ def reference_solve(
     if p.input_cones:
       r = r - rho * (zcnew - s["yc"])
     pp = np.zeros((n, p.nx))
-    pp[n - 1] = -(xref[n - 1] @ c.Pinf)
+    pp[n - 1] = -(xref[n - 1] @ c.P)
     pp[n - 1] = pp[n - 1] - rho * (s["vnew"][n - 1] - s["g"][n - 1])
     if p.state_cones:
       pp[n - 1] = pp[n - 1] - rho * (vcnew[n - 1] - s["gc"][n - 1])
@@ -182,11 +135,11 @@ def reference_solve(
     d = np.zeros((n - 1, p.nu))
     for i in range(n - 2, -1, -1):
       d[i] = c.Quu_inv @ (b.T @ pp[i + 1] + r[i] + c.BPf)
-      pp[i] = q[i] + c.AmBKt @ pp[i + 1] - c.Kinf.T @ r[i] + c.APf
+      pp[i] = q[i] + c.AmBKt @ pp[i + 1] - c.K.T @ r[i] + c.APf
     # forward_pass
     x, u = s["x"], s["u"]
     for i in range(n - 1):
-      u[i] = -(c.Kinf @ x[i]) - d[i]
+      u[i] = -(c.K @ x[i]) - d[i]
       x[i + 1] = a @ x[i] + b @ u[i] + f
     # update_slack
     vnew = x + s["g"]

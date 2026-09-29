@@ -32,6 +32,7 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from scaly.codegen import write_module
 
 GENERATED = Path(__file__).resolve().parent / "generated" / "nmpc_cartpole"
@@ -43,6 +44,7 @@ R, QN = 0.02, 10.0
 SIM_STEPS = 120
 
 
+@sc.function(NX, NU, output="xdot")
 def dynamics(x: sc.Expr, u: sc.Expr) -> sc.Expr:
   theta, pd, td = x[1], x[2], x[3]
   s, c = theta.sin(), theta.cos()
@@ -52,17 +54,12 @@ def dynamics(x: sc.Expr, u: sc.Expr) -> sc.Expr:
   return sc.stack([pd, td, pdd, tdd])
 
 
-def rk4(x: sc.Expr, u: sc.Expr, h: float) -> sc.Expr:
-  k1 = dynamics(x, u)
-  k2 = dynamics(x + 0.5 * h * k1, u)
-  k3 = dynamics(x + 0.5 * h * k2, u)
-  k4 = dynamics(x + h * k3, u)
-  return x + h / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+step = si.rk4(dynamics, dt=DT, steps=2)  # step(x, u) -> xnext: two RK4 substeps of DT / 2
 
 
 @sc.function(NX, NU, NX)
 def defect(x: sc.Expr, u: sc.Expr, x_next: sc.Expr) -> sc.Expr:
-  return rk4(rk4(x, u, DT / 2), u, DT / 2) - x_next
+  return step(x, u) - x_next
 
 
 @sc.function(NX, NU)

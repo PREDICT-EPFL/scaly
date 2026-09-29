@@ -171,7 +171,21 @@ A, B = si.linearize(cartpole, x_eq, u_eq)      # Jacobians of a model (or a map)
 not expressions. `linearize` evaluates the Jacobians of any Function's one output as generated code,
 one matrix per input leaf; linearizing a model and then `zoh` gives the exact discretization of the
 linearization, and linearizing a map built by `explicit` or `implicit` gives the linearization of that
-discretization.
+discretization. `si.affine(A, B)` is the map `A x + B u` itself.
+
+## Sensitivities
+
+```python
+step = si.variational(cartpole, "tsit5", dt=0.05, steps=2, hold=[1.0])
+x_next, Phi = step(x0, u0, u1)       # Phi = d x_next / d(x0, u0, u1), (nx, nx + 2 nu)
+```
+
+`variational` is an explicit Runge-Kutta map that carries its Jacobian through every stage by the
+variational equation, `dPhi/dt = f_x Phi + f_u du/dz`: the forward-mode derivative of the step, with
+the model's Jacobians from AD, one call per stage. `hold` says per control component whether the
+control is held (0, the default) or ramps from `u0` to `u1` over the interval (1), as sequential
+convex programming discretizes a first-order-hold control. Stages no weight reads are skipped, such
+as Tsit5's first-same-as-last stage.
 
 ## Transcriptions
 
@@ -220,4 +234,5 @@ Every stage calls the model once, as a call node, so the model is built, generat
 differentiated once however many stages and substeps there are. The step spells its coefficients
 as a person would: a numerical interval folds into the weights, zero weights drop out, and the most
 frequent weight is factored out, so RK4 becomes `x + h/6 (k1 + 2 k2 + 2 k3 + k4)`. A shooting defect
-built on `si.rk4` generates the same C as the hand-written RK4 of `examples/nmpc_cartpole.py`.
+built on `si.rk4` generates the same C as the same RK4 written out by hand (a test pins it); the
+examples use `si.rk4` for theirs.

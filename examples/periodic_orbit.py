@@ -7,10 +7,11 @@ Single shooting finds it as a root of
 
 the flow over one period ``T`` from a point on the axis ``x2 = 0`` (the phase condition), with two
 unknowns ``(a, T)``: an ``sc.roots.root`` with ``mu`` its parameter, solved by ``sc.roots.Newton``
-with its steps capped in length (``max_step``). The flow map is ``K`` classical RK4 steps written as
-one ``sc.scan`` whose step size ``T / K`` enters every step as a broadcast (stride-0) input, so the
-Newton step's Jacobian in ``(a, T)`` is forward mode through the loop. The Newton iteration around it
-is a ``while_loop`` in the generated code: the whole shooting solver is one C function.
+with its steps capped in length (``max_step``). The flow map is ``K`` classical RK4 steps,
+``si.rk4`` with the interval ``T`` an input, which runs them as one ``sc.scan`` whose step size
+``T / K`` enters every step as a broadcast (stride-0) input, so the Newton step's Jacobian in
+``(a, T)`` is forward mode through the loop. The Newton iteration around it is a ``while_loop`` in
+the generated code: the whole shooting solver is one C function.
 
 At the solution, the Jacobian of the flow in the initial state is the monodromy matrix. Its
 eigenvalues are the Floquet multipliers: one is exactly 1 (a shift along the orbit), and by
@@ -30,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from scaly.codegen import write_module
 
 GENERATED = Path(__file__).resolve().parent / "generated" / "periodic_orbit"
@@ -38,26 +40,19 @@ TOL, MAX_NEWTON, MAX_STEP = 1e-12, 50, 0.5
 PERIOD_MU_1 = 6.6632868593
 
 
+@sc.function(3, (), output="zdot")
 def vector_field(z: sc.Expr, mu: sc.Expr) -> sc.Expr:
   x1, x2 = z[0], z[1]
   return sc.stack([x2, mu * (1 - x1 * x1) * x2 - x1, mu * (1 - x1 * x1)])  # the third state integrates div f
 
 
-@sc.function(3, 2)
-def rk4(z: sc.Expr, mu_dt: sc.Expr) -> sc.Expr:
-  mu, dt = mu_dt[0], mu_dt[1]
-  k1 = vector_field(z, mu)
-  k2 = vector_field(z + 0.5 * dt * k1, mu)
-  k3 = vector_field(z + 0.5 * dt * k2, mu)
-  k4 = vector_field(z + dt * k3, mu)
-  return z + dt / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+# rk4(z, mu, dt) -> znext: K steps of dt / K, the interval an input (dt=None), run as one scan.
+rk4 = si.rk4(vector_field, dt=None, steps=K)
 
 
 def flow(x0: sc.Expr, period: sc.Expr, mu: sc.Expr) -> sc.Expr:
   """``(phi_T(x0), int_0^T div f dt)`` as one scan."""
-  z0 = sc.concat([x0, sc.const(np.zeros(1))])
-  mu_dt = sc.stack([mu, period / K])
-  return sc.scan(rk4, z0, [(mu_dt, 0, 0)], length=K)[0]
+  return rk4(sc.concat([x0, sc.const(np.zeros(1))]), mu, period)
 
 
 @sc.roots.root(vars=sc.L("y", 2), params=sc.L("mu", ()), name="shooting")

@@ -49,7 +49,7 @@
 | 5.1 | `scaly.sets` | ☑ |
 | 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☑ |
 | 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☑ |
-| 6.1 | Library code promoted from examples | ☐ |
+| 6.1 | Library code promoted from examples | ☑ |
 | 6.2 | `nn`, `geometry`, `export` namespaces | ☐ |
 | 7.1 | Conformance suites and the `method` marker | ☐ |
 | 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☐ |
@@ -771,6 +771,38 @@ own. `docs/guide/mpc.md` is `ocp.md`, `api/mpc.md` merged into `api/ocp.md`. Sui
 `stagewise`. Replace hand-written RK4s with `integrators.rk4`.
 Gate: DiscreteOCP conformance for each OCP method; case-study numbers reproduce within recorded
 tolerances.
+Log: done 2026-09-29. Four OCP methods beside `Direct`, each a frozen dataclass of its options with
+the common signature, warm start, `shift` and `initial_guess`, and entry points `ocp.<name>`:
+`ILQR` (`ocp/ilqr.py`, from `examples/ilqr.py`, which it reproduces bit for bit: 39 iterations, the
+same cost; the example is now a `ContinuousOCP` with Euler shooting solved by it), `TinyADMM`
+(`ocp/tinyadmm.py`: TinyMPC's generated ADMM core `admm_solver`, the library's infinite-horizon
+cache `tinympc_cache` and a finite-horizon `finite_cache`; `examples/tinympc` is an adapter over the
+core and `test_tinympc` still sees the library's iteration counts), `ALTRO` (experimental,
+`ocp/altro.py`, from the case study's `al_ilqr.py`, deleted: the study's four runs take Altro.jl's
+iteration counts, 18, 18, 112 and 93, with the recorded agreement, 3.8e-10 against 3.9e-10), and
+`SCvx` (experimental, `ocp/scvx.py`: a generic penalized-trust-region SCP over a QP method, `IPM` by
+default). `integrators/variational.py` is the SCvx study's `segment_variational` generalized (any
+explicit tableau, a zero- or first-order hold per control component, stages without weight
+skipped); the study now uses it and the library's Tsit5 (its `model.tsit5` is gone) and its results
+are bit-identical. `step_map(ocp)` (`ocp/formulate.py`) is the shared discrete map.
+`tests/ocp/test_conformance.py` runs every installed method on four reference problems against the
+direct method on IPOPT (a new method fails it until listed); each method has its own tests,
+mutation-checked. Deviations and findings: TinyMPC's library weighs references by `Q + rho I`,
+which `admm_solver` keeps for the example and `TinyADMM` replaces by the problem's `Q`; the
+finite-horizon cache makes a converged `TinyADMM` solve the stated problem. On a problem whose
+speed bound binds at consecutive knots PIQP stopped 4e-6 short of the optimum IPOPT and TinyADMM
+agree on. iLQR as written in the example stops by an accepted step's improvement only, so on an LQ
+problem at its optimum rounding makes it reject steps until `mu` overflows; the method also stops
+when the backward pass predicts a negligible decrease. The ALTRO port lacked Altro.jl's
+`dJ_zero_counter`, so a problem whose iLQR converges exactly ran every inner solve to 300
+iterations; the method has it (`dj_counter_limit`), the case study's counts unchanged. The
+pseudospectral CasADi pair takes `si.lgl` (same iterations, states to 3e-13). Not moved, recorded
+under Open items: DiffMPC's first-control rule (the stagewise rule gives its gradients to 1e-14, a
+test pins it, but loses the hoist), SymForce's LM (needs manifold variables), the benchmarks'
+Runge-Kutta steps (8.3). Eleven examples' hand-written Runge-Kutta and Euler steps are `si.rk4` and
+`si.explicit` maps, every result the same to 7e-15 and every iteration count equal (`nmpc_cartpole`'s
+C byte-identical); the notebooks in `examples/notebooks` keep their written-out steps, which they
+teach. Suite: 3876 passed, 44 skipped; C snapshots unchanged; ty within the ratchet.
 
 **6.2** `scaly.nn`, `scaly.geometry`, `scaly.export` (C++, CasADi, acados) populated per §3.5;
 duplicated MLP code removed from examples, benchmarks and tests.
@@ -842,3 +874,17 @@ indices. Snapshots may change only where these ops appear; differential tests ag
   `sys.path` (`plotstyle`, `scaly_impl`, ...), which step 7.2 removes. Until then the ty part of the
   common gate is a ratchet: no diagnostic outside the list recorded at step 0.1. Decide whether to
   fix them earlier.
+- **DiffMPC's first-control rule stays in its case study (found at 6.1).** `linalg.stagewise`'s
+  implicit derivative of `Riccati.solve` gives the study's gradients to 1e-14 (a test pins it), but
+  `solve` runs the affine backward pass together with the rollout from `x0`, so a batch episode can
+  no longer hoist the `x0`-free part of the recursion: the study's hoisted forward pass went from
+  0.14 to 2.4 ms. Wanted in `stagewise`: an `x0`-free policy `(K_k, k_k)` with its implicit rule,
+  after which the study's rule can go.
+- **SymForce's Levenberg-Marquardt stays in its case study (found at 6.1).** `roots` has generic
+  Gauss-Newton and LM (4.4); the study's is another algorithm (SE(3) retraction, factor-wise sparse
+  normal equations on `SparseLDL`, SymForce's damping schedule). Moving it needs manifold variables
+  (a retraction and a tangent size) and a sparse normal-equation solve in `roots.LeastSquares`; the
+  manifold comes with `geometry` (6.2).
+- **The benchmark problems keep their hand-written Runge-Kutta steps (6.1).** Their recorded timings
+  depend on the generated code; replacing them with `scaly.integrators` changes the workloads, so it
+  goes with the move to `bench/` (8.3), re-recording the results.

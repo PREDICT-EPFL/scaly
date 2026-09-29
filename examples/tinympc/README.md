@@ -8,8 +8,8 @@ constants of the code, and the loops over the horizon stay loops.
 
 | File | Content |
 | --- | --- |
-| `problem.py` | `Problem`, `Settings`, `Cone`; the Riccati cache as the library computes it; `reference_solve`, a line-by-line NumPy port of the library's `solve` (the test oracle) |
-| `solver.py` | `build_solver(problem)`: the generated `tiny_solve`, one `Function` `(state, x0, xref, uref, bounds...) -> (state_next, iterations, solved, u0)`; `Solver`, a warm-started Python wrapper |
+| `problem.py` | `Problem` (with `Settings` and `Cone` from `scaly.ocp.tinyadmm`); the Riccati cache as the library computes it (`tinympc_cache`); `reference_solve`, a line-by-line NumPy port of the library's `solve` (the test oracle) |
+| `solver.py` | `build_solver(problem)`: the generated `tiny_solve`, one `Function` `(state, x0, xref, uref, bounds...) -> (state_next, iterations, solved, u0)`, which is `scaly.ocp.tinyadmm.admm_solver` with the library's linear cost; `Solver`, a warm-started Python wrapper. The same ADMM with the problem's own references and terminal cost is the OCP method `sc.ocp.TinyADMM` |
 | `problems.py` | the three problem families of [mcu-solver-benchmarks](https://github.com/RoboticExplorationLab/mcu-solver-benchmarks) as closed-loop scenarios, with their sweeps |
 | `random_mpc.py` | random QP-MPC (ICRA 2024): tracking with `|u| <= 3` |
 | `safety_filter.py` | predictive safety filter on a double integrator (CDC 2024 benchmarks) |

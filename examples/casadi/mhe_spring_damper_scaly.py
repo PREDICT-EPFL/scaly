@@ -12,6 +12,7 @@ import numpy as np
 from scipy import linalg
 
 import scaly as sc
+from scaly import integrators as si
 from _common import scaly_ipopt_options, show
 
 N = 10  # horizon
@@ -22,18 +23,12 @@ N_SIM = 1000
 M, K, C = 1.0, 1.0, 0.5  # mass, spring constant, damping
 
 
-@sc.function
+@sc.function(2, 1, 1, output="xdot")
 def f(x, u, w):
   return sc.stack([x[1], (-K * x[0] - C * x[1] + u[0]) / M + w[0]])
 
 
-@sc.function(2, 1, 1, output="x1")
-def phi(x, u, d):
-  k1 = f(x, u, d)
-  k2 = f(x + DT / 2.0 * k1, u, d)
-  k3 = f(x + DT / 2.0 * k2, u, d)
-  k4 = f(x + DT * k3, u, d)
-  return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+phi = si.rk4(f, dt=DT, name="phi")  # phi(x, u, w) -> xnext
 
 
 @sc.function(2, output="y")

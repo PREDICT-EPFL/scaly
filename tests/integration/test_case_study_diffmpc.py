@@ -169,3 +169,33 @@ def test_episode_gradient_matches_finite_differences_and_hoisting_is_exact() -> 
     np.testing.assert_allclose(cost, np_episode(qd), rtol=1e-12)
     np.testing.assert_allclose(grad, fd, rtol=1e-6, atol=1e-7)
   np.testing.assert_allclose(results[1][0], results[0][0], rtol=1e-14)  # hoisted and per-solve agree
+
+
+def test_the_rule_is_the_stagewise_solves_implicit_derivative_at_the_first_control() -> None:
+  """``scaly.linalg.stagewise.Riccati.solve`` carries the general implicit rule; at the first control
+  it is DiffMPC's rule. The study keeps its own for the first control alone: its affine pass is free of
+  ``x0``, so a batch episode hoists the whole recursion, which ``solve``'s x0-coupled pass does not.
+  R's cotangent is the symmetric part's there and the lower triangle's here, the same once folded."""
+  from scaly.linalg.stagewise import Riccati
+
+  @sc.function(NX, NX, NX * NX, NX * NU, NX, NU * NU, output="u0")
+  def stagewise_u0(x0, qd, A_, B_, b, R_):
+    Q = qd.reshape((NX, 1)) * EYE
+    _, us, _ = Riccati(A_.reshape((NX, NX)), B_.reshape((NX, NU)), Q, R_.reshape((NU, NU)), Q, N=T - 1).solve(x0, c=b)
+    return us[0]
+
+  w = RNG.standard_normal(NU)
+  grads = []
+  for f in (mpc_rule, stagewise_u0):
+
+    @sc.function(NX, NX, NX * NX, NX * NU, NX, NU * NU, output=sc.G("a", "b", "c", "d", "e", "g"))
+    def g(x0, qd, A_, B_, b, R_):
+      loss = (sc.const(w) * f(x0, qd, A_, B_, b, R_)).sum()  # noqa: B023
+      return tuple(sc.gradient(loss, v) for v in (x0, qd, A_, B_, b, R_))
+
+    grads.append([np.asarray(a) for a in g(*ARGS)])
+  rule, library = grads
+  for mine, theirs in zip(rule[:5], library[:5], strict=True):
+    np.testing.assert_allclose(mine, theirs, rtol=1e-10, atol=1e-12)
+  folded = library[5].reshape(NU, NU)
+  np.testing.assert_allclose(np.tril(rule[5].reshape(NU, NU)), np.tril(folded + folded.T - np.diag(np.diag(folded))), rtol=1e-10, atol=1e-12)

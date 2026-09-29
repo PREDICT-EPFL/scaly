@@ -12,6 +12,7 @@ def test_the_ocp_surface() -> None:
   ocp = importlib.import_module("scaly.ocp")
   assert sc.ocp is ocp
   assert ocp.__all__ == [
+    "ALTRO",
     "METHOD_API",
     "REGISTRY",
     "Collocation",
@@ -19,6 +20,7 @@ def test_the_ocp_surface() -> None:
     "Direct",
     "DiscreteOCP",
     "Form",
+    "ILQR",
     "Info",
     "Interval",
     "Layout",
@@ -27,8 +29,10 @@ def test_the_ocp_surface() -> None:
     "Path",
     "Pseudospectral",
     "Quadratic",
+    "SCvx",
     "StageStructure",
     "TerminalEquality",
+    "TinyADMM",
     "Transcription",
     "initial_guess",
     "largest_ellipsoid",
@@ -40,5 +44,5 @@ def test_the_ocp_surface() -> None:
     "transcribe",
   ]
   assert "ocp" not in sc.__all__ and not hasattr(sc.integrators, "MultipleShooting")
-  assert sorted(ocp.REGISTRY.installed()) == ["direct"]
+  assert sorted(ocp.REGISTRY.installed()) == ["altro", "direct", "ilqr", "scvx", "tinyadmm"]
   assert importlib.util.find_spec("scaly.mpc") is None  # the receding horizon is the user's loop over ocp.solver and ocp.shift

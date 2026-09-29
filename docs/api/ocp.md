@@ -44,6 +44,32 @@
 
 ::: scaly.ocp.direct.Direct
 
+::: scaly.ocp.ilqr.ILQR
+
+::: scaly.ocp.tinyadmm.TinyADMM
+
+::: scaly.ocp.altro.ALTRO
+
+::: scaly.ocp.scvx.SCvx
+
+## TinyMPC's ADMM
+
+::: scaly.ocp.tinyadmm.admm_solver
+
+::: scaly.ocp.tinyadmm.finite_cache
+
+::: scaly.ocp.tinyadmm.tinympc_cache
+
+::: scaly.ocp.tinyadmm.LQRCache
+
+::: scaly.ocp.tinyadmm.Settings
+
+::: scaly.ocp.tinyadmm.Cone
+
+## Formulation for methods
+
+::: scaly.ocp.formulate.step_map
+
 ## Warm starts
 
 ::: scaly.ocp.warmstart.shift

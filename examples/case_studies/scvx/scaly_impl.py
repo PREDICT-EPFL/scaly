@@ -7,9 +7,9 @@ study's reference dump, citing `cvxpy_ptr_solver.py`):
    `dx/dtau = s_k f(x, u(tau))` from `X_k` over a normalized-time length `1/(N-1)` with two fixed Tsit5
    steps, the thrust a first-order hold between `U_k` and `U_{k+1}` and `s` a zero-order hold; `A_d`,
    `B_d`, `C_d` are the endpoint's derivatives in `X_k`, `U_k`, `U_{k+1}` and `x_prop` the endpoint.
-   OpenSCvx takes them by forward-mode JVPs through diffrax; `segment_variational` carries the same
-   tangent through every stage by the variational equation, and `interval_ad` (`sc.jacobian` through the
-   steps) is kept to check it.
+   OpenSCvx takes them by forward-mode JVPs through diffrax; `segment_variational` (`si.variational`)
+   carries the same tangent through every stage by the variational equation, and `interval_ad`
+   (`sc.jacobian` through the steps) is kept to check it.
 2. **Solve the convex subproblem**, a QP in the scaled variables `x = S_x xh + c_x`, `u = S_u uh + c_u`:
    minimize `-0.01 xh_{N-1, mass} + sum (zh - zh_ref)^2 + 10 sum |nu|` subject to the linearized dynamics
    `xh_{k+1} = S_x^-1 (A_d x_k + B_d u_k + C_d u_{k+1} + x_prop - A_d xbar_k - B_d ubar_k - C_d ubar_{k+1} - c_x) + nu_k`,
@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -38,7 +39,7 @@ import model as md  # noqa: E402
 N, NX, NU = md.N_NODES, md.NX, md.NU
 K = N - 1
 FOH = np.array([1.0, 1.0, 1.0, 0.0])
-TAB = md.tsit5()
+TAB = si.tableau("tsit5")
 H = 1.0 / K / 2  # two fixed steps per interval
 
 
@@ -55,7 +56,7 @@ def segment(x0, u0, u1, inline: bool = False):
   for step in range(2):
     tau0 = step * H
     ks = []
-    for i in range(6):
+    for i in range(6):  # the seventh, first-same-as-last stage has no weight
       xi = x
       for j in range(i):
         if TAB.a[i, j] != 0.0:
@@ -68,42 +69,16 @@ def segment(x0, u0, u1, inline: bool = False):
   return x
 
 
-@sc.function(sc.L("x", NX), sc.L("u", NU), output=sc.G("dx", "J_x", "J_u"), name="pdg6_rates_jac")
-def rates_jac(x, u):
-  """`dx/dtau` and its Jacobians in `x` and `u`, by AD of the rates alone."""
-  f = md.augmented(x, u)
-  return f, sc.jacobian(f, x), sc.jacobian(f, u)
-
-
 P = NX + 2 * NU  # the sensitivities are taken in (x_k, u_k, u_{k+1})
+
+# The endpoint and its Jacobian in `(x0, u0, u1)`: the same two Tsit5 steps, the tangent carried through
+# each stage by the variational equation (`si.variational`), the thrust a first-order and `s` a
+# zero-order hold. For an explicit Runge-Kutta step this is the forward-mode derivative of the step.
+VARIATIONAL = si.variational(rates, TAB, dt=1.0 / K, steps=2, hold=FOH, name="pdg6_variational")
 
 
 def segment_variational(x0, u0, u1):
-  """The endpoint and its Jacobian in `(x0, u0, u1)`: the same two Tsit5 steps, with the tangent
-  `Phi = d x / d(x0, u0, u1)` carried through each stage by the variational equation. For an explicit
-  Runge-Kutta step this is the forward-mode derivative of the step itself, stage for stage."""
-  x = x0
-  Phi = sc.const(np.hstack([np.eye(NX), np.zeros((NX, 2 * NU))]))
-  M = np.diag(FOH)
-  for step in range(2):
-    tau0 = step * H
-    ks, kphis = [], []
-    for i in range(6):
-      xi, phii = x, Phi
-      for j in range(i):
-        if TAB.a[i, j] != 0.0:
-          xi = xi + (H * TAB.a[i, j]) * ks[j]
-          phii = phii + (H * TAB.a[i, j]) * kphis[j]
-      frac = (tau0 + TAB.c[i] * H) * K
-      u = u0 + sc.const(FOH * frac) * (u1 - u0)
-      du = sc.const(np.hstack([np.zeros((NU, NX)), np.eye(NU) - frac * M, frac * M]))  # d u / d(x0, u0, u1)
-      f, Jx, Ju = rates_jac(xi, u)
-      ks.append(f)
-      kphis.append(Jx @ phii + Ju @ du)
-    for i in range(6):
-      x = x + (H * TAB.b[i]) * ks[i]
-      Phi = Phi + (H * TAB.b[i]) * kphis[i]
-  return x, Phi
+  return VARIATIONAL(x0, u0, u1)
 
 
 @sc.function(sc.L("x0", NX), sc.L("u0", NU), sc.L("u1", NU), name="pdg6_interval")

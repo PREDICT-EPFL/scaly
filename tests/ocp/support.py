@@ -39,7 +39,7 @@ class Controller:
     self.problem, self.method = problem, method
     self.solve_fn = sc.ocp.solver(problem, method, name=name)
     self.shift_fn = sc.ocp.shift(problem, method)
-    self.layout = method.layout(problem)
+    self.layout = method.layout(problem) if hasattr(method, "layout") else None  # a Direct method's point has leaves
     self.warm: np.ndarray | None = None
 
   def initial_guess(self, x0: Any, u: Any = None) -> np.ndarray:
@@ -53,11 +53,11 @@ class Controller:
     point = np.asarray(point)
     self.warm = np.asarray(self.shift_fn(point))
     cut, leaves = 0, {}
-    for name, size in zip(self.layout.var_names, self.layout.var_sizes, strict=True):
+    for name, size in zip(self.layout.var_names, self.layout.var_sizes, strict=True) if self.layout is not None else ():
       leaves[name] = point[cut : cut + size]
       cut += size
     k = self.problem.interval.n_internal
-    if k:
+    if k and "zs" in leaves:
       leaves["zs"] = leaves["zs"].reshape(self.problem.N, k)
     status = sc.Status(int(info.status))
     return Solved(np.asarray(xs), np.asarray(us), point, status, float(info.objective), int(info.iter), leaves)

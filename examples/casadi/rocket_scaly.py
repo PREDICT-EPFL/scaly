@@ -9,23 +9,20 @@ After casadi/docs/examples/python/rocket.py.
 import numpy as np
 
 import scaly as sc
+from scaly import integrators as si
 from _common import scaly_ipopt_options, show
 
 NU = 50  # control intervals
 DT = 0.01  # Euler step, 20 per interval
 
 
-@sc.function
+@sc.function(3, 1, output="xdot")
 def f(x, u):
   v, m = x[1], x[2]  # x = (position, speed, mass)
   return sc.stack([v, (u[0] - 0.05 * v * v) / m, -0.1 * u[0] * u[0]])
 
 
-@sc.function(3, 1, output="xnext")
-def F(x, u):
-  for _ in range(20):
-    x = x + DT * f(x, u)
-  return x
+F = si.explicit(f, "euler", dt=20 * DT, steps=20, name="F")  # F(x, u) -> xnext over one interval
 
 
 @sc.opt.problem(vars=sc.L("U", NU))

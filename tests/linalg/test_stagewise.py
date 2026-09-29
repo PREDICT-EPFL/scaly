@@ -204,8 +204,8 @@ def test_the_tinympc_riccati_cache(scenario) -> None:
   fac = Riccati(p.A, p.B, np.diag(p.Q + p.rho), np.diag(p.R + p.rho), p.rho * np.eye(p.nx), N=n)
   fn = sc.Function.from_exprs(f"sw_tiny_{p.nx}_{p.nu}_{n}", [], [fac.gains[0], fac.cost_to_go[0]], [], ["K0", "P0"])
   k0, p0 = fn._flat_numerical_call()
-  np.testing.assert_allclose(-k0, cache.Kinf, rtol=1e-9, atol=1e-9 * np.abs(cache.Kinf).max())
-  np.testing.assert_allclose(p0, 0.5 * (cache.Pinf + cache.Pinf.T), rtol=1e-9, atol=1e-9 * np.abs(cache.Pinf).max())
+  np.testing.assert_allclose(-k0, cache.K, rtol=1e-9, atol=1e-9 * np.abs(cache.K).max())
+  np.testing.assert_allclose(p0, 0.5 * (cache.P + cache.P.T), rtol=1e-9, atol=1e-9 * np.abs(cache.P).max())
 
 
 def test_a_shared_matrix_is_the_same_matrix_at_every_stage() -> None:

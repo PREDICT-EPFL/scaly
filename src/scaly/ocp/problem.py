@@ -220,6 +220,9 @@ class DiscreteOCP:
     # Every parameter any Function names, in order of appearance, one type per name.
     self.params: list[Param] = []
     self._collect(model, 2)
+    # A method that works on the matrices themselves (TinyADMM's Riccati cache) reads the specs.
+    self.stage_quadratic = stage_cost if isinstance(stage_cost, Quadratic) else None
+    self.terminal_quadratic = terminal_cost if isinstance(terminal_cost, Quadratic) else None
     stage = self._quadratic(stage_cost, "stage_cost", True) if isinstance(stage_cost, Quadratic) else stage_cost
     terminal_fn = self._quadratic(terminal_cost, "terminal_cost", False) if isinstance(terminal_cost, Quadratic) else terminal_cost
     for fn, lead in ((stage, 2), *((c.fn, 2) for c in self.constraints), (terminal_fn, 1)):

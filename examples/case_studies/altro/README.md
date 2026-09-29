@@ -30,7 +30,7 @@ Altro.jl runs phase 1 alone when `projected_newton=false` (it then stops at `con
 1e-6), and both phases otherwise (phase 1 to `projected_newton_tolerance`, set to 1e-4 here, then the
 projection to 1e-6). Both configurations are compared.
 
-`al_ilqr.py` writes both phases in Scaly, following Altro.jl 0.5's source rather than the paper's
+`sc.ocp.ALTRO` (`src/scaly/ocp/altro.py`, promoted from this study's `al_ilqr.py`) writes both phases in Scaly, following Altro.jl 0.5's source rather than the paper's
 pseudocode: the line search's acceptance ratio in `[1e-8, 10]` and its 20 halvings, the regularization
 schedule (`1.6` growth, `1e-8` floor, `+10` after a failed line search), the inner stopping test (cost
 decrease below 1e-4 and Altro's mean relative feedforward step below 1), the active set `c >= 0 or
@@ -67,8 +67,7 @@ does not, so `run_altro.jl` scales `Q` and `R` by `dt`.
 | --- | --- |
 | `baseline/setup.sh` | Julia 1.10.12 into `baseline/third_party`, the environment in `baseline/julia_env` (its Manifest pins Altro 0.5.0, TrajectoryOptimization 0.7.1, RobotDynamics 0.4.8, RobotZoo 0.3.1), writes `baseline/env.sh` |
 | `baseline/run_altro.jl` | the two problems on Altro.jl; one cold solve recorded, then BenchmarkTools over 50 cold solves |
-| `al_ilqr.py` | the augmented-Lagrangian iLQR and the projected Newton phase as one Scaly Function |
-| `scaly_impl.py` | the two problems as `al_ilqr.OCP`s |
+| `scaly_impl.py` | the two problems in Altro's terms (`OCP`), stated as `DiscreteOCP`s and solved by `sc.ocp.ALTRO`, the augmented-Lagrangian iLQR and the projected Newton phase as one Scaly Function |
 | `run_scaly.py` | builds, generates and compiles one solver, times it from C with `examples/qp_solvers/time_entry.c` |
 | `compare.py` | both algorithms on both sides for both problems, three fresh processes each, the fastest kept |
 | `altro.ipynb` | the study as a notebook |
@@ -109,7 +108,7 @@ Altro.jl, package load (0.8 s), problem and solver setup (3.9 s) and a first sol
 - **4.1 to 8.6x faster**, which meets the plan's criterion (the same optimum to 1e-6 relative, in less
   time than current Altro.jl) on both problems.
 - **The cartpole gains less.** Its line search takes 3.5 rollouts per iLQR iteration against the
-  parallel park's 1.4 (391 against 25, counted with a scratch variant of `al_ilqr.py`). Rollouts are the
+  parallel park's 1.4 (391 against 25, counted with a scratch variant of the study's former `al_ilqr.py`). Rollouts are the
   cheap part of an iteration, and the derivative expansions of the backward pass are the likely
   location of the gap. The split was not measured.
 - **Altro.jl's projection finds feasibility, not optimality.** ALTRO's answer has the lower violation

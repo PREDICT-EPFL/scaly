@@ -5,7 +5,7 @@
 
 Per problem (parallel park, cartpole), each algorithm on each side: the augmented-Lagrangian iLQR alone
 (`altro_al`, `scaly_al`) and full ALTRO, the augmented Lagrangian to 1e-4 and then the projected Newton
-phase (`altro_pn`, `scaly_pn`); Altro.jl 0.5 in Julia, Scaly's in generated C (`al_ilqr.py`, following
+phase (`altro_pn`, `scaly_pn`); Altro.jl 0.5 in Julia, Scaly's in generated C (`sc.ocp.ALTRO`, following
 Altro.jl's source). Each runs in `--processes` fresh processes, each
 held until the machine is quiet (`_common.wait_for_quiet`); the table keeps the fastest. A Julia process
 times cold solves with BenchmarkTools (50 samples); a Scaly process times the generated entry point from

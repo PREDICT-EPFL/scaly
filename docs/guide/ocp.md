@@ -123,6 +123,36 @@ control `u` (zeros by default), a transcription's own variables from its `guess`
 multipliers zero. The solver's own statistics, its time among them, are
 `sc.opt.solver_stats(solve)` after a call.
 
+## The other methods
+
+Every method builds the same Function, `xs, us, point, info = solve(x0, *params, warm)`, and has its
+own warm start, which `ocp.initial_guess` and `ocp.shift` know. Each one refuses, with its reasons,
+a problem it cannot take; `tests/ocp/test_conformance.py` checks each against the direct method on
+every problem it takes.
+
+| Method | Takes | Warm start |
+| --- | --- | --- |
+| `ocp.Direct(method, form)` | any `DiscreteOCP`, through an `sc.opt` method | the primal-dual point |
+| `ocp.ILQR()` | a map, costs at the points, no constraints, bounds or terminal set | the controls |
+| `ocp.TinyADMM(rho)` | an affine map without parameters, `Quadratic` costs, box bounds | the ADMM's state |
+| `ocp.ALTRO()` (experimental) | a map, costs at the points, bounds, hard paths, a terminal equality or set | the controls |
+| `ocp.SCvx()` (experimental) | a map, convex `Quadratic` costs, bounds, hard paths, a terminal equality or polytope | the reference `(X, U)` |
+
+- **`ILQR`** is iterative LQR with the regularization and line search of Tassa et al.: a rollout
+  `scan`, a backward Riccati `scan` on local models from AD, and a line search `while_loop` inside an
+  outer `while_loop`, so the whole trajectory optimizer is one generated C function.
+- **`TinyADMM`** is TinyMPC's ADMM: every bound gets a slack copy, so the primal step is an LQR whose
+  gains are computed offline, and each iteration is a backward pass for the affine terms, a
+  rollout, a clip and a dual update. Its gains come from the problem's own terminal cost
+  (`scaly.ocp.tinyadmm.finite_cache`); `admm_solver` with `tinympc_cache` is the library's
+  convention, which `examples/tinympc` reproduces to rounding.
+- **`ALTRO`** is the augmented-Lagrangian iLQR of Howell et al. following Altro.jl 0.5, with the
+  optional projected Newton phase (`projected_newton=True`, which takes diagonal `Quadratic`
+  costs). `examples/case_studies/altro` checks it against Altro.jl's iterates.
+- **`SCvx`** is sequential convex programming with a penalized trust region: each iteration
+  linearizes the map and the paths about the reference and solves a QP (by default `sc.opt.IPM`)
+  with virtual control and a proximal term.
+
 ## A receding horizon
 
 ```python

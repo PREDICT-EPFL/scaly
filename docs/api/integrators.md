@@ -84,6 +84,10 @@
 
 ::: scaly.integrators.linear.affine
 
+## Sensitivities
+
+::: scaly.integrators.variational.variational
+
 ## Tableaus
 
 ::: scaly.integrators.tableau.Tableau
