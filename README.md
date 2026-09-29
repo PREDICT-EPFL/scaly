@@ -71,8 +71,8 @@ uv run scaly_codegen mymodule:solve -o generated/
 Scaly requires with Python 3.12 or newer, on Linux and macOS, and only requires
 a C compiler to be pre-installed. Using [uv](docs.astral.sh/uv):
 ```bash
-# install just the core library
-uv add scaly    
+# install scaly: the compiler, its numerical methods, optimal control and the tools
+uv add scaly
 # or with an additional solver interface
 uv add "scaly[ipopt]"
 # or with all solvers

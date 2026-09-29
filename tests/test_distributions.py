@@ -6,15 +6,22 @@ declares it. The wheels are built here with hatchling, the build backend a relea
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 import tarfile
+import textwrap
 import zipfile
 from importlib.metadata import distribution
 from pathlib import Path
 
+import numpy
 import pytest
+import scipy
 from hatchling.builders.sdist import SdistBuilder
 from hatchling.builders.wheel import WheelBuilder
 
+import scaly as sc
 from scaly.testing import examples
 from scripts.distributions import ROOT, SRC, entry_points_of, load, owner_tests, scripts_of, source_owner, stale
 
@@ -129,6 +136,63 @@ def test_the_workspace_installs_every_distribution(name: str) -> None:
     for ep in installed.entry_points:
       got.setdefault(ep.group, {})[ep.name] = ep.value
     assert got == _declared(name), f"{name} is installed with other entry points than its manifest declares; run `uv sync`"
+
+
+def test_the_core_names_the_distribution_of_each_namespace() -> None:
+  """``sc.<namespace>`` names the distribution to install when it is missing; ``scaly.testing``
+  stays out of the ``scaly`` namespace."""
+  namespaces = {path.split("/")[1] for d in TABLE.lockstep if d.name != "scaly-core" for path in d.paths} - {"testing"}
+  assert sc._NAMESPACES == {name: source_owner(f"scaly/{name}/__init__.py", TABLE) for name in sorted(namespaces)}
+
+
+def _installed(wheels: dict[str, Path], names: tuple[str, ...], code: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+  """Run ``code`` where only the wheels of ``names`` are installed, unpacked into one directory, and
+  NumPy and SciPy: no site-packages, so neither the workspace's ``src/`` nor its metadata."""
+  site = tmp_path / "site"
+  for name in names:
+    with zipfile.ZipFile(wheels[name]) as archive:
+      archive.extractall(site)
+  deps = tmp_path / "deps"
+  deps.mkdir()
+  for module in (numpy, scipy):
+    installed = Path(module.__file__ or "").parents[1]
+    for entry in (module.__name__, f"{module.__name__}.libs"):  # a Linux wheel's libraries sit beside it
+      if (installed / entry).exists():
+        (deps / entry).symlink_to(installed / entry)
+  env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(site), str(deps)])}
+  prologue = f"import scaly as sc\nassert sc.__file__.startswith({str(site)!r}), sc.__file__\n"
+  return subprocess.run([sys.executable, "-S", "-c", prologue + textwrap.dedent(code)], env=env, cwd=tmp_path, capture_output=True, text=True)
+
+
+def test_an_install_of_core_and_numerics_names_scaly_control(wheels: dict[str, Path], tmp_path: Path) -> None:
+  code = """
+    from scaly import linalg as la
+    assert sc.linalg is la
+    try:
+      sc.ocp
+    except AttributeError as exc:
+      assert "scaly.ocp needs scaly-control" in str(exc), exc
+    else:
+      raise AssertionError("sc.ocp without scaly-control")
+  """
+  proc = _installed(wheels, ("scaly-core", "scaly-numerics"), code, tmp_path)
+  assert proc.returncode == 0, proc.stderr
+
+
+def test_an_install_without_scaly_experimental_names_it_for_its_methods(wheels: dict[str, Path], tmp_path: Path) -> None:
+  code = """
+    assert sorted(sc.ocp.REGISTRY.installed()) == ["direct", "ilqr", "tinyadmm"], sc.ocp.REGISTRY.installed()
+    for attr in ("ALTRO", "SCvx"):
+      try:
+        getattr(sc.ocp, attr)
+      except AttributeError as exc:
+        assert f"scaly.ocp.{attr} needs scaly-experimental" in str(exc), exc
+      else:
+        raise AssertionError(f"sc.ocp.{attr} without scaly-experimental")
+    assert sc.ocp.ILQR is sc.ocp.REGISTRY.get("ilqr")
+  """
+  proc = _installed(wheels, ("scaly-core", "scaly-numerics", "scaly-control"), code, tmp_path)
+  assert proc.returncode == 0, proc.stderr
 
 
 def test_the_example_runner_knows_the_lockstep_distributions() -> None:

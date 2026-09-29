@@ -6,7 +6,7 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 from ..function.method import Info as MethodInfo
-from ..function.method import registry
+from ..function.method import MethodHint, registry
 from ..function.model import ConcreteFunction
 from ..function.tree import L, Record
 from ..ir.types import TensorType
@@ -27,9 +27,13 @@ class Info(MethodInfo):
     return Record(cls, **{f.name: L(prefix + f.name, TensorType((), diff=False)) for f in fields(cls)})
 
 
-REGISTRY = registry("ocp", preference=("direct",))
+REGISTRY = registry(
+  "ocp",
+  hints=(MethodHint("altro", "ALTRO", "scaly-experimental"), MethodHint("scvx", "SCvx", "scaly-experimental")),
+  preference=("direct",),
+)
 """Every OCP method by short name (``"direct"``); ``auto`` formulates the problem and hands it to the
-first ``sc.opt`` method that takes it."""
+first ``sc.opt`` method that takes it. The experimental methods come with ``scaly-experimental``."""
 
 
 def solver(problem: DiscreteOCP, method: Any = "auto", /, *, name: str | None = None) -> ConcreteFunction[Any, Any, Any, Any]:

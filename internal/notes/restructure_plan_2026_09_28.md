@@ -54,7 +54,7 @@
 | 7.1 | Conformance suites and the `method` marker | ☑ |
 | 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☑ |
 | 8.1 | `distributions.toml`, manifests, metapackage | ☑ |
-| 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☐ |
+| 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☑ |
 | 8.3 | CI: isolation jobs, plugin jobs, release job, release script | ☐ |
 | 9.1 | Optional: indexing consolidation | ☐ |
 
@@ -944,6 +944,24 @@ known namespaces with install hints; each domain `__init__` resolves method clas
 Gate: in a clean venv from built wheels, `import scaly as sc; from scaly import linalg as la;
 sc.linalg is la`; `sc.ocp` without `scaly-control` raises an `AttributeError` naming it; `ty` and
 `pyright` resolve `scaly.linalg` both in the workspace and in the wheel venv.
+Log: done 2026-09-29, written in a worktree by a parallel agent and gated in the main checkout. `scaly/__init__.py` extends its
+`__path__` with `pkgutil.extend_path` after the core's own imports, and `_NAMESPACES` maps each
+namespace to its distribution: `sc.<name>` imports it on first read and, when it is missing, raises
+`AttributeError("scaly.ocp needs scaly-control, which is not installed (uv add scaly-control)")`;
+`sc.expr_graph` names scaly-tools the same way, and `sc.viz` joins the table, while `scaly.testing`
+stays out of the namespace. `roots`, `integrators` and `interp` get the lazy method-class hook `opt`
+has; `ocp` gets it too and stops importing `ALTRO` and `SCvx`, which leave its `__all__` and resolve
+through the registry, whose hints name scaly-experimental. `DIST_TOLERATED` is empty. Tests:
+`tests/core/test_namespaces.py` (a missing namespace and the graph views name their distribution,
+`sc.linalg` is the imported module, a `scaly/` portion elsewhere on the path merges);
+`tests/test_distributions.py` holds `_NAMESPACES` to the table and runs, in an interpreter with no
+site-packages, the unpacked wheels of core and numerics (`sc.linalg is la`, `sc.ocp` names
+scaly-control) and of core, numerics and control (`sc.ocp.ALTRO` and `SCvx` name scaly-experimental).
+Gate: `uv build` of scaly-core and scaly-numerics into a fresh venv with only those two wheels
+(and NumPy, SciPy): `sc.linalg is la`, and `sc.ocp` raises the `AttributeError` naming scaly-control;
+ty and pyright resolve `sc.linalg.SparseLDL` to its class in the workspace and in that venv, and
+pyright flags a name `linalg` does not have. Suite (8.1 and 8.2 together): 4365 passed, 54 skipped;
+C snapshots unchanged; ty within the ratchet (142).
 
 **8.3** CI jobs: workspace at HEAD; one isolation job per distribution (install its wheel with only
 declared dependencies, run its tests); plugins against HEAD and against their oldest and newest

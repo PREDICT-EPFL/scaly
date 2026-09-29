@@ -1333,6 +1333,10 @@ tests/core/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap]
 tests/core/test_c_snapshot.py::test_generated_c_matches_snapshot[wide]
 tests/core/test_c_snapshot.py::test_generated_c_matches_snapshot[workspace]
 tests/core/test_c_snapshot.py::test_generated_solver_c_matches_snapshot[solver]
+tests/core/test_namespaces.py::test_a_missing_namespace_names_its_distribution
+tests/core/test_namespaces.py::test_a_namespace_is_the_module_its_import_gives
+tests/core/test_namespaces.py::test_graph_views_name_scaly_tools_when_it_is_missing
+tests/core/test_namespaces.py::test_the_package_merges_portions_found_on_the_path
 tests/core/utils/test_names.py::test_c_identifier_spelling[1value-_1value]
 tests/core/utils/test_names.py::test_c_identifier_spelling[_h0-_h0]
 tests/core/utils/test_names.py::test_c_identifier_spelling[arg-arg_]

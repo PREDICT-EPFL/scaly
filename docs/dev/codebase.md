@@ -216,6 +216,14 @@ the one `src/` tree, so everything is importable; `tests/test_distributions.py` 
 and checks that every file lands in exactly one, and the distribution table in
 `tests/test_import_layering.py` checks that each imports only what it declares.
 
+Nothing in one distribution imports another it does not depend on, so the seams are lazy.
+`scaly/__init__.py` extends its `__path__` (`pkgutil.extend_path`), so directories that different
+installs put a `scaly/` in merge, and `sc.<namespace>` imports the namespace on first read, raising
+an `AttributeError` that names the distribution to install when it is missing (`_NAMESPACES`, held
+to the table by a test). A domain with a method registry resolves the method classes it does not
+import itself through the registry the same way (`sc.opt.PIQP`, `sc.ocp.ALTRO`), naming the
+distribution from the registry's hints.
+
 ## Import layers
 
 Every module has an import layer. A module may import modules in its own import layer or a lower

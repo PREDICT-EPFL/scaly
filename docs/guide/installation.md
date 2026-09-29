@@ -4,15 +4,24 @@ Scaly requires Python 3.12 or newer, on Linux and macOS, and only requires
 a C compiler to be installed system wide. Using [uv](https://docs.astral.sh/uv):
 
 ```bash
-# install just the core library
+# install scaly: the compiler, its numerical methods, optimal control and the tools
 uv add scaly
 # or with an additional solver interface
 uv add "scaly[ipopt]"
 # or with all solvers
 uv add "scaly[solvers]"
+# or with everything, the experimental namespaces too
+uv add "scaly[all]"
 ```
 
 You can of course also use pip by replacing `uv add` with `pip install`.
+
+`scaly` gathers several distributions that install into the one `scaly` package: `scaly-core` (the
+compiler), `scaly-numerics` (`linalg`, `roots`, `opt`, `integrators`, `interp`), `scaly-control`
+(`ocp`, `sets`) and `scaly-tools` (`viz`, `export`), with `scaly-experimental` (`nn`, `geometry`,
+the experimental OCP methods) as the `experimental` extra. Each can be installed alone with what it
+depends on; `sc.ocp` without `scaly-control`, or `sc.ocp.ALTRO` without `scaly-experimental`, raises
+an `AttributeError` naming the distribution to add.
 
 The solver plugins ship prebuilt libraries. A solve raises `SolverLibraryError` when the library it
 needs is not there. If no wheel matches your platform, or you want a checkout of the repository,

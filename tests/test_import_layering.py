@@ -403,12 +403,9 @@ def test_core_names_no_solver_adapter_or_package_built_on_it() -> None:
 # types its lazy namespaces that way), and reading a namespace through the package, ``sc.opt``,
 # counts as importing ``scaly.opt``, which it does.
 
-# Distribution edges carried through step 8.2, which resolves these names lazily; empty when it lands.
-DIST_TOLERATED: dict[tuple[str, str], str] = {
-  ("scaly", "scaly.viz.graph"): "sc.expr_graph and sc.program_graph, which scaly-tools provides",
-  ("scaly.ocp", "scaly.ocp.altro"): "the experimental ALTRO, imported by the scaly-control namespace",
-  ("scaly.ocp", "scaly.ocp.scvx"): "the experimental SCvx, imported by the scaly-control namespace",
-}
+# Distribution edges carried deliberately through a refactor in progress, as ``TOLERATED`` above; empty.
+# ``sc.<namespace>`` and a domain's method classes from another distribution resolve lazily instead.
+DIST_TOLERATED: dict[tuple[str, str], str] = {}
 
 
 def _plugin_modules() -> dict[str, Path]:

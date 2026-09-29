@@ -7,6 +7,9 @@ from .method import METHOD_API, REGISTRY, Fit, solver
 from .methods import PCHIP, ZOH, Akima, Constrained, Cubic, Interpolating, Linear, Makima, Nearest, PerAxis, Smoothing, SmoothLinear, Spline, Steffen
 from .spline import PP_BUDGET, BSpline, Index, Inverse
 
+# The method classes of other distributions, loaded on first use from the registry.
+__getattr__ = REGISTRY.attribute(__name__)
+
 __all__ = [
   "BOUNDARIES",
   "KINDS",

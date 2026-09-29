@@ -36,6 +36,9 @@ from .polynomial import lgl
 from .tableau import FAMILIES, TABLEAUS, Tableau, gauss_legendre, lobatto_iiia, lobatto_iiic, order_conditions, radau_iia, tableau
 from .variational import variational
 
+# The method classes of other distributions, loaded on first use from the registry.
+__getattr__ = REGISTRY.attribute(__name__)
+
 __all__ = [
   "BS32",
   "DOPRI5",

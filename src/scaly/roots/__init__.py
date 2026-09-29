@@ -11,6 +11,9 @@ from .newton import LINEAR, Newton, NewtonBisection
 from .problem import LeastSquares, Root, RootSpec, least_squares, root
 from .solver import solver
 
+# The method classes of other distributions, loaded on first use from the registry.
+__getattr__ = REGISTRY.attribute(__name__)
+
 __all__ = [
   "LINEAR",
   "METHOD_API",
