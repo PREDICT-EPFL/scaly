@@ -1,4 +1,4 @@
-"""Terminal ingredients: the LQR gain and cost, ellipsoidal and maximal positively invariant sets."""
+"""Terminal ingredients of an OCP: the LQR gain and cost to go, and the ellipsoidal and maximal positively invariant sets, as ``scaly.sets`` objects."""
 
 from __future__ import annotations
 

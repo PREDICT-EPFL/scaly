@@ -48,7 +48,7 @@
 | 4.5 | `integrators` and `interp` as method registries | ☑ |
 | 5.1 | `scaly.sets` | ☑ |
 | 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☑ |
-| 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☐ |
+| 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☑ |
 | 6.1 | Library code promoted from examples | ☐ |
 | 6.2 | `nn`, `geometry`, `export` namespaces | ☐ |
 | 7.1 | Conformance suites and the `method` marker | ☐ |
@@ -737,6 +737,32 @@ and pins the stage structure and the layout's blocks and runs.
 `Direct`, `shift`, `ocp.terminal`; delete `src/scaly/mpc/`; rewrite `examples/mpc/*` notebooks
 into `examples/ocp/` with explicit closed loops; rewrite `docs/guide/mpc.md` as `ocp.md`.
 Gate: notebooks run; closed-loop results match the recorded ones.
+Log: done 2026-09-29. `ocp/method.py`: the `ocp` registry (entry point `ocp.direct`), `Info`
+(`status`, `iter`, `objective`, `primal_residual`) and `solver(problem, method)`, whose Function is
+`xs, us, point, info = solve(x0, *params, warm)` for every method; a `ContinuousOCP` is refused with
+the pointer to `transcribe`. `ocp/direct.py`: `Direct(method, form)`, `to_problem` solved by any
+`sc.opt` method, with its `layout`, `warm_size`, `shift` and `initial_guess`. `ocp/warmstart.py`:
+`shift(problem, method)`, a Function from the point a solve reached to the next warm start (the old
+controller's stage shift), and `initial_guess`. `ocp/terminal.py` moved from `mpc/`; `mpc.linear`
+is `si.affine`. Two refinements of §3.3: the solver returns `xs, us` and the flat primal-dual
+`point` rather than one trajectory tree, and `shift` takes the method as well as the problem, since
+the point's layout is the method's (the form, and later ILQR's own). PIQP's sparse backend is no
+longer chosen for the user: `Direct(sc.opt.PIQP(sparse=True))` names it. `src/scaly/mpc/` is gone
+(`MPC`, `ClosedLoop`, `simulate`, `Solution`); a receding horizon is a loop over the solver and
+`shift`, a control law an `@sc.function` of the two. Before the package went, the new solver
+reproduced `MPC.solve` exactly (states, controls, point and shift) on seven OCPs. `tests/mpc` became
+`tests/ocp/test_direct.py` and `test_terminal.py` over a `support.Controller` of solver and shift,
+with the refusals in `test_problem.py`; `tests/integration/test_interp_ocp.py` moved too. The five
+notebooks are in `examples/ocp/` with their loops written out, re-executed: every recorded result
+reproduces (iterations, costs, slacks and where they give way, regions of attraction, QP sizes,
+agreement with NumPy and `solve_ivp`). Solve times ran 20 to 45% above the recorded ones on a loaded
+machine, and HEAD's code timed alongside ran the same (the contouring pair, 1.16 s against 1.17 s);
+the timing sentences now say what the outputs show. `interp/contouring_control` (the user's saved
+copy staged from HEAD) and the `contouring_mpc` pair moved to `sc.ocp`; the pair's results are
+bit-identical to HEAD's, iteration counts included. The composed law is larger C than the old
+`MPC.law` (3 176 lines against 2 718 for the lap), the solver and the shift being Functions of their
+own. `docs/guide/mpc.md` is `ocp.md`, `api/mpc.md` merged into `api/ocp.md`. Suite: 3808 passed,
+42 skipped; C snapshots unchanged; ty within the ratchet (the moved notebooks' diagnostics renamed).
 
 ### Phase 6: code from the examples
 

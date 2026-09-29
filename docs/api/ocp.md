@@ -35,3 +35,25 @@
 ::: scaly.ocp.transcription.Transcription
 
 ::: scaly.ocp.transcription.Interval
+
+## Methods
+
+::: scaly.ocp.method.solver
+
+::: scaly.ocp.method.Info
+
+::: scaly.ocp.direct.Direct
+
+## Warm starts
+
+::: scaly.ocp.warmstart.shift
+
+::: scaly.ocp.warmstart.initial_guess
+
+## Terminal ingredients
+
+::: scaly.ocp.terminal.lqr
+
+::: scaly.ocp.terminal.max_invariant_set
+
+::: scaly.ocp.terminal.largest_ellipsoid

@@ -123,3 +123,25 @@ def test_what_an_ocp_refuses() -> None:
     ocp.to_problem(ocp.transcribe(continuous, ocp.Collocation(2), N=3), "condensed")
   with pytest.raises(ValueError, match="takes the state, then the control"):
     ocp.DiscreteOCP(step=sc.Function.from_exprs("one_input", [x := sc.sym("x", 2)], [x], ["x"], ["xnext"]), N=3)
+  with pytest.raises(ValueError, match="Q must be 2x2"):
+    ocp.DiscreteOCP(step=double_integrator, N=3, stage_cost=ocp.Quadratic(np.eye(1)))
+  with pytest.raises(ValueError, match="varying names"):
+    ocp.DiscreteOCP(step=double_integrator, N=3, varying=("r",))
+
+  @sc.function(2, 1, 3, output="l")
+  def clash(x: sc.Expr, u: sc.Expr, stiffness: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  @sc.function(2, 1, (), output="xdot")
+  def stiff(x: sc.Expr, u: sc.Expr, stiffness: sc.Expr) -> sc.Expr:
+    return sc.stack([x[1], -stiffness * x[0] + u[0]])
+
+  with pytest.raises(ValueError, match="parameter 'stiffness' is"):
+    ocp.transcribe(ocp.ContinuousOCP(stiff, T=1.0, stage_cost=clash), N=3)
+
+  @sc.function(2, 1, 2, output="xnext")
+  def taken(x: sc.Expr, u: sc.Expr, x0: sc.Expr) -> sc.Expr:
+    return x + x0
+
+  with pytest.raises(ValueError, match="may not be named 'x0'"):
+    ocp.DiscreteOCP(step=taken, N=3)

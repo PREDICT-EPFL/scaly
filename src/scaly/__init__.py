@@ -79,13 +79,12 @@ const = Expr.const
 
 # The packages built on the compiler load on first use, so ``import scaly`` is the compiler alone:
 # ``sc.linalg`` imports ``scaly.linalg`` the first time it is read.
-_PACKAGES = ("integrators", "interp", "linalg", "mpc", "ocp", "opt", "roots", "sets")
+_PACKAGES = ("integrators", "interp", "linalg", "ocp", "opt", "roots", "sets")
 
 if TYPE_CHECKING:
   from . import integrators as integrators
   from . import interp as interp
   from . import linalg as linalg
-  from . import mpc as mpc
   from . import ocp as ocp
   from . import opt as opt
   from . import roots as roots

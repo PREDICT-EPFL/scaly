@@ -4,9 +4,9 @@ A kinematic bicycle ``(X, Y, psi, v)`` with its progress ``theta`` along the tra
 driven by acceleration, steering and the progress speed. The track's centre line is a periodic cubic
 spline in chord length (``interp.interpolant(bc="periodic")``, which also wraps ``theta`` past a
 lap); the stage cost weighs the contouring error (across the track) and the lag error (along it)
-against the progress, and a path constraint keeps the car inside the track. ``scaly.mpc`` transcribes
+against the progress, and a path constraint keeps the car inside the track. ``scaly.ocp`` transcribes
 it by multiple shooting (RK4, 40 intervals of 50 ms) for IPOPT; the first solve from rest, then 200
-closed-loop steps, each warm-started from the last solution shifted.
+closed-loop steps, each warm-started from the last solution shifted (``ocp.shift``).
 """
 
 import numpy as np
@@ -16,7 +16,7 @@ from _common import scaly_ipopt_options, show
 from _data import MPCC, mpcc_start, track
 from scaly import integrators as si
 from scaly import interp
-from scaly import mpc
+from scaly import ocp
 
 TRACK = track()
 CENTRE = interp.interpolant(TRACK.s, TRACK.xy, kind="cubic", bc="periodic")
@@ -55,34 +55,41 @@ def contour(x, u):
 def build(verbose: bool = False):
   x_lo = np.array([-np.inf, -np.inf, -np.inf, 0.0, -np.inf])
   x_hi = np.array([np.inf, np.inf, np.inf, MPCC.v_max, np.inf])
-  ocp = mpc.OCP(
-    ode=bicycle,
-    horizon=MPCC.horizon,
-    dt=MPCC.dt,
+  continuous = ocp.ContinuousOCP(
+    bicycle,
+    T=MPCC.horizon * MPCC.dt,
     stage_cost=stage,
     x_bounds=(x_lo, x_hi),
     u_bounds=(np.array(MPCC.u_lo), np.array(MPCC.u_hi)),
-    constraints=(mpc.Path(contour, -WIDTH, WIDTH),),
+    constraints=(ocp.Path(contour, -WIDTH, WIDTH),),
     name="mpcc",
   )
-  ctrl = mpc.MPC(ocp, "ipopt", options=scaly_ipopt_options(verbose, tol=1e-10))
+  problem = ocp.transcribe(continuous, N=MPCC.horizon)
+  method = ocp.Direct(sc.opt.IPOPT(options=scaly_ipopt_options(verbose, tol=1e-10)))
+  solve, shift = ocp.solver(problem, method), ocp.shift(problem, method)
   plant = si.rk4(bicycle, dt=MPCC.dt)
   x0 = mpcc_start()
 
   def run():
-    first = ctrl.solve(x0, guess=ctrl.initial_guess(x0))
-    iter_first = sc.opt.solver_stats(ctrl.solver).iter
-    ctrl.reset()
-    loop = mpc.simulate(ctrl, plant, x0, MPCC.steps)
-    assert first.status.ok and all(s in ("OK", "ACCEPTABLE") for s in loop.statuses)
+    first_xs, first_us, _, first = solve(x0, ocp.initial_guess(problem, method, x0))
+    x, warm, progress, loop_us, iter_loop, ok = x0, ocp.initial_guess(problem, method, x0), [x0[4]], [], [], []
+    for _ in range(MPCC.steps):
+      _, us, point, info = solve(x, warm)
+      warm = shift(point)
+      x = np.asarray(plant(x, us[0]))
+      progress.append(x[4])
+      loop_us.append(us[0])
+      iter_loop.append(int(info.iter))
+      ok.append(sc.Status(int(info.status)).ok)
+    assert sc.Status(int(first.status)).ok and all(ok)
     return {
-      "first_xs": first.xs,
-      "first_us": first.us,
-      "first_cost": np.array([first.cost]),
-      "progress": loop.xs[:, 4],
-      "loop_us": loop.us,
-      "iter_first": np.array([iter_first]),
-      "iter_loop": loop.iterations,
+      "first_xs": first_xs,
+      "first_us": first_us,
+      "first_cost": np.array([float(first.objective)]),
+      "progress": np.array(progress),
+      "loop_us": np.array(loop_us),
+      "iter_first": np.array([int(first.iter)]),
+      "iter_loop": np.array(iter_loop),
     }
 
   return run

@@ -82,6 +82,8 @@
 
 ::: scaly.integrators.linear.linearize
 
+::: scaly.integrators.linear.affine
+
 ## Tableaus
 
 ::: scaly.integrators.tableau.Tableau

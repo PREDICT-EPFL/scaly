@@ -2,7 +2,7 @@
 
 from .explicit import adaptive, explicit, rk4, symplectic
 from .implicit import implicit
-from .linear import foh, linearize, zoh
+from .linear import affine, foh, linearize, zoh
 from .method import METHOD_API, ODE, REGISTRY, solver
 from .methods import (
   BS32,
@@ -69,6 +69,7 @@ __all__ = [
   "Trapezoidal",
   "Tsit5",
   "adaptive",
+  "affine",
   "explicit",
   "foh",
   "gauss_legendre",

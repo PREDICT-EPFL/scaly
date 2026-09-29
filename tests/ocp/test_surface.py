@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 
 import scaly as sc
 
@@ -12,10 +13,13 @@ def test_the_ocp_surface() -> None:
   assert sc.ocp is ocp
   assert ocp.__all__ == [
     "METHOD_API",
+    "REGISTRY",
     "Collocation",
     "ContinuousOCP",
+    "Direct",
     "DiscreteOCP",
     "Form",
+    "Info",
     "Interval",
     "Layout",
     "MultipleShooting",
@@ -26,7 +30,15 @@ def test_the_ocp_surface() -> None:
     "StageStructure",
     "TerminalEquality",
     "Transcription",
+    "initial_guess",
+    "largest_ellipsoid",
+    "lqr",
+    "max_invariant_set",
+    "shift",
+    "solver",
     "to_problem",
     "transcribe",
   ]
   assert "ocp" not in sc.__all__ and not hasattr(sc.integrators, "MultipleShooting")
+  assert sorted(ocp.REGISTRY.installed()) == ["direct"]
+  assert importlib.util.find_spec("scaly.mpc") is None  # the receding horizon is the user's loop over ocp.solver and ocp.shift

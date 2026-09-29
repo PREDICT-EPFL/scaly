@@ -357,7 +357,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
   mean) behind `scaly.interp`'s calling convention.
 - **API-181. Piecewise-affine functions on polyhedral or simplicial partitions** (explicit MPC laws,
   PWA models), with point location by a search tree.
-- **API-182. B-spline input parametrizations as a transcription option in `scaly.mpc`.**
+- **API-182. B-spline input parametrizations as a transcription option in `scaly.ocp`.**
 - **API-183. Shape-constrained fitting online,** through the generated IPM (`sc.opt.IPM`).
 - **API-184. Knots as expressions** (CasADi's parametric grid) and free-knot fitting.
 - **API-185. Shape-preserving interpolation in n-D,** as a tensor-product Hermite spline with a

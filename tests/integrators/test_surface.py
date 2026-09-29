@@ -44,6 +44,7 @@ def test_the_integrator_surface() -> None:
     "Trapezoidal",
     "Tsit5",
     "adaptive",
+    "affine",
     "explicit",
     "foh",
     "gauss_legendre",

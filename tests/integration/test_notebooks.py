@@ -1,11 +1,11 @@
 """The example notebooks (``examples/notebooks``, ``examples/integrators``, ``examples/interp``,
-``examples/mpc``) run top to bottom without error.
+``examples/ocp``) run top to bottom without error.
 
 No Jupyter is needed: each notebook's code cells are executed in order in one namespace, from the
 notebook's directory, with Matplotlib's non-interactive backend. The notebooks in
 ``examples/notebooks`` carry their own checks in their printed output; this test keeps them from
 silently breaking as the API moves. Those in ``examples/integrators``, ``examples/interp`` and
-``examples/mpc`` end with a cell of assertions against their references, so running them checks them.
+``examples/ocp`` end with a cell of assertions against their references, so running them checks them.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ SOLVER = {
   "interp/learning_tables": ("ipopt",),
   "interp/shape_constrained": ("piqp",),
   "interp/spline_trajectories": ("ipopt", "piqp"),
-  "mpc/linear_mpc": ("piqp",),
-  "mpc/nmpc_closed_loop": ("ipopt", "sqp"),
-  "mpc/nmpc_transcriptions": ("ipopt",),
-  "mpc/reference_tracking": ("piqp",),
-  "mpc/terminal_sets": ("piqp", "ipopt"),
+  "ocp/linear_mpc": ("piqp",),
+  "ocp/nmpc_closed_loop": ("ipopt", "sqp"),
+  "ocp/nmpc_transcriptions": ("ipopt",),
+  "ocp/reference_tracking": ("piqp",),
+  "ocp/terminal_sets": ("piqp", "ipopt"),
 }
 NAMES = [
   "bratu_newton",
@@ -67,11 +67,11 @@ NAMES = [
   "interp/lookup_tables_nd",
   "interp/shape_constrained",
   "interp/spline_trajectories",
-  "mpc/linear_mpc",
-  "mpc/nmpc_closed_loop",
-  "mpc/nmpc_transcriptions",
-  "mpc/reference_tracking",
-  "mpc/terminal_sets",
+  "ocp/linear_mpc",
+  "ocp/nmpc_closed_loop",
+  "ocp/nmpc_transcriptions",
+  "ocp/reference_tracking",
+  "ocp/terminal_sets",
 ]
 
 

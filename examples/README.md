@@ -5,9 +5,9 @@ generated to `examples/generated/<name>/` (git-ignored), so you can read the cod
 result. `tests/integration/test_examples.py`, `tests/integration/test_examples_gallery.py` and
 `tests/linalg/test_examples.py` check each one against a NumPy or SciPy reference, central
 differences or a published value. The examples marked *solver* need the vendored PIQP or IPOPT
-libraries. The folders `integrators/` and `mpc/` hold the examples of `scaly.integrators` and
-`scaly.mpc` as notebooks, with their C in `examples/generated/integrators/` and
-`examples/generated/mpc/`.
+libraries. The folders `integrators/` and `ocp/` hold the examples of `scaly.integrators` and
+`scaly.ocp` as notebooks, with their C in `examples/generated/integrators/` and
+`examples/generated/ocp/`.
 
 The tables group the examples by the Scaly feature they are mainly about; most use several. Size is
 a rough guide: **S** is a first read, **L** a complete application.
@@ -84,7 +84,7 @@ a rough guide: **S** is a first read, **L** a complete application.
 | Example | Size | Problem | What it shows |
 | --- | --- | --- | --- |
 | `integrators/` | L | Nine notebooks on `scaly.integrators`: explicit and implicit Runge-Kutta maps, stiff problems, adaptive and symplectic stepping, exact discretization, collocation building blocks and transcriptions, and dense LU on a tuned mass damper | every public name of the package, with the maths, plots, and a last cell asserting agreement with `expm`, `solve_ivp`, published coefficients or central differences; see `integrators/README.md` |
-| `mpc/` | L | Five notebooks on `scaly.mpc`: a cart-pole swing-up under five transcriptions and in closed loop, reference tracking, linear MPC and terminal sets, *solver* | `OCP`, `MPC`, the control law exported to C, `simulate`, soft path constraints, parameters and references, `linear`, `lqr`, `Polytope`, invariant sets and ellipsoids, the condensed form, with plots of each and a last cell of assertions; see `mpc/README.md` |
+| `ocp/` | L | Five notebooks on `scaly.ocp`: a cart-pole swing-up under five transcriptions and in closed loop, reference tracking, linear MPC and terminal sets, *solver* | `ContinuousOCP`, `transcribe`, `DiscreteOCP`, `solver` with `Direct`, closed loops over the solver and `shift`, the control law exported to C, soft path constraints, parameters and references, `si.affine`, `lqr`, `Polytope`, invariant sets and ellipsoids, the condensed form, with plots of each and a last cell of assertions; see `ocp/README.md` |
 
 ## Notebooks
 
@@ -93,7 +93,7 @@ of their own on sparse matrices and seven on problems outside control: the deriv
 cells, plots of the results and of the algorithms at work, and the generated C at the end. They are saved with their outputs, so they read
 on GitHub without running. They write their generated C to the same `examples/generated/<name>/`
 folders as the scripts, and `tests/integration/test_notebooks.py` runs each one top to bottom.
-The fourteen notebooks in `integrators/` and `mpc/` are listed in the section above.
+The fourteen notebooks in `integrators/` and `ocp/` are listed in the section above.
 
 | Notebook | What it adds to the script |
 | --- | --- |

@@ -19,7 +19,7 @@ without running.
 | `adaptive_plant.ipynb` | M | The Arenstorf orbit of the restricted three-body problem as a plant model | `si.adaptive` with `dopri5` and `bs32` from 1e-4 to 1e-10 against DOP853 and `solve_ivp`'s RK45 (errors, and time per call); NaN when `max_steps` runs out; `dt` as an input or folded in; `sc.jacobian` through the `while_loop` against the variational equations; fixed-step `si.explicit` needing about 100 times the steps |
 | `symplectic_orbits.ipynb` | S/M | A thousand orbits of the Kepler problem at eccentricity 0.6 | `si.symplectic` (Störmer-Verlet, symplectic Euler) with `split=2` and 100 steps per call as a `scan`: the energy error stays bounded and the angular momentum holds to rounding, while `si.rk4`'s energy error grows tenfold at the same step; orders 2, 1 and 4 against `solve_ivp` |
 | `polynomials.ipynb` | S | Gauss, Radau and Lobatto nodes and the collocation tableaus built on them | `scaly.integrators.polynomial`: quadrature exact to degree 2n-1, 2n-2 and 2n-3 and no further; differentiation and interpolation matrices converging spectrally on `exp(sin 3t)`; `si.gauss_legendre`, `si.radau_iia`, `si.lobatto_iiia` against published coefficients, with `si.order_conditions`; a generated spectral derivative and integral with the matrices as constants |
-| `transcriptions.ipynb` | M | One interval of a driven pendulum under five transcriptions, each solved by Newton | the `si.Interval` contract that `scaly.mpc` consumes (`n_internal`, `n_residual`, `state_times`, `control_times`, `guess`) for `MultipleShooting` with RK4 and with Radau IIA, `Collocation` at Radau and Gauss points, and `Pseudospectral`; collocation equal to the `si.implicit` Radau IIA and Gauss-Legendre steps to rounding; orders 5 and 4, and spectral convergence in the node count |
+| `transcriptions.ipynb` | M | One interval of a driven pendulum under five transcriptions, each solved by Newton | the `sc.ocp.Interval` contract that `scaly.ocp` consumes (`n_internal`, `n_residual`, `state_times`, `control_times`, `guess`) for `MultipleShooting` with RK4 and with Radau IIA, `Collocation` at Radau and Gauss points, and `Pseudospectral`; collocation equal to the `si.implicit` Radau IIA and Gauss-Legendre steps to rounding; orders 5 and 4, and spectral convergence in the node count |
 
 ```bash
 uv run --with jupyterlab jupyter lab examples/integrators
@@ -38,16 +38,16 @@ side), one `sc.function` calls them all and stacks the results, so the sweep com
 
 | Module | Names | Notebooks |
 | --- | --- | --- |
-| `explicit.ipynb` | `explicit`, `rk4` | `explicit_methods.ipynb`, `discrete_maps.ipynb`, `symplectic_orbits.ipynb` |
+| `explicit.py` | `explicit`, `rk4` | `explicit_methods.ipynb`, `discrete_maps.ipynb`, `symplectic_orbits.ipynb` |
 | | `adaptive` | `adaptive_plant.ipynb` |
 | | `symplectic` | `symplectic_orbits.ipynb` |
-| `tableau.ipynb` | `Tableau`, `TABLEAUS`, `tableau`, `order_conditions` | `explicit_methods.ipynb`, `polynomials.ipynb`, `stiff_implicit.ipynb` |
+| `tableau.py` | `Tableau`, `TABLEAUS`, `tableau`, `order_conditions` | `explicit_methods.ipynb`, `polynomials.ipynb`, `stiff_implicit.ipynb` |
 | | `gauss_legendre`, `radau_iia`, `lobatto_iiia`, `lobatto_iiic` | `polynomials.ipynb`, `stiff_implicit.ipynb` |
-| `implicit.ipynb` | `implicit` | `stiff_implicit.ipynb`, `transcriptions.ipynb` |
-| `linear.ipynb` | `zoh`, `foh`, `linearize` | `linearize_and_discretize.ipynb`, `discrete_maps.ipynb` |
-| `model.ipynb` | `UNROLL_STEPS`, the map contract | `discrete_maps.ipynb` |
-| `polynomial.ipynb` | nodes, `lagrange_integrals`, `differentiation_matrix`, `interpolation_matrix` | `polynomials.ipynb` |
-| `transcription.ipynb` | `MultipleShooting`, `Collocation`, `Pseudospectral`, `Interval` | `transcriptions.ipynb` |
+| `implicit.py` | `implicit` | `stiff_implicit.ipynb`, `transcriptions.ipynb` |
+| `linear.py` | `zoh`, `foh`, `linearize` | `linearize_and_discretize.ipynb`, `discrete_maps.ipynb` |
+| `model.py` | `UNROLL_STEPS`, the map contract | `discrete_maps.ipynb` |
+| `polynomial.py` | nodes, `lagrange_integrals`, `differentiation_matrix`, `interpolation_matrix` | `polynomials.ipynb` |
+| `scaly.ocp` | `MultipleShooting`, `Collocation`, `Pseudospectral`, `Interval` | `transcriptions.ipynb` |
 | `scaly.linalg` | `lu`, `lu_solve`, `solve(assume="gen")` | `frequency_response.ipynb` |
 
-The MPC examples in `../mpc/` use these maps and transcriptions inside optimal control problems.
+The optimal control examples in `../ocp/` use these maps and transcriptions inside optimal control problems.

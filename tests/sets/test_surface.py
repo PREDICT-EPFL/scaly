@@ -12,4 +12,4 @@ def test_the_sets_surface() -> None:
   assert sc.sets is sets
   assert sets.__all__ == ["Constraint", "Ellipsoid", "Polytope"]
   assert "sets" not in sc.__all__ and not hasattr(sc, "Polytope")
-  assert not hasattr(importlib.import_module("scaly.mpc"), "Polytope")
+  assert not hasattr(importlib.import_module("scaly.ocp"), "Polytope")

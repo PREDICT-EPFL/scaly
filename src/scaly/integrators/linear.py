@@ -1,4 +1,4 @@
-"""Exact discretization of linear time-invariant systems, and linearization of any model or map at a point."""
+"""Linear time-invariant systems: the affine map, exact discretization (ZOH, FOH), and linearization of any model or map at a point."""
 
 from __future__ import annotations
 
@@ -8,9 +8,25 @@ import numpy as np
 from scipy.linalg import expm
 
 from ..function.api import jacobian
-from ..function.model import Function
+from ..function.model import ConcreteFunction, Function
+from ..function.tree import L, param_list
+from ..ir.expr import Expr
 
-__all__ = ["foh", "linearize", "zoh"]
+__all__ = ["affine", "foh", "linearize", "zoh"]
+
+
+def affine(a: Any, b: Any, *, name: str = "affine") -> ConcreteFunction[Any, Any, Any, Any]:
+  """The discrete-time map ``x_next = A x + B u``, a ``DiscreteOCP``'s ``step``: with ``Quadratic``
+  costs and polytopic constraints the OCP is a QP. A continuous-time pair goes through ``zoh`` first."""
+  a, b = np.atleast_2d(np.asarray(a, dtype=np.float64)), np.asarray(b, dtype=np.float64)
+  b = b.reshape(a.shape[0], -1)
+  if a.shape[0] != a.shape[1]:
+    raise ValueError(f"A must be square, got {a.shape}")
+
+  def body(x: Expr, u: Expr) -> Expr:
+    return Expr.const(a) @ x + Expr.const(b) @ u
+
+  return ConcreteFunction(name, body, param_list(L("x", a.shape[0]), L("u", b.shape[1])), L("xnext", a.shape[0]))
 
 
 def _matrices(a: Any, b: Any, dt: float) -> tuple[np.ndarray, np.ndarray]:

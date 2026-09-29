@@ -10,7 +10,7 @@ import pytest
 from scipy.interpolate import NdBSpline, make_interp_spline
 
 import scaly as sc
-from scaly import interp, mpc
+from scaly import interp, ocp
 
 GV = np.linspace(-2.0, 2.0, 5)
 GH = np.linspace(0.0, 1.0, 4)
@@ -43,17 +43,17 @@ def hand_drag(v: sc.Expr, h: sc.Expr) -> sc.Expr:
   return total
 
 
-def ocp(drag, name: str) -> mpc.OCP:
+def problem(drag, name: str) -> ocp.DiscreteOCP:
   @sc.function(2, 1, output="xnext", name=f"{name}_step")
   def step(x, u):
     h, v = x[0], x[1]
     return sc.stack([h + DT * v, v + DT * (u[0] - drag(v, h))])
 
-  return mpc.OCP(
+  return ocp.DiscreteOCP(
     step=step,
-    horizon=HORIZON,
-    stage_cost=mpc.Quadratic(np.diag([10.0, 0.1]), 0.01 * np.eye(1), x_ref=np.array([0.8, 0.0])),
-    terminal_cost=mpc.Quadratic(np.diag([100.0, 1.0]), x_ref=np.array([0.8, 0.0])),
+    N=HORIZON,
+    stage_cost=ocp.Quadratic(np.diag([10.0, 0.1]), 0.01 * np.eye(1), x_ref=np.array([0.8, 0.0])),
+    terminal_cost=ocp.Quadratic(np.diag([100.0, 1.0]), x_ref=np.array([0.8, 0.0])),
     x_bounds=(np.array([0.0, -2.0]), np.array([1.0, 2.0])),
     u_bounds=(np.array([-3.0]), np.array([3.0])),
     name=name,
@@ -63,14 +63,20 @@ def ocp(drag, name: str) -> mpc.OCP:
 @pytest.mark.solver("ipopt")
 def test_a_bicubic_table_in_the_dynamics_solves_as_the_hand_written_one() -> None:
   table = interp.interpolant((GV, GH), DRAG, kind="cubic")
-  options = {"tol": 1e-12}
-  lib = mpc.MPC(ocp(lambda v, h: table(sc.stack([v, h])), "interp_drag"), "ipopt", options=options).solve(X0)
-  hand = mpc.MPC(ocp(hand_drag, "hand_drag"), "ipopt", options=options).solve(X0)
-  assert lib.status.ok and hand.status.ok
-  np.testing.assert_allclose(lib.xs, hand.xs, rtol=1e-8, atol=1e-8)
-  np.testing.assert_allclose(lib.us, hand.us, rtol=1e-8, atol=1e-8)
-  assert abs(lib.cost - hand.cost) <= 1e-8 * max(1.0, abs(hand.cost))
-  assert np.ptp(lib.xs[:, 1]) > 0.3  # the velocity sweeps the table
+  method = ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-12}))
+
+  def solve(drag, name: str):
+    p = problem(drag, name)
+    xs, us, _, info = ocp.solver(p, method)(X0, ocp.initial_guess(p, method, X0))
+    assert sc.Status(int(info.status)).ok
+    return np.asarray(xs), np.asarray(us), float(info.objective)
+
+  lib_xs, lib_us, lib_cost = solve(lambda v, h: table(sc.stack([v, h])), "interp_drag")
+  hand_xs, hand_us, hand_cost = solve(hand_drag, "hand_drag")
+  np.testing.assert_allclose(lib_xs, hand_xs, rtol=1e-8, atol=1e-8)
+  np.testing.assert_allclose(lib_us, hand_us, rtol=1e-8, atol=1e-8)
+  assert abs(lib_cost - hand_cost) <= 1e-8 * max(1.0, abs(hand_cost))
+  assert np.ptp(lib_xs[:, 1]) > 0.3  # the velocity sweeps the table
 
 
 @pytest.mark.solver("ipopt")

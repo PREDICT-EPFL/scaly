@@ -76,6 +76,7 @@ cpp = "scaly.codegen.cpp"
 casadi = "scaly.codegen.casadi"
 
 [project.entry-points."scaly.methods"]
+"ocp.direct" = "scaly.ocp.direct:Direct"
 "opt.ipm" = "scaly.opt.ipm:IPM"
 "roots.newton" = "scaly.roots.newton:Newton"
 "roots.newton_bisection" = "scaly.roots.newton:NewtonBisection"
