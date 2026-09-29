@@ -20,7 +20,7 @@ def cartpole(x, u):
 
 ocp = mpc.OCP(
   ode=cartpole, dt=0.05, horizon=40,
-  transcription=si.MultipleShooting(si.rk4, steps=2),
+  transcription=si.MultipleShooting(si.RK4(steps=2)),
   stage_cost=mpc.Quadratic(np.diag([2, 20, 0.1, 0.1]), 0.02 * np.eye(1)),
   terminal_cost=mpc.Quadratic(100 * np.eye(4)),
   u_bounds=(-15.0, 15.0),

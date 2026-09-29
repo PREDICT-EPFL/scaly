@@ -12,7 +12,36 @@ import scaly as sc
 def test_the_interp_surface() -> None:
   interp = importlib.import_module("scaly.interp")
   assert sc.interp is interp
-  assert interp.__all__ == ["BOUNDARIES", "KINDS", "PP_BUDGET", "Axis", "BSpline", "Index", "Inverse", "constrained", "interpolant", "smoothing"]
+  assert interp.__all__ == [
+    "BOUNDARIES",
+    "KINDS",
+    "METHOD_API",
+    "PCHIP",
+    "PP_BUDGET",
+    "REGISTRY",
+    "ZOH",
+    "Akima",
+    "Axis",
+    "BSpline",
+    "Constrained",
+    "Cubic",
+    "Fit",
+    "Index",
+    "Interpolating",
+    "Inverse",
+    "Linear",
+    "Makima",
+    "Nearest",
+    "PerAxis",
+    "SmoothLinear",
+    "Smoothing",
+    "Spline",
+    "Steffen",
+    "constrained",
+    "interpolant",
+    "smoothing",
+    "solver",
+  ]
   assert "interp" not in sc.__all__ and not hasattr(sc, "interpolant")
 
 
@@ -43,6 +72,6 @@ def test_every_interp_name_is_documented() -> None:
           missing.append(f"{name}.{member}")
     elif callable(obj):
       missing += [name] if not obj.__doc__ else []
-    elif not any(_attribute_docstring(f"scaly.interp.{module}", name) for module in ("fit", "spline", "grid", "constrained")):
+    elif not any(_attribute_docstring(f"scaly.interp.{module}", name) for module in ("fit", "spline", "grid", "constrained", "method")):
       missing.append(name)
   assert not missing, f"undocumented: {missing}"

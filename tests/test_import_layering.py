@@ -108,6 +108,8 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.integrators": 5,
   "scaly.integrators.explicit": 5,
   "scaly.integrators.implicit": 5,
+  "scaly.integrators.method": 5,
+  "scaly.integrators.methods": 5,
   "scaly.integrators.linear": 5,
   "scaly.integrators.model": 5,
   "scaly.integrators.polynomial": 5,
@@ -118,6 +120,8 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.interp.fit": 5,
   "scaly.interp.grid": 5,
   "scaly.interp.spline": 5,
+  "scaly.interp.method": 5,
+  "scaly.interp.methods": 5,
   "scaly.mpc": 5,
   "scaly.mpc.controller": 5,
   "scaly.mpc.ocp": 5,
@@ -253,7 +257,7 @@ def test_module_imports_standalone(module: str) -> None:
 
 
 # The packages built on the compiler, which ``import scaly`` leaves unloaded (``sc.<name>`` loads one).
-BUILT_ON_THE_CORE = ("scaly.integrators", "scaly.interp", "scaly.linalg", "scaly.mpc", "scaly.opt")
+BUILT_ON_THE_CORE = ("scaly.integrators", "scaly.interp", "scaly.linalg", "scaly.mpc", "scaly.opt", "scaly.roots")
 
 
 def test_import_scaly_is_the_compiler_alone() -> None:

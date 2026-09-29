@@ -30,6 +30,35 @@ The map takes the model's own parameters, in order and under the same names. Its
 state's name followed by `next` (`xnext`, or `znext` for a state named `z`). A template model gives
 a template map, one instance per argument signature.
 
+## Methods
+
+Every named method is also a class, an integrator method with its options, found by name in
+`si.REGISTRY` as `integrators.<name>`. `si.solver(si.ODE(f, dt=...), method)` builds the same map
+as the shorthand the sections below describe; a method is what a transcription takes, and what
+composes with the methods of other domains.
+
+```python
+ode = si.ODE(cartpole, dt=0.05)
+step = si.solver(ode, si.RK4(steps=2))                          # = si.rk4(cartpole, dt=0.05, steps=2)
+stiff = si.solver(ode, si.RadauIIA(3, newton=sc.roots.Newton(tol=1e-10, rtol=1e-10)))
+shooting = si.MultipleShooting(si.Tsit5())
+```
+
+| Methods | Options | Shorthand |
+| --- | --- | --- |
+| `si.Euler`, `si.Heun`, `si.Midpoint`, `si.Ralston`, `si.RK3`, `si.SSPRK3`, `si.RK4`, `si.RK38`, `si.BS32`, `si.DOPRI5`, `si.Tsit5` | `steps` | `si.explicit(f, "rk4", ...)` |
+| `si.BackwardEuler`, `si.ImplicitMidpoint`, `si.Trapezoidal`, `si.SDIRK2`, `si.SDIRK3` | `steps`, `newton` | `si.implicit(f, "sdirk3", ...)` |
+| `si.GaussLegendre(stages)`, `si.RadauIIA(stages)`, `si.LobattoIIIA(stages)`, `si.LobattoIIIC(stages)` | `stages`, `steps`, `newton` | `si.implicit(f, "radau_iia", stages=3, ...)` |
+| `si.Adaptive(pair)`, `pair` one of `si.DOPRI5()`, `si.Tsit5()`, `si.BS32()` | `rtol`, `atol`, `max_steps`, `h0` | `si.adaptive(f, "dopri5", ...)` |
+| `si.StormerVerlet`, `si.SymplecticEuler` | `split`, `steps` | `si.symplectic(f, "stormer_verlet", ...)` |
+
+An implicit method's `newton` is an `sc.roots.Newton` ([Nonlinear equations](roots.md)): the default
+`Newton(tol=None, max_iter=3, simplified=True)` is the shorthand's `newton_iters=3`;
+`tol=...` with `rtol` equal to it is the shorthand's `tol`, and `simplified=False` its
+`newton="full"`. The ODE's `dt=None` makes the interval an input, and its `name` names the maps
+(`{name}_{method}`). A package adds a method by subclassing `si.ExplicitRK` or `si.ImplicitRK` with
+its `name` and `table` and declaring it in the `scaly.methods` entry points.
+
 ## Explicit Runge-Kutta methods
 
 `si.explicit(f, method, dt=..., steps=1, name=None)` builds the map of an explicit method, and
@@ -42,9 +71,9 @@ a template map, one instance per argument signature.
 | `"rk3"` (Kutta), `"ssprk3"` (strong-stability preserving) | 3 | 3 |
 | `"rk4"`, `"rk38"` (the 3/8 rule) | 4 | 4 |
 | `"bs32"` (Bogacki-Shampine) | 4 | 3 |
-| `"dopri5"` (Dormand-Prince) | 7 | 5 |
+| `"dopri5"` (Dormand-Prince), `"tsit5"` (Tsitouras) | 7 | 5 |
 
-The two embedded pairs step with their higher-order solution; the last stage, which only feeds the
+The three embedded pairs step with their higher-order solution; the last stage, which only feeds the
 error estimate, is never computed. A method may also be a `si.Tableau(a, b, c, order)` of your own,
 whose declared order is checked against the order conditions when it is built.
 
@@ -162,7 +191,7 @@ takes the same inputs and gives one value, integrated over the interval.
 
 | Transcription | Interval variables `z` | Residuals | Control |
 | --- | --- | --- | --- |
-| `si.MultipleShooting(si.rk4, steps=2)`, or any integrator and its options | none | `F(x, u) - xnext` | held |
+| `si.MultipleShooting(si.RK4(steps=2))`, or any integrator method or its name | none | `F(x, u) - xnext` | held |
 | `si.Collocation(degree, "radau")` | `degree - 1` states | `degree` collocation conditions | held |
 | `si.Collocation(degree, "legendre")` | `degree` states | `degree` conditions and continuity | held |
 | `si.Pseudospectral(nodes)` | `nodes - 1` states and `nodes - 1` controls | `nodes` conditions | at each node |
@@ -178,6 +207,8 @@ takes the same inputs and gives one value, integrated over the interval.
   applies; the Gauss and Lobatto schemes are not offered, because the first has no node there and the
   second collocates at both ends, one condition more than its unknowns at a fixed control.
 - `dt=None` makes the interval length the last input, after the parameters.
+- `si.lgl(n)` gives the Legendre-Gauss-Lobatto rule of `n` intervals on `[-1, 1]` (its nodes,
+  quadrature weights and differentiation matrix), for pseudospectral code of your own.
 
 The derivatives of a horizon of intervals follow the stage structure: when the variables are
 slices of one vector, as an NLP's are, each interval's Jacobian is computed once per interval in one

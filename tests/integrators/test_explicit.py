@@ -68,19 +68,22 @@ def test_linear_system_converges_at_the_method_order(method: str) -> None:
     for _ in range(n):
       x = step(x, u, np.array(T / n))
     errors.append(float(np.abs(x - exact).max()))
-  assert abs(_order(errors) - tab.order) < 0.15, errors
+  if method == "tsit5":  # its leading error constant is small by design: the rate reads 5.1 to 5.3 here
+    assert tab.order - 0.15 < _order(errors) < tab.order + 0.5, errors
+  else:
+    assert abs(_order(errors) - tab.order) < 0.15, errors
 
 
-@pytest.mark.parametrize("method", ["heun", "ssprk3", "rk4", "rk38", "dopri5"])
+@pytest.mark.parametrize("method", ["heun", "ssprk3", "rk4", "rk38", "dopri5", "tsit5"])
 def test_van_der_pol_converges_at_the_method_order(method: str) -> None:
   tab = si.TABLEAUS[method]
   T, x0 = 1.0, np.array([2.0, 0.0])
   exact = solve_ivp(lambda t, x: [x[1], (1 - x[0] ** 2) * x[1] - x[0]], (0, T), x0, method="DOP853", rtol=1e-13, atol=1e-14).y[:, -1]
   errors = []
-  for n in (16, 32) if method == "dopri5" else (64, 128):
+  for n in (16, 32) if method in ("dopri5", "tsit5") else (64, 128):
     x = si.explicit(van_der_pol, method, dt=T, steps=n)(x0)  # a scan: more substeps than UNROLL_STEPS
     errors.append(float(np.abs(x - exact).max()))
-  if method == "dopri5":  # its leading error constant is tiny: the rate reads about 6 until rounding takes over
+  if method in ("dopri5", "tsit5"):  # their leading error constants are tiny: the rate reads about 6 until rounding takes over
     assert _order(errors) > tab.order - 0.15, errors
   else:
     assert abs(_order(errors) - tab.order) < 0.15, errors
@@ -229,7 +232,7 @@ def stiffish(x, u):
   return sc.stack([x[1], 3.0 * (1 - x[0] * x[0]) * x[1] - x[0] + u[0]])
 
 
-@pytest.mark.parametrize("pair", ["dopri5", "bs32"])
+@pytest.mark.parametrize("pair", ["dopri5", "tsit5", "bs32"])
 def test_adaptive_error_follows_the_tolerance(pair: str) -> None:
   x0, u, T = np.array([2.0, 0.0]), np.array([0.3]), 2.0
   exact = solve_ivp(vdp_np, (0, T), x0, method="DOP853", rtol=1e-13, atol=1e-14).y[:, -1]

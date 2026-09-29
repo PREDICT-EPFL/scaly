@@ -11,7 +11,8 @@ import numpy as np
 from ..function.model import ConcreteFunction, Function
 from ..function.tree import G, L, param_list
 from ..ir.expr import Expr, concat
-from .explicit import rk4
+from .method import ODE, solver
+from .methods import RK4
 from .model import check_model, model_rhs
 from .polynomial import differentiation_matrix, gauss_nodes, interpolation_matrix, lagrange_integrals, radau_nodes
 
@@ -119,22 +120,21 @@ def _interval_fn(
 
 
 class MultipleShooting(Transcription):
-  """Each interval's end is the model integrated from its start by ``integrator`` (``si.rk4``,
-  ``si.explicit``, ``si.implicit``, ``si.symplectic``, ...) with ``options`` (``steps=2``,
-  ``method="radau_iia"``, ...); the residual is that end minus ``xnext``, and no variables are added.
-  A running cost is integrated by the same method, as one more state, so the step and its cost are
-  one call of the map."""
+  """Each interval's end is the model integrated from its start by ``method``, an integrator method
+  (``si.RK4(steps=2)``, ``si.RadauIIA(2)``, ``si.StormerVerlet(split=2)``, ...) or its name; the
+  residual is that end minus ``xnext``, and no variables are added. A running cost is integrated by
+  the same method, as one more state, so the step and its cost are one call of the map."""
 
-  def __init__(self, integrator: Callable[..., Any] = rk4, **options: Any) -> None:
-    self.integrator, self.options = integrator, options
-    self.label = f"{getattr(integrator, '__name__', 'map')}_shooting"
+  def __init__(self, method: Any = None) -> None:
+    self.method = method if method is not None else RK4()
+    self.label = f"{self.method if isinstance(self.method, str) else self.method.label}_shooting"
 
   def _interval(
     self, model: ConcreteFunction[Any, Any, Any, Any], cost: ConcreteFunction[Any, Any, Any, Any] | None, dt: float | None, name: str
   ) -> Interval:
     n = model.inputs[0].size
     target = model if cost is None else _augmented(model, cost, f"{name}_augmented")
-    step = self.integrator(target, dt=dt, name=f"{name}_step", **self.options)
+    step = solver(ODE(target, dt=dt), self.method, name=f"{name}_step")
 
     def body(x: Expr, u: Expr, _z: Any, xnext: Expr, params: tuple[Expr, ...], h: Expr | float) -> Any:
       start = x if cost is None else concat([x, Expr.const(np.zeros(1))])

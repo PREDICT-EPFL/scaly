@@ -1,11 +1,11 @@
-"""Gauss, Radau and Lobatto nodes on ``[0, 1]``, and the Lagrange basis over them: values, derivatives, integrals."""
+"""Gauss, Radau and Lobatto nodes on ``[0, 1]``, the Legendre-Gauss-Lobatto rule on ``[-1, 1]``, and the Lagrange basis over them: values, derivatives, integrals."""
 
 from __future__ import annotations
 
 import numpy as np
 from numpy.polynomial import legendre
 
-__all__ = ["differentiation_matrix", "gauss_nodes", "interpolation_matrix", "lagrange_integrals", "lobatto_nodes", "radau_nodes"]
+__all__ = ["differentiation_matrix", "gauss_nodes", "interpolation_matrix", "lagrange_integrals", "lgl", "lobatto_nodes", "radau_nodes"]
 
 
 def _polished(coefficients: np.ndarray, roots: np.ndarray) -> np.ndarray:
@@ -91,3 +91,18 @@ def differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
   np.fill_diagonal(d, 0.0)
   np.fill_diagonal(d, -d.sum(axis=1))
   return d
+
+
+def lgl(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+  """The Legendre-Gauss-Lobatto rule of ``n >= 1`` intervals on ``[-1, 1]``, as pseudospectral methods
+  use it: the ``n + 1`` nodes (both ends and the roots of ``P'_n``), the quadrature weights
+  ``2 / (n (n + 1) P_n(x_i)^2)``, exact for polynomials of degree up to ``2n - 1``, and the
+  differentiation matrix at the nodes. Nodes and weights are symmetric to rounding."""
+  if int(n) != n or n < 1:
+    raise ValueError(f"lgl needs at least one interval, got {n}")
+  x = 2.0 * lobatto_nodes(int(n) + 1) - 1.0
+  x = 0.5 * (x - x[::-1])
+  basis = np.zeros(int(n) + 1)
+  basis[-1] = 1.0
+  w = 2.0 / (n * (n + 1) * legendre.legval(x, basis) ** 2)
+  return x, 0.5 * (w + w[::-1]), differentiation_matrix(x)

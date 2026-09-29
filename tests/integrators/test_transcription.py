@@ -95,7 +95,7 @@ def test_the_cost_quadrature_is_exact_where_the_nodes_allow() -> None:
 
 def test_shooting_steps_and_integrates_its_cost_with_its_method() -> None:
   x, u, xn = np.array([1.5, -0.3]), np.array([0.4]), np.array([1.4, -0.2])
-  interval = si.MultipleShooting(si.rk4, steps=2).interval(van_der_pol, effort, dt=0.1)
+  interval = si.MultipleShooting(si.RK4(steps=2)).interval(van_der_pol, effort, dt=0.1)
   assert interval.n_internal == 0 and interval.fn.input_names == ("x", "u", "xnext")
   r, cost = interval.fn(x, u, xn)
   np.testing.assert_allclose(r, si.rk4(van_der_pol, dt=0.1, steps=2)(x, u) - xn, rtol=1e-14, atol=1e-15)
@@ -103,11 +103,13 @@ def test_shooting_steps_and_integrates_its_cost_with_its_method() -> None:
     lambda t, y: [*[y[1], MU * (1 - y[0] ** 2) * y[1] - y[0] + u[0]], y[0] ** 2 + y[1] ** 2 + u[0] ** 2], (0, 0.1), [*x, 0.0], rtol=1e-13, atol=1e-14
   ).y[:, -1]
   np.testing.assert_allclose(cost, exact[2:], rtol=1e-6)  # RK4 on the augmented model, to RK4's accuracy
-  implicit = si.MultipleShooting(si.implicit, method="radau_iia", stages=2, tol=1e-14).interval(van_der_pol, dt=0.1)
+  implicit = si.MultipleShooting(si.RadauIIA(2, newton=sc.roots.Newton(tol=1e-14, max_iter=20, rtol=1e-14, simplified=True))).interval(
+    van_der_pol, dt=0.1
+  )
   np.testing.assert_allclose(
     np.asarray(implicit.fn(x, u, xn)), si.implicit(van_der_pol, "radau_iia", stages=2, dt=0.1, tol=1e-14)(x, u) - xn, rtol=1e-13
   )
-  assert implicit.fn.name == "van_der_pol_implicit_shooting"
+  assert implicit.fn.name == "van_der_pol_radau_iia2_shooting"
 
 
 def test_global_pseudospectral_converges_spectrally() -> None:
@@ -142,7 +144,7 @@ def weighted(x, u, mu):
 
 def test_an_interval_length_input_equals_the_folded_one() -> None:
   x, u, mu = np.array([1.5, -0.3]), np.array([0.4]), np.array(2.5)
-  for transcription in (si.Collocation(3), si.Collocation(2, "legendre"), si.Pseudospectral(4), si.MultipleShooting(si.rk4)):
+  for transcription in (si.Collocation(3), si.Collocation(2, "legendre"), si.Pseudospectral(4), si.MultipleShooting(si.RK4())):
     folded = transcription.interval(damped, weighted, dt=0.1, name=f"fold_{transcription.label}")
     free = transcription.interval(damped, weighted, dt=None, name=f"free_{transcription.label}")
     assert free.fn.input_names[-2:] == ("p0", "dt")  # the parameters, then the length

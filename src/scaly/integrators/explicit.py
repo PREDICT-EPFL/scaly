@@ -25,8 +25,8 @@ def explicit(f: Function[Any, Any, Any, Any], method: str | Tableau = "rk4", *, 
       derivative. Its other parameters (inputs, parameters) become ``F``'s and are held fixed over
       the interval: a zero-order hold.
     method: a name from ``TABLEAUS`` (``"euler"``, ``"heun"``, ``"midpoint"``, ``"ralston"``,
-      ``"rk3"``, ``"ssprk3"``, ``"rk4"``, ``"rk38"``, and the pairs ``"bs32"`` and ``"dopri5"``, whose
-      higher-order solution is the step) or an explicit ``Tableau``.
+      ``"rk3"``, ``"ssprk3"``, ``"rk4"``, ``"rk38"``, and the pairs ``"bs32"``, ``"dopri5"`` and
+      ``"tsit5"``, whose higher-order solution is the step) or an explicit ``Tableau``.
     dt: the interval, folded into the generated code; ``None`` appends a ``dt`` parameter instead.
     steps: equal substeps per interval. Up to ``UNROLL_STEPS`` are unrolled, more run as a loop.
     name: the Function's name, by default ``{f.name}_{method}``.
@@ -93,8 +93,8 @@ def adaptive(
 
   Args:
     f: the model, as for ``explicit``.
-    pair: an explicit tableau with embedded weights, ``"dopri5"`` (Dormand-Prince 5(4)) or ``"bs32"``
-      (Bogacki-Shampine 3(2)); the step keeps the higher-order solution.
+    pair: an explicit tableau with embedded weights, ``"dopri5"`` (Dormand-Prince 5(4)), ``"tsit5"``
+      (Tsitouras 5(4)) or ``"bs32"`` (Bogacki-Shampine 3(2)); the step keeps the higher-order solution.
     dt: the interval, folded into the code; ``None`` (the default) makes it the last input.
     rtol, atol: a step is accepted when the difference between the two solutions, divided by
       ``atol + rtol * max(|x|, |x_next|)`` entry by entry, has a root mean square of at most 1.
@@ -112,7 +112,7 @@ def adaptive(
   """
   tab = tableau(pair)
   if tab.b_err is None or not tab.explicit:
-    raise ValueError(f"adaptive needs an explicit embedded pair, 'dopri5' or 'bs32', got {tab.name}")
+    raise ValueError(f"adaptive needs an explicit embedded pair, 'dopri5', 'tsit5' or 'bs32', got {tab.name}")
   if not rtol > 0 or not atol > 0 or int(max_steps) != max_steps or max_steps < 1 or (h0 is not None and not h0 > 0):
     raise ValueError(f"rtol and atol must be positive, max_steps a positive integer and h0 positive; got {rtol}, {atol}, {max_steps}, {h0}")
   exponent = -1.0 / (order_conditions(tab.a, tab.b_err, tab.order) + 1)

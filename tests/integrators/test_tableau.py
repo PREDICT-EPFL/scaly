@@ -89,7 +89,7 @@ def test_structure_of_the_families() -> None:
   assert not radau.diagonally_implicit
 
 
-@pytest.mark.parametrize(("name", "order"), [("bs32", 2), ("dopri5", 4)])
+@pytest.mark.parametrize(("name", "order"), [("bs32", 2), ("dopri5", 4), ("tsit5", 4)])
 def test_embedded_weights_have_the_lower_order(name: str, order: int) -> None:
   tab = si.TABLEAUS[name]
   assert tab.b_err is not None

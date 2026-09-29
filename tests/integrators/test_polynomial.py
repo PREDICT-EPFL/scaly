@@ -5,7 +5,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scaly.integrators.polynomial import differentiation_matrix, gauss_nodes, interpolation_matrix, lagrange_integrals, lobatto_nodes, radau_nodes
+from numpy.polynomial import legendre
+
+from scaly.integrators.polynomial import (
+  differentiation_matrix,
+  gauss_nodes,
+  interpolation_matrix,
+  lagrange_integrals,
+  lgl,
+  lobatto_nodes,
+  radau_nodes,
+)
 
 
 def _exact_to(nodes: np.ndarray) -> int:
@@ -54,3 +64,23 @@ def test_differentiation_and_interpolation_are_exact_on_polynomials(nodes_of, s:
     np.testing.assert_allclose(d @ nodes**k, k * nodes ** max(k - 1, 0) if k else np.zeros(nodes.size), atol=1e-10)
     np.testing.assert_allclose(table @ nodes**k, at**k, atol=1e-12)
   assert np.array_equal(table[-1], np.eye(nodes.size)[1])  # a node reads its own value exactly
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 6, 12, 30])
+def test_the_lgl_rule_its_nodes_weights_and_derivatives(n: int) -> None:
+  x, w, d = lgl(n)
+  basis = np.zeros(n + 1)
+  basis[-1] = 1.0
+  inner = legendre.legroots(legendre.legder(basis)) if n > 1 else np.zeros(0)
+  np.testing.assert_allclose(x, np.concatenate([[-1.0], np.sort(inner), [1.0]]), atol=2e-15)
+  np.testing.assert_array_equal(x, -x[::-1])
+  np.testing.assert_array_equal(w, w[::-1])
+  exact = [np.polynomial.polynomial.polyval(x, np.eye(2 * n)[k]) @ w - (2 / (k + 1) if k % 2 == 0 else 0.0) for k in range(2 * n)]
+  assert np.abs(exact).max() < 1e-14  # every degree up to 2n - 1
+  np.testing.assert_allclose(w @ legendre.legval(x, basis) ** 2, 2.0 / n, rtol=1e-13)  # not P_n^2, whose integral is 2 / (2n + 1)
+  coefficients = np.random.default_rng(n).standard_normal(n + 1)  # a polynomial of degree n
+  np.testing.assert_allclose(
+    d @ np.polynomial.polynomial.polyval(x, coefficients),
+    np.polynomial.polynomial.polyval(x, np.polynomial.polynomial.polyder(coefficients)),
+    atol=1e-11 * n * n,
+  )

@@ -18,7 +18,7 @@ from .explicit import increment
 from .model import discrete_map, model_rhs
 from .tableau import Tableau, tableau
 
-__all__ = ["implicit"]
+__all__ = ["implicit", "implicit_map"]
 
 
 def implicit(
@@ -76,7 +76,16 @@ def implicit(
   if tol is not None and (not tol > 0 or int(max_iter) != max_iter or max_iter < 1):
     raise ValueError(f"tol must be positive and max_iter a positive integer, got tol={tol}, max_iter={max_iter}")
   solver = Newton(tol, int(newton_iters) if tol is None else int(max_iter), rtol=tol or 0.0, simplified=newton == "simplified")
-  return discrete_map(f, tab.name, dt, steps, name, lambda model, fname, h: _Stages(tab, model, fname, h, solver).step)
+  return implicit_map(f, tab, dt=dt, steps=steps, newton=solver, name=name)
+
+
+def implicit_map(f: Function[Any, Any, Any, Any], tab: Tableau, *, dt: float | None, steps: int, newton: Newton, name: str | None = None) -> Any:
+  """``implicit``'s map for the implicit tableau ``tab``, its stage equations solved by ``newton``
+  (``Newton.iterate`` with the stage matrix's own solve, which replaces its ``linear``): ``tol=None``
+  takes ``max_iter`` iterations, and ``simplified`` factors the matrix once per step."""
+  if tab.explicit:
+    raise ValueError(f"{tab.name} is an explicit method; use sc.integrators.explicit")
+  return discrete_map(f, tab.name, dt, steps, name, lambda model, fname, h: _Stages(tab, model, fname, h, newton).step)
 
 
 class _Linear:

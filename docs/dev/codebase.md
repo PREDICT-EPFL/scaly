@@ -81,14 +81,18 @@ src/scaly/
     grid.py              an axis: knots, the partition and its searches, extrapolation, B-spline tables
     spline.py            BSpline: evaluation (per-cell polynomials or local bases), calculus, the inverse
     fit.py               interpolant and smoothing, from NumPy data or in the graph from Expr data
-    constrained.py       least squares under shape constraints, a QP solved by PIQP
+    constrained.py       least squares under shape constraints, a QP solved by an opt method (PIQP by default)
+    method.py            Fit, the interp method registry, METHOD_API and solver
+    methods.py           the interp methods, one class per kind of fit, each building a BSpline
 
   integrators/           discretization of continuous-time models: Runge-Kutta maps over the model's own signature
     model.py             the model contract f(x, ...) -> xdot, and the discrete-time maps built over its signature
     tableau.py           Butcher tableaus: the named Runge-Kutta families and their order conditions
-    polynomial.py        Gauss, Radau and Lobatto nodes on [0, 1] and the Lagrange basis over them
+    polynomial.py        Gauss, Radau and Lobatto nodes on [0, 1], the LGL rule on [-1, 1], the Lagrange basis over them
     explicit.py          explicit Runge-Kutta steps: fixed, adaptive and symplectic
-    implicit.py          implicit Runge-Kutta steps: Newton on the stage equations, implicit-function derivatives
+    implicit.py          implicit Runge-Kutta steps: roots.Newton on the stage equations, implicit-function derivatives
+    method.py            ODE, the integrator method registry, METHOD_API and solver
+    methods.py           the integrator methods, one class per named method, each building a discrete map
     linear.py            exact discretization of LTI systems (ZOH, FOH), and linearization at a point
     transcription.py     how one interval of a horizon becomes variables, equality constraints and a cost
 

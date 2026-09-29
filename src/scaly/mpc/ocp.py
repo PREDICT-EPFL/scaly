@@ -11,6 +11,8 @@ import numpy as np
 from ..function.model import ConcreteFunction, Function
 from ..function.sugar import scan, vmap
 from ..function.tree import G, L, param_list
+from ..integrators.method import ODE
+from ..integrators.method import solver as integrate
 from ..integrators.model import check_model
 from ..integrators.transcription import Interval, MultipleShooting, Transcription
 from ..ir.expr import Expr, concat, gather
@@ -83,7 +85,7 @@ class OCP:
     step: a discrete-time map ``F(x, u, *params) -> x_next``. Exactly one.
     horizon: the number of intervals ``N``.
     dt: the interval's length. Required with ``ode``; with ``step`` it only sets the times.
-    transcription: how ``ode`` becomes constraints; ``si.MultipleShooting(si.rk4)`` by default.
+    transcription: how ``ode`` becomes constraints; ``si.MultipleShooting(si.RK4())`` by default.
     stage_cost: ``l(x, u, *params)`` (one value) or a ``Quadratic``. With ``ode``, the running cost
       is ``dt * sum_k l(x_k, u_k)`` (``cost="points"``) or the transcription's integral of ``l`` over
       each interval (``cost="integral"``); with ``step`` it is ``sum_k l(x_k, u_k)``.
@@ -362,7 +364,7 @@ class OCP:
       step = self.model
     else:
       assert isinstance(self.transcription, MultipleShooting)
-      step = self.transcription.integrator(self.model, dt=self.dt, name=f"{self.name}_step", **self.transcription.options)
+      step = integrate(ODE(self.model, dt=self.dt), self.transcription.method, name=f"{self.name}_step")
 
     def body(x: Expr, u: Expr, *params: Expr) -> tuple[Expr, Expr]:
       nxt = step(x, u, *params)

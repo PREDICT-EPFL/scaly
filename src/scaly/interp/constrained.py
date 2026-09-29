@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -15,14 +16,13 @@ from ..opt.qp import QP
 from ..opt.method import REGISTRY
 from ..opt.solver import solver
 from ..function.method import Status
-from ..opt.external.wrapper import solver_stats
 from .grid import Extrap, Search, basis_derivatives, check_sites, derivative_matrix
 from .spline import BSpline, Strategy, _per_axis, design_matrix
 
 type Direction = Literal["increasing", "decreasing"] | None
 type Curvature = Literal["convex", "concave"] | None
 
-_SOLVERS: dict[tuple[int, int, int], ConcreteFunction[Any, Any, Any, Any]] = {}
+_SOLVERS: dict[tuple[int, int, int, str], ConcreteFunction[Any, Any, Any, Any]] = {}
 
 
 def constrained(
@@ -39,6 +39,7 @@ def constrained(
   periodic: bool = False,
   penalty: int = 2,
   lam: float = 0.0,
+  qp: Any = None,
   extrap: Extrap | tuple[Extrap | None, ...] | None = None,
   fill: float = math.nan,
   search: Search | Literal["auto"] | tuple[Search | Literal["auto"], ...] = "auto",
@@ -47,7 +48,7 @@ def constrained(
   name: str = "interp",
 ) -> BSpline:
   """The B-spline closest to scattered data in least squares whose coefficients satisfy linear
-  constraints that make its shape what the physics says: a quadratic program, solved by PIQP now.
+  constraints that make its shape what the physics says: a quadratic program, solved now by ``qp``.
 
   The constraints are sufficient conditions on the coefficients, exact for the spline everywhere,
   not only at the data:
@@ -74,6 +75,10 @@ def constrained(
     penalty: the order of the differences of the coefficients that ``lam`` penalizes.
     lam: the weight of the squared ``penalty``-th differences along each axis in the objective;
       needed when the data leave some coefficient free.
+    qp: the ``sc.opt`` QP method that solves the program, one that takes the bounds as data at run
+      time (``sc.opt.PIQP(sparse=True)``, ...; not the generated IPM, whose code keeps only the
+      bounds finite when it was built); by default PIQP with its tolerances at 1e-12. Its answer is
+      refined to rounding either way.
 
   ``extrap``, ``fill``, ``search``, ``strategy``, ``dtype`` and ``name`` are as for ``BSpline``.
   A constraint the data do not press on is inactive, and the fit is then the plain penalized least
@@ -169,11 +174,11 @@ def constrained(
   g_scale = 1.0 / np.maximum(np.abs(G).max(axis=1, initial=0.0), np.finfo(np.float64).tiny)
   A, eq_rhs, G = A * a_scale[:, None], list(np.array(eq_rhs) * a_scale), G * g_scale[:, None]
   g_lb, g_ub = g_lb * g_scale, g_ub * g_scale  # positive factors: an infinite side stays infinite
-  solve = _qp_solver(n, A.shape[0], G.shape[0])
+  solve = _qp_solver(n, A.shape[0], G.shape[0], qp)
   params = ((hessian, linear), (A, np.array(eq_rhs)), (G, g_lb, g_ub))
   result = solve.numerical_call(np.zeros(n), np.zeros(n), np.zeros(A.shape[0]), np.zeros(G.shape[0]), params)
-  status = solver_stats(solve).status
-  if status not in (Status.OK, Status.ACCEPTABLE):
+  status = Status(int(result[-1].status))
+  if not status.ok:
     raise ValueError(f"the constrained fit failed: {status.name.lower()} (infeasible constraints?)")
   coeffs = sigma * _polish(M, rhs, A, np.array(eq_rhs), G, g_lb, g_ub, np.asarray(result[0]), np.asarray(result[3])).reshape(sizes)
   return BSpline(
@@ -250,9 +255,13 @@ def _derivative_row(knots: Sequence[np.ndarray], degrees: Sequence[int], point: 
   return row
 
 
-def _qp_solver(n: int, n_eq: int, n_ineq: int) -> ConcreteFunction[Any, Any, Any, Any]:
-  key = (n, n_eq, n_ineq)
+def _qp_solver(n: int, n_eq: int, n_ineq: int, qp: Any = None) -> ConcreteFunction[Any, Any, Any, Any]:
+  key = (n, n_eq, n_ineq, repr(qp))
   if key not in _SOLVERS:
-    tight = {"eps_abs": 1e-12, "eps_rel": 1e-12, "eps_duality_gap_abs": 1e-12, "eps_duality_gap_rel": 1e-12}
-    _SOLVERS[key] = solver(QP(n, n_eq, n_ineq), REGISTRY.get("piqp")(options=tight), name=f"interp_constrained_{n}_{n_eq}_{n_ineq}")
+    if qp is None:
+      tight = {"eps_abs": 1e-12, "eps_rel": 1e-12, "eps_duality_gap_abs": 1e-12, "eps_duality_gap_rel": 1e-12}
+      _SOLVERS[key] = solver(QP(n, n_eq, n_ineq), REGISTRY.get("piqp")(options=tight), name=f"interp_constrained_{n}_{n_eq}_{n_ineq}")
+    else:
+      tag = hashlib.sha1(repr(qp).encode()).hexdigest()[:6]
+      _SOLVERS[key] = solver(QP(n, n_eq, n_ineq), qp, name=f"interp_constrained_{qp.name.removeprefix('opt.')}{tag}_{n}_{n_eq}_{n_ineq}")
   return _SOLVERS[key]

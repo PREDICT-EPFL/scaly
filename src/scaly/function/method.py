@@ -1,9 +1,11 @@
 """The method interface: the methods of a problem class, their registry through entry points, and the ``Status`` and ``Info`` every built solver reports.
 
 Every numerical domain follows one pattern: a problem class, any number of methods, and a
-``solver(problem, method)`` that returns a ``ConcreteFunction``. A method is a frozen dataclass of
-its options that says whether it can solve a problem (``supports``) and builds the Function that
-does (``build``). Methods are declared in the entry-point group ``scaly.methods`` under
+``solver(problem, method)`` that returns what solves the problem. A method is a frozen dataclass of
+its options that says whether it can solve a problem (``supports``) and builds that (``build``):
+for the domains that solve, ``opt`` and ``roots``, a ``ConcreteFunction`` with a warm start and the
+parameters in and the solution and an ``Info`` out; each other domain says what it builds (an
+integrator's discrete map, an interp fit's ``BSpline``). Methods are declared in the entry-point group ``scaly.methods`` under
 ``<domain>.<name>``, the built-in ones in their distribution's manifest and plugins in theirs, so
 a domain's ``MethodRegistry`` finds them all the same way and loads one only when it is asked for.
 The compiler names no domain and no method: a domain creates its registry with the install hints
@@ -20,7 +22,6 @@ from functools import cached_property
 from importlib.metadata import EntryPoint, entry_points
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-from .model import ConcreteFunction
 from .tree import L, Record
 
 METHOD_ENTRY_POINTS = "scaly.methods"
@@ -101,9 +102,9 @@ class Method(Protocol):
     """Whether this method, with these options, can solve ``problem``."""
     ...
 
-  def build(self, problem: Any, *, name: str) -> ConcreteFunction:
-    """The Function that solves ``problem``: its parameters and a warm start in, the solution and
-    an ``Info`` out."""
+  def build(self, problem: Any, *, name: str) -> Any:
+    """What solves ``problem``: for a solving domain the Function with its parameters and a warm
+    start in and the solution and an ``Info`` out; otherwise what the domain says."""
     ...
 
 

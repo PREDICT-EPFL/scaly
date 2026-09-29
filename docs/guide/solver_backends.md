@@ -80,7 +80,10 @@ unscaling, each a loop in the solver's graph. Select it with `sc.opt.solver(prob
 
 The solver is specialised when it is built. The structural patterns of `P`, `A_eq` and `G_ineq` are
 derived as for sparse PIQP, and which bounds are finite is read at one probe of the parameters, so
-a bound that is infinite there is left out of the generated code for good. The KKT system is
+a bound that is infinite there is left out of the generated code for good, and one that is finite
+there must stay finite: an infinite value at run time ends the solve with `Status.ERROR`. A
+problem whose bounds are parameters that are sometimes infinite (an `sc.opt.QP` with one-sided rows,
+say) belongs to the PIQP library, which takes them as data. The KKT system is
 factored whole by `linalg.SparseLDL` by default; `sparse=False` condenses it and factors it by a
 dense Cholesky, as PIQP's dense interface does.
 

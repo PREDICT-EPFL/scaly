@@ -45,7 +45,7 @@
 | 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☑ |
 | 4.3 | IPM as the method `opt.ipm` | ☑ |
 | 4.4 | `scaly.roots` | ☑ |
-| 4.5 | `integrators` and `interp` as method registries | ☐ |
+| 4.5 | `integrators` and `interp` as method registries | ☑ |
 | 5.1 | `scaly.sets` | ☐ |
 | 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☐ |
 | 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☐ |
@@ -206,11 +206,15 @@ class MethodRegistry:                    # one instance per problem family, e.g.
 - **Method classes on the namespace.** `scaly.<domain>.__getattr__` resolves method classes lazily
   from the registry, so `sc.opt.PIQP` works when `scaly-piqp` is installed and gives an install hint
   otherwise. Methods are frozen dataclasses of their options, validated at construction.
-- **Uniform built Function.** Per problem class the signature is fixed: inputs are parameters and a
-  warm start; outputs are the solution (primal, dual where applicable) and an `Info` pytree. `Info`
-  always has `status: Status` (a common enum in `scaly.ext`, grown from today's `ScalySolveStatus`),
-  `iter`, and domain residuals. External methods write these as outputs too; the stats-struct
-  accessor remains for timing only.
+- **Uniform built Function.** Per problem class the signature is fixed. For the domains that solve
+  (`opt`, `roots`, `ocp`) inputs are parameters and a warm start; outputs are the solution (primal,
+  dual where applicable) and an `Info` pytree. `Info` always has `status: Status` (a common enum in
+  `scaly.ext`, grown from today's `ScalySolveStatus`), `iter`, and domain residuals. External methods
+  write these as outputs too; the stats-struct accessor remains for timing only. The other domains
+  fix their own result (decided at step 4.5): an integrator method builds the discrete map
+  `F(x, ...) -> xnext`, an interp method a `BSpline`, neither with a warm start or an `Info`; one
+  method class per named method, today's functions (`rk4`, `implicit`, `interpolant`, ...) kept as
+  shorthand.
 - **Derivatives are owned by the problem class**, attached with `custom_derivative` after `build`:
   the KKT system at the solution for `opt` (equality constraints and inequalities with strict
   complementarity; the active set is identified by tolerance), `F_z^{-1}` for `roots`, the
@@ -233,8 +237,8 @@ class MethodRegistry:                    # one instance per problem family, e.g.
 | `linalg` | `LinearSystem` (dense, sparse, banded, stage-structured) | `LU`, `Cholesky`, `LDL`, `SparseLDL`, `Thomas`, `Riccati` | later: QDLDL, MA57 |
 | `roots` | `Root`, `LeastSquares` | `Newton`, `NewtonBisection`, `GaussNewton`, `LevenbergMarquardt` | — |
 | `opt` | `QP`, `NLP` | `IPM` | `PIQP`, `IPOPT`, `SQP` (plugins) |
-| `integrators` | `ODE` | explicit, adaptive, symplectic, implicit RK, collocation (today's `TABLEAUS`) | — |
-| `interp` | `Fit` | `BSpline`, `Linear`, `Smoothing`, `Constrained(qp=…)` (today's `KINDS`) | — |
+| `integrators` | `ODE` | one per named method: `RK4`, `Tsit5`, `DOPRI5`, ..., `RadauIIA(s, newton=…)`, `SDIRK3`, ..., `Adaptive(pair)`, `StormerVerlet` (today's `TABLEAUS`) | — |
+| `interp` | `Fit` | one per kind: `Linear`, `Cubic`, `PCHIP`, ..., `PerAxis`, `Smoothing`, `Constrained(qp=…)` (today's `KINDS`) | — |
 | `ocp` | `DiscreteOCP` | `Direct(opt_method, form)`, `ILQR`, `TinyADMM`; experimental `ALTRO`, `SCvx` | later: Fatrop |
 
 ### 3.2 Extension API (`scaly.ext`)
@@ -669,6 +673,34 @@ Guide and API pages, the codebase map; API-186 notes its route.
 **4.5 `integrators` and `interp` as registries.** `TABLEAUS` and `KINDS` become method registries;
 `tsit5` and LGL added.
 Gate: integrator order-condition tests; interp suite.
+Log: done 2026-09-29. Shape decided with the user before starting (the question was an open item):
+§3.1's warm-start-and-`Info` Function is for the solving domains, and each other domain fixes its
+own result; one method class per named method; today's functions stay as shorthand. `integrators`:
+`ODE(f, dt, name)`, `si.solver(ode, method)` returning the discrete map, and 23 methods registered as
+`integrators.<name>` (`Euler` ... `RK4`, `RK38`, `BS32`, `DOPRI5`, `Tsit5` with `steps`;
+`BackwardEuler` ... `SDIRK3` and the families `GaussLegendre(s)`, `RadauIIA(s)`, `LobattoIIIA(s)`,
+`LobattoIIIC(s)` with `steps` and `newton=sc.roots.Newton(...)`; `Adaptive(pair)`; `StormerVerlet`,
+`SymplecticEuler`), public bases `ExplicitRK`/`ImplicitRK` for a package's own. Each builds the same
+map as its shorthand: every one renders byte-identical C to it, and the 48 integrator files of the
+4.4 harness are unchanged (`implicit` now goes through `implicit_map`). `MultipleShooting` takes a
+method (or its name) instead of a function and options, its callers in tests, `mpc` and three
+notebooks moved; an implicit interval's name is now `{model}_radau_iia2_shooting`. `tsit5` joins
+`TABLEAUS` with its embedded weights (order 5, embedded 4; its rate on the linear test reads 5.1 to
+5.3, a small leading constant, tested like DOPRI5's), and `adaptive` takes it; `si.lgl(n)` is the
+Legendre-Gauss-Lobatto rule (nodes, weights, differentiation matrix), matching
+`examples/casadi/_lgl.py` to rounding, the examples left for 6.1. `interp`: `Fit(x, y, extrap, fill,
+search, strategy, dtype, name)`, `interp.solver(fit, method)` returning the `BSpline`, and 12 methods
+registered as `interp.<kind>` (the ten kinds with their options, `Smoothing`, `Constrained`), plus
+`PerAxis` to mix kinds; each fits its shorthand's spline (same digest). `constrained` takes `qp=`, any
+opt QP method, its status read from the `Info`; the generated IPM cannot serve there, since its code
+keeps only the bounds finite when built and a monotone row's upper side is infinite at run time
+(documented, with IPM's own docs). The shared `Method` protocol's `build` now returns what the
+domain says. `BUILT_ON_THE_CORE` in the layering test gains `scaly.roots`, missed in 4.4. `ty` caught
+the condensed OCP's rollout still reading the old `MultipleShooting` fields, a path no test reached:
+fixed, with a test that a continuous model's condensed and sparse forms agree. The
+`explicit_methods` notebook checks every explicit tableau and now counts Tsit5 (re-executed). Four
+mutations (dropped `steps`, an ignored pair, a collapsed `PerAxis`, shooting ignoring its method)
+each fail the new tests.
 
 ### Phase 5: control
 

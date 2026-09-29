@@ -122,7 +122,8 @@ and where the points are read decides the Jacobian's pattern.
 - `interp.constrained(x, y, ...)` is least squares under linear conditions on the coefficients
   that make a shape hold on the data's range: `monotone` and `convex` per axis, `bounds`, pinned
   values and derivatives (`equal`), and `periodic` ends. It is a quadratic program, solved by PIQP
-  when the graph is built, then refined by one active-set step, so the fit is exact to rounding
+  when the graph is built (`qp=` takes another `sc.opt` method that reads the bounds as data at run
+  time), then refined by one active-set step, so the fit is exact to rounding
   and the same at any scale of the data. Outside the data's range the default `linear`
   continuation keeps a monotone or convex shape but not the bounds, which `extrap="clamp"` keeps.
 - `interp.BSpline(knots, coeffs, degree)` takes coefficients directly, numbers or an `Expr`: a
@@ -137,6 +138,30 @@ every extrapolation mode, whose derivative in the bound is the spline there. `f.
 is the integral as a spline. `f.inverse()` reads a strictly monotone 1-D spline backwards, by
 safeguarded Newton (`sc.roots.NewtonBisection` on the cell) in a loop that stops relative to the
 cell's width, with the derivative `1/f'` supplied directly.
+
+## Methods
+
+Each kind is also a class, an interp method with its options, found by name in `interp.REGISTRY` as
+`interp.<kind>`. `interp.solver(interp.Fit(x, y, ...), method)` fits the spline the shorthand fits;
+`Fit` holds the data, on a grid or scattered, and how the spline is evaluated (`extrap`, `fill`,
+`search`, `strategy`, `dtype`, `name`). `"auto"` interpolates data on a grid linearly and smooths
+scattered data.
+
+```python
+table = interp.solver(interp.Fit(soc, ocv, extrap="clamp"), interp.PCHIP())
+mixed = interp.solver(interp.Fit((t, v), map2d), interp.PerAxis(interp.Linear(), interp.Cubic(bc="natural")))
+fit = interp.solver(interp.Fit(x, y), interp.Constrained(knots=12, monotone="increasing", bounds=(0.0, 1.0)))
+```
+
+| Methods | Options | Shorthand |
+| --- | --- | --- |
+| `interp.Nearest`, `interp.ZOH`, `interp.Linear`, `interp.Cubic`, `interp.Spline`, `interp.PCHIP`, `interp.Akima`, `interp.Makima`, `interp.Steffen`, `interp.SmoothLinear` | `period` (`ZOH`), `bc` (`Cubic`, `Spline`), `degree` (`Spline`), `frac` (`SmoothLinear`) | `interp.interpolant(x, y, kind=...)` |
+| `interp.PerAxis(method, ...)`, one interpolating method per axis | | `interpolant` with a tuple of kinds |
+| `interp.Smoothing` | `degree`, `segments`, `penalty`, `lam`, `method` | `interp.smoothing` |
+| `interp.Constrained` | `degree`, `knots`, `weights`, `monotone`, `convex`, `bounds`, `equal`, `periodic`, `penalty`, `lam`, `qp` | `interp.constrained` |
+
+A method refuses the data it cannot fit, naming why: an interpolant scattered points, a
+shape-preserving kind a grid of more than one axis, a constrained fit an `Expr`.
 
 ## Generated code
 
