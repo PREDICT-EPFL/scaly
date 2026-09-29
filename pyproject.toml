@@ -1,13 +1,18 @@
+# The root manifest is scaly-core's, and the uv workspace's. What the distribution ships and declares
+# is generated from distributions.toml (the marked block); the rest configures the workspace and the
+# tools, and is written here.
+
+# BEGIN generated from distributions.toml by scripts/distributions.py; edit the table and rerun it
 [project]
-name = "scaly"
+name = "scaly-core"
 version = "0.1.0a1"
-description = "Symbolic compiler for optimal control: typed expression graphs, sparse derivatives and standalone generated C."
+description = "The scaly compiler: typed expression graphs, sparse derivatives and standalone generated C."
 readme = "README.md"
-authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
 requires-python = ">=3.12"
 dependencies = ["numpy>=2.3.3", "scipy>=1.18.0"]
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
+authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
 keywords = [
   "optimal-control",
   "automatic-differentiation",
@@ -35,31 +40,51 @@ classifiers = [
 Repository = "https://github.com/PREDICT-EPFL/scaly"
 Issues = "https://github.com/PREDICT-EPFL/scaly/issues"
 
-[project.optional-dependencies]
-piqp = ["scaly-piqp>=0.1.0a1,<0.2"]
-ipopt = ["scaly-ipopt>=0.1.0a1,<0.2"]
-sqp = ["scaly-sqp>=0.1.0a1,<0.2"]
-solvers = ["scaly[piqp,ipopt,sqp]"]
+[project.scripts]
+scaly_codegen = "scaly.codegen.aot:main"
+scaly_toolchain = "scaly.codegen.toolchain:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scaly"]
+bypass-selection = true
+dev-mode-dirs = ["src"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/"]
+exclude = ["*"]
+
+[tool.hatch.build.hooks.custom]
+paths = [
+  "scaly/__init__.py",
+  "scaly/ext.py",
+  "scaly/ir",
+  "scaly/function",
+  "scaly/ad",
+  "scaly/passes",
+  "scaly/codegen",
+  "scaly/utils",
+]
+# END generated from distributions.toml
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [dependency-groups]
 dev = [
+  # Every distribution of the workspace, so `uv sync` installs them all: editable, over one src/ tree.
+  "scaly",
+  "scaly-numerics",
+  "scaly-control",
+  "scaly-tools",
+  "scaly-experimental",
+  "scaly-testing",
   "scaly-ipopt",
   "scaly-piqp",
   "scaly-sqp",
   "casadi>=3.8.0",
+  "hatchling>=1.27.0",
   "pytest>=8.4.2",
   "pytest-xdist>=3.8.0",
   "ruff>=0.13.3",
@@ -71,78 +96,19 @@ dev = [
 ]
 docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 
-[project.entry-points."scaly.adapters"]
-cpp = "scaly.export.cpp"
-casadi = "scaly.export.casadi"
-
-[project.entry-points.pytest11]
-scaly = "scaly.testing.plugin"  # the method marker
-
-[project.entry-points."scaly.methods"]
-"ocp.altro" = "scaly.ocp.altro:ALTRO"
-"ocp.direct" = "scaly.ocp.direct:Direct"
-"ocp.ilqr" = "scaly.ocp.ilqr:ILQR"
-"ocp.scvx" = "scaly.ocp.scvx:SCvx"
-"ocp.tinyadmm" = "scaly.ocp.tinyadmm:TinyADMM"
-"opt.ipm" = "scaly.opt.ipm:IPM"
-"roots.newton" = "scaly.roots.newton:Newton"
-"roots.newton_bisection" = "scaly.roots.newton:NewtonBisection"
-"roots.gauss_newton" = "scaly.roots.least_squares:GaussNewton"
-"roots.levenberg_marquardt" = "scaly.roots.least_squares:LevenbergMarquardt"
-"integrators.adaptive" = "scaly.integrators.methods:Adaptive"
-"integrators.backward_euler" = "scaly.integrators.methods:BackwardEuler"
-"integrators.bs32" = "scaly.integrators.methods:BS32"
-"integrators.dopri5" = "scaly.integrators.methods:DOPRI5"
-"integrators.euler" = "scaly.integrators.methods:Euler"
-"integrators.gauss_legendre" = "scaly.integrators.methods:GaussLegendre"
-"integrators.heun" = "scaly.integrators.methods:Heun"
-"integrators.implicit_midpoint" = "scaly.integrators.methods:ImplicitMidpoint"
-"integrators.lobatto_iiia" = "scaly.integrators.methods:LobattoIIIA"
-"integrators.lobatto_iiic" = "scaly.integrators.methods:LobattoIIIC"
-"integrators.midpoint" = "scaly.integrators.methods:Midpoint"
-"integrators.radau_iia" = "scaly.integrators.methods:RadauIIA"
-"integrators.ralston" = "scaly.integrators.methods:Ralston"
-"integrators.rk3" = "scaly.integrators.methods:RK3"
-"integrators.rk38" = "scaly.integrators.methods:RK38"
-"integrators.rk4" = "scaly.integrators.methods:RK4"
-"integrators.sdirk2" = "scaly.integrators.methods:SDIRK2"
-"integrators.sdirk3" = "scaly.integrators.methods:SDIRK3"
-"integrators.ssprk3" = "scaly.integrators.methods:SSPRK3"
-"integrators.stormer_verlet" = "scaly.integrators.methods:StormerVerlet"
-"integrators.symplectic_euler" = "scaly.integrators.methods:SymplecticEuler"
-"integrators.trapezoidal" = "scaly.integrators.methods:Trapezoidal"
-"integrators.tsit5" = "scaly.integrators.methods:Tsit5"
-"interp.akima" = "scaly.interp.methods:Akima"
-"interp.constrained" = "scaly.interp.methods:Constrained"
-"interp.cubic" = "scaly.interp.methods:Cubic"
-"interp.linear" = "scaly.interp.methods:Linear"
-"interp.makima" = "scaly.interp.methods:Makima"
-"interp.nearest" = "scaly.interp.methods:Nearest"
-"interp.pchip" = "scaly.interp.methods:PCHIP"
-"interp.smooth_linear" = "scaly.interp.methods:SmoothLinear"
-"interp.smoothing" = "scaly.interp.methods:Smoothing"
-"interp.spline" = "scaly.interp.methods:Spline"
-"interp.steffen" = "scaly.interp.methods:Steffen"
-"interp.zoh" = "scaly.interp.methods:ZOH"
-
-[project.entry-points."scaly.toolchain_report"]
-solvers = "scaly.opt.external.paths:toolchain_report"
-
-[project.entry-points."scaly.env_vars"]
-solvers = "scaly.opt.external.paths:SOLVER_ENV_VARS"
-
-[project.scripts]
-scaly_codegen = "scaly.codegen.aot:main"
-scaly_viz = "scaly.viz.serve:main"
-scaly_toolchain = "scaly.codegen.toolchain:main"
-
 [tool.uv]
 default-groups = ["dev", "docs"]
 
 [tool.uv.workspace]
-members = ["plugins/*"]
+members = ["packages/*", "plugins/*", "meta/*"]
 
 [tool.uv.sources]
+scaly = { workspace = true }
+scaly-numerics = { workspace = true }
+scaly-control = { workspace = true }
+scaly-tools = { workspace = true }
+scaly-experimental = { workspace = true }
+scaly-testing = { workspace = true }
 scaly-ipopt = { workspace = true }
 scaly-piqp = { workspace = true }
 scaly-sqp = { workspace = true }
@@ -155,6 +121,10 @@ include = [
   "tests/**/*.py",
   "bench/**/*.py",
   "plugins/**/*.py",
+  "packages/**/*.py",
+  "scripts/**/*.py",
+  "hatch_build.py",
+  "conftest.py",
 ]
 exclude = [".venv"]
 lint.ignore = ["E731"]

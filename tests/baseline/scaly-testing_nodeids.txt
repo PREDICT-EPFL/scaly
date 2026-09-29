@@ -1,0 +1,14 @@
+tests/testing/test_hyperdual.py::test_lagrangian_hessian_matches_closed_form
+tests/testing/test_hyperdual.py::test_lagrangian_hessian_matches_finite_differences_on_transcendentals
+tests/testing/test_plugin.py::test_a_missing_method_skips_or_fails_the_run[False]
+tests/testing/test_plugin.py::test_a_missing_method_skips_or_fails_the_run[True]
+tests/testing/test_plugin.py::test_what_is_available
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.conformance.ocp]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.conformance.qp]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.conformance.roots]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.examples]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.helpers]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.hyperdual]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.plugin]
+tests/testing/test_surface.py::test_each_modules_names_are_documented[scaly.testing.qp]
+tests/testing/test_surface.py::test_the_package_stays_out_of_the_scaly_namespace

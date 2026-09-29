@@ -41,6 +41,7 @@ MODULES = {
   "scaly.testing.conformance.ocp": ["X0", "check", "problems", "reference", "solve"],
   "scaly.testing.conformance.roots": ["TOL", "check", "problems"],
   "scaly.testing.examples": [
+    "FIRST_PARTY",
     "NOTEBOOK_KEY",
     "Requirements",
     "methods",

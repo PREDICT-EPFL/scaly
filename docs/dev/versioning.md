@@ -26,8 +26,9 @@ same commit, but equality has no compatibility meaning.
 
 Compatibility is enforced in two places:
 
-- Each plugin declares the supported core range in its package dependencies, `scaly>=0.1.0a1,<0.2`
-  for the `0.1.x` compatibility line. Naming a pre-release on the lower bound lets installers pick
+- Each plugin declares the supported range of `scaly-numerics`, the distribution that ships
+  `scaly.opt`, in its package dependencies: `scaly-numerics>=0.1.0a1,<0.2` for the `0.1.x`
+  compatibility line. Naming a pre-release on the lower bound lets installers pick
   `0.1.0b1` or `0.1.0rc1` without `--pre`; the exclusive upper bound also excludes every `0.2`
   pre-release.
 - The solver registry checks the plugin protocol version at runtime. A breaking change to the plugin

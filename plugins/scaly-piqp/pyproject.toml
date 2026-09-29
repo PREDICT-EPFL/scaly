@@ -3,7 +3,7 @@ name = "scaly-piqp"
 version = "0.1.0a1"
 description = "PIQP backend for scaly: the vendored solver plus the qp() oracle bindings."
 requires-python = ">=3.12"
-dependencies = ["scaly>=0.1.0a1,<0.2"]
+dependencies = ["scaly-numerics>=0.1.0a1,<0.2"]
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
 
@@ -31,4 +31,4 @@ include = ["src/", "bindings/", "hatch_build.py", "licenses/"]
 path = "hatch_build.py"
 
 [tool.uv.sources]
-scaly = { workspace = true }
+scaly-numerics = { workspace = true }

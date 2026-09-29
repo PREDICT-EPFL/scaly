@@ -15,7 +15,8 @@ packaging metadata, and a Python method class that renders the C wrapper.
 
 A plugin is a Python package that:
 
-1. depends on `scaly`, and checks at import the extension API it was written against
+1. depends on `scaly-numerics` (the distribution that ships `scaly.opt`, and the core with it), and
+   checks at import the extension API it was written against
    (`scaly.ext.require_ext_api(1, "scaly-mysolver")`);
 2. defines a method class, a frozen dataclass subclassing `scaly.opt.external.External`, and
    declares it in the `scaly.methods` entry-point group as `opt.<name>`;

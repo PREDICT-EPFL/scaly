@@ -188,6 +188,34 @@ Solver libraries are not in this tree. Each is a separate distribution under `pl
 (`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) discovered through an entry point; see
 [Solver plugins](solver_plugins.md). `opt/ipm` is the one method core ships, since it needs no library. `tests/` mirrors this layout by namespace, with the compiler's packages under `tests/core/`.
 
+## Distributions
+
+The tree is one import namespace, `scaly`, sliced into distributions that install into it side by
+side. `distributions.toml` at the repository root says which distribution ships each path, what each
+depends on, which tests are its own, and how it is versioned:
+
+| Distribution | Ships | Depends on |
+| --- | --- | --- |
+| `scaly-core` | `__init__.py`, `ext.py`, `ir/`, `function/`, `ad/`, `passes/`, `codegen/`, `utils/` | NumPy, SciPy |
+| `scaly-numerics` | `linalg/`, `roots/`, `opt/`, `integrators/`, `interp/` | core |
+| `scaly-control` | `ocp/` but its experimental methods, `sets/` | numerics |
+| `scaly-tools` | `viz/`, `export/` | core |
+| `scaly-experimental` | `nn/`, `geometry/`, `ocp/altro.py`, `ocp/scvx.py` | control |
+| `scaly-testing` | `testing/` | core, pytest; its suites need the namespace they test |
+| `scaly` | nothing: the metapackage of core, numerics, control and tools, with the rest as extras | |
+
+A path belongs to the distribution that lists it most specifically, so an experimental method sits at
+its natural path and is promoted by deleting one line. They release together at one version; the
+solver plugins version on their own and keep their own manifests. The manifests are generated from
+the table by `uv run scripts/distributions.py`: `packages/<name>/` and `meta/scaly/` whole, and the
+marked block at the top of the root `pyproject.toml`, which is `scaly-core`'s. Entry points and
+scripts are listed once in the table and land in the manifest of the distribution that ships their
+module. A shared build hook (`hatch_build.py`, copied beside each manifest) puts the distribution's
+slice into its wheel and its sdist. In the workspace every distribution is installed editable over
+the one `src/` tree, so everything is importable; `tests/test_distributions.py` builds the wheels
+and checks that every file lands in exactly one, and the distribution table in
+`tests/test_import_layering.py` checks that each imports only what it declares.
+
 ## Import layers
 
 Every module has an import layer. A module may import modules in its own import layer or a lower
@@ -271,12 +299,13 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A program-dialect pass from outside the compiler | `insert_after(anchor, name, fn)` or `insert_before` in `passes/program/__init__.py` |
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, ...) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` for a statement op (scalars need none); the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
-| A method of a problem class | a frozen dataclass of its options with `name`, `problem`, `api`, `supports` and `build` (`Method` in `function/method.py`), and an entry point `<domain>.<name>` in the `scaly.methods` group of its distribution's manifest; nothing in the domain changes |
+| A method of a problem class | a frozen dataclass of its options with `name`, `problem`, `api`, `supports` and `build` (`Method` in `function/method.py`), and an entry point `<domain>.<name>` in the `scaly.methods` group of `distributions.toml` (a plugin's own manifest for a plugin), then `uv run scripts/distributions.py`; nothing in the domain changes |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |
 | A Function with a hand-written C body | an object implementing `ExternCallee` in `function/extern.py`, passed to `extern_function`; nothing in the compiler changes |
 | A public name | the re-export and `__all__` entry in `scaly/__init__.py` |
-| An output adapter (another header language, another consumer's symbols) | a module in `export/` calling `register_adapter` from `codegen/adapter.py`, and an entry point under `scaly.adapters` naming it |
+| An output adapter (another header language, another consumer's symbols) | a module in `export/` calling `register_adapter` from `codegen/adapter.py`, and an entry point under `scaly.adapters` in `distributions.toml` naming it |
 | A module | an entry in `IMPORT_LAYERS` in `tests/test_import_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
+| A namespace (a new directory under `src/scaly/`) | the module's rows above, and its path and its tests' in the distribution that ships it in `distributions.toml`, then `uv run scripts/distributions.py` |
 
 ## The rules that keep it this way
 

@@ -15,6 +15,12 @@ Use `uv run` for everything, for example `uv run pytest` or `uv run bench/run.py
 takes a script path directly, so the `python` in `uv run python script.py` is redundant. Do not
 activate the virtual environment by hand.
 
+The repository is a uv workspace of every distribution (`scaly-core` at the root, the others under
+`packages/`, `meta/` and `plugins/`; see [The codebase](codebase.md#distributions)). The root's `dev`
+group names them all, so `uv sync` installs every one, editable over the one `src/` tree, as
+`uv sync --all-packages` would. After editing `distributions.toml`, run
+`uv run scripts/distributions.py` to regenerate the manifests.
+
 Scaly itself is pure Python, but the `scaly-piqp` and `scaly-ipopt` plugins vendor their solvers
 and build them from source on the first sync. CMake comes from PyPI as a build requirement; a C++
 compiler and a Fortran compiler have to be installed system-wide:
@@ -60,28 +66,21 @@ Run all four before you consider a change done. `pytest` collects `tests/` and `
 type checking covers the assertions in `tests/typing/`. An expected error that disappears leaves an
 unused ignore, which fails the check.
 
-The root `conftest.py` checks the full-collection node-ID baseline. After adding, removing, or
-renaming a test, regenerate it from the complete collection:
+The root `conftest.py` checks a node-ID baseline per distribution,
+`tests/baseline/<distribution>_nodeids.txt`, plus `repository_nodeids.txt` for the tests that belong
+to none; `distributions.toml` says whose each test is. A run checks the baseline of every
+distribution whose tests it collects in full: the whole suite checks them all, `pytest tests/core`
+checks `scaly-core`'s, and a selection (`-k`, `-m`, `--lf`, a node ID) checks none. After adding,
+removing, or renaming a test, write them all from the complete collection, then check:
 
 ```bash
-(
-  set -e
-  raw=$(mktemp)
-  fresh=$(mktemp)
-  trap 'rm -f "$raw" "$fresh"' EXIT
-  uv run pytest --collect-only -q >"$raw" 2>/dev/null || true
-  grep -E '^(tests|plugins)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
-  test -s "$fresh"
-  mv "$fresh" tests/baseline/pytest_nodeids.txt
-)
-generation_status=$?
-[ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q
+uv run pytest --collect-only -q --write-nodeid-baselines >/dev/null
+uv run pytest --collect-only -q
 ```
 
-The first collection can exit nonzero because the existing baseline is stale or missing; its error
-goes to stderr, which is discarded so it cannot splice into the last node ID. The `grep` keeps only
-pytest node IDs, including parameter IDs with spaces, and `sort` makes the file deterministic. The
-final collection must pass.
+The first command writes each baseline from the collected items themselves, sorted, instead of
+parsing pytest's output, so nothing on stdout or stderr can splice into a node ID; it refuses a
+partial collection and one with collection errors. The second must pass.
 
 A test that needs a method that may be missing, an external solver above all, carries a marker:
 
@@ -133,17 +132,22 @@ namespace has its own directory beside it, so `src/scaly/ocp/ilqr.py` is tested 
   [Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
 - `tests/typing/` holds the expected-error assertions that `ty check` covers, across namespaces.
 - `tests/core/baseline/c/` holds the generated-C snapshots that `tests/core/test_c_snapshot.py`
-  checks, and `tests/baseline/pytest_nodeids.txt` the node-ID baseline.
+  checks, and `tests/baseline/` the node-ID baselines, one per distribution.
 
 Shared test code that a plugin also needs lives in `scaly.testing`, not in `tests/`: the problem
 builders (`scaly.testing.helpers`), the Maros–Meszaros set (`scaly.testing.qp`), hyper-dual numbers
 and the conformance suites. `tests/` is not installed, so a plugin cannot import from it.
 
-Two root-level tests are structural and permanent. `tests/test_import_layering.py` holds the
+Three root-level tests are structural and permanent. `tests/test_import_layering.py` holds the
 import-layer table, the two sanctioned exceptions and the acyclicity check; a new module needs an
-entry in `IMPORT_LAYERS`. `tests/test_import_boundaries.py` pins the public names: that `sc.Expr` is
+entry in `IMPORT_LAYERS`. It also holds the distribution table, read from `distributions.toml`: the
+core imports no other distribution, each imports only what it declares, and their imports are
+acyclic. `tests/test_import_boundaries.py` pins the public names: that `sc.Expr` is
 `scaly.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
-paths stay retired.
+paths stay retired. `tests/test_distributions.py` builds every wheel and sdist and checks that each
+file under `src/scaly` lands in exactly one wheel, that the manifests are what `distributions.toml`
+generates, and that the workspace installs every distribution (see
+[The codebase](codebase.md#distributions)).
 
 Some compiler paths are exercised only by workload-shaped fixtures, mainly the RK4 stage-transcription
 Jacobian in `tests/core/integration/test_stage_transcription.py` and the chained-VMAP fixtures in

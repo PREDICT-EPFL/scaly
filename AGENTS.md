@@ -35,6 +35,9 @@ protocol, the reference machine and the evidence behind each rule. Put rationale
 - `uv run --only-group docs zensical serve` — docs preview, `build` to render into `site/`
 - `uv run bench/run.py smoke` — the benchmark problems' gates and kernel smoke; `bench/README.md`
   has the sweeps, studies and closed loops
+- `uv run scripts/distributions.py` — regenerate the distributions' manifests after editing
+  `distributions.toml`. `uv sync` installs every distribution of the workspace (the root's `dev`
+  group names them all), the same environment `uv sync --all-packages` gives.
 - `uv run path/to/script.py` runs a script. Not `uv run python path/to/script.py`: `uv run` takes
   the file directly, and the extra `python` buys nothing. The exception is an example with a PEP 723
   header (every script under `examples/` outside `case_studies/`): `uv run` would install its header's
@@ -82,6 +85,10 @@ Identifier spellings, several of which reach the generated C:
 - **A new module needs an `IMPORT_LAYERS` entry in `tests/test_import_layering.py`** and a one-line docstring
   saying what it owns. Imports go down import layers, never up. A new public name needs a docstring too:
   the API reference is generated from them and `tests/test_import_boundaries.py` pins the surface.
+- **The distributions' manifests are generated.** `packages/*/`, `meta/scaly/` and the marked block
+  at the top of the root `pyproject.toml` come from `distributions.toml`; edit the table and run
+  `uv run scripts/distributions.py`, never the manifests. A new namespace needs its path and its
+  tests in the table, and a distribution imports only what the table says it depends on.
 - **Never let a benchmark be the only thing exercising an IR, AD or codegen path.** Copy a small
   self-contained reproduction into `tests/`, differential against an unrolled or NumPy reference,
   before changing or retiring the benchmark. Prove a new gate can fail by perturbing what it checks.

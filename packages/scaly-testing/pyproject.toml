@@ -1,0 +1,60 @@
+# Generated from distributions.toml by scripts/distributions.py; edit the table and rerun it.
+
+[project]
+name = "scaly-testing"
+version = "0.1.0a1"
+description = "Testing scaly and the methods built on it: the pytest plugin with the method marker, conformance suites, reference problems and hyper-dual numbers."
+requires-python = ">=3.12"
+dependencies = ["scaly-core==0.1.0a1", "pytest>=8.4.2"]
+license = "BSD-2-Clause"
+license-files = ["LICENSE.md"]
+authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
+keywords = [
+  "optimal-control",
+  "automatic-differentiation",
+  "code-generation",
+  "symbolic",
+  "sparse",
+  "mpc",
+  "nonlinear-programming",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: C",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Compilers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+Repository = "https://github.com/PREDICT-EPFL/scaly"
+Issues = "https://github.com/PREDICT-EPFL/scaly/issues"
+
+[project.optional-dependencies]
+numerics = ["scaly-numerics==0.1.0a1"]
+control = ["scaly-control==0.1.0a1"]
+
+[project.entry-points.pytest11]
+scaly = "scaly.testing.plugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+dev-mode-dirs = ["../../src"]
+
+[tool.hatch.build.hooks.custom]
+paths = ["scaly/testing"]
+
+[tool.uv.sources]
+scaly-control = { workspace = true }
+scaly-core = { workspace = true }
+scaly-numerics = { workspace = true }

@@ -14,6 +14,10 @@ from typing import Any
 NOTEBOOK_KEY = "scaly"
 """The notebook metadata key holding ``requires-python`` and ``dependencies``, as a script's header does."""
 
+FIRST_PARTY = frozenset({"scaly", "scaly-core", "scaly-numerics", "scaly-control", "scaly-tools", "scaly-experimental", "scaly-testing"})
+"""The distributions released with scaly at one version (``distributions.toml``): pure Python, so the
+methods they register load wherever they are installed."""
+
 # The reference expression of PEP 723 for an inline metadata block.
 _BLOCK = re.compile(r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$")
 _NAME = re.compile(r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[(?P<extras>[^\]]*)\])?")
@@ -107,12 +111,12 @@ def _methods_by_distribution() -> dict[str, tuple[str, ...]]:
 
 
 def methods(reqs: Requirements) -> list[str]:
-  """The methods (``"opt.piqp"``) that the distributions ``reqs`` names beside ``scaly`` register,
+  """The methods (``"opt.piqp"``) that the distributions ``reqs`` names beside scaly's own register,
   where installed: what a runner marks the example with, so it runs only where they load. The
-  methods ``scaly`` itself brings are always there."""
+  methods of the ``FIRST_PARTY`` distributions are always there."""
   table = _methods_by_distribution()
-  names = {parse(req)[0] for req in reqs.dependencies} - {"scaly"}
+  names = {parse(req)[0] for req in reqs.dependencies} - FIRST_PARTY
   return sorted({m for name in names for m in table.get(name, ())})
 
 
-__all__ = ["NOTEBOOK_KEY", "Requirements", "methods", "notebook_requirements", "parse", "requirements", "script_requirements", "unmet"]
+__all__ = ["FIRST_PARTY", "NOTEBOOK_KEY", "Requirements", "methods", "notebook_requirements", "parse", "requirements", "script_requirements", "unmet"]

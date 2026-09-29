@@ -15,6 +15,10 @@ is not also recorded separately. And this is a discipline over what the source s
 interpreter does: imports are read with ``ast`` (function-local ones included — deferring an
 import inside a function is the usual way a cycle gets hidden), while ``if TYPE_CHECKING:`` blocks, the implicit parent-package import,
 and dynamic loading (``EntryPoint.load`` in ``solvers/registry.py``) are not counted.
+
+The second level is the distributions (at the end): ``distributions.toml`` says which one ships
+each module, the core imports no other's, each imports only what it declares, and the graph of what
+they import is acyclic.
 """
 
 from __future__ import annotations
@@ -22,11 +26,16 @@ from __future__ import annotations
 import ast
 import subprocess
 import sys
+from importlib.metadata import packages_distributions
 from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "scaly"
+from scripts.distributions import load, module_owner, reachable, requirement_name, third_party
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src" / "scaly"
+TABLE = load()
 
 # Import layer per module. Keys are today's module paths; the numbers are the target layout's, so a key
 # is renamed when its file moves but its import layer only changes if the design changes.
@@ -284,20 +293,9 @@ def test_module_imports_standalone(module: str) -> None:
   assert proc.returncode == 0, f"importing {module} first fails:\n{proc.stderr}"
 
 
-# The packages built on the compiler, which ``import scaly`` leaves unloaded (``sc.<name>`` loads one).
-BUILT_ON_THE_CORE = (
-  "scaly.export",
-  "scaly.geometry",
-  "scaly.integrators",
-  "scaly.interp",
-  "scaly.linalg",
-  "scaly.nn",
-  "scaly.ocp",
-  "scaly.opt",
-  "scaly.roots",
-  "scaly.sets",
-  "scaly.testing",
-)
+# The packages built on the compiler, which ``import scaly`` leaves unloaded (``sc.<name>`` loads one):
+# every package another distribution than scaly-core ships.
+BUILT_ON_THE_CORE = tuple(sorted({".".join(name.split(".")[:2]) for name in _modules() if module_owner(name, TABLE) != "scaly-core"}))
 
 
 def test_import_scaly_is_the_compiler_alone() -> None:
@@ -395,3 +393,133 @@ def test_core_names_no_solver_adapter_or_package_built_on_it() -> None:
           if any(target == forbidden or target.startswith(f"{forbidden}.") for forbidden in NOT_FROM_CORE):
             bad.append(f"{name}:{stmt.lineno} imports {target}")
   assert not bad, "core modules name a solver, an output adapter or a package built on the core:\n  " + "\n  ".join(sorted(set(bad)))
+
+
+# The second level: distributions. ``distributions.toml`` says which distribution ships each module,
+# the solver plugins' import packages included. A module may import from its own distribution and
+# from what that one declares, directly, through an extra, or in what those declare in turn; that
+# holds for the libraries outside the repository too. Imports are read as above, function-local ones
+# included and ``TYPE_CHECKING`` ones not (they cost nothing at run time, and ``scaly/__init__.py``
+# types its lazy namespaces that way), and reading a namespace through the package, ``sc.opt``,
+# counts as importing ``scaly.opt``, which it does.
+
+# Distribution edges carried through step 8.2, which resolves these names lazily; empty when it lands.
+DIST_TOLERATED: dict[tuple[str, str], str] = {
+  ("scaly", "scaly.viz.graph"): "sc.expr_graph and sc.program_graph, which scaly-tools provides",
+  ("scaly.ocp", "scaly.ocp.altro"): "the experimental ALTRO, imported by the scaly-control namespace",
+  ("scaly.ocp", "scaly.ocp.scvx"): "the experimental SCvx, imported by the scaly-control namespace",
+}
+
+
+def _plugin_modules() -> dict[str, Path]:
+  out: dict[str, Path] = {}
+  for dist in TABLE.distributions.values():
+    base = ROOT / dist.manifest / "src"
+    for package in dist.packages:
+      for path in sorted((base / package).rglob("*.py")):
+        rel = path.relative_to(base).with_suffix("")
+        out[".".join(rel.parts[:-1] if rel.name == "__init__" else rel.parts)] = path
+  return out
+
+
+def _known(target: str, modules: dict[str, Path]) -> str | None:
+  """The module ``target`` names, or the package it lies in when it names something inside one."""
+  parts = target.split(".")
+  for end in range(len(parts), 0, -1):
+    if (prefix := ".".join(parts[:end])) in modules:
+      return prefix
+  return None
+
+
+def _scaly_aliases(tree: ast.AST) -> set[str]:
+  """The names a module binds to the ``scaly`` package itself: ``import scaly as sc``, ``import scaly.opt``."""
+  aliases = set()
+  for stmt in _import_statements(tree):
+    if isinstance(stmt, ast.Import):
+      for alias in stmt.names:
+        if alias.asname is None and alias.name.split(".")[0] == "scaly":
+          aliases.add("scaly")
+        elif alias.name == "scaly" and alias.asname is not None:
+          aliases.add(alias.asname)
+  return aliases
+
+
+def _distribution_edges() -> tuple[dict[tuple[str, str], list[int]], dict[str, set[str]]]:
+  """Every import of a module by another across ``src/`` and the plugins, with its lines; and each
+  module's imports from outside the repository, by top-level name."""
+  modules = {**_modules(), **_plugin_modules()}
+  edges: dict[tuple[str, str], list[int]] = {}
+  foreign: dict[str, set[str]] = {}
+  for name, path in modules.items():
+    tree = ast.parse(path.read_text())
+    for stmt in _import_statements(tree):
+      if isinstance(stmt, ast.Import):
+        targets = [alias.name for alias in stmt.names]
+      else:
+        base = stmt.module if stmt.level == 0 else ".".join(filter(None, (_base_package(name, path, stmt.level), stmt.module)))
+        targets = [sub if (sub := f"{base}.{alias.name}") in modules else base or "" for alias in stmt.names]
+      for target in targets:
+        if (known := _known(target, modules)) is not None:
+          if known != name:
+            edges.setdefault((name, known), []).append(stmt.lineno)
+        elif isinstance(stmt, ast.Import) or stmt.level == 0:
+          top = target.split(".")[0]
+          if top not in sys.stdlib_module_names and top != "__future__":
+            foreign.setdefault(name, set()).add(top)
+    aliases = _scaly_aliases(tree)
+    for node in ast.walk(tree):
+      if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in aliases
+        and (target := f"scaly.{node.attr}") in modules
+      ):
+        edges.setdefault((name, target), []).append(node.lineno)
+  return edges, foreign
+
+
+def _undeclared(edges: dict[tuple[str, str], list[int]]) -> list[str]:
+  out = []
+  for (src, dst), lines in edges.items():
+    owner, other = module_owner(src, TABLE), module_owner(dst, TABLE)
+    if (src, dst) not in DIST_TOLERATED and other not in reachable(owner, TABLE):
+      out.append(f"{src} ({owner}) -> {dst} ({other}), line {lines[0]}")
+  return sorted(out)
+
+
+def test_the_core_imports_no_other_distribution() -> None:
+  edges, _ = _distribution_edges()
+  bad = [line for line in _undeclared(edges) if "(scaly-core) ->" in line]
+  assert not bad, "scaly-core imports from other distributions:\n  " + "\n  ".join(bad)
+
+
+def test_each_distribution_imports_only_what_it_declares() -> None:
+  edges, foreign = _distribution_edges()
+  bad = _undeclared(edges)
+  providers = {top: {requirement_name(dist) for dist in dists} for top, dists in packages_distributions().items()}
+  for module, tops in sorted(foreign.items()):
+    owner = module_owner(module, TABLE)
+    declared = third_party(reachable(owner, TABLE), TABLE)
+    for top in sorted(tops):
+      if not providers.get(top, set()) & declared:
+        bad.append(
+          f"{module} ({owner}) imports {top}, from {sorted(providers.get(top, ())) or 'no installed distribution'}, which it does not declare"
+        )
+  assert not bad, "imports a distribution does not declare (in distributions.toml, or a plugin's manifest):\n  " + "\n  ".join(bad)
+
+
+def test_the_distributions_import_each_other_acyclically() -> None:
+  edges, _ = _distribution_edges()
+  imported = {(module_owner(src, TABLE), module_owner(dst, TABLE)) for src, dst in edges if (src, dst) not in DIST_TOLERATED}
+  cycle = _cycle({(a, b) for a, b in imported if a != b})
+  assert cycle is None, "the distributions import each other in a cycle: " + " -> ".join(cycle or ())
+  declared = {(d.name, requirement_name(r)) for d in TABLE.distributions.values() for r in d.dependencies}
+  cycle = _cycle({(a, b) for a, b in declared if b in TABLE.distributions})
+  assert cycle is None, "the distributions depend on each other in a cycle: " + " -> ".join(cycle or ())
+
+
+def test_tolerated_distribution_edges_are_still_violations() -> None:
+  edges, _ = _distribution_edges()
+  gone = sorted(f"{src} -> {dst}" for src, dst in DIST_TOLERATED if (src, dst) not in edges)
+  legal = sorted(f"{src} -> {dst}" for src, dst in DIST_TOLERATED if module_owner(dst, TABLE) in reachable(module_owner(src, TABLE), TABLE))
+  assert not gone and not legal, f"drop these from DIST_TOLERATED; gone: {gone}, no longer a violation: {legal}"

@@ -1,0 +1,214 @@
+# The distributions built from this repository: what each ships from src/, what it depends on, which
+# tests are its own, and how it is versioned. This file is the one place that says so.
+# `uv run scripts/distributions.py` writes the manifests from it (packages/*/, meta/scaly/ and the
+# marked block at the top of the root pyproject.toml); tests/test_distributions.py fails while one
+# is stale.
+#
+# A source path belongs to the distribution that lists it most specifically. scaly-control lists
+# `scaly/ocp` and scaly-experimental lists `scaly/ocp/altro.py`, so ALTRO ships with
+# scaly-experimental; promoting it deletes that one line. Tests are assigned the same way: each
+# distribution's node IDs are pinned in tests/baseline/<distribution>_nodeids.txt. Entry points and
+# scripts go to the manifest of the distribution that ships the module they name.
+
+# Every distribution under [distributions] releases at this version, and pins the others to it.
+version = "0.1.0a1"
+
+# The metadata every distribution under [distributions] shares.
+[common]
+requires-python = ">=3.12"
+license = "BSD-2-Clause"
+authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
+keywords = [
+  "optimal-control",
+  "automatic-differentiation",
+  "code-generation",
+  "symbolic",
+  "sparse",
+  "mpc",
+  "nonlinear-programming",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: C",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Compilers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+]
+urls = { Repository = "https://github.com/PREDICT-EPFL/scaly", Issues = "https://github.com/PREDICT-EPFL/scaly/issues" }
+
+# A distribution's `dependencies` and `extras` name other distributions of this table bare (they are
+# pinned to `version` in its manifest) and everything else with its own specifier. `manifest` is the
+# directory of its pyproject.toml, `packages/<name>` unless given.
+
+[distributions.scaly-core]
+description = "The scaly compiler: typed expression graphs, sparse derivatives and standalone generated C."
+manifest = "."
+readme = "README.md"
+paths = [
+  "scaly/__init__.py",
+  "scaly/ext.py",
+  "scaly/ir",
+  "scaly/function",
+  "scaly/ad",
+  "scaly/passes",
+  "scaly/codegen",
+  "scaly/utils",
+]
+dependencies = ["numpy>=2.3.3", "scipy>=1.18.0"]
+tests = ["tests/core"]
+
+[distributions.scaly-numerics]
+description = "Numerical methods for scaly as generated code: linear algebra, nonlinear equations, optimization, integrators and interpolation."
+paths = ["scaly/linalg", "scaly/roots", "scaly/opt", "scaly/integrators", "scaly/interp"]
+dependencies = ["scaly-core"]
+tests = [
+  "tests/linalg",
+  "tests/roots",
+  "tests/opt",
+  "tests/integrators",
+  "tests/interp",
+  "tests/conformance/test_qp.py",
+  "tests/conformance/test_roots.py",
+]
+
+[distributions.scaly-control]
+description = "Optimal control for scaly: continuous and discrete OCPs, their transcription, formulation and methods, and sets in state space."
+paths = ["scaly/ocp", "scaly/sets"]
+dependencies = ["scaly-numerics"]
+tests = ["tests/ocp", "tests/sets", "tests/conformance/test_ocp.py"]
+
+[distributions.scaly-tools]
+description = "Tools around the scaly compiler: graph views and render recording, and code for other tools (C++, CasADi, acados)."
+paths = ["scaly/viz", "scaly/export"]
+dependencies = ["scaly-core"]
+tests = ["tests/viz", "tests/export"]
+
+[distributions.scaly-experimental]
+description = "Experimental scaly namespaces and methods, with no stability promise: neural networks, geometry, ALTRO and SCvx."
+paths = ["scaly/nn", "scaly/geometry", "scaly/ocp/altro.py", "scaly/ocp/scvx.py"]
+dependencies = ["scaly-control", "scaly-numerics"]
+tests = ["tests/nn", "tests/geometry", "tests/ocp/test_altro.py", "tests/ocp/test_scvx.py"]
+
+[distributions.scaly-testing]
+description = "Testing scaly and the methods built on it: the pytest plugin with the method marker, conformance suites, reference problems and hyper-dual numbers."
+paths = ["scaly/testing"]
+dependencies = ["scaly-core", "pytest>=8.4.2"]
+tests = ["tests/testing"]
+
+# The pytest plugin needs only the core. The helpers and each conformance suite import the namespace
+# they test, which a test job installs beside this distribution.
+[distributions.scaly-testing.extras]
+numerics = ["scaly-numerics"]
+control = ["scaly-control"]
+
+[distributions.scaly]
+description = "Symbolic compiler for optimal control: typed expression graphs, sparse derivatives and standalone generated C."
+manifest = "meta/scaly"
+readme = "README.md"
+dependencies = ["scaly-core", "scaly-numerics", "scaly-control", "scaly-tools"]
+# What crosses namespaces: the examples, notebooks and case studies, and the typing assertions.
+tests = ["tests/integration", "tests/typing"]
+
+# Solvers are offered as ranges, not pins: they version on their own.
+[distributions.scaly.extras]
+experimental = ["scaly-experimental"]
+piqp = ["scaly-piqp>=0.1.0a1,<0.2"]
+ipopt = ["scaly-ipopt>=0.1.0a1,<0.2"]
+sqp = ["scaly-sqp>=0.1.0a1,<0.2"]
+solvers = ["scaly[piqp,ipopt,sqp]"]
+all = ["scaly[experimental,solvers]"]
+
+# The solver plugins version on their own and keep their own manifests, whose build hooks vendor the
+# solver library; their dependencies and import package are read from those manifests.
+[plugins.scaly-piqp]
+manifest = "plugins/scaly-piqp"
+tests = ["plugins/scaly-piqp/tests"]
+
+[plugins.scaly-ipopt]
+manifest = "plugins/scaly-ipopt"
+tests = ["plugins/scaly-ipopt/tests"]
+
+[plugins.scaly-sqp]
+manifest = "plugins/scaly-sqp"
+tests = ["plugins/scaly-sqp/tests"]
+
+# Tests of the repository rather than of a distribution: the structural tests, which read src/, the
+# manifests and this file, and the benchmark harness's (bench/ is never published).
+[repository]
+tests = [
+  "tests/test_import_layering.py",
+  "tests/test_import_boundaries.py",
+  "tests/test_distributions.py",
+  "tests/bench",
+]
+
+[entry-points."scaly.methods"]
+"ocp.altro" = "scaly.ocp.altro:ALTRO"
+"ocp.direct" = "scaly.ocp.direct:Direct"
+"ocp.ilqr" = "scaly.ocp.ilqr:ILQR"
+"ocp.scvx" = "scaly.ocp.scvx:SCvx"
+"ocp.tinyadmm" = "scaly.ocp.tinyadmm:TinyADMM"
+"opt.ipm" = "scaly.opt.ipm:IPM"
+"roots.newton" = "scaly.roots.newton:Newton"
+"roots.newton_bisection" = "scaly.roots.newton:NewtonBisection"
+"roots.gauss_newton" = "scaly.roots.least_squares:GaussNewton"
+"roots.levenberg_marquardt" = "scaly.roots.least_squares:LevenbergMarquardt"
+"integrators.adaptive" = "scaly.integrators.methods:Adaptive"
+"integrators.backward_euler" = "scaly.integrators.methods:BackwardEuler"
+"integrators.bs32" = "scaly.integrators.methods:BS32"
+"integrators.dopri5" = "scaly.integrators.methods:DOPRI5"
+"integrators.euler" = "scaly.integrators.methods:Euler"
+"integrators.gauss_legendre" = "scaly.integrators.methods:GaussLegendre"
+"integrators.heun" = "scaly.integrators.methods:Heun"
+"integrators.implicit_midpoint" = "scaly.integrators.methods:ImplicitMidpoint"
+"integrators.lobatto_iiia" = "scaly.integrators.methods:LobattoIIIA"
+"integrators.lobatto_iiic" = "scaly.integrators.methods:LobattoIIIC"
+"integrators.midpoint" = "scaly.integrators.methods:Midpoint"
+"integrators.radau_iia" = "scaly.integrators.methods:RadauIIA"
+"integrators.ralston" = "scaly.integrators.methods:Ralston"
+"integrators.rk3" = "scaly.integrators.methods:RK3"
+"integrators.rk38" = "scaly.integrators.methods:RK38"
+"integrators.rk4" = "scaly.integrators.methods:RK4"
+"integrators.sdirk2" = "scaly.integrators.methods:SDIRK2"
+"integrators.sdirk3" = "scaly.integrators.methods:SDIRK3"
+"integrators.ssprk3" = "scaly.integrators.methods:SSPRK3"
+"integrators.stormer_verlet" = "scaly.integrators.methods:StormerVerlet"
+"integrators.symplectic_euler" = "scaly.integrators.methods:SymplecticEuler"
+"integrators.trapezoidal" = "scaly.integrators.methods:Trapezoidal"
+"integrators.tsit5" = "scaly.integrators.methods:Tsit5"
+"interp.akima" = "scaly.interp.methods:Akima"
+"interp.constrained" = "scaly.interp.methods:Constrained"
+"interp.cubic" = "scaly.interp.methods:Cubic"
+"interp.linear" = "scaly.interp.methods:Linear"
+"interp.makima" = "scaly.interp.methods:Makima"
+"interp.nearest" = "scaly.interp.methods:Nearest"
+"interp.pchip" = "scaly.interp.methods:PCHIP"
+"interp.smooth_linear" = "scaly.interp.methods:SmoothLinear"
+"interp.smoothing" = "scaly.interp.methods:Smoothing"
+"interp.spline" = "scaly.interp.methods:Spline"
+"interp.steffen" = "scaly.interp.methods:Steffen"
+"interp.zoh" = "scaly.interp.methods:ZOH"
+
+[entry-points."scaly.adapters"]
+cpp = "scaly.export.cpp"
+casadi = "scaly.export.casadi"
+
+[entry-points."scaly.toolchain_report"]
+solvers = "scaly.opt.external.paths:toolchain_report"
+
+[entry-points."scaly.env_vars"]
+solvers = "scaly.opt.external.paths:SOLVER_ENV_VARS"
+
+[entry-points.pytest11]
+scaly = "scaly.testing.plugin" # the method marker
+
+[scripts]
+scaly_codegen = "scaly.codegen.aot:main"
+scaly_toolchain = "scaly.codegen.toolchain:main"
+scaly_viz = "scaly.viz.serve:main"

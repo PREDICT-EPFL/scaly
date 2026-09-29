@@ -3,9 +3,12 @@ name = "scaly-sqp"
 version = "0.1.0a1"
 description = "SQP solver for scaly, generated in C on top of scaly-piqp."
 requires-python = ">=3.12"
-dependencies = ["scaly>=0.1.0a1,<0.2", "scaly-piqp>=0.1.0a1,<0.2", "jinja2>=3.1.6"]
+dependencies = ["scaly-numerics>=0.1.0a1,<0.2", "scaly-piqp>=0.1.0a1,<0.2", "jinja2>=3.1.6"]
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
+
+[project.optional-dependencies]
+casadi = ["casadi>=3.8.0"] # scaly_sqp.casadi: the SQP over a CasADi function's generated C
 
 [build-system]
 requires = ["hatchling"]
@@ -18,5 +21,5 @@ build-backend = "hatchling.build"
 packages = ["src/scaly_sqp"]
 
 [tool.uv.sources]
-scaly = { workspace = true }
+scaly-numerics = { workspace = true }
 scaly-piqp = { workspace = true }

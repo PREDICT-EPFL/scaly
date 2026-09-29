@@ -53,7 +53,7 @@
 | 6.2 | `nn`, `geometry`, `export` namespaces | ☑ |
 | 7.1 | Conformance suites and the `method` marker | ☑ |
 | 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☑ |
-| 8.1 | `distributions.toml`, manifests, metapackage | ☐ |
+| 8.1 | `distributions.toml`, manifests, metapackage | ☑ |
 | 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☐ |
 | 8.3 | CI: isolation jobs, plugin jobs, release job, release script | ☐ |
 | 9.1 | Optional: indexing consolidation | ☐ |
@@ -898,6 +898,46 @@ listed paths into the wheel; a small build hook so an sdist rebuild finds the sa
 `meta/scaly/pyproject.toml`; rename the root project to `scaly-core`.
 Gate: every file under `src/scaly/` lands in exactly one wheel (test); `uv sync --all-packages`
 works.
+Log: done 2026-09-29, written in a worktree by a parallel agent and gated in the main checkout,
+after the bench part of 8.3 (the repository's tests are `tests/bench`). `distributions.toml` holds each distribution's paths (the most specific listing wins, so
+`ocp/altro.py` and `ocp/scvx.py` ship with `scaly-experimental` while `scaly-control` lists `ocp/`),
+dependencies, extras and tests, the plugins by manifest, the repository's own tests, and every entry
+point and script once: each lands in the manifest of the distribution shipping its module.
+`scripts/distributions.py` reads it (owners of a file, module or node ID; what a distribution may
+import) and writes `packages/<name>/`, `meta/scaly/` and the marked block of the root
+`pyproject.toml`, now `scaly-core`'s (`--check` lists stale files). Deviation: no static
+`force-include`, which cannot say "`ocp/` less two files" and names `../../src`, absent from an
+sdist; one hook, `hatch_build.py` (copied beside each manifest, as an sdist carries its own), ships
+the slice at its import path in a wheel and under `src/` in an sdist, and nothing in an editable
+build, where `dev-mode-dirs` puts the one `src/` on the path. The workspace has `packages/*`,
+`plugins/*` and `meta/*`; the root's dev group names every distribution, so `uv sync` is `uv sync
+--all-packages`. The plugins depend on `scaly-numerics` (`versioning.md`, `solver_plugins.md`).
+Node IDs: one baseline per owner, `tests/baseline/<owner>_nodeids.txt` (conformance files by problem
+class, `tests/integration` and `tests/typing` the metapackage's, the structural tests and
+`tests/benchmarks` the `repository`'s); a run checks each owner whose tests it collects in full, and
+`--write-nodeid-baselines` writes them from the collected items, replacing the grep recipe and its
+stderr hazard. `test_import_layering.py` gains the distribution table (core imports no other, each
+imports only what it declares, third-party libraries included and `sc.<ns>` counted as an import,
+acyclic), with three edges in `DIST_TOLERATED` for 8.2; `BUILT_ON_THE_CORE` is derived from the
+table and gains `scaly.viz`. `tests/test_distributions.py` builds every wheel and sdist with
+hatchling: each file in exactly one wheel, a wheel rebuilt from its sdist identical, entry points
+where their modules are, manifests current, every distribution installed. Findings: `scaly-testing`
+needs more than the plan's core and pytest (its helpers and suites import `opt`, `integrators`,
+`ocp`), so it has extras `numerics` and `control` and the plugin keeps loading with the core alone;
+`scaly_sqp.casadi` imported CasADi undeclared (extra `casadi` in its manifest); 7.2's
+`scaly.testing.examples.methods()` left out only `scaly`, now every lockstep distribution
+(`FIRST_PARTY`, tested against the table); `tests/core` skips whole modules without CasADi, which an
+isolation job (8.3) has to install or tolerate; §3.7's warning on importing experimental modules is
+left for 8.3. Run in this worktree before the change of plan: `uv sync` installed all ten
+distributions; `uv build` of core, control and the metapackage; the new tests, the layering test,
+`tests/testing`, the example runner and lint: 543 passed; ten mutations (a manifest shipping another's
+file, an unlisted path, an sdist without its slice, core, numerics, a library and `sc.ocp` crossing
+undeclared, stale baselines, `methods()` reverted, a misplaced entry point) each fail their test; the
+baselines' union is 7.2's plus the 26 new tests. Gated in the main checkout: `uv sync` installed the six
+first-party distributions and the metapackage as workspace members with the lock unchanged;
+`scripts/distributions.py --check` clean; the common gate with the per-distribution baselines
+(`pytest --collect-only -q --write-nodeid-baselines`), ty within the ratchet (142) and the core-only
+run with every other namespace blocked (1508 passed, 7 skipped).
 
 **8.2** Core `scaly/__init__.py` gets `pkgutil.extend_path` and a lazy `__getattr__` over the
 known namespaces with install hints; each domain `__init__` resolves method classes lazily.
