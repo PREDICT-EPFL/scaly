@@ -38,6 +38,10 @@ protocol, the reference machine and the evidence behind each rule. Put rationale
 - `uv run scripts/distributions.py` — regenerate the distributions' manifests after editing
   `distributions.toml`. `uv sync` installs every distribution of the workspace (the root's `dev`
   group names them all), the same environment `uv sync --all-packages` gives.
+- `uv run scripts/isolation.py scaly-numerics` — one distribution's tests against its wheel alone, in a
+  fresh environment with only what it declares; CI runs it for each distribution and plugin
+- `uv run scripts/release.py X.Y.Z` — set the lockstep version, build every wheel into `dist/`, and
+  check `scaly[experimental,solvers]` from them in a clean environment; `--tag` tags `vX.Y.Z` after
 - `uv run path/to/script.py` runs a script. Not `uv run python path/to/script.py`: `uv run` takes
   the file directly, and the extra `python` buys nothing. The exception is an example with a PEP 723
   header (every script under `examples/` outside `case_studies/`): `uv run` would install its header's

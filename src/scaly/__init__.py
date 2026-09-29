@@ -66,6 +66,7 @@ from .ir.expr import (
 )
 from .function import ConcreteFunction, Function, G, L, NotConcrete, factory
 from .function.method import Status
+from .utils.experimental import ExperimentalWarning
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
@@ -149,6 +150,7 @@ __all__ = [
   "DType",
   "DeviceSpec",
   "Expr",
+  "ExperimentalWarning",
   "ConcreteFunction",
   "Function",
   "G",

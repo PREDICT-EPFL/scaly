@@ -20,6 +20,9 @@ from ..sets import Polytope
 from .formulate import step_map
 from .method import Info
 from .problem import METHOD_API, DiscreteOCP, TerminalEquality
+from ..utils.experimental import warn_experimental
+
+warn_experimental(__name__)
 
 
 @dataclass(frozen=True)

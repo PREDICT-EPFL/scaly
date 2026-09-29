@@ -11,6 +11,7 @@ tests/nn/test_layers.py::test_each_activation_against_numpy[tanh]
 tests/nn/test_layers.py::test_the_smooth_relu_bias_free_layers_and_an_output_activation
 tests/nn/test_layers.py::test_weights_from_one_vector_and_the_packed_layout
 tests/nn/test_layers.py::test_what_the_builders_refuse
+tests/nn/test_surface.py::test_the_experimental_modules_warn_on_import
 tests/nn/test_surface.py::test_the_nn_surface
 tests/nn/test_torch.py::test_load_torch_state_dict_reads_modern_torch_zip_without_torch
 tests/ocp/test_altro.py::test_a_continuous_model_scales_its_running_cost_by_dt

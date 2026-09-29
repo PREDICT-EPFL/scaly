@@ -1,7 +1,8 @@
 # Versioning and releases
 
-The versioning and release policy for the core package and its official solver plugins. Nothing has
-been published yet; this page fixes the rules the first release will follow.
+The versioning and release policy for the distributions built from this repository and the official
+solver plugins. `scaly` 0.1.0a1 was published as one distribution; these rules apply from the first
+release that ships the split.
 
 ## Initial versions
 
@@ -17,23 +18,42 @@ explicit deprecations with a migration period. Feature completeness by itself is
 Within the pre-1.0 series, patch releases stay within a compatible release line. A new minor version
 may open a new compatibility line and contain breaking changes.
 
-## Core and plugin versions
+## Lockstep distributions and independent plugins
 
-The core package and each solver plugin are versioned independently. A release of one package does
-not require publishing unchanged packages to keep version numbers aligned. Their initial versions
-may happen to be equal, and a coordinated compatibility change may update several versions in the
-same commit, but equality has no compatibility meaning.
+The repository builds seven first-party distributions from one source tree: `scaly-core`,
+`scaly-numerics`, `scaly-control`, `scaly-tools`, `scaly-experimental`, `scaly-testing` and the
+`scaly` metapackage ([The codebase](codebase.md) lists what each ships). They release in lockstep.
+`distributions.toml` holds one `version`; every lockstep distribution is released at that version,
+and each pins the first-party distributions it depends on to it exactly (`scaly-control` depends on
+`scaly-numerics==X.Y.Z`). A lockstep release publishes all seven, changed or not, so any set of them
+installed together is at one version.
 
-Compatibility is enforced in two places:
+`scaly-experimental` makes no stability promise: its modules (`scaly.nn`, `scaly.geometry`, the
+ALTRO and SCvx methods) may change or go in any release, and importing one gives an
+`sc.ExperimentalWarning`. Promoting a module is one line in `distributions.toml`: it moves to the
+distribution of its namespace and from then on follows that distribution's promise.
 
-- Each plugin declares the supported range of `scaly-numerics`, the distribution that ships
-  `scaly.opt`, in its package dependencies: `scaly-numerics>=0.1.0a1,<0.2` for the `0.1.x`
-  compatibility line. Naming a pre-release on the lower bound lets installers pick
-  `0.1.0b1` or `0.1.0rc1` without `--pre`; the exclusive upper bound also excludes every `0.2`
-  pre-release.
-- The solver registry checks the plugin protocol version at runtime. A breaking change to the plugin
-  contract bumps that protocol version and requires coordinated releases of the affected official
-  plugins.
+The solver plugins (`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) version independently. A release of
+one does not require publishing the others, and version equality with the lockstep distributions has
+no compatibility meaning. Each plugin declares:
+
+- the range of `scaly-numerics` it supports, the distribution that ships `scaly.opt`:
+  `scaly-numerics>=0.1.0a1,<0.2` for the `0.1.x` compatibility line (`>=X.Y,<X.(Y+1)` before 1.0).
+  Naming a pre-release on the lower bound lets installers pick `0.1.0b1` or `0.1.0rc1` without
+  `--pre`; the exclusive upper bound also excludes every `0.2` pre-release. CI runs each plugin
+  against the oldest and the newest release in its range;
+- the method API it implements, which the method registry checks when the plugin registers; and
+- the upstream version of the solver it vendors, in its metadata and its changelog.
+
+The `scaly` metapackage offers the plugins as extras with ranges, not pins (`scaly[piqp]`,
+`scaly[solvers]`, `scaly[all]`), so a plugin release reaches users without a lockstep release.
+
+## Method-API versions
+
+Method APIs are versioned per problem class (`opt.QP` API 1, `opt.NLP` API 1, `ocp.DiscreteOCP`
+API 1, ...): the class declares its `method_api`, and a method, built in or from a plugin, states the
+`api` it implements. Looking a method up refuses one whose `api` is not its class's, naming both, so
+a plugin built against another method API fails when it is first used rather than inside a solve.
 
 ## What a release may change
 
@@ -61,39 +81,38 @@ builds on, and every such package checks it at import; it is also part of every 
 
 Method API. `METHOD_API` (`scaly.opt.method`, the method API of `sc.opt.NLP`, which continues the
 solver plugin protocol's numbering) and `SCALY_SOLVER_STATS_VERSION` version the contract between
-core and solver plugins; [Solver plugins](solver_plugins.md#versioning) lists what
-each covers and its history. A protocol bump is a minor release of `scaly` and a coordinated release
-of every official plugin, which raise their lower bound on `scaly` in the same commit. A patch
-release never bumps either constant.
+`scaly.opt` and the solver plugins; [Solver plugins](solver_plugins.md#versioning) lists what each
+covers and its history. A protocol bump is a minor lockstep release and a coordinated release of every
+official plugin, which raise their lower bound on `scaly-numerics` in the same commit. A patch release
+never bumps either constant.
 
 ## Git tags
 
-The repository has no tags yet. From the first release on, every published package version gets
-exactly one package-qualified Git tag, for example:
-
-```text
-scaly-v0.1.0
-scaly-piqp-v0.1.0
-scaly-ipopt-v0.1.0
-```
-
-There is no additional repository-wide release tag. Several package tags may point to the same
-commit when that commit releases several packages, and packages that are not released receive no
-new tag.
+A lockstep release gets one tag, `vX.Y.Z`, which names the version of all seven lockstep
+distributions. A plugin release gets a package-qualified tag, `scaly-piqp-v0.1.0`. Several tags may
+point to one commit when it releases a lockstep version and plugins together. Tags are created by
+the release script only and are not moved or reused after publication.
 
 ## Release process
 
-Releases start manually in continuous integration; pushing a tag does not trigger one. The workflow
-does not exist yet, and this section records its design so the first one is built to it. The
-operator selects the package or packages to release, and the versions in their package metadata are
-the source of truth. The workflow then:
+`scripts/release.py` makes a lockstep release:
 
-1. records the exact source commit and validates the selected package versions;
-2. builds and tests every source distribution and wheel;
-3. publishes the artifacts to PyPI;
-4. creates one package tag per released version at the recorded commit; and
-5. creates the corresponding GitHub Releases and attaches their artifacts.
+```bash
+uv run scripts/release.py 0.2.0
+```
 
-A GitHub Release must refer to a tag, so the workflow creates each tag immediately before its GitHub
-Release, after the PyPI publication has succeeded. Tags are created by the release workflow only and
-are not moved or reused after publication.
+1. It sets `version` in `distributions.toml`, rewrites every manifest from the table (the pins move
+   with it) and relocks.
+2. It builds the wheel and sdist of every lockstep distribution and every solver plugin into `dist/`.
+3. It runs the release check: a clean environment gets `scaly[experimental,solvers]` from those
+   wheels alone, with the third-party packages the examples declare, and runs the conformance
+   suites, every example and notebook, and the examples' lint there, every solver required to load.
+4. With `--tag`, once the check passes on a committed tree, it tags `vX.Y.Z`.
+
+Pushing the tag runs the release job in CI: it checks the tag names the version in
+`distributions.toml`, runs the same build and check (`scripts/release.py --check-only`) and attaches
+the wheels to the run, with the plugins run against the oldest and newest `scaly-numerics` their
+ranges allow. Publishing stays a deliberate step after that: `uv publish dist/*`, then the GitHub
+Release for the tag. A plugin releases on its own: its version in its manifest, its wheel built by
+`uv build --package scaly-<name>`, `uv run scripts/isolation.py scaly-<name>` against the workspace,
+its tag, and `uv publish`.

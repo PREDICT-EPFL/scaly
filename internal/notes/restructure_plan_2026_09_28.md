@@ -55,7 +55,7 @@
 | 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☑ |
 | 8.1 | `distributions.toml`, manifests, metapackage | ☑ |
 | 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☑ |
-| 8.3 | CI: isolation jobs, plugin jobs, release job, release script | ☐ |
+| 8.3 | CI: isolation jobs, plugin jobs, release job, release script | ☑ |
 | 9.1 | Optional: indexing consolidation | ☐ |
 
 ## 1. Settled decisions
@@ -1000,6 +1000,37 @@ environment there, and gated in the main checkout after 7.2 (committed before 8.
 touch): 4332 passed, 54 skipped; C snapshots unchanged; ty within the ratchet (142);
 `uv run bench/run.py smoke` passed. The untracked `benchmarks/results/` and `third_party/` moved to
 `bench/`.
+Rest done 2026-09-29. `scripts/isolation.py <distribution>` builds the wheels of the distribution,
+of what it depends on and of scaly-testing, installs them into a fresh environment beside only their
+declared third-party dependencies, the extras the distribution declares and pytest, and runs the
+tests `distributions.toml` gives it there, leaving out paths inside them that another distribution
+owns more specifically (`tests/ocp/test_altro.py` from scaly-control) and turning the conftest's
+node-ID check off (`SCALY_NODEID_BASELINES=off`: an isolated collection differs by design); a
+plugin runs `--against head` or against the `lowest`/`highest` release of its `scaly-numerics`
+range from the index. First runs found what the workspace hides: modules building a plugin's method
+at import time (`test_solver_derivatives`, `test_direct`, `test_terminal`, `test_tinyadmm`,
+`test_scvx`, OCP conformance; now cached functions or factories), 16 tests building a plugin's
+method without its `method` mark, listing checks demanding every method installed (now: every
+installed method listed), linalg tests reaching `scaly.export` and the TinyMPC example (`scaly.ocp`)
+unguarded, a bench recorder test under `tests/viz` (now `tests/bench`), a CasADi test undeclared by
+scaly-ipopt. Every lockstep distribution and all three plugins now pass alone (core 1324, numerics
+1572, control 49, tools 18, experimental 22, testing 14, piqp 51, ipopt 47, sqp 43 passed). CI gains
+`isolation` (a matrix over the six lockstep distributions), `plugin-isolation` (each plugin against
+the workspace, its methods required), `plugin-range` and `release`, the last two on a `v*` tag or by
+hand. `scripts/release.py X.Y.Z` sets the table's version, regenerates the manifests (pins move with
+it), relocks, builds every wheel and sdist into `dist/` and runs the release check (a clean env with
+`scaly[experimental,solvers]` from those wheels alone and the examples' third-party packages;
+conformance, the example runner and its lint, methods required); `--tag` tags `vX.Y.Z` on a clean
+tree; nothing is uploaded. §3.7's warning: `sc.ExperimentalWarning` (`scaly.utils.experimental`)
+on importing `scaly.nn`, `scaly.geometry`, ALTRO and SCvx, filtered in the suite, checked in a
+subprocess. `docs/dev/versioning.md` is rewritten (lockstep and independent, method APIs, tags,
+the release process), `codebase.md` and `contributing.md` describe the isolation check, `AGENTS.md`
+lists both scripts. Deviations: the method API is checked for equality when a method is looked up,
+not as a range at registration, and the doc says so; `plugin-range` cannot pass before the lockstep
+distributions are on the index; the release job checks and archives, publishing stays a manual
+`uv publish`. The release check ran end to end here: every wheel built, and in the clean
+environment the conformance suites, every example and notebook and their lint gave 455 passed, 12
+skipped (the conformance refusals).
 
 ### Phase 9: optional
 

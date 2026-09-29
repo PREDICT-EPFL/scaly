@@ -74,6 +74,7 @@ def test_problem_carries_spec_trees_and_declared_names() -> None:
   assert tuple(group.name for group in filter_problem.spec.ineq) == ("cbf", "u_box")
 
 
+@pytest.mark.method("opt.sqp")
 def test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle() -> None:
   assert isinstance(quadratic.spec.lb, sc.Expr) and quadratic.spec.lb.shape == (3,)
   assert isinstance(quadratic.spec.ub, sc.Expr) and quadratic.spec.ub.shape == (3,)
@@ -128,6 +129,8 @@ def test_problem_infers_closed_over_parameters_and_retypes_them_nondifferentiabl
   assert state not in topo((inferred.spec.minimize,))
 
 
+@pytest.mark.method("opt.ipopt")
+@pytest.mark.method("opt.sqp")
 def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None:
   ipopt = sc.opt.solver(filter_problem, "ipopt", name="filter_ipopt")
   sqp = sc.opt.solver(filter_problem, "sqp", name="filter_sqp")
@@ -172,6 +175,7 @@ def single_block_stage(stage: sc.Expr) -> sc.Expr:
   return stage.sin()
 
 
+@pytest.mark.method("opt.sqp")
 def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
   @sc.opt.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("weight", ()), name="descriptor_hessian")
   def nonlinear_hessian(variables: tuple[sc.Expr, sc.Expr], weight: sc.Expr) -> sc.opt.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
@@ -203,6 +207,7 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
   np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
 
 
+@pytest.mark.method("opt.sqp")
 def test_single_block_problem_preserves_vmap_decision_input() -> None:
   @sc.opt.problem(vars=sc.L("z", 6), params=sc.L("p", ()), name="single_block_vmap")
   def mapped_problem(z: sc.Expr, p: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
@@ -226,6 +231,8 @@ def test_single_block_problem_preserves_vmap_decision_input() -> None:
   np.testing.assert_allclose(actual, np.diag(2.0 * lam_f - lam_g * np.sin(z)), rtol=1e-13, atol=1e-13)
 
 
+@pytest.mark.method("opt.ipopt")
+@pytest.mark.method("opt.sqp")
 def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
   left = sc.opt.solver(filter_problem, "sqp", name="filter_left")
   right = sc.opt.solver(filter_problem, "sqp", name="filter_right")
@@ -279,11 +286,15 @@ def test_solver_rejects_an_unknown_backend() -> None:
     sc.opt.solver(quadratic, "missing")
 
 
+@pytest.mark.method("opt.piqp")
+@pytest.mark.method("opt.ipopt")
 def test_solver_name_and_backend_are_selected_at_construction() -> None:
   assert sc.opt.solver(quadratic, "ipopt").name == "quadratic_ipopt"
   assert sc.opt.solver(quadratic, "piqp", name="quadratic_fast").name == "quadratic_fast"
 
 
+@pytest.mark.method("opt.piqp")
+@pytest.mark.method("opt.sqp")
 def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
   assert sc.opt.solver(filter_problem, "piqp").name == "filter_problem_piqp"
 
@@ -361,6 +372,8 @@ def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
     sc.opt.solver(nested_solver_cost, "piqp")
 
 
+@pytest.mark.method("opt.piqp")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_backend_accepts_a_nonlinear_problem() -> None:
   @sc.opt.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
   def nonlinear(x: sc.Expr, p: sc.Expr) -> sc.opt.ProblemSpec[sc.Expr]:
@@ -407,6 +420,7 @@ def test_bounded_requires_at_least_one_bound() -> None:
     sc.opt.bounded(sc.sym("g", 1))
 
 
+@pytest.mark.method("opt.sqp")
 def test_single_block_solver_signature_is_not_nested() -> None:
   solve = sc.opt.solver(quadratic, "sqp", name="quadratic_sqp")
   assert solve.input_names == ("x", "lam:x", "lam_eq", "lam_ineq", "scale")
@@ -414,6 +428,7 @@ def test_single_block_solver_signature_is_not_nested() -> None:
   assert solve.output_names == ("x", "lam:x", "lam_eq", "lam_ineq", "info:status", "info:iter", "info:objective", "info:primal_residual")
 
 
+@pytest.mark.method("opt.sqp")
 def test_nlp_solver_symbolic_call_preserves_variable_blocks() -> None:
   solve = sc.opt.solver(filter_problem, "sqp", name="filter_nested")
   u0, s0 = sc.sym("u0", 2), sc.sym("s0", 1)

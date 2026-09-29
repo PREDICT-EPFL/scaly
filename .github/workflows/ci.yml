@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, dev]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -257,3 +258,151 @@ jobs:
           uv run bench/run.py closed-loop --problem race_cars --solver ipopt --oracle both --smoke --repetitions 2 --out-dir bench/results/smoke/repeated/episodes
           uv run bench/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir bench/results/smoke/repeated/episodes
           uv run bench/run.py modes bench/results/smoke/repeated/episodes --out bench/results/smoke/repeated/modes.csv
+
+  # Each lockstep distribution alone: its wheel and the wheels of what it depends on, in a fresh
+  # environment with only their declared dependencies, running the tests distributions.toml gives it.
+  # An import it does not declare fails here while the workspace, which has everything, hides it.
+  isolation:
+    name: isolation / ${{ matrix.distribution }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [scaly-core, scaly-numerics, scaly-control, scaly-tools, scaly-experimental, scaly-testing]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (Python/core only)
+        env:
+          SCALY_BUILD_SOLVERS: skip
+        run: uv sync --frozen
+
+      - name: Tests against the wheel alone
+        run: uv run scripts/isolation.py ${{ matrix.distribution }} -- -n auto
+
+  # Each solver plugin alone against the workspace's wheels, its methods required to load.
+  plugin-isolation:
+    name: plugin isolation / ${{ matrix.plugin }} / ${{ matrix.os }}
+    needs: [vendored-solvers]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        plugin: [scaly-piqp, scaly-ipopt, scaly-sqp]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download vendored solver artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
+          path: plugins
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (uses restored vendored solvers)
+        env:
+          SCALY_BUILD_SOLVERS: required
+        run: uv sync --frozen
+
+      - name: Plugin tests against the workspace's wheels
+        env:
+          SCALY_BUILD_SOLVERS: required
+          SCALY_REQUIRE_METHODS: "1"
+        run: uv run scripts/isolation.py ${{ matrix.plugin }} -- -n auto
+
+  # Each plugin against the oldest and newest scaly-numerics its range allows, from the package
+  # index. It needs the lockstep distributions published, so it runs on a version tag and by hand.
+  plugin-range:
+    name: plugin range / ${{ matrix.plugin }} / ${{ matrix.against }}
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [vendored-solvers]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [scaly-piqp, scaly-ipopt, scaly-sqp]
+        against: [lowest, highest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download vendored solver artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
+          path: plugins
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (uses restored vendored solvers)
+        env:
+          SCALY_BUILD_SOLVERS: required
+        run: uv sync --frozen
+
+      - name: Plugin tests against the ${{ matrix.against }} supported scaly-numerics
+        env:
+          SCALY_BUILD_SOLVERS: required
+          SCALY_REQUIRE_METHODS: "1"
+        run: uv run scripts/isolation.py ${{ matrix.plugin }} --against ${{ matrix.against }} -- -n auto
+
+  # A version tag: every wheel, `scaly[experimental,solvers]` from those wheels alone in a clean
+  # environment, the conformance suites and every example there. Nothing is uploaded; the wheels
+  # are an artifact for `uv publish`.
+  release:
+    name: release check
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [vendored-solvers]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download vendored solver artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
+          path: plugins
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (uses restored vendored solvers)
+        env:
+          SCALY_BUILD_SOLVERS: required
+        run: uv sync --frozen
+
+      - name: The tag names the version distributions.toml holds
+        run: |
+          version=$(uv run python -c "import tomllib; print(tomllib.load(open('distributions.toml', 'rb'))['version'])")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, distributions.toml $version"; exit 1; }
+
+      - name: Build every wheel and check them in a clean environment
+        env:
+          SCALY_BUILD_SOLVERS: required
+        run: uv run scripts/release.py --check-only
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-wheels
+          path: dist/

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import importlib.util
 
+import pytest
+
 import scaly as sc
 
 
@@ -42,7 +44,12 @@ def test_the_ocp_surface() -> None:
     "transcribe",
   ]
   assert "ocp" not in sc.__all__ and not hasattr(sc.integrators, "MultipleShooting")
-  assert sorted(ocp.REGISTRY.installed()) == ["altro", "direct", "ilqr", "scvx", "tinyadmm"]
+  installed = set(ocp.REGISTRY.installed())
+  assert {"direct", "ilqr", "tinyadmm"} <= installed <= {"altro", "direct", "ilqr", "scvx", "tinyadmm"}
   # The experimental methods are scaly-experimental's, resolved through the registry on first use.
-  assert ocp.ALTRO is ocp.REGISTRY.get("altro") and ocp.SCvx is ocp.REGISTRY.get("scvx")
+  if {"altro", "scvx"} <= installed:
+    assert ocp.ALTRO is ocp.REGISTRY.get("altro") and ocp.SCvx is ocp.REGISTRY.get("scvx")
+  else:
+    with pytest.raises(AttributeError, match="scaly-experimental"):
+      ocp.ALTRO  # noqa: B018
   assert importlib.util.find_spec("scaly.mpc") is None  # the receding horizon is the user's loop over ocp.solver and ocp.shift

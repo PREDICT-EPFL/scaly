@@ -32,6 +32,10 @@ if _blocked := [name for name in os.environ.get("SCALY_BLOCK_IMPORTS", "").split
 # One node-ID baseline per owner of tests: each distribution of distributions.toml, and the
 # repository's own tests. A run that collects an owner's tests in full checks its baseline.
 NODEID_BASELINES = ROOT / "tests" / "baseline"
+NODEID_SWITCH = "SCALY_NODEID_BASELINES"
+"""Set to ``off`` where the collection is not the workspace's: an isolated install collects what its
+dependencies allow (a module that skips without an optional library leaves its node IDs out), so
+``scripts/isolation.py`` turns the check off and checks the tests themselves instead."""
 _XDIST_NODEID_CHECKED = False
 
 
@@ -56,7 +60,7 @@ def _checked_owners(config) -> list[str]:
   paths given the ones whose test paths all lie inside them. A selection (``-k``, ``-m``, ``--lf``,
   a node ID, ...) or a run from another directory collects no owner in full."""
   root = Path(config.rootpath).resolve()
-  if Path.cwd().resolve() != root:
+  if Path.cwd().resolve() != root or os.environ.get(NODEID_SWITCH) == "off":
     return []
   if (
     getattr(config.option, "markexpr", "") or getattr(config.option, "keyword", "") or any(getattr(config.option, name, False) for name in _SELECTING)

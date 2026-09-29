@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -14,10 +15,19 @@ import scaly as sc
 from scaly.linalg.stagewise import Riccati
 
 TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "ocp" / "tinympc"
-sys.path.insert(0, str(TINYMPC))  # the example's modules import each other by name
 
-import problem as tp  # noqa: E402  # ty: ignore[unresolved-import]
-import problems as tps  # noqa: E402  # ty: ignore[unresolved-import]
+
+def _tinympc() -> tuple[Any, Any]:
+  """The TinyMPC example's ``problem`` and ``problems`` modules; the example is an OCP, so without
+  scaly-control the test that reads it skips."""
+  pytest.importorskip("scaly.ocp", reason="the TinyMPC example needs scaly-control")
+  if str(TINYMPC) not in sys.path:
+    sys.path.insert(0, str(TINYMPC))  # the example's modules import each other by name
+  import problem as tp  # ty: ignore[unresolved-import]
+  import problems as tps  # ty: ignore[unresolved-import]
+
+  return tp, tps
+
 
 NX, NU = 3, 2
 NAMES = ("A", "B", "Q", "R", "S", "QN", "x0", "q", "r", "c", "qN")
@@ -177,7 +187,7 @@ def test_the_gains_and_cost_to_go_match_a_numpy_recursion() -> None:
   np.testing.assert_allclose(costs[n], d["QN"], rtol=1e-15)
 
 
-def _tiny_steps(p: tp.Problem) -> int:
+def _tiny_steps(p: Any) -> int:
   """How many steps the library's recursion takes before ``K`` moves by less than 1e-5 (``tp.cache``)."""
   q1, r1, a, b = np.diag(p.Q + p.rho), np.diag(p.R + p.rho), p.A, p.B
   k_prev, p_next = np.zeros((p.nu, p.nx)), p.rho * np.eye(p.nx)
@@ -191,14 +201,16 @@ def _tiny_steps(p: tp.Problem) -> int:
 
 @pytest.mark.parametrize(
   "scenario",
-  [lambda: tps.random_mpc(6, 3, 8), lambda: tps.safety_filter(4, 10), lambda: tps.rocket_landing(8)],
+  [("random_mpc", (6, 3, 8)), ("safety_filter", (4, 10)), ("rocket_landing", (8,))],
   ids=["random_mpc", "safety_filter", "rocket_landing"],
 )
-def test_the_tinympc_riccati_cache(scenario) -> None:
+def test_the_tinympc_riccati_cache(scenario: tuple[str, tuple[int, ...]]) -> None:
   """The example's cache is the recursion from ``P = rho I`` run until the gain settles: the first
   stage of a factorization that many stages long, on the penalized weights, is the same gain and
   cost-to-go (the example's gain has the opposite sign)."""
-  p = scenario().problem
+  tp, tps = _tinympc()
+  family, args = scenario
+  p = getattr(tps, family)(*args).problem
   cache = tp.cache(p)
   n = _tiny_steps(p)
   fac = Riccati(p.A, p.B, np.diag(p.Q + p.rho), np.diag(p.R + p.rho), p.rho * np.eye(p.nx), N=n)

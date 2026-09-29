@@ -145,6 +145,7 @@ tests = [
   "tests/test_import_layering.py",
   "tests/test_import_boundaries.py",
   "tests/test_distributions.py",
+  "tests/test_release.py",
   "tests/bench",
 ]
 

@@ -164,4 +164,6 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugins"]
+# The experimental namespaces warn on import, as they should for a user; their tests import them on purpose.
+filterwarnings = ["ignore::scaly.ExperimentalWarning"]
 norecursedirs = ["third_party", ".venv"]

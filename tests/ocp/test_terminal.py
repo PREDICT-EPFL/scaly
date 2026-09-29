@@ -4,6 +4,8 @@ feasibility and decrease with them."""
 
 from __future__ import annotations
 
+from functools import cache
+
 
 import numpy as np
 import pytest
@@ -25,8 +27,18 @@ U = sc.sets.Polytope.box([-1], [1])
 K, P = ocp.lqr(A, B, Q, R)
 A_K = A + B @ K
 PIQP = {"eps_abs": 1e-11, "eps_rel": 1e-11}
-SPARSE = ocp.Direct(sc.opt.PIQP(sparse=True, options=PIQP))
-DENSE = ocp.Direct(sc.opt.PIQP(options=PIQP), form="condensed")
+
+
+@cache
+def _sparse():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return ocp.Direct(sc.opt.PIQP(sparse=True, options=PIQP))
+
+
+@cache
+def _dense():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return ocp.Direct(sc.opt.PIQP(options=PIQP), form="condensed")
 
 
 def test_lqr_solves_the_riccati_equation_and_stabilizes() -> None:
@@ -97,7 +109,7 @@ def test_the_largest_lqr_ellipsoid_touches_the_polytope_and_is_invariant() -> No
 @pytest.mark.parametrize("horizon", [1, 5, 20])
 def test_unconstrained_mpc_with_the_lqr_terminal_cost_is_the_lqr(condensed: bool, horizon: int) -> None:
   problem = ocp.DiscreteOCP(step=si.affine(A, B), N=horizon, stage_cost=ocp.Quadratic(Q, R), terminal_cost=ocp.Quadratic(P), name=f"lqr_{horizon}")
-  controller = Controller(problem, DENSE if condensed else SPARSE)
+  controller = Controller(problem, _dense() if condensed else _sparse())
   for x in (np.array([1.3, -0.7]), np.array([-4.0, 2.5])):
     solution = controller.solve(x, warm=controller.initial_guess(x))
     np.testing.assert_allclose(solution.us[0], K @ x, rtol=1e-9, atol=1e-10)
@@ -121,8 +133,8 @@ def _constrained(name: str, horizon: int = 25, terminal=None) -> ocp.DiscreteOCP
 def test_the_condensed_form_solves_the_same_problem() -> None:
   x = np.array([2.5, 0.5])
   problem = _constrained("dense_vs_sparse")
-  sparse = Controller(problem, SPARSE).solve(x)
-  dense = Controller(problem, DENSE).solve(x)
+  sparse = Controller(problem, _sparse()).solve(x)
+  dense = Controller(problem, _dense()).solve(x)
   assert sparse.status.ok and dense.status.ok and dense.xs.shape == sparse.xs.shape
   np.testing.assert_allclose(dense.us, sparse.us, rtol=1e-7, atol=1e-8)
   np.testing.assert_allclose(dense.xs, sparse.xs, rtol=1e-7, atol=1e-8)
@@ -141,11 +153,12 @@ def test_the_condensed_form_keeps_its_state_bounds() -> None:
     x_bounds=([-5, -0.3], [5, 0.3]),
     name="tight",
   )
-  sparse, dense = Controller(problem, SPARSE).solve(x), Controller(problem, DENSE).solve(x)
+  sparse, dense = Controller(problem, _sparse()).solve(x), Controller(problem, _dense()).solve(x)
   assert np.abs(sparse.xs[:, 1]).max() == pytest.approx(0.3, abs=1e-6)  # the speed limit binds
   np.testing.assert_allclose(dense.xs, sparse.xs, rtol=1e-7, atol=1e-8)
 
 
+@pytest.mark.method("opt.piqp")
 def test_the_nested_piqp_runs_the_backend_the_method_names() -> None:
   def backends(method: ocp.Direct) -> list[bool]:
     solve = ocp.solver(_constrained(f"backend_{method.label}_{method.method.sparse}", horizon=5), method)
@@ -160,7 +173,7 @@ def test_the_nested_piqp_runs_the_backend_the_method_names() -> None:
 def test_recursive_feasibility_and_decrease_in_closed_loop() -> None:
   """With the maximal invariant set and the LQR cost as terminal ingredients, a state the MPC can
   solve from stays solvable, and the optimal cost falls by at least the stage cost at every step."""
-  controller = Controller(_constrained("recursive"), SPARSE)
+  controller = Controller(_constrained("recursive"), _sparse())
   rng = np.random.default_rng(5)
   starts = 0
   while starts < 4:
@@ -191,7 +204,7 @@ def test_an_ellipsoidal_terminal_set_goes_to_an_nlp_solver_not_a_qp_one() -> Non
   )  # the ellipsoid is well inside the invariant set
   assert solution.status.ok and ellipsoid.contains(solution.xs[-1], tol=1e-6)
   with pytest.raises(NotQuadratic, match="terminal"):
-    ocp.solver(problem, SPARSE)
+    ocp.solver(problem, _sparse())
 
 
 def test_affine_models_refuse_a_nonsquare_a() -> None:

@@ -4,6 +4,8 @@ constraints and bounds; the warm start's shift, the control law as one C module,
 
 from __future__ import annotations
 
+from functools import cache
+
 import numpy as np
 import pytest
 
@@ -20,7 +22,12 @@ U_MAX, P_MAX, SOFT = 15.0, 0.35, 1e3
 Q = np.array([2.0, 20.0, 0.1, 0.1])
 R, QN = 0.02, 10.0
 X0 = np.array([0.3, 0.4, 0.0, 0.0])
-IPOPT = sc.opt.IPOPT(options={"tol": 1e-12})
+
+
+@cache
+def _ipopt():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return sc.opt.IPOPT(options={"tol": 1e-12})
 
 
 def dynamics(x, u):
@@ -112,14 +119,14 @@ def library(transcription=None, name="lib_cartpole", *, track: bool = True, cost
 
 @pytest.mark.method("opt.ipopt")
 def test_the_library_transcribes_the_cart_pole_as_by_hand() -> None:
-  hand = sc.opt.solver(hand_written(), IPOPT, name="hand_ipopt")
+  hand = sc.opt.solver(hand_written(), _ipopt(), name="hand_ipopt")
   n_eq, n_ineq = (N + 1) * NX, 2 * N
   guess = (np.tile(X0, N + 1), np.zeros(N), np.zeros(N))
   (xs, us, slack), *_ = hand(guess, tuple(np.zeros(g.size) for g in guess), np.zeros(n_eq), np.zeros(n_ineq), X0)
   problem = library()
   nlp, layout = ocp.to_problem(problem)
   assert layout.var_names == ("xs", "us", "slack") and nlp.n_eq == n_eq and nlp.n_ineq == n_ineq
-  solution = Controller(problem, ocp.Direct(IPOPT)).solve(X0)
+  solution = Controller(problem, ocp.Direct(_ipopt())).solve(X0)
   assert solution.status.ok
   np.testing.assert_allclose(solution.xs.ravel(), xs, rtol=1e-9, atol=1e-10)
   np.testing.assert_allclose(solution.us.ravel(), us, rtol=1e-9, atol=1e-10)
@@ -149,7 +156,10 @@ def integrator(x, u):
   return x + u
 
 
-TIGHT = ocp.Direct(sc.opt.PIQP(sparse=True, options={"eps_abs": 1e-10, "eps_rel": 1e-10}))
+@cache
+def _tight():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return ocp.Direct(sc.opt.PIQP(sparse=True, options={"eps_abs": 1e-10, "eps_rel": 1e-10}))
 
 
 @pytest.mark.method("opt.piqp")
@@ -165,7 +175,7 @@ def test_a_varying_reference_is_read_stage_by_stage() -> None:
     name="tracking",
   )
   assert [p.name for p in problem.params] == ["r"]
-  solution = Controller(problem, TIGHT).solve(np.array([0.0]), r=ref)
+  solution = Controller(problem, _tight()).solve(np.array([0.0]), r=ref)
   np.testing.assert_allclose(solution.xs.ravel(), ref, atol=1e-5)
   np.testing.assert_allclose(solution.us.ravel(), np.diff(ref), atol=1e-5)
 
@@ -202,7 +212,7 @@ def test_a_discrete_map_sums_its_costs_and_the_terminal_equality_holds() -> None
   problem = ocp.DiscreteOCP(
     step=integrator, N=4, stage_cost=ocp.Quadratic(np.zeros((1, 1)), np.eye(1)), terminal=ocp.TerminalEquality(np.array([2.0])), name="reach"
   )
-  solution = Controller(problem, TIGHT).solve(np.array([0.0]))
+  solution = Controller(problem, _tight()).solve(np.array([0.0]))
   np.testing.assert_allclose(solution.us.ravel(), 0.5, atol=1e-6)  # the cheapest way to 2 in 4 steps, cost 4 * 0.5^2
   np.testing.assert_allclose(solution.cost, 1.0, atol=1e-6)  # no dt: a discrete map's costs are summed
 
@@ -245,7 +255,7 @@ def test_state_bounds_hold_after_the_initial_state_and_a_control_reference() -> 
     x_bounds=(None, 1.5),
     name="state_bounds",
   )
-  solution = Controller(problem, TIGHT).solve(np.array([1.8]))
+  solution = Controller(problem, _tight()).solve(np.array([1.8]))
   np.testing.assert_allclose(solution.xs.ravel(), [1.8, 1.5, 1.5, 1.5, 1.5], atol=1e-6)
   steady = ocp.DiscreteOCP(
     step=integrator, N=3, stage_cost=ocp.Quadratic(np.zeros((1, 1)), np.eye(1), u_ref=np.array([0.3])), name="control_reference"
@@ -284,7 +294,7 @@ def test_an_ocp_takes_a_model_that_scales_its_control(step: sc.Function) -> None
   problem = ocp.DiscreteOCP(
     step=step, N=4, stage_cost=ocp.Quadratic(np.zeros((1, 1)), np.eye(1)), terminal=ocp.TerminalEquality(np.array([2.0])), name=f"scaled_{step.name}"
   )
-  solution = Controller(problem, TIGHT).solve(np.array([0.0]))
+  solution = Controller(problem, _tight()).solve(np.array([0.0]))
   np.testing.assert_allclose(solution.us.ravel(), 5.0, atol=1e-6)  # the cheapest way to 2 in 4 steps of 0.1 u
   np.testing.assert_allclose(solution.cost, 100.0, atol=1e-5)
 
@@ -380,6 +390,7 @@ def test_the_control_law_is_the_solve_and_its_shifted_warm_start() -> None:
     x_solve = A @ x_solve + B @ solution.us[0]
 
 
+@pytest.mark.method("opt.ipopt")
 def test_the_law_generates_one_c_module_with_its_solver() -> None:
   problem = _soft("generated")
   method = ocp.Direct("ipopt")

@@ -6,6 +6,8 @@ silently zero and a custom rule's values were dropped by the empty pattern."""
 
 from __future__ import annotations
 
+from functools import cache
+
 import numpy as np
 import pytest
 
@@ -25,7 +27,12 @@ def _qp(x, p):
   )
 
 
-SOLVE = sc.opt.solver(_qp, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10}), name="solver_derivatives_solve")
+@cache
+def _solve():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return sc.opt.solver(_qp, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10}), name="solver_derivatives_solve")
+
+
 ZEROS = (sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(0)))
 
 
@@ -33,9 +40,10 @@ def _solution(solve: sc.Function, p: sc.Expr) -> sc.Expr:
   return solve._flat_symbolic_call([*ZEROS, p])[0]
 
 
+@pytest.mark.method("opt.piqp")
 def test_a_derivative_through_a_solver_raises() -> None:
   t = sc.sym("t", 2)
-  x = _solution(SOLVE, 2.0 * t[0] + t[1])
+  x = _solution(_solve(), 2.0 * t[0] + t[1])
   with pytest.raises(NotImplementedError, match="solver_derivatives_solve.*custom_derivative"):
     jvp(x, t, sc.const(np.ones(2)))
   with pytest.raises(NotImplementedError, match="custom_derivative"):
@@ -46,32 +54,35 @@ def test_a_derivative_through_a_solver_raises() -> None:
     sc.jacobian(x, t)
 
 
+@pytest.mark.method("opt.piqp")
 def test_a_solve_independent_of_the_variable_is_a_constant() -> None:
   t, q = sc.sym("t", 2), sc.sym("q", ())
-  derivative = simplify_cse_fixpoint(sc.jacobian(_solution(SOLVE, q) + t, t))
+  derivative = simplify_cse_fixpoint(sc.jacobian(_solution(_solve(), q) + t, t))
   assert derivative.op == sc.ExprOp.CONST
   np.testing.assert_array_equal(derivative.value, np.eye(2))
 
 
+@pytest.mark.method("opt.piqp")
 def test_the_pattern_of_a_solution_is_dense_in_the_columns_its_arguments_read() -> None:
   t = sc.sym("t", 3)
-  x = _solution(SOLVE, 2.0 * t[0] + t[2])
+  x = _solution(_solve(), 2.0 * t[0] + t[2])
   pattern = jacobian_sparsity(sc.concat([x, t[1:2]]), t)
   assert set(zip(pattern.rows, pattern.cols, strict=True)) == {(0, 0), (0, 2), (1, 0), (1, 2), (2, 1)}
 
 
 def _ruled() -> sc.Function:
   """The solve with the interior sensitivity ``dx/dp = (1/2, -1/2)`` as its forward rule."""
-  names = [*SOLVE.input_names, *(f"d{name}" for name in SOLVE.input_names)]
-  inputs = [sc.sym(name, e.shape) for name, e in zip(SOLVE.input_names, SOLVE.inputs, strict=True)]
-  tangents = [sc.sym(f"d{name}", e.shape) for name, e in zip(SOLVE.input_names, SOLVE.inputs, strict=True)]
+  names = [*_solve().input_names, *(f"d{name}" for name in _solve().input_names)]
+  inputs = [sc.sym(name, e.shape) for name, e in zip(_solve().input_names, _solve().inputs, strict=True)]
+  tangents = [sc.sym(f"d{name}", e.shape) for name, e in zip(_solve().input_names, _solve().inputs, strict=True)]
   dp = tangents[-1]
   solution = [sc.const(np.array([0.5, -0.5])) * dp, sc.const(np.zeros(2)) * dp, sc.const(np.zeros(1)) * dp, sc.const(np.zeros(0))]
   outs = [*solution, *(sc.const(0.0) * dp for _ in range(4))]  # the Info outputs carry no derivative
-  rule = sc.Function.from_exprs("solver_derivatives_rule", [*inputs, *tangents], outs, names, [f"d{name}" for name in SOLVE.output_names])
-  return sc.custom_derivative(SOLVE, jvp=rule)
+  rule = sc.Function.from_exprs("solver_derivatives_rule", [*inputs, *tangents], outs, names, [f"d{name}" for name in _solve().output_names])
+  return sc.custom_derivative(_solve(), jvp=rule)
 
 
+@pytest.mark.method("opt.piqp")
 def test_a_custom_rule_keeps_the_dense_pattern() -> None:
   ruled = _ruled()
   t = sc.sym("t", 2)

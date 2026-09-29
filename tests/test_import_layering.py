@@ -43,6 +43,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.utils": 0,
   "scaly.utils.env": 0,
   "scaly.utils.ext_api": 0,
+  "scaly.utils.experimental": 0,
   "scaly.utils.names": 0,
   "scaly.utils.options": 0,
   "scaly.ir": 1,

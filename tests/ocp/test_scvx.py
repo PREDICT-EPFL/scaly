@@ -4,6 +4,8 @@ its shift; its statuses; what it refuses."""
 
 from __future__ import annotations
 
+from functools import cache
+
 from typing import Any
 
 import numpy as np
@@ -17,7 +19,12 @@ from .support import Controller
 
 A = np.array([[1.0, 0.1], [0.0, 1.0]])
 B = np.array([[0.005], [0.1]])
-IPOPT = ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-12}))
+
+
+@cache
+def _ipopt():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-12}))
 
 
 @sc.function(2, 1, output="xdot", name="scvx_pendulum")
@@ -54,7 +61,7 @@ def test_a_nonlinear_model_reaches_the_direct_methods_optimum() -> None:
   )
   problem = ocp.transcribe(continuous, ocp.MultipleShooting(si.RK4()), N=20)
   scvx = Controller(problem, ocp.SCvx()).solve(np.zeros(2))
-  nlp = Controller(problem, IPOPT).solve(np.zeros(2))
+  nlp = Controller(problem, _ipopt()).solve(np.zeros(2))
   assert scvx.status == sc.Status.OK and nlp.status.ok
   np.testing.assert_allclose(scvx.us, nlp.us, atol=1e-5)
   np.testing.assert_allclose(scvx.cost, nlp.cost, rtol=1e-8)
@@ -70,7 +77,7 @@ def test_linear_constraints_hold_at_the_direct_methods_optimum(constraint: str) 
   problem = _linear(f"scvx_{constraint.replace(' ', '_')}", **spec)
   x0 = np.array([-1.0, 0.0])
   scvx = Controller(problem, ocp.SCvx()).solve(x0)
-  nlp = Controller(problem, IPOPT).solve(x0)
+  nlp = Controller(problem, _ipopt()).solve(x0)
   assert scvx.status == sc.Status.OK
   np.testing.assert_allclose(scvx.us, nlp.us, atol=1e-4)
   np.testing.assert_allclose(scvx.cost, nlp.cost, rtol=1e-6)

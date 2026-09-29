@@ -10,7 +10,15 @@ from scaly.opt.external import paths as solver_paths_module
 from scaly.utils import env
 
 
+def _plugins_installed() -> None:
+  """Discovery knows a solver by its plugin's registration: these tests need scaly-piqp and
+  scaly-ipopt installed, not their libraries, which they fake."""
+  pytest.importorskip("scaly_piqp", reason="needs scaly-piqp installed")
+  pytest.importorskip("scaly_ipopt", reason="needs scaly-ipopt installed")
+
+
 def test_solver_dir_override_discovery_and_flags(tmp_path, monkeypatch) -> None:
+  _plugins_installed()
   include = tmp_path / "include"
   lib = tmp_path / "lib"
   (include / "piqp").mkdir(parents=True)

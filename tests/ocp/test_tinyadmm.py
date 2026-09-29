@@ -4,6 +4,8 @@ horizon's Riccati cache; the warm start and its shift; its statuses; what it ref
 
 from __future__ import annotations
 
+from functools import cache
+
 from typing import Any
 
 import numpy as np
@@ -21,7 +23,12 @@ A = np.array([[1.0, 0.1], [0.0, 1.0]])
 B = np.array([[0.005], [0.1]])
 Q, R, QN = np.diag([1.0, 0.1]), 0.05 * np.eye(1), np.diag([10.0, 1.0])
 TIGHT: dict[str, Any] = {"abs_pri_tol": 1e-10, "abs_dua_tol": 1e-10, "max_iter": 20000}
-PIQP = ocp.Direct(sc.opt.PIQP(sparse=True, options={"eps_abs": 1e-11, "eps_rel": 1e-11}))
+
+
+@cache
+def _piqp():
+  """Built on first use, so the module imports where the plugin is missing and its tests skip by their mark."""
+  return ocp.Direct(sc.opt.PIQP(sparse=True, options={"eps_abs": 1e-11, "eps_rel": 1e-11}))
 
 
 def _boxed(name: str, horizon: int = 20, **kwargs) -> ocp.DiscreteOCP:
@@ -42,7 +49,7 @@ def test_a_boxed_linear_problem_is_the_direct_methods_solution() -> None:
   problem = _boxed("tiny_boxed")
   x0 = np.array([2.0, 0.0])
   admm = Controller(problem, ocp.TinyADMM(rho=5.0, **TIGHT)).solve(x0)
-  qp = Controller(problem, PIQP).solve(x0)
+  qp = Controller(problem, _piqp()).solve(x0)
   assert admm.status == sc.Status.OK and qp.status.ok
   np.testing.assert_allclose(admm.us, qp.us, atol=1e-7)
   np.testing.assert_allclose(admm.xs, qp.xs, atol=1e-7)
@@ -51,7 +58,7 @@ def test_a_boxed_linear_problem_is_the_direct_methods_solution() -> None:
   outside = np.array([0.0, 0.65])  # the initial state is data, outside the speed bound; one step brings it back
   from_outside = Controller(problem, ocp.TinyADMM(rho=5.0, **TIGHT)).solve(outside)
   assert from_outside.status == sc.Status.OK  # its knot is not clipped, or the residual would never vanish
-  np.testing.assert_allclose(from_outside.us, Controller(problem, PIQP).solve(outside).us, atol=1e-7)
+  np.testing.assert_allclose(from_outside.us, Controller(problem, _piqp()).solve(outside).us, atol=1e-7)
 
 
 @pytest.mark.method("opt.ipopt")
@@ -91,7 +98,7 @@ def test_a_linear_model_by_multiple_shooting_with_an_offset() -> None:
   problem = ocp.transcribe(continuous, ocp.MultipleShooting(si.RK4()), N=20)
   x0 = np.array([1.0, 0.5])
   admm = Controller(problem, ocp.TinyADMM(rho=1.0, **TIGHT)).solve(x0)
-  qp = Controller(problem, PIQP).solve(x0)
+  qp = Controller(problem, _piqp()).solve(x0)
   np.testing.assert_allclose(admm.us, qp.us, atol=1e-7)
   np.testing.assert_allclose(admm.xs, qp.xs, atol=1e-8)
   np.testing.assert_allclose(admm.cost, qp.cost, rtol=1e-8)
@@ -104,7 +111,7 @@ def test_without_bounds_the_slacks_clip_nothing_and_the_lq_solution_is_reached()
   )
   x0 = np.array([1.0, -0.5])
   admm = Controller(problem, ocp.TinyADMM(rho=3.0, **TIGHT)).solve(x0)
-  qp = Controller(problem, PIQP).solve(x0)
+  qp = Controller(problem, _piqp()).solve(x0)
   assert admm.status == sc.Status.OK
   np.testing.assert_allclose(admm.us, qp.us, rtol=1e-8, atol=1e-9)
 

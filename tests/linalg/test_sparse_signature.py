@@ -297,6 +297,7 @@ def test_a_template_refuses_a_sparse_matrix_for_an_expr_leaf() -> None:
 
 def test_a_sparse_output_named_like_its_function_compiles_in_c_and_cpp(tmp_path) -> None:
   """An undeclared sparse output is named after its function; the headers keep the two apart."""
+  pytest.importorskip("scaly.export", reason="the C++ header is scaly-tools' cpp adapter")
   cxx = shutil.which("c++")
   if cxx is None:
     pytest.skip("c++ is required to compile the generated headers")

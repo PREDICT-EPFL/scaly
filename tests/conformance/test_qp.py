@@ -21,7 +21,9 @@ CONFORMING = [pytest.param(name, marks=pytest.mark.method(f"opt.{name}"), id=f"o
 
 
 def test_every_installed_method_is_listed() -> None:
-  assert sorted(sc.opt.REGISTRY.installed()) == sorted(METHODS)
+  """A method installed here and missing from the table fails; a plugin listed but not installed is fine."""
+  assert set(sc.opt.REGISTRY.installed()) <= set(METHODS), sorted(set(sc.opt.REGISTRY.installed()) - set(METHODS))
+  assert "ipm" in sc.opt.REGISTRY.installed()
 
 
 @pytest.mark.parametrize("method", CONFORMING)

@@ -109,6 +109,22 @@ the few that only use one on the side (a snapshot under the `cpp` adapter) skip 
 `pytest.importorskip`. The blocking is at import only: a blocked package's entry points stay
 listed, so a test that loads every entry point of a group reaches it anyway.
 
+The blocking simulates a missing namespace; `scripts/isolation.py` makes one missing for real. It
+installs a distribution's wheel and the wheels of what it depends on into a fresh environment with
+only their declared dependencies, and runs the tests `distributions.toml` gives it there, as CI's
+isolation jobs do:
+
+```bash
+uv run scripts/isolation.py scaly-control -- -n auto
+```
+
+Run it after changing what a distribution's tests import. Three habits keep a test portable. A test
+that needs another namespace on the side skips without it (`pytest.importorskip("scaly.export")`). A
+test that builds a solver plugin's method carries the plugin's `method` mark even when it never runs
+the solve, since without the plugin the method does not exist. And nothing builds a plugin's method
+at import time: a module-level `sc.opt.PIQP(...)` makes the whole module error where the plugin is
+missing, so build it in the test or in a cached function the test calls.
+
 An xdist worker occasionally dies inside the isolated library load in the vendored-solver plugin
 tests. It reproduces on unmodified checkouts, so a lone worker crash there is probably not yours.
 Rerun before reading it as a failure.

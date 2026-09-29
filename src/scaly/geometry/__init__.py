@@ -3,5 +3,8 @@
 from . import quaternion as quaternion
 from .manifold import SO3, Euclidean, Pose3
 from .vectors import cross, skew
+from ..utils.experimental import warn_experimental
+
+warn_experimental(__name__)
 
 __all__ = ["SO3", "Euclidean", "Pose3", "cross", "quaternion", "skew"]

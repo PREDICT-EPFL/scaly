@@ -117,6 +117,7 @@ def test_nlp_generated_stats_and_timing_split() -> None:
 
 @pytest.mark.method("opt.ipopt")
 def test_vendored_ipopt_can_coexist_with_casadi_ipopt() -> None:
+  pytest.importorskip("casadi", reason="the coexistence needs CasADi's own IPOPT")
   x = sc.sym("x", 1)
   solver = build_nlp(x=x, f=(x[0] - 1.0) ** 2, solver="ipopt", name="ipopt_namespace")
   out = solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))

@@ -222,7 +222,17 @@ installs put a `scaly/` in merge, and `sc.<namespace>` imports the namespace on 
 an `AttributeError` that names the distribution to install when it is missing (`_NAMESPACES`, held
 to the table by a test). A domain with a method registry resolves the method classes it does not
 import itself through the registry the same way (`sc.opt.PIQP`, `sc.ocp.ALTRO`), naming the
-distribution from the registry's hints.
+distribution from the registry's hints. The modules of `scaly-experimental` warn on import (`sc.ExperimentalWarning`).
+
+The workspace hides a missing declaration, since it has everything installed. `scripts/isolation.py
+<distribution>` does not: it installs the distribution's wheel and the wheels of what it depends on
+into a fresh environment with only their declared dependencies, and runs the tests the table gives
+it there, leaving out the paths inside them that another distribution owns. A test that needs another
+namespace on the side skips without it (`pytest.importorskip`, or a `method` mark for a solver), and
+nothing constructs a plugin's method at import time. CI runs it for every distribution, each plugin
+against the workspace and against the ends of its `scaly-numerics` range, and `scripts/release.py`
+builds every wheel and checks `scaly[experimental,solvers]` from them alone
+([Versioning and releases](versioning.md)).
 
 ## Import layers
 
