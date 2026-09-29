@@ -1286,6 +1286,18 @@ The reproductions of published benchmarks in `examples/case_studies/`, planned i
       conic constraint in its penalty state, so its subproblem is a QP and E8 ran Phase C directly. An
       example whose subproblem keeps second-order cones (the plan's Szmuk and Reynolds formulations) needs
       CS-8 first; the node-count sweep against the ~100 ms class of Reynolds et al. goes with it. E8 report.
+- [ ] **CS-19. The SQP's convexification when the objective Hessian itself is indefinite.** With
+      `hessian="objective"` (laOPT's Gauss-Newton setting) E9's swing-up OCPs have negative curvature in
+      the objective's own directions (the terminal weight on `(2 sin(θ/2))²` near θ = π). The normal-space
+      damping cannot remove it, escalates `normal_shift` to 1e9, and the diagonal shift that follows
+      (up to 1.8e6) leaves a QP PIQP does not solve in any number of iterations: 88 of the 100 replayed
+      OCPs converge against laOPT's 94 with the same Hessian (95 with `hessian="exact"`). Shift the
+      diagonal first when the negative curvature is not in the normal space. E9 report.
+- [ ] **CS-20. `nn.load_torch_state_dict` on a whole checkpoint.** It returns nested dicts (E9 reads
+      `ckpt["encoder"]`, `ckpt["params"]`) but is annotated `dict[str, np.ndarray]`, so `ty` rejects the
+      natural use; widen the annotation or add a checkpoint loader. E9 report.
+- [ ] **CS-21. `bench/problems/npmpc/README.md` on the encoder.** It skips the encoder because Scaly has
+      no `erf`; Scaly has it, and E9 reproduces the encoder's z to 2e-6. Update the paragraph. E9 report.
 
 ## Licensing
 

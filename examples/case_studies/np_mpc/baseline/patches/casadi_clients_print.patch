@@ -1,0 +1,90 @@
+The C++ CasADi clients print casadi::DM values with operator<<. libcasadi from the casadi 3.7.0 wheel
+runs on the wheel's bundled libc++.1.0.dylib while these programs are compiled against the system
+libc++, and the two number their locale facets differently: libcasadi's DM printer, writing a double
+to the program's std::cout, calls the wrong facet and crashes (SIGSEGV in
+basic_ostream::operator<<(double) under casadi::Matrix<double>::print_default). The patch formats the
+two logged DMs (x0, u0) in the program itself. Nothing else changes; exceptions from libcasadi are
+caught normally, and the other programs do not print through CasADi in their loops.
+
+diff --git a/src_cpp/tests/run_furuta_eq_casadi_client.cpp b/src_cpp/tests/run_furuta_eq_casadi_client.cpp
+index c546281..518dd11 100644
+--- a/src_cpp/tests/run_furuta_eq_casadi_client.cpp
++++ b/src_cpp/tests/run_furuta_eq_casadi_client.cpp
+@@ -5,6 +5,7 @@
+ // solve, send back the first optimal input, repeat.
+ #include <chrono>
+ #include <iostream>
++#include <sstream>
+ #include <stdexcept>
+ #include <string>
+ 
+@@ -19,6 +20,19 @@
+ #define NPMPC_PROJECT_ROOT "."
+ #endif
+ 
++// Baseline patch (examples/case_studies/np_mpc/baseline/patches): libcasadi's DM printer runs on the
++// casadi wheel's bundled libc++ and crashes writing a double to this program's std::cout, which
++// belongs to the system libc++ (the two number their locale facets differently), so DMs are
++// formatted here instead.
++static std::string dmText(const casadi::DM& m) {
++    std::ostringstream out;
++    out << "[";
++    const std::vector<double>& v = m.nonzeros();
++    for (size_t i = 0; i < v.size(); ++i) { out << (i ? ", " : "") << v[i]; }
++    out << "]";
++    return out.str();
++}
++
+ int main(int argc, char** argv) {
+     const std::string host = argc > 1 ? argv[1] : "127.0.0.1";
+     const int port = argc > 2 ? std::stoi(argv[2]) : 56123;
+@@ -90,7 +104,7 @@ int main(int argc, char** argv) {
+ 
+         std::cout << "step " << step << " | t=" << state.t - tStart << " | skipped " << skipped
+                   << " | " << solveMs << " ms | " << (service.converged() ? "converged" : "NOT converged")
+-                  << " (" << service.iterCount() << " IPOPT iter) | x0=" << x0 << " | u0=" << u0 << "\n";
++                  << " (" << service.iterCount() << " IPOPT iter) | x0=" << dmText(x0) << " | u0=" << dmText(u0) << "\n";
+     }
+ 
+     return 0;
+diff --git a/src_cpp/tests/run_furuta_np_casadi_client.cpp b/src_cpp/tests/run_furuta_np_casadi_client.cpp
+index 3eff165..85de011 100644
+--- a/src_cpp/tests/run_furuta_np_casadi_client.cpp
++++ b/src_cpp/tests/run_furuta_np_casadi_client.cpp
+@@ -3,6 +3,7 @@
+ // current state, solve, send back the first optimal input, repeat.
+ #include <chrono>
+ #include <iostream>
++#include <sstream>
+ #include <string>
+ 
+ #include <casadi/casadi.hpp>
+@@ -17,6 +18,19 @@
+ #define NPMPC_PROJECT_ROOT "."
+ #endif
+ 
++// Baseline patch (examples/case_studies/np_mpc/baseline/patches): libcasadi's DM printer runs on the
++// casadi wheel's bundled libc++ and crashes writing a double to this program's std::cout, which
++// belongs to the system libc++ (the two number their locale facets differently), so DMs are
++// formatted here instead.
++static std::string dmText(const casadi::DM& m) {
++    std::ostringstream out;
++    out << "[";
++    const std::vector<double>& v = m.nonzeros();
++    for (size_t i = 0; i < v.size(); ++i) { out << (i ? ", " : "") << v[i]; }
++    out << "]";
++    return out.str();
++}
++
+ int main(int argc, char** argv) {
+     const std::string host = argc > 1 ? argv[1] : "127.0.0.1";
+     const int port = argc > 2 ? std::stoi(argv[2]) : 56123;
+@@ -87,7 +101,7 @@ int main(int argc, char** argv) {
+ 
+         std::cout << "step " << step << " | t=" << state.t - tStart << " | skipped " << skipped
+                   << " | " << solveMs << " ms | " << (service.converged() ? "converged" : "NOT converged")
+-                  << " (" << service.iterCount() << " iter) | x0=" << x0 << " | u0=" << u0 << "\n";
++                  << " (" << service.iterCount() << " iter) | x0=" << dmText(x0) << " | u0=" << dmText(u0) << "\n";
+     }
+ 
+     return 0;

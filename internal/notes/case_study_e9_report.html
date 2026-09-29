@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E9 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+</head><body><main>
+<h1>Case study E9 · Neural Process MPC</h1>
+<p class="sub">Branch <code>devrush</code> (uncommitted) · 29 Sep 2026 · code in <code>examples/case_studies/np_mpc/</code> · upstream <code>jowaibel/neural_process_mpc</code> at <code>2d8de66</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The Furuta swing-up of <i>Neural Process Model Predictive Control</i> (Waibel, Mello Rella, Jones, 2026). A conditional neural process encodes a short context trajectory into a latent z, and its decoder is the MPC's one-step model. The authors' code was built and run as published in all four of its implementations: CasADi in Python and C++, laOPT with IPOPT, and laOPT with SQP-PIQP. Each exists for the neural model and for the equation-based baseline. Scaly then reimplements the encoder, the decoder and both MPCs.</p>
+<ul>
+<li><b>The reproduction runs.</b> <code>baseline/setup.sh</code> pins and builds everything in 70 s. All six of the authors' C++ eval programs print OK against their Python solutions, with both IPOPT builds. One logging-only patch was needed, because the CasADi wheel's <code>libc++</code> crashes the C++ clients when they print a <code>DM</code>.</li>
+<li><b>Scaly poses exactly the authors' NLP.</b> On the 100 OCPs their controller met in one swing-up, Scaly's Opti mirror takes <b>the same IPOPT iteration count on every instance</b> of both models, with solutions equal to 6e-16. Scaly's encoder, which uses <code>erf</code> for GELU, reproduces their z to 1.1e-6 (float32). All 126 adaptation episodes, delayed loop and immediate, agree in closed-loop cost to 6e-6 and settle at the same step.</li>
+<li><b>Getting there took one finding.</b> Opti puts constants in a row's bound or inside the row depending on which side has variables. IPOPT's bound push and relaxation scale with |bound|, so the same inequality written with its constant on the other side takes different iterates. A loader swap onto CasADi's IPOPT ruled out the build.</li>
+<li><b>Speed, same problems and starting points.</b> On the neural model Scaly's solve takes <b>3.83 ms</b>, against 17.45 ms for the authors' controller as published (4.6×), 15.1 ms for their C++ CasADi, 8.93 ms for CasADi's <code>jit</code> and 36 ms for laOPT's IPOPT. Pointed at CasADi's IPOPT, Scaly's solver takes 7.73 ms. Against <code>jit</code> that makes the oracles and glue worth 1.16×, and the IPOPT build 2.0×.</li>
+<li><b>The SQP is where Scaly loses.</b> With laOPT's objective-only Hessian, laOPT's SQP converges on 94/100 neural OCPs at 1.57 ms; Scaly's converges on 88/100 at 1.25 ms. In the authors' real-time setup, the laOPT SQP client swings up in 0.2 s. Scaly's SQP client doesn't: its first solve from the hanging state takes 0.5 to 8 s. The cause is its convexification of an indefinite objective Hessian (CS-19).</li>
+<li><b>In real time</b>, on the authors' own server, Scaly's IPOPT client swings up in every run at 250 to 500 solves/s (neural: cost 157, upright at 0.26 s). The authors' C++ CasADi clients do not swing up on this Mac. Their solves take 20 to 45 ms on average with the wheel's IPOPT, and they apply unconverged iterates that violate the torque bound: up to 1.68 N m against 0.05.</li>
+<li><b>The release's loop is not the paper's.</b> The Python controller compensates a one-period delay, so its torque acts one period late. On system 3 it overshoots to 4π, costing about 320 at any context size, where the paper reports 188 at 100 steps. The same controller without the delay gets 176 to 205, near the paper's numbers.</li>
+</ul>
+</div>
+
+<h2>1. The benchmark and the reproduction</h2>
+<ul>
+<li><b>Model.</b> Encoder 7 → 64 → 128 → 128 → 64 → 4 (GELU) over context pairs, averaged; decoder 9 → 32 → 32 → 2 (sigmoid) for the mean velocity change, angles by the trapezoid. Checkpoint <code>model/model.pth</code>, the same bytes as the benchmark problem's vendored <code>cnp_model.pth</code>.</li>
+<li><b>MPC.</b> N = 12, dt = 20 ms, stage cost on 2(1 − cos θ), inter-stage cost, LQR terminal weight from the model's linearization at upright, |φ| ≤ 2 + s with a penalized slack, |τ| ≤ 0.05, the initial state as a ±1e-3 band. The equation baseline has the analytic model under implicit midpoint.</li>
+<li><b>Built and run.</b> The Python controller runs under its pinned environment (PyTorch 2.5.1, CasADi 3.7.0, Python 3.12), and the C++ programs build against laOPT <code>8f9820a</code> (the discrete-dynamics merge they need), PIQP v0.6.2, Eigen 3.4.0 and yaml-cpp 0.8.0. The CasADi C++ SDK and "CasADi's IPOPT" (3.14.11, MUMPS 5.4.1) come from the wheel. CMake builds laOPT's IPOPT targets twice, the second time against Scaly's IPOPT 3.14.19. <code>otool</code>, <code>DYLD_PRINT_LIBRARIES</code> and a probe written into each output confirm which IPOPT each binary loads.</li>
+<li><b>Their deploy, as published.</b> It encodes z from a 2 s real-time context experiment, then swings up (cost 336, settled at 0.58 s, mean solve 15.8 ms). A blocking <code>plt.show()</code> in its parameter-estimation step needs <code>MPLBACKEND=Agg</code> to run headless.</li>
+</ul>
+
+<h2>2. What was built</h2>
+<ul>
+<li><b><code>scaly_impl.py</code>.</b> It reads the CNP with <code>nn.load_torch_state_dict</code>, without torch, and writes both OCPs in two forms. <code>opti</code> mirrors <code>MPCController._build_optimization</code> and <code>laopt</code> mirrors <code>MultipleShootingXDiff</code> over <code>FurutaNPOCP</code>/<code>FurutaEqOCP</code>. The dynamics and the stage cost are each one <code>vmap</code>; x0, z (or p) and P are runtime parameters, so one compiled solver serves every latent code. The solvers are IPOPT with the authors' settings and Scaly's SQP with laOPT's.</li>
+<li><b><code>protocol.py</code></b>, NumPy only and imported by both environments: the plant (analytic Furuta, explicit midpoint at 4 kHz), the context experiment, and <code>lockstep</code>, which reproduces <code>run_controller</code> over <code>RuntimeBase</code> step for step, including the delay compensation and the warm start's retries.</li>
+<li><b>Harnesses.</b> <code>baseline/upstream.py</code> (their controller from their classes: lockstep, grid, replay, export), <code>run_scaly.py</code> (the same for Scaly), <code>baseline/replay_{laopt,casadi}.cpp</code> (their OCP classes and <code>configureSolver</code>), <code>baseline/run_realtime.py</code> (their agents against their server), <code>realtime_scaly.py</code> (a client like their C++ ones), <code>compare.py</code> (all of it, in fresh processes, on a quiet machine).</li>
+<li><b><code>np_mpc.ipynb</code>.</b> It runs the Scaly side live (z, 20 of their OCPs replayed with identical iterations, a closed loop matching theirs to the printed digit) and plots the recorded results.</li>
+</ul>
+
+<h2>3. Results</h2>
+<h3>Replay: the authors' 100 OCPs, median ms per solve (instance 0 excluded)</h3>
+<div class="scroll"><table>
+<tr><th>Implementation</th><th>IPOPT</th><th>Neural ms</th><th>iter (as ref.)</th><th>conv.</th><th>Equation ms</th><th>iter (as ref.)</th><th>conv.</th></tr>
+<tr><td>CasADi Python, as published</td><td>CasADi's</td><td class="r">17.45</td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r">8.95</td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>CasADi Python, <code>expand</code></td><td>CasADi's</td><td class="r">27.95</td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r">5.74</td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>CasADi Python, <code>jit</code></td><td>CasADi's</td><td class="r">8.93</td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r">5.50</td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>CasADi C++, as published</td><td>CasADi's</td><td class="r">15.13</td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r">8.34</td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>CasADi C++, <code>jit</code></td><td>CasADi's</td><td class="r">8.93</td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r">5.43</td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>laOPT IPOPT</td><td>CasADi's</td><td class="r">36.14</td><td class="r">11.31 (2)</td><td class="r">100</td><td class="r">6.24</td><td class="r">9.10 (0)</td><td class="r">100</td></tr>
+<tr><td>laOPT IPOPT</td><td>Scaly's</td><td class="r">32.56</td><td class="r">11.31 (2)</td><td class="r">100</td><td class="r">3.41</td><td class="r">9.10 (0)</td><td class="r">100</td></tr>
+<tr><td>laOPT SQP-PIQP, as published</td><td>–</td><td class="r">1.57</td><td class="r">6.30</td><td class="r">94</td><td class="r">0.40</td><td class="r">2.62</td><td class="r">100</td></tr>
+<tr><td><b>Scaly, Opti form, IPOPT</b></td><td>Scaly's</td><td class="r"><b>3.83</b></td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r"><b>2.38</b></td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>Scaly, Opti form, IPOPT</td><td>CasADi's</td><td class="r">7.73</td><td class="r">13.76 (100)</td><td class="r">100</td><td class="r">5.31</td><td class="r">11.97 (100)</td><td class="r">100</td></tr>
+<tr><td>Scaly, laOPT form, IPOPT</td><td>Scaly's</td><td class="r">2.88</td><td class="r">11.25 (7)</td><td class="r">100</td><td class="r">1.66</td><td class="r">9.11 (0)</td><td class="r">100</td></tr>
+<tr><td>Scaly, laOPT form, SQP-PIQP</td><td>–</td><td class="r">1.25</td><td class="r">6.06</td><td class="r">88</td><td class="r">0.36</td><td class="r">2.62</td><td class="r">97</td></tr>
+</table></div>
+<p>"As ref." counts the instances whose iteration count equals the authors' Python controller's. The laOPT mirror takes laOPT's count on 99/100 analytic-model and 67/100 neural instances, with solutions within 4e-7. laOPT also hands IPOPT six rows per node whose bounds are both infinite.</p>
+
+<h3>Closed loops</h3>
+<ul>
+<li><b>Lockstep, system 3.</b> Cost, settling step and ms per solve are 325.81, 28 and 17.6 ms for the authors' controller, 325.81, 28 and 3.84 ms for Scaly's Opti form, and 325.81, 28 and 2.94 ms for its laOPT form. The states agree to 7e-5; the authors' model predicts in float32. Without the delay both score 199.67 and settle at step 24.</li>
+<li><b>Adaptation grid.</b> Three systems, contexts of 1, 20, 50 and 100 steps, five seeds each, plus the equation baseline. The authors' and Scaly's episodes agree in cost to 6e-6 and in settling step in all 126 episodes. Mean solve 17.4 against 3.7 ms. A new z costs the authors' controller an Opti rebuild and solver construction, 38 ms; Scaly needs the Riccati solve (3 ms) and one solve (5 ms).</li>
+<li><b>Real time.</b> Median of three 1 s runs on their server, neural model. Their laOPT SQP client scores 202.6 and is upright at 0.20 s; Scaly's IPOPT client scores 157.1 at 0.26 s (363 solves) and its Opti form 181.8 at 0.20 s. Their CasADi C++ client and their laOPT IPOPT client fail, and their Python deploy settled within 1 s in 1 of 3 runs. On the equation model Scaly's clients score 148.9, their laOPT SQP client 158.1 and their laOPT IPOPT client 285.9.</li>
+</ul>
+
+<h2>4. What the numbers say about Scaly</h2>
+<ul>
+<li><span class="ok">Faithful by construction.</span> Iteration-identical IPOPT runs make the per-solve comparison exact: the same number of the same iterations, so the time ratio is the implementation's. The loader swap splits it into IPOPT build (2.0×) and oracles plus glue (1.16× against CasADi's compiled <code>jit</code>). Those match the benchmark problem's controlled 2×2 in <code>fairness.md</code> (1.13× and about 2×).</li>
+<li><span class="ok">Runtime parameters pay off modestly here.</span> Opti rebuilds in 38 ms per latent code, so the adaptation advantage is about 30 ms per new z, not seconds. The larger win is the per-solve time: 4.6× against the controller as published.</li>
+<li><span class="warn">SQP robustness.</span> Scaly's SQP mirrors laOPT's settings but converges less often on the swing-up. Its normal-space damping escalates to 1e9·AᵀA on negative curvature that lies in the objective's own directions, followed by a diagonal shift of up to 1.8e6. PIQP then misses its limit at 50 iterations, and at 1000. With <code>hessian="exact"</code> it converges on 95/100. <b>CS-19.</b></li>
+<li><span class="warn">Smaller items.</span> <code>nn.load_torch_state_dict</code> reads whole checkpoints but is typed as returning a flat state dict (<b>CS-20</b>). The benchmark problem's README still says Scaly lacks <code>erf</code> (<b>CS-21</b>). <code>sc.dot</code> with a constant weight vector containing zeros keeps structural Hessian entries: 191 nonzeros against CasADi's 167, harmless to the iterates.</li>
+</ul>
+
+<h2>5. Tests and checks</h2>
+<ul>
+<li><code>tests/integration/test_case_study_np_mpc.py</code>, 7 tests covering three things. The GELU encoder (<code>erf</code>, <code>vmap</code>, masked mean) against NumPy and finite differences. Initial-state bands that follow a runtime parameter across consecutive solves of one generated solver, as rows and as variable bounds, under IPOPT and SQP; nothing else tested parameter-dependent bounds. And the two mirrors agreeing on a miniature OCP. Node-ID baseline updated (7 ids).</li>
+<li><b>Mutation checks</b>, each on a scratch copy via <code>PYTHONPATH</code>: IPOPT's wrapper computing bounds once, the SQP template computing bounds once, and <code>erf</code> emitted as <code>erfc</code>. All three were caught.</li>
+<li><code>ruff format</code>, <code>ruff check</code> and <code>ty</code> are clean on the study's scripts and the test. The notebook has the <code>ty</code> import diagnostics every study notebook has (CS-18). <code>tests/integration</code>: 425 passed.</li>
+</ul>
+
+<h2>6. Fairness notes and what was not done</h2>
+<ul>
+<li>This is not the reference machine: an M3 Max on macOS 26.6 with Apple clang 21. The upstream C++ builds at its Release flags, Scaly's JIT at <code>-O2</code>. Each timed process waited for load average below 6, and every replay kept the fastest of 3 fresh processes per instance.</li>
+<li>Python-level timers were used for the Python columns, <code>steady_clock</code> around <code>solve()</code> for the C++ ones, and the Python call for Scaly. Scaly's C-side timer (<code>t_total</code>) is in <code>results/replay.json</code>.</li>
+<li>The authors' C++ CasADi real-time result depends on the wheel IPOPT's speed on macOS. On their Linux machine the source comment implies about 4.3 ms per solve. Not rerun on Linux.</li>
+<li>Not reproduced: training, the dataset generator, and the paper's real-time adaptation runs themselves. The adaptation grid runs in lockstep with NumPy's random contexts.</li>
+<li>The case-studies plan has no E9 entry; this study was added on request.</li>
+</ul>
+
+<h2>7. Next</h2>
+<ul>
+<li>CS-19: shift the diagonal first when the negative curvature is not in the normal space, then rerun the SQP rows here.</li>
+<li>Tell the authors about the C++ CasADi clients applying unconverged, bound-violating iterates, and about the gap between the release's delayed loop and the paper's numbers.</li>
+</ul>
+</main></body></html>
