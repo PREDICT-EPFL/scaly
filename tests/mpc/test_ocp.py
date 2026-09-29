@@ -96,7 +96,7 @@ def library(transcription=None, name="lib_cartpole", *, track: bool = True, **kw
     ode=cartpole,
     dt=DT,
     horizon=N,
-    transcription=transcription or si.MultipleShooting(si.RK4(steps=2)),
+    transcription=transcription or sc.ocp.MultipleShooting(si.RK4(steps=2)),
     stage_cost=stage,
     terminal_cost=terminal,
     u_bounds=(-U_MAX, U_MAX),
@@ -129,9 +129,9 @@ def test_the_library_transcribes_the_cart_pole_as_by_hand() -> None:
 def test_shooting_and_collocation_solve_the_same_problem_and_pseudospectral_improves_on_it() -> None:
   options = {"tol": 1e-11}
   kw = {"cost": "integral", "track": False}  # a path constraint binds only at the grid points, which pseudospectral controls can dodge
-  shooting = mpc.MPC(library(si.MultipleShooting(si.RK4(steps=4)), name="agree_shooting", **kw), "ipopt", options=options).solve(X0)
-  collocation = mpc.MPC(library(si.Collocation(3), name="agree_collocation", **kw), "ipopt", options=options).solve(X0)
-  pseudo = mpc.MPC(library(si.Pseudospectral(4), name="agree_pseudo", track=False), "ipopt", options=options).solve(X0)
+  shooting = mpc.MPC(library(sc.ocp.MultipleShooting(si.RK4(steps=4)), name="agree_shooting", **kw), "ipopt", options=options).solve(X0)
+  collocation = mpc.MPC(library(sc.ocp.Collocation(3), name="agree_collocation", **kw), "ipopt", options=options).solve(X0)
+  pseudo = mpc.MPC(library(sc.ocp.Pseudospectral(4), name="agree_pseudo", track=False), "ipopt", options=options).solve(X0)
   assert shooting.status.ok and collocation.status.ok and pseudo.status.ok
   # The same held controls, integrated two ways: the solutions differ by the integrators' errors.
   np.testing.assert_allclose(collocation.us, shooting.us, rtol=1e-3, atol=1e-4)
@@ -236,7 +236,7 @@ def test_refusals() -> None:
   with pytest.raises(ValueError, match="horizon must be a positive integer"):
     mpc.OCP(step=integrator, horizon=0)
   with pytest.raises(ValueError, match="a transcription goes with ode="):
-    mpc.OCP(step=integrator, horizon=3, transcription=si.Collocation())
+    mpc.OCP(step=integrator, horizon=3, transcription=sc.ocp.Collocation())
   with pytest.raises(ValueError, match="cost is 'points', or 'integral'"):
     mpc.OCP(step=integrator, horizon=3, cost="integral")
   with pytest.raises(ValueError, match="Q must be 1x1"):
@@ -280,7 +280,7 @@ def test_state_bounds_hold_after_the_initial_state_and_a_control_reference() -> 
 
 @pytest.mark.solver("ipopt")
 def test_control_bounds_reach_every_pseudospectral_control() -> None:
-  ocp = library(si.Pseudospectral(4), name="bounded_nodes", track=False)
+  ocp = library(sc.ocp.Pseudospectral(4), name="bounded_nodes", track=False)
   controller = mpc.MPC(ocp, "ipopt", options={"tol": 1e-10})
   for start, side in ((X0, U_MAX), (-X0, -U_MAX)):  # the mirrored start saturates the other side
     solution = controller.solve(start, guess=controller.initial_guess(start))
@@ -322,7 +322,7 @@ def test_the_condensed_form_of_a_continuous_model_rolls_out_its_shooting_method(
   # The condensed form eliminates the states by a scan of the transcription's own integrator method.
   # From near upright the problem is nearly linear, with one optimum both forms must reach.
   options, x0 = {"tol": 1e-11}, np.array([0.05, 0.05, 0.0, 0.0])
-  method = si.MultipleShooting(si.RK4(steps=2))
+  method = sc.ocp.MultipleShooting(si.RK4(steps=2))
   sparse = mpc.MPC(library(method, name="rollout_sparse", track=False), "ipopt", options=options).solve(x0)
   condensed = mpc.MPC(library(method, name="rollout_condensed", track=False, condensed=True), "ipopt", options=options).solve(x0)
   assert sparse.status.ok and condensed.status.ok

@@ -12,14 +12,10 @@ def test_the_integrator_surface() -> None:
   assert sc.integrators is integrators
   assert integrators.__all__ == [
     "BS32",
-    "Collocation",
     "DOPRI5",
     "FAMILIES",
-    "Interval",
     "METHOD_API",
-    "MultipleShooting",
     "ODE",
-    "Pseudospectral",
     "REGISTRY",
     "RK3",
     "RK38",
@@ -29,7 +25,6 @@ def test_the_integrator_surface() -> None:
     "SSPRK3",
     "TABLEAUS",
     "Tableau",
-    "Transcription",
     "UNROLL_STEPS",
     "Adaptive",
     "BackwardEuler",

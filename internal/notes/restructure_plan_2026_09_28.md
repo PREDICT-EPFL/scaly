@@ -47,7 +47,7 @@
 | 4.4 | `scaly.roots` | ☑ |
 | 4.5 | `integrators` and `interp` as method registries | ☑ |
 | 5.1 | `scaly.sets` | ☑ |
-| 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☐ |
+| 5.2 | `scaly.ocp`: continuous and discrete OCPs, transcription, formulation | ☑ |
 | 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☐ |
 | 6.1 | Library code promoted from examples | ☐ |
 | 6.2 | `nn`, `geometry`, `export` namespaces | ☐ |
@@ -719,6 +719,19 @@ page `sets.md` and the codebase map moved with it.
 split becomes the two classes, `condensed=` becomes `form=`).
 Gate: every `tests/mpc` OCP case reproduced through `transcribe` + `to_problem` with identical
 optimal values; stage-structure metadata tested.
+Log: done 2026-09-29. `ocp/problem.py`: `ContinuousOCP(ode, T, ...)` (a description, not solvable),
+`DiscreteOCP(step=F, N, ...)` (the multistage form, its `stage` a `StageStructure` of `nx`, `nu`,
+`nw`, `n_dynamics`, its `params`), `transcribe(cocp, transcription, N=)` with `dt = T / N`, and
+`Quadratic`, `Path`, `TerminalEquality`; `ocp/formulate.py`: `to_problem(docp, form="sparse" |
+"condensed")` returning the `opt` problem and its `Layout` (variable leaves and blocks, the
+per-stage multiplier runs, the condensed `states`), built once per form. The transcriptions moved
+from `integrators` to `ocp/transcription.py`. The code is `mpc.OCP`'s, and `mpc.OCP` is for this
+step a thin constructor over it (its `Quadratic`, `Path`, `TerminalEquality` now `ocp`'s), so
+every `tests/mpc` case runs through `transcribe` + `to_problem`; the control laws of seven OCPs
+(three transcriptions, soft paths, varying references, terminal equality, polytope and ellipsoid,
+sparse and condensed) render byte-identical C with identical optimal costs. `tests/ocp/test_problem.py`
+solves a discrete OCP sparse and condensed and a continuous one three ways straight from `opt`,
+and pins the stage structure and the layout's blocks and runs.
 
 **5.3 OCP methods, warm start, terminal ingredients; `mpc` removed.** `sc.ocp.solver`,
 `Direct`, `shift`, `ocp.terminal`; delete `src/scaly/mpc/`; rewrite `examples/mpc/*` notebooks

@@ -207,4 +207,4 @@ def test_linear_models_and_the_condensed_form_refuse_what_they_cannot_take() -> 
     return x + u
 
   with pytest.raises(ValueError, match="the condensed form takes a discrete map"):
-    mpc.OCP(ode=ode, dt=0.1, horizon=3, transcription=sc.integrators.Collocation(2), condensed=True)
+    mpc.OCP(ode=ode, dt=0.1, horizon=3, transcription=sc.ocp.Collocation(2), condensed=True)

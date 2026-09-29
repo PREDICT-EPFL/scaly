@@ -62,6 +62,7 @@ nav = [
         { "Nonlinear equations" = "api/roots.md" },
         { "Integrators" = "api/integrators.md" },
         { "Interpolation" = "api/interp.md" },
+        { "Optimal control" = "api/ocp.md" },
         { "Model predictive control" = "api/mpc.md" },
         { "Sets" = "api/sets.md" },
         { "Solvers" = "api/solvers.md" },

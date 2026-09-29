@@ -122,7 +122,7 @@ def test_the_law_generates_one_c_module_with_its_solver() -> None:
 
 
 def test_the_initial_guess() -> None:
-  ocp = mpc.OCP(ode=double_ode, dt=0.1, horizon=3, transcription=si.Collocation(2), name="guess_layout")
+  ocp = mpc.OCP(ode=double_ode, dt=0.1, horizon=3, transcription=sc.ocp.Collocation(2), name="guess_layout")
   controller = mpc.MPC(ocp, "ipopt")
   guess = controller.initial_guess(np.array([1.0, 2.0]), np.array([0.5]))
   n_vars = ocp.layout.n_vars

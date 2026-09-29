@@ -111,11 +111,3 @@ def test_what_a_method_refuses() -> None:
     si.ODE(lambda x: x)  # ty: ignore[invalid-argument-type]
   with pytest.raises(ValueError, match="dt must be positive"):
     si.ODE(van_der_pol, dt=-1.0)
-
-
-def test_shooting_takes_a_method_or_its_name() -> None:
-  x, u, xn = np.array([1.5, -0.3]), np.array([0.4]), np.array([1.4, -0.2])
-  for method in (si.RK4(steps=2), "rk4"):
-    interval = si.MultipleShooting(method).interval(van_der_pol, dt=0.1)
-    assert interval.fn.name == "van_der_pol_rk4_shooting"
-  np.testing.assert_allclose(interval.fn(x, u, xn), si.rk4(van_der_pol, dt=0.1)(x, u) - xn, rtol=1e-15)

@@ -33,19 +33,14 @@ from .methods import (
 )
 from .model import UNROLL_STEPS
 from .polynomial import lgl
-from .transcription import Collocation, Interval, MultipleShooting, Pseudospectral, Transcription
 from .tableau import FAMILIES, TABLEAUS, Tableau, gauss_legendre, lobatto_iiia, lobatto_iiic, order_conditions, radau_iia, tableau
 
 __all__ = [
   "BS32",
-  "Collocation",
   "DOPRI5",
   "FAMILIES",
-  "Interval",
   "METHOD_API",
-  "MultipleShooting",
   "ODE",
-  "Pseudospectral",
   "REGISTRY",
   "RK3",
   "RK38",
@@ -55,7 +50,6 @@ __all__ = [
   "SSPRK3",
   "TABLEAUS",
   "Tableau",
-  "Transcription",
   "UNROLL_STEPS",
   "Adaptive",
   "BackwardEuler",

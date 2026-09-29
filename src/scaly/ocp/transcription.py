@@ -1,4 +1,4 @@
-"""Transcriptions: how one interval of a horizon becomes variables, equality constraints and a cost."""
+"""Transcriptions: how one interval of a continuous-time OCP's horizon becomes variables, equality constraints and a cost."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ import numpy as np
 from ..function.model import ConcreteFunction, Function
 from ..function.tree import G, L, param_list
 from ..ir.expr import Expr, concat
-from .method import ODE, solver
-from .methods import RK4
-from .model import check_model, model_rhs
-from .polynomial import differentiation_matrix, gauss_nodes, interpolation_matrix, lagrange_integrals, radau_nodes
+from ..integrators.method import ODE, solver
+from ..integrators.methods import RK4
+from ..integrators.model import check_model, model_rhs
+from ..integrators.polynomial import differentiation_matrix, gauss_nodes, interpolation_matrix, lagrange_integrals, radau_nodes
 
 __all__ = ["Collocation", "Interval", "MultipleShooting", "Pseudospectral", "Transcription"]
 

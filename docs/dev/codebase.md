@@ -94,12 +94,16 @@ src/scaly/
     method.py            ODE, the integrator method registry, METHOD_API and solver
     methods.py           the integrator methods, one class per named method, each building a discrete map
     linear.py            exact discretization of LTI systems (ZOH, FOH), and linearization at a point
-    transcription.py     how one interval of a horizon becomes variables, equality constraints and a cost
 
   mpc/                   model predictive control: OCPs over a horizon, their solvers and control laws
     ocp.py               the OCP: dynamics, costs, constraints, horizon, transcription, and the sc.opt.problem it builds
     controller.py        MPC: the OCP's solver, its control law with the shifted warm start, closed-loop simulation
     terminal.py          terminal ingredients: the LQR gain and cost, ellipsoidal and maximal invariant sets
+
+  ocp/                   optimal control: continuous and discrete OCPs, transcription, formulation
+    problem.py           ContinuousOCP, DiscreteOCP and their pieces (costs, paths, terminal equality); transcribe
+    transcription.py     how one interval of a horizon becomes variables, equality constraints and a cost
+    formulate.py         to_problem: a DiscreteOCP as an sc.opt problem, sparse or condensed, and its Layout
 
   sets/                  sets in state space, the constraints that keep a point inside, as (expr, lo, hi)
     polytope.py          polytopes in halfspace form and the linear programs on them (SciPy's HiGHS)
@@ -173,7 +177,7 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites and structural sparsity. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree,extern,method}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, the protocol a Function with an extern body implements, and the method interface every domain shares. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
-| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `roots/*`, `interp/*`, `integrators/*`, `sets/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, nonlinear equations, splines, integrators and MPC. |
+| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `roots/*`, `interp/*`, `integrators/*`, `sets/*`, `ocp/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, nonlinear equations, splines, integrators and MPC. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |

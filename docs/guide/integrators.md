@@ -41,7 +41,7 @@ composes with the methods of other domains.
 ode = si.ODE(cartpole, dt=0.05)
 step = si.solver(ode, si.RK4(steps=2))                          # = si.rk4(cartpole, dt=0.05, steps=2)
 stiff = si.solver(ode, si.RadauIIA(3, newton=sc.roots.Newton(tol=1e-10, rtol=1e-10)))
-shooting = si.MultipleShooting(si.Tsit5())
+shooting = sc.ocp.MultipleShooting(si.Tsit5())
 ```
 
 | Methods | Options | Shorthand |
@@ -176,11 +176,11 @@ discretization.
 ## Transcriptions
 
 A transcription says how one interval of an optimal control horizon becomes variables, equality
-constraints and a cost. It is what an OCP builds its horizon from, one interval Function mapped over
-the intervals.
+constraints and a cost. It is what `sc.ocp.transcribe` builds a discrete OCP from, one interval
+Function mapped over the intervals, and it lives in `scaly.ocp` beside it.
 
 ```python
-interval = si.Collocation(3, "radau").interval(cartpole, running_cost, dt=0.05)
+interval = sc.ocp.Collocation(3, "radau").interval(cartpole, running_cost, dt=0.05)
 interval.fn           # (x, u, z, xnext, *params) -> [residuals; cost]
 interval.n_internal   # the size of z: this interval's own variables
 interval.guess(x, u)  # a starting point for z
@@ -191,10 +191,10 @@ takes the same inputs and gives one value, integrated over the interval.
 
 | Transcription | Interval variables `z` | Residuals | Control |
 | --- | --- | --- | --- |
-| `si.MultipleShooting(si.RK4(steps=2))`, or any integrator method or its name | none | `F(x, u) - xnext` | held |
-| `si.Collocation(degree, "radau")` | `degree - 1` states | `degree` collocation conditions | held |
-| `si.Collocation(degree, "legendre")` | `degree` states | `degree` conditions and continuity | held |
-| `si.Pseudospectral(nodes)` | `nodes - 1` states and `nodes - 1` controls | `nodes` conditions | at each node |
+| `sc.ocp.MultipleShooting(si.RK4(steps=2))`, or any integrator method or its name | none | `F(x, u) - xnext` | held |
+| `sc.ocp.Collocation(degree, "radau")` | `degree - 1` states | `degree` collocation conditions | held |
+| `sc.ocp.Collocation(degree, "legendre")` | `degree` states | `degree` conditions and continuity | held |
+| `sc.ocp.Pseudospectral(nodes)` | `nodes - 1` states and `nodes - 1` controls | `nodes` conditions | at each node |
 
 - Multiple shooting integrates the running cost with the same method as one more state, so the step
   and its cost are one call.
