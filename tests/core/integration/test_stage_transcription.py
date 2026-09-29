@@ -11,7 +11,7 @@ This is a *minimal reproduction* of a form the race-car benchmark surfaced, deli
 copied rather than imported: per `AGENTS.md` the pytest suite covers Scaly's core and must
 not depend on a benchmark problem, so retiring or reshaping that problem cannot silently
 drop this coverage. The benchmark keeps its own formulation gates in
-``benchmarks/problems/race_cars/checks.py``.
+``bench/problems/race_cars/checks.py``.
 """
 
 from __future__ import annotations

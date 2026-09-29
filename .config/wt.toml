@@ -14,7 +14,7 @@ lint = "uv run ruff check"
 unit-tests = "uv run pytest -n=auto"
 
 [[pre-merge]]
-benchmarks-smoke = "uv run benchmarks/run.py smoke"
+bench-smoke = "uv run bench/run.py smoke"
 
 [[pre-merge]]
 docs-build = "uv run zensical build"

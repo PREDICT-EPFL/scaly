@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from benchmarks.harness import CLOSED_LOOP_RESULTS, RESULTS, SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root
-from benchmarks.harness import sweep
-from benchmarks.harness.recording import (
+from bench.harness import CLOSED_LOOP_RESULTS, RESULTS, SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root
+from bench.harness import sweep
+from bench.harness.recording import (
   ACCEL_COLOR,
   BRAKE_COLOR,
   CAR_COLORS,
@@ -594,7 +594,7 @@ def test_arena_scene_adds_the_wall_margin_inset() -> None:
 
 def test_layouts_live_next_to_their_problem_and_parse_when_present() -> None:
   paths = {problem: layout_path(problem) for problem in PROBLEM_DIRS}
-  assert paths["unbumpercars"] == Path(__file__).resolve().parents[2] / "benchmarks/problems/unbumpercars/foxglove-layout.json"
+  assert paths["unbumpercars"] == Path(__file__).resolve().parents[2] / "bench/problems/unbumpercars/foxglove-layout.json"
   for problem, path in paths.items():
     assert path.parent.is_dir(), problem
     if path.is_file():

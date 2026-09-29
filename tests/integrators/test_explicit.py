@@ -223,6 +223,103 @@ def test_rk4_generates_the_code_of_a_hand_written_rk4() -> None:
   assert horizon(library) == horizon(lambda x, u: rk4(rk4(x, u, 0.05), u, 0.05))
 
 
+@sc.function(2, 1, 2, output="xdot")
+def forced(x, u, c):
+  """A damped pendulum under a held torque ``u``, its two coefficients ``c`` held too."""
+  return sc.stack([x[1], -c[0] * x[0].sin() - c[1] * x[1] + u[0] * x[0].cos()])
+
+
+FORCED_RK4 = si.rk4(forced, dt=None, name="forced_rk4_dt")
+
+
+def _written_rk4(x, u, c, h):
+  """RK4 of ``forced`` written out, the step divided as a person writes it."""
+
+  def f(s):
+    return sc.stack([s[1], -c[0] * s[0].sin() - c[1] * s[1] + u[0] * s[0].cos()])
+
+  k1 = f(x)
+  k2 = f(x + 0.5 * h * k1)
+  k3 = f(x + 0.5 * h * k2)
+  k4 = f(x + h * k3)
+  return x + h / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+def _shooting(step, name: str, horizon: int, *, mapped: bool) -> sc.Function:
+  """Multiple-shooting defects ``step(x_k, u_k, c, dt) - x_{k+1}`` over ``z = [x_0, u_0, ..., x_N]``,
+  every stage reading ``p = [c, dt]``, a constant tail, as the benchmark problems' transcriptions do."""
+  constant = sc.TensorType((3,), diff=False)
+
+  @sc.function(3, 2, sc.L("p", constant), output="eq", name=f"{name}_defect")
+  def defect(z, xnext, p):
+    return step(z[:2], z[2:], p[:2], p[2]) - xnext
+
+  z, p = sc.sym("z", 3 * horizon + 2), sc.sym("p", 3, diff=False)
+  if mapped:
+    eq = sc.vmap(defect, horizon, [(z, 0, 3), (z, 3, 3), (p, 0, 0)])
+  else:
+    eq = sc.concat([defect(z[3 * k : 3 * k + 3], z[3 * k + 3 : 3 * k + 5], p) for k in range(horizon)])
+  return sc.Function.from_exprs(name, [z, p], [eq], ["z", "p"], ["eq"])
+
+
+def _dense(fn: sc.Function, *args: np.ndarray) -> np.ndarray:
+  sparsity = fn.output_sparsities[0]
+  assert sparsity is not None
+  dense = np.zeros(sparsity.shape)
+  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn(args)).reshape(-1)
+  return dense
+
+
+def test_a_dt_input_map_in_a_vmapped_shooting_transcription_matches_the_written_out_step() -> None:
+  """The shape the benchmark problems use: the map called once per stage inside a ``vmap``, its held
+  inputs and its step read out of a broadcast constant tail. Defects, sparse Jacobian and sparse
+  Lagrangian Hessian land on an unrolled transcription with the step written out, and the defects on
+  NumPy; the library multiplies by ``h/6`` where the written step divides, so they agree to rounding."""
+  horizon = 4
+  rng = np.random.default_rng(3)
+  z, p, lam = rng.normal(size=3 * horizon + 2), np.array([2.0, 0.3, 0.07]), rng.normal(size=2 * horizon)
+  library = _shooting(FORCED_RK4, "shooting_library", horizon, mapped=True)
+  written = _shooting(_written_rk4, "shooting_written", horizon, mapped=False)
+
+  def forced_np(x, u):
+    return np.array([x[1], -p[0] * np.sin(x[0]) - p[1] * x[1] + u[0] * np.cos(x[0])])
+
+  expected = []
+  for k in range(horizon):
+    x, u = z[3 * k : 3 * k + 2], z[3 * k + 2 : 3 * k + 3]
+    expected.append(rk_np(si.TABLEAUS["rk4"], lambda s, u=u: forced_np(s, u), x, p[2]) - z[3 * k + 3 : 3 * k + 5])
+  np.testing.assert_allclose(np.asarray(library((z, p))).reshape(-1), np.concatenate(expected), rtol=1e-13, atol=1e-14)
+  np.testing.assert_allclose(np.asarray(library((z, p))), np.asarray(written((z, p))), rtol=1e-14, atol=1e-15)
+
+  jac = [fn.factory(f"{fn.name}_spjac", ["z", "p"], [sc.factory.SpJac("eq", "z")]) for fn in (library, written)]
+  np.testing.assert_allclose(_dense(jac[0], z, p), _dense(jac[1], z, p), rtol=1e-13, atol=1e-14)
+  hess = [
+    fn.factory(f"{fn.name}_sphess", ["z", "lam:eq", "p"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["eq"]}) for fn in (library, written)
+  ]
+  dense = _dense(hess[0], z, lam, p)
+  np.testing.assert_allclose(dense, _dense(hess[1], z, lam, p), rtol=1e-12, atol=1e-13)
+  np.testing.assert_allclose(dense, dense.T, rtol=0.0, atol=1e-13)
+  assert np.abs(dense).max() > 1e-3  # the pendulum's sine makes the Lagrangian curved
+
+
+def test_a_dt_input_map_mapped_directly_reads_its_scalar_step_from_the_tail() -> None:
+  """``vmap`` over the map itself, as the unbumpercars filter steps every car: the scalar ``dt`` formal
+  is one entry of the constant tail, broadcast to every iteration. Values and Jacobian equal the
+  written-out step called once per car."""
+  cars = 3
+  rng = np.random.default_rng(8)
+  xs, us, p = rng.normal(size=2 * cars), rng.normal(size=cars), np.array([1.5, 0.2, 0.1])
+  x_sym, u_sym, p_sym = sc.sym("xs", 2 * cars), sc.sym("us", cars), sc.sym("p", 3, diff=False)
+  mapped = sc.vmap(FORCED_RK4, cars, [(x_sym, 0, 2), (u_sym, 0, 1), (p_sym, 0, 0), (p_sym, 2, 0)])
+  written = sc.concat([_written_rk4(x_sym[2 * i : 2 * i + 2], u_sym[i : i + 1], p_sym[:2], p_sym[2]) for i in range(cars)])
+  outputs = [mapped, written, sc.jacobian(mapped, x_sym), sc.jacobian(written, x_sym)]
+  fn = sc.Function.from_exprs("cars_rk4", [x_sym, u_sym, p_sym], outputs, ["xs", "us", "p"], ["a", "b", "ja", "jb"])
+  a, b, ja, jb = (np.asarray(value) for value in fn((xs, us, p)))
+  np.testing.assert_allclose(a, b, rtol=1e-14, atol=1e-15)
+  np.testing.assert_allclose(ja, jb, rtol=1e-13, atol=1e-14)
+  assert np.count_nonzero(ja) == 4 * cars  # one 2x2 block per car
+
+
 def vdp_np(t, x, u=0.3, mu=3.0):
   return [x[1], mu * (1 - x[0] ** 2) * x[1] - x[0] + u]
 

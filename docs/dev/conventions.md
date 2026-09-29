@@ -52,10 +52,10 @@ Correctness checks have two homes, and each check belongs in exactly one.
 
 `tests/` covers scaly itself: the intermediate representations, differentiation, code generation
 and solver plumbing. It mirrors `src/scaly/` directory for directory. It never imports
-`benchmarks.problems`, and it imports `benchmarks.harness` only in `tests/benchmarks/` and the viz
+`bench.problems`, and it imports `bench.harness` only in `tests/bench/` and the viz
 recording tests.
 
-`benchmarks/problems/<problem>/checks.py` covers that problem: its input data, formulation, parameter
+`bench/problems/<problem>/checks.py` covers that problem: its input data, formulation, parameter
 layout, constant pins, and agreement between backends. Those checks gate the measurement they belong
 to.
 

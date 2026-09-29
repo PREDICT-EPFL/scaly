@@ -22,7 +22,7 @@ uv run --with jupyterlab jupyter lab examples/interp
 
 The plots use the shared style in `plotstyle.py`, beside them. Five of the notebooks write their C to
 `examples/generated/interp/<name>/` (git-ignored); `shape_constrained` has none to write. The FSDS centre line in `data/` is the one the
-race-car benchmark uses (`benchmarks/problems/race_cars/data/tracks/fsds_competition_1`).
+race-car benchmark uses (`bench/problems/race_cars/data/tracks/fsds_competition_1`).
 
 ## CasADi pairs
 

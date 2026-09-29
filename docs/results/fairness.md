@@ -105,7 +105,7 @@ The following audit experiment selected the CPU policy. It is not a headline ben
 The harness protocol check on 2026-09-05 used `performance`, five fresh processes per backend,
 and alternating backend order on the race-car Hessian at N=40. Google Benchmark ran for at least
 0.5 seconds per cell. Raw rows and provenance are local, gitignored artifacts under
-`benchmarks/results/protocol/boost_on/race.csv` and `benchmarks/results/protocol/boost_off/race.csv`.
+`bench/results/protocol/boost_on/race.csv` and `bench/results/protocol/boost_off/race.csv`.
 
 | Backend | Boost-on mean, µs | Boost-off mean, µs | Boost-on coefficient of variation | Boost-off coefficient of variation |
 |---|---:|---:|---:|---:|
@@ -381,11 +381,27 @@ column-compressed pattern. The metadata count is therefore the shipped source ar
 normalized measure of sparsity information. Report both counts. These costs need their own rows and
 must not be folded into a speed-up.
 
+## When the code behind a result changes
+
+A table stands for the generated code that produced it. A change that moves the C of a Scaly column
+leaves the published numbers describing the old code, and only a complete study on the reference
+machine replaces them: re-timing one column on its own would put two runs from different days into
+one comparison, which the protocol above does not allow.
+
+The published tables predate one such change. On 2026-09-29 the problems' Runge-Kutta steps moved
+from hand-written code onto `scaly.integrators`, as `si.rk4` maps with the step size an input, in the
+chain, race-car and unbumpercars formulations. Each stage now calls the model as a Function (the
+race-car model was inline expressions before), and the step multiplies by `h/6` where the written
+step divided by 6, which moves values by rounding. The CasADi mirrors and the NumPy references keep
+their written-out steps, so the CasADi columns and the references every gate compares against are
+unchanged. The neural-process MPC's learned model is a discrete map with no Runge-Kutta step, and
+its column is unchanged.
+
 ## Reproduce the comparison
 
 ```bash
-uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
-uv run benchmarks/run.py report benchmarks/results/<study-name>
+uv run bench/run.py study --out-dir bench/results/<study-name>
+uv run bench/run.py report bench/results/<study-name>
 ```
 
 The first command runs the frozen sweep grids and canonical closed loops. The second command rebuilds

@@ -3,7 +3,9 @@
 These are the results of the complete study that started on 2026-09-10 and finished on
 2026-09-11. The study measured exact sparse Lagrangian Hessians and canonical closed-loop
 controllers against CasADi 3.8.0. The [scalability page](scalability.md) contains every sweep cell,
-and the [fairness page](fairness.md) states what each comparison holds constant.
+and the [fairness page](fairness.md) states what each comparison holds constant. The Scaly columns
+were recorded before the problems' Runge-Kutta steps moved onto `scaly.integrators`; the fairness
+page says [what that changed](fairness.md#when-the-code-behind-a-result-changes).
 
 The study completed all 690 planned sweep attempts and 75 closed-loop episodes. Of the sweep
 attempts, 514 produced timings, 16 reached the 180-second compilation limit, and 160 were skipped
@@ -92,8 +94,8 @@ comparison.
 ## Reproduce the study
 
 ```bash
-uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
-uv run benchmarks/run.py report benchmarks/results/<study-name>
+uv run bench/run.py study --out-dir bench/results/<study-name>
+uv run bench/run.py report bench/results/<study-name>
 ```
 
 The study command runs the frozen grids with five fresh processes, order seed 0, the

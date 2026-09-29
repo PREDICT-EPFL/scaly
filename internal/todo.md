@@ -1149,7 +1149,7 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
 - [x] **CAPI-72. Native entry cleanup.** `mem` becomes `int`; the `f_sz_*()` functions and the
       `alloc_mem/init_mem/free_mem` stubs go from `codegen/c.py` and `codegen/aot.py`; the JIT
       reads `module.workspace_size` instead of calling `f_sz_w()`; the ABI doc follows. Touches
-      every rendered header, so the whole suite runs and the `benchmarks/results/smoke/**`
+      every rendered header, so the whole suite runs and the `bench/results/smoke/**`
       fixtures are regenerated if compared textually. [Design](notes/generated_interface_2026_09_18.md#the-pointer-entry-both-languages-always).
 - [x] **CAPI-73. C header with a caller-owned workspace.** After CAPI-72. Buffer structs become
       `f_x_t` (no `_in`/`_out`), 16-byte aligned; `f_workspace_t` is passed to `f_call` instead of
@@ -1188,6 +1188,9 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
       sets in fairness.md until BH-20 reruns. Evidence: `notes/perf_2026_09_07/README.md`.
 - [ ] **BH-21. Add an immutable publication mode**: clean release candidate, every raw run retained,
       and an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
+- [ ] **BH-49. Rerun the study on the reference machine now that the problems step with `si.rk4`**,
+      (`uv run bench/run.py study`, then `report`) and replace the results pages' tables.
+      [Why](../docs/results/fairness.md#when-the-code-behind-a-result-changes).
 
 ### Deferred
 
@@ -1517,7 +1520,7 @@ merge into dev and prioritize documentation.
       the one-time prologue. Disabling the identity lookup makes the regression fail.
 
 - [x] **BH-20. Complete the closeout study.** Completed 2026-09-11
-      in `benchmarks/results/study-2026-09-10`. The [results overview](../docs/results/index.md)
+      in `bench/results/study-2026-09-10`. The [results overview](../docs/results/index.md)
       and [scalability tables](../docs/results/scalability.md) contain the completed study.
       The interrupted 2026-09-09 attempt
       remains preserved in its original result directory and frozen investigation note.

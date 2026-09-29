@@ -11,7 +11,7 @@ cd scaly
 uv sync
 ```
 
-Use `uv run` for everything, for example `uv run pytest` or `uv run benchmarks/run.py`. `uv run`
+Use `uv run` for everything, for example `uv run pytest` or `uv run bench/run.py`. `uv run`
 takes a script path directly, so the `python` in `uv run python script.py` is redundant. Do not
 activate the virtual environment by hand.
 
@@ -129,7 +129,7 @@ namespace has its own directory beside it, so `src/scaly/ocp/ilqr.py` is tested 
   `test_example_runner.py` runs every example script and notebook outside `examples/case_studies/`,
   skipped where a requirement it declares is missing, and `test_examples_lint.py` holds the examples
   to the public API and to declaring what they need (see [Examples](#examples)).
-- `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates; see
+- `tests/bench/` tests the benchmark harness. The benchmark problems keep their own gates; see
   [Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
 - `tests/typing/` holds the expected-error assertions that `ty check` covers, across namespaces.
 - `tests/core/baseline/c/` holds the generated-C snapshots that `tests/core/test_c_snapshot.py`

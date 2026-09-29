@@ -2,7 +2,8 @@
 
 These are all exact sparse Lagrangian Hessian cells from the study that started on 2026-09-10 and
 finished on 2026-09-11. The [results overview](index.md) summarizes the canonical points, and the
-[fairness audit](fairness.md) defines the comparison.
+[fairness audit](fairness.md) defines the comparison. The Scaly cells predate the move of the
+problems' Runge-Kutta steps onto `scaly.integrators` ([what changed](fairness.md#when-the-code-behind-a-result-changes)).
 
 Each cell compiles one generated C kernel into a separate Google Benchmark binary. Before timing,
 the binary scatters the compact Hessian into a dense matrix and compares it with an independent
@@ -194,13 +195,13 @@ cost increase with the problem axis. The backend names are:
 
 ```bash
 # Run every headline sweep and closed loop, then render the report.
-uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
+uv run bench/run.py study --out-dir bench/results/<study-name>
 
 # Run only the frozen sweep grids.
-uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only sweep
+uv run bench/run.py study --out-dir bench/results/<study-name> --only sweep
 
 # Render an existing study again.
-uv run benchmarks/run.py report benchmarks/results/<study-name>
+uv run bench/run.py report bench/results/<study-name>
 ```
 
 Raw comma-separated value files, generated code, samples, binaries, logs, and provenance live below

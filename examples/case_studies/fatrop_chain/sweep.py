@@ -14,7 +14,7 @@ Backends:
   casadi_sx     rockit's NLP expanded to SX (`expand=True`), what the paper compiled
   casadi_mx     rockit's NLP as MX, one call node per stage (`expand=False`)
   casadi_map    the same NLP written with the stage map `F.map(N)` over an SX stage function
-CasADi oracles are `transform`ed (CSE) and generated with `casadi_int = int`, like benchmarks/harness/sweep.py.
+CasADi oracles are `transform`ed (CSE) and generated with `casadi_int = int`, like bench/harness/sweep.py.
 """
 
 from __future__ import annotations

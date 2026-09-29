@@ -183,7 +183,7 @@ jobs:
         run: uv run pytest -n=auto -m "not method"
 
       - name: Benchmark smoke
-        run: uv run python benchmarks/run.py smoke --skip solver_call
+        run: uv run bench/run.py smoke --skip solver_call
 
   tests-solvers:
     name: solver tests / ${{ matrix.os }}
@@ -229,31 +229,31 @@ jobs:
         run: uv run pytest -n=auto -m method
 
       - name: Solver-call smoke
-        run: uv run python benchmarks/run.py smoke --select solver_call
+        run: uv run bench/run.py smoke --select solver_call
 
       - name: Solver-backed problem gates
         env:
           SCALY_REQUIRE_METHODS: "1"
-        run: uv run python benchmarks/run.py smoke --select problems
+        run: uv run bench/run.py smoke --select problems
 
       - name: Public closed-loop smoke commands
         run: |
-          uv run python benchmarks/run.py closed-loop --problem chain --solver ipopt --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none --smoke
+          uv run bench/run.py closed-loop --problem chain --solver ipopt --oracle scaly --smoke
+          uv run bench/run.py closed-loop --problem chain --solver sqp --oracle scaly --smoke
+          uv run bench/run.py closed-loop --problem chain --solver sqp --oracle casadi --smoke
+          uv run bench/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly --smoke
+          uv run bench/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --smoke
+          uv run bench/run.py closed-loop --problem race_cars --solver sqp --oracle scaly --smoke
+          uv run bench/run.py closed-loop --problem race_cars --solver sqp --oracle casadi --smoke
+          uv run bench/run.py closed-loop --problem unbumpercars --solver ipopt --oracle scaly --smoke
+          uv run bench/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi --smoke
+          uv run bench/run.py closed-loop --problem unbumpercars --solver sqp --oracle scaly --smoke
+          uv run bench/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi --smoke
+          uv run bench/run.py closed-loop --problem unbumpercars --solver none --smoke
 
       - name: Repeated benchmark commands
         run: |
-          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle both --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv
+          uv run bench/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out bench/results/smoke/repeated/sweep.csv
+          uv run bench/run.py closed-loop --problem race_cars --solver ipopt --oracle both --smoke --repetitions 2 --out-dir bench/results/smoke/repeated/episodes
+          uv run bench/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir bench/results/smoke/repeated/episodes
+          uv run bench/run.py modes bench/results/smoke/repeated/episodes --out bench/results/smoke/repeated/modes.csv

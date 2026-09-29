@@ -33,6 +33,8 @@ protocol, the reference machine and the evidence behind each rule. Put rationale
   `ruff` or `ty` is likely a globally installed one at a different version, which will format the
   tree or report types differently from the pinned tools CI uses.
 - `uv run --only-group docs zensical serve` — docs preview, `build` to render into `site/`
+- `uv run bench/run.py smoke` — the benchmark problems' gates and kernel smoke; `bench/README.md`
+  has the sweeps, studies and closed loops
 - `uv run path/to/script.py` runs a script. Not `uv run python path/to/script.py`: `uv run` takes
   the file directly, and the extra `python` buys nothing. The exception is an example with a PEP 723
   header (every script under `examples/` outside `case_studies/`): `uv run` would install its header's
@@ -67,7 +69,7 @@ Identifier spellings, several of which reach the generated C:
 
 ## Traps
 
-- **Never edit `benchmarks/problems/*/foxglove-layout.json`.** They are Foxglove Desktop exports,
+- **Never edit `bench/problems/*/foxglove-layout.json`.** They are Foxglove Desktop exports,
   not source: undocumented panel ids, split trees and camera state that a hand edit gets wrong and
   that the next re-export silently discards. If a recorder change leaves one stale, say what to
   toggle in Desktop and let the user re-export.

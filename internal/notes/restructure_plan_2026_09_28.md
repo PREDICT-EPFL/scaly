@@ -21,7 +21,7 @@
 - The gate for every step includes: `uv run ruff format`, `uv run ruff check`, `uv run ty check`,
   `uv run pytest -n=auto` (full suite, including solver-marked tests with the plugins built), and
   `tests/test_c_snapshot.py` byte-identical unless the step says otherwise. Steps touching IR, AD or
-  lowering also run `uv run benchmarks/run.py smoke` and compare medians against the previous step.
+  lowering also run `uv run bench/run.py smoke` and compare medians against the previous step.
 - Pre-1.0 breaks are unshimmed (`docs/dev/versioning.md`). When a public name moves, update every
   caller, example, notebook and doc page in the same step; do not leave aliases.
 - When a step reveals that this plan is wrong, stop, write the finding under **Open items**, and ask.
@@ -910,6 +910,38 @@ declared dependencies, run its tests); plugins against HEAD and against their ol
 supported `scaly`; release job (all wheels, `scaly[experimental,solvers]` in a clean env,
 conformance and examples). `scripts/release.py`. `benchmarks/` renamed `bench/`. Rewrite
 `docs/dev/versioning.md`, `docs/dev/codebase.md`, `AGENTS.md` commands.
+Log: Bench part done 2026-09-29. `benchmarks/` is `bench/` and `tests/benchmarks/` is `tests/bench/`
+(`git mv`, the four Foxglove layouts byte-unchanged); the package imports as `bench`, every command
+is `uv run bench/run.py ...` (CI, the `wt` pre-merge hook, `AGENTS.md`, which gains the smoke
+command, the dev and results pages, `bench`'s READMEs, two example references), and ruff includes
+and ty excludes `bench/**` as they did `benchmarks/**`. Inside `bench/` the one duplicated helper
+was the provenance call, five callers each passing the repository root and the harness compiler;
+`provenance.collect(cli_args)` defaults both. The helpers §3.5 names (`text_bytes`, `time_c`,
+`compile_*`, `machine()`, `parse_ipopt`) live in the case studies and `examples/{opt/qp_solvers,casadi}`'s
+`compare.py`, not in `benchmarks/`, and an example can import `bench` only through the `sys.path`
+edit 7.2 removes, so they stay duplicated until the comparison runners themselves move into `bench/`
+(after 7.2, Open items). The chain, race-car and unbumpercars problems step with
+`si.rk4(model, dt=None)`: `chain_step_fn`, `race_car_rk4` over `race_car_ode` (the model a Function,
+where it was inlined) and the unbumpercars continuous-time map and discrete model's pose step, each
+model taking one parameter per slot as `si` requires; the NumPy plants and the CasADi mirrors keep
+their written steps, being the references the gates compare against, and npmpc has no Runge-Kutta
+step (a learned discrete map, a NumPy midpoint plant). The step multiplies by `h/6` where the
+written one divided, so the generated C of those three problems changed; measured against the tree
+before the move at seeded inputs, the values agree to 1e-16 (chain's step) or exactly (chain's and
+the race car's equality constraints, both unbumpercars steps), and the C moved by one division
+turned multiplication per step, except the unbumpercars discrete model, whose pose step is now a
+called map (158 lines against 169, eleven more multiplications and additions). The recorded results
+predate it (`fairness.md`, todo BH-49), to be re-recorded on a quiet reference machine. `tests/integrators/test_explicit.py`
+gains the two shapes the problems now use, the map in a vmapped shooting transcription with its step
+read from a broadcast tail and the map vmapped directly with a scalar step formal, against the
+written-out step (values, sparse Jacobian, sparse Lagrangian Hessian); the written-out shapes stay
+covered in `tests/core` (`test_stage_transcription`, `test_derivatives`, `test_vmap`). A stage
+weight scaled by 1e-6 in `increment` fails both new tests, and reading `dt` from the head of the
+arguments fails their module. Written in a worktree by a parallel agent that could not sync an
+environment there, and gated in the main checkout after 7.2 (committed before 8.1, which it does not
+touch): 4332 passed, 54 skipped; C snapshots unchanged; ty within the ratchet (142);
+`uv run bench/run.py smoke` passed. The untracked `benchmarks/results/` and `third_party/` moved to
+`bench/`.
 
 ### Phase 9: optional
 
@@ -964,6 +996,12 @@ indices. Snapshots may change only where these ops appear; differential tests ag
   normal equations on `SparseLDL`, SymForce's damping schedule). Moving it needs manifold variables
   (a retraction and a tangent size) and a sparse normal-equation solve in `roots.LeastSquares`; the
   manifold comes with `geometry` (6.2).
-- **The benchmark problems keep their hand-written Runge-Kutta steps (6.1).** Their recorded timings
-  depend on the generated code; replacing them with `scaly.integrators` changes the workloads, so it
-  goes with the move to `bench/` (8.3), re-recording the results.
+- **The recorded benchmark results predate the problems' `scaly.integrators` steps (found at 6.1,
+  code done at 8.3).** The chain, race-car and unbumpercars problems step with `si.rk4` since 8.3,
+  which changed their generated C; the published tables were recorded before, and re-recording
+  them needs the reference machine quiet (todo BH-49), so it was not done with the code.
+- **The case studies' comparison runners stay in `examples/` (found at 8.3).** `text_bytes`,
+  `time_c`, the `compile_*` helpers, `machine()` and `parse_ipopt` are copied across
+  `examples/case_studies/*` and `examples/{opt/qp_solvers,casadi}/compare.py`. An example cannot import
+  `bench` without a `sys.path` edit, so sharing them means moving the runners into `bench/` (after
+  7.2, which is reorganizing `examples/`), or `bench` becoming an installed workspace member.

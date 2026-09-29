@@ -145,7 +145,7 @@ def test_tests_do_not_import_benchmark_problems() -> None:
         names = [node.module or "", *(f"{node.module}.{alias.name}" for alias in node.names)]
       else:
         continue
-      if any(name == "benchmarks.problems" or name.startswith("benchmarks.problems.") for name in names):
+      if any(name == "bench.problems" or name.startswith("bench.problems.") for name in names):
         violations.append(f"{path.relative_to(root)}:{node.lineno}")
   assert not violations, "Benchmark problem imports belong in problem checks: " + ", ".join(violations)
 
@@ -156,7 +156,7 @@ def test_library_authors_use_the_public_function_api() -> None:
   root = Path(__file__).resolve().parents[1]
   private = re.compile(r"\b(_from_exprs|_lift|_tokens|_load_library)\b")
   found = []
-  for folder in ("src", "tests", "plugins", "examples", "benchmarks"):
+  for folder in ("src", "tests", "plugins", "examples", "bench"):
     for path in (root / folder).rglob("*"):
       if path.suffix not in {".py", ".ipynb", ".md"} or any(part in {"third_party", ".ipynb_checkpoints", "results"} for part in path.parts):
         continue
@@ -198,7 +198,7 @@ def test_nothing_outside_scaly_opt_imports_its_private_names() -> None:
   root = Path(__file__).resolve().parents[1]
   pattern = re.compile(r"from (?:scaly\.opt|\.+opt)(?:\.[\w.]+)? import \(?([^)\n]*)")
   found = []
-  for folder in ("src", "tests", "plugins", "examples", "benchmarks"):
+  for folder in ("src", "tests", "plugins", "examples", "bench"):
     for path in (root / folder).rglob("*.py"):
       if ".ipynb_checkpoints" in path.parts or path.is_relative_to(root / "src" / "scaly" / "opt"):
         continue

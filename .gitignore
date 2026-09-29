@@ -28,7 +28,7 @@ plugins/*/src/*/_piqp_ext.pyi
 plugins/*/src/*/licenses/
 
 # Local benchmark outputs
-benchmarks/results/
+bench/results/
 
 # CasADi's JIT writes these into the working directory and does not always clean up
 jit_tmp*.c
