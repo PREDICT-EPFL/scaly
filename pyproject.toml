@@ -75,6 +75,9 @@ docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 cpp = "scaly.export.cpp"
 casadi = "scaly.export.casadi"
 
+[project.entry-points.pytest11]
+scaly = "scaly.testing.plugin"  # the method marker
+
 [project.entry-points."scaly.methods"]
 "ocp.altro" = "scaly.ocp.altro:ALTRO"
 "ocp.direct" = "scaly.ocp.direct:Direct"
@@ -178,6 +181,3 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugins"]
 norecursedirs = ["third_party", ".venv"]
-markers = [
-  "solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job",
-]

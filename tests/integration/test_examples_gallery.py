@@ -120,14 +120,14 @@ def test_ilqr_reaches_a_stationary_point_clear_of_obstacles() -> None:
   assert out["clearance"] > 0 and np.abs(out["final_error"]).max() < 0.05
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_tiny_qp_matches_the_closed_form() -> None:
   ns = _load("tiny_qp")
   for _, _, _, _, err, kkt in ns["main"]()["rows"]:
     assert err < 1e-6 and kkt < 1e-6
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_cbf_filter_is_safe_and_matches_slsqp() -> None:
   ns = _load("cbf_safety_filter")
   out = ns["main"]()
@@ -136,7 +136,7 @@ def test_cbf_filter_is_safe_and_matches_slsqp() -> None:
   assert len(out["active"]) > 0
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_portfolio_frontier_and_references() -> None:
   ns = _load("portfolio_qp")
   out = ns["main"]()
@@ -148,7 +148,7 @@ def test_portfolio_frontier_and_references() -> None:
     assert abs(total - 1) < 1e-6 and lo > -1e-8 and hi < ns["X_MAX"] + 1e-8
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nmpc_cartpole_swings_up() -> None:
   ns = _load("nmpc_cartpole")
   out = ns["main"]()
@@ -157,8 +157,8 @@ def test_nmpc_cartpole_swings_up() -> None:
   assert np.abs(out["inputs"]).max() <= ns["U_MAX"] + 1e-6
 
 
-@pytest.mark.solver("sqp")
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.sqp")
+@pytest.mark.method("opt.ipopt")
 def test_mhe_tracks_the_pendulum_and_agrees_with_ipopt() -> None:
   ns = _load("mhe")
   out = ns["main"]()
@@ -167,7 +167,7 @@ def test_mhe_tracks_the_pendulum_and_agrees_with_ipopt() -> None:
   assert abs(out["b"][-1] - ns["B_TRUE"]) < 0.15
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_opf_case9_reaches_the_published_optimum() -> None:
   ns = _load("optimal_power_flow")
   out = ns["main"]()

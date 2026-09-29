@@ -9,7 +9,7 @@ import scaly as sc
 from scaly.opt.external.wrapper import SolverWrapperCtx
 from scaly.ir.types import SparsityType
 from scaly.opt.external.model import ExternalOracle, SolverDescriptor, descriptor_function
-from tests.opt.problem_helpers import build_nlp, solve_nlp
+from scaly.testing.helpers import build_nlp, solve_nlp
 
 
 def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.ConcreteFunction:
@@ -88,7 +88,7 @@ def test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns(rows: t
     assert "foreign_hess_raw" not in source
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_generated_stats_and_timing_split() -> None:
   x = sc.sym("x", 2)
   f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
@@ -115,7 +115,7 @@ def test_nlp_generated_stats_and_timing_split() -> None:
   assert sc.opt.solver_stats(nlp).to_solver_status().iter == stats.iter
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_vendored_ipopt_can_coexist_with_casadi_ipopt() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(x=x, f=(x[0] - 1.0) ** 2, solver="ipopt", name="ipopt_namespace")
@@ -130,7 +130,7 @@ def test_vendored_ipopt_can_coexist_with_casadi_ipopt() -> None:
   assert float(casadi_out["x"]) == pytest.approx(2.0)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_generated_warm_start_reduces_iterations() -> None:
   """Seeding x0 + lam_eq0 + lam_box0 from a previous solve (with
   warm_start_init_point) must converge in fewer iterations than cold."""
@@ -151,7 +151,7 @@ def test_nlp_generated_warm_start_reduces_iterations() -> None:
   assert sc.opt.solver_stats(warm).iter < sc.opt.solver_stats(cold).iter
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_generated_status_max_iter() -> None:
   x = sc.sym("x", 2)
   f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
@@ -164,7 +164,7 @@ def test_nlp_generated_status_max_iter() -> None:
   assert sc.opt.solver_stats(nlp).to_solver_status() is not None and not sc.opt.solver_stats(nlp).to_solver_status().ok
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_generated_rejected_option_reports_error_status() -> None:
   """The generated wrapper checks every AddIpopt*Option return and surfaces
   SCALY_SOLVE_ERROR with Invalid_Option (-12) as the native status and
@@ -183,7 +183,7 @@ def test_nlp_generated_rejected_option_reports_error_status() -> None:
   assert sc.opt.solver_stats(nlp).to_solver_status() is not None and not sc.opt.solver_stats(nlp).to_solver_status().ok
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_equality_constrained_quadratic() -> None:
   """min (x-1)^2 + (y-2)^2  s.t.  x + y == 1.
 
@@ -200,7 +200,7 @@ def test_nlp_equality_constrained_quadratic() -> None:
   np.testing.assert_allclose(out["lam_eq"], [2.0], atol=1e-6)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_box_only_quadratic() -> None:
   """Unconstrained convex objective + box bound that becomes active.
 
@@ -217,7 +217,7 @@ def test_nlp_box_only_quadratic() -> None:
   assert out["lam_box"][1] < 0
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
   """min x[0]^2 + 0.5 x[1]^2 + x[0] x[1]   s.t.   0 <= x[0]^2 + x[1] <= 5.
 
@@ -242,7 +242,7 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
   np.testing.assert_allclose(out["g_ineq"], [0.0], atol=2e-4)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   piece_x = sc.sym("piece_x", 2)
@@ -290,7 +290,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   np.testing.assert_allclose(hess_dense(True, mapped_out["x"], lam), hess_dense(False, mapped_out["x"], lam), rtol=1e-10, atol=1e-12)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_with_symbolic_parameter() -> None:
   """Parameter-aware NLP: solve min (x - mu)^2 across different ``mu`` values."""
   x = sc.sym("x", 2)
@@ -303,7 +303,7 @@ def test_nlp_with_symbolic_parameter() -> None:
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-6)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nlp_rosenbrock_equality_constrained() -> None:
   """Classic Rosenbrock, equality-constrained.
 
@@ -323,7 +323,7 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
   np.testing.assert_allclose(out["x"], [0.6187956190750259, 0.3812043809249741], atol=1e-5)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nested_nlp_in_scaly_function() -> None:
   """NLP solver embedded in a larger Function."""
 
@@ -343,7 +343,7 @@ def test_nested_nlp_in_scaly_function() -> None:
   np.testing.assert_allclose(x_proj, [0.0, 1.0], atol=1e-5)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   """JIT path for an NLP: projects (target) onto the unit circle."""
 

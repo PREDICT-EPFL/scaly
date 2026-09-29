@@ -13,7 +13,7 @@ import scaly_ipopt
 PACKAGE = Path(scaly_ipopt.__file__).parent
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_license_directory_per_pinned_dependency():
   pinned = json.loads((PACKAGE / "build_config.json").read_text())
   licenses = PACKAGE / "licenses"

@@ -7,7 +7,8 @@ import pytest
 from scipy import sparse
 
 from tests.opt.ipm import reference as ref
-from tests.opt.ipm.problems import INFINITE, gate_problems, infeasible_problems, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp, raw
+from scaly.testing.qp import INFINITE, infeasible_problems, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp, raw
+from tests.opt.ipm.problems import gate_problems
 
 NAMES = maros_meszaros_names()
 

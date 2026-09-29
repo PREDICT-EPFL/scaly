@@ -51,7 +51,7 @@
 | 5.3 | OCP methods, warm start, terminal ingredients; `mpc` removed | ☑ |
 | 6.1 | Library code promoted from examples | ☑ |
 | 6.2 | `nn`, `geometry`, `export` namespaces | ☑ |
-| 7.1 | Conformance suites and the `method` marker | ☐ |
+| 7.1 | Conformance suites and the `method` marker | ☑ |
 | 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☐ |
 | 8.1 | `distributions.toml`, manifests, metapackage | ☐ |
 | 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☐ |
@@ -831,6 +831,31 @@ library's SO(3). Left: `deploy_in_c.py`'s scalar-first quaternion kinematics and
 
 **7.1** `scaly.testing` with the pytest plugin, `method` marker, conformance suites, hyper-dual
 numbers; tests reorganized per §3.6.
+Log: done 2026-09-29. `scaly.testing` (import layer 10, outside `sc.__all__`): `plugin` (the
+`method` marker through a `pytest11` entry point; `method_available` checks the domain registry and,
+for an external solver, that its library loads; `SCALY_REQUIRE_METHODS=1` turns a missing method
+into a usage error, a subprocess test pins both), `hyperdual` (from `benchmarks/harness`),
+`helpers` (from `tests/opt/problem_helpers.py`), `qp` (the Maros–Meszaros data moved from
+`tests/data`, random and MPC QPs) and `conformance.{qp,ocp,roots}`. `tests/conformance/` lists every
+installed method per class and fails on an unlisted one: QP over `ipm`, `piqp`, `ipopt` (88 cases);
+DiscreteOCP over the five OCP methods; Root/LeastSquares over the four roots methods, each refusal
+checked to be refused by `solver()` too. The piqp and ipopt plugins run the QP suite in their own
+tests. 142 `solver("x")` marks became `method("opt.x")`, plus two hand-rolled `REGISTRY.installed()`
+skips; CI and `benchmarks/run.py` read the new variable. Tests: the compiler's under `tests/core/`
+(with `integration/` for its workload fixtures and `baseline/c/` for the snapshots); the node-ID
+baseline stays in `tests/baseline/`; `tests/typing/` stays at the root, as it spans namespaces.
+`tests/core` now passes with every other namespace blocked (`docs/dev/contributing.md` gives the
+command); getting there moved the CasADi and C++ adapter tests to `tests/export/`, the solver-path,
+solver-derivative, nested-PIQP and unnamed-leaf tests to `tests/opt/`, a spline read to
+`tests/interp/`, the op-colour check to `tests/viz/`, and made the snapshot's `table` and adapted
+entries skip without `scaly.interp`/`scaly.export`. The adapter-registry tests now use throwaway
+adapters and a fake entry point. Deviations: the DiscreteOCP suite uses four small reference
+problems (LQ, boxed, tracking, pendulum by multiple shooting) solved tight by `Direct` on IPOPT
+rather than the benchmark OCPs, which `src/` cannot import; `sqp` is held out of the QP suite
+(todo S-19); the NLP suite (no CUTEst data, S-20) and the LinearSystem suite (no linalg registry,
+S-21) are not written; "Fit" is the least-squares half of the roots suite; per-distribution node-ID
+baselines wait for 8.1's `distributions.toml`. Suite: 4023 passed, 54 skipped (the 12 new are
+conformance refusals); C snapshots unchanged; ty within the ratchet (188).
 **7.2** Examples per namespace with PEP 723 headers; public-API lint test; runner skips on missing
 requirements.
 

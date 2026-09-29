@@ -8,7 +8,8 @@ import pytest
 import scaly as sc
 from scaly.opt.ipm import KKT, Backend, Iterate, Kernels, QPStructure, QPValues, Refinement, ScaledQP, Scaling, ruiz, scale
 from tests.opt.ipm import reference as ref
-from tests.opt.ipm.problems import infeasible_problems, ipm_inputs, maros_meszaros, mpc_qp, random_qp
+from scaly.testing.qp import infeasible_problems, maros_meszaros, mpc_qp, random_qp
+from tests.opt.ipm.problems import ipm_inputs
 
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")
 PROBLEMS = ["HS21", "HS35MOD", "QAFIRO", "DUAL1", "CVXQP1_S", "QPCBLEND", "DPKLO1", "GENHS28", "QSC205", "PRIMALC1"]

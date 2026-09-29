@@ -606,7 +606,7 @@ def npmpc_lag_hess_dense_reference(
   terminal term and the slack penalty are added on their own blocks. Each block is one exact
   hyper-dual evaluation per column.
   """
-  from benchmarks.harness.hyperdual import lagrangian_hessian_np
+  from scaly.testing.hyperdual import lagrangian_hessian_np
 
   z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)
   if z.shape != (n_dec(horizon),) or p.shape != (n_param(decoder),) or lam_g.shape != (sum(constraint_counts(horizon)),):

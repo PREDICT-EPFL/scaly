@@ -8,8 +8,8 @@ degree, and the exact-Hessian path over closed-loop samples. They run before any
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
 covers Scaly's core and must not depend on a benchmark problem. The sparse Lagrangian
 Hessian and CasADi-differential behaviours these lean on have self-contained
-reproductions in ``tests/ad/test_sparsity.py`` and
-``tests/function/test_factory.py``.
+reproductions in ``tests/core/ad/test_sparsity.py`` and
+``tests/core/function/test_factory.py``.
 """
 
 from __future__ import annotations

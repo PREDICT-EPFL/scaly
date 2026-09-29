@@ -14,7 +14,7 @@ from scaly_ipopt import BUILD_CONFIG
 
 ca = pytest.importorskip("casadi")
 
-pytestmark = pytest.mark.solver("ipopt")
+pytestmark = pytest.mark.method("opt.ipopt")
 
 
 def test_compiled_nlpsol_uses_scaly_ipopt_and_refreshes_outputs() -> None:

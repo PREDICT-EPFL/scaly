@@ -9,7 +9,7 @@ import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.ir.types import SparsityType
 from scaly.opt.external.graph import solver_descriptor
-from tests.opt.problem_helpers import build_nlp, solve_nlp
+from scaly.testing.helpers import build_nlp, solve_nlp
 
 
 def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> sc.Function:
@@ -45,7 +45,7 @@ def test_sqp_generated_wrapper_reuses_one_qp_workspace(interface: str) -> None:
   assert "settings.eps_duality_gap_rel = 1e-08" in source
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 @pytest.mark.parametrize("hessian", ["exact", "objective"])
 def test_sqp_hessian_modes_solve_constrained_quadratic(hessian: str) -> None:
   solver = _problem(hessian=hessian)
@@ -56,7 +56,7 @@ def test_sqp_hessian_modes_solve_constrained_quadratic(hessian: str) -> None:
   assert out["g_ineq"][0] == pytest.approx(-0.5, abs=2e-6)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_stats_split_is_additive() -> None:
   solver = _problem()
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
@@ -68,7 +68,7 @@ def test_sqp_stats_split_is_additive() -> None:
   assert stats.n_eval_h > 0 and stats.n_eval_jac_g > 0
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_diagnostics_stats_fields() -> None:
   solver = _problem()
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
@@ -82,7 +82,7 @@ def test_sqp_diagnostics_stats_fields() -> None:
   assert stats.merit_penalty == 0.0  # the default filter has no merit penalty
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_rejects_nonfinite_warm_starts_before_the_kkt_check() -> None:
   solver = _problem()
   valid = [np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8])]
@@ -119,7 +119,7 @@ def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
   assert all("pct%s" not in line and '"quote' not in line for line in source.splitlines() if "fprintf" in line)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_trace_prints_per_iteration_lines_to_stderr(capfd: pytest.CaptureFixture[str]) -> None:
   solver = _problem(trace=True)
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
@@ -266,8 +266,8 @@ def test_sqp_bakes_csc_patterns_from_the_descriptor_sparsity() -> None:
   assert sorted(jac[k] for k in g_src) == sorted(entry for entry in jac if entry[0] >= nh)
 
 
-@pytest.mark.solver("sqp")
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.sqp")
+@pytest.mark.method("opt.ipopt")
 def test_sqp_sparse_assembly_reaches_the_same_solution_as_ipopt() -> None:
   """The sparse assembly's only external reference: a scrambled COO-to-CSC
   permutation still produces a self-consistent QP, so pattern assertions alone
@@ -285,7 +285,7 @@ def test_sqp_sparse_assembly_reaches_the_same_solution_as_ipopt() -> None:
   np.testing.assert_allclose(sqp_out["h_eq"], 0.0, atol=1e-9)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_sparse_and_dense_qp_interfaces_agree() -> None:
   """The dense interface assembles the same QP from the same patterns, so it
   is a differential check on the sparse assembly. Benchmarks never select it —
@@ -341,7 +341,7 @@ def test_sqp_ldl_symbolic_matches_a_dense_reference() -> None:
   assert parent == [-1] * n and l_ptr == [0] * (n + 1)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
   # H = [[1, 2], [2, 1]] has eigenvalues -1 and 3, so PIQP cannot take it
   # unregularized; the modified factorization shifts it positive definite
@@ -362,7 +362,7 @@ def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
   assert out["x"][0] * out["x"][1] < 0.0
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 @pytest.mark.parametrize("globalization", ["filter", "l1"])
 def test_sqp_globalizations_backtrack_before_accepting(globalization: str) -> None:
   x = sc.sym("x", 1)
@@ -382,7 +382,7 @@ def test_sqp_globalizations_backtrack_before_accepting(globalization: str) -> No
     assert stats.merit_penalty == pytest.approx(10.0)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_fails_when_filter_has_no_acceptable_trial() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(
@@ -398,7 +398,7 @@ def test_sqp_fails_when_filter_has_no_acceptable_trial() -> None:
   assert stats.alpha == 0.0 and stats.backtracks == 1
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_watchdog_falls_back_to_checkpoint_line_search() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(
@@ -415,7 +415,7 @@ def test_sqp_watchdog_falls_back_to_checkpoint_line_search() -> None:
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_kkt_terminates_at_initial_bound_optima_with_signed_multipliers() -> None:
   x = sc.sym("x", 1)
   upper = build_nlp(x=x, f=-x[0], x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_upper_kkt")
@@ -427,7 +427,7 @@ def test_sqp_kkt_terminates_at_initial_bound_optima_with_signed_multipliers() ->
     assert stats.iter == 0 and stats.qp_iter == 0 and stats.alpha == 0.0
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_bound_complementarity_uses_the_slack_selected_by_multiplier_sign() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(
@@ -444,7 +444,7 @@ def test_sqp_bound_complementarity_uses_the_slack_selected_by_multiplier_sign() 
   assert stats is not None and stats.iter == 1
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(
@@ -461,7 +461,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
   assert stats is not None and stats.status == sc.Status.OK and stats.iter == 0
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_nested_in_host_function() -> None:
   solver = _problem()
   target = sc.sym("target", 2, diff=False)
@@ -470,7 +470,7 @@ def test_sqp_nested_in_host_function() -> None:
   np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   # the iteration cap makes PIQP stop just short of its tolerance with a polished
   # iterate; like laopt, the SQP must use it and still converge
@@ -482,7 +482,7 @@ def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_max_iter_status() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(
@@ -497,7 +497,7 @@ def test_sqp_max_iter_status() -> None:
   assert sc.opt.solver_stats(solver) is not None and sc.opt.solver_stats(solver).status == sc.Status.MAX_ITER
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
   x = sc.sym("x", 2)
   solver = build_nlp(
@@ -529,7 +529,7 @@ def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
   assert bound_out["lam_box"][0] > 0.0
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(x=x, f=(x[0] - 2.0) ** 4, solver="sqp", name="sqp_unconverged", options={"max_iter": 1, "tol": 1e-12})
@@ -557,7 +557,7 @@ def test_sqp_rejects_invalid_options(options: dict[str, str | int | float | bool
     solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_same_sqp_wrapper_accepts_casadi_codegen_oracles(monkeypatch: pytest.MonkeyPatch) -> None:
   import casadi as ca
 
@@ -656,7 +656,7 @@ def test_casadi_external_sqp_validates_oracle_and_bound_shapes() -> None:
     )
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_casadi_external_sqp_supports_unconstrained_problem_without_jacobian() -> None:
   import casadi as ca
 

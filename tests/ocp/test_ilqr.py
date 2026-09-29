@@ -66,7 +66,7 @@ CAR = ocp.DiscreteOCP(step=car, N=N, stage_cost=car_stage, terminal_cost=car_ter
 GOAL = np.array([4.0, 1.5, np.pi / 2, 0.0])
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_nonlinear_problem_reaches_the_direct_methods_optimum() -> None:
   x0 = np.zeros(NX)
   ilqr = Controller(CAR, ocp.ILQR()).solve(x0, goal=GOAL)
@@ -100,7 +100,7 @@ def pendulum(x, u):
   return sc.stack([x[1], -x[0].sin() - 0.1 * x[1] + u[0]])
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_continuous_model_by_multiple_shooting_solves_the_direct_methods_problem() -> None:
   """The running cost at the points is ``dt`` times the sum; the map is the transcription's integrator."""
   continuous = ocp.ContinuousOCP(

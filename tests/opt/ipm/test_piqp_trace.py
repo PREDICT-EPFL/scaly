@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 
 from tests.opt.ipm import piqp_trace
-from tests.opt.ipm.problems import infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp
+from scaly.testing.qp import infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp
 
 NAMES = maros_meszaros_names()
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_hs21_matches_its_known_optimum() -> None:
   qp = maros_meszaros("HS21")
   trace = piqp_trace.run(qp)
@@ -22,7 +22,7 @@ def test_hs21_matches_its_known_optimum() -> None:
   np.testing.assert_allclose(trace.column("primal_obj")[-1], trace.info["primal_obj"], rtol=1e-5)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("name", NAMES)
 def test_every_problem_solves_the_same_with_both_backends(name: str) -> None:
   qp = maros_meszaros(name)
@@ -35,7 +35,7 @@ def test_every_problem_solves_the_same_with_both_backends(name: str) -> None:
   assert primal <= 1e-6 * (1.0 + np.abs(sparse_run.vectors["x"]).max()) and dual <= 1e-5 * scale
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("name", ["HS21", "QAFIRO", "DUAL1", "CVXQP1_S", "QPCBLEND"])
 def test_a_truncated_run_is_a_prefix_of_the_full_run(name: str) -> None:
   """``max_iter = k`` stops after iteration ``k`` of the full run: its full-precision result matches
@@ -69,7 +69,7 @@ def test_the_parser_reads_every_part() -> None:
   assert trace.vectors["y"].size == 0
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("name", sorted(piqp_trace.INFEASIBLE_STATUS))
 def test_piqp_statuses_on_the_infeasible_set(name: str) -> None:
   qp, _ = infeasible_problems()[name]
@@ -77,7 +77,7 @@ def test_piqp_statuses_on_the_infeasible_set(name: str) -> None:
     assert piqp_trace.run(qp, dense=dense).status == piqp_trace.INFEASIBLE_STATUS[name]
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("args", [(4, 2, 10), (12, 4, 20)])
 def test_mpc_problems_solve(args) -> None:
   qp = mpc_qp(*args)

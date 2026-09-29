@@ -26,5 +26,6 @@ For prose explanations, start with the [User Guide](../guide/getting_started.md)
 | [Geometry](geometry.md) | quaternions and SO(3), three-vectors, manifolds with a retraction and local coordinates (experimental) |
 | [Solvers](solvers.md) | typed problems, solver selection, quadratic proof, and solve statistics |
 | [Visualization](viz.md) | recording a compile and serving it |
+| [Testing](testing.md) | the `method` marker, the conformance suites a method meets, reference problems, hyper-dual numbers |
 
 Anything not on these pages is internal and may move without notice.

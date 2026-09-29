@@ -40,7 +40,7 @@ def _solve(problem: sc.opt.NLP, layout: ocp.Layout, method: object, x0: np.ndarr
   return dict(zip(layout.var_names, (np.asarray(v) for v in leaves), strict=True)), float(info.objective)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_discrete_ocp_solves_the_same_sparse_and_condensed() -> None:
   problem = ocp.DiscreteOCP(
     step=double_integrator,
@@ -63,7 +63,7 @@ def test_a_discrete_ocp_solves_the_same_sparse_and_condensed() -> None:
   assert np.abs(s["xs"].reshape(11, 2)[1:, 1]).max() <= 0.6 + 1e-7  # the state bound holds after the start
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_continuous_ocp_transcribed_three_ways() -> None:
   continuous = ocp.ContinuousOCP(spring, T=1.0, stage_cost=effort, u_bounds=(-2.0, 2.0), name="spring_ocp")
   costs = {}

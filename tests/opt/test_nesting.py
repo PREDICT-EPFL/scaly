@@ -6,15 +6,12 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.opt.problem_helpers import build_qp
-from scaly.opt.method import REGISTRY
+from scaly.testing.helpers import build_qp
 from scaly.ir.expr import ExprOp, topo
 from scaly.codegen import render_c_source
 from scaly.opt.external.graph import solver_descriptor
 
-pytestmark = pytest.mark.skipif(
-  "piqp" not in REGISTRY.installed(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
-)
+pytestmark = pytest.mark.method("opt.piqp")  # the structural tests build the private QP differential fixture
 
 
 def test_solver_call_returns_expressions() -> None:
@@ -66,7 +63,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   assert calls[0].attrs["callee"] == qp.name
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
@@ -86,3 +83,26 @@ def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   host = sc.Function.from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
   with pytest.raises(ValueError, match="duplicate extern symbol 'problem_body_piqp'"):
     render_c_source(host)
+
+
+# A constant-scaled constraint behind two Function calls: its tangent drops the constant's zero
+# term (tests/core/ad/test_zero_tangent_products.py), so the model stays provably affine to PIQP.
+@sc.function(1, output="y", name="zero_tangent_inner")
+def _inner(u):
+  return 2.0 * u
+
+
+@sc.function(1, output="y", name="zero_tangent_outer")
+def _outer(u):
+  return _inner(u)
+
+
+@sc.opt.problem(vars=sc.L("u", 1), name="zero_tangent_two_levels")
+def _two_levels(u):
+  return sc.opt.ProblemSpec(minimize=(u * u).sum(), eq=(_outer(u) - 1.0,))
+
+
+def test_piqp_accepts_a_constraint_scaled_behind_two_calls() -> None:
+  solve = sc.opt.solver(_two_levels, sc.opt.PIQP(options={"eps_abs": 1e-10, "eps_rel": 1e-10}))
+  u, *_ = solve.numerical_call(np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(0), ())
+  np.testing.assert_allclose(u, [0.5], atol=1e-8)  # 2 u = 1

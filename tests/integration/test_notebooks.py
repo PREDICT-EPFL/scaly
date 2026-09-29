@@ -76,7 +76,7 @@ NAMES = [
 
 
 def _params() -> list:
-  return [pytest.param(name, marks=[pytest.mark.solver(s) for s in SOLVER[name]]) if name in SOLVER else name for name in NAMES]
+  return [pytest.param(name, marks=[pytest.mark.method(f"opt.{s}") for s in SOLVER[name]]) if name in SOLVER else name for name in NAMES]
 
 
 @pytest.mark.parametrize("name", _params())

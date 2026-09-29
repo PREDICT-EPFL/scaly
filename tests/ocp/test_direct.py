@@ -110,7 +110,7 @@ def library(transcription=None, name="lib_cartpole", *, track: bool = True, cost
   return ocp.transcribe(continuous, transcription or ocp.MultipleShooting(si.RK4(steps=2)), N=N)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_the_library_transcribes_the_cart_pole_as_by_hand() -> None:
   hand = sc.opt.solver(hand_written(), IPOPT, name="hand_ipopt")
   n_eq, n_ineq = (N + 1) * NX, 2 * N
@@ -129,7 +129,7 @@ def test_the_library_transcribes_the_cart_pole_as_by_hand() -> None:
   assert np.all(solution.slack >= -1e-7)  # IPOPT relaxes bounds by 1e-8
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_shooting_and_collocation_solve_the_same_problem_and_pseudospectral_improves_on_it() -> None:
   method = ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-11}))
   # A path constraint binds only at the grid points, which pseudospectral controls can dodge.
@@ -152,7 +152,7 @@ def integrator(x, u):
 TIGHT = ocp.Direct(sc.opt.PIQP(sparse=True, options={"eps_abs": 1e-10, "eps_rel": 1e-10}))
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_varying_reference_is_read_stage_by_stage() -> None:
   """``x+ = x + u`` tracking ``r_k`` from ``x0 = r_0`` can reach every reference exactly, at zero cost."""
   ref = np.array([0.0, 0.5, 0.2, 1.0, 1.3, 0.7, 0.9])
@@ -181,7 +181,7 @@ def tracking(x, u, target):
   return (e * e).sum() + 0.01 * u[0] * u[0]
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_parameters_are_the_union_of_what_the_functions_name() -> None:
   continuous = ocp.ContinuousOCP(spring, T=1.0, stage_cost=tracking, terminal=ocp.TerminalEquality(x_ref="target"), name="spring_ocp")
   problem = ocp.transcribe(continuous, N=10)
@@ -197,7 +197,7 @@ def test_parameters_are_the_union_of_what_the_functions_name() -> None:
   assert np.abs(stiffer.us - solution.us).max() > 1e-3  # the model reads its parameter
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_discrete_map_sums_its_costs_and_the_terminal_equality_holds() -> None:
   problem = ocp.DiscreteOCP(
     step=integrator, N=4, stage_cost=ocp.Quadratic(np.zeros((1, 1)), np.eye(1)), terminal=ocp.TerminalEquality(np.array([2.0])), name="reach"
@@ -207,7 +207,7 @@ def test_a_discrete_map_sums_its_costs_and_the_terminal_equality_holds() -> None
   np.testing.assert_allclose(solution.cost, 1.0, atol=1e-6)  # no dt: a discrete map's costs are summed
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_soft_constraint_holds_when_it_can_and_gives_way_when_it_cannot() -> None:
   @sc.function(1, 1, output="g")
   def level(x, u):
@@ -232,7 +232,7 @@ def test_a_soft_constraint_holds_when_it_can_and_gives_way_when_it_cannot() -> N
   np.testing.assert_allclose(infeasible.slack, [0.5, 0.4, 0.3], atol=1e-6)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_state_bounds_hold_after_the_initial_state_and_a_control_reference() -> None:
   """From ``x0 = 1.8`` towards 3, with ``x <= 1.5``: the initial state is data and may lie outside, every
   later state stops at the bound. ``u`` is drawn to ``u_ref = 0.3`` where the state cost allows."""
@@ -253,7 +253,7 @@ def test_state_bounds_hold_after_the_initial_state_and_a_control_reference() -> 
   np.testing.assert_allclose(Controller(steady, ocp.Direct(sc.opt.PIQP(sparse=True))).solve(np.array([0.0])).us.ravel(), 0.3, atol=1e-6)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_control_bounds_reach_every_pseudospectral_control() -> None:
   problem = library(ocp.Pseudospectral(4), name="bounded_nodes", track=False)
   controller = Controller(problem, ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-10})))
@@ -266,7 +266,7 @@ def test_control_bounds_reach_every_pseudospectral_control() -> None:
 
 
 # The tangent of a product or quotient with a constant leaves the constant's zero term out
-# (``tests/ad/test_zero_tangent_products.py``), so the model stays provably affine to PIQP.
+# (``tests/core/ad/test_zero_tangent_products.py``), so the model stays provably affine to PIQP.
 @sc.function(1, 1, output="xnext")
 def _times_step(x, u):
   return x + 0.1 * u
@@ -277,7 +277,7 @@ def _over_step(x, u):
   return x + u / 10.0
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("step", [_times_step, _over_step], ids=["times", "over"])
 def test_an_ocp_takes_a_model_that_scales_its_control(step: sc.Function) -> None:
   # The OCP wraps the model in one more Function, so the scaling sits two calls below the constraint.
@@ -289,7 +289,7 @@ def test_an_ocp_takes_a_model_that_scales_its_control(step: sc.Function) -> None
   np.testing.assert_allclose(solution.cost, 100.0, atol=1e-5)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_the_condensed_form_of_a_continuous_model_rolls_out_its_shooting_method() -> None:
   # The condensed form eliminates the states by a scan of the transcription's own integrator method.
   # From near upright the problem is nearly linear, with one optimum both forms must reach.
@@ -363,7 +363,7 @@ def _law(problem: ocp.DiscreteOCP, method: ocp.Direct, name: str) -> sc.Function
   return law
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_the_control_law_is_the_solve_and_its_shifted_warm_start() -> None:
   method = ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-10}))
   problem = _soft("law_side")
@@ -390,7 +390,7 @@ def test_the_law_generates_one_c_module_with_its_solver() -> None:
   assert law.inputs[1].shape == (method.warm_size(problem),)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_closed_loop_reaches_the_origin_within_its_limits() -> None:
   controller = Controller(_soft("closed_loop", horizon=20), ocp.Direct(sc.opt.PIQP(sparse=True, options={"eps_abs": 1e-9, "eps_rel": 1e-9})))
   xs, us, statuses, _ = closed_loop(controller, lambda x, u: A @ x + B @ u, np.array([2.0, 0.0]), 80)
@@ -399,7 +399,7 @@ def test_a_closed_loop_reaches_the_origin_within_its_limits() -> None:
   assert np.abs(xs[:, 1]).max() < 0.8 + 1e-3  # the soft speed limit holds, since it can
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_continuous_plant_through_an_adaptive_map() -> None:
   @sc.function(2, 1, output="xdot")
   def pendulum(x, u):
@@ -419,7 +419,7 @@ def test_a_continuous_plant_through_an_adaptive_map() -> None:
   assert np.abs(xs[-1]).max() < 1e-2 and np.all(iterations > 0)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_closed_loop_parameter_may_change_with_the_step() -> None:
   problem = ocp.DiscreteOCP(
     step=double, N=10, stage_cost=ocp.Quadratic(np.eye(2), 0.1 * np.eye(1), x_ref="target"), u_bounds=(-1, 1), name="moving_target"

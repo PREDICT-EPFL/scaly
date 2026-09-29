@@ -83,26 +83,32 @@ goes to stderr, which is discarded so it cannot splice into the last node ID. Th
 pytest node IDs, including parameter IDs with spaces, and `sort` makes the file deterministic. The
 final collection must pass.
 
-A test that needs a built solver carries a marker:
+A test that needs a method that may be missing, an external solver above all, carries a marker:
 
 ```python
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_something(): ...
 ```
 
-The root `conftest.py` skips those when the library is absent, and CI splits the suite on
-`-m solver` against `-m "not solver"`. Never hand-roll a "is the solver loadable" skip condition.
+`scaly.testing`'s pytest plugin skips those when the method is not installed or its library cannot
+load, and fails the run instead under `SCALY_REQUIRE_METHODS=1`, as CI's method job sets it; CI
+splits the suite on `-m method` against `-m "not method"`. Never hand-roll a "is the solver
+loadable" skip condition.
 
-The compiler's own tests pass without `scaly.linalg`, which registers its ops from outside the
-compiler. The root `conftest.py` blocks the packages named in `SCALY_BLOCK_IMPORTS`, so importing
-one fails as it would if it were not installed:
+The compiler's own tests, `tests/core/`, pass with only the core installed: without `scaly.linalg`,
+which registers its ops from outside the compiler, and without any other namespace. The root
+`conftest.py` blocks the packages named in `SCALY_BLOCK_IMPORTS`, so importing one fails as it
+would if it were not installed:
 
 ```bash
-SCALY_BLOCK_IMPORTS=scaly.linalg uv run pytest -n=auto tests/ad tests/codegen tests/function tests/ir tests/passes tests/utils tests/viz tests/typing tests/test_c_snapshot.py tests/test_import_boundaries.py tests/test_import_layering.py
+SCALY_BLOCK_IMPORTS=scaly.linalg,scaly.roots,scaly.opt,scaly.integrators,scaly.interp,scaly.ocp,scaly.sets,scaly.viz,scaly.export,scaly.nn,scaly.geometry uv run pytest -n=auto tests/core tests/test_import_layering.py
 ```
 
-Run it after a change to the op registry, the rules or `LowerCtx`: a core test that reaches for
-`sc.linalg` belongs in `tests/linalg/`.
+Run it after a change to the op registry, the rules or `LowerCtx`, and after adding to
+`tests/core/`: a core test that reaches for a namespace belongs in that namespace's directory, and
+the few that only use one on the side (a snapshot under the `cpp` adapter) skip without it through
+`pytest.importorskip`. The blocking is at import only: a blocked package's entry points stay
+listed, so a test that loads every entry point of a group reaches it anyway.
 
 An xdist worker occasionally dies inside the isolated library load in the vendored-solver plugin
 tests. It reproduces on unmodified checkouts, so a lone worker crash there is probably not yours.
@@ -110,15 +116,25 @@ Rerun before reading it as a failure.
 
 ## Where things live
 
-`tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering.py`
-has its tests in `tests/passes/test_lowering.py`. Outside the mirror:
+`tests/` mirrors `src/scaly/` by namespace. The compiler's packages (`ir`, `ad`, `function`,
+`passes`, `codegen`, `utils`) have theirs under `tests/core/`, so a change to
+`src/scaly/passes/lowering.py` has its tests in `tests/core/passes/test_lowering.py`; each domain
+namespace has its own directory beside it, so `src/scaly/ocp/ilqr.py` is tested in
+`tests/ocp/test_ilqr.py`. Outside the mirror:
 
-- `tests/integration/` holds workload-shaped end-to-end checks.
+- `tests/conformance/` runs each problem class's suite from `scaly.testing.conformance` over every
+  installed method; a method missing from its table fails there, so a new one is listed on purpose.
+- `tests/core/integration/` holds the compiler's workload-shaped end-to-end checks, and
+  `tests/integration/` the ones that cross namespaces: the examples, notebooks and case studies.
 - `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates; see
   [Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
-- `tests/typing/` holds the expected-error assertions that `ty check` covers.
-- `tests/baseline/` holds `pytest_nodeids.txt` and the generated-C snapshots under `c/`, checked by
-  the root-level `tests/test_c_snapshot.py`.
+- `tests/typing/` holds the expected-error assertions that `ty check` covers, across namespaces.
+- `tests/core/baseline/c/` holds the generated-C snapshots that `tests/core/test_c_snapshot.py`
+  checks, and `tests/baseline/pytest_nodeids.txt` the node-ID baseline.
+
+Shared test code that a plugin also needs lives in `scaly.testing`, not in `tests/`: the problem
+builders (`scaly.testing.helpers`), the Maros–Meszaros set (`scaly.testing.qp`), hyper-dual numbers
+and the conformance suites. `tests/` is not installed, so a plugin cannot import from it.
 
 Two root-level tests are structural and permanent. `tests/test_import_layering.py` holds the
 import-layer table, the two sanctioned exceptions and the acyclicity check; a new module needs an
@@ -127,8 +143,8 @@ entry in `IMPORT_LAYERS`. `tests/test_import_boundaries.py` pins the public name
 paths stay retired.
 
 Some compiler paths are exercised only by workload-shaped fixtures, mainly the RK4 stage-transcription
-Jacobian in `tests/integration/test_stage_transcription.py` and the chained-VMAP fixtures in
-`tests/integration/test_vmap.py`. They build a mapped and a fully unrolled version of the same graph
+Jacobian in `tests/core/integration/test_stage_transcription.py` and the chained-VMAP fixtures in
+`tests/core/integration/test_vmap.py`. They build a mapped and a fully unrolled version of the same graph
 and compare values, Jacobians and Hessians, so a coloring bug cannot hide behind a false structural
 zero. Keep them working.
 

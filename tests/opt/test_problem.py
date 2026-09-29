@@ -244,7 +244,7 @@ def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
   assert source.count("static inline void filter_problem_hess_lower_raw(") == 1
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 def test_sqp_numerical_call_preserves_multiple_variable_blocks() -> None:
   solve = sc.opt.solver(two_block_quadratic, "sqp", name="two_block_sqp")
   result = solve.numerical_call(*_two_block_inputs())
@@ -254,7 +254,7 @@ def test_sqp_numerical_call_preserves_multiple_variable_blocks() -> None:
   assert result[1][1].shape == (1,)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_ipopt_numerical_call_preserves_multiple_variable_blocks() -> None:
   solve = sc.opt.solver(two_block_quadratic, "ipopt", name="two_block_ipopt")
   result = solve.numerical_call(*_two_block_inputs())
@@ -264,7 +264,7 @@ def test_ipopt_numerical_call_preserves_multiple_variable_blocks() -> None:
   assert result[1][1].shape == (1,)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_piqp_numerical_call_preserves_multiple_variable_blocks() -> None:
   solve = sc.opt.solver(two_block_quadratic, "piqp", name="two_block_piqp")
   result = solve.numerical_call(*_two_block_inputs())
@@ -386,7 +386,7 @@ def _zero_group_inputs(n_eq: int, n_ineq: int) -> tuple[Any, ...]:
   )
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 @pytest.mark.parametrize(("n_eq", "n_ineq"), ((0, 0), (1, 0), (0, 1)))
 def test_ipopt_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq: int) -> None:
   solve = sc.opt.solver(sc.opt.QP(2, n_eq, n_ineq), "ipopt", name=f"empty_ipopt_{n_eq}_{n_ineq}")
@@ -394,7 +394,7 @@ def test_ipopt_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq:
   np.testing.assert_allclose(result[0], np.zeros(2), atol=1e-7)
 
 
-@pytest.mark.solver("sqp")
+@pytest.mark.method("opt.sqp")
 @pytest.mark.parametrize(("n_eq", "n_ineq"), ((0, 0), (1, 0), (0, 1)))
 def test_sqp_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq: int) -> None:
   solve = sc.opt.solver(sc.opt.QP(2, n_eq, n_ineq), "sqp", name=f"empty_sqp_{n_eq}_{n_ineq}")
@@ -430,3 +430,8 @@ def test_nlp_solver_symbolic_call_preserves_variable_blocks() -> None:
   assert result[1][0].shape == (2,)
   assert result[2].shape == (1,)
   assert result[3].shape == (3,)
+
+
+def test_an_unnamed_leaf_outside_a_decorator_is_refused() -> None:
+  with pytest.raises(ValueError, match="unnamed leaf"):
+    sc.opt.problem(vars=sc.L(3), params=sc.L("p", ()))(lambda x, p: sc.opt.ProblemSpec(minimize=x.sum()))

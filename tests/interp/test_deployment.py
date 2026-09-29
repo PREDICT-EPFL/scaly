@@ -117,3 +117,13 @@ def test_every_fit_honours_its_dtype() -> None:
   assert interp.smoothing(x, y, dtype="float32").dtype.name == "float32"
   assert interp.smoothing(x, y, method="cubic", dtype="float32").dtype.name == "float32"
   assert interp.interpolant(x, y, kind="pchip", dtype="float32").dtype.name == "float32"
+
+
+def test_a_read_at_a_constant_nan_leaves_no_cast_of_nan_in_the_c() -> None:
+  """A spline read at a constant NaN folds before its clamped index cast, as C's ``fmax`` and ``fmin``
+  do, so the C casts a finite constant, and the value is still NaN."""
+  f = interp.interpolant(np.linspace(0.0, 1.0, 50), np.linspace(0.0, 1.0, 50) ** 2, kind="cubic")
+  x = sc.sym("x")
+  fn = sc.Function.from_exprs("const_nan_read", [x], [f(sc.const(np.nan)) + 0.0 * x], ["x"], ["y"])
+  assert "(int64_t)((double)NAN)" not in render_c_module(fn).body
+  assert np.isnan(fn(np.array(0.5)))

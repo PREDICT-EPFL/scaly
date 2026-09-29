@@ -9,7 +9,7 @@ same NLP. They run before any timing is recorded, via
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
 covers Scaly's core and must not depend on a benchmark problem. Where one of these
 checks also pins an IR/AD/codegen behaviour, a minimal self-contained reproduction
-of that behaviour lives in ``tests/integration/test_stage_transcription.py`` instead, so
+of that behaviour lives in ``tests/core/integration/test_stage_transcription.py`` instead, so
 this problem can be retired or reshaped without dropping compiler coverage.
 """
 

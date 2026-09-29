@@ -37,7 +37,7 @@ def _boxed(name: str, horizon: int = 20, **kwargs) -> ocp.DiscreteOCP:
   )
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_boxed_linear_problem_is_the_direct_methods_solution() -> None:
   problem = _boxed("tiny_boxed")
   x0 = np.array([2.0, 0.0])
@@ -54,7 +54,7 @@ def test_a_boxed_linear_problem_is_the_direct_methods_solution() -> None:
   np.testing.assert_allclose(from_outside.us, Controller(problem, PIQP).solve(outside).us, atol=1e-7)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_references_per_stage_are_the_problems_not_the_librarys() -> None:
   """A varying state reference and a fixed control reference: TinyMPC's library would weigh the
   reference by ``Q + rho I``; the method solves the stated problem."""
@@ -81,7 +81,7 @@ def damped(x, u):
   return sc.const(np.array([[0.0, 1.0], [-2.0, -0.3]])) @ x + sc.const(np.array([[0.0], [1.0]])) @ u + sc.const(np.array([0.0, 0.4]))
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_a_linear_model_by_multiple_shooting_with_an_offset() -> None:
   """The map is RK4 of an affine ODE, ``A x + B u + f`` with ``f`` from the offset; the running cost
   is ``dt`` times the sum at the points."""
@@ -97,7 +97,7 @@ def test_a_linear_model_by_multiple_shooting_with_an_offset() -> None:
   np.testing.assert_allclose(admm.cost, qp.cost, rtol=1e-8)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_without_bounds_the_slacks_clip_nothing_and_the_lq_solution_is_reached() -> None:
   problem = ocp.DiscreteOCP(
     step=si.affine(A, B, name="tiny_free_map"), N=15, stage_cost=ocp.Quadratic(Q, R), terminal_cost=ocp.Quadratic(QN), name="tiny_free"

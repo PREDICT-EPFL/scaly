@@ -12,7 +12,7 @@ import scaly_piqp
 PACKAGE = Path(scaly_piqp.__file__).parent
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_license_directory_per_pinned_dependency():
   pinned = json.loads((PACKAGE / "build_config.json").read_text())
   licenses = PACKAGE / "licenses"

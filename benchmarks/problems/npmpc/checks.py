@@ -9,7 +9,7 @@ is recorded, via ``benchmarks/run.py smoke``.
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite covers Scaly's
 core and must not depend on a benchmark problem. The IR behaviour this problem leans on — a dense
 matmul body used through VMAP over a horizon, differentiated to second order — has a self-contained
-reproduction in ``tests/integration/test_vmap_mlp.py``, so retiring this problem cannot drop the
+reproduction in ``tests/core/integration/test_vmap_mlp.py``, so retiring this problem cannot drop the
 compiler coverage.
 """
 

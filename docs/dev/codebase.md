@@ -169,6 +169,13 @@ src/scaly/
     recording.py         records a render by registering into codegen's observer hook
     serve.py             the tiny recording browser
 
+  testing/               what a test of scaly or of a plugin needs; not imported by scaly itself
+    plugin.py            the pytest plugin: the method marker, its skip and SCALY_REQUIRE_METHODS
+    conformance/         a suite per problem class (qp, ocp, roots): its problems and the contract a method meets
+    helpers.py           small typed QPs and NLPs through the solver builders, and their solves
+    qp.py                the Maros-Meszaros set (under data/), random and MPC QPs, and their KKT residuals
+    hyperdual.py         hyper-dual numbers: exact dense Lagrangian Hessians of NumPy functions
+
   utils/
     env.py               the environment variables and platform facts scaly reads
     ext_api.py           EXT_API_VERSION and the check a package runs against it
@@ -178,7 +185,7 @@ src/scaly/
 
 Solver libraries are not in this tree. Each is a separate distribution under `plugins/`
 (`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) discovered through an entry point; see
-[Solver plugins](solver_plugins.md). `opt/ipm` is the one method core ships, since it needs no library. `tests/` mirrors this layout directory for directory.
+[Solver plugins](solver_plugins.md). `opt/ipm` is the one method core ships, since it needs no library. `tests/` mirrors this layout by namespace, with the compiler's packages under `tests/core/`.
 
 ## Import layers
 
@@ -197,6 +204,7 @@ one, never a higher one.
 | 7 | `codegen/*`, `export/*` | The backend: render, compile, load, dispatch; and the output adapters and drop-ins for other tools. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `scaly/__init__`, `scaly/ext` | The public names sit above everything they re-export, the extension API with them. |
+| 10 | `testing/*` | Test support: the pytest plugin and the conformance suites, which exercise every namespace, so they sit above all of it. |
 
 `passes/` straddles the frontend: its expression rewrites are below `Function` (import layer 2)
 and its lowering is above it (import layer 6). Enforcement is per module, not per package, so

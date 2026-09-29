@@ -174,6 +174,15 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.viz.recording": 8,
   "scaly.viz.serve": 8,
   "scaly": 9,  # the curated public re-exports sit above everything they re-export
+  "scaly.testing": 10,
+  "scaly.testing.conformance": 10,
+  "scaly.testing.conformance.ocp": 10,
+  "scaly.testing.conformance.qp": 10,
+  "scaly.testing.conformance.roots": 10,
+  "scaly.testing.helpers": 10,
+  "scaly.testing.hyperdual": 10,
+  "scaly.testing.plugin": 10,
+  "scaly.testing.qp": 10,
   "scaly.ext": 9,  # the extension API, collected from every layer
 }
 
@@ -286,6 +295,7 @@ BUILT_ON_THE_CORE = (
   "scaly.opt",
   "scaly.roots",
   "scaly.sets",
+  "scaly.testing",
 )
 
 

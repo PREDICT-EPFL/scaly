@@ -69,6 +69,7 @@ nav = [
         { "Geometry" = "api/geometry.md" },
         { "Solvers" = "api/solvers.md" },
         { "Visualization" = "api/viz.md" },
+        { "Testing" = "api/testing.md" },
     ] },
 ]
 

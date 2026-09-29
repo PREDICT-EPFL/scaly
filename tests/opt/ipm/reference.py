@@ -21,7 +21,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import linalg as splinalg
 
-from tests.opt.ipm.problems import QP
+from scaly.testing.qp import QP
 
 PIQP_INF = 1e30
 EPS = np.finfo(np.float64).eps

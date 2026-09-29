@@ -8,7 +8,8 @@ import pytest
 import scaly as sc
 from scaly.opt.ipm import QPValues, ruiz, scale
 from tests.opt.ipm import reference as ref
-from tests.opt.ipm.problems import infeasible_problems, ipm_inputs, maros_meszaros, maros_meszaros_names, mpc_qp
+from scaly.testing.qp import infeasible_problems, maros_meszaros, maros_meszaros_names, mpc_qp
+from tests.opt.ipm.problems import ipm_inputs
 
 NAMES = maros_meszaros_names()
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")

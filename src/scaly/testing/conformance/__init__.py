@@ -1,0 +1,1 @@
+"""Conformance suites, one per problem class (``qp``, ``ocp``, ``roots``): the problems and the contract every method of the class meets on them. ``tests/conformance`` runs each over the installed methods, and a plugin runs the same over its own."""

@@ -60,7 +60,7 @@ def problem(drag, name: str) -> ocp.DiscreteOCP:
   )
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_bicubic_table_in_the_dynamics_solves_as_the_hand_written_one() -> None:
   table = interp.interpolant((GV, GH), DRAG, kind="cubic")
   method = ocp.Direct(sc.opt.IPOPT(options={"tol": 1e-12}))
@@ -79,7 +79,7 @@ def test_a_bicubic_table_in_the_dynamics_solves_as_the_hand_written_one() -> Non
   assert np.ptp(lib_xs[:, 1]) > 0.3  # the velocity sweeps the table
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_table_calibrated_by_ipopt_is_the_least_squares_fit() -> None:
   """A 6 x 5 linear table's values as decision variables, fitted to 300 scattered noisy measurements:
   through ``at()`` (the design matrix, exact sparsity) and through evaluation at the same points as

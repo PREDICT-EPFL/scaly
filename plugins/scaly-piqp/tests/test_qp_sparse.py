@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.opt.problem_helpers import build_qp, solve_qp
+from scaly.testing.helpers import build_qp, solve_qp
 from scaly.codegen import render_c_source
 from scaly.opt.qp import matrix_pattern
 from scaly.opt.external.graph import solver_descriptor
@@ -35,7 +35,7 @@ def _sparse_problem(sparse: bool, name: str) -> sc.Function:
   return sc.opt.solver(problem_body, sc.opt.PIQP(sparse=sparse), name=name)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
   qp = _sparse_problem(sparse=True, name="sparse_pattern_qp")
   desc = solver_descriptor(qp)
@@ -53,7 +53,7 @@ def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
   assert out_sizes["P"] == 5 and out_sizes["A_eq"] == 2 and out_sizes["G_ineq"] == 4
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_renders_baked_csc_tables() -> None:
   qp = _sparse_problem(sparse=True, name="sparse_render_qp")
   source = render_c_source(qp)
@@ -63,7 +63,7 @@ def test_sparse_qp_renders_baked_csc_tables() -> None:
   assert "piqp_setup_dense" not in source
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
   sparse_qp = _sparse_problem(sparse=True, name="sparse_parity_qp")
   dense_qp = _sparse_problem(sparse=False, name="dense_parity_qp")
@@ -75,7 +75,7 @@ def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
       np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-6, atol=1e-6, err_msg=f"output {key} diverges for t={tv}")
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_constant_data_and_stats() -> None:
   qp = build_qp(
     P=np.diag([2.0, 1.0, 4.0]),
@@ -95,7 +95,7 @@ def test_sparse_qp_constant_data_and_stats() -> None:
   assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=0.1, abs=1e-12)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
   """The sparse path gathers triu(P) exactly (PIQP's symmetric-P contract):
   an out-of-contract asymmetric P behaves as if symmetrized from its upper
@@ -113,7 +113,7 @@ def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
     np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-7, atol=1e-7, err_msg=key)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   """An all-zero P (an LP) keeps one padded (0,0) entry whose gathered value
   is the structural zero, so the baked CSC handle stays valid."""
@@ -133,7 +133,7 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
   """A parameter-dependent entry whose value happens to be zero at the probe
   draw must stay in the pattern (the dependency mask, not the probe, keeps it)."""
@@ -144,7 +144,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
   assert set(zip(sparsity.rows, sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_sparse_qp_in_scaly_function() -> None:
   @sc.function(sc.L("t", (2,)), output=sc.L("x", ...), name="shifted_sparse_qp")
   def solve_shifted(t):

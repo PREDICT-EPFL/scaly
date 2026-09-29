@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.opt.problem_helpers import build_qp, solve_qp
+from scaly.testing.helpers import build_qp, solve_qp
 
 
 def _problem(*, max_iter: int | None = None) -> sc.Function:
@@ -23,7 +23,7 @@ def _problem(*, max_iter: int | None = None) -> sc.Function:
   )
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_stats_success_and_timing_split() -> None:
   qp = _problem()
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(2))
@@ -44,7 +44,7 @@ def test_qp_stats_success_and_timing_split() -> None:
   assert stats.step_inf == 0.0 and stats.alpha == 0.0 and stats.merit_penalty == 0.0 and stats.backtracks == 0
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_stats_maps_max_iter_status() -> None:
   qp = _problem(max_iter=1)
   solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(2))
@@ -55,7 +55,7 @@ def test_qp_stats_maps_max_iter_status() -> None:
   assert sc.opt.solver_stats(qp).to_solver_status() is not None and not sc.opt.solver_stats(qp).to_solver_status().ok
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_reserved_name_compiles_solves_and_exposes_stats() -> None:
   qp = build_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))

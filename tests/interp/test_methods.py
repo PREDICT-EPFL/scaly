@@ -78,7 +78,7 @@ def test_smoothing_fits_its_shorthands_spline() -> None:
   assert smooth.digest == interp.smoothing(POINTS, VALUES, segments=(6, 5), lam=1e-3).digest
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_constrained_fits_its_shorthands_spline_by_any_qp_method() -> None:
   noisy = np.cumsum(RNG.uniform(0.0, 1.0, 40)) + RNG.standard_normal(40)
   sites = np.linspace(0.0, 1.0, 40)

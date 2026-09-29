@@ -83,7 +83,7 @@ def injection(va, vm):
   return V * np.conj(ybus() @ V)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_polar_opf_with_a_phase_shifter_matches_an_admittance_matrix_model() -> None:
   solve = sc.opt.solver(opf, sc.opt.IPOPT(options={"tol": 1e-10}), name="test_acopf_three_bus")
   x0 = (np.zeros(NB), np.ones(NB), np.clip(np.zeros(NG), PMIN, PMAX), np.zeros(NG), np.zeros(2 * NBR), np.zeros(2 * NBR))

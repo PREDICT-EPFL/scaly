@@ -15,15 +15,12 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.opt.problem_helpers import build_qp
+from scaly.testing.helpers import build_qp
 from scaly.codegen import render_c_api_header, render_c_source
 from scaly.codegen.jit import CompiledFunction, JitError
-from scaly.opt.method import REGISTRY
 from scaly.opt.external.stats import CSolverStats
 
-pytestmark = pytest.mark.skipif(
-  "piqp" not in REGISTRY.installed(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
-)
+pytestmark = pytest.mark.method("opt.piqp")  # the structural tests build the private QP differential fixture
 
 
 def test_solver_function_signature_errors() -> None:
@@ -46,7 +43,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
   assert "SCALY_SOLVER_STATS_VERSION 3" in header
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_settings_are_baked_into_jit_cache_key() -> None:
   def build(eps_abs: float) -> CompiledFunction:
     return CompiledFunction(build_qp(P=np.eye(2), c=np.zeros(2), name="settings_qp", options={"eps_abs": eps_abs}))
@@ -59,7 +56,7 @@ def test_qp_settings_are_baked_into_jit_cache_key() -> None:
   assert first.cache_key != changed.cache_key
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
   """The `scaly_solver_stats` handshake is Scaly's contract with every backend."""
   qp = build_qp(P=np.eye(2), c=np.zeros(2), name="stats_version_qp")
@@ -88,7 +85,7 @@ def test_sparse_qp_rejects_nested_solver_data() -> None:
     build_qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_two_solver_wrappers_in_one_translation_unit() -> None:
   """Two distinct solvers (one sparse, one dense) called from one host
   Function share a single generated TU; their static state must not collide."""

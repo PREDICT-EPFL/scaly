@@ -258,8 +258,12 @@ Plugins must not duplicate any of this:
 3. The wrapper template: drive the solver's C API from the oracle kernels, map statuses through enum
    constants, fill the stats struct, keep all state in `ctx.symbol`-prefixed statics. Normalize IEEE
    infinite bounds before every native setup or update call.
-4. Tests under `plugins/scaly-<name>/tests/`: correctness against analytic or reference solutions, a
-   nested-solve JIT test, and a stats sanity check (see the piqp and ipopt test suites for the
-   pattern).
+4. Tests under `plugins/scaly-<name>/tests/`, each marked `@pytest.mark.method("opt.<name>")`:
+   the conformance suite of its problem class from `scaly.testing.conformance` (a QP method runs
+   `qp.check_solves` and `qp.check_refuses` as `test_conformance_piqp.py` does), correctness
+   against analytic or reference solutions, a nested-solve JIT test, and a stats sanity check (see
+   the piqp and ipopt test suites for the pattern). List the method in the table of
+   `tests/conformance/` too, or say there why it is held to another suite: an installed method
+   missing from it fails.
 5. Nothing in `src/scaly/` should need to change. If it does, the protocol is missing something.
    Raise it as a core issue instead of forking core.

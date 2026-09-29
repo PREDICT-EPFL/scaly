@@ -22,7 +22,8 @@ import scaly as sc
 from scaly.opt.ipm import INFO_FIELDS, INVALID_BOUNDS, MAX_ITER_REACHED, NUMERICS, SOLVED, TRACE_FIELDS, Backend, QPValues, Settings, Solver
 from tests.opt.ipm import piqp_trace
 from tests.opt.ipm import reference as ref
-from tests.opt.ipm.problems import QP, _qp, gate_problems, ipm_inputs, kkt_residuals, maros_meszaros
+from scaly.testing.qp import QP, kkt_residuals, make_qp, maros_meszaros
+from tests.opt.ipm.problems import gate_problems, ipm_inputs
 
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")
 RESULT = ("x", "y", "z_l", "z_u", "z_bl", "z_bu", "s_l", "s_u", "s_bl", "s_bu", "status", "iter", "trace", "trace_rows", "info")
@@ -30,11 +31,11 @@ RHO, DELTA = TRACE_FIELDS.index("rho"), TRACE_FIELDS.index("delta")
 NONCONVEX = {
   # The condensed matrix turns indefinite mid-run: PIQP's dense backend retries with rho and delta
   # scaled by 100 (sparse LDL^T fails only on a zero pivot, so that backend never retries).
-  "nc_box": _qp("nc_box", np.diag([-1.0, 1.0]), [0.1, -0.5], G=np.array([[1.0, 1.0]]), h_u=[5.0], x_l=[-10.0, -10.0], x_u=[10.0, 10.0]),
-  "nc_box3": _qp("nc_box3", np.diag([-2.0, 1.0, 0.5]), [0.3, -0.5, 0.2], A=np.array([[1.0, 1.0, 1.0]]), b=[1.0], x_l=[-20.0] * 3, x_u=[20.0] * 3),
+  "nc_box": make_qp("nc_box", np.diag([-1.0, 1.0]), [0.1, -0.5], G=np.array([[1.0, 1.0]]), h_u=[5.0], x_l=[-10.0, -10.0], x_u=[10.0, 10.0]),
+  "nc_box3": make_qp("nc_box3", np.diag([-2.0, 1.0, 0.5]), [0.3, -0.5, 0.2], A=np.array([[1.0, 1.0, 1.0]]), b=[1.0], x_l=[-20.0] * 3, x_u=[20.0] * 3),
 }
 # A variable in no constraint and no cost term: with rho = 0 the KKT matrix is singular.
-LOOSE = _qp("loose_variable", np.diag([1.0, 2.0, 0.0]), [1.0, -1.0, 0.0], G=np.array([[1.0, 1.0, 0.0]]), h_u=[1.0], x_l=[-5.0, -5.0, -np.inf])
+LOOSE = make_qp("loose_variable", np.diag([1.0, 2.0, 0.0]), [1.0, -1.0, 0.0], G=np.array([[1.0, 1.0, 0.0]]), h_u=[1.0], x_l=[-5.0, -5.0, -np.inf])
 
 
 EXTRA: dict[str, QP] = {}  # problems a test builds itself, by name, for ``_solver``'s cache
@@ -68,7 +69,7 @@ def _matches(pq: piqp_trace.Trace, got: dict[str, np.ndarray]) -> bool:
 # --- the gate -----------------------------------------------------------------------------------
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("backend", ["sparse", "dense"])
 @pytest.mark.parametrize("name", sorted(gate_problems()))
 def test_decisions_match_piqp(name: str, backend: Backend) -> None:
@@ -91,7 +92,7 @@ def test_decisions_match_piqp(name: str, backend: Backend) -> None:
   assert abs(int(got["iter"]) - int(mine.info["iter"])) <= 3
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("backend", ["sparse", "dense"])
 @pytest.mark.parametrize("name", sorted(NONCONVEX))
 def test_factorization_retries_follow_piqp(name: str, backend: Backend) -> None:
@@ -106,7 +107,7 @@ def test_factorization_retries_follow_piqp(name: str, backend: Backend) -> None:
   assert (backend == "dense") == bool(np.any(rho[1:] > 10 * rho[:-1])) == bool(got["info"][INFO_FIELDS.index("ir")])
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize(
   "name, backend",
   [(name, "sparse") for name in ("HS21", "QAFIRO", "DUAL1", "CVXQP1_S", "QPCBLEND", "HS118")]
@@ -129,10 +130,10 @@ def _scale_cost_qp() -> QP:
   rng = np.random.default_rng(34)
   m = rng.standard_normal((3, 3)) * 10 ** rng.uniform(-2, 2, 3)
   c = rng.standard_normal(3) * 10 ** rng.uniform(-2, 2)
-  return _qp("scale_cost_split", m.T @ m + 0.1 * np.eye(3), c, G=rng.standard_normal((2, 3)), h_u=[1.0, 2.0], x_l=[-3.0] * 3, x_u=[3.0] * 3)
+  return make_qp("scale_cost_split", m.T @ m + 0.1 * np.eye(3), c, G=rng.standard_normal((2, 3)), h_u=[1.0, 2.0], x_l=[-3.0] * 3, x_u=[3.0] * 3)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("backend", ["sparse", "dense"])
 @pytest.mark.parametrize("name", ["scale_cost_split", "QAFIRO", "CVXQP1_S", "DUALC1", "QPCBLEND"])
 def test_cost_scaling_follows_each_backends_preconditioner(name: str, backend: Backend) -> None:
@@ -268,7 +269,7 @@ def test_a_failure_mid_run_ends_the_solve_after_the_count() -> None:
 def test_a_bound_declared_finite_that_arrives_infinite(bound: str, value: float, backend: Backend) -> None:
   """The solver is specialised to which bounds exist: one that arrives unusable stops it at once
   with its own status, rather than giving NaN or an unscaled answer."""
-  qp = _qp("finite_bounds", np.eye(2), [1.0, -1.0], G=np.array([[1.0, 1.0]]), h_u=[1.0], x_u=[5.0, 5.0])
+  qp = make_qp("finite_bounds", np.eye(2), [1.0, -1.0], G=np.array([[1.0, 1.0]]), h_u=[1.0], x_u=[5.0, 5.0])
   EXTRA[qp.name] = qp
   _, values = ipm_inputs(qp)
   values = dict(values)

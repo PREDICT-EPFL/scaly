@@ -23,7 +23,7 @@ from scipy import sparse
 from scaly.codegen.jit import compile_flags
 from scaly.codegen.toolchain import cache_root, find_c_compiler
 from scaly.opt.external.paths import backend_compile_flags
-from tests.opt.ipm.problems import QP
+from scaly.testing.qp import QP
 
 SOURCE = Path(__file__).with_name("piqp_trace.c")
 COLUMNS = ("iter", "primal_obj", "dual_obj", "duality_gap", "primal_res", "dual_res", "rho", "delta", "mu", "primal_step", "dual_step")

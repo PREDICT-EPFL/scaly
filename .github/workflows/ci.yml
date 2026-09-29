@@ -180,7 +180,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
 
       - name: Pytest core suite
-        run: uv run pytest -n=auto -m "not solver"
+        run: uv run pytest -n=auto -m "not method"
 
       - name: Benchmark smoke
         run: uv run python benchmarks/run.py smoke --skip solver_call
@@ -225,15 +225,15 @@ jobs:
 
       - name: Pytest solver suite
         env:
-          SCALY_REQUIRE_SOLVERS: "1"
-        run: uv run pytest -n=auto -m solver
+          SCALY_REQUIRE_METHODS: "1"
+        run: uv run pytest -n=auto -m method
 
       - name: Solver-call smoke
         run: uv run python benchmarks/run.py smoke --select solver_call
 
       - name: Solver-backed problem gates
         env:
-          SCALY_REQUIRE_SOLVERS: "1"
+          SCALY_REQUIRE_METHODS: "1"
         run: uv run python benchmarks/run.py smoke --select problems
 
       - name: Public closed-loop smoke commands

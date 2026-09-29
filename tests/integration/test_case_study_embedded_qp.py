@@ -44,7 +44,7 @@ def masses() -> sc.opt.NLP:
   return problem
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_generated_piqp_with_a_parametric_hessian_matches_the_library() -> None:
   p = masses()
   generated = sc.opt.solver(p, sc.opt.IPM(), name="test_masses_param_hessian_generated")

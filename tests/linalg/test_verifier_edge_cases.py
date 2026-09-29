@@ -1,4 +1,4 @@
-"""``verify_expr`` on the linear-algebra ops (``linalg.ops``), as ``tests/ir/test_verifier_edge_cases.py``
+"""``verify_expr`` on the linear-algebra ops (``linalg.ops``), as ``tests/core/ir/test_verifier_edge_cases.py``
 checks the core's: every graph the builders make verifies, and so does every derivative and
 rewrite of it; each op's rule rejects a node forged with one thing wrong, naming itself."""
 
@@ -16,7 +16,7 @@ from scaly.ir.expr_spec import spec_expr, verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.linalg import SparseLDL, SparseMatrix
 from scaly.linalg.ops import ragged_add, ragged_dot, sparse_ldl_factor, sparse_ldl_solve
-from tests.ir.test_verifier_edge_cases import _derivatives, _forge, _i64, _verify_deep
+from tests.core.ir.test_verifier_edge_cases import _derivatives, _forge, _i64, _verify_deep
 
 LINALG_OPS = frozenset({"cholesky", "ldl", "lu", "trisolve", "sparse_ldl", "sparse_ldl_solve", "ragged_add", "ragged_dot"})
 

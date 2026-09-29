@@ -331,7 +331,7 @@ def _problem_checks(problem: str) -> None:
   checks = importlib.import_module(f"benchmarks.problems.{problem}.checks")
   for name, outcome in checks.run_checks():
     print(f"smoke {problem}/{name}: {outcome}", flush=True)
-    if os.environ.get("SCALY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
+    if os.environ.get("SCALY_REQUIRE_METHODS") == "1" and outcome.startswith("skipped:"):
       raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
 
 

@@ -8,7 +8,7 @@ import pytest
 
 from benchmarks.harness.closed_loop import run_chain, run_race_cars
 
-pytestmark = pytest.mark.solver("ipopt")
+pytestmark = pytest.mark.method("opt.ipopt")
 
 
 @pytest.mark.parametrize("runner,problem", [(run_chain, "chain"), (run_race_cars, "race_cars")])

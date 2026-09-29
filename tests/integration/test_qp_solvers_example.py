@@ -31,7 +31,7 @@ SMALL = {
 }
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("backend", ["sparse", "dense"])
 @pytest.mark.parametrize("family", sorted(SMALL))
 def test_generated_piqp_matches_the_library(example: dict, family: str, backend: str) -> None:

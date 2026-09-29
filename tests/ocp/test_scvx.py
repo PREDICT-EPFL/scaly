@@ -42,7 +42,7 @@ def _linear(name: str, **kwargs) -> ocp.DiscreteOCP:
   return ocp.DiscreteOCP(**{**spec, **kwargs})
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_nonlinear_model_reaches_the_direct_methods_optimum() -> None:
   continuous = ocp.ContinuousOCP(
     pendulum,
@@ -61,7 +61,7 @@ def test_a_nonlinear_model_reaches_the_direct_methods_optimum() -> None:
   assert np.abs(nlp.us).max() > 1.5 - 1e-6  # the bound binds
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 @pytest.mark.parametrize("constraint", ["path", "terminal set"], ids=["path", "terminal_set"])
 def test_linear_constraints_hold_at_the_direct_methods_optimum(constraint: str) -> None:
   spec = (

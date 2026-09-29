@@ -98,7 +98,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - [x] **API-5. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
       fixture compared against the unrolled form with a forward/reverse duality check, and a
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
-      Lives in `tests/ad/test_vmap.py` (duality) and `tests/integration/test_vmap.py` (pairwise Hessian).
+      Lives in `tests/core/ad/test_vmap.py` (duality) and `tests/core/integration/test_vmap.py` (pairwise Hessian).
 - [x] **API-142. Explicit Runge-Kutta integrators** (integrators/MPC plan I1,
       `notes/integrators_mpc_plan_2026_09_27.md`). `scaly.integrators`: Butcher tableaus with the
       order conditions checked by B-series over rooted trees, ten named explicit methods (Euler to
@@ -280,7 +280,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       built under one setting is reused under another (a gradient at a `maximum` tie, a refusal
       under `"error"`). Key them on the setting, and name non-default derivatives apart. Done by
       C-158's `options_tag`, which keys the caches on every option in force;
-      `tests/ad/test_nonsmooth_derivative_caches.py` reproduces both cases through `vmap`, `scan`
+      `tests/core/ad/test_nonsmooth_derivative_caches.py` reproduces both cases through `vmap`, `scan`
       and `while_loop` under `sc.gradient`, `sc.jvp` and `sc.jacobian`. The narrower key is C-195.
 - [ ] **C-195. Key a derivative helper only on the options its callee reads.** `options_tag` keys
       every helper cache on all options and tags the names under any non-default one, so under
@@ -859,14 +859,14 @@ protocol's compile flags.
       Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-scaly-arithmetic-policy);
       rationale: [measurement protocol](../docs/results/fairness.md#measurement-protocol).
 - [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision).
-- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout).
-- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation).
+- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/core/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout).
+- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/core/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation).
 - [x] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** Implemented
       2026-09-08 in `ad/forward.py`: a constant `jvp_many` tangent whose per-iteration tiles repeat
       with period `k <= 8` (and at least twice, so short horizons of distinct tiles are not unrolled)
       is baked into one const-seed callee per tile, each mapped over its residue class and assembled
       with stack/transpose/reshape, so no seed table or gather is emitted; other constant patterns
-      keep the local-coloring and runtime-seed paths. `tests/ad/test_const_seed_bake.py` pins equal,
+      keep the local-coloring and runtime-seed paths. `tests/core/ad/test_const_seed_bake.py` pins equal,
       periodic, and fallback tiles. Race-car N=50 measured 26.0 to 24.0 µs together with C-53/C-10,
       static metadata 107 to 90 KB ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)).
 - [x] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-filled 43
@@ -900,7 +900,7 @@ protocol's compile flags.
       the arrays, and the structure is recovered at lowering, which also catches every other affine
       gather in the graph. `passes/program/_common.py` gained `_index_values`, the counterpart that
       reads the indices back out of the expression, so `combine_scatter_sums` still sees the
-      destinations it needs. `tests/passes/test_affine_index.py` pins the factoring, the forward and
+      destinations it needs. `tests/core/passes/test_affine_index.py` pins the factoring, the forward and
       reverse VMAP derivatives against NumPy and against the unrolled form, and the two gates; all
       three gates fail with the affine path disabled.
       Measured: unbumpercars C=32 source 52.30 MiB to 1.35 MiB and static metadata 53.9 MB to
@@ -915,7 +915,7 @@ protocol's compile flags.
       a combination of the plain quotients `k // stride[i]` with coefficients
       `c[i] - c[i+1] * dims[i+1]`, which is the `(x % c) + (x // c) * c -> x` recombination applied
       once at emission rather than as a folding pass. Exact integer algebra for a non-negative trip
-      index, so the indices are unchanged; `tests/passes/test_affine_index.py` gathers through every
+      index, so the indices are unchanged; `tests/core/passes/test_affine_index.py` gathers through every
       factored case and compares against NumPy to pin that. A single absolute size threshold was
       also tried and rejected: it makes the emitted shape depend on N, which
       `test_vmap_sparse_hessian_c_source_is_constant_in_length` correctly rejects.
@@ -925,7 +925,7 @@ protocol's compile flags.
       [refactorings](notes/refactorings.md#affine-index-maps-for-gathers-and-scatters).
 - [x] **C-10. Fold the identities the AD rules introduce, at the expression level.** Implemented
       2026-09-08 in `passes/expr.py`: `v @ ones -> sum(v)`, identity-index gathers become reshapes,
-      uniform 0/1 masks of the result shape fold, each pinned in `tests/passes/test_expr.py`. The
+      uniform 0/1 masks of the result shape fold, each pinned in `tests/core/passes/test_expr.py`. The
       matrix forms `A @ ones` and `ones @ A` were tried as stacked row sums and reverted: in loop
       form they lower to one loop per row and lose the fused producer, slower than the matmul. They
       wait for an axis reduction in the IR, which is C-8's accumulator lowering.
@@ -961,7 +961,7 @@ protocol's compile flags.
 - [ ] **C-159. float32 through the packed vectors of loop derivatives.** Multi-seed forward mode joins
       the tangents of several inputs in one vector, and a while loop's adjoint packs the carry's
       cotangent with the params'. A float32 carry beside float64 slices or params cannot share one,
-      so both raise (strict xfails in `tests/integration/test_loop_edge_cases.py`).
+      so both raise (strict xfails in `tests/core/integration/test_loop_edge_cases.py`).
 - [ ] **C-160. Multi-seed forward rules for `maximum`, `minimum`, `copysign`, the `max`/`min`
       reductions, `segment_max`/`segment_min` and `index_add`/`index_set`.** They fall back to one pass
       per seed, and `SCALY_STRICT_JVP_MANY=1` refuses them. The notes in `docs/how_it_works/ir.md` list
@@ -1106,7 +1106,7 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
 - [x] **C-13. Make the Program IR passes iterative instead of recursive.** Done 2026-09-08 with
       C-12: the program passes, `scalarize`, and the C renderer no longer recurse per expression node,
       and the renderer hoists subtrees deeper than `MAX_SCALAR_DEPTH` into temporaries so clang's
-      bracket limit is not hit. Witnesses in `tests/passes/test_program.py`: left folds at 400 and
+      bracket limit is not hit. Witnesses in `tests/core/passes/test_program.py`: left folds at 400 and
       3000, the NPMPC-shaped flat per-stage reduction at N=100, and a hinted scalar fold, each
       compiled and checked against NumPy. Recursion proportional to statement nesting (loop and call
       depth) remains and is documented in `docs/how_it_works/lowering.md`.
@@ -1130,6 +1130,15 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
   refactorings.md "Compiled CasADi artifacts across worktrees".
 - **S-18. CasADi `sqpmethod` as a secondary reference column.** Opt-in and record-only; its
   globalization, regularization and QP path differ from `scaly-sqp`. Add only if review asks for it.
+- **S-19. `scaly-sqp` on the QP conformance contract.** At its defaults its QP subproblems stop at
+  1e-6 and leave stationarity at 1.5e-6 against the suite's 1e-6; at `tol=1e-8` HS35 ends in
+  `NUMERICS`. Tighten the subproblem tolerance with `tol`, then list `sqp` in
+  `tests/conformance/test_qp.py` instead of holding it out.
+- **S-20. The NLP conformance suite on a CUTEst subset.** Plan §3.6 names it; no CUTEst data is in
+  the tree. Store a small subset (HS problems with known optima) the way `scaly.testing.qp` stores
+  Maros–Meszaros, add `scaly.testing.conformance.nlp`, run it over `ipopt` and `sqp`.
+- **S-21. The LinearSystem conformance suite.** Waits for `scaly.linalg` to have a method registry;
+  its factorizations are functions today, so there is nothing to list.
 
 ## C API
 
@@ -1144,7 +1153,7 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
       fixtures are regenerated if compared textually. [Design](notes/generated_interface_2026_09_18.md#the-pointer-entry-both-languages-always).
 - [x] **CAPI-73. C header with a caller-owned workspace.** After CAPI-72. Buffer structs become
       `f_x_t` (no `_in`/`_out`), 16-byte aligned; `f_workspace_t` is passed to `f_call` instead of
-      being stack-allocated inside it. Update the two C++ smoke tests in `tests/codegen/test_c.py`.
+      being stack-allocated inside it. Update the two C++ smoke tests in `tests/core/codegen/test_c.py`.
       [Design](notes/generated_interface_2026_09_18.md#the-c-header-langc).
 - [x] **CAPI-74. C++ header.** After CAPI-73, independent of CAPI-75. `lang="cpp"` renders `f.hpp`
       beside the same `f.c`: a guarded `Buffer<T, Ns...>` with inline aligned storage and a
@@ -1466,7 +1475,7 @@ merge into dev and prioritize documentation.
 
 - [x] **C-56. Prevent workspace slot names from colliding with user buffers.** `pack_workspace`
       allocates scratch slots around every existing parameter, output, and private buffer name.
-      The regression in `tests/passes/test_program.py` reproduces silent wrong results with outputs
+      The regression in `tests/core/passes/test_program.py` reproduces silent wrong results with outputs
       named `s1` and `s2`. Implemented and independently reviewed 2026-09-09.
 
 - [x] **C-46. Share stage-invariant and cross-formal derivative work.** The program pass hoists

@@ -45,7 +45,7 @@ CASES = {
 }
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 @pytest.mark.parametrize("projected_newton", [False, True], ids=["al", "pn"])
 @pytest.mark.parametrize("case", list(CASES))
 def test_the_constrained_problems_optimum(case: str, projected_newton: bool) -> None:
@@ -59,7 +59,7 @@ def test_the_constrained_problems_optimum(case: str, projected_newton: bool) -> 
   assert np.abs(altro.us).max() <= 1 + 1e-6  # the control bounds
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_the_bounds_and_the_equality_bind_and_hold() -> None:
   problem = _problem("altro_binding", **CASES["equality"][0])
   solution = Controller(problem, ocp.ALTRO(projected_newton=True)).solve(X0)
@@ -67,7 +67,7 @@ def test_the_bounds_and_the_equality_bind_and_hold() -> None:
   assert solution.xs[1:, 1].max() <= 0.4 + 1e-8 and np.abs(solution.xs[-1]).max() < 1e-8  # the projection's tolerance
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_continuous_model_scales_its_running_cost_by_dt() -> None:
   pendulum = sc.function(2, 1, output="xdot", name="altro_swing")(lambda x, u: sc.stack([x[1], -x[0].sin() - 0.2 * x[1] + u[0]]))
   continuous = ocp.ContinuousOCP(
@@ -86,7 +86,7 @@ def test_a_continuous_model_scales_its_running_cost_by_dt() -> None:
   np.testing.assert_allclose(altro.us, nlp.us, atol=1e-4)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_a_varying_reference_through_a_parameter() -> None:
   ref = np.stack([np.linspace(-1.0, 0.5, 31), np.full(31, 0.05)], axis=1).ravel()
   problem = _problem("altro_tracking", stage_cost=ocp.Quadratic(np.eye(2), 0.1 * np.eye(1), x_ref="r"), terminal_cost=None, varying=("r",))

@@ -238,7 +238,7 @@ def chain_lag_hess_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p
   next state is linear, so the Hessian is block diagonal; each block is one exact hyper-dual
   evaluation per column.
   """
-  from benchmarks.harness.hyperdual import lagrangian_hessian_np
+  from scaly.testing.hyperdual import lagrangian_hessian_np
 
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)

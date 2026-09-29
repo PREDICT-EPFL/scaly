@@ -92,7 +92,7 @@ def test_the_largest_lqr_ellipsoid_touches_the_polytope_and_is_invariant() -> No
   assert lo is None and hi == pytest.approx(ellipsoid.alpha) and row.shape == (1,)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("condensed", [False, True])
 @pytest.mark.parametrize("horizon", [1, 5, 20])
 def test_unconstrained_mpc_with_the_lqr_terminal_cost_is_the_lqr(condensed: bool, horizon: int) -> None:
@@ -117,7 +117,7 @@ def _constrained(name: str, horizon: int = 25, terminal=None) -> ocp.DiscreteOCP
   )
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_the_condensed_form_solves_the_same_problem() -> None:
   x = np.array([2.5, 0.5])
   problem = _constrained("dense_vs_sparse")
@@ -129,7 +129,7 @@ def test_the_condensed_form_solves_the_same_problem() -> None:
   assert np.abs(sparse.us).max() > 1 - 1e-6  # the input bound binds
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_the_condensed_form_keeps_its_state_bounds() -> None:
   x = np.array([1.0, 0.0])
   problem = ocp.DiscreteOCP(
@@ -156,7 +156,7 @@ def test_the_nested_piqp_runs_the_backend_the_method_names() -> None:
   assert backends(ocp.Direct(sc.opt.PIQP())) == [False]
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_recursive_feasibility_and_decrease_in_closed_loop() -> None:
   """With the maximal invariant set and the LQR cost as terminal ingredients, a state the MPC can
   solve from stays solvable, and the optimal cost falls by at least the stage cost at every step."""
@@ -182,7 +182,7 @@ def test_recursive_feasibility_and_decrease_in_closed_loop() -> None:
     assert cost < first.cost
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_an_ellipsoidal_terminal_set_goes_to_an_nlp_solver_not_a_qp_one() -> None:
   ellipsoid = ocp.largest_ellipsoid(P, X.intersect(U.preimage(K)))
   problem = _constrained("ellipsoid", terminal=ellipsoid)

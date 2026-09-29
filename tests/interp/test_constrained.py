@@ -8,7 +8,7 @@ from scaly.interp import constrained
 
 from .helpers import numbers
 
-pytestmark = pytest.mark.solver("piqp")
+pytestmark = pytest.mark.method("opt.piqp")
 
 
 def ocv_truth(soc: np.ndarray) -> np.ndarray:

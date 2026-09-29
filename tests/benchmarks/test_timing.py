@@ -32,7 +32,7 @@ def test_one_step_has_no_steady_state_sample():
   assert all(row["per_step_ms"] is None for row in mode_rows(summary))
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_interpreted_casadi_mode_solves_and_records_stats():
   import casadi as ca
   import numpy as np
@@ -109,7 +109,7 @@ def test_failed_episode_keeps_unavailable_mode_rows(tmp_path, monkeypatch, excep
   assert all(row["time_to_first_solve_ms"] == row["per_step_ms"] == "" for row in rows)
 
 
-@pytest.mark.solver("ipopt")
+@pytest.mark.method("opt.ipopt")
 def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch):
   import scaly as sc
   import numpy as np

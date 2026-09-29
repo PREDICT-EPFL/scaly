@@ -205,7 +205,7 @@ and the C renderer walk node graphs iteratively: rewrites go through the shared 
 `scaly.ir.match.rewrite`, which uses an explicit stack and one identity-keyed memo, and the
 remaining traversals (`_max_load_executions`, `_count_buf_loads`, the scalarizer's value
 substitution, `_emit_scalar`) keep their own explicit stacks. A left fold of several thousand
-chained scalar operations lowers, renders, compiles and runs; `tests/passes/test_program.py` pins
+chained scalar operations lowers, renders, compiles and runs; `tests/core/passes/test_program.py` pins
 folds at 400 and 3000 and a flat per-stage reduction at 100 stages.
 
 The generated C stays bounded too. Clang caps bracket nesting at 256, so `prepare_scalar` splits a

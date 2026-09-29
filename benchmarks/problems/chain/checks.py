@@ -8,7 +8,7 @@ closed-loop episode's shapes. They run before any timing is recorded, via
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
 covers Scaly's core and must not depend on a benchmark problem. The IR/AD/codegen
 behaviours these touch have self-contained reproductions in
-``tests/integration/test_stage_transcription.py`` and ``tests/ad/test_sparsity.py``,
+``tests/core/integration/test_stage_transcription.py`` and ``tests/core/ad/test_sparsity.py``,
 so this problem can be retired without dropping compiler coverage.
 """
 

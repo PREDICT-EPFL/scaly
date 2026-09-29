@@ -298,7 +298,7 @@ on, so `/scene/horizon` in particular shows nothing until it is enabled.
 
 The IR shape this problem leans on — a dense-matmul stage body with a broadcast weight tail, used
 through VMAP over a horizon and differentiated to second order — has a self-contained reproduction in
-`tests/integration/test_vmap_mlp.py`: a small MLP used through VMAP over a few stages, with `spjac` and
+`tests/core/integration/test_vmap_mlp.py`: a small MLP used through VMAP over a few stages, with `spjac` and
 `sphess` checked against an unrolled twin, a NumPy-scattered dense reference, and finite differences
 of the Lagrangian's gradient. It runs unconditionally, so retiring this benchmark cannot silently
 drop the coverage.

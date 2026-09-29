@@ -39,8 +39,8 @@ protocol, the reference machine and the evidence behind each rule. Put rationale
 Run the whole suite for any change touching the IR, differentiation or code generation. Those paths
 break subtly and are expensive to debug later.
 
-A test needing a built solver is marked `@pytest.mark.solver("piqp"|"ipopt")` and the root
-`conftest.py` handles the skip. Never hand-roll a "is the solver loadable" condition.
+A test needing a built solver is marked `@pytest.mark.method("opt.piqp"|"opt.ipopt"|"opt.sqp")` and
+`scaly.testing`'s pytest plugin handles the skip. Never hand-roll a "is the solver loadable" condition.
 
 ## Words
 

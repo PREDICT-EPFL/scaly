@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from tests.opt.problem_helpers import build_qp, solve_qp
+from scaly.testing.helpers import build_qp, solve_qp
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_equality_constrained_quadratic() -> None:
   """min 0.5 (x-1)^2 + 0.5 (y-2)^2  s.t.  x + y == 3, x, y >= 0.
 
@@ -30,7 +30,7 @@ def test_qp_equality_constrained_quadratic() -> None:
   np.testing.assert_allclose(out["cost"], -2.5, atol=1e-7)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_two_sided_inequality_box() -> None:
   """min 0.5 x^T x  s.t.  1 <= x[0] + x[1] <= 2, |x[0]| <= 1.
 
@@ -56,7 +56,7 @@ def test_qp_two_sided_inequality_box() -> None:
   assert out["lam_ineq"][0] < 0
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_with_symbolic_parameters() -> None:
   """The QP data may be Scaly ``Expr``s of free parameters.
 
@@ -73,7 +73,7 @@ def test_qp_with_symbolic_parameters() -> None:
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-7)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
   """Fully parameterized QP (P/c/A/b/G/bounds all depend on t): the generated
   solve must satisfy stationarity and primal feasibility at every point."""
@@ -104,7 +104,7 @@ def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
     x0 = out["x"]
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_qp_against_analytic_kkt_reference() -> None:
   """Cross-check a small equality-only QP against its dense KKT solution."""
   P_np = np.array([[2.0, 0.5], [0.5, 1.0]])
@@ -126,7 +126,7 @@ def test_qp_against_analytic_kkt_reference() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_qp_in_scaly_function() -> None:
   """The safety-filter assembly pattern: build QP data symbolically and wrap
   the solve as a node inside a larger ``Function``."""
@@ -145,7 +145,7 @@ def test_nested_qp_in_scaly_function() -> None:
     np.testing.assert_allclose(cost, -0.5 * float(np.dot(mu_val, mu_val)), atol=1e-7)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_qp_postprocessed() -> None:
   """Combine solver output with downstream symbolic math."""
 
@@ -161,7 +161,7 @@ def test_nested_qp_postprocessed() -> None:
   np.testing.assert_allclose(y, float(np.dot(mu_val, mu_val)), atol=1e-7)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
 
@@ -182,7 +182,7 @@ def test_nested_qp_with_general_inequality() -> None:
   np.testing.assert_allclose(u, [-0.1, -0.2], atol=1e-7)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
 
@@ -208,7 +208,7 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
   np.testing.assert_allclose(u2, [0.0, 0.0], atol=1e-7)
 
 
-@pytest.mark.solver("piqp")
+@pytest.mark.method("opt.piqp")
 def test_nested_qp_call_uses_the_declared_tree() -> None:
   """A nested solve takes the solver's declared input tree; leaf order comes from the declaration."""
   u_ref = sc.sym("u_ref", 2)

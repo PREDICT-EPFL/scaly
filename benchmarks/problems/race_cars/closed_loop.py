@@ -181,7 +181,7 @@ def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: n
   next stage, and the corridor rows. The couplings to the next state are linear, so the Hessian is
   block diagonal and each block comes from one exact hyper-dual evaluation per column.
   """
-  from benchmarks.harness.hyperdual import lagrangian_hessian_np
+  from scaly.testing.hyperdual import lagrangian_hessian_np
 
   n = config.horizon
   z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)
