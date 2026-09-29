@@ -10,10 +10,10 @@ wheel. The 17 below run there and have a Scaly counterpart; the others are liste
 the reason they are not here.
 
 ```bash
-uv run examples/casadi/rocket_casadi.py        # either half on its own prints its results
-uv run examples/casadi/rocket_scaly.py
-uv run examples/casadi/compare.py              # every pair: agreement, code lines, setup, run
-uv run examples/casadi/compare.py rocket race_car --processes 5
+uv run python examples/casadi/rocket_casadi.py        # either half on its own prints its results
+uv run python examples/casadi/rocket_scaly.py
+uv run python examples/casadi/compare.py              # every pair: agreement, code lines, setup, run
+uv run python examples/casadi/compare.py rocket race_car --processes 5
 ```
 
 ## The pairs

@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Evaluating one expensive scalar function at 300 points: a Python loop of calls against ``map`` (CasADi).
 
 The function is sin applied 100 000 times. The original times three ways of evaluating it on a

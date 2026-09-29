@@ -190,7 +190,7 @@ def test_refusals() -> None:
 
 def test_rk4_generates_the_code_of_a_hand_written_rk4() -> None:
   """The coefficients fold as a person would write them (``h/6 (k1 + 2 k2 + 2 k3 + k4)``), so a
-  vmapped shooting defect is the same C as `examples/nmpc_cartpole.py`'s hand-written RK4."""
+  vmapped shooting defect is the same C as `examples/opt/nmpc_cartpole.py`'s hand-written RK4."""
   from scaly.codegen import render_c_module
 
   def ode(x, u):

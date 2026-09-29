@@ -52,7 +52,7 @@
 | 6.1 | Library code promoted from examples | ☑ |
 | 6.2 | `nn`, `geometry`, `export` namespaces | ☑ |
 | 7.1 | Conformance suites and the `method` marker | ☑ |
-| 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☐ |
+| 7.2 | Examples: per-namespace folders, PEP 723 headers, public API only | ☑ |
 | 8.1 | `distributions.toml`, manifests, metapackage | ☐ |
 | 8.2 | Namespace import mechanics (`extend_path`, lazy attributes) | ☐ |
 | 8.3 | CI: isolation jobs, plugin jobs, release job, release script | ☐ |
@@ -858,6 +858,38 @@ baselines wait for 8.1's `distributions.toml`. Suite: 4023 passed, 54 skipped (t
 conformance refusals); C snapshots unchanged; ty within the ratchet (188).
 **7.2** Examples per namespace with PEP 723 headers; public-API lint test; runner skips on missing
 requirements.
+Log: done 2026-09-29. The gallery scripts and `examples/notebooks/` went into `examples/core/`,
+`linalg/`, `roots/`, `opt/`, `integrators/`, `ocp/` and `nn/` beside the existing `integrators/`,
+`interp/` and `ocp/`; `qp_solvers/` is `opt/qp_solvers/`, `tinympc/` is `ocp/tinympc/` (its
+`run_benchmark.py` one folder up, next to the modules it imports); `casadi/` and `case_studies/` stay.
+Generated C still lands in `examples/generated/<name>/`. Every script outside `case_studies/` opens
+with a PEP 723 header (78), every notebook carries the same list under `scaly` in its metadata (37):
+`scaly` (`scaly[experimental]` for `nn`), the solver plugins it names, `matplotlib`/`casadi`. Finding:
+ty checks a PEP 723 script as a standalone file, so its sibling imports stop resolving and
+`[tool.ty.overrides]` do not reach it; the 50 scripts that import modules beside them set
+`[tool.ty.environment] extra-paths = ["."]` in the header, which ty reads. Notebooks keep the project's
+config, so `pyproject.toml` puts the notebook folders on ty's `extra-paths`, and each folder has the
+shared `plotstyle.py` beside its notebooks (nine identical copies, a test keeps them one file); no
+notebook edits `sys.path` any more. `examples/casadi/compare.py` starts its workers with `python -P`
+and `PYTHONPATH` (a pair directory's own `_common` first) instead of editing `sys.path`, checked on
+both pair directories. `scaly.testing.examples` reads the declarations (`requirements`, `unmet`,
+`methods` from the `scaly.methods` entry points' distributions). `tests/integration/test_example_runner.py`
+(was `test_notebooks.py`) discovers every script and notebook, skips on unmet requirements, marks
+plugin methods, runs scripts in their own process (46, the CasADi and interp pairs among them, which
+no test ran before) and notebooks in-process with example-local modules evicted between them; 28
+scripts are left to their reference tests (`ELSEWHERE`, checked to be there) and five measuring
+harnesses are listed with the reason in `NOT_RUN`. `tests/integration/test_examples_lint.py` rejects
+`sys.path` edits and underscore names from `scaly`, and checks each declaration against the plugins
+and third-party packages the code uses (dropping `scaly-piqp` from `tiny_qp.py` fails it).
+Deviations: `case_studies/` keeps its `sys.path` edits and has no headers (their baselines run in
+other environments and they share helpers across studies; todo CS-18); `interp`'s constrained fit
+calls PIQP inside the library, so `shape_constrained.ipynb` declares it by hand; the "owned by the
+highest-tier namespace" CI selection waits for 8.3's jobs. In this repository an example runs with
+`uv run python examples/...` (`AGENTS.md`, `docs/dev/contributing.md`), since `uv run` on a headered
+script installs from the index. ty: 188 to 142 diagnostics, the rest pre-existing (the ratchet's
+paths follow the moves). Suite: 4328 passed, 54 skipped; `lookup_tables_nd.ipynb`'s timing assertion
+failed once under the load of three concurrent agent suites and passes on rerun; C snapshots
+unchanged.
 
 ### Phase 8: distributions
 
@@ -918,7 +950,9 @@ indices. Snapshots may change only where these ops appear; differential tests ag
   remaining 198 are in notebooks and case-study drivers, almost all sibling imports through
   `sys.path` (`plotstyle`, `scaly_impl`, ...), which step 7.2 removes. Until then the ty part of the
   common gate is a ratchet: no diagnostic outside the list recorded at step 0.1. Decide whether to
-  fix them earlier.
+  fix them earlier. After 7.2: 142. The gallery's sibling imports resolve; what remains is the case
+  studies' (todo CS-18) and type errors in notebook cells (NumPy unions, Matplotlib argument types),
+  which need edits to executed notebooks.
 - **DiffMPC's first-control rule stays in its case study (found at 6.1).** `linalg.stagewise`'s
   implicit derivative of `Riccati.solve` gives the study's gradients to 1e-14 (a test pins it), but
   `solve` runs the affine backward pass together with the rollout from `x0`, so a batch episode can

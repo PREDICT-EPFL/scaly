@@ -38,6 +38,18 @@ every method it ships.
 
 ::: scaly.testing.helpers.build_nlp
 
+## Example requirements
+
+An example declares what it needs: a script in a PEP 723 header, a notebook under `scaly` in its
+metadata. The example runner reads them, skips an example whose requirements are not installed, and
+marks one that names a solver plugin with that plugin's methods.
+
+::: scaly.testing.examples.requirements
+
+::: scaly.testing.examples.unmet
+
+::: scaly.testing.examples.methods
+
 ## Hyper-dual numbers
 
 ::: scaly.testing.hyperdual.lagrangian_hessian_np

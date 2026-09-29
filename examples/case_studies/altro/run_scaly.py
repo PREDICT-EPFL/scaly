@@ -2,7 +2,7 @@
 
     uv run examples/case_studies/altro/run_scaly.py --problem cartpole [--projected-newton] --out results/scaly_cartpole.json
 
-The solve is timed by `examples/qp_solvers/time_entry.c`, which calls the generated entry point with no
+The solve is timed by `examples/opt/qp_solvers/time_entry.c`, which calls the generated entry point with no
 Python in the loop, `--repeats` times on the same initial state: every call is a cold solve from the
 problem's initial controls, as each Altro.jl sample is. The C is compiled with the flags Scaly's JIT
 uses (`-O2 -mcpu=native -fno-math-errno`), and building, generating and compiling are timed apart.
@@ -22,7 +22,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parents[1] / "qp_solvers"))
+sys.path.insert(0, str(HERE.parents[1] / "opt" / "qp_solvers"))
 
 
 def main() -> None:
@@ -43,7 +43,7 @@ def main() -> None:
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
 
-  import compare as qp  # examples/qp_solvers/compare.py: sh, object_size, time_driver
+  import compare as qp  # examples/opt/qp_solvers/compare.py: sh, object_size, time_driver
   from scaly_impl import build
 
   t0 = time.perf_counter()

@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Minimum-effort rocket flight: reach position 10 at rest after 50 thrust intervals (Scaly).
 
 Each interval is 20 explicit Euler steps of s' = v, v' = (u - 0.05 v^2) / m, m' = -0.1 u^2; the

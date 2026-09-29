@@ -26,7 +26,7 @@ uv run --with jupyterlab jupyter lab examples/integrators
 ```
 
 Matplotlib is in the dev group; Jupyter is not, and `--with jupyterlab` adds it without changing the
-lock file. The plots use `../notebooks/plotstyle.py`. Each notebook ends by writing the C of its main
+lock file. The plots use the shared style in `plotstyle.py`, beside them. Each notebook ends by writing the C of its main
 Function to `examples/generated/integrators/<name>/` (git-ignored).
 
 Two habits keep them quick. A sweep over step sizes uses one map with `dt=None`, the step as an

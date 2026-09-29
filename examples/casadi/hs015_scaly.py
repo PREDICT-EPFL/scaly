@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Hock-Schittkowski problem 15: Rosenbrock's valley cut by two nonconvex constraints (Scaly).
 
     minimize  100 (x1 - x0^2)^2 + (1 - x0)^2

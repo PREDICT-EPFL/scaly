@@ -68,7 +68,7 @@ does not, so `run_altro.jl` scales `Q` and `R` by `dt`.
 | `baseline/setup.sh` | Julia 1.10.12 into `baseline/third_party`, the environment in `baseline/julia_env` (its Manifest pins Altro 0.5.0, TrajectoryOptimization 0.7.1, RobotDynamics 0.4.8, RobotZoo 0.3.1), writes `baseline/env.sh` |
 | `baseline/run_altro.jl` | the two problems on Altro.jl; one cold solve recorded, then BenchmarkTools over 50 cold solves |
 | `scaly_impl.py` | the two problems in Altro's terms (`OCP`), stated as `DiscreteOCP`s and solved by `sc.ocp.ALTRO`, the augmented-Lagrangian iLQR and the projected Newton phase as one Scaly Function |
-| `run_scaly.py` | builds, generates and compiles one solver, times it from C with `examples/qp_solvers/time_entry.c` |
+| `run_scaly.py` | builds, generates and compiles one solver, times it from C with `examples/opt/qp_solvers/time_entry.c` |
 | `compare.py` | both algorithms on both sides for both problems, three fresh processes each, the fastest kept |
 | `altro.ipynb` | the study as a notebook |
 

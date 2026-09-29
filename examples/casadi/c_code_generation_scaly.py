@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """C code generation: the gradient of the determinant of a 7x7 matrix, compiled at three levels (Scaly).
 
 A ``Function`` compiles on its first call, and ``SCALY_CC_OPT`` sets the optimization level (the

@@ -6,7 +6,7 @@ Solvers: `scaly_sparse` is PIQP's algorithm generated for this problem's KKT pat
 `sc.opt.solver(problem, sc.opt.IPM())`; `piqp_sparse` is the vendored PIQP 0.6.2 library behind
 `sc.opt.solver(problem, sc.opt.PIQP(sparse=True))`. Both at `eps_abs = eps_rel = 1e-7`, the
 benchmark's tolerance, and both take a warm start (which neither uses) and the parameters, and return
-the solution, the multipliers and an `Info`. Timing is `examples/qp_solvers`' harness: the generated
+the solution, the multipliers and an `Info`. Timing is `examples/opt/qp_solvers`' harness: the generated
 entry point called from C (`time_entry.c`) on the instance's parameters, which include the data the
 QOCO timer rewrites (`Q`, `R`, `x0`); the minimum over `--repeats` calls.
 """
@@ -25,7 +25,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parent.parent / "qp_solvers"))  # compare.py's timing harness
+sys.path.insert(0, str(HERE.parents[1] / "opt" / "qp_solvers"))  # compare.py's timing harness
 TOL = 1e-7
 
 
@@ -53,7 +53,7 @@ def main() -> None:
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
 
-  import compare as qp  # examples/qp_solvers/compare.py: sh, object_size, time_driver
+  import compare as qp  # examples/opt/qp_solvers/compare.py: sh, object_size, time_driver
   from problem import HORIZONS, instances, objective, problem
 
   t0 = time.perf_counter()

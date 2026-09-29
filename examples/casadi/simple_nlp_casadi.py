@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """The smallest NLP: the point on the line x0 + x1 = 10 closest to the origin (CasADi).
 
     minimize  x0^2 + x1^2   subject to  x0 + x1 - 10 >= 0

@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Moving-horizon estimation of a spring-damper from noisy position measurements (Scaly).
 
 A mass on a spring and damper, driven by a known force and an unknown process noise w, is observed

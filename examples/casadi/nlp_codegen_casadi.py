@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Generate C for an NLP's oracles, compile it and solve with IPOPT from the compiled code (CasADi).
 
     minimize  x^2 + y^2   subject to  x + y - 10 = 0

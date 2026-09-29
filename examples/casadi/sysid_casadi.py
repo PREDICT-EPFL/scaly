@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """System identification of a nonlinear mass-spring-damper from 2000 samples, by Gauss-Newton (CasADi).
 
     M y'' + c y' + k y + k_NL y^3 = u

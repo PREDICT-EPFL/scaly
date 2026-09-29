@@ -1,8 +1,15 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "casadi", "scaly-ipopt", "scaly-piqp"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Run every CasADi/Scaly pair in this directory and compare results, code size, setup time and run time.
 
-    uv run examples/casadi/compare.py                 # every pair, 3 fresh processes per variant
-    uv run examples/casadi/compare.py rocket race_car --processes 5
-    uv run examples/casadi/compare.py --dir examples/interp/pairs   # the pairs in another directory
+    uv run python examples/casadi/compare.py                 # every pair, 3 fresh processes per variant
+    uv run python examples/casadi/compare.py rocket race_car --processes 5
+    uv run python examples/casadi/compare.py --dir examples/interp/pairs   # the pairs in another directory
 
 There are up to three variants per pair: the CasADi file as written (oracles evaluated by CasADi's
 virtual machine, unless the original compiles them), the same file with ``CASADI_JIT=1`` when it
@@ -81,9 +88,7 @@ def worker(name: str, side: str, min_time: float, max_reps: int) -> None:
   else:
     import scaly  # noqa: F401
     import scaly.codegen  # noqa: F401
-  sys.path.insert(0, str(HERE))
-  sys.path.insert(0, str(PAIRS))  # a pair directory's own _common, if it has one, comes first
-  import _common  # noqa: F401
+  import _common  # noqa: F401  (the pair directory's own, if it has one: measure() puts it first on the path)
 
   t0 = time.perf_counter()
   module = __import__(f"{name}_{side.removesuffix('_jit')}")
@@ -110,7 +115,9 @@ def measure(name: str, side: str, processes: int, min_time: float, max_reps: int
     with tempfile.TemporaryDirectory(prefix="casadi-examples-") as work:  # the Scaly JIT cache, and where CasADi's JIT writes
       env = {**os.environ, "SCALY_CACHE_DIR": work, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MPLBACKEND": "Agg"}
       env["CASADI_JIT"] = "1" if side == "casadi_jit" else "0"
-      cmd = [sys.executable, __file__, "--worker", name, side, "--dir", str(PAIRS), "--min-time", str(min_time), "--max-reps", str(max_reps)]
+      # -P leaves this script's directory off the path, so a pair directory's own _common comes first.
+      env["PYTHONPATH"] = os.pathsep.join([str(PAIRS), str(HERE), *filter(None, [os.environ.get("PYTHONPATH")])])
+      cmd = [sys.executable, "-P", __file__, "--worker", name, side, "--dir", str(PAIRS), "--min-time", str(min_time), "--max-reps", str(max_reps)]
       proc = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=work)
     if proc.returncode != 0:
       if side == "casadi_jit":  # a JIT build that fails (gcc out of memory, say) is a result, not an error

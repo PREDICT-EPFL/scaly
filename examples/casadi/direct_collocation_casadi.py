@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Van der Pol optimal control by direct collocation, Legendre points of degree 3 (CasADi).
 
 The problem of ``direct_single_shooting``; on each of the N intervals the state is a degree-3

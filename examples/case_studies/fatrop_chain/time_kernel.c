@@ -10,7 +10,7 @@
  * must be at least sz_arg and sz_res long), each input's size, each output's size (-1 for an output the
  * caller does not request, passed as NULL, as IPOPT's callbacks do with CasADi's nlp_jac_g); then the
  * inputs as doubles. Prints the best and the median call in nanoseconds and writes the requested
- * outputs of the last call to outputs.bin. Same protocol as examples/qp_solvers/time_entry.c, except that
+ * outputs of the last call to outputs.bin. Same protocol as examples/opt/qp_solvers/time_entry.c, except that
  * each sample times a batch of calls long enough (1 ms) for the clock, which on macOS ticks in µs. */
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>

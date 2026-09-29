@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Legendre-Gauss-Lobatto pseudospectral transcription of an optimal-control problem (Scaly).
 
     minimize  4 x1(2) + x2(2) + int_0^2 4 u^2 dt   subject to  x1' = x2^3,  x2' = u,  x(0) = (0, 1)

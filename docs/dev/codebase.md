@@ -175,6 +175,7 @@ src/scaly/
     helpers.py           small typed QPs and NLPs through the solver builders, and their solves
     qp.py                the Maros-Meszaros set (under data/), random and MPC QPs, and their KKT residuals
     hyperdual.py         hyper-dual numbers: exact dense Lagrangian Hessians of NumPy functions
+    examples.py          what an example declares it needs (PEP 723 header, notebook metadata) and what is missing here
 
   utils/
     env.py               the environment variables and platform facts scaly reads

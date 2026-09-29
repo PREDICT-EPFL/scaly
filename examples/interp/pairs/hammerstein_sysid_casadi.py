@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Identification of a Hammerstein model from 2 000 samples by single shooting (CasADi).
 
     v[k] = N(u[k]),   y[k+1] = a1 y[k] + a2 y[k-1] + v[k],   N a cubic B-spline with 20 coefficients c

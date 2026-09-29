@@ -1,4 +1,4 @@
-"""``examples/qp_solvers``: the generated PIQP (``opt.ipm``) against the PIQP library (``opt.piqp``).
+"""``examples/opt/qp_solvers``: the generated PIQP (``opt.ipm``) against the PIQP library (``opt.piqp``).
 
 On small instances of the four families the generated solver must take the vendored library's
 iterations, backend for backend, and return its solution and multipliers; its objective must be the
@@ -8,6 +8,7 @@ problem's own, as the example's ``qp_data`` reproduces it.
 from __future__ import annotations
 
 import runpy
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,8 @@ import pytest
 
 import scaly as sc
 
-HERE = Path(__file__).resolve().parents[2] / "examples" / "qp_solvers"
+HERE = Path(__file__).resolve().parents[2] / "examples" / "opt" / "qp_solvers"
+sys.path.insert(0, str(HERE))  # the example's modules import each other by name, as a script run from there does
 
 
 @pytest.fixture(scope="module")

@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """A two-variable linear program, solved by qpOASES through CasADi's low-level ``conic`` interface.
 
     minimize  3 x0 + 4 x1   subject to  x0 + 2 x1 <= 14,  3 x0 - x1 >= 0,  x0 - x1 <= 2

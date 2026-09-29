@@ -20,7 +20,7 @@ so they read on GitHub without running.
 uv run --with jupyterlab jupyter lab examples/interp
 ```
 
-The plots use `../notebooks/plotstyle.py`. Five of the notebooks write their C to
+The plots use the shared style in `plotstyle.py`, beside them. Five of the notebooks write their C to
 `examples/generated/interp/<name>/` (git-ignored); `shape_constrained` has none to write. The FSDS centre line in `data/` is the one the
 race-car benchmark uses (`benchmarks/problems/race_cars/data/tracks/fsds_competition_1`).
 
@@ -39,8 +39,8 @@ halves use, from fixed seeds, and `pairs/_common.py` loads the helpers of `examp
 | `heat_pump_mpc` | a day of 15-minute heat-pump MPC with a bicubic COP table and hourly price and temperature forecasts, IPOPT | `interpolant("bspline")` mapped, `interp1d(..., "floor")` on `Opti` parameters | `interpolant(kind="cubic")` on a batch, `kind="zoh"` tables of parameters read by `at()` |
 
 ```bash
-uv run examples/interp/pairs/lut_eval_scaly.py         # either half on its own prints its results
-uv run examples/casadi/compare.py --dir examples/interp/pairs
+uv run python examples/interp/pairs/lut_eval_scaly.py         # either half on its own prints its results
+uv run python examples/casadi/compare.py --dir examples/interp/pairs
 ```
 
 `compare.py --dir examples/interp/pairs`, three fresh processes per variant, on an Apple M3 Max

@@ -126,6 +126,9 @@ namespace has its own directory beside it, so `src/scaly/ocp/ilqr.py` is tested 
   installed method; a method missing from its table fails there, so a new one is listed on purpose.
 - `tests/core/integration/` holds the compiler's workload-shaped end-to-end checks, and
   `tests/integration/` the ones that cross namespaces: the examples, notebooks and case studies.
+  `test_example_runner.py` runs every example script and notebook outside `examples/case_studies/`,
+  skipped where a requirement it declares is missing, and `test_examples_lint.py` holds the examples
+  to the public API and to declaring what they need (see [Examples](#examples)).
 - `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates; see
   [Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
 - `tests/typing/` holds the expected-error assertions that `ty check` covers, across namespaces.
@@ -147,6 +150,27 @@ Jacobian in `tests/core/integration/test_stage_transcription.py` and the chained
 `tests/core/integration/test_vmap.py`. They build a mapped and a fully unrolled version of the same graph
 and compare values, Jacobians and Hessians, so a coloring bug cannot hide behind a false structural
 zero. Keep them working.
+
+## Examples
+
+`examples/` has a folder per namespace (`core/`, `linalg/`, `opt/`, `ocp/`, ...), and an example goes
+in the folder of the namespace it is about. A script opens with a PEP 723 header and a notebook
+carries the same list under `scaly` in its metadata:
+
+```python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-piqp"]
+# ///
+```
+
+`scaly` is the base (`scaly[experimental]` for `nn` and `geometry`); add each solver plugin the example
+names and each third-party package it imports beyond NumPy and SciPy. A script that imports modules
+beside it also sets `[tool.ty.environment] extra-paths = ["."]` in the header, since ty checks a
+PEP 723 script as a standalone file. `test_examples_lint.py` checks the list against the code, and
+the example runner reads it to skip an example whose requirements are missing and to mark one that
+needs a plugin for CI's method job. Examples use only public names: no `sys.path` edits, no
+underscore names from `scaly`. Run one in the workspace with `uv run python examples/<folder>/<name>.py`.
 
 ## Making a change
 

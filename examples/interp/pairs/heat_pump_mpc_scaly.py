@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """A day of heat-pump MPC for a house, at 15 minutes, against hourly forecasts (Scaly).
 
     minimize   sum_k price(t_k) P_k dt + 1e-3 sum_k P_k^2

@@ -165,6 +165,20 @@ venvPath = "."
 typeCheckingMode = "basic"
 reportPrivateImportUsage = false
 
+[tool.ty.environment]
+# A notebook imports what sits beside it (the shared plot style, a harness), as a kernel started in
+# its folder does. ty resolves a script's sibling modules but not a notebook's, so the notebook
+# folders go on its search path; the plot style is one file in all of them.
+extra-paths = [
+  "examples/integrators",
+  "examples/interp",
+  "examples/linalg",
+  "examples/nn",
+  "examples/ocp",
+  "examples/opt",
+  "examples/roots",
+]
+
 [tool.ty.src]
 exclude = [
   "hatch_build.py",

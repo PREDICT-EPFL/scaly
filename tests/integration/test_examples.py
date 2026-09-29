@@ -13,7 +13,7 @@ EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def _load(name: str) -> dict:
-  return runpy.run_path(str(EXAMPLES / f"{name}.py"), run_name=f"example_{name}")
+  return runpy.run_path(str(EXAMPLES / f"{name}.py"), run_name=f"example_{name.replace('/', '_')}")
 
 
 def _central_difference(fun, x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
@@ -22,7 +22,7 @@ def _central_difference(fun, x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 
 @pytest.mark.parametrize("slip, puddle", [(0.0, 6.0), (0.1, 6.0), (0.2, 2.0)])
 def test_value_iteration_matches_numpy_and_its_policy_is_greedy(slip: float, puddle: float) -> None:
-  ns = _load("mdp_value_iteration")
+  ns = _load("core/mdp_value_iteration")
   out = ns["main"](slip, puddle)
   v_ref, q_ref = ns["reference"](slip, puddle)
   np.testing.assert_allclose(out["value"], v_ref, rtol=1e-12, atol=1e-12)
@@ -33,7 +33,7 @@ def test_value_iteration_matches_numpy_and_its_policy_is_greedy(slip: float, pud
 
 
 def test_lasso_meets_its_optimality_conditions() -> None:
-  ns = _load("lasso_admm")
+  ns = _load("linalg/lasso_admm")
   out = ns["main"]()
   x, lam, a, b = out["x"], float(out["lam"]), ns["A_CONST"], out["b"]
   grad = a.T @ (a @ x - b)  # optimality: grad + lam * sign(x) = 0 on the support, |grad| <= lam off it
@@ -47,7 +47,7 @@ def test_lasso_meets_its_optimality_conditions() -> None:
 
 
 def test_lqr_cost_and_gradient_through_both_scans() -> None:
-  ns = _load("lqr_tuning")
+  ns = _load("linalg/lqr_tuning")
   w = np.random.default_rng(3).normal(size=ns["NX"] + 1) * 0.5
   cost, grad = ns["tuning_objective"](w)
   np.testing.assert_allclose(cost, ns["reference_cost"](w), rtol=1e-12)
@@ -57,7 +57,7 @@ def test_lqr_cost_and_gradient_through_both_scans() -> None:
 
 
 def test_truss_analysis_and_design() -> None:
-  ns = _load("truss_sizing")
+  ns = _load("linalg/truss_sizing")
   structure = (ns["COORDS"].reshape(-1), ns["BARS"], ns["FREE"], ns["LOAD"])
   areas = np.random.default_rng(0).uniform(0.1, 1.0, ns["NB"])
   compliance, grad, lengths = ns["analyse"](areas, *structure)
@@ -76,7 +76,7 @@ def test_truss_analysis_and_design() -> None:
 
 
 def test_heat_control_simulation_gradient_and_sparse_signature() -> None:
-  ns = _load("heat_control")
+  ns = _load("linalg/heat_control")
   u = np.random.default_rng(1).uniform(0.0, 50.0, (ns["STEPS"], ns["N_HEATERS"]))
   kappa = ns["KAPPA"]
   k = ns["system"](kappa)
@@ -98,7 +98,7 @@ def test_heat_control_simulation_gradient_and_sparse_signature() -> None:
 
 
 def test_chain_equilibrium_gradient_and_fit() -> None:
-  ns = _load("hanging_chain")
+  ns = _load("roots/hanging_chain")
   import scaly as sc
 
   p, params = sc.sym("p", ns["NP"]), sc.sym("params", 3)

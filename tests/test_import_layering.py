@@ -179,6 +179,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.testing.conformance.ocp": 10,
   "scaly.testing.conformance.qp": 10,
   "scaly.testing.conformance.roots": 10,
+  "scaly.testing.examples": 10,
   "scaly.testing.helpers": 10,
   "scaly.testing.hyperdual": 10,
   "scaly.testing.plugin": 10,

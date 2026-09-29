@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Lookup tables evaluated at batches of points: values, gradients and a Hessian (Scaly).
 
 Three tables built by ``interp.interpolant`` from gridded data:

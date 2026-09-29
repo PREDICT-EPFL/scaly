@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Rosenbrock's problem as an equality-constrained NLP, solved by IPOPT (Scaly).
 
     minimize  x^2 + 100 z^2   subject to  z + (1 - x)^2 - y = 0

@@ -22,7 +22,7 @@ uv run --with jupyterlab jupyter lab examples/ocp
 ```
 
 Matplotlib is in the dev group; Jupyter is not, and `--with jupyterlab` adds it without changing the
-lock file. The plots use `../notebooks/plotstyle.py`. Each notebook ends by writing the C of a
+lock file. The plots use the shared style in `plotstyle.py`, beside them. Each notebook ends by writing the C of a
 control law to `examples/generated/ocp/<name>/` (git-ignored). The law is one Function the notebook
 composes from the solver and the shift, `law(x0, *params, warm) -> (u, warm_next)`:
 

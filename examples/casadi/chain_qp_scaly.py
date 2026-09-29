@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-piqp"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """A hanging chain of N masses resting on a sloped floor: a sparse QP, solved by PIQP (Scaly).
 
     minimize    sum_i D/2 ((y_i - y_{i+1})^2 + (z_i - z_{i+1})^2) + g0 sum_i m z_i

@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """A 12 x 12 lookup table calibrated to 3 000 scattered noisy measurements by least squares (Scaly).
 
     minimize over T   sum_i (T(p_i) - z_i)^2,   T bilinear on a 12 x 12 grid with values T

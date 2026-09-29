@@ -31,7 +31,7 @@ benchmark has a neural model inside its constraints, so it is an NLP.
 Pick IPM for the same problems when the solver has to ship without a library: a microcontroller,
 or a build that should carry nothing but generated C. It takes the PIQP library's iterations and
 returns its solution; its C is larger and slower to compile, and how its solve time compares depends
-on the problem. `examples/qp_solvers` measures both on four QP families.
+on the problem. `examples/opt/qp_solvers` measures both on four QP families.
 
 Pick IPOPT when the problem is nonlinear and you want a solver with two decades of use behind it
 and its own documentation.

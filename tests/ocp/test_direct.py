@@ -59,7 +59,7 @@ def position(x, u):
 
 
 def hand_written():
-  """The formulation of `examples/nmpc_cartpole.py`, written out without `scaly.ocp` or
+  """The formulation of `examples/opt/nmpc_cartpole.py`, written out without `scaly.ocp` or
   `scaly.integrators`, the track limit at the stages the library puts path constraints (0 .. N-1)."""
 
   def rk4(x, u, h):

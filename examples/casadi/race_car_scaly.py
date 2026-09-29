@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Minimum-time race on a track with a position-dependent speed limit (Scaly).
 
     minimize T   subject to  p' = v,  v' = u - v  (RK4 on N intervals of T/N),

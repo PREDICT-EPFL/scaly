@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Evaluating one expensive scalar function at 300 points with ``vmap`` (Scaly).
 
 The function is sin applied 100 000 times. In Scaly the repetition is a ``scan``, a loop in C, so

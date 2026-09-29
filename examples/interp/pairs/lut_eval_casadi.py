@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Lookup tables evaluated at batches of points: values, gradients and a Hessian (CasADi).
 
 Three tables built by ``interpolant`` from gridded data:

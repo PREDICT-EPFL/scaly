@@ -13,7 +13,7 @@ import pytest
 import scaly as sc
 from scaly.linalg.stagewise import Riccati
 
-TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "tinympc"
+TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "ocp" / "tinympc"
 sys.path.insert(0, str(TINYMPC))  # the example's modules import each other by name
 
 import problem as tp  # noqa: E402  # ty: ignore[unresolved-import]

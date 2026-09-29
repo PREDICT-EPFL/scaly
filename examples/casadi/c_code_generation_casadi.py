@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """C code generation: the gradient of the determinant of a 7x7 matrix, compiled at three levels (CasADi).
 
 ``Function.generate`` writes the C, gcc compiles it, and ``ca.external`` loads the shared library

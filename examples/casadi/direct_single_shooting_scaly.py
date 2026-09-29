@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Van der Pol optimal control by direct single shooting, RK4 integrator (Scaly).
 
     minimize  int_0^10 x1^2 + x2^2 + u^2 dt

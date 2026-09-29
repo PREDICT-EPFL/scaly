@@ -34,7 +34,10 @@ protocol, the reference machine and the evidence behind each rule. Put rationale
   tree or report types differently from the pinned tools CI uses.
 - `uv run --only-group docs zensical serve` — docs preview, `build` to render into `site/`
 - `uv run path/to/script.py` runs a script. Not `uv run python path/to/script.py`: `uv run` takes
-  the file directly, and the extra `python` buys nothing. Never activate the venv.
+  the file directly, and the extra `python` buys nothing. The exception is an example with a PEP 723
+  header (every script under `examples/` outside `case_studies/`): `uv run` would install its header's
+  requirements from the package index into a fresh environment, so `uv run python examples/...` runs
+  it against the workspace. Never activate the venv.
 
 Run the whole suite for any change touching the IR, differentiation or code generation. Those paths
 break subtly and are expensive to debug later.

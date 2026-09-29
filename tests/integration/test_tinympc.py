@@ -1,4 +1,4 @@
-"""The TinyMPC example (``examples/tinympc``): the generated ADMM against the NumPy port of the library.
+"""The TinyMPC example (``examples/ocp/tinympc``): the generated ADMM against the NumPy port of the library.
 
 The NumPy port (``problem.reference_solve``) follows the TinyMPC library's ``solve`` line by line;
 the benchmark checks it against the library itself. Here the generated solver must take the same
@@ -20,7 +20,7 @@ import pytest
 import scaly as sc
 from scaly.ocp.tinyadmm import project_cones
 
-TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "tinympc"
+TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "ocp" / "tinympc"
 # The example's modules import each other by name, so its directory goes on the path first.
 sys.path.insert(0, str(TINYMPC))
 

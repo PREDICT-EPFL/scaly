@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Model predictive contouring control around a Formula Student track (CasADi).
 
 A kinematic bicycle ``(X, Y, psi, v)`` with its progress ``theta`` along the track as a fifth state,

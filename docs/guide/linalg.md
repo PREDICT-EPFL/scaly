@@ -196,7 +196,7 @@ code next to the factorization:
 - `fact.inertia()`: the numbers of positive, negative and other (zero or NaN) pivots, as a
   `float64` vector of 3. By Sylvester's law of inertia these are the signs of the eigenvalues of
   `K`, so an SQP or interior-point step checks it against `(n, m, 0)` and raises its regularization
-  when it differs (see `examples/sqp_newton_sparse.py`).
+  when it differs (see `examples/linalg/sqp_newton_sparse.py`).
 - `fact.health(*, signs=None, pivot_tol=0.0, x=None)`: a bool, true when every pivot is finite with
   `|D[j]| > pivot_tol`. With `signs` (`+1`/`-1` per row of `K`), each pivot must also have the
   expected sign, the quasi-definite pattern. With `x`, every entry of the solution must be finite.
@@ -206,14 +206,14 @@ entry `i` of the solution depends on `b[j]` and on the entries of `K` exactly wh
 same connected component of `K`'s graph, and not on the factor. `sparse_jacobian` of a solve of a
 block-diagonal system then colors each block separately.
 
-**Examples.** `examples/sqp_newton_sparse.py` takes Newton steps on the KKT conditions of an
+**Examples.** `examples/linalg/sqp_newton_sparse.py` takes Newton steps on the KKT conditions of an
 optimal-control problem, with the Hessian and the constraint Jacobian as sparse matrices and
-inertia correction. `examples/kalman_update.py` updates a spatial field with a sparse information
+inertia correction. `examples/linalg/kalman_update.py` updates a spatial field with a sparse information
 prior through a quasi-definite system and differentiates the update: its Jacobian in the
-measurements is the Kalman gain. `examples/heat_control.py` steps a heat equation implicitly with one
+measurements is the Kalman gain. `examples/linalg/heat_control.py` steps a heat equation implicitly with one
 factorization and optimizes the heating through the solves' implicit rules;
-`examples/truss_sizing.py`, `examples/lasso_admm.py`, `examples/lqr_tuning.py` and
-`examples/hanging_chain.py` use the dense kernels. `examples/README.md` lists them all.
+`examples/linalg/truss_sizing.py`, `examples/linalg/lasso_admm.py`, `examples/linalg/lqr_tuning.py` and
+`examples/roots/hanging_chain.py` use the dense kernels. `examples/README.md` lists them all.
 
 ## Banded systems
 

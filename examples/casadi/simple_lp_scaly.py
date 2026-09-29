@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-piqp"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """A two-variable linear program, solved by PIQP through Scaly's matrix-data QP (Scaly).
 
     minimize  3 x0 + 4 x1   subject to  x0 + 2 x1 <= 14,  3 x0 - x1 >= 0,  x0 - x1 <= 2

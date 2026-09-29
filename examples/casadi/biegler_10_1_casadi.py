@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["casadi"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Biegler's example 10.1: collocation on N = 1..10 elements for z' = z^2 - 2z + 1, z(0) = -3 (CasADi).
 
 Radau collocation of degree K = 2 turns the initial-value problem into a square system of

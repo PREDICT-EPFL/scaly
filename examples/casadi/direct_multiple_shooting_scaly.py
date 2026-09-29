@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scaly", "scaly-ipopt"]
+#
+# [tool.ty.environment]
+# extra-paths = ["."]  # the modules beside this script, which it imports
+# ///
 """Van der Pol optimal control by direct multiple shooting, RK4 integrator (Scaly).
 
 The problem of ``direct_single_shooting``; now the states at the interval boundaries are variables

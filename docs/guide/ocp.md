@@ -145,7 +145,7 @@ every problem it takes.
   gains are computed offline, and each iteration is a backward pass for the affine terms, a
   rollout, a clip and a dual update. Its gains come from the problem's own terminal cost
   (`scaly.ocp.tinyadmm.finite_cache`); `admm_solver` with `tinympc_cache` is the library's
-  convention, which `examples/tinympc` reproduces to rounding.
+  convention, which `examples/ocp/tinympc` reproduces to rounding.
 - **`ALTRO`** is the augmented-Lagrangian iLQR of Howell et al. following Altro.jl 0.5, with the
   optional projected Newton phase (`projected_newton=True`, which takes diagonal `Quadratic`
   costs). `examples/case_studies/altro` checks it against Altro.jl's iterates.

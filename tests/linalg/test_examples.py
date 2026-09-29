@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def test_sqp_newton_step_converges_quadratically() -> None:
-  ns = runpy.run_path(str(EXAMPLES / "sqp_newton_sparse.py"), run_name="sqp_example")
+  ns = runpy.run_path(str(EXAMPLES / "linalg" / "sqp_newton_sparse.py"), run_name="sqp_example")
   out = ns["main"]()
   res = out["residuals"]
   assert res[-1] < 1e-9 and len(res) <= 8
@@ -31,7 +31,7 @@ def test_sqp_newton_step_converges_quadratically() -> None:
 
 
 def test_kalman_update_matches_the_covariance_form() -> None:
-  ns = runpy.run_path(str(EXAMPLES / "kalman_update.py"), run_name="kalman_example")
+  ns = runpy.run_path(str(EXAMPLES / "linalg" / "kalman_update.py"), run_name="kalman_example")
   out = ns["main"]()
   lam = ns["prior_information"]().toarray()
   h = ns["H_CONST"].toarray()

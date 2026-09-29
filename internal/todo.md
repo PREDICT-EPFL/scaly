@@ -105,7 +105,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       RK4 and the 3/8 rule, the Bogacki-Shampine and Dormand-Prince pairs), and `si.explicit` /
       `si.rk4`, maps with the model's own signature, `dt` folded or an input, substeps unrolled up to
       four and a `scan` beyond. Each stage is one call of the model. The coefficients fold as written
-      by hand, so a shooting defect generates byte-identical C to `examples/nmpc_cartpole.py`'s RK4 and
+      by hand, so a shooting defect generates byte-identical C to `examples/opt/nmpc_cartpole.py`'s RK4 and
       runs 13 to 23% faster than CasADi's fastest encoding (`perf_2026_09_27_integrators/`). 20/20
       mutants killed. Report: `notes/integrators_i1_report.html`.
 - [x] **API-144. Implicit Runge-Kutta integrators** (plan I3). `si.implicit`: Gauss-Legendre, Radau
@@ -465,8 +465,8 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       decision as a node attribute, `custom_derivative(sparsity=)` honored by calls, `vmap`, `scan`
       and `while_loop` bodies and the structured sparse Jacobian, a reverse-pass memory guard, loop
       patterns that skip loops reading nothing that depends on `wrt`, and a fix for scan patterns
-      with a carry of 256 or more entries. Examples: `examples/sqp_newton_sparse.py`,
-      `examples/kalman_update.py` (`notes/tier2_pr9_report.html`).
+      with a carry of 256 or more entries. Examples: `examples/linalg/sqp_newton_sparse.py`,
+      `examples/linalg/kalman_update.py` (`notes/tier2_pr9_report.html`).
 - [ ] **C-111. Generation time of straight-line code.** An unrolled graph costs about 1.2 ms per
       scalar operation to generate, most of it in lowering and the program passes (`match.rewrite`,
       `fuse_elementwise`, `fold_arith`, `pack_workspace`), linearly in the size. It caps
@@ -574,11 +574,11 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
 - [x] **C-125. An output named like an input is read back from the output buffer.** Silent wrong
       numbers: lowering keyed buffers by name, so an output's buffer replaced the input of the same
       name and every read of that input went to `res[k]`. Found by the TinyMPC example (C-126),
-      which names its output `state_next`, and again by T3-2's tests (`examples/simple.py`:
+      which names its output `state_next`, and again by T3-2's tests (`examples/core/simple.py`:
       `(x, y) -> (y, z)`). Fixed: such an output gets a buffer of its own, output rules reach their
       buffer by position, and the C entry maps parameters to `arg[i]` and `res[i]` by position (the
       typed header already named them `y_in`/`y_out`).
-- [x] **C-126. TinyMPC in Scaly (`examples/tinympc`).** TinyMPC's ADMM (the library's `solve`, box
+- [x] **C-126. TinyMPC in Scaly (`examples/ocp/tinympc`).** TinyMPC's ADMM (the library's `solve`, box
       and second-order-cone constraints, affine dynamics, warm starts) written once in Python and
       generated per problem: a `while_loop` over ADMM iterations around two `scan`s (Riccati backward
       pass, rollout). A NumPy port of the library's loop is the test oracle; the three problem
@@ -1213,6 +1213,12 @@ The reproductions of published benchmarks in `examples/case_studies/`, planned i
 
 ### Now
 
+- [ ] **CS-18. The case studies without `sys.path` edits.** Step 7.2 left them: the drivers and
+      notebooks reach `_common.py` and the shared plot style one folder up, their baselines' modules
+      and another study's harness (`embedded_qp` uses `opt/qp_solvers/compare.py` and `fatrop_chain`)
+      through the path. Make each study importable on its own (its helpers beside it, the shared
+      timing in `bench/` once 8.3 lands), then add PEP 723 headers and bring `case_studies/` under
+      `tests/integration/test_examples_lint.py`.
 - [ ] **CS-1. E1's acados leg.** Port the Fatrop chain to `AcadosOcp` (rockit 0.6.7's acados driver no
       longer compiles against current acados) and swap acados' generated `expl_vde_*`/`expl_ode_hess`
       for Scaly's `--casadi` output. Report: `notes/case_study_e1_report.html`, section 6.
