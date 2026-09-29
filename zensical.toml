@@ -98,6 +98,7 @@ features = [
 ]
 logo = "assets/scaly-wordmark.svg"
 favicon = "assets/scaly-mark.svg"
+custom_dir = "overrides"
 
 
 [project.plugins.mkdocstrings.handlers.python]

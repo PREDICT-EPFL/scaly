@@ -221,7 +221,6 @@ jobs:
             flags=(--target "$GITHUB_SHA" --title "$name $version" --generate-notes)
             previous=$(git tag --list "$name-v*" --sort=-v:refname | head -n 1)
             [ -n "$previous" ] && flags+=(--notes-start-tag "$previous")
-            [[ "$version" =~ [a-z] ]] && flags+=(--prerelease)
             [ "$name" != scaly ] && flags+=(--latest=false)
             gh release create "$tag" "${flags[@]}" release/"$prefix".tar.gz release/"$prefix"-*.whl
           done

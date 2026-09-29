@@ -27,6 +27,11 @@ jobs:
       - name: Install docs dependencies
         run: uv sync --frozen --only-group docs
 
+      # Every build here goes to Cloudflare, so each one carries the banner naming its branch and
+      # commit. The released site on GitHub Pages is built without it.
+      - name: Mark the build as development docs
+        run: printf '\n[project.extra.preview]\nbranch = "%s"\ncommit = "%s"\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" >> zensical.toml
+
       # The build emits a warning per broken internal link and per page missing from the nav.
       # Those are the failures worth catching, so the run is failed on any warning rather than
       # left green with a wall of them.

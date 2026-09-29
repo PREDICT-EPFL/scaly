@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{#- docs.yml sets extra.preview for the Cloudflare builds; the released site on GitHub Pages has none. -#}
+{% block announce -%}
+  {%- if config.extra.preview -%}
+    Development docs for <code>{{ config.extra.preview.branch }}</code> at
+    <a href="{{ config.repo_url }}/commit/{{ config.extra.preview.commit }}"><code>{{ config.extra.preview.commit[:7] }}</code></a>.
+    The docs for the latest release are at <a href="https://predict-epfl.github.io/scaly/">predict-epfl.github.io/scaly</a>.
+  {%- endif -%}
+{%- endblock %}

@@ -88,7 +88,7 @@ uv run scaly_codegen mymodule:solve -o generated/
 
 Scaly is developed by:
 
-- Tudor Oancea (main developer)
+- Tudor A. Oancea (main developer)
 - Colin N. Jones (methods and math)
 
 All contributors are part of the [Predictive control

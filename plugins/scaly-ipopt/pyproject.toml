@@ -4,6 +4,7 @@ version = "0.1.0a1"
 description = "IPOPT backend for scaly: the vendored solver plus the nlp() oracle bindings."
 requires-python = ">=3.12"
 dependencies = ["scaly>=0.1.0a1,<0.2"]
+readme = "README.md"
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
 
