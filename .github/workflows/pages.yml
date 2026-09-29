@@ -1,0 +1,56 @@
+name: Pages
+
+# Publishes the documentation of a released commit to GitHub Pages. `release.yml` calls it after
+# each scaly release; run it by hand from `main` with a tag to republish an earlier release. The
+# `github-pages` environment only accepts `main`, so the run stays on `main` and checks out `ref`.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag to publish, such as scaly-v0.1.0a1
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build the documentation site
+        run: |
+          uv sync --frozen --only-group docs
+          uv run --frozen --only-group docs zensical build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

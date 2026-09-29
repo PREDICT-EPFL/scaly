@@ -52,16 +52,6 @@ section because items move between sections more often than expected, because ei
 eight places to get wrong once completed items are deleted, and because the letters then carry
 only the theme and nothing else has to stay stable.
 
-Priority order from 2026-09-11, the road to a public repository and a first alpha. Each step is
-cheap once and expensive to redo, so the order is the sequencing that matters:
-
-1. R-40 versioning policy.
-2. D-32 to D-34 documentation rewrite, D-68 acknowledgements and AI disclosure, D-65 the two
-   docs deployments.
-3. R-67 make the repository public, after running the suite, ruff and ty locally on the rewritten
-   tree.
-4. R-66 platform-only wheel tags, R-41 wheels on test PyPI, R-42 `0.1.0a1`.
-
 ## API
 
 ### Now
@@ -645,11 +635,9 @@ the code does.
       acknowledgement of NCCR Automation, which funded the research, and a disclosure that AI coding
       agents (Claude, Codex and others) were used to write parts of the code and documentation.
       Before R-67, so the first public snapshot carries both.
-- [ ] **D-65. Two documentation deployments.** GitHub Pages publishes the user-facing docs from
-      `main` on each version tag, through a `docs.yml` job with `pages: write` and `id-token: write`
-      permissions on a tag trigger. Cloudflare Pages publishes the latest docs from `main` and a
-      preview per branch, which the existing every-branch build already produces. Each site carries
-      a banner or version switcher saying which one it is.
+- [x] **D-65. Two documentation deployments.** Done 2026-09-29. GitHub Pages publishes the docs of
+      the latest scaly release through `pages.yml`, called by `release.yml`. Cloudflare Pages
+      publishes every branch from `docs.yml`, with a banner naming the branch and commit.
 - [x] **D-35. Reconcile the problem READMEs with the audit.** Completed 2026-09-11. The problem
       READMEs now describe only the current formulations and link measured comparisons to the
       canonical result pages.
@@ -710,7 +698,7 @@ These steps make the tree public and permanent, and each is cheap to do once and
       unreachable commits fetchable by SHA until its garbage collection.
 - [x] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
       `CITATION.cff`, a real pyproject description, and ruff's `target-version` aligned with `requires-python`.
-- [ ] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
+- [x] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
       ruff and ty green locally. The first CI run happens here because the month's Actions minutes
       are spent, and both workflows will consume them once they refill.
 - [x] **R-40. Versioning policy.** What a minor bump promises about the generated C symbols, the
@@ -721,13 +709,9 @@ These steps make the tree public and permanent, and each is cheap to do once and
       sets `infer_tag = True`, which stamps the running interpreter's `cpXY-cpXY-<platform>` tag.
       Set the tag to `py3-none-<platform>` explicitly instead, so one wheel per OS and architecture
       serves every Python version and no per-interpreter build matrix or stable ABI is needed.
-- [ ] **R-41. Wheel building and publishing.** cibuildwheel with one matrix entry per OS and
-      architecture, solvers built natively on each runner as CI already does. `scaly`, `scaly-sqp`
-      and `scaly-piqp` first; `scaly-ipopt` follows once its Fortran runtime licensing (L-30) is
-      settled. Test PyPI first. After L-28 to L-31 and R-66. Decide the compiler the wheels are
-      built with at that point; the system compiler on each runner is the default. `cmake` comes
-      from PyPI as a build requirement of both plugins; a C++ compiler and gfortran stay system-wide
-      prerequisites for anyone building the wheels themselves.
+- [x] **R-41. Wheel building and publishing.** Done 2026-09-29. `ci.yml` builds the wheels and sdists
+      on every run and `release.yml` publishes a green `main` to TestPyPI, then PyPI; the design is
+      in [the release workflow note](notes/release_workflow_design.md).
 - [ ] **R-71. `zig cc` as the JIT's preferred compiler.** Order: `SCALY_CC`, then
       `python -m ziglang cc` when `ziglang` is importable, then `CC`, then `cc` on `PATH`. It wraps
       clang, so the JIT always speaks one flag dialect and gcc-only behaviour (the sincos merge
@@ -739,8 +723,9 @@ These steps make the tree public and permanent, and each is cheap to do once and
       IPOPT hooks) link against the vendored libraries with zig's driver on all three operating
       systems, and measure cold compile latency, since zig builds its own libc on first use.
       Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
-- [ ] **R-42. Freeze measurements on `0.1.0a1`, tag `v0.1.0a1`** and publish the wheels and a durable
-      archive. After R-41.
+- [ ] **R-42. Freeze measurements on `0.1.0a1`** and publish a durable archive. The four packages
+      were released at `0.1.0a1` on 2026-09-29, tagged `<package>-v0.1.0a1`; the measurement freeze
+      and the archive remain.
 
 ## Track C closeout before merging to dev
 

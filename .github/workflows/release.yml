@@ -3,8 +3,8 @@ name: Release
 # Publishes what a successful CI run on `main` built, without rebuilding. A package is released
 # when its version has no `<name>-v<version>` tag yet, so bumping the version is how a release is
 # requested and unchanged packages are left alone. `testpypi` stops after installing from
-# TestPyPI; `pypi` continues to PyPI, then tags each released package and creates its GitHub
-# Release. Every step skips what an earlier attempt already did, so a failed run can be rerun.
+# TestPyPI; `pypi` continues to PyPI, then tags each released package, creates its GitHub Release
+# and, when scaly itself is released, publishes the docs to GitHub Pages. Every step skips what an earlier attempt already did, so a failed run can be rerun.
 on:
   workflow_dispatch:
     inputs:
@@ -224,3 +224,14 @@ jobs:
             [ "$name" != scaly ] && flags+=(--latest=false)
             gh release create "$tag" "${flags[@]}" release/"$prefix".tar.gz release/"$prefix"-*.whl
           done
+
+  pages:
+    needs: [plan, github-release]
+    if: contains(fromJSON(needs.plan.outputs.packages).*.name, 'scaly')
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      ref: ${{ github.sha }}
