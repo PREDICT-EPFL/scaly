@@ -314,8 +314,9 @@ in 3.6 is reversed as an opt-in.
   bitwise equality across targets never existed.
 - Two side findings became items: the JIT cache key hashes `-march=native` as a string, not the
   CPU it resolves to (C-83), and `zig cc` moves from last fallback to preferred JIT compiler
-  (R-71). The C-79 entry in `internal/todo.md` holds the full design and gates; the docs draft
-  above gains the `lanes` and `vector_libm` paragraphs when it lands.
+  (R-71). The C-79 entry, moved to `c77_c79_implementation.md` when it closed, holds the full
+  design and gates; the docs draft above gains the `lanes` and `vector_libm` paragraphs when it
+  lands.
 
 ## 4. Items recorded in `internal/todo.md` as C-77 to C-81
 

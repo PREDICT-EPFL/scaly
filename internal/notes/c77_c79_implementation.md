@@ -1,7 +1,7 @@
 # C77–C79 implementation record
 
 Archived on 2026-09-24 for merge to dev. The user approved deferring the remaining performance
-investigation to a new branch. C-79 in `internal/todo.md` owns the follow-up; unchecked items
+investigation to a new branch. C-113 in `internal/todo.md` owns the follow-up; unchecked items
 below record the original acceptance requirements, not an active plan for this worktree.
 
 
@@ -225,3 +225,85 @@ budgets pass at 101,795 bytes / zero doubles with scalar lanes. Auto lanes use 1
 and 122,880 doubles. A reintroduced CALL boundary with scalar lanes produces 1,852,520 bytes
 and 1,601,141 doubles, failing both budgets. Default vector artifact sizes remain measured by
 the study, not bounded by this scalar structural check.
+
+## The C-79 todo entry at closure
+
+Moved here verbatim from `internal/todo.md` on 2026-09-29, when C-79 was closed and its open
+performance regressions moved to C-113. It holds the full design and gates that
+`perf_2026_09_22/README.md` refers to.
+
+- [ ] **C-79. Explicit lanes on mapped ranges.** Port tinygrad's `shift_to`,
+      `r -> r_outer * W + r_lane` with `r_lane` of `RangeKind.VECTOR`, applied to the mapped axis
+      first (independent trips, no dependence analysis), then a contiguous output axis, then a
+      reduction axis with terms staged per lane and accumulated in their original order. Under a widened range a unit-stride access is
+      a vector load or store, a constant stride is a staging transpose at the ABI boundary (buffers
+      created under the range are lane major; ABI arrays stay stage major), anything else is per
+      lane; `minimum` and `maximum` render per lane. W comes from a `lanes` render option:
+      `"auto"` (the AOT default) renders a preprocessor block that picks W from the compiler's
+      target macros, 8 under `__AVX512F__`, 4 under `__AVX__` or 256-bit SVE, 2 under `__SSE2__`
+      or `__aarch64__`, otherwise 1 (Cortex-M and ARMv7 have no double vectors), overridable with
+      `-DSCALY_LANES=n`, so one generated file serves several CPU builds and cross targets need
+      no target description; an integer renders a fixed W and drops the block, which is what the
+      JIT passes because the host is known and the `.so` never moves. Python caps W per kernel by
+      register pressure (`live values × W ≤ 4 × register file`, note §3.1), emitted as a cap on
+      the macro. The fused stage body is rendered once as an `always_inline` function
+      taking the stage index and a count of valid lanes; the main loop runs the `N / SCALY_LANES`
+      full trips with the count fixed at W, and one remainder call under
+      `#if (N % SCALY_LANES) != 0` handles the last partial vector with clamped loads and guarded
+      stores. No scalar tail and no second copy of the body. Staging buffers are sized for W = 8 so
+      the workspace size in the generated header does not depend on the macro. Two render modes,
+      documented in `docs/api/codegen.md` with their differences and supported compilers when this
+      lands: `gnu` (default; `vector_size` types, `v[i]`, `__builtin_shufflevector`,
+      `__builtin_convertvector`, `restrict`; gcc ≥ 12, clang, `zig cc`, armclang) and `c` (opt in;
+      the widened program as a scalar body inside an inner lane loop over the same staging buffers;
+      any C99 compiler). Transcendentals are per-lane scalar libm calls by default, and a third
+      render option `vector_libm="none" | "glibc"` (default `none`) turns on glibc libmvec: C-81
+      measured 26.6 µs at 8 lanes against 12.7 with the `_ZGVeN8v_*` prototypes declared in the
+      source, equal to the hand-written kernel on gcc, clang and `zig cc` alike, so declaring
+      them ourselves is compiler-neutral and `-fveclib`, gcc's `simd` attribute and
+      `__builtin_elementwise_*` all stay out. The `glibc` option renders a prototype block for
+      the ops the program uses, guarded on `__x86_64__`, `__GLIBC__`, the matching width
+      (`_ZGVeN8v_*` needs `__AVX512F__` and W = 8, `_ZGVdN4v_*` needs `__AVX__` and W = 4, never
+      a wider W on a narrower build) and `__GLIBC_PREREQ(2, 35)` for `tanh`; a build that fails
+      the guard hits an `#error` naming the option and the `-lmvec` link flag, so a wrong AOT
+      build fails at compile time with a sentence rather than at link time with an undefined
+      symbol. It moves results (glibc documents 4 ulp against scalar libm's under 1), so it is
+      off in distributed AOT output, on in the JIT on a glibc x86-64 host once the version check
+      passes, and off under `zig cc` cross builds, whose glibc stubs omit libmvec. Check whether
+      `-lm` alone already pulls `libmvec` through glibc's `libm.so` linker script before
+      documenting `-lmvec`. No vendored SLEEF, no Accelerate (vForce is array-based and would
+      undo C-77's fusion; Apple's scalar `sin` is 2 ns so the M4 gain is bounded at 5.7 of
+      14.2 µs), no own polynomials; `generic` means `lanes="auto"`, `vector_libm="none"`.
+      Compiler and OS are not dimensions of the generated C, only of the build recipe: a small
+      table in `codegen/toolchain.py` keyed by CPU level (`native`, `x86-64-v3`, `x86-64-v4`,
+      `apple-m4`, `generic`) yields the gcc and clang flag spellings, defines and link flags, and
+      the same `BuildRecipe` value is printed by `scaly_toolchain`, by the AOT CLI
+      (`--cpu`, `--lanes`, `--dialect`, `--vector-libm`; no named OS × arch × compiler targets,
+      which would render byte-identical C) and as a comment block at the top of the generated
+      `.c` and `.h` with the exact build line, the CPU baseline and the libc requirement.
+      Distributable AOT output requires an explicit CPU baseline; `native` is for host-local
+      builds. The complete vector-math study finished on 2026-09-23 under the
+      [shared policy](notes/benchmark_protocol.md#vector-math-study-policy). Retain the scalar-libm
+      comparison separately. Merge approved with the performance follow-up deferred to a new
+      branch. Keep C-79 open until the
+      [remaining regressions](notes/benchmark_comparison_history.md#remaining-regressions-and-limits) are resolved. Gates: compile matrix gcc × clang × W ∈ {1, 2, 4, 8} × `vector_libm` on and
+      off; byte-identical output between the two modes and across W at the same compiler and
+      flags with `vector_libm="none"` (bitwise equality across targets never existed: FMA
+      contraction and Apple versus glibc libm already move the last bits); an `nm` check that no
+      `_ZGV*` symbol appears when off, perturbed to prove it can fail; on the x86 reference
+      machine within 1.2× of `variant_w8_lane.c` (26.6 µs, gcc 13) when off and within 1.1× of
+      the hand-written kernel (12.7 µs) when on; no regression on the M4 at W = 2.
+      Implemented 2026-09-23 with original-order reduction accumulation. Independent review,
+      all 1,178 tests, and the complete vector-math study pass. All 23 Scaly sweep cells completed
+      five processes, and all 75 controller episodes succeeded. Latest five-process race N=200
+      microbenchmark medians: scalar libm 27.21 µs GCC / 24.69 µs Clang; libmvec 12.34 µs GCC /
+      12.23 µs Clang. Both x86 limits pass; M4 performance remains unmeasured.
+      Follow-up on a new branch: isolate UB base/gradient/Jacobian/Hessian costs on retained
+      canonical inputs, then compare compiler and lane-width effects without changing reduction
+      order. Recover the September 10 closed-loop function-evaluation baseline of 16.419 ms IPOPT
+      and 9.513 ms SQP; the latest study measures 17.022 and 10.045 ms. Investigate UB C=16/C=32
+      slowdowns against the intermediate scalar-policy study separately. Preserve the artifacts
+      under `benchmarks/results/study-2026-09-23-c77-c79-libmvec` and
+      `benchmarks/results/study-2026-09-23-c77-c79-final`. Recheck the race microbenchmark and
+      targeted UB comparisons before a final full study. The user approved merging the current
+      implementation on 2026-09-24 with these measured regressions deferred, not resolved.

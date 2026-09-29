@@ -184,9 +184,9 @@ swapped:
 ## Open items
 
 The Function and solver API over declared trees is implemented in `src/scaly`. Templates and the typed
-`vmap` candidate remain sketches. Follow-up work is tracked as D3.1 to D3.3 in
-[`internal/todo.md`](../internal/todo.md), with production constraints in
-[`internal/notes/refactorings.md`](../internal/notes/refactorings.md).
+`vmap` candidate remain sketches. Follow-up work is tracked as API-1, API-2 and API-4 in
+[`internal/todo.md`](../internal/todo.md), with the production design in
+[`internal/notes/core_compiler_roadmap.md`](../internal/notes/core_compiler_roadmap.md#signatures-and-templates).
 
 - **Names for `L` and `G`.** They carry no meaning to a reader who did not design them; `leaf` and
   `group` are the honest pytree words. Verbosity is a separate complaint and is not fixed by

@@ -519,8 +519,7 @@ def stage_cost_function(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc
 
   Scanned over the horizon by `npmpc_cost_expr`, so the objective's generated source stays constant
   in the horizon exactly as the dynamics' does. Building it as a Python loop instead unrolls it,
-  which grows the source linearly and, past roughly 75 stages, exceeds the Program IR passes'
-  recursion depth during lowering (the limitation recorded in `internal/todo.md`).
+  which grows the source linearly with the horizon.
   """
   x, xnext, u, weights = inputs
   dx = xnext - x

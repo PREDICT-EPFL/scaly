@@ -548,7 +548,7 @@ and adjoint passes are the callee-merge half of C-46, still open.
 The remaining C-46 work shares the specialized `x` and `u` derivative results through one packed
 mapped output. Joint forward propagation handles all active formals of ordinary calls and generic
 mapped calls. C-49 also adds the lean division rules, shared square-root reciprocals, square and
-vector self-dot rules, and negation identities. The [design rationale](../refactorings.md#joint-derivative-callees-and-scalar-rules)
+vector self-dot rules, and negation identities. The [design rationale](../refactorings_landed_2026_09.md#joint-derivative-callees-and-scalar-rules)
 explains why specialized local seed counts remain separate within the packed result. Automatic
 expansion before differentiation and generic sharing between distinct original Function outputs
 remain outside this change.
