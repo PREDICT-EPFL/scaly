@@ -24,6 +24,7 @@ GPU placement and the new ops tracked in the migration roadmap.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import numpy as np
@@ -437,10 +438,13 @@ class LowerCtx:
     """Loops over ``rows`` and ``lanes`` emitting ``body``: see ``_lane_loops``."""
     _lane_loops(self, tag, rows, lanes, kind, body)
 
-  def new_private(self, dtype: DType, shape: tuple[int, ...]) -> ProgramNode:
-    """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
+  def new_private(self, dtype: DType, shape: tuple[int, ...], *, lanes: int | None = None) -> ProgramNode:
+    """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer); ``lanes``
+    marks one that holds a vector's lanes, which keeps its own storage (``pack_workspace``)."""
     name = self.fresh_name("t")
     buf = p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private")
+    if lanes is not None:
+      buf = ProgramNode(ProgramOp.BUFFER, (), {**buf.attrs, "lanes": lanes}, dtype)
     self.buffers[name] = buf
     self.statements.append(buf)  # marks the local-array declaration for the renderer
     return buf
@@ -868,6 +872,39 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
 
+@dataclass(frozen=True)
+class _LaneSums:
+  """A block's ``width`` running sums, in private buffers of ``lanes`` each. ``each`` makes one
+  statement per sum from ``make(sum, column)``, the column counted from the block's first: on a
+  target of one lane each sum is its own scalar; on a wider one, each buffer's lanes are a loop of
+  kind ``VECTOR`` over the columns they hold, which the renderer writes as one vector statement.
+  The lanes are independent columns, so each sum is the scalar one's, in the same order."""
+
+  tag: str
+  lanes: int
+  buffers: tuple[ProgramNode, ...]
+
+  def each(self, name: str, make: Any) -> list[ProgramNode]:
+    c = p.const_int
+    if self.lanes == 1:
+      return [make(p.view(buf, [c(0)]), c(col)) for col, buf in enumerate(self.buffers)]
+    loops = []
+    for v, buf in enumerate(self.buffers):
+      q = f"q{name}{v}_{self.tag}"
+      lane = p.var(q)
+      loops.append(p.for_(p.range_(q, 0, self.lanes, kind=RangeKind.VECTOR), [make(p.view(buf, [lane]), p.add(c(v * self.lanes), lane))]))
+    return loops
+
+
+def _lane_sums(ctx: LowerCtx, tag: str, width: int, dtype: DType) -> _LaneSums:
+  """``width`` private running sums in buffers of the target's lanes (``_LaneSums``)."""
+  lanes = ctx.target.choices.vector_doubles
+  lanes = lanes if width % lanes == 0 else 1
+  return _LaneSums(
+    tag, lanes, tuple(ctx.new_private(dtype, ()) if lanes == 1 else ctx.new_private(dtype, (lanes,), lanes=lanes) for _ in range(width // lanes))
+  )
+
+
 # ``x @ b`` and ``a @ b`` keep a block of ``Target.row_blocks[0]`` outputs of a row in registers
 # across the reduction, and then one of each narrower width while one fits: the loads and stores of
 # the output row that a reduction loop outermost pays at every step are gone, and each output still
@@ -925,15 +962,17 @@ def _lower_columns_blocked(
     return p.load(p.view(a_buf, [k if row is None else p.add(p.mul(row, c(kk)), k)]))
 
   def row_block(tag: str, first: ProgramNode, width: int) -> list[ProgramNode]:
-    slots = [p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(width)]
+    sums = _lane_sums(ctx, tag, width, dtype)
     k = p.var(f"k_{tag}")
     a_k = a_at(i, k)
-    body = [p.store(s, p.add(p.load(s), p.mul(a_k, p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), p.add(first, c(q)))]))))) for q, s in enumerate(slots)]
     row = c(0) if i is None else p.mul(i, c(n))
     return [
-      *(p.store(s, zero) for s in slots),
-      p.for_(p.range_(k.attrs["name"], 0, kk, kind=RangeKind.REDUCE), body),
-      *(p.store(p.view(out, [p.add(row, p.add(first, c(q)))]), p.load(s)) for q, s in enumerate(slots)),
+      *sums.each("z", lambda s, _col: p.store(s, zero)),
+      p.for_(
+        p.range_(k.attrs["name"], 0, kk, kind=RangeKind.REDUCE),
+        sums.each("k", lambda s, col: p.store(s, p.add(p.load(s), p.mul(a_k, p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), p.add(first, col))])))))),
+      ),
+      *sums.each("s", lambda s, col: p.store(p.view(out, [p.add(row, p.add(first, col))]), p.load(s))),
     ]
 
   stmts: list[ProgramNode] = []
@@ -987,7 +1026,7 @@ def _panel_passes(
   order of ``k``, as in a single pass."""
   c = p.const_int
   chunk = min(kk, max(1, ctx.target.panel_bytes // (width * dtype.itemsize)))
-  slots = [p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(width)]
+  sums = _lane_sums(ctx, tag, width, dtype)
   packed = ctx.new_private(dtype, (chunk * width,))
   zero = p.const_float(0.0, dtype=dtype)
 
@@ -1003,15 +1042,20 @@ def _panel_passes(
         )
       ],
     )
-    outs = [p.view(out, [p.add(p.mul(i, c(n)), p.add(first, c(col)))]) for col in range(width)]
+
+    def at(col: ProgramNode) -> ProgramNode:
+      return p.view(out, [p.add(p.mul(i, c(n)), p.add(first, col))])
+
     a_k = p.load(p.view(a_buf, [p.add(p.mul(i, c(kk)), p.add(start, k))]))
-    body = [p.store(s, p.add(p.load(s), p.mul(a_k, p.load(p.view(packed, [p.add(p.mul(k, c(width)), c(col))]))))) for col, s in enumerate(slots)]
     rows_pass = p.for_(
       p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL),
       [
-        *(p.store(s, p.load(o) if resume else zero) for s, o in zip(slots, outs, strict=True)),
-        p.for_(p.range_(k.attrs["name"], 0, rows, kind=RangeKind.REDUCE), body),
-        *(p.store(o, p.load(s)) for s, o in zip(slots, outs, strict=True)),
+        *sums.each(f"z{name}", lambda s, col: p.store(s, p.load(at(col)) if resume else zero)),
+        p.for_(
+          p.range_(k.attrs["name"], 0, rows, kind=RangeKind.REDUCE),
+          sums.each(f"k{name}", lambda s, col: p.store(s, p.add(p.load(s), p.mul(a_k, p.load(p.view(packed, [p.add(p.mul(k, c(width)), col)])))))),
+        ),
+        *sums.each(f"s{name}", lambda s, col: p.store(at(col), p.load(s))),
       ],
     )
     return [copy, rows_pass]

@@ -954,12 +954,17 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       M = 5 unchanged; every other benchmark oracle one body on every preset; every other
       codegen-corpus kernel byte-identical. Read while the graph is built, so `scaly_codegen
       --target` imports the module under its target.
-- [ ] **C-212. Vector types for the product tiles (K1, Tier 4).** A tile's columns as an inner
-      range of kind `VECTOR`, rendered as GNU vector statements over `Target.vector_doubles` lanes
-      through the renderer's `may_alias` vector type; `generic` stays scalar. The prototype's scalar
-      4 x 8 tile was left unvectorized by clang's cost model at 8 x 8 x 8 and 12 x 12 x 12 (2-2.5x
-      slower); written with vector types it is sixteen `fmla.2d`. Plan: Tier 4 of
-      [the implementation plan](notes/perf_gaps_plan_2026_09_30.html).
+- [x] **C-212. Vector types for the product tiles (K1, Tier 4).** A block's running sums are
+      private buffers of `Target.vector_doubles` lanes, each updated in a loop of kind `VECTOR`,
+      which the C renderer writes as GNU vector statements (`codegen/c.py`): a static trip of 2, 4
+      or 8 lanes whose float64 arithmetic moves 0 or 1 elements a lane; anything else renders as
+      the loop it also is. A store to an array on the stack is a vector store; anywhere else it goes
+      lane by lane, since a store through the vector type may alias the ABI's pointer arrays, which
+      clang then reloaded after every store (1.16x at 8 x 8 x 8 until changed). Lane buffers keep
+      their own storage (`pack_workspace`): shared with a mat-vec's scalar sums, neither stayed in
+      registers (npmpc_12 1.25x until changed). GEMM 0.98-1.00 of its time at n = 8-256 on the
+      M3, the corpus's four changed kernels 0.96-1.00, outputs identical; two, four and eight
+      lanes compute the same bits. `generic` renders the same C as before.
 - [ ] **C-213. Register tiles for the products (K2, Tier 4).** `m_r x n_r` tiles from the BLIS
       model (`vector_registers`, `fma_units`, `fma_latency` join `Target`) in the row-blocked
       products and K0's panel passes. A scratch prototype of the M3's 4 x 8 tile ran GEMM at

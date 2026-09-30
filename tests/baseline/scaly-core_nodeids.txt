@@ -507,6 +507,21 @@ tests/core/codegen/test_reduction_edge_cases.py::test_segment_extrema_with_gaps_
 tests/core/codegen/test_reduction_edge_cases.py::test_segment_extrema_with_gaps_runs_fills_and_nan[scalar]
 tests/core/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/core/codegen/test_toolchain.py::test_env_registry_mentions_native_build_controls
+tests/core/codegen/test_vector_loops.py::test_a_vector_body_renders_as_vector_statements
+tests/core/codegen/test_vector_loops.py::test_every_vector_width_computes_the_same_bits
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[a call on a vector]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[a run-time bound]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[read at another index]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[stored at one place]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[stored at two places]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[stride 2, constant first]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[stride 2]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[the lane as a value]
+tests/core/codegen/test_vector_loops.py::test_other_bodies_render_as_loops[three lanes]
+tests/core/codegen/test_vector_loops.py::test_products_render_the_targets_vectors[apple-m3-2]
+tests/core/codegen/test_vector_loops.py::test_products_render_the_targets_vectors[generic-1]
+tests/core/codegen/test_vector_loops.py::test_products_render_the_targets_vectors[x86-64-v3-4]
+tests/core/codegen/test_vector_loops.py::test_products_render_the_targets_vectors[x86-64-v4-8]
 tests/core/codegen/test_vmap.py::test_callee_formal_named_w_avoids_workspace_collision
 tests/core/codegen/test_vmap.py::test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo
 tests/core/codegen/test_vmap.py::test_simple_banded_vmap_spjac_has_constant_loc
@@ -1437,6 +1452,7 @@ tests/core/passes/test_lowering.py::test_two_names_with_one_c_spelling_are_refus
 tests/core/passes/test_lowering.py::test_uncovered_case_raises_loudly
 tests/core/passes/test_pass_slots.py::test_an_inserted_pass_runs_at_its_slot
 tests/core/passes/test_pass_slots.py::test_anchors_and_names_are_checked
+tests/core/passes/test_program.py::test_a_blocks_lanes_keep_their_own_storage
 tests/core/passes/test_program.py::test_a_map_with_no_affine_factorization_keeps_its_table
 tests/core/passes/test_program.py::test_break_if_must_sit_in_a_serial_loop
 tests/core/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes[call]

@@ -906,12 +906,13 @@ def _panel_product(m: int | None, k: int, n: int) -> sc.Function:
 
 def _packed_buffers(fn: sc.Function) -> list[int]:
   """The sizes of the private buffers a lowered product copies its panels of ``b`` into (one slot
-  when the workspace packer lets two panels share it)."""
+  when the workspace packer lets two panels share it); a block's running sums are buffers of one
+  vector's lanes, eight at most."""
   sizes = {}
   for stmt in _stmts(fn):
     for node in _nodes(stmt):
       if (
-        node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private" and len(node.attrs["shape"]) == 1 and node.attrs["shape"][0] > 1
+        node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private" and len(node.attrs["shape"]) == 1 and node.attrs["shape"][0] > 8
       ):
         sizes[node.attrs["name"]] = node.attrs["shape"][0]
   return sorted(sizes.values())

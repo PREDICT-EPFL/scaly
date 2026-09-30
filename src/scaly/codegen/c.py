@@ -18,13 +18,14 @@ holds the extensible ``ExprOp``-keyed registry.
 from __future__ import annotations
 
 import math
+import re
 
 from .abi import abi_status_defines, c_api_signature, c_ident
 from .adapter import Adapter, entry_hooks, entry_workspace
 from ..function import ConcreteFunction, Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
-from ..ir.program import ProgramNode, ProgramOp
+from ..ir.program import ProgramNode, ProgramOp, RangeKind
 from ..ir.target import Target
 from ..ir.types import dtypes
 
@@ -94,16 +95,24 @@ _NAN_EXTREMA = (
 )
 
 
+# The wider vector types a ``VECTOR`` loop of four or eight lanes renders with (``_emit_vector_loop``),
+# declared only where one is used, as ``double2`` is: unaligned and aliasing plain double storage.
+_WIDE_VECTOR_TYPEDEFS = {lanes: f"typedef double double{lanes} __attribute__((vector_size({8 * lanes}), aligned(8), may_alias));" for lanes in (4, 8)}
+
+
 def with_prelude(source: str) -> str:
-  """``source`` with the definitions its body uses inserted after the vector typedef: the NaN
-  extrema (``_NAN_EXTREMA``) when it selects one. Every renderer of a whole translation unit
-  passes its text through here."""
-  if "SCALY_FMAX_NAN(" not in source and "SCALY_FMIN_NAN(" not in source:
+  """``source`` with the definitions its body uses inserted after the vector typedef: the wider
+  vector types (``_WIDE_VECTOR_TYPEDEFS``) and the NaN extrema (``_NAN_EXTREMA``) when it selects
+  one. Every renderer of a whole translation unit passes its text through here."""
+  extra = [typedef for lanes, typedef in _WIDE_VECTOR_TYPEDEFS.items() if re.search(rf"\bdouble{lanes}\b", source)]
+  if "SCALY_FMAX_NAN(" in source or "SCALY_FMIN_NAN(" in source:
+    extra += _NAN_EXTREMA
+  if not extra:
     return source
   head, sep, tail = source.partition(_VECTOR_TYPEDEF + "\n")
   if not sep:
-    raise LoweringError("generated source lost its vector typedef; the NaN extrema have nowhere to go")
-  return head + sep + "\n".join(_NAN_EXTREMA) + "\n" + tail
+    raise LoweringError("generated source lost its vector typedef; its other definitions have nowhere to go")
+  return head + sep + "\n".join(extra) + "\n" + tail
 
 
 def render_program_c_source(fun: Function, observe: ProgramObserver | None = None, *, target: Target | str | None = None) -> str:
@@ -201,8 +210,8 @@ def _render_entry(proc: ProgramNode, fun: ConcreteFunction, adapters: tuple[Adap
   by_output = dict(zip(fun.output_names, out_buffers, strict=True))
   ptr_expr.update({by_output[name]: ptr for name, ptr in redirected.items()})
   lines += setup
-  _emit_local_buffers(body, lines, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, lines, indent=2)
+  local = _emit_local_buffers(body, lines, ptr_expr, indent=2)
+  _emit_body(body, ptr_expr, lines, indent=2, local=local)
   lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
   return lines
 
@@ -241,15 +250,17 @@ def _render_raw_callee(proc: ProgramNode) -> list[str]:
   out = [f"{qualifier} void {c_ident(proc_name)}_raw({param_decls}) {{"]
   if not sz_w:
     out.append("  (void)w;")
-  _emit_local_buffers(body, out, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, out, indent=2)
+  local = _emit_local_buffers(body, out, ptr_expr, indent=2)
+  _emit_body(body, ptr_expr, out, indent=2, local=local)
   out.append("}")
   return out
 
 
-def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dict[str, str], indent: int) -> None:
+def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dict[str, str], indent: int) -> frozenset[str]:
+  """Declare ``body``'s buffers, and return the names of those that are arrays on the stack."""
   pad = " " * indent
   seen: set[str] = set()
+  arrays: set[str] = set()
   for stmt in body:
     if stmt.op != ProgramOp.BUFFER or stmt.attrs["name"] in seen:
       continue
@@ -274,18 +285,22 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type}* {name} = w + {stmt.attrs['workspace_offset']};")
     else:
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
+      arrays.add(stmt.attrs["name"])
+  return frozenset(arrays)
 
 
-def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
-  """Render Program statements in order."""
+def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, local: frozenset[str] = frozenset()) -> None:
+  """Render Program statements in order; ``local`` names the buffers that are arrays on the stack."""
   for stmt in body:
     if stmt.op == ProgramOp.BUFFER:
       continue
-    _emit_statement(stmt, ptr_expr, lines, indent)
+    _emit_statement(stmt, ptr_expr, lines, indent, local)
 
 
-def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, local: frozenset[str] = frozenset()) -> None:
   pad = " " * indent
+  if stmt.op == ProgramOp.FOR and stmt.args[0].attrs["kind"] == RangeKind.VECTOR and _emit_vector_loop(stmt, ptr_expr, lines, indent, local):
+    return
   if stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
     name = c_ident(rng.attrs["name"])
@@ -299,7 +314,7 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
       lines.append(f"{pad}for (; {name} < {stop}; {incr}) {{")
     else:
       lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
-    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2)
+    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, local)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
     _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
@@ -331,6 +346,177 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
 
+# A ``VECTOR`` loop renders as GNU vector statements when its body is what they can express: a
+# static trip count of two, four or eight lanes, and float64 stores and assignments of arithmetic
+# whose every access moves 0 or 1 elements a lane. An access at stride 1 is a load or store through
+# the unaligned, ``may_alias`` vector type; one at stride 0 is a scalar, which vector arithmetic
+# broadcasts. Each multiply-add stays one expression, which the C compiler fuses as it would the
+# scalar one, so each lane computes what the loop's trip computes. The statements run for every
+# lane in turn instead of lane by lane, which the kind allows: its lanes are independent, no lane
+# reading what another writes (the lowering emits it only so). A buffer the body both stores and
+# reads at another index would break that, and renders as a loop, as any other body does.
+_VECTOR_LANES = (2, 4, 8)
+_VECTOR_ARITH = frozenset({ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV, ProgramOp.NEG})
+
+
+def _nodes(node: ProgramNode) -> list[ProgramNode]:
+  """Every distinct node at or below ``node``."""
+  stack, seen, found = [node], set(), []
+  while stack:
+    n = stack.pop()
+    if id(n) not in seen:
+      seen.add(id(n))
+      found.append(n)
+      stack.extend(n.args)
+  return found
+
+
+def _mentions(node: ProgramNode, name: str) -> bool:
+  return any(n.op == ProgramOp.VAR and n.attrs["name"] == name for n in _nodes(node))
+
+
+def _lane_stride(index: ProgramNode, lane: str) -> int | None:
+  """How many elements ``index`` moves from one lane to the next: its coefficient in the variable
+  ``lane`` when it is affine in it with a constant one, else None."""
+  op = index.op
+  if op == ProgramOp.VAR:
+    return int(index.attrs["name"] == lane)
+  if op == ProgramOp.CONST_INT:
+    return 0
+  if op in (ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.NEG):
+    found = [_lane_stride(arg, lane) for arg in index.args]
+    strides = [stride for stride in found if stride is not None]
+    if len(strides) < len(found):
+      return None
+    if op == ProgramOp.NEG:
+      return -strides[0]
+    if op != ProgramOp.MUL:
+      return strides[0] + strides[1] if op == ProgramOp.ADD else strides[0] - strides[1]
+    (x, y), (a, b) = index.args, strides
+    if a == b == 0:
+      return 0
+    if a == 0 and x.op == ProgramOp.CONST_INT:
+      return int(x.attrs["value"]) * b
+    if b == 0 and y.op == ProgramOp.CONST_INT:
+      return a * int(y.attrs["value"])
+    return None
+  return None if _mentions(index, lane) else 0
+
+
+def _access_stride(view: ProgramNode, lane: str) -> int | None:
+  return 0 if not view.args else _lane_stride(view.args[0], lane) if len(view.args) == 1 else None
+
+
+def _lanes_of(node: ProgramNode, lane: str, vectors: set[str], memo: dict[int, bool | None]) -> bool | None:
+  """Whether ``node`` differs between the lanes (a vector) or not (a scalar), or None when the
+  vector statements cannot express it."""
+  key = id(node)
+  if key in memo:
+    return memo[key]
+  op = node.op
+  if op in (ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
+    result: bool | None = False
+  elif op == ProgramOp.VAR:
+    result = None if node.attrs["name"] == lane else node.attrs["name"] in vectors
+  elif op == ProgramOp.LOAD:
+    stride = _access_stride(node.args[0], lane)
+    result = False if stride == 0 else True if stride == 1 and node.dtype == dtypes.float64 else None
+  else:
+    args = [_lanes_of(arg, lane, vectors, memo) for arg in node.args]
+    if None in args:
+      result = None
+    elif not any(args):
+      result = False
+    else:
+      result = True if op in _VECTOR_ARITH and node.dtype == dtypes.float64 else None
+  memo[key] = result
+  return result
+
+
+def _emit_vector(node: ProgramNode, ptr_expr: dict[str, str], vtype: str, memo: dict[int, bool | None], bound: dict[str, str]) -> str:
+  """Render ``node`` with its vector parts as vector expressions and its scalar parts as they are,
+  the lane variable ``bound`` to the first lane's value."""
+  if not memo[id(node)]:
+    return _emit_scalar(node, ptr_expr, bound)
+  if node.op == ProgramOp.VAR:
+    return c_ident(node.attrs["name"])
+  if node.op == ProgramOp.LOAD:
+    ptr, index = _place(node.args[0], ptr_expr, bound)
+    return f"(*({vtype}*)({ptr}{'' if index == '0' else f' + {index}'}))"
+  args = [_emit_vector(arg, ptr_expr, vtype, memo, bound) for arg in node.args]
+  return f"(-{args[0]})" if node.op == ProgramOp.NEG else f"({args[0]} {_BIN_SYM[node.op]} {args[1]})"
+
+
+def _place(view: ProgramNode, ptr_expr: dict[str, str], bound: dict[str, str]) -> tuple[str, str]:
+  """A view's pointer and its index at the first lane."""
+  return ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"])), _emit_scalar(view.args[0], ptr_expr, bound)
+
+
+def _emit_vector_loop(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, local: frozenset[str]) -> bool:
+  """Render the ``VECTOR`` loop ``stmt`` as one block of vector statements, or return False when its
+  body is not what they can express (``_VECTOR_LANES``), leaving it to render as a loop. ``local``
+  names the buffers that are arrays on the stack."""
+  rng = stmt.args[0]
+  start, stop, step = rng.args
+  if stmt.attrs.get("exit_var") or any(bound.op != ProgramOp.CONST_INT for bound in (start, stop, step)) or step.attrs["value"] != 1:
+    return False
+  lanes = int(stop.attrs["value"]) - int(start.attrs["value"])
+  if lanes not in _VECTOR_LANES:
+    return False
+  lane, vtype = rng.attrs["name"], f"double{lanes}"
+  bound = {lane: str(start.attrs["value"])}
+  vectors: set[str] = set()
+  memo: dict[int, bool | None] = {}
+  body: list[str] = []
+  stored: dict[str, ProgramNode] = {}
+  for s in stmt.args[1:]:
+    if s.op == ProgramOp.STORE and stored.setdefault(s.args[0].attrs["buffer"], s.args[0]) is not s.args[0]:
+      return False  # one buffer stored at two places
+  for s in stmt.args[1:]:
+    value = s.args[-1] if s.op in (ProgramOp.STORE, ProgramOp.ASSIGN) else None
+    if value is not None and any(n.op == ProgramOp.LOAD and stored.get(n.args[0].attrs["buffer"], n.args[0]) is not n.args[0] for n in _nodes(value)):
+      return False  # a stored buffer read at another place
+  for s in stmt.args[1:]:
+    if s.op == ProgramOp.STORE:
+      view, value = s.args
+      if _access_stride(view, lane) != 1 or value.dtype != dtypes.float64:
+        return False
+      kind = _lanes_of(value, lane, vectors, memo)
+      if kind is None:
+        return False
+      rhs = _emit_vector(value, ptr_expr, vtype, memo, bound)
+      if not kind:  # the same value in every lane
+        rhs = f"({vtype}){{{', '.join([rhs] * lanes)}}}" if value.op in (ProgramOp.CONST_FLOAT, ProgramOp.VAR, ProgramOp.LOAD) else None
+        if rhs is None:
+          return False
+      ptr, index = _place(view, ptr_expr, bound)
+      if view.attrs["buffer"] in local:
+        # An array on the stack aliases nothing else, so a vector store there costs no reloads, and
+        # the C compiler keeps a sum loaded and stored as one vector type in a register.
+        body.append(f"*({vtype}*)({ptr}{'' if index == '0' else f' + {index}'}) = {rhs};")
+        continue
+      # Anywhere else, lane by lane as doubles, which the C compiler joins into one vector store: a
+      # store of the vector type may alias anything, the ABI's array of pointers too, which it
+      # would then load again after every store.
+      at_lane = (lambda at: str(int(index) + at)) if index.isdigit() else (lambda at: index if at == 0 else f"{index} + {at}")
+      lanes_stored = " ".join(f"{ptr}[{at_lane(at)}] = v_[{at}];" for at in range(lanes))
+      body.append(f"{{ const {vtype} v_ = {rhs}; {lanes_stored} }}")
+    elif s.op == ProgramOp.ASSIGN and s.attrs.get("declare") and s.dtype == dtypes.float64:
+      kind = _lanes_of(s.args[0], lane, vectors, memo)
+      if kind is None:
+        return False
+      name = s.attrs["target"]
+      if kind:
+        vectors.add(name)
+      body.append(f"{vtype if kind else 'double'} {c_ident(name)} = {_emit_vector(s.args[0], ptr_expr, vtype, memo, bound)};")
+    else:
+      return False
+  pad = " " * indent
+  scoped = any(s.op == ProgramOp.ASSIGN for s in stmt.args[1:])  # its temporaries stay in the loop's scope
+  lines.extend([f"{pad}{{", *(f"{pad}  {line}" for line in body), f"{pad}}}"] if scoped else [f"{pad}{line}" for line in body])
+  return True
+
+
 def _emit_assignment(target: str, values: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, declaration: str = "") -> None:
   """Render one scalar or paired assignment."""
   pad = " " * indent
@@ -350,13 +536,13 @@ def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
   raise LoweringError(f"unsupported CALL arg op {node.op}")
 
 
-def _emit_view(view: ProgramNode, ptr_expr: dict[str, str]) -> str:
+def _emit_view(view: ProgramNode, ptr_expr: dict[str, str], bound: dict[str, str] | None = None) -> str:
   if view.op != ProgramOp.VIEW:
     raise LoweringError(f"expected a VIEW, got {view.op}")
   ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
   if len(view.args) > 1:
     raise LoweringError("multi-index VIEW rendering is not implemented yet (lands with SLICE/MATMUL)")
-  idx = _emit_scalar(view.args[0], ptr_expr) if view.args else "0"
+  idx = _emit_scalar(view.args[0], ptr_expr, bound) if view.args else "0"
   return f"{ptr}[{idx}]"
 
 
@@ -392,8 +578,8 @@ def _nan_extremum(node: ProgramNode) -> str | None:
   return None
 
 
-def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
-  """Render a prepared scalar tree bottom up."""
+def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], bound: dict[str, str] | None = None) -> str:
+  """Render a prepared scalar tree bottom up; a variable ``bound`` names renders as its value there."""
   text: dict[int, str] = {}
   stack = [(n, False)]
   while stack:
@@ -416,9 +602,9 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
       if node.dtype == dtypes.float32:
         s = f"((float){s})"  # exact: the value is a float32 one
     elif op == ProgramOp.VAR:
-      s = c_ident(node.attrs["name"])
+      s = bound[node.attrs["name"]] if bound and node.attrs["name"] in bound else c_ident(node.attrs["name"])
     elif op == ProgramOp.LOAD:
-      s = _emit_view(node.args[0], ptr_expr)
+      s = _emit_view(node.args[0], ptr_expr, bound)
     elif op == ProgramOp.NEG:
       s = f"(-{args[0]})"
     elif op in _BIN_SYM:

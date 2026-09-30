@@ -247,18 +247,18 @@ def test_lowering_records_the_target_and_follows_it() -> None:
   x, b = sc.sym("x", 12), sc.sym("b", (12, 100))
   wide = sc.Function.from_exprs("target_vm_wide", [x, b], [(x @ b).block()], ["x", "b"], ["y"])
   m3, v3 = (lower_function(wide, target=name) for name in ("apple-m3", "x86-64-v3"))
-  assert _private_scalars(m3) == 0
-  assert _private_scalars(v3) == 32  # three blocks of 32 columns sharing one set of sums; the last 4 stream
+  assert _running_sums(m3) == 0
+  assert _running_sums(v3) == 32  # three blocks of 32 columns sharing one set of sums; the last 4 stream
 
 
-def _private_scalars(prog) -> int:
-  """The rank-0 private buffers of a lowered product: one per column of a block kept in registers."""
+def _running_sums(prog) -> int:
+  """The running sums of a lowered product's blocks kept in registers, one per column: private
+  buffers of one vector's lanes (a scalar each on a target of one lane)."""
   from scaly.ir.program import ProgramOp
 
   seen = {id(n): n for n in _walk(prog)}
-  return sum(
-    1 for n in seen.values() if n.op == ProgramOp.BUFFER and n.attrs.get("address_space") == "private" and tuple(n.attrs["shape"]) in ((), (1,))
-  )
+  buffers = [n for n in seen.values() if n.op == ProgramOp.BUFFER and n.attrs.get("address_space") == "private"]
+  return sum(int(np.prod(n.attrs["shape"])) for n in buffers if int(np.prod(n.attrs["shape"])) <= 8)
 
 
 def _walk(node):

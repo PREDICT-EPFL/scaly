@@ -47,8 +47,10 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   private = _private_decls(body)
   alias_src = _alias_sources(body)
   # Aliases own no storage (they're pointers into another buffer); pack only real buffers, but
-  # a read of an alias extends the lifetime of the buffer it points at.
-  packable = {name: decl for name, decl in private.items() if name not in alias_src}
+  # a read of an alias extends the lifetime of the buffer it points at. A buffer of a vector's lanes
+  # (a block's running sums) keeps its own few doubles: in a slot that scalar code also uses, the C
+  # compiler keeps neither the vector nor the scalars in registers.
+  packable = {name: decl for name, decl in private.items() if name not in alias_src and "lanes" not in decl.attrs}
   plan = _PackPlan()
   if not packable:
     for stmt in body:

@@ -383,6 +383,14 @@ it to bind a loop to a launch axis, choose vectorized against unrolled emission,
 reduction. In the lowered example below, the lowerer marks the accumulation loop `reduce`, so the
 renderer does not have to guess from the shape of the body.
 
+A `vector` loop's lanes are independent: no lane reads what another writes. The C renderer writes
+one of two, four or eight lanes as GNU vector statements when its body is float64 arithmetic whose
+accesses move one element a lane (a vector load or store) or none (a scalar the arithmetic
+broadcasts), and as the loop it also is otherwise. A store to an array on the stack is a vector
+store, so the C compiler keeps a sum there in a register; anywhere else stores go lane by lane,
+since a store through the vector type may alias anything, the ABI's pointer arrays too, and the
+compiler joins the lanes into one vector store anyway.
+
 ### Memory is explicit
 
 Buffers declare an address space, following the OpenCL and CUDA naming: `global`, `local`,

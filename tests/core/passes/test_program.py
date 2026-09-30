@@ -902,6 +902,20 @@ def test_packing_reuses_a_slot_freed_by_the_previous_statement() -> None:
     assert _sz_w(f) == 3200
 
 
+def test_a_blocks_lanes_keep_their_own_storage() -> None:
+  """A block's running sums live in buffers of the target's lanes, which the packer leaves out of
+  the slots it shares: in a slot that scalar code also uses, the C compiler kept neither in
+  registers (a mat-vec beside a product lost its vector code). Other private buffers still share."""
+  a, b, x = sc.sym("a", (8, 32)), sc.sym("b", (32, 32)), sc.sym("x", 32)
+  f = sc.Function.from_exprs("lanes_own_storage", [a, b, x], [((a @ b).block() @ x) + 1.0, (b @ x) * 2.0], ["a", "b", "x"], ["y", "z"])
+  with sc.target("apple-m3"):
+    proc = main_proc(lower_function(f))
+  private = [n for n in proc.args if n.op == ProgramOp.BUFFER and n.attrs.get("address_space") == "private"]
+  lanes = [n for n in private if "lanes" in n.attrs]
+  assert len(lanes) == 8 and all(n.attrs["shape"] == (2,) and n.attrs["lanes"] == 2 for n in lanes)  # 16 columns
+  assert any(n.attrs["name"].startswith("s") for n in private)  # the packer's slots, for the rest
+
+
 def test_slot_assignment_matches_the_linear_scan() -> None:
   """The heap-based left-edge assignment picks what scanning every slot in creation order would:
   the first slot of the kind that is free by the first write (freed the statement after the last

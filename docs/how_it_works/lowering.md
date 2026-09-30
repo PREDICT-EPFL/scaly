@@ -175,10 +175,14 @@ worth of columns, 16, 8 and 4 on a 128-bit machine (`Target.row_blocks`), whose 
 registers across the reduction, each output stored once; the columns no block covers, and every
 column of a row wider than four of the widest blocks (`Target.row_blocked_max`, 64 columns on
 Apple silicon), put the reduction loop outermost and vectorize over the row instead, adding into
-the output at every step. Each output's terms are summed in the same order whichever target the
-code is rendered for, but the widths still decide how the C compiler vectorizes the sums, and clang
-fuses a multiply and an add into one rounding in some shapes and not in others, so another target's
-widths can change the last bits. Under `rounding="portable"` every target takes the M3's widths.
+the output at every step. A block keeps its sums in private buffers of one vector's lanes, each
+updated in a loop of kind `vector` that the C renderer writes as GNU vector statements, so the
+generator vectorizes them rather than leaving it to the C compiler. Each output's terms are summed
+in the same order whichever target the code is rendered for, and a block's multiply-adds stay one
+expression each, which the C compiler fuses. The compiler's own vectorizer, which the blocks relied
+on before and the code around them still does, fuses a multiply and an add in some shapes and not
+in others, so another target's widths can still change the last bits. Under `rounding="portable"`
+every target takes the M3's widths.
 
 A matrix of several rows reads `b` once per row, so when `b` is wider than that limit or larger than
 half the level-1 data cache (`Target.panel_bytes`), the same column blocks run outermost instead.
