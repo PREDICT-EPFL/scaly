@@ -1,12 +1,24 @@
 Riccati recursion, 20 stages, rendered for the M3 under three rules for keeping a product's
 procedure in loops (scratch driver: ric_rules.py / ric_drive.py, time_entry, fastest of 9 x 20
-calls, JIT flags). "old" is C-206's rule (rows fill the middle block, 8 columns), "new" adds
-products that fill a register tile's rows and more than half its columns, "off" keeps none.
+calls, JIT flags). "old" is C-206's rule (rows fill the middle block, 8 columns); "candidate" adds
+products with a register tile's rows and at least two vectors of columns (4 on the M3); "off"
+keeps none in loops.
 
-nx=4 nu=2: old 1387 ns, new 1418 (1.023), off 1385 (0.999, same C)
-nx=6 nu=3: old 3457 ns, new 2985 (0.864), off 3456 (1.000, same C)
-nx=8 nu=3: old 3953 ns, new 3952 (1.000, same C), off 6275 (1.587)
-nx=12 nu=4: old 11285 ns, new 11286 (1.000, same C), off 11382 (1.009, same C)
-nx=16 nu=4: old 19944 ns, new 19975 (1.002, same C), off 19998 (1.003, same C)
+nx=4 nu=2: old 1387 ns, candidate 1418 (1.023), off 1385 (0.999, same C)
+nx=6 nu=3: old 3457 ns, candidate 2985 (0.864), off 3456 (1.000, same C)
+nx=8 nu=3: old 3953 ns, candidate 3952 (1.000, same C), off 6275 (1.587)
+nx=12 nu=4: old 11285 ns, candidate 11286 (1.000, same C), off 11382 (1.009, same C)
+nx=16 nu=4: old 19944 ns, candidate 19975 (1.002, same C), off 19998 (1.003, same C)
 
-Adopted: tiles' rows and more than half their columns (so 4 x 4 products, nx=4, stay expanded).
+Adopted: a tile's rows and more than half its columns, and more than four (so at 5 or more
+columns on every preset). The 4 x 4 products of nx = 4, which lost 2.3% in loops, stay expanded,
+as the table below shows.
+
+With the final Tier 4 code (after the review), "old" C-206's rule and "adopted" the rule above
+(scratch driver: ric_rules2.py / ric_drive2.py):
+
+nx=4 nu=2: old 1387 ns, adopted 1386 (0.999, same C), off 1383 (0.998, same C)
+nx=6 nu=3: old 3455 ns, adopted 2913 (0.843), off 3455 (1.000, same C)
+nx=8 nu=3: old 3992 ns, adopted 3992 (1.000, same C), off 6113 (1.532)
+nx=12 nu=4: old 11252 ns, adopted 11382 (1.011, same C), off 11307 (1.005, same C)
+nx=16 nu=4: old 19930 ns, adopted 19918 (0.999, same C), off 19908 (0.999, same C)

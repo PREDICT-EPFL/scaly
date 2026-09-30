@@ -100,10 +100,18 @@ class CpuFacts:
   features: frozenset[str] = frozenset()
   l1i: int | None = None
   l1d: int | None = None
+  l2: int | None = None
 
 
 _FEATURES = frozenset({"avx2", "fma", "avx512f", "avx512bw", "avx512dq", "avx512vl"})
-_SYSCTL_SIZES = ("hw.perflevel0.l1icachesize", "hw.perflevel0.l1dcachesize", "hw.l1icachesize", "hw.l1dcachesize")
+_SYSCTL_SIZES = (
+  "hw.perflevel0.l1icachesize",
+  "hw.perflevel0.l1dcachesize",
+  "hw.perflevel0.l2cachesize",
+  "hw.l1icachesize",
+  "hw.l1dcachesize",
+  "hw.l2cachesize",
+)
 _SYSCTL_FEATURES = {"hw.optional.avx2_0": "avx2", "hw.optional.fma": "fma", **{f"hw.optional.{f}": f for f in _FEATURES if f.startswith("avx512")}}
 
 
@@ -130,6 +138,7 @@ def _darwin_facts(machine: str, out: str | None = None) -> CpuFacts:
     features=frozenset(name for key, name in _SYSCTL_FEATURES.items() if values.get(key, "").strip() == "1"),
     l1i=size("hw.perflevel0.l1icachesize", "hw.l1icachesize"),
     l1d=size("hw.perflevel0.l1dcachesize", "hw.l1dcachesize"),
+    l2=size("hw.perflevel0.l2cachesize", "hw.l2cachesize"),
   )
 
 
@@ -167,6 +176,7 @@ def _linux_facts(machine: str, root: Path = Path("/")) -> CpuFacts:
     features=frozenset(flags & _FEATURES),
     l1i=sizes.get("1Instruction"),
     l1d=sizes.get("1Data"),
+    l2=sizes.get("2Unified"),
   )
 
 

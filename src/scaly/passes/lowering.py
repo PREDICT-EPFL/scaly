@@ -256,7 +256,7 @@ def _product_in_loops(node: Expr, target: Target) -> bool:
   expansion: a matrix times a matrix over a reduction of four terms or more, neither of them a
   constant, whose rows fill at least the target's middle column block (``Target.row_blocks``, 8
   columns on the reference machine), or which fills a register tile's rows (``Target.product_tile``)
-  and more than half its columns. Its loops run vectorized; expanded, every output is a scalar chain
+  and more than half its columns, and more than four. Its loops run vectorized; expanded, every output is a scalar chain
   the C compiler does not vectorize. Narrower products lose less, and a procedure kept in loops for
   them lost more on the rest of its work than the product gained (a Riccati step of four states,
   1.023x; one of six gained 0.86x in tiles, where it had lost 1.7% in single rows); a constant
@@ -271,7 +271,7 @@ def _product_in_loops(node: Expr, target: Target) -> bool:
     return False
   rows, columns = target.product_tile
   n = int(b.shape[1])
-  return n >= target.row_blocks[1] or (rows <= int(a.shape[0]) and n > columns // 2)
+  return n >= target.row_blocks[1] or (1 < rows <= int(a.shape[0]) and n > max(columns // 2, 4))
 
 
 # ``bool`` values only ever come from comparisons, logic and ``isfinite``, never from a narrowing
@@ -931,9 +931,11 @@ PANEL_ROWS_WIDE = 6
 PANEL_ROWS_LARGE = 16
 # A product in register tiles (``Target.product_tile``) reads ``b`` once per tile of rows, not per
 # row, and at any width: it copies panels only for a ``b`` larger than the L1 data cache and from 64
-# rows. Below that, reading ``b`` in place measured faster on the reference machine (1.1-1.6x at 8 to
-# 32 rows of 256 x 256, 1.08x at 96 x 96 x 96), and above it the copy won by 2-6% (64 x 64 x 512,
-# 192 and 256 square).
+# rows, or, from sixteen rows, larger than half the L2 cache, which every tile of rows would read
+# from memory again. Below that, reading ``b`` in place measured faster on the reference machine
+# (1.1-1.6x at 8 to 32 rows of 256 x 256, 1.08x at 96 x 96 x 96, 1.1-1.2x at 16 rows up to a ``b`` of
+# 8 MiB); above it the copy won, by 2-6% from 64 rows (64 x 64 x 512, 192 and 256 square) and by
+# 1.1x at 16 rows of 16 MiB to 3.1x at 63 rows of 32 MiB.
 PANEL_ROWS_TILED = 64
 
 
@@ -979,7 +981,9 @@ def _tile(
 
 def _tile_segments(n: int, columns: int, lanes: int) -> tuple[list[tuple[int, int, int]], int]:
   """A row's columns in tiles: ``columns`` wide as many times as they fit, then at most one of each
-  half as wide down to one vector's lanes; with the first column none covers."""
+  half as wide down to one vector's lanes, then the columns left, fewer than a vector's, in one of
+  scalar sums (streamed with ``k`` outermost they cost more than their share); with the first
+  column none covers, ``n``."""
   segments: list[tuple[int, int, int]] = []
   first = 0
   if (count := n // columns) > 0:
@@ -991,7 +995,9 @@ def _tile_segments(n: int, columns: int, lanes: int) -> tuple[list[tuple[int, in
       segments.append((first, width, 1))
       first += width
     width //= 2
-  return segments, first
+  if first < n:
+    segments.append((first, n - first, 1))
+  return segments, n
 
 
 def _lower_columns_blocked(
@@ -1015,7 +1021,11 @@ def _lower_columns_blocked(
   outermost = (
     m is not None
     and kk > 0
-    and ((large and m >= PANEL_ROWS_TILED) if tiled else ((n > target.row_blocked_max and m >= PANEL_ROWS_WIDE) or (large and m >= PANEL_ROWS_LARGE)))
+    and (
+      (large and (m >= PANEL_ROWS_TILED or (m >= PANEL_ROWS_LARGE and kk * n * dtype.itemsize > target.choices.l2_bytes // 2)))
+      if tiled
+      else ((n > target.row_blocked_max and m >= PANEL_ROWS_WIDE) or (large and m >= PANEL_ROWS_LARGE))
+    )
   )
   segments: list[tuple[int, int, int]] = []  # (first column, width, blocks)
   j0 = 0  # the first column no block covers; a vector's row wider than row_blocked_max has no blocks

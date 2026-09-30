@@ -179,22 +179,26 @@ the output at every step. A block keeps its sums in private buffers of one vecto
 updated in a loop of kind `vector` that the C renderer writes as GNU vector statements, so the
 generator vectorizes them rather than leaving it to the C compiler. Each output's terms are summed
 in the same order whichever target the code is rendered for, and a block's multiply-adds stay one
-expression each, which the C compiler fuses. The compiler's own vectorizer, which the blocks relied
-on before and the code around them still does, fuses a multiply and an add in some shapes and not
-in others, so another target's widths can still change the last bits. Under `rounding="portable"`
-every target takes the M3's widths.
+expression each, which the C compiler fuses. The code around the blocks is left to the compiler's
+own vectorizer, which fuses a multiply and an add in some shapes and not in others, so another
+target's widths can still change the last bits. Under `rounding="portable"` every target takes the
+M3's widths.
 
 A matrix of as many rows as a register tile holds or more runs in tiles instead, four rows by eight
 columns on the M3 (`Target.product_tile`), chosen from the processor's multiply-add units, their
 latency and its registers as BLIS's analytical model chooses them, so that enough independent sums
 hide the latency and each step of `k` loads four elements of `a` and four vectors of `b` for sixteen
-vector multiply-adds. The rows a tile does not fill take tiles of one row. Each output still sums in
-order of `k`, so a tile computes what a row block does.
+vector multiply-adds. The rows a tile does not fill take tiles of one row, and the columns fewer
+than a vector a tile of scalar sums. Each output still sums in order of `k`, so a tile computes what
+a row block does.
 
-A matrix of several rows reads `b` once per row, or per tile of rows, so when `b` is wider than
-that limit or larger than half the level-1 data cache (`Target.panel_bytes`), the same column
-blocks run outermost instead; in tiles, only for a `b` larger than the whole cache and from 64
-rows, since a tile of rows reads `b` in place fast enough below that.
+A matrix reads `b` once per tile of rows, or once per row when it has fewer rows than a tile, so a
+large `b` runs its column blocks outermost instead. In tiles that is a `b` larger than the level-1
+data cache from 64 rows, or larger than half the level-2 cache (`Target.l2_bytes`) from sixteen,
+which every tile of rows would otherwise read from memory again; below that a tile of rows reads
+`b` in place fast enough. In rows, it is a `b` wider than that limit from six rows or larger than
+the level-1 data cache from sixteen, which on a target of several lanes means a product of up to
+three rows, the fewest a tile does not hold.
 Each block copies its panel of `b` into a contiguous buffer, a chunk of `k` at a time small enough
 to stay in the cache, and every row of `a` passes over the chunk with its sums in registers. The
 copy is what keeps the panel in the cache when `n` is a power of two: read in place, down a column

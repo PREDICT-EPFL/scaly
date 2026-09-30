@@ -967,26 +967,17 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       lanes compute the same bits. `generic` renders the same C as before.
 - [x] **C-213. Register tiles for the products (K2, Tier 4).** A matrix product of four rows or
       more keeps its sums in tiles of `Target.product_tile`, from the BLIS model: enough sums to
-      hide `fma_units` x `fma_latency` within `vector_registers` (three fields that join `Target`),
-      the fewest loads a multiply-add of those; 4 x 8 on the M3, 4 x 16 on AVX-512, 4 x 4 on the
-      two-unit Arm cores. The rows a tile leaves take one-row tiles; K0's panels are tile-wide and
-      now copied only for a `b` past the L1 cache from 64 rows (in place was 1.1-1.6x faster below
-      that). A product filling a tile's rows and more than half its columns keeps its procedure
-      in loops (C-206 extended: a 6-state Riccati step 0.86, 4-state left expanded at 1.023).
-      GEMM 0.57-0.69 of its time at n = 8-256, 47-54 GF/s: 0.67-1.02x BLASFEO to n = 96, 1.06 at
-      128, 1.09-1.10 at 192-256; small products 1.3-2.8x faster, none slower; corpus matmul_48
-      0.71, mlp_small_jac 0.82, riccati_50 0.87. Outputs bit for bit, but for the products newly
-      kept in loops (4e-16). 6 x 8, 8 x 4, 4 x 12 and 4 x 16 tiles measured slower.
-- [ ] **C-215. Blocked Cholesky and triangular solves on the tiles (A7(a), Tier 5).** After C-213
-      the product runs at 52 GF/s and the Crout POTRF at 10-19, 1.7-2.4x BLASFEO from n = 24;
-      TRSM 1.8-2.4x. Right-looking in blocks of a tile's columns, the trailing update a tiled
-      product over its lower half; the solve a diagonal block then a product. A rounding change.
-      Plan: Tier 5 of [the implementation plan](notes/perf_gaps_plan_2026_09_30.html).
-- [ ] **C-216. The dense backend's matrices stored dense (A7(b), Tier 5).** `P`, and `G` when dense
-      enough, as dense arrays, and `P + G^T W G` as a weighted product on the tiles instead of
-      `SparseMatrix` index tables: about half of DUAL1-4's factor time in A7's profile.
-- [ ] **C-217. The dense step fused (B3, Tier 5).** DUALC's step (47-48% of its time) in fewer
-      passes over the vectors.
+      hide `fma_units` x `fma_latency` within `vector_registers` (fields that join `Target`), the
+      fewest loads a multiply-add of those; 4 x 8 on the M3, 4 x 16 on AVX-512, 4 x 4 on the
+      two-unit Arm cores. Rows a tile leaves take one-row tiles, columns fewer than a vector a tile
+      of scalar sums. K0's panels are tile-wide and copied only for a `b` past the L1 cache from 64
+      rows, or past half the L2 cache from sixteen (`l2_bytes`, a field the review's 1.8-2.2x
+      regression at 2048 x 2048 added). A product filling a tile's rows and more than half its
+      columns, and more than four, keeps its procedure in loops (a 6-state Riccati step 0.84).
+      GEMM 0.58-0.69 of its time at n = 8-256, 46-54 GF/s: 0.67-1.01x BLASFEO to n = 96, 1.06 at
+      128, 1.10-1.11 at 192-256; up to 2.9x faster elsewhere, none slower; corpus matmul_48 0.71,
+      mlp_small_jac 0.85, riccati_50 0.86. Each output still sums in order of `k`; last bits can
+      differ where Tier 3's code was left to clang's vectorizer or expanded (up to 1.1e-14).
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

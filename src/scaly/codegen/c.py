@@ -354,7 +354,10 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
 # scalar one, so each lane computes what the loop's trip computes. The statements run for every
 # lane in turn instead of lane by lane, which the kind allows: its lanes are independent, no lane
 # reading what another writes (the lowering emits it only so). A buffer the body both stores and
-# reads at another index would break that, and renders as a loop, as any other body does.
+# reads at another index would break that, and renders as a loop, as any other body does. The check
+# compares names, not storage: it trusts the body not to reach one buffer under two names (an
+# alias, a packed slot, an in-place output), which holds for every body the lowering emits, since
+# each stores only a block's own sums or an output from them.
 _VECTOR_LANES = (2, 4, 8)
 _VECTOR_ARITH = frozenset({ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV, ProgramOp.NEG})
 

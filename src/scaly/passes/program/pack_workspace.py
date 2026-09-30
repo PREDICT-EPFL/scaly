@@ -32,6 +32,7 @@ class _PackPlan:
   slot_dtype: dict[str, DType] = field(default_factory=dict)  # slot name -> dtype
   slot_size: dict[str, int] = field(default_factory=dict)  # slot name -> element count
   spill_offset: dict[str, int] = field(default_factory=dict)  # slot name -> offset into w[]
+  slot_lanes: dict[str, int] = field(default_factory=dict)  # slot name -> lanes, for a slot of vectors' lanes
   own_spill: int = 0  # doubles this proc spills to its own w[] window
   callees: set[str] = field(default_factory=set)  # callee names this proc invokes
 
@@ -47,10 +48,8 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   private = _private_decls(body)
   alias_src = _alias_sources(body)
   # Aliases own no storage (they're pointers into another buffer); pack only real buffers, but
-  # a read of an alias extends the lifetime of the buffer it points at. A buffer of a vector's lanes
-  # (a block's running sums) keeps its own few doubles: in a slot that scalar code also uses, the C
-  # compiler keeps neither the vector nor the scalars in registers.
-  packable = {name: decl for name, decl in private.items() if name not in alias_src and "lanes" not in decl.attrs}
+  # a read of an alias extends the lifetime of the buffer it points at.
+  packable = {name: decl for name, decl in private.items() if name not in alias_src}
   plan = _PackPlan()
   if not packable:
     for stmt in body:
@@ -105,7 +104,10 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
 
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
   order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))
-  ranks = _assign_slots([(packable[buf].dtype, first_write[buf], last_use[buf]) for buf in order])
+  # A buffer of a vector's lanes (a block's running sums) shares slots only with others of its
+  # lanes: in a slot that scalar code also uses, the C compiler kept neither the vector nor the
+  # scalars in registers.
+  ranks = _assign_slots([((packable[buf].dtype, packable[buf].attrs.get("lanes")), first_write[buf], last_use[buf]) for buf in order])
   names: dict[int, str] = {}
   used_names = {n.attrs["name"] for n in _walk(proc) if n.op == ProgramOp.BUFFER}
   counter = 0
@@ -118,6 +120,8 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       names[rank] = chosen
       plan.slot_dtype[chosen] = packable[buf].dtype
       plan.slot_size[chosen] = 0
+      if (lanes := packable[buf].attrs.get("lanes")) is not None:
+        plan.slot_lanes[chosen] = lanes
     chosen = names[rank]
     plan.rename[buf] = chosen
     plan.slot_size[chosen] = max(plan.slot_size[chosen], _size_of(packable[buf].attrs["shape"]))
@@ -208,6 +212,8 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> Pro
     }
     if slot in plan.spill_offset:
       attrs["workspace_offset"] = plan.spill_offset[slot]
+    if slot in plan.slot_lanes:
+      attrs["lanes"] = plan.slot_lanes[slot]
     slot_bufs[slot] = ProgramNode(ProgramOp.BUFFER, (), attrs, plan.slot_dtype[slot])
 
   def fn(n: ProgramNode) -> ProgramNode:

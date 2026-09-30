@@ -1,7 +1,7 @@
 {
  "cells": [
   "t3/jit",
-  "c213/jit"
+  "c213r/jit"
  ],
  "kernels": [
   "matmul_48",
@@ -12,38 +12,38 @@
  ],
  "best_ns": {
   "matmul_48/t3/jit": 5854.0,
-  "matmul_48/c213/jit": 4179.69,
-  "mlp_small_jac/t3/jit": 604.17,
-  "mlp_small_jac/c213/jit": 492.83,
-  "npmpc_12/t3/jit": 15437.5,
-  "npmpc_12/c213/jit": 15500.0,
-  "riccati_50/t3/jit": 8375.0,
-  "riccati_50/c213/jit": 7312.5,
-  "unbumpercars_8/t3/jit": 478750.0,
-  "unbumpercars_8/c213/jit": 473250.0
+  "matmul_48/c213r/jit": 4177.0,
+  "mlp_small_jac/t3/jit": 580.2,
+  "mlp_small_jac/c213r/jit": 493.48,
+  "npmpc_12/t3/jit": 15416.5,
+  "npmpc_12/c213r/jit": 15541.0,
+  "riccati_50/t3/jit": 8416.5,
+  "riccati_50/c213r/jit": 7239.5,
+  "unbumpercars_8/t3/jit": 479875.0,
+  "unbumpercars_8/c213r/jit": 472500.0
  },
  "median_ns": {
-  "matmul_48/t3/jit": 6145.75,
-  "matmul_48/c213/jit": 4377.62,
+  "matmul_48/t3/jit": 6135.5,
+  "matmul_48/c213r/jit": 4375.0,
   "mlp_small_jac/t3/jit": 609.38,
-  "mlp_small_jac/c213/jit": 507.81,
-  "npmpc_12/t3/jit": 15875.0,
-  "npmpc_12/c213/jit": 16292.0,
-  "riccati_50/t3/jit": 8792.0,
-  "riccati_50/c213/jit": 7708.25,
-  "unbumpercars_8/t3/jit": 510625.0,
-  "unbumpercars_8/c213/jit": 475750.0
+  "mlp_small_jac/c213r/jit": 517.58,
+  "npmpc_12/t3/jit": 16198.0,
+  "npmpc_12/c213r/jit": 15959.0,
+  "riccati_50/t3/jit": 8635.5,
+  "riccati_50/c213r/jit": 7645.75,
+  "unbumpercars_8/t3/jit": 509958.0,
+  "unbumpercars_8/c213r/jit": 497834.0
  },
  "err": {
   "matmul_48/t3/jit": 0.0,
-  "matmul_48/c213/jit": 0.0,
+  "matmul_48/c213r/jit": 0.0,
   "mlp_small_jac/t3/jit": 0.0,
-  "mlp_small_jac/c213/jit": 0.0,
+  "mlp_small_jac/c213r/jit": 0.0,
   "npmpc_12/t3/jit": 0.0,
-  "npmpc_12/c213/jit": 0.0,
+  "npmpc_12/c213r/jit": 0.0,
   "riccati_50/t3/jit": 0.0,
-  "riccati_50/c213/jit": 0.0,
+  "riccati_50/c213r/jit": 0.0,
   "unbumpercars_8/t3/jit": 0.0,
-  "unbumpercars_8/c213/jit": 0.0
+  "unbumpercars_8/c213r/jit": 0.0
  }
 }

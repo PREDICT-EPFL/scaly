@@ -24,6 +24,7 @@ from ..utils.env import CpuFacts, cpu_facts, env
 type Rounding = Literal["target", "portable"]
 
 _KIB = 1024
+_MIB = 1024 * _KIB
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,8 @@ class Target:
       16 on SSE and AVX2).
     fma_units: the vector multiply-adds that can start in one cycle.
     fma_latency: the cycles from one multiply-add to one that depends on it.
+    l2_bytes: the level-2 cache the core generated code runs on reaches (Apple's is shared by its
+      cluster of performance cores).
   """
 
   name: str = "generic"
@@ -66,13 +69,14 @@ class Target:
   vector_registers: int = 16
   fma_units: int = 1
   fma_latency: int = 4
+  l2_bytes: int = 1024 * _KIB
 
   def __post_init__(self) -> None:
     if self.rounding not in ("target", "portable"):
       raise ValueError(f"Target.rounding must be 'target' or 'portable', got {self.rounding!r}")
     if type(self.vector_bytes) is not int or self.vector_bytes not in (8, 16, 32, 64):
       raise ValueError(f"Target.vector_bytes must be 8, 16, 32 or 64, got {self.vector_bytes!r}")
-    for name in ("l1i_bytes", "l1d_bytes", "vector_registers", "fma_units", "fma_latency"):
+    for name in ("l1i_bytes", "l1d_bytes", "l2_bytes", "vector_registers", "fma_units", "fma_latency"):
       value = getattr(self, name)
       if type(value) is not int or value <= 0:
         raise ValueError(f"Target.{name} must be a positive integer, got {value!r}")
@@ -141,13 +145,14 @@ class Target:
   @property
   def product_tile(self) -> tuple[int, int]:
     """The rows and columns of ``a @ b`` whose sums a register tile keeps across the reduction, from
-    the analytical model of BLIS (Low et al., 2016): enough independent sums, ``rows * columns /
-    lanes``, to keep every multiply-add unit busy through its latency (``fma_units *
+    the analytical model of BLIS (Low et al., 2016). For each width of one, two, four or eight
+    vectors, which divide the power-of-two widths, the fewest rows whose sums, ``rows * columns /
+    lanes`` of them, keep every multiply-add unit busy through its latency (``fma_units *
     fma_latency``), within the vector registers with one for each vector of a row of ``b`` and one
-    for an element of ``a``; of those, the fewest loads a multiply-add, ties to more rows. Where no
-    tile hides the latency within the registers, the one that comes closest. The columns are one,
-    two, four or eight vectors, which divide the power-of-two widths. 4 x 8 on the reference
-    machine; one row, and no tile, on a target of one lane."""
+    for an element of ``a``; of those tiles, the fewest loads a multiply-add, ties to more rows.
+    Where no tile hides the latency within the registers, the one that comes closest; where not
+    even one row fits, one row and no tile. 4 x 8 on the reference machine; one row, and no tile,
+    on a target of one lane."""
     t = self.choices
     lanes = t.vector_doubles
     if lanes == 1:
@@ -159,6 +164,8 @@ class Target:
       rows = min(-(-need // vectors), (t.vector_registers - 1 - vectors) // vectors)
       if rows >= 1:
         options.append((max(0, need - rows * vectors), (rows + vectors) / (rows * vectors), -rows, rows, vectors * lanes))
+    if not options:
+      return (1, lanes)
     _, _, _, rows, columns = min(options)
     return (rows, columns)
 
@@ -173,18 +180,18 @@ PRESETS: dict[str, Target] = {
   t.name: t
   for t in (
     Target("generic"),
-    Target("apple-m1", ("-mcpu=apple-m1",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4),
-    Target("apple-m2", ("-mcpu=apple-m2",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4),
-    Target("apple-m3", ("-mcpu=apple-m3",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4),
-    Target("apple-m4", ("-mcpu=apple-m4",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4),
-    Target("armv8-a", ("-march=armv8-a",), 16, 64 * _KIB, 64 * _KIB, vector_registers=32, fma_units=2, fma_latency=4),
-    Target("cortex-a53", ("-mcpu=cortex-a53",), 16, 32 * _KIB, 32 * _KIB, vector_registers=32, fma_units=1, fma_latency=8),
-    Target("cortex-a72", ("-mcpu=cortex-a72",), 16, 48 * _KIB, 32 * _KIB, vector_registers=32, fma_units=2, fma_latency=7),
-    Target("cortex-a76", ("-mcpu=cortex-a76",), 16, 64 * _KIB, 64 * _KIB, vector_registers=32, fma_units=2, fma_latency=4),
-    Target("neoverse-v2", ("-mcpu=neoverse-v2",), 16, 64 * _KIB, 64 * _KIB, vector_registers=32, fma_units=4, fma_latency=4),
-    Target("x86-64", ("-march=x86-64",), 16, 32 * _KIB, 32 * _KIB, vector_registers=16, fma_units=2, fma_latency=4),
-    Target("x86-64-v3", ("-march=x86-64-v3",), 32, 32 * _KIB, 32 * _KIB, vector_registers=16, fma_units=2, fma_latency=4),
-    Target("x86-64-v4", ("-march=x86-64-v4",), 64, 32 * _KIB, 48 * _KIB, vector_registers=32, fma_units=2, fma_latency=4),
+    Target("apple-m1", ("-mcpu=apple-m1",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4, l2_bytes=12 * _MIB),
+    Target("apple-m2", ("-mcpu=apple-m2",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4, l2_bytes=16 * _MIB),
+    Target("apple-m3", ("-mcpu=apple-m3",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4, l2_bytes=16 * _MIB),
+    Target("apple-m4", ("-mcpu=apple-m4",), 16, 192 * _KIB, 128 * _KIB, vector_registers=32, fma_units=4, fma_latency=4, l2_bytes=16 * _MIB),
+    Target("armv8-a", ("-march=armv8-a",), 16, 64 * _KIB, 64 * _KIB, vector_registers=32, fma_units=2, fma_latency=4, l2_bytes=512 * _KIB),
+    Target("cortex-a53", ("-mcpu=cortex-a53",), 16, 32 * _KIB, 32 * _KIB, vector_registers=32, fma_units=1, fma_latency=8, l2_bytes=512 * _KIB),
+    Target("cortex-a72", ("-mcpu=cortex-a72",), 16, 48 * _KIB, 32 * _KIB, vector_registers=32, fma_units=2, fma_latency=7, l2_bytes=1024 * _KIB),
+    Target("cortex-a76", ("-mcpu=cortex-a76",), 16, 64 * _KIB, 64 * _KIB, vector_registers=32, fma_units=2, fma_latency=4, l2_bytes=512 * _KIB),
+    Target("neoverse-v2", ("-mcpu=neoverse-v2",), 16, 64 * _KIB, 64 * _KIB, vector_registers=32, fma_units=4, fma_latency=4, l2_bytes=2 * _MIB),
+    Target("x86-64", ("-march=x86-64",), 16, 32 * _KIB, 32 * _KIB, vector_registers=16, fma_units=2, fma_latency=4, l2_bytes=512 * _KIB),
+    Target("x86-64-v3", ("-march=x86-64-v3",), 32, 32 * _KIB, 32 * _KIB, vector_registers=16, fma_units=2, fma_latency=4, l2_bytes=1024 * _KIB),
+    Target("x86-64-v4", ("-march=x86-64-v4",), 64, 32 * _KIB, 48 * _KIB, vector_registers=32, fma_units=2, fma_latency=4, l2_bytes=2 * _MIB),
   )
 }
 """The named targets. Apple's are their performance cores; ``armv8-a`` is any 64-bit Arm core without
@@ -225,7 +232,7 @@ def _from_facts(facts: CpuFacts) -> Target:
     base = PRESETS["x86-64-v4" if _AVX512 <= facts.features else "x86-64-v3" if {"avx2", "fma"} <= facts.features else "x86-64"]
   else:
     base = PRESETS["generic"]
-  sizes = {"l1i_bytes": facts.l1i, "l1d_bytes": facts.l1d}
+  sizes = {"l1i_bytes": facts.l1i, "l1d_bytes": facts.l1d, "l2_bytes": facts.l2}
   changes = {name: value for name, value in sizes.items() if value and value != getattr(base, name)}
   return replace(base, **changes) if changes else base
 

@@ -35,6 +35,7 @@ def test_products_render_the_targets_vectors(target: str, lanes: int) -> None:
   # go lane by lane, and only a sum in an array on the stack is stored as a vector.
   stored = re.findall(r"\*\(double\d\*\)\((\w+)[^;]*\)\s*=[^=]", source)
   assert all(name not in ("arg", "res", "w") for name in stored) and (bool(stored) == (lanes > 1))
+  assert (lanes == 1) or "for (long long q" not in source  # every lane loop became vector statements
 
 
 def test_every_vector_width_computes_the_same_bits() -> None:
@@ -77,6 +78,13 @@ def test_a_vector_body_renders_as_vector_statements() -> None:
   text = _rendered(lambda q: p.store(_at(X, p.add(p.const_int(4), q)), p.add(p.mul(scale, p.load(_at(Y, q))), p.const_float(1.0))))
   assert "for (" not in text
   assert "(*(double2*)(y))" in text and "y[9]" in text and "x[(4 + 0)] = v_[0]; x[(4 + 0) + 1] = v_[1];" in text
+  # A temporary that differs between the lanes is a vector; the block keeps it in the loop's scope.
+  t = p.var("t", dtypes.float64)
+  text = _rendered(
+    lambda q: p.assign("t", p.mul(p.load(_at(Y, q)), p.const_float(2.0)), dtypes.float64, declare=True),
+    lambda q: p.store(_at(X, q), p.add(t, p.const_float(1.0))),
+  )
+  assert text.splitlines() == ["{", "  double2 t = ((*(double2*)(y)) * 2.0);", "  { const double2 v_ = (t + 1.0); x[0] = v_[0]; x[1] = v_[1]; }", "}"]
   # Lanes 6 and 7: the vector starts at the first lane's element.
   text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, q))), start=6)
   assert text == "{ const double2 v_ = (*(double2*)(y + 6)); x[6] = v_[0]; x[7] = v_[1]; }"
@@ -87,6 +95,7 @@ def test_a_vector_body_renders_as_vector_statements() -> None:
   [
     "stride 2",
     "stride 2, constant first",
+    "stride -1",
     "stored at two places",
     "stored at one place",
     "a call on a vector",
@@ -99,6 +108,8 @@ def test_a_vector_body_renders_as_vector_statements() -> None:
 def test_other_bodies_render_as_loops(why: str) -> None:
   if why == "stride 2":
     text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, p.mul(q, p.const_int(2))))))
+  elif why == "stride -1":  # x[q] = y[7 - q]: the lanes reversed
+    text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, p.sub(p.const_int(7), q)))))
   elif why == "stride 2, constant first":
     text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, p.mul(p.const_int(2), q)))))
   elif why == "stored at two places":  # x[q] then x[q + 1]: the next lane overwrites what this one stored

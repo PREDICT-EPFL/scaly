@@ -383,7 +383,7 @@ it to bind a loop to a launch axis, choose vectorized against unrolled emission,
 reduction. In the lowered example below, the lowerer marks the accumulation loop `reduce`, so the
 renderer does not have to guess from the shape of the body.
 
-A `vector` loop's lanes are independent: no lane reads what another writes. The C renderer writes
+A `vector` loop's lanes are independent, and no lane reads what another writes. The C renderer writes
 one of two, four or eight lanes as GNU vector statements when its body is float64 arithmetic whose
 accesses move one element a lane (a vector load or store) or none (a scalar the arithmetic
 broadcasts), and as the loop it also is otherwise. A store to an array on the stack is a vector

@@ -80,6 +80,8 @@ def test_the_product_tile_hides_the_multiply_add_latency(name: str, tile: tuple[
     assert rows * vectors + vectors + 1 <= target.vector_registers  # and room for the operands
   # More units need more sums: the M3's tile with two units would be twice what it needs.
   assert dataclasses.replace(PRESETS["apple-m3"], fma_units=2).product_tile == (4, 4)
+  # Two registers hold no tile at all: one row, and the products keep their row blocks.
+  assert Target("two", vector_bytes=16, vector_registers=2).product_tile == (1, 2)
   # Sixteen registers cannot hold the sixteen sums and their operands: the tile that comes closest,
   # fourteen sums of one vector each, with one register for b's vector and one for a's element.
   assert dataclasses.replace(PRESETS["apple-m3"], vector_registers=16).product_tile == (14, 2)
@@ -177,21 +179,24 @@ def test_the_host_is_the_preset_that_matches_it(facts, preset) -> None:
 def test_the_host_takes_the_caches_its_system_reports() -> None:
   host = _from_facts(CpuFacts("aarch64", "darwin", brand="Apple M3 Pro", l1i=131072))
   assert host.name == "apple-m3" and host.l1i_bytes == 131072 and host.l1d_bytes == PRESETS["apple-m3"].l1d_bytes
-  assert _from_facts(CpuFacts("aarch64", "darwin", brand="Apple M3 Max", l1i=196608, l1d=131072)) is PRESETS["apple-m3"]
+  assert _from_facts(CpuFacts("aarch64", "darwin", brand="Apple M3 Max", l1i=196608, l1d=131072, l2=16 << 20)) is PRESETS["apple-m3"]
+  assert _from_facts(CpuFacts("aarch64", "darwin", brand="Apple M3 Pro", l2=12 << 20)).l2_bytes == 12 << 20
 
 
 _SYSCTL = """machdep.cpu.brand_string: Apple M3 Max
 hw.perflevel0.l1icachesize: 196608
 hw.perflevel0.l1dcachesize: 131072
+hw.perflevel0.l2cachesize: 16777216
 hw.l1icachesize: 131072
 hw.l1dcachesize: 65536
+hw.l2cachesize: 4194304
 hw.optional.avx2_0: 0
 """
 
 
 def test_sysctl_output_parses() -> None:
   facts = _darwin_facts("aarch64", _SYSCTL)
-  assert facts == CpuFacts("aarch64", "darwin", brand="Apple M3 Max", l1i=196608, l1d=131072)  # the performance cores' caches
+  assert facts == CpuFacts("aarch64", "darwin", brand="Apple M3 Max", l1i=196608, l1d=131072, l2=16777216)  # the performance cores' caches
   assert _darwin_facts("x86_64", "hw.l1dcachesize: 32768\nhw.optional.avx2_0: 1\nhw.optional.fma: 1\n").features == {"avx2", "fma"}
   assert _darwin_facts("aarch64", "").l1i is None  # a system that answers nothing
 
@@ -207,7 +212,7 @@ def test_linux_proc_and_sys_parse(tmp_path) -> None:
     for name, value in (("level", level), ("type", kind), ("size", size)):
       (caches / f"index{index}" / name).write_text(value + "\n")
   facts = _linux_facts("aarch64", tmp_path)
-  assert (facts.implementer, facts.part, facts.l1i, facts.l1d) == ("0x41", "0xd0b", 65536, 65536)  # the first core's part
+  assert (facts.implementer, facts.part, facts.l1i, facts.l1d, facts.l2) == ("0x41", "0xd0b", 65536, 65536, 524288)  # the first core's part
   assert _from_facts(facts) is PRESETS["cortex-a76"]
   (tmp_path / "proc/cpuinfo").write_text("model name\t: AMD EPYC\nflags\t\t: sse2 avx2 fma avx512f avx512bw avx512dq avx512vl\n")
   assert _from_facts(_linux_facts("x86_64", tmp_path)).name == "x86-64-v4"
