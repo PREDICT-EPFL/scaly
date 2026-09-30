@@ -24,6 +24,7 @@ from scaly.passes.lowering import LoweringError, lower_function, main_proc
 from scaly.ir.expr import topo
 from scaly.ir.program import ProgramOp
 from scaly.ir.program_spec import verify_program
+from scaly.ir.types import Lowering
 
 _HAVE_CC = _find_compiler() is not None
 
@@ -704,7 +705,7 @@ def test_two_names_with_one_c_spelling_are_refused() -> None:
 
 @pytest.mark.parametrize("n", [1, 7, 8, 9, 15, 16, 17, 64, 1001])
 @pytest.mark.parametrize("hint", ["auto", "block"])
-def test_sums_and_dots_in_partial_sums_match_numpy(n: int, hint: str) -> None:
+def test_sums_and_dots_in_partial_sums_match_numpy(n: int, hint: Lowering) -> None:
   """From eight elements on a sum or a dot runs in four partial sums with the tail in the first:
   NumPy's value at every length around the thresholds, in loop form and scalarized."""
   x, y = sc.sym("x", n), sc.sym("y", n)
