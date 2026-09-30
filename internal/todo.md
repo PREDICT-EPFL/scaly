@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 201**
+**Next id: 202**
 
 | Prefix | Section |
 |---|---|
@@ -846,6 +846,16 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       repeated now lowers to `out[i] = src[i % size]`, which fusion inlines and
       `delinearize_loops` splits: no copy and no buffer. mlp_small_jac 1.13x, race cars 0.92 to 0.99,
       chain M = 9 278 to 110 loops at the same speed (`notes/codegen_speed_o5_report.html`).
+
+- [x] **C-201. Output rows in register blocks for `x @ b` and `a @ b`.** With the reduction loop
+      outermost, every step loaded and stored the whole output row. Rows of up to 64 columns now
+      run in blocks of 16, 8 and 4 columns whose sums stay in registers across `k`, each output
+      stored once and still summed in order of `k`; the leftover columns and wider rows keep the
+      old form (blocks measured slower on the unbumpercars oracle's 128 x 256 products). matmul_48
+      2.1x, mlp_small_jac 1.15x, npmpc 1.04x; unbumpercars 1.01 slower (one 256 x 6 product).
+      Tried first and dropped: two interleaved lanes inside the dense Cholesky tile's quarters,
+      1.45x slower (32 scalar sums spill; clang did not pair them)
+      (`notes/codegen_speed_o6_report.html`).
 
 ### Now
 

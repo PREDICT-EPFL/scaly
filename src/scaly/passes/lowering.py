@@ -801,27 +801,6 @@ def _mm_accum(out: ProgramNode, idx: ProgramNode, a_load: ProgramNode, b_load: P
   return p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_load, b_load)))
 
 
-def _mm_accumulate(
-  ctx: LowerCtx,
-  out: ProgramNode,
-  out_idx: ProgramNode,
-  a_load: ProgramNode,
-  b_load: ProgramNode,
-  dtype: DType,
-  outer: list[ProgramNode],
-  k_rng: ProgramNode,
-) -> None:
-  """Zero ``out[out_idx]`` over the ``outer`` loops, then accumulate ``a*b`` with the REDUCE-k loop outermost.
-
-  A dot product per output is a serial add chain the C compiler cannot break without reassociation. With
-  k outermost the inner loop runs over independent outputs and vectorizes, and each output still sums its
-  terms in the same order, so the result is bit-identical to the dot form. Use it when the reduction axis
-  is the matrix's slow axis; a contiguous reduction axis would make the compiler gather under -march=native.
-  """
-  ctx.emit(*_nest(outer, [_mm_init(out, out_idx, dtype)]))
-  ctx.emit(*_nest([k_rng, *outer], [_mm_accum(out, out_idx, a_load, b_load)]))
-
-
 @lowers(ExprOp.MATMUL)
 def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
@@ -854,28 +833,86 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
       itrng = p.range_(f"it_{nm}", 4 * blocks, m, kind=RangeKind.GLOBAL)
       ctx.emit(*_nest([itrng, krng], [row_dot(it)]))
   elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
-    kk, n = sb
-    j = p.var(f"j_{nm}")
-    jrng = p.range_(f"j_{nm}", 0, n, kind=RangeKind.GLOBAL)
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
-    b_idx = p.add(p.mul(k, p.const_int(n)), j)
-    _mm_accumulate(ctx, out, j, p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [b_idx])), dt, [jrng], krng)
+    _lower_columns_blocked(ctx, a_buf, b_buf, out, None, *sb, dt)
   elif len(sa) == 2 and len(sb) == 2:  # mat @ mat
-    m, kk = sa
-    n = sb[1]
-    i = p.var(f"i_{nm}")
-    irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
-    j = p.var(f"j_{nm}")
-    jrng = p.range_(f"j_{nm}", 0, n, kind=RangeKind.GLOBAL)
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
-    out_idx = p.add(p.mul(i, p.const_int(n)), j)
-    a_idx = p.add(p.mul(i, p.const_int(kk)), k)
-    b_idx = p.add(p.mul(k, p.const_int(n)), j)
-    _mm_accumulate(ctx, out, out_idx, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [b_idx])), dt, [irng, jrng], krng)
+    _lower_columns_blocked(ctx, a_buf, b_buf, out, sa[0], *sb, dt)
   else:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
+
+
+# ``x @ b`` and ``a @ b`` keep a block of this many outputs of a row in registers across the
+# reduction, and then one of each narrower width while one fits: the loads and stores of the output
+# row that a reduction loop outermost pays at every step are gone, and each output still sums its
+# terms in order of ``k`` as before (``notes/codegen_speed_o6_report.html``). The one to three
+# columns no block covers keep the reduction outermost: one to three chains of a long reduction are
+# slower than the memory round trips they save. So does a row wider than ``COLUMN_BLOCKED_MAX``:
+# there the reduction outermost streams the row contiguously, and the blocks, which read the matrix
+# a column block at a time, measured slower (the unbumpercars oracle's 128 x 256 products, 1.13x).
+COLUMN_BLOCKS = (16, 8, 4)
+COLUMN_BLOCKED_MAX = 64
+
+
+def _lower_columns_blocked(
+  ctx: LowerCtx, a_buf: ProgramNode, b_buf: ProgramNode, out: ProgramNode, m: int | None, kk: int, n: int, dtype: DType
+) -> None:
+  """``out = a @ b`` for ``b`` of shape ``(kk, n)`` and ``a`` a vector (``m`` None) or ``(m, kk)``:
+  row by row, the columns in blocks of ``COLUMN_BLOCKS`` widths, the widest as many times as it
+  fits, then at most one of each narrower one, each block's sums in private scalars over a ``k``
+  loop inside it and each output stored once; the columns left over, every column of a product
+  narrower than the narrowest block and every column of a row wider than ``COLUMN_BLOCKED_MAX``
+  accumulate with ``k`` outermost, as every product did before."""
+  c = p.const_int
+  nm = out.attrs["name"]
+  zero = p.const_float(0.0, dtype=dtype)
+  segments: list[tuple[int, int, int]] = []  # (first column, width, blocks)
+  j0 = 0  # the first column no block covers; a row wider than COLUMN_BLOCKED_MAX has no blocks
+  if n <= COLUMN_BLOCKED_MAX:
+    widest, *narrower = COLUMN_BLOCKS
+    if (count := n // widest) > 0:
+      segments.append((0, widest, count))
+      j0 = widest * count
+    for width in narrower:
+      if n - j0 >= width:
+        segments.append((j0, width, 1))
+        j0 += width
+  i = p.var(f"i_{nm}") if m is not None else None
+
+  def a_at(row: ProgramNode | None, k: ProgramNode) -> ProgramNode:
+    return p.load(p.view(a_buf, [k if row is None else p.add(p.mul(row, c(kk)), k)]))
+
+  def row_block(tag: str, first: ProgramNode, width: int) -> list[ProgramNode]:
+    slots = [p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(width)]
+    k = p.var(f"k_{tag}")
+    a_k = a_at(i, k)
+    body = [p.store(s, p.add(p.load(s), p.mul(a_k, p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), p.add(first, c(q)))]))))) for q, s in enumerate(slots)]
+    row = c(0) if i is None else p.mul(i, c(n))
+    return [
+      *(p.store(s, zero) for s in slots),
+      p.for_(p.range_(k.attrs["name"], 0, kk, kind=RangeKind.REDUCE), body),
+      *(p.store(p.view(out, [p.add(row, p.add(first, c(q)))]), p.load(s)) for q, s in enumerate(slots)),
+    ]
+
+  stmts: list[ProgramNode] = []
+  for number, (first, width, count) in enumerate(segments):
+    tag = f"{nm}_{number}"
+    if count > 1:
+      jb = p.var(f"jb_{tag}")
+      stmts.append(p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), row_block(tag, p.add(c(first), p.mul(jb, c(width))), width)))
+    else:
+      stmts += row_block(tag, c(first), width)
+  if stmts:
+    ctx.emit(*(stmts if i is None else [p.for_(p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL), stmts)]))
+  if j0 == n:
+    return
+  # The columns left over: zero them, then add each ``k`` in turn over every row and column.
+  j, k, r = p.var(f"j_{nm}"), p.var(f"k_{nm}"), p.var(f"r_{nm}")
+  jrng = p.range_(j.attrs["name"], j0, n, kind=RangeKind.GLOBAL)
+  krng = p.range_(k.attrs["name"], 0, kk, kind=RangeKind.REDUCE)
+  rows = [] if m is None else [p.range_(r.attrs["name"], 0, m, kind=RangeKind.GLOBAL)]
+  row = None if m is None else r
+  idx = j if m is None else p.add(p.mul(r, c(n)), j)
+  acc = p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_at(row, k), p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), j)])))))
+  ctx.emit(*_nest([*rows, jrng], [p.store(p.view(out, [idx]), zero)]), *_nest([krng, *rows, jrng], [acc]))
 
 
 def _pairwise(values: list[ProgramNode]) -> ProgramNode:

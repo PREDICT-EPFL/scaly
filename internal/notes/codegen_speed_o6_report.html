@@ -1,0 +1,77 @@
+<meta charset="utf-8">
+<title>Codegen Speed O6</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}pre code{overflow-wrap:normal}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+<main>
+<h1>O6: output rows in register blocks</h1>
+<p class="sub">Step 6 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-201 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>x @ b</code> and <code>a @ b</code> put the reduction loop outermost (C-43) so that each output sums its terms in order and the inner loop runs over independent outputs. The price was the output row itself: every step of <code>k</code> loaded and stored all of it. Reverse mode through a dense layer is exactly this product (<code>adjoint @ W</code>), and forward mode's multi-seed tangents are the matrix-matrix one. A row of up to 64 columns now runs in blocks of 16, 8 and 4 columns whose sums stay in registers across <code>k</code>, each output stored once, summed in the same order.</p>
+<ul>
+<li><b>Speed:</b> <span class="ok">matmul_48 2.13× faster</span> (12.6 → 5.9 µs), <span class="ok">mlp_small_jac 1.15×</span>, npmpc 1.04×; unbumpercars <span class="warn">1.01× slower</span> (489 → 495 µs by a direct A/B, from one 256 × 6 product).</li>
+<li><b>Bounds, from the measurements:</b> the one to three columns no block covers, and rows wider than 64, keep the reduction outermost. One to three chains of a long reduction are slower than the memory traffic they save (256 × 2: 1.47×), and the blocks, reading the matrix a column block at a time, were 1.13× slower on the unbumpercars oracle's 128 × 256 products though a hand-written 128 × 256 was faster in isolation.</li>
+<li><b>Order:</b> every output sums over <code>k</code> in order, as before. The result can still differ in the last place where the compiler fuses a multiply-add differently in the new loop shape (seen once, a single leftover column).</li>
+<li><b>Tests:</b> 4 449 passed, 57 skipped, 5 xfailed (19 new). Six mutants, six killed (one after widening a test case). Snapshot <code>wide.c</code> regenerated.</li>
+<li><b>Tried first and dropped:</b> two interleaved lanes inside each quarter of the dense Cholesky tile's dot products (the headroom <code>-fassociative-math</code> shows there, 0.70 on chol_solve_200): <span class="bad">1.45× slower</span>. Clang did not pair the even and odd sums into vector lanes, and 32 scalar sums with 16 loaded values spill the 32 registers. It needs explicit vector types in the program dialect.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O6”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>passes/lowering.py</code>: <code>_lower_columns_blocked</code> lowers <code>vec @ mat</code> and <code>mat @ mat</code> (the latter row by row); <code>_mm_accumulate</code>, now unused, is gone. <code>COLUMN_BLOCKS = (16, 8, 4)</code>, <code>COLUMN_BLOCKED_MAX = 64</code>.</li>
+<li><code>docs/how_it_works/lowering.md</code>: the matrix products' forms.</li>
+</ul>
+
+<h3>Choosing the blocks</h3>
+<p>Hand-written C, the JIT's flags, time over the reduction-outermost form; J is the block width:</p>
+<div class="scroll"><table><tr><th>product</th><th class="r">today</th><th class="r">J 4</th><th class="r">J 8</th><th class="r">J 16</th></tr>
+<tr><td><code>x @ b</code>, 32 × 32</td><td class="r">156 ns</td><td class="r">0.747</td><td class="r">0.490</td><td class="r ok">0.360</td></tr>
+<tr><td><code>x @ b</code>, 32 × 9</td><td class="r">105 ns</td><td class="r">0.420</td><td class="r ok">0.302</td><td class="r bad">1.032</td></tr>
+<tr><td><code>x @ b</code>, 16 × 256</td><td class="r">441 ns</td><td class="r">0.819</td><td class="r">0.619</td><td class="r ok">0.515</td></tr>
+<tr><td><code>x @ b</code>, 256 × 4</td><td class="r">499 ns</td><td class="r ok">0.452</td><td class="r bad">1.632</td><td class="r bad">1.638</td></tr>
+<tr><td><code>x @ b</code>, 256 × 2</td><td class="r">279 ns</td><td class="r bad">1.487</td><td class="r bad">1.471</td><td class="r bad">1.472</td></tr>
+<tr><td><code>a @ b</code>, 48 × 48 × 48</td><td class="r">12.3 µs</td><td class="r">1.119</td><td class="r">0.785</td><td class="r ok">0.510</td></tr>
+<tr><td><code>a @ b</code>, 32 × 32 × 4</td><td class="r">2.14 µs</td><td class="r ok">0.220</td><td class="r">0.718</td><td class="r">0.718</td></tr>
+<tr><td><code>a @ b</code>, 4 × 32 × 32</td><td class="r">482 ns</td><td class="r">0.989</td><td class="r">0.646</td><td class="r ok">0.473</td></tr>
+</table></div>
+<p>A block wider than the columns it has sends them all down the single-chain rest, which is why the widths cascade (16s, then one 8, then one 4) and why fewer than four columns keep the old form.</p>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/passes/test_lowering.py</code>: 14 products against NumPy, blocked, leftover, narrower than a block and wider than 64 columns, vectors and matrices; the output stored once, outside every reduction, for rows of 12 (8 + 4), 28 (16 + 8 + 4) and 64 columns, and accumulated in place for rows of 80 and 96 (whole blocks, wider than the limit).</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 never block</td><td class="ok"><code>test_column_blocks_store_each_output_once[None-12-True]</code></td></tr>
+<tr><td>M2 block rows of any width</td><td class="ok"><code>test_column_blocks_store_each_output_once[None-80-False]</code>, after replacing the 65- and 70-column cases, whose remainders passed by the old path</td></tr>
+<tr><td>M3 leftover columns dropped</td><td class="ok"><code>test_program_ir_jit_executes[_matmat]</code></td></tr>
+<tr><td>M4 no narrower blocks</td><td class="ok"><code>test_column_blocks_store_each_output_once[None-12-True]</code></td></tr>
+<tr><td>M5 every block reads its first column</td><td class="ok"><code>test_matmul_lowering_matches_numpy_exactly[vecmat]</code></td></tr>
+<tr><td>M6 outputs stored at the block's first column</td><td class="ok"><code>test_covered_function_renders_through_program_ir[_vecmat]</code></td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The kernels whose C changed, O5 against O6, nine interleaved rounds, fastest sample. unbumpercars' 1.04 here is 1.01 in a direct A/B (three runs of 400 calls each).</p>
+<div class="scroll"><table><tr><th>kernel</th><th class="r">before (O5)</th><th class="r">after</th></tr>
+<tr><td>matmul_48</td><td class="r">12.55 µs</td><td class="r ok">0.469</td></tr>
+<tr><td>mlp_small_jac</td><td class="r">670.9 ns</td><td class="r ok">0.866</td></tr>
+<tr><td>npmpc_12</td><td class="r">15.93 µs</td><td class="r">0.965</td></tr>
+<tr><td>unbumpercars_8</td><td class="r">474.83 µs</td><td class="r">1.041</td></tr>
+<tr><td><b>geometric mean</b></td><td class="r">—</td><td class="r"><b>0.799</b></td></tr>
+</table></div>
+</main>

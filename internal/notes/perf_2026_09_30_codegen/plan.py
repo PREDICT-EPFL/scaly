@@ -66,17 +66,25 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
   (
     6,
     "O6",
-    "C-11",
-    "Chain of masses: the stage-block structure of its Hessian (investigate)",
-    "chain M = 9 Hessian 2.4× slower than CasADi SX (759 against 315 µs) where M = 5 is 0.83×: the colouring width grows with M",
-    None,
+    "C-201",
+    "Output rows of <code>x @ b</code> and <code>a @ b</code> in register blocks (found during O5: the reduction-outermost form loads and stores the row at every step)",
+    "hand C: <code>x @ b</code> 32 × 32 0.36, <code>a @ b</code> 48³ 0.51; the dense Cholesky-tile variant of the same idea was 1.45× slower and dropped",
+    ("matmul_48 0.47, mlp_small_jac 0.87, npmpc 0.97; unbumpercars 1.01", "codegen_speed_o6_report.html"),
   ),
   (
     7,
-    "O7",
+    "—",
+    "C-11",
+    "Chain of masses: the stage-block structure of its Hessian (investigate)",
+    "chain M = 9 Hessian 2.4× slower than CasADi SX (759 against 315 µs) where M = 5 is 0.83×. Profiled: the stage kernel is 75% (42 forward-over-reverse directions, 1 751 divisions a stage), the assembly 21%: an AD change, not run tonight",
+    None,
+  ),
+  (
+    8,
+    "—",
     "C-77",
     "The sparse-derivative assembly fused into the mapped loop (stretch)",
-    "35% of the race-car Hessian in the 2026-09-22 study; race cars are 1.03–1.08× CasADi SX",
+    "after the last stage call, the assembly is 36% of chain M = 5, 18% of race cars N = 40, 5% at N = 200 and of npmpc; a multi-day compiler change, not run tonight",
     None,
   ),
 ]
@@ -86,7 +94,7 @@ def checklist() -> str:
   rows = []
   for rank, step, todo, change, evidence, status in CHECKLIST:
     if status is None:
-      mark = '<span class="warn">☐ pending</span>'
+      mark = '<span class="warn">☐ deferred</span>' if step == "—" else '<span class="warn">☐ pending</span>'
     else:
       result, report = status
       done = '<span class="bad">☒ rejected</span>' if result.startswith("<b>rejected</b>") else '<span class="ok">☑ done</span>'
@@ -110,6 +118,7 @@ REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
   ("report_o3_template.html", "codegen_speed_o3_report.html", "timing_o3_diag.json", {"o2/jit": "O2", "o2/contract": "-ffp-contract=fast", "o2/finite": "-ffinite-math-only", "o2/fast": "-ffast-math"}),
   ("report_o4_template.html", "codegen_speed_o4_report.html", "timing_o4.json", {"o2/jit": "before (O2)", "o4/jit": "after", "o2/finite": "O2, -ffinite-math-only"}),
   ("report_o5_template.html", "codegen_speed_o5_report.html", "timing_o5.json", {"o4/jit": "before (O4)", "o5/jit": "after"}),
+  ("report_o6_template.html", "codegen_speed_o6_report.html", "timing_o6.json", {"o5/jit": "before (O5)", "o6/jit": "after"}),
 ]
 
 

@@ -158,8 +158,11 @@ way, and stores each output once. One chain of dependent adds runs at the latenc
 overlap, and the C compiler pairs them into vector lanes, which is what `-ffast-math` would buy by
 reordering freely. The rounding is a blocked sum's, as in NumPy's pairwise `sum`, and it is fixed
 by the generated code rather than by the compiler. Shorter reductions keep one chain, and so do
-the matrix products whose reduction axis is the matrix's slow one: those put the reduction loop
-outermost and vectorize over independent outputs instead.
+the matrix products whose reduction axis is the matrix's slow one, `x @ b` and `a @ b`: each output
+sums its terms in order of `k`. Up to 64 columns an output row runs in blocks of 16, 8 and 4
+columns whose sums stay in registers across the reduction, each output stored once; the one to
+three columns no block covers, and every column of a wider row, put the reduction loop outermost
+and vectorize over the row instead, adding into the output at every step.
 
 A `max` or `min` reduction propagates NaN as `np.max` does, so its step is a select C's `fmax`
 cannot express: `((cur < x) || (x != x)) ? x : cur`. The renderer spells that select

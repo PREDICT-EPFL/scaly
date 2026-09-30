@@ -842,3 +842,47 @@ def test_stacks_that_are_not_tiles_keep_their_own_loops() -> None:
   np.testing.assert_array_equal(b, np.stack([xv, zv, xv]))
   np.testing.assert_array_equal(c, np.concatenate([xv, zv, xv], axis=1))
   np.testing.assert_array_equal(d, np.concatenate([xv] * 2, axis=1))
+
+
+# --- column blocks (C-201) --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+  ("m", "k", "n"),
+  [
+    (None, 32, 32),
+    (None, 32, 9),
+    (None, 2, 3),
+    (None, 7, 21),
+    (None, 256, 6),
+    (None, 3, 65),
+    (4, 32, 32),
+    (48, 48, 48),
+    (3, 5, 1),
+    (7, 3, 29),
+    (12, 12, 12),
+    (5, 9, 6),
+    (2, 3, 64),
+    (3, 4, 65),
+  ],
+)
+def test_column_blocked_products_match_numpy(m: int | None, k: int, n: int) -> None:
+  """``x @ b`` and ``a @ b`` in column blocks of 16, 8 and 4 with the rest, and a row wider than 64
+  as before: NumPy's product for every width, remainder and row count."""
+  rng = np.random.default_rng(1000 * (m or 0) + 10 * k + n)
+  b, bv = sc.sym("b", (k, n)), rng.standard_normal((k, n))
+  a, av = (sc.sym("a", k), rng.standard_normal(k)) if m is None else (sc.sym("a", (m, k)), rng.standard_normal((m, k)))
+  fn = sc.Function.from_exprs(f"columns_{m}_{k}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
+  np.testing.assert_allclose(fn((av, bv)), av @ bv, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize(("m", "n", "blocked"), [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (3, 96, False)])
+def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bool) -> None:
+  """A row of up to 64 columns in whole blocks (12 is one of 8 and one of 4, 28 one of 16, 8 and 4)
+  keeps its sums in registers and stores each output once, after its reduction; a wider row, even
+  one of whole blocks (80, 96), keeps the reduction outermost and accumulates in the output."""
+  a, b = sc.sym("a", 5) if m is None else sc.sym("a", (m, 5)), sc.sym("b", (5, n))
+  fn = sc.Function.from_exprs(f"stores_{m}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
+  stores = [node for stmt in _stmts(fn) for node in _nodes(stmt) if node.op == ProgramOp.STORE and node.args[0].attrs["buffer"] == "y"]
+  inside = [st for st in stores if _inside_reduce(fn, st)]
+  assert (not inside) if blocked else inside
