@@ -92,22 +92,32 @@ def blob(flat: list[np.ndarray], out_sizes: list[int], workspace: int) -> bytes:
   return head + b"".join(np.ascontiguousarray(a, dtype="<f8").tobytes() for a in flat)
 
 
-def one(name: str, backend: str, out: Path) -> dict:
+def one(name: str, backend: str, out: Path, split: bool = False) -> dict:
   import scaly as sc
   from scaly.codegen import render_c_module
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
   from scaly.codegen.toolchain import find_c_compiler
-  from scaly.opt.ipm import QPValues, Solver
+  from scaly.opt.ipm import QPValues, Scaling, Solver
   from tests.opt.ipm.problems import ipm_inputs
 
   qp = problem(name)
   s, values = ipm_inputs(qp)
   t0 = time.perf_counter()
   syms = {k: sc.sym(k, np.shape(values[k])) for k in ORDER}
-  res = Solver(s, backend, name=f"g_{c_ident(name)}").solve(QPValues.preprocess(s, **syms))
+  solver = Solver(s, backend, name=f"g_{c_ident(name)}")
+  qv = QPValues.preprocess(s, **syms)
+  args = tuple(np.asarray(values[k], dtype=float) for k in ORDER)
+  names, inputs, scaling = list(ORDER), [syms[k] for k in ORDER], None
+  if split:  # PIQP's setup once, outside the timed solve, as PIQP's own timer counts
+    setup = sc.Function.from_exprs(f"g_{c_ident(name)}_{backend}_setup", inputs, [solver.setup(qv).flat()], names, ["scaling"])
+    scaling_sym = sc.sym("scaling", (Scaling.size(s),))
+    scaling = Scaling.unflat(s, scaling_sym)
+    args = (*args, np.asarray(setup(args), dtype=float))
+    names, inputs = [*names, "scaling"], [*inputs, scaling_sym]
+  res = solver.solve(qv, scaling=scaling)
   keys = ["x", "status", "iter"]
-  fn = sc.Function.from_exprs(f"g_{c_ident(name)}_{backend}", [syms[k] for k in ORDER], [res[k] for k in keys], list(ORDER), keys)
+  fn = sc.Function.from_exprs(f"g_{c_ident(name)}_{backend}", inputs, [res[k] for k in keys], names, keys)
   build = time.perf_counter() - t0
   t0 = time.perf_counter()
   module = render_c_module(fn)
@@ -120,7 +130,6 @@ def one(name: str, backend: str, out: Path) -> dict:
   t0 = time.perf_counter()
   subprocess.run([cc, *compile_flags(), "-fPIC", "-shared", str(src), *module.link_flags, "-lm", "-o", str(lib)], check=True)
   compile_s = time.perf_counter() - t0
-  args = tuple(np.asarray(values[k], dtype=float) for k in ORDER)
   x, status, iters = fn(args)
   flat = [np.ravel(a) for a in args]
   (out / "inputs.bin").write_bytes(blob(flat, [int(e.size) for e in fn.outputs], int(module.workspace_size)))
@@ -151,10 +160,11 @@ def main() -> None:
   parser.add_argument("--problems", help="comma-separated, 'quick' (default) or 'all'")
   parser.add_argument("--backends", default="sparse,dense")
   parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+  parser.add_argument("--split", action="store_true", help="time the solve alone, with PIQP's setup (Ruiz) done once beforehand")
   parser.add_argument("--one", nargs=3, metavar=("PROBLEM", "BACKEND", "OUT"), help=argparse.SUPPRESS)
   args = parser.parse_args()
   if args.one:
-    print(json.dumps({k: v for k, v in one(args.one[0], args.one[1], Path(args.one[2])).items() if k != "x"}))
+    print(json.dumps({k: v for k, v in one(args.one[0], args.one[1], Path(args.one[2]), args.split).items() if k != "x"}))
     return
   names = list(QUICK) if args.problems in (None, "quick") else all_names() if args.problems == "all" else args.problems.split(",")
   cells = [(n, b) for n in names for b in args.backends.split(",")]
@@ -166,7 +176,7 @@ def main() -> None:
       env = {**os.environ, "SCALY_CACHE_DIR": cache}
       t = time.perf_counter()
       done = subprocess.run(
-        [sys.executable, __file__, "--variant", args.variant, "--one", name, backend, str(base / f"{name}_{backend}")],
+        [sys.executable, __file__, "--variant", args.variant, *(["--split"] if args.split else []), "--one", name, backend, str(base / f"{name}_{backend}")],
         capture_output=True,
         text=True,
         env=env,

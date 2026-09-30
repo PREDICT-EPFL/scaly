@@ -23,6 +23,21 @@ class Scaling:
   delta_b: Expr
   c: Expr
 
+  @staticmethod
+  def size(s: QPStructure) -> int:
+    """The length of ``flat``: ``delta``, ``delta_b`` and ``c``."""
+    return s.n + s.p + s.m + s.n + 1
+
+  def flat(self) -> Expr:
+    """The scaling as one vector ``[delta | delta_b | c]``."""
+    return concat([self.delta, self.delta_b, self.c.reshape((1,))])
+
+  @staticmethod
+  def unflat(s: QPStructure, v: Expr) -> Scaling:
+    """The scaling ``flat`` packed into ``v``."""
+    big = s.n + s.p + s.m
+    return Scaling(delta=v[:big], delta_b=v[big : big + s.n], c=v[big + s.n])
+
 
 def _limit(d: Expr) -> Expr:
   """PIQP's ``limit_scaling``: below 1e-4 counts as 1 (nothing to scale), above 1e4 is capped."""

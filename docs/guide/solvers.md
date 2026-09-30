@@ -90,6 +90,20 @@ choice changes only the speed; on the Maros–Mészáros set it takes the dense 
 with far more inequality rows than variables and the sparse one nearly everywhere else.
 `sc.opt.ipm.choose_backend(structure)` says which it would take.
 
+PIQP separates setup, which equilibrates the problem (Ruiz scaling), from solve, and keeps the
+scaling when only the vectors change. `IPM.split` gives the same two steps as two Functions:
+
+```python
+setup, solve = sc.opt.IPM().split(problem, name="mpc_qp")
+scaling = setup(params)                                   # once, while the matrices stay the same
+result = solve(x0, lam_box0, lam_eq0, lam_ineq0, params, scaling)
+```
+
+`setup` takes the problem's parameters and returns the scaling; it reads only the matrices, unless
+the option `preconditioner_scale_cost` scales the cost too. `solve` takes the solver's arguments
+and the scaling. `solve(..., setup(params))` computes what the one-Function solver computes, bit for
+bit, and in a controller whose matrices do not change, one `setup` serves every step.
+
 A problem caches its objective, gradient, constraint Jacobian and bounds oracles. Methods that need
 different Hessian triangles share them and cache one Hessian per triangle.
 

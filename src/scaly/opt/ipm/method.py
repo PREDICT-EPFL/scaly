@@ -18,6 +18,7 @@ from ..problem import NLP
 from ..qp import NotQuadratic, extract_qp, prove_qp
 from .algorithm import DUAL_INFEASIBLE, INFO_FIELDS, MAX_ITER_REACHED, NUMERICS, PRIMAL_INFEASIBLE, SOLVED, Settings, Solver
 from .cost import choose_backend
+from .ruiz import Scaling
 from .structure import QPStructure, QPValues
 
 _STATUS = {
@@ -81,6 +82,23 @@ class IPM:
     return Support()
 
   def build(self, problem: NLP[Any, Any, Any, Any], *, name: str) -> ConcreteFunction[Any, Any, Any, Any]:
+    return self._build(problem, name=name, split=False)[1]
+
+  def split(
+    self, problem: NLP[Any, Any, Any, Any], *, name: str
+  ) -> tuple[ConcreteFunction[Any, Any, Any, Any], ConcreteFunction[Any, Any, Any, Any]]:
+    """This method's solver for ``problem`` as PIQP's setup and solve, two Functions. ``setup``
+    (named ``{name}_setup``) takes the problem's parameters and returns the equilibration, Ruiz's
+    scaling as one vector, which reads only the matrices unless ``preconditioner_scale_cost``;
+    ``solve`` takes the solver's arguments and that scaling, and returns the solver's results.
+    ``solve(..., setup(params))`` computes what ``build``'s solver does, bit for bit. With matrices
+    that do not change, one ``setup`` serves every ``solve``, as PIQP's ``update`` keeps its
+    scaling, and a ``solve`` then costs what PIQP's timer counts."""
+    setup, solve = self._build(problem, name=name, split=True)
+    assert setup is not None
+    return setup, solve
+
+  def _build(self, problem: NLP[Any, Any, Any, Any], *, name: str, split: bool) -> tuple[ConcreteFunction | None, ConcreteFunction]:
     form = extract_qp(problem)
     n, p, m = form.P.shape[0], form.A.shape[0], form.G.shape[0]
     params = list(form.params)
@@ -118,10 +136,15 @@ class IPM:
       offsets = np.cumsum([0, *sizes])
       return variables.unflatten(tuple(flat[a:b].reshape(shape) for a, b, shape in zip(offsets[:-1], offsets[1:], shapes, strict=True)))
 
-    def body(_x0: Any, _lam_box0: Any, _lam_eq0: Expr, _lam_ineq0: Expr, values: Any) -> Any:
+    def qp_values(values: Any) -> tuple[dict[Expr, Expr], QPValues]:
       # The form's data are expressions of the problem's parameter symbols; the Function has its own.
       swap = dict(zip(params, problem.params.flatten_symbolic(values, name), strict=True))
-      out = Solver(s, backend, settings, name=name).solve(QPValues.preprocess(s, **{k: substitute(v, swap) for k, v in data.items()}))
+      return swap, QPValues.preprocess(s, **{k: substitute(v, swap) for k, v in data.items()})
+
+    def body(_x0: Any, _lam_box0: Any, _lam_eq0: Expr, _lam_ineq0: Expr, values: Any, scaling: Expr | None = None) -> Any:
+      swap, qv = qp_values(values)
+      given = None if scaling is None else Scaling.unflat(s, scaling)
+      out = Solver(s, backend, settings, name=name).solve(qv, scaling=given)
       x = out["x"]
       info = Info(
         status=_status(out["status"]),
@@ -131,17 +154,26 @@ class IPM:
       )
       return blocks(x), blocks(out["z_bu"] - out["z_bl"]), out["y"], out["z_u"] - out["z_l"], info
 
+    scaling = L("scaling", TensorType((Scaling.size(s),), diff=False))
     inputs = param_list(
       variables,
       variables.relabel("lam:"),
       L("lam_eq", TensorType((p,), diff=False)),
       L("lam_ineq", TensorType((m,), diff=False)),
       problem.params,
+      *((scaling,) if split else ()),
     )
     outputs = G(
       variables, variables.relabel("lam:"), L("lam_eq", TensorType((p,), diff=False)), L("lam_ineq", TensorType((m,), diff=False)), Info.tree()
     )
-    return ConcreteFunction(name, body, inputs, outputs)
+    solve = ConcreteFunction(name, body, inputs, outputs)
+    if not split:
+      return None, solve
+
+    def setup_body(values: Any) -> Expr:
+      return Solver(s, backend, settings, name=name).setup(qp_values(values)[1]).flat()
+
+    return ConcreteFunction(f"{name}_setup", setup_body, param_list(problem.params), scaling), solve
 
 
 __all__ = ["IPM"]

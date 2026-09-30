@@ -1615,6 +1615,10 @@ tests/opt/ipm/test_kkt.py::test_solves_match_the_reference[QSC205-dense]
 tests/opt/ipm/test_kkt.py::test_solves_match_the_reference[QSC205-sparse]
 tests/opt/ipm/test_kkt.py::test_two_sided_rows[dense]
 tests/opt/ipm/test_kkt.py::test_two_sided_rows[sparse]
+tests/opt/ipm/test_method.py::test_a_scaled_cost_makes_the_setup_read_c
+tests/opt/ipm/test_method.py::test_setup_then_solve_is_the_solver_bit_for_bit[False]
+tests/opt/ipm/test_method.py::test_setup_then_solve_is_the_solver_bit_for_bit[True]
+tests/opt/ipm/test_method.py::test_the_setup_reads_only_the_matrices_and_serves_every_solve
 tests/opt/ipm/test_piqp_trace.py::test_a_truncated_run_is_a_prefix_of_the_full_run[CVXQP1_S]
 tests/opt/ipm/test_piqp_trace.py::test_a_truncated_run_is_a_prefix_of_the_full_run[DUAL1]
 tests/opt/ipm/test_piqp_trace.py::test_a_truncated_run_is_a_prefix_of_the_full_run[HS21]

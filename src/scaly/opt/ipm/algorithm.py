@@ -716,14 +716,21 @@ class Solver:
 
   # --- the whole solve --------------------------------------------------------------------------
 
-  def solve(self, values: QPValues, *, trace: bool = False) -> dict[str, Expr]:
+  def setup(self, values: QPValues) -> Scaling:
+    """PIQP's setup: the Ruiz equilibration of ``values``, which reads only the matrices unless the
+    cost is scaled too (``preconditioner_scale_cost``)."""
+    t = self.settings
+    return ruiz(self.s, values, scale_cost=t.preconditioner_scale_cost, max_iter=t.preconditioner_iter, alias_cost=self.backend == "sparse")
+
+  def solve(self, values: QPValues, *, scaling: Scaling | None = None, trace: bool = False) -> dict[str, Expr]:
     """The solve for run-time ``values`` (as ``QPValues.preprocess`` gives them): the unscaled
     solution in PIQP's result layout, the status, the iteration count, and with ``trace`` one row
     per iteration in PIQP's table layout (``TRACE_FIELDS``): the first ``trace_rows`` rows are the
     ones PIQP prints, a row for every pass that reached the convergence test (all ``iter + 1``, but
-    for a solve that ran out of iterations or failed to factor, whose last pass does not)."""
+    for a solve that ran out of iterations or failed to factor, whose last pass does not). The
+    equilibration is ``setup(values)``, or ``scaling`` when given, as PIQP reuses its setup's."""
     s, t = self.s, self.settings
-    scaling = ruiz(s, values, scale_cost=t.preconditioner_scale_cost, max_iter=t.preconditioner_iter, alias_cost=self.backend == "sparse")
+    scaling = self.setup(values) if scaling is None else scaling
     q = scale(s, values, scaling)
     kernels = Kernels(s, self.backend, t.refinement(), name=self.name)
     outer = Iteration(s, q, kernels, t)
