@@ -1,0 +1,76 @@
+{
+ "op": "gemm",
+ "flags": [
+  "-O2",
+  "-mcpu=native",
+  "-fno-math-errno"
+ ],
+ "rows": [
+  {
+   "shape": "2,256,256",
+   "loops": 19627.35,
+   "base:loops": 14977.78,
+   "diff": 0.0
+  },
+  {
+   "shape": "3,256,256",
+   "loops": 23931.3,
+   "base:loops": 21829.29,
+   "diff": 0.0
+  },
+  {
+   "shape": "4,256,256",
+   "loops": 27801.37,
+   "base:loops": 28921.88,
+   "diff": 0.0
+  },
+  {
+   "shape": "6,256,256",
+   "loops": 35749.41,
+   "base:loops": 42635.95,
+   "diff": 0.0
+  },
+  {
+   "shape": "8,256,256",
+   "loops": 44656.25,
+   "base:loops": 54458.34,
+   "diff": 0.0
+  },
+  {
+   "shape": "16,256,256",
+   "loops": 83339.1,
+   "base:loops": 110142.05,
+   "diff": 0.0
+  },
+  {
+   "shape": "2,700,40",
+   "loops": 12322.46,
+   "base:loops": 5915.57,
+   "diff": 0.0
+  },
+  {
+   "shape": "4,700,40",
+   "loops": 16950.56,
+   "base:loops": 11987.8,
+   "diff": 0.0
+  },
+  {
+   "shape": "8,700,40",
+   "loops": 24584.18,
+   "base:loops": 22420.57,
+   "diff": 0.0
+  },
+  {
+   "shape": "4,128,128",
+   "loops": 6741.55,
+   "base:loops": 6724.79,
+   "diff": 0.0
+  },
+  {
+   "shape": "8,96,96",
+   "loops": 5756.87,
+   "base:loops": 7647.89,
+   "diff": 0.0
+  }
+ ]
+}

@@ -55,7 +55,7 @@ def test_portable_rounding_makes_the_reference_machines_choices() -> None:
   assert PRESETS["x86-64-v3"].choices is PRESETS["x86-64-v3"]
 
 
-@pytest.mark.parametrize("m, k, n", [(None, 256, 6), (20, 12, 40), (3, 70, 130), (8, 9, 100)])
+@pytest.mark.parametrize("m, k, n", [(None, 256, 6), (20, 12, 40), (3, 70, 130), (8, 9, 100), (20, 128, 40)])
 def test_portable_rounding_renders_the_same_c_for_every_target(m, k, n) -> None:
   a, b = sc.sym("a", k) if m is None else sc.sym("a", (m, k)), sc.sym("b", (k, n))
   fn = sc.Function.from_exprs(f"portable_{m}_{k}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["c"])

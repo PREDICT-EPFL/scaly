@@ -283,7 +283,8 @@ def _lower_lu(ctx: LowerCtx, node: Expr) -> None:
   def scale(k: ProgramNode, i: ProgramNode) -> ProgramNode:
     return p.store(at(i, k), p.div(p.load(at(i, k)), p.load(at(k, k))))
 
-  if straight_line(ctx, node, 2 * n * n * n // 3):
+  # 2n^3/3 multiply-adds, and about n^3 selects of the row swap at run-time pivots.
+  if straight_line(ctx, node, 5 * n * n * n // 3):
     for i in range(n):
       ctx.emit(*(p.store(at(c(i), c(j)), p.load(_entry(src, n, c(i), c(j)))) for j in range(n)))
     ctx.emit(*(p.store(at(c(n), c(j)), p.const_float(float(j), dtype=dt)) for j in range(n)))

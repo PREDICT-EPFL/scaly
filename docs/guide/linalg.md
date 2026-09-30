@@ -89,8 +89,9 @@ singular matrix gives a zero pivot, and inf or NaN in what follows it.
 all with the one factorization. Its second derivatives are implicit too. `lu_solve` is
 differentiable in `b`.
 
-**Generated code.** While its `2 n^3 / 3` operations are under the target's `straight_line_ops` (up to
-order 18 on Apple silicon), or up to `sc.options(linalg=dict(dense_unroll=...))`, the factorization is straight-line code
+**Generated code.** While its `5 n^3 / 3` operations, the eliminations and the row swaps' selects, are
+under the target's `straight_line_ops` (up to order 13 on Apple silicon), or up to
+`sc.options(linalg=dict(dense_unroll=...))`, the factorization is straight-line code
 with every access at a fixed address, and the row swap selects on the run-time pivot. Larger
 orders loop, swapping through the pivot row's run-time address. Against LAPACK's `dgesv` from
 Apple's Accelerate, the generated solve takes 0.12 of its time at order 4, 0.51 at order 8 and

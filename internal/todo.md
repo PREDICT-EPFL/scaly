@@ -890,10 +890,11 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 - [x] **C-204. Matrix products past the level-1 cache (K0).** A row wider than 64 columns fell back
       to the reduction outermost, accumulating in memory (12–19 GF/s from n = 96 natively on the M3,
       2.9–4.7x BLASFEO), and a `b` past the L1 cache was re-read from L2 for every row. A matrix of
-      several rows whose `b` exceeds `Target.panel_bytes` (half of L1d) or `row_blocked_max` now runs
-      the column blocks outermost, each block's panel copied contiguous a chunk of `k` at a time and
-      every row passing over it; later chunks resume from the outputs, so each output is still one
-      chain in order of `k`. The copy matters: in place, a panel down a power-of-two `n` shares a few
+      several rows whose `b` is wider than `row_blocked_max` (six rows or more) or larger than L1d
+      (sixteen or more: fewer do not pay for the copy) now runs the column blocks outermost, each
+      block's panel copied contiguous in chunks of `k` that fit `Target.panel_bytes` (half of L1d)
+      and every row passing over it; later chunks resume from the outputs, so each output is still
+      one chain in order of `k`. The copy matters: in place, a panel down a power-of-two `n` shares a few
       cache sets and evicts itself (n = 128 and 256 ran at 19 and 14 GF/s unpacked). GEMM 80–256:
       0.40–0.59 of the base's time, 30–33 GF/s, 1.67–1.89x BLASFEO; no corpus kernel changes.
       Vectors and single rows keep streaming.
@@ -903,7 +904,8 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       to n = 22 and 1.6–1.9x slower from 24, where its body passes the 4 096 operations scalar
       expansion keeps in registers; a solve of one vector 2–2.5x up to 32, parity near 64. Without
       the option (`dense_unroll` now None by default) the node records `"auto"`, and lowering makes
-      straight-line code while the body (`n^3/3`, `2n^3/3`, `n^2` per right-hand side) is under
+      straight-line code while the body (`n^3/3`; `5n^3/3` for LU, whose row swaps add about `n^3`
+      selects; `n^2` per right-hand side) is under
       `Target.straight_line_ops` (`l1i_bytes / 48`, 4 096 on the M3). Counting every right-hand
       side matters: at `n^2` alone a Hessian's 100-seed solves became 860 KB of C. The dense IPM:
       LOTSCHD 0.52, HS118 0.65, GENHS28 0.75, QAFIRO 0.86 of their time, iterations unchanged;
@@ -911,7 +913,8 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 - [x] **C-206. Small matrix products stay loops.** Scalar expansion turned every `a @ b` under its
       budget into scalar chains clang does not vectorize, 1.6–2.5x slower than the blocked loops
       from 8×8×8 (61 against 28 ns). A matrix times a matrix whose rows fill the target's middle
-      column block (8 columns on the M3) over four terms or more now keeps its procedure out of
+      column block (8 columns on the M3) over four terms or more, neither operand a constant (whose
+      zeros and ones fold only when expanded: seeds, selections), now keeps its procedure out of
       automatic expansion; `.scalar()` still expands it. Narrower rows are left alone: a 6-state
       Riccati step lost 1.7% kept in loops. An 8-state Riccati recursion 0.68 of its time; no
       codegen-corpus kernel changes.

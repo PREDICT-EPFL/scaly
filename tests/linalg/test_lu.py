@@ -180,10 +180,11 @@ def test_the_factorization_itself_refuses_a_derivative() -> None:
   assert pattern.shape == (12, 9) and pattern.nnz == 12 * 9
 
 
-@pytest.mark.parametrize(("target", "largest"), [("apple-m3", 18), ("generic", 10)])
+@pytest.mark.parametrize(("target", "largest"), [("apple-m3", 13), ("generic", 7)])
 def test_the_target_makes_small_bodies_straight_line(target: str, largest: int) -> None:
-  """Without the option, ``lu`` is straight-line code while its ``2 n^3 / 3`` operations are under
-  the target's ``straight_line_ops``, and loops past it; the loop code does not grow with the order."""
+  """Without the option, ``lu`` is straight-line code while its ``5 n^3 / 3`` operations (the
+  eliminations and the row swaps' selects) are under the target's ``straight_line_ops``, and loops
+  past it; the loop code does not grow with the order."""
   srcs = {}
   for n in (largest, largest + 1, 2 * largest):
     a = sc.sym("a", (n, n))

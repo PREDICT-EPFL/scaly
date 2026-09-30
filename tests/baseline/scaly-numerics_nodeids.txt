@@ -924,8 +924,8 @@ tests/linalg/test_lu.py::test_solves_match_numpy_for_vectors_matrices_and_transp
 tests/linalg/test_lu.py::test_the_adjoint_differentiates_in_reverse_mode[3]
 tests/linalg/test_lu.py::test_the_adjoint_differentiates_in_reverse_mode[9]
 tests/linalg/test_lu.py::test_the_factorization_itself_refuses_a_derivative
-tests/linalg/test_lu.py::test_the_target_makes_small_bodies_straight_line[apple-m3-18]
-tests/linalg/test_lu.py::test_the_target_makes_small_bodies_straight_line[generic-10]
+tests/linalg/test_lu.py::test_the_target_makes_small_bodies_straight_line[apple-m3-13]
+tests/linalg/test_lu.py::test_the_target_makes_small_bodies_straight_line[generic-7]
 tests/linalg/test_lu.py::test_ties_pick_the_first_row_and_every_multiplier_is_at_most_one
 tests/linalg/test_lu.py::test_validation
 tests/linalg/test_options.py::test_dense_unroll_is_decided_when_the_node_is_built

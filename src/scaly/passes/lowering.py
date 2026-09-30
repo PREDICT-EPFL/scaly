@@ -254,12 +254,16 @@ def _product_in_loops(node: Expr, target: Target) -> bool:
   """Whether ``node`` is a matrix product that keeps its procedure out of automatic scalar
   expansion: a matrix times a matrix whose rows fill at least the target's middle column block
   (``Target.row_blocks``, 8 columns on the reference machine) over a reduction of four terms or
-  more. Its loops run vectorized across the block; expanded, every output is a scalar chain the C
-  compiler does not vectorize. Narrower rows lose less, and a procedure kept in loops for them
-  lost more on the rest of its work than the product gained (a Riccati step of six states)."""
+  more, neither of them a constant. Its loops run vectorized across the block; expanded, every
+  output is a scalar chain the C compiler does not vectorize. Narrower rows lose less, and a
+  procedure kept in loops for them lost more on the rest of its work than the product gained (a
+  Riccati step of six states); a constant operand's zeros and ones, the seeds of a forward-mode
+  Jacobian above all, fold away only when expanded."""
   if node.op != ExprOp.MATMUL:
     return False
   a, b = node.args
+  if ExprOp.CONST in (a.op, b.op):
+    return False  # expanded, a constant operand's zeros and ones fold away, which loops cannot do
   return len(a.shape) == 2 and len(b.shape) == 2 and int(b.shape[0]) >= 4 and int(b.shape[1]) >= target.row_blocks[1]
 
 
@@ -872,10 +876,16 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 # than the memory round trips they save. So does a vector's row wider than ``Target.row_blocked_max``:
 # there the reduction outermost streams the row contiguously, and the blocks, which read the matrix a
 # column block at a time, measured slower (the unbumpercars oracle's 128 x 256 products, 1.13x).
-# A matrix of several rows reads ``b`` once per row instead, so when ``b`` is wider than that or
-# larger than ``Target.panel_bytes`` the column blocks run outermost: each block's panel of ``b``
-# stays in the L1 cache while every row passes over it, in chunks of ``k`` small enough to fit, and
-# each chunk resumes its sums from the outputs, so each is still one chain in order of ``k``.
+# A matrix of several rows reads ``b`` once per row instead, so when ``b`` is wider than that, or
+# larger than the whole L1 data cache, the column blocks run outermost: each block's panel of ``b``
+# is copied contiguous, in chunks of ``k`` that fit in ``Target.panel_bytes``, and every row passes
+# over the chunk; each chunk resumes its sums from the outputs, so each is still one chain in order
+# of ``k``. The copy has to be paid for by the rows that share it: on the reference machine a wide
+# row's streaming, slow per row, lost to it from six rows (1.19x at 6 x 256 x 256, even at four),
+# and the row blocks re-reading a ``b`` past the L1 cache from L2 only from sixteen (1.09x at 16 x
+# 700 x 40, 0.91 at eight; a ``b`` of twice the panel was even at 128 rows).
+PANEL_ROWS_WIDE = 6
+PANEL_ROWS_LARGE = 16
 
 
 def _lower_columns_blocked(
@@ -885,15 +895,19 @@ def _lower_columns_blocked(
   row by row, the columns in blocks of the target's ``row_blocks`` widths, the widest as many times
   as it fits, then at most one of each narrower one, each block's sums in private scalars over a
   ``k`` loop inside it and each output stored once; the columns left over, every column of a
-  product narrower than the narrowest block and every column of a vector's row wider than
-  ``row_blocked_max`` accumulate with ``k`` outermost, as every product did before. A matrix of
-  several rows whose ``b`` is wider than that or larger than ``Target.panel_bytes`` takes the same
-  blocks with the column blocks outermost (``_panel_passes``)."""
+  product narrower than the narrowest block and every column of a row wider than
+  ``row_blocked_max`` accumulate with ``k`` outermost, as every product did before, unless there are
+  rows enough to share the copy of a panel: then a ``b`` wider than that, or larger than the L1 data
+  cache, takes the same blocks with the column blocks outermost (``_panel_passes``)."""
   c = p.const_int
   nm = out.attrs["name"]
   zero = p.const_float(0.0, dtype=dtype)
   target = ctx.target
-  outermost = m is not None and m > 1 and (n > target.row_blocked_max or kk * n * dtype.itemsize > target.panel_bytes)
+  outermost = (
+    m is not None
+    and kk > 0
+    and ((n > target.row_blocked_max and m >= PANEL_ROWS_WIDE) or (kk * n * dtype.itemsize > target.choices.l1d_bytes and m >= PANEL_ROWS_LARGE))
+  )
   segments: list[tuple[int, int, int]] = []  # (first column, width, blocks)
   j0 = 0  # the first column no block covers; a vector's row wider than row_blocked_max has no blocks
   if n <= target.row_blocked_max or outermost:

@@ -115,9 +115,10 @@ class Target:
   @property
   def panel_bytes(self) -> int:
     """The bytes of ``b`` a product ``a @ b`` keeps in the level-1 data cache while every row of
-    ``a`` passes over it: half of ``l1d_bytes``, the other half for the rows of ``a`` and the
-    outputs. A ``b`` larger than this, or wider than ``row_blocked_max``, runs its column blocks
-    outermost, a panel of it at a time, copied contiguous in chunks of ``k`` that fit."""
+    ``a`` passes over it, when its column blocks run outermost (a ``b`` wider than
+    ``row_blocked_max``, or larger than ``l1d_bytes``, and rows enough to share the copy): half of
+    ``l1d_bytes``, the other half for the rows of ``a`` and the outputs. Each block's panel is
+    copied contiguous in chunks of ``k`` that fit."""
     return self.choices.l1d_bytes // 2
 
   @property

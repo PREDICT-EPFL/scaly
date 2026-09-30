@@ -879,12 +879,14 @@ def test_column_blocked_products_match_numpy(m: int | None, k: int, n: int, targ
     np.testing.assert_allclose(fn((av, bv)), av @ bv, rtol=1e-13, atol=1e-13)
 
 
-@pytest.mark.parametrize(("m", "n", "blocked"), [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (1, 96, False), (3, 96, True)])
+@pytest.mark.parametrize(
+  ("m", "n", "blocked"), [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (1, 96, False), (5, 96, False), (6, 96, True)]
+)
 def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bool) -> None:
   """On the M3, a row of up to 64 columns in whole blocks (12 is one of 8 and one of 4, 28 one of
   16, 8 and 4) keeps its sums in registers and stores each output once, after its reduction; a
-  wider row of a vector or of one row, even one of whole blocks (80, 96), keeps the reduction
-  outermost and accumulates in the output, and one of a matrix of several rows runs its column
+  wider row of a vector or of up to five rows, even one of whole blocks (80, 96), keeps the
+  reduction outermost and accumulates in the output, and one of six rows or more runs its column
   blocks outermost (C-204), storing each output once again."""
   a, b = sc.sym("a", 5) if m is None else sc.sym("a", (m, 5)), sc.sym("b", (5, n))
   fn = sc.Function.from_exprs(f"stores_{m}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
@@ -932,12 +934,15 @@ def _chunk_lengths(fn: sc.Function) -> set[int]:
   [
     (96, 96, 96),  # wider than 64 columns
     (20, 12, 100),  # wider, whole blocks and a tail of four
-    (4, 1100, 40),  # b past the budget at 40 columns: two whole chunks of 512 and a tail for the 16-wide blocks
-    (5, 1025, 64),  # a chunk of one row of k after two whole ones
-    (2, 700, 7),  # a narrow block and three streamed columns
+    (16, 1100, 40),  # b past L1 at 40 columns: two whole chunks of 512 and a tail for the 16-wide blocks
+    (16, 1025, 64),  # a chunk of one row of k after two whole ones
+    (6, 700, 7),  # a narrow block and three streamed columns
     (8, 5, 130),  # a streamed tail of two past eight 16-wide blocks
+    (5, 300, 256),  # too few rows to pay for the copy: streamed
     (1, 300, 256),  # one row: the vector path, streamed
     (None, 128, 256),  # a vector: streamed, as unbumpercars' products measured fastest
+    (8, 0, 100),  # an empty reduction: zeros
+    (3, 0, 70),
   ],
 )
 @pytest.mark.parametrize("target", ["apple-m3", "x86-64-v3", "generic"])
@@ -953,18 +958,23 @@ def test_products_past_the_cache_match_numpy_exactly(m: int | None, k: int, n: i
 
 def test_panels_are_packed_in_chunks_that_fit_the_budget() -> None:
   """On the M3 (64 KiB of panel): a 16-wide block takes chunks of 512 rows of ``k``, an 8-wide one
-  1 024; a matrix within the budget and 64 columns, or a single row, keeps the row-by-row blocks."""
+  1 024. A ``b`` within the L1 cache and 64 columns keeps the row-by-row blocks, and so does one past
+  it with fewer than sixteen rows, or a wide one with fewer than six, to share the copy."""
   with sc.target("apple-m3"):
-    wide_k = _panel_product(4, 1100, 24)
+    wide_k = _panel_product(16, 1100, 24)
     assert _packed_buffers(wide_k) == [8192]  # 16 x 512 and 8 x 1024, in one slot
     assert _chunk_lengths(wide_k) == {512, 1024, 1100 - 1024}  # 16 wide: 512, 512, 76; 8 wide: 1024, 76
+    assert _packed_buffers(_panel_product(15, 1100, 24)) == []
     assert _packed_buffers(_panel_product(96, 96, 96)) == [16 * 96]  # one chunk: all of k
+    assert _packed_buffers(_panel_product(6, 96, 96)) == [16 * 96]
+    assert _packed_buffers(_panel_product(5, 96, 96)) == []
     assert _packed_buffers(_panel_product(48, 48, 48)) == []  # 18 KiB of b: row by row, as before
+    assert _packed_buffers(_panel_product(16, 256, 40)) == []  # 80 KiB: past the panel, within L1
     assert _packed_buffers(_panel_product(1, 300, 256)) == []
-  with sc.target("generic"):  # 16 KiB of panel: 20 x 100 x 40 is past it there, not on the M3
-    assert _packed_buffers(_panel_product(20, 100, 40)) == [8 * 100]
+  with sc.target("generic"):  # 32 KiB of L1: 20 x 128 x 40 (40 KiB) is past it there, not on the M3
+    assert _packed_buffers(_panel_product(20, 128, 40)) == [8 * 128]
   with sc.target("apple-m3"):
-    assert _packed_buffers(_panel_product(20, 100, 40)) == []
+    assert _packed_buffers(_panel_product(20, 128, 40)) == []
 
 
 # --- small products stay loops (C-206) ---------------------------------------------------------------
@@ -981,6 +991,7 @@ def _loops(fn: sc.Function, target: str) -> bool:
     (2, 8, 8, True),
     (4, 4, 16, True),
     (8, 2, 8, False),  # a reduction of two: the scalar code is as fast
+    (-8, 8, 8, False),  # a constant operand: its zeros and ones fold away only in scalar code
     (6, 6, 6, False),  # narrower rows lose less than their procedure's other work gains expanded
     (8, 8, 4, False),
   ],
@@ -988,12 +999,21 @@ def _loops(fn: sc.Function, target: str) -> bool:
 def test_block_wide_products_keep_their_procedure_in_loops(m: int, k: int, n: int, loops: bool) -> None:
   """Expanded to scalars, a matrix product's outputs are chains the C compiler does not vectorize;
   its loops run vectorized across a column block."""
-  a, b = sc.sym("a", (m, k)), sc.sym("b", (k, n))
-  fn = sc.Function.from_exprs(f"small_product_{m}_{k}_{n}", [a, b], [a @ b], ["a", "b"], ["c"])
-  assert _loops(fn, "apple-m3") == loops
+  constant = m < 0
+  m = abs(m)
   av, bv = np.arange(m * k, dtype=float).reshape(m, k), np.arange(k * n, dtype=float).reshape(k, n) - 3.0
+  b = sc.sym("b", (k, n))
+  if constant:  # a selection matrix, as a seed or a kinematic matrix is
+    sel = np.eye(m, k)
+    fn = sc.Function.from_exprs(f"small_product_const_{m}_{k}_{n}", [b], [sc.const(sel) @ b], ["b"], ["c"])
+    av, args = sel, (bv,)
+  else:
+    a = sc.sym("a", (m, k))
+    fn = sc.Function.from_exprs(f"small_product_{m}_{k}_{n}", [a, b], [a @ b], ["a", "b"], ["c"])
+    args = ((av, bv),)
+  assert _loops(fn, "apple-m3") == loops
   with sc.target("apple-m3"):
-    np.testing.assert_array_equal(fn((av, bv)), av @ bv)
+    np.testing.assert_array_equal(fn(*args), av @ bv)
 
 
 def test_the_product_rule_follows_the_target_and_yields_to_a_scalar_hint() -> None:

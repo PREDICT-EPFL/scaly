@@ -178,7 +178,7 @@ imports them.
 | Op | Arity | Notes |
 | --- | --- | --- |
 | `ragged_add` `ragged_dot` | 5 / 4 | loops of run-time length: for each group, a range `[lo, hi)` read through fixed index maps and added (scaled) into the base, or summed as a dot product; unchecked, built by library code from its own tables |
-| `cholesky` `ldl` `lu` | 1 | dense factorizations of a square matrix's lower triangle; `ldl` is packed (unit `L` below the diagonal, `D` on it), without pivoting; `lu` is `P A = L U` with partial pivoting, packed in `(n + 1, n)` with the permutation, and has no derivative of its own; attr `unroll` (straight-line code or loops, from `sc.options(linalg=dict(dense_unroll=...))`) |
+| `cholesky` `ldl` `lu` | 1 | dense factorizations of a square matrix's lower triangle; `ldl` is packed (unit `L` below the diagonal, `D` on it), without pivoting; `lu` is `P A = L U` with partial pivoting, packed in `(n + 1, n)` with the permutation, and has no derivative of its own; attr `unroll`: straight-line code (true) or loops (false), fixed by `sc.options(linalg=dict(dense_unroll=...))`, or `"auto"`, the target's choice when it is lowered |
 | `sparse_ldl` | 1 | the sparse `L D L^T` of a symmetric matrix's values as `[L | D]`, over the analysis tables of `linalg.symbolic` (attrs); a left-looking loop nest updating each column from chunks of columns that share their rows; no derivative of its own |
 | `sparse_ldl_solve` | 2 | `K^{-1} b` from a `sparse_ldl` factor and `b`, over the ordering, the pattern of `L` and its chains of columns (attrs); linear in `b` |
 | `trisolve` | 2 | `op(T) X = B` for a triangular `T` and a vector or matrix `B`; attrs `lower`, `trans`, `unit`, `unroll` |

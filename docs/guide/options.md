@@ -40,7 +40,7 @@ unroll thresholds trade generation time for speed: straight-line code runs sever
 than a loop at these sizes, but costs about a millisecond of generation per operation. These three
 options take non-negative integers, and `dense_unroll` also None. Without it, a dense factorization
 or triangular solve is straight-line code while its body, counted in operations (`n^3 / 3` for a
-Cholesky factor, `n^2` per right-hand side of a solve), is under the target's
+Cholesky or `L D L^T` factor, `5 n^3 / 3` for `lu`, `n^2` per right-hand side of a solve), is under the target's
 `Target.straight_line_ops`, and loops past it ([Code generation](codegen.md#tuning-for-a-processor)).
 
 The unroll thresholds belong to the `linalg` namespace: `sc.options(linalg=dict(dense_unroll=4))`.
