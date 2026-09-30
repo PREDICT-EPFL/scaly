@@ -1,6 +1,6 @@
 # The generated-code speed review, 2026-09-30
 
-Studies behind `../codegen_speed_plan_2026_09_30.html` (todo C-196 … C-200) and the per-step
+Studies behind `../codegen_speed_plan_2026_09_30.html` (todo C-196 … C-202) and the per-step
 reports `../codegen_speed_o<N>_report.html`. Run each from the repository root. Timings come from an
 Apple M3 Max with Apple clang 21 at the JIT's flags (`-O2 -mcpu=native -fno-math-errno`); they are
 indicative, not reference-machine results, and no page under `docs/` cites them.
@@ -12,4 +12,5 @@ indicative, not reference-machine results, and no page under `docs/` cites them.
 | `time_entry.c` | the C driver: the IPM study's, with a batch of calls per sample (the Mac's clock ticks every 41.7 ns) |
 | `tables.py` | a timing result as an HTML table, times over the first cell |
 | `plan.py` | builds the plan and the step reports from `plan_template.html`, `report_o<N>_template.html` and `results/`; the checklist in it is where a step's status changes |
-| `results/` | the timing results the reports cite: `timing_diag0.json` (compile variants), `timing_diag1.json` (the parts of `-ffast-math`), `timing_o<N>*.json` (each step against the one before) |
+| `results/` | the timing results the reports cite: `timing_diag0.json` (compile variants), `timing_diag1.json` (the parts of `-ffast-math`), `timing_o<N>*.json` (each step against the one before), `timing_final.json` (the base commit against the branch), `sweep_base/` and `sweep_final/` (the benchmark sweep against CasADi SX, `bench/run.py sweep`, before and after) |
+| `result_template.html` | the plan's closing section, filled with `timing_final.json` |

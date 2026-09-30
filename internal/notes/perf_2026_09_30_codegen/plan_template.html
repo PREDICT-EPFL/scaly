@@ -1,6 +1,6 @@
 <main>
 <h1>Generated-code speed review: the plan</h1>
-<p class="sub">Where the generated C loses time, from tiny kernels to large sparse and structured ones, what to change, ranked by measured headroom, and how far the work got · branch <code>perf/codegen-speed</code> (from <code>devrush</code>), todo C-196 … C-201 · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's <code>-O2 -mcpu=native -fno-math-errno</code></p>
+<p class="sub">Where the generated C loses time, from tiny kernels to large sparse and structured ones, what to change, ranked by measured headroom, and how far the work got · branch <code>perf/codegen-speed</code> (from <code>devrush</code>), todo C-196 … C-202 · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's <code>-O2 -mcpu=native -fno-math-errno</code></p>
 
 <div class="box">
 <p style="margin-top:0"><b>Summary.</b> 26 kernels, from a 2×2 Hessian (1.6 ns) to a sparse MPC interior-point solve (0.64 ms), each compiled eight ways and timed from C. What the compile variants say:</p>
