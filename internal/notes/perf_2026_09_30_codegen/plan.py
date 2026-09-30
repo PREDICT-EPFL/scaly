@@ -45,7 +45,7 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
     "C-198",
     "FMA contraction across statements on clang, as GCC does by default (<code>-ffp-contract=fast</code>)",
     "<code>contract</code>: mlp_big_fwd 0.80, unbumpercars 0.86, rosen_hess 0.91, riccati_50 0.93; geomean 0.97. Contraction off: 1.09",
-    None,
+    ("<b>rejected</b>: after O2 it measures 1.11, slower (matvec_256 2.3×)", "codegen_speed_o3_report.html"),
   ),
   (
     4,
@@ -89,7 +89,8 @@ def checklist() -> str:
       mark = '<span class="warn">☐ pending</span>'
     else:
       result, report = status
-      mark = f'<span class="ok">☑ done</span>: {result} (<a href="{report}">report</a>)'
+      done = '<span class="bad">☒ rejected</span>' if result.startswith("<b>rejected</b>") else '<span class="ok">☑ done</span>'
+      mark = f'{done}: {result.removeprefix("<b>rejected</b>: ")} (<a href="{report}">report</a>)'
     rows.append(f"<tr><td>{rank}</td><td>{step}</td><td>{todo}</td><td>{change}</td><td>{evidence}</td><td>{mark}</td></tr>")
   return "\n".join(rows)
 
@@ -106,6 +107,7 @@ def steps() -> str:
 REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
   ("report_o1_template.html", "codegen_speed_o1_report.html", "timing_o1_all.json", {"base/jit": "before", "o1/jit": "after"}),
   ("report_o2_template.html", "codegen_speed_o2_report.html", "timing_o2.json", {"o1/jit": "before (O1)", "o2/jit": "after", "o1/assoc": "O1, -fassociative-math"}),
+  ("report_o3_template.html", "codegen_speed_o3_report.html", "timing_o3_diag.json", {"o2/jit": "O2", "o2/contract": "-ffp-contract=fast", "o2/finite": "-ffinite-math-only", "o2/fast": "-ffast-math"}),
 ]
 
 

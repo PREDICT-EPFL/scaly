@@ -14,6 +14,8 @@ variant>/``) compiled one way. The compile variants are diagnostics of where tim
   ``-ffinite-math-only``; ``-fno-signed-zeros``), to say which property a kernel's gain needs;
   ``noerrno_contract_off``: ``-ffp-contract=off``, no contraction at all;
 - ``inline``: every ``noinline`` callee made ``static inline``;
+- ``fmaximum``: the NaN-propagating max/min selects over plain names as clang's
+  ``__builtin_elementwise_maximum``/``minimum`` (one ``fmax``/``fmin`` instruction on AArch64);
 - ``restrict``: every pointer parameter of a callee ``restrict``-qualified (only safe where no
   call site aliases; the output check says whether these inputs caught one);
 - ``erestrict``: the entry's ABI pointers (``arg[i]``, ``res[i]``, ``w``) read once into
@@ -91,6 +93,16 @@ def _entry_restrict(src: str) -> str:
   return "\n".join(lines[: start + 1] + new_body + lines[end:])
 
 
+_NAN_MAX = re.compile(r"\(\(\((\w+) < (\w+)\) \|\| \(\2 != \2\)\) \? \2 : \1\)")
+_NAN_MIN = re.compile(r"\(\(\((\w+) < (\w+)\) \|\| \(\1 != \1\)\) \? \1 : \2\)")
+
+
+def _fmaximum(src: str) -> str:
+  """NaN-propagating max and min selects over plain names as clang's one-instruction builtins."""
+  src = _NAN_MAX.sub(r"__builtin_elementwise_maximum(\1, \2)", src)
+  return _NAN_MIN.sub(r"__builtin_elementwise_minimum(\1, \2)", src)
+
+
 def _all_restrict(src: str) -> str:
   return _entry_restrict(_restrict(src))
 
@@ -111,6 +123,7 @@ def compile_variants() -> dict[str, tuple[tuple[str, ...], object]]:
     "noerrno_contract_off": ((*jit, "-ffp-contract=off"), None),
     "inline": (jit, _inline),
     "restrict": (jit, _restrict),
+    "fmaximum": (jit, _fmaximum),
     "erestrict": (jit, _entry_restrict),
     "arestrict": (jit, _all_restrict),
     "arestrict_inline": (jit, lambda src: _inline(_all_restrict(src))),

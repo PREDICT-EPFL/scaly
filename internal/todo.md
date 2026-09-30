@@ -828,9 +828,12 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       work cap (a rejected attempt costs about 40 us of generation per unit); calls, mapped or not,
       keep the entry loopy. quat_jac 0.51, cartpole_jac 0.78, rosen_hess 0.83; no other corpus
       kernel changes (`notes/codegen_speed_o1_report.html`).
-- [ ] **C-198. FMA contraction across statements on clang.** GCC contracts across statements by
-      default, clang within one expression only; `-ffp-contract=fast` gives 0.97 in geometric mean,
-      up to 0.80 (mlp_big_fwd), and turning contraction off costs 1.09.
+- [x] **C-198. FMA contraction across statements on clang.** Measured and rejected: before C-196
+      `-ffp-contract=fast` gave 0.97 in geometric mean (0.80 on mlp_big_fwd), after it 1.11, the
+      partial sums up to 2.3x slower (matvec_256), npmpc and unbumpercars 1.5x: fusing across
+      statements defeats clang's pairing of the partial sums into vector lanes. The JIT keeps
+      clang's `-ffp-contract=on`; the benchmark protocol (`HOST_CFLAGS`) was never touched
+      (`notes/codegen_speed_o3_report.html`).
 - [ ] **C-199. NaN-propagating max and min without a separate NaN test.** `-ffinite-math-only`
       gives the IPM 0.85 to 0.95; the reductions test `b != b` beside every compare.
 - [ ] **C-200. A repeated concat (a tile) as one loop fusion can inline.** Multi-seed forward mode

@@ -1,0 +1,20 @@
+<main>
+<h1>O3: FMA contraction across statements, measured and rejected</h1>
+<p class="sub">Step 3 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-198 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> No change to the code. The plan's third step was to let clang contract a multiply and an add that sit in different statements, which GCC does by default and clang does not (<code>-ffp-contract=fast</code> against clang's <code>on</code>, which contracts inside one expression only). On the base code it measured 0.97 in geometric mean and up to 0.80. After O2 it measures <span class="bad">1.11, slower</span>: the partial sums O2 introduced run up to 2.3× slower under it.</p>
+<ul>
+<li><b>Decision:</b> the JIT keeps clang's default. Nothing to revert; the step is recorded so it is not tried again for the same reason.</li>
+<li><b>Not touched either way:</b> the benchmark protocol's flags (<code>HOST_CFLAGS</code>, which the sweep compiles both providers with). <code>docs/results/fairness.md</code> explains why contraction there is a choice with consequences for the comparison with CasADi SX, whose one-operation statements clang cannot contract today; that choice is not a speed step for the generated code.</li>
+</ul>
+</div>
+
+<h2>The measurement</h2>
+<p>Every corpus kernel after O2, compiled with the JIT's flags, then with <code>-ffp-contract=fast</code> added, then with <code>-ffinite-math-only</code> (O4's evidence) and with <code>-ffast-math</code> for reference. Seven interleaved rounds, fastest sample.</p>
+{{TABLE}}
+<p>What slows down is exactly what O2 sped up: matvec_256 (2.31), mlp_big_fwd (2.06), npmpc (1.50), unbumpercars (1.49), and the scan's gradient (1.20). The partial sums are statements of the form <code>s1[0] = (s1[0] + (a[k+1] * x[k+1]))</code>, contracted already under clang's default because each is one expression; with contraction across statements the compiler no longer pairs the four lanes into vector operations. Under <code>-ffast-math</code>, which also reassociates, the same kernels are 1.1–1.2× slower than the JIT build, so the generated order now beats the compiler's own reordering there.</p>
+
+<h2>Next</h2>
+<p>O4 (C-199): the NaN test in the max and min reductions, the IPM's remaining <code>-ffinite-math-only</code> gain.</p>
+</main>
