@@ -48,8 +48,8 @@ class IPM:
   A QP method, as ``PIQP`` is: it solves a problem Scaly proves quadratic. ``sparse=True`` factors
   the KKT system whole with ``linalg.SparseLDL``; ``sparse=False`` condenses it and factors it by a
   dense Cholesky; None, the default, chooses the one whose iteration costs less, from the problem's
-  structure alone, for the target in force when the solver is built (``opt.ipm.cost``): both
-  backends follow PIQP's path, so only their speed differs. ``options`` are PIQP's settings by
+  structure alone (``opt.ipm.cost``): both backends follow PIQP's path, to the same solution within
+  its tolerances. ``options`` are PIQP's settings by
   name (``Settings``: ``eps_abs``, ``max_iter``, ...), so a PIQP method's options carry over;
   PIQP's ``verbose`` is accepted and has no effect. Like PIQP it takes no warm start."""
 
@@ -141,7 +141,7 @@ class IPM:
       swap = dict(zip(params, problem.params.flatten_symbolic(values, name), strict=True))
       return swap, QPValues.preprocess(s, **{k: substitute(v, swap) for k, v in data.items()})
 
-    def body(_x0: Any, _lam_box0: Any, _lam_eq0: Expr, _lam_ineq0: Expr, values: Any, scaling: Expr | None = None) -> Any:
+    def solved(values: Any, scaling: Expr | None) -> Any:
       swap, qv = qp_values(values)
       given = None if scaling is None else Scaling.unflat(s, scaling)
       out = Solver(s, backend, settings, name=name).solve(qv, scaling=given)
@@ -153,6 +153,13 @@ class IPM:
         primal_residual=out["info"][INFO_FIELDS.index("primal_res")],
       )
       return blocks(x), blocks(out["z_bu"] - out["z_bl"]), out["y"], out["z_u"] - out["z_l"], info
+
+    # Two bodies, not one with an optional scaling: a Function names its arguments after its body's.
+    def body(_x0: Any, _lam_box0: Any, _lam_eq0: Expr, _lam_ineq0: Expr, values: Any) -> Any:
+      return solved(values, None)
+
+    def split_body(_x0: Any, _lam_box0: Any, _lam_eq0: Expr, _lam_ineq0: Expr, values: Any, scaling: Expr) -> Any:
+      return solved(values, scaling)
 
     scaling = L("scaling", TensorType((Scaling.size(s),), diff=False))
     inputs = param_list(
@@ -166,7 +173,7 @@ class IPM:
     outputs = G(
       variables, variables.relabel("lam:"), L("lam_eq", TensorType((p,), diff=False)), L("lam_ineq", TensorType((m,), diff=False)), Info.tree()
     )
-    solve = ConcreteFunction(name, body, inputs, outputs)
+    solve = ConcreteFunction(name, split_body if split else body, inputs, outputs)
     if not split:
       return None, solve
 

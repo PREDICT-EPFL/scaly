@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import numpy as np
 import pytest
 from scipy import sparse
 
 import scaly as sc
 from scaly.ir.target import PRESETS
+from scaly.linalg.symbolic import TooMuchWork
 from scaly.opt.ipm import QPStructure, choose_backend
-from scaly.opt.ipm.cost import DENSE_WEIGHTS, Work, iteration_us, kkt_symbolic, work
-from scaly.opt.ipm.kkt import Kernels
+from scaly.opt.ipm import cost
+from scaly.opt.ipm.cost import DENSE_WEIGHTS, Work, iteration_us, work
+from scaly.opt.ipm.kkt import Kernels, kkt_symbolic
 from scaly.testing.qp import maros_meszaros, mpc_qp
 
 from .problems import ipm_inputs
@@ -34,13 +34,13 @@ def test_the_counts_of_an_iteration() -> None:
 
 @pytest.mark.parametrize("name", ["HS118", "DUALC1", "QAFIRO", "CVXQP1_S"])
 def test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds(name: str) -> None:
-  """The model analyses the KKT pattern the sparse backend factors, not a copy of it."""
+  """The model and the sparse backend share one analysis of the KKT pattern, made once."""
   s, _ = ipm_inputs(maros_meszaros(name))
+  counted = work(s)
   kernels = Kernels(s, "sparse")
   _ = kernels._factorization
-  built = kernels._ldl.symbolic
-  assert (kkt_symbolic(s).update_lanes, kkt_symbolic(s).nnz_l) == (built.update_lanes, built.nnz_l)
-  assert (work(s).updates, work(s).nnz_l) == (built.update_lanes, built.nnz_l)
+  assert kernels._ldl.symbolic is kkt_symbolic(s)
+  assert (counted.updates, counted.nnz_l) == (kernels._ldl.symbolic.update_lanes, kernels._ldl.symbolic.nnz_l)
 
 
 @pytest.mark.parametrize(
@@ -54,29 +54,40 @@ def test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds(nam
   ],
 )
 def test_the_reference_machine_takes_the_faster_backend(name: str, backend: str) -> None:
-  """On the M3, as measured (``notes/perf_2026_09_30_gaps/backend_costs.json``)."""
+  """On the M3, as measured (``internal/notes/perf_2026_09_30_gaps/results/backend_costs.json``)."""
   s, _ = ipm_inputs(maros_meszaros(name))
-  assert choose_backend(s, PRESETS["apple-m3"]) == backend
+  assert choose_backend(s) == backend
 
 
 def test_a_long_horizon_is_sparse() -> None:
   s, _ = ipm_inputs(mpc_qp(12, 4, 20))
-  assert choose_backend(s, PRESETS["apple-m3"]) == "sparse"
+  assert choose_backend(s) == "sparse"
 
 
-def test_the_target_weighs_the_dense_factor() -> None:
-  """Straight-line under the target's budget, and vectorized loops by its width; under portable
-  rounding every target weighs it as the reference machine."""
-  w = Work(vectors=40, entries=200, assembly=300, factor=20**3 // 3, solve=400, updates=900, nnz_l=300)
-  m3, generic, avx512 = (iteration_us(w, "dense", PRESETS[t]) for t in ("apple-m3", "generic", "x86-64-v4"))
-  assert generic > m3 > avx512  # 2666 operations: straight-line on the M3 and AVX-512, loops for scalar C (682)
-  # The terms: the factor in the straight-line slot under the budget, in the loop slot (widened by
-  # the vector width, as the solve is) over it.
-  assert m3 == pytest.approx(np.dot(DENSE_WEIGHTS, (1, 40, 200, 300, 0, 2666, 400)))
-  assert generic == pytest.approx(np.dot(DENSE_WEIGHTS, (1, 40, 200, 300, 2 * 2666, 0, 2 * 400)))
-  portable = dataclasses.replace(PRESETS["generic"], rounding="portable")
-  assert iteration_us(w, "dense", portable) == m3
-  assert iteration_us(w, "sparse", PRESETS["generic"]) == iteration_us(w, "sparse", PRESETS["apple-m3"])
+def test_the_choice_is_the_same_for_every_target() -> None:
+  """It decides the graph, built before a target is known, from weights measured on one machine."""
+  s, _ = ipm_inputs(maros_meszaros("DUAL3"))
+  choices = set()
+  for name in PRESETS:
+    with sc.target(name):
+      choices.add(choose_backend(s))
+  assert choices == {"sparse"}
+
+
+def test_the_dense_factor_is_weighed_as_the_reference_machine_generates_it() -> None:
+  """Straight-line code under the M3's budget (4 096 operations), loops over it."""
+  small = Work(vectors=40, entries=200, assembly=300, factor=20**3 // 3, solve=400, updates=900, nnz_l=300)
+  large = Work(vectors=40, entries=200, assembly=300, factor=30**3 // 3, solve=900, updates=900, nnz_l=300)
+  assert iteration_us(small, "dense") == pytest.approx(np.dot(DENSE_WEIGHTS, (1, 40, 200, 300, 0, 2666, 400)))
+  assert iteration_us(large, "dense") == pytest.approx(np.dot(DENSE_WEIGHTS, (1, 40, 200, 300, 9000, 0, 900)))
+
+
+def test_a_sparse_factor_too_large_to_generate_leaves_the_dense_backend(monkeypatch) -> None:
+  def refuse(s):
+    raise TooMuchWork("too many update multiply-adds")
+
+  monkeypatch.setattr(cost, "kkt_symbolic", refuse)
+  assert choose_backend(_structure()) == "dense"
 
 
 def test_the_default_method_chooses_and_an_explicit_backend_does_not(monkeypatch) -> None:

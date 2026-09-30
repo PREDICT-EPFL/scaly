@@ -926,8 +926,10 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       55 problems' measured iterations on the M3 (`notes/perf_2026_09_30_gaps/backend_fit.py`). It
       takes the faster backend on 53 of 55, the worst pick 1.07x the better (52 and 1.20x leaving
       each problem out of its own fit). After C-205 the sparse backend is the faster on 50; the dense
-      one wins DUALC1/2/5/8 by 1.47–1.79x and ex_dense by 1.20x. Another target scales the dense
-      factor and solves by its vector width and uses its straight-line budget.
+      one wins DUALC1/2/5/8 by 1.47–1.79x and ex_dense by 1.20x. The choice decides the graph, so it
+      is the same for every target (the weights were measured on the M3 only); a sparse factor past
+      what can be generated leaves the dense backend; the model and the backend share one analysis
+      of the KKT pattern.
 - [x] **C-210. The IPM as PIQP's setup and solve (A4).** Ruiz equilibration ran inside every
       solve, where PIQP runs it at setup and keeps it across updates of the vectors (its solve
       timer excludes it). `IPM.split(problem, name=)` returns `setup`, the problem's parameters to

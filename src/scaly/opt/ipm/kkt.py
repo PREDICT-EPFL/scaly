@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Literal
@@ -31,6 +32,7 @@ from ...ir.expr import (
   where,
 )
 from ...linalg import SparseLDL, SparseMatrix, cho_solve, cholesky
+from ...linalg.symbolic import SymbolicLDL, analyze
 from .ruiz import ScaledQP
 from .structure import QPStructure
 
@@ -214,7 +216,7 @@ class Kernels:
       ok = where(l_diag > 0.0, 0.0, 1.0).sum() < 0.5
       digits = logical_and(ok, self._digits_left(l_diag, gather(dense.reshape((s.n * s.n,)), diag)))
     else:
-      self._ldl = SparseLDL(self.kkt_matrix(mats, xr, dr, zr), name=f"{self.name}_kkt")
+      self._ldl = SparseLDL(self.kkt_matrix(mats, xr, dr, zr), symbolic=kkt_symbolic(s), name=f"{self.name}_kkt")
       f = self._ldl.values
       # PIQP's sparse LDL^T fails only on a pivot that is exactly zero: an infinite one, from a dual
       # at zero, passes.
@@ -545,4 +547,19 @@ class Factor:
     return Iterate(lx, ly, z_l, z_u, z_bl, z_bu, s_l, s_u, s_bl, s_bu)
 
 
-__all__ = ["HEADER", "KKT", "Backend", "Factor", "Iterate", "Kernels", "Matrices", "Refinement"]
+_SYMBOLIC: weakref.WeakKeyDictionary[QPStructure, SymbolicLDL] = weakref.WeakKeyDictionary()
+
+
+def kkt_symbolic(s: QPStructure) -> SymbolicLDL:
+  """The symbolic factorization of the sparse backend's KKT matrix over ``s``, analysed once per
+  structure: the backend's ``SparseLDL`` and the backend choice (``opt.ipm.cost``) share it."""
+  if s not in _SYMBOLIC:
+    kernels = Kernels(s, "sparse")
+    mats, _ = kernels.matrices(Expr.sym("D", (sum(kernels.d_sizes),)))
+    matrix = kernels.kkt_matrix(mats, Expr.sym("x_reg", (s.n,)), Expr.sym("delta_reg", ()), Expr.sym("z_reg_ir", (s.m,)))
+    rows, cols = matrix.coordinates()
+    _SYMBOLIC[s] = analyze(matrix.shape, rows, cols, "auto")
+  return _SYMBOLIC[s]
+
+
+__all__ = ["HEADER", "KKT", "Backend", "Factor", "Iterate", "Kernels", "Matrices", "Refinement", "kkt_symbolic"]

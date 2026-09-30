@@ -83,9 +83,10 @@ derived as for sparse PIQP, and which bounds are finite is read at one probe of 
 a bound that is infinite there is left out of the generated code for good, and one that is finite
 there must stay finite: an infinite value at run time ends the solve with `Status.ERROR`. A
 problem whose bounds are parameters that are sometimes infinite (an `sc.opt.QP` with one-sided rows,
-say) belongs to the PIQP library, which takes them as data. The KKT system is
-factored whole by `linalg.SparseLDL` by default; `sparse=False` condenses it and factors it by a
-dense Cholesky, as PIQP's dense interface does.
+say) belongs to the PIQP library, which takes them as data. `sparse=True` factors the KKT system
+whole by `linalg.SparseLDL`, as PIQP's sparse interface does; `sparse=False` condenses it and factors
+it by a dense Cholesky, as its dense interface does; by default the solver takes the one a cost
+model of the problem's structure finds faster ([Solvers](solvers.md)).
 
 Options are PIQP's settings by name (`eps_abs`, `eps_rel`, `max_iter`, ...), checked when the method
 is made: an unknown name raises `TypeError` listing the settings. PIQP's `verbose` is accepted and

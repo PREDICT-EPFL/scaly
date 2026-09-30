@@ -59,13 +59,14 @@ def test_setup_then_solve_is_the_solver_bit_for_bit(sparse: bool) -> None:
     assert got[4].status == sc.Status.OK
 
 
-def test_the_setup_reads_only_the_matrices_and_serves_every_solve() -> None:
+@pytest.mark.parametrize("sparse", [True, False])
+def test_the_setup_reads_only_the_matrices_and_serves_every_solve(sparse: bool) -> None:
   """With the matrices fixed, as in MPC, one setup serves every solve, as PIQP's ``update`` keeps its
   scaling: the equilibration does not read ``c``, ``b`` or the bounds."""
-  method = sc.opt.IPM()
-  problem = _problem("ipm_split_reuse")
-  full = sc.opt.solver(problem, method, name="ipm_split_reuse_full")
-  setup, solve = method.split(problem, name="ipm_split_reuse")
+  method = sc.opt.IPM(sparse=sparse)
+  problem = _problem(f"ipm_split_reuse_{sparse}")
+  full = sc.opt.solver(problem, method, name=f"ipm_split_reuse_full_{sparse}")
+  setup, solve = method.split(problem, name=f"ipm_split_reuse_{sparse}")
   scaling = setup.numerical_call(_values(0))
   for seed in (1, 2, 3):
     values = _values(seed)  # other vectors, the same matrices
@@ -82,12 +83,21 @@ def test_the_setup_reads_only_the_matrices_and_serves_every_solve() -> None:
   assert not np.array_equal(foreign[0], reference[0])
 
 
-def test_a_scaled_cost_makes_the_setup_read_c() -> None:
-  method = sc.opt.IPM(options={"preconditioner_scale_cost": True})
-  problem = _problem("ipm_split_cost")
-  setup, solve = method.split(problem, name="ipm_split_cost")
-  full = sc.opt.solver(problem, method, name="ipm_split_cost_full")
+@pytest.mark.parametrize("sparse", [True, False])
+def test_a_scaled_cost_makes_the_setup_read_c(sparse: bool) -> None:
+  """The sparse backend's setup also keeps the cost maxima where its stopping test reads them, as
+  PIQP's sparse interface does (``alias_cost``)."""
+  method = sc.opt.IPM(sparse=sparse, options={"preconditioner_scale_cost": True})
+  problem = _problem(f"ipm_split_cost_{sparse}")
+  setup, solve = method.split(problem, name=f"ipm_split_cost_{sparse}")
+  full = sc.opt.solver(problem, method, name=f"ipm_split_cost_full_{sparse}")
   a = _values(0)
   b = (a[0], 100.0 * a[1], *a[2:])  # a cost large enough to set the cost scale over P's
   assert not np.array_equal(setup.numerical_call(a), setup.numerical_call(b))
   _same(solve.numerical_call(*ARGS, b, setup.numerical_call(b)), full.numerical_call(*ARGS, b))
+
+
+def test_the_solver_takes_the_five_arguments_every_solver_takes() -> None:
+  full = sc.opt.solver(_problem("ipm_signature"), sc.opt.IPM(), name="ipm_signature")
+  with pytest.raises(TypeError, match="takes 5 arguments"):
+    full.numerical_call(*ARGS)

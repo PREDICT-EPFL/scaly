@@ -84,11 +84,11 @@ iterations. `sparse=True` factors the whole KKT system with `linalg.SparseLDL`; 
 condenses it and uses a dense Cholesky. By default the solver takes the one whose iteration costs
 less, decided when it is built from the problem's structure alone: the counts each iteration is made
 of (the condensed matrix's outer products, the factors' multiply-adds, the entries of the sparse
-factor) weighed as they were measured on Apple silicon, for the target in force
-([Code generation](codegen.md#tuning-for-a-processor)). Both backends follow PIQP's path, so the
-choice changes only the speed; on the Maros–Mészáros set it takes the dense backend for problems
-with far more inequality rows than variables and the sparse one nearly everywhere else.
-`sc.opt.ipm.choose_backend(structure)` says which it would take.
+factor), weighed as they were measured on Apple silicon, the same for every target. Both backends
+follow PIQP's path to the same solution within its tolerances; on the Maros–Mészáros set, measured
+on Apple silicon, it takes the dense backend for the problems with far more inequality rows than
+variables and the sparse one nearly everywhere else.
+`sc.opt.ipm.choose_backend(sc.opt.ipm.QPStructure.from_patterns(...))` says which it takes.
 
 PIQP separates setup, which equilibrates the problem (Ruiz scaling), from solve, and keeps the
 scaling when only the vectors change. `IPM.split` gives the same two steps as two Functions:
