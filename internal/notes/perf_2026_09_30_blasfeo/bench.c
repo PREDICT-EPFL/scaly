@@ -39,13 +39,19 @@ static void scaly_jit(void) { const double *arg[2] = {A_rm, B_rm}; double *res[1
 static void scaly_o3(void) { const double *arg[2] = {A_rm, B_rm}; double *res[1] = {out_rm2}; f_o3(arg, res, NULL, w, 0); }
 static void bf_gemm_nn(void) { blasfeo_dgemm_nn(n, n, n, 1.0, &sA, 0, 0, &sB, 0, 0, 0.0, &sD, 0, 0, &sD, 0, 0); }
 static void bf_gemm_nt(void) { blasfeo_dgemm_nt(n, n, n, 1.0, &sA, 0, 0, &sBt, 0, 0, 0.0, &sD, 0, 0, &sD, 0, 0); }
+#ifndef BENCH_NO_BLAS_API /* a BLASFEO built without BLAS_API=1 (the vendored one) lacks these three */
 static void bf_blas_gemm(void) { char t = 'N'; double one = 1.0, zero = 0.0; blasfeo_blas_dgemm(&t, &t, &n, &n, &n, &one, A_cm, &n, B_cm, &n, &zero, C_cm, &n); }
+#endif
 static void bf_potrf(void) { blasfeo_dpotrf_l(n, &sA, 0, 0, &sD, 0, 0); }
+#ifndef BENCH_NO_BLAS_API
 static void bf_lapack_potrf(void) { char u = 'L'; int info; memcpy(C_cm, A_cm, sizeof(double) * n * n); blasfeo_lapack_dpotrf(&u, &n, C_cm, &n, &info); }
+#endif
 static void bf_trsm_llnn(void) { sA.use_dA = 0; blasfeo_dtrsm_llnn(n, n, 1.0, &sA, 0, 0, &sB, 0, 0, &sD, 0, 0); }
 /* X = L^{-1} B  <=>  X^T = B^T L^{-T}: rltn on B^T gives X^T */
 static void bf_trsm_rltn(void) { sA.use_dA = 0; blasfeo_dtrsm_rltn(n, n, 1.0, &sA, 0, 0, &sBt, 0, 0, &sDt, 0, 0); }
+#ifndef BENCH_NO_BLAS_API
 static void bf_blas_trsm(void) { char s = 'L', u = 'L', t = 'N', d = 'N'; double one = 1.0; memcpy(C_cm, B_cm, sizeof(double) * n * n); blasfeo_blas_dtrsm(&s, &u, &t, &d, &n, &n, &one, A_cm, &n, C_cm, &n); }
+#endif
 static void copy_only(void) { memcpy(C_cm, (op[0] == 'p' ? A_cm : B_cm), sizeof(double) * n * n); }
 
 typedef struct { const char *name; void (*fn)(void); long reps; double best; int subtract_copy; double diff; } variant;
@@ -113,15 +119,21 @@ int main(int argc, char **argv) {
   if (strcmp(op, "gemm") == 0) {
     v[nv++] = (variant){"bf_dgemm_nn", bf_gemm_nn, 0, 1e300, 0, 0};
     v[nv++] = (variant){"bf_dgemm_nt", bf_gemm_nt, 0, 1e300, 0, 0};
+#ifndef BENCH_NO_BLAS_API
     v[nv++] = (variant){"bf_blas_dgemm", bf_blas_gemm, 0, 1e300, 0, 0};
+#endif
   } else if (strcmp(op, "potrf") == 0) {
     lower = 1;
     v[nv++] = (variant){"bf_dpotrf_l", bf_potrf, 0, 1e300, 0, 0};
+#ifndef BENCH_NO_BLAS_API
     v[nv++] = (variant){"bf_lapack_dpotrf", bf_lapack_potrf, 0, 1e300, 1, 0};
+#endif
   } else {
     v[nv++] = (variant){"bf_dtrsm_llnn", bf_trsm_llnn, 0, 1e300, 0, 0};
     v[nv++] = (variant){"bf_dtrsm_rltn", bf_trsm_rltn, 0, 1e300, 0, 0};
+#ifndef BENCH_NO_BLAS_API
     v[nv++] = (variant){"bf_blas_dtrsm", bf_blas_trsm, 0, 1e300, 1, 0};
+#endif
   }
   v[nv++] = (variant){"memcpy", copy_only, 0, 1e300, 0, 0};
 

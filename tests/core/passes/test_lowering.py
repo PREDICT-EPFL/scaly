@@ -893,6 +893,79 @@ def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bo
   assert (not inside) if blocked else inside
 
 
+# --- products past the level-1 cache (C-204) ---------------------------------------------------------
+
+
+def _panel_product(m: int | None, k: int, n: int) -> sc.Function:
+  a, b = sc.sym("a", k) if m is None else sc.sym("a", (m, k)), sc.sym("b", (k, n))
+  return sc.Function.from_exprs(f"panels_{m}_{k}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
+
+
+def _packed_buffers(fn: sc.Function) -> list[int]:
+  """The sizes of the private buffers a lowered product copies its panels of ``b`` into (one slot
+  when the workspace packer lets two panels share it)."""
+  sizes = {}
+  for stmt in _stmts(fn):
+    for node in _nodes(stmt):
+      if (
+        node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private" and len(node.attrs["shape"]) == 1 and node.attrs["shape"][0] > 1
+      ):
+        sizes[node.attrs["name"]] = node.attrs["shape"][0]
+  return sorted(sizes.values())
+
+
+def _chunk_lengths(fn: sc.Function) -> set[int]:
+  """The trip counts of the reductions over ``k``: one per chunk length."""
+  trips = set()
+  for stmt in _stmts(fn):
+    for node in _nodes(stmt):
+      if node.op == ProgramOp.RANGE and node.attrs["kind"] == "reduce":
+        start, stop = node.args[0], node.args[1]
+        if start.op == stop.op == ProgramOp.CONST_INT:
+          trips.add(stop.attrs["value"] - start.attrs["value"])
+  return trips
+
+
+@pytest.mark.parametrize(
+  ("m", "k", "n"),
+  [
+    (96, 96, 96),  # wider than 64 columns
+    (20, 12, 100),  # wider, whole blocks and a tail of four
+    (4, 1100, 40),  # b past the budget at 40 columns: two whole chunks of 512 and a tail for the 16-wide blocks
+    (5, 1025, 64),  # a chunk of one row of k after two whole ones
+    (2, 700, 7),  # a narrow block and three streamed columns
+    (8, 5, 130),  # a streamed tail of two past eight 16-wide blocks
+    (1, 300, 256),  # one row: the vector path, streamed
+    (None, 128, 256),  # a vector: streamed, as unbumpercars' products measured fastest
+  ],
+)
+@pytest.mark.parametrize("target", ["apple-m3", "x86-64-v3", "generic"])
+def test_products_past_the_cache_match_numpy_exactly(m: int | None, k: int, n: int, target: str) -> None:
+  """Integer-valued inputs keep every partial sum exact, so the chunks resumed from the outputs must
+  give NumPy's product exactly, on every target's blocks and budget."""
+  rng = np.random.default_rng(k + n)
+  av = rng.integers(-8, 9, k if m is None else (m, k)).astype(np.float64)
+  bv = rng.integers(-8, 9, (k, n)).astype(np.float64)
+  with sc.target(target):
+    np.testing.assert_array_equal(_panel_product(m, k, n)((av, bv)), av @ bv)
+
+
+def test_panels_are_packed_in_chunks_that_fit_the_budget() -> None:
+  """On the M3 (64 KiB of panel): a 16-wide block takes chunks of 512 rows of ``k``, an 8-wide one
+  1 024; a matrix within the budget and 64 columns, or a single row, keeps the row-by-row blocks."""
+  with sc.target("apple-m3"):
+    wide_k = _panel_product(4, 1100, 24)
+    assert _packed_buffers(wide_k) == [8192]  # 16 x 512 and 8 x 1024, in one slot
+    assert _chunk_lengths(wide_k) == {512, 1024, 1100 - 1024}  # 16 wide: 512, 512, 76; 8 wide: 1024, 76
+    assert _packed_buffers(_panel_product(96, 96, 96)) == [16 * 96]  # one chunk: all of k
+    assert _packed_buffers(_panel_product(48, 48, 48)) == []  # 18 KiB of b: row by row, as before
+    assert _packed_buffers(_panel_product(1, 300, 256)) == []
+  with sc.target("generic"):  # 16 KiB of panel: 20 x 100 x 40 is past it there, not on the M3
+    assert _packed_buffers(_panel_product(20, 100, 40)) == [8 * 100]
+  with sc.target("apple-m3"):
+    assert _packed_buffers(_panel_product(20, 100, 40)) == []
+
+
 # --- transposes (C-202) -----------------------------------------------------------------------------
 
 

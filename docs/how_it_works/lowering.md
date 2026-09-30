@@ -176,6 +176,15 @@ code is rendered for, but the widths still decide how the C compiler vectorizes 
 fuses a multiply and an add into one rounding in some shapes and not in others, so another target's
 widths can change the last bits. Under `rounding="portable"` every target takes the M3's widths.
 
+A matrix of several rows reads `b` once per row, so when `b` is wider than that limit or larger than
+half the level-1 data cache (`Target.panel_bytes`), the same column blocks run outermost instead.
+Each block copies its panel of `b` into a contiguous buffer, a chunk of `k` at a time small enough
+to stay in the cache, and every row of `a` passes over the chunk with its sums in registers. The
+copy is what keeps the panel in the cache when `n` is a power of two: read in place, down a column
+of the matrix, its rows would share a few of the cache's sets and evict each other. The first chunk
+starts each output's sum at zero and every later one resumes it from the stored partial sum, so
+each output is still one chain of multiply-adds in order of `k`.
+
 A `transpose` lowers to one flat loop over its output whose coordinates divide the loop variable.
 Fusion can then inline it into its one consumer: a gather reading a few entries of a transposed
 product, as the recovery of a sparse derivative does, computes only those entries. A transpose that

@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 204**
+**Next id: 205**
 
 | Prefix | Section |
 |---|---|
@@ -887,6 +887,16 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       block. So `rounding="portable"` makes every such choice the M3's, and the C is then the same
       for every target. The generated C of the 26 codegen-corpus kernels is byte-identical on the
       M3; the C snapshot renders for `apple-m3` so it is the same on every machine.
+- [x] **C-204. Matrix products past the level-1 cache (K0).** A row wider than 64 columns fell back
+      to the reduction outermost, accumulating in memory (12–19 GF/s from n = 96 natively on the M3,
+      2.9–4.7x BLASFEO), and a `b` past the L1 cache was re-read from L2 for every row. A matrix of
+      several rows whose `b` exceeds `Target.panel_bytes` (half of L1d) or `row_blocked_max` now runs
+      the column blocks outermost, each block's panel copied contiguous a chunk of `k` at a time and
+      every row passing over it; later chunks resume from the outputs, so each output is still one
+      chain in order of `k`. The copy matters: in place, a panel down a power-of-two `n` shares a few
+      cache sets and evicts itself (n = 128 and 256 ran at 19 and 14 GF/s unpacked). GEMM 80–256:
+      0.40–0.59 of the base's time, 30–33 GF/s, 1.67–1.89x BLASFEO; no corpus kernel changes.
+      Vectors and single rows keep streaming.
 
 ### Now
 

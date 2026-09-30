@@ -856,9 +856,13 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 # the output row that a reduction loop outermost pays at every step are gone, and each output still
 # sums its terms in order of ``k`` as before (``notes/codegen_speed_o6_report.html``). The columns no
 # block covers keep the reduction outermost: one to three chains of a long reduction are slower
-# than the memory round trips they save. So does a row wider than ``Target.row_blocked_max``: there
-# the reduction outermost streams the row contiguously, and the blocks, which read the matrix a
+# than the memory round trips they save. So does a vector's row wider than ``Target.row_blocked_max``:
+# there the reduction outermost streams the row contiguously, and the blocks, which read the matrix a
 # column block at a time, measured slower (the unbumpercars oracle's 128 x 256 products, 1.13x).
+# A matrix of several rows reads ``b`` once per row instead, so when ``b`` is wider than that or
+# larger than ``Target.panel_bytes`` the column blocks run outermost: each block's panel of ``b``
+# stays in the L1 cache while every row passes over it, in chunks of ``k`` small enough to fit, and
+# each chunk resumes its sums from the outputs, so each is still one chain in order of ``k``.
 
 
 def _lower_columns_blocked(
@@ -868,15 +872,19 @@ def _lower_columns_blocked(
   row by row, the columns in blocks of the target's ``row_blocks`` widths, the widest as many times
   as it fits, then at most one of each narrower one, each block's sums in private scalars over a
   ``k`` loop inside it and each output stored once; the columns left over, every column of a
-  product narrower than the narrowest block and every column of a row wider than
-  ``row_blocked_max`` accumulate with ``k`` outermost, as every product did before."""
+  product narrower than the narrowest block and every column of a vector's row wider than
+  ``row_blocked_max`` accumulate with ``k`` outermost, as every product did before. A matrix of
+  several rows whose ``b`` is wider than that or larger than ``Target.panel_bytes`` takes the same
+  blocks with the column blocks outermost (``_panel_passes``)."""
   c = p.const_int
   nm = out.attrs["name"]
   zero = p.const_float(0.0, dtype=dtype)
+  target = ctx.target
+  outermost = m is not None and m > 1 and (n > target.row_blocked_max or kk * n * dtype.itemsize > target.panel_bytes)
   segments: list[tuple[int, int, int]] = []  # (first column, width, blocks)
-  j0 = 0  # the first column no block covers; a row wider than row_blocked_max has no blocks
-  if n <= ctx.target.row_blocked_max:
-    widest, *narrower = ctx.target.row_blocks
+  j0 = 0  # the first column no block covers; a vector's row wider than row_blocked_max has no blocks
+  if n <= target.row_blocked_max or outermost:
+    widest, *narrower = target.row_blocks
     if (count := n // widest) > 0:
       segments.append((0, widest, count))
       j0 = widest * count
@@ -904,13 +912,19 @@ def _lower_columns_blocked(
   stmts: list[ProgramNode] = []
   for number, (first, width, count) in enumerate(segments):
     tag = f"{nm}_{number}"
+    if outermost:
+      assert m is not None
+      block = lambda start: _panel_passes(ctx, tag, a_buf, b_buf, out, m, kk, n, start, width, dtype)  # noqa: E731
+    else:
+      block = lambda start: row_block(tag, start, width)  # noqa: E731
     if count > 1:
       jb = p.var(f"jb_{tag}")
-      stmts.append(p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), row_block(tag, p.add(c(first), p.mul(jb, c(width))), width)))
+      stmts.append(p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), block(p.add(c(first), p.mul(jb, c(width))))))
     else:
-      stmts += row_block(tag, c(first), width)
+      stmts += block(c(first))
   if stmts:
-    ctx.emit(*(stmts if i is None or m is None else [p.for_(p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL), stmts)]))
+    rowwise = i is not None and m is not None and not outermost
+    ctx.emit(*([p.for_(p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL), stmts)] if rowwise else stmts))
   if j0 == n:
     return
   # The columns left over: zero them, then add each ``k`` in turn over every row and column.
@@ -922,6 +936,67 @@ def _lower_columns_blocked(
   idx = j if m is None else p.add(p.mul(r, c(n)), j)
   acc = p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_at(row, k), p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), j)])))))
   ctx.emit(*_nest([*rows, jrng], [p.store(p.view(out, [idx]), zero)]), *_nest([krng, *rows, jrng], [acc]))
+
+
+def _panel_passes(
+  ctx: LowerCtx,
+  tag: str,
+  a_buf: ProgramNode,
+  b_buf: ProgramNode,
+  out: ProgramNode,
+  m: int,
+  kk: int,
+  n: int,
+  first: ProgramNode,
+  width: int,
+  dtype: DType,
+) -> list[ProgramNode]:
+  """The ``width`` columns of ``out = a @ b`` from ``first`` on, with the panel of ``b`` they read
+  outermost: for each chunk of ``k`` that fits in ``Target.panel_bytes``, the chunk's rows of the
+  panel are copied into one contiguous buffer (read down a column of a power-of-two ``n``, the panel
+  would fall into a few sets of the cache and evict itself), then every row of ``a`` passes over it
+  with its sums in private scalars, which the first chunk starts at zero and every later one
+  resumes from the outputs the chunk before stored. Each output is one chain of multiply-adds in
+  order of ``k``, as in a single pass."""
+  c = p.const_int
+  chunk = min(kk, max(1, ctx.target.panel_bytes // (width * dtype.itemsize)))
+  slots = [p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(width)]
+  packed = ctx.new_private(dtype, (chunk * width,))
+  zero = p.const_float(0.0, dtype=dtype)
+
+  def pass_over(name: str, start: ProgramNode, rows: int, resume: bool) -> list[ProgramNode]:
+    """Copy rows ``start`` to ``start + rows`` of the panel, then pass every row of ``a`` over them."""
+    r, q, i, k = (p.var(f"{v}{name}_{tag}") for v in ("r", "q", "i", "k"))
+    copy = p.for_(
+      p.range_(r.attrs["name"], 0, rows, kind=RangeKind.GLOBAL),
+      [
+        p.for_(
+          p.range_(q.attrs["name"], 0, width, kind=RangeKind.GLOBAL),
+          [p.store(p.view(packed, [p.add(p.mul(r, c(width)), q)]), p.load(p.view(b_buf, [p.add(p.mul(p.add(start, r), c(n)), p.add(first, q))])))],
+        )
+      ],
+    )
+    outs = [p.view(out, [p.add(p.mul(i, c(n)), p.add(first, c(col)))]) for col in range(width)]
+    a_k = p.load(p.view(a_buf, [p.add(p.mul(i, c(kk)), p.add(start, k))]))
+    body = [p.store(s, p.add(p.load(s), p.mul(a_k, p.load(p.view(packed, [p.add(p.mul(k, c(width)), c(col))]))))) for col, s in enumerate(slots)]
+    rows_pass = p.for_(
+      p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL),
+      [
+        *(p.store(s, p.load(o) if resume else zero) for s, o in zip(slots, outs, strict=True)),
+        p.for_(p.range_(k.attrs["name"], 0, rows, kind=RangeKind.REDUCE), body),
+        *(p.store(o, p.load(s)) for s, o in zip(slots, outs, strict=True)),
+      ],
+    )
+    return [copy, rows_pass]
+
+  full, tail = divmod(kk, chunk)
+  passes = pass_over("p0", c(0), chunk, resume=False)
+  if full > 1:
+    kb = p.var(f"kb_{tag}")
+    passes.append(p.for_(p.range_(kb.attrs["name"], 1, full, kind=RangeKind.SERIAL), pass_over("p1", p.mul(kb, c(chunk)), chunk, resume=True)))
+  if tail:
+    passes += pass_over("p2", c(full * chunk), tail, resume=True)
+  return passes
 
 
 def _pairwise(values: list[ProgramNode]) -> ProgramNode:

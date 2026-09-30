@@ -1,0 +1,93 @@
+{
+ "flags": [
+  "-O2",
+  "-mcpu=native",
+  "-fno-math-errno"
+ ],
+ "rows": [
+  {
+   "op": "gemm",
+   "n": 64,
+   "base_ns": 14995.55,
+   "new_ns": 15055.09,
+   "blasfeo_ns": 9698.41,
+   "new_over_base": 1.0039705112516715,
+   "base_over_bf": 1.5461864367458171,
+   "new_over_bf": 1.552325587390098,
+   "new_gflops": 34.825,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 4048,
+   "c_bytes_new": 4048
+  },
+  {
+   "op": "gemm",
+   "n": 80,
+   "base_ns": 55127.56,
+   "new_ns": 31401.31,
+   "blasfeo_ns": 18829.15,
+   "new_over_base": 0.5696118239225535,
+   "base_over_bf": 2.9277774089642916,
+   "new_over_bf": 1.667696629959398,
+   "new_gflops": 32.61,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1131,
+   "c_bytes_new": 4189
+  },
+  {
+   "op": "gemm",
+   "n": 96,
+   "base_ns": 95068.38,
+   "new_ns": 55770.3,
+   "blasfeo_ns": 32144.01,
+   "new_over_base": 0.5866335368289646,
+   "base_over_bf": 2.9575768549101373,
+   "new_over_bf": 1.7350137708394193,
+   "new_gflops": 31.728,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1131,
+   "c_bytes_new": 4189
+  },
+  {
+   "op": "gemm",
+   "n": 128,
+   "base_ns": 268023.26,
+   "new_ns": 139040.94,
+   "blasfeo_ns": 76518.27,
+   "new_over_base": 0.518764453503028,
+   "base_over_bf": 3.502735490491356,
+   "new_over_bf": 1.8170946624904092,
+   "new_gflops": 30.166,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1140,
+   "c_bytes_new": 4226
+  },
+  {
+   "op": "gemm",
+   "n": 192,
+   "base_ns": 1165700.0,
+   "new_ns": 469156.86,
+   "blasfeo_ns": 251294.74,
+   "new_over_base": 0.4024679248520202,
+   "base_over_bf": 4.638775964829188,
+   "new_over_bf": 1.8669585364182315,
+   "new_gflops": 30.173,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1140,
+   "c_bytes_new": 4227
+  },
+  {
+   "op": "gemm",
+   "n": 256,
+   "base_ns": 2776687.5,
+   "new_ns": 1125318.18,
+   "blasfeo_ns": 594731.71,
+   "new_over_base": 0.40527361469376727,
+   "base_over_bf": 4.668806881005219,
+   "new_over_bf": 1.8921442409721183,
+   "new_gflops": 29.818,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1140,
+   "c_bytes_new": 4227
+  }
+ ]
+}

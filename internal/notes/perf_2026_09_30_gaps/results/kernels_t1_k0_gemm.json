@@ -1,0 +1,107 @@
+{
+ "flags": [
+  "-O2",
+  "-mcpu=native",
+  "-fno-math-errno"
+ ],
+ "rows": [
+  {
+   "op": "gemm",
+   "n": 48,
+   "base_ns": 8568.4,
+   "new_ns": 8556.03,
+   "blasfeo_ns": 5598.71,
+   "new_over_base": 0.9985563232342095,
+   "base_over_bf": 1.5304239726651316,
+   "new_over_bf": 1.5282145351339864,
+   "new_gflops": 25.851,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 4048,
+   "c_bytes_new": 4048
+  },
+  {
+   "op": "gemm",
+   "n": 64,
+   "base_ns": 19127.73,
+   "new_ns": 19553.55,
+   "blasfeo_ns": 12963.71,
+   "new_over_base": 1.0222619202592258,
+   "base_over_bf": 1.4754827128962311,
+   "new_over_bf": 1.508329791394593,
+   "new_gflops": 26.813,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 4048,
+   "c_bytes_new": 4048
+  },
+  {
+   "op": "gemm",
+   "n": 80,
+   "base_ns": 64000.0,
+   "new_ns": 35214.78,
+   "blasfeo_ns": 21900.0,
+   "new_over_base": 0.5502309375,
+   "base_over_bf": 2.922374429223744,
+   "new_over_bf": 1.6079808219178082,
+   "new_gflops": 29.079,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1131,
+   "c_bytes_new": 4258
+  },
+  {
+   "op": "gemm",
+   "n": 96,
+   "base_ns": 117292.04,
+   "new_ns": 66520.94,
+   "blasfeo_ns": 39337.73,
+   "new_over_base": 0.5671394239540893,
+   "base_over_bf": 2.981667727141347,
+   "new_over_bf": 1.6910213171934425,
+   "new_gflops": 26.6,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1131,
+   "c_bytes_new": 4258
+  },
+  {
+   "op": "gemm",
+   "n": 128,
+   "base_ns": 327297.3,
+   "new_ns": 215009.71,
+   "blasfeo_ns": 93463.04,
+   "new_over_base": 0.6569247897859225,
+   "base_over_bf": 3.501890158933414,
+   "new_over_bf": 2.3004784565107235,
+   "new_gflops": 19.508,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1140,
+   "c_bytes_new": 4309
+  },
+  {
+   "op": "gemm",
+   "n": 192,
+   "base_ns": 1451125.0,
+   "new_ns": 579209.3,
+   "blasfeo_ns": 308708.86,
+   "new_over_base": 0.39914500818330606,
+   "base_over_bf": 4.7006263441872065,
+   "new_over_bf": 1.8762315406172667,
+   "new_gflops": 24.44,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1140,
+   "c_bytes_new": 4310
+  },
+  {
+   "op": "gemm",
+   "n": 256,
+   "base_ns": 3452187.5,
+   "new_ns": 2352687.5,
+   "blasfeo_ns": 758031.25,
+   "new_over_base": 0.6815062913008056,
+   "base_over_bf": 4.554149317722719,
+   "new_over_bf": 3.103681411551305,
+   "new_gflops": 14.262,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 1140,
+   "c_bytes_new": 4310
+  }
+ ]
+}

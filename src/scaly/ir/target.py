@@ -105,6 +105,14 @@ class Target:
     return (8 * v, 4 * v, 2 * v)
 
   @property
+  def panel_bytes(self) -> int:
+    """The bytes of ``b`` a product ``a @ b`` keeps in the level-1 data cache while every row of
+    ``a`` passes over it: half of ``l1d_bytes``, the other half for the rows of ``a`` and the
+    outputs. A ``b`` larger than this, or wider than ``row_blocked_max``, runs its column blocks
+    outermost, a panel of it at a time, copied contiguous in chunks of ``k`` that fit."""
+    return self.choices.l1d_bytes // 2
+
+  @property
   def row_blocked_max(self) -> int:
     """The widest row of a vector times a matrix that is blocked at all, four of the widest blocks
     (64 columns on the reference machine); a wider one streams with the reduction outermost."""
