@@ -4,7 +4,7 @@ sparsity, verification and loop lowering; and what the dense factorizations shar
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from scipy import sparse
@@ -17,17 +17,16 @@ from ...ir.program import ProgramNode, RangeKind
 from ...ir.spec import Rule
 from ...ir.types import TensorType
 from ...utils.options import get_options
-from ..options import LinalgOptions
 
 if TYPE_CHECKING:
   from ...passes.lowering import LowerCtx
 
 TRISOLVE = "trisolve"
 
-# Factorizations and triangular solves of order at most this are straight-line code, which scalar
-# expansion then turns into registers; larger ones are loops with triangular bounds. The graph
-# carries the decision (``sc.options(linalg=dict(dense_unroll=...))``); this is the default for a node without it.
-DENSE_UNROLL = 8
+type Unroll = bool | Literal["auto"]
+"""A factorization's or triangular solve's choice between straight-line code and loops: fixed when
+its graph is built (``sc.options(linalg=dict(dense_unroll=...))``), or ``"auto"``, made when it is
+lowered, for the target, by the size of its straight-line body (``straight_line``)."""
 
 
 def _square(a: Any, what: str) -> Expr:
@@ -39,13 +38,24 @@ def _square(a: Any, what: str) -> Expr:
   return a
 
 
-def _unroll_attr(n: int, unroll: bool | None = None) -> dict[str, bool]:
-  """Whether a dense factorization or solve of order ``n`` becomes straight-line code, decided when
-  the graph is built (``sc.options(linalg=dict(dense_unroll=...))``), so the choice is part of the
-  graph. A derivative passes ``unroll``, the choice of the node it differentiates, so that no option
-  in force when it is built changes it."""
-  limits: LinalgOptions = get_options().namespace("linalg")
-  return {"unroll": n <= limits.dense_unroll if unroll is None else bool(unroll)}
+def _unroll_attr(n: int, unroll: Unroll | None = None) -> dict[str, Unroll]:
+  """Whether a dense factorization or solve of order ``n`` becomes straight-line code: ``unroll``
+  when given, else what the ``linalg`` option in force when the graph is built says, orders up to
+  ``dense_unroll`` straight-line and larger ones loops, or, with the option unset, ``"auto"``. A
+  derivative passes the choice of the node it differentiates, so that no option in force when it is
+  built changes it."""
+  if unroll is None:
+    limit = get_options().namespace("linalg").dense_unroll
+    return {"unroll": "auto" if limit is None else n <= limit}
+  return {"unroll": "auto" if unroll == "auto" else bool(unroll)}
+
+
+def straight_line(ctx: LowerCtx, node: Expr, ops: int) -> bool:
+  """Whether ``node`` lowers to straight-line code: the choice its graph recorded, or, for
+  ``"auto"``, whether its straight-line body of ``ops`` operations is under the target's
+  ``straight_line_ops``."""
+  choice = node.attrs.get("unroll", "auto")
+  return ops < ctx.target.straight_line_ops if choice == "auto" else bool(choice)
 
 
 def _entry(buf: ProgramNode, n: int, i: ProgramNode, j: ProgramNode) -> ProgramNode:
@@ -61,11 +71,12 @@ def _tri_mask(n: int, lower: bool, unit: bool) -> Expr:
   return Expr.const(mask)
 
 
-def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False, unroll: bool | None = None) -> Expr:
+def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False, unroll: Unroll | None = None) -> Expr:
   """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
   matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
   when ``unit_diagonal`` is false. ``unroll`` overrides the ``linalg`` option's choice between
-  straight-line code and loops, as a derivative does to keep its factorization's."""
+  straight-line code (True), loops (False) and the target's choice (``"auto"``), as a derivative
+  does to keep its factorization's."""
   t = _square(t, "solve_triangular")
   b = as_expr(b)
   if len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0]:
@@ -98,7 +109,7 @@ def trisolve_tangent(expr: Expr, dt: Expr | None, db: Expr | None) -> Expr:
     term = (masked.T if trans else masked) @ expr
     rhs = -term if rhs is None else rhs - term
   assert rhs is not None
-  return solve_triangular(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
+  return solve_triangular(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=expr.attrs["unroll"])
 
 
 def _jvp_trisolve(expr: Expr, d: list[Expr]) -> Expr:
@@ -119,7 +130,7 @@ def _columns_as_seeds(cols: Expr, layout: tuple[int, ...], shape: tuple[int, ...
   return cols.reshape((n, nseed, m)).transpose((1, 0, 2)).reshape(shape)
 
 
-def _seed_solve(t: Expr, rhs: Expr, **flags: bool) -> Expr:
+def _seed_solve(t: Expr, rhs: Expr, **flags: Any) -> Expr:
   """One triangular solve for every seed: the seeds become right-hand-side columns."""
   cols, layout = _seeds_as_columns(rhs)
   return _columns_as_seeds(solve_triangular(t, cols, **flags), layout, rhs.shape)
@@ -144,14 +155,14 @@ def _jvp_many_trisolve(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> E
     rhs = -term if rhs is None else rhs - term
   if rhs is None:
     return zeros_many(expr, nseed)
-  return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
+  return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=expr.attrs["unroll"])
 
 
 def _vjp_trisolve(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   args = expr.args
   t, b = args
   lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
-  b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
+  b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit, unroll=expr.attrs["unroll"])
   x2, bb2 = (expr.reshape((expr.size, 1)), b_bar.reshape((b_bar.size, 1))) if len(expr.shape) == 1 else (expr, b_bar)
   outer = x2 @ bb2.T if trans else bb2 @ x2.T
   return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
@@ -209,7 +220,8 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   # ``order(s)`` is the row handled at step ``s``; ``others(i)`` the range of the other index.
   forward = lower != trans
   row_at = (lambda s: s) if forward else (lambda s: p.sub(c(n - 1), s))  # noqa: E731
-  if node.attrs.get("unroll", n <= DENSE_UNROLL):
+  # The body loops over the right-hand sides, but scalar expansion can unroll that loop too.
+  if straight_line(ctx, node, n * n * m):
     steps = range(n) if forward else range(n - 1, -1, -1)
     if trans:
       ctx.emit(ctx.copy_loop(bb, out, b.shape))

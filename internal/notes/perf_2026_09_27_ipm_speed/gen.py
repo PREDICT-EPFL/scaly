@@ -29,7 +29,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples" / "qp_solvers"))
+sys.path.insert(0, str(ROOT / "examples" / "opt" / "qp_solvers"))
 BUILD = HERE / "build"
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")
 
@@ -57,17 +57,18 @@ QUICK = (
 
 
 def all_names() -> list[str]:
-  from tests.opt.ipm.problems import maros_meszaros_names
+  from scaly.testing.qp import maros_meszaros_names
 
   return [*maros_meszaros_names(), "mpc_4_2_10", "mpc_12_4_20", "mpc_27_6_30", "ex_mpc_N20", "ex_portfolio", "ex_svm", "ex_dense"]
 
 
 def problem(name: str):
   """A ``tests.opt.ipm.problems.QP`` by name: a stored Maros-Meszaros problem, a generated MPC
-  (``mpc_<nx>_<nu>_<N>``) or a family of ``examples/qp_solvers`` at its parameters (``ex_<case>``)."""
+  (``mpc_<nx>_<nu>_<N>``) or a family of ``examples/opt/qp_solvers`` at its parameters (``ex_<case>``)."""
   from scipy import sparse
 
-  from tests.opt.ipm.problems import _qp, maros_meszaros, mpc_qp
+  from scaly.testing.qp import maros_meszaros, mpc_qp
+  from scaly.testing.qp import make_qp as _qp
 
   if name.startswith("mpc_"):
     nx, nu, horizon = (int(v) for v in name.split("_")[1:])
@@ -164,7 +165,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="scaly-cache-") as cache:
       env = {**os.environ, "SCALY_CACHE_DIR": cache}
       t = time.perf_counter()
-      done = subprocess.run([sys.executable, __file__, "--variant", args.variant, "--one", name, backend, str(base / f"{name}_{backend}")], capture_output=True, text=True, env=env)
+      done = subprocess.run(
+        [sys.executable, __file__, "--variant", args.variant, "--one", name, backend, str(base / f"{name}_{backend}")],
+        capture_output=True,
+        text=True,
+        env=env,
+      )
     if done.returncode:
       return f"{name:>14} {backend:>6} FAILED {done.stderr.strip().splitlines()[-1][-300:] if done.stderr.strip() else done.returncode}"
     m = json.loads(done.stdout.strip().splitlines()[-1])

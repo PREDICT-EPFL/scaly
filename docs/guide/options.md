@@ -30,7 +30,7 @@ at their jumps, under `"split"` and `"first"`, and `"error"` refuses them like t
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `max_trajectory` | 50 000 000 | the most values reverse mode may store for the carries of one `scan` or `while_loop` |
-| `linalg=dict(dense_unroll=...)` | 8 | the largest order at which `linalg.cholesky`, `ldl` and `solve_triangular` become straight-line code instead of loops |
+| `linalg=dict(dense_unroll=...)` | None | the largest order at which `linalg.cholesky`, `ldl`, `lu` and `solve_triangular` become straight-line code instead of loops; None leaves the choice to the target the graph is rendered for |
 | `linalg=dict(sparse_unroll=...)` | 1000 | the most multiply-adds and divisions a `linalg.SparseLDL` factorization may take and still become straight-line code (`schedule="auto"`) |
 
 A reverse pass over a loop stores its carry at every step; building one that would exceed
@@ -38,7 +38,10 @@ A reverse pass over a loop stores its carry at every step; building one that wou
 derivative ([Custom derivatives](derivatives.md#custom-derivatives)), not a larger limit. The two
 unroll thresholds trade generation time for speed: straight-line code runs several times faster
 than a loop at these sizes, but costs about a millisecond of generation per operation. These three
-options take non-negative integers.
+options take non-negative integers, and `dense_unroll` also None. Without it, a dense factorization
+or triangular solve is straight-line code while its body, counted in operations (`n^3 / 3` for a
+Cholesky factor, `n^2` per right-hand side of a solve), is under the target's
+`Target.straight_line_ops`, and loops past it ([Code generation](codegen.md#tuning-for-a-processor)).
 
 The unroll thresholds belong to the `linalg` namespace: `sc.options(linalg=dict(dense_unroll=4))`.
 A package declares its own namespace with `scaly.utils.options.register_option_namespace` and says

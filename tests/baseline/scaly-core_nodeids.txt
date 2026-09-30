@@ -969,6 +969,7 @@ tests/core/ir/test_target.py::test_linux_cache_sizes_parse[n/a-None]
 tests/core/ir/test_target.py::test_linux_proc_and_sys_parse
 tests/core/ir/test_target.py::test_lowering_records_the_target_and_follows_it
 tests/core/ir/test_target.py::test_portable_rounding_computes_the_same_bits_for_every_target
+tests/core/ir/test_target.py::test_portable_rounding_makes_every_choice_the_reference_machines
 tests/core/ir/test_target.py::test_portable_rounding_makes_the_reference_machines_choices
 tests/core/ir/test_target.py::test_portable_rounding_renders_the_same_c_for_every_target[20-12-40]
 tests/core/ir/test_target.py::test_portable_rounding_renders_the_same_c_for_every_target[3-70-130]
@@ -1243,8 +1244,9 @@ tests/core/passes/test_lowering.py::test_column_blocked_products_match_numpy[x86
 tests/core/passes/test_lowering.py::test_column_blocked_products_match_numpy[x86-64-v4-None-32-32]
 tests/core/passes/test_lowering.py::test_column_blocked_products_match_numpy[x86-64-v4-None-32-9]
 tests/core/passes/test_lowering.py::test_column_blocked_products_match_numpy[x86-64-v4-None-7-21]
+tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[1-96-False]
 tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[3-28-True]
-tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[3-96-False]
+tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[3-96-True]
 tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[None-12-True]
 tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[None-64-True]
 tests/core/passes/test_lowering.py::test_column_blocks_store_each_output_once[None-80-False]

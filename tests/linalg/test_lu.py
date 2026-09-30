@@ -11,17 +11,19 @@ import scipy.linalg as sl
 import scaly as sc
 from scaly.ad.forward import jvp
 from scaly.ad.sparsity import jacobian_sparsity
-from scaly.codegen import render_c_module
+from scaly.codegen import render_c_module, render_c_source
 from scaly.ir.expr import Expr
 from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import TensorType
 from scaly.linalg import lu, lu_solve, solve
-from scaly.linalg.ops import DENSE_UNROLL, LU_NO_DERIVATIVE
+from scaly.linalg.ops import LU_NO_DERIVATIVE
 from scaly.linalg.ops.dense import LU
 
+ORDER = 8  # an order every test builds both ways, and its neighbours
+
 RNG = np.random.default_rng(707)
-SIZES = [1, 2, 3, DENSE_UNROLL, DENSE_UNROLL + 1, 13, 24, 40]
+SIZES = [1, 2, 3, ORDER, ORDER + 1, 13, 24, 40]
 
 
 def _fn(name, inputs, outputs):
@@ -103,7 +105,7 @@ def test_a_singular_matrix_gives_nonfinite_values() -> None:
   assert not np.isfinite(x).all()
 
 
-@pytest.mark.parametrize("n", [3, DENSE_UNROLL + 2])
+@pytest.mark.parametrize("n", [3, ORDER + 2])
 def test_implicit_derivatives_are_the_closed_forms(n: int) -> None:
   @sc.function((n, n), n, output="x", name=f"gen{n}")
   def gen(a, b):
@@ -120,7 +122,7 @@ def test_implicit_derivatives_are_the_closed_forms(n: int) -> None:
   np.testing.assert_allclose(abar.reshape(n, n), -np.outer(lam, x), rtol=1e-11, atol=1e-12)
 
 
-@pytest.mark.parametrize("n", [3, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [3, ORDER + 1])
 def test_the_adjoint_differentiates_in_reverse_mode(n: int) -> None:
   """Reverse over reverse: the adjoint solves with the transposed matrix, whose own reverse rule
   (a solve with the matrix and an outer product the other way round) is what this reaches."""
@@ -142,7 +144,7 @@ def test_the_adjoint_differentiates_in_reverse_mode(n: int) -> None:
   np.testing.assert_allclose(sc.gradient(weighted, "xbar")(a, b, xbar), mu, rtol=1e-10, atol=1e-11)
 
 
-@pytest.mark.parametrize("n", [3, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [3, ORDER + 1])
 def test_second_derivatives_match_finite_differences_of_the_gradient(n: int) -> None:
   @sc.function((n, n), n, output="c", name=f"objective{n}")
   def objective(a, b):
@@ -178,20 +180,22 @@ def test_the_factorization_itself_refuses_a_derivative() -> None:
   assert pattern.shape == (12, 9) and pattern.nnz == 12 * 9
 
 
-def test_small_orders_are_straight_line_and_large_ones_loops() -> None:
+@pytest.mark.parametrize(("target", "largest"), [("apple-m3", 18), ("generic", 10)])
+def test_the_target_makes_small_bodies_straight_line(target: str, largest: int) -> None:
+  """Without the option, ``lu`` is straight-line code while its ``2 n^3 / 3`` operations are under
+  the target's ``straight_line_ops``, and loops past it; the loop code does not grow with the order."""
   srcs = {}
-  for n in (DENSE_UNROLL, 24, 48):
+  for n in (largest, largest + 1, 2 * largest):
     a = sc.sym("a", (n, n))
-    srcs[n] = str(render_c_module(_fn(f"lushape{n}", [a], [lu(a)])).body)
-  assert "for (" not in srcs[DENSE_UNROLL].split("int lushape")[1]
-  lines = {n: len(src.splitlines()) for n, src in srcs.items()}
-  assert lines[24] == lines[48], "the loop code does not grow with the order"
+    srcs[n] = render_c_source(_fn(f"lushape{n}", [a], [lu(a)]), target=target).split(f"int lushape{n}(")[1]
+  assert "for (" not in srcs[largest] and "for (" in srcs[largest + 1]
+  assert len(srcs[largest + 1].splitlines()) == len(srcs[2 * largest].splitlines()), "the loop code does not grow with the order"
   with sc.options(linalg=dict(dense_unroll=0)):
-    a_s = sc.sym("a", (DENSE_UNROLL, DENSE_UNROLL))
+    a_s = sc.sym("a", (ORDER, ORDER))
     looped = _fn("lu_forced_loops", [a_s], [lu(a_s)])
   assert "for (" in str(render_c_module(looped).body).split("int lu_forced_loops")[1]
-  a = _needs_pivoting(DENSE_UNROLL)
-  np.testing.assert_array_equal(looped._flat_numerical_call(a)[0], _factor(DENSE_UNROLL)._flat_numerical_call(a)[0])
+  a = _needs_pivoting(ORDER)
+  np.testing.assert_array_equal(looped._flat_numerical_call(a)[0], _factor(ORDER)._flat_numerical_call(a)[0])
 
 
 def test_validation() -> None:

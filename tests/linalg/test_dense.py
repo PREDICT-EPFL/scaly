@@ -13,12 +13,13 @@ import scaly as sc
 from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
-from scaly.codegen import render_c_module
+from scaly.codegen import render_c_module, render_c_source
 from scaly.linalg import cho_solve, cholesky, ldl, ldl_solve, ldl_unpack, solve, solve_triangular
-from scaly.linalg.ops import DENSE_UNROLL
+
+ORDER = 8  # an order every test builds both ways, and its neighbours
 
 RNG = np.random.default_rng(606)
-SIZES = [1, 2, 3, DENSE_UNROLL, DENSE_UNROLL + 1, 13, 20]
+SIZES = [1, 2, 3, ORDER, ORDER + 1, 13, 20]
 FLAGS = [(lower, trans, unit) for lower in (True, False) for trans in (False, True) for unit in (False, True)]
 
 
@@ -108,8 +109,9 @@ def test_cholesky_runs_by_tiles_and_ldl_by_entries() -> None:
   """The looped Cholesky is the tiled kernel (block loops, then dot products per tile); the looped
   ``ldl`` keeps the entry-at-a-time Crout loops."""
   a = sc.sym("a", (20, 20))
-  chol = str(render_c_module(_fn("tiles_chol", [a], [cholesky(a)])).body)
-  packed = str(render_c_module(_fn("tiles_ldl", [a], [ldl(a)])).body)
+  with sc.options(linalg=dict(dense_unroll=0)):
+    chol = str(render_c_module(_fn("tiles_chol", [a], [cholesky(a)])).body)
+    packed = str(render_c_module(_fn("tiles_ldl", [a], [ldl(a)])).body)
   assert re.search(r"for \(long long tbi_\w+ = 0; tbi_\w+ < 5;", chol) and "fi_" not in chol
   assert "tbi_" not in packed and "fi_" in packed
 
@@ -143,7 +145,7 @@ def _cases(n: int):
   return cases
 
 
-@pytest.mark.parametrize("n", [4, DENSE_UNROLL + 2])
+@pytest.mark.parametrize("n", [4, ORDER + 2])
 @pytest.mark.parametrize("name", ["cholesky", "ldl", *(f"tri{int(a)}{int(b)}{int(c)}" for a, b, c in FLAGS)])
 def test_derivatives(monkeypatch: pytest.MonkeyPatch, n: int, name: str) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
@@ -180,14 +182,26 @@ def test_sparsity_is_conservative_and_structural() -> None:
   assert not np.any((jac[1] != 0) & ~sc.jacobian_sparsity(x, bm).to_mask())
 
 
-def test_small_orders_are_straight_line_and_large_ones_loops() -> None:
-  srcs = {}
-  for n in (DENSE_UNROLL, 24, 48):
+@pytest.mark.parametrize(("target", "chol", "tri"), [("apple-m3", 23, 63), ("generic", 12, 26)])
+def test_the_target_makes_small_bodies_straight_line(target: str, chol: int, tri: int) -> None:
+  """Without the option, a factorization or solve is straight-line code while its body is under the
+  target's ``straight_line_ops`` (4 096 operations on the M3, 682 for scalar C): ``n^3 / 3`` for
+  ``cholesky`` and ``ldl``, ``n^2`` for each right-hand side of a solve. Past it the code loops, and
+  the loop code does not grow with the order."""
+
+  def body(name: str, n: int, op) -> str:
     a, b = sc.sym("a", (n, n)), sc.sym("b", n)
-    srcs[n] = str(render_c_module(_fn(f"shape{n}", [a, b], [cholesky(a), ldl(a), solve_triangular(a, b)])).body)
-  assert "for (" not in srcs[DENSE_UNROLL].split("int shape")[1]
-  lines = {n: len(src.splitlines()) for n, src in srcs.items()}
-  assert lines[24] == lines[48], "the loop code does not grow with the order"
+    return render_c_source(_fn(f"{name}{n}", [a, b], [op(a, b)]), target=target).split(f"int {name}{n}(")[1]
+
+  for name, op, largest in (("chol", lambda a, b: cholesky(a), chol), ("ldl", lambda a, b: ldl(a), chol), ("tri", solve_triangular, tri)):
+    assert "for (" not in body(name, largest, op)
+    assert "for (" in body(name, largest + 1, op)
+    # Orders a multiple of the Cholesky tile apart: the tile loops' remainders are the same.
+    assert len(body(name, largest + 1, op).splitlines()) == len(body(name, largest + 25, op).splitlines()), (
+      "the loop code does not grow with the order"
+    )
+  a, bm = sc.sym("a", (tri // 2, tri // 2)), sc.sym("bm", (tri // 2, 5))  # five right-hand sides: five times the body
+  assert "for (" in render_c_source(_fn("tri_five", [a, bm], [solve_triangular(a, bm)]), target=target).split("int tri_five(")[1]
 
 
 def test_validation_and_vmap() -> None:

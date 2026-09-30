@@ -879,12 +879,13 @@ def test_column_blocked_products_match_numpy(m: int | None, k: int, n: int, targ
     np.testing.assert_allclose(fn((av, bv)), av @ bv, rtol=1e-13, atol=1e-13)
 
 
-@pytest.mark.parametrize(("m", "n", "blocked"), [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (3, 96, False)])
+@pytest.mark.parametrize(("m", "n", "blocked"), [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (1, 96, False), (3, 96, True)])
 def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bool) -> None:
   """On the M3, a row of up to 64 columns in whole blocks (12 is one of 8 and one of 4, 28 one of
   16, 8 and 4) keeps its sums in registers and stores each output once, after its reduction; a
-  wider row, even one of whole blocks (80, 96), keeps the reduction outermost and accumulates in
-  the output."""
+  wider row of a vector or of one row, even one of whole blocks (80, 96), keeps the reduction
+  outermost and accumulates in the output, and one of a matrix of several rows runs its column
+  blocks outermost (C-204), storing each output once again."""
   a, b = sc.sym("a", 5) if m is None else sc.sym("a", (m, 5)), sc.sym("b", (5, n))
   fn = sc.Function.from_exprs(f"stores_{m}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
   with sc.target("apple-m3"):

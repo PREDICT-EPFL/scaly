@@ -12,16 +12,16 @@ from .sparse_ldl import (
   sparse_ldl_factor,
   sparse_ldl_solve,
 )
-from .trisolve import DENSE_UNROLL, solve_triangular
+from .trisolve import Unroll, solve_triangular
 
 __all__ = [
   "CHOLESKY_TILE",
-  "DENSE_UNROLL",
   "LU_NO_DERIVATIVE",
   "SPARSE_LDL_MAX_WIDTH",
   "SPARSE_LDL_NO_DERIVATIVE",
   "SPARSE_LDL_SOLVE_TABLES",
   "SPARSE_LDL_TABLES",
+  "Unroll",
   "cholesky",
   "ldl",
   "lu",

@@ -2,7 +2,7 @@
 
 ``cholesky``, ``ldl``, ``lu`` and ``solve_triangular`` are expression ops (``linalg/ops``) with their
 own loop lowering and structural sparsity, and all but ``lu`` with derivatives in both modes; this
-module adds the solves built from them. Orders up to ``DENSE_UNROLL`` become straight-line code.
+module adds the solves built from them. Small orders become straight-line code (``Target.straight_line_ops``).
 Nothing calls an external library: the loops are generated C like everything else.
 """
 
@@ -16,9 +16,8 @@ from ..function.model import ConcreteFunction
 from ..function.sugar import custom_derivative, vmap
 from ..ir.expr import Expr, as_expr, cast, gather, put, take
 from ..ir.types import DType, dtypes
-from ..utils.options import get_options
-from .ops import cholesky, ldl, lu, solve_triangular
-from .options import LinalgOptions
+from .ops import Unroll, cholesky, ldl, lu, solve_triangular
+from .ops.trisolve import _unroll_attr
 
 __all__ = ["cho_solve", "cholesky", "ldl", "ldl_solve", "ldl_unpack", "lu", "lu_solve", "solve", "solve_triangular"]
 
@@ -101,7 +100,7 @@ def _call(fn: ConcreteFunction, *args: Expr) -> Expr:
   return out[0] if isinstance(out, tuple) else out
 
 
-_GENERAL: dict[tuple[int, DType, bool], tuple[ConcreteFunction, ConcreteFunction]] = {}
+_GENERAL: dict[tuple[int, DType, Unroll], tuple[ConcreteFunction, ConcreteFunction]] = {}
 
 
 def _general_solvers(n: int, dtype: DType) -> tuple[ConcreteFunction, ConcreteFunction]:
@@ -111,12 +110,13 @@ def _general_solvers(n: int, dtype: DType) -> tuple[ConcreteFunction, ConcreteFu
   second derivatives are implicit too, and only a third would reach the factorization.
 
   The triangular solves inside are straight-line code or loops as ``sc.options(linalg=dict(dense_unroll=...))``
-  decides when the solve is built, so each decision has its own pair, named apart from the default's."""
-  unroll = n <= get_options().namespace("linalg").dense_unroll
+  decides when the solve is built, or the target when it is lowered, so each decision has its own
+  pair, named apart from the default's."""
+  unroll = _unroll_attr(n)["unroll"]
   key = (n, dtype, unroll)
   if key not in _GENERAL:
     tag = f"lu_solve{n}" + ("" if dtype == dtypes.float64 else f"_{dtype.name}")
-    if unroll != (n <= LinalgOptions().dense_unroll):
+    if unroll != "auto":
       tag += "_unrolled" if unroll else "_looped"
 
     def syms(*names: str) -> list[Expr]:

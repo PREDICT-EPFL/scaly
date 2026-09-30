@@ -13,6 +13,7 @@ import pytest
 import scaly as sc
 from scaly.ad.forward import options_tag
 from scaly.codegen import render_c_source
+from scaly.ir.expr import topo
 from scaly.linalg import LinalgOptions
 
 
@@ -47,7 +48,7 @@ def test_the_namespace_loads_with_its_package_on_first_use() -> None:
     "assert 'scaly.linalg' not in sys.modules\n"
     "with sc.options(linalg=dict(dense_unroll=0)) as inside:\n"
     "  assert inside.namespace('linalg').dense_unroll == 0\n"
-    "assert 'scaly.linalg' in sys.modules and sc.linalg.LinalgOptions().dense_unroll == 8\n"
+    "assert 'scaly.linalg' in sys.modules and sc.linalg.LinalgOptions().dense_unroll is None\n"
   )
   proc = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True)
   assert proc.returncode == 0, proc.stderr
@@ -69,4 +70,10 @@ def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
   for got, ref in zip(fns["loop"]._flat_numerical_call(av, bv), fns["flat"]._flat_numerical_call(av, bv), strict=True):
     np.testing.assert_allclose(got, ref, rtol=1e-13, atol=1e-14)
   with sc.options(linalg=dict(dense_unroll=16)):
-    assert sc.linalg.cholesky(sc.sym("big", (12, 12))).attrs["unroll"]
+    assert sc.linalg.cholesky(sc.sym("big", (12, 12))).attrs["unroll"] is True
+  # Unset, the option leaves the choice to the target at lowering, and a derivative keeps "auto".
+  assert all(e.attrs["unroll"] == "auto" for e in unrolled)
+  (tangent,) = [e for e in topo([sc.jvp(sc.linalg.cholesky(a), a, sc.sym("da", (4, 4)))]) if e.op == "trisolve"][:1]
+  assert tangent.attrs["unroll"] == "auto"
+  with sc.options(linalg=dict(dense_unroll=None)):
+    assert sc.linalg.cholesky(a).attrs["unroll"] == "auto"

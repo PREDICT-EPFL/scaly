@@ -105,6 +105,14 @@ class Target:
     return (8 * v, 4 * v, 2 * v)
 
   @property
+  def straight_line_ops(self) -> int:
+    """The operations a dense factorization or triangular solve may take as straight-line code:
+    under it the body is unrolled, over it the code loops. 4 096 on the reference machine, the
+    budget scalar expansion keeps a body in registers under, past which straight-line code measured
+    slower than loops there; other targets scale it by their instruction cache."""
+    return self.choices.l1i_bytes // 48
+
+  @property
   def panel_bytes(self) -> int:
     """The bytes of ``b`` a product ``a @ b`` keeps in the level-1 data cache while every row of
     ``a`` passes over it: half of ``l1d_bytes``, the other half for the rows of ``a`` and the

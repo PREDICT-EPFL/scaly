@@ -43,9 +43,12 @@ mode and to second order.
 - Their sparsity is conservative: the factor's lower triangle may depend on all of the lower
   triangle it reads, and each column of a solution on its whole column of right-hand sides.
 
-**Generated code.** Orders up to `sc.options(linalg=dict(dense_unroll=...))` (8 by default, decided when the
-op is built) become straight-line code, which scalar expansion keeps in registers. Larger orders
-become loops with triangular bounds that do not grow with the order:
+**Generated code.** Small orders become straight-line code, which scalar expansion keeps in
+registers: without an option, those whose body is under the target's `Target.straight_line_ops`
+operations (`n^3 / 3` for a factorization, `n^2` for each right-hand side of a solve; on Apple
+silicon, a Cholesky factor up to order 23 and a solve of one vector up to 63), decided when the op
+is rendered; with `sc.options(linalg=dict(dense_unroll=...))`, the orders up to it, decided when
+the op is built. Larger orders become loops with triangular bounds that do not grow with the order:
 
 - `cholesky` runs by 4×4 tiles of `L`: a tile's dot products over the columns to its left run
   together, each row entry loaded once for the whole tile and the sums kept in registers, each dot
@@ -86,7 +89,8 @@ singular matrix gives a zero pivot, and inf or NaN in what follows it.
 all with the one factorization. Its second derivatives are implicit too. `lu_solve` is
 differentiable in `b`.
 
-**Generated code.** Up to `sc.options(linalg=dict(dense_unroll=...))` the factorization is straight-line code
+**Generated code.** While its `2 n^3 / 3` operations are under the target's `straight_line_ops` (up to
+order 18 on Apple silicon), or up to `sc.options(linalg=dict(dense_unroll=...))`, the factorization is straight-line code
 with every access at a fixed address, and the row swap selects on the run-time pivot. Larger
 orders loop, swapping through the pivot row's run-time address. Against LAPACK's `dgesv` from
 Apple's Accelerate, the generated solve takes 0.12 of its time at order 4, 0.51 at order 8 and

@@ -697,10 +697,11 @@ tests/linalg/test_dense.py::test_single_seed_tangents_match_the_multi_seed_jacob
 tests/linalg/test_dense.py::test_single_seed_tangents_match_the_multi_seed_jacobian[tri101]
 tests/linalg/test_dense.py::test_single_seed_tangents_match_the_multi_seed_jacobian[tri110]
 tests/linalg/test_dense.py::test_single_seed_tangents_match_the_multi_seed_jacobian[tri111]
-tests/linalg/test_dense.py::test_small_orders_are_straight_line_and_large_ones_loops
 tests/linalg/test_dense.py::test_solves_built_from_factors[12]
 tests/linalg/test_dense.py::test_solves_built_from_factors[3]
 tests/linalg/test_dense.py::test_sparsity_is_conservative_and_structural
+tests/linalg/test_dense.py::test_the_target_makes_small_bodies_straight_line[apple-m3-23-63]
+tests/linalg/test_dense.py::test_the_target_makes_small_bodies_straight_line[generic-12-26]
 tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[10]
 tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[11]
 tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[12]
@@ -912,7 +913,6 @@ tests/linalg/test_lu.py::test_implicit_derivatives_are_the_closed_forms[10]
 tests/linalg/test_lu.py::test_implicit_derivatives_are_the_closed_forms[3]
 tests/linalg/test_lu.py::test_second_derivatives_match_finite_differences_of_the_gradient[3]
 tests/linalg/test_lu.py::test_second_derivatives_match_finite_differences_of_the_gradient[9]
-tests/linalg/test_lu.py::test_small_orders_are_straight_line_and_large_ones_loops
 tests/linalg/test_lu.py::test_solves_match_numpy_for_vectors_matrices_and_transposes[13]
 tests/linalg/test_lu.py::test_solves_match_numpy_for_vectors_matrices_and_transposes[1]
 tests/linalg/test_lu.py::test_solves_match_numpy_for_vectors_matrices_and_transposes[24]
@@ -924,6 +924,8 @@ tests/linalg/test_lu.py::test_solves_match_numpy_for_vectors_matrices_and_transp
 tests/linalg/test_lu.py::test_the_adjoint_differentiates_in_reverse_mode[3]
 tests/linalg/test_lu.py::test_the_adjoint_differentiates_in_reverse_mode[9]
 tests/linalg/test_lu.py::test_the_factorization_itself_refuses_a_derivative
+tests/linalg/test_lu.py::test_the_target_makes_small_bodies_straight_line[apple-m3-18]
+tests/linalg/test_lu.py::test_the_target_makes_small_bodies_straight_line[generic-10]
 tests/linalg/test_lu.py::test_ties_pick_the_first_row_and_every_multiplier_is_at_most_one
 tests/linalg/test_lu.py::test_validation
 tests/linalg/test_options.py::test_dense_unroll_is_decided_when_the_node_is_built

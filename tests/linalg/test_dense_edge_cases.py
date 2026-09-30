@@ -23,13 +23,15 @@ from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import TensorType, dtypes
 from scaly.linalg import cho_solve, cholesky, ldl, ldl_solve, ldl_unpack, lu, lu_solve, solve, solve_triangular
-from scaly.linalg.ops import CHOLESKY_TILE, DENSE_UNROLL
+from scaly.linalg.ops import CHOLESKY_TILE
 from scaly.linalg.ops.dense import CHOLESKY, LDL
 from scaly.linalg.ops.trisolve import TRISOLVE
 
+ORDER = 8  # an order every test builds both ways, and its neighbours
+
 FLAGS = [(lower, trans, unit) for lower in (True, False) for trans in (False, True) for unit in (False, True)]
 # One below, at and one above the default unrolling threshold and the tile side, and past two tiles.
-ORDERS = sorted({1, 2, CHOLESKY_TILE - 1, CHOLESKY_TILE, CHOLESKY_TILE + 1, DENSE_UNROLL - 1, DENSE_UNROLL, DENSE_UNROLL + 1, 2 * CHOLESKY_TILE + 1})
+ORDERS = sorted({1, 2, CHOLESKY_TILE - 1, CHOLESKY_TILE, CHOLESKY_TILE + 1, ORDER - 1, ORDER, ORDER + 1, 2 * CHOLESKY_TILE + 1})
 EPS = np.finfo(np.float64).eps
 
 
@@ -176,7 +178,7 @@ def test_solves_built_on_the_factorizations_across_the_threshold(rng: np.random.
 # --- structured matrices -------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("n", [1, 5, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [1, 5, ORDER + 1])
 def test_diagonal_triangular_and_permutation_matrices_give_exact_results(rng: np.random.Generator, n: int) -> None:
   v = rng.choice([-1.0, 1.0], n) * (0.5 + rng.random(n))
   upper = np.triu(rng.standard_normal((n, n)), 1) + np.diag(v)
@@ -217,7 +219,7 @@ def test_tied_pivots_choose_the_first_row_as_lapack_does(rng: np.random.Generato
   p, l_ref, u_ref = sl.lu(h)
   explicit = np.ones((5, 5)) + 4 * np.eye(5)
   explicit[:, 0] = [0.5, -3.0, 3.0, -3.0, 1.0]  # -3 in row 1 ties +3 in row 2 and -3 in row 3
-  for unroll in _forms(n) if n <= DENSE_UNROLL else (n - 1,):
+  for unroll in _forms(n) if n <= ORDER else (n - 1,):
     with sc.options(linalg=dict(dense_unroll=unroll)):
       a, e = sc.sym("a", (n, n)), sc.sym("e", (5, 5))
       fac, first = _fn(f"de_ties{n}_{unroll}", [a, e], [lu(a), lu(e)])._flat_numerical_call(h, explicit)
@@ -228,7 +230,7 @@ def test_tied_pivots_choose_the_first_row_as_lapack_does(rng: np.random.Generato
     assert first[5, 0] == 1.0
 
 
-@pytest.mark.parametrize("n", [4, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [4, ORDER + 1])
 def test_singular_matrices_give_a_zero_pivot_and_nonfinite_values_after_it(rng: np.random.Generator, n: int) -> None:
   j = n // 2
   zero_column = rng.standard_normal((n, n))
@@ -252,7 +254,7 @@ def test_singular_matrices_give_a_zero_pivot_and_nonfinite_values_after_it(rng: 
     assert np.isnan(np.diag(chol)).all()  # every pivot is the square root of a negative number
 
 
-@pytest.mark.parametrize("n", [5, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [5, ORDER + 1])
 def test_power_of_two_scaling_to_the_ends_of_the_exponent_range_is_exact(rng: np.random.Generator, n: int) -> None:
   """Scaling by powers of two commutes with every rounding, so matrices whose entries run from about
   1e-300 to 1e300 factor and solve to the unscaled results scaled, bit for bit."""
@@ -298,7 +300,7 @@ def test_hilbert_matrices_factor_and_solve_with_a_small_backward_error(rng: np.r
 # --- non-finite values ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("n", [6, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [6, ORDER + 1])
 def test_a_nan_entry_poisons_only_what_is_computed_from_it(rng: np.random.Generator, n: int) -> None:
   i, j = n - 2, 1
   s, g, b = _spd(rng, n), _cyclic(rng, n), rng.standard_normal(n)
@@ -317,7 +319,7 @@ def test_a_nan_entry_poisons_only_what_is_computed_from_it(rng: np.random.Genera
     assert np.isnan(fn._flat_numerical_call(s, g, bad_b)[2]).all()
 
 
-@pytest.mark.parametrize("n", [6, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [6, ORDER + 1])
 def test_triangular_solves_carry_nonfinite_values_only_to_later_unknowns(rng: np.random.Generator, n: int) -> None:
   """An inf in the right-hand side, a NaN in one column of a matrix right-hand side, or a zero on the
   diagonal leaves every unknown solved before it, and every other column, as without it."""
@@ -372,7 +374,7 @@ def test_ldl_factors_quasi_definite_matrices_where_cholesky_gives_nan(rng: np.ra
 # --- float32 -------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("n", [3, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [3, ORDER + 1])
 def test_float32_ops_compute_in_single_precision(rng: np.random.Generator, n: int) -> None:
   f32 = np.float32
   s, g, t = _spd(rng, n).astype(f32), _cyclic(rng, n).astype(f32), _triangle_operand(rng, n).astype(f32)
@@ -422,7 +424,7 @@ def test_float32_ldl_solve() -> None:
 # --- shapes and refusals -------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("unroll", [0, DENSE_UNROLL])
+@pytest.mark.parametrize("unroll", [0, ORDER])
 def test_empty_orders_and_right_hand_sides_give_empty_results(unroll: int) -> None:
   with sc.options(linalg=dict(dense_unroll=unroll)):
     e, z, t, bz = sc.sym("e", (0, 0)), sc.sym("z", 0), sc.sym("t", (3, 3)), sc.sym("bz", (3, 0))
@@ -545,7 +547,7 @@ def test_a_linalg_option_leaves_derivative_helpers_alone() -> None:
   flat = sc.sym("flat", 18)
   cost = sc.vmap(lane, 2, [(flat, 0, 9)]).sum()
   grads = []
-  for unroll in (DENSE_UNROLL, 0):
+  for unroll in (ORDER, 0):
     with sc.options(linalg=dict(dense_unroll=unroll)):
       grads.append(gradient(cost, flat))
   names = {e.attrs["callee"].name for g in grads for e in _nodes(g) if e.op == ExprOp.VMAP}
@@ -596,7 +598,7 @@ def test_order_one_derivatives_are_the_scalar_closed_forms(monkeypatch: pytest.M
     np.testing.assert_allclose([y, jac, one, grad, jac_b, hess], [value, d_mat, d_mat, d_mat, d_b, d2_mat], rtol=1e-13, atol=1e-15, err_msg=name)
 
 
-@pytest.mark.parametrize("n", [DENSE_UNROLL, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [ORDER, ORDER + 1])
 def test_jacobians_agree_across_forms_and_with_finite_differences(monkeypatch: pytest.MonkeyPatch, rng: np.random.Generator, n: int) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   s, bv = _spd(rng, n), rng.standard_normal(n)
@@ -623,7 +625,7 @@ def test_jacobians_agree_across_forms_and_with_finite_differences(monkeypatch: p
   _close(grad_a.reshape(-1), weights @ jac_a, 1e-10)
 
 
-@pytest.mark.parametrize("n", [1, 3, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [1, 3, ORDER + 1])
 def test_derivatives_read_the_lower_triangle_of_the_direction_as_a_symmetric_matrix(rng: np.random.Generator, n: int) -> None:
   """``cholesky`` and ``ldl`` read the lower triangle of a tangent as the symmetric matrix it stands
   for, and the reverse rule is the adjoint of that: ``<grad, D> = <W, dF[D]>`` for any ``D``, upper
@@ -655,7 +657,7 @@ def test_derivatives_read_the_lower_triangle_of_the_direction_as_a_symmetric_mat
   np.testing.assert_allclose(got[0], chol_fd, rtol=1e-6, atol=1e-8)
 
 
-@pytest.mark.parametrize("n", [1, 5, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [1, 5, ORDER + 1])
 def test_general_solve_derivatives_with_pivoting_and_several_right_hand_sides(
   monkeypatch: pytest.MonkeyPatch, rng: np.random.Generator, n: int
 ) -> None:
@@ -738,7 +740,7 @@ def test_batched_ops_under_vmap_match_single_calls(rng: np.random.Generator, n: 
       np.testing.assert_array_equal(got[i * width : (i + 1) * width], single)
 
 
-@pytest.mark.parametrize("n", [3, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [3, ORDER + 1])
 def test_ops_inside_scan_and_while_loop_bodies_match_the_steps_taken_outside(rng: np.random.Generator, n: int) -> None:
   steps = 4
   ss, gs = [_spd(rng, n) for _ in range(steps)], [_cyclic(rng, n) for _ in range(steps)]
@@ -780,7 +782,7 @@ def test_ops_inside_scan_and_while_loop_bodies_match_the_steps_taken_outside(rng
 # --- constants -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("n", [3, DENSE_UNROLL + 1])
+@pytest.mark.parametrize("n", [3, ORDER + 1])
 def test_constant_matrices_agree_with_symbolic_inputs(rng: np.random.Generator, n: int) -> None:
   s, k, g, t = _spd(rng, n), _quasi_definite(rng, n - n // 2, n // 2), _cyclic(rng, n), _triangle_operand(rng, n)
   b = sc.sym("b", n)

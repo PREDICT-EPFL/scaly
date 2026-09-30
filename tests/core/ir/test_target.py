@@ -63,6 +63,18 @@ def test_portable_rounding_renders_the_same_c_for_every_target(m, k, n) -> None:
   assert sources == {render_c_source(fn, target="apple-m3")}
 
 
+def test_portable_rounding_makes_every_choice_the_reference_machines() -> None:
+  """Every choice a target makes, the straight-line factorizations and the small products among
+  them, renders the reference machine's C under portable rounding."""
+  from scaly.linalg import cholesky, solve_triangular
+
+  a, b, x = sc.sym("a", (20, 20)), sc.sym("b", 20), sc.sym("x", (8, 8))
+  fn = sc.Function.from_exprs("portable_choices", [a, b, x], [solve_triangular(cholesky(a), b), x @ x], ["a", "b", "x"], ["y", "z"])
+  sources = {render_c_source(fn, target=dataclasses.replace(preset, rounding="portable")) for preset in PRESETS.values()}
+  assert sources == {render_c_source(fn, target="apple-m3")}
+  assert render_c_source(fn, target="generic") != render_c_source(fn, target="apple-m3")
+
+
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
 def test_portable_rounding_computes_the_same_bits_for_every_target() -> None:
   """A 256-long vector times a 256 x 6 matrix: the M3 blocks four columns and streams two, a
@@ -229,8 +241,9 @@ def test_lowering_records_the_target_and_follows_it() -> None:
   # 40 columns: 16 + 16 + 8 on the M3, 32 + 8 on AVX2, 8 x 5 scalar
   sources = {name: render_c_source(fn, target=name) for name in ("apple-m3", "generic", "x86-64-v3")}
   assert len(set(sources.values())) == 3
-  # 100 columns: past the M3's 64, so streamed there, but within AVX2's 128, so blocked there
-  wide = _matmul("target_mm_wide", 20, 12, 100)
+  # A vector times 100 columns: past the M3's 64, so streamed there, but within AVX2's 128, so blocked there
+  x, b = sc.sym("x", 12), sc.sym("b", (12, 100))
+  wide = sc.Function.from_exprs("target_vm_wide", [x, b], [(x @ b).block()], ["x", "b"], ["y"])
   m3, v3 = (lower_function(wide, target=name) for name in ("apple-m3", "x86-64-v3"))
   assert _private_scalars(m3) == 0
   assert _private_scalars(v3) == 32  # three blocks of 32 columns sharing one set of sums; the last 4 stream

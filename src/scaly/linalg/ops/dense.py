@@ -18,7 +18,6 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.spec import Rule
 from ...ir.types import DType, TensorType, dtypes
 from .trisolve import (
-  DENSE_UNROLL,
   _columns_as_seeds,
   _entry,
   _seed_solve,
@@ -27,6 +26,7 @@ from .trisolve import (
   _square,
   _unroll_attr,
   solve_triangular,
+  straight_line,
 )
 
 if TYPE_CHECKING:
@@ -98,7 +98,7 @@ def _lower_as_symmetric(d: Expr) -> Expr:
 def _sandwich(t: Expr, s: Expr, *, unit: bool) -> Expr:
   """``L^{-1} S L^{-T}`` for a symmetric ``S`` and the lower triangle of ``t``, a factorization's
   result, whose choice between straight-line code and loops the solves keep."""
-  unroll = bool(t.attrs["unroll"])
+  unroll = t.attrs["unroll"]
   z = solve_triangular(t, s, lower=True, unit_diagonal=unit, unroll=unroll)
   return solve_triangular(t, z.T, lower=True, unit_diagonal=unit, unroll=unroll).T
 
@@ -140,7 +140,7 @@ def _jvp_many_factor(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Exp
     return zeros_many(expr, nseed)
   s = _lower_as_symmetric(d[0])
   unit = expr.op == LDL
-  unroll = bool(expr.attrs["unroll"])
+  unroll = expr.attrs["unroll"]
   z = _seed_solve(expr, s, lower=True, unit_diagonal=unit, unroll=unroll)
   x = _seed_transpose(_seed_solve(expr, _seed_transpose(z), lower=True, unit_diagonal=unit, unroll=unroll))
   if expr.op == CHOLESKY:
@@ -169,7 +169,7 @@ def _factor_cotangent(expr: Expr, cot: Expr) -> Expr:
     inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
     inner = (unit_l.T @ ((cot * Expr.const(stril)) * inv_d.reshape((1, n)))) * Expr.const(stril) + cot * Expr.const(eye)
     unit = True
-  unroll = bool(expr.attrs["unroll"])
+  unroll = expr.attrs["unroll"]
   w = solve_triangular(expr, inner, lower=True, trans=True, unit_diagonal=unit, unroll=unroll)
   g = solve_triangular(expr, w.T, lower=True, trans=True, unit_diagonal=unit, unroll=unroll).T
   return g * Expr.const(tril) + (g * Expr.const(stril.T)).T
@@ -225,7 +225,7 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
     stores = [p.store(p.view(scaled, [j]), value)] if scaled is not None else []
     return [*stores, p.store(_entry(out, n, i, j), p.div(value, p.load(_entry(out, n, j, j))))]
 
-  if node.attrs.get("unroll", n <= DENSE_UNROLL):
+  if straight_line(ctx, node, n * n * n // 3):
     for i in range(n):
       for j in range(i + 1):
         value = p.load(_entry(src, n, c(i), c(j)))
@@ -283,7 +283,7 @@ def _lower_lu(ctx: LowerCtx, node: Expr) -> None:
   def scale(k: ProgramNode, i: ProgramNode) -> ProgramNode:
     return p.store(at(i, k), p.div(p.load(at(i, k)), p.load(at(k, k))))
 
-  if node.attrs.get("unroll", n <= DENSE_UNROLL):
+  if straight_line(ctx, node, 2 * n * n * n // 3):
     for i in range(n):
       ctx.emit(*(p.store(at(c(i), c(j)), p.load(_entry(src, n, c(i), c(j)))) for j in range(n)))
     ctx.emit(*(p.store(at(c(n), c(j)), p.const_float(float(j), dtype=dt)) for j in range(n)))
