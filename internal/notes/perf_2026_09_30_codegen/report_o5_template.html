@@ -1,0 +1,43 @@
+<main>
+<h1>O5: a tile is one loop</h1>
+<p class="sub">Step 5 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-200 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Multi-seed forward mode stacks a primal factor once per seed (<code>stack([d] * nseed)</code>), and lowering gave every copy its own loop, which fusion cannot inline since the buffer is written by many loops: 42 loops of three elements at chain M = 9, four of 32 in the MLP Jacobian, four of 246 in the race-car Hessian. A <code>stack</code> or <code>concat</code> along axis 0 of one input repeated now lowers to one loop, <code>out[i] = src[i % size]</code>, which fusion inlines into its consumer and <code>delinearize_loops</code> then splits into nested loops without the remainder.</p>
+<ul>
+<li><b>Speed:</b> <span class="ok">mlp_small_jac 1.13× faster</span>; the race cars 0.92–0.99; chain M = 5 and M = 9, npmpc and unbumpercars unchanged within noise (chain M = 9 timed 746 µs in both builds by a direct A/B; one 15-round run read 1.09 on a low outlier of the old build).</li>
+<li><b>Code:</b> chain M = 9's entry has 110 loops instead of 278; no workspace size changes.</li>
+<li><b>Tests:</b> 4 430 passed, 57 skipped, 5 xfailed (2 new, one updated). Five mutants, five killed.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O5”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>passes/lowering.py</code>: <code>_lower_tile</code>, tried first by <code>_lower_stack</code> and <code>_lower_concat</code>; every other stack and concat lowers as before.</li>
+</ul>
+<pre><code>- for (long long j_t16_0 = 0; j_t16_0 &lt; 32; ++j_t16_0) { s1[j_t16_0] = s0[j_t16_0]; }
+- for (long long j_t16_1 = 0; j_t16_1 &lt; 32; ++j_t16_1) { s1[(32 + j_t16_1)] = s0[j_t16_1]; }
+- ... two more ...
+- for (long long i_t18 = 0; i_t18 &lt; 128; ++i_t18) { s0[i_t18] = (k13[i_t18] * (1.0 - s1[i_t18])); }
++ for (long long i_t18_0 = 0; i_t18_0 &lt; 4; ++i_t18_0) {
++   for (long long i_t18_1 = 0; i_t18_1 &lt; 32; ++i_t18_1) { ... (1.0 - s0[i_t18_1]) ... }
++ }</code></pre>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/passes/test_lowering.py</code>: a tile feeding an elementwise product leaves no buffer and no copy loop; a tile with two consumers (a matrix product and a scaling) is one loop; NumPy's values for both. Repeated stacks along another axis, and stacks and concats of different inputs, keep their values element for element.</li>
+<li><code>tests/core/passes/test_program.py::test_call_output_does_not_reuse_slot_that_produced_input</code> pinned the slot names of the macOS-miscompile regression; the tile moved them, so it now names the new ones and asserts the property itself: the call's output is not the slot that produced its tangent input.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 never a tile</td><td class="ok"><code>test_a_tile_is_one_loop_that_fuses_into_its_consumer</code></td></tr>
+<tr><td>M2 no remainder in the index</td><td class="ok">the same</td></tr>
+<tr><td>M3 a repeated stack along any axis taken for a tile</td><td class="ok"><code>test_stacks_that_are_not_tiles_keep_their_own_loops</code></td></tr>
+<tr><td>M4 any inputs taken for a tile</td><td class="ok"><code>test_covered_function_renders_through_program_ir[_concat]</code></td></tr>
+<tr><td>M5 stack never tried</td><td class="ok"><code>test_a_tile_is_one_loop_that_fuses_into_its_consumer</code></td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The kernels whose C changed, O4 against O5, nine interleaved rounds, fastest sample.</p>
+{{TABLE}}
+</main>

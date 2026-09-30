@@ -797,3 +797,48 @@ def test_partial_sums_have_a_fixed_order_and_never_accumulate_in_an_output() -> 
   assert fn(xv) == blocked(0)
   stores = [node for stmt in _stmts(fn) for node in _nodes(stmt) if node.op == ProgramOp.STORE and node.args[0].attrs["buffer"] == "s"]
   assert len(stores) == 1 and not _inside_reduce(fn, stores[0])
+
+
+# --- tiles (C-200) ------------------------------------------------------------------------------
+
+
+def _loops_storing(fn: sc.Function, prefix: str) -> list:
+  """The top-level loops of ``fn``'s entry whose loop variable was named for ``prefix``'s buffer."""
+  return [s for s in _stmts(fn) if s.op == ProgramOp.FOR and s.args[0].attrs["name"].startswith(prefix)]
+
+
+def test_a_tile_is_one_loop_that_fuses_into_its_consumer() -> None:
+  """A ``stack`` or ``concat`` along axis 0 of one input repeated, as forward mode builds for each
+  seed, lowers to ``out[i] = src[i % size]``: fused into an elementwise consumer it leaves no copy
+  and no buffer, and in front of a matrix product it is one loop, not one per copy."""
+  x, y = sc.sym("x", 5), sc.sym("y", (3, 5))
+  stacked = sc.stack([x.sin()] * 3)
+  fused = sc.Function.from_exprs("tile_fused", [x, y], [(stacked * y).block()], ["x", "y"], ["out"])
+  body = _stmts(fused)
+  assert not [s for s in body if s.op == ProgramOp.BUFFER and s.attrs.get("shape") == (3, 5)]
+  assert not _loops_storing(fused, "j_")
+  a = sc.sym("a", (4, 15))
+  tiled = sc.concat([x.sin()] * 3)
+  # Two consumers keep the tile materialized; one would take it in (fusion into the product's operand).
+  product = sc.Function.from_exprs("tile_product", [x, a], [(a @ tiled).block(), tiled * 2.0], ["x", "a"], ["out", "twice"])
+  assert len(_loops_storing(product, "j_")) == 1
+  xv, yv = np.linspace(-1.0, 1.0, 5), np.arange(15.0).reshape(3, 5)
+  av = np.random.default_rng(5).standard_normal((4, 15))
+  np.testing.assert_allclose(fused((xv, yv)), np.sin(xv) * yv, rtol=1e-15)
+  out, twice = product((xv, av))
+  np.testing.assert_allclose(out, av @ np.tile(np.sin(xv), 3), rtol=1e-13)
+  np.testing.assert_allclose(twice, 2.0 * np.tile(np.sin(xv), 3), rtol=1e-15)
+
+
+def test_stacks_that_are_not_tiles_keep_their_own_loops() -> None:
+  """A repeated stack along another axis, and a stack or concat of different inputs, are not
+  tiles: their values are NumPy's, element for element."""
+  x, z = sc.sym("x", (2, 3)), sc.sym("z", (2, 3))
+  outs = [sc.stack([x] * 3, axis=1).block(), sc.stack([x, z, x]), sc.concat([x, z, x], axis=1), sc.concat([x] * 2, axis=1)]
+  fn = sc.Function.from_exprs("not_tiles", [x, z], outs, ["x", "z"], ["a", "b", "c", "d"])
+  xv, zv = np.arange(6.0).reshape(2, 3), -np.arange(6.0).reshape(2, 3) - 1.0
+  a, b, c, d = fn((xv, zv))
+  np.testing.assert_array_equal(a, np.stack([xv] * 3, axis=1))
+  np.testing.assert_array_equal(b, np.stack([xv, zv, xv]))
+  np.testing.assert_array_equal(c, np.concatenate([xv, zv, xv], axis=1))
+  np.testing.assert_array_equal(d, np.concatenate([xv] * 2, axis=1))

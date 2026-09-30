@@ -1,0 +1,35 @@
+{
+ "cells": [
+  "o4/jit",
+  "o5/jit"
+ ],
+ "kernels": [
+  "chain_9",
+  "chain_5",
+  "race_cars_200"
+ ],
+ "best_ns": {
+  "chain_9/o4/jit": 679209.0,
+  "chain_9/o5/jit": 741542.0,
+  "chain_5/o4/jit": 98917.0,
+  "chain_5/o5/jit": 100458.0,
+  "race_cars_200/o4/jit": 51916.0,
+  "race_cars_200/o5/jit": 47709.0
+ },
+ "median_ns": {
+  "chain_9/o4/jit": 749709.0,
+  "chain_9/o5/jit": 751250.0,
+  "chain_5/o4/jit": 108250.0,
+  "chain_5/o5/jit": 108125.0,
+  "race_cars_200/o4/jit": 53250.0,
+  "race_cars_200/o5/jit": 52458.0
+ },
+ "err": {
+  "chain_9/o4/jit": 0.0,
+  "chain_9/o5/jit": 0.0,
+  "chain_5/o4/jit": 0.0,
+  "chain_5/o5/jit": 0.0,
+  "race_cars_200/o4/jit": 0.0,
+  "race_cars_200/o5/jit": 0.0
+ }
+}

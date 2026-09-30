@@ -61,7 +61,7 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
     "C-200",
     "A concat of one value repeated (a tile) as one loop that fusion can inline",
     "one copy loop per seed in every multi-seed forward-mode kernel (mlp_small_jac, the race cars, the <code>jac</code> snapshot)",
-    None,
+    ("mlp_small_jac 0.89, race cars 0.92–0.99; chain M = 9 278 → 110 loops", "codegen_speed_o5_report.html"),
   ),
   (
     6,
@@ -109,6 +109,7 @@ REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
   ("report_o2_template.html", "codegen_speed_o2_report.html", "timing_o2.json", {"o1/jit": "before (O1)", "o2/jit": "after", "o1/assoc": "O1, -fassociative-math"}),
   ("report_o3_template.html", "codegen_speed_o3_report.html", "timing_o3_diag.json", {"o2/jit": "O2", "o2/contract": "-ffp-contract=fast", "o2/finite": "-ffinite-math-only", "o2/fast": "-ffast-math"}),
   ("report_o4_template.html", "codegen_speed_o4_report.html", "timing_o4.json", {"o2/jit": "before (O2)", "o4/jit": "after", "o2/finite": "O2, -ffinite-math-only"}),
+  ("report_o5_template.html", "codegen_speed_o5_report.html", "timing_o5.json", {"o4/jit": "before (O4)", "o5/jit": "after"}),
 ]
 
 

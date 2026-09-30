@@ -1138,6 +1138,7 @@ tests/core/passes/test_expr.py::test_simplify_preserves_conflicting_hint_precede
 tests/core/passes/test_expr.py::test_simplify_preserves_isolated_opaque_spelling
 tests/core/passes/test_expr.py::test_simplify_revisits_new_children_in_one_bounded_walk
 tests/core/passes/test_expr.py::test_simplify_rewrites_algebraic_identities_and_folds_constants
+tests/core/passes/test_lowering.py::test_a_tile_is_one_loop_that_fuses_into_its_consumer
 tests/core/passes/test_lowering.py::test_an_expensive_producer_fuses_into_the_partial_sums
 tests/core/passes/test_lowering.py::test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction
 tests/core/passes/test_lowering.py::test_blocked_matvec_matches_numpy[1-8]
@@ -1245,6 +1246,7 @@ tests/core/passes/test_lowering.py::test_program_ir_jit_executes[_vecmat]
 tests/core/passes/test_lowering.py::test_program_ir_jit_executes[_vmap]
 tests/core/passes/test_lowering.py::test_segment_extrema_in_runs[False]
 tests/core/passes/test_lowering.py::test_segment_extrema_in_runs[True]
+tests/core/passes/test_lowering.py::test_stacks_that_are_not_tiles_keep_their_own_loops
 tests/core/passes/test_lowering.py::test_stage_transcription_renders_and_matches[forward]
 tests/core/passes/test_lowering.py::test_stage_transcription_renders_and_matches[jacobian]
 tests/core/passes/test_lowering.py::test_stage_transcription_renders_and_matches[sparse_jacobian]

@@ -1,0 +1,70 @@
+<meta charset="utf-8">
+<title>Codegen Speed O5</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}pre code{overflow-wrap:normal}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+<main>
+<h1>O5: a tile is one loop</h1>
+<p class="sub">Step 5 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-200 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Multi-seed forward mode stacks a primal factor once per seed (<code>stack([d] * nseed)</code>), and lowering gave every copy its own loop, which fusion cannot inline since the buffer is written by many loops: 42 loops of three elements at chain M = 9, four of 32 in the MLP Jacobian, four of 246 in the race-car Hessian. A <code>stack</code> or <code>concat</code> along axis 0 of one input repeated now lowers to one loop, <code>out[i] = src[i % size]</code>, which fusion inlines into its consumer and <code>delinearize_loops</code> then splits into nested loops without the remainder.</p>
+<ul>
+<li><b>Speed:</b> <span class="ok">mlp_small_jac 1.13× faster</span>; the race cars 0.92–0.99; chain M = 5 and M = 9, npmpc and unbumpercars unchanged within noise (chain M = 9 timed 746 µs in both builds by a direct A/B; one 15-round run read 1.09 on a low outlier of the old build).</li>
+<li><b>Code:</b> chain M = 9's entry has 110 loops instead of 278; no workspace size changes.</li>
+<li><b>Tests:</b> 4 430 passed, 57 skipped, 5 xfailed (2 new, one updated). Five mutants, five killed.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O5”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>passes/lowering.py</code>: <code>_lower_tile</code>, tried first by <code>_lower_stack</code> and <code>_lower_concat</code>; every other stack and concat lowers as before.</li>
+</ul>
+<pre><code>- for (long long j_t16_0 = 0; j_t16_0 &lt; 32; ++j_t16_0) { s1[j_t16_0] = s0[j_t16_0]; }
+- for (long long j_t16_1 = 0; j_t16_1 &lt; 32; ++j_t16_1) { s1[(32 + j_t16_1)] = s0[j_t16_1]; }
+- ... two more ...
+- for (long long i_t18 = 0; i_t18 &lt; 128; ++i_t18) { s0[i_t18] = (k13[i_t18] * (1.0 - s1[i_t18])); }
++ for (long long i_t18_0 = 0; i_t18_0 &lt; 4; ++i_t18_0) {
++   for (long long i_t18_1 = 0; i_t18_1 &lt; 32; ++i_t18_1) { ... (1.0 - s0[i_t18_1]) ... }
++ }</code></pre>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/passes/test_lowering.py</code>: a tile feeding an elementwise product leaves no buffer and no copy loop; a tile with two consumers (a matrix product and a scaling) is one loop; NumPy's values for both. Repeated stacks along another axis, and stacks and concats of different inputs, keep their values element for element.</li>
+<li><code>tests/core/passes/test_program.py::test_call_output_does_not_reuse_slot_that_produced_input</code> pinned the slot names of the macOS-miscompile regression; the tile moved them, so it now names the new ones and asserts the property itself: the call's output is not the slot that produced its tangent input.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 never a tile</td><td class="ok"><code>test_a_tile_is_one_loop_that_fuses_into_its_consumer</code></td></tr>
+<tr><td>M2 no remainder in the index</td><td class="ok">the same</td></tr>
+<tr><td>M3 a repeated stack along any axis taken for a tile</td><td class="ok"><code>test_stacks_that_are_not_tiles_keep_their_own_loops</code></td></tr>
+<tr><td>M4 any inputs taken for a tile</td><td class="ok"><code>test_covered_function_renders_through_program_ir[_concat]</code></td></tr>
+<tr><td>M5 stack never tried</td><td class="ok"><code>test_a_tile_is_one_loop_that_fuses_into_its_consumer</code></td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The kernels whose C changed, O4 against O5, nine interleaved rounds, fastest sample.</p>
+<div class="scroll"><table><tr><th>kernel</th><th class="r">before (O4)</th><th class="r">after</th></tr>
+<tr><td>chain_5</td><td class="r">105.79 µs</td><td class="r">1.000</td></tr>
+<tr><td>chain_9</td><td class="r">727.38 µs</td><td class="r">1.027</td></tr>
+<tr><td>mlp_small_jac</td><td class="r">750.0 ns</td><td class="r ok">0.886</td></tr>
+<tr><td>npmpc_12</td><td class="r">15.92 µs</td><td class="r">0.997</td></tr>
+<tr><td>race_cars_200</td><td class="r">52.21 µs</td><td class="r">0.985</td></tr>
+<tr><td>race_cars_40</td><td class="r">9.75 µs</td><td class="r">0.996</td></tr>
+<tr><td>unbumpercars_8</td><td class="r">481.54 µs</td><td class="r">1.003</td></tr>
+<tr><td><b>geometric mean</b></td><td class="r">—</td><td class="r"><b>0.984</b></td></tr>
+</table></div>
+</main>

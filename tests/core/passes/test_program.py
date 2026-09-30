@@ -468,7 +468,10 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   match = re.search(re.escape(declaration.group(1)) + r"\(([^)]*)\);", source)
   assert match is not None
   args = [a.strip() for a in match.group(1).split(",")]
-  assert args[:3] == ["s0", "s3", "s4"]
+  assert args[:3] == ["s0", "s2", "s3"]
+  # The tangent input ``s2`` is computed from ``s1``; the output must not land in ``s1``.
+  producer = re.search(r"\n\s+s2\[\w+\] = \((s\d+)\[", source)
+  assert producer is not None and producer.group(1) not in args[2:3]
 
 
 def test_regular_raw_callees_stay_inline() -> None:

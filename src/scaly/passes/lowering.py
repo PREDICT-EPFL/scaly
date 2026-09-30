@@ -1830,11 +1830,31 @@ def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
   ctx.emit(p.for_(p.range_(iname, 0, len(idx), kind=kind), [p.store(p.view(out, [dst]), pick(cur, value))]))
 
 
+def _lower_tile(ctx: LowerCtx, node: Expr) -> bool:
+  """A ``stack`` or ``concat`` along axis 0 of one input repeated (a tile: forward mode stacks a
+  primal factor once per seed) as one loop, ``out[i] = src[i % size]``, where one copy loop per
+  piece would be: a single producer loop is what ``fuse_elementwise`` can inline into the
+  consumer, and ``delinearize_loops`` then splits the remainder away. False for any other."""
+  src = node.args[0]
+  if len(node.args) < 2 or int(node.attrs.get("axis", 0)) != 0 or any(a is not src for a in node.args):
+    return False
+  out = ctx.alloc_tmp(node)
+  size = _size_of(src.shape)
+  name = f"j_{out.attrs['name']}"
+  j = p.var(name)
+  rng = p.range_(name, 0, size * len(node.args), kind=RangeKind.GLOBAL)
+  ctx.emit(p.for_(rng, [p.store(p.view(out, [j]), p.load(p.view(ctx.buf_of(src), [p.mod(j, p.const_int(size))])))]))
+  return True
+
+
 @lowers(ExprOp.STACK)
 def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
   """Stack ``n`` rank-r inputs along a new ``axis`` into a rank-(r+1) output: each input
   occupies index ``i`` along the new axis. Per element, decompose the input flat index into
-  its coords, insert ``i`` at ``axis``, recombine against the output shape."""
+  its coords, insert ``i`` at ``axis``, recombine against the output shape. A tile is one loop
+  (``_lower_tile``)."""
+  if _lower_tile(ctx, node):
+    return
   axis = int(node.attrs.get("axis", 0))
   out_shape = node.shape
   out = ctx.alloc_tmp(node)
@@ -1852,7 +1872,10 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
 @lowers(ExprOp.CONCAT)
 def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
   """Concatenate inputs along ``axis``: each input keeps its shape but its ``axis`` coordinate is
-  shifted by the running offset. Per element, decompose / shift / recombine against the output."""
+  shifted by the running offset. Per element, decompose / shift / recombine against the output.
+  A tile is one loop (``_lower_tile``)."""
+  if _lower_tile(ctx, node):
+    return
   axis = int(node.attrs.get("axis", 0))
   out_shape = node.shape
   out = ctx.alloc_tmp(node)

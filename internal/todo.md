@@ -840,8 +840,12 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       present (one `fmax` on AArch64) and the select elsewhere, float64 only, defined only in a
       source that uses them. The generated IPM: qafiro 1.16x, hs118 1.09x, cvxqp1 1.07x, sparse
       MPC 1.06x, matching `-ffinite-math-only` (`notes/codegen_speed_o4_report.html`).
-- [ ] **C-200. A repeated concat (a tile) as one loop fusion can inline.** Multi-seed forward mode
-      copies a primal factor once per seed, one loop each, before the elementwise use.
+- [x] **C-200. A repeated concat (a tile) as one loop fusion can inline.** Multi-seed forward mode
+      stacks a primal factor once per seed, and each copy was its own loop before the elementwise
+      use (42 loops of three at chain M = 9). A `stack` or `concat` along axis 0 of one input
+      repeated now lowers to `out[i] = src[i % size]`, which fusion inlines and
+      `delinearize_loops` splits: no copy and no buffer. mlp_small_jac 1.13x, race cars 0.92 to 0.99,
+      chain M = 9 278 to 110 loops at the same speed (`notes/codegen_speed_o5_report.html`).
 
 ### Now
 

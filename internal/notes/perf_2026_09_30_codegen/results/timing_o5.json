@@ -1,0 +1,63 @@
+{
+ "cells": [
+  "o4/jit",
+  "o5/jit"
+ ],
+ "kernels": [
+  "chain_5",
+  "chain_9",
+  "mlp_small_jac",
+  "npmpc_12",
+  "race_cars_200",
+  "race_cars_40",
+  "unbumpercars_8"
+ ],
+ "best_ns": {
+  "chain_5/o4/jit": 105792.0,
+  "chain_5/o5/jit": 105792.0,
+  "chain_9/o4/jit": 727375.0,
+  "chain_9/o5/jit": 747042.0,
+  "mlp_small_jac/o4/jit": 750.0,
+  "mlp_small_jac/o5/jit": 664.58,
+  "npmpc_12/o4/jit": 15916.0,
+  "npmpc_12/o5/jit": 15875.0,
+  "race_cars_200/o4/jit": 52209.0,
+  "race_cars_200/o5/jit": 51416.0,
+  "race_cars_40/o4/jit": 9750.0,
+  "race_cars_40/o5/jit": 9708.0,
+  "unbumpercars_8/o4/jit": 481542.0,
+  "unbumpercars_8/o5/jit": 483208.0
+ },
+ "median_ns": {
+  "chain_5/o4/jit": 108375.0,
+  "chain_5/o5/jit": 108041.0,
+  "chain_9/o4/jit": 750042.0,
+  "chain_9/o5/jit": 752417.0,
+  "mlp_small_jac/o4/jit": 768.22,
+  "mlp_small_jac/o5/jit": 682.3,
+  "npmpc_12/o4/jit": 16292.0,
+  "npmpc_12/o5/jit": 16292.0,
+  "race_cars_200/o4/jit": 53250.0,
+  "race_cars_200/o5/jit": 52500.0,
+  "race_cars_40/o4/jit": 10000.0,
+  "race_cars_40/o5/jit": 9959.0,
+  "unbumpercars_8/o4/jit": 491042.0,
+  "unbumpercars_8/o5/jit": 489667.0
+ },
+ "err": {
+  "chain_5/o4/jit": 0.0,
+  "chain_5/o5/jit": 0.0,
+  "chain_9/o4/jit": 0.0,
+  "chain_9/o5/jit": 0.0,
+  "mlp_small_jac/o4/jit": 0.0,
+  "mlp_small_jac/o5/jit": 0.0,
+  "npmpc_12/o4/jit": 0.0,
+  "npmpc_12/o5/jit": 0.0,
+  "race_cars_200/o4/jit": 0.0,
+  "race_cars_200/o5/jit": 0.0,
+  "race_cars_40/o4/jit": 0.0,
+  "race_cars_40/o5/jit": 0.0,
+  "unbumpercars_8/o4/jit": 0.0,
+  "unbumpercars_8/o5/jit": 0.0
+ }
+}
