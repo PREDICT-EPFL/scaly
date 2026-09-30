@@ -122,8 +122,9 @@ class CModule:
 
   @property
   def compile_flags(self) -> tuple[str, ...]:
-    """The flags that build ``source`` for ``target``: its CPU flags and ``-fno-math-errno``, at
-    ``-O2``, as the JIT compiles for its host (``codegen/jit.py``)."""
+    """Flags that build ``source`` for ``target``: ``-O2``, its CPU flags and ``-fno-math-errno``,
+    the JIT's default flags with the target's CPU in place of the host's (``codegen/jit.py`` also
+    honours ``SCALY_CC_OPT``, and gives GCC before 12 ``-ftree-vectorize``)."""
     return ("-O2", *self.target.cflags, "-fno-math-errno")
 
   @cached_property
@@ -570,11 +571,11 @@ def main(argv: list[str] | None = None) -> None:
   module_name, _, attr = args.function.partition(":")
   if not attr:
     parser.error(f"function {args.function!r} is not module:attribute")
+  fun = getattr(importlib.import_module(module_name), attr)
   try:
-    target = resolve_target(args.target)
+    target = resolve_target(args.target)  # after the import, which may set the process default
   except ValueError as error:
     parser.error(str(error))
-  fun = getattr(importlib.import_module(module_name), attr)
   if not isinstance(fun, Function):
     fun = fun()
   if not fun.is_concrete:

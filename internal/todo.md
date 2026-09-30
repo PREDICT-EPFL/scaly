@@ -874,13 +874,13 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 `notes/perf_2026_09_30_gaps/`. Every optimization takes its parameters from `sc.Target`.
 
 - [x] **C-203. `sc.Target`: the processor generated code is tuned for.** A frozen description of
-      it (vector width and registers, FMA units and latency, the caches, the AOT CPU flag, and
-      `rounding="target"|"portable"`), with presets (Apple M1–M4, Cortex-A53/A72/A76, Neoverse V2,
-      the x86-64 levels, `generic`) and the host detected from `sysctl` or `/sys`. Read at render
+      it (vector width, L1 caches, the AOT CPU flag, and `rounding="target"|"portable"`; a field
+      joins when a choice first reads it), with presets (Apple M1–M4, Cortex-A53/A72/A76, Neoverse
+      V2, `armv8-a`, the x86-64 levels, `generic`) and the host detected from `sysctl` or `/sys`. Read at render
       time: `render_c_module(fn, target=)`, `write_module`, `scaly_codegen --target`, and for the
       JIT the target in force (`sc.target(...)`, `sc.set_target`, `SCALY_TARGET`, else the host),
       whose change re-renders a called Function. Lowering rules read `ctx.target`, passes the
-      `PROGRAM`'s `target` attribute. The O6 row blocks and their 64-column limit are now its
+      `PROGRAM`'s `tuned_for` attribute. The O6 row blocks and their 64-column limit are now its
       derived `row_blocks` and `row_blocked_max`, scaled by vector width. They keep each output's
       order of summation but still change bits (unbumpercars by up to 5.5e-17 under the AVX2
       target's widths): clang fuses the multiply-adds of a streamed row and not of a vectorized

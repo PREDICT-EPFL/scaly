@@ -36,6 +36,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import render_c_module
 from ..function.extern import ExternState, extern_functions
+from ..ir.target import Target, resolve_target
 from ..utils.ext_api import EXT_API_VERSION
 from .toolchain import cache_root, compiler_identity, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
@@ -172,8 +173,9 @@ _artifact_cache: dict[str, _Artifact] = {}
 _artifact_lock = threading.Lock()
 
 
-def _build_artifact(fun: ConcreteFunction) -> _Artifact:
-  """Render, compile (if needed), and return a path to ``fun``'s cached shared object.
+def _build_artifact(fun: ConcreteFunction, target: Target | None = None) -> _Artifact:
+  """Render ``fun`` for ``target`` (None: the target in force), compile it (if needed), and return
+  a path to its cached shared object.
 
   Raises ``JitUnavailable`` if there is no usable compiler or codegen does not support
   ``fun``; callers let it propagate (there is no interpreter fallback). Raises ``JitError``
@@ -185,7 +187,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   cc = compiler.cc
 
   try:
-    module = render_c_module(fun)
+    module = render_c_module(fun, target=target)
   except NotImplementedError as exc:
     raise JitUnavailable(f"codegen does not support function {fun.name!r}: {exc}") from exc
 
@@ -253,11 +255,13 @@ class CompiledFunction:
   """Handle around a JIT-compiled `Function`.
 
   Holds the ``ctypes.CDLL`` for the cached shared object, the resolved entry point with
-  ``argtypes``/``restype`` set up for the pointer ABI, and the workspace size the rendered module
-  reported (the header's ``SZ_W``; the library exports no size query of its own).
+  ``argtypes``/``restype`` set up for the pointer ABI, the workspace size the rendered module
+  reported (the header's ``SZ_W``; the library exports no size query of its own), and the
+  ``target`` its C was rendered for (the target in force when None is given).
   """
 
   __slots__ = (
+    "target",
     "_name",
     "_artifact",
     "_lib",
@@ -278,9 +282,10 @@ class CompiledFunction:
     "_workspaces",
   )
 
-  def __init__(self, fun: ConcreteFunction):
+  def __init__(self, fun: ConcreteFunction, target: Target | None = None):
+    self.target = resolve_target(target)
     self._name = fun.name  # not the Function, which holds this handle: no cycle keeps the workspaces
-    self._artifact = _build_artifact(fun)
+    self._artifact = _build_artifact(fun, self.target)
     self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.isolated)
     symbol = c_ident(fun.name)
     self._symbol = symbol
@@ -417,13 +422,15 @@ def _address(arr: np.ndarray) -> int:
     return arr.ctypes.data
 
 
-def get_compiled(fun: ConcreteFunction) -> CompiledFunction:
-  """Compile ``fun`` (or reuse a cached `.so`) and return a `CompiledFunction` handle."""
-  return CompiledFunction(fun)
+def get_compiled(fun: ConcreteFunction, target: Target | None = None) -> CompiledFunction:
+  """Compile ``fun`` for ``target`` (None: the target in force), or reuse a cached `.so`, and
+  return a `CompiledFunction` handle."""
+  return CompiledFunction(fun, target)
 
 
-def invalidate_cache(fun: ConcreteFunction) -> None:
-  """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
+def invalidate_cache(fun: ConcreteFunction, target: Target | None = None) -> None:
+  """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun`` rendered
+  for ``target`` (None: the target in force).
 
   Safe to call when nothing is cached yet; codegen failures (``NotImplementedError``) are
   swallowed since there cannot be a corresponding cache entry to remove. Only the current
@@ -433,7 +440,7 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
   if compiler is None:
     return  # nothing can have been built without one
   try:
-    module = render_c_module(fun)
+    module = render_c_module(fun, target=target)
   except NotImplementedError:
     return
   key = _compute_cache_key(

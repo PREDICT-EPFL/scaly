@@ -89,23 +89,23 @@ The AOT output and the JIT read the same `CModule`, produced from a single lower
 ## Tuning for a processor
 
 Some choices the lowering makes depend on the processor: how many outputs of a matrix product
-stay in registers, how long a row is before it streams instead. `sc.Target` describes the
-processor they are made for: its vector width and registers, its fused multiply-add units and their
-latency, and its caches. Rendering takes one, and so does the command line:
+stay in registers, how much of a matrix is kept in cache at once. `sc.Target` describes the
+processor they are made for: its vector width, its level-1 caches, and the compiler flags that select
+it. A field joins it when a choice first reads it. Rendering takes one, and so does the command line:
 
 ```python
 module = render_c_module(fn, target="cortex-a76")     # a preset name, or a Target
 module.compile_flags                                  # ("-O2", "-mcpu=cortex-a76", "-fno-math-errno")
-write_module(fn, out_dir, target=sc.Target.preset("x86-64-v3", l2_bytes=2 << 20))
+write_module(fn, out_dir, target=sc.Target.preset("x86-64-v3", l1d_bytes=48 << 10))
 ```
 
 ```bash
 uv run scaly_codegen mymodule:my_function -o generated/ --target cortex-a76
 ```
 
-`sc.Target.presets()` lists the presets: Apple M1 to M4, Cortex-A53, A72 and A76, Neoverse V2, the
-three x86-64 levels (`x86-64`, `x86-64-v3` with AVX2, `x86-64-v4` with AVX-512) and `generic`, plain
-scalar C. Without a target, rendering uses the one in force, which is the host this process runs on,
+`sc.Target.presets()` lists the presets: Apple M1 to M4, Cortex-A53, A72 and A76, Neoverse V2,
+`armv8-a` for any other 64-bit Arm core, the three x86-64 levels (`x86-64`, `x86-64-v3` with AVX2,
+`x86-64-v4` with AVX-512) and `generic`, plain scalar C. Without a target, rendering uses the one in force, which is the host this process runs on,
 detected once from `sysctl` on macOS or `/sys` and `/proc/cpuinfo` on Linux. `SCALY_TARGET` names
 another preset, `sc.set_target(...)` changes it for the process, and `with sc.target(...):` for a
 block, as `sc.options` does for the options a graph is built under. A graph is the same whatever the

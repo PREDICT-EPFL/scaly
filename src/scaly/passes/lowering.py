@@ -81,8 +81,8 @@ def lower_function(
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   ``target`` (a ``Target``, a preset name, or None for the target in force) is the processor the
-  code is tuned for. Lowering rules read it as ``LowerCtx.target``; the program passes read it off
-  the ``PROGRAM``'s ``target`` attribute.
+  code is tuned for. Lowering rules read it as ``LowerCtx.target``, and it is recorded on the
+  ``PROGRAM`` as its ``tuned_for`` attribute for the program passes.
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
   PROC in topological order followed by ``fun``'s main PROC last. Non-host
@@ -114,7 +114,7 @@ def lower_function(
   else:
     root = _lower_to_proc(fun, callees, extern_fns, target, observe_expr=observe_expr, entry=True)
     prog = p.program([*callees.values(), root])
-  prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "target": target}, prog.dtype)
+  prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "tuned_for": target}, prog.dtype)
   if extern_fns:
     externs = {name: ef.extern for name, ef in extern_fns.items() if ef.extern is not None}
     extern_deps = {name: tuple(d.name for d in extern.dependencies()) for name, extern in externs.items()}

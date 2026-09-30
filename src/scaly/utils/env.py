@@ -85,54 +85,51 @@ def shared_lib_flag() -> str:
 
 @dataclass(frozen=True, slots=True)
 class CpuFacts:
-  """What the operating system says about the processor this process runs on. Caches are those of
-  the core generated code runs on (Apple's performance cores); a size the system does not report is
-  None. ``part`` is the Arm "CPU part" number on Linux, ``features`` the instruction-set extensions
-  that matter for code generation (``avx2``, ``fma``, ``avx512f``, ``sve``, ``sme``)."""
+  """What the operating system says about the processor this process runs on. ``machine`` is
+  ``aarch64``, ``x86_64`` or what ``platform.machine()`` says, ``system`` is ``sys.platform``.
+  Caches are those of the core generated code runs on (Apple's performance cores); a size the system
+  does not report is None. ``implementer`` and ``part`` are Arm's numbers on Linux, ``features`` the
+  x86 extensions that decide a preset (``avx2``, ``fma``, ``avx512f``, ``avx512bw``, ``avx512dq``,
+  ``avx512vl``)."""
 
   machine: str
+  system: str = ""
   brand: str = ""
+  implementer: str = ""
   part: str = ""
   features: frozenset[str] = frozenset()
   l1i: int | None = None
   l1d: int | None = None
-  l2: int | None = None
-  line: int | None = None
 
 
-_SYSCTL_KEYS = (
-  "machdep.cpu.brand_string",
-  "hw.perflevel0.l1icachesize",
-  "hw.perflevel0.l1dcachesize",
-  "hw.perflevel0.l2cachesize",
-  "hw.l1icachesize",
-  "hw.l1dcachesize",
-  "hw.l2cachesize",
-  "hw.cachelinesize",
-  "hw.optional.arm.FEAT_SME",
-  "hw.optional.avx2_0",
-  "hw.optional.avx512f",
-  "hw.optional.fma",
-)
-_FEATURE_KEYS = {"hw.optional.arm.FEAT_SME": "sme", "hw.optional.avx2_0": "avx2", "hw.optional.avx512f": "avx512f", "hw.optional.fma": "fma"}
+_FEATURES = frozenset({"avx2", "fma", "avx512f", "avx512bw", "avx512dq", "avx512vl"})
+_SYSCTL_SIZES = ("hw.perflevel0.l1icachesize", "hw.perflevel0.l1dcachesize", "hw.l1icachesize", "hw.l1dcachesize")
+_SYSCTL_FEATURES = {"hw.optional.avx2_0": "avx2", "hw.optional.fma": "fma", **{f"hw.optional.{f}": f for f in _FEATURES if f.startswith("avx512")}}
 
 
-def _darwin_facts(machine: str) -> CpuFacts:
-  # One call for every key: a key this machine lacks is reported on stderr and the rest still print.
-  out = subprocess.run(["sysctl", *_SYSCTL_KEYS], capture_output=True, text=True, check=False).stdout
+def _sysctl() -> str:
+  # Its own path first: a restricted PATH (cron's /usr/bin:/bin) does not reach /usr/sbin.
+  return "/usr/sbin/sysctl" if Path("/usr/sbin/sysctl").exists() else "sysctl"
+
+
+def _darwin_facts(machine: str, out: str | None = None) -> CpuFacts:
+  """The facts ``sysctl`` gives, or ``out`` as it would print them."""
+  if out is None:
+    # One call for every key: a key this machine lacks is reported on stderr and the rest still print.
+    keys = ("machdep.cpu.brand_string", *_SYSCTL_SIZES, *_SYSCTL_FEATURES)
+    out = subprocess.run([_sysctl(), *keys], capture_output=True, text=True, check=False).stdout
   values = dict(line.split(": ", 1) for line in out.splitlines() if ": " in line)
 
   def size(*keys: str) -> int | None:
-    return next((int(values[k]) for k in keys if values.get(k, "").isdigit() and int(values[k]) > 0), None)
+    return next((int(values[k]) for k in keys if values.get(k, "").strip().isdigit() and int(values[k]) > 0), None)
 
   return CpuFacts(
     machine,
-    brand=values.get("machdep.cpu.brand_string", ""),
-    features=frozenset(name for key, name in _FEATURE_KEYS.items() if values.get(key) == "1"),
+    "darwin",
+    brand=values.get("machdep.cpu.brand_string", "").strip(),
+    features=frozenset(name for key, name in _SYSCTL_FEATURES.items() if values.get(key, "").strip() == "1"),
     l1i=size("hw.perflevel0.l1icachesize", "hw.l1icachesize"),
     l1d=size("hw.perflevel0.l1dcachesize", "hw.l1dcachesize"),
-    l2=size("hw.perflevel0.l2cachesize", "hw.l2cachesize"),
-    line=size("hw.cachelinesize"),
   )
 
 
@@ -143,10 +140,11 @@ def _sysfs_size(text: str) -> int | None:
   return int(digits) * scale if digits.isdigit() else None
 
 
-def _linux_facts(machine: str) -> CpuFacts:
+def _linux_facts(machine: str, root: Path = Path("/")) -> CpuFacts:
+  """The facts ``/proc/cpuinfo`` and ``/sys/devices/system/cpu`` give, under ``root``."""
   info: dict[str, str] = {}
   try:
-    for line in Path("/proc/cpuinfo").read_text().splitlines():
+    for line in (root / "proc/cpuinfo").read_text().splitlines():
       key, sep, value = line.partition(":")
       if sep and key.strip() not in info:
         info[key.strip()] = value.strip()
@@ -154,23 +152,21 @@ def _linux_facts(machine: str) -> CpuFacts:
     pass
   flags = set((info.get("flags") or info.get("Features") or "").split())
   sizes: dict[str, int | None] = {}
-  line_size = None
-  for index in sorted(Path("/sys/devices/system/cpu/cpu0/cache").glob("index*")):
+  for index in sorted((root / "sys/devices/system/cpu/cpu0/cache").glob("index*")):
     try:
       level, kind = (index / "level").read_text().strip(), (index / "type").read_text().strip()
       sizes.setdefault(f"{level}{kind}", _sysfs_size((index / "size").read_text()))
-      line_size = line_size or _sysfs_size((index / "coherency_line_size").read_text())
     except OSError:
       continue
   return CpuFacts(
     machine,
+    "linux",
     brand=info.get("model name", ""),
+    implementer=info.get("CPU implementer", ""),
     part=info.get("CPU part", ""),
-    features=frozenset(flags & {"avx2", "fma", "avx512f", "sve", "sme"}),
+    features=frozenset(flags & _FEATURES),
     l1i=sizes.get("1Instruction"),
     l1d=sizes.get("1Data"),
-    l2=sizes.get("2Unified"),
-    line=line_size,
   )
 
 
@@ -186,4 +182,4 @@ def cpu_facts() -> CpuFacts:
       return _linux_facts(machine)
   except (OSError, ValueError):
     pass
-  return CpuFacts(machine)
+  return CpuFacts(machine, sys.platform)

@@ -12,7 +12,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.match import _apply_lowering
-from ..ir.target import Target, get_target
+from ..ir.target import get_target
 from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, as_shape, backend_supports, dtypes
 from .tree import Hole, LeafDecl, SymbolicValue, Tree, _G, _leaves, flat_tree, inferred_tree, is_symbolic_call, param_list, skeleton
 
@@ -87,7 +87,6 @@ _GRAPH_ATTRIBUTES = frozenset(
     "custom_vjp",
     "custom_sparsity",
     "_compiled",
-    "_compiled_for",
     "_compile",
     "_flat_numerical_call",
     "_flat_symbolic_call",
@@ -547,8 +546,7 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     missing = [e.name or f"%{e.id}" for e in topo(self.outputs) if e.op == ExprOp.INPUT and e.id not in declared]
     if missing:
       raise ValueError(f"function {self.name!r} has undeclared symbolic inputs: {missing}")
-    self._compiled: Any = None
-    self._compiled_for: Target | None = None  # the target ``_compiled`` was rendered for
+    self._compiled: Any = None  # the JIT's handle, which records the target it was rendered for
     # The C body of a Function the compiler does not generate (``function/extern.py``).
     self.extern: ExternCallee | None = None
     # Derivative rules that replace differentiating the body; set by ``sc.custom_derivative``.
@@ -681,10 +679,12 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     """Lazily JIT-compile this function for the target in force (``sc.target``) and cache the
     handle; a call under another target renders and compiles again, or reuses that one's library."""
     target = get_target()
-    if self._compiled is None or (self._compiled_for is not target and self._compiled_for != target):
-      self._compiled = _jit().CompiledFunction(self)
-      self._compiled_for = target
-    return self._compiled
+    compiled = self._compiled
+    if compiled is None or (compiled.target is not target and compiled.target != target):
+      # Rendered for the target read above, and stored as one attribute with it, so another
+      # thread's target cannot come between the two.
+      compiled = self._compiled = _jit().CompiledFunction(self, target)
+    return compiled
 
   def _flat_numerical_call(self, *args: Any) -> tuple[np.ndarray, ...]:
     """Evaluate from flat leaves: lazily compile and run through the universal ABI.
@@ -700,9 +700,8 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
   def recompile(self) -> None:
     """Drop the cached compiled handle and remove the on-disk cache entry for this function."""
     jit = _jit()
-    self._compiled = None
-    self._compiled_for = None
-    jit.invalidate_cache(self)
+    compiled, self._compiled = self._compiled, None
+    jit.invalidate_cache(self, None if compiled is None else compiled.target)
 
   def callee_state(self, name: str | None = None) -> Any:
     """The state the extern callee ``name`` (``function/extern.py``) exposed after the latest call,

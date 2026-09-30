@@ -11,6 +11,7 @@ from ..function.api import function, jacobian
 from ..function.model import Function
 from ..function.tree import G, L
 from ..ir.expr import Expr, concat
+from ..ir.target import Target
 
 
 def acados_functions(
@@ -53,20 +54,21 @@ def acados_functions(
   return {f"{name}_expl_ode_fun": ode, f"{name}_expl_vde_forw": vde_forw, f"{name}_expl_vde_adj": vde_adj}
 
 
-def install_dropin(functions: dict[str, Function[Any, Any, Any, Any]], model_dir: Path) -> list[Path]:
+def install_dropin(functions: dict[str, Function[Any, Any, Any, Any]], model_dir: Path, *, target: Target | str | None = None) -> list[Path]:
   """Replace acados' generated model sources in ``model_dir`` (``<code_export_directory>/<model>_model``)
   by ``functions``' C, one ``<key>.c`` each: the CasADi layer's source with its header inlined, prefixed
   by ``#define casadi_int int``, as acados builds its C with ``casadi_int`` an ``int`` where the layer
   defaults to CasADi's ``long long``. The generated modules are also written, as they are, to
-  ``model_dir/scaly``. Run it after acados has generated its code and before it builds."""
+  ``model_dir/scaly``. The C is tuned for ``target`` (``sc.Target``, a preset name, or None for the
+  target in force). Run it after acados has generated its code and before it builds."""
   written = []
   for key, fn in functions.items():
-    module = write_module(fn, model_dir / "scaly", adapters=("casadi",))
+    module = write_module(fn, model_dir / "scaly", adapters=("casadi",), target=target)
     header = (model_dir / "scaly" / module.header_name).read_text()
     source = (model_dir / "scaly" / module.source_name).read_text().replace(f'#include "{module.header_name}"', header)
-    target = model_dir / f"{key}.c"
-    target.write_text("#define casadi_int int\n" + source)
-    written.append(target)
+    path = model_dir / f"{key}.c"
+    path.write_text("#define casadi_int int\n" + source)
+    written.append(path)
   return written
 
 

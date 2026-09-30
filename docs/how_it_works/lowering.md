@@ -24,10 +24,10 @@ deduplicates callees so a block used a hundred times is lowered once, runs the o
 pipeline, and verifies the result before returning it.
 
 It lowers for a target, the `sc.Target` describing the processor the code is tuned for (the one in
-force unless `target=` names another). A rule reads it as `ctx.target`, and a program pass reads
-it off the `PROGRAM` node's `target` attribute, so a choice that depends on the vector width or a
-cache size is made where the rest of the lowering is decided, and the renderer still only spells
-what it is given. The listing leaves the target out: it says what the program was tuned for, not
+force unless `target=` names another). A rule reads it as `ctx.target`, and it is recorded on the
+`PROGRAM` node as its `tuned_for` attribute for the program passes, so a choice that depends on the
+vector width or a cache size is made where the rest of the lowering is decided, and the renderer
+still only spells what it is given. The listing leaves the target out: it says what the program was tuned for, not
 what it computes.
 
 Before allocating buffers, lowering normalizes a private copy of each ordinary Function's outputs
