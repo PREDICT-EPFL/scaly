@@ -112,9 +112,11 @@ detected once from `sysctl` on macOS or `/sys` and `/proc/cpuinfo` on Linux. `SC
 another preset, `sc.set_target(...)` changes it for the process, and `with sc.target(...):` for a
 block, as `sc.options` does for the options a graph is built under. The target is read when the
 graph is rendered, so one Function can be written out for several processors. One choice is made
-earlier, while automatic differentiation builds a derivative: a mapped tangent body too large for
-the processor's instruction cache is split into groups of seeds, each its own loop, by the target in
-force then. `scaly_codegen --target` builds the module's graph under the target it names.
+earlier, while automatic differentiation builds a derivative. A mapped tangent body expanded into
+more scalar code than the processor's instruction cache holds is split into groups of seeds, each
+its own loop, for the target in force then. So `write_module(fn, out_dir, target=...)` renders
+`fn`'s graph as it was built. To get another processor's grouping, build the derivative under
+`with sc.target(...)`, as `scaly_codegen --target` does for the whole module.
 
 The JIT compiles for the machine it runs on, whatever the target. A call under another target
 renders that target's C and runs it on this machine, which is how a test checks another processor's

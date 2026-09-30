@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 212**
+**Next id: 215**
 
 | Prefix | Section |
 |---|---|
@@ -940,16 +940,36 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 - [x] **C-211. Stage derivatives in groups that fit the instruction cache (A1).** A mapped
       tangent body grows with its seeds, and the chain of masses' stage Hessian at M = 7 and 9
       (228 and 339 KiB of code) ran 2.8x slower per operation than at M = 5, past the M3's 192 KiB
-      L1i. Forward mode now estimates a body's code from its graph (`ad.forward._body_ops`, five
-      bytes an operation) and, past `Target.body_bytes` (half of L1i), splits its seeds into
-      groups, each its own mapped call over every trip, in all four paths of the `jvp_many` VMAP
-      rule and the structured sparse Jacobian. Every group recomputes the primal and the adjoint,
-      so the count divides only the tangents, and the seeds stay in one body when that shared part
-      is past the budget, when one seed would not fit, or when the recomputation would add more
-      than half the work (`MAX_RECOMPUTE`); on 16-32 KiB instruction caches the chain stays one
-      body. Chain Hessian at M = 7 0.43 of its time, M = 9 0.46, M = 5 0.98; every other
+      L1i. Forward mode now estimates an expanded body's code from its graph
+      (`ad.forward._body_ops`, five bytes an operation) and, past `Target.body_bytes` (half of
+      L1i), splits its seeds into groups, each its own mapped call over every trip, in all four
+      paths of the `jvp_many` VMAP rule and the structured sparse Jacobian. Only a body expanded
+      into scalar code is split (`.scalar()`, inherited by derivatives; `_expands`): the review
+      found a first version splitting bodies kept in loops, whose code is compact, and the neural
+      MPC oracles 1.4-1.8x slower for it (npmpc_decoder_jac W = 64 on the M3 itself). Every group
+      recomputes the primal and the adjoint, and a grouped formal loses its share of the packed
+      body, so a split into `count` groups is charged `count` recomputations; the seeds stay in one
+      body when that part is past the budget, when one seed would not fit, or when the charge
+      passes half the work (`MAX_RECOMPUTE`). Chain Hessian at M = 7 0.43 of its time, M = 9 0.46,
+      M = 5 unchanged; every other benchmark oracle one body on every preset; every other
       codegen-corpus kernel byte-identical. Read while the graph is built, so `scaly_codegen
       --target` imports the module under its target.
+- [ ] **C-212. Vector types for the product tiles (K1, Tier 4).** A tile's columns as an inner
+      range of kind `VECTOR`, rendered as GNU vector statements over `Target.vector_doubles` lanes
+      through the renderer's `may_alias` vector type; `generic` stays scalar. The prototype's scalar
+      4 x 8 tile was left unvectorized by clang's cost model at 8 x 8 x 8 and 12 x 12 x 12 (2-2.5x
+      slower); written with vector types it is sixteen `fmla.2d`. Plan: Tier 4 of
+      [the implementation plan](notes/perf_gaps_plan_2026_09_30.html).
+- [ ] **C-213. Register tiles for the products (K2, Tier 4).** `m_r x n_r` tiles from the BLIS
+      model (`vector_registers`, `fma_units`, `fma_latency` join `Target`) in the row-blocked
+      products and K0's panel passes. A scratch prototype of the M3's 4 x 8 tile ran GEMM at
+      n = 16-64 at 51-54 GF/s, 0.86-1.04x BLASFEO's time, bit for bit today's outputs.
+- [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
+      C-211, both toward the old code: each formal's body is judged alone, so bodies that
+      `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's
+      overlapping-window stage); and the scan, while, custom-JVP and template-instance derivative
+      caches keep the grouping of the first target they were built under. Key those caches on
+      `body_bytes` without renaming their helpers' C symbols, and decide the groups after packing.
 
 ### Now
 

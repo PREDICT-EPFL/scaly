@@ -19,5 +19,5 @@ Mac with Apple clang before acting on them (step A1's first experiment).
 `results/` holds what the plan cites: the native kernel sweeps against BLASFEO (`kernels_*.json`),
 the straight-line and loop comparisons (`shapes_*.json`), the corpus timings of C-205 and C-206
 (`corpus_*.json`), the dense IPM's before and after C-205 (`ipm_dense_c205.json`), A1's cliff
-(`chain_cliff.json`), the groups that take it away (`chain_groups.json`) and the benchmark sweep of the chain against CasADi SX after them (`sweep_chain_t3.*`) and A7's profile of the dense IPM (`a7_profile_dense_ipm.txt`, made with
+(`chain_cliff.json`), the groups that take it away (`chain_groups.json`) and the benchmark sweep of the chain against CasADi SX after them (`sweep_chain_t3.*`), and Tier 4's register-tile prototype, rendered from a scratch copy of the lowering with `kernels.py` and `shapes.py` (`kernels_t4_proto_4x8.json`, `shapes_t4_proto_small.json`) and A7's profile of the dense IPM (`a7_profile_dense_ipm.txt`, made with
 `../perf_2026_09_27_ipm_speed/prof.py`).

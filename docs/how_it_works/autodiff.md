@@ -79,17 +79,24 @@ One mapped call then shares the primal and adjoint expressions across those resu
 each result's original seed layout, including zero seed rows. Generic runtime seeds instead enter
 one joint derivative helper for all active formals.
 
-A mapped tangent body grows with its seeds. Once its code no longer fits the processor's
-instruction cache, every iteration fetches it again from the next level, and each operation costs
-several times more. Forward mode estimates a body's code from its expression graph, at about five
-bytes for each scalar operation it expands to. When that passes the target's `body_bytes`, half its
-instruction cache, the seeds are split into groups, each its own mapped call over every iteration,
-with enough groups that each body comes to about that budget. Every group recomputes the primal and
-the adjoint, estimated as the callee's own body. So the seeds stay in one body when that part alone
-is past the budget, when a body of one seed would not fit either, or when the recomputation would
-add more than half the body's work. A group's tangents are the same expressions, simplified within
-the group, so a result can differ from the single body's in its last bits. The target is the one in
-force while the derivative is built.
+A mapped tangent body grows with its seeds, and a body expanded into scalar code (a callee marked
+`.scalar()`, whose derivatives inherit the hint) grows in machine code with them. Once that code no
+longer fits the processor's instruction cache, every iteration fetches it again from the next level.
+Forward mode estimates an expanded body's code from its expression graph, at about five bytes an
+operation. When that passes the target's `body_bytes`, half its instruction cache, the seeds are
+split into groups, each its own mapped call over every iteration, with enough groups that each body
+comes to about that budget. A body kept in loops stays compact at any size and is never split.
+Every group recomputes the primal and the adjoint, estimated as the callee's own body, and a formal
+split into groups no longer shares them with the other formals' packed body. So the seeds stay in
+one body when that part alone is past the budget, when a body of one seed would not fit either, or
+when the recomputation would add more than half the body's work. A group's tangents are the same
+expressions, simplified within the group, so a result can differ from the single body's in its last
+bits.
+
+The target is the one in force while the derivative is built, with two limits. Each formal's body
+is judged on its own, so bodies that packing then joins can pass the budget together. And the
+derivative helpers the process caches (of a scan, a while loop, a call with a custom JVP, and a
+template's derived instances) keep the grouping of the target they were first built under.
 
 One case where one-sided coloring would lose that guarantee is a shared stride-0 formal marked
 differentiable. It gives the Hessian a dense row and column, so coloring the global pattern as a

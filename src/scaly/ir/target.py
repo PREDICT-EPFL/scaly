@@ -109,8 +109,9 @@ class Target:
   @property
   def body_bytes(self) -> int:
     """The machine code a loop body may take and still stay in the instruction cache across its
-    trips: half of ``l1i_bytes``. A mapped tangent body larger than this is split into groups of
-    seeds, each its own loop, when the primal each group recomputes costs little (``ad.forward``)."""
+    trips: half of ``l1i_bytes``. A mapped tangent body expanded into more scalar code than this is
+    split into groups of seeds, each its own loop, when the primal each group recomputes costs
+    little (``ad.forward``)."""
     return self.choices.l1i_bytes // 2
 
   @property

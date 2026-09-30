@@ -29,6 +29,7 @@ from ..ir.expr import (
   copysign,
   define_rules,
   equal,
+  expr_has_trait,
   not_equal,
   gather,
   op_def,
@@ -1108,7 +1109,15 @@ def _body_ops(fn: Any) -> int:
 _MOVES = frozenset({ExprOp.INPUT, ExprOp.CONST, ExprOp.RESHAPE, ExprOp.SLICE, ExprOp.CONCAT, ExprOp.STACK, ExprOp.GATHER, ExprOp.TRANSPOSE})
 
 
-# The most that recomputing the primal in every group may add to a tangent body's work. A split
+def _expands(fn: Any) -> bool:
+  """Whether ``fn``'s body becomes scalar code, the one form whose code grows with its operations:
+  it asks to (``.scalar()``, which derivatives inherit) and every index is known at generation time.
+  A body in loops stays compact at any size, and automatic expansion stops at a few thousand
+  operations (``passes.program.scalarize``), within every target's budget but the smallest."""
+  return fn._effective_lowering() == "scalar" and not any(expr_has_trait(n, "runtime_index") for n in topo(fn.outputs))
+
+
+# The most that recomputing the primal in the groups may add to a tangent body's work. A split
 # within it pays on any processor whose cost per operation rises by 1.5x or more past its
 # instruction cache: 2.8x on the reference machine, 2x in a Linux VM on it.
 MAX_RECOMPUTE = 0.5
@@ -1116,18 +1125,21 @@ MAX_RECOMPUTE = 0.5
 
 def _seed_groups(callee: Any, fn: ConcreteFunction, nseed: int) -> list[tuple[int, int]]:
   """The seeds of ``fn``, a mapped tangent body of ``callee``, in contiguous groups whose bodies
-  come to about the target's ``body_bytes``: a body past the instruction cache streams its code
-  from L2 at every trip (the chain of masses' stage Hessian, 2.8x slower per operation past 192 KiB
-  on the reference machine). Every group recomputes the primal, estimated as ``callee``'s own body,
-  so the seeds stay in one group when that alone is past the budget, when one seed's body would not
-  fit, or when the recomputation would add more than ``MAX_RECOMPUTE`` of the body's work."""
+  come to about the target's ``body_bytes``: an expanded body past the instruction cache streams
+  its code from L2 at every trip (the chain of masses' stage Hessian, 2.8x slower per operation past
+  192 KiB on the reference machine). Every group recomputes the primal, estimated as ``callee``'s own
+  body, and a formal split into groups no longer shares it with the other formals' bodies
+  (``_pack_jvp_maps``), which then compute it once more: a split into ``count`` groups adds ``count``
+  of them. The seeds stay in one group when the body is not expanded (``_expands``), when the primal
+  alone is past the budget, when one seed's body would not fit, or when the recomputation would add
+  more than ``MAX_RECOMPUTE`` of the body's work."""
   budget = get_target().body_bytes // BYTES_PER_BODY_OP
   total = _body_ops(fn)
   shared = min(_body_ops(callee), total)
-  if total <= budget or shared >= budget:
+  if total <= budget or shared >= budget or not _expands(fn):
     return [(0, nseed)]
   count = -(-(total - shared) // (budget - shared))
-  if count > nseed or (count - 1) * shared > MAX_RECOMPUTE * total:
+  if count > nseed or count * shared > MAX_RECOMPUTE * total:
     return [(0, nseed)]
   bounds = [round(g * nseed / count) for g in range(count + 1)]
   return list(zip(bounds[:-1], bounds[1:], strict=True))
@@ -1504,10 +1516,15 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       parts = []
       for lo, hi in groups:
         count = hi - lo
-        fn = inner_fn if count == nseed else _call_jvp_many_function(callee, output_idx, formals, count, (None,) * len(formals))[0]
-        primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
+        # A group of fewer seeds is its own function, with the arguments its body reads.
+        fn, arg_idx, seed_idx, _ = (
+          (inner_fn, primal_arg_indices, seed_indices, None)
+          if count == nseed
+          else _call_jvp_many_function(callee, output_idx, formals, count, (None,) * len(formals))
+        )
+        primal_specs = [(expr.args[i], starts[i], strides[i]) for i in arg_idx]
         seed_specs = [
-          (gather(tan, idx[:, lo:hi, :].reshape(-1)), 0, count * callee.inputs[i].size) for i in seed_indices for tan, idx in (generic_seeds[i],)
+          (gather(tan, idx[:, lo:hi, :].reshape(-1)), 0, count * callee.inputs[i].size) for i in seed_idx for tan, idx in (generic_seeds[i],)
         ]
         # A group's body is its own loop over the trips, so it stays in the instruction cache for
         # all of them: several groups are not packed into one body again.
