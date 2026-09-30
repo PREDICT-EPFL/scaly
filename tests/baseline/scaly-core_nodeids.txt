@@ -286,6 +286,7 @@ tests/core/codegen/test_adapter.py::test_a_header_adapter_leaves_the_kernel_alon
 tests/core/codegen/test_adapter.py::test_a_header_adapter_replaces_the_c_header
 tests/core/codegen/test_adapter.py::test_every_hook_reaches_its_place
 tests/core/codegen/test_adapter.py::test_names_resolve_through_entry_points_and_are_checked
+tests/core/codegen/test_c.py::test_both_spellings_of_the_nan_extrema_agree
 tests/core/codegen/test_c.py::test_c_api_header_exposes_pointer_abi_and_typed_buffers
 tests/core/codegen/test_c.py::test_c_api_header_exposes_sparse_output_metadata
 tests/core/codegen/test_c.py::test_c_header_typed_buffers_compile_and_run_from_c
@@ -295,6 +296,7 @@ tests/core/codegen/test_c.py::test_c_source_column_slice_is_not_contiguous
 tests/core/codegen/test_c.py::test_c_source_executes_scalar_subset_through_universal_abi
 tests/core/codegen/test_c.py::test_c_source_lowers_call_nodes_through_internal_raw_function
 tests/core/codegen/test_c.py::test_compiled_erf_matches_math_erf
+tests/core/codegen/test_c.py::test_nan_propagating_extrema_are_spelled_once_and_defined_only_where_used
 tests/core/codegen/test_c.py::test_renderer_spells_explicit_paired_store
 tests/core/codegen/test_c.py::test_scalarized_stores_coalesce_into_vector_accesses
 tests/core/codegen/test_c.py::test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target

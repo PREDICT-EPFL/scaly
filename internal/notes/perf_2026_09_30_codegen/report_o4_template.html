@@ -1,0 +1,49 @@
+<main>
+<h1>O4: one instruction for a NaN-propagating max or min</h1>
+<p class="sub">Step 4 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-199 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A <code>max</code> or <code>min</code> reduction propagates NaN as <code>np.max</code> does, which C's <code>fmax</code> does not, so each step was the select <code>((cur &lt; x) || (x != x)) ? x : cur</code>: two dependent compares and a select, 851 of them in the generated QAFIRO solver (norms, step lengths, residual maxima). AArch64 has the NaN-propagating maximum as one instruction, and clang exposes it; the renderer now spells the select that way where the compiler can.</p>
+<ul>
+<li><b>Speed:</b> the generated IPM <span class="ok">QAFIRO sparse 1.16× faster</span>, <span class="ok">HS118 dense 1.09×</span>, CVXQP1_S dense 1.07×, the sparse MPC 1.06×; elementwise_1e5 1.02×. That is <code>-ffinite-math-only</code>'s whole gain on these kernels, without its license to assume no NaN.</li>
+<li><b>Semantics:</b> the builtins are IEEE 754-2019 <code>maximum</code>/<code>minimum</code>: a NaN operand gives NaN, and −0 counts below +0 where the select kept the first of two zeros. Only a zero result's sign can differ, which the reductions' four lanes already leave open. Float32 reductions keep the select (the builtins would give the expression a double's type).</li>
+<li><b>Portability:</b> the macro is defined only in a source that uses it, after the vector typedef, behind <code>__has_builtin</code>; GCC, older clang and any other compiler get the select as a <code>static inline</code> function. Checked: Apple clang 21 (C, C++), GCC 15 at <code>-std=c99 -Wall -Wextra -Werror</code>.</li>
+<li><b>Tests:</b> 4 428 passed, 57 skipped, 5 xfailed (2 new). Seven mutants, seven killed. Snapshot <code>control.c</code> regenerated.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O4”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>codegen/c.py</code>: <code>_nan_extremum</code> recognizes the float64 select of a max step, <code>select((cur &lt; x) || (x != x), x, cur)</code>, and of a min step, <code>select((x &lt; cur) || (x != x), x, cur)</code>, by node identity (both dialects are hash-consed), and <code>_emit_scalar</code> renders it as <code>SCALY_FMAX_NAN(cur, x)</code> or <code>SCALY_FMIN_NAN(cur, x)</code>. <code>with_prelude</code> inserts the definitions (<code>_NAN_EXTREMA</code>) into a finished source that uses them; <code>render_program_c</code> and the solver-bearing path in <code>codegen/aot.py</code> both pass their source through it.</li>
+<li>The lowering is unchanged: the renderer still makes no lowering decision, it spells one it recognizes.</li>
+<li><code>docs/how_it_works/lowering.md</code>: the spelling and the zero-sign caveat.</li>
+</ul>
+<pre><code>fcmp  d1, d1            ; today: x != x
+fccmp d0, d1, #8, vc    ;        cur &lt; x, if ordered
+fcsel d0, d1, d0, mi
+
+fmax  d0, d0, d1        ; __builtin_elementwise_maximum(cur, x)</code></pre>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/codegen/test_c.py</code>: the macros appear, with their definitions after the typedef, exactly in a source with an extremum reduction, and no NaN test is left in its body; a source without one has neither; a float32 reduction keeps its select. Both spellings compiled from one source (the builtin test switched off for the second) give NumPy's maximum, minimum and infinity norm, NaN at the first, a middle and the last element included, and agree with each other.</li>
+<li>The existing four-lane extremum tests (NaN in every position, lengths 1 to 1 001) run through the builtins on this machine.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 never recognized</td><td class="ok"><code>test_nan_propagating_extrema_are_spelled_once_and_defined_only_where_used</code></td></tr>
+<tr><td>M2 max and min swapped</td><td class="ok">the same</td></tr>
+<tr><td>M3 no prelude</td><td class="ok">the same</td></tr>
+<tr><td>M4 prelude in every source</td><td class="ok">the same</td></tr>
+<tr><td>M5 float32 too</td><td class="ok">the same</td></tr>
+<tr><td>M6 fallback without the NaN test</td><td class="ok"><code>test_both_spellings_of_the_nan_extrema_agree</code></td></tr>
+<tr><td>M7 operands swapped</td><td class="ok"><code>test_generated_c_matches_snapshot[control]</code> (equivalent but for a NaN's payload and a zero's sign)</td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The kernels whose C changed, O2 against O4 with the JIT's flags; the last column is O2 under <code>-ffinite-math-only</code>. Nine interleaved rounds, fastest sample. CVXQP1_S's 1.06 here is noise: its O2 build timed 344 µs in this run against 370 in every other; fifteen rounds give 0.932, and the sparse MPC 0.947.</p>
+{{TABLE}}
+
+<h2>Next</h2>
+<p>O5 (C-200): the copy loops of multi-seed forward mode.</p>
+</main>

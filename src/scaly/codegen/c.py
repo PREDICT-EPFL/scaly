@@ -73,6 +73,37 @@ def _includes(extra: tuple[str, ...] = ()) -> list[str]:
 # Width 4 measured slower than scalar stores under GCC on the chain M=5 Hessian.
 _VECTOR_TYPEDEF = "typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));"
 
+# The NaN-propagating maximum and minimum the extremum reductions select (``_nan_extremum``): one
+# ``fmax``/``fmin`` instruction on AArch64 through clang's builtins, which have the IEEE 754-2019
+# semantics (a NaN operand gives NaN; -0 is below +0), and the select itself anywhere else. Only
+# a zero's sign can differ between the two, as it already may between the reductions' lanes.
+_NAN_EXTREMA = (
+  "#if defined(__has_builtin)",
+  "#if __has_builtin(__builtin_elementwise_maximum) && __has_builtin(__builtin_elementwise_minimum)",
+  "#define SCALY_FMAX_NAN(a, b) __builtin_elementwise_maximum(a, b)",
+  "#define SCALY_FMIN_NAN(a, b) __builtin_elementwise_minimum(a, b)",
+  "#endif",
+  "#endif",
+  "#ifndef SCALY_FMAX_NAN",
+  "static inline double scaly_fmax_nan(double a, double b) { return ((a < b) || (b != b)) ? b : a; }",
+  "static inline double scaly_fmin_nan(double a, double b) { return ((b < a) || (b != b)) ? b : a; }",
+  "#define SCALY_FMAX_NAN(a, b) scaly_fmax_nan(a, b)",
+  "#define SCALY_FMIN_NAN(a, b) scaly_fmin_nan(a, b)",
+  "#endif",
+)
+
+
+def with_prelude(source: str) -> str:
+  """``source`` with the definitions its body uses inserted after the vector typedef: the NaN
+  extrema (``_NAN_EXTREMA``) when it selects one. Every renderer of a whole translation unit
+  passes its text through here."""
+  if "SCALY_FMAX_NAN(" not in source and "SCALY_FMIN_NAN(" not in source:
+    return source
+  head, sep, tail = source.partition(_VECTOR_TYPEDEF + "\n")
+  if not sep:
+    raise LoweringError("generated source lost its vector typedef; the NaN extrema have nowhere to go")
+  return head + sep + "\n".join(_NAN_EXTREMA) + "\n" + tail
+
 
 def render_program_c_source(fun: Function, observe: ProgramObserver | None = None) -> str:
   """Lower a non-solver host ``fun`` and render it. ``codegen/aot.py`` lowers once for the whole
@@ -104,7 +135,7 @@ def render_program_c(prog: ProgramNode, fun: ConcreteFunction, adapters: tuple[A
   lines += _render_entry(proc, fun, adapters)
   lines += adapter_sources(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), adapters), adapters)
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
-  return "\n".join(lines).rstrip() + "\n"
+  return with_prelude("\n".join(lines).rstrip() + "\n")
 
 
 def adapter_defines(adapters: tuple[Adapter, ...]) -> list[str]:
@@ -342,6 +373,23 @@ def _narrow(call: str, node: ProgramNode) -> str:
   return f"((float){call})" if node.dtype == dtypes.float32 else call
 
 
+def _nan_extremum(node: ProgramNode) -> str | None:
+  """``SCALY_FMAX_NAN`` for a float64 ``select((cur < value) || (value != value), value, cur)``,
+  ``SCALY_FMIN_NAN`` for ``select((value < cur) || (value != value), value, cur)``: the step of a
+  NaN-propagating max or min reduction (``passes/lowering.py``); None for any other select."""
+  cond, value, cur = node.args
+  if node.dtype != dtypes.float64 or cond.op != ProgramOp.OR:
+    return None
+  lt, ne = cond.args
+  if lt.op != ProgramOp.LT or ne.op != ProgramOp.NE or ne.args[0] is not value or ne.args[1] is not value:
+    return None
+  if lt.args[0] is cur and lt.args[1] is value:
+    return "SCALY_FMAX_NAN"
+  if lt.args[0] is value and lt.args[1] is cur:
+    return "SCALY_FMIN_NAN"
+  return None
+
+
 def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
   """Render a prepared scalar tree bottom up."""
   text: dict[int, str] = {}
@@ -384,7 +432,8 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
     elif op == ProgramOp.ISFINITE:
       s = f"(isfinite({args[0]}) != 0)"
     elif op == ProgramOp.SELECT:
-      s = f"({args[0]} ? {args[1]} : {args[2]})"
+      extremum = _nan_extremum(node)
+      s = f"({args[0]} ? {args[1]} : {args[2]})" if extremum is None else f"{extremum}({args[2]}, {args[1]})"
     elif op == ProgramOp.CAST:
       s = f"(({node.dtype.c_type}){args[0]})"
     else:

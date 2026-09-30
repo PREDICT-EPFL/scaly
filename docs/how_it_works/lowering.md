@@ -161,6 +161,13 @@ by the generated code rather than by the compiler. Shorter reductions keep one c
 the matrix products whose reduction axis is the matrix's slow one: those put the reduction loop
 outermost and vectorize over independent outputs instead.
 
+A `max` or `min` reduction propagates NaN as `np.max` does, so its step is a select C's `fmax`
+cannot express: `((cur < x) || (x != x)) ? x : cur`. The renderer spells that select
+`SCALY_FMAX_NAN(cur, x)` (and the minimum `SCALY_FMIN_NAN`), defined at the top of a source that
+uses it as clang's `__builtin_elementwise_maximum`, the IEEE 754-2019 maximum and one instruction on
+AArch64, where the compiler has it, and as the select anywhere else. The two differ only in the
+sign of a zero result, which the reduction's lanes already leave open.
+
 ### Loopy-code optimizations
 
 `combine_scatter_sums` replaces a left-associated sum of single-use zero-filled scatters with one

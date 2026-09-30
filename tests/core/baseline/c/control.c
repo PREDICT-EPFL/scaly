@@ -2,6 +2,18 @@
 #include <stddef.h>
 #include <stdint.h>
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_elementwise_maximum) && __has_builtin(__builtin_elementwise_minimum)
+#define SCALY_FMAX_NAN(a, b) __builtin_elementwise_maximum(a, b)
+#define SCALY_FMIN_NAN(a, b) __builtin_elementwise_minimum(a, b)
+#endif
+#endif
+#ifndef SCALY_FMAX_NAN
+static inline double scaly_fmax_nan(double a, double b) { return ((a < b) || (b != b)) ? b : a; }
+static inline double scaly_fmin_nan(double a, double b) { return ((b < a) || (b != b)) ? b : a; }
+#define SCALY_FMAX_NAN(a, b) scaly_fmax_nan(a, b)
+#define SCALY_FMIN_NAN(a, b) scaly_fmin_nan(a, b)
+#endif
 
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
@@ -23,10 +35,10 @@ static inline void control_step_raw(const double* c, const double* u, double* n,
   double v5 = u[1];
   double v6 = c[2];
   double v7 = (((1.0 < v6) ? 1.0 : v6) + v5);
-  double v8 = (((v2 < v4) || (v4 != v4)) ? v4 : v2);
+  double v8 = SCALY_FMAX_NAN(v2, v4);
   *(double2*)(n) = (double2){v2, (v4 + ((v1 * v1) + (v5 * v5)))};
   n[2] = v7;
-  m[0] = (((v8 < v7) || (v7 != v7)) ? v7 : v8);
+  m[0] = SCALY_FMAX_NAN(v8, v7);
 }
 
 int control(const double** arg, double** res, int* iw, double* w, int mem) {

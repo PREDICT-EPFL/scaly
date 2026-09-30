@@ -394,3 +394,66 @@ def test_renderer_spells_explicit_paired_store() -> None:
   proc = p.proc("paired", [out], [p.store_pair(p.view(out, [p.const_int(0)]), p.const_float(1), p.const_float(2))])
   source = "\n".join(_render_raw_callee(proc))
   assert "*(double2*)(out) = (double2){1.0, 2.0};" in source
+
+
+def _extremum_fn(name: str, n: int, dtype: str = "float64") -> sc.Function:
+  from scaly.ir.expr import reduce_max, reduce_min
+
+  x = sc.sym("x", n, dtype=dtype)
+  return sc.Function.from_exprs(name, [x], [reduce_max(x).block(), reduce_min(x), sc.norm_inf(x - 1.0)], ["x"], ["mx", "mn", "ni"])
+
+
+def test_nan_propagating_extrema_are_spelled_once_and_defined_only_where_used() -> None:
+  """A max or min reduction's step renders as ``SCALY_FMAX_NAN``/``SCALY_FMIN_NAN``, one ``fmax``
+  instruction under clang, defined after the vector typedef; a source without one has neither
+  the macros nor their definitions, and a float32 reduction keeps its select, since the builtins
+  would give its expression a double's type."""
+  from scaly.codegen import render_c_source
+
+  src = render_c_source(_extremum_fn("nan_extrema", 64))
+  assert src.count("SCALY_FMAX_NAN(") > 3 and src.count("SCALY_FMIN_NAN(") > 3
+  assert "!= v" not in src.split('extern "C"')[1]  # no NaN test left in the body
+  typedef = src.index("typedef double double2")
+  assert typedef < src.index("#define SCALY_FMAX_NAN") < src.index("int nan_extrema(")
+  x = sc.sym("x", 64)
+  plain = render_c_source(sc.Function.from_exprs("no_extrema", [x], [(x * 2.0).block()], ["x"], ["y"]))
+  assert "SCALY_FMAX_NAN" not in plain and "scaly_fmax_nan" not in plain
+  single = render_c_source(_extremum_fn("nan_extrema_f32", 64, "float32"))
+  assert "SCALY_FMAX_NAN(" not in single and "!= v" in single
+
+
+def test_both_spellings_of_the_nan_extrema_agree(tmp_path) -> None:
+  """The builtins and the select they replace (compiled with the builtin test turned off) give the
+  same maximum, minimum and infinity norm, and a NaN anywhere gives NaN."""
+  cc = shutil.which("cc")
+  if cc is None:
+    pytest.skip("cc is required to compile the two spellings")
+  from scaly.codegen import render_c_source
+
+  source = render_c_source(_extremum_fn("both_extrema", 37))
+  assert "#if defined(__has_builtin)" in source
+  c_double_p = ctypes.POINTER(ctypes.c_double)
+  results = {}
+  for label, text in {"builtin": source, "select": source.replace("#if defined(__has_builtin)", "#if 0", 1)}.items():
+    src, lib_path = tmp_path / f"{label}.c", tmp_path / f"lib{label}.so"
+    src.write_text(text)
+    subprocess.run([cc, "-O2", "-fPIC", "-dynamiclib" if sys.platform == "darwin" else "-shared", str(src), "-lm", "-o", str(lib_path)], check=True)
+    lib = ctypes.CDLL(str(lib_path))
+    lib.both_extrema.restype = ctypes.c_int
+    rows = []
+    rng = np.random.default_rng(37)
+    for nan_at in (None, 0, 17, 36):
+      xv = rng.standard_normal(37)
+      if nan_at is not None:
+        xv[nan_at] = np.nan
+      x_buf = (ctypes.c_double * 37)(*xv)
+      outs = [(ctypes.c_double * 1)() for _ in range(3)]
+      args = (c_double_p * 1)(ctypes.cast(x_buf, c_double_p))
+      res = (c_double_p * 3)(*(ctypes.cast(o, c_double_p) for o in outs))
+      assert lib.both_extrema(args, res, None, None, 0) == 0
+      got = np.array([o[0] for o in outs])
+      want = np.array([np.max(xv), np.min(xv), np.max(np.abs(xv - 1.0))])
+      np.testing.assert_array_equal(got, want)  # NaN compares equal to NaN here
+      rows.append(got)
+    results[label] = np.array(rows)
+  np.testing.assert_array_equal(results["builtin"], results["select"])

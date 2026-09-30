@@ -834,8 +834,12 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       statements defeats clang's pairing of the partial sums into vector lanes. The JIT keeps
       clang's `-ffp-contract=on`; the benchmark protocol (`HOST_CFLAGS`) was never touched
       (`notes/codegen_speed_o3_report.html`).
-- [ ] **C-199. NaN-propagating max and min without a separate NaN test.** `-ffinite-math-only`
-      gives the IPM 0.85 to 0.95; the reductions test `b != b` beside every compare.
+- [x] **C-199. NaN-propagating max and min without a separate NaN test.** The extremum
+      reductions' step, `((cur < x) || (x != x)) ? x : cur`, cost clang two compares and a select;
+      it now renders as `SCALY_FMAX_NAN`/`SCALY_FMIN_NAN`, clang's IEEE-maximum builtins where
+      present (one `fmax` on AArch64) and the select elsewhere, float64 only, defined only in a
+      source that uses them. The generated IPM: qafiro 1.16x, hs118 1.09x, cvxqp1 1.07x, sparse
+      MPC 1.06x, matching `-ffinite-math-only` (`notes/codegen_speed_o4_report.html`).
 - [ ] **C-200. A repeated concat (a tile) as one loop fusion can inline.** Multi-seed forward mode
       copies a primal factor once per seed, one loop each, before the elementwise use.
 

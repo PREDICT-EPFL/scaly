@@ -1,0 +1,65 @@
+{
+ "cells": [
+  "o2/jit",
+  "o4/jit",
+  "o2/finite"
+ ],
+ "kernels": [
+  "elementwise_1e5",
+  "ipm_cvxqp1_dense",
+  "ipm_hs118_dense",
+  "ipm_mpc_12_4_20_sparse",
+  "ipm_qafiro_sparse"
+ ],
+ "best_ns": {
+  "elementwise_1e5/o2/jit": 763458.0,
+  "elementwise_1e5/o4/jit": 747833.0,
+  "elementwise_1e5/o2/finite": 739542.0,
+  "ipm_cvxqp1_dense/o2/jit": 343875.0,
+  "ipm_cvxqp1_dense/o4/jit": 364625.0,
+  "ipm_cvxqp1_dense/o2/finite": 355208.0,
+  "ipm_hs118_dense/o2/jit": 25583.0,
+  "ipm_hs118_dense/o4/jit": 23417.0,
+  "ipm_hs118_dense/o2/finite": 23583.0,
+  "ipm_mpc_12_4_20_sparse/o2/jit": 629125.0,
+  "ipm_mpc_12_4_20_sparse/o4/jit": 594917.0,
+  "ipm_mpc_12_4_20_sparse/o2/finite": 570500.0,
+  "ipm_qafiro_sparse/o2/jit": 19791.0,
+  "ipm_qafiro_sparse/o4/jit": 17083.0,
+  "ipm_qafiro_sparse/o2/finite": 17000.0
+ },
+ "median_ns": {
+  "elementwise_1e5/o2/jit": 777833.0,
+  "elementwise_1e5/o4/jit": 761625.0,
+  "elementwise_1e5/o2/finite": 755959.0,
+  "ipm_cvxqp1_dense/o2/jit": 379167.0,
+  "ipm_cvxqp1_dense/o4/jit": 372333.0,
+  "ipm_cvxqp1_dense/o2/finite": 371125.0,
+  "ipm_hs118_dense/o2/jit": 26458.0,
+  "ipm_hs118_dense/o4/jit": 24250.0,
+  "ipm_hs118_dense/o2/finite": 24334.0,
+  "ipm_mpc_12_4_20_sparse/o2/jit": 636750.0,
+  "ipm_mpc_12_4_20_sparse/o4/jit": 601542.0,
+  "ipm_mpc_12_4_20_sparse/o2/finite": 601458.0,
+  "ipm_qafiro_sparse/o2/jit": 20625.0,
+  "ipm_qafiro_sparse/o4/jit": 17709.0,
+  "ipm_qafiro_sparse/o2/finite": 17625.0
+ },
+ "err": {
+  "elementwise_1e5/o2/jit": 0.0,
+  "elementwise_1e5/o4/jit": 0.0,
+  "elementwise_1e5/o2/finite": 0.0,
+  "ipm_cvxqp1_dense/o2/jit": 0.0,
+  "ipm_cvxqp1_dense/o4/jit": 0.0,
+  "ipm_cvxqp1_dense/o2/finite": 0.0,
+  "ipm_hs118_dense/o2/jit": 0.0,
+  "ipm_hs118_dense/o4/jit": 0.0,
+  "ipm_hs118_dense/o2/finite": 0.0,
+  "ipm_mpc_12_4_20_sparse/o2/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/o4/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/o2/finite": 0.0,
+  "ipm_qafiro_sparse/o2/jit": 0.0,
+  "ipm_qafiro_sparse/o4/jit": 0.0,
+  "ipm_qafiro_sparse/o2/finite": 0.0
+ }
+}

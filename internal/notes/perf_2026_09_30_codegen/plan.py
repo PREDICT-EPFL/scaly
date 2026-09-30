@@ -53,7 +53,7 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
     "C-199",
     "NaN-propagating max and min without a separate NaN test",
     "<code>finite</code>: ipm_qafiro_sparse 0.85, ipm_hs118_dense 0.90, ipm_mpc_12_4_20_sparse 0.95",
-    None,
+    ("the IPM: qafiro 0.86, hs118 0.92, cvxqp1 0.93, sparse MPC 0.95", "codegen_speed_o4_report.html"),
   ),
   (
     5,
@@ -108,6 +108,7 @@ REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
   ("report_o1_template.html", "codegen_speed_o1_report.html", "timing_o1_all.json", {"base/jit": "before", "o1/jit": "after"}),
   ("report_o2_template.html", "codegen_speed_o2_report.html", "timing_o2.json", {"o1/jit": "before (O1)", "o2/jit": "after", "o1/assoc": "O1, -fassociative-math"}),
   ("report_o3_template.html", "codegen_speed_o3_report.html", "timing_o3_diag.json", {"o2/jit": "O2", "o2/contract": "-ffp-contract=fast", "o2/finite": "-ffinite-math-only", "o2/fast": "-ffast-math"}),
+  ("report_o4_template.html", "codegen_speed_o4_report.html", "timing_o4.json", {"o2/jit": "before (O2)", "o4/jit": "after", "o2/finite": "O2, -ffinite-math-only"}),
 ]
 
 

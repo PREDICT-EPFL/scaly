@@ -1,0 +1,65 @@
+{
+ "cells": [
+  "o2/jit",
+  "o2/fmaximum",
+  "o2/finite"
+ ],
+ "kernels": [
+  "ipm_hs118_dense",
+  "ipm_qafiro_sparse",
+  "ipm_cvxqp1_dense",
+  "ipm_mpc_12_4_20_sparse",
+  "elementwise_1e5"
+ ],
+ "best_ns": {
+  "ipm_hs118_dense/o2/jit": 24042.0,
+  "ipm_hs118_dense/o2/fmaximum": 23500.0,
+  "ipm_hs118_dense/o2/finite": 23500.0,
+  "ipm_qafiro_sparse/o2/jit": 19708.0,
+  "ipm_qafiro_sparse/o2/fmaximum": 17167.0,
+  "ipm_qafiro_sparse/o2/finite": 17000.0,
+  "ipm_cvxqp1_dense/o2/jit": 364375.0,
+  "ipm_cvxqp1_dense/o2/fmaximum": 364917.0,
+  "ipm_cvxqp1_dense/o2/finite": 360291.0,
+  "ipm_mpc_12_4_20_sparse/o2/jit": 615125.0,
+  "ipm_mpc_12_4_20_sparse/o2/fmaximum": 581584.0,
+  "ipm_mpc_12_4_20_sparse/o2/finite": 595000.0,
+  "elementwise_1e5/o2/jit": 764000.0,
+  "elementwise_1e5/o2/fmaximum": 743167.0,
+  "elementwise_1e5/o2/finite": 706042.0
+ },
+ "median_ns": {
+  "ipm_hs118_dense/o2/jit": 26416.0,
+  "ipm_hs118_dense/o2/fmaximum": 24250.0,
+  "ipm_hs118_dense/o2/finite": 24334.0,
+  "ipm_qafiro_sparse/o2/jit": 20584.0,
+  "ipm_qafiro_sparse/o2/fmaximum": 17791.0,
+  "ipm_qafiro_sparse/o2/finite": 17625.0,
+  "ipm_cvxqp1_dense/o2/jit": 377584.0,
+  "ipm_cvxqp1_dense/o2/fmaximum": 373250.0,
+  "ipm_cvxqp1_dense/o2/finite": 370792.0,
+  "ipm_mpc_12_4_20_sparse/o2/jit": 636917.0,
+  "ipm_mpc_12_4_20_sparse/o2/fmaximum": 601708.0,
+  "ipm_mpc_12_4_20_sparse/o2/finite": 603959.0,
+  "elementwise_1e5/o2/jit": 780208.0,
+  "elementwise_1e5/o2/fmaximum": 756083.0,
+  "elementwise_1e5/o2/finite": 760375.0
+ },
+ "err": {
+  "ipm_hs118_dense/o2/jit": 0.0,
+  "ipm_hs118_dense/o2/fmaximum": 0.0,
+  "ipm_hs118_dense/o2/finite": 0.0,
+  "ipm_qafiro_sparse/o2/jit": 0.0,
+  "ipm_qafiro_sparse/o2/fmaximum": 0.0,
+  "ipm_qafiro_sparse/o2/finite": 0.0,
+  "ipm_cvxqp1_dense/o2/jit": 0.0,
+  "ipm_cvxqp1_dense/o2/fmaximum": 0.0,
+  "ipm_cvxqp1_dense/o2/finite": 0.0,
+  "ipm_mpc_12_4_20_sparse/o2/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/o2/fmaximum": 0.0,
+  "ipm_mpc_12_4_20_sparse/o2/finite": 0.0,
+  "elementwise_1e5/o2/jit": 0.0,
+  "elementwise_1e5/o2/fmaximum": 0.0,
+  "elementwise_1e5/o2/finite": 0.0
+ }
+}

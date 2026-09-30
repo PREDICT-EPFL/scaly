@@ -33,6 +33,7 @@ from scaly.codegen.c import (
   adapter_sources,
   entry_prologue,
   render_program_c,
+  with_prelude,
   wrap_entry,
 )
 from scaly.function import ConcreteFunction, Function
@@ -405,7 +406,7 @@ def _render_extern_bearing_source(ctx: _RenderCtx, adapters: tuple[Adapter, ...]
     lines += _render_entry(procs[fun.name], fun, adapters)
   lines += adapter_sources(fun, entry_workspace(fun, ctx.workspace_size, adapters), adapters)
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
-  return "\n".join(lines).rstrip() + "\n"
+  return with_prelude("\n".join(lines).rstrip() + "\n")
 
 
 def _render_extern_entry(fun: ConcreteFunction, sz_w: int, adapters: tuple[Adapter, ...]) -> list[str]:
