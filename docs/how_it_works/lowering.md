@@ -184,8 +184,17 @@ on before and the code around them still does, fuses a multiply and an add in so
 in others, so another target's widths can still change the last bits. Under `rounding="portable"`
 every target takes the M3's widths.
 
-A matrix of several rows reads `b` once per row, so when `b` is wider than that limit or larger than
-half the level-1 data cache (`Target.panel_bytes`), the same column blocks run outermost instead.
+A matrix of as many rows as a register tile holds or more runs in tiles instead, four rows by eight
+columns on the M3 (`Target.product_tile`), chosen from the processor's multiply-add units, their
+latency and its registers as BLIS's analytical model chooses them, so that enough independent sums
+hide the latency and each step of `k` loads four elements of `a` and four vectors of `b` for sixteen
+vector multiply-adds. The rows a tile does not fill take tiles of one row. Each output still sums in
+order of `k`, so a tile computes what a row block does.
+
+A matrix of several rows reads `b` once per row, or per tile of rows, so when `b` is wider than
+that limit or larger than half the level-1 data cache (`Target.panel_bytes`), the same column
+blocks run outermost instead; in tiles, only for a `b` larger than the whole cache and from 64
+rows, since a tile of rows reads `b` in place fast enough below that.
 Each block copies its panel of `b` into a contiguous buffer, a chunk of `k` at a time small enough
 to stay in the cache, and every row of `a` passes over the chunk with its sums in registers. The
 copy is what keeps the panel in the cache when `n` is a power of two: read in place, down a column

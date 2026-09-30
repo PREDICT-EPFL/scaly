@@ -965,10 +965,18 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       registers (npmpc_12 1.25x until changed). GEMM 0.98-1.00 of its time at n = 8-256 on the
       M3, the corpus's four changed kernels 0.96-1.00, outputs identical; two, four and eight
       lanes compute the same bits. `generic` renders the same C as before.
-- [ ] **C-213. Register tiles for the products (K2, Tier 4).** `m_r x n_r` tiles from the BLIS
-      model (`vector_registers`, `fma_units`, `fma_latency` join `Target`) in the row-blocked
-      products and K0's panel passes. A scratch prototype of the M3's 4 x 8 tile ran GEMM at
-      n = 16-64 at 51-54 GF/s, 0.86-1.04x BLASFEO's time, bit for bit today's outputs.
+- [x] **C-213. Register tiles for the products (K2, Tier 4).** A matrix product of four rows or
+      more keeps its sums in tiles of `Target.product_tile`, from the BLIS model: enough sums to
+      hide `fma_units` x `fma_latency` within `vector_registers` (three fields that join `Target`),
+      the fewest loads a multiply-add of those; 4 x 8 on the M3, 4 x 16 on AVX-512, 4 x 4 on the
+      two-unit Arm cores. The rows a tile leaves take one-row tiles; K0's panels are tile-wide and
+      now copied only for a `b` past the L1 cache from 64 rows (in place was 1.1-1.6x faster below
+      that). A product filling a tile's rows and more than half its columns keeps its procedure
+      in loops (C-206 extended: a 6-state Riccati step 0.86, 4-state left expanded at 1.023).
+      GEMM 0.57-0.69 of its time at n = 8-256, 47-54 GF/s: 0.67-1.02x BLASFEO to n = 96, 1.06 at
+      128, 1.09-1.10 at 192-256; small products 1.3-2.8x faster, none slower; corpus matmul_48
+      0.71, mlp_small_jac 0.82, riccati_50 0.87. Outputs bit for bit, but for the products newly
+      kept in loops (4e-16). 6 x 8, 8 x 4, 4 x 12 and 4 x 16 tiles measured slower.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

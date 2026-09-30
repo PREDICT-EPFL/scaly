@@ -1,0 +1,12 @@
+Riccati recursion, 20 stages, rendered for the M3 under three rules for keeping a product's
+procedure in loops (scratch driver: ric_rules.py / ric_drive.py, time_entry, fastest of 9 x 20
+calls, JIT flags). "old" is C-206's rule (rows fill the middle block, 8 columns), "new" adds
+products that fill a register tile's rows and more than half its columns, "off" keeps none.
+
+nx=4 nu=2: old 1387 ns, new 1418 (1.023), off 1385 (0.999, same C)
+nx=6 nu=3: old 3457 ns, new 2985 (0.864), off 3456 (1.000, same C)
+nx=8 nu=3: old 3953 ns, new 3952 (1.000, same C), off 6275 (1.587)
+nx=12 nu=4: old 11285 ns, new 11286 (1.000, same C), off 11382 (1.009, same C)
+nx=16 nu=4: old 19944 ns, new 19975 (1.002, same C), off 19998 (1.003, same C)
+
+Adopted: tiles' rows and more than half their columns (so 4 x 4 products, nx=4, stay expanded).

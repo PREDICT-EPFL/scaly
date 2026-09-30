@@ -53,8 +53,36 @@ def test_portable_rounding_makes_the_reference_machines_choices() -> None:
     assert portable.choices is target_module.PORTABLE
     assert portable.row_blocks == (16, 8, 4) and portable.row_blocked_max == 64
     assert (portable.straight_line_ops, portable.body_bytes, portable.panel_bytes) == (4096, 98304, 65536)
+    assert portable.product_tile == (4, 8)
   assert PRESETS["x86-64-v3"].choices is PRESETS["x86-64-v3"]
   assert PRESETS["x86-64-v3"].body_bytes == 16384
+
+
+@pytest.mark.parametrize(
+  ("name", "tile"),
+  [
+    ("apple-m3", (4, 8)),  # 4 units x 4 cycles: 16 sums of 2 lanes; 4 + 4 loads a step, the fewest
+    ("neoverse-v2", (4, 8)),
+    ("cortex-a76", (4, 4)),  # 2 x 4: 8 sums
+    ("cortex-a72", (4, 8)),  # 2 x 7: 14, so 16
+    ("x86-64-v3", (4, 8)),  # 2 x 4 sums of 4 lanes in 16 registers
+    ("x86-64-v4", (4, 16)),
+    ("generic", (1, 8)),  # one lane: no tile, the row blocks
+  ],
+)
+def test_the_product_tile_hides_the_multiply_add_latency(name: str, tile: tuple[int, int]) -> None:
+  target = PRESETS[name]
+  assert target.product_tile == tile
+  rows, columns = tile
+  vectors = columns // target.vector_doubles
+  if rows > 1:
+    assert rows * vectors >= target.fma_units * target.fma_latency  # enough independent sums
+    assert rows * vectors + vectors + 1 <= target.vector_registers  # and room for the operands
+  # More units need more sums: the M3's tile with two units would be twice what it needs.
+  assert dataclasses.replace(PRESETS["apple-m3"], fma_units=2).product_tile == (4, 4)
+  # Sixteen registers cannot hold the sixteen sums and their operands: the tile that comes closest,
+  # fourteen sums of one vector each, with one register for b's vector and one for a's element.
+  assert dataclasses.replace(PRESETS["apple-m3"], vector_registers=16).product_tile == (14, 2)
 
 
 @pytest.mark.parametrize("m, k, n", [(None, 256, 6), (20, 12, 40), (3, 70, 130), (8, 9, 100), (20, 128, 40)])

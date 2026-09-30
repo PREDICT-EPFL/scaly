@@ -1,0 +1,79 @@
+{
+ "flags": [
+  "-O2",
+  "-mcpu=native",
+  "-fno-math-errno"
+ ],
+ "rows": [
+  {
+   "op": "gemm",
+   "n": 32,
+   "base_ns": 1231.73,
+   "new_ns": 1935.18,
+   "blasfeo_ns": 1310.62,
+   "new_over_base": 1.5711073043605337,
+   "base_over_bf": 0.9398071141902307,
+   "new_over_bf": 1.4765378217942655,
+   "new_gflops": 33.866,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 7448,
+   "c_bytes_new": 14292
+  },
+  {
+   "op": "gemm",
+   "n": 64,
+   "base_ns": 9739.17,
+   "new_ns": 14479.82,
+   "blasfeo_ns": 9684.83,
+   "new_over_base": 1.486761192175514,
+   "base_over_bf": 1.0056108367415846,
+   "new_over_bf": 1.4951031664985344,
+   "new_gflops": 36.208,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 7449,
+   "c_bytes_new": 14293
+  },
+  {
+   "op": "gemm",
+   "n": 96,
+   "base_ns": 34995.54,
+   "new_ns": 51763.44,
+   "blasfeo_ns": 32100.13,
+   "new_over_base": 1.4791439137672973,
+   "base_over_bf": 1.090199323180311,
+   "new_over_bf": 1.612561693675384,
+   "new_gflops": 34.184,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 7605,
+   "c_bytes_new": 14370
+  },
+  {
+   "op": "gemm",
+   "n": 128,
+   "base_ns": 84365.59,
+   "new_ns": 117535.0,
+   "blasfeo_ns": 76367.09,
+   "new_over_base": 1.3931627811765437,
+   "base_over_bf": 1.1047375250255052,
+   "new_over_bf": 1.5390792028346243,
+   "new_gflops": 35.686,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 7688,
+   "c_bytes_new": 14470
+  },
+  {
+   "op": "gemm",
+   "n": 256,
+   "base_ns": 648947.37,
+   "new_ns": 926814.81,
+   "blasfeo_ns": 592292.68,
+   "new_over_base": 1.428181779980093,
+   "base_over_bf": 1.0956531996985004,
+   "new_over_bf": 1.5647919369862886,
+   "new_gflops": 36.204,
+   "diff_new_base": 0.0,
+   "c_bytes_base": 7688,
+   "c_bytes_new": 14471
+  }
+ ]
+}

@@ -88,12 +88,13 @@ The AOT output and the JIT read the same `CModule`, produced from a single lower
 
 ## Tuning for a processor
 
-Some choices the lowering makes depend on the processor: how many outputs of a matrix product
-stay in registers (`Target.row_blocks`), how much of a matrix is kept in cache at once
-(`Target.panel_bytes`), up to which size a factorization or triangular solve is straight-line code
-(`Target.straight_line_ops`). `sc.Target` describes the
-processor they are made for: its vector width, its level-1 caches, and the compiler flags that select
-it. A field joins it when a choice first reads it. Rendering takes one, and so does the command line:
+Some choices the lowering makes depend on the processor: how many rows and columns of a matrix
+product keep their sums in registers (`Target.product_tile`, and `Target.row_blocks` for a single
+row), how much of a matrix is kept in cache at once (`Target.panel_bytes`), up to which size a
+factorization or triangular solve is straight-line code (`Target.straight_line_ops`). `sc.Target`
+describes the processor they are made for: its vector width and registers, its multiply-add units
+and their latency, its level-1 caches, and the compiler flags that select it. A field joins it when
+a choice first reads it. Rendering takes one, and so does the command line:
 
 ```python
 module = render_c_module(fn, target="cortex-a76")     # a preset name, or a Target

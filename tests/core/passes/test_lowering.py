@@ -864,6 +864,11 @@ def test_stacks_that_are_not_tiles_keep_their_own_loops() -> None:
     (5, 9, 6),
     (2, 3, 64),
     (3, 4, 65),
+    (4, 4, 5),  # one register tile of rows: a tile of 4 columns, one streamed
+    (9, 20, 13),  # two tiles of rows and one left over; tiles of 8 and 4 columns, one streamed
+    (6, 96, 96),  # tiles at any width, reading b in place
+    (67, 300, 123),  # past the L1 cache from 64 rows: tiles over packed panels, rows and a column left over
+    (64, 1100, 24),  # panels in two chunks of k: the second resumes from the outputs
   ],
 )
 @pytest.mark.parametrize("target", ["apple-m3", "x86-64-v4", "generic"])
@@ -880,14 +885,15 @@ def test_column_blocked_products_match_numpy(m: int | None, k: int, n: int, targ
 
 
 @pytest.mark.parametrize(
-  ("m", "n", "blocked"), [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (1, 96, False), (5, 96, False), (6, 96, True)]
+  ("m", "n", "blocked"),
+  [(None, 12, True), (3, 28, True), (None, 64, True), (None, 80, False), (1, 96, False), (3, 96, False), (4, 96, True), (6, 96, True), (4, 10, True)],
 )
 def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bool) -> None:
   """On the M3, a row of up to 64 columns in whole blocks (12 is one of 8 and one of 4, 28 one of
   16, 8 and 4) keeps its sums in registers and stores each output once, after its reduction; a
-  wider row of a vector or of up to five rows, even one of whole blocks (80, 96), keeps the
-  reduction outermost and accumulates in the output, and one of six rows or more runs its column
-  blocks outermost (C-204), storing each output once again."""
+  wider row of a vector or of up to three rows, even one of whole blocks (80, 96), keeps the
+  reduction outermost and accumulates in the output, and four rows or more fill register tiles at
+  any width, storing each output once again (10 columns: a tile of 8 and one of 2)."""
   a, b = sc.sym("a", 5) if m is None else sc.sym("a", (m, 5)), sc.sym("b", (5, n))
   fn = sc.Function.from_exprs(f"stores_{m}_{n}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
   with sc.target("apple-m3"):
@@ -958,24 +964,25 @@ def test_products_past_the_cache_match_numpy_exactly(m: int | None, k: int, n: i
 
 
 def test_panels_are_packed_in_chunks_that_fit_the_budget() -> None:
-  """On the M3 (64 KiB of panel): a 16-wide block takes chunks of 512 rows of ``k``, an 8-wide one
-  1 024. A ``b`` within the L1 cache and 64 columns keeps the row-by-row blocks, and so does one past
-  it with fewer than sixteen rows, or a wide one with fewer than six, to share the copy."""
+  """On the M3 (64 KiB of panel, 8-column tiles): a product in register tiles copies panels only for
+  a ``b`` larger than the L1 data cache and from 64 rows, in chunks of 1 024 rows of ``k`` for an
+  8-wide panel. Without tiles, the rules of single rows hold (``generic``, 32 KiB of L1: 8 columns,
+  chunks of 256): a ``b`` past the cache from sixteen rows, a wide one from six."""
   with sc.target("apple-m3"):
-    wide_k = _panel_product(16, 1100, 24)
-    assert _packed_buffers(wide_k) == [8192]  # 16 x 512 and 8 x 1024, in one slot
-    assert _chunk_lengths(wide_k) == {512, 1024, 1100 - 1024}  # 16 wide: 512, 512, 76; 8 wide: 1024, 76
-    assert _packed_buffers(_panel_product(15, 1100, 24)) == []
-    assert _packed_buffers(_panel_product(96, 96, 96)) == [16 * 96]  # one chunk: all of k
-    assert _packed_buffers(_panel_product(6, 96, 96)) == [16 * 96]
-    assert _packed_buffers(_panel_product(5, 96, 96)) == []
-    assert _packed_buffers(_panel_product(48, 48, 48)) == []  # 18 KiB of b: row by row, as before
-    assert _packed_buffers(_panel_product(16, 256, 40)) == []  # 80 KiB: past the panel, within L1
+    wide_k = _panel_product(64, 1100, 24)  # 211 KiB of b
+    assert _packed_buffers(wide_k) == [8 * 1024]
+    assert _chunk_lengths(wide_k) == {1024, 1100 - 1024}
+    assert _packed_buffers(_panel_product(63, 1100, 24)) == []
+    assert _packed_buffers(_panel_product(64, 256, 256)) == [8 * 256]  # one chunk: all of k
+    assert _packed_buffers(_panel_product(16, 256, 256)) == []  # a tile of rows reads b in place
+    assert _packed_buffers(_panel_product(96, 96, 96)) == []  # 72 KiB: within the L1 cache
+    assert _packed_buffers(_panel_product(3, 96, 96)) == []  # fewer rows than a tile, fewer than six
     assert _packed_buffers(_panel_product(1, 300, 256)) == []
-  with sc.target("generic"):  # 32 KiB of L1: 20 x 128 x 40 (40 KiB) is past it there, not on the M3
-    assert _packed_buffers(_panel_product(20, 128, 40)) == [8 * 128]
-  with sc.target("apple-m3"):
-    assert _packed_buffers(_panel_product(20, 128, 40)) == []
+  with sc.target("generic"):
+    assert _packed_buffers(_panel_product(16, 256, 24)) == [8 * 256]  # 48 KiB, within 32 columns: sixteen rows
+    assert _packed_buffers(_panel_product(15, 256, 24)) == []
+    assert _packed_buffers(_panel_product(6, 96, 96)) == [8 * 96]  # wider than 32 columns, six rows
+    assert _packed_buffers(_panel_product(5, 96, 96)) == []
 
 
 # --- small products stay loops (C-206) ---------------------------------------------------------------
@@ -993,7 +1000,8 @@ def _loops(fn: sc.Function, target: str) -> bool:
     (4, 4, 16, True),
     (8, 2, 8, False),  # a reduction of two: the scalar code is as fast
     (-8, 8, 8, False),  # a constant operand: its zeros and ones fold away only in scalar code
-    (6, 6, 6, False),  # narrower rows lose less than their procedure's other work gains expanded
+    (6, 6, 6, True),  # a register tile's rows (4 on the M3) and more than half its columns (8)
+    (3, 6, 6, False),  # narrower, with fewer rows than a tile: its procedure's other work gains more expanded
     (8, 8, 4, False),
   ],
 )
@@ -1020,7 +1028,7 @@ def test_block_wide_products_keep_their_procedure_in_loops(m: int, k: int, n: in
 def test_the_product_rule_follows_the_target_and_yields_to_a_scalar_hint() -> None:
   a, b = sc.sym("a", (8, 8)), sc.sym("b", (8, 8))
   fn = sc.Function.from_exprs("small_product_hint", [a, b], [a @ b], ["a", "b"], ["c"])
-  assert _loops(fn, "apple-m3") and not _loops(fn, "x86-64-v3")  # AVX2's middle block is 16 columns
+  assert _loops(fn, "apple-m3") and not _loops(fn, "x86-64-v4")  # AVX-512's tile is 16 columns, its middle block 32
   hinted = sc.Function.from_exprs("small_product_scalar", [a, b], [(a @ b).scalar()], ["a", "b"], ["c"])
   assert not _loops(hinted, "apple-m3")  # the user asked for scalar code
 

@@ -253,19 +253,25 @@ def _lower_to_proc(
 
 def _product_in_loops(node: Expr, target: Target) -> bool:
   """Whether ``node`` is a matrix product that keeps its procedure out of automatic scalar
-  expansion: a matrix times a matrix whose rows fill at least the target's middle column block
-  (``Target.row_blocks``, 8 columns on the reference machine) over a reduction of four terms or
-  more, neither of them a constant. Its loops run vectorized across the block; expanded, every
-  output is a scalar chain the C compiler does not vectorize. Narrower rows lose less, and a
-  procedure kept in loops for them lost more on the rest of its work than the product gained (a
-  Riccati step of six states); a constant operand's zeros and ones, the seeds of a forward-mode
-  Jacobian above all, fold away only when expanded."""
+  expansion: a matrix times a matrix over a reduction of four terms or more, neither of them a
+  constant, whose rows fill at least the target's middle column block (``Target.row_blocks``, 8
+  columns on the reference machine), or which fills a register tile's rows (``Target.product_tile``)
+  and more than half its columns. Its loops run vectorized; expanded, every output is a scalar chain
+  the C compiler does not vectorize. Narrower products lose less, and a procedure kept in loops for
+  them lost more on the rest of its work than the product gained (a Riccati step of four states,
+  1.023x; one of six gained 0.86x in tiles, where it had lost 1.7% in single rows); a constant
+  operand's zeros and ones, the seeds of a forward-mode Jacobian above all, fold away only when
+  expanded."""
   if node.op != ExprOp.MATMUL:
     return False
   a, b = node.args
   if ExprOp.CONST in (a.op, b.op):
     return False  # expanded, a constant operand's zeros and ones fold away, which loops cannot do
-  return len(a.shape) == 2 and len(b.shape) == 2 and int(b.shape[0]) >= 4 and int(b.shape[1]) >= target.row_blocks[1]
+  if len(a.shape) != 2 or len(b.shape) != 2 or int(b.shape[0]) < 4:
+    return False
+  rows, columns = target.product_tile
+  n = int(b.shape[1])
+  return n >= target.row_blocks[1] or (rows <= int(a.shape[0]) and n > columns // 2)
 
 
 # ``bool`` values only ever come from comparisons, logic and ``isfinite``, never from a narrowing
@@ -923,6 +929,69 @@ def _lane_sums(ctx: LowerCtx, tag: str, width: int, dtype: DType) -> _LaneSums:
 # 700 x 40, 0.91 at eight; a ``b`` of twice the panel was even at 128 rows).
 PANEL_ROWS_WIDE = 6
 PANEL_ROWS_LARGE = 16
+# A product in register tiles (``Target.product_tile``) reads ``b`` once per tile of rows, not per
+# row, and at any width: it copies panels only for a ``b`` larger than the L1 data cache and from 64
+# rows. Below that, reading ``b`` in place measured faster on the reference machine (1.1-1.6x at 8 to
+# 32 rows of 256 x 256, 1.08x at 96 x 96 x 96), and above it the copy won by 2-6% (64 x 64 x 512,
+# 192 and 256 square).
+PANEL_ROWS_TILED = 64
+
+
+def _tile(
+  ctx: LowerCtx,
+  tag: str,
+  rows: list[ProgramNode],
+  width: int,
+  steps: int,
+  term: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode],
+  out_at: Callable[[ProgramNode, ProgramNode], ProgramNode],
+  resume: bool,
+  dtype: DType,
+) -> list[ProgramNode]:
+  """A register tile of ``len(rows)`` rows and ``width`` columns of a product: each row's sums in
+  buffers of the target's lanes (``_LaneSums``), started at zero or, when ``resume``, from the
+  outputs, then ``steps`` steps of ``k`` each adding ``term(row, k, column)`` to every sum, then
+  each output stored once. Each output is still one chain of multiply-adds in order of ``k``."""
+  zero = p.const_float(0.0, dtype=dtype)
+  k = p.var(f"k_{tag}")
+  sums = [_lane_sums(ctx, f"{tag}_{r}", width, dtype) for r in range(len(rows))]
+  return [
+    *(
+      st
+      for r, (row, s_r) in enumerate(zip(rows, sums, strict=True))
+      for st in s_r.each(f"z{r}", lambda s, col, row=row: p.store(s, p.load(out_at(row, col)) if resume else zero))
+    ),
+    p.for_(
+      p.range_(k.attrs["name"], 0, steps, kind=RangeKind.REDUCE),
+      [
+        st
+        for r, (row, s_r) in enumerate(zip(rows, sums, strict=True))
+        for st in s_r.each(f"k{r}", lambda s, col, row=row: p.store(s, p.add(p.load(s), term(row, k, col))))
+      ],
+    ),
+    *(
+      st
+      for r, (row, s_r) in enumerate(zip(rows, sums, strict=True))
+      for st in s_r.each(f"s{r}", lambda s, col, row=row: p.store(out_at(row, col), p.load(s)))
+    ),
+  ]
+
+
+def _tile_segments(n: int, columns: int, lanes: int) -> tuple[list[tuple[int, int, int]], int]:
+  """A row's columns in tiles: ``columns`` wide as many times as they fit, then at most one of each
+  half as wide down to one vector's lanes; with the first column none covers."""
+  segments: list[tuple[int, int, int]] = []
+  first = 0
+  if (count := n // columns) > 0:
+    segments.append((0, columns, count))
+    first = columns * count
+  width = columns // 2
+  while width >= lanes:
+    if n - first >= width:
+      segments.append((first, width, 1))
+      first += width
+    width //= 2
+  return segments, first
 
 
 def _lower_columns_blocked(
@@ -940,14 +1009,19 @@ def _lower_columns_blocked(
   nm = out.attrs["name"]
   zero = p.const_float(0.0, dtype=dtype)
   target = ctx.target
+  tile_rows, tile_columns = target.product_tile
+  tiled = m is not None and 1 < tile_rows <= m
+  large = kk * n * dtype.itemsize > target.choices.l1d_bytes
   outermost = (
     m is not None
     and kk > 0
-    and ((n > target.row_blocked_max and m >= PANEL_ROWS_WIDE) or (kk * n * dtype.itemsize > target.choices.l1d_bytes and m >= PANEL_ROWS_LARGE))
+    and ((large and m >= PANEL_ROWS_TILED) if tiled else ((n > target.row_blocked_max and m >= PANEL_ROWS_WIDE) or (large and m >= PANEL_ROWS_LARGE)))
   )
   segments: list[tuple[int, int, int]] = []  # (first column, width, blocks)
   j0 = 0  # the first column no block covers; a vector's row wider than row_blocked_max has no blocks
-  if n <= target.row_blocked_max or outermost:
+  if tiled:
+    segments, j0 = _tile_segments(n, tile_columns, target.choices.vector_doubles)
+  elif n <= target.row_blocked_max or outermost:
     widest, *narrower = target.row_blocks
     if (count := n // widest) > 0:
       segments.append((0, widest, count))
@@ -975,12 +1049,26 @@ def _lower_columns_blocked(
       *sums.each("s", lambda s, col: p.store(p.view(out, [p.add(row, p.add(first, col))]), p.load(s))),
     ]
 
+  if tiled and not outermost:
+    assert m is not None
+    _lower_row_tiles(
+      ctx,
+      nm,
+      segments,
+      m,
+      tile_rows,
+      kk,
+      lambda row, k, col, first: p.mul(a_at(row, k), p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), p.add(first, col))]))),
+      lambda row, col, first: p.view(out, [p.add(p.mul(row, c(n)), p.add(first, col))]),
+      dtype,
+    )
+    segments = []
   stmts: list[ProgramNode] = []
   for number, (first, width, count) in enumerate(segments):
     tag = f"{nm}_{number}"
     if outermost:
       assert m is not None
-      block = lambda start: _panel_passes(ctx, tag, a_buf, b_buf, out, m, kk, n, start, width, dtype)  # noqa: E731
+      block = lambda start: _panel_passes(ctx, tag, a_buf, b_buf, out, m, kk, n, start, width, dtype, tile_rows if tiled else 1)  # noqa: E731
     else:
       block = lambda start: row_block(tag, start, width)  # noqa: E731
     if count > 1:
@@ -1004,6 +1092,46 @@ def _lower_columns_blocked(
   ctx.emit(*_nest([*rows, jrng], [p.store(p.view(out, [idx]), zero)]), *_nest([krng, *rows, jrng], [acc]))
 
 
+def _lower_row_tiles(
+  ctx: LowerCtx,
+  nm: str,
+  segments: list[tuple[int, int, int]],
+  m: int,
+  tile_rows: int,
+  kk: int,
+  term: Callable[[ProgramNode, ProgramNode, ProgramNode, ProgramNode], ProgramNode],
+  out_at: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode],
+  dtype: DType,
+) -> None:
+  """The tiled columns of every row of a product: ``tile_rows`` rows at a time over each segment's
+  tiles, the rows left over one at a time over the same tiles (``_tile``)."""
+  c = p.const_int
+  blocks, left = divmod(m, tile_rows)
+
+  def over(label: str, rows: list[ProgramNode]) -> list[ProgramNode]:
+    stmts: list[ProgramNode] = []
+    for number, (first, width, count) in enumerate(segments):
+      tag = f"{nm}_{label}{number}"
+
+      def tile(start: ProgramNode, tag: str = tag, width: int = width) -> list[ProgramNode]:
+        return _tile(ctx, tag, rows, width, kk, lambda row, k, col: term(row, k, col, start), lambda row, col: out_at(row, col, start), False, dtype)
+
+      if count > 1:
+        jb = p.var(f"jb_{tag}")
+        stmts.append(p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), tile(p.add(c(first), p.mul(jb, c(width))))))
+      else:
+        stmts += tile(c(first))
+    return stmts
+
+  if blocks:
+    ib = p.var(f"ib_{nm}")
+    rows = [p.add(p.mul(ib, c(tile_rows)), c(r)) for r in range(tile_rows)]
+    ctx.emit(p.for_(p.range_(ib.attrs["name"], 0, blocks, kind=RangeKind.GLOBAL), over("t", rows)))
+  if left:
+    it = p.var(f"it_{nm}")
+    ctx.emit(p.for_(p.range_(it.attrs["name"], blocks * tile_rows, m, kind=RangeKind.GLOBAL), over("l", [it])))
+
+
 def _panel_passes(
   ctx: LowerCtx,
   tag: str,
@@ -1016,6 +1144,7 @@ def _panel_passes(
   first: ProgramNode,
   width: int,
   dtype: DType,
+  tile_rows: int = 1,
 ) -> list[ProgramNode]:
   """The ``width`` columns of ``out = a @ b`` from ``first`` on, with the panel of ``b`` they read
   outermost: for each chunk of ``k`` that fits in ``Target.panel_bytes``, the chunk's rows of the
@@ -1023,9 +1152,12 @@ def _panel_passes(
   would fall into a few sets of the cache and evict itself), then every row of ``a`` passes over it
   with its sums in private scalars, which the first chunk starts at zero and every later one
   resumes from the outputs the chunk before stored. Each output is one chain of multiply-adds in
-  order of ``k``, as in a single pass."""
+  order of ``k``, as in a single pass. With ``tile_rows`` above one, the rows pass ``tile_rows`` at a
+  time as register tiles (``_tile``), the rows left over one at a time."""
   c = p.const_int
   chunk = min(kk, max(1, ctx.target.panel_bytes // (width * dtype.itemsize)))
+  if tile_rows > 1:
+    return _panel_tile_passes(ctx, tag, a_buf, b_buf, out, m, kk, n, first, width, dtype, tile_rows, chunk)
   sums = _lane_sums(ctx, tag, width, dtype)
   packed = ctx.new_private(dtype, (chunk * width,))
   zero = p.const_float(0.0, dtype=dtype)
@@ -1059,6 +1191,73 @@ def _panel_passes(
       ],
     )
     return [copy, rows_pass]
+
+  full, tail = divmod(kk, chunk)
+  passes = pass_over("p0", c(0), chunk, resume=False)
+  if full > 1:
+    kb = p.var(f"kb_{tag}")
+    passes.append(p.for_(p.range_(kb.attrs["name"], 1, full, kind=RangeKind.SERIAL), pass_over("p1", p.mul(kb, c(chunk)), chunk, resume=True)))
+  if tail:
+    passes += pass_over("p2", c(full * chunk), tail, resume=True)
+  return passes
+
+
+def _panel_tile_passes(
+  ctx: LowerCtx,
+  tag: str,
+  a_buf: ProgramNode,
+  b_buf: ProgramNode,
+  out: ProgramNode,
+  m: int,
+  kk: int,
+  n: int,
+  first: ProgramNode,
+  width: int,
+  dtype: DType,
+  tile_rows: int,
+  chunk: int,
+) -> list[ProgramNode]:
+  """``_panel_passes`` with the rows in register tiles of ``tile_rows``."""
+  c = p.const_int
+  packed = ctx.new_private(dtype, (chunk * width,))
+  blocks, left = divmod(m, tile_rows)
+
+  def pass_over(name: str, start: ProgramNode, steps: int, resume: bool) -> list[ProgramNode]:
+    r, q = (p.var(f"{v}{name}_{tag}") for v in ("r", "q"))
+    copy = p.for_(
+      p.range_(r.attrs["name"], 0, steps, kind=RangeKind.GLOBAL),
+      [
+        p.for_(
+          p.range_(q.attrs["name"], 0, width, kind=RangeKind.GLOBAL),
+          [p.store(p.view(packed, [p.add(p.mul(r, c(width)), q)]), p.load(p.view(b_buf, [p.add(p.mul(p.add(start, r), c(n)), p.add(first, q))])))],
+        )
+      ],
+    )
+
+    def term(row: ProgramNode, k: ProgramNode, col: ProgramNode) -> ProgramNode:
+      return p.mul(p.load(p.view(a_buf, [p.add(p.mul(row, c(kk)), p.add(start, k))])), p.load(p.view(packed, [p.add(p.mul(k, c(width)), col)])))
+
+    def out_at(row: ProgramNode, col: ProgramNode) -> ProgramNode:
+      return p.view(out, [p.add(p.mul(row, c(n)), p.add(first, col))])
+
+    passes = [copy]
+    if blocks:
+      ib = p.var(f"ib{name}_{tag}")
+      rows = [p.add(p.mul(ib, c(tile_rows)), c(t)) for t in range(tile_rows)]
+      passes.append(
+        p.for_(
+          p.range_(ib.attrs["name"], 0, blocks, kind=RangeKind.GLOBAL), _tile(ctx, f"{tag}_{name}t", rows, width, steps, term, out_at, resume, dtype)
+        )
+      )
+    if left:
+      it = p.var(f"it{name}_{tag}")
+      passes.append(
+        p.for_(
+          p.range_(it.attrs["name"], blocks * tile_rows, m, kind=RangeKind.GLOBAL),
+          _tile(ctx, f"{tag}_{name}l", [it], width, steps, term, out_at, resume, dtype),
+        )
+      )
+    return passes
 
   full, tail = divmod(kk, chunk)
   passes = pass_over("p0", c(0), chunk, resume=False)

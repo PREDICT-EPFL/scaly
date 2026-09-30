@@ -912,7 +912,7 @@ def test_a_blocks_lanes_keep_their_own_storage() -> None:
     proc = main_proc(lower_function(f))
   private = [n for n in proc.args if n.op == ProgramOp.BUFFER and n.attrs.get("address_space") == "private"]
   lanes = [n for n in private if "lanes" in n.attrs]
-  assert len(lanes) == 8 and all(n.attrs["shape"] == (2,) and n.attrs["lanes"] == 2 for n in lanes)  # 16 columns
+  assert len(lanes) == 16 and all(n.attrs["shape"] == (2,) and n.attrs["lanes"] == 2 for n in lanes)  # a tile, 4 rows of 8
   assert any(n.attrs["name"].startswith("s") for n in private)  # the packer's slots, for the rest
 
 
