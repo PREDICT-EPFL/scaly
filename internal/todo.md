@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 205**
+**Next id: 207**
 
 | Prefix | Section |
 |---|---|
@@ -897,6 +897,24 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       cache sets and evicts itself (n = 128 and 256 ran at 19 and 14 GF/s unpacked). GEMM 80–256:
       0.40–0.59 of the base's time, 30–33 GF/s, 1.67–1.89x BLASFEO; no corpus kernel changes.
       Vectors and single rows keep streaming.
+- [x] **C-205. Straight-line factorizations and solves up to the target's budget.** `cholesky`,
+      `ldl`, `lu` and `solve_triangular` were straight-line code up to order 8 and loops from 9,
+      where natively on the M3 straight-line code measured faster much further: POTRF 1.4–1.7x up
+      to n = 22 and 1.6–1.9x slower from 24, where its body passes the 4 096 operations scalar
+      expansion keeps in registers; a solve of one vector 2–2.5x up to 32, parity near 64. Without
+      the option (`dense_unroll` now None by default) the node records `"auto"`, and lowering makes
+      straight-line code while the body (`n^3/3`, `2n^3/3`, `n^2` per right-hand side) is under
+      `Target.straight_line_ops` (`l1i_bytes / 48`, 4 096 on the M3). Counting every right-hand
+      side matters: at `n^2` alone a Hessian's 100-seed solves became 860 KB of C. The dense IPM:
+      LOTSCHD 0.52, HS118 0.65, GENHS28 0.75, QAFIRO 0.86 of their time, iterations unchanged;
+      chol_solve_16 0.49. The option still fixes the choice when set.
+- [x] **C-206. Small matrix products stay loops.** Scalar expansion turned every `a @ b` under its
+      budget into scalar chains clang does not vectorize, 1.6–2.5x slower than the blocked loops
+      from 8×8×8 (61 against 28 ns). A matrix times a matrix whose rows fill the target's middle
+      column block (8 columns on the M3) over four terms or more now keeps its procedure out of
+      automatic expansion; `.scalar()` still expands it. Narrower rows are left alone: a 6-state
+      Riccati step lost 1.7% kept in loops. An 8-state Riccati recursion 0.68 of its time; no
+      codegen-corpus kernel changes.
 
 ### Now
 

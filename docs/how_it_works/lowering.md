@@ -103,6 +103,10 @@ The `Expr.lowering` hint selects the containing procedure:
 - `expr.scalar()` requests expansion even at the entry point and overrides its automatic size limits.
 - `expr.block()` or `expr.opaque()` prevents expansion of the containing procedure. These hints
   take precedence if a body contains conflicting hints.
+- `auto` leaves a procedure unexpanded when it holds a matrix times a matrix whose rows fill the
+  target's middle column block (8 columns on Apple silicon) over four terms or more: expanded, its
+  outputs become scalar chains the C compiler does not vectorize, where its loops vectorize across
+  the block.
 - `auto` admits at most 4,096 distinct scalar arithmetic operations per procedure after folding
   and sharing. Constants, variable references and loads do not count as arithmetic. A separate
   program-wide limit of 16,384 counts arithmetic operations plus scalar declarations and output

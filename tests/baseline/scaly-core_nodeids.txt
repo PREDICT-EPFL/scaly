@@ -1195,6 +1195,12 @@ tests/core/passes/test_lowering.py::test_a_gather_reads_through_a_transposed_com
 tests/core/passes/test_lowering.py::test_a_tile_is_one_loop_that_fuses_into_its_consumer
 tests/core/passes/test_lowering.py::test_an_expensive_producer_fuses_into_the_partial_sums
 tests/core/passes/test_lowering.py::test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction
+tests/core/passes/test_lowering.py::test_block_wide_products_keep_their_procedure_in_loops[2-8-8-True]
+tests/core/passes/test_lowering.py::test_block_wide_products_keep_their_procedure_in_loops[4-4-16-True]
+tests/core/passes/test_lowering.py::test_block_wide_products_keep_their_procedure_in_loops[6-6-6-False]
+tests/core/passes/test_lowering.py::test_block_wide_products_keep_their_procedure_in_loops[8-2-8-False]
+tests/core/passes/test_lowering.py::test_block_wide_products_keep_their_procedure_in_loops[8-8-4-False]
+tests/core/passes/test_lowering.py::test_block_wide_products_keep_their_procedure_in_loops[8-8-8-True]
 tests/core/passes/test_lowering.py::test_blocked_matvec_matches_numpy[1-8]
 tests/core/passes/test_lowering.py::test_blocked_matvec_matches_numpy[12-12]
 tests/core/passes/test_lowering.py::test_blocked_matvec_matches_numpy[3-7]
@@ -1395,6 +1401,7 @@ tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_num
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-7]
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-8]
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-9]
+tests/core/passes/test_lowering.py::test_the_product_rule_follows_the_target_and_yields_to_a_scalar_hint
 tests/core/passes/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
 tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape0-axes0]
 tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape1-axes1]

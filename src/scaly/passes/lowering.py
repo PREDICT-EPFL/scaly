@@ -240,7 +240,7 @@ def _lower_to_proc(
       and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
       # Scalar expansion follows every address at generation time; a run-time index has none.
       and not any(expr_has_trait(n, "runtime_index") for n in nodes)
-      and lowering in ("scalar", "auto")
+      and (lowering == "scalar" or (lowering == "auto" and not any(_product_in_loops(n, target) for n in nodes)))
       else "disabled",
       **({"in_place": True} if in_place else {}),
       # The entry point: automatic scalar expansion keeps its call boundaries (``scalarize``).
@@ -248,6 +248,19 @@ def _lower_to_proc(
     },
     proc.dtype,
   )
+
+
+def _product_in_loops(node: Expr, target: Target) -> bool:
+  """Whether ``node`` is a matrix product that keeps its procedure out of automatic scalar
+  expansion: a matrix times a matrix whose rows fill at least the target's middle column block
+  (``Target.row_blocks``, 8 columns on the reference machine) over a reduction of four terms or
+  more. Its loops run vectorized across the block; expanded, every output is a scalar chain the C
+  compiler does not vectorize. Narrower rows lose less, and a procedure kept in loops for them
+  lost more on the rest of its work than the product gained (a Riccati step of six states)."""
+  if node.op != ExprOp.MATMUL:
+    return False
+  a, b = node.args
+  return len(a.shape) == 2 and len(b.shape) == 2 and int(b.shape[0]) >= 4 and int(b.shape[1]) >= target.row_blocks[1]
 
 
 # ``bool`` values only ever come from comparisons, logic and ``isfinite``, never from a narrowing

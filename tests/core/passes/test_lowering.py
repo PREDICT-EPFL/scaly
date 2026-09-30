@@ -967,6 +967,43 @@ def test_panels_are_packed_in_chunks_that_fit_the_budget() -> None:
     assert _packed_buffers(_panel_product(20, 100, 40)) == []
 
 
+# --- small products stay loops (C-206) ---------------------------------------------------------------
+
+
+def _loops(fn: sc.Function, target: str) -> bool:
+  return "for (" in render_c_source(fn, target=target).split(f"int {fn.name}(")[1]
+
+
+@pytest.mark.parametrize(
+  ("m", "k", "n", "loops"),
+  [
+    (8, 8, 8, True),  # a row fills the M3's middle block (8 columns), over four terms or more
+    (2, 8, 8, True),
+    (4, 4, 16, True),
+    (8, 2, 8, False),  # a reduction of two: the scalar code is as fast
+    (6, 6, 6, False),  # narrower rows lose less than their procedure's other work gains expanded
+    (8, 8, 4, False),
+  ],
+)
+def test_block_wide_products_keep_their_procedure_in_loops(m: int, k: int, n: int, loops: bool) -> None:
+  """Expanded to scalars, a matrix product's outputs are chains the C compiler does not vectorize;
+  its loops run vectorized across a column block."""
+  a, b = sc.sym("a", (m, k)), sc.sym("b", (k, n))
+  fn = sc.Function.from_exprs(f"small_product_{m}_{k}_{n}", [a, b], [a @ b], ["a", "b"], ["c"])
+  assert _loops(fn, "apple-m3") == loops
+  av, bv = np.arange(m * k, dtype=float).reshape(m, k), np.arange(k * n, dtype=float).reshape(k, n) - 3.0
+  with sc.target("apple-m3"):
+    np.testing.assert_array_equal(fn((av, bv)), av @ bv)
+
+
+def test_the_product_rule_follows_the_target_and_yields_to_a_scalar_hint() -> None:
+  a, b = sc.sym("a", (8, 8)), sc.sym("b", (8, 8))
+  fn = sc.Function.from_exprs("small_product_hint", [a, b], [a @ b], ["a", "b"], ["c"])
+  assert _loops(fn, "apple-m3") and not _loops(fn, "x86-64-v3")  # AVX2's middle block is 16 columns
+  hinted = sc.Function.from_exprs("small_product_scalar", [a, b], [(a @ b).scalar()], ["a", "b"], ["c"])
+  assert not _loops(hinted, "apple-m3")  # the user asked for scalar code
+
+
 # --- transposes (C-202) -----------------------------------------------------------------------------
 
 
