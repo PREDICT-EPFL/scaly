@@ -1,0 +1,52 @@
+DUAL3 dense: 1048.5 us per solve, 12 iterations, 3371 samples
+   60.5%  kkt_factor_raw
+   15.3%  step_raw
+   10.5%  kkt_solve_raw
+    8.6%  ipm_ruiz_pass_raw
+    2.3%  <deduplicated_symbol>
+    1.4%  dense
+    0.7%  _platform_memset
+    0.6%  _platform_memmove
+527458 593625
+DUAL1 dense: 1480.5 us per solve, 12 iterations, 1611 samples
+   57.3%  kkt_factor_raw
+   16.2%  step_raw
+   12.8%  kkt_solve_raw
+    8.6%  ipm_ruiz_pass_raw
+    2.4%  <deduplicated_symbol>
+    1.4%  dense
+    0.9%  _platform_memset
+    0.4%  _platform_memmove
+280167 307458
+DUALC8 dense: 647.1 us per solve, 10 iterations, 2036 samples
+   48.1%  step_raw
+   21.6%  kkt_factor_raw
+   12.9%  kkt_solve_raw
+    5.3%  ipm_ruiz_pass_raw
+    3.1%  dense
+    3.0%  _platform_memmove
+    2.5%  <deduplicated_symbol>
+    2.1%  _platform_memset
+    0.9%  refine_raw
+    0.6%  ipm_ruiz_go_raw
+108208 122791
+DUALC1 dense: 320.3 us per solve, 10 iterations, 1553 samples
+   47.3%  step_raw
+   23.3%  kkt_factor_raw
+   11.5%  kkt_solve_raw
+    6.1%  ipm_ruiz_pass_raw
+    3.3%  _platform_memmove
+    3.2%  dense
+    2.8%  <deduplicated_symbol>
+    2.2%  _platform_memset
+    0.5%  ipm_ruiz_go_raw
+97583 111875
+ex_dense dense: 247.3 us per solve, 8 iterations, 1937 samples
+   56.5%  kkt_factor_raw
+   13.6%  step_raw
+   11.1%  ipm_ruiz_pass_raw
+    9.0%  kkt_solve_raw
+    5.4%  _platform_memmove
+    2.1%  _platform_memset
+    1.9%  dense
+    0.4%  <deduplicated_symbol>

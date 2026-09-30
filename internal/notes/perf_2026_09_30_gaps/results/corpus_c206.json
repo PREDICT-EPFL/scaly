@@ -1,0 +1,21 @@
+{
+ "cells": [
+  "t1_c205/jit",
+  "t1_c206/jit"
+ ],
+ "kernels": [
+  "riccati_50"
+ ],
+ "best_ns": {
+  "riccati_50/t1_c205/jit": 8521.0,
+  "riccati_50/t1_c206/jit": 8666.75
+ },
+ "median_ns": {
+  "riccati_50/t1_c205/jit": 8812.5,
+  "riccati_50/t1_c206/jit": 9052.0
+ },
+ "err": {
+  "riccati_50/t1_c205/jit": 0.0,
+  "riccati_50/t1_c206/jit": 0.0
+ }
+}

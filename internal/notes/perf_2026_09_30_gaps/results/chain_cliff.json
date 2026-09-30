@@ -1,0 +1,50 @@
+[
+ {
+  "M": 3,
+  "colours": 12,
+  "stage": "chain_eq_stage_M3_adj0_0_1_fwd12ca7f511cc5f_adj_eq_z_hoisted_1_raw",
+  "stage_mults": 3420,
+  "stage_code_O2": 25376,
+  "time_us_O2": 22.291,
+  "us_per_1000_mults_O2": 6.517836257309942,
+  "stage_code_Os": 25376,
+  "time_us_Os": 25.625,
+  "us_per_1000_mults_Os": 7.492690058479532
+ },
+ {
+  "M": 5,
+  "colours": 24,
+  "stage": "chain_eq_stage_M5_adj0_0_1_fwd24cca2508f786_adj_eq_z_hoisted_1_raw",
+  "stage_mults": 14116,
+  "stage_code_O2": 134352,
+  "time_us_O2": 100.917,
+  "us_per_1000_mults_O2": 7.149121564182488,
+  "stage_code_Os": 134352,
+  "time_us_Os": 104.584,
+  "us_per_1000_mults_Os": 7.408897704732219
+ },
+ {
+  "M": 7,
+  "colours": 30,
+  "stage": "chain_eq_stage_M7_adj0_0_1_fwd30c2b44a60500_adj_eq_z_hoisted_1_raw",
+  "stage_mults": 25202,
+  "stage_code_O2": 233532,
+  "time_us_O2": 498.875,
+  "us_per_1000_mults_O2": 19.79505594794064,
+  "stage_code_Os": 233532,
+  "time_us_Os": 496.417,
+  "us_per_1000_mults_Os": 19.697524006031266
+ },
+ {
+  "M": 9,
+  "colours": 42,
+  "stage": "chain_eq_stage_M9_adj0_0_1_fwd42c137ac12226_adj_eq_z_hoisted_1_raw",
+  "stage_mults": 37446,
+  "stage_code_O2": 347072,
+  "time_us_O2": 764.125,
+  "us_per_1000_mults_O2": 20.406051380654812,
+  "stage_code_Os": 347072,
+  "time_us_Os": 780.916,
+  "us_per_1000_mults_Os": 20.85445708486888
+ }
+]
