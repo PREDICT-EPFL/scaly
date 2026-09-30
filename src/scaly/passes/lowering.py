@@ -901,7 +901,7 @@ def _lower_columns_blocked(
     else:
       stmts += row_block(tag, c(first), width)
   if stmts:
-    ctx.emit(*(stmts if i is None else [p.for_(p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL), stmts)]))
+    ctx.emit(*(stmts if i is None or m is None else [p.for_(p.range_(i.attrs["name"], 0, m, kind=RangeKind.GLOBAL), stmts)]))
   if j0 == n:
     return
   # The columns left over: zero them, then add each ``k`` in turn over every row and column.
