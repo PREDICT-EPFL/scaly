@@ -39,8 +39,9 @@ def test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds(nam
   counted = work(s)
   kernels = Kernels(s, "sparse")
   _ = kernels._factorization
-  assert kernels._ldl.symbolic is kkt_symbolic(s)
-  assert (counted.updates, counted.nnz_l) == (kernels._ldl.symbolic.update_lanes, kernels._ldl.symbolic.nnz_l)
+  ldl = kernels._ldl
+  assert ldl is not None and ldl.symbolic is kkt_symbolic(s)
+  assert (counted.updates, counted.nnz_l) == (ldl.symbolic.update_lanes, ldl.symbolic.nnz_l)
 
 
 @pytest.mark.parametrize(

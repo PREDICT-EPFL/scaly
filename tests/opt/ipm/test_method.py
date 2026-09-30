@@ -100,4 +100,4 @@ def test_a_scaled_cost_makes_the_setup_read_c(sparse: bool) -> None:
 def test_the_solver_takes_the_five_arguments_every_solver_takes() -> None:
   full = sc.opt.solver(_problem("ipm_signature"), sc.opt.IPM(), name="ipm_signature")
   with pytest.raises(TypeError, match="takes 5 arguments"):
-    full.numerical_call(*ARGS)
+    full.numerical_call(*ARGS)  # ty: ignore[missing-argument]

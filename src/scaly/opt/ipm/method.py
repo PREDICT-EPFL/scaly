@@ -173,9 +173,9 @@ class IPM:
     outputs = G(
       variables, variables.relabel("lam:"), L("lam_eq", TensorType((p,), diff=False)), L("lam_ineq", TensorType((m,), diff=False)), Info.tree()
     )
-    solve = ConcreteFunction(name, split_body if split else body, inputs, outputs)
     if not split:
-      return None, solve
+      return None, ConcreteFunction(name, body, inputs, outputs)
+    solve = ConcreteFunction(name, split_body, inputs, outputs)
 
     def setup_body(values: Any) -> Expr:
       return Solver(s, backend, settings, name=name).setup(qp_values(values)[1]).flat()
