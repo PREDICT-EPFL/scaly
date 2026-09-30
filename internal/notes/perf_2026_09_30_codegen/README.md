@@ -1,7 +1,7 @@
 # The generated-code speed review, 2026-09-30
 
 Studies behind `../codegen_speed_plan_2026_09_30.html` (todo C-196 … C-202) and the per-step
-reports `../codegen_speed_o<N>_report.html`. Run each from the repository root. Timings come from an
+reports `../codegen_speed_o<N>_report.html` (published together, private, at https://claude.ai/artifact/Gngfjm5iDw9A9Q9NF5x8HC). Run each from the repository root. Timings come from an
 Apple M3 Max with Apple clang 21 at the JIT's flags (`-O2 -mcpu=native -fno-math-errno`); they are
 indicative, not reference-machine results, and no page under `docs/` cites them.
 
