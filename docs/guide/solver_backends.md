@@ -16,7 +16,7 @@ ship.
 | Solves | quadratic programs | quadratic programs | nonlinear programs | nonlinear programs |
 | Method | `sc.opt.PIQP(...)`, or `"piqp"` | `sc.opt.IPM(...)`, or `"ipm"` | `sc.opt.IPOPT(...)`, or `"ipopt"` | `sc.opt.SQP(...)`, or `"sqp"` |
 | Algorithm | proximal interior point | PIQP's, generated as C | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
-| Sparse data | `sparse=True` for the problem data | specialised to the problem's patterns always; `sparse=False` condenses the KKT system | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
+| Sparse data | `sparse=True` for the problem data | specialised to the problem's patterns always; the sparse or the condensed KKT system by a cost model, or `sparse=True`/`False` | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
 | Exact Lagrangian Hessian | n/a (the Hessian is your `P`) | n/a | yes, default | yes, default; `hessian="objective"` to approximate |
 | Warm start | no, upstream has no C API for it | no, as PIQP | primal always; multipliers only if you ask | primal and dual, always |
 | Foreign oracles | no | no | no | yes, see [below](#driving-the-sqp-with-foreign-oracles) |

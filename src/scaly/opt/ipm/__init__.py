@@ -12,6 +12,7 @@ from .algorithm import (
   Settings,
   Solver,
 )
+from .cost import Work, choose_backend
 from .kkt import KKT, Backend, Factor, Iterate, Kernels, Refinement
 from .method import IPM
 from .ruiz import ScaledQP, Scaling, ruiz, scale
@@ -40,6 +41,8 @@ __all__ = [
   "Scaling",
   "Settings",
   "Solver",
+  "Work",
+  "choose_backend",
   "ruiz",
   "scale",
 ]

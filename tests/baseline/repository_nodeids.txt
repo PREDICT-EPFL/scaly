@@ -214,6 +214,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.external
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.external.wrapper]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.external]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.ipm.algorithm]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.ipm.cost]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.ipm.kkt]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.ipm.method]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.opt.ipm.ruiz]

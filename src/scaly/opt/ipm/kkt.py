@@ -214,15 +214,7 @@ class Kernels:
       ok = where(l_diag > 0.0, 0.0, 1.0).sum() < 0.5
       digits = logical_and(ok, self._digits_left(l_diag, gather(dense.reshape((s.n * s.n,)), diag)))
     else:
-      upper = {
-        (0, 0): mats.P.add_diagonal(xr),
-        (0, 1): mats.A.T,
-        (0, 2): mats.G.T,
-        (1, 1): SparseMatrix.diag(-dr * Expr.const(np.ones(s.p))),
-        (2, 2): SparseMatrix.diag(-zr),
-      }
-      kept = [k for k, size in enumerate((s.n, s.p, s.m)) if size or k == 0]
-      self._ldl = SparseLDL(SparseMatrix.block([[upper.get((r, c)) for c in kept] for r in kept]), name=f"{self.name}_kkt")
+      self._ldl = SparseLDL(self.kkt_matrix(mats, xr, dr, zr), name=f"{self.name}_kkt")
       f = self._ldl.values
       # PIQP's sparse LDL^T fails only on a pivot that is exactly zero: an infinite one, from a dual
       # at zero, passes.
@@ -233,6 +225,21 @@ class Kernels:
     outs = [f, where(ok, 1.0, 0.0), where(digits, 1.0, 0.0)]
     fn = ConcreteFunction.from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
     return fn, int(f.size)
+
+  def kkt_matrix(self, mats: Matrices, xr: Expr, dr: Expr, zr: Expr) -> SparseMatrix:
+    """The whole KKT matrix the sparse backend factors, its upper triangle:
+    ``[[P + diag(x_reg), A^T, G^T], [., -delta_reg I, .], [., ., -diag(z_reg)]]``, without the blocks
+    of an empty ``A`` or ``G``."""
+    s = self.s
+    upper = {
+      (0, 0): mats.P.add_diagonal(xr),
+      (0, 1): mats.A.T,
+      (0, 2): mats.G.T,
+      (1, 1): SparseMatrix.diag(-dr * Expr.const(np.ones(s.p))),
+      (2, 2): SparseMatrix.diag(-zr),
+    }
+    kept = [k for k, size in enumerate((s.n, s.p, s.m)) if size or k == 0]
+    return SparseMatrix.block([[upper.get((r, c)) for c in kept] for r in kept])
 
   @staticmethod
   def _digits_left(l_diag: Expr, c_diag: Expr) -> Expr:

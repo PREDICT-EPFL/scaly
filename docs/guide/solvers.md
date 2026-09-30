@@ -80,8 +80,15 @@ IPM is PIQP's algorithm generated as C, with no library behind it: the solver is
 problem's sparsity and to which of its bounds are finite, and ships as the rest of a generated module
 does. It takes PIQP's settings as `options`, so `sc.opt.IPM(options={"eps_abs": 1e-9})` and
 `sc.opt.PIQP(options={"eps_abs": 1e-9})` ask for the same tolerance, and it takes the library's
-iterations. `sparse=True`, the default, factors the whole KKT system with `linalg.SparseLDL`;
-`sparse=False` condenses it and uses a dense Cholesky.
+iterations. `sparse=True` factors the whole KKT system with `linalg.SparseLDL`; `sparse=False`
+condenses it and uses a dense Cholesky. By default the solver takes the one whose iteration costs
+less, decided when it is built from the problem's structure alone: the counts each iteration is made
+of (the condensed matrix's outer products, the factors' multiply-adds, the entries of the sparse
+factor) weighed as they were measured on Apple silicon, for the target in force
+([Code generation](codegen.md#tuning-for-a-processor)). Both backends follow PIQP's path, so the
+choice changes only the speed; on the Maros–Mészáros set it takes the dense backend for problems
+with far more inequality rows than variables and the sparse one nearly everywhere else.
+`sc.opt.ipm.choose_backend(structure)` says which it would take.
 
 A problem caches its objective, gradient, constraint Jacobian and bounds oracles. Methods that need
 different Hessian triangles share them and cache one Hessian per triangle.

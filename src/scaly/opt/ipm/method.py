@@ -17,6 +17,7 @@ from ..nlp import nlp_oracles
 from ..problem import NLP
 from ..qp import NotQuadratic, extract_qp, prove_qp
 from .algorithm import DUAL_INFEASIBLE, INFO_FIELDS, MAX_ITER_REACHED, NUMERICS, PRIMAL_INFEASIBLE, SOLVED, Settings, Solver
+from .cost import choose_backend
 from .structure import QPStructure, QPValues
 
 _STATUS = {
@@ -43,17 +44,19 @@ class IPM:
   Mehrotra loop with proximal updates, unscaling), generated as C specialised to the problem's
   sparsity and to which of its bounds are finite: no solver library behind it.
 
-  A QP method, as ``PIQP`` is: it solves a problem Scaly proves quadratic. ``sparse`` factors the
-  KKT system whole with ``linalg.SparseLDL``; otherwise it is condensed and factored by a dense
-  Cholesky. ``options`` are PIQP's settings by name (``Settings``: ``eps_abs``, ``max_iter``, ...),
-  so a PIQP method's options carry over; PIQP's ``verbose`` is accepted and has no effect. Like
-  PIQP it takes no warm start."""
+  A QP method, as ``PIQP`` is: it solves a problem Scaly proves quadratic. ``sparse=True`` factors
+  the KKT system whole with ``linalg.SparseLDL``; ``sparse=False`` condenses it and factors it by a
+  dense Cholesky; None, the default, chooses the one whose iteration costs less, from the problem's
+  structure alone, for the target in force when the solver is built (``opt.ipm.cost``): both
+  backends follow PIQP's path, so only their speed differs. ``options`` are PIQP's settings by
+  name (``Settings``: ``eps_abs``, ``max_iter``, ...), so a PIQP method's options carry over;
+  PIQP's ``verbose`` is accepted and has no effect. Like PIQP it takes no warm start."""
 
   name: ClassVar[str] = "opt.ipm"
   problem: ClassVar[type] = NLP
   api: ClassVar[int] = METHOD_API
 
-  sparse: bool = True
+  sparse: bool | None = None
   options: dict[str, Any] = field(default_factory=dict)
 
   def __post_init__(self) -> None:
@@ -105,7 +108,7 @@ class IPM:
     }
     oracles = nlp_oracles(problem)
     objective = oracles.base.outputs[0]  # the problem's own objective, constants included
-    backend = "sparse" if self.sparse else "dense"
+    backend = choose_backend(s) if self.sparse is None else "sparse" if self.sparse else "dense"
     settings = self.settings
     variables = problem.vars.with_types(tuple(TensorType(e.shape, e.type.dtype, e.type.sparsity, diff=False) for e in problem._var_symbols))
     sizes = [e.size for e in problem._var_symbols]

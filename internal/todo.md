@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 209**
+**Next id: 210**
 
 | Prefix | Section |
 |---|---|
@@ -918,6 +918,16 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       automatic expansion; `.scalar()` still expands it. Narrower rows are left alone: a 6-state
       Riccati step lost 1.7% kept in loops. An 8-state Riccati recursion 0.68 of its time; no
       codegen-corpus kernel changes.
+- [x] **C-209. `IPM` chooses its backend (A5).** `IPM(sparse=None)`, the new default, takes the
+      backend whose iteration a cost model finds cheaper, from the structure alone and for the
+      target in force when the solver is built (`opt.ipm.cost`): each backend's counts (the
+      condensed matrix's outer products, the factor's `n^3/3` as straight-line code or loops, the
+      solves' `n^2`; the sparse factor's update multiply-adds and `nnz(L)`) weighed as fitted to the
+      55 problems' measured iterations on the M3 (`notes/perf_2026_09_30_gaps/backend_fit.py`). It
+      takes the faster backend on 53 of 55, the worst pick 1.07x the better (52 and 1.20x leaving
+      each problem out of its own fit). After C-205 the sparse backend is the faster on 50; the dense
+      one wins DUALC1/2/5/8 by 1.47–1.79x and ex_dense by 1.20x. Another target scales the dense
+      factor and solves by its vector width and uses its straight-line budget.
 
 ### Now
 

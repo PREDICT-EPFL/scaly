@@ -122,6 +122,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.opt.ipm.structure": 5,
   "scaly.opt.ipm.ruiz": 5,
   "scaly.opt.ipm.kkt": 5,
+  "scaly.opt.ipm.cost": 5,
   "scaly.opt.ipm.algorithm": 5,
   "scaly.opt.ipm.method": 5,
   "scaly.linalg": 5,
