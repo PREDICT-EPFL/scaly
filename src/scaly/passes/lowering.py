@@ -765,7 +765,11 @@ def _lower_extremum(ctx: LowerCtx, node: Expr) -> None:
 
 @lowers(ExprOp.TRANSPOSE)
 def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
-  """Permuted copy: ``out[Σ o_i·out_stride_i] = src[Σ o_i·src_stride_{axes[i]}]``, one loop per output axis."""
+  """Permuted copy: ``out[t] = src[Σ o_i(t)·src_stride_{axes[i]}]``, one flat loop over the output
+  whose coordinates ``o_i(t)`` divide ``t``. A flat loop is what ``fuse_elementwise`` can inline
+  into a single consumer, a gather above all (the recovery of a sparse derivative gathers from a
+  transposed product and reads only its nonzeros), and ``delinearize_loops`` splits one that stays
+  into a loop per output axis without the divisions."""
   src = node.args[0]
   axes = tuple(int(a) for a in node.attrs["axes"])
   src_shape, out_shape = src.shape, node.shape
@@ -773,18 +777,12 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"TRANSPOSE lowering handles rank <= 4; got {src_shape}")
   out = ctx.alloc_tmp(node)
   src_strides = _row_major_strides(src_shape)
-  out_strides = _row_major_strides(out_shape)
-  ranges, loop_vars = [], []
-  for i, d in enumerate(out_shape):
-    name = f"d{i}_{out.attrs['name']}"
-    ranges.append(p.range_(name, 0, int(d), kind=RangeKind.GLOBAL))
-    loop_vars.append(p.var(name))
-  out_idx = _affine_sum(loop_vars, out_strides)
-  src_idx = _affine_sum(loop_vars, [src_strides[axes[i]] for i in range(len(out_shape))])
-  stmt: ProgramNode = p.store(p.view(out, [out_idx]), p.load(p.view(ctx.buf_of(src), [src_idx])))
-  for rng in reversed(ranges):
-    stmt = p.for_(rng, [stmt])
-  ctx.emit(stmt)
+  name = f"d_{out.attrs['name']}"
+  t = p.var(name)
+  coords = [_coord_p(t, out_shape, i) for i in range(len(out_shape))]
+  src_idx = _affine_sum(coords, [src_strides[axes[i]] for i in range(len(out_shape))])
+  rng = p.range_(name, 0, _size_of(out_shape), kind=RangeKind.GLOBAL)
+  ctx.emit(p.for_(rng, [p.store(p.view(out, [t]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
 def _nest(ranges: list[ProgramNode], body: list[ProgramNode]) -> list[ProgramNode]:

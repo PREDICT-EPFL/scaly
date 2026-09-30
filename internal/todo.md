@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 202**
+**Next id: 203**
 
 | Prefix | Section |
 |---|---|
@@ -856,6 +856,15 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       Tried first and dropped: two interleaved lanes inside the dense Cholesky tile's quarters,
       1.45x slower (32 scalar sums spill; clang did not pair them)
       (`notes/codegen_speed_o6_report.html`).
+
+- [x] **C-202. A transpose fused into the gather that reads it.** The sparse-derivative recovery
+      transposes a seed-major product and gathers its nonzeros; the transpose was a loop nest,
+      which fusion cannot inline, so every entry was computed and stored first (984 for 527 used in
+      the race-car Hessian at N = 40). A transpose is now one flat loop, fused into a single
+      consumer and split back into a loop per axis when it stays; a transpose that only moves data
+      is not read through a gather's table (a division per element, 1.05x slower on
+      race_cars_jac_40). race_cars_40 0.966, race_cars_200 0.977; the first step of C-77
+      (`notes/codegen_speed_o7_report.html`).
 
 ### Now
 

@@ -1,0 +1,69 @@
+<meta charset="utf-8">
+<title>Codegen Speed O7</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}pre code{overflow-wrap:normal}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+<main>
+<h1>O7: a transpose fused into the gather that reads it</h1>
+<p class="sub">Step 7 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-202, the first step of C-77 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A sparse Hessian is recovered by transposing a seed-major product and gathering its nonzeros (<code>gather(transpose(jvp_many(...)))</code>, C-77's description). The transpose lowered to a loop nest, which fusion cannot inline, so every entry was computed and stored before the gather read a subset: in the race-car Hessian at N = 40, 984 entries, each with two table reads and four products, for 527 used. A transpose is now one flat loop over its output, which fusion inlines into its one consumer.</p>
+<ul>
+<li><b>Speed:</b> <span class="ok">race_cars_40 1.035× faster</span> (9.94 → 9.60 µs by a direct A/B), race_cars_200 1.02×; the other kernels whose C changed (chain, npmpc, unbumpercars, riccati, the MLP Jacobian) within ±2%.</li>
+<li><b>The rule that makes it safe:</b> a transpose that only moves data is not inlined into a consumer that reads it through a table: the permutation's divisions would run per element. Without the rule race_cars_jac_40 was 1.05× slower (5.98 → 6.28 µs, its gather reads 86% of a plain copy).</li>
+<li><b>Unfused transposes</b> are split back by <code>delinearize_loops</code> into a loop per output axis without divisions, the same loops as before under new names.</li>
+<li><b>Tests:</b> 4 459 passed, 57 skipped, 5 xfailed (6 new). Four mutants, four killed. Snapshots regenerated where a transpose's loop names moved.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O7”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>passes/lowering.py</code>: <code>_lower_transpose</code> emits <code>out[t] = src[Σ o_i(t) · stride_{axes[i]}]</code> over one loop, the coordinates by <code>_coord_p</code>.</li>
+<li><code>passes/program/fuse_elementwise.py</code>: <code>_reads_through_a_table</code>; a producer whose value is a single load is not inlined where its consumer's index loads.</li>
+<li><code>docs/how_it_works/lowering.md</code>: the transpose's form and the rule.</li>
+</ul>
+<pre><code>- for (d0 &lt; 246) for (d1 &lt; 4) { v4 = d0 + 246 d1; ...; s0[4 d0 + d1] = (s2[v4] + ...); }   // 984 entries
+- for (i &lt; 527) res[0][i] = s0[k43[i]];
++ for (i &lt; 527) { v = k43[i]; v4 = v / 4 + 246 (v % 4); ...; res[0][i] = (s2[v4] + ...); }   // 527 entries</code></pre>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/passes/test_lowering.py</code>: five transposes of rank 2 to 4 against NumPy, plain and under an elementwise producer, with no division left in the C; a gather of a transposed <code>sin</code> computes one <code>sin</code> per gathered entry and holds no transposed buffer, while a gather of a plain transpose keeps its copy.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 the nested transpose (the previous lowering)</td><td class="ok"><code>test_a_gather_reads_through_a_transposed_computation</code></td></tr>
+<tr><td>M2 no pure-permutation rule</td><td class="ok">the same</td></tr>
+<tr><td>M3 the rule applied to computing producers instead</td><td class="ok">the same</td></tr>
+<tr><td>M4 the axes ignored</td><td class="ok"><code>test_covered_function_renders_through_program_ir[_transpose]</code></td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The kernels whose C changed, O6 against O7, nine interleaved rounds, fastest sample.</p>
+<div class="scroll"><table><tr><th>kernel</th><th class="r">before (O6)</th><th class="r">after</th></tr>
+<tr><td>chain_5</td><td class="r">105.75 µs</td><td class="r">1.014</td></tr>
+<tr><td>chain_9</td><td class="r">732.17 µs</td><td class="r">0.998</td></tr>
+<tr><td>mlp_small_jac</td><td class="r">581.2 ns</td><td class="r">1.000</td></tr>
+<tr><td>npmpc_12</td><td class="r">15.59 µs</td><td class="r">0.989</td></tr>
+<tr><td>race_cars_200</td><td class="r">51.25 µs</td><td class="r">0.977</td></tr>
+<tr><td>race_cars_40</td><td class="r">9.71 µs</td><td class="r">0.966</td></tr>
+<tr><td>race_cars_jac_40</td><td class="r">5.91 µs</td><td class="r">0.998</td></tr>
+<tr><td>riccati_50</td><td class="r">8.46 µs</td><td class="r">0.990</td></tr>
+<tr><td>unbumpercars_8</td><td class="r">482.04 µs</td><td class="r">1.020</td></tr>
+<tr><td><b>geometric mean</b></td><td class="r">—</td><td class="r"><b>0.994</b></td></tr>
+</table></div>
+</main>

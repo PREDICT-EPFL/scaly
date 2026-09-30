@@ -73,6 +73,14 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
   ),
   (
     7,
+    "O7",
+    "C-202",
+    "A transpose as one flat loop, fused into the gather that reads it (found during O6: the race-car Hessian computes 984 transposed entries and gathers 527)",
+    "the first step of C-77, the assembly's dead entries",
+    ("race_cars_40 0.966, race_cars_200 0.977; a plain permutation stays a copy in front of a gather", "codegen_speed_o7_report.html"),
+  ),
+  (
+    8,
     "—",
     "C-11",
     "Chain of masses: the stage-block structure of its Hessian (investigate)",
@@ -80,7 +88,7 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
     None,
   ),
   (
-    8,
+    9,
     "—",
     "C-77",
     "The sparse-derivative assembly fused into the mapped loop (stretch)",
@@ -119,6 +127,7 @@ REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
   ("report_o4_template.html", "codegen_speed_o4_report.html", "timing_o4.json", {"o2/jit": "before (O2)", "o4/jit": "after", "o2/finite": "O2, -ffinite-math-only"}),
   ("report_o5_template.html", "codegen_speed_o5_report.html", "timing_o5.json", {"o4/jit": "before (O4)", "o5/jit": "after"}),
   ("report_o6_template.html", "codegen_speed_o6_report.html", "timing_o6.json", {"o5/jit": "before (O5)", "o6/jit": "after"}),
+  ("report_o7_template.html", "codegen_speed_o7_report.html", "timing_o7.json", {"o6/jit": "before (O6)", "o7/jit": "after"}),
 ]
 
 
@@ -131,8 +140,19 @@ def reports() -> None:
     (NOTES / output).write_text(head + body)
 
 
+def result() -> str:
+  """The end-to-end comparison, base commit against the branch's last step, once it is recorded."""
+  path = HERE / "results" / "timing_final.json"
+  if not path.exists():
+    return "<p>Not measured yet.</p>"
+  data = json.loads(path.read_text())
+  text = (HERE / "result_template.html").read_text() if (HERE / "result_template.html").exists() else "{{TABLE}}"
+  return text.replace("{{TABLE}}", table(data, labels={"base/jit": "base", "o7/jit": "branch", "base/fast": "base, -ffast-math"}))
+
+
 def main() -> None:
   body = (HERE / "plan_template.html").read_text()
+  body = body.replace("{{RESULT}}", result())
   diag0 = json.loads((HERE / "results" / "timing_diag0.json").read_text())
   diag1 = json.loads((HERE / "results" / "timing_diag1.json").read_text())
   body = body.replace("{{CHECKLIST}}", checklist()).replace("{{STEPS}}", steps())

@@ -1138,6 +1138,7 @@ tests/core/passes/test_expr.py::test_simplify_preserves_conflicting_hint_precede
 tests/core/passes/test_expr.py::test_simplify_preserves_isolated_opaque_spelling
 tests/core/passes/test_expr.py::test_simplify_revisits_new_children_in_one_bounded_walk
 tests/core/passes/test_expr.py::test_simplify_rewrites_algebraic_identities_and_folds_constants
+tests/core/passes/test_lowering.py::test_a_gather_reads_through_a_transposed_computation
 tests/core/passes/test_lowering.py::test_a_tile_is_one_loop_that_fuses_into_its_consumer
 tests/core/passes/test_lowering.py::test_an_expensive_producer_fuses_into_the_partial_sums
 tests/core/passes/test_lowering.py::test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction
@@ -1288,6 +1289,11 @@ tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_num
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-8]
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-9]
 tests/core/passes/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
+tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape0-axes0]
+tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape1-axes1]
+tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape2-axes2]
+tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape3-axes3]
+tests/core/passes/test_lowering.py::test_transposes_match_numpy_and_lose_their_divisions[shape4-axes4]
 tests/core/passes/test_lowering.py::test_two_different_functions_with_one_name_are_refused
 tests/core/passes/test_lowering.py::test_two_names_with_one_c_spelling_are_refused
 tests/core/passes/test_lowering.py::test_uncovered_case_raises_loudly

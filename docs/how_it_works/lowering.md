@@ -164,6 +164,13 @@ columns whose sums stay in registers across the reduction, each output stored on
 three columns no block covers, and every column of a wider row, put the reduction loop outermost
 and vectorize over the row instead, adding into the output at every step.
 
+A `transpose` lowers to one flat loop over its output whose coordinates divide the loop variable.
+Fusion can then inline it into its one consumer: a gather reading a few entries of a transposed
+product, as the recovery of a sparse derivative does, computes only those entries. A transpose that
+only moves data stays a copy in front of a gather, since reading it through the gather's table
+would divide per element, and `delinearize_loops` splits any transpose that stays back into a loop
+per axis without the divisions.
+
 A `max` or `min` reduction propagates NaN as `np.max` does, so its step is a select C's `fmax`
 cannot express: `((cur < x) || (x != x)) ? x : cur`. The renderer spells that select
 `SCALY_FMAX_NAN(cur, x)` (and the minimum `SCALY_FMIN_NAN`), defined at the top of a source that

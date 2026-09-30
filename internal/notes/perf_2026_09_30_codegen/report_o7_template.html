@@ -1,0 +1,40 @@
+<main>
+<h1>O7: a transpose fused into the gather that reads it</h1>
+<p class="sub">Step 7 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-202, the first step of C-77 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A sparse Hessian is recovered by transposing a seed-major product and gathering its nonzeros (<code>gather(transpose(jvp_many(...)))</code>, C-77's description). The transpose lowered to a loop nest, which fusion cannot inline, so every entry was computed and stored before the gather read a subset: in the race-car Hessian at N = 40, 984 entries, each with two table reads and four products, for 527 used. A transpose is now one flat loop over its output, which fusion inlines into its one consumer.</p>
+<ul>
+<li><b>Speed:</b> <span class="ok">race_cars_40 1.035× faster</span> (9.94 → 9.60 µs by a direct A/B), race_cars_200 1.02×; the other kernels whose C changed (chain, npmpc, unbumpercars, riccati, the MLP Jacobian) within ±2%.</li>
+<li><b>The rule that makes it safe:</b> a transpose that only moves data is not inlined into a consumer that reads it through a table: the permutation's divisions would run per element. Without the rule race_cars_jac_40 was 1.05× slower (5.98 → 6.28 µs, its gather reads 86% of a plain copy).</li>
+<li><b>Unfused transposes</b> are split back by <code>delinearize_loops</code> into a loop per output axis without divisions, the same loops as before under new names.</li>
+<li><b>Tests:</b> 4 459 passed, 57 skipped, 5 xfailed (6 new). Four mutants, four killed. Snapshots regenerated where a transpose's loop names moved.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O7”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><code>passes/lowering.py</code>: <code>_lower_transpose</code> emits <code>out[t] = src[Σ o_i(t) · stride_{axes[i]}]</code> over one loop, the coordinates by <code>_coord_p</code>.</li>
+<li><code>passes/program/fuse_elementwise.py</code>: <code>_reads_through_a_table</code>; a producer whose value is a single load is not inlined where its consumer's index loads.</li>
+<li><code>docs/how_it_works/lowering.md</code>: the transpose's form and the rule.</li>
+</ul>
+<pre><code>- for (d0 &lt; 246) for (d1 &lt; 4) { v4 = d0 + 246 d1; ...; s0[4 d0 + d1] = (s2[v4] + ...); }   // 984 entries
+- for (i &lt; 527) res[0][i] = s0[k43[i]];
++ for (i &lt; 527) { v = k43[i]; v4 = v / 4 + 246 (v % 4); ...; res[0][i] = (s2[v4] + ...); }   // 527 entries</code></pre>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/passes/test_lowering.py</code>: five transposes of rank 2 to 4 against NumPy, plain and under an elementwise producer, with no division left in the C; a gather of a transposed <code>sin</code> computes one <code>sin</code> per gathered entry and holds no transposed buffer, while a gather of a plain transpose keeps its copy.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 the nested transpose (the previous lowering)</td><td class="ok"><code>test_a_gather_reads_through_a_transposed_computation</code></td></tr>
+<tr><td>M2 no pure-permutation rule</td><td class="ok">the same</td></tr>
+<tr><td>M3 the rule applied to computing producers instead</td><td class="ok">the same</td></tr>
+<tr><td>M4 the axes ignored</td><td class="ok"><code>test_covered_function_renders_through_program_ir[_transpose]</code></td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The kernels whose C changed, O6 against O7, nine interleaved rounds, fastest sample.</p>
+{{TABLE}}
+</main>

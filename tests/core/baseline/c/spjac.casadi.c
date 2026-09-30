@@ -45,7 +45,7 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   double* spjac_eq_z_native = w + 0;
   static const double k0[48] = {1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  double s0[48];
+  double s0[36];
   double s1[12];
   static const double k4[48] = {0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   double s2[12];
@@ -71,15 +71,11 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
       s3[((4 * i_t9_0) + i_t9_1)] = s0[((8 + (12 * i_t9_0)) + i_t9_1)];
     }
   }
-  for (long long d0_t14 = 0; d0_t14 < 12; ++d0_t14) {
-    for (long long d1_t14 = 0; d1_t14 < 4; ++d1_t14) {
-      int64_t v0 = (d0_t14 + (d1_t14 * 12));
-      int64_t v1 = ((((v0 / 4) % 3) * 4) + (v0 % 4));
-      s0[((d0_t14 * 4) + d1_t14)] = ((((k0[v0] * s1[v1]) + (k4[v0] * s2[v1])) + (k8[v0] * s3[v1])) - k12[v0]);
-    }
-  }
   for (long long i_spjac_eq_z = 0; i_spjac_eq_z < 36; ++i_spjac_eq_z) {
-    spjac_eq_z_native[i_spjac_eq_z] = s0[k15[i_spjac_eq_z]];
+    int64_t v0 = k15[i_spjac_eq_z];
+    int64_t v1 = ((v0 / 4) + ((v0 % 4) * 12));
+    int64_t v2 = ((((v1 / 4) % 3) * 4) + (v1 % 4));
+    spjac_eq_z_native[i_spjac_eq_z] = ((((k0[v1] * s1[v2]) + (k4[v1] * s2[v2])) + (k8[v1] * s3[v2])) - k12[v1]);
   }
   static const int spjac_eq_z_csc_val_perm[36] = {0, 3, 1, 6, 9, 4, 7, 10, 2, 12, 5, 15, 8, 13, 18, 21, 11, 16, 19, 22, 14, 24, 17, 27, 20, 25, 30, 33, 23, 28, 31, 34, 26, 29, 32, 35};
   for (int k = 0; k < 36; ++k) res[0][k] = spjac_eq_z_native[spjac_eq_z_csc_val_perm[k]];

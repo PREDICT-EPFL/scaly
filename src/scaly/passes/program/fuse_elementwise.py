@@ -63,6 +63,15 @@ def _max_load_executions(node: ProgramNode, buf: str, factor: int) -> int | None
   return best
 
 
+def _reads_through_a_table(node: ProgramNode, buf: str) -> bool:
+  """Whether ``node`` reads ``buf`` at an index that itself loads (a gather's table, a run-time
+  index): inlining a producer there evaluates its index arithmetic per element at run time."""
+  for n in _walk(node):
+    if n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf and any(m.op == ProgramOp.LOAD for a in n.args[0].args for m in _walk(a)):
+      return True
+  return False
+
+
 def _total_load_executions(node: ProgramNode, buf: str) -> int | None:
   """How many times the loads of ``buf`` in ``node`` run together: each occurrence (tree
   multiplicity, so ``buf*buf`` counts twice) times its enclosing loops' trip counts. None under a
@@ -168,6 +177,10 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
     producer_size = _size_of(private[buf].attrs["shape"])
     execs = _max_load_executions(body[ci], buf, 1)
     if execs is None or execs > producer_size:
+      continue
+    # A producer that only moves data (a transpose, a tile) is cheaper copied than read through a
+    # gather's table, which would divide its index per element; one that computes is not.
+    if rhs.op == ProgramOp.LOAD and rhs.args[0].attrs["buffer"] not in inlinable and _reads_through_a_table(body[ci], buf):
       continue
     rhs_loads = buffer_refs(rhs).loads
     is_expensive = _has_expensive(rhs) or any(expanded_expensive.get(name, False) for name in rhs_loads)

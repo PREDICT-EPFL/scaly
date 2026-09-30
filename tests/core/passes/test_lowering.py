@@ -886,3 +886,40 @@ def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bo
   stores = [node for stmt in _stmts(fn) for node in _nodes(stmt) if node.op == ProgramOp.STORE and node.args[0].attrs["buffer"] == "y"]
   inside = [st for st in stores if _inside_reduce(fn, st)]
   assert (not inside) if blocked else inside
+
+
+# --- transposes (C-202) -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+  ("shape", "axes"), [((3, 4), (1, 0)), ((2, 3, 4), (2, 0, 1)), ((2, 3, 4), (1, 2, 0)), ((2, 2, 3, 2), (3, 1, 0, 2)), ((1, 7), (1, 0))]
+)
+def test_transposes_match_numpy_and_lose_their_divisions(shape: tuple[int, ...], axes: tuple[int, ...]) -> None:
+  """A transpose is one flat loop over the output; standing alone it is split back into a loop per
+  axis, so the C divides nothing; values are NumPy's, plain and through an elementwise producer."""
+  x = sc.sym("x", shape)
+  name = "transpose_" + "_".join(map(str, axes)) + f"_{len(shape)}"
+  fn = sc.Function.from_exprs(name, [x], [x.transpose(axes).block(), x.transpose(axes).sin()], ["x"], ["a", "b"])
+  xv = np.random.default_rng(len(shape)).standard_normal(shape)
+  a, b = fn(xv)
+  np.testing.assert_array_equal(a, xv.transpose(axes))
+  np.testing.assert_allclose(b, np.sin(xv.transpose(axes)), rtol=1e-15)
+  body = render_c_source(fn).split(f"int {name}(")[1]
+  assert " / " not in body and " % " not in body
+
+
+def test_a_gather_reads_through_a_transposed_computation() -> None:
+  """The recovery of a sparse derivative gathers a few entries of a transposed product: the
+  transpose fuses into the gather, so only the gathered entries are computed; a transpose that only
+  moves data stays a copy, since reading it through the gather's table would divide per element."""
+  x = sc.sym("x", (4, 6))
+  picks = np.array([0, 5, 7, 23, 11])
+  computed = sc.Function.from_exprs("gather_computed", [x], [sc.gather(x.T.sin(), picks).block()], ["x"], ["g"])
+  body = _stmts(computed)
+  assert sum(n.op == ProgramOp.SIN for stmt in body for n in _nodes(stmt)) == 1
+  assert not [s for s in body if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 24]
+  moved = sc.Function.from_exprs("gather_moved", [x], [sc.gather(x.T, picks).block()], ["x"], ["g"])
+  assert [s for s in _stmts(moved) if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 24]
+  xv = np.random.default_rng(6).standard_normal((4, 6))
+  np.testing.assert_allclose(computed(xv), np.sin(xv.T).ravel()[picks], rtol=1e-15)
+  np.testing.assert_array_equal(moved(xv), xv.T.ravel()[picks])
