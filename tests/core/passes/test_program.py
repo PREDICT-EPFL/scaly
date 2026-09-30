@@ -890,14 +890,16 @@ def test_index_evaluation_truncates_toward_zero_like_c() -> None:
 
 def test_packing_reuses_a_slot_freed_by_the_previous_statement() -> None:
   """``C`` is last read where ``D = C A`` is made, and ``E = D B`` is the next statement: ``E``
-  takes ``C``'s slot, so two 1600-element slots spill, not three."""
+  takes ``C``'s slot, so two 1600-element slots spill, not three (the products as the M3 blocks
+  them; another target's blocks keep other private sums)."""
 
   @sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), output=sc.L("out0", ...), name="chain_reuse")
   def f(inputs):
     A, B = inputs
     return ((A @ B) @ A @ B).sum()
 
-  assert _sz_w(f) == 3200
+  with sc.target("apple-m3"):
+    assert _sz_w(f) == 3200
 
 
 def test_slot_assignment_matches_the_linear_scan() -> None:

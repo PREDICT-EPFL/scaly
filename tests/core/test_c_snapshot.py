@@ -26,6 +26,8 @@ import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_source
 
 BASELINE = Path(__file__).resolve().parent / "baseline" / "c"
+TARGET = "apple-m3"
+"""Every entry renders for this preset, not the host, so the snapshot is the same on every machine."""
 N_STAGES = 3
 WEIGHTS = (np.arange(40 * 40, dtype=np.float64).reshape(40, 40) % 7 - 3.0) / 11.0
 
@@ -122,14 +124,14 @@ adapter changes both files, and its source is the same under either header."""
 
 
 def _rendered(fun: sc.Function) -> dict[str, str]:
-  return {".c": render_c_source(fun), ".h": render_c_api_header(fun)}
+  return {".c": render_c_source(fun, target=TARGET), ".h": render_c_api_header(fun, target=TARGET)}
 
 
 def _adapted(fun: sc.Function, adapters: tuple[str, ...]) -> dict[str, str]:
   tag = "+".join(adapters)
-  out = {f".{tag}.{'hpp' if 'cpp' in adapters else 'h'}": render_c_api_header(fun, adapters=adapters)}
+  out = {f".{tag}.{'hpp' if 'cpp' in adapters else 'h'}": render_c_api_header(fun, adapters=adapters, target=TARGET)}
   if "cpp" not in adapters:
-    out[f".{tag}.c"] = render_c_source(fun, adapters=adapters)
+    out[f".{tag}.c"] = render_c_source(fun, adapters=adapters, target=TARGET)
   return out
 
 

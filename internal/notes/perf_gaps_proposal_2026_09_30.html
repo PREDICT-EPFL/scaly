@@ -1,0 +1,250 @@
+<meta charset="utf-8">
+<title>Remaining Speed Gaps</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+/* Layout: the internal-notes house style (one reading column, boxed summary, scrolling tables), reused from codegen_speed_plan_2026_09_30.html */
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+.tag{display:inline-block;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;padding:1px 6px;border-radius:4px;border:1px solid var(--rule);color:var(--muted);white-space:nowrap}
+.tag.ad{color:var(--acc);border-color:var(--acc)}.tag.alg{color:var(--ok);border-color:var(--ok)}.tag.cg{color:var(--warn);border-color:var(--warn)}
+.step{margin:18px 0 0}.step h3{margin:0 0 4px}.step p{margin:4px 0}.meta{color:var(--muted);font-size:13.5px}
+</style>
+<main>
+<h1>Where the others are still faster, and what to do about it</h1>
+<p class="sub">A proposal following the codegen speed review (C-196 … C-202) and the generated-PIQP speed pass (C-135 … C-141), with the case studies E1–E9 · 30 Sep 2026 · every comparison below comes from those reports except the chain measurements in section 2, which are new · revised the same day to fold in the BLASFEO kernel analysis (<code>blasfeo_kernels_analysis_2026_09_30.html</code>) as items K0–K5, with its impact re-derived against the current profile and an effort column for every item (sections 5 and 6)</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> After O1–O7 and the IPM speed pass, the places where another tool is still faster fall into a few groups, and most of the remaining headroom is not in the C renderer:</p>
+<ul>
+<li><b>Chain of masses, M = 9 (2.41× CasADi SX).</b> A new measurement puts most of this on an <b>instruction-cache cliff</b>: the scalarized stage Hessian grows from 200 KB of machine code at M = 5 to about 490 KB at M = 9, and between M = 5 and M = 7 the time per operation doubles while the stack-spill share stays constant. The fix is at the AD level. Split the 42 colours into groups whose bodies fit in cache, and run each group over all stages (<b>A1</b>). The two AD op-count items the C-49 audit left open, pre-AD inlining (<b>A2</b>, −26% of stage operations) and computing only the Hessian entries that are used (<b>A3</b>, SX saves 19% this way), then bring it to about parity together with C-77.</li>
+<li><b>PIQP.</b> If each side runs its better backend, Scaly is at <b>0.81× PIQP</b> in geometric mean over the 55 problems (0.94× above 50 µs). Eleven problems remain slower, in three classes. QRECIPE loses by iteration count (an ordering and pivoting issue, <b>A6</b>). DUAL1–4 have a dense P. DUALC and ex_dense have m ≫ n (<b>A7</b>). Two cheap structural changes come first. Choose the backend at generation time from the exact factorization cost (<b>A5</b>; ex_portfolio is 236 µs dense against 36 µs sparse). Move Ruiz and other data-only work out of the per-solve path when the matrices are fixed (<b>A4</b>). PIQP's solve timer already excludes its own Ruiz.</li>
+<li><b>Case studies.</b> The gaps to ExaModels (4.4×), PyTorch/XLA on batched layers (up to 20×), SymForce's linearize, Fatrop's Riccati and CasADi's IPOPT oracles all trace to AD or algorithm structure: CS-2, CS-3, CS-5, CS-9, CS-10, CS-14 and Tier 5 (<b>A8–A11</b>).</li>
+<li><b>Dense kernels of the BLASFEO class (K0–K5, section 5).</b> Isolated, Scaly's GEMM is 1.2–1.6× BLASFEO at n = 16–64 and 4.3× beyond 64 columns, POTRF 1.5–2.9× and TRSM about 1.9× from n = 12, while Scaly wins at n ≤ 8. Closing this is 2–3 person-months, about half of it already on the list (B2, A7, C-117, A11). Its impact on the gaps above is <b>narrower than the analysis stated</b>: the 80–90% Cholesky share it used predates C-136, and at DUAL's sizes the factor is now about 20–45% of an iteration. On the best-backend PIQP comparison it moves only DUAL1–4, and closes them only together with dense storage of P in A7. Where it is decisive is <b>A11</b> (Fatrop's Riccati runs on BLASFEO, so after the algorithm the kernels are the second half of that 5–9×) and <b>A9</b> (the rewritten surrogate lands on a 512-wide GEMM, i.e. on the 4.3× path). K0 is days and belongs at the front; the rest follows the chain campaign, gated by A7's profile.</li>
+</ul>
+<p style="margin-bottom:0"><b>Proposed order</b> (section 6 has the impact and effort of every item): the A1 experiment (half a day, decides whether the cliff holds on the M3 with Apple clang), then A4, A5, K0 and A7's profile (small, low-risk, IPM-wide; the profile decides how much of K is worth doing for the IPM), then the chain campaign A1–A3 with C-77, then A6, then A7 with K1–K2 as one dense campaign (K3 only if the profile still shows the factor dominating), then A11 with K4, then the remaining case-study items. The codegen items already on the list are in section 7 for completeness.</p>
+</div>
+
+<h2>1. Where another tool is still faster</h2>
+<p>Ratios are Scaly's time over the other tool's time, so values above 1 mean Scaly is slower. The type column says where the fix lives: <span class="tag ad">AD</span> differentiation and sparsity, <span class="tag alg">algorithm</span> the solver or library formulation, <span class="tag cg">codegen</span> lowering and the program passes.</p>
+<div class="scroll"><table>
+<tr><th>against</th><th>case</th><th class="r">ratio</th><th>cause, as far as known</th><th>type</th><th>todo · here</th></tr>
+<tr><td>CasADi SX</td><td>chain Lagrangian Hessian, M = 9</td><td class="r bad">2.41</td><td>stage body past the instruction cache (section 2); 42 forward-over-reverse directions on a dense stage block; duplicated link adjoints; assembly 21%</td><td><span class="tag ad">AD</span></td><td>C-11, C-58, C-77 · A1–A3</td></tr>
+<tr><td>CasADi SX</td><td>race cars N = 40 / 200</td><td class="r">1.02 / 1.00</td><td>parity; the assembly after the stage calls is 18% / 5%; 527 of 984 transposed entries are used</td><td><span class="tag ad">AD</span> <span class="tag cg">codegen</span></td><td>C-77, C-78 · A3</td></tr>
+<tr><td>CasADi SX</td><td>E1 IPOPT oracles, chain 2D / 3D</td><td class="r bad">1.9 / 1.7</td><td>compressed Jacobian formed by a dense contraction with 0/1 seed matrices; E1 predates O5–O7, so re-measure</td><td><span class="tag ad">AD</span></td><td>CS-2 · A3</td></tr>
+<tr><td>CasADi SX</td><td>E1 stage Hessian, 3D chain (42 variables)</td><td class="r warn">1.14</td><td>dense <code>sc.hessian</code>; SX drops the structural zeros</td><td><span class="tag ad">AD</span></td><td>CS-3 · A10</td></tr>
+<tr><td>CasADi SX</td><td>I5 collocation defect</td><td class="r bad">2.2</td><td>2.1 against 0.95 µs; SX expands fully (70× the code)</td><td><span class="tag cg">codegen</span></td><td>—</td></tr>
+<tr><td>PIQP sparse</td><td>QRECIPE</td><td class="r bad">2.13</td><td>34 iterations against 19: MMD-ordered LDLᵀ rounding moves the path from iteration 7</td><td><span class="tag alg">algorithm</span></td><td>C-130 · A6</td></tr>
+<tr><td>PIQP dense</td><td>DUAL1–4 (dense P, n 75–111)</td><td class="r bad">1.38–1.59</td><td>best of Scaly's backends against PIQP's dense one; the Cholesky, plus per-iteration O(n²) work not yet profiled</td><td><span class="tag alg">algorithm</span> <span class="tag cg">codegen</span></td><td>C-117 · A7, K1–K3</td></tr>
+<tr><td>PIQP dense</td><td>DUALC1/2/5/8 (n ≤ 9, m 214–502)</td><td class="r bad">1.38–1.69</td><td>condensed Gᵀ W G assembly and the triangular solves</td><td><span class="tag alg">algorithm</span></td><td>new · A7(b), B3</td></tr>
+<tr><td>PIQP dense</td><td>ex_dense (n 30, m 40)</td><td class="r bad">2.11</td><td>about 14 µs an iteration where the factor is well under 1 µs: fixed per-iteration cost</td><td><span class="tag cg">codegen</span></td><td>new · profile, B3</td></tr>
+<tr><td>PIQP</td><td>GENHS28, LOTSCHD (tiny)</td><td class="r warn">1.3–1.7</td><td>Scaly's timed solve includes Ruiz equilibration; PIQP's solve timer does not</td><td><span class="tag alg">algorithm</span></td><td>new · A4</td></tr>
+<tr><td>PIQP</td><td>a user's choice of backend</td><td class="r bad">up to 6.5</td><td>ex_portfolio: dense 236 µs, sparse 36 µs; the mpc problems dense 1.1–1.4× PIQP, sparse 0.67–0.91×</td><td><span class="tag alg">algorithm</span></td><td>new · A5</td></tr>
+<tr><td>Fatrop</td><td>E1 full SQP on the chain</td><td class="r bad">5–9 (KKT)</td><td>a generic sparse LDLᵀ of the whole KKT matrix against a Riccati recursion</td><td><span class="tag alg">algorithm</span></td><td>Tier 5 · A11, K4</td></tr>
+<tr><td>ExaModels</td><td>E6 AC-OPF Hessian, case9241 / 13659</td><td class="r bad">4.4 (5.6 Hessian)</td><td>colour width follows the largest bus degree (12 → 74); work grows as n × width, not nnz; 277 MB of C</td><td><span class="tag ad">AD</span></td><td>CS-5 · A10</td></tr>
+<tr><td>PyTorch / XLA</td><td>E2 surrogate 12 × 512; E5 at nx = 16</td><td class="r bad">≈ 20 (2.2 of it float32)</td><td>a <code>vmap</code> of matrix–vector products runs element by element; the weights are read 20 times per call</td><td><span class="tag ad">AD</span></td><td>CS-9 · A9, K0–K2</td></tr>
+<tr><td>network written inline</td><td>E2 acados <code>expl_vde_forw</code>; E5 episode</td><td class="r bad">1.9; 1.24</td><td>60 against 31 µs, 200 against 161 ms: a call and its derivative compute the primal twice</td><td><span class="tag ad">AD</span></td><td>CS-10 · A8</td></tr>
+<tr><td>its own forward pass</td><td>E5 reverse sweep</td><td class="r bad">≈ 440</td><td>84 ms against 0.19 ms: hoisting stops at a custom rule</td><td><span class="tag ad">AD</span></td><td>CS-14 · A8</td></tr>
+<tr><td>SymForce fixed</td><td>E7 linearize, 5 poses</td><td class="r warn">1.48</td><td>3.40 against 2.29 µs: CSE across all factors; the whole solve is still 1.24× faster</td><td><span class="tag ad">AD</span></td><td>left, as E7 decided</td></tr>
+<tr><td>QOCOGEN</td><td>E3 RAM on Cortex-M7</td><td class="r bad">2.4–7.7</td><td>P built dense from its parameters before its nonzeros are gathered</td><td><span class="tag alg">algorithm</span></td><td>CS-12 · A4</td></tr>
+<tr><td>CasADi VM, ExaModels</td><td>time to first solution</td><td class="r bad">2–8</td><td>a JIT cache hit still renders the C (1.4 of 1.8 s); E1 3D IPOPT setup 14.1 against 1.8 s; E6 53–66 against 24–29 s</td><td><span class="tag cg">codegen</span></td><td>C-115, CS-16 · A12</td></tr>
+<tr><td>TinyMPC</td><td>16–32 inputs</td><td class="r warn">1.25</td><td>dense products (0.80× speed-up), measured before O6's blocked products: re-measure</td><td><span class="tag cg">codegen</span></td><td>C-117 · K2</td></tr>
+<tr><td>BLASFEO (vendored)</td><td>isolated GEMM / POTRF / TRSM, n = 16–128</td><td class="r bad">1.16–4.3 / 1.5–2.9 / 1.8–2.0</td><td>1 × 16 row tile, load-bound; a triple loop past 64 columns; inner-product Crout Cholesky; no explicit SIMD (section 5). Scaly wins at n ≤ 8</td><td><span class="tag cg">codegen</span></td><td>C-79, C-117 · K0–K3</td></tr>
+</table></div>
+
+<h2>2. New: the chain's stage Hessian falls off an instruction-cache cliff</h2>
+<p>The benchmark's Lagrangian Hessian (lower triangle, horizon 40), built with <code>nlp_oracles</code> and timed through the Function call (fastest of 7 × 50 calls). Measured on the Linux VM on this Mac with gcc 11.4, <code>-O2 -mcpu=native -fno-math-errno</code>, so the absolute times are not the M3 Max / Apple clang numbers (M = 9: 1 035 µs here, 759 µs there). The ratios are what matter. Multiplications are counted in the generated C of the scalarized stage procedure. Code size is that procedure's object size.</p>
+<div class="scroll"><table>
+<tr><th>masses M</th><th class="r">colours</th><th class="r">Hessian nnz</th><th class="r">stage mults</th><th class="r">stage divisions</th><th class="r">stage code</th><th class="r">time</th><th class="r">time per 1 000 mults</th></tr>
+<tr><td>3</td><td class="r">12</td><td class="r">3 123</td><td class="r">3 420</td><td class="r">185</td><td class="r">42 KB</td><td class="r">39.5 µs</td><td class="r">11.5 µs</td></tr>
+<tr><td>5</td><td class="r">24</td><td class="r">12 003</td><td class="r">14 116</td><td class="r">695</td><td class="r">200 KB</td><td class="r">196 µs</td><td class="r">13.9 µs</td></tr>
+<tr><td>7</td><td class="r">30</td><td class="r">22 323</td><td class="r">25 202</td><td class="r">1 223</td><td class="r">343 KB</td><td class="r">710 µs</td><td class="r bad">28.2 µs</td></tr>
+<tr><td>9</td><td class="r">42</td><td class="r">32 643</td><td class="r">37 446</td><td class="r">1 751</td><td class="r">≈ 490 KB</td><td class="r">1 035 µs</td><td class="r bad">27.7 µs</td></tr>
+</table></div>
+<p>The operation count grows as expected, 2.7× from M = 5 to M = 9. The cost per operation doubles between M = 5 and M = 7 and then stays flat. That is a step, not a trend. The stage procedure is one straight-line body called once per stage, 40 times per evaluation. At M = 5 it is about the size of the 192 KB L1 instruction cache of Apple's performance cores, and from M = 7 it is well past it, so every stage call streams its code from L2. Two other explanations do not fit. Spills: 60% of the body's instructions are stack loads and stores at both M = 5 and M = 9 (30 252 of 50 161, 68 367 of 121 512). Compile flags: <code>-Os</code> makes both sizes about 15% faster and leaves the ratio at 5.1. The assembly, 21% of M = 9 on the M3, is in these times too. The per-operation step is too large for it to explain.</p>
+<p>CasADi SX's expanded oracle is straight-line across the whole horizon, so it never expects its code to be reused: it streams its code once, where Scaly streams 490 KB forty times. With about 2× SX's multiplications per stage (C-49: 19 946 operations against SX's triangle-only 13 213 at M = 5), Scaly wins while the body stays hot and loses when it does not.</p>
+<p class="meta">Scripts: <code>internal/notes/perf_2026_09_30_gaps/chain_probe.py M outdir</code> (colours, generated C, per-procedure counts) and <code>chain_time.py M</code>; run from the repository root with <code>uv run</code>.</p>
+
+<h2>3. PIQP, each side on its better backend</h2>
+<p>From <code>perf_2026_09_27_ipm_speed/results_2026_09_27.md</code>: for each problem, the faster of Scaly's sparse and dense solves against the faster of PIQP's. Over all 55 problems the geometric mean is <span class="ok">0.81</span>, and <span class="ok">0.94</span> over the 38 where PIQP takes at least 50 µs. The eleven problems where PIQP's better backend still wins:</p>
+<div class="scroll"><table>
+<tr><th>problem</th><th>n / p / m</th><th class="r">Scaly dense</th><th class="r">Scaly sparse</th><th class="r">PIQP dense</th><th class="r">PIQP sparse</th><th class="r">best / best</th><th>class</th></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td class="r">3 560</td><td class="r">860</td><td class="r">3 601</td><td class="r">404</td><td class="r bad">2.13</td><td>iterations, 34 against 19</td></tr>
+<tr><td>ex_dense</td><td>30 / 5 / 40</td><td class="r">114</td><td class="r">123</td><td class="r">54</td><td class="r">203</td><td class="r bad">2.11</td><td>per-iteration overhead</td></tr>
+<tr><td>GENHS28</td><td>10 / 8 / 0</td><td class="r">2.2</td><td class="r">1.7</td><td class="r">1.1</td><td class="r">1.0</td><td class="r bad">1.70</td><td>fixed cost, Ruiz in the timer</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td class="r">334</td><td class="r">477</td><td class="r">197</td><td class="r">503</td><td class="r bad">1.69</td><td>m ≫ n</td></tr>
+<tr><td>DUAL3</td><td>111 / 1 / 0</td><td class="r">987</td><td class="r">894</td><td class="r">564</td><td class="r">1 686</td><td class="r bad">1.59</td><td>dense P</td></tr>
+<tr><td>DUAL2</td><td>96 / 1 / 0</td><td class="r">645</td><td class="r">571</td><td class="r">363</td><td class="r">1 046</td><td class="r bad">1.57</td><td>dense P</td></tr>
+<tr><td>DUALC1</td><td>9 / 1 / 214</td><td class="r">136</td><td class="r">208</td><td class="r">92</td><td class="r">231</td><td class="r bad">1.48</td><td>m ≫ n</td></tr>
+<tr><td>DUALC2</td><td>7 / 1 / 228</td><td class="r">119</td><td class="r">174</td><td class="r">82</td><td class="r">171</td><td class="r bad">1.44</td><td>m ≫ n</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td class="r">536</td><td class="r">467</td><td class="r">331</td><td class="r">845</td><td class="r bad">1.41</td><td>dense P</td></tr>
+<tr><td>DUAL4</td><td>75 / 1 / 0</td><td class="r">399</td><td class="r">336</td><td class="r">243</td><td class="r">539</td><td class="r bad">1.38</td><td>dense P</td></tr>
+<tr><td>DUALC5</td><td>8 / 1 / 277</td><td class="r">128</td><td class="r">201</td><td class="r">93</td><td class="r">221</td><td class="r bad">1.38</td><td>m ≫ n</td></tr>
+</table></div>
+<p>Times in µs. PRIMALC1–5, mpc_12_4_20, mpc_27_6_30, VALUES and QBEACONF, all slower than PIQP on the dense backend, are all faster on Scaly's sparse one. Their dense gap only matters to a user who picks the dense backend.</p>
+
+<h2>4. Proposed changes outside the C renderer</h2>
+<p>Ranked by expected payoff times breadth, and ordered for execution. Estimates are from the cited measurements and are stated as estimates.</p>
+
+<div class="step"><h3>A1 · Colour-blocked stage derivatives <span class="tag ad">AD</span></h3>
+<p><b>What.</b> <code>_sparse_jacobian_vmap</code> (<code>ad/sparse.py</code>) stacks every formal's colours into one block seed and emits one mapped <code>jvp_many</code> callee. Instead, partition the colours into k groups so that each group's scalarized body stays under a code budget (a first guess: 6 000–8 000 scalar operations, roughly 64–96 KB), and emit k mapped calls. Each is its own loop over the stages, so a group's code stays hot for all 40 trips. The loops run group-outer, stage-inner, and the recovery gather reads from k blocks instead of one.</p>
+<p><b>Cost.</b> Each group recomputes the primal and the adjoint: about 1 300 operations at M = 5, against 20 000 tangent operations. The alternative, storing the adjoint once and passing it to the later groups, costs workspace and is worth trying second.</p>
+<p><b>Expected.</b> If the per-operation cost returns to M = 5's, the stage part of M = 9 halves: 759 → about 470 µs on the M3, or 1.5× SX. Race cars and npmpc are unaffected (their bodies are small).</p>
+<p><b>First experiment (half a day).</b> Split the generated M = 9 stage procedure's C by hand into three bodies over 14 colours each, run them group-outer, and time it on the M3 with Apple clang at both the JIT's <code>-O2</code> and the sweep's <code>-O3</code>. This confirms the cliff where the benchmark runs before anything in <code>ad/</code> changes.</p>
+<p class="meta">Gate: time per operation at M = 9 within 1.2× of M = 5's; chain M = 5 unchanged; the dense-reference check of the sweep. Touches C-11.</p></div>
+
+<div class="step"><h3>A2 · Inline small pure callees before differentiating <span class="tag ad">AD</span></h3>
+<p><b>What.</b> C-58, as the C-49 audit specifies it: an expression-level expansion of a <code>CALL</code> under an operation budget, and of a short <code>VMAP</code>, inside a body that will be scalarized anyway, applied before <code>vjp</code>. The outer stage map is kept. Inside the stage, <code>chain_mass_accel_fn</code> computes each interior link twice, and today the two adjoints are not merged.</p>
+<p><b>Expected.</b> At M = 5, with the C-49 rule edits that have since landed, 19 946 → 14 771 operations per stage (−26%). It also shrinks the code, which helps A1. Estimated chain M = 9 with A1 and A2: about 1.3× SX.</p>
+<p class="meta">Risk: this is the expansion policy C-49 deferred to protect mapped structure. Bound it to bodies already marked or chosen for scalarization, so loop-form code is untouched. Gate: npmpc and unbumpercars within 2% (their MLPs must stay loops).</p></div>
+
+<div class="step"><h3>A3 · Compute only the derivative entries that are used <span class="tag ad">AD</span></h3>
+<p><b>What.</b> When a <code>gather</code> reads a fixed per-trip subset of a <code>VMAP</code>'s output, re-derive the callee with only those outputs, so dead-code elimination runs inside it before scalarization. A final trip whose slice differs is peeled, which is C-78's third pass. For star-coloured Hessians, choose the recovery (which compressed entry supplies each nonzero) so that the set of distinct entries read is as small as possible.</p>
+<p><b>Why.</b> The chain's stage block is dense. At M = 5 the callee computes 24 seeds × 24 live rows and the triangle uses 300 of those 576 entries. SX's triangle-only <code>nlp_hess_l</code> costs 13 213 operations against 16 367 for its full Hessian (−19%). O7 found the same waste in the race cars: 984 entries computed, 527 gathered; O7's fusion removes it outside the callee but not inside. The same mechanism removes CS-2's dense seed contraction in the IPOPT Jacobian.</p>
+<p><b>Expected.</b> A1 + A2 + A3 put chain M = 9 at about 1.15× SX, and at parity or better once C-77 fuses the assembly. Race cars: a few percent.</p>
+<p class="meta">Gate: the sweep's dense-reference checks; the IPOPT chain oracles of E1 re-measured (CS-2).</p></div>
+
+<div class="step"><h3>A4 · A setup/solve split for generated solvers <span class="tag alg">algorithm</span></h3>
+<p><b>What.</b> Give <code>opt.ipm.Solver</code> a <code>setup</code> Function for what depends only on the matrices: Ruiz equilibration, the data-only residual maxima (C-134), the sparse extraction of P (CS-12). Give it a <code>solve</code> that takes that state, following PIQP's setup/update split. When the matrices are constants in the graph, fold <code>setup</code> at generation time. C-80 is the same idea for NLP oracles: a parameter-only prologue computed once per solve, not once per iteration.</p>
+<p><b>Why.</b> Ruiz is 2–14% of the profiled sparse solves (QAFIRO 14%). It is all of the gap on GENHS28 (one iteration) and part of LOTSCHD's. PIQP's solve timer excludes it, so today's comparison charges Scaly for work PIQP does not time. In MPC with fixed A, B, Q, R, only x₀ changes, so everything in <code>setup</code> is wasted on every solve. CS-12 also closes most of E3's RAM gap to QOCOGEN.</p>
+<p class="meta">Gate: iterations and solutions identical on the 55 problems; both timing columns reported (with setup, and PIQP-comparable without it). Update <code>fairness.md</code> for the second column.</p></div>
+
+<div class="step"><h3>A5 · Choose the backend at generation time <span class="tag alg">algorithm</span></h3>
+<p><b>What.</b> <code>backend="auto"</code> as the default. The structure is fixed, so the cost of each backend is known exactly before any code is written: the symbolic LDLᵀ's flop count (<code>SymbolicLDL</code>) against the dense condensation and n³/6, weighted by the measured rates of the two kernels. An opt-in <code>backend="tune"</code> builds both and times them on the build machine.</p>
+<p><b>Why.</b> Section 3. The better backend alone takes the geometric mean against PIQP from 0.71 (sparse) or 0.99 (dense) to 0.81, and it spares a user ex_portfolio's 6.5× (dense 236 µs, sparse 36 µs).</p>
+<p class="meta">Gate: the cost model picks the faster backend on at least 50 of the 55 problems, and is never more than 1.2× off the better one.</p></div>
+
+<div class="step"><h3>A6 · Search orderings at generation time, and add a noise-pivot test <span class="tag alg">algorithm</span></h3>
+<p><b>What.</b> The ordering runs once, offline, so it can afford to try several: AMD, which PIQP uses; MMD, today's; and nested dissection. Keep the one with the least fill or fewest flops. Add C-130's noise-pivot test (a pivot below the rounding of Σ|L|²|D| is treated as zero and regularized) so that a rounding-sensitive path does not run into steps of 1e-21.</p>
+<p><b>Why.</b> QRECIPE is the one sparse problem far from PIQP (2.13×), and by iteration count, not speed. Both PIQP backends agree on 19 iterations. The sparse IPM also has two other rounding-sensitive problems, QBEACONF and QSHARE1B, that have constrained earlier work (the eight-lane sums, the single-sum Cholesky).</p>
+<p class="meta">Gate: QRECIPE within 25% of PIQP's iterations; no other problem's iteration count increases.</p></div>
+
+<div class="step"><h3>A7 · The dense backend's formulation <span class="tag alg">algorithm</span></h3>
+<p><b>First, profile DUAL1–4 and ex_dense.</b> At the corpus's Cholesky rates (chol_solve_64 to chol_solve_200, about 7–11 G multiply-adds a second), DUAL3's n = 111 factor should take about 20–30 µs of its 82 µs iteration. That is my estimate, and the rest has not been attributed. On ex_dense the factor is well under 1 µs of about 14 µs. <code>prof.py</code> from the IPM pass does this directly.</p>
+<p><b>Then:</b> (a) a blocked right-looking Cholesky in <code>scaly.linalg</code> whose trailing update is a matrix product: O6's register-blocked product runs matmul_48 at about 19 G multiply-adds a second, against 10–13 for the 4×4-tile Crout. Its partial sums are per block, and it needs the QSHARE1B/QBEACONF rounding gate. (b) For m ≫ n (DUALC), Gᵀ W G as a weighted symmetric rank-m update: one triangle, no W G temporary. (c) C-131's remaining factor copies, about five n² copies per factorization, 3–5% on dense.</p>
+<p><b>With K (section 5).</b> (a) is the cheap first step of K3 on today's product, and K2 lifts it without further work. For the level-2 kernels to reach the DUAL iterations at all, the dense backend must also store P, and G when it is dense enough, as dense arrays: today <code>opt/ipm/kkt.py</code> forms the condensed matrix and the products with P, A and G through <code>SparseMatrix</code> index tables.</p>
+<p class="meta">Gate: dense geometric mean against PIQP dense at or below 1.0 above 50 µs; iterations unchanged except where PIQP's two backends disagree.</p></div>
+
+<div class="step"><h3>A8 · One forward pass per call <span class="tag ad">AD</span></h3>
+<p>CS-10: share the primal between a call node and its derivative, or have the derivative callee return it. E2: 60 against 31 µs. E5: 200 against 161 ms. CS-14: hoist a custom rule's loop-invariant part in the reverse sweep as the forward <code>scan</code> already does. E5's reverse sweep recomputes a Riccati recursion that the forward pass hoists (84 ms against 0.19 ms).</p></div>
+
+<div class="step"><h3>A9 · A mapped matrix–vector product as one matrix product <span class="tag ad">AD</span></h3>
+<p>CS-9: rewrite <code>vmap(x ↦ W x)</code> with W shared across trips as <code>W X</code>, and apply the same rewrite to the Jacobian's seeded products. O6's blocked product then does the work. E2's surrogate reads each layer's weights 20 times per call, and Scaly's speed-up there falls from 29–38× at width 16 to 0.05× at 12 × 512. E5 at nx = 16 loses the 5× criterion for the same reason. The rewrite lands on a GEMM with a 512-wide operand, which is either past <code>COLUMN_BLOCKED_MAX</code> (12–13 GF/s, 4.3× BLASFEO) or on the 1 × 16 tile (52–62% of peak), depending on orientation, so K0 is a prerequisite (up to 2.7× on that product) and K2 adds another 1.4–1.6×; the float32 part (2.2× of the 20×) needs K1's four-lane rendering.</p></div>
+
+<div class="step"><h3>A10 · Local derivatives for repeated patterns <span class="tag ad">AD</span></h3>
+<p>CS-5 and CS-3: colour one <code>vmap</code> body, or one gather pattern, compute its small local Hessian, and scatter it, so the work grows as nnz instead of n × colour width. This is ExaModels' method: E6 is 4.4× behind from case9241, with 277 MB of C and first solutions 2× slower. For small dense stages, a star-coloured stage Hessian (CS-3, E1 3D) is the cheaper part. It is a larger change than A1–A3, but it also bounds generated code size.</p></div>
+
+<div class="step"><h3>A11 · The multistage QP backend <span class="tag alg">algorithm</span></h3>
+<p>Tier 5 of the PIQP plan: a Riccati-structured KKT solve for OCP QPs. E1 measured a generic sparse LDLᵀ of the whole KKT matrix at 5–9× Fatrop's Riccati time per solve. No oracle speed-up closes that gap. This is the largest item here, and the one that decides full-stack MPC comparisons against acados, Fatrop and HPIPM. Fatrop and HPIPM run their recursions on BLASFEO, so once the algorithm is in place the remaining gap is the block kernels at n<sub>x</sub> + n<sub>u</sub> ≈ 10–50, where Scaly is today 1.2–1.6× on GEMM, 2.0–2.9× on POTRF and about 2× on TRSM. My estimate is that A11 on today's kernels leaves roughly 1.5–2.5× to Fatrop, and that K2–K4 (with the fused Riccati step) are what take it to parity or below.</p></div>
+
+<div class="step"><h3>A12 · A JIT cache keyed on structure <span class="tag cg">codegen</span></h3>
+<p>C-115 and CS-16: key the cache on the Function's IR hash and the flags, and render the C only on a miss. A warm start is 1.8 s, of which 1.4 s is rendering (E8), against a 2 ms solve. This does not change run time, but it is the gap users meet first.</p></div>
+
+<h2>5. Dense kernels of the BLASFEO class (K0–K5)</h2>
+<p>From <code>blasfeo_kernels_analysis_2026_09_30.html</code>, with raw data in <code>perf_2026_09_30_blasfeo/</code>. Scaly's JIT defaults are measured against BLASFEO <code>ARMV8A_APPLE_M1</code> on panel-major data, on the Linux VM (gcc 11.4, 3.6 GHz, measured peak 58 GFLOP/s). The ratio is Scaly's time over BLASFEO's.</p>
+<div class="scroll"><table>
+<tr><th class="r">n</th><th class="r">GEMM</th><th class="r">POTRF</th><th class="r">TRSM (vs <code>rltn</code>)</th><th>Scaly's kernel, and why it loses</th></tr>
+<tr><td class="r">4</td><td class="r ok">0.35</td><td class="r ok">0.27</td><td class="r ok">0.34</td><td rowspan="2">straight-line code; BLASFEO's dispatch and edge kernels dominate</td></tr>
+<tr><td class="r">8</td><td class="r ok">0.78</td><td class="r ok">0.57</td><td class="r ok">0.56</td></tr>
+<tr><td class="r">16</td><td class="r warn">1.16</td><td class="r bad">2.03</td><td class="r bad">2.00</td><td rowspan="3">GEMM: a 1 × 16 row tile, about 1.1 loads per FMA against 0.375 for an 8 × 4 tile, and 8 accumulator chains where about 16 are needed. POTRF: the C-136 inner-product Crout, against an outer-product panel update with an in-register factorization and a reciprocal diagonal. No explicit SIMD anywhere.</td></tr>
+<tr><td class="r">32</td><td class="r warn">1.38</td><td class="r bad">2.40</td><td class="r bad">2.00</td></tr>
+<tr><td class="r">64</td><td class="r warn">1.58</td><td class="r bad">2.91</td><td class="r bad">1.90</td></tr>
+<tr><td class="r">128</td><td class="r bad">4.30</td><td class="r bad">2.68</td><td class="r bad">1.90</td><td>GEMM: rows wider than <code>COLUMN_BLOCKED_MAX = 64</code> fall back to a triple loop accumulating in memory, 12 GF/s</td></tr>
+</table></div>
+<p>The proposal is a kernel layer below AD, inside the program dialect, so derivatives land on the same kernels. It is staged as follows (the analysis's S0–S5; efforts are its estimates):</p>
+<div class="scroll"><table>
+<tr><th>item</th><th>content</th><th>effort</th><th>overlap with the list</th><th>gate</th></tr>
+<tr><td>K0</td><td>column blocking past 64 columns for matrix–matrix products; <code>dense_unroll</code> re-checked for POTRF/TRSM at n = 9–16</td><td>2–4 days</td><td>new</td><td>no GEMM cliff at n ≥ 96; unbumpercars unchanged</td></tr>
+<tr><td>K1</td><td>target descriptor, 64 B workspace alignment, <code>RangeKind.VECTOR</code> rendered as vector types with a small per-ISA shim</td><td>1–2 weeks</td><td><b>is</b> B2 (C-79)</td><td>C-79's gates</td></tr>
+<tr><td>K2</td><td>GEMM m<sub>r</sub> × n<sub>r</sub> tiles from the BLIS analytical model (8 × 4 on M-series NEON), nn/nt/tn, exact tiling at fixed sizes; GEMV</td><td>2–3 weeks</td><td>new</td><td>≥ 0.95× BLASFEO GEMM at n = 16–128, natively on the M3 and on the x86 reference machine</td></tr>
+<tr><td>K3</td><td>local panel packing, fused SYRK + POTRF with reciprocal diagonal, TRSM, LDLᵀ</td><td>2–3 weeks</td><td>subsumes A7(a), A7(b), C-117</td><td>POTRF ≤ 1.0× BLASFEO at n = 16–128</td></tr>
+<tr><td>K4</td><td>global layout planning, a fused Riccati step, batching across stages</td><td>3–4 weeks</td><td>inside A11 (Tier 5)</td><td>≤ 1.0× HPIPM on the multistage set</td></tr>
+<tr><td>K5</td><td>SME (M4), SVE, float32 and Cortex-M targets</td><td>research</td><td>Tier 6</td><td>per target</td></tr>
+</table></div>
+<p>An <code>extern</code> BLASFEO path (it is vendored in <code>scaly-piqp</code>) would take about a week and is the right gate reference for K2–K3, not the product: it gives up the n ≤ 8 wins, fusion, structure and SME, and it breaks the generated-code-only decision.</p>
+
+<h3>Impact, re-derived against the gaps in sections 1 and 3</h3>
+<p>The analysis's impact estimate for the IPM does not survive a check against the current numbers. The corrections, in order of consequence:</p>
+<ul>
+<li><b>The Cholesky share is stale.</b> The "80–90% of a step" it used is the tier-3 profile (<code>tier3_implementation_status.md</code>, C-117), taken before C-136 made the kernel 3.3× faster at n = 300. Today, by rate, the factor of DUAL1–4 (n³/6 multiply-adds at 6–11 G a second: 6–8 in the VM at n = 64–128, 7–11 in the M3 corpus at n = 64–200) is 6–12 µs of DUAL4's 36 µs iteration and 21–38 µs of DUAL3's 82 µs: about <b>20–45%</b>. At n = 200–300 (PRIMALC, VALUES, QGROW7) it is roughly 40–70%: the old 86–91% profile with the C-136 speed-up gives about 70%, the rates about 40%. A7's profile (<code>prof.py</code>, macOS <code>sample</code>, about a day) settles this and must come before any K2/K3 work is justified on IPM grounds.</li>
+<li><b>Dense backend against PIQP dense.</b> With POTRF at BLASFEO parity (2.7–2.9× faster at n = 64–128) and nothing else changed, a step gets 1.2–1.4× faster at n ≈ 100 and 1.4–1.9× at n = 200–300. The dense geometric mean above 50 µs moves from 1.22 to about <b>0.8–1.0</b>, not the 0.6–0.75 the analysis gave, which needs a share of 75% or more across the set.</li>
+<li><b>Best backend against best backend (section 3).</b> Of the eleven problems, only <b>DUAL1–4</b> move. DUAL3 needs 987 → 564 µs (1.75×); the factor alone gives 700–830 µs, i.e. 1.24–1.47× PIQP, from 1.59. The other 55–80% of the iteration is products with P, triangular solves and residuals. Those are level-2 dense work in principle, but the dense backend still runs them through <code>SparseMatrix</code> index tables, so vector GEMV/TRSV only applies once A7 stores P (and a dense-enough G) densely. With both, the estimate is 0.9–1.2× PIQP. <b>DUALC</b> (n ≤ 9) factors a 9 × 9 matrix, where Scaly already beats BLASFEO; its Gᵀ W G is 16–32 k multiply-adds, 2–4 µs at GEMM-class rates of DUALC8's 33 µs iteration, so the lever is A7(b)'s dense weighted SYRK and B3, not tiles. ex_dense, QRECIPE and GENHS28: none.</li>
+<li><b>Large-n dense problems</b> (PRIMALC1–5, VALUES, QGROW7, QSHARE1B) gain most, but Scaly's sparse backend already beats PIQP's better backend on all of them (0.77–0.95×). After A5 this matters only to a user who forces the dense backend.</li>
+<li><b>A11 (Fatrop 5–9×).</b> This is where K is decisive rather than marginal. The algorithm (a Riccati recursion instead of a generic sparse LDLᵀ) removes most of the gap, but Fatrop and HPIPM run their recursion on BLASFEO, and at n<sub>x</sub> + n<sub>u</sub> ≈ 10–50 Scaly's kernels are 1.2–2.9× slower. The residual is an estimated 1.5–2.5× that only K2–K4 remove. With fusion across the Riccati step, structural zeros inside blocks and batching of small stages, beating HPIPM at small n<sub>x</sub> is plausible.</li>
+<li><b>A9 (E2, about 20×).</b> The rewrite turns 20 re-reads of each weight matrix into one GEMM with a 512-wide operand, which today runs on the 4.3× path or the 52–62%-of-peak tile. K0 is a prerequisite (up to 2.7× on that product) and K2 adds another 1.4–1.6×. The float32 part needs K1.</li>
+<li><b>Smaller or unmeasured.</b> TinyMPC at 16–32 inputs (1.25×, to be re-measured after O6): K2's GEMV, modest. Kalman/MHE with dense covariance and dense Gauss–Newton would gain as much as the dense IPM, but no benchmark gap is measured there yet. Sparse LDLᵀ: only problems with supernodes wider than about 8.</li>
+<li><b>None:</b> the chain (2.41×), race cars, E1's IPOPT oracles, E6, E7, CS-10/CS-14 and time to first solution. These are AD or algorithm structure (A1–A3, A8, A10, A12, C-77).</li>
+</ul>
+
+<h3>Corrections to effort and risk</h3>
+<ul>
+<li><b>K0 is not a one-line change.</b> The analysis calls the 64-column limit trivial to lift, but it was set deliberately: <code>passes/lowering.py</code> records that column blocks measured 1.13× slower on unbumpercars' 128 × 256 products, where streaming the row with the reduction outermost wins. K0 must block only true matrix–matrix products (both dimensions large), with a k-block that keeps the B panel in L1, and keep the streaming path for vector × wide-matrix. Still days.</li>
+<li><b>2–3 person-months is the gross figure.</b> K1 is B2, K3 subsumes A7(a)/(b) and C-117, and K4 is part of A11, all already on the list. The marginal new effort is K0, K2, the packing and fused kernels of K3 beyond A7(a), and K4's layout planning: about <b>5–8 weeks</b>.</li>
+<li><b>A cheaper first step exists.</b> A7(a), a blocked right-looking Cholesky whose trailing update is the existing O6 product (15–18 G multiply-adds a second at n = 16–64 in the VM, against 4–8 for today's factor), should take the factor about 1.5× faster for roughly a third of K3's effort (estimate), and K2 then lifts it without further work. K3's fused kernels are justified only if the profile still shows the factor above about 40% after A7(a).</li>
+<li><b>Platform.</b> The kernel ratios are from gcc 11 in the VM; the IPM numbers they are applied to are Apple clang 21, native. The rates above mix the two, so the shares carry that uncertainty. K2/K3's gates must be native, and SME (K5) can only be measured natively on macOS.</li>
+<li><b>Rounding.</b> Blocked kernels change the summation order again. QSHARE1B and QBEACONF have already constrained C-136 and the eight-lane sums, so K3 needs the same decision-trace tolerance gates as A6 and A7(a).</li>
+</ul>
+
+<h2>6. Impact against effort, all items</h2>
+<p>Efforts are my estimates for one person familiar with the code, except the K rows, which are the BLASFEO analysis's. Effects are the estimates of sections 4 and 5, combined as in section 8. "Marginal" means net of work already counted in another row.</p>
+<div class="scroll"><table>
+<tr><th>item</th><th>gaps it addresses (measured)</th><th>expected effect (estimate)</th><th>effort</th><th>depends on</th></tr>
+<tr><td>A1 experiment</td><td>chain M = 9, 2.41×</td><td>confirms or refutes the i-cache cliff on the M3</td><td>½ day</td><td>—</td></tr>
+<tr><td>A4</td><td>GENHS28, LOTSCHD 1.3–1.7×; E3 RAM 2.4–7.7×; fixed-matrix MPC</td><td>closes GENHS28; Ruiz 2–14% off every solve with fixed matrices</td><td>1–2 weeks</td><td>—</td></tr>
+<tr><td>A5</td><td>backend choice, up to 6.5×</td><td>geometric mean 0.71 / 0.99 → 0.81 by default</td><td>≤ 1 week</td><td>—</td></tr>
+<tr><td>K0</td><td>GEMM past 64 columns, 4.3×</td><td>removes the cliff; prerequisite for A9</td><td>2–4 days</td><td>—</td></tr>
+<tr><td>A7 profile</td><td>DUAL1–4, DUALC, ex_dense</td><td>decides between K3, level-2 kernels and B3</td><td>1 day</td><td>—</td></tr>
+<tr><td>A1</td><td>chain M = 9</td><td>2.41 → ≈ 1.5× SX</td><td>1–2 weeks</td><td>A1 experiment</td></tr>
+<tr><td>A2</td><td>chain; code size</td><td>−26% stage operations; → ≈ 1.3× SX</td><td>2–3 weeks</td><td>—</td></tr>
+<tr><td>A3</td><td>chain; race cars; E1 oracles 1.7–1.9×</td><td>→ ≈ 1.15× SX; CS-2</td><td>2–4 weeks</td><td>—</td></tr>
+<tr><td>B1 (C-77)</td><td>assembly 18–36% of the oracles</td><td>chain → ≈ parity with A1–A3</td><td>2–3 weeks</td><td>A3 helps</td></tr>
+<tr><td>A6</td><td>QRECIPE 2.13×; rounding-sensitive paths</td><td>QRECIPE within 25% of PIQP's iterations</td><td>1–2 weeks</td><td>—</td></tr>
+<tr><td>A7(a)</td><td>dense factor, DUAL1–4</td><td>factor ≈ 1.5×; DUAL step 1.05–1.2×</td><td>1–2 weeks</td><td>A7 profile</td></tr>
+<tr><td>A7(b), (c), dense P storage</td><td>DUALC 1.38–1.69×; DUAL level-2 work</td><td>DUALC to about parity if the assembly is the cost; opens DUAL to K2's GEMV</td><td>1–2 weeks</td><td>A7 profile</td></tr>
+<tr><td>K1 (= B2)</td><td>everything vectorizable; float32 in A9</td><td>enabling; little on its own</td><td>1–2 weeks</td><td>—</td></tr>
+<tr><td>K2</td><td>GEMM 1.2–1.6×; A9; TinyMPC; Riccati blocks</td><td>GEMM at parity; A7(a) and A9 lifted with it</td><td>2–3 weeks</td><td>K0, K1</td></tr>
+<tr><td>K3 (marginal over A7(a))</td><td>POTRF 1.5–2.9×, TRSM 1.9×</td><td>dense backend 1.22 → ≈ 0.8–1.0× PIQP dense; DUAL1–4 → ≈ 0.9–1.2× with dense P</td><td>1–2 weeks</td><td>K2; justified only if the profile says so</td></tr>
+<tr><td>A11</td><td>Fatrop 5–9× (KKT)</td><td>→ ≈ 1.5–2.5× on today's kernels</td><td>1–3 months</td><td>—</td></tr>
+<tr><td>K4 (marginal over A11)</td><td>the residual of A11</td><td>→ ≈ parity with Fatrop/HPIPM, possibly below at small n<sub>x</sub></td><td>2–3 weeks</td><td>A11, K2, K3</td></tr>
+<tr><td>A9</td><td>E2 ≈ 20×; E5 at nx = 16</td><td>removes the 20× weight re-reads; its product then runs at K2's rate</td><td>1–2 weeks</td><td>K0; K2 for full effect</td></tr>
+<tr><td>A8</td><td>E2 1.9×, E5 1.24× and ≈ 440×</td><td>one forward pass per call; CS-14 hoisting</td><td>2–3 weeks</td><td>—</td></tr>
+<tr><td>A10</td><td>E6 4.4×; E1 3D stage 1.14×</td><td>work as nnz, not n × colour width; bounded code size</td><td>1–2 months</td><td>—</td></tr>
+<tr><td>A12</td><td>time to first solution 2–8×</td><td>warm start 1.8 → ≈ 0.4 s</td><td>≤ 1 week</td><td>—</td></tr>
+<tr><td>B3</td><td>ex_dense 2.11×; part of DUALC</td><td>to be sized by A7's profile</td><td>2–3 weeks</td><td>A7 profile</td></tr>
+<tr><td>K5</td><td>none measured</td><td>SME: up to 9× peak FP64 on M4 at n ≳ 32 (Remke and Breuer)</td><td>research</td><td>K1, K2</td></tr>
+</table></div>
+<p><b>Reading the table.</b> Per week of effort, K0, A4, A5 and A7's profile are the best buys and go first. The chain campaign (A1–A3, C-77) addresses the headline benchmark gap and nothing in K touches it, so it keeps its place. The dense-kernel programme is worth its 5–8 marginal weeks mainly as the second half of A11 and as what A9 lands on; for the PIQP comparison it closes four problems, and only together with dense storage of P, so it follows A6 and is scheduled with A7 rather than ahead of it. K3's fused kernels are the one piece whose value depends entirely on a measurement not yet taken.</p>
+<h2>7. Codegen items already on the list</h2>
+<ul>
+<li><b>B1 · C-77:</b> the derivative assembly fused into the mapped loop. 21% of chain M = 9, 36% of M = 5, 18% of race cars N = 40. A3 reduces what it has to handle.</li>
+<li><b>B2 · C-79 and vector values in the program dialect (= K1):</b> the dense Cholesky tile's remaining 1.4× (<code>-fassociative-math</code> 0.71 on chol_solve_200) and wider register tiles. A7(a) may take part of this without vector types.</li>
+<li><b>B3 · Multi-consumer fusion in the IPM step:</b> about 200 loops of a few hundred elements per iteration. This is the likely cause for ex_dense and part of DUALC, to be confirmed by A7's profile.</li>
+<li><b>B4 · Eight-lane sums</b> once A6 has settled the QBEACONF gate.</li>
+<li><b>B5 · Register pressure in scalarized bodies (new):</b> 60% of the chain stage's instructions are stack traffic. Scheduling the scalar SSA to shorten live ranges (a Sethi–Ullman-style order within the hash-consed DAG) may be worth measuring after A1.</li>
+</ul>
+
+<h2>8. Method</h2>
+<ul>
+<li>Every ratio in sections 1 and 3 is taken from the committed reports: <code>codegen_speed_plan_2026_09_30.html</code>, <code>ipm_speed_report.html</code> with its <code>results_2026_09_27.md</code>, <code>case_study_e1…e9_report.html</code>, <code>integrators_i5_report.html</code>, the C-49 audit (<code>perf_2026_09_07/c49_ad_op_audit.md</code>) and <code>todo.md</code>. The machine is an M3 Max with Apple clang 21 unless the report says otherwise.</li>
+<li>Section 2 is new, measured on the Linux VM described there, and should be repeated on the M3 (the A1 experiment does this). The 192 KB figure is the L1 instruction cache of Apple's performance cores. The VM does not report which core type it ran on.</li>
+<li>Estimates of a change's effect combine the measured shares multiplicatively (for example, the stage at 75% of chain M = 9 with half its per-operation cost gives 0.25 + 0.75 / 2 of today's time). They assume the effects are independent, which A1 and A2 are not quite, since A2 also shrinks the code.</li>
+<li>Section 5's kernel ratios are from <code>perf_2026_09_30_blasfeo/</code> (Linux VM, gcc 11.4, BLASFEO <code>ARMV8A_APPLE_M1</code>, panel-major, minimum of 9 samples), and are indicative. The Cholesky shares in section 5 are computed as n³/6 multiply-adds over a measured rate and divided by the per-iteration time from <code>results_2026_09_27.md</code> (total time over iterations); they are estimates until A7's profile replaces them.</li>
+<li>Efforts in section 6 are estimates, not measurements; the K rows are the BLASFEO analysis's, the rest mine. "Marginal" subtracts work already counted in the row it overlaps.</li>
+</ul>
+
+<h2>References</h2>
+<ol class="meta">
+<li>G. Frison, D. Kouzoupis, T. Sartor, A. Zanelli, M. Diehl, "BLASFEO: Basic Linear Algebra Subroutines for Embedded Optimization," <i>ACM Trans. Math. Softw.</i> 44(4), 42, 2018. <a href="https://dl.acm.org/doi/10.1145/3210754">doi:10.1145/3210754</a> · <a href="https://arxiv.org/abs/1704.02457">arXiv:1704.02457</a></li>
+<li>T. M. Low, F. D. Igual, T. M. Smith, E. S. Quintana-Ortí, "Analytical Modeling Is Enough for High-Performance BLIS," <i>ACM Trans. Math. Softw.</i> 43(2), 2016. <a href="https://dl.acm.org/doi/10.1145/2925987">doi:10.1145/2925987</a></li>
+<li>S. Remke, A. Breuer, "Hello SME! Generating Fast Matrix Multiplication Kernels Using the Scalable Matrix Extension," <i>SC24 Workshops</i>, 2024. <a href="https://arxiv.org/abs/2409.18779">arXiv:2409.18779</a></li>
+</ol>
+</main>

@@ -25,6 +25,7 @@ from ..function import ConcreteFunction, Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
 from ..ir.program import ProgramNode, ProgramOp
+from ..ir.target import Target
 from ..ir.types import dtypes
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
@@ -105,11 +106,12 @@ def with_prelude(source: str) -> str:
   return head + sep + "\n".join(_NAN_EXTREMA) + "\n" + tail
 
 
-def render_program_c_source(fun: Function, observe: ProgramObserver | None = None) -> str:
-  """Lower a non-solver host ``fun`` and render it. ``codegen/aot.py`` lowers once for the whole
-  module and calls ``render_program_c`` directly; this is the standalone convenience."""
+def render_program_c_source(fun: Function, observe: ProgramObserver | None = None, *, target: Target | str | None = None) -> str:
+  """Lower a non-solver host ``fun`` for ``target`` (None: the target in force) and render it.
+  ``codegen/aot.py`` lowers once for the whole module and calls ``render_program_c`` directly; this
+  is the standalone convenience."""
   fun = fun.concrete
-  return render_program_c(lower_function(fun, observe=observe), fun)
+  return render_program_c(lower_function(fun, observe=observe, target=target), fun)
 
 
 def render_program_c(prog: ProgramNode, fun: ConcreteFunction, adapters: tuple[Adapter, ...] = ()) -> str:

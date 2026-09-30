@@ -1,0 +1,4 @@
+clock_ghz 3.604
+fma_gflops 58.17
+flops_per_cycle 16.14
+(sink 3.6e+08)

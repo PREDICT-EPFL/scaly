@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 203**
+**Next id: 204**
 
 | Prefix | Section |
 |---|---|
@@ -865,6 +865,28 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
       is not read through a gather's table (a division per element, 1.05x slower on
       race_cars_jac_40). race_cars_40 0.966, race_cars_200 0.977; the first step of C-77
       (`notes/codegen_speed_o7_report.html`).
+
+### Remaining speed gaps (2026-09-30)
+
+The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_proposal_2026_09_30.html)
+(items A1–A12, B1–B5, K0–K5); the tiers, their gates and results are in
+[`notes/perf_gaps_plan_2026_09_30.html`](notes/perf_gaps_plan_2026_09_30.html); harness
+`notes/perf_2026_09_30_gaps/`. Every optimization takes its parameters from `sc.Target`.
+
+- [x] **C-203. `sc.Target`: the processor generated code is tuned for.** A frozen description of
+      it (vector width and registers, FMA units and latency, the caches, the AOT CPU flag, and
+      `rounding="target"|"portable"`), with presets (Apple M1–M4, Cortex-A53/A72/A76, Neoverse V2,
+      the x86-64 levels, `generic`) and the host detected from `sysctl` or `/sys`. Read at render
+      time: `render_c_module(fn, target=)`, `write_module`, `scaly_codegen --target`, and for the
+      JIT the target in force (`sc.target(...)`, `sc.set_target`, `SCALY_TARGET`, else the host),
+      whose change re-renders a called Function. Lowering rules read `ctx.target`, passes the
+      `PROGRAM`'s `target` attribute. The O6 row blocks and their 64-column limit are now its
+      derived `row_blocks` and `row_blocked_max`, scaled by vector width. They keep each output's
+      order of summation but still change bits (unbumpercars by up to 5.5e-17 under the AVX2
+      target's widths): clang fuses the multiply-adds of a streamed row and not of a vectorized
+      block. So `rounding="portable"` makes every such choice the M3's, and the C is then the same
+      for every target. The generated C of the 26 codegen-corpus kernels is byte-identical on the
+      M3; the C snapshot renders for `apple-m3` so it is the same on every machine.
 
 ### Now
 

@@ -23,6 +23,13 @@ trait; adding a new structural operation is a rule.
 deduplicates callees so a block used a hundred times is lowered once, runs the optimization
 pipeline, and verifies the result before returning it.
 
+It lowers for a target, the `sc.Target` describing the processor the code is tuned for (the one in
+force unless `target=` names another). A rule reads it as `ctx.target`, and a program pass reads
+it off the `PROGRAM` node's `target` attribute, so a choice that depends on the vector width or a
+cache size is made where the rest of the lowering is decided, and the renderer still only spells
+what it is given. The listing leaves the target out: it says what the program was tuned for, not
+what it computes.
+
 Before allocating buffers, lowering normalizes a private copy of each ordinary Function's outputs
 with the expression rewrite rules. The copy keeps the declared inputs and output metadata.
 Lowering captures the Function's effective hint before rewriting and applies it to the procedure
@@ -159,10 +166,15 @@ overlap, and the C compiler pairs them into vector lanes, which is what `-ffast-
 reordering freely. The rounding is a blocked sum's, as in NumPy's pairwise `sum`, and it is fixed
 by the generated code rather than by the compiler. Shorter reductions keep one chain, and so do
 the matrix products whose reduction axis is the matrix's slow one, `x @ b` and `a @ b`: each output
-sums its terms in order of `k`. Up to 64 columns an output row runs in blocks of 16, 8 and 4
-columns whose sums stay in registers across the reduction, each output stored once; the one to
-three columns no block covers, and every column of a wider row, put the reduction loop outermost
-and vectorize over the row instead, adding into the output at every step.
+sums its terms in order of `k`. An output row runs in blocks of 8, 4 and 2 vector registers'
+worth of columns, 16, 8 and 4 on a 128-bit machine (`Target.row_blocks`), whose sums stay in
+registers across the reduction, each output stored once; the columns no block covers, and every
+column of a row wider than four of the widest blocks (`Target.row_blocked_max`, 64 columns on
+Apple silicon), put the reduction loop outermost and vectorize over the row instead, adding into
+the output at every step. Each output's terms are summed in the same order whichever target the
+code is rendered for, but the widths still decide how the C compiler vectorizes the sums, and clang
+fuses a multiply and an add into one rounding in some shapes and not in others, so another target's
+widths can change the last bits. Under `rounding="portable"` every target takes the M3's widths.
 
 A `transpose` lowers to one flat loop over its output whose coordinates divide the loop variable.
 Fusion can then inline it into its one consumer: a gather reading a few entries of a transposed

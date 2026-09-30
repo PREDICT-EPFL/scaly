@@ -1,0 +1,110 @@
+# op=potrf n=4 scaly_residual=8.88e-16 copy_ns=2.22
+potrf scaly_jit 4 5.35 3.986 0
+potrf scaly_o3 4 5.90 3.619 0
+potrf bf_dpotrf_l 4 19.54 1.092 4.44e-16
+potrf bf_lapack_dpotrf 4 60.49 0.353 4.44e-16
+# op=potrf n=8 scaly_residual=3.55e-15 copy_ns=6.39
+potrf scaly_jit 8 26.30 6.490 0
+potrf scaly_o3 8 26.39 6.467 0
+potrf bf_dpotrf_l 8 46.00 3.710 4.44e-16
+potrf bf_lapack_dpotrf 8 107.06 1.594 4.44e-16
+# op=potrf n=12 scaly_residual=1.78e-15 copy_ns=12.85
+potrf scaly_jit 12 138.57 4.157 0
+potrf scaly_o3 12 137.17 4.199 0
+potrf bf_dpotrf_l 12 91.09 6.323 4.44e-16
+potrf bf_lapack_dpotrf 12 167.46 3.440 4.44e-16
+# op=potrf n=16 scaly_residual=3.55e-15 copy_ns=23.10
+potrf scaly_jit 16 248.66 5.491 0
+potrf scaly_o3 16 241.15 5.662 0
+potrf bf_dpotrf_l 16 122.46 11.150 8.88e-16
+potrf bf_lapack_dpotrf 16 221.54 6.163 8.88e-16
+# op=potrf n=24 scaly_residual=7.11e-15 copy_ns=51.76
+potrf scaly_jit 24 622.69 7.400 0
+potrf scaly_o3 24 634.45 7.263 0
+potrf bf_dpotrf_l 24 292.12 15.774 8.88e-16
+potrf bf_lapack_dpotrf 24 396.97 11.608 8.88e-16
+# op=potrf n=32 scaly_residual=7.11e-15 copy_ns=93.94
+potrf scaly_jit 32 1249.51 8.742 0
+potrf scaly_o3 32 1263.62 8.644 0
+potrf bf_dpotrf_l 32 521.67 20.938 8.88e-16
+potrf bf_lapack_dpotrf 32 664.89 16.428 8.88e-16
+# op=potrf n=48 scaly_residual=1.42e-14 copy_ns=296.70
+potrf scaly_jit 48 3547.15 10.393 0
+potrf scaly_o3 48 3546.13 10.396 0
+potrf bf_dpotrf_l 48 1264.19 29.160 1.78e-15
+potrf bf_lapack_dpotrf 48 1500.84 24.562 1.78e-15
+# op=potrf n=64 scaly_residual=2.84e-14 copy_ns=531.67
+potrf scaly_jit 64 7330.03 11.921 0
+potrf scaly_o3 64 7264.50 12.029 0
+potrf bf_dpotrf_l 64 2518.31 34.698 1.78e-15
+potrf bf_lapack_dpotrf 64 2843.64 30.729 1.78e-15
+# op=potrf n=96 scaly_residual=2.84e-14 copy_ns=1019.93
+potrf scaly_jit 96 20649.60 14.282 0
+potrf scaly_o3 96 20602.73 14.314 0
+potrf bf_dpotrf_l 96 7261.50 40.613 1.78e-15
+potrf bf_lapack_dpotrf 96 8501.19 34.691 1.78e-15
+# op=potrf n=128 scaly_residual=5.68e-14 copy_ns=1502.50
+potrf scaly_jit 128 43856.71 15.939 0
+potrf scaly_o3 128 43770.38 15.971 0
+potrf bf_dpotrf_l 128 16385.54 42.663 1.78e-15
+potrf bf_lapack_dpotrf 128 18723.66 37.335 1.78e-15
+# op=trsm n=4 scaly_residual=5.55e-17 copy_ns=1.97
+trsm scaly_jit 4 4.09 15.645 0
+trsm scaly_o3 4 4.43 14.452 0
+trsm bf_dtrsm_llnn 4 18.94 3.379 5.55e-17
+trsm bf_dtrsm_rltn 4 12.13 5.276 5.55e-17
+trsm bf_blas_dtrsm 4 31.66 2.021 5.55e-17
+# op=trsm n=8 scaly_residual=1.11e-16 copy_ns=6.34
+trsm scaly_jit 8 18.53 27.625 0
+trsm scaly_o3 8 19.35 26.464 0
+trsm bf_dtrsm_llnn 8 55.65 9.201 1.11e-16
+trsm bf_dtrsm_rltn 8 32.87 15.575 1.11e-16
+trsm bf_blas_dtrsm 8 91.78 5.579 1.11e-16
+# op=trsm n=12 scaly_residual=1.11e-16 copy_ns=13.62
+trsm scaly_jit 12 151.02 11.442 0
+trsm scaly_o3 12 163.61 10.562 0
+trsm bf_dtrsm_llnn 12 127.27 13.578 5.55e-17
+trsm bf_dtrsm_rltn 12 82.83 20.862 5.55e-17
+trsm bf_blas_dtrsm 12 287.34 6.014 5.55e-17
+# op=trsm n=16 scaly_residual=1.11e-16 copy_ns=23.00
+trsm scaly_jit 16 300.78 13.618 0
+trsm scaly_o3 16 314.86 13.009 0
+trsm bf_dtrsm_llnn 16 236.11 17.348 1.11e-16
+trsm bf_dtrsm_rltn 16 150.37 27.240 1.11e-16
+trsm bf_blas_dtrsm 16 262.60 15.598 1.11e-16
+# op=trsm n=24 scaly_residual=1.11e-16 copy_ns=51.22
+trsm scaly_jit 24 779.22 17.741 0
+trsm scaly_o3 24 616.05 22.440 0
+trsm bf_dtrsm_llnn 24 617.97 22.370 1.11e-16
+trsm bf_dtrsm_rltn 24 402.49 34.347 1.11e-16
+trsm bf_blas_dtrsm 24 638.53 21.650 1.11e-16
+# op=trsm n=32 scaly_residual=1.67e-16 copy_ns=107.42
+trsm scaly_jit 32 1697.65 19.302 0
+trsm scaly_o3 32 1396.62 23.462 0
+trsm bf_dtrsm_llnn 32 1290.67 25.388 1.11e-16
+trsm bf_dtrsm_rltn 32 850.23 38.540 1.11e-16
+trsm bf_blas_dtrsm 32 1245.17 26.316 1.11e-16
+# op=trsm n=48 scaly_residual=1.67e-16 copy_ns=265.08
+trsm scaly_jit 48 4883.62 22.645 0
+trsm scaly_o3 48 4859.70 22.757 0
+trsm bf_dtrsm_llnn 48 3939.26 28.074 1.67e-16
+trsm bf_dtrsm_rltn 48 2547.19 43.417 1.67e-16
+trsm bf_blas_dtrsm 48 3812.08 29.011 1.67e-16
+# op=trsm n=64 scaly_residual=1.67e-16 copy_ns=538.49
+trsm scaly_jit 64 10832.23 24.200 0
+trsm scaly_o3 64 10846.15 24.169 0
+trsm bf_dtrsm_llnn 64 8631.53 30.371 1.67e-16
+trsm bf_dtrsm_rltn 64 5700.04 45.990 1.67e-16
+trsm bf_blas_dtrsm 64 7332.78 35.750 1.67e-16
+# op=trsm n=96 scaly_residual=2.78e-16 copy_ns=867.40
+trsm scaly_jit 96 34249.35 25.832 0
+trsm scaly_o3 96 34183.70 25.882 0
+trsm bf_dtrsm_llnn 96 25209.71 35.095 2.22e-16
+trsm bf_dtrsm_rltn 96 18477.33 47.882 2.22e-16
+trsm bf_blas_dtrsm 96 22686.81 38.998 2.22e-16
+# op=trsm n=128 scaly_residual=3.33e-16 copy_ns=1351.40
+trsm scaly_jit 128 79343.51 26.431 0
+trsm scaly_o3 128 80432.89 26.073 0
+trsm bf_dtrsm_llnn 128 54566.90 38.433 2.78e-16
+trsm bf_dtrsm_rltn 128 41848.99 50.112 2.78e-16
+trsm bf_blas_dtrsm 128 52513.97 39.935 2.78e-16

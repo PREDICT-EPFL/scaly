@@ -20,6 +20,7 @@ from scaly.ir.expr_spec import spec_expr
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.program_spec import spec_program_full
 from scaly.ir.spec import Rule, Spec, VerifyError
+from scaly.ir.target import Target, get_target, set_target, target
 from scaly.opt.problem import NLP, NO_LB, NO_UB, Bounded, ProblemSpec
 from scaly.opt.qp import QP, NotQuadratic, QPData
 
@@ -33,6 +34,8 @@ def test_public_exports_are_canonical() -> None:
   assert sc.NotConcrete is NotConcrete and issubclass(NotConcrete, TypeError)
   assert sc.L is L
   assert sc.G is G
+  assert sc.Target is Target and sc.target is target and sc.get_target is get_target and sc.set_target is set_target
+  assert {"Target", "get_target", "set_target", "target"} <= set(sc.__all__)
   assert sc.opt.Bounded is Bounded
   assert sc.opt.NLP is NLP
   assert sc.opt.ProblemSpec is ProblemSpec

@@ -9,7 +9,10 @@ own (the solvers) lists them through the ``scaly.env_vars`` entry points, and
 
 from __future__ import annotations
 
+import functools
 import os
+import platform
+import subprocess
 import sys
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -32,6 +35,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("SCALY_CC", None, "Override the C compiler used by the JIT."),
   EnvVar("SCALY_CC_OPT", "-O2", "Optimization flag the JIT passes to the C compiler."),
   EnvVar("SCALY_STRICT_JVP_MANY", "0", "Raise instead of using the unrolled multi-seed JVP fallback."),
+  EnvVar("SCALY_TARGET", None, "The processor preset code is generated for when none is set in code (default: the host's)."),
   EnvVar("SCALY_VIZ_DIR", None, "Visualization recording directory."),
 )
 
@@ -77,3 +81,109 @@ def shared_lib_ext() -> str:
 
 def shared_lib_flag() -> str:
   return "-dynamiclib" if sys.platform == "darwin" else "-shared"
+
+
+@dataclass(frozen=True, slots=True)
+class CpuFacts:
+  """What the operating system says about the processor this process runs on. Caches are those of
+  the core generated code runs on (Apple's performance cores); a size the system does not report is
+  None. ``part`` is the Arm "CPU part" number on Linux, ``features`` the instruction-set extensions
+  that matter for code generation (``avx2``, ``fma``, ``avx512f``, ``sve``, ``sme``)."""
+
+  machine: str
+  brand: str = ""
+  part: str = ""
+  features: frozenset[str] = frozenset()
+  l1i: int | None = None
+  l1d: int | None = None
+  l2: int | None = None
+  line: int | None = None
+
+
+_SYSCTL_KEYS = (
+  "machdep.cpu.brand_string",
+  "hw.perflevel0.l1icachesize",
+  "hw.perflevel0.l1dcachesize",
+  "hw.perflevel0.l2cachesize",
+  "hw.l1icachesize",
+  "hw.l1dcachesize",
+  "hw.l2cachesize",
+  "hw.cachelinesize",
+  "hw.optional.arm.FEAT_SME",
+  "hw.optional.avx2_0",
+  "hw.optional.avx512f",
+  "hw.optional.fma",
+)
+_FEATURE_KEYS = {"hw.optional.arm.FEAT_SME": "sme", "hw.optional.avx2_0": "avx2", "hw.optional.avx512f": "avx512f", "hw.optional.fma": "fma"}
+
+
+def _darwin_facts(machine: str) -> CpuFacts:
+  # One call for every key: a key this machine lacks is reported on stderr and the rest still print.
+  out = subprocess.run(["sysctl", *_SYSCTL_KEYS], capture_output=True, text=True, check=False).stdout
+  values = dict(line.split(": ", 1) for line in out.splitlines() if ": " in line)
+
+  def size(*keys: str) -> int | None:
+    return next((int(values[k]) for k in keys if values.get(k, "").isdigit() and int(values[k]) > 0), None)
+
+  return CpuFacts(
+    machine,
+    brand=values.get("machdep.cpu.brand_string", ""),
+    features=frozenset(name for key, name in _FEATURE_KEYS.items() if values.get(key) == "1"),
+    l1i=size("hw.perflevel0.l1icachesize", "hw.l1icachesize"),
+    l1d=size("hw.perflevel0.l1dcachesize", "hw.l1dcachesize"),
+    l2=size("hw.perflevel0.l2cachesize", "hw.l2cachesize"),
+    line=size("hw.cachelinesize"),
+  )
+
+
+def _sysfs_size(text: str) -> int | None:
+  text = text.strip().upper()
+  scale = {"K": 1024, "M": 1024 * 1024}.get(text[-1:], 1)
+  digits = text.rstrip("KM")
+  return int(digits) * scale if digits.isdigit() else None
+
+
+def _linux_facts(machine: str) -> CpuFacts:
+  info: dict[str, str] = {}
+  try:
+    for line in Path("/proc/cpuinfo").read_text().splitlines():
+      key, sep, value = line.partition(":")
+      if sep and key.strip() not in info:
+        info[key.strip()] = value.strip()
+  except OSError:
+    pass
+  flags = set((info.get("flags") or info.get("Features") or "").split())
+  sizes: dict[str, int | None] = {}
+  line_size = None
+  for index in sorted(Path("/sys/devices/system/cpu/cpu0/cache").glob("index*")):
+    try:
+      level, kind = (index / "level").read_text().strip(), (index / "type").read_text().strip()
+      sizes.setdefault(f"{level}{kind}", _sysfs_size((index / "size").read_text()))
+      line_size = line_size or _sysfs_size((index / "coherency_line_size").read_text())
+    except OSError:
+      continue
+  return CpuFacts(
+    machine,
+    brand=info.get("model name", ""),
+    part=info.get("CPU part", ""),
+    features=frozenset(flags & {"avx2", "fma", "avx512f", "sve", "sme"}),
+    l1i=sizes.get("1Instruction"),
+    l1d=sizes.get("1Data"),
+    l2=sizes.get("2Unified"),
+    line=line_size,
+  )
+
+
+@functools.cache
+def cpu_facts() -> CpuFacts:
+  """The facts about this process's processor that code generation reads, looked up once."""
+  machine = platform.machine().lower()
+  machine = {"arm64": "aarch64", "amd64": "x86_64"}.get(machine, machine)
+  try:
+    if sys.platform == "darwin":
+      return _darwin_facts(machine)
+    if sys.platform.startswith("linux"):
+      return _linux_facts(machine)
+  except (OSError, ValueError):
+    pass
+  return CpuFacts(machine)

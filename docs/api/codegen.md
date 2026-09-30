@@ -14,6 +14,18 @@
 
 ::: scaly.codegen.aot.workspace_size
 
+## The target processor
+
+::: scaly.ir.target.Target
+
+::: scaly.ir.target.target
+
+::: scaly.ir.target.set_target
+
+::: scaly.ir.target.get_target
+
+::: scaly.ir.target.host_target
+
 ## The ABI
 
 ::: scaly.codegen.abi.c_api_signature

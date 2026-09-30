@@ -68,6 +68,7 @@ from .function import ConcreteFunction, Function, G, L, NotConcrete, factory
 from .function.method import Status
 from .utils.experimental import ExperimentalWarning
 from .utils.options import Options, get_options, options, set_options
+from .ir.target import Target, get_target, set_target, target
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
 from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
@@ -227,6 +228,10 @@ __all__ = [
   "get_options",
   "options",
   "set_options",
+  "Target",
+  "get_target",
+  "set_target",
+  "target",
   "program_graph",
   "render_expr_assembly",
   "render_program_assembly",

@@ -163,7 +163,8 @@ def render_program_assembly(root: ProgramNode) -> str:
 def _render_program_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
   pad = "  " * indent
   if n.op == ProgramOp.PROGRAM:
-    lines.append(f"{pad}prog.module{_attrs_asm(n.attrs, skip={'proc_count', 'kernel_count'})} {{")
+    # The target is what the program was tuned for, not part of what it computes.
+    lines.append(f"{pad}prog.module{_attrs_asm(n.attrs, skip={'proc_count', 'kernel_count', 'target'})} {{")
     pc = int(n.attrs.get("proc_count", 0))
     for sub in n.args[:pc]:
       _render_program_node(sub, indent + 1, lines)

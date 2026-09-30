@@ -24,6 +24,7 @@ src/scaly/
     program.py           ProgramOp, RangeKind, ProgramNode, interning, builders
     program_spec.py      program-dialect verify rules, verify_program
     spec.py              the shared Rule/Spec table machinery and the one VerifyError
+    target.py            Target: the processor code is tuned for, its presets, the host's, and the target in force
     match.py             Pattern, PatternMatcher, rewrite: how a pass is defined and applied
     text.py              the stable assembly listings for both dialects, plus format_program
 

@@ -47,6 +47,7 @@ from .arith import constant
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
 from ..ir.program_spec import verify_program
+from ..ir.target import Target, resolve_target
 from ..ir.types import DeviceSpec, DType, dtypes
 from .affine import affine_index_map
 from .expr import cse_many, simplify
@@ -74,8 +75,14 @@ def lowers(*ops: str) -> Callable[[LowerRule], LowerRule]:
 ExprObserver = Callable[[str, ConcreteFunction], None]
 
 
-def lower_function(fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
+def lower_function(
+  fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None, *, target: Target | str | None = None
+) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
+
+  ``target`` (a ``Target``, a preset name, or None for the target in force) is the processor the
+  code is tuned for. Lowering rules read it as ``LowerCtx.target``; the program passes read it off
+  the ``PROGRAM``'s ``target`` attribute.
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
   PROC in topological order followed by ``fun``'s main PROC last. Non-host
@@ -90,6 +97,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
   size the caller's ``w[]`` to fit them and the CALL into the extern gets ``callee_needs_w`` right.
   """
   fun = fun.concrete
+  target = resolve_target(target)
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
   _check_function_names(fun)
@@ -100,12 +108,13 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
     extern_fns[fun.name] = fun
     for dependency in fun.extern.dependencies():
       if dependency.name not in callees:
-        callees[dependency.name] = _lower_to_proc(dependency, callees, extern_fns, observe_expr=observe_expr)
+        callees[dependency.name] = _lower_to_proc(dependency, callees, extern_fns, target, observe_expr=observe_expr)
     prog = p.program([*callees.values()])
     prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "extern_root": fun.name}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, extern_fns, observe_expr=observe_expr, entry=True)
+    root = _lower_to_proc(fun, callees, extern_fns, target, observe_expr=observe_expr, entry=True)
     prog = p.program([*callees.values(), root])
+  prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "target": target}, prog.dtype)
   if extern_fns:
     externs = {name: ef.extern for name, ef in extern_fns.items() if ef.extern is not None}
     extern_deps = {name: tuple(d.name for d in extern.dependencies()) for name, extern in externs.items()}
@@ -190,6 +199,7 @@ def _lower_to_proc(
   fun: ConcreteFunction,
   callees: dict[str, ProgramNode],
   extern_fns: dict[str, ConcreteFunction],
+  target: Target,
   *,
   observe_expr: ExprObserver | None = None,
   entry: bool = False,
@@ -204,7 +214,7 @@ def _lower_to_proc(
   chain = tuple(e.id for e in update_chain(fun) or ()) if in_place else None
   if in_place and not chain:
     raise LoweringError(f"{fun.name!r} was lowered in place but its carry is not an update chain")
-  ctx = LowerCtx(fun, callees, extern_fns, observe_expr, entry=entry, in_place=chain)
+  ctx = LowerCtx(fun, callees, extern_fns, target, observe_expr, entry=entry, in_place=chain)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -260,7 +270,8 @@ class LowerCtx:
   - ``emit(*statements)`` appends to the procedure; ``fresh_id()`` and ``fresh_name(prefix)`` give
     names no other statement uses;
   - ``copy_loop``, ``blocked_sum`` and ``lane_loops`` build the loops rules share;
-  - ``fun`` the Function being lowered and ``in_place`` whether its carry is updated in place.
+  - ``fun`` the Function being lowered and ``in_place`` whether its carry is updated in place;
+  - ``target`` the processor the code is tuned for (``scaly.ir.target.Target``).
 
   ``entry`` marks the Function whose procedure becomes the pointer-ABI entry. Its parameters are the
   caller's ``double`` arrays whatever the declared dtype, so a ``bool`` input is read into a typed
@@ -272,12 +283,14 @@ class LowerCtx:
     fun: ConcreteFunction,
     callees: dict[str, ProgramNode],
     extern_fns: dict[str, ConcreteFunction],
+    target: Target,
     observe_expr: ExprObserver | None = None,
     *,
     entry: bool = False,
     in_place: tuple[int, ...] | None = None,
   ) -> None:
     self.fun = fun
+    self.target = target
     self.entry = entry
     self.in_place = in_place
     self.callees = callees
@@ -838,34 +851,32 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
 
-# ``x @ b`` and ``a @ b`` keep a block of this many outputs of a row in registers across the
-# reduction, and then one of each narrower width while one fits: the loads and stores of the output
-# row that a reduction loop outermost pays at every step are gone, and each output still sums its
-# terms in order of ``k`` as before (``notes/codegen_speed_o6_report.html``). The one to three
-# columns no block covers keep the reduction outermost: one to three chains of a long reduction are
-# slower than the memory round trips they save. So does a row wider than ``COLUMN_BLOCKED_MAX``:
-# there the reduction outermost streams the row contiguously, and the blocks, which read the matrix
-# a column block at a time, measured slower (the unbumpercars oracle's 128 x 256 products, 1.13x).
-COLUMN_BLOCKS = (16, 8, 4)
-COLUMN_BLOCKED_MAX = 64
+# ``x @ b`` and ``a @ b`` keep a block of ``Target.row_blocks[0]`` outputs of a row in registers
+# across the reduction, and then one of each narrower width while one fits: the loads and stores of
+# the output row that a reduction loop outermost pays at every step are gone, and each output still
+# sums its terms in order of ``k`` as before (``notes/codegen_speed_o6_report.html``). The columns no
+# block covers keep the reduction outermost: one to three chains of a long reduction are slower
+# than the memory round trips they save. So does a row wider than ``Target.row_blocked_max``: there
+# the reduction outermost streams the row contiguously, and the blocks, which read the matrix a
+# column block at a time, measured slower (the unbumpercars oracle's 128 x 256 products, 1.13x).
 
 
 def _lower_columns_blocked(
   ctx: LowerCtx, a_buf: ProgramNode, b_buf: ProgramNode, out: ProgramNode, m: int | None, kk: int, n: int, dtype: DType
 ) -> None:
   """``out = a @ b`` for ``b`` of shape ``(kk, n)`` and ``a`` a vector (``m`` None) or ``(m, kk)``:
-  row by row, the columns in blocks of ``COLUMN_BLOCKS`` widths, the widest as many times as it
-  fits, then at most one of each narrower one, each block's sums in private scalars over a ``k``
-  loop inside it and each output stored once; the columns left over, every column of a product
-  narrower than the narrowest block and every column of a row wider than ``COLUMN_BLOCKED_MAX``
-  accumulate with ``k`` outermost, as every product did before."""
+  row by row, the columns in blocks of the target's ``row_blocks`` widths, the widest as many times
+  as it fits, then at most one of each narrower one, each block's sums in private scalars over a
+  ``k`` loop inside it and each output stored once; the columns left over, every column of a
+  product narrower than the narrowest block and every column of a row wider than
+  ``row_blocked_max`` accumulate with ``k`` outermost, as every product did before."""
   c = p.const_int
   nm = out.attrs["name"]
   zero = p.const_float(0.0, dtype=dtype)
   segments: list[tuple[int, int, int]] = []  # (first column, width, blocks)
-  j0 = 0  # the first column no block covers; a row wider than COLUMN_BLOCKED_MAX has no blocks
-  if n <= COLUMN_BLOCKED_MAX:
-    widest, *narrower = COLUMN_BLOCKS
+  j0 = 0  # the first column no block covers; a row wider than row_blocked_max has no blocks
+  if n <= ctx.target.row_blocked_max:
+    widest, *narrower = ctx.target.row_blocks
     if (count := n // widest) > 0:
       segments.append((0, widest, count))
       j0 = widest * count
@@ -1014,7 +1025,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
     renamed = ConcreteFunction.from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
-    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.extern_fns, observe_expr=ctx.observe_expr, in_place=True)
+    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.extern_fns, ctx.target, observe_expr=ctx.observe_expr, in_place=True)
   return name, _put_scratch(update_chain(normalized) or [])
 
 
@@ -1049,7 +1060,7 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
       _ensure_callee(ctx, dependency)
     return
   if callee.name not in ctx.callees:
-    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.extern_fns, observe_expr=ctx.observe_expr)
+    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.extern_fns, ctx.target, observe_expr=ctx.observe_expr)
 
 
 @lowers(ExprOp.CALL)

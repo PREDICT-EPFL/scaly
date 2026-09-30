@@ -1,0 +1,60 @@
+# op=gemm n=4 scaly_residual=2.78e-17 copy_ns=1.93
+gemm scaly_jit 4 3.70 34.590 0
+gemm scaly_o3 4 4.16 30.747 0
+gemm bf_dgemm_nn 4 10.73 11.933 2.78e-17
+gemm bf_dgemm_nt 4 10.17 12.592 2.78e-17
+gemm bf_blas_dgemm 4 16.06 7.970 2.78e-17
+# op=gemm n=8 scaly_residual=5.55e-17 copy_ns=6.29
+gemm scaly_jit 8 28.29 36.195 0
+gemm scaly_o3 8 29.69 34.487 0
+gemm bf_dgemm_nn 8 36.06 28.394 5.55e-17
+gemm bf_dgemm_nt 8 36.41 28.128 5.55e-17
+gemm bf_blas_dgemm 8 39.87 25.684 5.55e-17
+# op=gemm n=12 scaly_residual=1.11e-16 copy_ns=13.56
+gemm scaly_jit 12 114.85 30.092 0
+gemm scaly_o3 12 115.12 30.020 0
+gemm bf_dgemm_nn 12 97.56 35.425 1.11e-16
+gemm bf_dgemm_nt 12 97.66 35.387 1.11e-16
+gemm bf_blas_dgemm 12 105.69 32.700 1.11e-16
+# op=gemm n=16 scaly_residual=0 copy_ns=23.01
+gemm scaly_jit 16 226.14 36.226 0
+gemm scaly_o3 16 223.97 36.576 0
+gemm bf_dgemm_nn 16 195.19 41.969 0
+gemm bf_dgemm_nt 16 195.81 41.837 0
+gemm bf_blas_dgemm 16 202.59 40.436 0
+# op=gemm n=24 scaly_residual=0 copy_ns=51.47
+gemm scaly_jit 24 914.54 30.231 0
+gemm scaly_o3 24 919.55 30.067 0
+gemm bf_dgemm_nn 24 590.24 46.842 0
+gemm bf_dgemm_nt 24 594.06 46.541 0
+gemm bf_blas_dgemm 24 604.95 45.703 0
+# op=gemm n=32 scaly_residual=0 copy_ns=93.93
+gemm scaly_jit 32 1869.94 35.047 0
+gemm scaly_o3 32 1867.69 35.089 0
+gemm bf_dgemm_nn 32 1355.90 48.334 0
+gemm bf_dgemm_nt 32 1338.58 48.959 0
+gemm bf_blas_dgemm 32 1360.36 48.175 0
+# op=gemm n=48 scaly_residual=0 copy_ns=290.98
+gemm scaly_jit 48 6496.73 34.045 0
+gemm scaly_o3 48 6493.82 34.061 0
+gemm bf_dgemm_nn 48 4271.84 51.777 0
+gemm bf_dgemm_nt 48 4254.27 51.991 0
+gemm bf_blas_dgemm 48 4306.46 51.361 0
+# op=gemm n=64 scaly_residual=0 copy_ns=636.36
+gemm scaly_jit 64 15714.45 33.363 0
+gemm scaly_o3 64 15955.25 32.860 0
+gemm bf_dgemm_nn 64 9968.30 52.596 0
+gemm bf_dgemm_nt 64 9946.61 52.710 0
+gemm bf_blas_dgemm 64 10026.10 52.292 0
+# op=gemm n=96 scaly_residual=0 copy_ns=961.14
+gemm scaly_jit 96 137543.22 12.865 0
+gemm scaly_o3 96 138722.46 12.755 0
+gemm bf_dgemm_nn 96 32953.58 53.696 0
+gemm bf_dgemm_nt 96 33033.79 53.566 0
+gemm bf_blas_dgemm 96 33186.06 53.320 0
+# op=gemm n=128 scaly_residual=0 copy_ns=1474.06
+gemm scaly_jit 128 339103.28 12.369 0
+gemm scaly_o3 128 337744.22 12.419 0
+gemm bf_dgemm_nn 128 78797.27 53.229 0
+gemm bf_dgemm_nt 128 79050.96 53.058 0
+gemm bf_blas_dgemm 128 83380.46 50.303 0

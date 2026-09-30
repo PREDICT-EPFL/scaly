@@ -39,6 +39,7 @@ from scaly.codegen.c import (
 from scaly.function import ConcreteFunction, Function
 from scaly.function.extern import BuildRequirements, ExternRenderCtx, LinkResolver, extern_functions
 from scaly.ir.expr import callees_of, topo
+from scaly.ir.target import Target, resolve_target
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
 
@@ -101,7 +102,8 @@ class CModule:
   that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``externs`` lists the
   Functions with extern bodies (solvers, say) that the function reaches. ``adapters`` names the
   output adapters applied (``"cpp"`` for the C++ header, ``"casadi"`` for the CasADi-compatible
-  symbols); ``typed_buffers`` toggles the C header's structs and ``_call`` wrapper.
+  symbols); ``typed_buffers`` toggles the C header's structs and ``_call`` wrapper. ``target`` is
+  the processor the code was tuned for, and ``compile_flags`` the flags that build it for that one.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
   and asks for none of them; for a big sparse function the header alone is larger than the source.
@@ -115,7 +117,14 @@ class CModule:
   workspace_size: int
   externs: tuple[ConcreteFunction, ...]
   typed_buffers: bool
+  target: Target
   adapters: tuple[str, ...] = ()
+
+  @property
+  def compile_flags(self) -> tuple[str, ...]:
+    """The flags that build ``source`` for ``target``: its CPU flags and ``-fno-math-errno``, at
+    ``-O2``, as the JIT compiles for its host (``codegen/jit.py``)."""
+    return ("-O2", *self.target.cflags, "-fno-math-errno")
 
   @cached_property
   def requirements(self) -> Requirements:
@@ -172,21 +181,25 @@ class _RenderCtx:
   """One lowering of ``fun`` and the facts every artifact reads off it."""
 
   fun: ConcreteFunction
+  target: Target
   prog: ProgramNode
   externs: tuple[ConcreteFunction, ...]
   workspace_size: int
 
 
 def _lower(
-  fun: ConcreteFunction, observe: ProgramObserver | None = None, observe_expr: Callable[[str, ConcreteFunction], None] | None = None
+  fun: ConcreteFunction,
+  target: Target,
+  observe: ProgramObserver | None = None,
+  observe_expr: Callable[[str, ConcreteFunction], None] | None = None,
 ) -> _RenderCtx:
-  """Lower ``fun`` once. ``workspace_size`` is the doubles of scratch it needs in ``w[]`` — the
-  packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for an extern callee passing
-  its ``w`` straight to its dependencies."""
+  """Lower ``fun`` once for ``target``. ``workspace_size`` is the doubles of scratch it needs in
+  ``w[]`` — the packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for an extern
+  callee passing its ``w`` straight to its dependencies."""
   externs = extern_functions(fun)  # refuses two extern Functions with one C symbol, before lowering
-  prog = lower_function(fun, observe=observe, observe_expr=observe_expr)
+  prog = lower_function(fun, observe=observe, observe_expr=observe_expr, target=target)
   sz_w = _extern_root_workspace(prog, fun.name) if fun.extern is not None else int(main_proc(prog).attrs.get("sz_w", 0))
-  return _RenderCtx(fun, prog, externs, sz_w)
+  return _RenderCtx(fun, target, prog, externs, sz_w)
 
 
 def _extern_root_workspace(prog: ProgramNode, name: str) -> int:
@@ -420,7 +433,7 @@ def _render_extern_entry(fun: ConcreteFunction, sz_w: int, adapters: tuple[Adapt
   return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 
-def _render_observed(fun: ConcreteFunction, adapters: tuple[Adapter, ...]) -> tuple[_RenderCtx, str]:
+def _render_observed(fun: ConcreteFunction, adapters: tuple[Adapter, ...], target: Target) -> tuple[_RenderCtx, str]:
   """Lower and render ``fun`` under the registered observers: one lowering, one source, and the
   expression, Program, code, and outcome sequence ``scaly.viz`` records."""
   observers = [obs for begin in _RENDER_OBSERVERS if (obs := begin(fun)) is not None]
@@ -435,7 +448,7 @@ def _render_observed(fun: ConcreteFunction, adapters: tuple[Adapter, ...]) -> tu
 
   try:
     _check_layout(fun, adapters)
-    ctx = _lower(fun, observe if observers else None, observe_expr if observers else None)
+    ctx = _lower(fun, target, observe if observers else None, observe_expr if observers else None)
     source = _render_source(ctx, adapters)
   except Exception as exc:
     for obs in observers:
@@ -453,25 +466,26 @@ def _check_layout(fun: ConcreteFunction, adapters: tuple[Adapter, ...]) -> None:
       a.check(fun)
 
 
-def render_c_source(fun: Function, *, adapters: Sequence[str] = ()) -> str:
-  """Render a standalone pointer-ABI C implementation of ``fun`` and its callees, with what the
-  named output ``adapters`` add to the source (``"casadi"``: the CasADi 3.8 compatible symbols).
+def render_c_source(fun: Function, *, adapters: Sequence[str] = (), target: Target | str | None = None) -> str:
+  """Render a standalone pointer-ABI C implementation of ``fun`` and its callees for ``target`` (a
+  ``Target``, a preset name, or None for the target in force), with what the named output
+  ``adapters`` add to the source (``"casadi"``: the CasADi 3.8 compatible symbols).
 
   A ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
   """
   fun = fun.concrete
-  return _render_observed(fun, resolve_adapters(adapters))[1]
+  return _render_observed(fun, resolve_adapters(adapters), resolve_target(target))[1]
 
 
-def render_c_api_header(fun: Function, *, typed_buffers: bool = True, adapters: Sequence[str] = ()) -> str:
+def render_c_api_header(fun: Function, *, typed_buffers: bool = True, adapters: Sequence[str] = (), target: Target | str | None = None) -> str:
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
   buffers (``typed_buffers=False`` omits them from the C header), the sparse-output tables, and
   what the named output ``adapters`` add (``"cpp"`` renders the C++ header instead, ``"casadi"``
-  adds the CasADi query prototypes)."""
+  adds the CasADi query prototypes). The workspace it quotes is the one ``target``'s code needs."""
   fun = fun.concrete
   resolved = resolve_adapters(adapters)
   _check_layout(fun, resolved)
-  ctx = _lower(fun)
+  ctx = _lower(fun, resolve_target(target))
   return _render_header(
     ctx.fun, requirements(ctx.externs), entry_workspace(fun, ctx.workspace_size, resolved), typed_buffers=typed_buffers, adapters=resolved
   )
@@ -484,13 +498,16 @@ def render_c_module(
   source_name: str | None = None,
   typed_buffers: bool = True,
   adapters: Sequence[str] = (),
+  target: Target | str | None = None,
 ) -> CModule:
   """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C.
   The named output ``adapters`` may replace the header (``"cpp"``: ``f.hpp``) or add a layer to
-  both files (``"casadi"``: the CasADi 3.8 compatible symbols)."""
+  both files (``"casadi"``: the CasADi 3.8 compatible symbols). ``target`` is the processor the
+  code is tuned for: a ``Target``, a preset name, or None for the one in force (``sc.target``),
+  which is the host unless set."""
   fun = fun.concrete
   resolved = resolve_adapters(adapters)
-  ctx, body = _render_observed(fun, resolved)
+  ctx, body = _render_observed(fun, resolved, resolve_target(target))
   symbol = c_ident(fun.name)
   suffix = next((a.header_suffix for a in resolved if a.header is not None), "h")
   return CModule(
@@ -502,22 +519,25 @@ def render_c_module(
     workspace_size=entry_workspace(fun, ctx.workspace_size, resolved),
     externs=ctx.externs,
     typed_buffers=typed_buffers,
+    target=ctx.target,
     adapters=tuple(a.name for a in resolved),
   )
 
 
-def workspace_size(fun: Function, *, adapters: Sequence[str] = ()) -> int:
-  """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes.
-  ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
-  module is already in hand."""
+def workspace_size(fun: Function, *, adapters: Sequence[str] = (), target: Target | str | None = None) -> int:
+  """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes — for
+  ``target``. ``CModule.workspace_size`` is the same number without a second lowering, so prefer it
+  when the module is already in hand."""
   fun = fun.concrete
-  return entry_workspace(fun, _lower(fun).workspace_size, resolve_adapters(adapters))
+  return entry_workspace(fun, _lower(fun, resolve_target(target)).workspace_size, resolve_adapters(adapters))
 
 
-def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, adapters: Sequence[str] = ()) -> CModule:
-  """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module."""
+def write_module(
+  fun: Function, out_dir: Path, *, typed_buffers: bool = True, adapters: Sequence[str] = (), target: Target | str | None = None
+) -> CModule:
+  """Write ``fun``'s header / ``.c``, tuned for ``target``, into ``out_dir`` and return the module."""
   fun = fun.concrete
-  module = render_c_module(fun, typed_buffers=typed_buffers, adapters=adapters)
+  module = render_c_module(fun, typed_buffers=typed_buffers, adapters=adapters, target=target)
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
@@ -526,7 +546,7 @@ def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, ad
 
 def main(argv: list[str] | None = None) -> None:
   parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a header/source pair: a C kernel and a C or C++ header.")
-  parser.add_argument("target", help="module:attribute naming a Function with every shape declared, or a zero-argument factory returning one")
+  parser.add_argument("function", help="module:attribute naming a Function with every shape declared, or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
   parser.add_argument(
     "--adapter",
@@ -540,22 +560,33 @@ def main(argv: list[str] | None = None) -> None:
     ),
   )
   parser.add_argument("--no-typed-buffers", action="store_true", help="C header only: omit the typed buffer structs and the f_call wrapper")
+  parser.add_argument(
+    "--target",
+    default=None,
+    metavar="NAME",
+    help="the processor to tune the code for: host (the default, unless SCALY_TARGET names another) or one of " + ", ".join(Target.presets()),
+  )
   args = parser.parse_args(argv)
-  module_name, _, attr = args.target.partition(":")
+  module_name, _, attr = args.function.partition(":")
   if not attr:
-    parser.error(f"target {args.target!r} is not module:attribute")
+    parser.error(f"function {args.function!r} is not module:attribute")
+  try:
+    target = resolve_target(args.target)
+  except ValueError as error:
+    parser.error(str(error))
   fun = getattr(importlib.import_module(module_name), attr)
   if not isinstance(fun, Function):
     fun = fun()
   if not fun.is_concrete:
     parser.error(
-      f"{args.target} has shape holes; export a concrete instance instead, such as `{attr}_3 = {attr}.instantiate(...)`, "
+      f"{args.function} has shape holes; export a concrete instance instead, such as `{attr}_3 = {attr}.instantiate(...)`, "
       f"or a zero-argument factory returning one ({', '.join(fun.instances) or 'no instances are built at import'})"
     )
-  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, adapters=args.adapter)
+  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, adapters=args.adapter, target=target)
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")
+  print(f"target: {target.name} (compile with {' '.join(module.compile_flags)})")
   if module.externs:
     print("link flags: " + " ".join(module.link_flags))
 

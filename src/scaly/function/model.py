@@ -12,6 +12,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.match import _apply_lowering
+from ..ir.target import Target, get_target
 from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, as_shape, backend_supports, dtypes
 from .tree import Hole, LeafDecl, SymbolicValue, Tree, _G, _leaves, flat_tree, inferred_tree, is_symbolic_call, param_list, skeleton
 
@@ -86,6 +87,7 @@ _GRAPH_ATTRIBUTES = frozenset(
     "custom_vjp",
     "custom_sparsity",
     "_compiled",
+    "_compiled_for",
     "_compile",
     "_flat_numerical_call",
     "_flat_symbolic_call",
@@ -546,6 +548,7 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     if missing:
       raise ValueError(f"function {self.name!r} has undeclared symbolic inputs: {missing}")
     self._compiled: Any = None
+    self._compiled_for: Target | None = None  # the target ``_compiled`` was rendered for
     # The C body of a Function the compiler does not generate (``function/extern.py``).
     self.extern: ExternCallee | None = None
     # Derivative rules that replace differentiating the body; set by ``sc.custom_derivative``.
@@ -675,9 +678,12 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     return cast(NO, self.output_tree.unflatten(self._flat_numerical_call(*actuals)))
 
   def _compile(self) -> Any:
-    """Lazily JIT-compile this function and cache the handle."""
-    if self._compiled is None:
+    """Lazily JIT-compile this function for the target in force (``sc.target``) and cache the
+    handle; a call under another target renders and compiles again, or reuses that one's library."""
+    target = get_target()
+    if self._compiled is None or (self._compiled_for is not target and self._compiled_for != target):
       self._compiled = _jit().CompiledFunction(self)
+      self._compiled_for = target
     return self._compiled
 
   def _flat_numerical_call(self, *args: Any) -> tuple[np.ndarray, ...]:
@@ -695,6 +701,7 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     """Drop the cached compiled handle and remove the on-disk cache entry for this function."""
     jit = _jit()
     self._compiled = None
+    self._compiled_for = None
     jit.invalidate_cache(self)
 
   def callee_state(self, name: str | None = None) -> Any:

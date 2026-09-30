@@ -86,6 +86,44 @@ with `scaly.codegen.adapter.register_adapter`.
 The AOT output and the JIT read the same `CModule`, produced from a single lowering. The header's
 `SZ_W` and the source's scratch use cannot drift apart, because there is only one number.
 
+## Tuning for a processor
+
+Some choices the lowering makes depend on the processor: how many outputs of a matrix product
+stay in registers, how long a row is before it streams instead. `sc.Target` describes the
+processor they are made for: its vector width and registers, its fused multiply-add units and their
+latency, and its caches. Rendering takes one, and so does the command line:
+
+```python
+module = render_c_module(fn, target="cortex-a76")     # a preset name, or a Target
+module.compile_flags                                  # ("-O2", "-mcpu=cortex-a76", "-fno-math-errno")
+write_module(fn, out_dir, target=sc.Target.preset("x86-64-v3", l2_bytes=2 << 20))
+```
+
+```bash
+uv run scaly_codegen mymodule:my_function -o generated/ --target cortex-a76
+```
+
+`sc.Target.presets()` lists the presets: Apple M1 to M4, Cortex-A53, A72 and A76, Neoverse V2, the
+three x86-64 levels (`x86-64`, `x86-64-v3` with AVX2, `x86-64-v4` with AVX-512) and `generic`, plain
+scalar C. Without a target, rendering uses the one in force, which is the host this process runs on,
+detected once from `sysctl` on macOS or `/sys` and `/proc/cpuinfo` on Linux. `SCALY_TARGET` names
+another preset, `sc.set_target(...)` changes it for the process, and `with sc.target(...):` for a
+block, as `sc.options` does for the options a graph is built under. A graph is the same whatever the
+target: it is read only when the graph is rendered, so one Function can be written out for several
+processors.
+
+The JIT compiles for the machine it runs on, whatever the target. A call under another target
+renders that target's C and runs it on this machine, which is how a test checks another processor's
+choices without its hardware. Two targets that make the same choices render the same source and
+share one cached library.
+
+A choice that shapes the floating-point code can change the last bits of a result, even one that
+keeps the order of every sum: the C compiler fuses a multiply and an add into one rounding in some
+loop shapes and not in others. `Target(rounding="portable")` makes every such choice as it is made
+for the reference machine, the Apple M3, whatever the processor, so the generated C is the same for
+every target and results differ between machines only as far as their compilers do. The default,
+`"target"`, lets the choices follow the processor.
+
 ## Using the result
 
 The generated pair depends on nothing but libm. Every function is reachable through one signature:

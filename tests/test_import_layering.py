@@ -54,6 +54,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.ir.program_spec": 1,
   "scaly.ir.expr_spec": 1,
   "scaly.ir.spec": 1,
+  "scaly.ir.target": 1,
   "scaly.ir.text": 1,
   "scaly.passes": 1,
   "scaly.passes.affine": 2,

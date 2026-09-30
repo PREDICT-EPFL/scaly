@@ -1,0 +1,130 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BLASFEO-Class Kernels in Scaly</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+.meta{color:var(--muted);font-size:13.5px}
+</style>
+<main>
+<h1>BLASFEO-class kernels in Scaly</h1>
+<p class="sub">Analysis and measurement, 2026-09-30. Scripts and raw numbers: <code>internal/notes/perf_2026_09_30_blasfeo/</code>. Related: C-79, C-8, C-117, A7 (<code>perf_gaps_proposal_2026_09_30.html</code>), Tier 5 and Tier 6 (<code>piqp_plan.md</code>).</p>
+
+<div class="box">
+<p><b>Verdict.</b></p>
+<ul>
+<li><b>Can it be done?</b> Yes. Nothing in BLASFEO depends on hand-written assembly as such. It depends on four things: a register tile sized to the FMA pipeline, a storage layout that makes the tile's operand loads contiguous, fused factorization kernels, and a reciprocal-diagonal trick. All four can be expressed in Scaly's program dialect and rendered as C with vector types or intrinsics. Scaly also has the advantage BLASFEO lacks: every size is known at generation time.</li>
+<li><b>Competitive?</b> On isolated kernels, parity with BLASFEO for n ≥ 32 is a realistic target, but BLASFEO's GEMM already runs at about 90% of peak there, so there is little room to beat it. For n ≲ 32, and for fused sequences such as a Riccati step, a Kalman update or a KKT factorization, Scaly should beat it. BLASFEO's Cholesky runs at only 19–36% of peak for n = 16–32, and it cannot fuse across calls or exploit structural zeros inside blocks. Scaly already beats it for n ≤ 8. On Apple M4-class chips, SME outer products are a hardware path BLASFEO does not target at all.</li>
+<li><b>Impact.</b> The impact is large for solvers dominated by dense blocks: the dense IPM (where Cholesky is 80–90% of a step), Riccati and multistage solvers (Tier 5, the HPIPM/Fatrop class), and estimators. It is roughly zero for AD-dominated function evaluation (chain, race cars); those gaps are C-77 and A1–A3, not BLAS.</li>
+<li><b>Complexity.</b> Moderate, and most of it is infrastructure already planned: C-79 vector rendering, a Tier-6 target description, and a layout attribute. The kernel generator itself is a few thousand lines of Python templates, against BLASFEO's ~128 k lines of ARMv8 and ~210 k lines of AVX2 kernel source. The effort is roughly 2–3 person-months to parity on GEMM, SYRK, POTRF and TRSM for NEON and AVX2. This is an estimate, not a measurement.</li>
+</ul>
+</div>
+
+<h2>1. What BLASFEO does</h2>
+<ul>
+<li><b>Target regime.</b> BLASFEO targets matrices of order about 4–300, where MKL and OpenBLAS lose to packing and dispatch overhead. Its aim is near-peak throughput from n ≈ 50 upward without cache blocking, on the assumption that the working set lives in L1 or L2 [1].</li>
+<li><b>Panel-major storage (<code>blasfeo_dmat</code>).</b> Rows are grouped into panels of height <code>ps</code>, which is 4 doubles on both <code>ARMV8A_APPLE_M1</code> and Haswell. Storage is column-major within each panel, and the matrix is padded to a multiple of <code>ps</code>. The matrix is therefore <i>already</i> in the packed format a GEMM micro-kernel wants: the four rows of a panel at column k form one contiguous 32 B load, and no call ever packs. The BLAS API added later packs on the fly for column-major data [2].</li>
+<li><b>Register-blocked micro-kernels in assembly, one set per ISA.</b> Double-precision tiles are 8×4 and 4×4 on Apple M1 and 12×4, 8×4 and 4×4 on Haswell. The k loop does rank-1 outer-product updates with software pipelining and prefetch. Kernels are built from "inner" subroutines (<code>inner_kernel_*</code>, <code>inner_scale_*</code>, <code>inner_store_*</code>) that pass accumulators in registers. <code>_vs</code> variants handle ragged edges with masked stores. The vendored ARMv8 set exports about 240 double-precision kernel entry points.</li>
+<li><b>Fused LAPACK-level kernels.</b> Cholesky is <code>dsyrk</code>+<code>dpotrf</code> on a panel: the panel is updated by the outer-product kernel, then its diagonal block is factorized and the rows below it are solved while still in registers. Triangular solves multiply by a stored inverse diagonal instead of dividing. This fusion is why its POTRF approaches GEMM speed at moderate n.</li>
+<li><b>Compile-time targets.</b> Targets are chosen at build time (<code>TARGET=X64_INTEL_SKYLAKE_X | X64_INTEL_HASWELL | … | ARMV8A_APPLE_M1 | ARMV8A_ARM_CORTEX_A76 | … | GENERIC</code>). <code>blasfeo_block_size.h</code> records per target the panel size, the maximum kernel size, the cache sizes and the blocking parameters. There is no autotuning; the parameters are hand-chosen per microarchitecture, which is essentially the analytical recipe of BLIS [3].</li>
+<li><b>No compile-time sizes.</b> Every call dispatches on (m, n, k) at run time. It never unrolls the k loop for a known k, never exploits zeros inside a block, and never fuses across calls. HPIPM gets some of that fusion by hand-picking fused kernels.</li>
+</ul>
+
+<h2>2. Where Scaly stands today (M3 Max, Linux VM, gcc 11.4)</h2>
+<p>The comparison uses Scaly's JIT defaults (<code>-O2 -ftree-vectorize -mcpu=native</code>) against BLASFEO <code>ARMV8A_APPLE_M1</code> on data already in panel-major format, taking the minimum of 9 samples of ≥ 20 ms each. Measured peak is 58 GFLOP/s (16 flop/cycle at 3.6 GHz). The ratio is Scaly time divided by BLASFEO time, so values above 1 mean Scaly is slower. Results agree to ≤ 2e-15. <code>-O3</code> is within ±5%.</p>
+<div class="scroll"><table>
+<tr><th class="r">n</th><th class="r">GEMM ratio</th><th class="r">GEMM GF/s S / B</th><th class="r">POTRF ratio</th><th class="r">POTRF GF/s S / B</th><th class="r">TRSM ratio</th><th class="r">TRSM GF/s S / B</th></tr>
+<tr><td class="r">4</td><td class="r ok">0.35</td><td class="r">34.6 / 11.9</td><td class="r ok">0.27</td><td class="r">4.0 / 1.1</td><td class="r ok">0.34</td><td class="r">15.6 / 5.3</td></tr>
+<tr><td class="r">8</td><td class="r ok">0.78</td><td class="r">36.2 / 28.4</td><td class="r ok">0.57</td><td class="r">6.5 / 3.7</td><td class="r ok">0.56</td><td class="r">27.6 / 15.6</td></tr>
+<tr><td class="r">12</td><td class="r warn">1.18</td><td class="r">30.1 / 35.4</td><td class="r bad">1.52</td><td class="r">4.2 / 6.3</td><td class="r bad">1.82</td><td class="r">11.4 / 20.9</td></tr>
+<tr><td class="r">16</td><td class="r warn">1.16</td><td class="r">36.2 / 42.0</td><td class="r bad">2.03</td><td class="r">5.5 / 11.2</td><td class="r bad">2.00</td><td class="r">13.6 / 27.2</td></tr>
+<tr><td class="r">32</td><td class="r warn">1.38</td><td class="r">35.0 / 48.3</td><td class="r bad">2.40</td><td class="r">8.7 / 20.9</td><td class="r bad">2.00</td><td class="r">19.3 / 38.5</td></tr>
+<tr><td class="r">64</td><td class="r warn">1.58</td><td class="r">33.4 / 52.6</td><td class="r bad">2.91</td><td class="r">11.9 / 34.7</td><td class="r bad">1.90</td><td class="r">24.2 / 46.0</td></tr>
+<tr><td class="r">128</td><td class="r bad">4.30</td><td class="r">12.4 / 53.2</td><td class="r bad">2.68</td><td class="r">15.9 / 42.7</td><td class="r bad">1.90</td><td class="r">26.4 / 50.1</td></tr>
+</table></div>
+<p class="meta">The TRSM comparison is against <code>blasfeo_dtrsm_rltn</code>, BLASFEO's fastest variant. The <code>llnn</code> variant has no ARM kernel and falls back to generic C, where Scaly's ratio is 1.2–1.45. The full tables, with n = 24, 48 and 96 and the column-major BLAS-API numbers, are in <code>results/tables.md</code>.</p>
+
+<h3>Diagnosis</h3>
+<ul>
+<li><b>n ≤ 8 (≤ 12 for GEMM): Scaly wins.</b> The code is straight-line, and BLASFEO's dispatch, edge handling and loop overhead dominate at these sizes. This is evidence that compile-time sizes are worth a lot at small n.</li>
+<li><b>GEMM at n = 16–64 runs at 52–62% of peak.</b> The O6 tile is one output row by 16 columns. That costs one broadcast plus 8 vector loads per 8 vector FMAs, about 1.1 loads per FMA, against 0.375 for BLASFEO's 8×4 tile. It is load-bound, and 8 accumulator chains are also below the ~16 needed to keep four FMA pipes busy (assuming the ~4-cycle FMA latency of recent Apple cores).</li>
+<li><b>GEMM at n ≥ 96 hits a cliff.</b> <code>COLUMN_BLOCKED_MAX = 64</code> sends wider rows to a triple loop that accumulates in memory, which runs at 12 GF/s. This is a trivial fix.</li>
+<li><b>POTRF is the largest gap.</b> The C-136 Crout is an inner-product formulation: 4×4 tiles of dot products that end in horizontal reductions, plus a division per column. BLASFEO's version is an outer-product panel update feeding a factorization done in registers with a reciprocal diagonal.</li>
+<li><b>No explicit SIMD.</b> Scaly emits no explicit SIMD, apart from paired stores. <code>RangeKind.VECTOR</code> exists in the IR but is never rendered, and the O6 report found clang spilling on the two-lane Cholesky tile. Autovectorization will not get there.</li>
+</ul>
+
+<h2>3. What processor-specific generation in Scaly would look like</h2>
+<p>The kernel layer belongs <i>below</i> AD and <i>inside</i> the program dialect. <code>cholesky</code>, <code>matmul</code> and <code>solve_triangular</code> keep their expression-level definitions and derivative rules, and only their lowerings change. Derivatives therefore land on the same fast kernels at no extra cost, and the generic path stays the reference.</p>
+<ol>
+<li><b>Target descriptor</b> (the Tier 6 item). It records ISA, vector width in doubles, register count, FMA pipes × latency, load ports, whether an FMA by lane exists (NEON <code>fmla v, v, v.d[i]</code>), masking (SVE, AVX-512), SME tile geometry, and L1/L2 sizes. For the host it is filled from compiler macros and <code>-mcpu=native</code>. For cross-targets it is given explicitly (e.g. Cortex-A53/A76/A78AE, Zen 4, Cortex-M7 in single precision). It becomes part of the JIT cache key.</li>
+<li><b>Vector rendering</b> (C-79's infrastructure). <code>RangeKind.VECTOR</code> is rendered as GNU <code>vector_size</code> types, plus a thin per-ISA shim for the few operations the compiler will not infer: broadcast-by-lane FMA, <code>ld1r</code>/<code>vbroadcastsd</code>, and aligned loads. Workspace gets 64 B alignment.</li>
+<li><b>Layout as a compilation decision.</b> Buffers get a layout attribute: row-major, column-major or panel-major(ps), with padding. The ABI stays row-major, and internal buffers (KKT blocks, Riccati P, factors) are allocated directly in the kernel's preferred layout. BLASFEO makes the user manage <code>dmat</code>s; Scaly can plan this globally and pack only where a buffer crosses the ABI. A cheaper first step lets each op pack locally into workspace. That costs O(n²) against O(n³) work, which is negligible from n ≈ 16.</li>
+<li><b>Micro-kernel templates.</b> About six parametrized loop nests: GEMM m<sub>r</sub>×n<sub>r</sub> (nn/nt/tn), SYRK-lower, a fused SYRK+POTRF diagonal tile, GEMM+TRSM with the inverse diagonal, GEMV, and an LDLᵀ variant. m<sub>r</sub> and n<sub>r</sub> come from the analytical constraints of [3]: m<sub>r</sub>n<sub>r</sub>/N<sub>vec</sub> ≥ N<sub>fma</sub>·L<sub>fma</sub>, subject to the register budget. On M-series NEON this gives 8×4, as BLASFEO chose. Sizes are fixed, so every tile is exact, edges are peeled at generation time with smaller tiles, and short k loops are fully unrolled. No <code>_vs</code> kernels and no run-time dispatch are needed.</li>
+<li><b>Macro algorithms written once in Python.</b> Blocked left-looking Cholesky and LDLᵀ, TRSM, SYRK, and a Riccati step, written as loops over tiles. This is the "programmatic" direction, and A7 is its first instance.</li>
+<li><b>Selection.</b> Choose between straight-line code (n ≲ 8–12), scalar tiles, vector tiles, and SIMD across a mapped axis (tiny blocks × many stages or scenarios, via C-79 lanes). An analytical cost model makes the default choice; an optional measured tune at JIT time is cached per (op, shape, target).</li>
+</ol>
+
+<h3>Where Scaly can beat BLASFEO, not just match it</h3>
+<ul>
+<li><b>Small and medium sizes.</b> Exact tiling and unrolling with no dispatch. BLASFEO's POTRF is at 11 GF/s at n = 16 and 21 at n = 32, far from the ~50 its GEMM reaches, so this is where MPC sizes (n<sub>x</sub>+n<sub>u</sub> ≈ 10–40) live.</li>
+<li><b>Fusion across calls.</b> A Riccati step (Aᵀ P A, Bᵀ P B, a Cholesky of R + Bᵀ P B, a solve, and a rank update) can keep blocks in registers or L1, with no intermediate stores or calls.</li>
+<li><b>Structure inside blocks.</b> Structural zeros, identity blocks, diagonal Q and R, and symmetric operands. Scaly already knows the sparsity pattern; BLASFEO treats every block as dense.</li>
+<li><b>Batching.</b> For blocks of order 8 or less across N stages, vectorizing across stages beats vectorizing within the matrix. BLASFEO has no batched path.</li>
+<li><b>SME on M4-class Apple silicon.</b> Remke and Breuer measured 503 GFLOP/s FP64 with SME outer products, against 56 with Neon, using a LIBXSMM JIT generator [6]. Streaming-mode entry and exit and the latency are costly for tiny n, so this is a medium-n (≳ 32) path that a target-aware generator can choose and BLASFEO cannot. The VM does not expose SME, so it must be measured natively on macOS.</li>
+</ul>
+
+<h2>4. Expected impact by workload</h2>
+<div class="scroll"><table>
+<tr><th>Workload</th><th>Dense-kernel share</th><th>Expected effect</th></tr>
+<tr><td>Dense IPM backend (PIQP dense class, n ≈ 100–300)</td><td>Cholesky 80–90% of a step</td><td class="ok">POTRF 1.8–2.9× faster puts the step roughly 1.6–2.3× faster. The backend moves from 1.22× PIQP to about 0.6–0.75× (estimate).</td></tr>
+<tr><td>Riccati / multistage solvers (Tier 5; HPIPM- and Fatrop-class)</td><td>Dominant (level 3 at n<sub>x</sub>, n<sub>u</sub> ≈ 4–40)</td><td class="ok">A prerequisite for the ≤ 1.5× vendored gate. With fusion and structure, beating HPIPM at small n<sub>x</sub> is plausible.</td></tr>
+<tr><td>TinyMPC-type ADMM (online mat-vec)</td><td>Level 2</td><td class="warn">Vector GEMV should remove the 0.80× cases at 16–32 inputs. The gain is modest overall.</td></tr>
+<tr><td>Sparse LDLᵀ (PIQP sparse)</td><td>Factorization 40–60% of a step; supernodes mostly ≤ 8 wide</td><td class="warn">Helps only problems with wide supernodes, where a supernodal dense update kernel pays off.</td></tr>
+<tr><td>Kalman / MHE with dense covariance, dense Gauss–Newton</td><td>High</td><td class="ok">Same kernels (SYRK, POTRF, TRSM) and the same gains.</td></tr>
+<tr><td>AD-dominated oracles (chain, race cars, NLP Hessians)</td><td>≈ 0</td><td class="bad">None directly. Only the shared vector rendering (C-79) helps there.</td></tr>
+</table></div>
+
+<h2>5. Complexity and staging</h2>
+<div class="scroll"><table>
+<tr><th>Stage</th><th>Content</th><th>Effort (estimate)</th><th>Gate</th></tr>
+<tr><td>S0</td><td>Column blocking beyond 64 columns; re-check <code>dense_unroll</code> for POTRF/TRSM at 9–16</td><td>days</td><td>No GEMM cliff at n ≥ 96</td></tr>
+<tr><td>S1</td><td>Target descriptor, 64 B workspace alignment, vector rendering with an ISA shim (this is C-79's core)</td><td>1–2 weeks</td><td>C-79's own gates</td></tr>
+<tr><td>S2</td><td>GEMM tile template from the analytical model; nn/nt/tn; exact tiling</td><td>2–3 weeks</td><td>≥ 0.95× BLASFEO GEMM at n = 16–128 on the M3 and the x86 reference machine</td></tr>
+<tr><td>S3</td><td>Local panel packing, fused SYRK+POTRF with reciprocal diagonal, TRSM, LDLᵀ (subsumes A7 and C-117)</td><td>2–3 weeks</td><td>POTRF ≤ 1.0× BLASFEO at n = 16–128; dense IPM ≤ 0.75× PIQP</td></tr>
+<tr><td>S4</td><td>Global layout planning; fused Riccati step; batching across stages (Tier 5)</td><td>3–4 weeks</td><td>≤ 1.0× HPIPM on the multistage set</td></tr>
+<tr><td>S5</td><td>SME (M4), SVE, float / Cortex-M targets</td><td>research</td><td>Per target</td></tr>
+</table></div>
+<p><b>Cheap baseline.</b> BLASFEO is already vendored in <code>scaly-piqp</code>, and <code>function/extern.py</code> can inject C with build requirements. An <code>extern</code> BLASFEO path would take about a week and would give BLASFEO speed at n ≥ 12. It gives up the n ≤ 8 wins, fusion, structure and SME, and it breaks the generated-code-only decision. It is better used as the gate reference than as the product.</p>
+
+<h3>Risks</h3>
+<ul>
+<li><b>Compiler quality.</b> gcc 11 on aarch64 and register spills in intrinsics code; the O6 report already found spilling. Mitigations: explicit vector types (not autovectorization), recommending clang, and inline assembly for the innermost tile only as a last resort.</li>
+<li><b>Summation order changes rounding.</b> C-136 showed QSHARE1B is sensitive to pivot noise. Blocked kernels change the order again, so the decision-trace gates need tolerance rules rather than bit-exactness.</li>
+<li><b>Scope creep into a general BLAS.</b> Keep the set to what the solvers call, at sizes the solvers use.</li>
+<li><b>Measurement portability.</b> The VM clock is 3.6 GHz against a 4.05 GHz boost. Repeat natively on macOS with Apple clang, and on the x86 reference machine against the <code>X64_INTEL_HASWELL</code>/<code>SKYLAKE_X</code> kernels.</li>
+<li><b>Hardware-tracking burden.</b> This is lower than BLASFEO's because the parameters are derived, not hand-coded, but each new ISA still needs a shim and validation hardware.</li>
+</ul>
+
+<h2>References</h2>
+<ol class="meta">
+<li>G. Frison, D. Kouzoupis, T. Sartor, A. Zanelli, M. Diehl, "BLASFEO: Basic Linear Algebra Subroutines for Embedded Optimization," <i>ACM Trans. Math. Softw.</i> 44(4), 42, 2018. <a href="https://dl.acm.org/doi/10.1145/3210754">doi:10.1145/3210754</a> · <a href="https://arxiv.org/abs/1704.02457">arXiv:1704.02457</a></li>
+<li>G. Frison, T. Sartor, A. Zanelli, M. Diehl, "The BLAS API of BLASFEO: Optimizing Performance for Small Matrices," <i>ACM Trans. Math. Softw.</i> 46(2), 2020. <a href="https://dl.acm.org/doi/10.1145/3378671">doi:10.1145/3378671</a> · <a href="https://arxiv.org/abs/1902.08115">arXiv:1902.08115</a></li>
+<li>T. M. Low, F. D. Igual, T. M. Smith, E. S. Quintana-Ortí, "Analytical Modeling Is Enough for High-Performance BLIS," <i>ACM Trans. Math. Softw.</i> 43(2), 2016. <a href="https://dl.acm.org/doi/10.1145/2925987">doi:10.1145/2925987</a></li>
+<li>D. G. Spampinato, D. Fabregat-Traver, P. Bientinesi, M. Püschel, "Program Generation for Small-Scale Linear Algebra Applications," <i>CGO</i> 2018. <a href="https://dl.acm.org/doi/10.1145/3168812">doi:10.1145/3168812</a> · <a href="https://arxiv.org/abs/1805.04775">arXiv:1805.04775</a></li>
+<li>A. Heinecke, G. Henry, M. Hutchinson, H. Pabst, "LIBXSMM: Accelerating Small Matrix Multiplications by Runtime Code Generation," <i>SC16</i>. <a href="https://ieeexplore.ieee.org/document/7877162/">IEEE Xplore</a></li>
+<li>S. Remke, A. Breuer, "Hello SME! Generating Fast Matrix Multiplication Kernels Using the Scalable Matrix Extension," <i>SC24 Workshops</i>, 2024. <a href="https://arxiv.org/abs/2409.18779">arXiv:2409.18779</a></li>
+<li>Y. Ikarashi et al., "Exocompilation for Productive Programming of Hardware Accelerators," <i>PLDI</i> 2022. <a href="https://dl.acm.org/doi/abs/10.1145/3519939.3523446">doi:10.1145/3519939.3523446</a></li>
+<li>BLASFEO source (vendored commit 5cb0a06). <a href="https://github.com/giaf/blasfeo">github.com/giaf/blasfeo</a></li>
+</ol>
+</main>
