@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 211**
+**Next id: 212**
 
 | Prefix | Section |
 |---|---|
@@ -919,12 +919,12 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       Riccati step lost 1.7% kept in loops. An 8-state Riccati recursion 0.68 of its time; no
       codegen-corpus kernel changes.
 - [x] **C-209. `IPM` chooses its backend (A5).** `IPM(sparse=None)`, the new default, takes the
-      backend whose iteration a cost model finds cheaper, from the structure alone and for the
-      target in force when the solver is built (`opt.ipm.cost`): each backend's counts (the
-      condensed matrix's outer products, the factor's `n^3/3` as straight-line code or loops, the
-      solves' `n^2`; the sparse factor's update multiply-adds and `nnz(L)`) weighed as fitted to the
-      55 problems' measured iterations on the M3 (`notes/perf_2026_09_30_gaps/backend_fit.py`). It
-      takes the faster backend on 53 of 55, the worst pick 1.07x the better (52 and 1.20x leaving
+      backend whose iteration a cost model finds cheaper, from the structure alone
+      (`opt.ipm.cost`): each backend's counts (the condensed matrix's outer products, the factor's
+      `n^3/3` as straight-line code or loops, the solves' `n^2`; the sparse factor's update
+      multiply-adds and `nnz(L)`) weighed as fitted to the 55 problems' measured iterations on the
+      M3 (`notes/perf_2026_09_30_gaps/backend_fit.py`). It takes the faster backend on 53 of 55,
+      the worst pick 1.07x the better (52 and 1.20x leaving
       each problem out of its own fit). After C-205 the sparse backend is the faster on 50; the dense
       one wins DUALC1/2/5/8 by 1.47–1.79x and ex_dense by 1.20x. The choice decides the graph, so it
       is the same for every target (the weights were measured on the M3 only); a sparse factor past
@@ -937,6 +937,19 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       solver's arguments and that scaling to its results; `solve(..., setup(params))` is the
       one-Function solver bit for bit, and a controller whose matrices stay fixed calls `setup`
       once. The harness times it (`perf_2026_09_27_ipm_speed/gen.py --split`).
+- [x] **C-211. Stage derivatives in groups that fit the instruction cache (A1).** A mapped
+      tangent body grows with its seeds, and the chain of masses' stage Hessian at M = 7 and 9
+      (228 and 339 KiB of code) ran 2.8x slower per operation than at M = 5, past the M3's 192 KiB
+      L1i. Forward mode now estimates a body's code from its graph (`ad.forward._body_ops`, five
+      bytes an operation) and, past `Target.body_bytes` (half of L1i), splits its seeds into
+      groups, each its own mapped call over every trip, in all four paths of the `jvp_many` VMAP
+      rule and the structured sparse Jacobian. Every group recomputes the primal and the adjoint,
+      so the count divides only the tangents, and the seeds stay in one body when that shared part
+      is past the budget, when one seed would not fit, or when the recomputation would add more
+      than half the work (`MAX_RECOMPUTE`); on 16-32 KiB instruction caches the chain stays one
+      body. Chain Hessian at M = 7 0.43 of its time, M = 9 0.46, M = 5 0.98; every other
+      codegen-corpus kernel byte-identical. Read while the graph is built, so `scaly_codegen
+      --target` imports the module under its target.
 
 ### Now
 

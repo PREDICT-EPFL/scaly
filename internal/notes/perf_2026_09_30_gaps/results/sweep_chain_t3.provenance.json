@@ -1,0 +1,65 @@
+{
+  "casadi_version": "3.8.0",
+  "cli_args": [
+    "sweep",
+    "--workloads",
+    "chain",
+    "--sizes",
+    "5,7,9",
+    "--backends",
+    "scaly,casadi_sx",
+    "--repetitions",
+    "1",
+    "--out",
+    "/private/tmp/claude-501/-Users-cnjones-git-projects-alloy/0973a49a-00d2-4f90-ad45-44da1d813b6e/scratchpad/sweep_t3/chain.csv"
+  ],
+  "compilation_caches": {
+    "SCALY_CACHE_DIR": null,
+    "SCALY_CASADI_IPOPT_CACHE": null
+  },
+  "compiler": "Homebrew clang version 20.1.8",
+  "cpu_settings": {
+    "affinity": null,
+    "boost_enabled": null,
+    "policies": {}
+  },
+  "git_commit": "423eaca1141d90f1b2b316feab39546b5f7449ad",
+  "git_dirty": true,
+  "native_cflags": [
+    "-mcpu=native",
+    "-fno-math-errno"
+  ],
+  "native_solvers": {
+    "ipopt": {
+      "build": {
+        "blas": {
+          "implementation": "Accelerate",
+          "linkage": "framework"
+        },
+        "ipopt": {
+          "branch": "releases/3.14.19",
+          "linkage": "shared",
+          "version": "3.14.19"
+        },
+        "metis": {
+          "gklib_commit": "3b7d61b9f885063c89901f3901fb4426f9cfb58f",
+          "linkage": "static",
+          "tag": "v5.2.1",
+          "version": "5.2.1"
+        },
+        "mumps": {
+          "coinor_branch": "releases/3.0.12",
+          "coinor_version": "3.0.12",
+          "linkage": "static",
+          "version": "5.8.2"
+        }
+      },
+      "library": "/Users/cnjones/git/projects/alloy/plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.dylib",
+      "link_library": "/Users/cnjones/git/projects/alloy/plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.dylib"
+    }
+  },
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python_version": "3.14.3",
+  "scaly_version": "0.1.0a1",
+  "timestamp": "2026-09-30T18:50:51.811463+00:00"
+}

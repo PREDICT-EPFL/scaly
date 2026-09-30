@@ -49,6 +49,7 @@ from ..ir.expr import (
   zeros_like,
 )
 from ..passes.expr import simplify_cse_fixpoint
+from ..ir.target import get_target
 from ..utils.env import env_bool
 from ..utils.options import Options, get_options
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
@@ -1092,6 +1093,104 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
   return cache[key]
 
 
+# Machine code per operation of a scalar-expanded tangent body, from the chain's stage Hessians on
+# the reference machine (3.9 to 5.4 bytes for every operation ``_body_ops`` counts, M = 3 to 9).
+BYTES_PER_BODY_OP = 5
+
+
+def _body_ops(fn: Any) -> int:
+  """The scalar operations ``fn``'s body becomes once expanded: its arithmetic nodes by size, a
+  matrix product by its multiply-adds. What it leaves out (the bodies of calls within, a
+  reduction's inputs) makes a body look smaller, so it errs toward one group."""
+  return sum(n.size * (n.args[0].shape[-1] if n.op == ExprOp.MATMUL else 1) for n in topo(fn.outputs) if n.op not in _MOVES)
+
+
+_MOVES = frozenset({ExprOp.INPUT, ExprOp.CONST, ExprOp.RESHAPE, ExprOp.SLICE, ExprOp.CONCAT, ExprOp.STACK, ExprOp.GATHER, ExprOp.TRANSPOSE})
+
+
+# The most that recomputing the primal in every group may add to a tangent body's work. A split
+# within it pays on any processor whose cost per operation rises by 1.5x or more past its
+# instruction cache: 2.8x on the reference machine, 2x in a Linux VM on it.
+MAX_RECOMPUTE = 0.5
+
+
+def _seed_groups(callee: Any, fn: ConcreteFunction, nseed: int) -> list[tuple[int, int]]:
+  """The seeds of ``fn``, a mapped tangent body of ``callee``, in contiguous groups whose bodies
+  come to about the target's ``body_bytes``: a body past the instruction cache streams its code
+  from L2 at every trip (the chain of masses' stage Hessian, 2.8x slower per operation past 192 KiB
+  on the reference machine). Every group recomputes the primal, estimated as ``callee``'s own body,
+  so the seeds stay in one group when that alone is past the budget, when one seed's body would not
+  fit, or when the recomputation would add more than ``MAX_RECOMPUTE`` of the body's work."""
+  budget = get_target().body_bytes // BYTES_PER_BODY_OP
+  total = _body_ops(fn)
+  shared = min(_body_ops(callee), total)
+  if total <= budget or shared >= budget:
+    return [(0, nseed)]
+  count = -(-(total - shared) // (budget - shared))
+  if count > nseed or (count - 1) * shared > MAX_RECOMPUTE * total:
+    return [(0, nseed)]
+  bounds = [round(g * nseed / count) for g in range(count + 1)]
+  return list(zip(bounds[:-1], bounds[1:], strict=True))
+
+
+def _grouped_const_tangents(
+  callee: Any,
+  output_idx: int,
+  formal_idx: int,
+  seed: np.ndarray,
+  active: tuple[int, ...],
+  groups: list[tuple[int, int]],
+  count: int,
+  slice_size: int,
+  specs: Callable[[tuple[int, ...]], list[tuple[Expr, int, int]]],
+) -> dict[int, Expr]:
+  """The mapped tangents of ``callee``'s output, one ``(count, slice_size)`` block per active row of
+  the constant ``seed``, computed by one mapped body per group of rows (``_seed_groups``): each group
+  is ``seed`` with the other rows zeroed, which ``_call_jvp_many_function`` drops. A group's body is
+  its own loop over the trips, so it stays in the instruction cache for all of them, and the groups
+  are not packed into one body again (``_pack_jvp_maps``)."""
+  rows: dict[int, Expr] = {}
+  for lo, hi in groups:
+    keep = np.zeros(seed.shape[0], dtype=bool)
+    keep[list(active[lo:hi])] = True
+    fn, args, active_g = _call_jvp_many_const_function(
+      callee, output_idx, formal_idx, np.where(keep.reshape((-1,) + (1,) * (seed.ndim - 1)), seed, 0.0)
+    )
+    mapped = vmap(fn, count, specs(args)).reshape((count, len(active_g), slice_size))
+    rows.update({row: mapped[:, pos, :] for pos, row in enumerate(active_g)})
+  return rows
+
+
+def _mapped_const_seeds(
+  callee: Any,
+  output_idx: int,
+  formals: tuple[int, ...],
+  nseed: int,
+  constants: tuple[np.ndarray, ...],
+  length: int,
+  specs: Callable[[tuple[int, ...]], list[tuple[Expr, int, int]]],
+) -> tuple[Expr, tuple[int, ...]]:
+  """The tangents of ``callee``'s output for the constant seeds ``constants`` of ``formals``, mapped
+  over ``length`` trips, flat in the layout ``(length, active seeds, output)``, and the active seed
+  rows. When one body for every seed would not fit the instruction cache (``_seed_groups``), each
+  group of seeds is its own mapped body (the constants with the other rows zeroed), and their results
+  are joined along the seed axis into the same layout."""
+  fn, args, seed_args, active = _call_jvp_many_function(callee, output_idx, formals, nseed, constants)
+  assert not seed_args
+  groups = _seed_groups(callee, fn, len(active))
+  if len(groups) == 1:
+    return vmap(fn, length, specs(args)), active
+  size = callee.outputs[output_idx].size
+  parts = []
+  for lo, hi in groups:
+    keep = np.zeros(nseed, dtype=bool)
+    keep[list(active[lo:hi])] = True
+    grouped = tuple(np.where(keep.reshape((-1,) + (1,) * (c.ndim - 1)), c, 0.0) for c in constants)
+    fn_g, args_g, _, active_g = _call_jvp_many_function(callee, output_idx, formals, nseed, grouped)
+    parts.append(vmap(fn_g, length, specs(args_g)).reshape((length, len(active_g), size)))
+  return concat(parts, axis=1).reshape((length * len(active) * size,)), active
+
+
 def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
   """Share specialized tangent bodies through one mapped result, preserving each seed layout."""
   groups: list[tuple[int, dict[Expr, tuple[Expr, int, int]], list[Expr]]] = []
@@ -1293,7 +1392,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       maps.append(mapped)
       return mapped
 
-    generic_seeds: dict[int, Expr] = {}
+    generic_seeds: dict[int, tuple[Expr, np.ndarray]] = {}  # formal -> (tangent, per-trip tile indices)
     ret: Expr | None = None
     for formal_idx, actual_outer in enumerate(expr.args):
       actual_tan = _formable_tangent(expr, formal_idx, wrt, seeds, memo, dep_memo)
@@ -1317,14 +1416,21 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
         zero_rows = Expr.const(np.zeros((n, slice_size), dtype=np.float64))
         parts: list[Expr] = []
         for r in range(period):
-          inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(
-            callee, output_idx, formal_idx, tiles[r].reshape((nseed, *formal.shape))
-          )
+          tile = tiles[r].reshape((nseed, *formal.shape))
+          inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(callee, output_idx, formal_idx, tile)
           if not active:
             parts.append(Expr.const(np.zeros((nseed, n, slice_size), dtype=np.float64)))
             continue
-          primal_specs = [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in primal_arg_indices]
-          mapped_3d = mapped_call(inner_fn, n, primal_specs).reshape((n, len(active), slice_size))
+
+          def specs(indices: tuple[int, ...], r: int = r) -> list[tuple[Expr, int, int]]:
+            return [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in indices]
+
+          groups = _seed_groups(callee, inner_fn, len(active))
+          if len(groups) > 1:
+            rows = _grouped_const_tangents(callee, output_idx, formal_idx, tile, active, groups, n, slice_size, specs)
+            parts.append(stack([rows[row] if row in rows else zero_rows for row in range(nseed)], axis=0))
+            continue
+          mapped_3d = mapped_call(inner_fn, n, specs(primal_arg_indices)).reshape((n, len(active), slice_size))
           if len(active) == nseed:
             parts.append(mapped_3d.transpose((1, 0, 2)))
           else:
@@ -1366,16 +1472,22 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
               if local_mask[k, j]:
                 unique_j[c, k] = int(j)
                 break
-        primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
-        mapped_flat = mapped_call(inner_fn, length, primal_specs)
-        mapped_3d = mapped_flat.reshape((length, active_count, slice_size))
+        # Where each local color's tangent is computed: one mapped body for all of them, or, when
+        # that body would not fit the instruction cache, one per group of colors (``_seed_groups``).
+        groups = _seed_groups(callee, inner_fn, active_count)
+        local_specs = lambda indices: [(expr.args[i], starts[i], strides[i]) for i in indices]  # noqa: E731
+        if len(groups) > 1:
+          slices = _grouped_const_tangents(callee, output_idx, formal_idx, seed_f_shaped, active, groups, length, slice_size, local_specs)
+        else:
+          mapped_3d = mapped_call(inner_fn, length, local_specs(primal_arg_indices)).reshape((length, active_count, slice_size))
+          slices = {c_local: mapped_3d[:, pos, :] for pos, c_local in enumerate(active)}
         c_arr = np.arange(nseed, dtype=np.int64).reshape(nseed, 1, 1)
         it_arr = np.arange(length, dtype=np.int64).reshape(1, length, 1)
-        for pos, c_local in enumerate(active):
+        for c_local in active:
           uj_arr = unique_j[c_local].reshape(1, 1, slice_size)
           flat_idx = (c_arr * outer_size + start + it_arr * stride + uj_arr).reshape(-1)
           gathered = gather(actual_tan, flat_idx).reshape((nseed, length, slice_size))
-          mapped_slice = mapped_3d[:, pos, :].reshape((1, length, slice_size))
+          mapped_slice = slices[c_local].reshape((1, length, slice_size))
           contribution = (gathered * mapped_slice).reshape((nseed, length * slice_size))
           ret = contribution if ret is None else ret + contribution
         continue
@@ -1383,16 +1495,25 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       it_arr = np.arange(length, dtype=np.int64)[:, None, None]
       c_arr = np.arange(nseed, dtype=np.int64)[None, :, None]
       j_arr = np.arange(formal_size, dtype=np.int64)[None, None, :]
-      tile_indices = (c_arr * outer_size + start + it_arr * stride + j_arr).reshape(-1)
-      seed_buffer = gather(actual_tan, tile_indices)
-      generic_seeds[formal_idx] = seed_buffer
+      # Per trip, the formal's tile of every seed: ``(length, nseed, formal_size)``.
+      generic_seeds[formal_idx] = (actual_tan, c_arr * outer_size + start + it_arr * stride + j_arr)
     if generic_seeds:
       formals = tuple(generic_seeds)
       inner_fn, primal_arg_indices, seed_indices, _ = _call_jvp_many_function(callee, output_idx, formals, nseed, (None,) * len(formals))
-      primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
-      seed_specs = [(generic_seeds[i], 0, nseed * callee.inputs[i].size) for i in seed_indices]
-      mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
-      term = mapped_flat.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size))
+      groups = _seed_groups(callee, inner_fn, nseed)
+      parts = []
+      for lo, hi in groups:
+        count = hi - lo
+        fn = inner_fn if count == nseed else _call_jvp_many_function(callee, output_idx, formals, count, (None,) * len(formals))[0]
+        primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
+        seed_specs = [
+          (gather(tan, idx[:, lo:hi, :].reshape(-1)), 0, count * callee.inputs[i].size) for i in seed_indices for tan, idx in (generic_seeds[i],)
+        ]
+        # A group's body is its own loop over the trips, so it stays in the instruction cache for
+        # all of them: several groups are not packed into one body again.
+        mapped_flat = (mapped_call if len(groups) == 1 else vmap)(fn, length, [*primal_specs, *seed_specs])
+        parts.append(mapped_flat.reshape((length, count, slice_size)).transpose((1, 0, 2)))
+      term = (parts[0] if len(parts) == 1 else concat(parts, axis=0)).reshape((nseed, length * slice_size))
       ret = term if ret is None else ret + term
     ret = zeros_many(expr, nseed) if ret is None else ret
     memo[expr.id] = ret = _pack_jvp_maps(callee, ret, maps)

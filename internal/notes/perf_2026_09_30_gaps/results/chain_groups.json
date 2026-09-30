@@ -1,0 +1,122 @@
+[
+ {
+  "M": 5,
+  "budget": "host",
+  "body_bytes": null,
+  "groups": 2,
+  "work": 1031320,
+  "time_us": 105.458
+ },
+ {
+  "M": 5,
+  "budget": "one",
+  "body_bytes": 1073741824,
+  "groups": 1,
+  "work": 997160,
+  "time_us": 107.583
+ },
+ {
+  "M": 5,
+  "budget": "full_l1i",
+  "body_bytes": 196608,
+  "groups": 1,
+  "work": 997160,
+  "time_us": 107.458
+ },
+ {
+  "M": 5,
+  "budget": "quarter_l1i",
+  "body_bytes": 49152,
+  "groups": 3,
+  "work": 1065480,
+  "time_us": 110.0
+ },
+ {
+  "M": 5,
+  "budget": "l1i_32k",
+  "body_bytes": 16384,
+  "groups": 1,
+  "work": 997160,
+  "time_us": 110.208
+ },
+ {
+  "M": 7,
+  "budget": "host",
+  "body_bytes": null,
+  "groups": 3,
+  "work": 1992120,
+  "time_us": 209.708
+ },
+ {
+  "M": 7,
+  "budget": "one",
+  "body_bytes": 1073741824,
+  "groups": 1,
+  "work": 1887320,
+  "time_us": 489.875
+ },
+ {
+  "M": 7,
+  "budget": "full_l1i",
+  "body_bytes": 196608,
+  "groups": 2,
+  "work": 1939720,
+  "time_us": 214.208
+ },
+ {
+  "M": 7,
+  "budget": "quarter_l1i",
+  "body_bytes": 49152,
+  "groups": 6,
+  "work": 2149320,
+  "time_us": 215.917
+ },
+ {
+  "M": 7,
+  "budget": "l1i_32k",
+  "body_bytes": 16384,
+  "groups": 1,
+  "work": 1887320,
+  "time_us": 488.0
+ },
+ {
+  "M": 9,
+  "budget": "host",
+  "body_bytes": null,
+  "groups": 5,
+  "work": 3809560,
+  "time_us": 354.0
+ },
+ {
+  "M": 9,
+  "budget": "one",
+  "body_bytes": 1073741824,
+  "groups": 1,
+  "work": 3527000,
+  "time_us": 744.959
+ },
+ {
+  "M": 9,
+  "budget": "full_l1i",
+  "body_bytes": 196608,
+  "groups": 3,
+  "work": 3668280,
+  "time_us": 341.75
+ },
+ {
+  "M": 9,
+  "budget": "quarter_l1i",
+  "body_bytes": 49152,
+  "groups": 12,
+  "work": 4304040,
+  "time_us": 376.833
+ },
+ {
+  "M": 9,
+  "budget": "l1i_32k",
+  "body_bytes": 16384,
+  "groups": 1,
+  "work": 3527000,
+  "time_us": 728.416
+ }
+]

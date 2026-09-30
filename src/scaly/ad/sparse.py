@@ -13,11 +13,10 @@ from typing import Any, Literal
 import numpy as np
 from scipy import sparse
 
-from ..function.sugar import vmap
 from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substitute
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
-from .forward import _call_jvp_many_function, jvp_many
+from .forward import _mapped_const_seeds, jvp_many
 from .sparsity import _callee_mask, _depends_on, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
 from ..ir.types import SparsityType
 
@@ -322,10 +321,15 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     seed[first + local_colors, np.arange(formal.size)] = 1.0
     constants.append(seed.reshape((coloring_width, *formal.shape)))
   formals = tuple(f_idx for f_idx, *_ in colored)
-  inner_fn, arg_indices, seed_indices, active = _call_jvp_many_function(callee, output_idx, formals, coloring_width, tuple(constants))
-  assert not seed_indices
-  primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-  mapped_flat = vmap(inner_fn, length, primal_specs)
+  mapped_flat, active = _mapped_const_seeds(
+    callee,
+    output_idx,
+    formals,
+    coloring_width,
+    tuple(constants),
+    length,
+    lambda indices: [(vmap_expr.args[i], starts[i], strides[i]) for i in indices],
+  )
   active_to_pos = {c: i for i, c in enumerate(active)}
   active_count = len(active)
   pieces: list[tuple[Expr, np.ndarray]] = []  # (gathered piece values, nnz slots they cover)

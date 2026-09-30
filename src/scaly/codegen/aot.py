@@ -16,6 +16,7 @@ definitions, prototypes, link flags) comes off their ``build_requirements``, mer
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from scaly.function import ConcreteFunction, Function
 from scaly.function.extern import BuildRequirements, ExternRenderCtx, LinkResolver, extern_functions
 from scaly.ir.expr import callees_of, topo
 from scaly.ir.target import Target, resolve_target
+from scaly.ir.target import target as target_block
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
 
@@ -571,13 +573,18 @@ def main(argv: list[str] | None = None) -> None:
   module_name, _, attr = args.function.partition(":")
   if not attr:
     parser.error(f"function {args.function!r} is not module:attribute")
-  fun = getattr(importlib.import_module(module_name), attr)
   try:
-    target = resolve_target(args.target)  # after the import, which may set the process default
+    requested = None if args.target is None else resolve_target(args.target)
   except ValueError as error:
     parser.error(str(error))
-  if not isinstance(fun, Function):
-    fun = fun()
+  # The graph is built under the requested target: AD makes one choice from it while it builds a
+  # derivative (``ad.forward._seed_groups``). Without one, the target is the one in force after the
+  # import, which may set the process default.
+  with target_block(requested) if requested is not None else contextlib.nullcontext():
+    fun = getattr(importlib.import_module(module_name), attr)
+    if not isinstance(fun, Function):
+      fun = fun()
+  target = requested if requested is not None else resolve_target(None)
   if not fun.is_concrete:
     parser.error(
       f"{args.function} has shape holes; export a concrete instance instead, such as `{attr}_3 = {attr}.instantiate(...)`, "

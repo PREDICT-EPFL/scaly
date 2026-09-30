@@ -1,8 +1,10 @@
 """The processor generated code is tuned for: ``Target``, its presets, the host's, and the target in force.
 
-A target is read when a Function is rendered, never when its graph is built: one graph renders for
-any number of targets, and the rendered C carries every choice a target made, so the JIT's cache
-key, a hash of that C, tells two targets' builds apart without naming them. The JIT compiles for the
+A target is read when a Function is rendered: one graph renders for any number of targets, and the
+rendered C carries every choice a target made, so the JIT's cache key, a hash of that C, tells two
+targets' builds apart without naming them. One choice is made while a graph is built, by AD: how
+many groups a mapped tangent body's seeds are split into to fit the instruction cache
+(``body_bytes``), from the target in force then. The JIT compiles for the
 processor it runs on whatever the target, so rendering for another target in-process runs that
 target's choices on this machine; ahead-of-time output takes ``Target.cflags`` for the machine it
 is built for.
@@ -103,6 +105,13 @@ class Target:
     rounding choice."""
     v = self.choices.vector_doubles
     return (8 * v, 4 * v, 2 * v)
+
+  @property
+  def body_bytes(self) -> int:
+    """The machine code a loop body may take and still stay in the instruction cache across its
+    trips: half of ``l1i_bytes``. A mapped tangent body larger than this is split into groups of
+    seeds, each its own loop, when the primal each group recomputes costs little (``ad.forward``)."""
+    return self.choices.l1i_bytes // 2
 
   @property
   def straight_line_ops(self) -> int:

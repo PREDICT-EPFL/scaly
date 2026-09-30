@@ -198,6 +198,13 @@ tests/core/ad/test_reduction_derivative_edge_cases.py::test_tied_extrema_split_e
 tests/core/ad/test_reduction_derivative_edge_cases.py::test_tied_extrema_split_equally_or_go_to_the_lowest_index_of_the_view[split]
 tests/core/ad/test_reduction_derivative_edge_cases.py::test_unique_extrema_have_one_hot_derivatives_in_every_view[first]
 tests/core/ad/test_reduction_derivative_edge_cases.py::test_unique_extrema_have_one_hot_derivatives_in_every_view[split]
+tests/core/ad/test_seed_groups.py::test_groups_are_as_few_as_fit
+tests/core/ad/test_seed_groups.py::test_seeds_stay_together_when_one_each_would_not_fit
+tests/core/ad/test_seed_groups.py::test_split_bodies_give_the_same_derivative[hessian]
+tests/core/ad/test_seed_groups.py::test_split_bodies_give_the_same_derivative[jacobian]
+tests/core/ad/test_seed_groups.py::test_split_bodies_give_the_same_derivative[runtime]
+tests/core/ad/test_seed_groups.py::test_split_bodies_give_the_same_derivative[sparse_jacobian]
+tests/core/ad/test_seed_groups.py::test_the_body_estimate_counts_arithmetic_not_moves
 tests/core/ad/test_sparsity.py::test_a_map_over_runs_of_one_variable_is_differentiated_in_one_structured_pass
 tests/core/ad/test_sparsity.py::test_accumulating_scatter_and_segment_extrema_patterns
 tests/core/ad/test_sparsity.py::test_colored_sparse_jacobian_matches_dense_gather_reference
@@ -978,6 +985,7 @@ tests/core/ir/test_target.py::test_portable_rounding_renders_the_same_c_for_ever
 tests/core/ir/test_target.py::test_portable_rounding_renders_the_same_c_for_every_target[None-256-6]
 tests/core/ir/test_target.py::test_recompile_drops_the_library_of_the_target_it_was_built_for
 tests/core/ir/test_target.py::test_sysctl_output_parses
+tests/core/ir/test_target.py::test_the_cli_builds_the_graph_under_its_target
 tests/core/ir/test_target.py::test_the_cli_takes_a_target
 tests/core/ir/test_target.py::test_the_environment_names_the_default
 tests/core/ir/test_target.py::test_the_host_is_the_preset_that_matches_it[facts0-apple-m3]

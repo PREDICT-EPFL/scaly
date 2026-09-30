@@ -79,6 +79,18 @@ One mapped call then shares the primal and adjoint expressions across those resu
 each result's original seed layout, including zero seed rows. Generic runtime seeds instead enter
 one joint derivative helper for all active formals.
 
+A mapped tangent body grows with its seeds. Once its code no longer fits the processor's
+instruction cache, every iteration fetches it again from the next level, and each operation costs
+several times more. Forward mode estimates a body's code from its expression graph, at about five
+bytes for each scalar operation it expands to. When that passes the target's `body_bytes`, half its
+instruction cache, the seeds are split into groups, each its own mapped call over every iteration,
+with enough groups that each body comes to about that budget. Every group recomputes the primal and
+the adjoint, estimated as the callee's own body. So the seeds stay in one body when that part alone
+is past the budget, when a body of one seed would not fit either, or when the recomputation would
+add more than half the body's work. A group's tangents are the same expressions, simplified within
+the group, so a result can differ from the single body's in its last bits. The target is the one in
+force while the derivative is built.
+
 One case where one-sided coloring would lose that guarantee is a shared stride-0 formal marked
 differentiable. It gives the Hessian a dense row and column, so coloring the global pattern as a
 Jacobian needs one color per iteration. `sparse_hessian` instead symmetrizes its structural pattern

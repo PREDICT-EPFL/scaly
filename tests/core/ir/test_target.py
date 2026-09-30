@@ -52,7 +52,9 @@ def test_portable_rounding_makes_the_reference_machines_choices() -> None:
     portable = dataclasses.replace(preset, rounding="portable")
     assert portable.choices is target_module.PORTABLE
     assert portable.row_blocks == (16, 8, 4) and portable.row_blocked_max == 64
+    assert (portable.straight_line_ops, portable.body_bytes, portable.panel_bytes) == (4096, 98304, 65536)
   assert PRESETS["x86-64-v3"].choices is PRESETS["x86-64-v3"]
+  assert PRESETS["x86-64-v3"].body_bytes == 16384
 
 
 @pytest.mark.parametrize("m, k, n", [(None, 256, 6), (20, 12, 40), (3, 70, 130), (8, 9, 100), (20, 128, 40)])
@@ -353,3 +355,18 @@ def test_the_cli_takes_a_target(tmp_path, monkeypatch, capsys) -> None:
   (tmp_path / "scaly_target_cli_set.py").write_text("import scaly as sc\nfrom scaly_target_cli import build\n\nsc.set_target('generic')\n")
   aot.main(["scaly_target_cli_set:build", "-o", str(tmp_path / "set")])
   assert "target: generic (compile with -O2 -fno-math-errno)" in capsys.readouterr().out
+
+
+def test_the_cli_builds_the_graph_under_its_target(tmp_path, monkeypatch) -> None:
+  """AD reads the target while it builds a derivative (``ad.forward._seed_groups``), so the module's
+  import and its factory both run under ``--target``, and the target in force is restored after."""
+  (tmp_path / "scaly_target_cli_build.py").write_text(
+    "import scaly as sc\n\nat_import = sc.get_target().name\n\n\ndef build():\n  global at_build\n  at_build = sc.get_target().name\n"
+    "  x = sc.sym('x', 4)\n  return sc.Function.from_exprs('target_cli_build', [x], [x * x], ['x'], ['y'])\n"
+  )
+  monkeypatch.syspath_prepend(str(tmp_path))
+  before = sc.get_target()
+  aot.main(["scaly_target_cli_build:build", "-o", str(tmp_path / "out"), "--target", "x86-64-v3"])
+  module = sys.modules["scaly_target_cli_build"]
+  assert (module.at_import, module.at_build) == ("x86-64-v3", "x86-64-v3")
+  assert sc.get_target() is before

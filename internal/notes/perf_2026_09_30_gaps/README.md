@@ -14,9 +14,10 @@ machine-code sizes are from `nm -S` on `cc -O2 -mcpu=native -fno-math-errno -c c
 Mac with Apple clang before acting on them (step A1's first experiment).
 | `shapes.py --op OP --shapes ... --modes ...` | small dense kernels of any shape (products, factors, solves, `cho_solve`) rendered two or more ways (`auto`, `straight`, `loops`, or another checkout's), timed from C |
 | `chain_cliff.py [M ...]` | A1's measurement, natively: the chain's stage Hessian at M = 3 … 9, the stage body's machine code and the time per 1 000 multiplications at `-O2` and `-Os`; `results/chain_cliff.json` |
+| `chain_groups.py [M ...]` | C-211 (Tier 3): the same Hessian with its seeds in groups, per body budget (the host's, one body, all, a quarter and 16 KiB): the groups made, the work the mapped bodies generate and the time from C; `results/chain_groups.json` |
 
 `results/` holds what the plan cites: the native kernel sweeps against BLASFEO (`kernels_*.json`),
 the straight-line and loop comparisons (`shapes_*.json`), the corpus timings of C-205 and C-206
 (`corpus_*.json`), the dense IPM's before and after C-205 (`ipm_dense_c205.json`), A1's cliff
-(`chain_cliff.json`) and A7's profile of the dense IPM (`a7_profile_dense_ipm.txt`, made with
+(`chain_cliff.json`), the groups that take it away (`chain_groups.json`) and the benchmark sweep of the chain against CasADi SX after them (`sweep_chain_t3.*`) and A7's profile of the dense IPM (`a7_profile_dense_ipm.txt`, made with
 `../perf_2026_09_27_ipm_speed/prof.py`).
