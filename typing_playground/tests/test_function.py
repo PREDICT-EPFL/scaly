@@ -9,6 +9,7 @@ from typing_playground.function import forward, function, gradient, hessian, lag
 from typing_playground.tests.definitions import (
   adj_square_x,
   constant,
+  energy,
   cost,
   cost_batch,
   cost_packed,
@@ -24,7 +25,7 @@ from typing_playground.tests.definitions import (
   step,
   step_flat,
 )
-from typing_playground.trees import G, L
+from typing_playground.trees import arg, group
 
 
 def test_names_and_shapes_are_declared_not_inferred() -> None:
@@ -73,17 +74,17 @@ def test_wrong_structure_at_call_is_a_runtime_error() -> None:
 
 def test_output_count_and_shape_are_checked_at_the_decorator() -> None:
   with pytest.raises(TypeError, match=r"declared with shape \(2,\)"):
-    function(L("x", 3), outputs=L("y", 2))(lambda x: x)
+    function(arg("x", 3), outputs=arg("y", 2))(lambda x: x)
   with pytest.raises(TypeError, match="declared 2 leaves"):
-    function(L("x", 3), outputs=G(L("a", ...), L("b", ...)))(cast(Any, lambda x: x))
+    function(arg("x", 3), outputs=group(arg("a", ...), arg("b", ...)))(cast(Any, lambda x: x))
 
 
 def test_group_parts_are_the_body_parameters() -> None:
-  f = function(L("x", 3), L("p", ()), outputs=L("f", ...))(lambda x, p: (x * x).sum() * p)
+  f = function(arg("x", 3), arg("p", ()), outputs=arg("f", ...))(lambda x, p: (x * x).sum() * p)
   assert f.instantiate().input_names == ("x", "p") and f.instantiate().output_shapes == ((),)
   assert f.numerical_call(Buffer((3,)), Buffer(())).shape == ()
   with pytest.raises(TypeError):
-    function(L("x", 3), L("p", ()), outputs=L("f", ...))(cast(Any, lambda inputs: inputs[0]))  # the whole tree is not one parameter
+    function(arg("x", 3), arg("p", ()), outputs=arg("f", ...))(cast(Any, lambda inputs: inputs[0]))  # the whole tree is not one parameter
 
 
 def test_a_group_is_one_parameter() -> None:
@@ -91,16 +92,24 @@ def test_a_group_is_one_parameter() -> None:
   assert cost_packed.numerical_call((Buffer((3,)), Buffer(()))).shape == ()
   with pytest.raises(ValueError, match="structure"):
     cast(Any, cost_packed).numerical_call(Buffer((3,)), Buffer(()))
-  one = function(G(L("x", 3)), G(L("y", 3)), outputs=L("z", ...))(lambda x, y: x[0] + y[0])  # never normalized
+  one = function(group(arg("x", 3)), group(arg("y", 3)), outputs=arg("z", ...))(lambda x, y: x[0] + y[0])  # never normalized
   assert one.numerical_call((Buffer((3,)),), (Buffer((3,)),)).shape == (3,)
 
 
-def test_zero_parameters_and_a_missing_output_declaration() -> None:
+def test_zero_parameters() -> None:
   assert constant.instantiate().name == "constant" and constant.instantiate().input_names == ()
   assert constant().shape == (2,) and isinstance(constant(), Buffer)  # no arguments is an evaluation
   assert isinstance(constant.symbolic_call(), Expr)
-  with pytest.raises(TypeError, match="declare outputs="):
-    cast(Any, function)(L("x", 3))(lambda x: x)
+
+
+def test_a_missing_output_declaration_is_read_off_the_trace() -> None:
+  assert energy.outputs is None and energy.instantiate().output_names == ("energy",) and energy.instantiate().output_shapes == ((),)
+  assert gradient(energy, "energy", "x").name == "energy_grad_energy_x"
+  assert function(arg("x", 3), name="twice")(lambda x: 2.0 * x).instantiate().output_names == ("twice",)
+  nested = function(arg("x", 3))(lambda x: (x, (x, x.sum())))
+  assert nested.instantiate().output_names == ("out0", "out1", "out2")
+  out = nested(Buffer((3,)))
+  assert out[0].shape == (3,) and out[1][0].shape == (3,) and out[1][1].shape == ()
 
 
 def test_body_names_are_independent_of_declared_names() -> None:
@@ -158,5 +167,5 @@ def test_call_dispatches_on_the_leaf_kind() -> None:
     cast(Any, cost)(Expr((3,)), Buffer(()))
   with pytest.raises(ValueError, match="expected shapes"):
     cost(Buffer((4,)), Buffer(()))
-  inner = function(L("x", 3), outputs=L("y", ...))(lambda x: cost(x, x.sum()))  # symbolic inside a trace
+  inner = function(arg("x", 3), outputs=arg("y", ...))(lambda x: cost(x, x.sum()))  # symbolic inside a trace
   assert inner.instantiate().output_shapes == ((),)

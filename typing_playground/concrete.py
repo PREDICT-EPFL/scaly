@@ -17,24 +17,28 @@ from collections.abc import Callable
 from typing import Any, cast, overload
 
 from .expr import Buffer, Expr, Shape
-from .trees import L, Tree, append_parameter, check_structure, leaves, shapes_of, unflatten
+from .trees import Tree, append_parameter, arg, check_structure, inferred_outputs, leaves, shapes_of, unflatten
 
 
 class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A named graph from a parameter list with resolved shapes to one output tree. The body and both
-  calls take one argument per parameter; the input type parameters are those lists, as tuples."""
+  calls take one argument per parameter; the input type parameters are those lists, as tuples.
+  Without ``outputs`` the tree is read off the trace, its one leaf named ``output_name``."""
 
   def __init__(
     self,
     name: str,
     fn: Callable[..., SymbolicOutputs],
     inputs: Tree[SymbolicInputs, NumericalInputs],
-    outputs: Tree[SymbolicOutputs, NumericalOutputs],
+    outputs: Tree[SymbolicOutputs, NumericalOutputs] | None,
+    output_name: str | None = None,
   ) -> None:
     self.name = name
     self._fn = fn
     self.inputs = inputs
     traced = fn(*cast(tuple[Any, ...], self.inputs.symbols(degree=1)))
+    if outputs is None:
+      outputs = cast(Tree[SymbolicOutputs, NumericalOutputs], inferred_outputs(traced, output_name or name))
     self.output_shapes = outputs.resolved(shapes_of(traced))
     self.outputs = outputs.with_shapes(self.output_shapes)
     self.output_degrees = tuple(cast(Expr, v).degree for v in leaves(traced))
@@ -112,7 +116,7 @@ def _derived(fn: Instance, name: str, shape: Shape, degree: int | None) -> Insta
     fn.symbolic_call(*args)
     return Expr(shape, degree=degree)
 
-  return ConcreteFunction(f"{fn.name}_{name}", body, fn.inputs, L(name, shape))
+  return ConcreteFunction(f"{fn.name}_{name}", body, fn.inputs, arg(name, shape))
 
 
 def _lower_degree(degree: int | None, by: int) -> int | None:
@@ -147,17 +151,17 @@ def _seeded(fn: Instance, seed: Tree[Any, Any], name: str, shape: Shape) -> Inst
     fn.symbolic_call(*args[:-1])
     return Expr(shape, degree=None)
 
-  return ConcreteFunction(f"{fn.name}_{name}", body, append_parameter(fn.inputs, seed), L(name, shape))
+  return ConcreteFunction(f"{fn.name}_{name}", body, append_parameter(fn.inputs, seed), arg(name, shape))
 
 
 def forward(fn: Instance, of: str, wrt: str) -> Instance:
   """``J(of, wrt) @ seed``, called as ``fwd.numerical_call(*inputs, seed)``."""
-  return _seeded(fn, L(f"fwd:{wrt}", _shape_of_input(fn, wrt)), f"fwd_{of}_{wrt}", _shape_of_output(fn, of))
+  return _seeded(fn, arg(f"fwd:{wrt}", _shape_of_input(fn, wrt)), f"fwd_{of}_{wrt}", _shape_of_output(fn, of))
 
 
 def adjoint(fn: Instance, of: str, wrt: str) -> Instance:
   """``J(of, wrt).T @ lam``, called as ``adj.numerical_call(*inputs, lam)``."""
-  return _seeded(fn, L(f"lam:{of}", _shape_of_output(fn, of)), f"adj_{of}_{wrt}", _shape_of_input(fn, wrt))
+  return _seeded(fn, arg(f"lam:{of}", _shape_of_output(fn, of)), f"adj_{of}_{wrt}", _shape_of_input(fn, wrt))
 
 
 def lagrangian_hessian(fn: Instance, wrt: str) -> Instance:

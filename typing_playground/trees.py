@@ -1,14 +1,15 @@
-"""Structure declarations: ``Tree``, ``L`` and ``G``, and the flatten/unflatten utilities over them.
+"""Structure declarations: ``Tree``, ``arg`` and ``group``, and the flatten/unflatten utilities over them.
 
 A leaf declaration is a shape or ``...``, a hole. Holes are how output shapes are left to the trace
 and how a declaration leaves input shapes to the call site; ``with_shapes`` fills them and ``resolved``
 checks concrete shapes against the declaration. A function's inputs are a parameter list, a group
-built by ``parameter_list`` with one tree per parameter; ``G`` is only ever structure.
+built by ``parameter_list`` with one tree per parameter; ``group`` is only ever structure.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from types import EllipsisType
 from typing import Any, TypeGuard, cast, overload
 
@@ -78,8 +79,8 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"duplicate names in {self.names}")
 
 
-class L(Tree[Expr, Buffer]):
-  """One named tensor. The real ``L`` also takes a ``TensorType`` for dtype and ``diff`` and
+class _Leaf(Tree[Expr, Buffer]):
+  """Runtime class behind ``arg``. The real library's ``L`` also takes a ``TensorType`` for dtype and ``diff`` and
   requires the shape argument today; holes need it to be optional, as here."""
 
   def __init__(self, name: str, shape: int | ShapeDecl = ..., /) -> None:
@@ -89,19 +90,25 @@ class L(Tree[Expr, Buffer]):
   def symbols(self, degree: int = 0) -> Expr:
     return Expr(self.shapes[0], self.names[0], degree)
 
-  def relabel(self, prefix: str) -> L:
-    return L(prefix + self.names[0], self.decls[0])
+  def relabel(self, prefix: str) -> _Leaf:
+    return _Leaf(prefix + self.names[0], self.decls[0])
 
-  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> L:
-    return L(self.names[0], shapes[0])
+  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> _Leaf:
+    return _Leaf(self.names[0], shapes[0])
 
 
-class _G(Tree[Any, Any]):
-  """Runtime class behind ``G``; the static types live on ``G``'s overloads."""
+def arg(name: str, shape: int | ShapeDecl = ..., /) -> Tree[Expr, Buffer]:
+  """Declare one named tensor, an ``Expr`` in the body and a ``Buffer`` in a numerical call. Without
+  a shape the leaf is a hole, bound per call on an input and traced on an output."""
+  return _Leaf(name, shape)
+
+
+class _Group(Tree[Any, Any]):
+  """Runtime class behind ``group``; the static types live on ``group``'s overloads."""
 
   def __init__(self, parts: tuple[Tree[Any, Any], ...], *, public: bool = True) -> None:
     if public and not 1 <= len(parts) <= 8:
-      raise TypeError(f"G takes 1 to 8 trees, got {len(parts)}; nest for more")
+      raise TypeError(f"group takes 1 to 8 trees, got {len(parts)}; nest for more")
     self.parts = parts
     self.names = tuple(n for part in parts for n in part.names)
     self.decls = tuple(d for part in parts for d in part.decls)
@@ -110,52 +117,52 @@ class _G(Tree[Any, Any]):
   def symbols(self, degree: int = 0) -> tuple[Any, ...]:
     return tuple(part.symbols(degree) for part in self.parts)
 
-  def relabel(self, prefix: str) -> _G:
-    return _G(tuple(part.relabel(prefix) for part in self.parts), public=False)
+  def relabel(self, prefix: str) -> _Group:
+    return _Group(tuple(part.relabel(prefix) for part in self.parts), public=False)
 
-  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> _G:
+  def with_shapes(self, shapes: tuple[ShapeDecl, ...]) -> _Group:
     out: list[Tree[Any, Any]] = []
     i = 0
     for part in self.parts:
       out.append(part.with_shapes(shapes[i : i + part.size]))
       i += part.size
-    return _G(tuple(out), public=False)
+    return _Group(tuple(out), public=False)
 
 
 # The one ladder in the design: deriving the Buffer structure from the Expr structure needs a
 # type-level map, which Python lacks, so each width is spelled out (README, "Why a wrapper class").
 # fmt: off
 @overload
-def G[SA, NA](a: Tree[SA, NA], /) -> Tree[tuple[SA], tuple[NA]]: ...
+def group[SA, NA](a: Tree[SA, NA], /) -> Tree[tuple[SA], tuple[NA]]: ...
 @overload
-def G[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /) -> Tree[tuple[SA, SB], tuple[NA, NB]]: ...
+def group[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /) -> Tree[tuple[SA, SB], tuple[NA, NB]]: ...
 @overload
-def G[SA, NA, SB, NB, SC, NC](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], /) -> Tree[tuple[SA, SB, SC], tuple[NA, NB, NC]]: ...
+def group[SA, NA, SB, NB, SC, NC](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], /) -> Tree[tuple[SA, SB, SC], tuple[NA, NB, NC]]: ...
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], /) -> Tree[tuple[SA, SB, SC, SD], tuple[NA, NB, NC, ND]]: ...
+def group[SA, NA, SB, NB, SC, NC, SD, ND](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], /) -> Tree[tuple[SA, SB, SC, SD], tuple[NA, NB, NC, ND]]: ...
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], /) -> Tree[tuple[SA, SB, SC, SD, SE], tuple[NA, NB, NC, ND, NE]]: ...
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], /) -> Tree[tuple[SA, SB, SC, SD, SE], tuple[NA, NB, NC, ND, NE]]: ...
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF], tuple[NA, NB, NC, ND, NE, NF]]: ...
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF], tuple[NA, NB, NC, ND, NE, NF]]: ...
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG], tuple[NA, NB, NC, ND, NE, NF, NG]]: ...
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG], tuple[NA, NB, NC, ND, NE, NF, NG]]: ...
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], h: Tree[SH, NH], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH]]: ...
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], h: Tree[SH, NH], /) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH]]: ...
 # fmt: on
-def G(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
-  """Group trees side by side: ``G(L("x", 3), L("p", ()))`` is ``tuple[Expr, Expr]`` / ``tuple[Buffer, Buffer]``.
-  Groups are never normalized: ``G(L("x"))`` is a one-element tuple, not a leaf."""
-  return _G(parts)
+def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
+  """Group trees side by side: ``group(arg("x", 3), arg("p", ()))`` is ``tuple[Expr, Expr]`` / ``tuple[Buffer, Buffer]``.
+  Groups are never normalized: ``group(arg("x"))`` is a one-element tuple, not a leaf."""
+  return _Group(parts)
 
 
-def parameter_list(trees: tuple[Tree[Any, Any], ...], /) -> _G:
+def parameter_list(trees: tuple[Tree[Any, Any], ...], /) -> _Group:
   """One tree per parameter, any number of them, zero included."""
-  return _G(trees, public=False)
+  return _Group(trees, public=False)
 
 
-def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _G:
+def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _Group:
   """``params`` with ``tree`` as one more parameter, which is how seeded modes extend a signature."""
-  return _G((*cast(_G, params).parts, tree), public=False)
+  return _Group((*cast(_Group, params).parts, tree), public=False)
 
 
 def leaves(value: object, /) -> tuple[Expr | Buffer, ...]:
@@ -171,18 +178,42 @@ def shapes_of(value: object, /) -> tuple[Shape, ...]:
   return tuple(v.shape for v in leaves(value))
 
 
+@dataclass(frozen=True)
+class LeafKey:
+  """One leaf of a skeleton. Marked, so a scalar leaf is never mistaken for an empty group."""
+
+  shape: Shape
+
+
 def skeleton(value: object, /) -> Any:
-  """Nested shapes: the structure-aware key a bare function caches instances under."""
+  """Nested ``LeafKey``s: the structure and shapes of a call, which is what binds an instance when
+  the declaration does not fix the structure."""
   if isinstance(value, tuple):
     return tuple(skeleton(v) for v in value)
-  return leaves(value)[0].shape
+  return LeafKey(leaves(value)[0].shape)
+
+
+def skeleton_of(tree: Tree[Any, Any], shapes: tuple[Shape, ...], /) -> Any:
+  return unflatten(tree, tuple(LeafKey(s) for s in shapes))
+
+
+def skeleton_shapes(skel: Any, /) -> tuple[Shape, ...]:
+  if isinstance(skel, tuple):
+    return tuple(s for part in skel for s in skeleton_shapes(part))
+  return (cast(LeafKey, skel).shape,)
+
+
+def map_skeleton(skel: Any, f: Callable[[Shape], Shape], /) -> Any:
+  if isinstance(skel, tuple):
+    return tuple(map_skeleton(part, f) for part in skel)
+  return LeafKey(f(cast(LeafKey, skel).shape))
 
 
 def unflatten[S, N](tree: Tree[S, N], values: tuple[Any, ...]) -> Any:
   """Rebuild ``tree``'s structure from flat values (the C side hands back flat buffers)."""
-  if isinstance(tree, L):
+  if isinstance(tree, _Leaf):
     return values[0]
-  assert isinstance(tree, _G)
+  assert isinstance(tree, _Group)
   out: list[Any] = []
   i = 0
   for part in tree.parts:
@@ -192,10 +223,10 @@ def unflatten[S, N](tree: Tree[S, N], values: tuple[Any, ...]) -> Any:
 
 
 def same_structure(tree: Tree[Any, Any], value: object) -> bool:
-  """Whether ``value`` nests like ``tree``, ignoring shapes."""
-  if isinstance(tree, L):
-    return isinstance(value, (Expr, Buffer))
-  assert isinstance(tree, _G)
+  """Whether ``value``, a pytree of values or a skeleton, nests like ``tree``, ignoring shapes."""
+  if isinstance(tree, _Leaf):
+    return not isinstance(value, tuple)
+  assert isinstance(tree, _Group)
   return isinstance(value, tuple) and len(value) == len(tree.parts) and all(same_structure(t, v) for t, v in zip(tree.parts, value, strict=True))
 
 
@@ -206,9 +237,16 @@ def check_structure(tree: Tree[Any, Any], value: object, what: str) -> None:
     raise ValueError(f"{what}: expected shapes {tree.shapes} for {tree.names}, got {shapes_of(value)}")
 
 
-def inferred_tree(value: object, names: Iterator[str], /) -> Tree[Any, Any]:
-  """A declaration read off a value: its structure and leaf shapes, with the given leaf names.
-  This is what a bare function does on first call; ``flat_tree`` is the real library's analogue."""
-  if isinstance(value, tuple):
-    return _G(tuple(inferred_tree(v, names) for v in value), public=False)
-  return L(next(names), leaves(value)[0].shape)
+def inferred_tree(skel: Any, names: Iterator[str], /) -> Tree[Any, Any]:
+  """A declaration read off a skeleton, with the given leaf names. This is how the bare mode reads its
+  inputs; ``flat_tree`` is the real library's analogue."""
+  if isinstance(skel, tuple):
+    return _Group(tuple(inferred_tree(v, names) for v in skel), public=False)
+  return arg(next(names), cast(LeafKey, skel).shape)
+
+
+def inferred_outputs(value: object, name: str, /) -> Tree[Any, Any]:
+  """The output tree read off a traced value: one leaf is named ``name``, several ``out0``, ``out1``..."""
+  skel = skeleton(value)
+  n = len(skeleton_shapes(skel))
+  return inferred_tree(skel, iter((name,) if n == 1 else (f"out{i}" for i in range(n))))

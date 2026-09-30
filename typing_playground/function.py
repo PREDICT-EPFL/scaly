@@ -1,6 +1,6 @@
 """``Function``: a body over a declared parameter list, realized as one ``ConcreteFunction`` per binding.
 
-The one public function type. A declaration may leave leaf shapes as holes (``L("x")``); a call binds
+The one public function type. A declaration may leave leaf shapes as holes (``arg("x")``); a call binds
 them to its arguments' shapes and traces the body once per distinct binding. A fully shaped
 declaration has one instance, built at the decorator and named after the function, so it fails
 early and keeps its C symbol. The decorator takes one tree per parameter, and the input type
@@ -17,12 +17,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import EllipsisType
-from typing import Any, cast, overload
+from typing import Any, Protocol, cast, overload
 
 from . import concrete
 from .concrete import ConcreteFunction, Instance
 from .expr import Buffer, Expr, Shape, ShapeDecl, as_shape
-from .trees import L, Tree, append_parameter, inferred_tree, leaves, parameter_list, same_structure, shapes_of, skeleton
+from .trees import Tree, append_parameter, arg, inferred_tree, map_skeleton, parameter_list, same_structure, skeleton, skeleton_of, skeleton_shapes
 
 
 def _mangle(name: str, shapes: tuple[Shape, ...]) -> str:
@@ -30,10 +30,11 @@ def _mangle(name: str, shapes: tuple[Shape, ...]) -> str:
 
 
 class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
-  """A body plus a declaration that may have shape holes, or none at all in the bare mode. Nothing
-  shape-dependent lives here: ``inputs`` and ``outputs`` are the declared trees, holes included, and
-  ``instantiate`` returns the ``ConcreteFunction`` that has the shapes. ``instances`` is everything
-  that reaches C."""
+  """A body plus a declaration that may have shape holes. Nothing shape-dependent lives here:
+  ``inputs`` and ``outputs`` are the declared trees, holes included, and ``None`` where the structure
+  is read instead, off the call for ``inputs`` (the bare mode) and off the trace for ``outputs``
+  (no ``outputs=``). ``instantiate`` returns the ``ConcreteFunction`` that has the shapes.
+  ``instances`` is everything that reaches C."""
 
   def __init__(
     self,
@@ -42,8 +43,6 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     inputs: Tree[SymbolicInputs, NumericalInputs] | None,
     outputs: Tree[SymbolicOutputs, NumericalOutputs] | None,
   ) -> None:
-    if (inputs is None) != (outputs is None):
-      raise TypeError(f"{name}: declare outputs= with the inputs, or neither for the bare mode")
     self.name = name
     self._fn = fn
     self.inputs = inputs
@@ -52,10 +51,15 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     if self.inputs is not None and not self.inputs.has_holes:
       self.instantiate()
 
-  def _build(self, resolved: tuple[Shape, ...]) -> ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
-    assert self.inputs is not None and self.outputs is not None
+  def _build(self, resolved: tuple[Shape, ...]) -> Instance:
+    assert self.inputs is not None
     name = _mangle(self.name, resolved) if self.inputs.has_holes else self.name
-    return ConcreteFunction(name, self._fn, self.inputs.with_shapes(resolved), self.outputs)
+    return ConcreteFunction(name, self._fn, self.inputs.with_shapes(resolved), self.outputs, self.name)
+
+  def _build_bare(self, skel: Any) -> Instance:
+    shapes = skeleton_shapes(skel)
+    inputs = inferred_tree(skel, (f"in{i}" for i in range(len(shapes))))
+    return ConcreteFunction(_mangle(self.name, shapes), self._fn, inputs, None, self.name)
 
   def instantiate(
     self, shapes: tuple[int | Shape, ...] | None = None, /
@@ -75,31 +79,35 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       self.instances[resolved] = got
     return got
 
+  def _bind(self, skel: Any, what: str) -> Instance:
+    """The instance for a call skeleton: checked against the declared inputs, or, in the bare mode,
+    cached under the skeleton and read off it."""
+    if self.inputs is None:
+      got = self.instances.get(skel)
+      if got is None:
+        got = self._build_bare(skel)
+        self.instances[skel] = got
+      return got
+    if not same_structure(self.inputs, skel):
+      raise ValueError(f"{what}: arguments do not have the declared structure of {self.inputs.names}")
+    shapes = skeleton_shapes(skel)
+    if any(d is not Ellipsis and d != s for d, s in zip(self.inputs.decls, shapes, strict=True)):
+      raise ValueError(f"{what}: expected shapes {self.inputs.decls} for {self.inputs.names}, got {shapes}")
+    return self.instantiate(shapes)
+
   def _resolve(self, args: tuple[Any, ...], what: str) -> Instance:
-    if self.inputs is not None:
-      if not same_structure(self.inputs, args):
-        raise ValueError(f"{what}: arguments do not have the declared structure of {self.inputs.names}")
-      shapes = shapes_of(args)
-      if any(d is not Ellipsis and d != s for d, s in zip(self.inputs.decls, shapes, strict=True)):
-        raise ValueError(f"{what}: expected shapes {self.inputs.decls} for {self.inputs.names}, got {shapes}")
-      return self.instantiate(shapes)
-    # Bare mode: the structure is read off the arguments, so leaves must be exactly Expr or ndarray
-    # and every tuple is structure. Array-likes are refused here because `(a, b)` could be two leaves
-    # or one vector; the declared form disambiguates them and may coerce.
+    # The bare mode reads its structure from the call, so leaves must be exactly Expr or ndarray and
+    # every tuple is structure. Array-likes are refused because `(a, b)` could be two leaves or one
+    # vector; the declared form disambiguates them and may coerce.
     try:
-      key = skeleton(args)
+      skel = skeleton(args)
     except TypeError as e:
+      if self.inputs is not None:
+        raise ValueError(f"{what}: arguments do not have the declared structure of {self.inputs.names}") from None
       raise TypeError(
         f"{what}: a bare function reads its structure from the call, so every leaf must be an Expr or an ndarray ({e}); wrap array-likes in np.asarray or declare the input tree"
       ) from None
-    got = self.instances.get(key)
-    if got is None:
-      in_tree = inferred_tree(args, (f"in{i}" for i in range(len(leaves(args)))))
-      traced = self._fn(*in_tree.symbols())  # pre-trace to learn the output structure; the real thing traces once
-      out_tree = inferred_tree(traced, (f"out{i}" for i in range(len(leaves(traced)))))
-      got = ConcreteFunction(_mangle(self.name, shapes_of(args)), self._fn, in_tree, out_tree)
-      self.instances[key] = got
-    return got
+    return self._bind(skel, what)
 
   # Numerical first, for the reason `ConcreteFunction.__call__` gives.
   @overload
@@ -117,8 +125,20 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     return self._resolve(args, f"{self.name}.numerical_call").numerical_call(*args)
 
 
+class _InferredOutputs[NI, *Ss](Protocol):
+  """What ``@function(...)`` without ``outputs=`` returns. The symbolic output type is the body's;
+  the numerical one is ``Buffer`` for an ``Expr`` body and ``Any`` otherwise, since no map from one
+  to the other exists (README, "Why a wrapper class exists")."""
+
+  @overload
+  def __call__(self, fn: Callable[[*Ss], Expr], /) -> Function[tuple[*Ss], NI, Expr, Buffer]: ...
+  @overload
+  def __call__[SO](self, fn: Callable[[*Ss], SO], /) -> Function[tuple[*Ss], NI, SO, Any]: ...
+
+
 # One overload per width: turning the slots' `Tree[S, N]`s into the two parameter lists is the type-level
-# map Python lacks (README, "Why a wrapper class exists"). Bare comes last: no slots and no `outputs`.
+# map Python lacks (README, "Why a wrapper class exists"). The second ladder omits `outputs`, which the
+# trace then supplies. Bare comes last: no slots and no `outputs`.
 # fmt: off
 @overload
 def function[SO, NO](*, outputs: Tree[SO, NO], name: str | None = None) -> Callable[[Callable[[], SO]], Function[tuple[()], tuple[()], SO, NO]]: ...
@@ -139,13 +159,30 @@ def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SO, NO](a: 
 @overload
 def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH, SO, NO](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], h: Tree[SH, NH], /, *, outputs: Tree[SO, NO], name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF, SG, SH], SO]], Function[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO]]: ...
 @overload
+def function[SA, NA](a: Tree[SA, NA], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA], SA]: ...
+@overload
+def function[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB], SA, SB]: ...
+@overload
+def function[SA, NA, SB, NB, SC, NC](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC], SA, SB, SC]: ...
+@overload
+def function[SA, NA, SB, NB, SC, NC, SD, ND](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC, ND], SA, SB, SC, SD]: ...
+@overload
+def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC, ND, NE], SA, SB, SC, SD, SE]: ...
+@overload
+def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC, ND, NE, NF], SA, SB, SC, SD, SE, SF]: ...
+@overload
+def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC, ND, NE, NF, NG], SA, SB, SC, SD, SE, SF, SG]: ...
+@overload
+def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], h: Tree[SH, NH], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC, ND, NE, NF, NG, NH], SA, SB, SC, SD, SE, SF, SG, SH]: ...
+@overload
 def function[*Ss, SO](*, name: str | None = None) -> Callable[[Callable[[*Ss], SO]], Function[tuple[*Ss], Any, SO, Any]]: ...
 # fmt: on
 def function(
   *inputs: Tree[Any, Any], outputs: Tree[Any, Any] | None = None, name: str | None = None
 ) -> Callable[[Callable[..., Any]], Function[Any, Any, Any, Any]]:
-  """Declare a function with one tree per parameter and an output tree; leaves without a shape are
-  bound at each call. With nothing declared, the bare mode reads everything from the first call."""
+  """Declare a function with one tree per parameter and, optionally, an output tree; leaves without a
+  shape are bound at each call, and a missing output tree is read off each trace. With nothing
+  declared, the bare mode also reads the inputs off each call."""
   params = None if not inputs and outputs is None else parameter_list(inputs)
 
   def decorate(fn: Callable[..., Any]) -> Function[Any, Any, Any, Any]:
@@ -158,62 +195,72 @@ def function(
 
 
 class _Derived(Function[Any, Any, Any, Any]):
-  """A function whose instances are ``transform(source instance)``. ``source_shapes`` maps a binding
-  of its own leaves to the source's: a prefix for the seeded modes, one axis less for ``vmap``."""
+  """A function whose instances are ``transform(source instance)``. ``source_skeleton`` maps a call
+  skeleton of it to the source's: the identity, the seed dropped for the seeded modes, one axis less
+  for ``vmap``. Its trees are ``None`` where the source's structure is only known at binding, and it
+  then binds from the call as the bare mode does."""
 
   def __init__(
     self,
     source: Function[Any, Any, Any, Any],
-    inputs: Tree[Any, Any],
-    outputs: Tree[Any, Any],
+    inputs: Tree[Any, Any] | None,
+    outputs: Tree[Any, Any] | None,
     transform: Callable[[Instance], Instance],
-    source_shapes: Callable[[tuple[Shape, ...]], tuple[Shape, ...]],
+    source_skeleton: Callable[[Any], Any],
     *,
     name: str,
   ) -> None:
     self._source = source
     self._transform = transform
-    self._source_shapes = source_shapes
+    self._source_skeleton = source_skeleton
     super().__init__(name, source._fn, inputs, outputs)
 
-  def _build(self, resolved: tuple[Shape, ...]) -> Instance:
-    fn = self._transform(self._source.instantiate(self._source_shapes(resolved)))
-    if fn.input_shapes != resolved:
-      raise ValueError(f"{self.name}: instantiated with shapes {resolved}, but the transform's inputs are {fn.input_shapes}")
+  def _derive(self, skel: Any) -> Instance:
+    fn = self._transform(self._source._bind(self._source_skeleton(skel), self.name))
+    if skeleton_of(fn.inputs, fn.input_shapes) != skel:
+      raise ValueError(f"{self.name}: bound with shapes {skeleton_shapes(skel)}, but the transform's inputs are {fn.input_shapes}")
     return fn
+
+  def _build(self, resolved: tuple[Shape, ...]) -> Instance:
+    assert self.inputs is not None
+    return self._derive(skeleton_of(self.inputs, resolved))
+
+  def _build_bare(self, skel: Any) -> Instance:
+    return self._derive(skel)
 
 
 def lift[SI, NI, SO, NO](
   source: Function[Any, Any, Any, Any],
-  inputs: Tree[SI, NI],
-  outputs: Tree[SO, NO],
+  inputs: Tree[SI, NI] | None,
+  outputs: Tree[SO, NO] | None,
   transform: Callable[[Instance], Instance],
   *,
   name: str,
-  source_shapes: Callable[[tuple[Shape, ...]], tuple[Shape, ...]] | None = None,
+  source_skeleton: Callable[[Any], Any] = lambda skel: skel,
 ) -> Function[SI, NI, SO, NO]:
   """The one mechanism every transform uses: the declared trees give the static types, with holes
-  where the source has them, and ``transform`` runs per instance. By default the source's leaves
-  come first in ``inputs``, so its shapes are a prefix."""
-  if source.inputs is None:
-    raise TypeError(f"{source.name}: a bare function has no declared names to transform")
-  n = source.inputs.size
-  return cast(Function[SI, NI, SO, NO], _Derived(source, inputs, outputs, transform, source_shapes or (lambda s: s[:n]), name=name))
+  where the source has them and ``None`` where its structure is only known at binding, and
+  ``transform`` runs per instance."""
+  return cast(Function[SI, NI, SO, NO], _Derived(source, inputs, outputs, transform, source_skeleton, name=name))
 
 
-def _declared(fn: Function[Any, Any, Any, Any], of: str | None, wrt: str | None) -> tuple[Tree[Any, Any], Tree[Any, Any]]:
-  """The trees a derived declaration builds on, with ``of`` and ``wrt`` checked. Names need no shapes,
-  so the check is immediate. Without holes these are the instance's trees, so the derived function
-  has none either and is built now, as its source was."""
-  if fn.inputs is None or fn.outputs is None:
-    raise TypeError(f"{fn.name}: a bare function has no declared names to transform")
-  if wrt is not None:
+def _without_seed(skel: Any) -> Any:
+  return skel[:-1]
+
+
+def _declared(fn: Function[Any, Any, Any, Any], of: str | None, wrt: str | None) -> tuple[Tree[Any, Any] | None, Tree[Any, Any] | None]:
+  """The trees a derived declaration builds on, ``None`` where the source reads them at binding.
+  Declared names are checked now and the others by the transform at binding. Without holes these are
+  the instance's trees, so the derived function has none either and is built now, as its source was."""
+  if fn.inputs is not None and wrt is not None:
     fn.inputs.index(wrt)
-  if of is not None:
-    fn.outputs.index(of)
-  if fn.inputs.has_holes:
+  if fn.inputs is None or fn.inputs.has_holes:
+    if fn.outputs is not None and of is not None:
+      fn.outputs.index(of)
     return fn.inputs, fn.outputs
   instance = fn.instantiate()
+  if of is not None:
+    instance.outputs.index(of)
   return instance.inputs, instance.outputs
 
 
@@ -227,17 +274,17 @@ def _decl(tree: Tree[Any, Any], name: str) -> ShapeDecl:
 def gradient[SI, NI](fn: Function[SI, NI, Any, Any], of: str, wrt: str, /) -> Function[SI, NI, Expr, Buffer]:
   """``d of / d wrt`` as a function of every parameter of ``fn``. Needs a scalar ``of``."""
   inputs, _ = _declared(fn, of, wrt)
-  return lift(fn, inputs, L(f"grad_{of}_{wrt}"), lambda f: concrete.gradient(f, of, wrt), name=f"{fn.name}_grad_{of}_{wrt}")
+  return lift(fn, inputs, arg(f"grad_{of}_{wrt}"), lambda f: concrete.gradient(f, of, wrt), name=f"{fn.name}_grad_{of}_{wrt}")
 
 
 def jacobian[SI, NI](fn: Function[SI, NI, Any, Any], of: str, wrt: str, /) -> Function[SI, NI, Expr, Buffer]:
   inputs, _ = _declared(fn, of, wrt)
-  return lift(fn, inputs, L(f"jac_{of}_{wrt}"), lambda f: concrete.jacobian(f, of, wrt), name=f"{fn.name}_jac_{of}_{wrt}")
+  return lift(fn, inputs, arg(f"jac_{of}_{wrt}"), lambda f: concrete.jacobian(f, of, wrt), name=f"{fn.name}_jac_{of}_{wrt}")
 
 
 def hessian[SI, NI](fn: Function[SI, NI, Any, Any], of: str, wrt: str, /) -> Function[SI, NI, Expr, Buffer]:
   inputs, _ = _declared(fn, of, wrt)
-  return lift(fn, inputs, L(f"hess_{of}_{wrt}_{wrt}"), lambda f: concrete.hessian(f, of, wrt), name=f"{fn.name}_hess_{of}_{wrt}_{wrt}")
+  return lift(fn, inputs, arg(f"hess_{of}_{wrt}_{wrt}"), lambda f: concrete.hessian(f, of, wrt), name=f"{fn.name}_hess_{of}_{wrt}_{wrt}")
 
 
 def forward[*Ss, *Ns](
@@ -245,8 +292,10 @@ def forward[*Ss, *Ns](
 ) -> Function[tuple[*Ss, Expr], tuple[*Ns, Buffer], Expr, Buffer]:
   """``J(of, wrt) @ seed``, called as ``fwd.numerical_call(*inputs, seed)``. The seed is shaped as ``wrt``."""
   inputs, _ = _declared(fn, of, wrt)
-  seeded = append_parameter(inputs, L(f"fwd:{wrt}", _decl(inputs, wrt)))
-  return lift(fn, seeded, L(f"fwd_{of}_{wrt}"), lambda f: concrete.forward(f, of, wrt), name=f"{fn.name}_fwd_{of}_{wrt}")
+  seeded = None if inputs is None else append_parameter(inputs, arg(f"fwd:{wrt}", _decl(inputs, wrt)))
+  return lift(
+    fn, seeded, arg(f"fwd_{of}_{wrt}"), lambda f: concrete.forward(f, of, wrt), name=f"{fn.name}_fwd_{of}_{wrt}", source_skeleton=_without_seed
+  )
 
 
 def adjoint[*Ss, *Ns](
@@ -254,8 +303,11 @@ def adjoint[*Ss, *Ns](
 ) -> Function[tuple[*Ss, Expr], tuple[*Ns, Buffer], Expr, Buffer]:
   """``J(of, wrt).T @ lam``, called as ``adj.numerical_call(*inputs, lam)``. The seed is shaped as ``of``."""
   inputs, outputs = _declared(fn, of, wrt)
-  seeded = append_parameter(inputs, L(f"lam:{of}", _decl(outputs, of)))
-  return lift(fn, seeded, L(f"adj_{of}_{wrt}"), lambda f: concrete.adjoint(f, of, wrt), name=f"{fn.name}_adj_{of}_{wrt}")
+  seed = arg(f"lam:{of}", ... if outputs is None else _decl(outputs, of))
+  seeded = None if inputs is None else append_parameter(inputs, seed)
+  return lift(
+    fn, seeded, arg(f"adj_{of}_{wrt}"), lambda f: concrete.adjoint(f, of, wrt), name=f"{fn.name}_adj_{of}_{wrt}", source_skeleton=_without_seed
+  )
 
 
 def lagrangian_hessian[*Ss, *Ns, SO, NO](
@@ -263,8 +315,15 @@ def lagrangian_hessian[*Ss, *Ns, SO, NO](
 ) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, Buffer]:
   """Hessian of ``sum_i lam_i . out_i``: the multipliers are one more parameter, the output tree relabelled."""
   inputs, outputs = _declared(fn, None, wrt)
-  seeded = append_parameter(inputs, outputs.relabel("lam:"))
-  return lift(fn, seeded, L(f"hess_lagrangian_{wrt}"), lambda f: concrete.lagrangian_hessian(f, wrt), name=f"{fn.name}_hess_lagrangian_{wrt}")
+  seeded = None if inputs is None or outputs is None else append_parameter(inputs, outputs.relabel("lam:"))
+  return lift(
+    fn,
+    seeded,
+    arg(f"hess_lagrangian_{wrt}"),
+    lambda f: concrete.lagrangian_hessian(f, wrt),
+    name=f"{fn.name}_hess_lagrangian_{wrt}",
+    source_skeleton=_without_seed,
+  )
 
 
 # --- vmap: a candidate, not a settled design (README, "Open items") ---
@@ -282,9 +341,16 @@ def vmap[SI, NI, SO, NO](fn: Function[SI, NI, SO, NO], length: int, /) -> Functi
   inputs, outputs = _declared(fn, None, None)
   name = f"{fn.name}_vmap{length}"
 
-  def per_iteration(shapes: tuple[Shape, ...]) -> tuple[Shape, ...]:
-    if any(not s or s[0] != length for s in shapes):
-      raise ValueError(f"{name}: every argument needs a leading axis of {length}, got shapes {shapes}")
-    return tuple(s[1:] for s in shapes)
+  def per_iteration(shape: Shape) -> Shape:
+    if not shape or shape[0] != length:
+      raise ValueError(f"{name}: every argument needs a leading axis of {length}, got shape {shape}")
+    return shape[1:]
 
-  return lift(fn, _batched(inputs, length), _batched(outputs, length), lambda f: concrete.vmap(f, length), name=name, source_shapes=per_iteration)
+  return lift(
+    fn,
+    None if inputs is None else _batched(inputs, length),
+    None if outputs is None else _batched(outputs, length),
+    lambda f: concrete.vmap(f, length),
+    name=name,
+    source_skeleton=lambda skel: map_skeleton(skel, per_iteration),
+  )

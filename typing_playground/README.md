@@ -24,7 +24,7 @@ package; ruff and pytest reach it through `pyproject.toml`.
 | Module | Owns |
 | --- | --- |
 | `expr.py` | `Expr` and `Buffer` stand-ins. `Expr.degree` tracks polynomial degree for the QP gate. |
-| `trees.py` | `Tree`, `L`, `G`; parameter lists; flatten, unflatten and structure checks; the inferred tree of the bare mode. |
+| `trees.py` | `Tree`, `arg`, `group`; parameter lists; flatten, unflatten and structure checks; the inferred tree of the bare mode. |
 | `concrete.py` | `ConcreteFunction`, one instance with resolved shapes, and the transforms over one. |
 | `function.py` | `Function`, `@function`, `lift`, the derivative wrappers, a candidate `vmap`. |
 | `opti.py` | `ProblemSpec`, `Problem`, `@problem`, `solver`, the QP gate, `qp_problem`. |
@@ -38,11 +38,17 @@ package; ruff and pytest reach it through `pyproject.toml`.
 - **The declared structure is the source of truth.** Nothing is inferred from the body's signature.
   ty checks that decorator and body agree, and rejects calls with the wrong structure, count or
   leaf kind on both the symbolic and the numerical side (`test_typing.py`, "functions").
-- **One declaration per parameter.** `@function(L("x"), L("p"), outputs=L("f"))` declares
+- **One declaration per parameter.** `@function(arg("x"), arg("p"), outputs=arg("f"))` declares
   `def cost(x, p)`, called `cost(x, p)`, so the decorator reads like the signature. A group is one
   parameter whose value is a tuple; zero to eight parameters are typed. The input type parameters
   are always tuples of parameter types (see "Parameter lists").
-- **Outputs are keyword-only**, so the declaration reads as inputs, then `outputs=`.
+- **Outputs are keyword-only, and without `outputs=` each instance reads its output tree off its
+  trace.** One output leaf is named after the function, or after `name=`; several are `out0`,
+  `out1`, and so on. Statically the output type is the body's, and its numerical side is `Buffer`
+  for an `Expr` body and `Any` otherwise, since no map from one to the other exists. A second width
+  ladder spells this: without `outputs=` the decorator returns a protocol whose `__call__`
+  overloads on the body's return type. A forgotten `outputs=` reads as one more parameter, which
+  the body's arity rejects.
 - **`f(*args)` dispatches on the leaves**, as `__call__` does in `src/scaly/function/model.py`:
   all-`Expr` arguments build a call node, all-numerical ones evaluate, and a mix is a `TypeError`
   at run time and matches no overload statically. `Tree.is_symbolic` and `is_numerical` are the
@@ -57,8 +63,8 @@ package; ruff and pytest reach it through `pyproject.toml`.
   spell the generated header, the sparse tables and the `of`/`wrt` strings of the derivative
   wrappers. The name a body binds is independent of the declared one. Unknown `of`/`wrt` fails
   when the derivative is built, with the declared choices in the message.
-- **Output shapes may be holes** (`L("f")` or `L("f", ...)`) and are then traced; a written shape
-  is checked against the trace. Wrong output count or shape fails when the instance is traced,
+- **Output shapes may be holes** (`arg("f")` or `arg("f", ...)`) and are then traced; a written
+  shape is checked against the trace. Wrong output count or shape fails when the instance is traced,
   which for a fully shaped declaration is at the decorator.
 - **Derivatives keep the source's parameters and are therefore typed.** `gradient` is
   `Function[SI, NI, Expr, Buffer]`. Seeded modes append one parameter: `forward` and `adjoint` a
@@ -76,15 +82,15 @@ package; ruff and pytest reach it through `pyproject.toml`.
 
 ## Why a wrapper class exists
 
-Every user would rather write `("x", 3)` than `L("x", 3)`. The wrapper is not storing metadata; it
-is the type-level map from the `Expr` structure to the `Buffer` structure, done by brute force:
-`G`'s eight overloads spell out, width by width, that grouping `Tree[SA, NA]` and `Tree[SB, NB]`
+Every user would rather write `("x", 3)` than `arg("x", 3)`. The wrapper is not storing metadata;
+it is the type-level map from the `Expr` structure to the `Buffer` structure, done by brute force:
+`group`'s eight overloads spell out, width by width, that grouping `Tree[SA, NA]` and `Tree[SB, NB]`
 gives `Tree[tuple[SA, SB], tuple[NA, NB]]`, and the decorator's do the same for its parameters.
 Python's type system has no other way to express it:
 
 - A bare `("x", 3)` literal is `tuple[str, int]` whatever classes exist.
 - `typing.Annotated[T, meta]` is erased to `T` by every checker; the metadata survives only at run
-  time, which is what FastAPI and jaxtyping use. It could replace `L` for the runtime half and
+  time, which is what FastAPI and jaxtyping use. It could replace `arg` for the runtime half and
   contributes nothing to the static half. The stubs nanobind emits for PIQP,
   `Annotated[NDArray[float64], "[m, 1]"]`, are documentation, and they are documentation because the
   type system has nowhere to hold a shape.
@@ -96,8 +102,8 @@ Python's type system has no other way to express it:
 
 So the design space is three points: type only the symbolic side (numerical calls become `Any`),
 make the user write both structures, or carry both in a wrapper with a width ladder. This is the
-third. The lever for the notation is therefore ceremony, not existence: better names than `L` and
-`G`, a defaulted output declaration. Those are open (see below); the wrapper is not.
+third. The lever for the notation is therefore ceremony, not existence: clear names for the two
+constructors, now `arg` and `group`, and a default output declaration. The wrapper is not.
 
 ## Parameter lists
 
@@ -117,8 +123,9 @@ mode appends in one overload: `forward` takes `Function[tuple[*Ss], tuple[*Ns], 
 expected error in `test_typing.py`. Two `TypeVarTuple`s in one function signature are fine; PEP 646
 refuses two on one class, which is why `Function` keeps plain type variables.
 
-A group is one parameter: `@function(G(L("x"), L("p")), outputs=...)` declares `def f(xp)`. Groups
-are never normalized, so `G(L("x"))` is a one-element tuple, not a leaf. With no parameters,
+A group is one parameter: `@function(group(arg("x"), arg("p")), outputs=...)` declares
+`def f(xp)`. Groups are never normalized, so `group(arg("x"))` is a one-element tuple, not a leaf.
+With no parameters,
 `@function(outputs=...)` is a constant: `f()` evaluates it and `f.symbolic_call()` embeds it,
 since an empty call has no leaves to dispatch on. A ninth parameter is a static error; group some.
 
@@ -126,8 +133,8 @@ The `devrush` branch spells the declaration the same way and types it differentl
 (`src/scaly/function/model.py` and `api.py`): `Function[**PS, **PN, SO, NO]`. A class may take two
 `ParamSpec`s, so its calls need no typed `self`. But a `ParamSpec` can only be extended at the front
 (`Concatenate`), so each seeded wrapper there repeats a ladder of ten overloads. Here the decorator's
-ladder and `G`'s are the only ones. Mixing the two, a `ParamSpec` class matched by `TypeVarTuple`s
-(`Function[[*Ss], [*Ns], ...]`), is rejected by pyright and mypy and misread by ty. `ParamSpec`
+ladder and `group`'s are the only ones. Mixing the two, a `ParamSpec` class matched by
+`TypeVarTuple`s (`Function[[*Ss], [*Ns], ...]`), is rejected by pyright and mypy and misread by ty. `ParamSpec`
 would add keyword binding by the body's parameter names, but the ladders spell the lists
 positionally, so typed keyword calls are lost there too.
 
@@ -165,19 +172,25 @@ shapes is a `TypeError` from the declaration.
 - Anything that needs an *instance* (derivative wrappers, `vmap`, the solver descriptor) is lifted.
   `lift(source, inputs, outputs, transform)` is the one mechanism: the declared trees give the
   static types, with holes where the source has them, and `transform` runs per binding on the
-  source's instance. `source_shapes` maps the derived function's shapes to the source's: a prefix
-  for the seeded modes, one axis less for `vmap`. Each wrapper is one signature over `Function`.
+  source's instance. `source_skeleton` maps the derived function's call skeleton to the source's:
+  the seed dropped for the seeded modes, one axis less for `vmap`. Each wrapper is one signature
+  over `Function`.
   Seeded modes append a parameter declared from the source (`fwd:x` shaped as `x`, `lam:f` as
   `f`), which is a hole only where the source has one, and `lift` checks the bound shapes against
-  what the transform produced. Name checks happen when the derivative is built, because names need
-  no shapes. So does everything else when the source has no holes, since the derived declaration
-  then has none either; otherwise the checks that need shapes, such as "gradient needs a scalar
-  output", run at binding.
+  what the transform produced. Declared names are checked when the derivative is built, because
+  names need no shapes. So does everything else when the source has no holes, since the derived
+  declaration then has none either; otherwise the checks that need shapes, such as "gradient needs
+  a scalar output", run at binding.
+- Where the source's structure is only known at binding, the derived tree is `None` and the derived
+  function binds from its call as the bare mode does: a bare source's inputs, and the multipliers of
+  `lagrangian_hessian` over an inferred output tree with holes. So do the names of inferred trees,
+  which exist only per instance.
 
 **The bare mode.** `@function()` with no declaration reads structure, leaf shapes and auto names
-(`in0`, `out0`) from the first call. It types as `Function[tuple[*Ss], Any, SO, Any]` with the
-symbolic side read off the body's annotations: the arity is checked, leaf kinds only where
-annotated (`Unknown` elsewhere), and the numerical side is given up explicitly. Its rules:
+(`in0`, `in1`, and outputs as above) from each new call, in the one trace of its instance. It
+types as `Function[tuple[*Ss], Any, SO, Any]` with the symbolic side read off the body's
+annotations: the arity is checked, leaf kinds only where annotated (`Unknown` elsewhere), and the
+numerical side is given up explicitly. Its rules:
 
 - Leaves must be exactly `Expr` or `np.ndarray`, and every tuple is structure. Array-likes are
   refused with a `TypeError` that says how to fix it, not a warning: `(a, b)` could be two leaves
@@ -185,8 +198,11 @@ annotated (`Unknown` elsewhere), and the numerical side is given up explicitly. 
   declared form has no such ambiguity, since the declaration says which tuples are structure, and
   may keep coercing array-likes as `flatten_numerical` does today.
 - Each distinct call structure is its own instance (the cache key is the nested shape skeleton),
-  so a bare helper may be called with different structures. It has no declared names, so it cannot
-  be transformed or instantiated by shape; declare the trees for that.
+  so a bare helper may be called with different structures. It has no declared leaves, so it cannot
+  be instantiated by shape; declare the trees for that. It is transformed by its inferred names,
+  checked at binding: `gradient(scale, "scale", "in0")`. The names number flat leaves, so calling
+  one bare function with several structures can make `in1` mean different arguments; that is the
+  user's responsibility.
 - In practice bare functions are helper libraries called symbolically inside traced bodies, where
   every leaf is an `Expr` and the ambiguity above never arises.
 
@@ -231,27 +247,45 @@ swapped:
   deterministic and documented. `c_signature` is illustrative; the real header comes from
   `codegen/aot.py` unchanged, with leaf names in tree order.
 
+## Decisions for the roadmap rewrite
+
+Settled on 2026-09-30. The core compiler roadmap is being rewritten from this playground and a new
+review of devrush; its current "Signatures and templates" section predates these and does not bind.
+
+- **Parameter lists are typed with `TypeVarTuple`**, as in "Parameter lists", not with devrush's
+  `Function[**PS, **PN, SO, NO]`.
+- **The surface is this playground's**: one tree per parameter, keyword-only `outputs=` that may be
+  left out to read the output tree off the trace, a group as one tuple-valued parameter, a hole
+  wherever a leaf has no shape, and `@function()` for the bare mode.
+- **An inferred output tree names one leaf after the function and several `out0`, `out1`...**, in
+  the bare mode as well.
+- **`arg` declares a leaf and `group` a group**, replacing `L` and `G`. `arg` declares outputs
+  too. It was chosen over `leaf`, which fits outputs better, and `expr`, which suggests it returns
+  an `Expr`. A one-element group stays a group, never normalized to its leaf.
+- **The declaration decides whether instance names are mangled, never the call history.** A
+  declaration without holes names its one instance after the function, or `name=`, and so do the
+  functions derived from it. A declaration with holes mangles every instance even if only one is
+  ever built, and so does the bare mode.
+- **Mangling encodes the nesting and never uses `__`**, which C++ reserves. The exact tokens are
+  the roadmap's to fix; a collision raises.
+- **The bare mode is instantiated only by calling it**, once per call skeleton. `instantiate` needs
+  a declaration.
+- **Bare functions and inferred outputs can be transformed.** Their names exist only after a call,
+  so they are checked at binding, as shapes already are, and a derived tree that depends on them
+  binds from the call. Calling one bare function with several structures can make one inferred name
+  mean different arguments; that is the user's responsibility, documented with the bare mode.
+- **Only shapes are holes for now.** Dtype, differentiability and sparsity holes cost nothing
+  statically and should be straightforward at run time, but what a hole may carry is decided with
+  the roadmap.
+
 ## Open items
 
 The Function and solver API over declared trees is implemented in `src/scaly` in its single-tree
-form. The registry, parameter lists and the typed `vmap` candidate remain sketches. Follow-up work
-is tracked as API-1, API-2, API-3 and API-4 in [`internal/todo.md`](../internal/todo.md), with the
-production design in
-[`internal/notes/core_compiler_roadmap.md`](../internal/notes/core_compiler_roadmap.md#signatures-and-templates).
+form. The registry, parameter lists and the typed `vmap` candidate remain sketches.
 
-- **Roadmap API-3** has this declaration, one argument per parameter, but types it as
-  `Function[**PS, **PN, SO, NO]` with a ladder on every seeded wrapper; "Parameter lists" is the
-  case for tuple parameters and `TypeVarTuple` instead. Decide before API-3 starts.
-- **Names for `L` and `G`.** They carry no meaning to a reader who did not design them; `leaf` and
-  `group` are the honest pytree words. Verbosity is a separate complaint and is not fixed by
-  renaming: default the output declaration to one traced leaf named after the function.
-- **Mangling flattens structure.** Two nestings with the same flat shapes would collide in C symbol
-  names; the real scheme must encode the nesting.
 - **Tensor metadata is absent from the binding.** Define how dtype, differentiability and sparsity
   patterns bind when a shape is inferred. The instance key and C names must distinguish metadata
   that changes the concrete graph, and lifted seed trees must match the generated inputs.
-- **The bare mode traces twice**, once to learn the output structure and once in
-  `ConcreteFunction`. Trace once.
 - **`vmap` typed by its callee's trees** is one of the two open problems in
   `internal/notes/refactorings.md`. `function.py`'s `vmap` is a candidate answer, every leaf
   gaining a leading axis with the structure preserved, not the real slicing semantics.
@@ -259,4 +293,5 @@ production design in
 - **ty's messages on typed-`self` calls** report an arity error as a mismatch of the parameter tuple
   (`Expected tuple[Buffer, Buffer], found tuple[Buffer]`); pyright names the missing argument.
   mypy rejects the implementation signature of the self-typed `__call__` overloads (`misc`); ty
-  and pyright accept it.
+  and pyright accept it. Pyright miscounts the numerical parameters of a seeded transform of a bare
+  function (`test_instances.py`), whose numerical side is `Any`; ty and mypy accept the call.

@@ -16,6 +16,7 @@ from typing_playground.tests.definitions import (
   adj_square_x,
   caller,
   constant,
+  energy,
   cost,
   cost_batch,
   cost_packed,
@@ -39,16 +40,16 @@ from typing_playground.tests.definitions import (
   step,
   step_flat,
 )
-from typing_playground.trees import G, L, Tree
+from typing_playground.trees import Tree, arg, group
 
 if TYPE_CHECKING:
   # declarations: the count of a group is static, and only trees may be grouped
-  L("x", "3")  # ty: ignore[invalid-argument-type]
-  G()  # ty: ignore[no-matching-overload]
-  G(L("x", 3), L("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
-  assert_type(G(L("x", 3)), Tree[tuple[Expr], tuple[Buffer]])  # never normalized to the leaf
-  assert_type(G(L("x", 3), L("p", ())), Tree[tuple[Expr, Expr], tuple[Buffer, Buffer]])
-  assert_type(G(G(L("a", 1), L("b", 1)), L("c", 1)), Tree[tuple[tuple[Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], Buffer]])
+  arg("x", "3")  # ty: ignore[invalid-argument-type]
+  group()  # ty: ignore[no-matching-overload]
+  group(arg("x", 3), arg("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
+  assert_type(group(arg("x", 3)), Tree[tuple[Expr], tuple[Buffer]])  # never normalized to the leaf
+  assert_type(group(arg("x", 3), arg("p", ())), Tree[tuple[Expr, Expr], tuple[Buffer, Buffer]])
+  assert_type(group(group(arg("a", 1), arg("b", 1)), arg("c", 1)), Tree[tuple[tuple[Expr, Expr], Expr], tuple[tuple[Buffer, Buffer], Buffer]])
 
   # functions: the input types are the parameter lists; count, structure and leaf kind are checked on both sides
   assert_type(duplicate, Function[tuple[Expr], tuple[Buffer], tuple[Expr, Expr], tuple[Buffer, Buffer]])
@@ -67,30 +68,34 @@ if TYPE_CHECKING:
   step_flat.numerical_call((Buffer((4,)), Buffer((2,))), (Buffer((10,)), Buffer((3,)), Buffer(())))  # ty: ignore[invalid-argument-type]
 
   # decorator and body must agree: one tree per parameter, a group being one parameter; 0 to 8 of them
-  function(L("x", 3), L("y", 3), outputs=L("z", ...))(lambda x, y: x)
-  function(G(L("x", 3), L("y", 3)), outputs=L("z", ...))(lambda xy: xy[0])
-  function(G(L("x", 3), L("y", 3)), outputs=L("z", ...))(lambda x, y: x)  # ty: ignore[invalid-argument-type]
+  function(arg("x", 3), arg("y", 3), outputs=arg("z", ...))(lambda x, y: x)
+  function(group(arg("x", 3), arg("y", 3)), outputs=arg("z", ...))(lambda xy: xy[0])
+  function(group(arg("x", 3), arg("y", 3)), outputs=arg("z", ...))(lambda x, y: x)  # ty: ignore[invalid-argument-type]
   assert_type(cost_packed, Function[tuple[tuple[Expr, Expr]], tuple[tuple[Buffer, Buffer]], Expr, Buffer])
   assert_type(cost_packed.numerical_call((Buffer((3,)), Buffer(()))), Buffer)
-  function(G(L("x", 3), L("y", 3)), L("z", ...))  # ty: ignore[no-matching-overload]
+  # without outputs= the output type is the body's, numerically typed for an Expr and Any otherwise;
+  # a forgotten `outputs=` is one parameter too many for the body
+  assert_type(energy, Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
+  assert_type(function(arg("x", 3))(lambda x: (x, x)), Function[tuple[Expr], tuple[Buffer], tuple[Expr, Expr], Any])
+  function(group(arg("x", 3), arg("y", 3)), arg("z", ...))(lambda xy: xy[0])  # ty: ignore[no-matching-overload]
   assert_type(constant, Function[tuple[()], tuple[()], Expr, Buffer])
   assert_type(constant(), Buffer)
   assert_type(constant.symbolic_call(), Expr)
   constant(Buffer(()))  # ty: ignore[no-matching-overload]
-  eight = function(L("a"), L("b"), L("c"), L("d"), L("e"), L("f"), L("g"), L("h"), outputs=L("y"))(lambda a, b, c, d, e, f, g, h: a)
+  eight = function(arg("a"), arg("b"), arg("c"), arg("d"), arg("e"), arg("f"), arg("g"), arg("h"), outputs=arg("y"))(lambda a, b, c, d, e, f, g, h: a)
   assert_type(
     eight,
     Function[
       tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr], tuple[Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer], Expr, Buffer
     ],
   )
-  function(L("a"), L("b"), L("c"), L("d"), L("e"), L("f"), L("g"), L("h"), L("i"), outputs=L("y"))  # ty: ignore[no-matching-overload]
-  function(L("x", 3), L("y", 3), outputs=L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
-  function(L("x", 3), L("y", 3), outputs=L("z", ...))(lambda inputs: inputs[0])  # ty: ignore[invalid-argument-type]
-  function(L("x", 3), outputs=L("z", ...))(lambda x, y: x)  # ty: ignore[invalid-argument-type]
-  function(L("x", 3), outputs=G(L("a", ...), L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  function(arg("a"), arg("b"), arg("c"), arg("d"), arg("e"), arg("f"), arg("g"), arg("h"), arg("i"), outputs=arg("y"))  # ty: ignore[no-matching-overload]
+  function(arg("x", 3), arg("y", 3), outputs=arg("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  function(arg("x", 3), arg("y", 3), outputs=arg("z", ...))(lambda inputs: inputs[0])  # ty: ignore[invalid-argument-type]
+  function(arg("x", 3), outputs=arg("z", ...))(lambda x, y: x)  # ty: ignore[invalid-argument-type]
+  function(arg("x", 3), outputs=group(arg("a", ...), arg("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
 
-  @function(L("x", 3), L("y", 3), outputs=L("z", ...))  # ty: ignore[invalid-argument-type]
+  @function(arg("x", 3), arg("y", 3), outputs=arg("z", ...))  # ty: ignore[invalid-argument-type]
   def wrong_kind(x: Buffer, y: Expr) -> Expr:
     return y
 
@@ -146,8 +151,8 @@ if TYPE_CHECKING:
   cost_t.numerical_call(Buffer((3,)))  # ty: ignore[invalid-argument-type]
   cost_t.numerical_call(Expr((3,)), Expr((3,)))  # ty: ignore[invalid-argument-type]
   cost_t.symbolic_call(Buffer((3,)), Buffer((3,)))  # ty: ignore[invalid-argument-type]
-  function(L("x"), L("p"), outputs=L("f"))(lambda x, p: x)
-  function(L("x"), L("p"), outputs=L("f"))(lambda inputs: inputs[0])  # ty: ignore[invalid-argument-type]
+  function(arg("x"), arg("p"), outputs=arg("f"))(lambda x, p: x)
+  function(arg("x"), arg("p"), outputs=arg("f"))(lambda inputs: inputs[0])  # ty: ignore[invalid-argument-type]
 
   # one signature per wrapper, holes or not
   assert_type(gradient(cost_t, "f", "x"), Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer])
@@ -166,8 +171,8 @@ if TYPE_CHECKING:
   assert_type(quadratic, Problem[Expr, Buffer, Expr, Buffer])
   assert_type(filter_problem, Problem[tuple[Expr, Expr], tuple[Buffer, Buffer], tuple[Expr, Expr], tuple[Buffer, Buffer]])
   assert_type(qp3, Problem[Expr, Buffer, QPData[Expr], QPData[Buffer]])
-  problem(vars=G(L("u", 2), L("s", 1)), params=L("p", ()))(lambda x, p: ProblemSpec(minimize=x.sum()))  # ty: ignore[unresolved-attribute]
-  problem(vars=L("x", 2), params=L("p", ()))(lambda x, p: ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
+  problem(vars=group(arg("u", 2), arg("s", 1)), params=arg("p", ()))(lambda x, p: ProblemSpec(minimize=x.sum()))  # ty: ignore[unresolved-attribute]
+  problem(vars=arg("x", 2), params=arg("p", ()))(lambda x, p: ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
 
   # solvers are Functions with a fixed five-group input and four-group output
   assert_type(
