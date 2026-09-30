@@ -103,8 +103,15 @@ def _write_third_party_notices(
 
 
 def _piqp_built(system: str, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> bool:
+  """Whether the library, its headers and its notices are there, built from the pins in
+  ``build_config.json``. The notices record the version of every component they were built from,
+  so bumping a pin rebuilds instead of keeping the old library."""
   lib_path = lib_dir / _shared_lib_name(system, "piqpc")
-  return lib_path.exists() and (licenses_dir / NOTICES).exists() and (include_dir / "piqp.h").exists() and (include_dir / "piqp_typedef.h").exists()
+  notices = licenses_dir / NOTICES
+  if not (lib_path.exists() and notices.exists() and (include_dir / "piqp.h").exists() and (include_dir / "piqp_typedef.h").exists()):
+    return False
+  text = notices.read_text()
+  return all(f"| {name} | {pin['version']} |" in text for name, pin in _BUILD_CONFIG.items())
 
 
 def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> None:
@@ -118,8 +125,10 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
 
   hook.app.display_info("Building PIQP C interface...")
 
-  eigen_dir = third_party_dir / "eigen"
-  eigen_install_dir = third_party_dir / "eigen_install"
+  # Every source and install directory is named by its pinned tag, so a bumped pin clones and
+  # builds afresh instead of reusing the previous version's tree.
+  eigen_dir = third_party_dir / f"eigen-{EIGEN_TAG}"
+  eigen_install_dir = third_party_dir / f"eigen-{EIGEN_TAG}-install"
   eigen_cmake_dir = eigen_install_dir / "share" / "eigen3" / "cmake"
   third_party_dir.mkdir(parents=True, exist_ok=True)
   if not eigen_dir.exists():
@@ -152,8 +161,8 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   else:
     hook.app.display_info(f"Using existing Eigen install at {eigen_install_dir}")
 
-  blasfeo_dir = third_party_dir / "blasfeo"
-  blasfeo_install_root = third_party_dir / "blasfeo_install"
+  blasfeo_dir = third_party_dir / f"blasfeo-{BLASFEO_TAG}"
+  blasfeo_install_root = third_party_dir / f"blasfeo-{BLASFEO_TAG}-install"
   if not blasfeo_dir.exists():
     hook.app.display_info(f"Cloning Blasfeo {BLASFEO_TAG} to {blasfeo_dir}")
     subprocess.run(["git", "clone", "--depth=1", "--branch", BLASFEO_TAG, "https://github.com/giaf/blasfeo.git", str(blasfeo_dir)], check=True)
@@ -188,7 +197,7 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   else:
     hook.app.display_info(f"Using existing Blasfeo install at {blasfeo_install_dir}")
 
-  piqp_dir = third_party_dir / "piqp"
+  piqp_dir = third_party_dir / f"piqp-{PIQP_TAG}"
   if not piqp_dir.exists():
     hook.app.display_info(f"Cloning PIQP {PIQP_TAG} to {piqp_dir}")
     subprocess.run(

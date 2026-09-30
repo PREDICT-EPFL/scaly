@@ -233,7 +233,7 @@ expecting system packages. This matters when you ship.
 
 | Plugin | Builds | Also pulls in |
 | --- | --- | --- |
-| `scaly-piqp` | PIQP v0.6.2 | Eigen 3.4.1, Blasfeo 0.1.4.3 |
+| `scaly-piqp` | PIQP v0.6.4 | Eigen 3.4.1, Blasfeo 0.1.4.3 |
 | `scaly-ipopt` | IPOPT 3.14.19 | MUMPS 5.8.2 through COIN-OR ThirdParty-Mumps 3.0.12, METIS 5.2.1 with GKlib, and on Linux OpenBLAS v0.3.28; macOS uses Apple's Accelerate framework |
 | `scaly-sqp` | nothing of its own | links PIQP's library, so it needs `scaly-piqp` built |
 | IPM (in `scaly`) | nothing | nothing: the generated C is the whole solver |

@@ -51,7 +51,10 @@ In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored depen
 in `src/scaly_*/build_config.json`, which pins its version, and a row in the
 `_write_third_party_notices` call of that plugin's `hatch_build.py`, which copies its license texts
 into the wheel. The `test_*_notices.py` test in each of those plugins fails when a pinned dependency
-has no license directory.
+has no license directory. In `scaly-piqp` it also fails when the library was built from another
+version than the pin. There a bumped pin rebuilds on `uv sync --reinstall-package scaly-piqp`: the
+build hook compares the versions its notices record with the pins, and names each `third_party`
+checkout by its tag.
 
 ## The checks
 

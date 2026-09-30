@@ -1,8 +1,8 @@
 """Vendored PIQP as a trace oracle: build the C driver, run it on a problem, parse what it prints.
 
 ``run(qp)`` returns PIQP's per-iteration table (its verbose output, printed with 4 to 6 significant
-digits) and its final result at full precision. PIQP 0.6.2 is deterministic and starts from
-scratch on every solve, so ``run(qp, max_iter=k)`` returns the state after exactly ``k``
+digits) and its final result at full precision. PIQP is deterministic (from 0.6.4 on) and starts
+from scratch on every solve, so ``run(qp, max_iter=k)`` returns the state after exactly ``k``
 iterations of the full run: ``exact_trace`` uses that to read every iteration at full precision,
 the step parameter ``sigma`` included, which the table leaves out.
 """

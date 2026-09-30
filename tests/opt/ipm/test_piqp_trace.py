@@ -1,4 +1,4 @@
-"""The PIQP trace harness: vendored PIQP 0.6.2 run through the C driver, its output parsed."""
+"""The PIQP trace harness: vendored PIQP run through the C driver, its output parsed."""
 
 from __future__ import annotations
 

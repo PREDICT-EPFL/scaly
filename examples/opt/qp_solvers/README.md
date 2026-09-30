@@ -6,7 +6,7 @@ problem's parameters in, the solution, its multipliers and an `Info` out.
 
 | Solver | Built by | Behind the generated C |
 | --- | --- | --- |
-| PIQP library, sparse and dense | `sc.opt.solver(problem, sc.opt.PIQP(sparse=...))` | the vendored PIQP 0.6.2 (`scaly-piqp` plugin) |
+| PIQP library, sparse and dense | `sc.opt.solver(problem, sc.opt.PIQP(sparse=...))` | the vendored PIQP 0.6.4 (`scaly-piqp` plugin) |
 | generated PIQP, sparse and dense | `sc.opt.solver(problem, sc.opt.IPM(sparse=...))` | nothing: `scaly.opt.ipm` generates PIQP's algorithm for the problem's structure |
 | IPOPT | `sc.opt.solver(problem, sc.opt.IPOPT(...))` | the vendored IPOPT 3.14 with MUMPS (`scaly-ipopt` plugin) |
 

@@ -15,7 +15,7 @@ and the problem's parameters to its solution and an ``Info``, whatever the metho
 
 | Key | Solver | Behind the generated C |
 | --- | --- | --- |
-| ``piqp_sparse``, ``piqp_dense`` | ``sc.opt.PIQP(sparse=...)`` | oracles for the QP data, and a call into the vendored PIQP 0.6.2 library |
+| ``piqp_sparse``, ``piqp_dense`` | ``sc.opt.PIQP(sparse=...)`` | oracles for the QP data, and a call into the vendored PIQP 0.6.4 library |
 | ``scaly_sparse``, ``scaly_dense`` | ``sc.opt.IPM(sparse=...)`` | nothing: PIQP's algorithm is the generated C, specialised to the problem's sparsity |
 | ``ipopt`` | ``sc.opt.IPOPT(...)`` | oracles, and a call into the vendored IPOPT 3.14 with MUMPS |
 

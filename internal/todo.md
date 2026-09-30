@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 207**
+**Next id: 209**
 
 | Prefix | Section |
 |---|---|
@@ -1237,8 +1237,24 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
 
 ### Now
 
+- [x] **S-207. The `ocp/linear_mpc.ipynb` flake: PIQP 0.6.2 read past its index of lower-bounded
+      rows.** One process in ten, the condensed two-mass QP at N = 50 hit `MAX_ITER` with a NaN
+      solution on every solve, so the sparse-against-condensed check failed. The QP data were
+      identical byte for byte in failing and passing processes; PIQP's dual recovery
+      (`KKTSystem::solve`) read `h_l_idx(n_h_l)`, one entry past the 200 filled ones, and when that
+      uninitialized heap held 200 it took row 200, which has no lower bound, as bounded (`1/z_l`
+      times `s_l = 0`). Upstream fixed it in 0.6.4 (PIQP issue 42); the plugin now vendors 0.6.4,
+      whose only other changes from 0.6.2 move code into `.tpp` files. `hatch_build.py` rebuilds
+      when a pin differs from the versions the notices record and names each `third_party`
+      checkout by its tag; `test_piqp_dual_recovery.py` makes the garbage certain with a preloaded
+      `malloc` (fails on 0.6.2, dense and sparse), and the notices test fails on a stale build.
+
 ### Deferred
 
+- **S-208. A pin bump rebuilds `scaly-ipopt` too.** Its hook has the trap S-207 removed from
+  `scaly-piqp`: `_ipopt_built` checks that a library exists, not which versions built it, and the
+  `third_party` checkouts are reused whatever their tag, so bumping `build_config.json` keeps the
+  old library until someone deletes the directories by hand.
 - **S-16. Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with
   our hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
   stack" is defensible; "our IPOPT is newer" is not. Rationale: [fairness](../docs/results/fairness.md).

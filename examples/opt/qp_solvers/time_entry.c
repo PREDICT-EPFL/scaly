@@ -7,7 +7,7 @@
  * so one driver serves every solver. inputs.bin holds, as little-endian int64: the number of
  * inputs, the number of outputs, the workspace size, each input's size, each output's size; then
  * the inputs as doubles. The driver calls the entry `repeats` times on the same inputs (a cold
- * solve each time: PIQP 0.6.2 has no warm start, and neither the generated solver nor IPOPT is given
+ * solve each time: PIQP 0.6.4 has no warm start, and neither the generated solver nor IPOPT is given
  * one), prints the best and the median wall time in nanoseconds, and writes the last call's outputs
  * to outputs.bin.
  */

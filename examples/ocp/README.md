@@ -65,6 +65,6 @@ so the generated code holds the solver and the warm start's shift, and a C calle
 - Scaly's SQP needs a good start on the swing-up. From the default guess it reaches a worse local
   minimum; started from IPOPT's first solution, the point that solve returned, it follows IPOPT's
   closed loop to 5e-6 in fewer iterations per step.
-- PIQP 0.6.2 takes no warm start, so its law's warm buffer only carries the layout. On an
+- PIQP 0.6.4 takes no warm start, so its law's warm buffer only carries the layout. On an
   infeasible start it runs to `MAX_ITER` in the sparse form rather than reporting infeasibility,
   which the condensed form does.
