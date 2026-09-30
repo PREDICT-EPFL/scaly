@@ -1,0 +1,35 @@
+{
+ "cells": [
+  "o1/jit",
+  "o2/jit"
+ ],
+ "kernels": [
+  "ipm_qafiro_sparse",
+  "ipm_hs118_dense",
+  "mlp_small_jac"
+ ],
+ "best_ns": {
+  "ipm_qafiro_sparse/o1/jit": 20417.0,
+  "ipm_qafiro_sparse/o2/jit": 19708.0,
+  "ipm_hs118_dense/o1/jit": 26208.0,
+  "ipm_hs118_dense/o2/jit": 25583.0,
+  "mlp_small_jac/o1/jit": 790.62,
+  "mlp_small_jac/o2/jit": 698.95
+ },
+ "median_ns": {
+  "ipm_qafiro_sparse/o1/jit": 21291.0,
+  "ipm_qafiro_sparse/o2/jit": 20583.0,
+  "ipm_hs118_dense/o1/jit": 27083.0,
+  "ipm_hs118_dense/o2/jit": 26417.0,
+  "mlp_small_jac/o1/jit": 809.38,
+  "mlp_small_jac/o2/jit": 767.7
+ },
+ "err": {
+  "ipm_qafiro_sparse/o1/jit": 0.0,
+  "ipm_qafiro_sparse/o2/jit": 0.0,
+  "ipm_hs118_dense/o1/jit": 0.0,
+  "ipm_hs118_dense/o2/jit": 0.0,
+  "mlp_small_jac/o1/jit": 0.0,
+  "mlp_small_jac/o2/jit": 0.0
+ }
+}

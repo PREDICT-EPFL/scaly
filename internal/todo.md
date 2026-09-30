@@ -810,10 +810,18 @@ Ranked by measured headroom in [`notes/codegen_speed_plan_2026_09_30.html`](note
 `perf/codegen-speed`. Rejected there with evidence: a no-alias ABI (`restrict`), dropping the macOS
 `noinline`, `-O3`, reciprocals of invariant divisors.
 
-- [ ] **C-196. Dot products and sums as independent partial sums.** Every reduction the matrix
-      products and `sum` lower to is one serial chain, latency-bound at about one multiply-add a
-      cycle; `-fassociative-math` shows the headroom (mlp_big_fwd 0.43, unbumpercars 0.61,
-      chol_solve_200 0.69, npmpc 0.71). Split them in a fixed order the generated code owns.
+- [x] **C-196. Dot products and sums as independent partial sums.** Every reduction the matrix
+      products and `sum` lowered to was one serial chain, latency-bound at about one multiply-add a
+      cycle. Now `sum` and `dot` from eight elements add into four partial sums (`k % 4`, the tail
+      into the first, combined pairwise) and `a @ x` from eight columns runs four rows per pass in
+      four partial sums each, stored once; an expensive producer fuses into the partial sums
+      (computed once per element in all, instead of one textual load). matvec_256 2.8x,
+      mlp_big_fwd 2.2x, unbumpercars 1.55x, npmpc 1.32x. Also fixed a latent bug it exposed:
+      `delinearize_loops` evaluated a strided loop's indices at trip numbers, not the variable's
+      values (a wrong IPM objective). Eight lanes were faster again on long sums but took the
+      sparse IPM off PIQP's path on QBEACONF (rounding decides that path): the follow-up needs that
+      gate settled first. The dense factorizations' tiles (chol_solve_200 still 0.64 under
+      `-fassociative-math`) are the rest (`notes/codegen_speed_o2_report.html`).
 - [x] **C-197. Scalarize an entry point that calls nothing.** The entry was never expanded
       automatically, so a standalone Jacobian ran as loops multiplying identity-seed tables C may
       not fold. Now an entry without calls expands under a callee's op budget and its own 4 096-unit

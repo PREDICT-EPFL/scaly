@@ -29,7 +29,7 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
     "C-196",
     "Dot products and sums as independent partial sums in a fixed order: matrix products, matvecs, <code>sum</code>",
     "<code>assoc</code>: mlp_big_fwd 0.43, unbumpercars 0.61, chol_solve_200 0.69, npmpc 0.71, ipm_cvxqp1_dense 0.84, mlp_small_jac 0.86",
-    None,
+    ("matvec_256 0.36, mlp_big_fwd 0.46, unbumpercars 0.65, npmpc 0.76; a latent <code>delinearize_loops</code> bug fixed", "codegen_speed_o2_report.html"),
   ),
   (
     2,
@@ -66,9 +66,17 @@ CHECKLIST: list[tuple[int, str, str, str, str, tuple[str, str] | None]] = [
   (
     6,
     "O6",
+    "C-11",
+    "Chain of masses: the stage-block structure of its Hessian (investigate)",
+    "chain M = 9 Hessian 2.4× slower than CasADi SX (759 against 315 µs) where M = 5 is 0.83×: the colouring width grows with M",
+    None,
+  ),
+  (
+    7,
+    "O7",
     "C-77",
     "The sparse-derivative assembly fused into the mapped loop (stretch)",
-    "35% of the race-car Hessian in the 2026-09-22 study; see the CasADi comparison",
+    "35% of the race-car Hessian in the 2026-09-22 study; race cars are 1.03–1.08× CasADi SX",
     None,
   ),
 ]
@@ -97,6 +105,7 @@ def steps() -> str:
 # step report: template, output, timing result, column labels
 REPORTS: list[tuple[str, str, str, dict[str, str]]] = [
   ("report_o1_template.html", "codegen_speed_o1_report.html", "timing_o1_all.json", {"base/jit": "before", "o1/jit": "after"}),
+  ("report_o2_template.html", "codegen_speed_o2_report.html", "timing_o2.json", {"o1/jit": "before (O1)", "o2/jit": "after", "o1/assoc": "O1, -fassociative-math"}),
 ]
 
 

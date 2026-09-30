@@ -33,12 +33,13 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 <h2>The checklist, ranked by measured headroom</h2>
 <p>Rank is expected payoff times breadth, from the diagnostics below. The step number is the order of execution; O1 ran first because the diagnosis produced a working prototype of it.</p>
 <div class="scroll"><table><tr><th>rank</th><th>step</th><th>todo</th><th>change</th><th>evidence (compile-variant ratio)</th><th>status</th></tr>
-<tr><td>1</td><td>O2</td><td>C-196</td><td>Dot products and sums as independent partial sums in a fixed order: matrix products, matvecs, <code>sum</code></td><td><code>assoc</code>: mlp_big_fwd 0.43, unbumpercars 0.61, chol_solve_200 0.69, npmpc 0.71, ipm_cvxqp1_dense 0.84, mlp_small_jac 0.86</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>1</td><td>O2</td><td>C-196</td><td>Dot products and sums as independent partial sums in a fixed order: matrix products, matvecs, <code>sum</code></td><td><code>assoc</code>: mlp_big_fwd 0.43, unbumpercars 0.61, chol_solve_200 0.69, npmpc 0.71, ipm_cvxqp1_dense 0.84, mlp_small_jac 0.86</td><td><span class="ok">☑ done</span>: matvec_256 0.36, mlp_big_fwd 0.46, unbumpercars 0.65, npmpc 0.76; a latent <code>delinearize_loops</code> bug fixed (<a href="codegen_speed_o2_report.html">report</a>)</td></tr>
 <tr><td>2</td><td>O1</td><td>C-197</td><td>Scalarize an entry point that calls nothing (under a callee's op budget, a 4 096-unit work cap)</td><td><code>fast</code>: quat_jac 0.44, rosen_hess 0.66, cartpole_jac 0.75: the identity-seed tables C may not fold</td><td><span class="ok">☑ done</span>: quat_jac 0.51, cartpole_jac 0.78, rosen_hess 0.83; every other kernel's C unchanged (<a href="codegen_speed_o1_report.html">report</a>)</td></tr>
 <tr><td>3</td><td>O3</td><td>C-198</td><td>FMA contraction across statements on clang, as GCC does by default (<code>-ffp-contract=fast</code>)</td><td><code>contract</code>: mlp_big_fwd 0.80, unbumpercars 0.86, rosen_hess 0.91, riccati_50 0.93; geomean 0.97. Contraction off: 1.09</td><td><span class="warn">☐ pending</span></td></tr>
 <tr><td>4</td><td>O4</td><td>C-199</td><td>NaN-propagating max and min without a separate NaN test</td><td><code>finite</code>: ipm_qafiro_sparse 0.85, ipm_hs118_dense 0.90, ipm_mpc_12_4_20_sparse 0.95</td><td><span class="warn">☐ pending</span></td></tr>
 <tr><td>5</td><td>O5</td><td>C-200</td><td>A concat of one value repeated (a tile) as one loop that fusion can inline</td><td>one copy loop per seed in every multi-seed forward-mode kernel (mlp_small_jac, the race cars, the <code>jac</code> snapshot)</td><td><span class="warn">☐ pending</span></td></tr>
-<tr><td>6</td><td>O6</td><td>C-77</td><td>The sparse-derivative assembly fused into the mapped loop (stretch)</td><td>35% of the race-car Hessian in the 2026-09-22 study; see the CasADi comparison</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>6</td><td>O6</td><td>C-11</td><td>Chain of masses: the stage-block structure of its Hessian (investigate)</td><td>chain M = 9 Hessian 2.4× slower than CasADi SX (759 against 315 µs) where M = 5 is 0.83×: the colouring width grows with M</td><td><span class="warn">☐ pending</span></td></tr>
+<tr><td>7</td><td>O7</td><td>C-77</td><td>The sparse-derivative assembly fused into the mapped loop (stretch)</td><td>35% of the race-car Hessian in the 2026-09-22 study; race cars are 1.03–1.08× CasADi SX</td><td><span class="warn">☐ pending</span></td></tr>
 </table></div>
 
 <h3>Rejected, with the evidence</h3>
@@ -113,6 +114,18 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 </table></div>
 <p>Reading the rows: the NN-heavy oracles (mlp_big_fwd, npmpc, unbumpercars) and the dense factorizations (chol_solve_200, ipm_cvxqp1_dense) need reassociation, which only the generated code can provide without changing what the user asked for: it can split each reduction into independent partial sums in a fixed order, which is deterministic and portable where <code>-ffast-math</code> is neither. matvec_256 gains nothing from <code>assoc</code> alone because its accumulator is the ABI output, which the vectorizer must assume the inputs alias; a partial-sum lowering keeps the accumulators in registers and needs no alias rule. The sparse kernels (LDL, the sparse IPM) are bound by their index traffic and gain little from anything here.</p>
 
+<h3>Against CasADi</h3>
+<p>The benchmark sweep's own comparison (<code>bench/run.py sweep</code>, Google Benchmark, the protocol's flags, one repetition) on the base commit, exact Lagrangian Hessians: where Scaly stands before any step here.</p>
+<div class="scroll"><table><tr><th>problem</th><th class="r">size</th><th class="r">Scaly</th><th class="r">CasADi SX</th><th class="r">Scaly / SX</th></tr>
+<tr><td>race cars</td><td class="r">N = 40</td><td class="r">10.8 µs</td><td class="r">10.0 µs</td><td class="r">1.08</td></tr>
+<tr><td>race cars</td><td class="r">N = 200</td><td class="r">57.8 µs</td><td class="r">55.9 µs</td><td class="r">1.03</td></tr>
+<tr><td>chain of masses</td><td class="r">M = 5</td><td class="r">106 µs</td><td class="r">127 µs</td><td class="r ok">0.83</td></tr>
+<tr><td>chain of masses</td><td class="r">M = 9</td><td class="r">759 µs</td><td class="r">315 µs</td><td class="r bad">2.41</td></tr>
+<tr><td>neural-process MPC</td><td class="r">N = 12</td><td class="r">18.2 µs</td><td class="r">327 µs</td><td class="r ok">0.06</td></tr>
+<tr><td>unbumpercars</td><td class="r">C = 8</td><td class="r">756 µs</td><td class="r">—</td><td class="r">(CasADi's cell failed to build here)</td></tr>
+</table></div>
+<p>The chain at M = 9 is the one large gap: its Hessian's colouring width grows with the number of masses (12, 24, 42 at M = 3, 5, 9; C-11), so Scaly runs that many forward-over-reverse sweeps per stage where SX expands one symbolic Hessian.</p>
+
 <h2>The steps</h2>
-<ul><li><b>O1</b> (C-197): quat_jac 0.51, cartpole_jac 0.78, rosen_hess 0.83; every other kernel's C unchanged. <a href="codegen_speed_o1_report.html">Report</a>.</li></ul>
+<ul><li><b>O1</b> (C-197): quat_jac 0.51, cartpole_jac 0.78, rosen_hess 0.83; every other kernel's C unchanged. <a href="codegen_speed_o1_report.html">Report</a>.</li><li><b>O2</b> (C-196): matvec_256 0.36, mlp_big_fwd 0.46, unbumpercars 0.65, npmpc 0.76; a latent <code>delinearize_loops</code> bug fixed. <a href="codegen_speed_o2_report.html">Report</a>.</li></ul>
 </main>

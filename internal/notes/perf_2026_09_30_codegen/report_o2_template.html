@@ -1,0 +1,63 @@
+<main>
+<h1>O2: dot products and sums in partial sums</h1>
+<p class="sub">Step 2 of the <a href="codegen_speed_plan_2026_09_30.html">generated-code speed plan</a> · todo C-196 · branch <code>perf/codegen-speed</code> · 30 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's flags</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Every reduction the matrix products and <code>sum</code> lowered to was one chain of dependent adds, which runs at the latency of one multiply-add per step on a core that retires eight a cycle. <code>-fassociative-math</code> showed the headroom; the generated code now takes it itself, in an order it fixes, without the compiler's license to reorder.</p>
+<ul>
+<li><b>Speed</b> (kernels whose C changed): <span class="ok">matvec_256 2.80× faster</span> (18.1 → 6.5 µs), <span class="ok">mlp_big_fwd 2.16×</span>, <span class="ok">unbumpercars 1.55×</span> (736 → 475 µs), <span class="ok">npmpc 1.32×</span> (19.5 → 14.8 µs), mlp_small_jac 1.13×, elementwise_1e5 1.06×, the sparse IPM 1.04×. The IPM kernels take the same iterations to the same solutions.</li>
+<li><b>Against <code>-fassociative-math</code></b>: unbumpercars 0.645 against 0.585, npmpc 0.759 against 0.710, mlp_big_fwd 0.463 against 0.425. The rest of that headroom is in the dense factorizations' tiles (chol_solve_200 0.64, ipm_cvxqp1_dense 0.83 under the flag, unchanged here).</li>
+<li><b>A latent bug fixed</b>, exposed by the first strided loop to carry a division: <code>delinearize_loops</code> evaluated a loop's indices at its trip numbers, not its variable's values. The generated IPM's objective came out 4.98 instead of 7.69 in the embedded-QP case study test.</li>
+<li><b>Tests:</b> 4 426 passed, 57 skipped, 5 xfailed (28 new). Nine mutants, nine killed (two after strengthening a test). Snapshots <code>wide.c</code> and <code>workspace.c</code> regenerated.</li>
+<li><b>Undo:</b> <code>git revert</code> the commit “Codegen speed O2”.</li>
+</ul>
+</div>
+
+<h2>What changed</h2>
+<ul>
+<li><b><code>sum</code> and <code>dot</code></b> (<code>passes/lowering.py</code>, <code>_reduce_into</code>): from eight elements, four partial sums, element <code>k</code> into partial <code>k % 4</code>, the elements past the last whole block into the first, combined as <code>(p0 + p1) + (p2 + p3)</code>. Every read of the terms sits in one statement (a loop run once, as the max/min reduction has done since C-137), so an elementwise producer fuses into the sum. A private result is the first partial sum, so it is live from the start as a sequential accumulator was and the workspace packer does not park it in a slot its terms free; an output is not, since the ABI's buffers are memory the compiler must assume the terms alias.</li>
+<li><b><code>a @ x</code></b> (<code>_lower_matvec_blocked</code>): from eight columns, four rows per pass, each row in four partial sums, sixteen chains the C compiler pairs into NEON lanes, the sums in private scalars and each output stored once; the rows left over run one at a time the same way. <code>vec @ mat</code> and <code>mat @ mat</code> already put the reduction outermost and vectorize over independent outputs, and are unchanged.</li>
+<li><b><code>_blocked_sum</code></b> takes a lane count and a first slot, and folds a static tail bound in Python (fusion needs a constant trip count). The dense factorizations that use it keep their four lanes.</li>
+<li><b><code>fuse_elementwise</code></b>: an expensive (libm) producer fuses when its element loads run no more often in all than it has elements, in place of exactly one textual load. <code>buf * buf</code> is still refused (twice per element); four partial sums reading each element once are not.</li>
+<li><b><code>delinearize_loops</code></b>: indices evaluated at <code>k = 0, s, 2s, …</code>.</li>
+<li><code>docs/how_it_works/lowering.md</code>: the summation order.</li>
+</ul>
+
+<h3>Choosing the blocking</h3>
+<p>Hand-written C variants of a matrix-vector product, compiled with the JIT's flags, time over today's four sequential rows (<code>r</code> rows per pass × <code>l</code> partial sums):</p>
+<div class="scroll"><table><tr><th>shape</th><th class="r">today</th><th class="r">r4 l2</th><th class="r">r4 l4 (chosen)</th><th class="r">r2 l4</th><th class="r">r1 l8</th><th class="r">r8 l2</th><th class="r">r4 l8</th><th class="r">r1 l4</th></tr>
+<tr><td>256×256</td><td class="r">18.8 µs</td><td class="r">0.473</td><td class="r ok">0.364</td><td class="r">0.433</td><td class="r">0.390</td><td class="r">0.334</td><td class="r">0.338</td><td class="r">1.000</td></tr>
+<tr><td>32×32</td><td class="r">250 ns</td><td class="r">0.368</td><td class="r ok">0.347</td><td class="r">0.415</td><td class="r">0.418</td><td class="r">0.318</td><td class="r">0.363</td><td class="r">1.199</td></tr>
+<tr><td>256×16</td><td class="r">928 ns</td><td class="r">0.382</td><td class="r ok">0.398</td><td class="r">0.473</td><td class="r">0.519</td><td class="r">0.358</td><td class="r">0.445</td><td class="r">1.316</td></tr>
+<tr><td>4×256</td><td class="r">292 ns</td><td class="r">0.444</td><td class="r ok">0.275</td><td class="r">0.399</td><td class="r">0.357</td><td class="r bad">1.076</td><td class="r">0.234</td><td class="r">0.994</td></tr>
+<tr><td>12×12</td><td class="r">35 ns</td><td class="r">0.452</td><td class="r ok">0.438</td><td class="r">0.534</td><td class="r bad">1.059</td><td class="r">0.576</td><td class="r">0.671</td><td class="r">0.800</td></tr>
+<tr><td>64×64</td><td class="r">1.07 µs</td><td class="r">0.392</td><td class="r ok">0.312</td><td class="r">0.376</td><td class="r">0.372</td><td class="r">0.291</td><td class="r">0.282</td><td class="r">1.094</td></tr>
+<tr><td>100×7</td><td class="r">168 ns</td><td class="r">0.470</td><td class="r">0.547</td><td class="r">0.748</td><td class="r bad">2.025</td><td class="r">0.457</td><td class="r">0.994</td><td class="r">1.450</td></tr>
+</table></div>
+<p>Four rows by four lanes is never far from the best and never bad; eight rows fail when there are fewer rows, one row fails when the row is short (the 100×7 column is why seven columns and fewer keep today's form). For a single sum or dot product, eight lanes were faster than four on long vectors (dot 0.23 against 0.64 of one chain at n = 256), but eight lanes took the sparse IPM off PIQP's path on QBEACONF: the rounding decides that problem's path, and with eight or sixteen lanes it stalls at the iteration limit where two and four lanes, and the base, solve it in 19–21 iterations. The traces of four and eight lanes both leave the base's at 1e-15 on the first iteration and diverge a thousandfold every few, so it is the problem's sensitivity, not a wrong sum; four lanes keep the whole IPM gate (600 tests) and match the codebase's other blocked reductions. Eight lanes are recorded as a follow-up that needs that gate settled first.</p>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/core/passes/test_lowering.py</code>: sums, dot products and a sum of squares against NumPy at 1, 7, 8, 9, 15, 16, 17, 64 and 1 001 elements, in loop form and scalarized; matrix-vector products at seven shapes covering every row and column remainder, with each output stored outside the reduction; an expensive producer fused into the partial sums (five <code>sin</code> calls for 67 elements, no buffer); the summation order bit for bit against a NumPy emulation, on data the self-check shows four orders round differently, and an output stored once.</li>
+<li><code>tests/core/passes/test_program.py</code>: a strided partial-sum loop over a period-8 broadcast of a while loop's carry, the case whose split was wrong.</li>
+<li>Full suite: 4 426 passed, 57 skipped, 5 xfailed. <code>ruff</code> clean.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>killed by</th></tr>
+<tr><td>M1 one lane</td><td class="ok"><code>test_an_expensive_producer_fuses_into_the_partial_sums</code></td></tr>
+<tr><td>M2 matvec keeps the sequential rows</td><td class="ok"><code>test_blocked_matvec_matches_numpy[1-8]</code></td></tr>
+<tr><td>M3 delinearize at trip numbers (the bug)</td><td class="ok"><code>test_delinearized_strided_loops_index_by_the_variables_values</code>, after moving it to a period-8 broadcast: with period 4 the buggy split was refused and the test passed by luck</td></tr>
+<tr><td>M4 expensive producers fuse at one textual load only</td><td class="ok"><code>test_an_expensive_producer_fuses_into_the_partial_sums</code></td></tr>
+<tr><td>M5 no accumulator as the first lane</td><td class="ok"><code>test_packing_reuses_slots_and_spills</code></td></tr>
+<tr><td>M6 an output as the first lane</td><td class="ok"><code>test_partial_sums_have_a_fixed_order_and_never_accumulate_in_an_output</code></td></tr>
+<tr><td>M7 a symbolic tail bound</td><td class="ok"><code>test_an_expensive_producer_fuses_into_the_partial_sums</code></td></tr>
+<tr><td>M8 lanes combined in sequence</td><td class="ok"><code>test_generated_c_matches_snapshot[wide]</code></td></tr>
+<tr><td>M9 tail into the last lane</td><td class="ok"><code>test_partial_sums_have_a_fixed_order_…</code>, after changing its data: the first data set's orders all rounded alike</td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p>The corpus kernels whose C changed, and two for reference, before (O1) and after, with the JIT's flags; the last column is O1 under <code>-fassociative-math</code>, the headroom this step aimed at. Nine interleaved rounds, fastest sample. Timings within ±5% of 1.000 on a kernel whose C did not change (cartpole_jac, chol_solve_200) are noise; QAFIRO's 1.04 here re-timed at 0.965 over 15 rounds.</p>
+{{TABLE}}
+
+<h2>Next</h2>
+<p>O3 (C-198): FMA contraction across statements on clang.</p>
+</main>

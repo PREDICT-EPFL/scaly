@@ -697,3 +697,102 @@ def test_two_names_with_one_c_spelling_are_refused() -> None:
   (b,) = sc.scan(second, c0, [(us, 0, 1)], length=3)
   with pytest.raises(LoweringError, match="two different Functions are named 'step.*' and 'step.*', both 'step__3' in C"):
     lower_function(sc.Function.from_exprs("c_spelling_host", [c0, us], [a + b], ["c0", "us"], ["y"]))
+
+
+# --- reductions in partial sums (C-196) ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("n", [1, 7, 8, 9, 15, 16, 17, 64, 1001])
+@pytest.mark.parametrize("hint", ["auto", "block"])
+def test_sums_and_dots_in_partial_sums_match_numpy(n: int, hint: str) -> None:
+  """From eight elements on a sum or a dot runs in four partial sums with the tail in the first:
+  NumPy's value at every length around the thresholds, in loop form and scalarized."""
+  x, y = sc.sym("x", n), sc.sym("y", n)
+  outs = [(x.sin() * y).sum(), x @ y, (x * x).sum() + 1.0]
+  fn = sc.Function.from_exprs(f"partial_{n}_{hint}", [x, y], [o.with_lowering(hint) for o in outs], ["x", "y"], ["s", "d", "q"])
+  rng = np.random.default_rng(n)
+  xv, yv = rng.standard_normal(n), rng.standard_normal(n)
+  s, d, q = fn((xv, yv))
+  np.testing.assert_allclose(s, np.sum(np.sin(xv) * yv), rtol=1e-13, atol=1e-13)
+  np.testing.assert_allclose(d, xv @ yv, rtol=1e-13, atol=1e-13)
+  np.testing.assert_allclose(q, np.sum(xv * xv) + 1.0, rtol=1e-13)
+
+
+@pytest.mark.parametrize(("m", "k"), [(1, 8), (3, 7), (4, 8), (5, 9), (9, 23), (12, 12), (37, 64)])
+def test_blocked_matvec_matches_numpy(m: int, k: int) -> None:
+  """Past seven columns ``a @ x`` runs four rows per pass in four partial sums each, the rows left
+  over one at a time: NumPy's product for every row and column remainder, the output stored once."""
+  a, x = sc.sym("a", (m, k)), sc.sym("x", k)
+  fn = sc.Function.from_exprs(f"matvec_{m}_{k}", [a, x], [(a @ x.sin()).block()], ["a", "x"], ["y"])
+  rng = np.random.default_rng(m * 100 + k)
+  av, xv = rng.standard_normal((m, k)), rng.standard_normal(k)
+  np.testing.assert_allclose(fn((av, xv)), av @ np.sin(xv), rtol=1e-13, atol=1e-13)
+  if k >= 8:
+    stores = [n for stmt in _stmts(fn) for n in _nodes(stmt) if n.op == ProgramOp.STORE and n.args[0].attrs["buffer"] == "y"]
+    assert all(not _inside_reduce(fn, st) for st in stores)  # the output is stored once per row, after its sums
+
+
+def _stmts(fn: sc.Function) -> list:
+  proc = main_proc(lower_function(fn))
+  return list(proc.args[int(proc.attrs["param_count"]) :])
+
+
+def _nodes(node):
+  stack = [node]
+  while stack:
+    n = stack.pop()
+    yield n
+    stack.extend(n.args)
+
+
+def _inside_reduce(fn: sc.Function, target) -> bool:
+  """Whether ``target`` sits inside a REDUCE loop of ``fn``'s entry."""
+  from scaly.ir.program import RangeKind
+
+  def walk(node, inside: bool) -> bool:
+    if node is target:
+      return inside
+    if node.op == ProgramOp.FOR:
+      inside = inside or node.args[0].attrs["kind"] == RangeKind.REDUCE
+      return any(walk(a, inside) for a in node.args[1:])
+    return False
+
+  return any(walk(stmt, False) for stmt in _stmts(fn))
+
+
+def test_an_expensive_producer_fuses_into_the_partial_sums() -> None:
+  """Each element of ``sin(x) * y`` is read once across the four partial sums and the tail, so it
+  is computed inside the reduction, never stored first."""
+  x, y = sc.sym("x", 67), sc.sym("y", 67)
+  fn = sc.Function.from_exprs("sin_sum", [x, y], [(x.sin() * y).sum().block()], ["x", "y"], ["s"])
+  body = _stmts(fn)
+  assert not [s for s in body if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 67]
+  assert sum(n.op == ProgramOp.SIN for stmt in body for n in _nodes(stmt)) == 5  # four lanes and the tail
+  xv, yv = np.linspace(-2, 2, 67), np.cos(np.arange(67))
+  np.testing.assert_allclose(fn((xv, yv)), np.sum(np.sin(xv) * yv), rtol=1e-13)
+
+
+def test_partial_sums_have_a_fixed_order_and_never_accumulate_in_an_output() -> None:
+  """The order is the generated code's own: lane ``q`` sums the ``k`` with ``k % 4 == q`` in turn,
+  the tail goes into lane 0, and the lanes combine as ``(l0 + l1) + (l2 + l3)``; bit for bit, so a
+  rounding change cannot slip in unnoticed. An output is stored once, after the sums, never used as
+  an accumulator the C compiler would have to keep in memory."""
+  n = 37
+  x = sc.sym("x", n)
+  fn = sc.Function.from_exprs("order_sum", [x], [x.sum().block()], ["x"], ["s"])
+  rng = np.random.default_rng(24)  # a seed whose data the four orders below round differently
+  xv = rng.standard_normal(n) * 10.0 ** rng.integers(-3, 4, n)
+
+  def blocked(tail_lane: int, tree: bool = True) -> float:
+    lanes = [0.0] * 4
+    for k in range(n - n % 4):
+      lanes[k % 4] += xv[k]
+    for k in range(n - n % 4, n):
+      lanes[tail_lane] += xv[k]
+    return (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]) if tree else ((lanes[0] + lanes[1]) + lanes[2]) + lanes[3]
+
+  # The data tell the orders apart: the tail in another lane, a sequential combine, one chain.
+  assert len({blocked(0), blocked(3), blocked(0, tree=False), float(np.cumsum(xv)[-1])}) == 4
+  assert fn(xv) == blocked(0)
+  stores = [node for stmt in _stmts(fn) for node in _nodes(stmt) if node.op == ProgramOp.STORE and node.args[0].attrs["buffer"] == "s"]
+  assert len(stores) == 1 and not _inside_reduce(fn, stores[0])

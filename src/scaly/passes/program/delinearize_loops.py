@@ -138,7 +138,9 @@ def _split(loop: ProgramNode) -> ProgramNode | None:
   name = rng.attrs["name"]
   if any(_uses_var(stmt, name, {id(v) for v in views}) for stmt in body):
     return None  # the loop variable is used as a value, not only as an index
-  k = np.arange(n, dtype=np.int64)
+  # The variable's values, not its trip numbers: a strided loop (a reduction's partial sums) runs
+  # k = 0, s, 2s, ...; the new coordinates count trips, so each index is affine in them either way.
+  k = np.arange(n, dtype=np.int64) * int(rng.args[2].attrs["value"])
   arrays = [_evaluate(c, name, k) for c in components]
   if any(a is None for a in arrays):
     return None

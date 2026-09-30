@@ -150,6 +150,17 @@ The scalarization pass keeps reduction accumulation order. This does not promise
 results across scalarized and loopy code: emitted expression trees and the selected C compiler
 flags can also affect rounding. Scaly does not enable `-ffast-math` by default.
 
+That order is the lowering's, and it is not a single chain. A `sum` or a `dot` of eight elements
+or more adds into four partial sums, element `k` into partial `k % 4`, the elements past the last
+whole block of four into the first, and combines them as `(p0 + p1) + (p2 + p3)`; a matrix-vector
+product with eight columns or more runs four rows per pass, each row in four partial sums the same
+way, and stores each output once. One chain of dependent adds runs at the latency of an add; four
+overlap, and the C compiler pairs them into vector lanes, which is what `-ffast-math` would buy by
+reordering freely. The rounding is a blocked sum's, as in NumPy's pairwise `sum`, and it is fixed
+by the generated code rather than by the compiler. Shorter reductions keep one chain, and so do
+the matrix products whose reduction axis is the matrix's slow one: those put the reduction loop
+outermost and vectorize over independent outputs instead.
+
 ### Loopy-code optimizations
 
 `combine_scatter_sums` replaces a left-associated sum of single-use zero-filled scatters with one

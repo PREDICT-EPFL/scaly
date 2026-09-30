@@ -919,3 +919,24 @@ def test_slot_assignment_matches_the_linear_scan() -> None:
       free_at[slot] = last + 1
       expected.append(slot)
     assert _assign_slots(items) == expected
+
+
+def test_delinearized_strided_loops_index_by_the_variables_values() -> None:
+  """A sum's partial-sum loop steps by its lane count; over a broadcast its reads divide the
+  variable, so ``delinearize_loops`` splits it. The split counts trips, and every index must be
+  evaluated at the variable's values (0, 4, 8, ...), not at the trip numbers: the loop runs over the
+  slot a while loop leaves its carry in, a view with an offset, as the generated IPM's objective does."""
+  # The weights repeat every eight entries and the lanes step by four, so trip numbers 0..3 read
+  # weights 0..7 without wrapping: evaluated there, the index looks affine and the split is wrong.
+  z, q = sc.sym("z", 22), sc.sym("q", 8)
+  cond = sc.Function.from_exprs("strided_cond", [z], [z[0] < 5.0], ["z"], ["go"])
+  step = sc.Function.from_exprs("strided_step", [z], [z + 1.0], ["z"], ["next"])
+  out, _ = sc.while_loop(cond, step, z, max_iter=10)
+  x = out[6:22].reshape((2, 8))
+  fn = sc.Function.from_exprs("strided_cost", [z, q], [(x * x * q.reshape((1, 8))).sum(), out], ["z", "q"], ["cost", "z_out"])
+  zv = np.linspace(-1.0, 1.0, 22)
+  zv[0] = 0.0
+  qv = np.arange(1.0, 9.0)
+  cost, z_out = fn((zv, qv))
+  np.testing.assert_allclose(z_out, zv + 5.0)
+  np.testing.assert_allclose(cost, np.sum((zv[6:] + 5.0).reshape(2, 8) ** 2 * qv), rtol=1e-14)

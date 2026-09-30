@@ -397,9 +397,11 @@ class LowerCtx:
     """A loop copying ``src`` into ``dst`` entry by entry, converting to ``dst``'s dtype."""
     return _copy_loop(src, dst, shape)
 
-  def blocked_sum(self, tag: str, start: ProgramNode, stop: ProgramNode, term: Any, dtype: DType) -> tuple[list[ProgramNode], ProgramNode]:
-    """The sum of ``term(k)`` over ``[start, stop)`` in blocks: see ``_blocked_sum``."""
-    return _blocked_sum(self, tag, start, stop, term, dtype)
+  def blocked_sum(
+    self, tag: str, start: ProgramNode, stop: ProgramNode, term: Any, dtype: DType, *, lanes: int = 4
+  ) -> tuple[list[ProgramNode], ProgramNode]:
+    """The sum of ``term(k)`` over ``[start, stop)`` in ``lanes`` partial sums: see ``_blocked_sum``."""
+    return _blocked_sum(self, tag, start, stop, term, dtype, lanes=lanes)
 
   def lane_loops(self, tag: str, rows: int, lanes: int, kind: RangeKind, body: Any) -> None:
     """Loops over ``rows`` and ``lanes`` emitting ``body``: see ``_lane_loops``."""
@@ -674,17 +676,41 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   ctx.emit(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
+# A reduction this long or longer sums in ``REDUCTION_LANES`` partial sums interleaved by index,
+# combined pairwise: one chain of dependent adds cannot overlap, four can (2.6-4x faster from 64
+# elements on, ``notes/codegen_speed_o2_report.html``). The rounding is that of a blocked sum, as in
+# NumPy's own pairwise ``sum``, not that of a sequential one; the order is fixed by the generated
+# code. Eight lanes are faster again on long sums but moved the generated IPM off PIQP's path on
+# QBEACONF, a problem whose path rounding decides; four keep it, as they do in ``_blocked_sum``.
+REDUCTION_LANES = 4
+BLOCKED_REDUCTION_MIN = 2 * REDUCTION_LANES
+
+
+def _reduce_into(ctx: LowerCtx, acc: ProgramNode, n: int, term: Any, dtype: DType) -> None:
+  """``acc[0] = sum(term(k) for k < n)``: in one chain below ``BLOCKED_REDUCTION_MIN``, else in
+  ``REDUCTION_LANES`` partial sums. Every read of the terms sits in one statement, a loop run once,
+  so ``fuse_elementwise`` can inline an elementwise producer; ``unroll_unit_loops`` removes it."""
+  z = p.const_int(0)
+  zero = p.const_float(0.0, dtype=dtype)
+  tag = acc.attrs["name"]
+  if n < BLOCKED_REDUCTION_MIN:
+    name = f"i_{tag}"
+    rng = p.range_(name, 0, n, kind=RangeKind.REDUCE)
+    slot = p.view(acc, [z])
+    ctx.emit(p.store(slot, zero), p.for_(rng, [p.store(slot, p.add(p.load(slot), term(p.var(name))))]))
+    return
+  # A private accumulator holds the first partial sum; an output does not, since the ABI's buffers
+  # are memory the C compiler must assume the terms may alias, so a sum kept there stays in memory.
+  private = all(acc is not param for param in ctx.params)
+  stmts, total = _blocked_sum(ctx, tag, z, p.const_int(n), term, dtype, lanes=REDUCTION_LANES, first=p.view(acc, [z]) if private else None)
+  ctx.emit(p.for_(p.range_(f"ko_{tag}", 0, 1), [*stmts, p.store(p.view(acc, [z]), total)]))
+
+
 @lowers(ExprOp.SUM)
 def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
-  """Full reduction to a scalar: zero the accumulator, then a REDUCE loop adds every element."""
-  src = node.args[0]
-  acc = ctx.alloc_tmp(node)
-  z = p.const_int(0)
-  ctx.emit(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
-  name = f"i_{acc.attrs['name']}"
-  rng = p.range_(name, 0, _size_of(src.shape), kind=RangeKind.REDUCE)
-  i = p.var(name)
-  ctx.emit(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))
+  """Full reduction to a scalar (``_reduce_into``)."""
+  src_buf = ctx.buf_of(node.args[0])
+  _reduce_into(ctx, ctx.alloc_tmp(node), _size_of(node.args[0].shape), lambda k: p.load(p.view(src_buf, [k])), node.type.dtype)
 
 
 @lowers(ExprOp.MAX, ExprOp.MIN)
@@ -804,9 +830,9 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   sa, sb = a.shape, b.shape
   nm = out.attrs["name"]
   if len(sa) == 1 and len(sb) == 1:  # dot
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, sa[0], kind=RangeKind.REDUCE)
-    _mm_accumulate(ctx, out, p.const_int(0), p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [k])), dt, [], krng)
+    _reduce_into(ctx, out, sa[0], lambda k: p.mul(p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [k]))), dt)
+  elif len(sa) == 2 and len(sb) == 1 and sa[1] >= MATVEC_BLOCKED_MIN:
+    _lower_matvec_blocked(ctx, a_buf, b_buf, out, sa, dt)
   elif len(sa) == 2 and len(sb) == 1:  # mat @ vec: the reduction axis is contiguous in ``a``
     m, kk = sa
     i = p.var(f"i_{nm}")
@@ -852,25 +878,88 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
 
-def _blocked_sum(ctx: LowerCtx, tag: str, start: ProgramNode, stop: ProgramNode, term: Any, dtype: DType) -> tuple[list[ProgramNode], ProgramNode]:
-  """Statements summing ``term(k)`` over ``start <= k < stop`` into four partial sums, and the total.
+def _pairwise(values: list[ProgramNode]) -> ProgramNode:
+  """``values`` summed as a balanced tree, neighbours first: ``(v0 + v1) + (v2 + v3)``."""
+  while len(values) > 1:
+    values = [p.add(values[i], values[i + 1]) if i + 1 < len(values) else values[i] for i in range(0, len(values), 2)]
+  return values[0]
+
+
+def _blocked_sum(
+  ctx: LowerCtx, tag: str, start: ProgramNode, stop: ProgramNode, term: Any, dtype: DType, *, lanes: int = 4, first: ProgramNode | None = None
+) -> tuple[list[ProgramNode], ProgramNode]:
+  """Statements summing ``term(k)`` over ``start <= k < stop`` into ``lanes`` partial sums, and the total.
 
   A dot product summed in one accumulator is a chain of dependent adds the C compiler may not
-  reorder; four interleaved accumulators overlap four chains. The rounding differs from a single
-  sequential sum the way blocked library kernels do."""
+  reorder; interleaved accumulators overlap as many chains. Partial sum ``q`` takes the ``k`` with
+  ``(k - start) % lanes == q`` up to the last whole block, the first takes the tail too, and the
+  total combines them pairwise (``_pairwise``). The rounding differs from a single sequential sum
+  the way blocked library kernels do. ``first``, a view, holds the first partial sum instead of a
+  new private scalar: the result's own slot, so that it is live from the start, as a sequential
+  accumulator is, and does not take over a slot its terms free."""
   c = p.const_int
-  slots = [p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(4)]
+  slots = [first if q == 0 and first is not None else p.view(ctx.new_private(dtype, ()), [c(0)]) for q in range(lanes)]
   zero = p.const_float(0.0, dtype=dtype)
-  tail = p.sub(stop, p.mod(p.sub(stop, start), c(4)))
+  if start.op == stop.op == ProgramOp.CONST_INT:  # a static trip count, which fusion needs to see
+    tail = c(int(stop.attrs["value"]) - (int(stop.attrs["value"]) - int(start.attrs["value"])) % lanes)
+  else:
+    tail = p.sub(stop, p.mod(p.sub(stop, start), c(lanes)))
   kb, kt = f"kb_{tag}", f"kt_{tag}"
-  block = [p.store(slots[q], p.add(p.load(slots[q]), term(p.add(p.var(kb), c(q))))) for q in range(4)]
+  block = [p.store(slots[q], p.add(p.load(slots[q]), term(p.add(p.var(kb), c(q))))) for q in range(lanes)]
   stmts = [
     *(p.store(s, zero) for s in slots),
-    p.for_(p.range_(kb, start, tail, step=4, kind=RangeKind.REDUCE), block),
+    p.for_(p.range_(kb, start, tail, step=lanes, kind=RangeKind.REDUCE), block),
     p.for_(p.range_(kt, tail, stop, kind=RangeKind.REDUCE), [p.store(slots[0], p.add(p.load(slots[0]), term(p.var(kt))))]),
   ]
-  loads = [p.load(s) for s in slots]
-  return stmts, p.add(p.add(loads[0], loads[1]), p.add(loads[2], loads[3]))
+  return stmts, _pairwise([p.load(s) for s in slots])
+
+
+# ``a @ x`` with a row this long or longer runs four rows at a time, each row's dot product in four
+# partial sums: sixteen independent chains, which the C compiler pairs into vector lanes. 2.3-3.6x
+# faster than four sequential rows from 12x12 to 256x256; a shorter row keeps the rows' own order.
+MATVEC_ROWS = 4
+MATVEC_LANES = 4
+MATVEC_BLOCKED_MIN = 2 * MATVEC_LANES
+
+
+def _lower_matvec_blocked(ctx: LowerCtx, a_buf: ProgramNode, x_buf: ProgramNode, out: ProgramNode, shape: tuple[int, ...], dtype: DType) -> None:
+  """``out = a @ x`` for a row-major ``a`` of ``shape = (m, kk)``: ``MATVEC_ROWS`` rows per pass
+  (the rows left over one at a time), each summed in ``MATVEC_LANES`` partial sums interleaved by
+  ``k`` and combined pairwise, the tail of ``k`` into the first. The sums live in private scalars
+  and each output is stored once."""
+  m, kk = shape
+  c = p.const_int
+  nm = out.attrs["name"]
+  lanes = MATVEC_LANES
+  tail = kk - kk % lanes
+  zero = p.const_float(0.0, dtype=dtype)
+
+  def rows_pass(tag: str, rows: list[ProgramNode]) -> list[ProgramNode]:
+    slots = [[p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(lanes)] for _ in rows]
+    kb, kt = p.var(f"kb_{tag}"), p.var(f"kt_{tag}")
+
+    def term(row: ProgramNode, k: ProgramNode) -> ProgramNode:
+      return p.mul(p.load(p.view(a_buf, [p.add(p.mul(row, c(kk)), k)])), p.load(p.view(x_buf, [k])))
+
+    def add(slot: ProgramNode, row: ProgramNode, k: ProgramNode) -> ProgramNode:
+      return p.store(slot, p.add(p.load(slot), term(row, k)))
+
+    body = [add(slots[r][q], row, p.add(kb, c(q))) for r, row in enumerate(rows) for q in range(lanes)]
+    stmts = [p.store(s, zero) for row_slots in slots for s in row_slots]
+    stmts.append(p.for_(p.range_(kb.attrs["name"], 0, tail, step=lanes, kind=RangeKind.REDUCE), body))
+    if tail < kk:
+      stmts.append(p.for_(p.range_(kt.attrs["name"], tail, kk, kind=RangeKind.REDUCE), [add(slots[r][0], row, kt) for r, row in enumerate(rows)]))
+    stmts += [p.store(p.view(out, [row]), _pairwise([p.load(s) for s in slots[r]])) for r, row in enumerate(rows)]
+    return stmts
+
+  blocks, left = divmod(m, MATVEC_ROWS)
+  if blocks:
+    ib = p.var(f"ib_{nm}")
+    rows = [p.add(p.mul(ib, c(MATVEC_ROWS)), c(r)) for r in range(MATVEC_ROWS)]
+    ctx.emit(p.for_(p.range_(ib.attrs["name"], 0, blocks, kind=RangeKind.GLOBAL), rows_pass(nm, rows)))
+  if left:
+    it = p.var(f"it_{nm}")
+    ctx.emit(p.for_(p.range_(it.attrs["name"], MATVEC_ROWS * blocks, m, kind=RangeKind.GLOBAL), rows_pass(f"{nm}_t", [it])))
 
 
 def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict[int, np.ndarray] | None = None) -> tuple[str, int] | None:

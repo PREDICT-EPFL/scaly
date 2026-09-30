@@ -13,7 +13,6 @@ from ._common import (
   buffer_refs,
   inline_producer as _as_inline_producer,
   _map_procs,
-  _postorder,
   _private_decls,
   _proc_parts,
   _rebuild_proc,
@@ -64,12 +63,25 @@ def _max_load_executions(node: ProgramNode, buf: str, factor: int) -> int | None
   return best
 
 
-def _count_buf_loads(node: ProgramNode, buf: str) -> int:
-  """Textual occurrences of a load of ``buf`` in ``node`` (tree multiplicity: ``buf*buf`` is 2)."""
-  count: dict[int, int] = {}
-  for n in _postorder(node):
-    count[id(n)] = (n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf) + sum(count[id(a)] for a in n.args)
-  return count[id(node)]
+def _total_load_executions(node: ProgramNode, buf: str) -> int | None:
+  """How many times the loads of ``buf`` in ``node`` run together: each occurrence (tree
+  multiplicity, so ``buf*buf`` counts twice) times its enclosing loops' trip counts. None under a
+  non-static bound. An expensive producer inlined where this exceeds its element count would be
+  computed more than once per element."""
+  total = 0
+  stack = [(node, 1)]
+  while stack:
+    n, factor = stack.pop()
+    if n.op == ProgramOp.FOR:
+      tc = _trip_count(n.args[0])
+      if tc is None:
+        return None
+      stack.extend((sub, factor * tc) for sub in n.args[1:])
+      continue
+    if n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf:
+      total += factor
+    stack.extend((sub, factor) for sub in n.args)
+  return total
 
 
 def _expand_inlinables(node: ProgramNode, inlinable: dict[str, tuple[str, ProgramNode]]) -> ProgramNode:
@@ -137,8 +149,8 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   # there, never passed to a CALL, read by exactly one consumer statement, and that consumer
   # re-reads it at most ``producer_size`` times (no compute blow-up — this is what keeps the
   # producer out of a matmul/contraction operand position, where each element is read m*n*k
-  # times). Expensive (libm) producers additionally must appear exactly once textually so the
-  # call isn't duplicated (``buf*buf``).
+  # times). Expensive (libm) producers additionally must not be computed more than once per
+  # element in all: ``buf*buf`` is refused, a reduction's partial sums reading each element once are not.
   inlinable: dict[str, tuple[str, ProgramNode]] = {}
   expanded_expensive: dict[str, bool] = {}
   expanded_reads: dict[str, frozenset[str]] = {}
@@ -159,7 +171,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
       continue
     rhs_loads = buffer_refs(rhs).loads
     is_expensive = _has_expensive(rhs) or any(expanded_expensive.get(name, False) for name in rhs_loads)
-    if is_expensive and _count_buf_loads(body[ci], buf) != 1:
+    if is_expensive and ((total := _total_load_executions(body[ci], buf)) is None or total > producer_size):
       continue
     moved_reads = set(buffer_refs(rhs, aliases).reads)
     for name in rhs_loads & inlinable.keys():
