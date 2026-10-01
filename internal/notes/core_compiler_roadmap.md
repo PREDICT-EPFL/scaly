@@ -51,9 +51,10 @@ KKT the Karush–Kuhn–Tucker system of an IPM, TACO the Tensor Algebra Compile
 13. [Runtime indexing, in-place updates and external code](#runtime-indexing-in-place-updates-and-external-code)
 14. [Milestone checks](#milestone-checks)
 15. [What devrush gives us](#what-devrush-gives-us)
-16. [Open questions](#open-questions)
-17. [Evidence from devrush](#evidence-from-devrush)
-18. [How this roadmap was made](#how-this-roadmap-was-made)
+16. [Devrush as a source of tests and examples](#devrush-as-a-source-of-tests-and-examples)
+17. [Open questions](#open-questions)
+18. [Evidence from devrush](#evidence-from-devrush)
+19. [How this roadmap was made](#how-this-roadmap-was-made)
 
 ## Decisions
 
@@ -138,7 +139,18 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
     register-blocked dense products with tile sizes chosen in Python, as ordinary expressions.
     Lowering keeps the structure they wrote (Function boundaries, loops, lowering hints), keeps
     small loop carries in C locals, reads affine slices in place and hoists packing out of loops.
-    Scaly does not try to rediscover BLASFEO's kernels by itself.
+    Scaly does not try to rediscover BLASFEO's kernels by itself. Devrush's later speed work
+    (register tiles, cache panels and blocked factorizations chosen in lowering) is a study for
+    after this roadmap, not part of it.
+15. **Processor knowledge reaches lowering only, as build options.** There is no target object.
+    What the processor and the compiler can do reaches the compiler as main's `BuildRecipe` fields
+    (`cpu`, `lanes`, `dialect`, `vector_libm`, `reciprocal`), and a field joins when a lowering
+    choice first needs one. Only lowering and the program passes read them: the expression graph,
+    derivative helpers and library Functions are the same for every recipe, so a derivative cache
+    or a template instance never keeps the choices of the recipe it was first built under (devrush
+    read its target while building seed groups, and its caches kept the first target's grouping).
+    A library Function that wants a schedule chosen by size says so with a lowering hint, which
+    lowering resolves against the recipe.
 
 ## The core language
 
@@ -166,7 +178,7 @@ What devrush's registered ops needed from the compiler, and the core capability 
 |---|---|---|
 | `ragged_add`, `ragged_dot` | inner runs `lo[g] <= p < hi[g]` of run-time length | a run-time trip count on `LOOP` under a static bound, C-121 |
 | `ragged_add` on the work column, row swaps in `lu`, the sweeps' updates | updating a large carry without copying it | buffer reuse in lowering with an in-place contract, C-138 |
-| `cholesky`, `ldl`, `trisolve` with `Unroll` | straight-line code on small sizes | unrolling static loops by the target's budget, C-154 |
+| `cholesky`, `ldl`, `trisolve` with `Unroll` | straight-line code on small sizes | unrolling static loops by a straight-line budget, C-154 |
 | `trisolve`'s four partial sums, `blocked_sum` | lanes on a reduction whose bounds are loaded | lanes with a remainder loop, C-113 |
 
 ## Order of work
@@ -259,6 +271,8 @@ Why this order:
 - Before an item changes an IR, AD or codegen path that only a benchmark exercises, copy a small
   reproduction into `tests/` (AGENTS.md). Every new gate is shown to fail by perturbing what it
   checks.
+- Look in devrush's tests and examples for the feature the item adds, and port the ones that show
+  it working (see [Devrush as a source of tests and examples](#devrush-as-a-source-of-tests-and-examples)).
 - C snapshots stay byte-identical unless the item says it regenerates them, and a regeneration comes
   with the reviewed diff and measurements of source size, generation time and run time on the
   benchmark problems.
@@ -306,8 +320,11 @@ intern hit, `Expr` and `ProgramNode` return the cached node and the dataclass `_
 reassigns every field, so a later construction replaces `value` and `attrs` and resets `_key_cache`.
 `Expr.const` keeps the caller's array, so mutating that array changes an interned node.
 `ir/program.py::_attrs_key` keys floats by value, so `const_float(0.0) is const_float(-0.0)` and a
-constant's sign can flip. Use `@dataclass(init=False)` and set fields only on a miss; encode floats
-by their bits in both `_attrs_key` functions (signed zeros stay distinct, NaN interns); copy and
+constant's sign can flip. Use `@dataclass(init=False)` and set fields only on a miss, in both
+dialects; encode floats by their bits in both `_attrs_key` functions (signed zeros stay distinct, a
+NaN attribute matches itself) and key bools, ints and floats by kind, so `1`, `True` and `1.0` are
+three nodes, NumPy's scalars included (devrush found a hit turning `take(fill=0.0)` into
+`take(fill=-0.0)` in an existing Function, and `1` into `True` in a program node); copy and
 freeze constants, index tables and patterns (`writeable=False`) and freeze `attrs` mappings. A
 determinism test forbids module-level counters in `src/`, since generated names must stay
 content-derived.
@@ -383,6 +400,18 @@ relative to the cache root;
 a missing artifact behind a valid index entry is rebuilt; `invalidate_cache` uses the index instead
 of rendering. Test: a subprocess with a different `PYTHONHASHSEED` loads from the cache and never
 calls `lower_function`.
+
+Devrush built this key (`codegen/structure.py`, its "JIT finds a library from the graph"), and two
+reviews of it found fifteen ways for one key to cover two renderings. Each is a test here: a pass
+inserted in the pipeline; an option read while rendering; a source file replaced with its
+modification time kept, or edited before scaly loads; stale bytecode; a symlink or directory
+swapped under a live process; a rule that carries state (a closure, a bound method, a partial); a
+wrapper carrying a scaly function's name; a dtype equal by name to another C type; a class defined
+inside a function; nodes numbered by object address. Where the digest cannot be sure, there is no
+key and the Function renders as today. A `SCALY_JIT_KEY=verify` mode renders on every hit and
+raises when the rendered C, the workspace size or the link flags differ from the entry's; CI runs
+the suite under it. Devrush measured a second process's first result from 1.3 s to 0.17 s on its
+IPM solvers, with the digest about 1% of a render.
 
 ## One AD engine
 
@@ -516,7 +545,10 @@ gains its integer and boolean formats here. The AD half waits for C-99: `SELECT`
 tangents, reverse sends `where(c, t, 0)` and `where(c, 0, t)`, and C-99's masked-partial helper
 keeps a NaN partial of the unchosen branch (`sqrt` at 0) out of the result. Sparsity and support
 take the union of branches, and the QP affinity proof treats a select condition as nonlinear;
-devrush's proof accepted `|x|` as quadratic because its pattern ignored predicates.
+devrush's proof accepted `|x|` as quadratic because its pattern ignored predicates. Inside a loop,
+when one branch is a load that cannot fault and the other is no work, lowering computes the branch
+before the select: C does not evaluate the untaken side of `?:`, so the compiler cannot hoist the
+load and keeps a branch in the loop (devrush: a masked product 2.6 times faster).
 
 **C-105. Nonsmooth derivatives and extremum reductions.** Ties split equally, `floor` and `ceil`
 have zero derivative, and `abs` has `sign(x)` with `sign(0) = 0` (main's `x/|x|` is NaN at 0).
@@ -635,7 +667,8 @@ materialized unless it is cheap, by the caps `fuse_elementwise` applies today. F
 iteration plans, not only consumer counts: a sparse producer is inlined only into a consumer that
 shares its traversal, and otherwise kept in a workspace or materialized. The consumer-agreement
 merge of tinygrad's `run_rangeify` (share a producer when all consumers index it the same way) is in
-scope: devrush's many short IPM loops justify it. `fuse_elementwise.py` and `inline_producer` are
+scope: devrush's many short IPM loops justify it (its IPM step is 213 loops, none above 5% of the
+step, one pass per intermediate vector). `fuse_elementwise.py` and `inline_producer` are
 deleted. Memoize `read` on `(expr, coords)`, since re-walking deferred subgraphs is what made
 `fuse_ranges._rewrite` slow before. Gates from the old C-8: race-car `SZ_W` zero at W = 1, chain M=5
 workspace under 100k doubles (109,944 today), npmpc within 5%, `_assert_fused` still holds; plus the
@@ -659,15 +692,21 @@ need. A register-blocked dense product written in Python (4×4 blocks of slices,
 `k` panels carrying the block accumulator) must lower to: the block as straight-line code over C
 locals; the accumulator carry in C locals rather than workspace slots; slices read in place; a
 packed layout the user materializes hoisted out of the loops; Function boundaries, loops and
-lowering hints (`.scalar()`, `.block()`) kept; generated buffer parameters marked `restrict`, which
-they are not today. Each property is a test on the generated C, and a small kernel library in
+lowering hints (`.scalar()`, `.block()`) kept. No `restrict`: devrush measured it on every pointer
+at 0.996 in geometric mean over 26 kernels, since private buffers are stack arrays whose address
+never escapes. Each property is a test on the generated C, and a small kernel library in
 `tests/` (a 4×4 product, a panel Cholesky) is measured against the same kernels in BLASFEO.
 
 **C-152. Demanded entries.** The backward counterpart of support: which entries of a node any
 consumer reads, computed in lowering, so a node is computed over its support intersected with its
 demanded entries. Devrush's evidence: 984 entries computed where 527 are gathered, and a
 parameter-dependent QP Hessian built dense every solve and then gathered (its todo item CS-12). It
-generalizes C-130's sampled `MATMUL` adjoint to any producer of a gather.
+generalizes C-130's sampled `MATMUL` adjoint to any producer of a gather. Devrush reached part of
+this with rewrite rules in `passes/expr.py` (a gather read through a transpose, a slice, a sum, a
+concatenation or a scatter, and a product with a mostly-zero constant placed as a scatter); its
+IPOPT Jacobian of a mapped multiple-shooting chain ran in 0.39 to 0.42 of its time. Its cases are
+the tests here, including the guards it found by measuring: a gather that repeats entries does not
+distribute over a sum, and a computed part of a concatenation stays whole.
 
 **C-82. Frame budget.** As the todo describes. It can land any time after C-86: a budget computed
 over the final program stays valid as the schedules change.
@@ -957,9 +996,12 @@ stored elements; nested loops each count their own, and the product is not bound
 raises and names `sc.custom_derivative`. Tests: finite differences, duality, zero-trip and early-exit
 loops, reverse scans, a trajectory output, and a Hessian of a while loop by forward over reverse.
 
-**C-154. Unrolling static loops by the target's budget.** `LOOP` lowering unrolls a loop whose
-length is static and whose per-step slices are constants when the body, times the length, fits the
-target's straight-line budget, honouring the node's lowering hint. Constant folding then deletes
+**C-154. Unrolling static loops by a straight-line budget.** `LOOP` lowering unrolls a loop whose
+length is static and whose per-step slices are constants when the body, times the length, fits a
+straight-line budget, honouring the node's lowering hint. The budget is a constant in lowering, and
+becomes a `BuildRecipe` field only if a measurement asks for one (decision 15). It counts the whole
+body, every right-hand side of a solve included: devrush counted one and a Hessian's 100-seed solves
+became 860 KB of C. Constant folding then deletes
 the masked terms of a triangle written with `where(iota < j, ...)`, so a library Cholesky of a small
 dense block gives the straight-line code devrush's `Unroll` option produced, without an option.
 Unrolling never changes the reference schedule's summation order (decision 13).
@@ -987,7 +1029,10 @@ reference for the algorithms and the measurements, not for the structure.
 **Contract for every solve.** The matrix classes are stated per solve. A solve reads one stored
 triangle of a symmetric matrix (the lower), and an off-diagonal stored entry stands for both
 mirrored entries, so its cotangent is the sum of both mirrored contributions. A factorization that
-meets an unusable pivot reports it through a status output, never through a NaN alone.
+meets an unusable pivot reports it through a status output, never through a NaN alone. A pivot is
+unusable when it is zero or, finite, at most machine epsilon times the diagonal entry it came from:
+devrush's sparse LDL^T passed pivots 12 to 30 orders below that, and QRECIPE took 74 IPM
+iterations instead of 19 on steps of length 1e-25.
 `solve(K, b)` is a semantic boundary built with `custom_derivative`: the forward rule returns the
 solution and the factorization as residuals, so the primal and all derivative solves share one
 factorization; forward is `dx = K^-1 (db - dK x)`, reverse is `bbar = K^-T xbar` with
@@ -1056,6 +1101,12 @@ functional; writing into the old buffer is a lowering decision, by three rules, 
    proof applies: every index is evaluated at every step with one batched NumPy interpreter over the
    elementwise table, and the entries read must be disjoint from those later links write.
 
+The entries an op reads are not its derivative pattern. Devrush's proof took `floor` and `ceil`,
+whose derivative is zero, for ops that read nothing, and a body writing `floor` of the entries it
+overwrote gave `[2.5, 2.5, 3.5]` where NumPy gives `[1.5, 2.5, 3.5]`. Every read rule is stated per
+op, a missing one reads everything, and in-place forms take their names from C-87's scope, since a
+user Function named like devrush's `<name>_inplace` took the procedure's place.
+
 `LOOP(in_place=...)` names carries that must be updated in place, and lowering raises when it
 cannot prove it, instead of silently copying O(size) per step. The in-place procedure takes one
 `inout` buffer parameter instead of two aliased pointers; `scalarize` refuses it, `hoist_invariant`
@@ -1118,6 +1169,17 @@ library, which removes `SOLVER_CALL` and C-89's zero-derivative guard, and repla
 | Templates | test cases and naming tokens | `__` in names, attribute forwarding, the `ConcreteFunction` subclass |
 | Integrators, interpolation, MPC, IPM | test problems and timings for the milestone checks | the libraries themselves, for now |
 
+## Devrush as a source of tests and examples
+
+This roadmap builds a core small and solid enough that splines, interpolation, integrators, custom
+linear-algebra routines, solvers, optimal-control formulations and examples from almost any field
+are ordinary code on top of it. Devrush already wrote many of them, under `examples/`,
+`tests/integration/`, `tests/linalg/` and its case studies. Each item should use them as a check:
+when a feature lands, port the devrush tests and examples that exercise it, as tests that a small
+example works or as examples that show it is effective. They are the quickest way to find what the
+feature still misses, before a milestone check does. Port the problem and its reference values,
+not devrush's code, and rewrite each one against main's API.
+
 ## Open questions
 
 Choices this roadmap leaves open on purpose. Each names the item that settles it.
@@ -1164,6 +1226,8 @@ protocol, not the reference machine of `benchmark_protocol.md`.
 | A call's value and its derivative run the callee's forward pass twice; on DiffMPC's episode that is 200 against 161 ms | `internal/notes/case_study_e2_report.html`, `case_study_e5_report.html` |
 | The dense backend cannot use matrix-vector kernels while every sparse product goes through index tables; a parameter-dependent QP Hessian is built dense every solve | `internal/notes/perf_gaps_proposal_2026_09_30.html` (A7), devrush `internal/todo.md` CS-12 |
 | 984 entries computed where 527 are gathered | `internal/notes/codegen_speed_o7_report.html` |
+| A graph-keyed JIT index takes a second process's first result from 1.3 s to 0.17 s; two reviews found fifteen holes in the key | devrush `internal/todo.md` "The JIT finds a library from the graph, without rendering", `internal/notes/perf_2026_09_30_gaps/` |
+| `restrict` on every pointer: 0.996 in geometric mean over 26 kernels | `internal/notes/codegen_speed_plan_2026_09_30.html` |
 
 ## How this roadmap was made
 
@@ -1183,6 +1247,12 @@ roadmap) and one adversarial review of the sparse design produced
 [`small_core_static_sparsity_2026_09_30.md`](small_core_static_sparsity_2026_09_30.md), and the
 maintainer settled its decisions. The templates section follows `typing_playground/`, which the
 maintainer designed before that session.
+
+Checked the same day against devrush's codegen-speed and speed-gaps work (its todo's
+"Generated-code speed review" and "Remaining speed gaps" sections). The maintainer kept that
+work's tiling and blocking out of scope, added decision 15 instead of a target object, and folded
+its correctness findings into C-88, C-94, C-104, C-138, C-151, C-152, C-154 and the solve
+contract.
 
 The devrush files worth rereading, all on `origin/devrush`:
 

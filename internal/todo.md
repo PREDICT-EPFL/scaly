@@ -24,7 +24,7 @@ with its box checked until it is flushed out by hand.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 155**
+**Next id: 156**
 
 The frozen experimental `devrush` branch keeps its own todo list, whose ids from C-82 up name
 different items than the same ids here. Cite devrush work by file and title, never by id.
@@ -75,7 +75,7 @@ dependencies and the rules that let lanes run in parallel.
    C-102, C-144; C-151, C-152; API-117, API-4; C-126; the milestone checks API-140 and API-141.
 4. Then D-36, the GPU milestone definition.
 
-Small fixes that fit between any two of these: C-82, S-17, S-142 (before C-139), R-42, C-143,
+Small fixes that fit between any two of these: C-82, S-155, S-17, S-142 (before C-139), R-42, C-143,
 C-145.
 
 ## API
@@ -135,7 +135,9 @@ C-145.
       [Checks](notes/core_compiler_roadmap.md#milestone-checks).
 - [ ] **API-141. A generated sparse QP interior-point solver.** The devrush IPM's structure rebuilt
       on the library sparse LDL^T, loops, predicates and reductions, passing devrush's
-      Maros-Meszaros subset. An example, not a library. After C-135 and C-8.
+      Maros-Meszaros subset, with devrush's split into a setup (the scaling, run once while the
+      matrices stay fixed) and a solve, which is what PIQP's solve timer measures. An example, not
+      a library. After C-135 and C-8.
       [Checks](notes/core_compiler_roadmap.md#milestone-checks).
 
 ### Deferred
@@ -181,8 +183,9 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       variables, temporaries and header identifiers; closes the `_h{n}` collision guard C-53 left
       open. After C-86. [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-88. Interning sets fields once, floats are keyed by bits, constants are frozen.** Fixes
-      intern hits that replace `value` and `attrs`, `sc.const` aliasing the caller's array, and
-      `const_float(0.0) is const_float(-0.0)`. [Design](notes/core_compiler_roadmap.md#foundations).
+      intern hits that replace `value` and `attrs` in both dialects, `sc.const` aliasing the
+      caller's array, `const_float(0.0) is const_float(-0.0)`, and `1`, `True` and `1.0` sharing a
+      node. [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-89. Refuse wrong answers at the boundary.** Non-float64 input and output leaves raise
       until C-107; an active derivative through `SOLVER_CALL` raises instead of returning zero;
       `MINIMUM`/`MAXIMUM` fold with `fmin`/`fmax` like the C.
@@ -207,7 +210,9 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       Function plus versions, render options and C-83's fingerprint; atomic index writes through
       `os.replace` and cache-relative paths, which hold on Windows (R-38); `invalidate_cache`
       without rendering. Gate: a fresh process with another `PYTHONHASHSEED`
-      loads from the cache without calling `lower_function`. After C-88 and API-90.
+      loads from the cache without calling `lower_function`; one test per hole devrush's reviews
+      found; a `SCALY_JIT_KEY=verify` mode that renders on every hit, which CI runs. After C-88 and
+      API-90.
       [Design](notes/core_compiler_roadmap.md#foundations).
 
 ### AD engine
@@ -300,8 +305,8 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       After C-8. [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-151. Predictable lowering of hand-written kernels.** A register-blocked product written
       in Python keeps its structure: blocks as straight-line code over C locals, small loop carries
-      in locals, slices read in place, packing hoisted, Function boundaries and lowering hints kept,
-      `restrict` buffer parameters. Each property tested on the generated C; a 4×4 product and a
+      in locals, slices read in place, packing hoisted, Function boundaries and lowering hints kept;
+      no `restrict`, which devrush measured as neutral. Each property tested on the generated C; a 4×4 product and a
       panel Cholesky measured against BLASFEO. After C-121 and C-8.
       [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-152. Demanded entries.** Which entries of a node its consumers read, so a node is computed
@@ -382,8 +387,9 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 - [ ] **C-123. Reverse AD through `LOOP`.** One backward loop over the stored trajectory, visiting
       exactly the steps taken; differentiable trajectories; `max_trajectory=`. After C-122.
       [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
-- [ ] **C-154. Unrolling static loops by the target's straight-line budget**, honouring lowering
-      hints, so small library factorizations become straight-line code without an option; the
+- [ ] **C-154. Unrolling static loops by a straight-line budget** that counts every right-hand
+      side, a constant in lowering until a measurement asks for a `BuildRecipe` field, honouring
+      lowering hints, so small library factorizations become straight-line code without an option; the
       reference schedule's summation order unchanged. After C-121.
       [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
 - [ ] **C-125. `COND`** with branch Functions, a boolean or clamped integer selector, program `IF`,
@@ -395,7 +401,8 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 ### Linear algebra as library Functions
 
 - [ ] **C-133. Triangular solves, Cholesky, and `solve(assume="pos")`** as library Functions over
-      `LOOP` under one solve contract: stated matrix classes, one stored triangle, pivot status, an
+      `LOOP` under one solve contract: stated matrix classes, one stored triangle, pivot status (a
+      pivot at most epsilon times its diagonal entry fails), an
       implicit derivative reusing the factorization through API-101's residuals, a reference
       schedule. After API-101, C-121, C-138 and C-154.
       [Design](notes/core_compiler_roadmap.md#linear-algebra-as-library-functions).
@@ -416,7 +423,8 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       indices. After C-93 and C-104.
       [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
 - [ ] **C-138. In-place loop carries** by buffer reuse in lowering: last use, same index, disjoint
-      indices; the `in_place` contract raises instead of copying; `inout` procedure parameters.
+      indices; read rules stated per op, never taken from derivative patterns; the `in_place`
+      contract raises instead of copying; `inout` procedure parameters.
       After C-136 and C-121.
       [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
 - [ ] **C-139. `sc.extern` and `sc.CLibrary`.** A concrete C function from a frozen build
@@ -495,6 +503,12 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 
 ### Now
 
+- [ ] **S-155. Vendor PIQP 0.6.4.** 0.6.2's dual recovery (`KKTSystem::solve`) reads one entry
+      past its index of lower-bounded rows, so in about one process in ten `ocp/linear_mpc.ipynb`'s
+      condensed QP hits `MAX_ITER` with a NaN solution. Upstream fixed it in 0.6.4 (PIQP issue 42).
+      Devrush has the bump, a `plugins/scaly-piqp/hatch_build.py` that rebuilds when a pin differs
+      from the versions the notices record, and `test_piqp_dual_recovery.py`, which makes the bad
+      read certain with a preloaded `malloc`. A cold rebuild is 5 to 8 minutes.
 - [ ] **S-142. Validate PIQP option names before code generation.** Unknown settings reach the
       generated C and fail at compile time with a C error. Before C-139 moves the plugins onto
       externs, so it is not written twice. Rationale:
