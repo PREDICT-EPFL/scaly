@@ -109,8 +109,8 @@ Python numerical solver.
 fixes its structure (the patterns of `P`, `A` and `G` and which bounds are finite), and traces PIQP's
 algorithm on the extracted data as an ordinary graph: Ruiz equilibration and the Mehrotra iterations
 are `while_loop`s, and the KKT system is factored by `linalg.SparseLDL` or, condensed, by a dense
-Cholesky. The condensed matrix is assembled through the patterns' index tables, except that a
-constraint matrix with dense rows enters as a dense product, which the lowering runs in register
+Cholesky. The dense backend assembles the condensed matrix through the patterns' index tables, and
+multiplies a constraint matrix with dense rows as a dense array, which the lowering runs in register
 tiles. The solver `Function` has no extern callee, so it lowers, fuses and ships like any other.
 
 ## The pieces

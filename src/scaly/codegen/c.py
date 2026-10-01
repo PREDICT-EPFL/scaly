@@ -348,7 +348,8 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
 
 # A ``VECTOR`` loop renders as GNU vector statements when its body is what they can express: a
 # static trip count of two, four or eight lanes, and float64 stores and assignments of arithmetic
-# whose every access moves 0 or 1 elements a lane. An access at stride 1 is a load or store through
+# whose every access moves 0 or 1 elements a lane (an integer assigned in it is an index, the
+# lanes' own or one they share). An access at stride 1 is a load or store through
 # the unaligned, ``may_alias`` vector type; one at stride 0 is a scalar, which vector arithmetic
 # broadcasts. Each multiply-add stays one expression, which the C compiler fuses as it would the
 # scalar one, so each lane computes what the loop's trip computes. The statements run for every
@@ -378,24 +379,25 @@ def _mentions(node: ProgramNode, name: str) -> bool:
   return any(n.op == ProgramOp.VAR and n.attrs["name"] == name for n in _nodes(node))
 
 
-def _lane_stride(index: ProgramNode, lane: str) -> int | None:
-  """How many elements ``index`` moves from one lane to the next: its coefficient in the variable
-  ``lane`` when it is affine in it with a constant one, else None."""
+def _lane_stride(index: ProgramNode, strides: dict[str, int]) -> int | None:
+  """How many elements ``index`` moves from one lane to the next: its coefficient in the lane
+  variable when it is affine in it with a constant one, else None. ``strides`` holds the lane
+  variable (1) and the indices assigned in the loop that move with it."""
   op = index.op
   if op == ProgramOp.VAR:
-    return int(index.attrs["name"] == lane)
+    return strides.get(index.attrs["name"], 0)
   if op == ProgramOp.CONST_INT:
     return 0
   if op in (ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.NEG):
-    found = [_lane_stride(arg, lane) for arg in index.args]
-    strides = [stride for stride in found if stride is not None]
-    if len(strides) < len(found):
+    found = [_lane_stride(arg, strides) for arg in index.args]
+    moves = [stride for stride in found if stride is not None]
+    if len(moves) < len(found):
       return None
     if op == ProgramOp.NEG:
-      return -strides[0]
+      return -moves[0]
     if op != ProgramOp.MUL:
-      return strides[0] + strides[1] if op == ProgramOp.ADD else strides[0] - strides[1]
-    (x, y), (a, b) = index.args, strides
+      return moves[0] + moves[1] if op == ProgramOp.ADD else moves[0] - moves[1]
+    (x, y), (a, b) = index.args, moves
     if a == b == 0:
       return 0
     if a == 0 and x.op == ProgramOp.CONST_INT:
@@ -403,14 +405,14 @@ def _lane_stride(index: ProgramNode, lane: str) -> int | None:
     if b == 0 and y.op == ProgramOp.CONST_INT:
       return a * int(y.attrs["value"])
     return None
-  return None if _mentions(index, lane) else 0
+  return None if any(_mentions(index, name) for name in strides) else 0
 
 
-def _access_stride(view: ProgramNode, lane: str) -> int | None:
-  return 0 if not view.args else _lane_stride(view.args[0], lane) if len(view.args) == 1 else None
+def _access_stride(view: ProgramNode, strides: dict[str, int]) -> int | None:
+  return 0 if not view.args else _lane_stride(view.args[0], strides) if len(view.args) == 1 else None
 
 
-def _lanes_of(node: ProgramNode, lane: str, vectors: set[str], memo: dict[int, bool | None]) -> bool | None:
+def _lanes_of(node: ProgramNode, strides: dict[str, int], vectors: set[str], memo: dict[int, bool | None]) -> bool | None:
   """Whether ``node`` differs between the lanes (a vector) or not (a scalar), or None when the
   vector statements cannot express it."""
   key = id(node)
@@ -420,12 +422,12 @@ def _lanes_of(node: ProgramNode, lane: str, vectors: set[str], memo: dict[int, b
   if op in (ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
     result: bool | None = False
   elif op == ProgramOp.VAR:
-    result = None if node.attrs["name"] == lane else node.attrs["name"] in vectors
+    result = None if node.attrs["name"] in strides else node.attrs["name"] in vectors
   elif op == ProgramOp.LOAD:
-    stride = _access_stride(node.args[0], lane)
+    stride = _access_stride(node.args[0], strides)
     result = False if stride == 0 else True if stride == 1 and node.dtype == dtypes.float64 else None
   else:
-    args = [_lanes_of(arg, lane, vectors, memo) for arg in node.args]
+    args = [_lanes_of(arg, strides, vectors, memo) for arg in node.args]
     if None in args:
       result = None
     elif not any(args):
@@ -468,6 +470,7 @@ def _emit_vector_loop(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[s
     return False
   lane, vtype = rng.attrs["name"], f"double{lanes}"
   bound = {lane: str(start.attrs["value"])}
+  strides = {lane: 1}
   vectors: set[str] = set()
   memo: dict[int, bool | None] = {}
   body: list[str] = []
@@ -482,9 +485,9 @@ def _emit_vector_loop(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[s
   for s in stmt.args[1:]:
     if s.op == ProgramOp.STORE:
       view, value = s.args
-      if _access_stride(view, lane) != 1 or value.dtype != dtypes.float64:
+      if _access_stride(view, strides) != 1 or value.dtype != dtypes.float64:
         return False
-      kind = _lanes_of(value, lane, vectors, memo)
+      kind = _lanes_of(value, strides, vectors, memo)
       if kind is None:
         return False
       rhs = _emit_vector(value, ptr_expr, vtype, memo, bound)
@@ -505,13 +508,22 @@ def _emit_vector_loop(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[s
       lanes_stored = " ".join(f"{ptr}[{at_lane(at)}] = v_[{at}];" for at in range(lanes))
       body.append(f"{{ const {vtype} v_ = {rhs}; {lanes_stored} }}")
     elif s.op == ProgramOp.ASSIGN and s.attrs.get("declare") and s.dtype == dtypes.float64:
-      kind = _lanes_of(s.args[0], lane, vectors, memo)
+      kind = _lanes_of(s.args[0], strides, vectors, memo)
       if kind is None:
         return False
       name = s.attrs["target"]
       if kind:
         vectors.add(name)
       body.append(f"{vtype if kind else 'double'} {c_ident(name)} = {_emit_vector(s.args[0], ptr_expr, vtype, memo, bound)};")
+    elif s.op == ProgramOp.ASSIGN and s.attrs.get("declare") and s.dtype.is_integer:
+      # An index named because two accesses use it: the lanes' own (its value at the first lane,
+      # and its stride for the accesses through it) or one they share.
+      stride = _lane_stride(s.args[0], strides)
+      if stride is None:
+        return False
+      if stride:
+        strides[s.attrs["target"]] = stride
+      body.append(f"{s.dtype.c_type} {c_ident(s.attrs['target'])} = {_emit_scalar(s.args[0], ptr_expr, bound)};")
     else:
       return False
   pad = " " * indent

@@ -9,6 +9,15 @@ from ._common import _walk
 from .scheduling import ScalarNameAllocator, schedule_values
 
 
+def _accumulates(store: ProgramNode) -> bool:
+  """Whether ``store`` adds to the element it stores, one step of a running sum. The sum is a chain
+  through that element whatever the C compiler does with a select in it, so a branch computed
+  ahead buys nothing there and costs what the branch would have skipped (1.2-1.7x in sums over a
+  mask the processor predicts)."""
+  target, value = store.args
+  return value.op in (ProgramOp.ADD, ProgramOp.SUB) and any(arg.op == ProgramOp.LOAD and arg.args[0] == target for arg in value.args)
+
+
 def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
   """Insert local assignments that bound scalar depth without moving loads across statements; in a
   loop, also those that compute a select's loading branches ahead of it (``schedule_values``)."""
@@ -23,7 +32,7 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
         out.append(ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], names, True)), stmt.attrs, stmt.dtype))
         continue
       if stmt.op == ProgramOp.STORE:
-        declarations, roots = schedule_values((*stmt.args[0].args, stmt.args[1]), names, ahead=looped)
+        declarations, roots = schedule_values((*stmt.args[0].args, stmt.args[1]), names, ahead=looped and not _accumulates(stmt))
         index = roots[:-1]
         target = ProgramNode(ProgramOp.VIEW, index, stmt.args[0].attrs, stmt.args[0].dtype)
         out.extend((*declarations, p.store(target, roots[-1])))

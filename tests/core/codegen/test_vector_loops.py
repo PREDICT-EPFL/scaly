@@ -85,6 +85,25 @@ def test_a_vector_body_renders_as_vector_statements() -> None:
     lambda q: p.store(_at(X, q), p.add(t, p.const_float(1.0))),
   )
   assert text.splitlines() == ["{", "  double2 t = ((*(double2*)(y)) * 2.0);", "  { const double2 v_ = (t + 1.0); x[0] = v_[0]; x[1] = v_[1]; }", "}"]
+  # An index the lanes share, named because two accesses use it, is an integer beside the vectors.
+  base = p.var("base", dtypes.int64)
+  text = _rendered(
+    lambda q: p.assign("base", p.mul(p.var("row", dtypes.int64), p.const_int(8)), dtypes.int64, declare=True),
+    lambda q: p.store(_at(X, p.add(base, q)), p.mul(p.load(_at(Y, p.add(base, q))), p.const_float(2.0))),
+  )
+  assert text.splitlines()[:2] == ["{", "  int64_t base = (row * 8);"] and "(*(double2*)(y + (base + 0)))" in text and "for (" not in text
+  # The lanes' own index, named the same way: its value at the first lane, the accesses at stride 1.
+  at = p.var("at", dtypes.int64)
+  text = _rendered(
+    lambda q: p.assign("at", p.add(p.mul(p.var("row", dtypes.int64), p.const_int(8)), q), dtypes.int64, declare=True),
+    lambda q: p.store(_at(X, at), p.add(p.load(_at(X, at)), p.load(_at(Y, q)))),
+    start=2,
+  )
+  assert (
+    text.splitlines()[:2] == ["{", "  int64_t at = ((row * 8) + 2);"]
+    and "(*(double2*)(x + at)) + (*(double2*)(y + 2))" in text
+    and "for (" not in text
+  )
   # Lanes 6 and 7: the vector starts at the first lane's element.
   text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, q))), start=6)
   assert text == "{ const double2 v_ = (*(double2*)(y + 6)); x[6] = v_[0]; x[7] = v_[1]; }"
@@ -103,6 +122,8 @@ def test_a_vector_body_renders_as_vector_statements() -> None:
     "three lanes",
     "a run-time bound",
     "the lane as a value",
+    "an index named per lane",
+    "an index not affine in the lane",
   ],
 )
 def test_other_bodies_render_as_loops(why: str) -> None:
@@ -127,6 +148,18 @@ def test_other_bodies_render_as_loops(why: str) -> None:
     text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, q))), lanes=3)
   elif why == "a run-time bound":
     text = _rendered(lambda q: p.store(_at(X, q), p.load(_at(Y, q))), stop=p.var("n"))
+  elif why == "an index named per lane":  # at = 2 * q: the temporary differs between the lanes
+    at = p.var("at", dtypes.int64)
+    text = _rendered(
+      lambda q: p.assign("at", p.mul(q, p.const_int(2)), dtypes.int64, declare=True),
+      lambda q: p.store(_at(X, q), p.load(_at(Y, at))),
+    )
+  elif why == "an index not affine in the lane":
+    at = p.var("at", dtypes.int64)
+    text = _rendered(
+      lambda q: p.assign("at", p.mul(q, q), dtypes.int64, declare=True),
+      lambda q: p.store(_at(X, q), p.load(_at(Y, at))),
+    )
   else:  # the lane number itself, in arithmetic with a vector: not an access
     lane = lambda q: p.ProgramNode(p.ProgramOp.CAST, (q,), dtype=dtypes.float64)  # noqa: E731
     text = _rendered(lambda q: p.store(_at(X, q), p.add(p.load(_at(Y, q)), lane(q))))

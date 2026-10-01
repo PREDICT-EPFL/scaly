@@ -65,14 +65,14 @@ def work(s: QPStructure) -> Work:
 
 # Microseconds per unit of each count, fitted on the reference machine to the 55 problems of the IPM
 # speed study (``internal/notes/perf_2026_09_30_gaps/backend_fit.py``: the faster backend on 53, the
-# worst pick 1.10x the better, and the same leaving each problem out of its own fit). Dense: a
+# worst pick 1.17x the better, and the same leaving each problem out of its own fit). Dense: a
 # constant, vectors, entries, the assembly, the factor as loops, the factor as straight-line code,
 # the solve. Sparse: a constant, vectors, entries, the update multiply-adds, the entries of ``L``.
 # A zero is a count the fit found no time in beside the others. Refit when either backend's
 # generated code changes speed: the weights before the dense factor went into blocks took the
 # sparse backend for four problems the dense one had become 1.1-1.2x faster on.
-DENSE_WEIGHTS = (1.145e-1, 7.68e-4, 2.457e-3, 3.762e-4, 2.594e-5, 0.0, 2.517e-3)
-SPARSE_WEIGHTS = (7.138e-2, 0.0, 0.0, 6.169e-5, 8.793e-3)
+DENSE_WEIGHTS = (1.041e-1, 2.237e-3, 2.404e-3, 3.711e-4, 2.615e-5, 0.0, 2.485e-3)
+SPARSE_WEIGHTS = (6.997e-2, 0.0, 0.0, 5.457e-5, 9.041e-3)
 
 
 def iteration_us(w: Work, backend: Backend) -> float:

@@ -277,12 +277,26 @@ their timing across writes and calls. Generated names reserve existing C identif
 The same temporaries make selects what the C compiler can vectorize. C evaluates only one branch of
 `c ? a : b` and skips the right operand of `&&` and `||`, and a load that C would skip is one the
 compiler may not move ahead of the condition, so it keeps a branch and the loop around it stays
-scalar. A graph evaluates every operand anyway, so inside a loop the scheduler names such an operand,
-when it holds a load, in a temporary before the statement: `where(mask, 1.0 / x, 0.0)` renders as the
-reciprocal of every element and then a select. Three kinds of operand stay under their condition,
-because computing them where C would not could fault or cost a call: a libm call, an integer
-division or remainder, and a float converted to an integer. Straight-line code keeps its branches,
-which skip the work.
+scalar. A graph evaluates every operand anyway, so inside a loop the scheduler names such an operand
+in a temporary before the statement: `where(mask, 1.0 / x, 0.0)` renders as the reciprocal of every
+element and then a select.
+
+Computing a branch for every element is a trade against a branch the processor predicts, which
+skips the work. The scheduler takes it only where it pays:
+
+- One of the select's two branches must be no work at all (a constant, a named value, a load). A
+  piecewise function with arithmetic in every piece keeps its branches.
+- A variable must enter the condition. A select on a flag keeps its branches, and the C compiler
+  tests the flag once outside the loop.
+- The branch must be a float computed with operations that are one instruction under every
+  compiler and cannot fault. A libm call, a square root, a minimum, a floor, an integer division
+  and a float converted to an integer stay under their condition.
+- A running sum keeps its branch, because the sum is a chain through one element whatever the
+  compiler does with the select.
+- Straight-line code keeps its branches, since it has no loop to vectorize.
+
+A loop the C compiler vectorizes can differ in the last bit from the same loop left scalar, because
+the compiler fuses multiply-adds differently in vector code.
 
 ## Deep expressions
 

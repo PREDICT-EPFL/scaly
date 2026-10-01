@@ -1,0 +1,6 @@
+call overhead 1.82 us
+PRIMALC2   n  231 p    0 m    7 density P 0.01 A 0.00 G 1.00 | sparse    164.0 us  dense     43.1 us  chol    126.7 us  |diff| 0.0e+00
+DUAL3      n  111 p    1 m    0 density P 0.99 A 1.00 G 0.00 | sparse     31.5 us  dense     21.0 us  chol     19.6 us  |diff| 0.0e+00
+ex_dense   n   30 p    5 m   40 density P 1.03 A 1.00 G 1.00 | sparse     10.2 us  dense      5.4 us  chol      0.9 us  |diff| 0.0e+00
+LOTSCHD    n   12 p    7 m    0 density P 0.08 A 0.64 G 0.00 | sparse      3.0 us  dense      2.7 us  chol      0.1 us  |diff| 0.0e+00
+DUALC2     n    7 p    1 m  228 density P 1.14 A 1.00 G 1.00 | sparse      4.1 us  dense      4.6 us  chol      0.1 us  |diff| 0.0e+00

@@ -109,11 +109,12 @@ def dense_rows(rows: np.ndarray, count: int, n: int) -> bool:
   """Whether ``M^T W M`` for a matrix of ``count`` rows and ``n`` columns, with entries in rows
   ``rows``, is cheaper as a dense product than through its index tables. The sparse form multiplies
   each pair of entries of a row, ``sum(nnz_row^2)`` products, at about four times a dense
-  multiply-add's cost (PRIMALC2's seven dense rows of 231: 373 000 products in 163 us against
-  43 us), so the dense form wins from a quarter of ``count * n^2``. Two floors, both measured: under
-  eight columns the dense product has no whole register tile to run in (DUALC2, seven columns:
-  1.08x slower), and under 4 096 products the sparse form is too little work for the dense one's
-  copies to pay (LOTSCHD, 532 products: 1.18x slower)."""
+  multiply-add's cost (PRIMALC2's seven dense rows of 231: 373 000 products in 164 us against
+  43 us), so the dense form wins from a quarter of ``count * n^2``. Two floors, both measured in the
+  solver: under eight columns the dense product has no whole register tile to run in (DUALC2,
+  seven columns: 1.06x slower), and under 4 096 products the sparse form is too little work for the
+  dense one's copies to pay (LOTSCHD, 532 products: 1.2x slower). The measurements are
+  ``internal/notes/perf_2026_09_30_gaps/results/assembly_c216.txt`` and ``ipm_dense_c216_rule*.md``."""
   per_row = np.bincount(np.asarray(rows, dtype=np.int64), minlength=count).astype(np.float64)
   products = float(per_row @ per_row)
   return n >= DENSE_PRODUCT_COLUMNS and products >= DENSE_PRODUCT_WORK and 4.0 * products >= float(count) * n * n

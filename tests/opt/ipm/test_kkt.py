@@ -189,6 +189,8 @@ def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend, toleran
     (100, 7, 7, False),  # no whole register tile in seven columns
     (16, 16, 16, True),  # 4 096 products of the sparse form
     (15, 16, 16, False),  # 3 840: too little work
+    (51, 9, 9, True),  # 4 131
+    (50, 9, 9, False),  # 4 050
     (40, 32, 16, True),  # half of each row: a quarter of the dense product's multiply-adds
     (40, 32, 15, False),
   ],
@@ -226,5 +228,8 @@ def test_the_condensed_matrix_takes_dense_rows_as_dense_products(dense_a: bool, 
   got = np.asarray(fn((data, x_reg, np.array(delta), z_reg))).reshape(n, n)
   want = P + np.diag(x_reg) + A.T @ A / delta + (G.T / z_reg) @ G
   np.testing.assert_allclose(np.tril(got), np.tril(want), rtol=1e-12, atol=1e-12)
-  if not (dense_a or dense_g):
+  if dense_a or dense_g:  # P's stored triangle went into the lower one alone
+    assert np.triu(P, 1).any()
+    np.testing.assert_allclose(np.triu(got, 1), np.triu(want - P, 1), rtol=1e-12, atol=1e-12)
+  else:
     np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12)

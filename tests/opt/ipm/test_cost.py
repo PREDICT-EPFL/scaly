@@ -72,6 +72,9 @@ def test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds(nam
     ("DUAL1", "dense"),
     ("PRIMALC1", "sparse"),
     ("HS118", "sparse"),
+    ("HS21", "sparse"),  # the smallest problems: the constants decide
+    ("HS76", "sparse"),
+    ("GENHS28", "sparse"),
   ],
 )
 def test_the_reference_machine_takes_the_faster_backend(name: str, backend: str) -> None:

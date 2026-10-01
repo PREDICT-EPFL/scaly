@@ -50,18 +50,18 @@ silicon, a Cholesky factor up to order 23 and a solve of one vector up to 63), d
 is rendered; with `sc.options(linalg=dict(dense_unroll=...))`, the orders up to it, decided when
 the op is built. Larger orders become loops with triangular bounds that do not grow with the order:
 
-- `cholesky` runs by 4×4 tiles of `L`: a tile's dot products over the columns to its left run
+- `cholesky` runs by 4×4 tiles of `L`. A tile's dot products over the columns to its left run
   together, each row entry loaded once for the whole tile and the sums kept in registers, each dot
-  product in four partial sums over contiguous quarters of its columns. About 12 G multiply-adds a
-  second at order 300 on an Apple M3, three times the row-by-row kernel it replaced. From six
-  blocks of the processor's register tile (`Target.product_tile`, order 48 on Apple silicon) it goes
-  by blocks of columns instead: each block's update by the columns to its left runs in register
-  tiles, the matrix product's fastest code, with its dot products in the same four quarters added
-  pairwise, and the block itself is factored and solved as before, dividing by the diagonal.
+  product in four partial sums over contiguous quarters of its columns. From six blocks of the
+  processor's register tile (`Target.product_tile`, order 48 on Apple silicon) it goes by blocks of
+  columns instead. The columns to a block's left update it in register tiles, the matrix product's
+  code, with the dot products in the same four quarters added pairwise, and the block is then
+  factored and solved as before, dividing by the diagonal.
 - `ldl` runs row by row, taking dot products of contiguous rows in four interleaved partial sums.
 - A solve with the matrix transposed sweeps rows of the triangle, which are contiguous.
-- Several right-hand sides are handled a row of `X` at a time, four rows of the triangle per pass;
-  a tile's width of them or more, from four blocks of the tile, by blocks of rows the same way.
+- A solve for several right-hand sides takes a row of `X` at a time, four rows of the triangle per
+  pass. With a tile's width of them or more, from four blocks of the tile, it goes by blocks of rows
+  the same way.
 
 **Speed.** Against OpenBLAS LAPACK at orders 32–64 (measured on aarch64 Linux, gcc 11, in
 `internal/notes/tier2_pr6_report.html`):

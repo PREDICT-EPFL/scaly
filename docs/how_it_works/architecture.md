@@ -190,8 +190,9 @@ the order that results.
   the caller's `w[]`, which is what `f_SZ_W` reports. Without it the largest benchmark cells
   overflow the C stack.
 - `coalesce_stores` pairs adjacent stores after physical aliases are known.
-- `prepare_scalar` bounds statement expression depth using the scalarizer's shared scheduler, and
-  computes a select's loading branches ahead of it so that the C compiler vectorizes the loop.
+- `prepare_scalar` bounds statement expression depth using the scalarizer's shared scheduler. In a
+  loop it also computes a select's loading branch ahead of it where that costs no skipped work, so
+  that the C compiler can vectorize the loop.
 
 Each pass that rebuilds an expression tree goes through `scaly.ir.match.rewrite`, the iterative
 driver shared with the expression dialect (`passes/program/_common.py` holds the `rebuild_program`

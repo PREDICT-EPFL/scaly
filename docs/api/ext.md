@@ -74,6 +74,8 @@ it has no cotangent for, and builds a Jacobian pattern from its arguments' with 
         - copy_loop
         - blocked_sum
         - lane_loops
+        - tile
+        - tile_segments
 
 ::: scaly.passes.lowering.PositionRanges
 

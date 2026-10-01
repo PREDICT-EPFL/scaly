@@ -203,7 +203,9 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
   """Row-by-row (Crout) ``L L^T`` or ``L D L^T``: entry ``(i, j)``, ``j <= i``, is the matrix entry
   minus a dot product of two rows already computed, both contiguous in row-major storage. For
   ``L D L^T`` the row being computed is kept scaled by ``D`` in a scratch vector, so every update
-  is one multiply-add. Small orders are unrolled into straight-line code."""
+  is one multiply-add. Small orders are unrolled into straight-line code. Past them ``L D L^T`` runs
+  these row loops, and ``L L^T`` runs by register tiles (``_cholesky_tiles``) or, from six blocks of
+  the target's tile, by blocks of columns (``_cholesky_blocked``)."""
   a = node.args[0]
   n = a.shape[0]
   src, out, dt = ctx.buf_of(a), ctx.alloc_tmp(node), node.type.dtype
@@ -235,8 +237,8 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(*(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n)))
     return
   if chol:
-    # Blocks of a tile's width, a multiple of four (the quarters), and at least six of them: on the
-    # reference machine the blocks took 1.09x the Crout tiles' time at 32, 0.99x at 40, 0.91x at 48.
+    # Blocks of a tile's width, a multiple of four (the quarters), and at least six of them, where
+    # they took 0.90 of the Crout tiles' time on the reference machine; with fewer they were no faster.
     rows, width = ctx.target.product_tile
     (_cholesky_blocked if rows > 1 and width % 4 == 0 and n >= 6 * width else _cholesky_tiles)(ctx, src, out, n, dt)
     return
@@ -411,8 +413,9 @@ def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int,
   last whole block form one more, narrower block. Each entry's
   dot product runs in four quarters of the columns left of its block, each summed from zero and
   added pairwise before the entry subtracts it, as the Crout tiles do (``_cholesky_tiles``): one
-  running sum per entry lost an interior-point solve accuracy it needed, and so did subtracting the
-  quarters one after another. The upper triangle, which the tiles crossing the
+  running sum per entry took an interior-point solve past the iterations it is held to, and the
+  quarters subtracted one after another kept it within them only by chance (an unrelated change of
+  rounding moved it twelve iterations). The upper triangle, which the tiles crossing the
   diagonal write too, is zeroed at the end."""
   c = p.const_int
   nm = out.attrs["name"]

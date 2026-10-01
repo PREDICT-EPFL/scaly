@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 220**
+**Next id: 222**
 
 | Prefix | Section |
 |---|---|
@@ -986,12 +986,13 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       from four blocks, in all four variants. Accuracy decided the form: each dot product in four
       quarters added pairwise, and divisions, as the Crout tiles do. One pass took QSHARE1B past its
       iterations, the quarters subtracted one after another left it on a knife edge (a dead store
-      moved it 12 iterations), and reciprocals took QBORE3D from 20 to 24. POTRF 0.65-0.90 of its
-      time at n = 48-256, 1.48-2.04x BLASFEO (was 2.27-2.40); TRSM 0.44-0.79 from n = 32,
-      1.16-1.21x BLASFEO from 96. Dense IPM over the 55 problems 0.904 of its time, 0.747 of
-      PIQP's dense backend (0.981 above 50 us, was 1.125); six problems' iterations move by one
-      to four. Right-looking measured worse (1.68-1.98x BLASFEO): eight steps of `k` a tile do not
-      pay for its loads and stores. The rest of the gap to BLASFEO is K3's fused kernels.
+      moved it 12 iterations), and reciprocals took QBORE3D from 20 to 24. POTRF 0.64-0.90 of its
+      time at n = 48-256, 1.46-2.05x BLASFEO (was 2.27-2.40; gate 1.2x: not met); TRSM 0.43-0.75
+      from n = 32, 1.16-1.19x BLASFEO from 96 (`results/kernels_t5_final.json`). Dense IPM over
+      the 55 problems 0.904 of its time, 0.747 of PIQP's dense backend (0.981 above 50 us, was
+      1.125); six problems' iterations move by one to four (gate: within one, not met; every
+      decision test passes). Right-looking measured worse (1.68-1.98x BLASFEO): eight steps of `k`
+      a tile do not pay for its loads and stores. The rest of the gap to BLASFEO is C-221.
 - [x] **C-216. The dense backend's dense rows as dense products (A7(b), Tier 5).** Where `A` or `G`
       has dense rows the condensed matrix takes `A^T A / delta` or `G^T W G` as a dense product on
       the register tiles, and `P`'s stored triangle goes straight into the lower one; a problem
@@ -1000,36 +1001,61 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       least eight columns (DUALC2's seven and LOTSCHD's 532 products measured slower dense). 13 of
       the 55 problems change, all faster: ex_portfolio 0.49, PRIMALC1/2/5 0.59-0.63, ex_dense 0.62,
       DUAL1-4 0.80-0.88, DUALC5/8 0.80-0.82. Those 13 from 1.45x PIQP's dense backend to 1.07x
-      (DUAL1-4 1.08-1.24, were 1.29-1.48); all 55 0.698 of PIQP, 0.892 above 50 us. `P` and `G`
-      themselves stay in entry order: the step's products with them are C-217's.
-- [x] **C-217. Selects computed ahead of their condition, in loops (B3's finding, Tier 5).** The
-      step's profile by loop (`perf_2026_09_30_gaps/step_lines.py`): flat over 213 loops, its
-      products with `G` already fast (1.1-1.7 us of DUALC8's 12), and 47% of its samples in loops
-      clang left scalar, each a select around a load (`mask ? 1 / x : 0`, the step-length ratios,
-      `flag ? a : b`): C skips the untaken branch, so the compiler may not hoist its loads and
-      keeps the branch. Inside a loop `schedule_values` now names a select's branches, and the
-      right operand of `&&` and `||`, when they hold a load; a libm call, an integer division or
-      remainder and a float-to-integer cast stay under their condition, and straight-line code
-      keeps its branches. Isolated, a masked product runs 2.6x faster and a masked reciprocal 1.9x.
-      DUALC8's step: 82% of its samples in vectorized loops, from 48%. DUALC1/2/5/8 0.89-0.93 of
-      their time, 0.72-0.98x PIQP's dense backend (gate: at most its time, met); the 55 dense
-      problems 0.982, 0.686 of PIQP and 0.874 above 50 us; corpus: only the four IPM kernels
-      render other C (HS118 dense 0.92, QAFIRO sparse 0.92).
-- [ ] **C-219. Adjacent loops fused (B3 proper).** After C-217 the IPM step is 213 loops, none
-      above 5% of it and four fifths of its samples vectorized: what is left is one pass per
-      intermediate vector. A Program pass that merges adjacent elementwise loops of one trip
-      count (each read of an earlier loop's output at the same element) would save the passes;
-      the reductions between them (four chains, a tail) and the gathers through index tables
-      break the runs, so it needs statement reordering too. Sized at 2-3 weeks in the proposal;
-      take it when a profile shows a step-dominated problem still behind (none of the 55 is).
+      (DUAL1-4 1.08-1.24, were 1.29-1.48; gate 1.2x: DUAL2 just outside); all 55 0.698 of PIQP,
+      0.892 above 50 us. `P` and `G` stay in entry order for the step's products, which measured
+      as fast through their index tables as dense (`results/assembly_c216.txt`).
+- [x] **C-217. A select's loading branch computed ahead of it, in loops (B3's finding, Tier 5).**
+      The step's profile by loop (`perf_2026_09_30_gaps/step_lines.py`): flat over 213 loops, its
+      products with `G` already fast (1.1-1.7 us of DUALC8's 12), and 42% of its samples in loops
+      clang left scalar, most of them a select around a load (`mask ? 1 / x : 0`, the step-length
+      ratios): C skips the untaken branch, so the compiler may not hoist its loads and keeps the
+      branch. Inside a loop `schedule_values` now names such a branch, and the right operand of
+      `&&` and `||`. The review bounded it to where it measured faster (`select_ab/`,
+      `results/select_ahead_cases.txt`): one of the select's branches must be no work, a variable
+      must enter the condition, the branch must be a float of one-instruction operations that
+      cannot fault, and a running sum keeps its branch. Isolated, a masked product runs 2.6x
+      faster and a masked reciprocal 1.9x; a piecewise function, a sum over a mask and a select on
+      a flag render the C they did. DUALC8's step: 73% of its samples in vectorized loops, from
+      48%. DUALC1/2/8 0.94, 0.90 and 0.92 of their time (`ipm_dense_c217.md`; 0.86-1.00 between
+      runs on a loaded machine), at or under PIQP's dense backend (the gate); the 55 problems
+      1.00 in all. What is left in
+      the step's scalar loops is selects on flags, which want the loop tested once outside (C-219).
+- [ ] **C-219. Adjacent loops fused, and flag selects unswitched (B3 proper).** After C-217 the
+      IPM step is 213 loops, none above 5% of it: what is left is one pass per intermediate
+      vector, and a tenth of it in `flag ? a[i] : (flag2 ? b[i] : c[i])` loops that the C compiler
+      neither vectorizes nor tests outside the loop. A Program pass that merges adjacent
+      elementwise loops of one trip count (each read of an earlier loop's output at the same
+      element) would save the passes; the reductions between them (four chains, a tail) and the
+      gathers through index tables break the runs, so it needs statement reordering too. A select
+      on a loop-invariant condition can be lowered as the test around two loops. Sized at 2-3
+      weeks in the proposal; no problem of the 55 is step-dominated and behind PIQP.
 - [x] **C-218. The backend model refitted to the dense backend's new costs.** After C-215 to
-      C-217 the dense backend is the faster one on DUAL1-4 (0.82-0.90 of the sparse backend's
+      C-217 the dense backend is the faster one on DUAL1-4 (0.79-0.92 of the sparse backend's
       time, was 1.19-1.21): the old weights still took the sparse one there, right on 49 of 55 and
       up to 1.22x the better. `Work.assembly` now counts a matrix multiplied dense as a quarter
       of `rows * n^2` (`kkt.dense_rows`' own exchange rate), and the weights are refitted on both
       backends' times (`results/backend_costs.json`): the faster backend on 53 of 55, in sample
-      and leaving each out, the worst pick 1.10x (HS268 and S268, order 5). Refit whenever either
-      backend's code changes speed.
+      and leaving each out, the worst pick 1.17x (HS268 and S268, order 5, 2 us). Refit whenever
+      either backend's code changes speed. Each solver on its better backend: 0.628 of PIQP's
+      time over the 55 (0.801 above 50 us; 0.637 and 0.823 before Tier 5), behind on DUAL1-4
+      (1.12-1.34x), ex_dense (1.06x) and QRECIPE (iterations).
+- [ ] **C-220. The blocked solves' code size.** One blocked `solve_triangular` is 59-75 KB of C
+      (four quarter passes, times the right-hand sides' tile widths, times whole and last
+      blocks), against 2 KB for the row loops, and derivative code holds several: the gradient
+      of `sumsqr(cho_solve(cholesky(a), b))` at 50 x 9 went from 97 to 453 KB and from 0.2 to
+      1.2 s of `cc` (`results/compile_cost_t5.txt`), for 0.71 of its run time. One procedure per
+      `(n, m, variant)` shared by every use in a module, or the quarters as a loop over one body,
+      would cut it. The same file's second derivatives were already 16 MB before the blocks.
+- [ ] **C-221. The Cholesky's rate (K3).** The condition the plan set holds after Tier 5: the
+      factor is 52-73% of DUAL2-3, VALUES, PRIMALC1 and DPKLO1, and 59-73% of that is the blocked
+      Cholesky (`results/a7_profile_after_c216.txt`, `step_lines.py` on `kkt_factor_raw`), at
+      1.46-2.05x BLASFEO. At n = 128 the update is 20.6 us and the rest 11.6 us against BLASFEO's
+      16.3 us in all: the update runs each tile four times (the quarters) over short `k` loops,
+      and the rows below a block divide by each pivot. What decides the form is accuracy
+      (QSHARE1B, QBORE3D), which only the IPM's decision tests and a pattern test on the rendered
+      C now pin, so start from what those problems tolerate: an update whose four quarter sums
+      live in one tile's registers at once (one pass over the panel), then the pivots'
+      reciprocals with one Newton step. Gate: DUAL1-4 at most 1.1x PIQP on their better backend.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

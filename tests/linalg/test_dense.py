@@ -96,10 +96,12 @@ def test_solves_built_from_factors(n: int) -> None:
 @pytest.mark.parametrize("n", [10, 11, 12, 14, 15, 37, 42, 64])
 def test_tiled_cholesky_matches_numpy(n: int) -> None:
   """Above the unrolling threshold the Cholesky runs by register tiles; every remainder of the tile
-  side (``n % 4``) takes its own edge tiles, and a larger order splits the dot products in quarters."""
+  side (``n % 4``) takes its own edge tiles, and a larger order splits the dot products in quarters.
+  Under AVX-512's preset, whose blocks start at order 96, so that every order here is the tiles'."""
   a = sc.sym("a", (n, n))
   s = _spd(n)
-  (chol,) = _fn(f"tiled{n}", [a], [cholesky(a)])._flat_numerical_call(s + np.triu(RNG.standard_normal((n, n)), 1))
+  with sc.target("x86-64-v4"):
+    (chol,) = _fn(f"tiled{n}", [a], [cholesky(a)])._flat_numerical_call(s + np.triu(RNG.standard_normal((n, n)), 1))
   np.testing.assert_allclose(chol, np.linalg.cholesky(s), rtol=1e-12, atol=1e-12)
   assert np.all(np.triu(chol, 1) == 0)
   assert np.abs(chol @ chol.T - s).max() <= 64 * np.finfo(float).eps * np.abs(s).max()
@@ -123,6 +125,15 @@ def test_cholesky_of_an_indefinite_matrix_is_nan() -> None:
   b = sc.sym("b", (11, 11))  # tiled: the NaN pivot's row and every row after it
   (tiled,) = _fn("chol_nan_tiled", [b], [cholesky(b)])._flat_numerical_call(np.diag([1.0] * 5 + [-1.0] + [1.0] * 5))
   assert np.all(np.isfinite(tiled[:5, :5])) and np.isnan(tiled[5, 5]) and np.isnan(tiled[6:, 5]).all()
+  n, bad = 53, 20  # in blocks: the same, from a pivot inside the third block
+  d = sc.sym("d", (n, n))
+  blocked = _fn("chol_nan_blocked", [d], [cholesky(d)])
+  assert "bjb_" in render_c_source(blocked, target="apple-m3")
+  diagonal = np.ones(n)
+  diagonal[bad] = -1.0
+  with sc.target("apple-m3"):
+    (out,) = blocked._flat_numerical_call(np.diag(diagonal))
+  assert np.all(np.isfinite(out[:bad, :bad])) and np.isnan(out[bad, bad]) and np.isnan(out[bad + 1 :, bad]).all()
 
 
 # --- derivatives --------------------------------------------------------------------------------
@@ -269,31 +280,69 @@ def test_second_derivatives_in_the_matrix_match_finite_differences(name: str, n:
 def test_a_cholesky_in_blocks_is_numpys(target: str, n: int) -> None:
   """From six blocks of the target's register tile the factor goes by blocks of columns (order 48
   with the M3's and AVX2's 8-column tiles, 24 with 4 columns, 96 with AVX-512's 16; never in scalar
-  C): the same factor, its upper triangle exactly zero."""
+  C): the same factor, from the lower triangle alone, its upper triangle exactly zero."""
   spd = _spd(n)
   a = sc.sym("a", (n, n))
   fn = _fn(f"blocked_chol_{n}_{target.replace('-', '_')}", [a], [cholesky(a)])
   with sc.target(target):
-    got = fn._flat_numerical_call(spd)[0].reshape(n, n)
+    got = fn._flat_numerical_call(spd + np.triu(RNG.standard_normal((n, n)), 1) * 100.0)[0].reshape(n, n)
   np.testing.assert_allclose(got, np.linalg.cholesky(spd), rtol=1e-13, atol=1e-13)
   assert not np.triu(got, 1).any()
 
 
-@pytest.mark.parametrize("target", ["apple-m3", "armv8-a"])
-@pytest.mark.parametrize(("n", "m"), [(32, 8), (33, 9), (67, 13)])  # a last block of one row; right-hand sides a tile leaves
+# Right-hand sides: one tile, a tile and a column, a tile and two columns, two tiles and both; the
+# 4-column tiles of armv8-a; AVX-512's 16-column tile, which needs order 64 and 16 of them.
+BLOCKED_SOLVES = [
+  *(("apple-m3", n, m) for n, m in [(32, 8), (33, 9), (35, 10), (67, 19)]),
+  *(("armv8-a", n, m) for n, m in [(33, 9), (35, 10)]),
+  ("x86-64-v4", 67, 19),
+]
+
+
+def _solve_in_blocks(target: str | sc.Target, tag: str, n: int, m: int, lower: bool, trans: bool, unit: bool) -> None:
+  """The solve of ``n`` unknowns for ``m`` right-hand sides takes blocks under ``target``, reads only
+  its triangle (the other one, and a unit diagonal, hold noise) and matches NumPy's."""
+  tri = _triangle(_spd(n) / n + np.eye(n), lower, unit)
+  b = RNG.standard_normal((n, m))
+  a, bm = sc.sym("a", (n, n)), sc.sym("b", (n, m))
+  fn = _fn(
+    f"blocked_tri_{n}_{m}_{int(lower)}{int(trans)}{int(unit)}_{tag}", [a, bm], [solve_triangular(a, bm, lower=lower, trans=trans, unit_diagonal=unit)]
+  )
+  assert "tb_" in render_c_source(fn, target=target)
+  noise = RNG.standard_normal((n, n)) * 100.0
+  given = tri + (np.triu(noise, 1) if lower else np.tril(noise, -1)) + (np.diag(RNG.uniform(2.0, 3.0, n)) if unit else 0.0)
+  with sc.target(target):
+    got = fn._flat_numerical_call(given, b)[0].reshape(n, m)
+  np.testing.assert_allclose(got, np.linalg.solve(tri.T if trans else tri, b), rtol=1e-11, atol=1e-11)
+
+
+@pytest.mark.parametrize(("target", "n", "m"), BLOCKED_SOLVES)
 @pytest.mark.parametrize(("lower", "trans", "unit"), FLAGS)
 def test_a_solve_in_blocks_is_the_substitution(target: str, n: int, m: int, lower: bool, trans: bool, unit: bool) -> None:
   """With a tile's width of right-hand sides or more, from four blocks, the substitution goes by
   blocks of unknowns, forward or backward, against the triangle or its transpose."""
-  tri = _triangle(_spd(n) / n + np.eye(n), lower, unit)
-  b = RNG.standard_normal((n, m))
-  a, bm = sc.sym("a", (n, n)), sc.sym("b", (n, m))
-  name = f"blocked_tri_{n}_{m}_{int(lower)}{int(trans)}{int(unit)}_{target.replace('-', '_')}"
-  fn = _fn(name, [a, bm], [solve_triangular(a, bm, lower=lower, trans=trans, unit_diagonal=unit)])
-  given = tri + np.diag(RNG.uniform(2.0, 3.0, n)) if unit else tri  # a unit diagonal is not read
-  with sc.target(target):
-    got = fn._flat_numerical_call(given, b)[0].reshape(n, m)
-  np.testing.assert_allclose(got, np.linalg.solve(tri.T if trans else tri, b), rtol=1e-11, atol=1e-11)
+  _solve_in_blocks(target, target.replace("-", "_"), n, m, lower, trans, unit)
+
+
+@pytest.mark.parametrize(("lower", "trans"), [(True, False), (True, True), (False, False), (False, True)])
+def test_a_solve_in_blocks_on_a_tile_whose_rows_do_not_divide_its_width(lower: bool, trans: bool) -> None:
+  """Three rows by eight columns: each block of eight unknowns is two tiles of rows and two rows more."""
+  odd = sc.Target("odd", vector_bytes=16, vector_registers=32, fma_units=2, fma_latency=5)
+  assert odd.product_tile == (3, 8)
+  _solve_in_blocks(odd, "odd", 37, 11, lower, trans, False)
+
+
+def test_the_blocks_sum_as_the_crout_tiles_do() -> None:
+  """Each dot product in four quarters, the first two added, the last two added, and their sum
+  subtracted from the entry at once; and a division by each pivot, never a product with its
+  reciprocal. The interior-point method's decisions are held to PIQP's on problems where this
+  rounding chooses the path (``tests/opt/ipm/test_algorithm.py``); this pins the form itself."""
+  a, t, b = sc.sym("a", (48, 48)), sc.sym("t", (32, 32)), sc.sym("b", (32, 8))
+  combined = r"(\w+\[\d\]\[\w+\]) = \(arg\[\d\]\[\w+\] - \(\1 \+ s\d+\[[^;]*\]\)\);"
+  for name, fn in (("factor", _fn("form_chol", [a], [cholesky(a)])), ("solve", _fn("form_tri", [t, b], [solve_triangular(t, b, lower=True)]))):
+    body = render_c_source(fn, target="apple-m3").split('extern "C"')[1]
+    assert re.search(combined, body), name
+    assert "1.0 /" not in body and re.search(r"\) / (arg|res)\[0\]\[", body), name
 
 
 def test_a_tile_too_narrow_for_quarters_keeps_the_row_code() -> None:
@@ -314,8 +363,8 @@ def test_a_tile_too_narrow_for_quarters_keeps_the_row_code() -> None:
 
 
 def test_blocks_start_where_they_are_faster() -> None:
-  """On the M3: a Cholesky factor in blocks from order 48 (at 40 the Crout tiles were as fast), a
-  solve from order 32 with eight right-hand sides; a single right-hand side keeps the row-by-row
+  """On the M3: a Cholesky factor in blocks from order 48, a solve from order 32 with eight
+  right-hand sides; a single right-hand side keeps the row-by-row
   code, and so does scalar C."""
 
   def source(op, n: int, m: int | None, target: str) -> str:

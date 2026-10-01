@@ -247,7 +247,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(*per_col(solve_row))
     return
   rows, width = ctx.target.product_tile
-  if rows > 1 and width % 4 == 0 and width % rows == 0 and n >= 4 * width and m >= width:
+  if rows > 1 and width % 4 == 0 and n >= 4 * width and m >= width:
     _trisolve_blocked(ctx, tb, bb, out, n, m, lower, trans, unit, dt)
     return
   s, k = p.var(f"ss_{nm}"), p.var(f"sk_{nm}")

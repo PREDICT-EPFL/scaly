@@ -6,8 +6,8 @@
 ``prof.py`` leaves ``prof.c`` (the cell's solver with its procedures out of line) and ``sample.txt``
 in the cell. This reads the call graph's source lines, takes the procedure's self samples, assigns
 them to its top-level loops, and compiles ``prof.c`` again with clang's vectorization remarks to say
-which of those loops were vectorized. C-217 came from it: 47% of the IPM step's samples sat in loops
-left scalar, each a select around a load.
+which of those loops were vectorized. C-217 came from it: 42% of the IPM step's samples sat in loops
+left scalar, most of them a select around a load (``results/step_lines_dualc8.txt``).
 """
 
 from __future__ import annotations

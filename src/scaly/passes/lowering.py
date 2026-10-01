@@ -451,11 +451,19 @@ class LowerCtx:
     dtype: DType,
     finish: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode] | None = None,
   ) -> list[ProgramNode]:
-    """A register tile of ``rows`` by ``width`` sums over ``steps`` steps, from zero: see ``_tile``."""
+    """The statements of a register tile: one running sum for each of ``rows`` (row indices) and
+    each of ``width`` columns, started at zero, ``steps`` steps of ``k`` each adding
+    ``term(row, k, column)`` to every sum, then each stored once at ``out_at(row, column)``: the
+    sum, or ``finish(row, column, sum)``. Each sum is one chain of multiply-adds in order of
+    ``k``, kept in the target's vector registers (``Target.product_tile`` gives the rows and
+    width they hold)."""
     return _tile(self, tag, rows, width, steps, term, out_at, False, dtype, finish)
 
   def tile_segments(self, n: int) -> list[tuple[int, int, int]]:
-    """``n`` columns in the target's register tiles, as ``(first, width, count)``: see ``_tile_segments``."""
+    """``n`` columns cut into the target's register tiles, as ``(first, width, count)`` runs:
+    ``count`` tiles of ``width`` columns from column ``first``. Full tiles as often as they fit,
+    then at most one of each half width down to one vector, then the columns left in one tile
+    of scalar sums."""
     return _tile_segments(n, self.target.product_tile[1], self.target.choices.vector_doubles)[0]
 
   def lane_loops(self, tag: str, rows: int, lanes: int, kind: RangeKind, body: Any) -> None:

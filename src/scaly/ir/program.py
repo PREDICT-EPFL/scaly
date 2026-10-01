@@ -500,7 +500,10 @@ def compare(op: ProgramOp, x: ProgramNode, y: ProgramNode) -> ProgramNode:
 
 
 def select(cond: ProgramNode, x: ProgramNode, y: ProgramNode) -> ProgramNode:
-  """``x`` where the ``bool`` scalar ``cond`` holds, else ``y``."""
+  """``x`` where the ``bool`` scalar ``cond`` holds, else ``y``. Both are values, not guarded
+  computations: in a loop a branch that loads may be computed whatever ``cond`` is
+  (``passes.program.scheduling``), so a load that is valid only under the condition must select
+  its index, not its value."""
   if not cond.dtype.is_bool or x.dtype != y.dtype:
     raise TypeError(f"select needs a bool condition and same-dtype branches, got {cond.dtype}, {x.dtype}, {y.dtype}")
   return ProgramNode(ProgramOp.SELECT, (cond, x, y), dtype=x.dtype)
