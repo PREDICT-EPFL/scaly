@@ -142,14 +142,17 @@ Hoisting uses the same reachability analysis after splitting callees.
 
 Scaly applies algebraic simplifications without a math-mode option. Expression simplification
 and scalar expansion can remove neutral elements, multiply by zero, cancel equal symbolic terms,
-and simplify constant powers. For example, expression simplification can replace `x / x` with
-one, and scalar expansion can replace `0 / x` with zero. The available rules and known constants
+and simplify constant powers. For example, expression simplification can replace `x - x` with
+zero, and scalar expansion can replace `0 / x` with zero. The available rules and known constants
 differ by compilation stage; a lowering hint does not select an IEEE 754 compliance mode.
 
 These rules do not preserve NaN or infinity propagation, signed zero, or floating-point exception
 behavior. They can also change intermediate rounding, overflow, or underflow. In particular,
 symbolic `0 / x` can become zero even when the runtime value of `x` is zero or NaN. Do not rely
 on an invalid operation surviving graph simplification to detect invalid model inputs.
+
+A quotient of a term by itself is the exception. `x / x` stays a division, so it is NaN where
+`x` is zero, infinite or NaN, as in NumPy.
 
 When scalar expansion knows all operands, it evaluates constant arithmetic before applying
 symbolic identities. Known `inf * 0` produces NaN. An invalid constant operation that the folder

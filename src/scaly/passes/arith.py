@@ -87,8 +87,8 @@ def simplify_arith[Node: _HasArgs](d: Arith[Node], node: Node) -> Node | None:
     if d.kind(y) == "neg":
       return d.build("neg", (d.build("mul", (x, y.args[0]), node),), node)
   elif kind == "div":
-    if x is y:
-      return d.full(1, node)
+    # ``x / x`` stays a division: it is NaN where ``x`` is zero, infinite or NaN, and a one would
+    # hide a division by zero at a finite input.
     if cx == 0:
       return d.full(0, node)
     if cy == 1 and d.fits(x, node):

@@ -32,7 +32,6 @@ CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.n
   "mul_zero": (lambda x: x * 0.0, lambda v: 0 * v, {"mul"}),
   "zero_div": (lambda x: 0.0 / x, lambda v: 0 * v, {"div"}),
   "sub_self": (lambda x: x - x, lambda v: 0 * v, {"sub"}),
-  "div_self": (lambda x: x / x, lambda v: v / v, {"div"}),
   "neg_neg": (lambda x: -(-x), lambda v: v, {"neg"}),
   "add_neg": (lambda x: x + (-x.sin()), lambda v: v - np.sin(v), {"neg"}),
   "neg_add": (lambda x: (-x.sin()) + x, lambda v: v - np.sin(v), {"neg"}),
@@ -47,6 +46,17 @@ CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.n
   "pow_two": (lambda x: x**2.0, lambda v: v * v, {"pow"}),
   "constants": (lambda x: x + sc.const(3.0) / sc.const(2.0), lambda v: v + 1.5, {"div"}),
   "uniform_tensor": (lambda x: x * sc.const([1.0, 1.0, 1.0]) + sc.const([0.0, 0.0, 0.0]), lambda v: v, {"mul", "add"}),
+}
+
+# Zero, the infinities and NaN, where a quotient of a term by itself is NaN and not one.
+EXCEPTIONAL = np.array([0.0, -0.0, np.inf, -np.inf, np.nan, 2.0, -1.25])
+
+# name -> (build, reference): the division's two operands are one node, at once or once shared
+SELF_QUOTIENTS: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.ndarray]]] = {
+  "div_self": (lambda x: x / x, lambda v: v / v),
+  "neg_div_self": (lambda x: (-x) / x, lambda v: -v / v),
+  "div_neg_self": (lambda x: x / (-x), lambda v: v / -v),
+  "shared_div_self": (lambda x: x.sin() / x.sin(), lambda v: np.sin(v) / np.sin(v)),
 }
 
 
@@ -87,6 +97,33 @@ def test_loop_body(name: str) -> None:
   assert not proc.attrs.get("scalarized") and "for" in _proc_ops(proc)
   assert not gone & _proc_ops(proc)
   np.testing.assert_allclose(fn(DATA), reference(DATA), rtol=1e-15, atol=0)
+
+
+@pytest.mark.parametrize("lowering", ["graph", "scalar", "block"])
+@pytest.mark.parametrize("name", sorted(SELF_QUOTIENTS))
+def test_self_division_matches_numpy_at_zero_infinity_and_nan(name: str, lowering: str) -> None:
+  build, reference = SELF_QUOTIENTS[name]
+  x = sc.sym("x", EXCEPTIONAL.size)
+  if lowering == "graph":
+    fn = _function(f"arith_self_graph_{name}", x, sc.simplify(build(x)))
+    ops = {str(n.op) for n in topo(fn.outputs)}
+  else:
+    fn = _function(f"arith_self_{lowering}_{name}", x, build(x).scalar() if lowering == "scalar" else build(x).block())
+    proc = main_proc(lower_function(fn))
+    assert bool(proc.attrs.get("scalarized")) == (lowering == "scalar")
+    ops = _proc_ops(proc)
+  with np.errstate(divide="ignore", invalid="ignore"):
+    expected = reference(EXCEPTIONAL)
+  assert np.isnan(expected[:5]).all() and np.isfinite(expected[5:]).all()
+  np.testing.assert_array_equal(fn(EXCEPTIONAL), expected)
+  assert "div" in ops
+
+
+def test_self_division_is_folded_by_neither_dialect() -> None:
+  x = sc.sym("x", 3)
+  assert sc.simplify(x / x).op == sc.ExprOp.DIV
+  loaded = p.load(p.view(p.buffer("x", dtypes.float64, (1,)), [p.const_int(0)]))
+  assert fold_program(p.div(loaded, loaded)).op == ProgramOp.DIV
 
 
 def test_mixed_constant_tensor_folds_per_element_only_where_the_element_is_known() -> None:
