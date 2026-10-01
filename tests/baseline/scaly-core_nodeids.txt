@@ -1624,6 +1624,19 @@ tests/core/passes/test_scalarize.py::test_symbolic_zero_identities_and_known_inv
 tests/core/passes/test_scalarize.py::test_the_entry_point_expands_only_within_its_work_cap
 tests/core/passes/test_scalarize.py::test_unfolded_constant_division_uses_floating_point_in_c
 tests/core/passes/test_scalarize.py::test_views_broadcast_gather_and_scatter
+tests/core/passes/test_scheduling.py::test_a_branch_without_a_load_stays_in_the_select
+tests/core/passes/test_scheduling.py::test_a_float_division_is_computed_first
+tests/core/passes/test_scheduling.py::test_a_masked_reciprocal_renders_as_a_value_and_a_select
+tests/core/passes/test_scheduling.py::test_a_selects_branches_are_computed_before_it
+tests/core/passes/test_scheduling.py::test_a_shared_libm_value_already_named_does_not_hold_its_branch_back
+tests/core/passes/test_scheduling.py::test_straight_line_code_keeps_its_branches[assign]
+tests/core/passes/test_scheduling.py::test_straight_line_code_keeps_its_branches[store]
+tests/core/passes/test_scheduling.py::test_straight_line_code_keeps_its_branches[store_pair]
+tests/core/passes/test_scheduling.py::test_the_right_operand_of_a_short_circuit_is_computed_first
+tests/core/passes/test_scheduling.py::test_what_could_fault_or_cost_stays_under_its_condition[a float to an integer]
+tests/core/passes/test_scheduling.py::test_what_could_fault_or_cost_stays_under_its_condition[a libm call]
+tests/core/passes/test_scheduling.py::test_what_could_fault_or_cost_stays_under_its_condition[an integer division]
+tests/core/passes/test_scheduling.py::test_what_could_fault_or_cost_stays_under_its_condition[an integer remainder]
 tests/core/test_c_snapshot.py::test_baseline_holds_exactly_the_corpus
 tests/core/test_c_snapshot.py::test_generated_c_matches_snapshot[control]
 tests/core/test_c_snapshot.py::test_generated_c_matches_snapshot[forward]

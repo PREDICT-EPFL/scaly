@@ -1,0 +1,83 @@
+C-216's build:
+g_DUALC8_step_raw: 1002 self samples, 5.8% outside loops; 213 loops, 109 sampled
+
+the procedure's samples by the compiler's verdict on the loop:
+   48.1%  vectorized
+   39.0%  scalar: the cost-model indicates that vectorization is not beneficial
+    3.4%  scalar: loop not vectorized
+    2.5%  interleaved
+    1.2%  scalar: no remark
+
+the loops, by samples:
+    3.9%  L1722  scalar: the cost-model indicates that vector  for (long long i_t729_0 = 0; i_t729_0 < 502; ++i_t729_0) {  for (long long i_t729_1 = 0; i_t729_1 < 8; ++i_t729_1) { s32[i_t729_1] = (s32[i_t729_1] + (q_G[(i_t729_0 + (502 * i_t729_1))] * s6
+    3.2%  L1841  vectorized                                    for (long long i_t801_0 = 0; i_t801_0 < 8; ++i_t801_0) {    for (long long i_t801_1 = 0; i_t801_1 < 502; ++i_t801_1) { s40[i_t801_1] = (s40[i_t801_1] + (q_G[((502 * i_t801_0) + i_t801_1)] * 
+    3.1%  L1135  vectorized                                    for (long long kb_t437 = 0; kb_t437 < 500; kb_t437 += 4) {  s134[0] = (s134[0] + ((t222[kb_t437] + (s112[0] * s84[kb_t437])) * (s28[kb_t437] + (s133[0] * s83[kb_t437])))); int64_t v397 = (kb
+    3.1%  L792   vectorized                                    for (long long j_t309_2 = 0; j_t309_2 < 502; ++j_t309_2) {  s78[(9 + j_t309_2)] = (((s69[j_t309_2] * (k201[j_t309_2] ? (s72[j_t309_2] + (s8[j_t309_2] * s73[j_t309_2])) : 0.0)) - (s74[j_t309_
+    2.5%  L1333  vectorized                                    for (long long j_t558_2 = 0; j_t558_2 < 502; ++j_t558_2) {  s187[(9 + j_t558_2)] = (((s69[j_t558_2] * (k201[j_t558_2] ? (s72[j_t558_2] - (s8[j_t558_2] * s186[j_t558_2])) : 0.0)) - (s74[j_t55
+    1.9%  L813   scalar: the cost-model indicates that vector  for (long long i_t324 = 0; i_t324 < 502; ++i_t324) {        s84[i_t324] = (k195[i_t324] ? (s49[i_t324] * ((-s52[i_t324]) - (t222[i_t324] * s83[i_t324]))) : 0.0);
+    1.9%  L824   scalar: the cost-model indicates that vector  for (long long kb_t330 = 4; kb_t330 < 500; kb_t330 += 4) {  double v201 = s84[kb_t330]; double v202 = ((v201 < 0.0) ? (-(t222[kb_t330] / v201)) : 1e+30);
+    1.8%  L1152  vectorized                                    for (long long kb_t446 = 0; kb_t446 < 500; kb_t446 += 4) {  s138[0] = (s138[0] + ((t223[kb_t446] + (s112[0] * s91[kb_t446])) * (s30[kb_t446] + (s133[0] * s90[kb_t446])))); int64_t v400 = (kb
+    1.8%  L1858  scalar: loop not vectorized                   for (long long i_t808 = 0; i_t808 < 500; ++i_t808) {        s46[k803[i_t808]] = ((s41[i_t808] - s42[i_t808]) - s45[i_t808]);
+    1.8%  L2688  scalar: the cost-model indicates that vector  for (long long j_next_13 = 0; j_next_13 < 502; ++j_next_13  double v1090 = t29[j_next_13]; next[(2560 + j_next_13)] = (s51[0] ? v1090 : (s43[0] ? s0[j_next_13] : v1090));
+    1.7%  L700   scalar: the cost-model indicates that vector  for (long long i_t239 = 0; i_t239 < 502; ++i_t239) {        s49[i_t239] = (k195[i_t239] ? (1.0 / s28[i_t239]) : 0.0);
+    1.6%  L685   vectorized                                    for (long long c_t229 = 0; c_t229 < 1086; ++c_t229) {       s47[c_t229] = s46[c_t229];
+    1.6%  L1364  scalar: the cost-model indicates that vector  for (long long kb_t575 = 4; kb_t575 < 500; kb_t575 += 4) {  double v448 = s2[kb_t575]; double v449 = ((v448 < 0.0) ? (-(t222[kb_t575] / v448)) : 1e+30);
+    1.6%  L775   scalar: the cost-model indicates that vector  for (long long i_t297 = 0; i_t297 < 502; ++i_t297) {        s74[i_t297] = (k195[i_t297] ? (1.0 / ((s49[i_t297] * t222[i_t297]) + t249[0])) : 0.0);
+    1.5%  L2281  vectorized                                    for (long long kb_t956 = 4; kb_t956 < 500; kb_t956 += 4) {  double v930 = s17[0]; double v931 = fabs(((s70[kb_t956] * s1[0]) * t20[kb_t956]));
+    1.5%  L589   scalar: the cost-model indicates that vector  for (long long i_t198 = 0; i_t198 < 502; ++i_t198) {        s26[i_t198] = (k195[i_t198] && (t17[i_t198] < 2.2204460492503131e-16));
+    1.4%  L810   scalar: the cost-model indicates that vector  for (long long i_t320 = 0; i_t320 < 502; ++i_t320) {        s83[i_t320] = (k195[i_t320] ? (-t318[i_t320]) : 0.0);
+    1.4%  L1310  vectorized                                    for (long long i_t526 = 0; i_t526 < 502; ++i_t526) {        s181[i_t526] = (((s180[0] - (s84[i_t526] * s83[i_t526])) * k524[i_t526]) - s52[i_t526]);
+    1.4%  L1350  scalar: the cost-model indicates that vector  for (long long i_t566 = 0; i_t566 < 502; ++i_t566) {        s0[i_t566] = (k195[i_t566] ? (-t564[i_t566]) : 0.0);
+    1.4%  L2063  vectorized                                    for (long long kb_t879 = 4; kb_t879 < 500; kb_t879 += 4) {  double v804 = s64[0]; double v805 = (s45[kb_t879] / s58[kb_t879]);
+    1.4%  L2248  vectorized                                    for (long long kb_t947 = 4; kb_t947 < 500; kb_t947 += 4) {  double v911 = s17[0]; double v912 = fabs(((s75[kb_t947] * s1[0]) * t20[kb_t947]));
+    1.4%  L2654  scalar: the cost-model indicates that vector  for (long long j_next_2 = 0; j_next_2 < 502; ++j_next_2) {  next[(9 + j_next_2)] = (s50[0] ? s28[j_next_2] : (s51[0] ? t17[j_next_2] : s16[j_next_2]));
+    1.3%  L1535  scalar: the cost-model indicates that vector  for (long long kb_t639 = 4; kb_t639 < 500; kb_t639 += 4) {  double v548 = s0[kb_t639]; double v549 = ((v548 < 0.0) ? (-(s28[kb_t639] / v548)) : 1e+30);
+    1.3%  L2365  vectorized                                    for (long long kb_t1012 = 0; kb_t1012 < 500; kb_t1012 += 4  s19[0] = (s19[0] + (s12[kb_t1012] * s16[kb_t1012])); int64_t v978 = (kb_t1012 + 1);
+    1.3%  L781   vectorized                                    for (long long i_t300 = 0; i_t300 < 502; ++i_t300) {        s76[i_t300] = (t74[i_t300] - (t249[0] * s75[i_t300]));
+    1.3%  L596   scalar: the cost-model indicates that vector  for (long long i_t203 = 0; i_t203 < 502; ++i_t203) {        s29[i_t203] = (k201[i_t203] && (t30[i_t203] < 2.2204460492503131e-16));
+    1.3%  L2669  scalar: the cost-model indicates that vector  for (long long j_next_7 = 0; j_next_7 < 502; ++j_next_7) {  next[(1531 + j_next_7)] = (s51[0] ? t223[j_next_7] : s2[j_next_7]);
+    1.2%  L858   scalar: the cost-model indicates that vector  for (long long i_t337 = 0; i_t337 < 502; ++i_t337) {        s90[i_t337] = (k201[i_t337] ? t318[i_t337] : 0.0);
+    1.2%  L992   scalar: the cost-model indicates that vector  for (long long kb_t397 = 4; kb_t397 < 500; kb_t397 += 4) {  double v301 = s83[kb_t397]; double v302 = ((v301 < 0.0) ? (-(s28[kb_t397] / v301)) : 1e+30);
+    1.2%  L273   vectorized                                    for (long long kb_t23 = 4; kb_t23 < 500; kb_t23 += 4) {     double v0 = s4[0]; double v1 = fabs(((s2[kb_t23] * s1[0]) * t20[kb_t23]));
+
+C-217's build:
+g_DUALC8_step_raw: 909 self samples, 5.0% outside loops; 213 loops, 109 sampled
+
+the procedure's samples by the compiler's verdict on the loop:
+   81.6%  vectorized
+    5.8%  scalar: the cost-model indicates that vectorization is not beneficial
+    4.6%  interleaved
+    1.5%  scalar: no remark
+    1.4%  scalar: loop not vectorized
+
+the loops, by samples:
+    4.8%  L1790  scalar: the cost-model indicates that vector  for (long long i_t729_0 = 0; i_t729_0 < 502; ++i_t729_0) {  for (long long i_t729_1 = 0; i_t729_1 < 8; ++i_t729_1) { s32[i_t729_1] = (s32[i_t729_1] + (q_G[(i_t729_0 + (502 * i_t729_1))] * s6
+    4.6%  L1909  vectorized                                    for (long long i_t801_0 = 0; i_t801_0 < 8; ++i_t801_0) {    for (long long i_t801_1 = 0; i_t801_1 < 502; ++i_t801_1) { s40[i_t801_1] = (s40[i_t801_1] + (q_G[((502 * i_t801_0) + i_t801_1)] * 
+    2.8%  L1375  vectorized                                    for (long long j_t558_2 = 0; j_t558_2 < 502; ++j_t558_2) {  double v486 = (s72[j_t558_2] - (s8[j_t558_2] * s186[j_t558_2])); double v487 = (s77[j_t558_2] - (s49[j_t558_2] * s181[j_t558_2]));
+    2.5%  L808   vectorized                                    for (long long j_t309_2 = 0; j_t309_2 < 502; ++j_t309_2) {  double v213 = (s72[j_t309_2] + (s8[j_t309_2] * s73[j_t309_2])); double v214 = (s77[j_t309_2] + (s49[j_t309_2] * s52[j_t309_2]));
+    2.4%  L1194  vectorized                                    for (long long kb_t446 = 0; kb_t446 < 500; kb_t446 += 4) {  s138[0] = (s138[0] + ((t223[kb_t446] + (s112[0] * s91[kb_t446])) * (s30[kb_t446] + (s133[0] * s90[kb_t446])))); int64_t v442 = (kb
+    2.1%  L1593  vectorized                                    for (long long kb_t639 = 4; kb_t639 < 500; kb_t639 += 4) {  double v606 = s0[kb_t639]; double v607 = (-(s28[kb_t639] / v606));
+    1.9%  L1177  vectorized                                    for (long long kb_t437 = 0; kb_t437 < 500; kb_t437 += 4) {  s134[0] = (s134[0] + ((t222[kb_t437] + (s112[0] * s84[kb_t437])) * (s28[kb_t437] + (s133[0] * s83[kb_t437])))); int64_t v439 = (kb
+    1.9%  L1024  vectorized                                    for (long long kb_t397 = 4; kb_t397 < 500; kb_t397 += 4) {  double v333 = s83[kb_t397]; double v334 = (-(s28[kb_t397] / v333));
+    1.9%  L844   vectorized                                    for (long long kb_t330 = 4; kb_t330 < 500; kb_t330 += 4) {  double v221 = s84[kb_t330]; double v222 = (-(t222[kb_t330] / v221));
+    1.7%  L887   vectorized                                    for (long long i_t341 = 0; i_t341 < 502; ++i_t341) {        double v251 = (s8[i_t341] * ((-s73[i_t341]) - (t223[i_t341] * s90[i_t341]))); s91[i_t341] = (k201[i_t341] ? v251 : 0.0);
+    1.7%  L589   vectorized                                    for (long long i_t198 = 0; i_t198 < 502; ++i_t198) {        uint8_t v164 = (t17[i_t198] < 2.2204460492503131e-16); s26[i_t198] = (k195[i_t198] && v164);
+    1.5%  L1914  interleaved                                   for (long long i_t802 = 0; i_t802 < 500; ++i_t802) {        s41[i_t802] = s40[k803[i_t802]];
+    1.4%  L687   vectorized                                    for (long long c_t229 = 0; c_t229 < 1086; ++c_t229) {       s47[c_t229] = s46[c_t229];
+    1.4%  L2349  vectorized                                    for (long long kb_t956 = 4; kb_t956 < 500; kb_t956 += 4) {  double v998 = s17[0]; double v999 = fabs(((s70[kb_t956] * s1[0]) * t20[kb_t956]));
+    1.4%  L2075  vectorized                                    for (long long kb_t865 = 4; kb_t865 < 500; kb_t865 += 4) {  double v838 = s64[0]; double v839 = (s41[kb_t865] / s58[kb_t865]);
+    1.4%  L1071  vectorized                                    for (long long kb_t407 = 4; kb_t407 < 500; kb_t407 += 4) {  double v366 = s90[kb_t407]; double v367 = (-(s30[kb_t407] / v366));
+    1.4%  L1465  vectorized                                    for (long long kb_t590 = 4; kb_t590 < 500; kb_t590 += 4) {  double v529 = s5[kb_t590]; double v530 = (-(t223[kb_t590] / v529));
+    1.4%  L1933  vectorized                                    for (long long kb_t811 = 4; kb_t811 < 500; kb_t811 += 4) {  double v772 = s49[0]; double v773 = fabs((s46[kb_t811] / t20[kb_t811]));
+    1.3%  L1453  vectorized                                    for (long long i_t585 = 0; i_t585 < 502; ++i_t585) {        double v524 = (s8[i_t585] * (s186[i_t585] - (t223[i_t585] * s4[i_t585]))); s5[i_t585] = (k201[i_t585] ? v524 : 0.0);
+    1.3%  L1640  vectorized                                    for (long long kb_t649 = 4; kb_t649 < 500; kb_t649 += 4) {  double v639 = s4[kb_t649]; double v640 = (-(s30[kb_t649] / v639));
+    1.3%  L309   vectorized                                    for (long long kb_t35 = 4; kb_t35 < 500; kb_t35 += 4) {     double v19 = s5[0]; double v20 = fabs(((s4[kb_t35] * s1[0]) * t20[kb_t35]));
+    1.2%  L2433  vectorized                                    for (long long kb_t1012 = 0; kb_t1012 < 500; kb_t1012 += 4  s19[0] = (s19[0] + (s12[kb_t1012] * s16[kb_t1012])); int64_t v1046 = (kb_t1012 + 1);
+    1.2%  L2752  vectorized                                    for (long long j_next_6 = 0; j_next_6 < 502; ++j_next_6) {  double v1173 = t222[j_next_6]; double v1174 = s12[j_next_6];
+    1.2%  L2616  vectorized                                    for (long long kb_t1169 = 4; kb_t1169 < 500; kb_t1169 += 4  double v1094 = s67[0]; double v1095 = fabs((s71[kb_t1169] / t20[kb_t1169]));
+    1.2%  L766   vectorized                                    for (long long i_t280 = 0; i_t280 < 502; ++i_t280) {        double v205 = (1.0 / s30[i_t280]); s8[i_t280] = (k201[i_t280] ? v205 : 0.0);
+    1.2%  L788   vectorized                                    for (long long i_t297 = 0; i_t297 < 502; ++i_t297) {        double v209 = (1.0 / ((s49[i_t297] * t222[i_t297]) + t249[0])); s74[i_t297] = (k195[i_t297] ? v209 : 0.0);
+    1.2%  L770   vectorized                                    for (long long i_t284 = 0; i_t284 < 502; ++i_t284) {        double v206 = (1.0 / ((s8[i_t284] * t223[i_t284]) + t249[0])); s69[i_t284] = (k201[i_t284] ? v206 : 0.0);
+    1.2%  L393   vectorized                                    for (long long i_t76 = 0; i_t76 < 502; ++i_t76) {           s10[i_t76] = (t74[i_t76] - (t63[0] * s2[i_t76]));
+    1.2%  L1917  interleaved                                   for (long long i_t804 = 0; i_t804 < 500; ++i_t804) {        s42[i_t804] = q_h_l[k803[i_t804]];
+    1.1%  L2131  vectorized                                    for (long long kb_t879 = 4; kb_t879 < 500; kb_t879 += 4) {  double v872 = s64[0]; double v873 = (s45[kb_t879] / s58[kb_t879]);

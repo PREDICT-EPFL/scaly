@@ -274,6 +274,16 @@ reads the first destination. Odd tails stay scalar.
 shares the scheduler used by scalar expansion, but limits sharing to a statement so loads keep
 their timing across writes and calls. Generated names reserve existing C identifier spellings.
 
+The same temporaries make selects what the C compiler can vectorize. C evaluates only one branch of
+`c ? a : b` and skips the right operand of `&&` and `||`, and a load that C would skip is one the
+compiler may not move ahead of the condition, so it keeps a branch and the loop around it stays
+scalar. A graph evaluates every operand anyway, so inside a loop the scheduler names such an operand,
+when it holds a load, in a temporary before the statement: `where(mask, 1.0 / x, 0.0)` renders as the
+reciprocal of every element and then a select. Three kinds of operand stay under their condition,
+because computing them where C would not could fault or cost a call: a libm call, an integer
+division or remainder, and a float converted to an integer. Straight-line code keeps its branches,
+which skip the work.
+
 ## Deep expressions
 
 Depth in your expression does not become depth on the Python stack. The program-dialect passes

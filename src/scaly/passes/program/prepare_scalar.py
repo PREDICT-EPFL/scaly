@@ -10,31 +10,32 @@ from .scheduling import ScalarNameAllocator, schedule_values
 
 
 def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
-  """Insert local assignments that bound scalar depth without moving loads across statements."""
+  """Insert local assignments that bound scalar depth without moving loads across statements; in a
+  loop, also those that compute a select's loading branches ahead of it (``schedule_values``)."""
 
-  def rewrite_body(body: tuple[ProgramNode, ...], names: ScalarNameAllocator) -> tuple[ProgramNode, ...]:
+  def rewrite_body(body: tuple[ProgramNode, ...], names: ScalarNameAllocator, looped: bool = False) -> tuple[ProgramNode, ...]:
     out: list[ProgramNode] = []
     for stmt in body:
       if stmt.op == ProgramOp.BUFFER:
         out.append(stmt)
         continue
       if stmt.op == ProgramOp.FOR:
-        out.append(ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], names)), stmt.attrs, stmt.dtype))
+        out.append(ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], names, True)), stmt.attrs, stmt.dtype))
         continue
       if stmt.op == ProgramOp.STORE:
-        declarations, roots = schedule_values((*stmt.args[0].args, stmt.args[1]), names)
+        declarations, roots = schedule_values((*stmt.args[0].args, stmt.args[1]), names, ahead=looped)
         index = roots[:-1]
         target = ProgramNode(ProgramOp.VIEW, index, stmt.args[0].attrs, stmt.args[0].dtype)
         out.extend((*declarations, p.store(target, roots[-1])))
         continue
       if stmt.op == ProgramOp.STORE_PAIR:
-        declarations, roots = schedule_values((*stmt.args[0].args, *stmt.args[1:]), names)
+        declarations, roots = schedule_values((*stmt.args[0].args, *stmt.args[1:]), names, ahead=looped)
         index_count = len(stmt.args[0].args)
         target = ProgramNode(ProgramOp.VIEW, roots[:index_count], stmt.args[0].attrs, stmt.args[0].dtype)
         out.extend((*declarations, p.store_pair(target, roots[-2], roots[-1])))
         continue
       if stmt.op == ProgramOp.ASSIGN:
-        declarations, roots = schedule_values((stmt.args[0],), names)
+        declarations, roots = schedule_values((stmt.args[0],), names, ahead=looped)
         target = stmt.attrs["target"]
         out.extend((*declarations, p.assign(target, roots[0], stmt.dtype, declare=stmt.attrs.get("declare", False))))
         continue

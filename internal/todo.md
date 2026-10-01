@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 219**
+**Next id: 220**
 
 | Prefix | Section |
 |---|---|
@@ -1002,8 +1002,26 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       DUAL1-4 0.80-0.88, DUALC5/8 0.80-0.82. Those 13 from 1.45x PIQP's dense backend to 1.07x
       (DUAL1-4 1.08-1.24, were 1.29-1.48); all 55 0.698 of PIQP, 0.892 above 50 us. `P` and `G`
       themselves stay in entry order: the step's products with them are C-217's.
-- [ ] **C-217. The dense step fused (B3, Tier 5).** DUALC's step (47-48% of its time) in fewer
-      passes over the vectors.
+- [x] **C-217. Selects computed ahead of their condition, in loops (B3's finding, Tier 5).** The
+      step's profile by loop (`perf_2026_09_30_gaps/step_lines.py`): flat over 213 loops, its
+      products with `G` already fast (1.1-1.7 us of DUALC8's 12), and 47% of its samples in loops
+      clang left scalar, each a select around a load (`mask ? 1 / x : 0`, the step-length ratios,
+      `flag ? a : b`): C skips the untaken branch, so the compiler may not hoist its loads and
+      keeps the branch. Inside a loop `schedule_values` now names a select's branches, and the
+      right operand of `&&` and `||`, when they hold a load; a libm call, an integer division or
+      remainder and a float-to-integer cast stay under their condition, and straight-line code
+      keeps its branches. Isolated, a masked product runs 2.6x faster and a masked reciprocal 1.9x.
+      DUALC8's step: 82% of its samples in vectorized loops, from 48%. DUALC1/2/5/8 0.89-0.93 of
+      their time, 0.72-0.98x PIQP's dense backend (gate: at most its time, met); the 55 dense
+      problems 0.982, 0.686 of PIQP and 0.874 above 50 us; corpus: only the four IPM kernels
+      render other C (HS118 dense 0.92, QAFIRO sparse 0.92).
+- [ ] **C-219. Adjacent loops fused (B3 proper).** After C-217 the IPM step is 213 loops, none
+      above 5% of it and four fifths of its samples vectorized: what is left is one pass per
+      intermediate vector. A Program pass that merges adjacent elementwise loops of one trip
+      count (each read of an earlier loop's output at the same element) would save the passes;
+      the reductions between them (four chains, a tail) and the gathers through index tables
+      break the runs, so it needs statement reordering too. Sized at 2-3 weeks in the proposal;
+      take it when a profile shows a step-dominated problem still behind (none of the 55 is).
 - [ ] **C-218. The backend model refitted to the dense backend's new costs.** `cost.py`'s weights
       were fitted before C-215 and C-216: the dense factor in blocks and the dense products of
       dense rows are cheaper than the model counts them (`Work.assembly` charges every row its

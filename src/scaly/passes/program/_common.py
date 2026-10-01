@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 import numpy as np
 
+from ...ir.expr import op_def, registered_ops
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ...utils.names import c_ident
+
+
+@functools.cache
+def expensive_ops(version: int) -> frozenset[ProgramOp]:
+  """The program ops of the expression ops with both the ``elementwise`` and the ``expensive``
+  trait: libm calls, which fusion does not duplicate and a select does not compute ahead. Keyed by
+  the registry's version (``ir.expr.registry_version``)."""
+  traits = [op_def(op).traits for op in registered_ops()]
+  return frozenset(t["elementwise"] for t in traits if t.get("expensive") and "elementwise" in t)
 
 
 def _walk(root: ProgramNode) -> Iterable[ProgramNode]:

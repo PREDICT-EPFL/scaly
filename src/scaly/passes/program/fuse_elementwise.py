@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import functools
 from bisect import bisect_right
 
-from ...ir.expr import op_def, registered_ops, registry_version
+from ...ir.expr import registry_version
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ._common import (
   _alias_sources,
   buffer_refs,
+  expensive_ops,
   inline_producer as _as_inline_producer,
   _map_procs,
   _private_decls,
@@ -26,16 +26,8 @@ from ._common import (
 )
 
 
-@functools.cache
-def _expensive_ops(version: int) -> frozenset[ProgramOp]:
-  """The program ops of the expression ops with both the ``elementwise`` and the ``expensive``
-  trait: libm calls, which fusion does not duplicate. Keyed by the registry's version."""
-  traits = [op_def(op).traits for op in registered_ops()]
-  return frozenset(t["elementwise"] for t in traits if t.get("expensive") and "elementwise" in t)
-
-
 def _has_expensive(node: ProgramNode) -> bool:
-  expensive = _expensive_ops(registry_version())
+  expensive = expensive_ops(registry_version())
   return any(n.op in expensive for n in _walk(node))
 
 
