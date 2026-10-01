@@ -17,7 +17,16 @@ from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substi
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .forward import _mapped_const_seeds, jvp_many
-from .sparsity import _callee_mask, _depends_on, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
+from .sparsity import (
+  _callee_mask,
+  _depends_on,
+  _mask_sparsity,
+  _symmetrize_sparsity,
+  column_coloring,
+  jacobian_mask,
+  jacobian_sparsity,
+  star_coloring,
+)
 from ..ir.types import SparsityType
 
 
@@ -242,8 +251,11 @@ def _linear_part(expr: Expr, wrt: Expr) -> _Split:
       return sparse.csr_array(stacked[order]), rest
     return None, node
 
-  for node in topo((expr,)):  # arguments first: a graph may be deeper than the interpreter's stack
-    memo[node.id] = split_node(node)
+  # A coefficient that overflows or divides by zero is not an error here: the caller sees that it
+  # is not finite and leaves the expression whole.
+  with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+    for node in topo((expr,)):  # arguments first: a graph may be deeper than the interpreter's stack
+      memo[node.id] = split_node(node)
   return memo[expr.id]
 
 
@@ -257,7 +269,10 @@ def _sparse_jacobian_linear_part(expr: Expr, wrt: Expr) -> SparseJacobian | None
   n = wrt.size
   fixed = matrix.tocoo()  # SciPy's sums and products drop the entries that cancel, so these are the nonzeros
   fixed_keys = fixed.row.astype(np.int64) * n + fixed.col.astype(np.int64)
-  if fixed_keys.size == 0:
+  # The coefficients are folded here in double precision, in an order of their own. Where one is
+  # not finite (a product of constants that overflows, a division by a zero), the generated code
+  # may cancel what this arithmetic cannot, so the expression is differentiated as it stands.
+  if fixed_keys.size == 0 or not np.all(np.isfinite(fixed.data)):
     return None
   inner = None if rest is None else _sparse_jacobian_of_rest(cse(simplify(rest)), wrt)
   inner_keys = (
@@ -290,8 +305,17 @@ def _sparse_jacobian_at_selections(expr: Expr, wrt: Expr) -> SparseJacobian | No
   if found is None:
     return None
   inner_expr, at, index = found
-  inner = sparse_jacobian_colored(inner_expr, at)
   n = wrt.size
+  # From the pattern alone, before anything is built: a row's entries take a color each, so the
+  # selections need at least as many as their fullest row holds. A reduction over a gathered
+  # operand is one row over every entry gathered, more than the variable has, and the seeds and
+  # the compressed Jacobian of such a row are as large as the selections squared.
+  mask = jacobian_mask(inner_expr, at).tocoo()
+  whole = np.unique(mask.row.astype(np.int64) * n + index[mask.col])
+  colors = _widths(column_coloring(SparsityType((expr.size, n), tuple(int(k) for k in whole // n), tuple(int(k) for k in whole % n))))
+  if not mask.nnz or int(np.bincount(mask.row).max()) >= colors:
+    return None
+  inner = sparse_jacobian_colored(inner_expr, at)
   keys = np.asarray(inner.sparsity.rows, dtype=np.int64) * n + index[np.asarray(inner.sparsity.cols, dtype=np.int64)]
   unique, place = np.unique(keys, return_inverse=True)
   sparsity = SparsityType((expr.size, n), tuple(int(k) for k in unique // n), tuple(int(k) for k in unique % n))
@@ -310,8 +334,16 @@ def _sparse_hessian_at_selections(expr: Expr, wrt: Expr) -> SparseJacobian | Non
   if found is None:
     return None
   inner_expr, at, index = found
-  inner = sparse_hessian(inner_expr, at)
   n = wrt.size
+  # From the pattern alone, as for the Jacobian: a star coloring gives a row's entries a color
+  # each, and coloring the selections' pattern is itself quadratic in a full row.
+  mask = jacobian_mask(cse(simplify(gradient(inner_expr, at).reshape((at.size,)))), at).tocoo()
+  across = np.concatenate([index[mask.row] * n + index[mask.col], index[mask.col] * n + index[mask.row]])
+  whole = np.unique(across)
+  colors = _widths(star_coloring(SparsityType((n, n), tuple(int(k) for k in whole // n), tuple(int(k) for k in whole % n))))
+  if not mask.nnz or int(np.bincount(mask.row).max()) >= colors:
+    return None
+  inner = sparse_hessian(inner_expr, at)
   keys = index[np.asarray(inner.sparsity.rows, dtype=np.int64)] * n + index[np.asarray(inner.sparsity.cols, dtype=np.int64)]
   unique, place = np.unique(keys, return_inverse=True)
   sparsity = SparsityType((n, n), tuple(int(k) for k in unique // n), tuple(int(k) for k in unique % n))

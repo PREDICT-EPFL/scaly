@@ -185,7 +185,7 @@ def _split(
       if kept == hoist:
         break
       hoist = kept
-    through = _split_a_call(body, hoist | opaque_calls | scoped, known, aliases, local_names, used_names, pure, table, splits, work)
+    through = _split_calls(body, hoist | opaque_calls | scoped, known, aliases, local_names, used_names, pure, table, splits, work)
     if through is None:
       break
     body = through
@@ -232,7 +232,7 @@ def _split(
   return prologue, hoisted, used, exported
 
 
-def _split_a_call(
+def _split_calls(
   body: list[ProgramNode],
   settled: set[int],
   known: set[str],
@@ -244,33 +244,53 @@ def _split_a_call(
   splits: dict[tuple[str, tuple[int, ...]], _Split | None],
   work: dict[str, int],
 ) -> list[ProgramNode] | None:
-  """``body`` with the first call that stays in the loop, to a callee some of whose inputs are
-  ``known`` invariant, replaced by that callee's two halves: the prologue's buffers, the call of
-  the prologue (which reads invariant buffers only, so the caller's split then moves it out), and
-  the call of the rest. None when no call splits."""
+  """``body`` with each call that stays in the loop, to a callee some of whose inputs are ``known``
+  invariant, replaced by that callee's two halves: the prologue's buffers, the call of the
+  prologue (which reads invariant buffers only, so the caller's split then moves it out), and the
+  call of the rest. None when no call splits. Every such call is split in one pass: a split
+  writes what the call wrote and reads what it read, so it changes no other call's invariant
+  inputs, and the caller's analysis, which is of the whole body, then runs once for them all (one
+  split a pass took 37 s on a stage of 400 calls)."""
+  out: list[ProgramNode] = []
   for i, stmt in enumerate(body):
-    if stmt.op != ProgramOp.CALL or i in settled or stmt.attrs["callee"] not in table or stmt.attrs["callee"] not in pure:
-      continue
-    n_in = int(stmt.attrs["n_in"])
-    names = [_resolve_alias(a.attrs.get("buffer", a.attrs.get("name")), aliases) for a in stmt.args]
-    invariant = tuple(k for k in range(n_in) if names[k] in known)
-    if not invariant or set(names[n_in:]) & {names[k] for k in invariant}:
-      continue
-    key = (stmt.attrs["callee"], invariant)
-    if key not in splits:
-      splits[key] = None  # while it is being split, and if it does not split
-      splits[key] = _split(table[key[0]], invariant, used_names, pure, table, splits, work)
-    split = splits[key]
-    if split is None:
-      continue
-    prologue, hoisted, used, exported = split
-    moved, kept = work[prologue.attrs["name"]], work[hoisted.attrs["name"]]
-    if moved < _CALL_SHARE * (moved + kept):
-      continue
-    bufs = [buffer(allocated_name(f"{key[0]}_{b.attrs['name']}", local_names), b.dtype, b.attrs["shape"], address_space="private") for b in exported]
-    calls = [_call(prologue, [*(stmt.args[k] for k in used), *bufs]), _call(hoisted, [*stmt.args[:n_in], *bufs, *stmt.args[n_in:]])]
-    return [*body[:i], *bufs, *calls, *body[i + 1 :]]
-  return None
+    halves = None
+    if stmt.op == ProgramOp.CALL and i not in settled and stmt.attrs["callee"] in table and stmt.attrs["callee"] in pure:
+      halves = _halves(stmt, known, aliases, local_names, used_names, pure, table, splits, work)
+    out += [stmt] if halves is None else halves
+  return out if len(out) > len(body) else None
+
+
+def _halves(
+  stmt: ProgramNode,
+  known: set[str],
+  aliases: dict[str, str],
+  local_names: set[str],
+  used_names: set[str],
+  pure: set[str],
+  table: dict[str, ProgramNode],
+  splits: dict[tuple[str, tuple[int, ...]], _Split | None],
+  work: dict[str, int],
+) -> list[ProgramNode] | None:
+  """What replaces the call ``stmt`` when its callee splits at the inputs that are ``known``
+  invariant and the part that moves is worth it (``_CALL_SHARE``); None otherwise."""
+  n_in = int(stmt.attrs["n_in"])
+  names = [_resolve_alias(a.attrs.get("buffer", a.attrs.get("name")), aliases) for a in stmt.args]
+  invariant = tuple(k for k in range(n_in) if names[k] in known)
+  if not invariant or set(names[n_in:]) & {names[k] for k in invariant}:
+    return None
+  key = (stmt.attrs["callee"], invariant)
+  if key not in splits:
+    splits[key] = None  # while it is being split, and if it does not split
+    splits[key] = _split(table[key[0]], invariant, used_names, pure, table, splits, work)
+  split = splits[key]
+  if split is None:
+    return None
+  prologue, hoisted, used, exported = split
+  moved, kept = work[prologue.attrs["name"]], work[hoisted.attrs["name"]]
+  if moved < _CALL_SHARE * (moved + kept):
+    return None
+  bufs = [buffer(allocated_name(f"{key[0]}_{b.attrs['name']}", local_names), b.dtype, b.attrs["shape"], address_space="private") for b in exported]
+  return [*bufs, _call(prologue, [*(stmt.args[k] for k in used), *bufs]), _call(hoisted, [*stmt.args[:n_in], *bufs, *stmt.args[n_in:]])]
 
 
 def _binds_or_reads_outer_var(stmt: ProgramNode) -> bool:

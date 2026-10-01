@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 243**
+**Next id: 245**
 
 | Prefix | Section |
 |---|---|
@@ -1286,8 +1286,8 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       that has no form (two mapped operands multiplied, a reduction, a gather, a call), for
       overlapping windows, for an output no trip changes, for a body with a lowering hint, and
       where the form is not expected faster. That is decided from the target (`_gains`): a
-      product gains when the trips together fill register tiles one trip did not, or when the
-      shared matrix is larger than `Target.panel_bytes`; the body is batched when such
+      product gains when the trips together fill register tiles and either one trip did not or
+      the shared matrix is larger than `Target.panel_bytes`; the body is batched when such
       products are at least half its products' multiply-adds. The rule is from a sweep of 80
       shapes (`results/a9_batch_sweep.txt`): 0.4-0.9 of the loop's time where it says to batch,
       1.0-1.07 where a body's six or twelve tangent columns already fill the tiles at each
@@ -1303,7 +1303,20 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       rule's thresholds on two targets; a seeded differential fuzz of 40 random bodies against
       the body called once a trip, run on 600 more seeds before the commit. 41 mutants, all
       killed after one test was added; two more survived as checks that could not matter, and
-      those were removed.
+      those were removed. The review (`results/t8_review_cases.txt`) proved one crash and
+      three slowdowns, all closed. A rank-4 transpose in a body became a rank-5 one, which
+      lowering refuses: its map keeps the loop. A constant with mostly zeros was multiplied
+      densely where the loop, expanded, folds the zeros away (4-18x): a constant under a
+      quarter full keeps the loop. A batched product kept the procedure around the map in
+      loops, where a sparse constant product beside it lost its folding (2.4-3.7x): lowering
+      drops the batched form where it would end a procedure's scalar expansion beside a
+      product with a constant operand (`_batching_ends_expansion`). A map with an output no
+      trip changes ran its body in the loop and batched the other output as well (1.5x): the
+      outputs of a map are batched together or not at all. `_tiled` asked for more than four
+      columns where lowering tiles four: four trips of a vector by a matrix of 256 rows or
+      more are now batched (0.45-0.57), and a product of four columns a trip is no longer
+      batched for nothing (1.17-1.25). And a batched product does not sum in the loop's order,
+      as the text had claimed: the loop's matrix times a vector adds four partial sums.
 - [x] **C-239. One forward pass: hoisting goes through calls, the outputs of one map share one
       loop, and a mapped rule reads the map's outputs (A8, Tier 8).** E5's gradient cost 4.6x
       its forward pass per solve and 59 ms where the forward pass, hoisted, takes 0.05
@@ -1333,6 +1346,14 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       mapped rule reading each of two outputs of different sizes, a rule reading none, in a map
       and in a call, second derivatives through the mapped rule, and the quarter rule on
       both sides of its threshold. 19 mutants, all killed (one by a pass that no longer ends).
+      The review (`results/t8_review_cases.txt`) proved a regression and two build times that
+      grew with the graph. An output the rule does not read was passed as a float zero, which
+      is no argument for an integer count or a boolean flag (the call failed, in a call, a map
+      and a scan body): the zero has the output's type. One call was split a pass, each pass
+      analysing the whole body again (400 calls in a stage, 37 s): every call that splits is
+      split in one pass (0.23 s). And each map walked the graph for its outputs (2 000 maps,
+      9 s): the outputs of every map, scan and while loop are found in one walk (0.3 s). A
+      call in the body of a `while_loop` is not split, which the documentation now says.
 - [ ] **C-240. The DiffMPC case study's rule runs its own Riccati recursion.** Returning the
       recursion from `mpc_function` and reading it in `implicit_rule` takes the gradient from
       3.5x to 2.3x its forward pass (C-239, `e5_episode.py`'s `per_solve_outputs`). The change
@@ -1375,11 +1396,27 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       back for their arguments' patterns, and the first `_linear_part` recursed too. The linear
       part is found in topological order, `_depends_on` walks with a stack of its own, and
       `jacobian_sparsity` fills its patterns arguments first when the recursion overflows.
+      The review (`results/t8_review_cases.txt`) proved two more. The cut built the whole
+      derivative in the selections before comparing colors: a reduction over a gathered
+      operand makes it dense in the entries gathered, and a Hessian over 1 600 of them took
+      60 s to color, a Jacobian over 16 000 6.5 GB of seeds. A row's entries take a color
+      each, so the cut is now turned down from the pattern (`jacobian_mask`) when its fullest
+      row already holds as many entries as `wrt` needs colors, before anything is built. And
+      the linear part folds its coefficients in double precision at build time: two terms
+      whose coefficients overflow cancel in the generated code and gave NaN folded. A
+      coefficient that is not finite leaves the expression whole, and the folding no longer
+      warns.
 - [ ] **C-242. The AC-OPF case study's recorded sweep predates C-241.** Its README explains
       Scaly's gap to ExaModels from case2869 on by colors that follow the bus degree, and its
       table has the function evaluations at 2.1 s for case9241. Both are out of date. The sweep
       needs the Julia baseline (`baseline/setup.sh` downloads it) for the exported cases, and
       the notebook run again.
+- [ ] **C-243. An int64 `matmul` does not lower.** `VerifyError: CONST_FLOAT must have floating
+      dtype`, with or without a map: the product's sums start from a float zero whatever the
+      operands' type. Found by Tier 8's review; older than the tier.
+- [ ] **C-244. An output no trip changes, batched.** A map with such an output keeps its loop
+      for all its outputs (C-238's review), which is right but gives up the batched product
+      beside it. The output needs a form of its own: the value repeated over the trips.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced

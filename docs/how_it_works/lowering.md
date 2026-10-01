@@ -60,24 +60,37 @@ trips as a leading axis, an elementwise op runs over that axis, a move of data (
 becomes one matrix product over all the trips' rows. That product reads the matrix once and fills
 the register tiles a single trip's product could not. A constant matrix on the left is transposed
 when the code is generated; one known only at run time is not copied, and multiplies the trips'
-columns placed side by side. Each output is the same sum in the same order as in the loop.
+columns placed side by side. Each output is the sum of the same terms as in the loop, but lowering
+may add them in another order (a matrix times a vector adds four partial sums, a row of a matrix
+product one), so a result can differ from the loop's in its last bits.
 
 The loop is kept in these cases:
 
 - the body holds an op with no such form: a product of two values that both change with the
-  trip, a reduction, a gather or scatter, a call, a nested loop;
-- a mapped input's windows overlap or leave gaps, or an output does not change with the trip;
+  trip, a reduction, a gather or scatter, a call, a nested loop, a transpose of a rank-4 value
+  (with the trips in front it would have more axes than lowering moves);
+- a mapped input's windows overlap or leave gaps;
+- an output the graph reads does not change with the trip. The outputs of one map are batched
+  together or not at all, because a loop kept for one of them runs the whole body;
 - the body carries a lowering hint (`.block()`, `.scalar()`), which is a request about its own
   procedure;
+- the body multiplies by a constant of which fewer than a quarter of the entries are nonzero. In
+  its loop a small body is expanded into scalar code, where the zeros fold away, and batched it
+  would be a dense product;
+- batching would end the scalar expansion of the procedure the map is in, and that procedure
+  holds a product with a constant operand. A map's body is a procedure of its own. Batched, its
+  product belongs to the procedure around it, and a product that fills the tiles keeps a whole
+  procedure in loops, where a constant's zeros no longer fold away;
 - the batched form is not expected faster on the target.
 
 The last is decided from the target. A product of a mapped value and a shared matrix gains when
-the trips together fill register tiles (`Target.product_tile`) that one trip did not, or when the
-shared matrix is larger than `Target.panel_bytes`, half the level-1 data cache, so that the loop
-read it from the level-2 cache at every trip. A product that fills the tiles at every trip
-already, by a matrix that stays in the cache, runs the same multiply-adds either way. A body is
-batched when the products that gain are at least half of the multiply-adds of all its products
-with a mapped operand. A target of one lane has no tiles and keeps every loop.
+the trips together fill register tiles (`Target.product_tile`, a tile's rows and at least half
+its columns) and either one trip did not, or the shared matrix is larger than
+`Target.panel_bytes`, half the level-1 data cache, so that the loop read it from the level-2
+cache at every trip. A product that fills the tiles at every trip already, by a matrix that stays
+in the cache, runs the same multiply-adds either way. A body is batched when the products that
+gain are at least half of the multiply-adds of all its products with a mapped operand. A target of
+one lane has no tiles and keeps every loop.
 
 ## Program forms
 
@@ -116,9 +129,11 @@ move, but its callee is split the same way, and its prologue, which reads invari
 moves out with the rest of the invariant work. Without that, whatever a nested Function derived
 from a broadcast argument was recomputed at every trip, however little of the call depended on the
 trip. A custom derivative rule that runs a recursion over the problem data, mapped over a batch
-that shares the data, is such a call. A call is split only when a quarter or more of its work is
-invariant. A procedure that has been split is no longer expanded into its caller as one
-straight-line body, and that costs more than hoisting a few scalars saves.
+that shares the data, is such a call. The calls reached this way are the ones the callee makes
+itself, in the body of a `scan` and in a nested map. A call in the body of a `while_loop` is left
+whole. A call is split only when a quarter or more of its work is invariant. A procedure that has
+been split is no longer expanded into its caller as one straight-line body, and that costs more
+than hoisting a few scalars saves.
 
 Under `auto` the prologue has `scalarize_mode="inline"`: `scalarize` inlines it into an expanding
 caller but never expands it on its own, since code that runs once per call gains nothing from

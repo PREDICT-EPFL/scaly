@@ -4,6 +4,7 @@ when the graph is built, each against the dense derivative."""
 
 from __future__ import annotations
 
+import warnings
 from unittest import mock
 
 import numpy as np
@@ -303,6 +304,54 @@ def test_a_pattern_of_a_graph_deeper_than_the_interpreters_stack_is_found() -> N
   assert _depends_on(y, x, {})
   pattern = jacobian_sparsity(y, x)
   assert sorted(zip(pattern.rows, pattern.cols, strict=True)) == [(i, j) for i in range(3) for j in range(3)]
+
+
+def test_a_cut_whose_fullest_row_takes_as_many_colors_is_turned_down_from_its_pattern() -> None:
+  """A reduction over a gathered operand couples every entry gathered with every other: in the
+  selections its Hessian is full, and a row of its Jacobian reads them all, more entries than the
+  variable has. A row's entries take a color each, so the cut cannot win, and it is turned down
+  from the pattern, before the selections' pattern is colored (quadratic in a full row) or their
+  derivative built (as large as the selections squared: 6.5 GB for 16 000 entries gathered)."""
+  n, m = 6, 60
+  rng = np.random.default_rng(4)
+  x = sc.sym("x", n)
+  picked = sc.gather(x, rng.integers(0, n, m))
+  energy = picked.sin().sum() ** 2
+  assert sparse_module._at_selections(energy, x) is not None
+  with mock.patch.object(sparse_module, "star_coloring", wraps=star_coloring) as colored:
+    hess = sparse_hessian(energy, x)
+  assert colored.call_args_list and all(call.args[0].shape == (n, n) for call in colored.call_args_list)
+  v = rng.uniform(0.5, 1.5, n)
+  np.testing.assert_allclose(
+    _dense(hess, [x], [v], "full_cut_hess"), _reference(energy, x, [x], [v], "full_cut_hess_ref", second=True), rtol=1e-12, atol=1e-12
+  )
+  rows = sc.concat([(picked * (k + 1.0)).sin().sum().reshape((1,)) for k in range(3)])
+  with mock.patch.object(sparse_module, "sparse_jacobian_colored", wraps=sparse_jacobian_colored) as built:
+    jac = sparse_jacobian_colored(rows, x)
+  assert all(call.args[1].size != m for call in built.call_args_list)
+  np.testing.assert_allclose(
+    _dense(jac, [x], [v], "full_cut_jac"), _reference(rows, x, [x], [v], "full_cut_jac_ref", second=False), rtol=1e-12, atol=1e-12
+  )
+
+
+def test_a_coefficient_that_is_not_finite_leaves_the_expression_whole() -> None:
+  """The linear part folds its coefficients when the graph is built, in an order of its own. Two
+  terms whose coefficients overflow cancel in the generated code, which computes zero, where the
+  folded coefficients give infinity minus infinity; and a division by a constant with a zero has
+  an infinite coefficient. Neither is taken as a constant Jacobian, and neither warns."""
+  x = sc.sym("x", 3)
+  v = np.array([0.5, -1.0, 2.0])
+  cancels = x * 1e200 * 1e200 - x * 1e200 * 1e200
+  divided = x / sc.const(np.array([1.0, 0.0, 2.0]))
+  with warnings.catch_warnings():
+    warnings.simplefilter("error")
+    assert sparse_module._sparse_jacobian_linear_part(cancels, x) is None
+    assert sparse_module._sparse_jacobian_linear_part(divided, x) is None
+    jacobians = [sparse_jacobian_colored(cancels, x), sparse_jacobian_colored(divided, x)]
+  with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+    for k, (sj, expr) in enumerate(zip(jacobians, (cancels, divided), strict=True)):
+      np.testing.assert_array_equal(_dense(sj, [x], [v], f"not_finite_{k}"), _reference(expr, x, [x], [v], f"not_finite_ref_{k}", second=False))
+  np.testing.assert_array_equal(np.diag(_dense(jacobians[0], [x], [v], "not_finite_zero")), np.zeros(3))
 
 
 def test_the_colorings_compared_are_the_ones_named() -> None:

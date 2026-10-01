@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -1037,6 +1038,37 @@ def test_the_outputs_of_one_map_share_one_loop() -> None:
   np.testing.assert_allclose(av, np.sin(X * W).reshape(-1), rtol=1e-14)
   np.testing.assert_allclose(bv, 2.0 * (X * W).sum(axis=1), rtol=1e-14)
   np.testing.assert_allclose(sv, np.sin(X * W).sum() + np.exp(U + W).sum(), rtol=1e-14)
+
+
+def test_the_outputs_of_every_loop_are_found_in_one_walk_of_the_graph() -> None:
+  """A map, a scan and a while loop each lower once for all their outputs the graph reads, which
+  takes knowing them. They are found for every loop in one walk: a walk for each loop made
+  lowering quadratic in their number (2 000 maps in one Function, 9 s). The walks lowering makes
+  do not grow with the number of maps."""
+  from scaly.passes import lowering
+
+  u, v = sc.sym("u", 2), sc.sym("v", 2)
+  two = sc.Function.from_exprs("walk_two", [u, v], [u * v, (u + v).sin()], ["u", "v"], ["a", "b"])
+
+  def walks(maps: int) -> tuple[sc.Function, int]:
+    xs = sc.sym("xs", 8)
+    acc = xs
+    for k in range(maps):  # each map reads the one before, so each is a loop of its own
+      acc = sc.vmap(two, 4, [(acc, 0, 2), (xs, 0, 2)], output=k % 2) * 0.5 + xs
+    fn = sc.Function.from_exprs(f"walk_{maps}", [xs], [acc], ["xs"], ["y"])
+    with mock.patch.object(lowering, "topo", wraps=lowering.topo) as walked:
+      lower_function(fn)
+    return fn, walked.call_count
+
+  fn, few = walks(3)
+  _, many = walks(30)
+  assert many == few, (few, many)
+  xv = np.random.default_rng(2).normal(size=8)
+  want = xv
+  for k in range(3):
+    pairs = want.reshape(4, 2), xv.reshape(4, 2)
+    want = ((pairs[0] * pairs[1]) if k % 2 == 0 else np.sin(pairs[0] + pairs[1])).reshape(-1) * 0.5 + xv
+  np.testing.assert_allclose(fn(xv), want, rtol=1e-14)
 
 
 # --- products past the level-1 cache (C-204) ---------------------------------------------------------

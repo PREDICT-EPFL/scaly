@@ -713,7 +713,11 @@ def custom_vjp_call(callee: Any, args: Sequence[Expr], cots: dict[int, Expr], ou
   read = [any(_depends_on(out, rule.inputs[n + j], dep) for out in rule.outputs) for j in range(len(callee.outputs))]
   if outputs is None:
     outputs = callee._flat_symbolic_call(list(args))
-  given = [out if reads else zeros_like(formal) for out, formal, reads in zip(outputs, callee.outputs, read, strict=True)]
+  # The zero of an output the rule does not read has that output's own type: a count or a flag is not a float.
+  given = [
+    out if reads else Expr.const(np.zeros(formal.shape), dtype=formal.type.dtype)
+    for out, formal, reads in zip(outputs, callee.outputs, read, strict=True)
+  ]
   full = [cots[j] if j in cots else zeros_like(formal) for j, formal in enumerate(callee.outputs)]
   grads = rule._flat_symbolic_call([*args, *given, *full])
   # A rule that returns a constant zero for an input says that input receives nothing: hand back the

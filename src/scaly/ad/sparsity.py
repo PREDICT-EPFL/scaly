@@ -47,10 +47,17 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
   numerical values. It is conservative for nonsmooth elementwise ops and block ops, but exact
   for the structural/arithmetic subset currently implemented here.
   """
+  return _mask_sparsity(jacobian_mask(expr, wrt))
+
+
+def jacobian_mask(expr: Expr, wrt: Expr) -> sparse.csr_array:
+  """``jacobian_sparsity`` as the boolean matrix it is computed in, ``expr.size`` by ``wrt.size``:
+  for a caller that wants a row's fill or the coordinates as arrays, which for a pattern of
+  millions of entries are far cheaper than the tuples of a ``SparsityType``."""
   (expr,), (wrt,), _ = independent((expr,), (wrt,))
   memo: dict[int, sparse.csr_array] = {}
   try:
-    return _mask_sparsity(_jac_mask(expr, wrt, memo))
+    return _jac_mask(expr, wrt, memo)
   except RecursionError:
     pass
   # Deeper than the interpreter's stack. The rules ask for their arguments' patterns by calling
@@ -65,7 +72,7 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
         raise
       except Exception:  # noqa: BLE001, S112
         continue
-  return _mask_sparsity(_jac_mask(expr, wrt, memo))
+  return _jac_mask(expr, wrt, memo)
 
 
 def column_coloring(sparsity: SparsityType) -> tuple[int, ...]:

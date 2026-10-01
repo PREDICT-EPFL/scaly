@@ -187,8 +187,8 @@ solve_with_rule = sc.custom_derivative(solve, vjp=rule)
 The reverse rule receives the call's outputs, so it reuses the solution instead of solving again.
 That is also how a rule gets anything else the Function computed on the way: return it as a second
 output, and the rule reads it from its arguments instead of computing it again. A Riccati recursion
-whose gains the rule needs is returned beside the control, for instance. Under `vmap` the rule's
-outputs come from the map itself, and a rule that reads no output does not have the Function called
+whose gains the rule needs is returned beside the control, for instance. Under `vmap` the outputs
+the rule reads are the map's own, and a rule that reads no output does not have the Function called
 for it. The rules are honored through calls, `vmap` and every derivative built on them.
 
 Sparsity patterns come from the body unless `sparsity=` gives them. It is a function of `(output

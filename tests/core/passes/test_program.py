@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -972,6 +973,57 @@ def test_a_call_is_split_only_when_a_quarter_of_its_work_is_invariant(invariant:
   rng = np.random.default_rng(invariant)
   zv, wv = rng.normal(size=3 * 64), rng.normal(size=invariant)
   np.testing.assert_allclose(fn((zv, wv)), np.sin(zv) * np.exp(wv).sum() + zv, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+def test_every_call_of_a_stage_is_split_in_one_pass_of_the_analysis() -> None:
+  """A stage that calls a Function many times with the broadcast ``W``, as an integrator's substeps
+  do: every call is split, and the analysis of the stage's body runs once for them all. With one
+  call split a pass, each pass analysing the whole body again, a stage of 400 calls took 37 s."""
+  hoist_module = sys.modules["scaly.passes.program.hoist_invariant"]
+
+  def stage_of(calls: int) -> tuple[sc.Function, int]:
+    x, w = sc.sym("x", 3), sc.sym("w", 9)
+    inner = sc.Function.from_exprs(f"chain{calls}_inner", [x, w], [(w.reshape((3, 3)).exp() @ x).sin()], ["x", "w"], ["y"])
+    y = x
+    for k in range(calls):
+      y = inner((y * (1.0 + 0.001 * k), w))
+    stage = sc.Function.from_exprs(f"chain{calls}_stage", [x, w], [y], ["x", "w"], ["y"])
+    z, ws = sc.sym("z", 12), sc.sym("ws", 9)
+    fn = sc.Function.from_exprs(f"chain{calls}_map", [z, ws], [sc.vmap(stage, 4, [(z, 0, 3), (ws, 0, 0)])], ["z", "ws"], ["y"])
+    with mock.patch.object(hoist_module, "buffer_refs", wraps=hoist_module.buffer_refs) as analysed:
+      procs = _after_hoisting(fn)
+    assert _callees(procs[f"chain{calls}_stage_hoisted_1"], looped=False).count(f"chain{calls}_inner_hoisted_1") == calls
+    assert [n for n, pr in procs.items() if ProgramOp.EXP in _ops(pr)] == [f"chain{calls}_inner_hoist_1"]
+    return fn, analysed.call_count
+
+  fn, few = stage_of(8)
+  _, many = stage_of(64)
+  assert many <= 12 * few, (few, many)  # eight times the calls: quadratic would be 64 times the statements analysed
+  rng = np.random.default_rng(12)
+  zv, wv = rng.normal(size=12), rng.normal(size=9)
+  want = zv.reshape(4, 3).copy()
+  for k in range(8):
+    want = np.sin((want * (1.0 + 0.001 * k)) @ np.exp(wv.reshape(3, 3)).T)
+  np.testing.assert_allclose(fn((zv, wv)), want.reshape(-1), rtol=1e-10, atol=1e-10)  # eight steps amplify the last bits
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+def test_a_call_whose_arguments_are_all_broadcast_moves_whole() -> None:
+  """A call that reads broadcast arguments only moves out of the loop as it is, into the stage's
+  prologue. It is not split: its callee has nothing that depends on the trip to leave behind."""
+  x, w = sc.sym("x", 3), sc.sym("w", 9)
+  inner = sc.Function.from_exprs("moved_inner", [w], [w.reshape((3, 3)).exp().sin()], ["w"], ["m"])
+  stage = sc.Function.from_exprs("moved_stage", [x, w], [inner(w) @ x], ["x", "w"], ["y"])
+  z, ws = sc.sym("z", 12), sc.sym("ws", 9)
+  fn = sc.Function.from_exprs("moved_map", [z, ws], [sc.vmap(stage, 4, [(z, 0, 3), (ws, 0, 0)])], ["z", "ws"], ["y"])
+  procs = _after_hoisting(fn)
+  assert not [name for name in procs if name.startswith("moved_inner_")], sorted(procs)
+  assert _callees(procs["moved_stage_hoist_1"], looped=False) == ["moved_inner"]
+  assert "moved_inner" not in _reachable(procs, "moved_stage_hoisted_1")
+  rng = np.random.default_rng(13)
+  zv, wv = rng.normal(size=12), rng.normal(size=9)
+  np.testing.assert_allclose(fn((zv, wv)), (zv.reshape(4, 3) @ np.sin(np.exp(wv.reshape(3, 3))).T).reshape(-1), rtol=1e-13, atol=1e-13)
 
 
 def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:

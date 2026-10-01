@@ -9,7 +9,9 @@ import pytest
 
 import scaly as sc
 from scaly.ir.program import ProgramOp
-from scaly.passes.lowering import lower_function
+from scaly.ir.target import resolve_target
+from scaly.passes.batch import batch_maps
+from scaly.passes.lowering import _normalize_function, lower_function
 
 TRIPS = 7
 RNG = np.random.default_rng(11)
@@ -233,17 +235,17 @@ def test_a_body_is_batched_when_the_products_that_gain_are_half_of_its_products(
 
 
 def test_a_product_too_small_for_the_tiles_keeps_the_loop() -> None:
-  """The batched product has to fill a tile: four rows, a reduction of four terms, and more than
-  four columns (half a tile's on the M3). With a constant matrix the trips are its rows and the
+  """The batched product has to fill a tile: four rows, a reduction of four terms, and four
+  columns (half a tile's on the M3). With a constant matrix the trips are its rows and the
   matrix's rows its columns; with a matrix that is an input, the other way around. Below any of
   the three the batched product is no better than the loop's."""
   x4, x3 = [("x", (4,))], [("x", (3,))]
   wx = lambda x, w: w @ x  # noqa: E731
-  for trips, rows, k, taken in ((5, 4, 4, True), (4, 4, 4, False), (5, 3, 4, False), (5, 4, 3, False), (1, 9, 4, False)):
+  for trips, rows, k, taken in ((4, 4, 4, True), (3, 4, 4, False), (4, 3, 4, False), (4, 4, 3, False), (1, 9, 4, False)):
     case = _taken if taken else _kept
     case(f"input_{trips}_{rows}_{k}", [*(x4 if k == 4 else x3), ("w", (rows, k))], (1,), wx, trips=trips)
   rng = np.random.default_rng(8)
-  for trips, rows, k, taken in ((4, 5, 4, True), (3, 5, 4, False), (4, 4, 4, False), (4, 5, 3, False)):
+  for trips, rows, k, taken in ((4, 4, 4, True), (3, 4, 4, False), (4, 3, 4, False), (4, 4, 3, False)):
     case = _taken if taken else _kept
     value = rng.standard_normal((rows, k))
     case(f"constant_{trips}_{rows}_{k}", x4 if k == 4 else x3, (), lambda x, value=value: sc.const(value) @ x, trips=trips)
@@ -392,6 +394,82 @@ def test_windows_that_overlap_and_an_output_no_trip_changes_keep_the_loop() -> N
   np.testing.assert_allclose(np.asarray(y).reshape(TRIPS, N), xv2.reshape(TRIPS, K) @ wv.T, rtol=1e-13, atol=1e-13)
   np.testing.assert_allclose(np.asarray(z).reshape(TRIPS, N), np.tile(wv @ pv, (TRIPS, 1)), rtol=1e-13, atol=1e-13)
   assert _calls(both) > 0
+  # The loop kept for that output runs the whole body, so the other output stays in it: batched as
+  # well, its product would run twice. A graph that does not read the shared output batches the map.
+  normal = _normalize_function(both.concrete)
+  assert batch_maps(normal, resolve_target("apple-m3")) is normal
+  first = sc.Function.from_exprs("two_map_y", [xs2, ws, ps], [sc.vmap(two, TRIPS, specs, output=0)], ["xs", "ws", "ps"], ["y"])
+  assert _calls(first) == 0
+  np.testing.assert_allclose(np.asarray(first((xv2, wv, pv))).reshape(TRIPS, N), xv2.reshape(TRIPS, K) @ wv.T, rtol=1e-13, atol=1e-13)
+
+
+def test_a_body_that_multiplies_by_a_constant_of_mostly_zeros_keeps_its_loop() -> None:
+  """In its loop a small body is expanded into scalar code, where a constant's zeros fold away and
+  the product costs its nonzeros; batched it would multiply every entry. A constant with fewer
+  than a quarter of its entries nonzero keeps the loop, also beside a product that gains; one
+  with a quarter of them is batched."""
+  n = 16
+  rng = np.random.default_rng(5)
+  band = np.diag(rng.standard_normal(n)) + np.diag(rng.standard_normal(n - 1), 1) + np.diag(rng.standard_normal(n - 1), -1)
+  quarter = np.where(np.arange(n * n).reshape(n, n) % 4 == 0, rng.standard_normal((n, n)), 0.0)
+  under = quarter.copy()
+  under[0, 0] = 0.0
+  assert np.count_nonzero(band) * 4 < n * n and np.count_nonzero(quarter) * 4 == n * n
+  _kept("band_left", [("x", (n,))], (), lambda x: sc.const(band) @ x + x)
+  _kept("band_right", [("x", (n,))], (), lambda x: x @ sc.const(band) + x)
+  _kept("band_beside_a_gain", [("x", (n,)), ("w", (64, n))], (1,), lambda x, w: sc.concat([sc.const(band) @ x, w @ x]))
+  _kept("under_a_quarter", [("x", (n,))], (), lambda x: sc.const(under) @ x)
+  _taken("a_quarter", [("x", (n,))], (), lambda x: sc.const(quarter) @ x)
+
+
+def test_a_transpose_that_would_pass_the_rank_lowering_moves_keeps_its_loop() -> None:
+  """Lowering moves the axes of a value of rank four at most. With the trips in front a rank-4
+  transpose would have five, so its map keeps the loop, beside a product that would gain; a
+  rank-3 one is batched."""
+  move4 = lambda q, x, w: (q * 2.0).transpose((1, 3, 0, 2)).reshape((60,)) + w @ x  # noqa: E731
+  _kept("rank_4", [("q", (2, 2, 3, 5)), ("x", (6,)), ("w", (60, 6))], (2,), move4)
+  move3 = lambda q, x, w: (q * 2.0).transpose((1, 2, 0)).reshape((60,)) + w @ x  # noqa: E731
+  _taken("rank_3", [("q", (4, 3, 5)), ("x", (6,)), ("w", (60, 6))], (2,), move3)
+
+
+def test_a_map_is_not_batched_where_that_would_end_a_procedures_scalar_expansion() -> None:
+  """A map's body is a procedure of its own. Batched, its product belongs to the procedure the map
+  is in, and one that fills the tiles keeps that procedure in loops, where a constant operand's
+  zeros no longer fold away. So beside a product with a constant operand the map keeps its loop;
+  without one it is batched; and so it is where the procedure was in loops already."""
+  n, trips = 24, 6
+  rng = np.random.default_rng(6)
+  band = np.diag(rng.standard_normal(n)) + np.diag(rng.standard_normal(n - 1), 1)
+  x, w = sc.sym("x", 6), sc.sym("w", (6, 6))
+  body = sc.Function.from_exprs("beside_body", [x, w], [w @ x], ["x", "w"], ["y"])
+  xs, ws, z, big = sc.sym("xs", trips * 6), sc.sym("ws", (6, 6)), sc.sym("z", n), sc.sym("big", (n, n))
+  mapped = sc.vmap(body, trips, [(xs, 0, 6), (ws.reshape((36,)), 0, 0)])
+  values = (rng.standard_normal(trips * 6), rng.standard_normal((6, 6)), rng.standard_normal(n), rng.standard_normal((n, n)))
+  want = (values[0].reshape(trips, 6) @ values[1].T).reshape(-1)
+  cases = {
+    "constant": (sc.const(band) @ z, band @ values[2], True),
+    "none": (z * 2.0, values[2] * 2.0, False),
+    "in_loops": (
+      sc.concat([sc.const(band) @ z, (big @ big).reshape((n * n,))]),
+      np.concatenate([band @ values[2], (values[3] @ values[3]).reshape(-1)]),
+      False,
+    ),
+  }
+  for tag, (beside, beside_value, kept) in cases.items():
+    fn = sc.Function.from_exprs(f"beside_{tag}", [xs, ws, z, big], [mapped, beside], ["xs", "ws", "z", "big"], ["y", "c"])
+    assert (_calls(fn) > 0) == kept, tag
+    y, c = fn(values)
+    np.testing.assert_allclose(np.asarray(y).reshape(-1), want, rtol=1e-13, atol=1e-13)
+    np.testing.assert_allclose(np.asarray(c).reshape(-1), beside_value, rtol=1e-13, atol=1e-13)
+  # A map whose shared matrix is a constant batches into a product with a constant operand, which
+  # keeps no procedure in loops: beside the same constant product it is batched.
+  weights = rng.standard_normal((6, 6))
+  fixed = sc.Function.from_exprs("beside_fixed_body", [x], [sc.const(weights) @ x], ["x"], ["y"])
+  fn = sc.Function.from_exprs("beside_fixed", [xs, z], [sc.vmap(fixed, trips, [(xs, 0, 6)]), sc.const(band) @ z], ["xs", "z"], ["y", "c"])
+  assert _calls(fn) == 0
+  y, c = fn((values[0], values[2]))
+  np.testing.assert_allclose(np.asarray(y).reshape(-1), (values[0].reshape(trips, 6) @ weights.T).reshape(-1), rtol=1e-13, atol=1e-13)
+  np.testing.assert_allclose(np.asarray(c).reshape(-1), band @ values[2], rtol=1e-13, atol=1e-13)
 
 
 def test_the_outputs_of_one_map_share_one_batched_body() -> None:

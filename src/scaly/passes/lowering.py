@@ -230,8 +230,8 @@ def _lower_to_proc(
   lowering = fun._effective_lowering()
   fun = _normalize_function(fun)
   batched = batch_maps(fun, target)
-  if batched is not fun:  # the batched bodies bring reshapes of reshapes and the like with them
-    fun = _normalize_function(batched)
+  if batched is not fun and not (lowering == "auto" and _batching_ends_expansion(fun, batched, target)):
+    fun = _normalize_function(batched)  # the batched bodies bring reshapes of reshapes and the like with them
   if observe_expr is not None:
     observe_expr("normalized", fun)
   # The chain is found on exactly the graph being lowered, so its node ids are this graph's. The
@@ -272,6 +272,22 @@ def _lower_to_proc(
       **({"entry": True} if entry else {}),
     },
     proc.dtype,
+  )
+
+
+def _batching_ends_expansion(fun: ConcreteFunction, batched: ConcreteFunction, target: Target) -> bool:
+  """Whether the batched maps of ``batched`` would keep a procedure in loops that ``fun`` expands
+  into scalar code, where it holds a product with a constant operand. A map's body is a procedure
+  of its own, so its products decide nothing about the procedure the map is in; batched, they are
+  that procedure's, and one that fills the tiles keeps it all in loops (``_product_in_loops``).
+  The constant's zeros then no longer fold away: a procedure with a sparse constant product of 48
+  to 64 rows beside a map of six to eight small products took 2.4 to 3.7 times as long. The maps
+  keep their loops there."""
+  nodes = topo(fun.outputs)
+  return (
+    any(n.op == ExprOp.MATMUL and ExprOp.CONST in (n.args[0].op, n.args[1].op) for n in nodes)
+    and not any(_product_in_loops(n, target) for n in nodes)
+    and any(_product_in_loops(n, target) for n in topo(batched.outputs))
   )
 
 
@@ -358,6 +374,7 @@ class LowerCtx:
     # scan identity -> buffer name per output index (0 final carry, -1 carries, 1.. stacked outputs).
     self.scan_invocations: dict[tuple[object, ...], dict[int, str]] = {}
     self.map_invocations: dict[tuple[object, ...], dict[int, str]] = {}
+    self._loop_outputs: dict[tuple[object, ...], dict[int, Expr]] | None = None
     self._const_tables: dict[tuple[int, ...], ProgramNode] = {}
     self._tmp = 0
 
@@ -430,6 +447,18 @@ class LowerCtx:
       rule(self, node)
 
   # --- helpers --------------------------------------------------------------
+
+  def loop_outputs(self, node: Expr) -> dict[int, Expr]:
+    """The nodes of the graph that are outputs of ``node``'s loop (a map, a scan or a while loop:
+    one callee over the same arguments), by output index. Every loop's are found in one walk of
+    the graph, the first time one is asked for: a walk for each loop made lowering quadratic in
+    the number of loops (2 000 maps, 9 s)."""
+    if self._loop_outputs is None:
+      self._loop_outputs = {}
+      for n in topo(self.fun.outputs):
+        if n.op in (ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE):
+          self._loop_outputs.setdefault((n.op, *_loop_key(n)), {})[int(n.attrs["output"])] = n
+    return self._loop_outputs[(node.op, *_loop_key(node))]
 
   def buf_of(self, expr: Expr) -> ProgramNode:
     return self.buffers[self.value_buffers[expr.id]]
@@ -1526,7 +1555,7 @@ def _emit_vmap(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int, 
   starts = tuple(int(s) for s in node.attrs["starts"])
   strides = tuple(int(s) for s in node.attrs["strides"])
   _ensure_callee(ctx, callee)
-  siblings = {int(n.attrs["output"]): n for n in topo(ctx.fun.outputs) if n.op == ExprOp.VMAP and _scan_key(n) == key}
+  siblings = ctx.loop_outputs(node)
   outs = {j: ctx.alloc_tmp(sibling) for j, sibling in sorted(siblings.items())}
   bufs = {j: out.attrs["name"] for j, out in outs.items()}
   if length == 0:
@@ -1551,6 +1580,10 @@ def _emit_vmap(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int, 
   )
   ctx.emit(p.for_(rng, [call]))
   return bufs
+
+
+def _loop_key(node: Expr) -> tuple[object, ...]:
+  return _while_key(node) if node.op == ExprOp.WHILE else _scan_key(node)
 
 
 def _scan_key(node: Expr) -> tuple[object, ...]:
@@ -1578,8 +1611,7 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
   init, outers = node.args[0], node.args[1:]
   carry = callee.inputs[0]
   cs, dtype = carry.size, carry.type.dtype
-  key = _scan_key(node)
-  siblings = {int(n.attrs["output"]): n for n in topo(ctx.fun.outputs) if n.op == ExprOp.SCAN and _scan_key(n) == key}
+  siblings = ctx.loop_outputs(node)
   trajectory = -1 in siblings
   # A stacked output someone reads gets its own buffer (the Function's output buffer when it is one);
   # one nobody reads is written to a single reused slot.
@@ -1688,7 +1720,7 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   index = bool(node.attrs.get("index", False))
   carry = body.inputs[0]
   cs, dtype = carry.size, carry.type.dtype
-  trajectory = any(n.op == ExprOp.WHILE and n.attrs["output"] == -1 and _while_key(n) == key for n in topo(ctx.fun.outputs))
+  trajectory = -1 in ctx.loop_outputs(node)
   steps = {1: np.arange(max_iter, dtype=np.int64)} if index else {}
   first = 1 + int(index)
   for i, param in enumerate(params):

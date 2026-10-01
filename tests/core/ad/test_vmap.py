@@ -216,6 +216,37 @@ def test_a_rule_that_does_not_read_the_outputs_leaves_the_map_alone() -> None:
   assert custom.name not in {name for called in _calls(_lowered(ruled)).values() for name in called}
 
 
+@pytest.mark.parametrize("dtype", ["int64", "bool"])
+@pytest.mark.parametrize("reads", [False, True], ids=["unread", "read"])
+def test_a_rule_is_given_a_count_or_a_flag_it_does_not_read_as_a_zero_of_that_type(dtype: str, reads: bool) -> None:
+  """A Function with a reverse rule returns a count or a flag beside its value. The rule is passed
+  a zero for an output it does not read, and that zero has the output's own type: a float zero for
+  an integer or a boolean formal is no call at all. In a call, under a map and in a scan's body the
+  gradient is the one the rule gives, as it is when the rule reads the output."""
+  tag = f"{dtype}_{'read' if reads else 'unread'}"
+  x = sc.sym("x", 3)
+  above = x > 0.5
+  extra = above if dtype == "bool" else sc.cast(above.cast("float64").sum(), dtype).reshape((1,))
+  plain = sc.Function.from_exprs(f"flag_{tag}", [x], [x * x * x, extra], ["x"], ["y", "n"])
+  y, n, ybar, nbar = sc.sym("y", 3), sc.sym("n", extra.shape, dtype=dtype), sc.sym("ybar", 3), sc.sym("nbar", extra.shape)
+  slope = 3.0 * x * x
+  if reads:  # times one, computed from the output that is not a float
+    slope = slope * (sc.where(n, 1.0, 1.0) if dtype == "bool" else sc.cast(n, "float64").sum() * 0.0 + 1.0)
+  rule = sc.Function.from_exprs(f"flag_{tag}_rule", [x, y, n, ybar, nbar], [slope * ybar], ["x", "y", "n", "ybar", "nbar"], ["xbar"])
+  ruled = sc.custom_derivative(plain, vjp=rule)
+  point, weights = np.array([0.3, 0.9, 1.4]), np.array([1.0, -2.0, 0.5])
+  q = sc.sym("q", 3)
+  called = sc.Function.from_exprs(f"flag_{tag}_call", [q], [sc.gradient((weights * ruled(q)[0]).sum(), q)], ["q"], ["g"])
+  np.testing.assert_allclose(called(point), 3 * point**2 * weights, rtol=1e-13)
+  qs, points = sc.sym("qs", 6), np.concatenate([point, point + 0.1])
+  mapped = sc.Function.from_exprs(f"flag_{tag}_map", [qs], [sc.gradient((sc.vmap(ruled, 2, [(qs, 0, 3)]) ** 2).sum(), qs)], ["qs"], ["g"])
+  np.testing.assert_allclose(mapped(points), 6 * points**5, rtol=1e-13)
+  carry = sc.sym("carry", 3)
+  body = sc.Function.from_exprs(f"flag_{tag}_body", [carry], [ruled(carry)[0] * 0.5], ["carry"], ["next"])
+  scanned = sc.Function.from_exprs(f"flag_{tag}_scan", [q], [sc.gradient(sc.scan(body, q, length=2)[0].sum(), q)], ["q"], ["g"])
+  np.testing.assert_allclose(scanned(point), 9 * point**8 / 16, rtol=1e-13)  # ((x^3 / 2)^3) / 2 = x^9 / 16
+
+
 def test_second_derivatives_go_through_a_mapped_rule_and_the_outputs_it_reads() -> None:
   """The lane is a function of the inputs, the outputs and the cotangent, and the outputs are the
   map's: forward mode over the gradient differentiates all three paths. The Hessian of the loss

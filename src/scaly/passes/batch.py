@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from ..function import ConcreteFunction
 from ..ir.expr import Expr, ExprOp, concat, has_trait, matmul, stack, topo
 from ..ir.target import Target
@@ -10,6 +12,12 @@ from ..ir.types import TensorType
 # A value of the body, rewritten: the expression, and whether it changes with the trip. One that
 # does holds the trips as its leading axis.
 type _Value = tuple[Expr, bool]
+
+
+# A shared constant with fewer nonzeros than one entry in this many is left to the loop (``_gains``).
+SPARSE_CONSTANT = 4
+# The most axes a transpose may have for lowering to take it (``lowering._lower_transpose``).
+TRANSPOSE_RANK = 4
 
 
 class _NoForm(Exception):
@@ -28,17 +36,23 @@ def batch_maps(fun: ConcreteFunction, target: Target) -> ConcreteFunction:
   and fills the register tiles a single trip's product could not.
 
   The loop is kept where the body holds an op with no such form (a product of two values that
-  both change with the trip, a reduction, a gather, a call, a nested loop), where a mapped input's
-  windows overlap, where an output does not change with the trip, and where the batched form is
-  not expected faster for ``target`` (``_gains``). Sibling outputs of one map share one batched
-  body.
+  both change with the trip, a reduction, a gather, a call, a nested loop, a transpose that would
+  pass the rank lowering handles), where a mapped input's windows overlap, where an output the
+  graph reads does not change with the trip, and where the batched form is not expected faster
+  for ``target`` (``_gains``). The outputs of one map are batched together or not at all: a loop
+  kept for one of them runs the whole body, so batching the others would compute it twice.
   """
   rebuilt: dict[int, Expr] = {}
   bodies: dict[tuple[object, ...], dict[int, _Value] | None] = {}
+  nodes = topo(fun.outputs)
+  read: dict[tuple[object, ...], set[int]] = {}
+  for node in nodes:
+    if node.op == ExprOp.VMAP:
+      read.setdefault(_map_key(node), set()).add(int(node.attrs["output"]))
   changed = False
-  for node in topo(fun.outputs):
+  for node in nodes:
     args = tuple(rebuilt[a.id] for a in node.args)
-    out = _batched_output(node, args, target, bodies) if node.op == ExprOp.VMAP else None
+    out = _batched_output(node, args, target, bodies, read[_map_key(node)]) if node.op == ExprOp.VMAP else None
     if out is not None:
       changed = True
     elif all(before is after for before, after in zip(node.args, args, strict=True)):
@@ -49,22 +63,38 @@ def batch_maps(fun: ConcreteFunction, target: Target) -> ConcreteFunction:
   return fun._with_outputs(tuple(rebuilt[o.id] for o in fun.outputs)) if changed else fun
 
 
-def _batched_output(node: Expr, args: tuple[Expr, ...], target: Target, bodies: dict[tuple[object, ...], dict[int, _Value] | None]) -> Expr | None:
+def _map_key(node: Expr) -> tuple[object, ...]:
+  """What the outputs of one map share: the body, what it is mapped over, and how."""
+  return (
+    id(node.attrs["callee"]),
+    tuple(a.id for a in node.args),
+    int(node.attrs["length"]),
+    tuple(node.attrs["starts"]),
+    tuple(node.attrs["strides"]),
+  )
+
+
+def _batched_output(
+  node: Expr, args: tuple[Expr, ...], target: Target, bodies: dict[tuple[object, ...], dict[int, _Value] | None], read: set[int]
+) -> Expr | None:
+  """``node``, one output of a map, from the map's batched body; None when the map keeps its loop.
+  ``read`` holds the outputs of the map that the graph reads."""
   callee: ConcreteFunction = node.attrs["callee"]
   trips = int(node.attrs["length"])
   starts, strides = tuple(int(s) for s in node.attrs["starts"]), tuple(int(s) for s in node.attrs["strides"])
-  key = (id(callee), tuple(a.id for a in args), trips, starts, strides)
+  key = _map_key(node)
   if key not in bodies:
     try:
-      bodies[key] = _batched_body(callee, args, trips, starts, strides, target)
+      body = _batched_body(callee, args, trips, starts, strides, target)
+      # An output no trip changes would have to be repeated, which the loop does; and the loop
+      # runs the whole body, so the map's other outputs stay in it too.
+      bodies[key] = body if all(body[callee.outputs[index].id][1] for index in read) else None
     except _NoForm:
       bodies[key] = None
   body = bodies[key]
   if body is None:
     return None
-  out, batched = body[callee.outputs[int(node.attrs["output"])].id]
-  # An output no trip changes would have to be repeated: its map keeps the loop, which does that.
-  return out.reshape(node.shape) if batched else None
+  return body[callee.outputs[int(node.attrs["output"])].id][0].reshape(node.shape)
 
 
 def _batched_body(
@@ -103,10 +133,13 @@ def _batched_body(
 
 def _tiled(rows: int, k: int, columns: int, target: Target) -> bool:
   """Whether a product of ``rows`` by ``k`` with ``k`` by ``columns`` fills register tiles: a tile's
-  rows, a reduction of four terms or more, and more columns than half a tile's (and than four), as
-  lowering judges a product worth its loops (``lowering._product_in_loops``)."""
+  rows, a reduction of four terms or more, and at least half a tile's columns and four. Lowering
+  runs any product of a tile's rows in tiles, the last columns in narrower ones; from four
+  columns on the tiles measured faster than as many products of one column (four trips of a
+  vector by a matrix of 256 rows or more, 0.45 to 0.57 of the loop's time), and under four they
+  did not (three trips, 1.09 to 1.12)."""
   tile_rows, tile_columns = target.product_tile
-  return 1 < tile_rows <= rows and k >= 4 and columns > max(tile_columns // 2, 4)
+  return 1 < tile_rows <= rows and k >= 4 and columns >= max(tile_columns // 2, 4)
 
 
 def _gains(nodes: list[Expr], mapped: set[int], trips: int, target: Target) -> bool:
@@ -115,13 +148,18 @@ def _gains(nodes: list[Expr], mapped: set[int], trips: int, target: Target) -> b
   What batching changes is the products of a value that changes with the trip by a matrix that
   does not. Such a product gains in two cases. The trips' rows together fill the register tiles
   (``_tiled``) where one trip's product, a vector's or a narrow matrix's, did not: measured at
-  0.6 to 0.9 of the loop's time from a 16 by 16 matrix on. Or the shared matrix is larger than
-  ``Target.panel_bytes``, half the level-1 data cache, so the loop read it from the level-2 cache
-  again at every trip: 0.4 to 0.9. A product that already fills the tiles one trip at a time, by
-  a matrix that stays in the cache, runs the same multiply-adds either way and pays for the
-  copies that bring the trips' columns together: 1.0 to 1.07. The body is batched when the
-  products that gain are at least half of the multiply-adds of all its products with a mapped
-  operand."""
+  0.6 to 0.9 of the loop's time from a 16 by 16 matrix on. Or the trips together fill them, one
+  trip did too, and the shared matrix is larger than ``Target.panel_bytes``, half the level-1 data
+  cache, so the loop read it from the level-2 cache again at every trip: 0.4 to 0.9. A product
+  that already fills the tiles one trip at a time, by a matrix that stays in the cache, runs the
+  same multiply-adds either way and pays for the copies that bring the trips' columns together:
+  1.0 to 1.07. The body is batched when the products that gain are at least half of the
+  multiply-adds of all its products with a mapped operand.
+
+  A body that multiplies by a constant with mostly zeros keeps its loop whatever else it holds. A
+  small body is expanded into scalar code there, where the constant's zeros fold away and a
+  product costs its nonzeros; batched, it is a dense product over every entry (a tridiagonal
+  constant of 64 to 160 rows, 4 to 15 times the loop's time)."""
   batched = set(mapped)
   gain = total = 0
   for n in nodes:
@@ -136,6 +174,8 @@ def _gains(nodes: list[Expr], mapped: set[int], trips: int, target: Target) -> b
     work = a.size * b.size // int(a.shape[-1]) if a.size and b.size else 0  # the multiply-adds of one trip's product
     total += work
     shared, value, left = (b, a, False) if a.id in batched else (a, b, True)
+    if shared.op == ExprOp.CONST and shared.value is not None and SPARSE_CONSTANT * np.count_nonzero(shared.value) < shared.size:
+      return False
     if len(shared.shape) != 2:
       continue
     m, k = shared.shape if left else reversed(shared.shape)  # the reduction runs over ``k``
@@ -167,6 +207,8 @@ def _form(n: Expr, found: list[_Value], trips: int) -> Expr:
   if n.op == ExprOp.RESHAPE:
     return x.reshape((trips, *n.shape))
   if n.op == ExprOp.TRANSPOSE:
+    if len(x.shape) > TRANSPOSE_RANK:
+      raise _NoForm  # with the trips in front it has an axis more than lowering moves
     axes = n.attrs.get("axes") or tuple(reversed(range(len(n.args[0].shape))))
     return x.transpose((0, *(int(axis) + 1 for axis in axes)))
   if n.op == ExprOp.SLICE:
@@ -185,8 +227,9 @@ def _lead(x: Expr, rank: int, trips: int) -> Expr:
 
 def _product(left: _Value, right: _Value, trips: int) -> Expr:
   """A product of a batched value and a shared one, as one product over the trips. Each output is
-  the sum it was, in the order of the reduction, so the batched product computes what the loop's
-  did."""
+  the sum of the terms it was, but lowering may add them in another order than it did in the
+  body (a matrix times a vector there adds four partial sums, a row of a matrix product one), so
+  a result can differ from the loop's in its last bits."""
   (a, a_batched), (b, b_batched) = left, right
   if a_batched and b_batched:
     raise _NoForm  # a product of two values that both change with the trip is a loop of products
