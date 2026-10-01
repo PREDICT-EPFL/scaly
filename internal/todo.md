@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 231**
+**Next id: 233**
 
 | Prefix | Section |
 |---|---|
@@ -625,7 +625,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       (sparse) and 2.29× (dense), geometric means over 51 problems (C-132 found these mostly
       measurement); 0.7–5.2 s cold first call
       (`perf_2026_09_26_tier3/t3_4_ipm.py`, `notes/tier3_pr4_report.html`).
-- [x] **C-130. QRECIPE's sparse path stalls.** Done as C-226: a noise-pivot test on the diagonal entry; the ordering was not it. 34 iterations against PIQP's 19 (both backends of
+- [x] **C-130. QRECIPE's sparse path stalls.** Done as C-226 for QRECIPE itself (74 -> 19; the counts below are this entry's, from before): a pivot test on the diagonal entry; the ordering was not it. What is left of the stall on scaled problems is C-232. 34 iterations against PIQP's 19 (both backends of
       PIQP agree on 19; the problem is rounding-sensitive). From iteration 7 the generated LDL^T's
       rounding (MMD ordering) moves the path; at iterations 11–13 the steps shrink to 1e-21 until a
       factorization with an exactly zero pivot retries. Candidates: a noise-pivot test for the sparse
@@ -1119,15 +1119,18 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       seconds before (`utils.env.LOADED_AT_NS`, by modification and change time), a watched
       render (`register_render_observer(watches=)`), or libraries that do not resolve. Lowering
       and rendering run under `default_options`, so no option in force reaches the C.
-      `SCALY_JIT_KEY=verify` renders on every hit and raises on a different source key: the
-      whole suite ran under it on three targets, 4 400 to 4 500 libraries found and rendered
-      again per run, with no mismatch; CI's test jobs run under it. `source` turns the index off.
+      `SCALY_JIT_KEY=verify` renders on every hit and raises when the source key, the workspace,
+      the link flags or the isolation differ from the entry's: the whole suite ran under it on
+      three targets, about 4 500 libraries found and rendered again per run, with no mismatch;
+      CI's test jobs run under it. `source` turns the index off.
       Seconds to a first result in a second process (`warm_start.py`,
-      `results/warm_start_c225.txt`): the corpus's IPM solvers 1.49-1.65 -> 0.21-0.24, a Riccati
-      recursion 1.07 -> 0.18, chain M = 9 22.9 -> 16.0 (what is left is building the graph,
-      C-214's). The key costs 4-14 ms on those, under 1% of the render; on a Function that
-      renders in 1 ms it costs 1.3 ms (the stat of every source file), and on a solver 2 ms
-      against a 6 ms render, since the solver's own C is rendered for the digest.
+      `results/warm_start_c225.txt`): the corpus's IPM solvers 1.29-1.44 -> 0.17-0.20, a Riccati
+      recursion 0.90 -> 0.15, chain M = 9 20.6 -> 14.9 (what is left is building the graph,
+      C-214's; retaken with the key as the second review left it). The graph's digest costs
+      6-19 ms on those and the code's 2-3 ms, about 1% of the render together; on a Function
+      that renders in 1 ms the key costs 2 ms (the stat of every source file and directory, at
+      every key), and on a solver 2 ms against a 6 ms render,
+      since the solver's own C is rendered for the digest.
       The review proved six holes, each with one key over two renderings, all closed: a pass
       inserted in the pipeline; `nonsmooth` read while rendering (see C-227); a file replaced
       with its modification time kept; an op's traits and a rule's helper state; the address of
@@ -1136,20 +1139,55 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       4 900 suite Functions digest two ways for one C. The index keeps the eight states of the
       code used last. An extension must keep what shapes its C in the package that registers
       it: code a rule calls in another package is not digested.
-- [x] **C-226. A sparse pivot within one ulp of its diagonal entry is a zero pivot (A6, C-130;
-      Tier 7).** QRECIPE's sparse path took 74 iterations against PIQP's 19: the generated
-      `LDL^T` left pivots 12 to 40 orders below one ulp of their diagonal entries, PIQP's test
-      (a pivot exactly zero) passed them, and their steps were of length 1e-49 until a later
-      pivot came out exactly zero. The ordering alone decides whether it happens: natural, RCM
-      and MMD with other tie-breaks all take 19-20 (`results/a6_orderings.txt`), so a search
+      A second review proved nine more, none reachable from scaly's own graphs in an ordinary
+      checkout (each needs an extension, or a change of a file's identity the time test did not
+      see), all closed: a package imported before scaly and edited before scaly loads (another
+      package is now judged by when the process started, `utils.env.process_started_ns`, and
+      has no digest where that is unknown or in a fork); a link pointed elsewhere, a directory
+      swapped or a file deleted under a live process (directories' own times count);
+      a wrapper carrying a scaly function's name (a function is told by its code and the module
+      it was defined in, a class by a name that leads back to it); a ufunc that is not NumPy's;
+      a `Target` subclass; a project module named like one of the interpreter's (told by where
+      it lives); what fusion reads of the whole op registry; bytecode left stale by a source
+      replaced with its size and modification time kept (bytecode older than its source's last
+      change that Python would still load is digested with the source; bytecode written since
+      is not, or keys would move while one test worker writes what another reads); a file over
+      a megabyte replaced the same way (its change time counts). Shapes
+      are written as plain integers, so a node first built with NumPy's gets the same key. The
+      first review's 140 mutants were rerun on the reworked code with the second's survivors,
+      and the second round's fixes (with C-226's and C-231's) carry 57 of their own, all killed.
+- [x] **C-226. A sparse pivot within one ulp of its diagonal entry fails the factorization (A6,
+      C-130; Tier 7).** QRECIPE's sparse path took 74 iterations against PIQP's 19: the generated
+      `LDL^T` left pivots 12 to 30 orders below one ulp of their diagonal entries, PIQP's test
+      (a pivot exactly zero) passed them, and their steps were of length 1e-25 and less until a
+      later pivot came out exactly zero. The ordering alone decides whether it happens: natural,
+      RCM and MMD with other tie-breaks all take 19-20 (`results/a6_orderings.txt`), so a search
       over orderings by fill would not have found it, and none is added. `Kernels._pivots_left`
-      takes a finite pivot at or below `eps` times the diagonal entry it came from as the zero
-      it stands for, refinement on or off, so PIQP's retry runs. QRECIPE 74 -> 19; no other of
-      the 55 problems changes its iteration count or status; the PIQP path gate holds; time
-      0.998 in geometric mean elsewhere and 0.25 on QRECIPE (`results/a6_sparse.md`). A first version that
-      bounded each pivot by its whole sum (`|a| + sum L^2 |D|`, a pass over the factor) cost
-      6-8% a solve and turned refinement on for six problems that did not need it. 11 mutants,
-      all killed.
+      fails a factorization with a finite pivot at or below `eps` times the diagonal entry it
+      came from, refinement on or off, and the retry runs as for a zero pivot, except that the
+      floor of the regularization stays where it is (only a pivot exactly zero raises it, as in
+      PIQP). QRECIPE 74 -> 19, PIQP's count though not its path (PIQP has no retry there); no
+      other of the 55 problems changes its iteration count or status; the PIQP path gate holds;
+      time 0.996 in geometric mean elsewhere and 0.25 on QRECIPE (`results/a6_sparse.md`).
+      The review's fuzz of 10 560 value sets on 44 structures (`ipm_fuzz/`,
+      `results/c226_fuzz.txt`) against the tree before: 195 differ, 90 faster, 2 solved that
+      were not, 6 slower (QBEACONF 140 -> 217 the worst), none lost. As first committed, every
+      retry raised the floor as a singular matrix's does: a row-scaled QRECIPE lost a pivot in
+      some thirty iterations, the floor reached its cap and the solve stopped at the iteration
+      limit (solved in 64 before, in 100 now). A first version that bounded each pivot by its
+      whole sum (`|a| + sum L^2 |D|`, a pass over the factor) cost 6-8% a solve and turned
+      refinement on where it was not needed (`results/a6_growth_variant.md`).
+- [ ] **C-232. The sparse backend's stalls that C-226 leaves.** The review's fuzz: of 469 value
+      sets PIQP's sparse backend solves, the generated one stalled (a step under 1e-10) on 151
+      before C-226 and on 40 after, nearly all of the fixed ones QRECIPE's. A cost-scaled
+      QBRANDY still stalls or stops at the iteration limit where PIQP takes 17 iterations. The
+      candidate, prototyped by the review at the same cost: for a convex `P` every pivot of a
+      constraint row has at least the magnitude of its diagonal entry, and every pivot of a
+      variable is at least its `x_reg`, so a pivot under those bounds is rounding (2 stalls of
+      469 left; it turns refinement on for four of the 55, and a nonconvex `P` needs the rule
+      off). Also there: a retry that scales `rho` and `delta` by 100 is PIQP's answer to a
+      singular matrix and does not always cure residue; and with `rho = 0` and no
+      preconditioning a legitimate pivot can equal one ulp of its entry.
 - [x] **C-227. `floor` and `ceil` read what their pattern omits (found by C-225's review).**
       Both carried the `exact_reads` trait, but their derivative pattern is empty, so the
       in-place carry proof took a body that writes `floor` of the entries it overwrites for
@@ -1165,6 +1203,16 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       (equal type objects, a list with a tuple, `np.int64(1)` with `1`). And `_attrs_key` keys a
       float by its bits and a bool and a float by kind, as `ProgramNode` interning and
       `codegen/structure.py` do, so those are separate nodes: with the first fix alone the
+      That is coarse: a body that reads through `floor` only entries it does not write loses
+      the in-place form too. A tighter rule the second review prototyped (a read pattern in
+      which every elementwise op and `select` reads the union of its arguments' patterns)
+      keeps those and needs no trait; not taken yet.
+- [x] **C-231. A Function named like a loop body's in-place form is refused (found by C-225's
+      second review; older than Tier 7).** A loop body that may overwrite its carry is lowered a
+      second time as `<name>_inplace` and shared by that name. A Function of that name called in
+      the same graph took the procedure's place or gave its own up, whichever was lowered first:
+      `[5, 5, 6]` where NumPy gives `[6, 2, 3]`. `_check_function_names` now refuses the graph,
+      as it refuses two Functions of one name.
       second `take` would have been the first one, silently, and only while the first was
       alive. The expression CSE pass shares the key; a NaN attribute now matches itself. Over
       the suite (the example notebooks left out) the new key splits no pair of nodes the old one
@@ -1174,25 +1222,29 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       had no JIT key; it compares by equality now. Tests in `tests/core/ir/test_expr.py` and
       `tests/core/codegen/test_structure.py`; taking out either half of the fix, or the change
       to the extern check, fails them.
-- [x] **C-229. A long dot product's partial sums follow the target (B4, Tier 7).** Eight
-      partial sums everywhere, the form C-196 left for when QBEACONF's gate was settled, measured
-      again: the corpus 1.002 in geometric mean (the sparse factorizations 1.02-1.03, their rows
-      being short), the sparse IPM 0.994, the dense IPM 0.975 above 50 us. The gain is one loop,
-      the forward substitution of one right-hand side, whose rows are dot products as long as the
-      row. That loop alone now takes `Target.sum_lanes` partial sums, a vector of them for each
-      multiply-add unit and no fewer than four: 8 on the M3 (16 measured no faster), 4 on SSE2
-      and on a single lane, 8 on AVX2. Dense IPM, 50 problems with their iteration counts
-      unchanged: 0.988 of their time, 0.977 from 91 variables (0.93-1.01)
-      (`results/b4_dense.md`); corpus `ipm_cvxqp1_dense` 0.972, nothing else moved
-      (`results/corpus_t7_final.json`). The count is a rounding choice (`rounding="portable"`
-      takes the reference machine's 8): five rounding-sensitive dense problems change their
-      iteration count, four down and QGROW7 up by one, 633 -> 628 in all; the PIQP path gate
-      holds. 7 mutants, all killed.
+- [x] **C-229. The rows of a single-right-hand-side triangular solve sum in the target's count of
+      partial sums (B4, Tier 7).** Eight partial sums in every reduction, the form C-196 left
+      for when QBEACONF's gate was settled, measured again: the corpus 1.002 in geometric mean
+      (the sparse factorizations 1.02-1.03, their rows being short), and on the IPM problems
+      whose iteration count does not change 0.994 sparse and 0.975 dense above 50 us
+      (`results/b4_eight_everywhere_*.md`). The gain is one loop: the triangular solve with one
+      right-hand side and no transpose (forward for a lower triangle, backward for an upper
+      one, `lu_solve`'s included), whose rows are dot products as long as the row. That loop
+      alone now takes `Target.sum_lanes` partial sums, a vector of them for each multiply-add
+      unit and no fewer than four: 8 on the M3 (16 measured no faster,
+      `results/b4_trisolve_lanes.md`), 4 on SSE2 and on a single lane, 8 on AVX2. Dense IPM, 50
+      problems with their iteration counts unchanged: 0.988 of their time, 0.977 from 91
+      variables (0.93-1.01) and 0.994 from 64 to 90 (`results/b4_dense.md`); corpus
+      `ipm_cvxqp1_dense` 0.972, nothing else moved (`results/corpus_t7_final.json`). The count
+      is a rounding choice (`rounding="portable"` takes the reference machine's 8): five
+      rounding-sensitive dense problems change their iteration count, four down and QGROW7 up
+      by one, 633 -> 628 in all, and end at other points of a degenerate optimal face (the
+      objectives agree to 1e-6); the PIQP path gate holds. 7 mutants, all killed.
 - [x] **B5 (Tier 7): live ranges in scalarized bodies, closed by measurement.** Stack loads and
       stores are 37-44% of the chain stage's instructions (`stack_traffic.py`,
       `results/b5_stack_traffic.txt`), but the statements already sit at their first use: what
       is long is the last use, the reverse sweep reading the forward pass (320-760 values live
-      at once against 32 registers, `live_ranges.py`). No order of the statements shortens
+      at once on average, up to 1 180, against 32 registers, `live_ranges.py`). No order of the statements shortens
       that; a smaller adjoint would (C-58, C-214).
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the

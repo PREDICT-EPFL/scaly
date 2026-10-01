@@ -1,0 +1,25 @@
+# cmpfuzz.py: 44 structures x 240 value sets, the sparse backend. 'old' is the tree before C-226.
+## before C-226 against C-226 as first committed (every retry raises the floor)
+CVXQP1_S                     n/p/m 100/50/0: instances 240, identical 238, differ 2, new gains status 1, new faster 1
+QBEACONF                     n/p/m 262/140/33: instances 240, identical 229, differ 11, same count, other x 9, NEW SLOWER 2
+   k   90 tinyP     NEW SLOWER                       status   1/  1 iter  91/102 ir 1/1 obj 33592.4859/33592.4859
+   k  222 tinyP     NEW SLOWER                       status   1/  1 iter 140/214 ir 1/1 obj 33592.4859/33592.4859
+QBRANDY                      n/p/m 249/166/38: instances 240, identical 228, differ 12, same count, other x 9, new faster 1, NEW SLOWER 2
+   k  190 dupcost   NEW SLOWER                       status   1/  1 iter  32/ 37 ir 1/1 obj -72.8744203/-72.8744203
+   k  234 tinyP     NEW SLOWER                       status   1/  1 iter  69/103 ir 1/1 obj 1518.50994/1518.50994
+QRECIPE                      n/p/m 180/91/24: instances 240, differ 160, new faster 90, identical 80, same count, other x 68, status differs (neither solved) 1, NEW LOSES STATUS 1
+   k  146 rowscale  NEW LOSES STATUS                 status   1/ -1 iter  64/250 ir 1/1 obj -266.616/-266.585673
+TOTAL: instances 10560, identical 10365, differ 195, new gains status 1, new faster 92, same count, other x 96, NEW SLOWER 4, status differs (neither solved) 1, NEW LOSES STATUS 1
+
+## before C-226 against C-226 with the floor left alone on residue
+CVXQP1_S                     n/p/m 100/50/0: instances 240, identical 238, differ 2, new gains status 1, new faster 1
+QBEACONF                     n/p/m 262/140/33: instances 240, identical 229, differ 11, same count, other x 9, NEW SLOWER 2
+   k   90 tinyP     NEW SLOWER                       status   1/  1 iter  91/111 ir 1/1 obj 33592.4859/33592.4859
+   k  222 tinyP     NEW SLOWER                       status   1/  1 iter 140/217 ir 1/1 obj 33592.4859/33592.4859
+QBRANDY                      n/p/m 249/166/38: instances 240, identical 228, differ 12, same count, other x 9, new faster 1, NEW SLOWER 2
+   k  190 dupcost   NEW SLOWER                       status   1/  1 iter  32/ 36 ir 1/1 obj -72.8744203/-72.8744203
+   k  234 tinyP     NEW SLOWER                       status   1/  1 iter  69/115 ir 1/1 obj 1518.50994/1518.50994
+QRECIPE                      n/p/m 180/91/24: instances 240, differ 160, new faster 88, identical 80, same count, other x 68, status differs (neither solved) 1, NEW SLOWER 2, new gains status 1
+   k  146 rowscale  NEW SLOWER                       status   1/  1 iter  64/100 ir 1/1 obj -266.616/-266.616
+   k  147 costscale NEW SLOWER                       status   1/  1 iter 160/187 ir 1/1 obj -0.00089288561/-0.000892885603
+TOTAL: instances 10560, identical 10365, differ 195, new gains status 2, new faster 90, same count, other x 96, NEW SLOWER 6, status differs (neither solved) 1

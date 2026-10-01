@@ -4,6 +4,7 @@ and structural sparsity against the Jacobian."""
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import numpy as np
@@ -316,12 +317,15 @@ def _solve_in_blocks(target: str | sc.Target, tag: str, n: int, m: int, lower: b
   np.testing.assert_allclose(got, np.linalg.solve(tri.T if trans else tri, b), rtol=1e-11, atol=1e-11)
 
 
-@pytest.mark.parametrize(("target", "lanes"), [("apple-m3", 8), ("generic", 4), ("x86-64", 4), ("x86-64-v3", 8), ("cortex-a53", 4)])
-@pytest.mark.parametrize(("lower", "unit"), [(True, False), (True, True), (False, False)])
+@pytest.mark.parametrize(
+  ("target", "lanes"), [("apple-m3", 8), ("generic", 4), ("x86-64", 4), ("x86-64-v3", 8), ("x86-64-v4", 16), ("cortex-a53", 4)]
+)
+@pytest.mark.parametrize(("lower", "unit"), [(True, False), (True, True), (False, False), (False, True)])
 def test_one_right_hand_side_is_solved_in_the_targets_partial_sums(target: str, lanes: int, lower: bool, unit: bool) -> None:
-  """With one right-hand side each row is a dot product as long as the row, summed in
-  ``Target.sum_lanes`` partial sums: the loop takes that many unknowns a pass, and the solve is
-  the substitution whatever their count."""
+  """With one right-hand side and no transpose (forward for a lower triangle, backward for an
+  upper one) each row is a dot product as long as the row, summed in ``Target.sum_lanes`` partial
+  sums: the loop takes that many unknowns a pass, and the solve is the substitution whatever
+  their count."""
   n = 101  # past the straight-line budget of every target here, and no multiple of a lane count
   tri = _triangle(_spd(n) / n + np.eye(n), lower, unit)
   b = RNG.standard_normal(n)
@@ -334,6 +338,21 @@ def test_one_right_hand_side_is_solved_in_the_targets_partial_sums(target: str, 
   with sc.target(target):
     got = fn._flat_numerical_call(given, b)[0]
   np.testing.assert_allclose(got, np.linalg.solve(tri, b), rtol=1e-11, atol=1e-11)
+
+
+def test_the_partial_sums_are_the_reference_machines_under_portable_rounding_and_only_one_solve_takes_them() -> None:
+  n = 101
+  a, bv, bm = sc.sym("a", (n, n)), sc.sym("b", n), sc.sym("bm", (n, 3))
+  one = _fn("lanes_portable", [a, bv], [solve_triangular(a, bv)])
+  texts = {
+    render_c_source(one, target=dataclasses.replace(sc.Target.preset(name), rounding="portable"))
+    for name in ("apple-m3", "generic", "x86-64", "x86-64-v4")
+  }
+  assert len(texts) == 1 and re.findall(r"kb_t_\w+ \+= (\d+)\)", texts.pop()) == ["8"]
+  # Several right-hand sides, and the solve against the transpose, keep their own forms on a target of sixteen.
+  several = render_c_source(_fn("lanes_several", [a, bm], [solve_triangular(a, bm)]), target="x86-64-v4")
+  transposed = render_c_source(_fn("lanes_transposed", [a, bv], [solve_triangular(a, bv, trans=True)]), target="x86-64-v4")
+  assert "+= 16)" not in several and "+= 16)" not in transposed
 
 
 @pytest.mark.parametrize(("target", "n", "m"), BLOCKED_SOLVES)

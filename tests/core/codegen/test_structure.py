@@ -6,13 +6,18 @@ from __future__ import annotations
 import enum
 import functools
 import gc
+import importlib.util
 import json
 import math
 import os
 import shutil
+import struct
 import sys
 import time
+import types
+import weakref
 from dataclasses import dataclass, field, replace
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +36,7 @@ from scaly.function.extern import BuildRequirements, ExternRenderCtx, ExternSour
 from scaly.ir.expr import Expr, ExprOp, Lowering, op_def
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.target import Target, resolve_target
-from scaly.ir.types import SparsityType, TensorType, dtypes
+from scaly.ir.types import DType, SparsityType, TensorType, dtypes
 from scaly.utils.options import default_options, get_options
 
 pytestmark = pytest.mark.skipif(shutil.which(os.environ.get("SCALY_CC", "cc")) is None, reason="the JIT needs a C compiler")
@@ -42,6 +47,8 @@ def loaded_now(monkeypatch):
   """As if scaly were loaded now: a file written in the two seconds before the load stops the key,
   and a test must not depend on how long ago a file it reads was saved."""
   monkeypatch.setattr(env, "LOADED_AT_NS", time.time_ns() + 3_000_000_000)
+  # A package other than scaly is judged by when the process started: here, when scaly was loaded.
+  monkeypatch.setattr(env, "process_started_ns", lambda: env.LOADED_AT_NS)
 
 
 @pytest.fixture
@@ -629,19 +636,21 @@ def test_a_file_is_read_once_and_a_large_one_is_taken_by_its_size_and_time(tmp_p
   assert code_digest({"structure_pkg_e"}) == base
   assert [path for path in reads if "structure_pkg_e" in path] == first  # nothing read twice
   stamp = library.stat()
-  library.write_bytes(b"\2" * (structure._READ_WHOLE + 1))  # other contents, the same size and time
-  os.utime(library, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-  _loaded_now(monkeypatch)
-  assert code_digest({"structure_pkg_e"}) == base  # not read: only its size and time
-  os.utime(library, ns=(stamp.st_atime_ns, stamp.st_mtime_ns - SECOND))
+  os.utime(library, ns=(stamp.st_atime_ns, stamp.st_mtime_ns - SECOND))  # the same bytes at another time
   _loaded_now(monkeypatch)
   timed = code_digest({"structure_pkg_e"})
   assert timed not in (None, base)
+  library.write_bytes(b"\2" * (structure._READ_WHOLE + 1))  # other contents, the size and the modification time kept
+  os.utime(library, ns=(stamp.st_atime_ns, stamp.st_mtime_ns - SECOND))
+  _loaded_now(monkeypatch)
+  replaced = code_digest({"structure_pkg_e"})
+  assert replaced not in (None, base, timed)  # told by its change time: it is not read
+  assert str(library) not in reads
   library.write_bytes(b"\2" * (structure._READ_WHOLE + 2))
   os.utime(library, ns=(stamp.st_atime_ns, stamp.st_mtime_ns - SECOND))
   _loaded_now(monkeypatch)
   sized = code_digest({"structure_pkg_e"})
-  assert sized not in (None, base, timed)
+  assert sized not in (None, base, timed, replaced)
   stamp = edge.stat()
   edge.write_bytes(b"\3" * structure._READ_WHOLE)  # read again, although its size and modification time are the same
   os.utime(edge, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
@@ -654,7 +663,8 @@ def test_code_written_or_replaced_after_scaly_was_loaded_has_no_digest(tmp_path,
   rules = package / "sub" / "rules.py"
   assert code_digest({"structure_pkg_b"}) is not None
   slack = structure._CLOCK_SLACK_NS
-  changed = max(path.stat().st_ctime_ns for path in package.rglob("*") if "__pycache__" not in path.parts)
+  scanned = [package, *(path for path in package.rglob("*") if "__pycache__" not in path.parts)]
+  changed = max(max(path.stat().st_ctime_ns, path.stat().st_mtime_ns) for path in scanned)
   monkeypatch.setattr(env, "LOADED_AT_NS", changed + slack)  # loaded two seconds after the last file was written: too close to tell
   assert code_digest({"structure_pkg_b"}) is None
   monkeypatch.setattr(env, "LOADED_AT_NS", changed + slack + 1)
@@ -700,11 +710,13 @@ def test_the_interpreters_and_numpys_code_is_named_by_version(monkeypatch) -> No
   base = code_digest(())
   assert base is not None
   assert code_digest({"numpy", "math", "functools"}) == base  # no files of theirs are read
-  monkeypatch.setattr(np, "__version__", np.__version__ + ".post1")
-  bumped = code_digest(())
-  assert bumped not in (None, base)
-  monkeypatch.setattr(sys, "version", sys.version + " (patched)")
-  assert code_digest(()) not in (None, base, bumped)
+  import scipy
+
+  seen = {base}
+  for module, name in ((np, "__version__"), (scipy, "__version__"), (sys, "version")):
+    monkeypatch.setattr(module, name, getattr(module, name) + ".post1")
+    seen.add(code_digest(()))
+  assert None not in seen and len(seen) == 4
 
 
 def test_two_packages_with_the_same_files_have_two_digests(tmp_path, monkeypatch) -> None:
@@ -1295,3 +1307,320 @@ def test_a_solver_has_a_key_and_is_found_by_it(cache, monkeypatch) -> None:
   jit._artifact_cache.clear()
   _no_render(monkeypatch)
   np.testing.assert_array_equal(solver()(*args)[0], first)
+
+
+# --- what a second review proved: each of these was one key over two renderings ------------------
+
+
+def test_a_package_other_than_scaly_is_judged_by_when_the_process_started(tmp_path, monkeypatch) -> None:
+  # It may have been imported before scaly was: a file of its written between the two is not what runs.
+  package = _package(tmp_path, "structure_pkg_i", monkeypatch)
+  assert code_digest({"structure_pkg_i"}) is not None
+  written = max(path.stat().st_ctime_ns for path in [package, *package.rglob("*")])
+  monkeypatch.setattr(env, "process_started_ns", lambda: written - SECOND)  # the process started before the files were written
+  assert code_digest({"structure_pkg_i"}) is None
+  assert code_digest(()) is not None  # scaly's own code loads when scaly does
+  monkeypatch.setattr(env, "process_started_ns", lambda: None)  # a platform that does not say, or a forked process
+  assert code_digest({"structure_pkg_i"}) is None and code_digest(()) is not None
+
+
+def test_the_process_start_is_before_scaly_was_loaded_and_unknown_in_a_fork(monkeypatch) -> None:
+  monkeypatch.undo()  # the real clock, not the fixture's
+  started = env.process_started_ns()
+  if started is None:
+    pytest.skip("this platform does not say when a process started")
+  assert 0 < env.LOADED_AT_NS - started < 3600 * SECOND
+  monkeypatch.setattr(env, "_started", [])
+  monkeypatch.setattr(env, "_process_start", lambda: env.LOADED_AT_NS + 1)  # a start after the load is no start
+  assert env.process_started_ns() is None
+  monkeypatch.setattr(env, "_started", [])
+  monkeypatch.setattr(env, "_process_start", lambda: env.LOADED_AT_NS)
+  assert env.process_started_ns() == env.LOADED_AT_NS
+  monkeypatch.setattr(env, "_LOADED_BY", os.getpid() + 1)  # as in a child forked from the process that loaded scaly
+  assert env.process_started_ns() is None
+
+
+def test_a_link_pointed_elsewhere_or_a_directory_changed_under_a_live_process_has_no_digest(tmp_path, monkeypatch) -> None:
+  package = _package(tmp_path, "structure_pkg_j", monkeypatch)
+  for version in ("v1", "v2"):
+    (tmp_path / version).mkdir()
+    (tmp_path / version / "impl.py").write_text(f"VERSION = '{version}'\n")
+  (package / "current").symlink_to(tmp_path / "v1", target_is_directory=True)
+  (package / "one.py").symlink_to(tmp_path / "v1" / "impl.py")
+  _loaded_now(monkeypatch)
+  assert code_digest({"structure_pkg_j"}) is not None
+  loaded = time.time_ns() + structure._CLOCK_SLACK_NS  # loaded now: every time so far is older
+  monkeypatch.setattr(env, "LOADED_AT_NS", loaded)
+  assert code_digest({"structure_pkg_j"}) is not None
+
+  def relink(name: str, target: Path, directory: bool) -> None:
+    """Point the link elsewhere by renaming a new link over it, as an upgrade in place does."""
+    fresh = package / f"{name}.new"
+    fresh.symlink_to(target, target_is_directory=directory)
+    fresh.rename(package / name)
+
+  for change in (
+    lambda: relink("current", tmp_path / "v2", True),
+    lambda: relink("one.py", tmp_path / "v2" / "impl.py", False),
+    lambda: (package / "sub" / "rules.py").unlink(),
+    lambda: (package / "sub" / "added.py").write_text(""),
+    lambda: (package / "template.c").rename(package / "renamed.c"),
+  ):
+    monkeypatch.setattr(env, "LOADED_AT_NS", time.time_ns() + structure._CLOCK_SLACK_NS)
+    assert code_digest({"structure_pkg_j"}) is not None
+    change()
+    assert code_digest({"structure_pkg_j"}) is None
+
+
+def _bytecode(source: Path, body: bytes, *, mtime: int | None = None, size: int | None = None, flags: int = 0) -> bytes:
+  """A bytecode file's bytes for ``source``: the header Python checks (the source's modification
+  time and size, unless given others), then ``body``."""
+  stat = source.stat()
+  recorded = int(stat.st_mtime) if mtime is None else mtime
+  return importlib.util.MAGIC_NUMBER + struct.pack("<III", flags, recorded & 0xFFFFFFFF, (stat.st_size if size is None else size) & 0xFFFFFFFF) + body
+
+
+def test_bytecode_python_would_run_in_place_of_a_changed_source_is_part_of_the_digest(tmp_path, monkeypatch) -> None:
+  # Python loads the bytecode it kept when the source's size and modification time match what the
+  # bytecode recorded: a source replaced with both kept runs as the old code, and only the
+  # bytecode says so.
+  package = _package(tmp_path, "structure_pkg_k", monkeypatch)
+  source = package / "__init__.py"
+  cached = Path(importlib.util.cache_from_source(str(source)))
+  cached.unlink(missing_ok=True)
+
+  def digest(kept: bytes | None, *, older: bool) -> str | None:
+    if kept is not None:
+      cached.write_bytes(kept)
+      when = source.stat().st_ctime_ns - SECOND if older else source.stat().st_ctime_ns
+      os.utime(cached, ns=(when, when))
+    _loaded_now(monkeypatch)
+    return code_digest({"structure_pkg_k"})
+
+  base = digest(None, older=False)
+  assert base is not None
+  # Written at or after the source's last change: the source's own, whatever it holds. Bytecode
+  # that one worker writes while another runs moves no key.
+  assert digest(_bytecode(source, b"one"), older=False) == base
+  assert digest(_bytecode(source, b"two"), older=False) == base
+  # Older than the source's last change, and for a source of this size and time: what runs.
+  stale = digest(_bytecode(source, b"of the source that was here before"), older=True)
+  other = digest(_bytecode(source, b"of yet another"), older=True)
+  assert len({base, stale, other}) == 3 and None not in (stale, other)
+  # Older, but for a source of another time or size: Python compiles the source again.
+  assert digest(_bytecode(source, b"x", mtime=int(source.stat().st_mtime) - 5), older=True) == base
+  assert digest(_bytecode(source, b"x", size=source.stat().st_size + 1), older=True) == base
+  assert digest(b"cut", older=True) == base
+  # Bytecode checked by a hash of the source is not checked here: taken as accepted.
+  assert digest(_bytecode(source, b"hashed", mtime=0, size=0, flags=1), older=True) not in (None, base, stale, other)
+
+
+def _passing(prog: ProgramNode) -> ProgramNode:
+  return prog
+
+
+def _named_like(fn):
+  """A function of this module carrying the name of another, as a decorator's wrapper does."""
+  wrapper = types.FunctionType(_passing.__code__, _passing.__globals__, getattr(fn, "__name__"))
+  wrapper.__module__, wrapper.__qualname__ = fn.__module__, getattr(fn, "__qualname__")
+  return wrapper
+
+
+def test_a_function_is_told_by_its_code_and_not_by_the_name_it_carries(monkeypatch) -> None:
+  fn = _fn()
+  base, packages = _graph(fn)
+  fold = dict(program_passes.PASS_PIPELINE)["fold_arith"]
+  disguised = _named_like(fold)
+  assert (disguised.__module__, disguised.__qualname__) == (fold.__module__, getattr(fold, "__qualname__")) and disguised.__closure__ is None
+  monkeypatch.setattr(
+    program_passes, "PASS_PIPELINE", tuple((name, disguised if name == "fold_arith" else pass_) for name, pass_ in program_passes.PASS_PIPELINE)
+  )
+  other, other_packages = _graph(fn)
+  assert other != base and other_packages == packages | {__name__.partition(".")[0]}
+  monkeypatch.setattr(
+    program_passes, "PASS_PIPELINE", tuple((name, _wrapped(fold) if name == "fold_arith" else pass_) for name, pass_ in program_passes.PASS_PIPELINE)
+  )
+  assert graph_digest(fn) is None  # a real wrapper is a closure
+
+
+_FIRST = lambda *args: None  # noqa: E731
+_SECOND = lambda *args: None  # noqa: E731
+
+
+def test_two_functions_of_one_name_are_told_by_their_line_and_their_defaults(monkeypatch) -> None:
+  fn = _fn()
+  sin = op_def(ExprOp.SIN)
+  digests = []
+  for rule in (_FIRST, _SECOND):  # two lambdas of one module: one qualified name, two lines
+    monkeypatch.setattr(sin, "fold", rule)
+    digests.append(_graph(fn)[0])
+  for scale in (1.0, 2.0):  # one code, two defaults, as a loop at module level makes them
+    made = types.FunctionType(_plain.__code__, _plain.__globals__, "_plain", (scale,))
+    monkeypatch.setattr(sin, "fold", made)
+    digests.append(_graph(fn)[0])
+  made = types.FunctionType(_plain.__code__, _plain.__globals__, "_plain")
+  made.__kwdefaults__ = {"scale": 3.0}
+  monkeypatch.setattr(sin, "fold", made)
+  digests.append(_graph(fn)[0])
+  assert len(set(digests)) == 5
+  made.__kwdefaults__ = {"scale": _OPAQUE}  # a default the walk cannot write
+  assert graph_digest(fn) is None
+  for scope in ({"__name__": "structure_no_such_module"}, {"__name__": __name__}):  # globals that are no module's own
+    monkeypatch.setattr(sin, "fold", types.FunctionType(_plain.__code__, scope, "_plain"))
+    assert graph_digest(fn) is None
+
+
+def _local():
+  def inner(*args):
+    return None
+
+  return inner
+
+
+def test_a_function_defined_in_another_is_keyed_when_it_captures_nothing(monkeypatch) -> None:
+  # Every call of the outer function gives the same code with nothing of its own, so one stands for all.
+  fn = _fn()
+  monkeypatch.setattr(op_def(ExprOp.SIN), "fold", _local())
+  one = graph_digest(fn)
+  monkeypatch.setattr(op_def(ExprOp.SIN), "fold", _local())
+  assert one is not None and graph_digest(fn) == one
+
+
+class _Posing:
+  pass
+
+
+def test_a_class_whose_name_leads_to_another_gives_no_key() -> None:
+  assert _digest(_Whole()) is not None
+  posing = dataclass(frozen=True)(type("Posing", (), {"__annotations__": {"n": int}, "n": 1, "__module__": __name__, "__qualname__": "_Whole"}))
+  assert _digest(posing()) is None
+  assert _Posing.__qualname__ == "_Posing"
+
+
+def test_a_ufunc_that_is_not_numpys_gives_no_key(monkeypatch) -> None:
+  fn = _fn()
+  assert graph_digest(fn) is not None
+  made = np.frompyfunc(math.cos, 1, 1)  # as a compiled extension's ufunc is: one NumPy's name does not lead to
+  monkeypatch.setattr(op_def(ExprOp.SIN), "numpy", made)
+  assert graph_digest(fn) is None
+
+
+def test_a_target_of_a_subclass_has_no_key(cache) -> None:
+  class Tuned(Target):
+    @property
+    def sum_lanes(self) -> int:
+      return 16
+
+  fn = _fn()
+  host = resolve_target(None)
+  assert _key(fn, target=host) is not None
+  assert _key(fn, target=Tuned(**{f.name: getattr(host, f.name) for f in dataclass_fields(host)})) is None
+
+
+def test_a_module_named_like_one_of_the_interpreters_is_digested_by_its_files(tmp_path, monkeypatch) -> None:
+  assert structure._versioned("math") and structure._versioned("functools") and structure._versioned("json") and structure._versioned("numpy")
+  assert not structure._versioned("scaly") and not structure._versioned("structure_never_imported")
+  # What is installed beside the interpreter's own modules is not the interpreter's.
+  installed = os.path.realpath(pytest.__file__)
+  with monkeypatch.context() as patched:
+    patched.setattr(structure, "_STDLIB", (installed[: installed.index("site-packages")],))
+    assert not structure._versioned("pytest")
+  module = tmp_path / "trace.py"
+  module.write_text("X = 1\n")
+  spec = importlib.util.spec_from_file_location("trace", module)
+  assert spec is not None and spec.loader is not None
+  shadow = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(shadow)
+  monkeypatch.setitem(sys.modules, "trace", shadow)
+  assert not structure._versioned("trace")
+  _loaded_now(monkeypatch)
+  base = code_digest({"trace"})
+  assert base not in (None, code_digest(()))
+  module.write_text("X = 2\n")
+  _loaded_now(monkeypatch)
+  assert code_digest({"trace"}) not in (None, base)
+
+
+def test_what_fusion_reads_of_the_whole_registry_is_part_of_the_digest(monkeypatch) -> None:
+  fn = _fn()  # no abs in it
+  base = _graph(fn)[0]
+  absolute = op_def(ExprOp.ABS)
+  monkeypatch.setattr(absolute, "traits", {**absolute.traits, "expensive": True})
+  assert _graph(fn)[0] != base
+
+
+def test_a_shape_of_numpy_integers_is_the_shape() -> None:
+  def digest(shape) -> str:
+    x = Expr(ExprOp.INPUT, type=TensorType(shape), name="x")
+    return _graph(sc.Function.from_exprs("structure_shape", [x], [x], ["x"], ["y"]))[0]
+
+  plain = digest((3, 4))
+  gc.collect()
+  assert digest((np.int64(3), np.int64(4))) == plain
+
+
+def test_a_type_of_a_subclass_gives_no_key() -> None:
+  class Tagged(TensorType):
+    pass
+
+  class Float(DType):
+    pass
+
+  for kind in (Tagged((3,)), TensorType((3,), dtype=Float(**{f.name: getattr(dtypes.float64, f.name) for f in dataclass_fields(dtypes.float64)}))):
+    x = Expr(ExprOp.INPUT, type=kind, name="structure_subtyped")
+    assert graph_digest(sc.Function.from_exprs("structure_subtype", [x], [x], ["x"], ["y"])) is None
+
+
+def test_every_rule_of_an_op_and_every_traits_name_is_part_of_the_digest(monkeypatch) -> None:
+  fn = _fn()
+  sin = op_def(ExprOp.SIN)
+  seen = {_graph(fn)[0]}
+  for kind in ("lower", "jvp", "vjp", "sparsity", "fold"):
+    monkeypatch.setattr(sin, kind, _plain)
+    seen.add(_graph(fn)[0])
+  assert len(seen) == 6
+  monkeypatch.setattr(sin, "traits", {**sin.traits, "exact_reads": True, "structure_one": True})
+  one = _graph(fn)[0]
+  monkeypatch.setattr(sin, "traits", {**{k: v for k, v in sin.traits.items() if k != "structure_one"}, "structure_two": True})
+  assert _graph(fn)[0] != one
+
+
+def test_a_file_written_under_two_seconds_before_the_load_may_have_been_written_after_it(tmp_path, monkeypatch) -> None:
+  package = _package(tmp_path, "structure_pkg_l", monkeypatch)
+  written = max(max(path.stat().st_ctime_ns, path.stat().st_mtime_ns) for path in [package, *package.rglob("*")] if "__pycache__" not in path.parts)
+  monkeypatch.setattr(env, "LOADED_AT_NS", written + 1_500_000_000)
+  assert code_digest({"structure_pkg_l"}) is None
+  monkeypatch.setattr(env, "LOADED_AT_NS", written + 2_500_000_000)
+  assert code_digest({"structure_pkg_l"}) is not None
+
+
+def test_a_graph_nested_too_deep_for_the_walk_has_no_key(monkeypatch) -> None:
+  def deep(self, fun):
+    raise RecursionError
+
+  monkeypatch.setattr(structure._Walk, "function", deep)
+  assert graph_digest(_fn()) is None
+
+
+_BUILT: list[weakref.ref] = []
+
+
+@dataclass(frozen=True)
+class _Building(_Callee):
+  def dependencies(self) -> tuple[sc.ConcreteFunction, ...]:
+    made = _Callee.dependencies(self)
+    _BUILT.extend(weakref.ref(f) for f in made)
+    return made
+
+
+def test_the_walk_keeps_alive_what_it_numbers_by_address() -> None:
+  # An extern body may build the Functions it calls when asked; freed, their addresses are reused,
+  # and the next Function at one would pass for the last.
+  _BUILT.clear()
+  walk = structure._Walk()
+  walk.function(extern_function("structure_extern", _Building(), [("x", (3,))], [("y", ())]))
+  gc.collect()
+  assert _BUILT and all(ref() is not None for ref in _BUILT)
+  del walk
+  gc.collect()
+  assert all(ref() is None for ref in _BUILT)

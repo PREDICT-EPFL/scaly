@@ -331,6 +331,31 @@ def test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry(
   np.testing.assert_array_equal(got, ref)
 
 
+@pytest.mark.parametrize("op", ["floor", "ceil", "cast", "take", "copysign", "select", "lt"])
+def test_an_op_whose_pattern_is_not_what_it_reads_does_not_claim_exact_reads(op: str) -> None:
+  """The in-place proof takes a pattern for a read set only through ops with ``exact_reads``. These
+  read entries their derivative pattern omits (a zero derivative, an index, a condition), and with
+  the trait on any of them a body that overwrites what it reads would run in place."""
+  from scaly.ir.expr import ExprOp, has_trait
+
+  assert not has_trait(getattr(ExprOp, op.upper()), "exact_reads")
+
+
+def test_a_read_through_a_cast_or_a_run_time_index_keeps_two_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+  def cast(tag: str) -> sc.Function:
+    x = sc.sym("x", 3)
+    body = _fn(f"cast_body_{tag}", [x], [sc.index_set(x, [0, 1], sc.cast(sc.cast(x, "int64"), "float64").gather(np.array([1, 0])) + 0.5)])
+    x0 = sc.sym("x0", 3)
+    return _fn(f"cast_{tag}", [x0], [sc.scan(body, x0, length=2)[0]])
+
+  point = (np.array([1.5, -2.5, 3.25]),)
+  (got,) = _run_both(monkeypatch, cast, point, expect_in_place=False)
+  ref = point[0].copy()
+  for _ in range(2):
+    ref = np.array([np.trunc(ref[1]) + 0.5, np.trunc(ref[0]) + 0.5, ref[2]])
+  np.testing.assert_array_equal(got, ref)
+
+
 @pytest.mark.parametrize("reads_written", [False, True])
 def test_constant_index_updates_without_step_inputs(monkeypatch: pytest.MonkeyPatch, reads_written: bool) -> None:
   """A body with no input sliced per step and constant update indices: one step stands for all.

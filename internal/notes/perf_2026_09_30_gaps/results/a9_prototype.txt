@@ -1,0 +1,31 @@
+# run_proto.py: the surrogate kernel mapped (today), batched by the prototype, and NumPy's batched form; load average 15
+    size      mapped     batched       numpy batched/mapped batched/numpy
+    2x16       4.8 us       3.6 us      35.2 us          0.742          0.10
+   2x128      72.7 us      37.0 us      58.3 us          0.510          0.64
+    5x16       7.2 us       6.5 us      51.4 us          0.897          0.13
+   5x128     260.6 us     117.8 us     127.7 us          0.452          0.92
+   12x32      45.3 us      31.0 us     119.3 us          0.683          0.26
+  12x512   26782.3 us    6015.2 us    1809.2 us          0.225          3.32
+
+# prod.py: a @ b with few rows against a wide b, as an input and as a constant
+       m x k x n         b       time   GF/s
+  10x 512x 512     input    175.2 us   15.0
+  10x 512x 512  constant    316.7 us    8.3
+  20x 512x 512     input    240.0 us   21.8
+  20x 512x 512  constant    226.0 us   23.2
+  30x 512x 512     input    391.6 us   20.1
+  30x 512x 512  constant    665.8 us   11.8
+  32x 512x 512     input    395.8 us   21.2
+  32x 512x 512  constant    366.3 us   22.9
+  64x 512x 512     input    693.1 us   24.2
+  64x 512x 512  constant    711.8 us   23.6
+  30x 128x 128     input     25.3 us   19.5
+  30x 128x 128  constant     27.1 us   18.1
+  30x 256x 256     input     93.6 us   21.0
+  30x 256x 256  constant     92.5 us   21.3
+  30x 500x 500     input    406.2 us   18.5
+  30x 500x 500  constant    426.6 us   17.6
+  30x 520x 520     input    428.1 us   19.0
+  30x 520x 520  constant    461.4 us   17.6
+  10x 500x 500     input    170.9 us   14.6
+  10x 500x 500  constant    189.3 us   13.2

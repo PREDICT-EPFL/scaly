@@ -25,6 +25,9 @@ Mac with Apple clang before acting on them (step A1's first experiment).
 | `orderings.py PROBLEM [n]` | C-226 (Tier 7): the sparse IPM on one problem under each ordering (natural, reverse Cuthill-McKee, minimum degree, and minimum degree on the graph relabelled at random): fill, multiply-adds, status, iterations; `results/a6_orderings.txt` is QRECIPE before and after the pivot test |
 | `stack_traffic.py VARIANT KERNEL ...` | B5 (Tier 7): the share of a corpus kernel's instructions that load from or store to the stack, per function; `results/b5_stack_traffic.txt` |
 | `live_ranges.py kernel_jit.c` | B5 (Tier 7): how long the scalar temporaries of a generated straight-line function stay live, and how many are live at once; the same results file |
+| `e2_surrogate.py [--sizes 2x16,12x512]` | A9 (Tier 8): the E2 case study's surrogate kernel (a network and its Jacobian at ten nodes) per call at the study's sizes, beside NumPy's batched form of the same computation; `results/e2_surrogate_before.txt` |
+| `batch_proto/` | A9 (Tier 8): a prototype that rewrites a map as one batched expression (`batch_proto.py`), the surrogate kernel mapped, batched and in NumPy (`run_proto.py`), and products of few rows against a wide `b` (`prod.py`); `results/a9_prototype.txt` |
+| `e2_vde.py [--sizes 5x128]` | A8 (Tier 8): E2's sensitivity kernel with the network written inline and called as a Function; `results/e2_vde_before.txt` |
 | `e1_oracles.py [--masses 3 5]` | C-224 (Tier 6): the E1 case study's IPOPT oracles and stage oracles on the 3-D chain, built from this checkout or another tree and timed with the study's C timer, without the CasADi side; `results/e1_oracles_c224.txt` |
 | `chain_groups.py [M ...]` | C-211 (Tier 3): the same Hessian with its seeds in groups, per body budget (the host's, one body, all, a quarter and 16 KiB): the groups made, the work the mapped bodies generate and the time from C; `results/chain_groups.json` |
 

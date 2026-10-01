@@ -1,0 +1,8 @@
+# examples/case_studies/diffmpc/run_scaly.py --problem P --seeds 2: the episode's forward pass and gradient, best of the seeds
+problem              variant  forward ms  gradient ms  gradient / forward
+      1   per_solve_implicit       24.69        116.6                 4.7
+      1         per_solve_ad       29.64        181.0                 6.1
+      1     hoisted_implicit        0.07         66.3               907.5
+      5   per_solve_implicit       31.58        126.6                 4.0
+      5         per_solve_ad       25.26        155.0                 6.1
+      5     hoisted_implicit        0.13         57.4               456.3

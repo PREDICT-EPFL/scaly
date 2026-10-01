@@ -104,13 +104,37 @@ def test_a_generated_solver_has_a_structural_key(backend: Backend) -> None:
 
 def test_the_sparse_backend_does_not_stall_on_pivots_that_are_rounding_residue() -> None:
   """QRECIPE under the sparse backend's ordering has pivots that cancel to 1e-28 of their diagonal
-  entries and less. Taken as pivots they gave steps of 1e-49 and 74 iterations; taken as the zero
-  pivots they stand for, PIQP's retry runs and the solver takes PIQP's 19."""
+  entries and less. Taken as pivots they gave steps of 1e-25 and smaller and 74 iterations; taken
+  as a failed factorization, the retry runs and the solver takes 19, which is PIQP's count (PIQP's
+  own path has no retry: its factorization keeps those pivots)."""
   got = solve(maros_meszaros("QRECIPE"), "sparse")
   assert int(got["status"]) == SOLVED
   assert int(got["iter"]) <= 21
   steps = got["trace"][1:, [TRACE_FIELDS.index("primal_step"), TRACE_FIELDS.index("dual_step")]]
   assert steps.min() > 1e-3
+
+
+def test_a_problem_that_keeps_losing_pivots_to_rounding_still_converges() -> None:
+  """QRECIPE with its rows scaled over twelve orders of magnitude loses a pivot to rounding in
+  some thirty of its iterations. Were each retry to raise the floor of the regularization, as a
+  singular matrix's does, the floor would reach its cap and the solver would stop at the iteration
+  limit with a dual residual of 2e-3; with the floor left alone it converges."""
+  import zlib
+
+  qp = maros_meszaros("QRECIPE")
+  s, values = ipm_inputs(qp)
+  rng = np.random.default_rng([zlib.crc32(b"QRECIPE"), 146])
+  span = float(rng.choice([1.0, 3.0, 6.0, 8.0]))
+  rows_a, rows_g = 10.0 ** rng.uniform(-span, span, s.p), 10.0 ** rng.uniform(-span, span, s.m)
+  scaled = {k: np.array(v, dtype=float, copy=True) for k, v in values.items()}
+  scaled["A"] *= rows_a[s.A_rows]
+  scaled["b"] *= rows_a
+  scaled["G"] *= rows_g[s.G_rows]
+  for bound in ("h_l", "h_u"):
+    finite = np.isfinite(scaled[bound]) & (np.abs(scaled[bound]) < 1e19)
+    scaled[bound] = np.where(finite, scaled[bound] * rows_g, scaled[bound])
+  got = dict(zip(RESULT, _solver("QRECIPE", "sparse", Settings())(tuple(scaled[k] for k in ORDER)), strict=True))
+  assert span == 6.0 and int(got["status"]) == SOLVED and int(got["iter"]) < 150, (int(got["status"]), int(got["iter"]))
 
 
 @pytest.mark.method("opt.piqp")

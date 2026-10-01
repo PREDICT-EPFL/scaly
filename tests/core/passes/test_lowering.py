@@ -700,6 +700,25 @@ def test_two_names_with_one_c_spelling_are_refused() -> None:
     lower_function(sc.Function.from_exprs("c_spelling_host", [c0, us], [a + b], ["c0", "us"], ["y"]))
 
 
+@pytest.mark.parametrize("loop", ["scan", "while"])
+@pytest.mark.parametrize("name", ["clash_step_inplace", "clash:step_inplace"])
+def test_a_function_named_like_a_loop_bodys_in_place_form_is_refused(loop: str, name: str) -> None:
+  """A loop body that may overwrite its carry is lowered a second time as ``<name>_inplace``. A
+  Function of that name, or of its C spelling, called in the same graph would take that
+  procedure's place, or give its own up to it, whichever is lowered first."""
+  x = sc.sym("x", 3)
+  step = sc.Function.from_exprs(name.removesuffix("_inplace"), [x], [sc.index_set(x, [0], x[2:3] * 2.0)], ["x"], ["n"])
+  other = sc.Function.from_exprs("clash_step_inplace", [x], [x[::-1] + 1.0], ["x"], ["r"])
+  cond = sc.Function.from_exprs("clash_go", [x], [x[0] < 100.0], ["x"], ["go"])
+  x0 = sc.sym("x0", 3)
+  looped = sc.scan(step, x0, length=2)[0] if loop == "scan" else sc.while_loop(cond, step, x0, max_iter=2)[0]
+  for outputs in ([other(x0), looped], [looped, other(x0)]):
+    with pytest.raises(LoweringError, match="'clash_step_inplace' .* is named like the in-place form of the loop body 'clash.step'"):
+      lower_function(sc.Function.from_exprs("clash_host", [x0], outputs, ["x0"], ["a", "b"]))
+  alone = sc.Function.from_exprs("clash_alone", [x0], [looped], ["x0"], ["y"])  # the body's own in-place form is no clash
+  assert "clash_step_inplace_raw" in render_c_source(alone)
+
+
 # --- reductions in partial sums (C-196) ------------------------------------------------------------
 
 

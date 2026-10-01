@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import os
 import platform
+import struct
 import subprocess
 import sys
 import time
@@ -45,6 +46,50 @@ ENV_VARS: tuple[EnvVar, ...] = (
 LOADED_AT_NS = time.time_ns()
 """When this process loaded scaly, in nanoseconds since the epoch: a source file written after it
 may not be the code a module already imported is running."""
+
+
+_LOADED_BY = os.getpid()
+_started: list[int | None] = []
+
+
+def process_started_ns() -> int | None:
+  """When this process started, in nanoseconds since the epoch: no module in it was imported
+  earlier. None where the platform does not say, and in a process forked from the one that loaded
+  scaly, whose own start says nothing of when the modules it inherited were imported."""
+  if os.getpid() != _LOADED_BY:
+    return None
+  if not _started:
+    try:
+      found = _process_start()
+    except (OSError, ValueError, IndexError, AttributeError, StopIteration, struct.error):
+      found = None
+    _started.append(found if found is not None and 0 < found <= LOADED_AT_NS else None)
+  return _started[0]
+
+
+def _process_start() -> int | None:
+  if sys.platform.startswith("linux"):
+    with open("/proc/self/stat") as file:
+      ticks = int(file.read().rsplit(")", 1)[1].split()[19])  # starttime, in clock ticks since boot
+    with open("/proc/stat") as file:
+      boot = next(int(line.split()[1]) for line in file if line.startswith("btime"))
+    rate = os.sysconf("SC_CLK_TCK")
+    return (boot * rate + ticks) * 1_000_000_000 // rate  # the boot time is whole seconds: early, if anything
+  if sys.platform == "darwin":
+    import ctypes
+    import ctypes.util
+
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    query = (ctypes.c_int * 4)(1, 14, 1, os.getpid())  # CTL_KERN, KERN_PROC, KERN_PROC_PID
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(query, 4, None, ctypes.byref(size), None, 0) != 0:
+      return None
+    info = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(query, 4, info, ctypes.byref(size), None, 0) != 0:
+      return None
+    seconds, micros = struct.unpack_from("qi", info.raw, 0)  # kinfo_proc opens with the start's timeval
+    return seconds * 1_000_000_000 + micros * 1_000
+  return None
 
 
 def env(name: str, default: str | None = None) -> str | None:

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import functools
 import hashlib
+import importlib.util
 import os
 import struct
 import sys
+import sysconfig
 import types
 from collections.abc import Iterable
 from typing import Any
@@ -17,8 +18,8 @@ import numpy as np
 
 from ..function import ConcreteFunction, Function
 from ..function.extern import BuildRequirements, ExternCallee, ExternRenderCtx
-from ..ir.expr import _RULE_KINDS, Expr, op_def, topo
-from ..ir.types import DType, TensorType
+from ..ir.expr import _RULE_KINDS, Expr, op_def, registered_ops, topo
+from ..ir.types import DType, SparsityType, TensorType
 from ..passes import lowering
 from ..passes.program import pipeline
 from ..utils import env
@@ -31,8 +32,24 @@ class Unkeyed(Exception):
   key and is rendered to find its library, as every Function was before there was one."""
 
 
-# Packages whose code a version stands for: the interpreter's and NumPy's go into every key.
-_VERSIONED = frozenset({"numpy", *sys.stdlib_module_names})
+_STDLIB = tuple(os.path.realpath(path) + os.sep for path in {sysconfig.get_path("stdlib"), sysconfig.get_path("platstdlib")} if path)
+
+
+def _versioned(package: str) -> bool:
+  """Whether a version stands for ``package``'s code: NumPy itself, and the interpreter's own
+  modules, told by where they live and not by their name, which a project's module may share."""
+  module = sys.modules.get(package)
+  if module is None:
+    return False
+  if module is np:
+    return True
+  file = getattr(module, "__file__", None)
+  if file is None:
+    return not hasattr(module, "__path__")  # built in or frozen; a namespace package has a path
+  real = os.path.realpath(file)
+  return real.startswith(_STDLIB) and "site-packages" not in real and "dist-packages" not in real
+
+
 # The array element kinds whose bytes are their value: flags, integers, floats and complex numbers.
 _PLAIN_KINDS = "biufc"
 
@@ -63,7 +80,8 @@ class _Walk:
     self.packages: set[str] = set()
     self.requirements: list[BuildRequirements] = []
     # Everything numbered by its address stays alive until the walk ends: an extern body may build
-    # the Functions it calls anew each time it is asked, and a freed one's address is reused.
+    # the Functions it calls anew each time it is asked, and a freed one's address is reused. The
+    # graph holds the rest (a node its type and its callees), so the roots and those are enough.
     self.held: list[Any] = []
 
   def put(self, tag: bytes, payload: bytes = b"") -> None:
@@ -75,10 +93,18 @@ class _Walk:
   def named(self, obj: Any) -> str:
     """The module and qualified name of a class or a function, its package noted: that package's
     source is part of the key. One defined inside a function has no name of its own (two such
-    classes share one), so it gives no key."""
+    classes share one), so it gives no key. For a class or a builtin; a Python function is told by
+    its code (``rule``)."""
     module, name = getattr(obj, "__module__", None), getattr(obj, "__qualname__", None)
     if not isinstance(module, str) or not isinstance(name, str) or "<locals>" in name:
       raise Unkeyed(f"{obj!r} has no module-level name")
+    # The name has to lead back to the object, as a pickle's does: a wrapper may carry the name
+    # of what it wraps.
+    found: Any = sys.modules.get(module)
+    for part in name.split("."):
+      found = getattr(found, part, None)
+    if found is not obj:
+      raise Unkeyed(f"{module}.{name} is not {obj!r}")
     self.packages.add(module.partition(".")[0])
     return f"{module}.{name}"
 
@@ -165,19 +191,21 @@ class _Walk:
     """A node's type by number. Types with the same fields are one, as they are to the graph:
     interning compares a node's type by value, so which of two equal objects a node holds is an
     accident of what the process built before. The fields are compared one by one, a dtype's
-    included, since a dtype's own equality is its name alone."""
+    included, since a dtype's own equality is its name alone, and written as plain integers,
+    since a shape may hold NumPy's. A type of a subclass may hold more than the fields: no key."""
     serial = self.type_ids.get(id(t))
     if serial is None:
-      dtype = self.dtypes.get(id(t.dtype))
-      if dtype is None:
-        # A dtype of another class has fields the walk cannot name: it stands alone.
-        dtype = self.dtypes[id(t.dtype)] = dataclasses.astuple(t.dtype) if type(t.dtype) is DType else (object(),)
-        self.held.append(t.dtype)
-      pattern = None if t.sparsity is None else (type(t.sparsity), t.sparsity.shape, t.sparsity.rows, t.sparsity.cols)
-      fields = (type(t), t.shape, dtype, pattern, t.diff)
+      if type(t) is not TensorType or type(t.dtype) is not DType or type(t.sparsity) not in (SparsityType, type(None)):
+        raise Unkeyed(f"a type of a subclass, {type(t).__qualname__}")
+      pattern = None
+      if t.sparsity is not None:
+        coordinates = np.asarray([t.sparsity.rows, t.sparsity.cols], dtype=np.int64).tobytes()
+        pattern = (tuple(int(d) for d in t.sparsity.shape), coordinates)
+      fields = (tuple(int(d) for d in t.shape), dataclasses.astuple(t.dtype), pattern, bool(t.diff))
       serial = self.types.get(fields)
       if serial is None:
-        self.record(t, owner)
+        self.put(b"t", repr(fields[:2] + fields[3:]).encode())
+        self.put(b"z", b"" if pattern is None else repr(pattern[0]).encode() + pattern[1])
         serial = self.types[fields] = len(self.types)
       self.type_ids[id(t)] = serial
       self.held.append(t)
@@ -206,7 +234,6 @@ class _Walk:
     serial = self.functions.get(id(fun))
     if serial is not None:
       return serial
-    self.held.append(fun)
     self.put(b"f", self.named(type(fun)).encode())
     self.put(b"S", fun.name.encode("utf-8", "surrogatepass"))
     # What lowering and the C body read of a Function. Its output patterns and coloring widths go
@@ -250,21 +277,32 @@ class _Walk:
     self.requirements.append(needs)
 
   def rule(self, fn: Any) -> None:
-    """A rule, a trait or a pass that is a function: which one, by module and name. Its code is its
-    package's files (``code_digest``); what a closure, a bound method or a partial application
-    carries is in no file, so outside scaly, whose own are fixed by its code, such a rule gives
-    no key."""
+    """A rule, a trait or a pass that is a function: which one. A Python function is told by its
+    code, the module it was defined in and where: the name it carries may be another's (a
+    decorator's wrapper takes the name of what it wraps). Its code is its package's files
+    (``code_digest``), and its defaults are written, being values a file does not fix. What a
+    closure, a bound method, a partial application or an object that is called carries is in no
+    file, so those give no key. A rule that reads a global of its module that something sets at
+    run time is not seen either: an extension keeps such state out of its rules."""
     if isinstance(fn, np.ufunc):
+      if getattr(np, fn.__name__, None) is not fn:
+        raise Unkeyed(f"the ufunc {fn.__name__} is not NumPy's")
       self.packages.add("numpy")
       self.put(b"c", f"numpy.{fn.__name__}".encode())
       return
-    if isinstance(fn, functools.partial):
-      raise Unkeyed(f"the rule {fn!r} is a partial application")
-    name = self.named(fn)
-    bound = getattr(fn, "__self__", None)  # a builtin's is its module, which is no state
-    if (getattr(fn, "__closure__", None) or not (bound is None or isinstance(bound, types.ModuleType))) and not name.startswith("scaly."):
-      raise Unkeyed(f"the rule {name} carries state of its own")
-    self.put(b"c", name.encode())
+    if not isinstance(fn, types.FunctionType):
+      # A builtin, a class, or one of NumPy's dispatching functions: by a name that leads back to
+      # it, which a method bound to an object's does not.
+      self.put(b"c", self.named(fn).encode())
+      return
+    code, module = fn.__code__, fn.__globals__.get("__name__")
+    defined = sys.modules.get(module) if isinstance(module, str) else None
+    if defined is None or defined.__dict__ is not fn.__globals__ or fn.__closure__:
+      raise Unkeyed(f"the rule {fn!r} is a closure, or not a function of a module's own")
+    self.packages.add(module.partition(".")[0])
+    self.put(b"c", f"{module}.{code.co_qualname}:{code.co_firstlineno}".encode())
+    self.value(fn.__defaults__, None)
+    self.value(fn.__kwdefaults__, None)
 
   def definitions(self) -> None:
     """The definition of every op the graph holds: its arity, its rules and its traits. A trait
@@ -293,11 +331,15 @@ class _Walk:
 
   def switches(self) -> None:
     """What shapes the lowering of every Function and is no part of any graph: the passes
-    extensions inserted in the pipeline, and whether a loop's carry may be overwritten in place."""
+    extensions inserted in the pipeline, whether a loop's carry may be overwritten in place, and
+    what fusion reads of the whole op registry, the program ops it does not duplicate."""
     for name, fn in pipeline():
       self.put(b"p", name.encode())
       self.rule(fn)
     self.put(b"k", b"1" if lowering.DONATE_CARRIES else b"0")
+    traits = [op_def(op).traits for op in registered_ops()]
+    for op in sorted(str(t["elementwise"]) for t in traits if t.get("expensive") and "elementwise" in t):
+      self.put(b"e", op.encode())
 
 
 def graph_digest(fun: ConcreteFunction) -> GraphDigest | None:
@@ -329,23 +371,32 @@ def _roots(package: str) -> list[str] | None:
 
 def code_digest(packages: Iterable[str]) -> str | None:
   """A digest of the code of ``packages`` and of scaly as it stands on disk: every file's path and
-  contents (for a file over a megabyte, a built library, its size and times), and the
-  interpreter's and NumPy's versions. Hidden files and directories and bytecode are not code.
+  contents (for a file over a megabyte, a built library, its size and times), the bytecode
+  Python keeps for a source where it is older than the source's last change, and the
+  interpreter's, NumPy's and SciPy's versions. Hidden files and directories are not code.
 
-  None when that cannot stand for the code this process runs: a file was written or replaced
-  after scaly was loaded (a module imported before the edit runs the old code, one imported after
-  it the new), or a package has no files to read. A package is taken whole and alone: code in
-  another package that a rule calls is not seen, so an extension keeps what shapes its C in the
+  None when that cannot stand for the code this process runs: a file or a directory was written,
+  replaced or relinked after the code was loaded or in the two seconds before, as fine as some
+  file systems keep time (a module imported before the edit runs the old code, one imported after
+  it the new), or a package has no files to read. Scaly's own code is loaded when scaly is;
+  another package may have been imported at any time since the process started, and where the
+  platform does not say when that was, it has no digest. A package is taken whole and alone: code
+  in another package that a rule calls is not seen, so an extension keeps what shapes its C in the
   package that registers it."""
+  import scipy
+
   digest = hashlib.sha256()
-  digest.update(f"{sys.version}\0{np.__version__}\0".encode())
-  for package in sorted({"scaly", *packages} - _VERSIONED):
+  digest.update(f"{sys.version}\0{np.__version__}\0{scipy.__version__}\0".encode())
+  for package in sorted({"scaly", *packages}):
+    if _versioned(package):
+      continue
     roots = _roots(package)
-    if not roots:
+    mark = env.LOADED_AT_NS if package == "scaly" else env.process_started_ns()
+    if not roots or mark is None:
       return None
     digest.update(f"{package}\0".encode())
     for root in roots:
-      if not _scan(root, digest):
+      if not _scan(root, digest, mark - _CLOCK_SLACK_NS):
         return None
   return digest.hexdigest()
 
@@ -353,31 +404,68 @@ def code_digest(packages: Iterable[str]) -> str | None:
 _READ_WHOLE = 1 << 20
 # A file's digest by its path, size and times: read once per process, then only stat.
 _CONTENTS: dict[tuple[str, int, int, int], bytes] = {}
-# A file system may keep times to two seconds: a file written that close before the load could have
-# been written after it.
+# A file system may keep times to two seconds: a file written that close before the code was loaded
+# could have been written after it.
 _CLOCK_SLACK_NS = 2_000_000_000
 
 
-def _scan(root: str, digest: Any) -> bool:
-  """Add every file under ``root`` to ``digest``; False if one changed after scaly was loaded or
-  cannot be read."""
+def _contents(path: str, stat: os.stat_result) -> bytes:
+  key = (path, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+  found = _CONTENTS.get(key)
+  if found is None:
+    with open(path, "rb") as file:
+      found = _CONTENTS[key] = hashlib.sha256(file.read()).digest()
+  return found
+
+
+def _accepted(cached: str, source: os.stat_result) -> bool:
+  """Whether Python would load the bytecode at ``cached`` for a source with ``source``'s size and
+  modification time without compiling it again: its header records both, or a hash of the source,
+  which this does not check and so takes as accepted."""
+  with open(cached, "rb") as file:
+    header = file.read(16)
+  if len(header) < 16:
+    return False
+  flags, recorded, size = struct.unpack("<III", header[4:])
+  return bool(flags & 1) or (recorded, size) == (int(source.st_mtime) & 0xFFFFFFFF, source.st_size & 0xFFFFFFFF)
+
+
+def _scan(root: str, digest: Any, mark: int) -> bool:
+  """Add every file under ``root`` to ``digest``; False if a file, a link or a directory changed at
+  ``mark`` or later, or something cannot be read."""
+
+  def moved(stat: os.stat_result) -> bool:
+    # The change time too: a copy that keeps the modification time of the file it replaces (an
+    # archive, an installer) still moves that one.
+    return max(stat.st_mtime_ns, stat.st_ctime_ns) >= mark
+
   try:
     if os.path.isfile(root):
+      if moved(os.lstat(root)):
+        return False
       entries = [(os.path.basename(root), root, os.stat(root))]
     else:
       entries = []
       stack = [root]
-      seen = set()
+      top = os.stat(root)
+      seen = {(top.st_dev, top.st_ino)}
+      if moved(top) or moved(os.lstat(root)):
+        return False
       while stack:
         directory = stack.pop()
         with os.scandir(directory) as found:
           for entry in found:
             if entry.name.startswith(".") or entry.name == "__pycache__":
-              continue  # an editor's or the system's own, and bytecode
+              continue  # an editor's or the system's own, and bytecode, which goes with its source
             if entry.is_symlink() and not os.path.exists(entry.path):
               continue  # a link to nothing is no code
             stat = entry.stat()
             if entry.is_dir():
+              # A directory moves when an entry is added, removed or renamed in it: a file deleted
+              # or swapped in under a live process, or a link pointed elsewhere, leaves no other
+              # trace.
+              if moved(stat):
+                return False
               if (stat.st_dev, stat.st_ino) not in seen:  # a link back into the tree is walked once
                 seen.add((stat.st_dev, stat.st_ino))
                 stack.append(entry.path)
@@ -385,22 +473,27 @@ def _scan(root: str, digest: Any) -> bool:
               entries.append((os.path.relpath(entry.path, root), entry.path, stat))
       if not entries:
         return False
-    loaded = env.LOADED_AT_NS - _CLOCK_SLACK_NS
     for name, path, stat in sorted(entries, key=lambda entry: entry[0]):
-      # The change time too: a copy that keeps the modification time of the file it replaces
-      # (an archive, an installer) still moves that one.
-      if max(stat.st_mtime_ns, stat.st_ctime_ns) >= loaded:
+      if moved(stat):
         return False
-      if stat.st_size > _READ_WHOLE:
-        contents = f"{stat.st_size}\0{stat.st_mtime_ns}".encode()
-      else:
-        key = (path, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
-        contents = _CONTENTS.get(key)
-        if contents is None:
-          with open(path, "rb") as file:
-            contents = _CONTENTS[key] = hashlib.sha256(file.read()).digest()
       digest.update(f"{name}\0".encode())
-      digest.update(contents)
+      if stat.st_size > _READ_WHOLE:
+        digest.update(f"{stat.st_size}\0{stat.st_mtime_ns}\0{stat.st_ctime_ns}".encode())
+        continue
+      digest.update(_contents(path, stat))
+      if name.endswith(".py"):
+        # Python loads the bytecode it kept when the source's size and modification time are what
+        # the bytecode recorded, so a source replaced with both kept runs as the old code.
+        # Bytecode older than its source's last change that Python would still accept may be that
+        # case, and says which code runs: it is digested too. Bytecode written since is the
+        # source's own, and bytecode Python would compile again is not what runs.
+        try:
+          cached = importlib.util.cache_from_source(path)
+          kept = os.stat(cached)
+        except (FileNotFoundError, NotImplementedError, ValueError):
+          continue
+        if kept.st_mtime_ns < stat.st_ctime_ns and _accepted(cached, stat):
+          digest.update(_contents(cached, kept))
   except OSError:
     return False
   return True

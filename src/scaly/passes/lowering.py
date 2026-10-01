@@ -146,11 +146,18 @@ def _same_function(a: ConcreteFunction, b: ConcreteFunction) -> bool:
   )
 
 
+IN_PLACE_SUFFIX = "_inplace"
+
+
 def _check_function_names(fun: ConcreteFunction) -> None:
   """Refuse two different Functions with one name anywhere in ``fun``'s call tree.
 
-  Procedures are emitted once per name, so the second would silently run the first one's body."""
+  Procedures are emitted once per name, so the second would silently run the first one's body. A
+  loop's body may also be lowered a second time, to overwrite its carry in place, under its name
+  with ``_inplace`` after it (``_ensure_in_place_callee``): a Function of that name is refused
+  too, or the two would trade places."""
   owners: dict[str, ConcreteFunction] = {}
+  bodies: dict[str, str] = {}  # the C spelling of each loop body's in-place variant, and the body
   todo = [fun]
   while todo:
     f = todo.pop()
@@ -169,6 +176,13 @@ def _check_function_names(fun: ConcreteFunction) -> None:
     for node in topo(f.outputs):
       if node.op in CALLEE_OPS:
         todo.extend(callees_of(node))
+      if node.op in (ExprOp.SCAN, ExprOp.WHILE):
+        bodies[c_ident(f"{node.attrs['callee'].name}{IN_PLACE_SUFFIX}")] = node.attrs["callee"].name
+  for spelling, body in bodies.items():
+    if spelling in owners:
+      raise LoweringError(
+        f"the Function {owners[spelling].name!r} in the graph of {fun.name!r} is named like the in-place form of the loop body {body!r}; give it another name"
+      )
 
 
 def main_proc(program_node: ProgramNode) -> ProgramNode:
@@ -752,8 +766,9 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
 # combined pairwise: one chain of dependent adds cannot overlap, four can (2.6-4x faster from 64
 # elements on, ``notes/codegen_speed_o2_report.html``). The rounding is that of a blocked sum, as in
 # NumPy's own pairwise ``sum``, not that of a sequential one; the order is fixed by the generated
-# code. Eight lanes are faster again on long sums but moved the generated IPM off PIQP's path on
-# QBEACONF, a problem whose path rounding decides; four keep it, as they do in ``_blocked_sum``.
+# code. Eight lanes measured no faster over the corpus and slower on the sparse factorizations'
+# short rows, and they move the paths of the IPM problems rounding decides; only the rows of a
+# triangular solve with one right-hand side take the target's count (``Target.sum_lanes``).
 REDUCTION_LANES = 4
 BLOCKED_REDUCTION_MIN = 2 * REDUCTION_LANES
 
@@ -1411,7 +1426,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict
   normalized = _normalize_function(callee)
   if in_place_chain(normalized) is None and not in_place_steps(normalized, steps or {}):
     return None
-  name = f"{callee.name}_inplace"
+  name = f"{callee.name}{IN_PLACE_SUFFIX}"
   if name not in ctx.callees:
     renamed = ConcreteFunction.from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
     ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.extern_fns, ctx.target, observe_expr=ctx.observe_expr, in_place=True)

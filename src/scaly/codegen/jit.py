@@ -202,7 +202,7 @@ def _structure_key(fun: ConcreteFunction, target: Target, compiler: tuple[str, .
   flags, what its extern bodies link). None when there is none to trust: the graph holds a value
   the digest does not know, the code on disk is not what this process loaded, an observer wants
   to see the render, or what an extern body needs cannot be resolved (rendering then says why)."""
-  if render_watched(fun):
+  if render_watched(fun) or type(target) is not Target:  # a subclass may override a choice no field shows
     return None
   found = graph_digest(fun)
   if found is None:

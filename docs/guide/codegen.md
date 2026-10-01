@@ -35,10 +35,10 @@ whose rules the graph uses. A Function the index holds is loaded with nothing lo
 second process pays before its first result is the building of the graph. A solver is the one part
 still asked for its C, which goes into the digest as text, since nothing else says what it would
 render. The index is left out, and the Function rendered as on a first call, whenever the digest
-cannot be trusted. That is the case when the graph holds a value the digest does not know, when a
-rule comes from outside scaly and carries state of its own (a closure, a bound method), when a
-source file changed after the process loaded scaly or within two seconds before, and when the
-visualizer is recording the Function. `SCALY_JIT_KEY=source` turns the index off, and
+cannot be trusted. That is the case, among others the architecture page lists, when the graph
+holds a value the digest does not know, when a rule or a pass carries state of its own (a closure,
+a bound method), when a source file changed after the process loaded scaly or within two seconds
+before, and when the visualizer is recording the Function. `SCALY_JIT_KEY=source` turns the index off, and
 `SCALY_JIT_KEY=verify` renders every Function anyway and raises if the index names a library built
 from other C, which is how the digest is checked against the whole test suite.
 

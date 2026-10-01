@@ -1,0 +1,7 @@
+layers x width       scaly  numpy batched   ratio  build s first call s   per call; ratio is scaly / numpy
+          2x16       9.1 us        54.2 us    0.17     0.00         0.05
+         2x128     127.7 us        79.0 us    1.62     0.00         0.01
+          5x16      10.3 us        76.4 us    0.13     0.00         0.00
+         5x128     472.9 us       205.0 us    2.31     0.01         0.01
+         12x32      80.4 us       176.2 us    0.46     0.04         0.01
+        12x512   45624.8 us      3068.6 us   14.87     0.17         0.09

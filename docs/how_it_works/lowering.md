@@ -172,9 +172,10 @@ way, and stores each output once. One chain of dependent adds runs at the latenc
 overlap, and the C compiler pairs them into vector lanes, which is what `-ffast-math` would buy by
 reordering freely. The rounding is a blocked sum's, as in NumPy's pairwise `sum`, and it is fixed
 by the generated code rather than by the compiler. One reduction takes its count of partial sums
-from the target: the row of a triangular solve with one right-hand side, a dot product as long as
-the row, runs in `Target.sum_lanes` of them, a vector for each multiply-add unit, eight on the
-reference machine. Shorter reductions keep one chain, and so do
+from the target. It is the row of a triangular solve with one right-hand side and no transpose, a
+dot product as long as the row, which runs in `Target.sum_lanes` of them, a vector for each
+multiply-add unit and no fewer than four, eight on the reference machine. Shorter reductions keep
+one chain, and so do
 the matrix products whose reduction axis is the matrix's slow one, `x @ b` and `a @ b`: each output
 sums its terms in order of `k`. An output row runs in blocks of 8, 4 and 2 vector registers'
 worth of columns, 16, 8 and 4 on a 128-bit machine (`Target.row_blocks`), whose sums stay in

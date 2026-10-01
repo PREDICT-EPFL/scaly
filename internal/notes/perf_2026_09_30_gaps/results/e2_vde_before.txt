@@ -1,0 +1,6 @@
+layers x width     inline     called called / inline
+          2x16      5.5 us      5.7 us            1.04
+         2x128     12.4 us     13.8 us            1.11
+          5x16      5.9 us      6.6 us            1.12
+         5x128     31.7 us     37.9 us            1.19
+         12x32     10.3 us     12.6 us            1.22

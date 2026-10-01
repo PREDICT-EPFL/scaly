@@ -35,9 +35,12 @@ from .structure import QPStructure
 
 Backend = Literal["dense", "sparse"]
 EPS = float(np.finfo(np.float64).eps)
+# How a factorization went, as the retry loop's header holds it under ``ok``: below one half is a failure.
+_FACTORED, _RESIDUE, _SINGULAR = 1.0, 0.25, 0.0
 HEADER = ("rho", "delta", "reg_limit", "ir", "retries", "tried", "ok", "changed")
 """The retry loop's scalars: the regularization it ends with, whether refinement is on, the retries
-spent, whether an attempt was made and succeeded, and whether a retry changed ``rho`` and ``delta``."""
+spent, whether an attempt was made and how it went (``_FACTORED``, ``_RESIDUE`` or ``_SINGULAR``),
+and whether a retry changed ``rho`` and ``delta``."""
 
 
 @dataclass(frozen=True)
@@ -236,8 +239,10 @@ class Kernels:
       symbolic = self._ldl.symbolic
       first = symbolic.a_ptr[:-1]  # a column of the permuted matrix starts at its diagonal entry
       assert np.array_equal(symbolic.a_rows[first], np.arange(self.size)), "the KKT matrix stores its whole diagonal"
-      ok = self._pivots_left(pivots, gather(kkt.values, symbolic.a_source[first]))
-      digits = ok
+      # PIQP's sparse LDL^T fails only on a pivot that is exactly zero: an infinite one, from a dual
+      # at zero, passes, and so does a NaN one.
+      ok = where(pivots.abs() <= 0.0, 1.0, 0.0).sum() < 0.5
+      digits = self._pivots_left(pivots, gather(kkt.values, symbolic.a_source[first]))
     names = ["D", "x_reg", "delta_reg", "z_reg_ir"]
     outs = [f, where(ok, 1.0, 0.0), where(digits, 1.0, 0.0)]
     fn = ConcreteFunction.from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
@@ -293,13 +298,16 @@ class Kernels:
   def _pivots_left(pivots: Expr, k_diag: Expr) -> Expr:
     """Whether every pivot of the sparse ``LDL^T`` is larger than one ulp of the diagonal entry of
     the KKT matrix it came from. PIQP's sparse factorization fails only on a pivot that is exactly
-    zero, and that is this test for a pivot that is: an infinite one, from a dual at zero, passes,
-    and so does a NaN one. A pivot that cancels need not come out exactly zero, though. On QRECIPE
-    this factorization left pivots 12 to 40 orders of magnitude below one ulp of their entries,
-    which are rounding residue and not a pivot; they passed the zero test, the steps they gave
-    were of length 1e-49, and the solver took 74 iterations where PIQP takes 19.
-    A pivot with no digit of its entry left is taken as the zero it stands for, with refinement on
-    or off, so the retry PIQP has for a zero pivot runs."""
+    zero. A pivot that cancels need not come out exactly zero, though: on QRECIPE this
+    factorization left pivots 12 to 30 orders of magnitude below one ulp of their entries, which
+    are rounding residue and not a pivot. They passed the zero test, the steps they gave were of
+    length 1e-25 and less, and the solver took 74 iterations where PIQP takes 19.
+
+    A pivot with no digit of its entry left is taken as a failed factorization, with refinement on
+    or off, and the retry runs as for a zero pivot, with one difference (``_try``): the floor of
+    the regularization, which a singular matrix raises for the rest of the solve, stays where it
+    is, since the matrix is not singular and only its factorization lost the pivot. An infinite
+    pivot passes, and so does a NaN one, as in PIQP."""
     # As a difference: an infinite pivot's is NaN (its entry is infinite too), and passes like a NaN.
     return where(pivots.abs() - EPS * k_diag.abs() <= 0.0, 1.0, 0.0).sum() < 0.5
 
@@ -317,7 +325,8 @@ class Kernels:
   def _attempt(self, d: Expr, v: Expr, rho: Expr, delta: Expr, ir: Expr) -> tuple[list[Expr], Expr]:
     """``update_scalings_and_factor``: the regularizations for the current slacks and duals, the
     static one if refinement is on, and the factorization. Returns the parts of the record and
-    whether it succeeded."""
+    how it went: ``_FACTORED``, ``_SINGULAR`` (PIQP's own failure) or, from the sparse backend,
+    ``_RESIDUE`` (no pivot zero, but one with no digit left: ``_pivots_left``)."""
     s, r = self.s, self.refinement
     fn, _ = self._factorization
     mats, xb = self.matrices(d)
@@ -339,7 +348,11 @@ class Kernels:
     reg = where(ir, r.static_eps + r.static_rel * max_diag, 0.0)
     x_reg, delta_reg, z_reg_ir = x_reg + reg, delta + reg, z_reg + reg
     f, ok, digits = fn.symbolic_call((d, x_reg, delta_reg, z_reg_ir))
-    return [stack([delta, delta_reg]), x_reg, z_reg, z_reg_ir, f], where(ir, ok, digits) > 0.5
+    if self.backend == "dense":
+      outcome = where(where(ir, ok, digits) > 0.5, _FACTORED, _SINGULAR)
+    else:
+      outcome = where(digits > 0.5, _FACTORED, where(ok > 0.5, _RESIDUE, _SINGULAR))
+    return [stack([delta, delta_reg]), x_reg, z_reg, z_reg_ir, f], outcome
 
   def _try(self, c: Expr, d: Expr, v: Expr) -> Expr:
     """One pass of the retry loop from the header at the start of ``c``: the next header and record."""
@@ -350,11 +363,13 @@ class Kernels:
     ir = where(failed, 1.0, h["ir"])
     rho = where(retry, h["rho"] * 100.0, h["rho"])
     delta = where(retry, h["delta"] * 100.0, h["delta"])
-    reg_limit = where(retry, minimum(10.0 * h["reg_limit"], r.reg_limit_cap), h["reg_limit"])
-    rec, ok = self._attempt(d, v, rho, delta, ir > 0.5)
-    head = stack(
-      [rho, delta, reg_limit, ir, h["retries"] + where(retry, 1.0, 0.0), Expr.const(1.0), where(ok, 1.0, 0.0), where(retry, 1.0, h["changed"])]
-    )
+    # A singular matrix raises the floor of the regularization for the rest of the solve, as in
+    # PIQP. Residue does not: over a solve its retries would ratchet the floor to its cap, and a
+    # problem that only loses a pivot now and then would end regularized too heavily to converge.
+    singular = h["ok"] < 0.5 * _RESIDUE
+    reg_limit = where(logical_and(retry, singular), minimum(10.0 * h["reg_limit"], r.reg_limit_cap), h["reg_limit"])
+    rec, outcome = self._attempt(d, v, rho, delta, ir > 0.5)
+    head = stack([rho, delta, reg_limit, ir, h["retries"] + where(retry, 1.0, 0.0), Expr.const(1.0), outcome, where(retry, 1.0, h["changed"])])
     # One concatenation, so the factor goes from the factorization's result into the carry once.
     return concat([head, *rec])
 

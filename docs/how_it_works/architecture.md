@@ -239,24 +239,34 @@ pass pipeline with the passes extensions inserted, and the switch for in-place l
 the graph's digest go the target, the compiler and its flags, and a digest of the code that would
 do the rendering: the path and contents of every file of scaly and of each package that defines a
 rule, a pass or a class the graph uses (a file over a megabyte, a built library, by its size and
-modification time). An index entry under that key names the library's directory and holds the
-workspace size and link flags the handle needs.
+times). Where Python would run bytecode it kept from before a source's last change, that bytecode
+is digested with the source. An index entry under that key names the library's directory and holds
+the workspace size, the link flags and the isolation the handle needs.
 
 The key is refused, and the Function rendered, in these cases:
 
-- the walk meets a value of a type it does not know, a class defined inside a function, or a
-  dataclass field its class leaves out of equality;
-- a rule or a pass from outside scaly is a closure, a bound method or a partial application, whose
-  state is in no file;
-- a source file was modified or replaced after the process loaded scaly, or in the two seconds
-  before, which is as fine as some file systems keep time;
+- the walk meets a value of a type it does not know, a class defined inside a function, a subclass
+  of a type or of `Target`, or a dataclass field its class leaves out of equality;
+- a rule or a pass is a closure, a bound method, a partial application or an object that is called,
+  whose state is in no file, or carries a name that does not lead back to it;
+- a file, a link or a directory of the code was written, replaced or relinked after the code was
+  loaded, or in the two seconds before, which is as fine as some file systems keep time. Scaly's
+  own code is loaded with scaly; another package may have been imported any time since the process
+  started, and where the platform does not say when that was, it has no digest;
+- an extern body raises when asked for its C, or the libraries it links do not resolve;
+- the graph is nested too deep for the walk, or holds a Function that is still a template;
 - a render observer wants the Function.
 
 A refusal costs a render. A key that missed something the rendering reads would load a stale
-library, so `SCALY_JIT_KEY=verify` renders on every hit and raises when the source key differs, and
-the suite runs under it. Options are the one process state rendering could read by accident, since
-it shares code with graph building: lowering and rendering run under `default_options`, so such a
-read gets the defaults and the C depends on the graph alone. The index keeps the entries of the
+library, so `SCALY_JIT_KEY=verify` renders on every hit and raises when the source key, the
+workspace, the link flags or the isolation differ from the entry's, and the suite runs under it.
+That mode compares only what is built twice under one state of the process, so state that every
+lowering reads is digested by name (the pass pipeline, the switch for in-place carries, the ops
+fusion does not duplicate), and options, which rendering shares code with graph building to read,
+cannot reach it at all. Lowering and rendering run under `default_options`, so such a read gets
+the defaults and the C depends on the graph alone. An extension keeps what shapes its C in the
+files of the package that registers it, and out of globals set at run time, which no digest sees.
+The index keeps the entries of the
 eight states of the code used last, since each edit of a checkout leaves a state nothing finds
 again. On Linux,
 solver-bearing artifacts load into an isolated linker namespace to keep vendored dependencies out

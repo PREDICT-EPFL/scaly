@@ -120,11 +120,11 @@ class Target:
 
   @property
   def sum_lanes(self) -> int:
-    """The partial sums a long dot product runs in, interleaved by index and combined pairwise: a
-    vector of them for each multiply-add unit, and no fewer than four, which every target can
-    overlap. Eight on the reference machine, where sixteen measured no faster on the rows of a
-    forward substitution. The partial sums fix the order of the additions: their count is a
-    rounding choice."""
+    """The partial sums each row of a triangular solve with one right-hand side runs in, a dot
+    product as long as the row (the other reductions keep four): interleaved by index and combined
+    pairwise, a vector of them for each multiply-add unit, and no fewer than four, which every
+    target can overlap. Eight on the reference machine, where sixteen measured no faster. The
+    partial sums fix the order of the additions: their count is a rounding choice."""
     t = self.choices
     return max(4, t.vector_doubles * t.fma_units)
 
