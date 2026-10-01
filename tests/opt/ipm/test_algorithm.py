@@ -92,6 +92,27 @@ def test_decisions_match_piqp(name: str, backend: Backend) -> None:
   assert abs(int(got["iter"]) - int(mine.info["iter"])) <= 3
 
 
+@pytest.mark.parametrize("backend", ["sparse", "dense"])
+def test_a_generated_solver_has_a_structural_key(backend: Backend) -> None:
+  """The JIT finds a solver built before from its graph (``codegen/structure.py``): a value in the
+  solver's graph that the digest refused would cost every later process the whole rendering."""
+  from scaly.codegen.structure import graph_digest
+
+  found = graph_digest(_solver("HS21", backend, Settings()).concrete)
+  assert found is not None and found.packages == {"scaly", "numpy"}
+
+
+def test_the_sparse_backend_does_not_stall_on_pivots_that_are_rounding_residue() -> None:
+  """QRECIPE under the sparse backend's ordering has pivots that cancel to 1e-28 of their diagonal
+  entries and less. Taken as pivots they gave steps of 1e-49 and 74 iterations; taken as the zero
+  pivots they stand for, PIQP's retry runs and the solver takes PIQP's 19."""
+  got = solve(maros_meszaros("QRECIPE"), "sparse")
+  assert int(got["status"]) == SOLVED
+  assert int(got["iter"]) <= 21
+  steps = got["trace"][1:, [TRACE_FIELDS.index("primal_step"), TRACE_FIELDS.index("dual_step")]]
+  assert steps.min() > 1e-3
+
+
 @pytest.mark.method("opt.piqp")
 @pytest.mark.parametrize("backend", ["sparse", "dense"])
 @pytest.mark.parametrize("name", sorted(NONCONVEX))

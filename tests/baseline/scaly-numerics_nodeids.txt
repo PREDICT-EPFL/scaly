@@ -1468,6 +1468,8 @@ tests/opt/ipm/test_algorithm.py::test_a_factorization_that_never_succeeds[sparse
 tests/opt/ipm/test_algorithm.py::test_a_factorization_that_never_succeeds[sparse-True]
 tests/opt/ipm/test_algorithm.py::test_a_failure_mid_run_ends_the_solve_after_the_count
 tests/opt/ipm/test_algorithm.py::test_a_failure_mid_run_keeps_what_piqp_had_done
+tests/opt/ipm/test_algorithm.py::test_a_generated_solver_has_a_structural_key[dense]
+tests/opt/ipm/test_algorithm.py::test_a_generated_solver_has_a_structural_key[sparse]
 tests/opt/ipm/test_algorithm.py::test_a_zero_pivot_turns_refinement_on[dense]
 tests/opt/ipm/test_algorithm.py::test_a_zero_pivot_turns_refinement_on[sparse]
 tests/opt/ipm/test_algorithm.py::test_an_infeasibility_exit_reports_what_found_it[empty_slab-dense]
@@ -1651,6 +1653,7 @@ tests/opt/ipm/test_algorithm.py::test_the_result_matches_the_reference[mpc_4x2_N
 tests/opt/ipm/test_algorithm.py::test_the_result_matches_the_reference[mpc_4x2_N10-sparse]
 tests/opt/ipm/test_algorithm.py::test_the_result_matches_the_reference[unbounded_lp-dense]
 tests/opt/ipm/test_algorithm.py::test_the_result_matches_the_reference[unbounded_lp-sparse]
+tests/opt/ipm/test_algorithm.py::test_the_sparse_backend_does_not_stall_on_pivots_that_are_rounding_residue
 tests/opt/ipm/test_algorithm.py::test_trace_rows_are_the_rows_piqp_prints
 tests/opt/ipm/test_cost.py::test_a_long_horizon_is_sparse
 tests/opt/ipm/test_cost.py::test_a_sparse_factor_too_large_to_generate_leaves_the_dense_backend
@@ -1674,11 +1677,16 @@ tests/opt/ipm/test_cost.py::test_the_sparse_counts_are_those_of_the_factorizatio
 tests/opt/ipm/test_cost.py::test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds[DUALC1]
 tests/opt/ipm/test_cost.py::test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds[HS118]
 tests/opt/ipm/test_cost.py::test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds[QAFIRO]
+tests/opt/ipm/test_kkt.py::test_a_negative_sparse_pivot_is_judged_by_its_magnitude
 tests/opt/ipm/test_kkt.py::test_a_noise_pivot_turns_refinement_on_and_nothing_more
 tests/opt/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[dense-0.0]
 tests/opt/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[dense-100.0]
 tests/opt/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[sparse-0.0]
 tests/opt/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[sparse-100.0]
+tests/opt/ipm/test_kkt.py::test_a_sparse_pivot_that_is_infinite_or_nan_passes_as_in_piqp[-inf]
+tests/opt/ipm/test_kkt.py::test_a_sparse_pivot_that_is_infinite_or_nan_passes_as_in_piqp[inf]
+tests/opt/ipm/test_kkt.py::test_a_sparse_pivot_that_is_infinite_or_nan_passes_as_in_piqp[nan]
+tests/opt/ipm/test_kkt.py::test_a_sparse_pivot_within_one_ulp_of_its_entry_is_a_zero_pivot
 tests/opt/ipm/test_kkt.py::test_dense_rows_are_those_whose_product_is_cheaper_dense[100-7-7-False]
 tests/opt/ipm/test_kkt.py::test_dense_rows_are_those_whose_product_is_cheaper_dense[100-8-8-True]
 tests/opt/ipm/test_kkt.py::test_dense_rows_are_those_whose_product_is_cheaper_dense[15-16-16-False]

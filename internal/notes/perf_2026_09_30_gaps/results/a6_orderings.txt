@@ -1,0 +1,15 @@
+# QRECIPE, sparse backend, before C-226 (PIQP takes 19 iterations with either backend)
+QRECIPE    mmd          n   295 nnz(L)    1436 lanes     10364 status 1 iter 74
+QRECIPE    natural      n   295 nnz(L)    2013 lanes     18876 status 1 iter 19
+QRECIPE    rcm          n   295 nnz(L)    2779 lanes     33020 status 1 iter 20
+QRECIPE    mmd_tie0     n   295 nnz(L)    1499 lanes     11646 status 1 iter 19
+QRECIPE    mmd_tie1     n   295 nnz(L)    1611 lanes     13970 status 1 iter 19
+QRECIPE    mmd_tie2     n   295 nnz(L)    1611 lanes     13970 status 1 iter 19
+QRECIPE    mmd_tie3     n   295 nnz(L)    1611 lanes     13970 status 1 iter 19
+
+# after C-226
+QRECIPE    mmd          n   295 nnz(L)    1436 lanes     10364 status 1 iter 19
+QRECIPE    natural      n   295 nnz(L)    2013 lanes     18876 status 1 iter 19
+QRECIPE    rcm          n   295 nnz(L)    2779 lanes     33020 status 1 iter 20
+QRECIPE    mmd_tie0     n   295 nnz(L)    1499 lanes     11646 status 1 iter 19
+QRECIPE    mmd_tie1     n   295 nnz(L)    1611 lanes     13970 status 1 iter 19

@@ -14,9 +14,7 @@ from ...function.sugar import while_loop
 from ...ir.expr import (
   Expr,
   as_expr,
-  cast,
   concat,
-  equal,
   gather,
   isfinite,
   logical_and,
@@ -25,7 +23,6 @@ from ...ir.expr import (
   maximum,
   minimum,
   norm_inf,
-  reduce_max,
   scatter,
   segment_sum,
   stack,
@@ -232,12 +229,14 @@ class Kernels:
       ok = where(l_diag > 0.0, 0.0, 1.0).sum() < 0.5
       digits = logical_and(ok, self._digits_left(l_diag, gather(dense.reshape((s.n * s.n,)), diag)))
     else:
-      self._ldl = SparseLDL(self.kkt_matrix(mats, xr, dr, zr), symbolic=kkt_symbolic(s), name=f"{self.name}_kkt")
+      kkt = self.kkt_matrix(mats, xr, dr, zr)
+      self._ldl = SparseLDL(kkt, symbolic=kkt_symbolic(s), name=f"{self.name}_kkt")
       f = self._ldl.values
-      # PIQP's sparse LDL^T fails only on a pivot that is exactly zero: an infinite one, from a dual
-      # at zero, passes.
       pivots = f[self._ldl.d_offset : self._ldl.d_offset + self.size]
-      ok = logical_not(reduce_max(cast(equal(pivots, 0.0), "float64")) > 0.0)
+      symbolic = self._ldl.symbolic
+      first = symbolic.a_ptr[:-1]  # a column of the permuted matrix starts at its diagonal entry
+      assert np.array_equal(symbolic.a_rows[first], np.arange(self.size)), "the KKT matrix stores its whole diagonal"
+      ok = self._pivots_left(pivots, gather(kkt.values, symbolic.a_source[first]))
       digits = ok
     names = ["D", "x_reg", "delta_reg", "z_reg_ir"]
     outs = [f, where(ok, 1.0, 0.0), where(digits, 1.0, 0.0)]
@@ -289,6 +288,20 @@ class Kernels:
     }
     kept = [k for k, size in enumerate((s.n, s.p, s.m)) if size or k == 0]
     return SparseMatrix.block([[upper.get((r, c)) for c in kept] for r in kept])
+
+  @staticmethod
+  def _pivots_left(pivots: Expr, k_diag: Expr) -> Expr:
+    """Whether every pivot of the sparse ``LDL^T`` is larger than one ulp of the diagonal entry of
+    the KKT matrix it came from. PIQP's sparse factorization fails only on a pivot that is exactly
+    zero, and that is this test for a pivot that is: an infinite one, from a dual at zero, passes,
+    and so does a NaN one. A pivot that cancels need not come out exactly zero, though. On QRECIPE
+    this factorization left pivots 12 to 40 orders of magnitude below one ulp of their entries,
+    which are rounding residue and not a pivot; they passed the zero test, the steps they gave
+    were of length 1e-49, and the solver took 74 iterations where PIQP takes 19.
+    A pivot with no digit of its entry left is taken as the zero it stands for, with refinement on
+    or off, so the retry PIQP has for a zero pivot runs."""
+    # As a difference: an infinite pivot's is NaN (its entry is infinite too), and passes like a NaN.
+    return where(pivots.abs() - EPS * k_diag.abs() <= 0.0, 1.0, 0.0).sum() < 0.5
 
   @staticmethod
   def _digits_left(l_diag: Expr, c_diag: Expr) -> Expr:

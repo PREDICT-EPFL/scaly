@@ -104,10 +104,13 @@ def test_refinement_stops_when_it_slows(name: str, backend: Backend) -> None:
   _check(maros_meszaros(name), backend, f"slow_{name}", static_eps=1e-3, cases=((1e-6, 1e-4, True),))
 
 
-def _noise_pivot(p22: float, ir: float, retries: int = 10) -> dict[str, float]:
-  """The dense factorization's retry loop on P = [[4, 2], [2, p22]] alone, rho = 0 and no static
-  regularization: a condensed matrix whose second Cholesky pivot is p22 - 1, exactly."""
-  P = np.array([[4.0, 2.0], [2.0, p22]])
+def _noise_pivot(
+  p22: float, ir: float, retries: int = 10, *, backend: Backend = "dense", static_eps: float = 0.0, p11: float = 4.0
+) -> dict[str, float]:
+  """The factorization's retry loop on P = [[4, 2], [2, p22]] alone, rho = 0 and no static
+  regularization unless ``static_eps`` gives one: a matrix whose second pivot is p22 - 1, exactly,
+  in the Cholesky and in the sparse ``LDL^T`` alike."""
+  P = np.array([[p11, 2.0], [2.0, p22]])
   s = QPStructure.from_patterns(
     P, np.zeros((0, 2)), np.zeros((0, 2)), h_l=np.zeros(0), h_u=np.zeros(0), x_l=np.full(2, -np.inf), x_u=np.full(2, np.inf)
   )
@@ -116,13 +119,13 @@ def _noise_pivot(p22: float, ir: float, retries: int = 10) -> dict[str, float]:
   values = QPValues(P=pv, c=sc.const(np.zeros(2)), A=empty, b=empty, G=empty, h_l=empty, h_u=empty, x_l=empty, x_u=empty)
   unit = Scaling(sc.const(np.ones(2)), sc.const(np.ones(2)), sc.const(1.0))
   kkt = KKT(
-    Kernels(s, "dense", Refinement(static_eps=0.0, static_rel=0.0, max_factor_retires=retries), name=f"noise_{int(ir)}_{p22 > 1}_{retries}"),
+    Kernels(s, backend, Refinement(static_eps=static_eps, static_rel=0.0, max_factor_retires=retries), name=f"noise_{backend}_{int(ir)}_{retries}"),
     ScaledQP(values, sc.const(np.ones(2)), unit),
   )
   it = Iterate.unflat(s, sc.const(np.zeros(sum(Iterate.sizes(s)))))
   factor = kkt.factor(0.0, 1e-4, it, ir=ir)
   keys = ["ok", "ir", "delta", "retries"]
-  fn = sc.Function.from_exprs(f"noise_{int(ir)}_{p22 > 1}_{retries}", [pv], [factor.head[k] for k in keys], ["pv"], keys)
+  fn = sc.Function.from_exprs(f"noise_{backend}_{int(ir)}_{retries}_{static_eps > 0}", [pv], [factor.head[k] for k in keys], ["pv"], keys)
   return dict(zip(keys, (float(v) for v in fn(P[s.P_rows, s.P_cols])), strict=True))
 
 
@@ -141,6 +144,40 @@ def test_a_noise_pivot_turns_refinement_on_and_nothing_more() -> None:
   # settings refuse 0 retries, the generated solver takes it); with refinement already on, nothing.
   assert _noise_pivot(1.0, 0.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
   assert _noise_pivot(1.0, 1.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
+
+
+def test_a_sparse_pivot_within_one_ulp_of_its_entry_is_a_zero_pivot() -> None:
+  """The sparse backend's second pivot against a diagonal entry of 1 + k eps. PIQP's test asks only
+  whether a pivot is exactly zero; a pivot at or below one ulp of its entry is rounding residue,
+  and is taken as that zero with refinement off or on. Without a static regularization no retry
+  moves it; with one, the first failure turns refinement on and the regularized matrix factors."""
+  eps = float(np.finfo(np.float64).eps)
+  passed = {"ok": 1.0, "ir": 0.0, "delta": 1e-4, "retries": 0.0}
+  assert _noise_pivot(1.0 + 2 * eps, 0.0, backend="sparse") == passed  # two ulps: a pivot
+  assert _noise_pivot(1.0 + 8 * eps, 0.0, backend="sparse") == passed
+  for p22 in (1.0 + eps, 1.0):  # one ulp, and exactly zero
+    for ir in (0.0, 1.0):
+      lost = _noise_pivot(p22, ir, backend="sparse")
+      assert lost["ok"] == 0.0 and lost["ir"] == 1.0 and lost["retries"] == 10.0
+  assert _noise_pivot(1.0 + eps, 0.0, backend="sparse", static_eps=1e-8) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
+  assert _noise_pivot(1.0 + eps, 1.0, backend="sparse", static_eps=1e-8) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
+
+
+@pytest.mark.parametrize("p22", [np.inf, -np.inf, np.nan])
+def test_a_sparse_pivot_that_is_infinite_or_nan_passes_as_in_piqp(p22: float) -> None:
+  """PIQP's sparse factorization fails on a pivot equal to zero and on nothing else: an infinite
+  pivot, which a dual at zero gives, is not one, and neither is a NaN."""
+  assert _noise_pivot(p22, 0.0, backend="sparse") == {"ok": 1.0, "ir": 0.0, "delta": 1e-4, "retries": 0.0}
+
+
+def test_a_negative_sparse_pivot_is_judged_by_its_magnitude() -> None:
+  eps = float(np.finfo(np.float64).eps)
+  assert _noise_pivot(1.0 - eps, 0.0, backend="sparse")["ok"] == 1.0  # -eps against 1 - eps: just over one ulp of it
+  assert _noise_pivot(1.0 - eps / 2, 0.0, backend="sparse")["ok"] == 0.0  # -eps / 2: under one
+  assert _noise_pivot(0.5, 0.0, backend="sparse") == {"ok": 1.0, "ir": 0.0, "delta": 1e-4, "retries": 0.0}  # -0.5: indefinite, and a pivot
+  # A negative diagonal entry, as the KKT matrix's constraint blocks have: -(1 + eps) + 1 against it.
+  assert _noise_pivot(-(1.0 + eps), 0.0, backend="sparse", p11=-4.0)["ok"] == 0.0
+  assert _noise_pivot(-(1.0 + 2 * eps), 0.0, backend="sparse", p11=-4.0)["ok"] == 1.0
 
 
 @pytest.mark.parametrize("tolerance", [0.0, 1e2])
