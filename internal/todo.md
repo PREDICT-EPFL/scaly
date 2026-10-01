@@ -12,7 +12,8 @@ The single actionable list. Rationale lives elsewhere and is linked, never resta
 - **What shape a refactoring should take** — [`internal/notes/refactorings.md`](notes/refactorings.md):
   one `#` section per refactoring, kept until that refactoring lands.
 
-Reorganized 2026-09-29 around the core compiler roadmap; completed items were flushed and their
+Reorganized 2026-09-29 around the core compiler roadmap, and again 2026-10-01 when the roadmap was
+rewritten around three milestones; completed items were flushed and their
 records live in git history and the frozen notes. Sections are themes. Inside each section, **Now**
 holds what is actively worked on or next in line, and **Deferred** holds what is intentionally low
 priority: the reasoning is still good, nothing depends on it yet. A finished item stays in place
@@ -23,7 +24,7 @@ with its box checked until it is flushed out by hand.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 148**
+**Next id: 155**
 
 The frozen experimental `devrush` branch keeps its own todo list, whose ids from C-82 up name
 different items than the same ids here. Cite devrush work by file and title, never by id.
@@ -58,20 +59,24 @@ only the theme and nothing else has to stay stable.
 
 ## Priority order
 
-From 2026-09-29. The roadmap's [order of work](notes/core_compiler_roadmap.md#order-of-work) has the
+From 2026-10-01. The roadmap's [order of work](notes/core_compiler_roadmap.md#order-of-work) has the
 dependencies and the rules that let lanes run in parallel.
 
-1. Wave 0, foundations: C-86 first, then C-87 and C-93; C-88, C-89, API-90, C-91, C-92 and
-   C-83 in any order; C-94 last.
-2. Wave 1: the AD engine C-95 to API-101; the loop-nest emitter C-108 and C-109; API-114 and API-3;
-   C-103 and the first half of C-104; the sparse boundary C-127 to C-129.
-3. Wave 2: C-104's AD half, C-105 to C-107; C-110 to C-112; API-1, API-115, API-116; C-130, C-131;
-   C-119 and C-124.
-4. Wave 3: C-120 to C-123; API-2, C-8, C-113, C-102; API-117, API-4; C-132.
-5. Wave 4: C-133 to C-135; C-125, C-126; C-136 to C-139; the milestone checks API-140 and API-141.
-6. Then D-36, the GPU milestone definition.
+1. Milestone 1, differentiable loops in a debuggable core.
+   - Foundations: C-86 first, then C-87 and C-93; C-88, C-89, API-90, C-91, C-92 and C-83 in any
+     order; C-94 last. R-71 right after C-83, before C-139 and before milestone 3, so `CLibrary`
+     speaks one flag dialect and milestone 3 is measured under one compiler.
+   - Then C-124 (`sc.print`), and in parallel lanes: the AD engine C-95 to API-101; the templates
+     API-114, API-3, API-1, API-115; C-103 and C-104; C-136; C-108 and C-109; the loops C-119 to
+     C-123 and C-138.
+2. Milestone 2, static sparse functions end to end: C-127, C-148, C-149, C-128, C-129, API-116,
+   C-130 to C-132; C-154 and C-133 to C-135; C-125; C-139; C-105 to C-107.
+3. Milestone 3, competitive kernels and generated solvers: C-110 to C-112; C-150, API-2; C-8, C-113,
+   C-102, C-144; C-151, C-152; API-117, API-4; C-126; the milestone checks API-140 and API-141.
+4. Then D-36, the GPU milestone definition.
 
-Small fixes that fit between any two of these: C-82, S-17, S-142, R-42, R-71, C-143, C-145.
+Small fixes that fit between any two of these: C-82, S-17, S-142 (before C-139), R-42, C-143,
+C-145.
 
 ## API
 
@@ -79,41 +84,41 @@ Small fixes that fit between any two of these: C-82, S-17, S-142, R-42, R-71, C-
 
 - [ ] **API-90. An immutable Function.** One constructor, a public `Function.build` taking trees,
       `_replace` as the only copy path, the solver descriptor and a `role` as constructor fields,
-      `_with_trees` no longer mutating `self`. Wave 0. [Design](notes/core_compiler_roadmap.md#foundations).
-- [ ] **API-101. `sc.custom_derivative` on Functions.** Rules set at construction and honoured by
-      `CALL`, `VMAP` and later `LOOP` through one pair of body-derivative functions; unread tangents
-      are never built; declared sparsity. After C-100 and API-90.
+      `_with_trees` no longer mutating `self`. Milestone 1. [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **API-101. `sc.custom_derivative` with residuals.** Rules set at construction: a JVP rule, and
+      a `fwd`/`bwd` pair in JAX's `custom_vjp` form whose residuals (a factorization, a trajectory)
+      are results of the same invocation, so a solve's derivatives reuse its factorization; honoured
+      by `CALL`, `LOOP` and maps through one pair of body-derivative functions; unread tangents are
+      never built; declared sparsity. After C-100 and API-90.
       [Design](notes/core_compiler_roadmap.md#one-ad-engine).
-- [ ] **API-114. Move output declarations to `output=`.** Waits for the template API redesign
-      (roadmap decision 12), which may replace this item. A scripted edit of every decorator in
-      `src/`, `tests/`, `benchmarks/`, `plugins/`, `examples/`, `docs/` and the notebooks, with an
-      arity check that suggests `output=`. Snapshots byte-identical.
+- [ ] **API-114. The playground's declaration surface.** `arg` and `group` replace `L` and `G`, one
+      tree per parameter, keyword-only `outputs=` that may be left out. A scripted edit of every
+      decorator in `src/`, `tests/`, `benchmarks/`, `plugins/`, `examples/`, `docs/` and the
+      notebooks; bodies keep their single grouped parameter. Snapshots byte-identical.
       [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
-- [ ] **API-3. One slot per positional parameter, and the zero-input contract.** Waits for the
-      template API redesign (roadmap decision 12). The `Function[**PS, **PN, SO, NO]` overload
-      ladder, variadic calls, parameter-named leaves; a call
-      with no arguments is numerical and `symbolic_call()` is symbolic, so parameterless solver
-      oracles stay legal and `ad/forward.py` drops `_flat_symbolic_call`. The seeded wrappers and
-      solver call convention change here. After API-114. Rationale: refactorings.md "Zero-input
-      `Function`s, and the flat call seam that survives because of them".
+- [ ] **API-3. Parameter lists typed with `TypeVarTuple`, and the zero-input contract.** The
+      playground's ladders and typed-`self` calls; a call with no arguments is numerical and
+      `symbolic_call()` is symbolic, so parameterless solver oracles stay legal and `ad/forward.py`
+      drops `_flat_symbolic_call`. The seeded wrappers and solver call convention change here; the
+      playground's static tests move to `tests/typing/`. After API-114. Rationale: refactorings.md
+      "Zero-input `Function`s, and the flat call seam that survives because of them".
       [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
-- [ ] **API-1. Function templates.** Semantics fixed, syntax waits for the template API redesign
-      (roadmap decision 12). Input holes with partial dims and open dtypes, a specialization key
-      over the tree skeleton and leaf types (patterns included), one trace per
-      instance, `{template}_{tokens}` names without `__`, `instantiate(*specs, name=)`, bare mode in
-      one trace, `NotConcrete` wherever a graph is needed. After API-3 and C-87; if C-127 lands
-      first, keys carry patterns from the start.
+- [ ] **API-1. Function instances, holes and names.** The playground's `Function` in front of
+      today's Function, which becomes the `ConcreteFunction` instance; holes for shapes, dtypes and
+      patterns, keyed on whole leaf types; the bare mode; `instantiate`; mangled names without `__`
+      that encode the nesting. After API-3 and C-87.
       [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
-- [ ] **API-115. Lifted derivatives of templates.** The nine derivative wrappers through one
-      `_lift`, cached per source instance, with seed and multiplier slots typed from it. After API-1.
-- [ ] **API-116. Sparse pattern holes.** `sc.S(name)` without a pattern binds from a sparse
-      expression or a SciPy argument, and bare mode binds a sparse argument's own pattern. After
-      API-1 and C-128. [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
-- [ ] **API-2. Typed vmap.** `sc.vmap(f, N)` returns a mapped callable that builds `VMAP` nodes at
-      the call site and returns the callee's output tree with a leading axis; `sc.window` and
-      `sc.broadcast` markers; views read in place when affine; template callees instantiated from
-      slice shapes. After API-1, C-110 and C-119. Rationale: refactorings.md "`vmap` and the AD
-      entry points erase the callee's declared trees".
+- [ ] **API-115. Lifted derivatives.** The nine derivative wrappers through `lift`, cached per
+      source instance, with seeds and multipliers copying the whole leaf type, not only the shape.
+      After API-1.
+- [ ] **API-116. Pattern holes and the numerical sparse fast path.** A pattern hole binds from a
+      sparse expression or a SciPy argument; a concrete sparse leaf also takes its values vector.
+      With C-128. [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
+- [ ] **API-2. Typed vmap.** `sc.vmap(f, N)` returns a mapped callable, lifted with `lift`, that
+      builds a map at the call site and returns the callee's output tree with a leading axis;
+      `sc.window` and `sc.broadcast` markers; views read in place when affine; template callees
+      instantiated from slice shapes. After API-1, C-110 and C-150. Rationale: refactorings.md
+      "`vmap` and the AD entry points erase the callee's declared trees".
       [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **API-117. Function-level `sc.jvp` and `sc.vjp` that keep declared trees.** AD-built callees
       stop being `Any`-typed at run time. After C-98 and API-3.
@@ -123,13 +128,14 @@ Small fixes that fit between any two of these: C-82, S-17, S-142, R-42, R-71, C-
       decoder-architecture builders with templates. This benchmark may use the packed parameter
       length as its specialization key because it does not add more MLP layouts; a general template
       must distinguish individual layer shapes because equal parameter counts do not prove equal
-      architectures. Retire the template sketch in `typing_playground/`. After API-115.
+      architectures. After API-115.
 - [ ] **API-140. TinyMPC on main.** Port devrush's `examples/tinympc` onto the finished core as a
-      test of it: loops, constant folding, loop-invariant parameters. Within 10% of devrush's
-      reported timings. After C-123. [Checks](notes/core_compiler_roadmap.md#milestone-checks).
+      test of it: loops, constant folding, loop-invariant parameters, the library dense solves.
+      Within 10% of devrush's reported timings. After C-123, C-133 and C-113.
+      [Checks](notes/core_compiler_roadmap.md#milestone-checks).
 - [ ] **API-141. A generated sparse QP interior-point solver.** The devrush IPM's structure rebuilt
-      on sparse LDL^T, loops, predicates and reductions, passing devrush's Maros-Meszaros subset.
-      An example, not a library. After C-135 and C-123.
+      on the library sparse LDL^T, loops, predicates and reductions, passing devrush's
+      Maros-Meszaros subset. An example, not a library. After C-135 and C-8.
       [Checks](notes/core_compiler_roadmap.md#milestone-checks).
 
 ### Deferred
@@ -167,7 +173,7 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 ### Foundations
 
 - [ ] **C-86. Split `passes/lowering.py` into a package**, refuse a second `@lowers` for one op,
-      and delete the unused multi-index `VIEW` door. First in wave 0. Snapshots byte-identical.
+      and delete the unused multi-index `VIEW` door. First in milestone 1. Snapshots byte-identical.
       [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-87. Key callees by identity, and give generated C one name authority.** Two Functions
       with the same name share one procedure and one invocation today, silently computing the wrong
@@ -186,19 +192,21 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-92. Run the verifier, test op coverage, remove recursion.** `verify_expr` at Function
       construction and before lowering, rules for `SLICE` and `SOLVER_CALL`, one test that every
-      `ExprOp` is classified everywhere, iterative `_depends_on`, `_jac_mask` and `structural_key`.
+      `ExprOp` is classified everywhere and that no pass names a member of the elementwise table,
+      iterative `_depends_on`, `_jac_mask` and `structural_key`.
       [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-93. `SCATTER` accumulates repeated indices**, as its docstring says; `segment_sum` as a
-      builder; linear-time gather and unbroadcast adjoints. After C-86.
+      builder; linear-time gather and unbroadcast adjoints. The first step of C-136. After C-86.
       [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-83. Fingerprint the host and the compiler in the JIT cache key.** Absorbs C-85. The CPU
       features and compiler version macros from the probe `toolchain.native_recipe` already runs,
       the compiler's `--version`, real path, full command and effective flags; `Compiler` becomes a
-      command tuple for R-71. Gate: changing any of them misses the cache.
+      command tuple for R-71, which follows it. Gate: changing any of them misses the cache.
       [Design](notes/core_compiler_roadmap.md#foundations).
 - [ ] **C-94. A JIT index key that skips lowering on a hit.** A graph digest of the immutable
-      Function plus versions, render options and C-83's fingerprint; atomic index writes;
-      `invalidate_cache` without rendering. Gate: a fresh process with another `PYTHONHASHSEED`
+      Function plus versions, render options and C-83's fingerprint; atomic index writes through
+      `os.replace` and cache-relative paths, which hold on Windows (R-38); `invalidate_cache`
+      without rendering. Gate: a fresh process with another `PYTHONHASHSEED`
       loads from the cache without calling `lower_function`. After C-88 and API-90.
       [Design](notes/core_compiler_roadmap.md#foundations).
 
@@ -218,15 +226,15 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       same traversal; zero tangents are structural and typed; the rank-4 transpose cap goes;
       `_jvp_many_structural`, `_jvp_many_unrolled` and `SCALY_STRICT_JVP_MANY` are deleted.
       Regenerates snapshots. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
-- [ ] **C-99. One table of elementwise partials shared with reverse mode**, lazily built, with
+- [ ] **C-99. One elementwise table: partials, folding and C spelling**, lazily built, with
       stable contraction forms and the masked-cotangent helper; `vjp_many` leaves the public API
       (step 4). [Design](notes/core_compiler_roadmap.md#one-ad-engine).
 - [ ] **C-100. Derivatives with respect to intermediate expressions**, and `sc.stop_gradient`.
       Without it, forward mode returns silent zeros for a slice of a loop carry.
       [Design](notes/core_compiler_roadmap.md#one-ad-engine).
 - [ ] **C-102. Reverse mode keeps the call boundary**: one adjoint helper call per invocation, map
-      adjoints through the accumulating scatter, inlining left to lowering. Wave 3, after C-113;
-      measured on every benchmark problem. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+      adjoints through the accumulating scatter, inlining left to lowering. Milestone 3, after
+      C-113; measured on every benchmark problem. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
 
 ### Dtypes and the scalar vocabulary
 
@@ -234,13 +242,13 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       between expression dtypes, `sc.const` keeping ndarray dtypes, same-kind numerical casts,
       `Expr.__bool__` raising, dtype checks at calls, NumPy integer indices.
       [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
-- [ ] **C-104. Predicates, `select`, `cast`, `copysign`, integer `//` and `%`** in both dialects.
-      The IR and lowering half after C-108; the AD half, with masked cotangents and a nonlinear
-      treatment in the QP affinity proof, after C-99.
-      [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
+- [ ] **C-104. Predicates, `select`, `cast`, integer `//` and `%`** as rows of the elementwise
+      table in both dialects; integer and boolean formats for `sc.print`. The IR and lowering half
+      after C-108; the AD half, with masked cotangents and a nonlinear treatment in the QP affinity
+      proof, after C-99. [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
 - [ ] **C-105. Nonsmooth derivatives and extremum reductions.** Ties split equally, `abs` slope 0 at
-      0, zero slope for `floor` and `ceil`; `reduce_max`, `reduce_min`, `argmax`, `argmin`, the two
-      norms, propagating NaN. After C-104 and C-109.
+      0, zero slope for `floor` and `ceil`; `max` and `min` as `REDUCE` kinds propagating NaN;
+      `argmax`, `argmin` and the two norms as builders. After C-104 and C-109.
       [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
 - [ ] **C-106. float32 through lowering and the program passes.** Dtype-faithful folding and
       literals, libm names by dtype, float32 in `scalarize`, `widen_ranges`, `coalesce_stores` and
@@ -254,10 +262,11 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 
 ### Tensor core and the loop compiler
 
-- [ ] **C-108. The loop-nest emitter.** `nest`, `reduce` and `read` on `LowerCtx`; affine view
-      indices, quotient and remainder only where a composition requires them; empty extents emit no
-      store; elementwise, movement, `STACK` and `CONCAT` migrated; the div/mod coordinate helpers
-      deleted. Regenerates snapshots. After C-86.
+- [ ] **C-108. The loop-nest emitter and the iteration-plan interface.** `nest`, `reduce` and `read`
+      on `LowerCtx`, with access maps that are affine or table-driven from the start so sparse
+      kernels share the interface; affine view indices, quotient and remainder only where a
+      composition requires them; empty extents emit no store; elementwise, movement, `STACK` and
+      `CONCAT` migrated; the div/mod coordinate helpers deleted. Regenerates snapshots. After C-86.
       [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-109. Accumulators and the contraction schedule.** Reductions as `ASSIGN` accumulators;
       `SUM` and rank-2 `MATMUL` on them; C-43's layout branches deleted and replaced by one
@@ -267,24 +276,38 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       `sum(axes, keepdims)`, `mean`, `sc.diag`; `A @ ones` folds to a reduction (C-10's residue).
       After C-98 and C-109. [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-111. Batched matmul** with NumPy semantics, its AD and sparsity rules. After C-110.
-- [ ] **C-112. `einsum`** as frontend sugar: pairwise contractions through batched matmul, ellipses,
+- [ ] **C-112. `einsum`** as a builder: pairwise contractions through batched matmul, ellipses,
       diagonals for repeated labels. After C-111.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-150. `VMAP` folds into `LOOP`** as a loop without carries: one predicate replaces the
+      `ExprOp.VMAP` tests in 14 files, one invocation model, one adjoint route. Snapshots
+      byte-identical, `vmap.c` included. After C-121 and C-119.
       [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-8. Fusion decided at lowering time**, in the shape of tinygrad's rangeify: movement ops
       never materialized unless required, single-consumer elementwise producers inlined, a
-      reduce-under-broadcast cap; `fuse_elementwise.py` deleted. Gates: race-car `SZ_W` zero at
-      W = 1, chain M=5 workspace under 100k doubles (109,944 today), npmpc within 5%. Regenerates
-      snapshots. After C-109; scheduled after C-112 so the N-d ops land before fusion changes the
-      emitted code. The 2026-09-08 study
-      (`notes/perf_2026_09_07/tinygrad_rangeify.md`) is the reference.
+      reduce-under-broadcast cap, the consumer-agreement merge, and sparse producers fused only into
+      consumers that share their traversal; `fuse_elementwise.py` deleted. Gates: race-car `SZ_W`
+      zero at W = 1, chain M=5 workspace under 100k doubles (109,944 today), npmpc within 5%, the
+      IPM's KKT assembly in one loop. Regenerates snapshots. After C-109, C-112 and C-130. The
+      2026-09-08 study (`notes/perf_2026_09_07/tinygrad_rangeify.md`) is the reference.
       [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-113. Lanes over nests, and block callees inlined into their maps.** Per-lane accumulators
-      on any reduction, lanes over nests and the seed axis, float32 lanes, loop order by unit-stride
-      access. Gates: a `vmap` of a 12x512 matvec within 2x of `X @ W.T`, and the regressions C-79 left
-      open (unbumpercars C=2, C=16, C=32, closed-loop function evaluation) resolved under the C-79
-      protocol; its design and gates are in
-      [`c77_c79_implementation.md`](notes/c77_c79_implementation.md#the-c-79-todo-entry-at-closure).
+      on any reduction, with a remainder loop on reduce ranges with loaded bounds, lanes over nests
+      and the seed axis, float32 lanes, loop order by unit-stride access. Gates: a `vmap` of a
+      12x512 matvec within 2x of `X @ W.T`, and the regressions C-79 left open (unbumpercars C=2,
+      C=16, C=32, closed-loop function evaluation) resolved under the C-79 protocol; its design and
+      gates are in [`c77_c79_implementation.md`](notes/c77_c79_implementation.md#the-c-79-todo-entry-at-closure).
       After C-8. [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-151. Predictable lowering of hand-written kernels.** A register-blocked product written
+      in Python keeps its structure: blocks as straight-line code over C locals, small loop carries
+      in locals, slices read in place, packing hoisted, Function boundaries and lowering hints kept,
+      `restrict` buffer parameters. Each property tested on the generated C; a 4×4 product and a
+      panel Cholesky measured against BLASFEO. After C-121 and C-8.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-152. Demanded entries.** Which entries of a node its consumers read, so a node is computed
+      over its support intersected with them; generalizes C-130's sampled adjoint (devrush: 984
+      entries computed for 527 gathered; its CS-12). After C-130 and C-8.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
 - [ ] **C-82. A frame budget in `pack_workspace` instead of the per-buffer spill threshold.**
       Fusion and lane staging move memory from full-length intermediates into per-stage locals, and
       inlined callees add their locals to the caller's frame; the hand-written kernel uses no `w[]`
@@ -300,76 +323,108 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 
 ### Sparse tensors
 
-- [ ] **C-127. A canonical, interned CSC pattern in `TensorType`**, over the last two axes with
-      shared-pattern batch axes; storage shape `(*batch, nnz)`; builders and the verifier refuse
-      sparse operands to ops without a sparse rule. After C-88 and C-92.
+- [ ] **C-127. The stored pattern in `TensorType`**: canonical, interned, compared by identity, over
+      the last two axes with shared-pattern batch axes; storage shape `(*batch, nnz)`; fixed pattern
+      rules shared with C-148; ops without one refuse sparse operands; the storage-size audit. After
+      API-1 and C-92. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-148. Support on every node.** `Expr.support`, lazy, cached, outside the intern key, one
+      rule per op with `None` as the sound default; used by simplification, `ad/sparsity.py` (which
+      keeps relations over nonzero entries only) and scalar lowering; a randomized soundness
+      harness. After C-127. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-149. No work proportional to a matrix's full size.** Gate: build, analyse, differentiate
+      and lower a 10⁵×10⁵ matrix with 10⁶ entries under fixed time and memory limits; fixes
+      `zeros_like`, scatter folding, `expr.size` row pointers, `arange(size)` rules, `_matmul_mask`
+      and constant hashing. After C-148. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-128. The sparse boundary.** Sparse leaves with a pattern and a layout (CSC, CSR or a given
+      coordinate order), sparse `sc.const` from SciPy or from values and a pattern, `PACK` and
+      `VALUES`, `to_dense`, `from_dense` and `sparsify` as builders, storage-aware calls and maps,
+      numerical sparse arguments and results. After C-149.
       [Design](notes/core_compiler_roadmap.md#sparse-tensors).
-- [ ] **C-128. The sparse boundary.** `sc.S` leaves, sparse `sc.const` from SciPy or from values and
-      a pattern, pack, values, `to_dense`, `from_dense`, storage-aware calls and maps, numerical
-      sparse arguments and results. After C-127. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
-- [ ] **C-129. Sparse inputs in the generated C, C++ and CasADi interfaces**, with no zero-length
-      arrays for empty patterns. After C-128. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
-- [ ] **C-130. Sparse algebra with full AD.** Transpose, union and intersection arithmetic,
-      scaling, sums, sparse-dense products; derivatives in stored coordinates; stored-coordinate
-      sparsity analysis; tests pinning the contract with the loop compiler. After C-98, C-108 and
-      C-93. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
-- [ ] **C-131. Sparse assembly and sparse-sparse products**: block diagonal, concatenation,
-      Kronecker products, repatterning, a column-loop product without pair enumeration. After C-130.
+- [ ] **C-129. Sparse inputs in the generated C, C++ and CasADi interfaces**, values in each leaf's
+      layout, batched leaves publishing their local pattern once, no zero-length arrays for empty
+      patterns. After C-128. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-130. Sparse kernels and the sampled adjoint.** Iteration plans for sparse operands: one
+      compact map with build-time union and intersection regions, `MATMUL` with a sparse operand,
+      `REDUCE` over stored entries; four kernel forms per region; outputs written in the declared
+      layout; derivatives on stored coordinates and the sampled `MATMUL` adjoint. Gate: devrush's
+      KKT assembly and products on its Maros-Meszaros subset with no dense `(m, n)` buffer. After
+      C-128, C-109 and C-98. Regenerates snapshots. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-131. Sparse-sparse products**: the Boolean product pattern at build time, a column loop
+      over a dense accumulator, bounded table and workspace growth. After C-130.
       [Design](notes/core_compiler_roadmap.md#sparse-tensors).
-- [ ] **C-132. Sparse derivative outputs become sparse leaves**, and `Function.output_sparsities`
-      goes away; values switch to CSC order under the versioning policy. After C-129 and C-130.
-      [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-132. Sparse derivative outputs become sparse leaves** with a declared layout and triangle,
+      and `Function.output_sparsities` goes away; values switch to the declared layout under the
+      versioning policy. After C-129 and C-130. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
 
 ### Loops, conditionals and printing
 
+- [ ] **C-124. `sc.print`.** An identity op carrying a format, printing whenever its value is
+      computed, a trace-time error for unreachable prints, `SCALY_PRINTF` to compile prints out.
+      float64 first; integer and boolean formats with C-104, float32 with C-106. The JIT flushes C
+      `stdout` after a call that printed, since a Windows process (R-38) may not share it with
+      Python's. Right after the foundations, after C-86 and C-87.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
 - [ ] **C-119. One invocation per callee-op call.** `callees_of` replaces the hard-coded
-      `{CALL, VMAP}` sets; `invocation_key` groups sibling outputs; each invocation is emitted once
-      with all its used results, so a `VMAP` with several used outputs becomes one loop. Regenerates
-      snapshots. After C-87 and C-108. [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+      `{CALL, VMAP}` sets; `invocation_key` groups sibling outputs and custom-rule residuals; each
+      invocation is emitted once with all its used results, so a `VMAP` with several used outputs
+      becomes one loop. Regenerates snapshots. After C-87 and C-108.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
 - [ ] **C-120. Carried loops in the program dialect.** A `carried` range attribute, `BREAK_IF`,
       `exit_var`, and every pass guard pinned by a test before the op exists. After C-119.
       [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
-- [ ] **C-121. `LOOP`, with `scan` and `while_loop`.** One callee op with an optional condition,
-      several carries, documented results including an int64 trip count and per-carry
-      trajectories; derivatives raise until C-122. Gate: RK4 rollout at N=200 builds in constant C
-      size. After C-120 and C-104. [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-121. `LOOP`, with `scan` and `while_loop`.** One callee op with an optional condition, a
+      user-facing run-time trip count under a static bound, several carries, an `in_place`
+      contract, documented results including an int64 trip count and per-carry trajectories;
+      derivatives raise until C-122. Gate: RK4 rollout at N=200 builds in constant C size. After
+      C-120 and C-104. [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
 - [ ] **C-122. Forward AD through `LOOP`**, single and multi-seed, taking the primal's steps.
       After C-121 and C-99.
 - [ ] **C-123. Reverse AD through `LOOP`.** One backward loop over the stored trajectory, visiting
       exactly the steps taken; differentiable trajectories; `max_trajectory=`. After C-122.
       [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
-- [ ] **C-124. `sc.print`.** An identity op carrying a format, printing whenever its value is
-      computed, a trace-time error for unreachable prints, `SCALY_PRINTF` to compile prints out.
-      After C-104. [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
-- [ ] **C-125. `COND` and `SWITCH`** with branch Functions, program `IF`, and AD over branches.
-      After C-121. [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-154. Unrolling static loops by the target's straight-line budget**, honouring lowering
+      hints, so small library factorizations become straight-line code without an option; the
+      reference schedule's summation order unchanged. After C-121.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-125. `COND`** with branch Functions, a boolean or clamped integer selector, program `IF`,
+      and AD over branches; no separate `SWITCH`. After C-121.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
 - [ ] **C-126. Checked builds**: bounds and non-finite checks naming the function and op, behind a
       render option. After C-136 and C-124.
 
-### Linear solves
+### Linear algebra as library Functions
 
-- [ ] **C-133. Triangular solves, Cholesky, and `solve(assume="pos")`** under one solve contract:
-      stated matrix classes, one stored triangle, pivot status, an implicit derivative sharing one
-      factorization, summation order fixed by definition. After API-101 and C-109.
-      [Design](notes/core_compiler_roadmap.md#linear-solves).
-- [ ] **C-134. Dense LDL^T and LU, and `solve(assume="sym"|"gen")`.** After C-133.
-- [ ] **C-135. Sparse LDL^T as one op pair** with a digest-named symbolic analysis that also replaces
-      `scaly-sqp`'s `_ldl_symbolic`, one implementation whatever the unrolling, and the pivot status
-      of the solve contract. After C-130, C-134 and C-104.
-      [Design](notes/core_compiler_roadmap.md#linear-solves).
+- [ ] **C-133. Triangular solves, Cholesky, and `solve(assume="pos")`** as library Functions over
+      `LOOP` under one solve contract: stated matrix classes, one stored triangle, pivot status, an
+      implicit derivative reusing the factorization through API-101's residuals, a reference
+      schedule. After API-101, C-121, C-138 and C-154.
+      [Design](notes/core_compiler_roadmap.md#linear-algebra-as-library-functions).
+- [ ] **C-134. Dense LDL^T and LU, and `solve(assume="sym"|"gen")`**, as library Functions. After
+      C-133.
+- [ ] **C-135. Sparse LDL^T as a library Function** over a digest-named symbolic analysis that also
+      replaces `scaly-sqp`'s `_ldl_symbolic`: an outer loop over columns, inner loops with run-time
+      trip counts, `in_place` carries, column chunks as a `COND` over widths. Gate, and the test of
+      the closed language: devrush's direct kernel's loop structure and timings. After C-130,
+      C-134 and C-125. [Design](notes/core_compiler_roadmap.md#linear-algebra-as-library-functions).
 
 ### Runtime indexing and external code
 
-- [ ] **C-136. `TAKE` and `PUT` with runtime int64 indices**, `combine` in `set`, `add`, `max`, `min`,
-      defined duplicate and out-of-range behaviour, AD and sparsity. After C-104 and C-105.
+- [ ] **C-136. `GATHER` and `SCATTER` with index operands**, absorbing C-137: a constant index is
+      the static case, `combine` in `set`, `add`, `max`, `min`, `mode` `fill` or
+      `promise_in_bounds`, defined duplicate and out-of-range behaviour, AD and sparsity; segment
+      reductions, `take` and `dynamic_slice` as builders. Snapshots byte-identical for constant
+      indices. After C-93 and C-104.
       [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
-- [ ] **C-137. `GATHER` and `SCATTER` become constant-index `TAKE` and `PUT`.** Snapshots
-      byte-identical. After C-136.
-- [ ] **C-138. In-place loop carries** with one prover module and `inout` procedure parameters.
-      After C-137 and C-121.
+- [ ] **C-138. In-place loop carries** by buffer reuse in lowering: last use, same index, disjoint
+      indices; the `in_place` contract raises instead of copying; `inout` procedure parameters.
+      After C-136 and C-121.
       [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
-- [ ] **C-139. `EXTERNAL_CALL`: user C code or a linked symbol as a graph node**, pure and
-      reentrant, differentiable only through `custom_derivative`. After C-107, API-1 and C-119.
+- [ ] **C-139. `sc.extern` and `sc.CLibrary`.** A concrete C function from a frozen build
+      description, called through `EXTERN` nodes; pure and reentrant; differentiable only through
+      `custom_derivative`; the solver plugins move onto it and `SOLVER_CALL` goes away. Flags in
+      clang's dialect and libraries named rather than spelled as linker flags, so Windows (R-38)
+      adds a platform without changing the API. After C-119, API-1 and R-71; typed pointers after
+      C-107.
       [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
 
 ### Deferred
@@ -381,7 +436,11 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 - **C-144. Share a call's primal with its derivative.** A `CALL` node's value and its derivative each
   run the callee's forward pass; devrush's neural MPC case study hit it, and its DiffMPC episode ran
   in 200 ms against 161 ms without the duplicate. C-96's cache knows which helper is the derivative of which
-  callee. After C-102.
+  callee, and API-101's residuals are the mechanism. After C-102.
+- **C-153. Structure inside a sparse pattern.** Detect dense blocks, bands and supernodes inside a
+  static pattern and give them dense kernels; also different patterns per batch entry and
+  automatic compaction of dense-typed values. After C-131, when a workload asks.
+  [Design](notes/core_compiler_roadmap.md#sparse-tensors).
 - **C-145. Fold identity products in QP extraction.** Devrush found `_qp_data` in
   `solvers/qp.py` building `I @ X` products and searching full patterns for dense colouring, which
   costs cubic time on dense QPs. Main has the same function; confirm and fold.
@@ -437,7 +496,8 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 ### Now
 
 - [ ] **S-142. Validate PIQP option names before code generation.** Unknown settings reach the
-      generated C and fail at compile time with a C error. Rationale:
+      generated C and fail at compile time with a C error. Before C-139 moves the plugins onto
+      externs, so it is not written twice. Rationale:
       [`documentation_api_review.md`](notes/documentation_api_review.md#piqp-option-errors-reach-c-compilation).
 
 ### Deferred
@@ -482,6 +542,8 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
 - **CAPI-147. Dense matrices in the CasADi layer.** `casadi=True` refuses a dense argument or
   result with both dimensions above one, because CasADi stores column-major and Scaly row-major.
   Transpose at the boundary, or document the refusal next to the option, when a user needs it.
+  Row-major against column-major is the dense case of the value layout a sparse leaf declares in
+  C-128 and C-129; extend that field to dense leaves rather than adding a CasADi-only transpose.
 
 ## Benchmark harness
 
@@ -553,10 +615,11 @@ branch; the [release workflow note](notes/release_workflow_design.md) has the de
       the x86 reference machine zig's clang 21 was within 10% of clang 20 on the baseline and
       linked `-lmvec` natively (11.6 µs on the 8-lane libmvec variant). The compiler becomes a
       command list rather than a binary path (C-83 prepares this), which `scaly_toolchain` must
-      print. Before flipping the default, check that the solver plugins' JIT paths (the `scaly-sqp`
-      wrapper, the PIQP and IPOPT hooks) link against the vendored libraries with zig's driver on
-      all three operating systems, and measure cold compile latency, since zig builds its own libc
-      on first use. Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
+      print. Milestone 1, right after C-83 and before C-139 and milestone 3 (roadmap
+      [order of work](notes/core_compiler_roadmap.md#order-of-work)). Before flipping the default,
+      check that the solver plugins' JIT paths (the `scaly-sqp` wrapper, the PIQP and IPOPT hooks)
+      link against the vendored libraries with zig's driver on all three operating systems, and
+      measure cold compile latency, since zig builds its own libc on first use. Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
 
 ### Deferred
 
@@ -565,4 +628,7 @@ branch; the [release workflow note](notes/release_workflow_design.md) has the de
   drags in Fortran and its own licensing survey. Candidate toolchain: make `ziglang` (R-71) a
   required dependency on Windows through a `sys_platform == 'win32'` marker, and build the Windows
   `scaly-piqp` wheel with `zig cc` as the CMake C and C++ compiler, so the JIT and the solver
-  library share one toolchain and no MSVC-versus-MinGW runtime mismatch can arise.
+  library share one toolchain and no MSVC-versus-MinGW runtime mismatch can arise. After R-71.
+  The core compiler items are designed so this adds a platform without changing them: C-139's
+  `CLibrary` names libraries instead of spelling linker flags, C-94 writes its index through
+  `os.replace` with cache-relative paths, and C-124's JIT flushes C `stdout`.

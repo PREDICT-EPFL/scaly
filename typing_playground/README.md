@@ -249,8 +249,8 @@ swapped:
 
 ## Decisions for the roadmap rewrite
 
-Settled on 2026-09-30. The core compiler roadmap is being rewritten from this playground and a new
-review of devrush; its current "Signatures and templates" section predates these and does not bind.
+Settled on 2026-09-30. The core compiler roadmap was rewritten from this playground on 2026-10-01;
+its "Signatures and templates" section turns these decisions into items.
 
 - **Parameter lists are typed with `TypeVarTuple`**, as in "Parameter lists", not with devrush's
   `Function[**PS, **PN, SO, NO]`.
@@ -274,9 +274,10 @@ review of devrush; its current "Signatures and templates" section predates these
   so they are checked at binding, as shapes already are, and a derived tree that depends on them
   binds from the call. Calling one bare function with several structures can make one inferred name
   mean different arguments; that is the user's responsibility, documented with the bare mode.
-- **Only shapes are holes for now.** Dtype, differentiability and sparsity holes cost nothing
-  statically and should be straightforward at run time, but what a hole may carry is decided with
-  the roadmap.
+- **Shapes, dtypes and sparsity patterns may be holes**, settled with the roadmap on 2026-10-01: an
+  instance is keyed on whole leaf types, differentiability is declared and never a hole, and the
+  numerical leaf type becomes `np.ndarray | scipy.sparse.sparray`. The sketches here still model
+  shapes only.
 
 ## Open items
 

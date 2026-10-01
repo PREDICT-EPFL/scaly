@@ -21,6 +21,7 @@ For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_i
 | Note | What it records |
 | --- | --- |
 | `core_compiler_roadmap.md` | the core compiler features before GPU support: decisions, order of work, one design paragraph per todo item |
+| `small_core_static_sparsity_2026_09_30.md` | the investigation behind the 2026-10-01 roadmap rewrite: the closed opset, sparse patterns and support, TACO-style lowering |
 | `refactorings.md` | refactorings we have decided on but not yet carried out, one `#` section each |
 | `refactorings_landed_2026_09.md` | refactoring designs moved out of `refactorings.md` once they landed in September 2026 |
 | `benchmark_protocol.md` | the benchmark measurement protocol and the reasoning behind each rule |
