@@ -1,0 +1,68 @@
+{
+ "cells": [
+  "t5final/jit",
+  "c222/jit",
+  "c223/jit",
+  "t6final/jit"
+ ],
+ "kernels": [
+  "ipm_cvxqp1_dense",
+  "ipm_mpc_12_4_20_sparse",
+  "ipm_qafiro_sparse",
+  "ipm_hs118_dense"
+ ],
+ "best_ns": {
+  "ipm_cvxqp1_dense/t5final/jit": 314000.0,
+  "ipm_cvxqp1_dense/c222/jit": 308625.0,
+  "ipm_cvxqp1_dense/c223/jit": 310750.0,
+  "ipm_cvxqp1_dense/t6final/jit": 312833.0,
+  "ipm_mpc_12_4_20_sparse/t5final/jit": 578084.0,
+  "ipm_mpc_12_4_20_sparse/c222/jit": 581916.0,
+  "ipm_mpc_12_4_20_sparse/c223/jit": 578625.0,
+  "ipm_mpc_12_4_20_sparse/t6final/jit": 580834.0,
+  "ipm_qafiro_sparse/t5final/jit": 16989.75,
+  "ipm_qafiro_sparse/c222/jit": 16792.0,
+  "ipm_qafiro_sparse/c223/jit": 17166.5,
+  "ipm_qafiro_sparse/t6final/jit": 16833.0,
+  "ipm_hs118_dense/t5final/jit": 14823.0,
+  "ipm_hs118_dense/c222/jit": 14895.75,
+  "ipm_hs118_dense/c223/jit": 14687.5,
+  "ipm_hs118_dense/t6final/jit": 14750.0
+ },
+ "median_ns": {
+  "ipm_cvxqp1_dense/t5final/jit": 319666.0,
+  "ipm_cvxqp1_dense/c222/jit": 319917.0,
+  "ipm_cvxqp1_dense/c223/jit": 322333.0,
+  "ipm_cvxqp1_dense/t6final/jit": 325708.0,
+  "ipm_mpc_12_4_20_sparse/t5final/jit": 598625.0,
+  "ipm_mpc_12_4_20_sparse/c222/jit": 600291.0,
+  "ipm_mpc_12_4_20_sparse/c223/jit": 599708.0,
+  "ipm_mpc_12_4_20_sparse/t6final/jit": 598125.0,
+  "ipm_qafiro_sparse/t5final/jit": 17489.75,
+  "ipm_qafiro_sparse/c222/jit": 17459.0,
+  "ipm_qafiro_sparse/c223/jit": 17468.75,
+  "ipm_qafiro_sparse/t6final/jit": 17500.0,
+  "ipm_hs118_dense/t5final/jit": 15229.0,
+  "ipm_hs118_dense/c222/jit": 15281.25,
+  "ipm_hs118_dense/c223/jit": 14989.5,
+  "ipm_hs118_dense/t6final/jit": 15010.25
+ },
+ "err": {
+  "ipm_cvxqp1_dense/t5final/jit": 0.0,
+  "ipm_cvxqp1_dense/c222/jit": 0.0,
+  "ipm_cvxqp1_dense/c223/jit": 0.0,
+  "ipm_cvxqp1_dense/t6final/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/t5final/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/c222/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/c223/jit": 0.0,
+  "ipm_mpc_12_4_20_sparse/t6final/jit": 0.0,
+  "ipm_qafiro_sparse/t5final/jit": 0.0,
+  "ipm_qafiro_sparse/c222/jit": 0.0,
+  "ipm_qafiro_sparse/c223/jit": 0.0,
+  "ipm_qafiro_sparse/t6final/jit": 0.0,
+  "ipm_hs118_dense/t5final/jit": 0.0,
+  "ipm_hs118_dense/c222/jit": 0.0,
+  "ipm_hs118_dense/c223/jit": 0.0,
+  "ipm_hs118_dense/t6final/jit": 0.0
+ }
+}

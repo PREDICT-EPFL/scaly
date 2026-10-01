@@ -130,12 +130,39 @@ def _fold_tables(body: list[ProgramNode], reserved: set[str]) -> list[ProgramNod
   }
   if not tables:
     return body
+  constants = {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
+
+  def candidate(stmt: ProgramNode) -> bool:
+    """Whether ``stmt`` holds anything the rewrite could fire on, in one walk: an integer division
+    or remainder, or a constant read at a table's entry. Most statements hold neither."""
+    for n in _walk(stmt):
+      if n.op in (ProgramOp.DIV, ProgramOp.MOD) and n.dtype.is_integer:
+        return True
+      if (
+        n.op == ProgramOp.LOAD
+        and n.args[0].attrs["buffer"] in constants
+        and any(a.op == ProgramOp.LOAD and a.args[0].attrs["buffer"] in tables for a in n.args[0].args)
+      ):
+        return True
+    return False
+
+  todo = [stmt.op != ProgramOp.BUFFER and candidate(stmt) for stmt in body]
+  if not any(todo):
+    return body
+  # Every name the procedure spells, so that a new table's cannot meet one: parameters, buffers,
+  # loop variables and assigned locals.
   spellings = {c_ident(name) for name in reserved} | {c_ident(s.attrs["name"]) for s in body if s.op == ProgramOp.BUFFER}
+  for stmt in body:
+    for n in _walk(stmt):
+      if n.op == ProgramOp.VAR:
+        spellings.add(c_ident(n.attrs["name"]))
+      elif n.op == ProgramOp.ASSIGN:
+        spellings.add(c_ident(n.attrs["target"]))
+      elif n.op == ProgramOp.FOR:
+        spellings.add(c_ident(n.args[0].attrs["name"]))
   made: dict[bytes, ProgramNode] = {}
   picks: dict[tuple, ProgramNode] = {}
   derived: set[str] = set()
-
-  constants = {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
 
   def divides(n: ProgramNode) -> bool:
     """Whether ``n`` holds what a table saves at run time: an integer division or remainder, or a
@@ -145,7 +172,7 @@ def _fold_tables(body: list[ProgramNode], reserved: set[str]) -> list[ProgramNod
     return any(m.op in (ProgramOp.DIV, ProgramOp.MOD) or (m.op == ProgramOp.VIEW and m.attrs["buffer"] in derived) for m in _walk(n))
 
   def composed(n: ProgramNode) -> bool:
-    if n.op not in _TABLE_ARITH or not divides(n):
+    if n.op not in _TABLE_ARITH or not n.dtype.is_integer or not divides(n):
       return False
     found = _table_function(n, tables)
     return found is not None and found[0] is not None
@@ -184,7 +211,7 @@ def _fold_tables(body: list[ProgramNode], reserved: set[str]) -> list[ProgramNod
     return p.load(p.view(made[key], [index]))
 
   patterns = [Pattern(None, composed, table_read), Pattern(ProgramOp.LOAD, value_read, picked)]
-  out = [rewrite(stmt, patterns, rebuild=rebuild_program) if stmt.op != ProgramOp.BUFFER else stmt for stmt in body]
+  out = [rewrite(stmt, patterns, rebuild=rebuild_program) if go else stmt for stmt, go in zip(body, todo, strict=True)]
   if not made and not picks:
     return body
   first = next(i for i, stmt in enumerate(out) if stmt.op != ProgramOp.BUFFER)

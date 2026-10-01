@@ -23,7 +23,7 @@
     "boost_enabled": null,
     "policies": {}
   },
-  "git_commit": "242524b71c9f428a6296d71033efa4ddb34b1605",
+  "git_commit": "devrush with C-222 and C-223 (Tier 6) applied",
   "git_dirty": true,
   "native_cflags": [
     "-mcpu=native",

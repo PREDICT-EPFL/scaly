@@ -328,7 +328,16 @@ def test_index_arithmetic_on_a_tables_entry_folds_into_one_table() -> None:
   assert [list(b.attrs["values"]) for b in buffers] == [[(2 * q + r) // 3 for q, r in zip(picks, [3, 1, 0, 2, 5, 4], strict=True)]]
 
 
-STAYS = ["a negative entry", "a zero divisor", "two indices", "a variable beside the table", "sums and products only", "a table at a table's entry"]
+STAYS = [
+  "a negative entry",
+  "a zero divisor",
+  "two indices",
+  "a variable beside the table",
+  "sums and products only",
+  "a table at a table's entry",
+  "tables of two lengths",
+  "a table read past its end",
+]
 
 
 @pytest.mark.parametrize("why", STAYS)
@@ -356,13 +365,77 @@ def test_index_arithmetic_that_is_not_a_table_stays(why: str) -> None:
   elif why == "sums and products only":
     tables = [k, other]
     index = lambda i: p.sub(p.mul(at(i), const_int(2)), load(view(other, [i])))  # noqa: E731
-  else:
+  elif why == "a table at a table's entry":
     tables = [k, other]
     index = lambda i: load(view(k, [load(view(other, [i]))]))  # noqa: E731
+  elif why == "tables of two lengths":
+    tables = [k, _index_table("l", [1, 2, 3, 4, 5, 6, 7, 8])]
+    index = lambda i: p.div(p.add(at(i), load(view(tables[1], [i]))), const_int(2))  # noqa: E731
+  else:
+    tables = [k, _index_table("t", [4, 2, 0])]
+    index = lambda i: p.div(load(view(tables[1], [at(i)])), const_int(2))  # noqa: E731
   given = {t.attrs["name"]: list(t.attrs["values"]) for t in tables}
   buffers, stored = _folded_gather(index, tables)
   assert {b.attrs["name"]: list(b.attrs["values"]) for b in buffers} == given
   assert any(n.op == ProgramOp.VIEW and n.attrs["buffer"] in given for n in _walk(stored.args[1].args[0].args[0]))
+
+
+def test_fusion_reads_a_moved_array_through_a_constant_table_and_copies_it_under_a_run_time_one() -> None:
+  """``buf[v] = x[v / 4 + (v % 4) * 6]`` (a transpose) read as ``buf[k[i]]``: under a constant
+  table the producer is inlined and the two indices fold into one table, so ``buf`` is gone;
+  read at indices known only at run time it stays a copy, since nothing would fold."""
+  x, y = buffer("x", dtypes.float64, (24,)), buffer("y", dtypes.float64, (5,))
+  at = buffer("at", dtypes.int64, (5,))
+  moved = buffer("moved", dtypes.float64, (24,), address_space="private")
+  v, i = var("v"), var("i")
+  source = p.add(p.div(v, const_int(4)), p.mul(p.mod(v, const_int(4)), const_int(6)))
+  producer = for_(range_("v", 0, 24), [store(view(moved, [v]), load(view(x, [source])))])
+  picks = [0, 5, 7, 23, 11]
+  k = _index_table("k", picks)
+  for table, params in ((k, [x, y]), (at, [x, at, y])):
+    consumer = for_(range_("i", 0, 5), [store(view(y, [i]), load(view(moved, [load(view(table, [i]))])))])
+    body = [moved, *([k] if table is k else []), producer, consumer]
+    result = fold_arith(fuse_elementwise(program([proc_("moved_gather", params, body)]))).args[0]
+    buffers = {n.attrs["name"]: n for n in result.args[len(params) :] if n.op == ProgramOp.BUFFER}
+    if table is k:
+      (composed,) = buffers.values()
+      assert list(composed.attrs["values"]) == [q // 4 + (q % 4) * 6 for q in picks]
+      assert not [n for stmt in result.args for n in _walk(stmt) if n.op in (ProgramOp.DIV, ProgramOp.MOD)]
+    else:
+      assert "moved" in buffers and sum(n.op == ProgramOp.FOR for n in result.args) == 2
+  # A producer that itself reads through a table is no arithmetic to fold: it stays a copy too.
+  other = _index_table("j", [(7 * q) % 24 for q in range(24)])
+  picked = for_(range_("v", 0, 24), [store(view(moved, [v]), load(view(x, [load(view(other, [v]))])))])
+  consumer = for_(range_("i", 0, 5), [store(view(y, [i]), load(view(moved, [load(view(k, [i]))])))])
+  result = fold_arith(fuse_elementwise(program([proc_("picked_gather", [x, y], [moved, k, other, picked, consumer])]))).args[0]
+  assert any(n.op == ProgramOp.BUFFER and n.attrs["name"] == "moved" for n in result.args)
+
+
+def test_the_table_fold_leaves_statements_without_a_division_alone(monkeypatch) -> None:
+  """A long float expression beside an index table is not rewritten node by node (that was
+  quadratic: a fused chain of 2 000 operations took 9 s to render): only a statement holding an
+  integer division, or a constant read at a table's entry, is handed to the rewriter."""
+  import importlib
+
+  module = importlib.import_module("scaly.passes.program.fold_arith")  # the package exports the pass under the module's name
+  _fold_tables = module._fold_tables
+
+  rewritten = []
+  real = module.rewrite
+  monkeypatch.setattr(module, "rewrite", lambda stmt, *args, **kwargs: rewritten.append(stmt) or real(stmt, *args, **kwargs))
+
+  x, y = buffer("x", dtypes.float64, (6,)), buffer("y", dtypes.float64, (6,))
+  k = _index_table("k", [3, 1, 0, 2, 5, 4])
+  i = var("i")
+  value = load(view(x, [load(view(k, [i]))]))
+  for step in range(400):
+    value = p.add(p.mul(value, p.const_float(1.0 + step)), load(view(x, [i])))
+  loop = for_(range_("i", 0, 6), [store(view(y, [i]), value)])
+  body = [k, loop]
+  assert _fold_tables(body, {"x", "y"}) is body and not rewritten
+  divided = for_(range_("i", 0, 6), [store(view(y, [i]), load(view(x, [p.div(load(view(k, [i])), const_int(2))])))])
+  folded = _fold_tables([k, loop, divided], {"x", "y"})
+  assert folded[-2] is loop and folded[-1] is not divided and rewritten == [divided]
 
 
 def test_a_constant_table_read_at_a_folded_index_becomes_the_values_picked() -> None:

@@ -1066,7 +1066,10 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       of an entry, or a table read at a table's entry, doubled the sparse factorization's C for
       nothing. Chain M = 9 0.93 of its time, M = 5 0.955, race cars 0.96-0.97 (the gate asked
       0.92: the out-of-line profile overstated the gather), their Jacobian 0.98
-      (`results/corpus_c222.json`); seven corpus kernels render other C, none slower.
+      (`results/corpus_c222.json`); seven corpus kernels render other C, none slower. The race cars' C grows with the composed tables
+      (N = 200: 88 -> 129 KB). After the review the fold looks only at statements holding an
+      integer division (it was quadratic in a statement's size: a fused chain of 2 000 operations
+      rendered in 9 s), and reserves every name the procedure spells.
 - [x] **C-223. A gather reads placed blocks directly: the compressed matrix is never formed
       (B1's first part, Tier 6).** A sparse Hessian was assembled by scattering each term's block
       into a seeds-by-columns array, summing, transposing and gathering the nonzeros: four passes
@@ -1083,17 +1086,22 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 - [x] **C-224. A product with a mostly-zero constant places the entries it keeps (CS-2, Tier 6).**
       The IPOPT Jacobian of a mapped multiple-shooting problem summed 25 terms, each an 18 900-entry
       0/1 seed constant times a broadcast of one stage's tangents, for 9 996 nonzeros. Three more
-      rules in `simplify`: a product with a constant of which at most one entry in eight is
-      nonzero is a scatter of the kept entries (scaled unless they are ones); a gather of a slice
-      reads what was sliced; a gather of a concatenation reads the parts, taken apart only when
-      each part read is a constant or made of placed values and no entry is read twice. With
+      rules in `simplify`: under a gather, a float product with a constant of which at most one
+      entry in eight is nonzero is a scatter of the kept entries (scaled unless they are ones);
+      a gather of a slice reads what was sliced; a gather of a concatenation reads the parts,
+      taken apart only when each part read is a constant or made of placed values, no entry is
+      read twice and at most two thirds of the parts are read. With
       C-223's rules the nonzeros are then read straight from the map's output. E1's 3-D chain
       (`e1_oracles.py`, new; `results/e1_oracles_c224.txt`): the IPOPT Jacobian 151 -> 64 us at
       three masses and 396 -> 154 at five (0.39-0.42), its C 6.5-7.9x smaller; the Hessian oracle
-      0.93-0.98, the Fatrop drop-in's stage Hessians 0.89-0.96. The corpus is unchanged within
-      noise and every output has the same bits. Two guards came from measuring off the target:
+      0.93-0.98, the Fatrop drop-in's stage Hessians 0.89-0.96. The corpus kernels it changes
+      are within 1% at 31 to 41 rounds (`results/corpus_t6_ipm.json`, `corpus_c224_chain.json`)
+      and every corpus output has Tier 5's bits. Two guards came from measuring off the target:
       a gather that repeats entries does not distribute over a sum (the stage Hessian ran 1.3x
-      slower), and a computed part of a concatenation stays whole (the race cars' Jacobian 1.13x).
+      slower), and a computed part of a concatenation stays whole (the race cars' Jacobian 1.13x). The review added three more
+      (`results/t6_review_cases.txt`): the product placed outside a gather made `x * mask + y`
+      1.2-1.9x slower, a gather of most of a concatenation 1.1-2x, and an integer product with a
+      sparse constant did not compile; all three are back at Tier 5's time and tested.
 - [ ] **C-58 note (Tier 6).** A prototype that inlines plain callees into a scalar-lowered mapped
       body before the reverse sweep (calls substituted, short maps unrolled) gave chain M = 5 0.97
       of its time and M = 9 1.24x: the flattened adjoint changes what C-211's seed groups see,

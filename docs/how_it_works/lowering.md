@@ -207,15 +207,15 @@ starts each output's sum at zero and every later one resumes it from the stored 
 each output is still one chain of multiply-adds in order of `k`.
 
 A `transpose` lowers to one flat loop over its output whose coordinates divide the loop variable.
-Fusion can then inline it into its one consumer: a gather reading a few entries of a transposed
-product, as the recovery of a sparse derivative does, computes only those entries. Read through a
-gather's index table, the transposed coordinates are a division and a remainder of the table's
-entry, which `fold_arith` computes when the code is generated: the two indices compose into one
+Fusion can then inline it into its one consumer. A gather reading a few entries of a transposed
+product, as the recovery of a sparse derivative does, then computes only those entries. Read through
+a gather's index table, the transposed coordinates are a division and a remainder of the table's
+entry, and `fold_arith` computes those when the code is generated. The two indices compose into one
 table, so a transpose that only moves data is never copied in front of a gather at constant
 indices. In front of a gather at run-time indices it stays a copy, and `delinearize_loops` splits
 any transpose that stays back into a loop per axis without the divisions. A gather whose map repeats
-with a period reads a table at the remainder, and the split takes the index apart at that read: one
-loop per period and one within it, with the table read at the inner coordinate.
+with a period reads a table at the remainder, and the split takes the index apart at that read. The
+result is one loop per period and one within it, with the table read at the inner coordinate.
 
 A `max` or `min` reduction propagates NaN as `np.max` does, so its step is a select C's `fmax`
 cannot express: `((cur < x) || (x != x)) ? x : cur`. The renderer spells that select

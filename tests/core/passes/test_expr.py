@@ -335,28 +335,105 @@ def test_a_gather_of_a_concatenation_reads_the_parts(why: str) -> None:
   np.testing.assert_array_equal(sc.Function.from_exprs(f"gc_{kind}_{len(picks)}", [a, b], [got.block()], ["a", "b"], ["g"])((av, bv)), dense[picks])
 
 
-def test_a_product_with_a_mostly_zero_constant_places_the_entries_it_keeps() -> None:
-  """A seed or selector matrix times a broadcast array: only the kept entries are read, scaled when
-  the constant is not one, and placed. A constant with more than one entry in eight stays a product."""
+def test_a_gather_of_a_product_with_a_mostly_zero_constant_reads_the_entries_it_keeps() -> None:
+  """A seed or selector matrix times a broadcast array, then gathered: only the kept entries are
+  read, scaled when the constant is not one. Left alone the product stays a product, which is one
+  vector loop; so does an integer one, and one whose constant keeps more than an entry in eight."""
   from scaly.passes.expr import simplify
 
   x = sc.sym("ps_x", (5, 1, 6))  # broadcast along the middle axis
   seeds = np.zeros((5, 4, 6))
   seeds[0, 1, 2], seeds[3, 0, 5], seeds[4, 3, 0], seeds[4, 3, 1] = 1.0, 1.0, -2.5, 1.0
+  picks = np.array([8, 0, 119, 77, 114, 115, 8])
+  xv = np.linspace(-1.0, 2.0, 30).reshape(5, 1, 6)
   for left in (True, False):
     product = sc.const(seeds) * x if left else x * sc.const(seeds)
-    got = simplify(product)
-    assert got.shape == (5, 4, 6) and not any(n.op == sc.ExprOp.CONST and n.size == 120 for n in _ops(got))
-    assert sum(n.op == sc.ExprOp.SEGMENT_REDUCE for n in _ops(got)) == 1 and any(n.op == sc.ExprOp.GATHER and n.size == 4 for n in _ops(got))
-    xv = np.linspace(-1.0, 2.0, 30).reshape(5, 1, 6)
-    np.testing.assert_array_equal(sc.Function.from_exprs(f"ps_{int(left)}", [x], [got.block()], ["x"], ["y"])(xv), seeds * xv)
+    assert simplify(product).op == sc.ExprOp.MUL  # not under a gather
+    got = simplify(sc.gather(product, picks))
+    assert not any(n.op == sc.ExprOp.CONST and n.size == 120 for n in _ops(got)) and not any(
+      n.op == sc.ExprOp.MUL and n.size == 120 for n in _ops(got)
+    )
+    np.testing.assert_array_equal(sc.Function.from_exprs(f"ps_{int(left)}", [x], [got.block()], ["x"], ["y"])(xv), (seeds * xv).ravel()[picks])
   ones = np.zeros((5, 4, 6))
   ones[[0, 3], [1, 0], [2, 5]] = 1.0
-  unit = simplify(sc.const(ones) * x)
+  unit = simplify(sc.gather(sc.const(ones) * x, picks))
   assert not any(n.op == sc.ExprOp.MUL for n in _ops(unit))  # ones need no product at all
-  dense = np.zeros((5, 4, 6))
-  dense[0::2, :, ::2] = 1.0  # more than one entry in eight
-  kept = simplify(sc.const(dense) * x)
-  assert kept.op == sc.ExprOp.MUL
-  nothing = simplify(sc.const(np.zeros((5, 4, 6))) * x)
+  nothing = simplify(sc.gather(sc.const(np.zeros((5, 4, 6))) * x, picks))
   assert nothing.op == sc.ExprOp.CONST and not np.asarray(nothing.value).any()
+
+
+@pytest.mark.parametrize(("kept", "placed"), [(15, True), (16, False)])
+def test_a_constant_is_mostly_zero_up_to_one_entry_in_eight(kept: int, placed: bool) -> None:
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("pd_x", 120)
+  mask = np.zeros(120)
+  mask[:kept] = 2.0
+  got = simplify(sc.gather(sc.const(mask) * x, np.arange(0, 120, 7)))
+  assert any(n.op == sc.ExprOp.MUL and n.size == 120 for n in _ops(got)) != placed
+
+
+@pytest.mark.parametrize("dtype", ["int64", "int32", "bool"])
+def test_an_integer_product_with_a_mostly_zero_constant_stays_a_product(dtype: str) -> None:
+  """A scatter adds into float zeros; an integer or bool product has no such form, and compiles."""
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("pi_x", 16, dtype=dtype)
+  mask = np.zeros(16, dtype=dtype)
+  mask[[4, 9]] = 1
+  product = x * sc.const(mask, dtype=dtype) if dtype != "bool" else sc.logical_and(x, sc.const(mask, dtype="bool"))
+  picked = simplify(sc.gather(product, np.array([9, 0, 4])))
+  assert not any(n.op == sc.ExprOp.SEGMENT_REDUCE for n in _ops(picked))
+  xv = (np.arange(16) - 3).astype(dtype)
+  got = sc.Function.from_exprs(f"pi_{dtype}", [x], [product.block(), picked.block()], ["x"], ["y", "g"])(xv)
+  want = xv * mask if dtype != "bool" else xv & mask
+  np.testing.assert_array_equal(got[0], want)
+  np.testing.assert_array_equal(got[1], want[[9, 0, 4]])
+
+
+def test_a_gather_of_most_of_a_concatenation_stays_one_gather() -> None:
+  """Taken apart, each part would fill a zeroed array of the result's size: worth it when the
+  gather reads at most two thirds of what the parts hold, not for a permutation of them. More
+  than four parts stay whole too, and the parts are found along the axis they were joined on."""
+  from scaly.passes.expr import simplify
+
+  a, b = sc.sym("gm_a", 12), sc.sym("gm_b", 12)
+  first, second = sc.gather(a, np.arange(12)[::-1].copy()), sc.gather(b, (np.arange(12) * 5) % 12)
+  joined = sc.concat([first, second])
+  whole = lambda e: any(n.op == sc.ExprOp.CONCAT for n in _ops(e))  # noqa: E731
+  assert whole(simplify(sc.gather(joined, np.random.default_rng(0).permutation(24))))  # every entry
+  assert whole(simplify(sc.gather(joined, np.arange(17)))) and not whole(simplify(sc.gather(joined, np.arange(16))))  # two thirds of 24
+  five = sc.concat([sc.gather(a, np.arange(12) % (k + 2)) for k in range(5)])
+  assert whole(simplify(sc.gather(five, np.arange(0, 60, 6)))) and not whole(simplify(sc.gather(five, np.arange(0, 48, 6))))
+  rows = sc.concat([first.reshape((3, 4)), second.reshape((3, 4))], axis=1)  # joined along the second axis
+  picks = np.array([0, 5, 7, 22, 16, 9])
+  got = simplify(sc.gather(rows, picks))
+  assert not whole(got)
+  av, bv = np.arange(12.0), np.arange(12.0) * 10.0
+  dense = np.concatenate([av[::-1].reshape(3, 4), bv[(np.arange(12) * 5) % 12].reshape(3, 4)], axis=1)
+  np.testing.assert_array_equal(sc.Function.from_exprs("gm", [a, b], [got.block()], ["a", "b"], ["g"])((av, bv)), dense.ravel()[picks])
+
+
+def test_a_gather_of_a_sum_sees_a_placement_under_a_transpose_and_shared_terms_once() -> None:
+  """The terms of a sum are looked through transposes, and a term shared by two sums is looked at
+  once: twenty sums of a matrix with its transpose are a million paths and twenty nodes."""
+  import time
+
+  from scaly.passes.expr import simplify
+
+  v = sc.sym("go_v", 6)
+  placed = sc.scatter(v, np.array([0, 5, 7, 10, 13, 15]), (16,)).reshape((4, 4))
+  x = sc.sym("go_x", (4, 4))
+  got = simplify(sc.gather(x.cos() + (placed.T + x), np.array([1, 4, 14])))
+  assert not any(n.op == sc.ExprOp.SEGMENT_REDUCE and n.size == 16 for n in _ops(got))
+  vv, xv = np.arange(1.0, 7.0), np.arange(16.0).reshape(4, 4) * 0.1
+  dense = np.zeros(16)
+  dense[[0, 5, 7, 10, 13, 15]] = vv
+  want = (np.cos(xv) + (dense.reshape(4, 4).T + xv)).ravel()[[1, 4, 14]]
+  np.testing.assert_allclose(sc.Function.from_exprs("go", [v, x], [got.block()], ["v", "x"], ["g"])((vv, xv)), want, rtol=1e-15)
+  shared = x
+  for _ in range(20):
+    shared = shared + shared.T
+  start = time.perf_counter()
+  simplify(sc.gather(shared, np.array([3, 1, 2])))
+  assert time.perf_counter() - start < 0.2  # every path walked takes about half a second

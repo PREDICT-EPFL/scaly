@@ -374,11 +374,15 @@ def _gather_of_transpose(e: Expr) -> Expr:
 
 def _opens(e: Expr) -> bool:
   """Whether a gather of ``e`` simplifies further: ``e`` is, through reshapes, transposes and
-  sums, built of scatters and gathers, whose index tables compose with the gather's."""
-  pending = [e]
+  sums, built of scatters, gathers and products with a mostly-zero constant, whose index tables
+  compose with the gather's."""
+  pending, seen = [e], set()
   while pending:
     cur = _source(pending.pop())
-    if cur.op == ExprOp.GATHER or (cur.op == ExprOp.SEGMENT_REDUCE and _is_scatter(cur)):
+    if cur.id in seen:  # a sum shared by two terms is walked once
+      continue
+    seen.add(cur.id)
+    if cur.op == ExprOp.GATHER or (cur.op == ExprOp.SEGMENT_REDUCE and _is_scatter(cur)) or _sparse_product(cur):
       return True
     if cur.op == ExprOp.TRANSPOSE or (cur.op == ExprOp.ADD and all(arg.shape == cur.shape for arg in cur.args)):
       pending.extend(cur.args)
@@ -459,15 +463,19 @@ def _placed(e: Expr) -> bool:
 
 def _takes_apart(e: Expr) -> bool:
   """Whether a gather of a concatenation is better read from the parts: always from one part; from
-  a few when it reads no entry twice and every part read is a constant or built of placed and
-  picked arrays, which compose with the gather. A part that is computed stays whole: gathered, it
-  would be computed through an index table, where the race cars' Jacobian computes it in a
-  vector loop and gathers after (1.13x slower taken apart)."""
+  a few when it reads no entry twice, reads at most two thirds of what those parts hold, and every
+  part read is a constant or built of placed and picked arrays, which compose with the gather.
+  A part that is computed stays whole: gathered, it would be computed through an index table,
+  where the race cars' Jacobian computes it in a vector loop and gathers after (1.13x slower
+  taken apart). A gather of most of the parts (a permutation of them) stays one gather too: taken
+  apart, each part fills a zeroed array of the result's size (1.1-2x slower)."""
   owner = np.unique(_parts_read(e)[0])
   if owner.size == 1:
     return True
   parts = [_gathered(e).args[int(at)] for at in owner]
-  return owner.size <= GATHERED_PARTS and _picks_once(e) and all(_placed(part) for part in parts)
+  if owner.size > GATHERED_PARTS or 3 * e.size > 2 * sum(part.size for part in parts):
+    return False
+  return _picks_once(e) and all(_placed(part) for part in parts)
 
 
 def _gather_of_concat(e: Expr) -> Expr:
@@ -493,7 +501,10 @@ SPARSE_FACTOR = 8
 
 
 def _sparse_factor(e: Expr) -> int | None:
-  """Which operand of the product ``e`` is a constant of the product's shape that is mostly zeros."""
+  """Which operand of the float product ``e`` is a constant of the product's shape that is mostly
+  zeros. An integer or bool product stays a product: a scatter adds into float zeros."""
+  if not e.type.dtype.is_floating:
+    return None
   for at, arg in enumerate(e.args):
     if arg.op == ExprOp.CONST and arg.shape == e.shape and e.size >= SPARSE_FACTOR and arg.value is not None:
       if np.count_nonzero(arg.value) * SPARSE_FACTOR <= e.size:
@@ -501,10 +512,23 @@ def _sparse_factor(e: Expr) -> int | None:
   return None
 
 
+def _sparse_product(e: Expr) -> bool:
+  return e.op == ExprOp.MUL and not _all_args_const(e) and _sparse_factor(e) is not None
+
+
+def _gather_of_sparse_product(e: Expr) -> Expr:
+  """A gather of a product with a mostly-zero constant gathers the placed form of the product
+  (``_product_with_sparse_constant``), which composes with it. Only under a gather: left alone,
+  the product is one vector loop, and placed it would be a zeroed array, a scatter and a second
+  pass (``x * mask + y`` ran 1.2-1.9x slower that way)."""
+  product = _gathered(e)
+  return gather(_product_with_sparse_constant(product).reshape((product.size,)), e.attrs["indices"])
+
+
 def _product_with_sparse_constant(e: Expr) -> Expr:
-  """A product with a constant that is mostly zeros (a seed matrix, a selector) computes only the
-  entries the constant keeps and places them: the zeros are never multiplied, and a gather of the
-  result composes with the placement. A zero times anything is zero here, as in ``x * 0``."""
+  """A product with a constant that is mostly zeros (a seed matrix, a selector) as the entries the
+  constant keeps, placed: the zeros are never multiplied. A zero times anything is a positive
+  zero here, as in ``x * 0``, where the product would keep a NaN or a zero's sign."""
   at = _sparse_factor(e)
   assert at is not None
   factor, other = e.args[at], e.args[1 - at]
@@ -534,10 +558,10 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.TRANSPOSE, _gather_of_transpose),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.SLICE, _gather_of_slice),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.CONCAT and _takes_apart(e), _gather_of_concat),
+  Pattern(ExprOp.GATHER, lambda e: _sparse_product(_gathered(e)), _gather_of_sparse_product),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.ADD and _picks_once(e) and _opens(_gathered(e)), _gather_of_sum),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.SEGMENT_REDUCE and _is_scatter(_gathered(e)), _gather_of_scatter),
   Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and not _is_zero(e.args[0]) and _is_permutation(e), _scatter_to_gather),
-  Pattern(ExprOp.MUL, lambda e: not _all_args_const(e) and _sparse_factor(e) is not None, _product_with_sparse_constant),
   Pattern(ExprOp.TRANSPOSE, lambda e: _source(e.args[0]).op == ExprOp.GATHER, _transpose_of_gather),
   Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.STACK, _all_args_zero, _zero_unary),

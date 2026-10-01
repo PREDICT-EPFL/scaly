@@ -1,0 +1,19 @@
+The Tier 6 review's cases (select_ab/mask_cases.py, concat_cases.py; ab.py's harness): Tier 5's tree (base), Tier 6 as reviewed (head) and after the review's fixes (now). ns per call, ratio to base.
+
+addy_n64_d8            base        7.7 ns (1.000)  head       14.0 ns (1.829)  now        7.6 ns (0.999)  |diff| 0.0e+00
+addy_n1024_d8          base      156.5 ns (1.000)  head      225.4 ns (1.440)  now      154.4 ns (0.986)  |diff| 0.0e+00
+addy_n1024_d16         base      154.8 ns (1.000)  head      204.1 ns (1.318)  now      160.3 ns (1.035)  |diff| 0.0e+00
+addy_n1024_d64         base      170.1 ns (1.000)  head      215.5 ns (1.267)  now      184.6 ns (1.085)  |diff| 0.0e+00
+chain_n1024_d8         base      292.4 ns (1.000)  head      370.3 ns (1.266)  now      274.5 ns (0.939)  |diff| 8.9e-16
+plain_n1024_d8         base      145.2 ns (1.000)  head      141.4 ns (0.974)  now      145.6 ns (1.003)  |diff| 0.0e+00
+plain_n1024_d64        base      155.6 ns (1.000)  head      113.9 ns (0.732)  now      155.6 ns (1.000)  |diff| 0.0e+00
+perm3_n256             base      287.3 ns (1.000)  head      432.7 ns (1.506)  now      305.1 ns (1.062)  |diff| 0.0e+00
+perm3_n4096            base    10917.7 ns (1.000)  head    13480.7 ns (1.235)  now    11178.7 ns (1.024)  |diff| 0.0e+00
+perm4_n4096            base    17777.8 ns (1.000)  head    24036.0 ns (1.352)  now    17665.8 ns (0.994)  |diff| 0.0e+00
+sub2_n16               base        2.3 ns (1.000)  head        4.5 ns (1.915)  now        4.4 ns (1.868)  |diff| 0.0e+00
+sub2_n256              base      168.7 ns (1.000)  head      125.1 ns (0.742)  now      125.6 ns (0.744)  |diff| 0.0e+00
+sub2_n4096             base     5663.5 ns (1.000)  head     3241.1 ns (0.572)  now     3373.0 ns (0.596)  |diff| 0.0e+00
+interleave_n256        base      139.9 ns (1.000)  head      170.6 ns (1.220)  now      141.4 ns (1.011)  |diff| 0.0e+00
+interleave_n4096       base     2025.1 ns (1.000)  head     3972.9 ns (1.962)  now     2040.2 ns (1.007)  |diff| 0.0e+00
+scat2_n256             base      502.7 ns (1.000)  head      353.5 ns (0.703)  now      353.3 ns (0.703)  |diff| 0.0e+00
+scat2_n4096            base    15112.5 ns (1.000)  head     8373.6 ns (0.554)  now     8349.6 ns (0.552)  |diff| 0.0e+00

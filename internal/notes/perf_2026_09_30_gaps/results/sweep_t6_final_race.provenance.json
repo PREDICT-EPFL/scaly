@@ -3,15 +3,15 @@
   "cli_args": [
     "sweep",
     "--workloads",
-    "chain",
+    "race_cars",
     "--sizes",
-    "5,7,9",
+    "5,10,40,200",
     "--backends",
     "scaly,casadi_sx",
     "--repetitions",
-    "1",
+    "3",
     "--out",
-    "/private/tmp/claude-501/-Users-cnjones-git-projects-alloy/0973a49a-00d2-4f90-ad45-44da1d813b6e/scratchpad/sweep_t3/chain.csv"
+    "/private/tmp/claude-501/-Users-cnjones-git-projects-alloy/0973a49a-00d2-4f90-ad45-44da1d813b6e/scratchpad/sweep_t6f/race.csv"
   ],
   "compilation_caches": {
     "SCALY_CACHE_DIR": null,
@@ -23,7 +23,7 @@
     "boost_enabled": null,
     "policies": {}
   },
-  "git_commit": "devrush with C-211 (Tier 3) applied, uncommitted",
+  "git_commit": "devrush with Tier 6 and its review's fixes applied, uncommitted",
   "git_dirty": true,
   "native_cflags": [
     "-mcpu=native",
@@ -61,5 +61,5 @@
   "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
   "python_version": "3.14.3",
   "scaly_version": "0.1.0a1",
-  "timestamp": "2026-09-30T18:50:51.811463+00:00"
+  "timestamp": "2026-10-01T08:29:39.416445+00:00"
 }
