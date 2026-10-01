@@ -1,0 +1,71 @@
+prof.py on the C-216 build, procedures out of line. Read the shares: the machine was running the test suite, so the times per solve are high.
+DUAL2 dense: 533.7 us per solve, 11 iterations, 2295 samples
+   51.9%  kkt_factor_raw
+   22.1%  step_raw
+   16.1%  kkt_solve_raw
+    4.4%  <deduplicated_symbol>
+    2.5%  dense
+    1.4%  __bzero
+    0.9%  _platform_memmove
+    0.7%  _platform_memset
+DUAL3 dense: 758.5 us per solve, 12 iterations, 2294 samples
+   55.0%  kkt_factor_raw
+   21.0%  step_raw
+   15.5%  kkt_solve_raw
+    3.4%  <deduplicated_symbol>
+    2.1%  dense
+    1.4%  __bzero
+    1.1%  _platform_memset
+    0.5%  _platform_memmove
+VALUES dense: 2698.7 us per solve, 12 iterations, 2274 samples
+   69.7%  kkt_factor_raw
+   14.5%  kkt_solve_raw
+    7.7%  step_raw
+    3.7%  <deduplicated_symbol>
+    1.7%  _platform_memset
+    1.1%  __bzero
+    1.1%  dense
+    0.4%  _platform_memmove
+DPKLO1 dense: 282.2 us per solve, 2 iterations, 2269 samples
+   73.7%  kkt_factor_raw
+   10.6%  kkt_solve_raw
+    4.6%  <deduplicated_symbol>
+    4.4%  step_raw
+    2.9%  dense
+    2.1%  __bzero
+    1.5%  _platform_memset
+    0.2%  _platform_memmove
+DUALC8 dense: 306.1 us per solve, 10 iterations, 2292 samples
+   58.2%  step_raw
+   15.2%  kkt_solve_raw
+   12.6%  kkt_factor_raw
+    5.0%  dense
+    2.5%  refine_raw
+    2.4%  <deduplicated_symbol>
+    2.4%  _platform_memmove
+    1.6%  _platform_memset
+DUALC1 dense: 142.0 us per solve, 10 iterations, 2283 samples
+   49.1%  step_raw
+   19.1%  kkt_factor_raw
+   17.7%  kkt_solve_raw
+    4.9%  _platform_memmove
+    3.9%  <deduplicated_symbol>
+    3.6%  dense
+    1.6%  _platform_memset
+ex_dense dense: 86.1 us per solve, 8 iterations, 2243 samples
+   47.7%  kkt_factor_raw
+   21.6%  step_raw
+   15.9%  kkt_solve_raw
+    7.3%  _platform_memmove
+    3.2%  dense
+    2.0%  <deduplicated_symbol>
+    1.7%  _platform_memset
+    0.5%  mach_absolute_time
+PRIMALC1 dense: 4589.7 us per solve, 14 iterations, 2282 samples
+   73.1%  kkt_factor_raw
+   16.0%  kkt_solve_raw
+    5.7%  step_raw
+    2.7%  <deduplicated_symbol>
+    1.5%  _platform_memset
+    0.5%  __bzero
+    0.5%  dense

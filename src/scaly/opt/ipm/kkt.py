@@ -99,6 +99,26 @@ class Iterate:
     return Iterate(*(v[int(a) : int(b)] for a, b in zip(offsets[:-1], offsets[1:], strict=True)))
 
 
+# The fewest columns, and the fewest products of the sparse form, a dense ``M^T W M`` pays from. Both
+# are the reference machine's, like ``cost.py``'s weights: the graph is built before any target is known.
+DENSE_PRODUCT_COLUMNS = 8
+DENSE_PRODUCT_WORK = 4096
+
+
+def dense_rows(rows: np.ndarray, count: int, n: int) -> bool:
+  """Whether ``M^T W M`` for a matrix of ``count`` rows and ``n`` columns, with entries in rows
+  ``rows``, is cheaper as a dense product than through its index tables. The sparse form multiplies
+  each pair of entries of a row, ``sum(nnz_row^2)`` products, at about four times a dense
+  multiply-add's cost (PRIMALC2's seven dense rows of 231: 373 000 products in 163 us against
+  43 us), so the dense form wins from a quarter of ``count * n^2``. Two floors, both measured: under
+  eight columns the dense product has no whole register tile to run in (DUALC2, seven columns:
+  1.08x slower), and under 4 096 products the sparse form is too little work for the dense one's
+  copies to pay (LOTSCHD, 532 products: 1.18x slower)."""
+  per_row = np.bincount(np.asarray(rows, dtype=np.int64), minlength=count).astype(np.float64)
+  products = float(per_row @ per_row)
+  return n >= DENSE_PRODUCT_COLUMNS and products >= DENSE_PRODUCT_WORK and 4.0 * products >= float(count) * n * n
+
+
 def _where_rows(mask: np.ndarray, value: Expr) -> Expr:
   """``value`` on the rows of ``mask``, exactly zero elsewhere (an infinity there is discarded)."""
   return where(Expr.const(mask, dtype="bool"), value, 0.0)
@@ -203,12 +223,7 @@ class Kernels:
     d, xr, dr, zr = Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("x_reg", (s.n,)), Expr.sym("delta_reg", ()), Expr.sym("z_reg_ir", (s.m,))
     mats, _ = self.matrices(d)
     if self.backend == "dense":
-      c = mats.full_P().add_diagonal(xr)
-      if s.p:
-        c = c + (mats.A.T @ mats.A) * (1.0 / dr)
-      if s.m:
-        c = c + mats.G.T @ mats.G.scale_rows(1.0 / zr)
-      dense = c.to_dense()
+      dense = self._condensed(mats, xr, dr, zr)
       f = cholesky(dense).reshape((s.n * s.n,))
       diag = np.arange(s.n) * (s.n + 1)
       l_diag = gather(f, diag)
@@ -227,6 +242,37 @@ class Kernels:
     outs = [f, where(ok, 1.0, 0.0), where(digits, 1.0, 0.0)]
     fn = ConcreteFunction.from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
     return fn, int(f.size)
+
+  def _condensed(self, mats: Matrices, xr: Expr, dr: Expr, zr: Expr) -> Expr:
+    """The condensed matrix ``P + diag(x_reg) + A^T A / delta + G^T diag(1 / z_reg) G`` as a dense
+    array; the Cholesky reads its lower triangle. A product whose matrix has dense rows
+    (``dense_rows``) is a dense product, which the lowering runs in register tiles, and then
+    ``P``'s stored upper triangle goes straight into the lower one, transposed. With no such
+    product the matrix is assembled through its index tables, both triangles, as before."""
+    s = self.s
+    dense_a, dense_g = (bool(count) and dense_rows(rows, count, s.n) for rows, count in ((s.A_rows, s.p), (s.G_rows, s.m)))
+    if not (dense_a or dense_g):
+      c = mats.full_P().add_diagonal(xr)
+      if s.p:
+        c = c + (mats.A.T @ mats.A) * (1.0 / dr)
+      if s.m:
+        c = c + mats.G.T @ mats.G.scale_rows(1.0 / zr)
+      return c.to_dense()
+    lower = mats.P.T.add_diagonal(xr)
+    dense: Expr | None = None
+    if dense_a:
+      a = mats.A.to_dense()
+      dense = (a.T @ a) * (1.0 / dr)
+    elif s.p:
+      lower = lower + (mats.A.T @ mats.A) * (1.0 / dr)
+    if dense_g:
+      g = mats.G.to_dense()
+      product = (g.T * (1.0 / zr)) @ g
+      dense = product if dense is None else dense + product
+    elif s.m:
+      lower = lower + mats.G.T @ mats.G.scale_rows(1.0 / zr)
+    assert dense is not None
+    return lower.to_dense() + dense
 
   def kkt_matrix(self, mats: Matrices, xr: Expr, dr: Expr, zr: Expr) -> SparseMatrix:
     """The whole KKT matrix the sparse backend factors, its upper triangle:
@@ -562,4 +608,4 @@ def kkt_symbolic(s: QPStructure) -> SymbolicLDL:
   return _SYMBOLIC[s]
 
 
-__all__ = ["HEADER", "KKT", "Backend", "Factor", "Iterate", "Kernels", "Matrices", "Refinement", "kkt_symbolic"]
+__all__ = ["HEADER", "KKT", "Backend", "Factor", "Iterate", "Kernels", "Matrices", "Refinement", "dense_rows", "kkt_symbolic"]

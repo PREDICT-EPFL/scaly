@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 218**
+**Next id: 219**
 
 | Prefix | Section |
 |---|---|
@@ -992,11 +992,24 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       PIQP's dense backend (0.981 above 50 us, was 1.125); six problems' iterations move by one
       to four. Right-looking measured worse (1.68-1.98x BLASFEO): eight steps of `k` a tile do not
       pay for its loads and stores. The rest of the gap to BLASFEO is K3's fused kernels.
-- [ ] **C-216. The dense backend's matrices stored dense (A7(b), Tier 5).** `P`, and `G` when dense
-      enough, as dense arrays, and `P + G^T W G` as a weighted product on the tiles instead of
-      `SparseMatrix` index tables: about half of DUAL1-4's factor time in A7's profile.
+- [x] **C-216. The dense backend's dense rows as dense products (A7(b), Tier 5).** Where `A` or `G`
+      has dense rows the condensed matrix takes `A^T A / delta` or `G^T W G` as a dense product on
+      the register tiles, and `P`'s stored triangle goes straight into the lower one; a problem
+      without such rows renders the C it did. The rule (`kkt.dense_rows`): the sparse form's
+      products, `sum(nnz_row^2)`, are at least a quarter of `rows * n^2`, at least 4 096, over at
+      least eight columns (DUALC2's seven and LOTSCHD's 532 products measured slower dense). 13 of
+      the 55 problems change, all faster: ex_portfolio 0.49, PRIMALC1/2/5 0.59-0.63, ex_dense 0.62,
+      DUAL1-4 0.80-0.88, DUALC5/8 0.80-0.82. Those 13 from 1.45x PIQP's dense backend to 1.07x
+      (DUAL1-4 1.08-1.24, were 1.29-1.48); all 55 0.698 of PIQP, 0.892 above 50 us. `P` and `G`
+      themselves stay in entry order: the step's products with them are C-217's.
 - [ ] **C-217. The dense step fused (B3, Tier 5).** DUALC's step (47-48% of its time) in fewer
       passes over the vectors.
+- [ ] **C-218. The backend model refitted to the dense backend's new costs.** `cost.py`'s weights
+      were fitted before C-215 and C-216: the dense factor in blocks and the dense products of
+      dense rows are cheaper than the model counts them (`Work.assembly` charges every row its
+      nonzeros squared), so it takes the sparse backend where the dense one may now be faster.
+      Count dense rows as `dense_rows` multiplies them, rerun `backend_costs.py` and
+      `backend_fit.py`, and move the weights and `test_cost.py`'s pins together.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

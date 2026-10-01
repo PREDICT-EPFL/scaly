@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.ir.expr import ExprOp, topo
 from scaly.opt.ipm import KKT, Backend, Iterate, Kernels, QPStructure, QPValues, Refinement, ScaledQP, Scaling, ruiz, scale
+from scaly.opt.ipm.kkt import dense_rows
 from tests.opt.ipm import reference as ref
 from scaly.testing.qp import infeasible_problems, maros_meszaros, mpc_qp, random_qp
 from tests.opt.ipm.problems import ipm_inputs
@@ -177,3 +179,52 @@ def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend, toleran
     np.testing.assert_array_equal(on_gated, on)  # the gate opens, and no step is taken
   else:
     assert not np.array_equal(on_gated, on)  # refined: the gate does open
+
+
+@pytest.mark.parametrize(
+  ("count", "n", "per_row", "dense"),
+  [
+    (20, 16, 16, True),
+    (100, 8, 8, True),
+    (100, 7, 7, False),  # no whole register tile in seven columns
+    (16, 16, 16, True),  # 4 096 products of the sparse form
+    (15, 16, 16, False),  # 3 840: too little work
+    (40, 32, 16, True),  # half of each row: a quarter of the dense product's multiply-adds
+    (40, 32, 15, False),
+  ],
+)
+def test_dense_rows_are_those_whose_product_is_cheaper_dense(count: int, n: int, per_row: int, dense: bool) -> None:
+  assert dense_rows(np.repeat(np.arange(count), per_row), count, n) == dense
+
+
+def test_one_dense_row_among_empty_ones_is_not_dense() -> None:
+  """The dense product runs over every row, the empty ones too."""
+  assert dense_rows(np.zeros(80, dtype=np.int64), 1, 80)
+  assert not dense_rows(np.zeros(80, dtype=np.int64), 100, 80)
+
+
+@pytest.mark.parametrize(("dense_a", "dense_g"), [(False, False), (True, False), (False, True), (True, True)])
+def test_the_condensed_matrix_takes_dense_rows_as_dense_products(dense_a: bool, dense_g: bool) -> None:
+  """``P + diag(x_reg) + A^T A / delta + G^T diag(1 / z_reg) G``, its lower triangle, whichever of
+  ``A`` and ``G`` is multiplied as a dense array; with neither, both triangles, through index tables."""
+  n, rng = 16, np.random.default_rng(3)
+  band = lambda rows: np.abs(np.subtract.outer(np.arange(rows), np.arange(n))) <= 1  # noqa: E731
+  half = np.triu(rng.random((n, n)) < 0.3) | np.eye(n, dtype=bool)
+  P = np.where(half, rng.standard_normal((n, n)), 0.0)
+  P = np.triu(P) + np.triu(P, 1).T
+  A = rng.standard_normal((20, n)) if dense_a else np.where(band(6), rng.standard_normal((6, n)), 0.0)
+  G = rng.standard_normal((24, n)) if dense_g else np.where(band(10), rng.standard_normal((10, n)), 0.0)
+  free = np.full(n, np.inf)
+  s = QPStructure.from_patterns(P != 0, A != 0, G != 0, h_l=np.full(G.shape[0], -np.inf), h_u=np.zeros(G.shape[0]), x_l=-free, x_u=free)
+  kern = Kernels(s, "dense", name=f"condensed_{int(dense_a)}{int(dense_g)}")
+  d, xr, dr, zr = sc.sym("D", (sum(kern.d_sizes),)), sc.sym("x_reg", (n,)), sc.sym("delta_reg", ()), sc.sym("z_reg", (s.m,))
+  condensed = kern._condensed(kern.matrices(d)[0], xr, dr, zr)
+  assert sum(node.op == ExprOp.MATMUL for node in topo([condensed])) == int(dense_a) + int(dense_g)
+  fn = sc.Function.from_exprs(f"condensed_{int(dense_a)}{int(dense_g)}", [d, xr, dr, zr], [condensed], ["D", "x_reg", "delta_reg", "z_reg"], ["c"])
+  data = np.concatenate([P[s.P_rows, s.P_cols], A[s.A_rows, s.A_cols], G[s.G_rows, s.G_cols], np.ones(n)])
+  x_reg, delta, z_reg = rng.uniform(0.5, 2.0, n), 0.37, rng.uniform(0.5, 2.0, s.m)
+  got = np.asarray(fn((data, x_reg, np.array(delta), z_reg))).reshape(n, n)
+  want = P + np.diag(x_reg) + A.T @ A / delta + (G.T / z_reg) @ G
+  np.testing.assert_allclose(np.tril(got), np.tril(want), rtol=1e-12, atol=1e-12)
+  if not (dense_a or dense_g):
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12)
