@@ -87,7 +87,8 @@ of (the condensed matrix's outer products, the factors' multiply-adds, the entri
 factor), weighed as they were measured on Apple silicon, the same for every target. Both backends
 follow PIQP's path to the same solution within its tolerances; on the Maros–Mészáros set, measured
 on Apple silicon, it takes the dense backend for the problems with far more inequality rows than
-variables and the sparse one nearly everywhere else.
+variables and for those with a dense Hessian of moderate order, and the sparse one nearly everywhere
+else.
 `sc.opt.ipm.choose_backend(sc.opt.ipm.QPStructure.from_patterns(...))` says which it takes.
 
 PIQP separates setup, which equilibrates the problem (Ruiz scaling), from solve, and keeps the

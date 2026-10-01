@@ -11,13 +11,13 @@
   "solve": 10000,
   "updates": 13571,
   "nnz_l": 1485,
-  "sparse_us": 143.25,
+  "sparse_us": 131.333,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 197.125,
-   "dense": 344.25000000000006
+   "sparse": 193.50000000000003,
+   "dense": 363.91600000000005
   },
-  "dense_us": 335.416,
+  "dense_us": 298.25,
   "dense_iter": 9
  },
  {
@@ -32,13 +32,13 @@
   "solve": 10000,
   "updates": 9941,
   "nnz_l": 1214,
-  "sparse_us": 119.541,
+  "sparse_us": 115.875,
   "sparse_iter": 10,
   "piqp_us": {
-   "sparse": 171.50000000000003,
-   "dense": 388.0
+   "sparse": 168.084,
+   "dense": 378.708
   },
-  "dense_us": 390.041,
+  "dense_us": 337.708,
   "dense_iter": 10
  },
  {
@@ -53,13 +53,13 @@
   "solve": 10000,
   "updates": 16906,
   "nnz_l": 1729,
-  "sparse_us": 172.208,
+  "sparse_us": 163.875,
   "sparse_iter": 10,
   "piqp_us": {
-   "sparse": 240.50000000000003,
-   "dense": 416.959
+   "sparse": 251.41600000000003,
+   "dense": 406.16700000000003
   },
-  "dense_us": 398.583,
+  "dense_us": 351.416,
   "dense_iter": 10
  },
  {
@@ -74,13 +74,13 @@
   "solve": 17689,
   "updates": 102298,
   "nnz_l": 4501,
-  "sparse_us": 125.459,
+  "sparse_us": 105.709,
   "sparse_iter": 2,
   "piqp_us": {
-   "sparse": 164.375,
-   "dense": 154.417
+   "sparse": 173.833,
+   "dense": 162.542
   },
-  "dense_us": 276.959,
+  "dense_us": 223.917,
   "dense_iter": 2
  },
  {
@@ -90,18 +90,18 @@
   "m": 0,
   "vectors": 86,
   "entries": 3643,
-  "assembly": 7225,
+  "assembly": 1806,
   "factor": 204708,
   "solve": 7225,
   "updates": 105090,
   "nnz_l": 3644,
-  "sparse_us": 453.833,
+  "sparse_us": 426.625,
   "sparse_iter": 12,
   "piqp_us": {
-   "sparse": 869.7080000000001,
-   "dense": 338.334
+   "sparse": 849.916,
+   "dense": 346.04200000000003
   },
-  "dense_us": 549.875,
+  "dense_us": 379.66700000000003,
   "dense_iter": 12
  },
  {
@@ -111,18 +111,18 @@
   "m": 0,
   "vectors": 97,
   "entries": 4604,
-  "assembly": 9216,
+  "assembly": 2304,
   "factor": 294912,
   "solve": 9216,
   "updates": 150803,
   "nnz_l": 4642,
-  "sparse_us": 550.5,
+  "sparse_us": 522.041,
   "sparse_iter": 11,
   "piqp_us": {
-   "sparse": 994.4580000000002,
-   "dense": 375.25000000000006
+   "sparse": 1105.5000000000002,
+   "dense": 368.583
   },
-  "dense_us": 659.416,
+  "dense_us": 455.875,
   "dense_iter": 11
  },
  {
@@ -132,18 +132,18 @@
   "m": 0,
   "vectors": 112,
   "entries": 6219,
-  "assembly": 12321,
+  "assembly": 3080,
   "factor": 455877,
   "solve": 12321,
   "updates": 233158,
   "nnz_l": 6207,
-  "sparse_us": 815.2090000000001,
+  "sparse_us": 810.375,
   "sparse_iter": 12,
   "piqp_us": {
-   "sparse": 1702.7910000000002,
-   "dense": 553.291
+   "sparse": 1668.6250000000002,
+   "dense": 565.8340000000001
   },
-  "dense_us": 979.666,
+  "dense_us": 662.875,
   "dense_iter": 12
  },
  {
@@ -153,18 +153,18 @@
   "m": 0,
   "vectors": 76,
   "entries": 2874,
-  "assembly": 5625,
+  "assembly": 1406,
   "factor": 140625,
   "solve": 5625,
   "updates": 72709,
   "nnz_l": 2844,
-  "sparse_us": 318.16700000000003,
+  "sparse_us": 302.083,
   "sparse_iter": 11,
   "piqp_us": {
-   "sparse": 593.291,
-   "dense": 236.33400000000003
+   "sparse": 589.416,
+   "dense": 247.25000000000003
   },
-  "dense_us": 378.04200000000003,
+  "dense_us": 272.708,
   "dense_iter": 11
  },
  {
@@ -174,18 +174,18 @@
   "m": 214,
   "vectors": 224,
   "entries": 1980,
-  "assembly": 17415,
+  "assembly": 4414,
   "factor": 243,
   "solve": 81,
   "updates": 9795,
   "nnz_l": 1971,
-  "sparse_us": 184.5,
+  "sparse_us": 177.583,
   "sparse_iter": 10,
   "piqp_us": {
-   "sparse": 228.45800000000003,
-   "dense": 94.29200000000002
+   "sparse": 240.04100000000003,
+   "dense": 100.0
   },
-  "dense_us": 118.292,
+  "dense_us": 98.292,
   "dense_iter": 10
  },
  {
@@ -200,13 +200,13 @@
   "solve": 49,
   "updates": 6468,
   "nnz_l": 1624,
-  "sparse_us": 151.875,
+  "sparse_us": 144.291,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 171.08300000000003,
-   "dense": 89.79200000000002
+   "sparse": 184.12500000000003,
+   "dense": 91.792
   },
-  "dense_us": 94.0,
+  "dense_us": 83.75,
   "dense_iter": 9
  },
  {
@@ -216,18 +216,18 @@
   "m": 277,
   "vectors": 286,
   "entries": 2260,
-  "assembly": 17792,
+  "assembly": 4496,
   "factor": 170,
   "solve": 64,
   "updates": 10092,
   "nnz_l": 2252,
-  "sparse_us": 174.0,
+  "sparse_us": 167.042,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 237.95800000000003,
-   "dense": 94.709
+   "sparse": 252.792,
+   "dense": 103.542
   },
-  "dense_us": 97.084,
+  "dense_us": 72.459,
   "dense_iter": 9
  },
  {
@@ -237,18 +237,18 @@
   "m": 502,
   "vectors": 511,
   "entries": 4060,
-  "assembly": 32192,
+  "assembly": 8096,
   "factor": 170,
   "solve": 64,
   "updates": 18192,
   "nnz_l": 4052,
-  "sparse_us": 431.458,
+  "sparse_us": 386.416,
   "sparse_iter": 10,
   "piqp_us": {
-   "sparse": 520.1250000000001,
-   "dense": 209.125
+   "sparse": 530.416,
+   "dense": 209.0
   },
-  "dense_us": 294.125,
+  "dense_us": 203.333,
   "dense_iter": 10
  },
  {
@@ -263,13 +263,13 @@
   "solve": 100,
   "updates": 49,
   "nnz_l": 33,
-  "sparse_us": 1.416,
+  "sparse_us": 0.375,
   "sparse_iter": 1,
   "piqp_us": {
-   "sparse": 1.083,
+   "sparse": 1.125,
    "dense": 1.2080000000000002
   },
-  "dense_us": 1.584,
+  "dense_us": 0.541,
   "dense_iter": 1
  },
  {
@@ -284,13 +284,13 @@
   "solve": 225,
   "updates": 132,
   "nnz_l": 74,
-  "sparse_us": 12.167,
+  "sparse_us": 11.375,
   "sparse_iter": 12,
   "piqp_us": {
-   "sparse": 27.708000000000002,
-   "dense": 34.66700000000001
+   "sparse": 27.792,
+   "dense": 34.333000000000006
   },
-  "dense_us": 14.5,
+  "dense_us": 14.042,
   "dense_iter": 12
  },
  {
@@ -305,13 +305,13 @@
   "solve": 4,
   "updates": 2,
   "nnz_l": 2,
-  "sparse_us": 1.291,
+  "sparse_us": 1.125,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 3.2910000000000004,
-   "dense": 4.542
+   "sparse": 3.2920000000000003,
+   "dense": 4.5
   },
-  "dense_us": 1.666,
+  "dense_us": 1.458,
   "dense_iter": 9
  },
  {
@@ -326,13 +326,13 @@
   "solve": 25,
   "updates": 95,
   "nnz_l": 35,
-  "sparse_us": 2.4170000000000003,
+  "sparse_us": 2.0,
   "sparse_iter": 7,
   "piqp_us": {
-   "sparse": 5.333,
-   "dense": 5.708
+   "sparse": 5.375,
+   "dense": 5.541
   },
-  "dense_us": 2.584,
+  "dense_us": 2.208,
   "dense_iter": 7
  },
  {
@@ -347,13 +347,13 @@
   "solve": 9,
   "updates": 7,
   "nnz_l": 5,
-  "sparse_us": 0.875,
+  "sparse_us": 0.75,
   "sparse_iter": 5,
   "piqp_us": {
-   "sparse": 2.1670000000000003,
+   "sparse": 2.166,
    "dense": 2.958
   },
-  "dense_us": 1.083,
+  "dense_us": 1.0,
   "dense_iter": 5
  },
  {
@@ -368,13 +368,13 @@
   "solve": 9,
   "updates": 8,
   "nnz_l": 6,
-  "sparse_us": 1.541,
+  "sparse_us": 1.416,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 3.625,
-   "dense": 4.917000000000001
+   "sparse": 3.5000000000000004,
+   "dense": 4.958000000000001
   },
-  "dense_us": 1.75,
+  "dense_us": 1.708,
   "dense_iter": 9
  },
  {
@@ -389,13 +389,13 @@
   "solve": 25,
   "updates": 15,
   "nnz_l": 11,
-  "sparse_us": 0.333,
+  "sparse_us": 0.125,
   "sparse_iter": 1,
   "piqp_us": {
    "sparse": 0.5830000000000001,
-   "dense": 0.791
+   "dense": 0.75
   },
-  "dense_us": 0.375,
+  "dense_us": 0.166,
   "dense_iter": 1
  },
  {
@@ -410,13 +410,13 @@
   "solve": 25,
   "updates": 15,
   "nnz_l": 11,
-  "sparse_us": 0.458,
+  "sparse_us": 0.20800000000000002,
   "sparse_iter": 2,
   "piqp_us": {
-   "sparse": 0.8750000000000001,
+   "sparse": 0.833,
    "dense": 1.125
   },
-  "dense_us": 0.5,
+  "dense_us": 0.291,
   "dense_iter": 2
  },
  {
@@ -431,13 +431,13 @@
   "solve": 25,
   "updates": 15,
   "nnz_l": 11,
-  "sparse_us": 1.9160000000000001,
+  "sparse_us": 1.541,
   "sparse_iter": 6,
   "piqp_us": {
-   "sparse": 3.625,
+   "sparse": 3.6670000000000003,
    "dense": 4.333
   },
-  "dense_us": 2.084,
+  "dense_us": 1.833,
   "dense_iter": 6
  },
  {
@@ -452,13 +452,13 @@
   "solve": 16,
   "updates": 25,
   "nnz_l": 14,
-  "sparse_us": 1.583,
+  "sparse_us": 1.416,
   "sparse_iter": 6,
   "piqp_us": {
-   "sparse": 3.125,
-   "dense": 4.041
+   "sparse": 3.4170000000000003,
+   "dense": 4.000000000000001
   },
-  "dense_us": 1.666,
+  "dense_us": 1.583,
   "dense_iter": 6
  },
  {
@@ -473,13 +473,13 @@
   "solve": 144,
   "updates": 191,
   "nnz_l": 71,
-  "sparse_us": 6.042,
+  "sparse_us": 4.583,
   "sparse_iter": 8,
   "piqp_us": {
-   "sparse": 9.625,
-   "dense": 10.25
+   "sparse": 9.792,
+   "dense": 10.166
   },
-  "dense_us": 6.916,
+  "dense_us": 5.416,
   "dense_iter": 8
  },
  {
@@ -494,13 +494,13 @@
   "solve": 105625,
   "updates": 216602,
   "nnz_l": 9385,
-  "sparse_us": 959.125,
+  "sparse_us": 993.833,
   "sparse_iter": 8,
   "piqp_us": {
-   "sparse": 1397.9160000000002,
-   "dense": 6358.584000000001
+   "sparse": 1414.625,
+   "dense": 6333.125
   },
-  "dense_us": 8396.958,
+  "dense_us": 6885.041,
   "dense_iter": 8
  },
  {
@@ -510,18 +510,18 @@
   "m": 9,
   "vectors": 239,
   "entries": 2299,
-  "assembly": 476100,
+  "assembly": 119025,
   "factor": 4055666,
   "solve": 52900,
   "updates": 10470,
   "nnz_l": 2106,
-  "sparse_us": 252.167,
+  "sparse_us": 251.416,
   "sparse_iter": 14,
   "piqp_us": {
-   "sparse": 348.29100000000005,
-   "dense": 2955.333
+   "sparse": 336.75,
+   "dense": 2963.4590000000003
   },
-  "dense_us": 6504.042,
+  "dense_us": 3454.3340000000003,
   "dense_iter": 14
  },
  {
@@ -531,18 +531,18 @@
   "m": 7,
   "vectors": 238,
   "entries": 1847,
-  "assembly": 373527,
+  "assembly": 93381,
   "factor": 4108797,
   "solve": 53361,
   "updates": 6524,
   "nnz_l": 1638,
-  "sparse_us": 182.709,
+  "sparse_us": 182.041,
   "sparse_iter": 12,
   "piqp_us": {
-   "sparse": 247.875,
-   "dense": 2663.125
+   "sparse": 248.16700000000003,
+   "dense": 2581.916
   },
-  "dense_us": 5249.8330000000005,
+  "dense_us": 2859.917,
   "dense_iter": 12
  },
  {
@@ -552,18 +552,18 @@
   "m": 8,
   "vectors": 295,
   "entries": 2582,
-  "assembly": 658952,
+  "assembly": 164738,
   "factor": 7879967,
   "solve": 82369,
   "updates": 10416,
   "nnz_l": 2324,
-  "sparse_us": 201.917,
+  "sparse_us": 186.458,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 255.708,
-   "dense": 3549.6250000000005
+   "sparse": 262.167,
+   "dense": 3535.8340000000003
   },
-  "dense_us": 6842.042,
+  "dense_us": 3820.625,
   "dense_iter": 9
  },
  {
@@ -578,13 +578,13 @@
   "solve": 9409,
   "updates": 2630,
   "nnz_l": 721,
-  "sparse_us": 119.958,
+  "sparse_us": 110.25,
   "sparse_iter": 12,
   "piqp_us": {
-   "sparse": 132.791,
-   "dense": 676.0830000000001
+   "sparse": 132.959,
+   "dense": 676.291
   },
-  "dense_us": 556.542,
+  "dense_us": 513.958,
   "dense_iter": 12
  },
  {
@@ -599,13 +599,13 @@
   "solve": 1024,
   "updates": 259,
   "nnz_l": 138,
-  "sparse_us": 17.125,
+  "sparse_us": 13.625,
   "sparse_iter": 13,
   "piqp_us": {
-   "sparse": 37.834,
-   "dense": 82.5
+   "sparse": 38.791000000000004,
+   "dense": 82.333
   },
-  "dense_us": 46.542,
+  "dense_us": 46.416000000000004,
   "dense_iter": 13
  },
  {
@@ -620,14 +620,14 @@
   "solve": 68644,
   "updates": 76292,
   "nnz_l": 5442,
-  "sparse_us": 1101.625,
+  "sparse_us": 1091.625,
   "sparse_iter": 21,
   "piqp_us": {
-   "sparse": 1601.166,
-   "dense": 10135.458
+   "sparse": 1601.042,
+   "dense": 10100.5
   },
-  "dense_us": 11698.292,
-  "dense_iter": 17
+  "dense_us": 10608.416000000001,
+  "dense_iter": 19
  },
  {
   "name": "QBORE3D",
@@ -641,14 +641,14 @@
   "solve": 99225,
   "updates": 26928,
   "nnz_l": 3162,
-  "sparse_us": 704.875,
+  "sparse_us": 641.083,
   "sparse_iter": 19,
   "piqp_us": {
-   "sparse": 873.2080000000001,
-   "dense": 11147.667
+   "sparse": 912.792,
+   "dense": 11333.416000000001
   },
-  "dense_us": 13640.375,
-  "dense_iter": 21
+  "dense_us": 9987.791000000001,
+  "dense_iter": 20
  },
  {
   "name": "QBRANDY",
@@ -662,14 +662,14 @@
   "solve": 62001,
   "updates": 77742,
   "nnz_l": 5223,
-  "sparse_us": 917.0,
+  "sparse_us": 863.75,
   "sparse_iter": 16,
   "piqp_us": {
-   "sparse": 1342.083,
-   "dense": 6455.7080000000005
+   "sparse": 1327.0,
+   "dense": 6443.375
   },
-  "dense_us": 8158.25,
-  "dense_iter": 16
+  "dense_us": 6606.0830000000005,
+  "dense_iter": 17
  },
  {
   "name": "QCAPRI",
@@ -683,14 +683,14 @@
   "solve": 124609,
   "updates": 77053,
   "nnz_l": 5843,
-  "sparse_us": 2015.75,
+  "sparse_us": 1855.75,
   "sparse_iter": 31,
   "piqp_us": {
-   "sparse": 7766.500000000001,
-   "dense": 35751.542
+   "sparse": 7727.292,
+   "dense": 35609.083
   },
-  "dense_us": 28989.875,
-  "dense_iter": 31
+  "dense_us": 20029.708,
+  "dense_iter": 32
  },
  {
   "name": "QE226",
@@ -704,13 +704,13 @@
   "solve": 79524,
   "updates": 154211,
   "nnz_l": 8247,
-  "sparse_us": 1483.458,
+  "sparse_us": 1386.375,
   "sparse_iter": 19,
   "piqp_us": {
-   "sparse": 2323.542,
-   "dense": 13598.833
+   "sparse": 2312.0420000000004,
+   "dense": 13569.125000000002
   },
-  "dense_us": 11214.292,
+  "dense_us": 8809.791000000001,
   "dense_iter": 19
  },
  {
@@ -725,13 +725,13 @@
   "solve": 90601,
   "updates": 64719,
   "nnz_l": 5919,
-  "sparse_us": 1535.0,
+  "sparse_us": 1488.291,
   "sparse_iter": 24,
   "piqp_us": {
-   "sparse": 2033.0830000000003,
-   "dense": 14846.625
+   "sparse": 2160.875,
+   "dense": 14801.5
   },
-  "dense_us": 20121.0,
+  "dense_us": 14865.25,
   "dense_iter": 24
  },
  {
@@ -746,13 +746,13 @@
   "solve": 20164,
   "updates": 59586,
   "nnz_l": 4283,
-  "sparse_us": 1020.125,
+  "sparse_us": 962.291,
   "sparse_iter": 23,
   "piqp_us": {
-   "sparse": 1390.333,
-   "dense": 4404.333
+   "sparse": 1423.917,
+   "dense": 4391.084
   },
-  "dense_us": 3830.541,
+  "dense_us": 3410.0,
   "dense_iter": 23
  },
  {
@@ -767,13 +767,13 @@
   "solve": 6889,
   "updates": 6361,
   "nnz_l": 1072,
-  "sparse_us": 165.417,
+  "sparse_us": 163.667,
   "sparse_iter": 16,
   "piqp_us": {
-   "sparse": 199.375,
-   "dense": 596.2909999999999
+   "sparse": 208.41700000000003,
+   "dense": 596.7500000000001
   },
-  "dense_us": 533.583,
+  "dense_us": 471.333,
   "dense_iter": 16
  },
  {
@@ -788,13 +788,13 @@
   "solve": 20449,
   "updates": 22721,
   "nnz_l": 2702,
-  "sparse_us": 645.292,
+  "sparse_us": 575.042,
   "sparse_iter": 21,
   "piqp_us": {
-   "sparse": 807.667,
-   "dense": 3877.666
+   "sparse": 793.7080000000001,
+   "dense": 4248.667
   },
-  "dense_us": 2779.75,
+  "dense_us": 2348.875,
   "dense_iter": 21
  },
  {
@@ -809,13 +809,13 @@
   "solve": 4,
   "updates": 7,
   "nnz_l": 5,
-  "sparse_us": 1.291,
+  "sparse_us": 1.208,
   "sparse_iter": 8,
   "piqp_us": {
    "sparse": 3.458,
-   "dense": 3.875
+   "dense": 4.167
   },
-  "dense_us": 1.541,
+  "dense_us": 1.375,
   "dense_iter": 8
  },
  {
@@ -830,13 +830,13 @@
   "solve": 32400,
   "updates": 10364,
   "nnz_l": 1436,
-  "sparse_us": 1590.334,
+  "sparse_us": 1560.166,
   "sparse_iter": 80,
   "piqp_us": {
-   "sparse": 431.54200000000003,
-   "dense": 3713.2090000000003
+   "sparse": 434.29200000000003,
+   "dense": 3701.333
   },
-  "dense_us": 3892.917,
+  "dense_us": 3113.5,
   "dense_iter": 19
  },
  {
@@ -851,14 +851,14 @@
   "solve": 41209,
   "updates": 3872,
   "nnz_l": 1425,
-  "sparse_us": 314.125,
+  "sparse_us": 299.333,
   "sparse_iter": 16,
   "piqp_us": {
-   "sparse": 388.958,
-   "dense": 6506.916
+   "sparse": 390.708,
+   "dense": 6762.875000000001
   },
-  "dense_us": 3817.667,
-  "dense_iter": 15
+  "dense_us": 3017.667,
+  "dense_iter": 16
  },
  {
   "name": "QSCAGR7",
@@ -872,13 +872,13 @@
   "solve": 19600,
   "updates": 1837,
   "nnz_l": 716,
-  "sparse_us": 166.0,
+  "sparse_us": 151.917,
   "sparse_iter": 15,
   "piqp_us": {
-   "sparse": 172.916,
-   "dense": 1216.083
+   "sparse": 181.50000000000003,
+   "dense": 1225.834
   },
-  "dense_us": 1260.917,
+  "dense_us": 972.833,
   "dense_iter": 15
  },
  {
@@ -893,14 +893,14 @@
   "solve": 50625,
   "updates": 17005,
   "nnz_l": 2537,
-  "sparse_us": 598.125,
+  "sparse_us": 555.9590000000001,
   "sparse_iter": 24,
   "piqp_us": {
-   "sparse": 696.6250000000001,
-   "dense": 10092.417000000001
+   "sparse": 710.541,
+   "dense": 10053.834
   },
-  "dense_us": 8445.625,
-  "dense_iter": 24
+  "dense_us": 7735.9580000000005,
+  "dense_iter": 28
  },
  {
   "name": "QSHARE2B",
@@ -914,13 +914,13 @@
   "solve": 6241,
   "updates": 7390,
   "nnz_l": 1360,
-  "sparse_us": 231.75,
+  "sparse_us": 227.667,
   "sparse_iter": 18,
   "piqp_us": {
-   "sparse": 315.667,
-   "dense": 937.417
+   "sparse": 334.625,
+   "dense": 944.7500000000001
   },
-  "dense_us": 635.417,
+  "dense_us": 560.9590000000001,
   "dense_iter": 18
  },
  {
@@ -935,13 +935,13 @@
   "solve": 25,
   "updates": 95,
   "nnz_l": 35,
-  "sparse_us": 2.458,
+  "sparse_us": 2.0,
   "sparse_iter": 7,
   "piqp_us": {
-   "sparse": 5.333,
-   "dense": 5.166
+   "sparse": 5.417,
+   "dense": 5.542000000000001
   },
-  "dense_us": 2.625,
+  "dense_us": 2.1670000000000003,
   "dense_iter": 7
  },
  {
@@ -956,13 +956,13 @@
   "solve": 4,
   "updates": 4,
   "nnz_l": 3,
-  "sparse_us": 0.583,
+  "sparse_us": 0.458,
   "sparse_iter": 4,
   "piqp_us": {
-   "sparse": 1.3750000000000002,
-   "dense": 1.4160000000000001
+   "sparse": 1.333,
+   "dense": 1.5410000000000001
   },
-  "dense_us": 0.709,
+  "dense_us": 0.583,
   "dense_iter": 4
  },
  {
@@ -972,18 +972,18 @@
   "m": 0,
   "vectors": 203,
   "entries": 4024,
-  "assembly": 40804,
+  "assembly": 10201,
   "factor": 2747469,
   "solve": 40804,
   "updates": 40502,
   "nnz_l": 3822,
-  "sparse_us": 608.458,
+  "sparse_us": 582.0,
   "sparse_iter": 12,
   "piqp_us": {
-   "sparse": 651.792,
-   "dense": 1769.1660000000002
+   "sparse": 719.416,
+   "dense": 1839.125
   },
-  "dense_us": 2914.7090000000003,
+  "dense_us": 2116.209,
   "dense_iter": 12
  },
  {
@@ -998,13 +998,13 @@
   "solve": 4,
   "updates": 7,
   "nnz_l": 5,
-  "sparse_us": 1.208,
+  "sparse_us": 1.166,
   "sparse_iter": 8,
   "piqp_us": {
-   "sparse": 3.333,
-   "dense": 3.875
+   "sparse": 3.2920000000000003,
+   "dense": 4.208
   },
-  "dense_us": 1.5,
+  "dense_us": 1.416,
   "dense_iter": 8
  },
  {
@@ -1019,13 +1019,13 @@
   "solve": 4096,
   "updates": 1284,
   "nnz_l": 452,
-  "sparse_us": 50.875,
+  "sparse_us": 44.875,
   "sparse_iter": 8,
   "piqp_us": {
-   "sparse": 61.50000000000001,
-   "dense": 139.333
+   "sparse": 65.62500000000001,
+   "dense": 139.709
   },
-  "dense_us": 132.5,
+  "dense_us": 126.208,
   "dense_iter": 8
  },
  {
@@ -1040,13 +1040,13 @@
   "solve": 110224,
   "updates": 63236,
   "nnz_l": 7908,
-  "sparse_us": 566.542,
+  "sparse_us": 517.2090000000001,
   "sparse_iter": 7,
   "piqp_us": {
-   "sparse": 782.5000000000001,
-   "dense": 4228.167
+   "sparse": 803.917,
+   "dense": 4215.875
   },
-  "dense_us": 5880.042,
+  "dense_us": 4333.8330000000005,
   "dense_iter": 7
  },
  {
@@ -1061,13 +1061,13 @@
   "solve": 1034289,
   "updates": 1035989,
   "nnz_l": 58281,
-  "sparse_us": 4767.8330000000005,
+  "sparse_us": 4561.916,
   "sparse_iter": 8,
   "piqp_us": {
-   "sparse": 7448.708,
-   "dense": 97877.54200000002
+   "sparse": 7429.375,
+   "dense": 97843.0
   },
-  "dense_us": 140997.916,
+  "dense_us": 89372.417,
   "dense_iter": 8
  },
  {
@@ -1082,13 +1082,13 @@
   "solve": 48400,
   "updates": 19008,
   "nnz_l": 3479,
-  "sparse_us": 338.41700000000003,
+  "sparse_us": 300.709,
   "sparse_iter": 9,
   "piqp_us": {
-   "sparse": 378.66600000000005,
-   "dense": 1839.333
+   "sparse": 413.25000000000006,
+   "dense": 1877.6670000000001
   },
-  "dense_us": 2541.5,
+  "dense_us": 1865.834,
   "dense_iter": 9
  },
  {
@@ -1098,18 +1098,18 @@
   "m": 0,
   "vectors": 71,
   "entries": 430,
-  "assembly": 22205,
+  "assembly": 6337,
   "factor": 91541,
   "solve": 4225,
   "updates": 1300,
   "nnz_l": 380,
-  "sparse_us": 35.917,
+  "sparse_us": 27.5,
   "sparse_iter": 7,
   "piqp_us": {
-   "sparse": 39.709,
-   "dense": 126.04200000000002
+   "sparse": 44.00000000000001,
+   "dense": 126.50000000000001
   },
-  "dense_us": 257.084,
+  "dense_us": 121.292,
   "dense_iter": 7
  },
  {
@@ -1124,13 +1124,13 @@
   "solve": 12321,
   "updates": 6920,
   "nnz_l": 1255,
-  "sparse_us": 143.5,
+  "sparse_us": 136.458,
   "sparse_iter": 10,
   "piqp_us": {
-   "sparse": 166.959,
-   "dense": 932.0000000000001
+   "sparse": 175.792,
+   "dense": 980.875
   },
-  "dense_us": 677.666,
+  "dense_us": 559.25,
   "dense_iter": 10
  },
  {
@@ -1140,18 +1140,18 @@
   "m": 40,
   "vectors": 75,
   "entries": 1815,
-  "assembly": 40500,
+  "assembly": 10125,
   "factor": 9000,
   "solve": 900,
   "updates": 25420,
   "nnz_l": 1785,
-  "sparse_us": 121.041,
+  "sparse_us": 108.333,
   "sparse_iter": 8,
   "piqp_us": {
-   "sparse": 186.04100000000003,
-   "dense": 54.584
+   "sparse": 199.25000000000003,
+   "dense": 57.708000000000006
   },
-  "dense_us": 101.0,
+  "dense_us": 62.083,
   "dense_iter": 8
  }
 ]

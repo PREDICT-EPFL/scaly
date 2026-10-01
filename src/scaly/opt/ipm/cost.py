@@ -8,7 +8,7 @@ import numpy as np
 
 from ...ir.target import PORTABLE
 from ...linalg.symbolic import TooMuchWork
-from .kkt import Backend, kkt_symbolic
+from .kkt import Backend, dense_rows, kkt_symbolic
 from .structure import QPStructure
 
 
@@ -19,8 +19,10 @@ class Work:
   Attributes:
     vectors: ``n + p + m``, the length of the vectors every step updates.
     entries: the stored entries of ``P`` (upper triangle), ``A`` and ``G``, which the residuals read.
-    assembly: the multiply-adds of the dense backend's condensed matrix ``A^T A / delta + G^T W G``,
-      one outer product per row of ``A`` and ``G``: the sum of their rows' nonzeros squared.
+    assembly: the products of the dense backend's condensed matrix ``A^T A / delta + G^T W G``. A
+      matrix multiplied through its index tables takes one outer product per row, its rows'
+      nonzeros squared; one multiplied as a dense array (``kkt.dense_rows``) counts a quarter of
+      ``rows * n^2``, a dense multiply-add being a quarter of a product through the tables.
     factor: ``n^3 / 3``, the dense backend's Cholesky factor.
     solve: ``n^2``, one pair of triangular solves with it.
     updates: the sparse backend's update multiply-adds (``SymbolicLDL.update_lanes``).
@@ -36,16 +38,24 @@ class Work:
   nnz_l: int
 
 
+def _assembly(rows: np.ndarray, count: int, n: int) -> int:
+  """The products of ``M^T W M`` for a matrix of ``count`` rows with entries in rows ``rows``."""
+  if not count:
+    return 0
+  if dense_rows(rows, count, n):
+    return count * n * n // 4
+  per_row = np.bincount(rows, minlength=count).astype(np.int64)
+  return int(per_row @ per_row)
+
+
 def work(s: QPStructure) -> Work:
   """The counts of ``s``'s iteration on either backend; raises ``TooMuchWork`` when the sparse
   backend's factorization is past what ``linalg.symbolic`` will generate."""
-  rows_a = np.bincount(s.A_rows, minlength=s.p) if s.p else np.zeros(0, dtype=np.int64)
-  rows_g = np.bincount(s.G_rows, minlength=s.m) if s.m else np.zeros(0, dtype=np.int64)
   ldl = kkt_symbolic(s)
   return Work(
     vectors=s.n + s.p + s.m,
     entries=int(s.P_rows.size + s.A_rows.size + s.G_rows.size),
-    assembly=int(np.sum(rows_a.astype(np.int64) ** 2) + np.sum(rows_g.astype(np.int64) ** 2)),
+    assembly=_assembly(s.A_rows, s.p, s.n) + _assembly(s.G_rows, s.m, s.n),
     factor=s.n**3 // 3,
     solve=s.n**2,
     updates=int(ldl.update_lanes),
@@ -55,11 +65,14 @@ def work(s: QPStructure) -> Work:
 
 # Microseconds per unit of each count, fitted on the reference machine to the 55 problems of the IPM
 # speed study (``internal/notes/perf_2026_09_30_gaps/backend_fit.py``: the faster backend on 53, the
-# worst pick 1.07x the better; 52 and 1.20x leaving each problem out of its own fit). Dense: a
+# worst pick 1.10x the better, and the same leaving each problem out of its own fit). Dense: a
 # constant, vectors, entries, the assembly, the factor as loops, the factor as straight-line code,
 # the solve. Sparse: a constant, vectors, entries, the update multiply-adds, the entries of ``L``.
-DENSE_WEIGHTS = (1.29e-1, 6.44e-3, 3.16e-3, 1.79e-4, 4.71e-5, 8.43e-5, 2.72e-3)
-SPARSE_WEIGHTS = (7.71e-2, 1.09e-2, 0.0, 9.89e-5, 7.94e-3)
+# A zero is a count the fit found no time in beside the others. Refit when either backend's
+# generated code changes speed: the weights before the dense factor went into blocks took the
+# sparse backend for four problems the dense one had become 1.1-1.2x faster on.
+DENSE_WEIGHTS = (1.145e-1, 7.68e-4, 2.457e-3, 3.762e-4, 2.594e-5, 0.0, 2.517e-3)
+SPARSE_WEIGHTS = (7.138e-2, 0.0, 0.0, 6.169e-5, 8.793e-3)
 
 
 def iteration_us(w: Work, backend: Backend) -> float:

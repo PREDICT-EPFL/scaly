@@ -1022,12 +1022,14 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       the reductions between them (four chains, a tail) and the gathers through index tables
       break the runs, so it needs statement reordering too. Sized at 2-3 weeks in the proposal;
       take it when a profile shows a step-dominated problem still behind (none of the 55 is).
-- [ ] **C-218. The backend model refitted to the dense backend's new costs.** `cost.py`'s weights
-      were fitted before C-215 and C-216: the dense factor in blocks and the dense products of
-      dense rows are cheaper than the model counts them (`Work.assembly` charges every row its
-      nonzeros squared), so it takes the sparse backend where the dense one may now be faster.
-      Count dense rows as `dense_rows` multiplies them, rerun `backend_costs.py` and
-      `backend_fit.py`, and move the weights and `test_cost.py`'s pins together.
+- [x] **C-218. The backend model refitted to the dense backend's new costs.** After C-215 to
+      C-217 the dense backend is the faster one on DUAL1-4 (0.82-0.90 of the sparse backend's
+      time, was 1.19-1.21): the old weights still took the sparse one there, right on 49 of 55 and
+      up to 1.22x the better. `Work.assembly` now counts a matrix multiplied dense as a quarter
+      of `rows * n^2` (`kkt.dense_rows`' own exchange rate), and the weights are refitted on both
+      backends' times (`results/backend_costs.json`): the faster backend on 53 of 55, in sample
+      and leaving each out, the worst pick 1.10x (HS268 and S268, order 5). Refit whenever either
+      backend's code changes speed.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

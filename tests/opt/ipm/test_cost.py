@@ -32,6 +32,23 @@ def test_the_counts_of_an_iteration() -> None:
   assert (w.factor, w.solve) == (27 // 3, 9)
 
 
+def test_dense_rows_count_as_the_dense_product_they_are_multiplied_by() -> None:
+  """A matrix the dense backend multiplies as a dense array (``kkt.dense_rows``) costs a quarter of
+  ``rows * n^2``, not its rows' nonzeros squared; one below the rule's floors keeps the latter."""
+  n, free = 16, np.full(16, np.inf)
+  P = sparse.eye_array(n, format="csc")
+
+  def counted(rows_a: int, rows_g: int) -> int:
+    s = QPStructure.from_patterns(
+      P, np.ones((rows_a, n)), np.ones((rows_g, n)), h_l=np.full(rows_g, -np.inf), h_u=np.zeros(rows_g), x_l=-free, x_u=free
+    )
+    return work(s).assembly
+
+  assert counted(20, 0) == 20 * n * n // 4
+  assert counted(15, 0) == 15 * n * n  # 3 840 products: under the rule's 4 096, through the tables
+  assert counted(15, 24) == 15 * n * n + 24 * n * n // 4
+
+
 @pytest.mark.parametrize("name", ["HS118", "DUALC1", "QAFIRO", "CVXQP1_S"])
 def test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds(name: str) -> None:
   """The model and the sparse backend share one analysis of the KKT pattern, made once."""
@@ -51,7 +68,10 @@ def test_the_sparse_counts_are_those_of_the_factorization_the_backend_builds(nam
     ("DUALC8", "dense"),
     ("CVXQP1_S", "sparse"),
     ("QAFIRO", "sparse"),
-    ("DUAL3", "sparse"),
+    ("DUAL3", "dense"),  # a dense Hessian of order 111: since the factor went into blocks
+    ("DUAL1", "dense"),
+    ("PRIMALC1", "sparse"),
+    ("HS118", "sparse"),
   ],
 )
 def test_the_reference_machine_takes_the_faster_backend(name: str, backend: str) -> None:
@@ -72,7 +92,7 @@ def test_the_choice_is_the_same_for_every_target() -> None:
   for name in PRESETS:
     with sc.target(name):
       choices.add(choose_backend(s))
-  assert choices == {"sparse"}
+  assert choices == {"dense"}
 
 
 def test_the_dense_factor_is_weighed_as_the_reference_machine_generates_it() -> None:
