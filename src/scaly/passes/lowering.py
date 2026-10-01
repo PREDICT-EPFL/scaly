@@ -51,6 +51,7 @@ from ..ir.program_spec import verify_program
 from ..ir.target import Target, resolve_target
 from ..ir.types import DeviceSpec, DType, dtypes
 from .affine import affine_index_map
+from .batch import batch_maps
 from .expr import cse_many, simplify
 from ..utils.names import c_ident
 from ..utils.options import default_options
@@ -228,6 +229,9 @@ def _lower_to_proc(
 ) -> ProgramNode:
   lowering = fun._effective_lowering()
   fun = _normalize_function(fun)
+  batched = batch_maps(fun, target)
+  if batched is not fun:  # the batched bodies bring reshapes of reshapes and the like with them
+    fun = _normalize_function(batched)
   if observe_expr is not None:
     observe_expr("normalized", fun)
   # The chain is found on exactly the graph being lowered, so its node ids are this graph's. The

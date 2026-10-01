@@ -1,0 +1,12 @@
+# e2_surrogate.py: E2's surrogate kernel (a network and its Jacobian at ten nodes) per call, before and after the
+# batching pass (passes/batch.py, C-238), beside NumPy's batched form. Best of two runs of each tree, alternated;
+# Apple M3 Max, load average 3. 'before' is the tree with C-237 in (25.0 ms at 12x512, against 25.6 on the tree
+# before it). results/e2_surrogate_before.txt reads 43-46 ms there and 3 ms for NumPy: it was taken under a load
+# average of 15, which slowed both alike, so its ratios stand and its times do not.
+layers x width   before us    after us after/before   numpy us before/numpy after/numpy
+          2x16         4.7         3.4        0.723       31.2         0.15        0.11
+         2x128        77.9        33.2        0.426       57.2         1.36        0.58
+          5x16         7.0         6.4        0.914       50.3         0.14        0.13
+         5x128       287.2       105.0        0.366      124.7         2.30        0.84
+         12x32        44.9        30.0        0.668      113.2         0.40        0.27
+        12x512     24796.2      4496.0        0.181     1748.1        14.18        2.57

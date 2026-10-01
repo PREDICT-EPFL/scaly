@@ -155,7 +155,8 @@ trait names the program op it computes and one shared rule lowers them all, so a
 op is a trait and adding a structural op is a rule. The rule gets a `LowerCtx` whose public part
 (buffers, `emit`, fresh names, the shared loops) is all an op defined outside the compiler needs.
 `lower_function` normalizes private copies of the outputs while preserving Function policy and
-metadata, walks the DAG topologically, emits one procedure per reached `Function`, deduplicates
+metadata, writes each map that gains by it as one expression over all its trips
+([`passes/batch.py`](lowering.md#maps-as-batched-expressions)), walks the DAG topologically, emits one procedure per reached `Function`, deduplicates
 callees, runs the optimization pipeline, and verifies.
 
 An op or case outside the lowered subset raises `LoweringError`. There is no fallback, which is

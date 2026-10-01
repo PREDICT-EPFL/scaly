@@ -32,6 +32,7 @@ src/scaly/
     affine.py            the affine structure of a concrete index array, for table-free gathers
     arith.py             shared arithmetic identities (simplify_arith, fold_program)
     expr.py              simplify, constant folding, CSE            (Expr -> Expr)
+    batch.py             a map whose body has batched forms as one expression over its trips (Function -> Function)
     lowering.py          lower_function, the per-ExprOp rule registry (Expr -> ProgramNode)
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE, the slots passes are inserted at, and optimize_program
@@ -249,7 +250,7 @@ one, never a higher one.
 | 3 | `function/{model,tree,extern,method}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, the protocol a Function with an extern body implements, and the method interface every domain shares. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
 | 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `roots/*`, `interp/*`, `integrators/*`, `sets/*`, `ocp/*`, `nn/*`, `geometry/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, nonlinear equations, splines, integrators and optimal control. |
-| 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
+| 6 | `passes/lowering`, `passes/batch`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*`, `export/*` | The backend: render, compile, load, dispatch; and the output adapters and drop-ins for other tools. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `scaly/__init__`, `scaly/ext` | The public names sit above everything they re-export, the extension API with them. |

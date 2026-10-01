@@ -49,6 +49,36 @@ while the Functions that C calls lower normally.
 Not covered: device placement other than the host, and the operations listed as absent in
 [the expression dialect](ir.md#operations). Both raise `LoweringError`.
 
+## Maps as batched expressions
+
+Before a Function's graph is lowered, `batch_maps` (`passes/batch.py`) looks at each `VMAP` in it.
+A mapped body multiplies by its weights once a trip, so a matrix every trip shares is read as many
+times as there are trips, and each product is as narrow as one trip's value. The pass writes the
+whole map as one expression over all its trips. Every value that changes with the trip takes the
+trips as a leading axis, an elementwise op runs over that axis, a move of data (`reshape`,
+`transpose`, a slice, `stack`, `concat`) carries it along, and a product with a shared matrix
+becomes one matrix product over all the trips' rows. That product reads the matrix once and fills
+the register tiles a single trip's product could not. A constant matrix on the left is transposed
+when the code is generated; one known only at run time is not copied, and multiplies the trips'
+columns placed side by side. Each output is the same sum in the same order as in the loop.
+
+The loop is kept in these cases:
+
+- the body holds an op with no such form: a product of two values that both change with the
+  trip, a reduction, a gather or scatter, a call, a nested loop;
+- a mapped input's windows overlap or leave gaps, or an output does not change with the trip;
+- the body carries a lowering hint (`.block()`, `.scalar()`), which is a request about its own
+  procedure;
+- the batched form is not expected faster on the target.
+
+The last is decided from the target. A product of a mapped value and a shared matrix gains when
+the trips together fill register tiles (`Target.product_tile`) that one trip did not, or when the
+shared matrix is larger than `Target.panel_bytes`, half the level-1 data cache, so that the loop
+read it from the level-2 cache at every trip. A product that fills the tiles at every trip
+already, by a matrix that stays in the cache, runs the same multiply-adds either way. A body is
+batched when the products that gain are at least half of the multiply-adds of all its products
+with a mapped operand. A target of one lane has no tiles and keeps every loop.
+
 ## Program forms
 
 Loopy code, or loop form, keeps buffers and loops. Scalarized code, or scalar form, expands
