@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _attrs_key, define_rules, gather, matmul, op_def, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _attrs_key, define_rules, gather, matmul, op_def, scatter, stack, topo, zeros_like
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -21,7 +21,9 @@ def simplify(expr: Expr) -> Expr:
   Covers the shared arithmetic identities of ``passes/arith.py`` (neutral elements, zero
   annihilation, ``x - x``, negation normalization, small constant powers), folding of all-constant
   subgraphs, identity reshape, transpose and gather, slice of slice, slice of stack, ``A.T @ v`` as
-  ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and a matmul with an all-ones vector as sums.
+  ``v @ A`` (and ``v @ A.T`` as ``A @ v``), a matmul with an all-ones vector as sums, and the
+  composition of a gather with what it reads: another gather, a transpose, a scatter, or a sum
+  of such, so that an array which is only placed and picked from is never formed.
   """
   return rewrite(expr, SIMPLIFY_PATTERNS, fixpoint=False, revisit=True, max_steps=100_000)
 
@@ -357,6 +359,61 @@ def _scatter_to_gather(e: Expr) -> Expr:
   return gather(e.args[0].reshape((e.args[0].size,)), inverse.reshape(e.shape))
 
 
+def _gather_of_transpose(e: Expr) -> Expr:
+  """A gather of a transpose is a gather of what was transposed, at the transposed places."""
+  moved = _gathered(e)
+  axes = moved.attrs["axes"]
+  coords = np.unravel_index(np.asarray(e.attrs["indices"]), moved.shape)
+  back = [coords[axes.index(axis)] for axis in range(len(axes))]  # coordinate ``axis`` of the source is the transposed one at its place in ``axes``
+  flat = np.zeros_like(back[0])
+  for coord, size in zip(back, moved.args[0].shape, strict=True):
+    flat = flat * size + coord
+  return gather(moved.args[0], flat)
+
+
+def _opens(e: Expr) -> bool:
+  """Whether a gather of ``e`` simplifies further: ``e`` is, through reshapes, transposes and
+  sums, built of scatters and gathers, whose index tables compose with the gather's."""
+  pending = [e]
+  while pending:
+    cur = _source(pending.pop())
+    if cur.op == ExprOp.GATHER or (cur.op == ExprOp.SEGMENT_REDUCE and _is_scatter(cur)):
+      return True
+    if cur.op == ExprOp.TRANSPOSE or (cur.op == ExprOp.ADD and all(arg.shape == cur.shape for arg in cur.args)):
+      pending.extend(cur.args)
+  return False
+
+
+def _gather_of_sum(e: Expr) -> Expr:
+  """A gather of a sum whose terms are placed or picked arrays is the sum of the terms' gathers,
+  each of which composes with its own table: the assembly of a sparse derivative, which sums
+  blocks scattered into a compressed matrix and then gathers the nonzeros, never forms the matrix."""
+  total = _gathered(e)
+  flat = (total.size,)
+  x, y = (gather(arg.reshape(flat), e.attrs["indices"]) for arg in total.args)
+  return x + y
+
+
+def _gather_of_scatter(e: Expr) -> Expr:
+  """A gather of scattered values reads the values directly: each place gathered takes the values
+  scattered to it (none: zero; several: their sum), so the zero array they were placed in is
+  never filled. Every place taking exactly one value is a plain gather."""
+  placed = _gathered(e)
+  at = np.asarray(placed.attrs["indices"]).reshape(-1)
+  wanted = np.asarray(e.attrs["indices"]).reshape(-1)
+  order = np.argsort(at, kind="stable")
+  first, last = np.searchsorted(at[order], wanted, side="left"), np.searchsorted(at[order], wanted, side="right")
+  counts = last - first
+  into = np.repeat(np.arange(wanted.size), counts)
+  source = order[np.concatenate([np.arange(a, b) for a, b in zip(first, last, strict=True) if b > a])] if into.size else into
+  values = placed.args[0].reshape((placed.args[0].size,))
+  if not into.size:
+    return zeros_like(e)
+  if np.all(counts == 1):
+    return gather(values, source.reshape(e.shape))
+  return scatter(gather(values, source), into, e.shape)
+
+
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
   *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
@@ -369,6 +426,9 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.GATHER, _compose_gathers),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.TRANSPOSE, _gather_of_transpose),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.ADD and _opens(_gathered(e)), _gather_of_sum),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.SEGMENT_REDUCE and _is_scatter(_gathered(e)), _gather_of_scatter),
   Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and not _is_zero(e.args[0]) and _is_permutation(e), _scatter_to_gather),
   Pattern(ExprOp.TRANSPOSE, lambda e: _source(e.args[0]).op == ExprOp.GATHER, _transpose_of_gather),
   Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and _is_zero(e.args[0]), _zero_unary),

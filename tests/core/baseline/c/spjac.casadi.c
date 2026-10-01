@@ -45,11 +45,11 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   double* spjac_eq_z_native = w + 0;
   double s0[36];
-  static const int64_t k[36] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11};
-  static const double k_5[36] = {1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0};
-  static const double k_10[36] = {0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0};
-  static const double k_11[36] = {1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0};
-  static const double k_12[36] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1};
+  static const int64_t k_6[36] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11};
+  static const double k[36] = {1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0};
+  static const double k_7[36] = {0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0};
+  static const double k_8[36] = {1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0};
+  static const double k_9[36] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1};
   double s1[12];
   double s2[12];
   double s3[12];
@@ -72,8 +72,8 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
     }
   }
   for (long long i_spjac_eq_z = 0; i_spjac_eq_z < 36; ++i_spjac_eq_z) {
-    int64_t v0 = k[i_spjac_eq_z];
-    spjac_eq_z_native[i_spjac_eq_z] = ((((k_5[i_spjac_eq_z] * s1[v0]) + (k_10[i_spjac_eq_z] * s2[v0])) + (k_11[i_spjac_eq_z] * s3[v0])) - k_12[i_spjac_eq_z]);
+    int64_t v0 = k_6[i_spjac_eq_z];
+    spjac_eq_z_native[i_spjac_eq_z] = ((((k[i_spjac_eq_z] * s1[v0]) + (k_7[i_spjac_eq_z] * s2[v0])) + (k_8[i_spjac_eq_z] * s3[v0])) - k_9[i_spjac_eq_z]);
   }
   static const int spjac_eq_z_csc_val_perm[36] = {0, 3, 1, 6, 9, 4, 7, 10, 2, 12, 5, 15, 8, 13, 18, 21, 11, 16, 19, 22, 14, 24, 17, 27, 20, 25, 30, 33, 23, 28, 31, 34, 26, 29, 32, 35};
   for (int k = 0; k < 36; ++k) res[0][k] = spjac_eq_z_native[spjac_eq_z_csc_val_perm[k]];

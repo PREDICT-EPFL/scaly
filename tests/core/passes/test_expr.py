@@ -185,3 +185,102 @@ def test_gathers_scatters_and_transposes_compose_into_one_gather() -> None:
   expected[perm] = np.sin(xv)
   np.testing.assert_array_equal(b, expected)
   np.testing.assert_array_equal(c, xv[::-1].reshape(3, 4).T)
+
+
+def _ops(e: sc.Expr) -> list[sc.Expr]:
+  from scaly.ir.expr import topo
+
+  return topo([e])
+
+
+def test_a_gather_of_a_transpose_reads_what_was_transposed() -> None:
+  """A gather's table and the transpose under it compose when the graph is built: the transpose is
+  never materialized, whatever it transposes."""
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("gt_x", (4, 6))
+  picks = np.array([0, 5, 7, 23, 11])
+  moved = simplify(sc.gather(x.T, picks))
+  assert moved.op == sc.ExprOp.GATHER and moved.args[0].op != sc.ExprOp.TRANSPOSE
+  assert moved.attrs["indices"].tolist() == [int(q // 4 + (q % 4) * 6) for q in picks]
+  cube = sc.sym("gt_c", (2, 3, 4))
+  axes = (2, 0, 1)
+  some = np.array([[0, 23], [7, 12]])
+  turned = simplify(sc.gather(cube.transpose(axes), some))
+  assert turned.shape == (2, 2) and not any(n.op == sc.ExprOp.TRANSPOSE for n in _ops(turned))
+  computed = simplify(sc.gather(x.T.sin(), picks))  # an operation between them keeps both
+  assert any(n.op == sc.ExprOp.TRANSPOSE for n in _ops(computed))
+  fn = sc.Function.from_exprs("gt", [x, cube], [moved, turned], ["x", "c"], ["a", "b"])
+  xv, cv = np.arange(24.0).reshape(4, 6) * 0.5, np.arange(24.0).reshape(2, 3, 4) - 7.0
+  a, b = fn((xv, cv))
+  np.testing.assert_array_equal(a, xv.T.ravel()[picks])
+  np.testing.assert_array_equal(b, cv.transpose(axes).ravel()[some])
+
+
+SCATTERED = {
+  "each place once": [9, 7, 11],
+  "a place several values went to": [2, 9],
+  "nothing was placed there": [0, 9, 5],
+  "only places nothing went to": [0, 1],
+  "a place read twice": [7, 7, 11, 2],
+  "a table of two axes": [[9, 0], [2, 2]],
+}
+
+
+@pytest.mark.parametrize("why", SCATTERED)
+def test_a_gather_of_scattered_values_reads_the_values(why: str) -> None:
+  """The zero array the values were placed in is never filled: a place gathered takes the values
+  scattered to it, added in the order they were scattered, and zero if there were none."""
+  from scaly.passes.expr import simplify
+
+  v = sc.sym("gs_v", 6)
+  at = np.array([7, 2, 9, 2, 2, 11])  # three values go to place 2, where their order decides the sum
+  picks = np.array(SCATTERED[why])
+  got = simplify(sc.gather(sc.scatter(v * 2.0, at, (12,)), picks))
+  assert got.shape == picks.shape and not any(n.size == 12 for n in _ops(got))
+  if why == "each place once":  # one value each: a plain gather of the values
+    assert got.op == sc.ExprOp.GATHER and got.attrs["indices"].tolist() == [2, 0, 5]
+    assert not any(n.op == sc.ExprOp.SEGMENT_REDUCE for n in _ops(got))
+  if why == "only places nothing went to":
+    assert got.op == sc.ExprOp.CONST and not np.asarray(got.value).any()
+  vv = np.array([1.0, 1.0, 3.0, 1e16, -1e16, 5.0])
+  dense = np.zeros(12)
+  np.add.at(dense, at, vv * 2.0)
+  assert dense[2] == 0.0  # (2 + 2e16) - 2e16: the other order gives 2
+  np.testing.assert_array_equal(sc.Function.from_exprs(f"gs_{len(why)}", [v], [got.block()], ["v"], ["g"])(vv), dense[picks])
+
+
+def test_a_gather_of_another_segment_reduction_keeps_it() -> None:
+  """A maximum per place is no sum of placed values: the places are reduced, then gathered."""
+  from scaly.ir.expr import segment_max
+  from scaly.passes.expr import simplify
+
+  v = sc.sym("gm_v", 5)
+  at, picks = np.array([3, 1, 3, 0, 1]), np.array([3, 1])
+  got = simplify(sc.gather(segment_max(v, at, 4, fill=-1.0), picks))
+  assert got.op == sc.ExprOp.GATHER and got.args[0].op == sc.ExprOp.SEGMENT_REDUCE and got.args[0].size == 4
+  vv = np.array([2.0, -3.0, 7.0, 1.0, 4.0])
+  np.testing.assert_array_equal(sc.Function.from_exprs("gm", [v], [got.block()], ["v"], ["g"])(vv), [7.0, 4.0])
+
+
+def test_a_gather_of_a_sum_of_placed_blocks_never_forms_the_array() -> None:
+  """A sparse derivative's assembly: blocks scattered into a compressed matrix, summed, the matrix
+  transposed, its nonzeros gathered. Simplified, each block's values go straight to the nonzeros
+  they reach; nothing of the matrix's size is left. A sum of computed arrays stays one gather."""
+  from scaly.passes.expr import simplify
+
+  a, b, c = sc.sym("gp_a", 12), sc.sym("gp_b", (3, 4)), sc.sym("gp_c", 60)
+  first = sc.scatter(a, np.arange(12) * 5, (60,)).reshape((6, 10))
+  second = sc.scatter(b.T.reshape((12,)) * 3.0, 59 - np.arange(12) * 5, (60,)).reshape((6, 10))
+  picks = np.array([0, 6, 12, 30, 59, 54, 1, 35])
+  matrix = (first + second + c.reshape((6, 10)).cos()).T
+  got = simplify(sc.gather(matrix, picks))
+  assert got.shape == (8,) and not any(n.op in (sc.ExprOp.SEGMENT_REDUCE, sc.ExprOp.TRANSPOSE) and n.size == 60 for n in _ops(got))
+  plain = simplify(sc.gather((c.sin() + c.cos()).reshape((6, 10)), picks))
+  assert plain.op == sc.ExprOp.GATHER and plain.args[0].op in (sc.ExprOp.ADD, sc.ExprOp.RESHAPE)
+  av, bv, cv = np.arange(1.0, 13.0), np.arange(12.0).reshape(3, 4) - 5.5, np.linspace(-1.0, 1.0, 60)
+  dense = np.zeros(60)
+  dense[np.arange(12) * 5] += av
+  dense[59 - np.arange(12) * 5] += bv.T.ravel() * 3.0
+  want = (dense + np.cos(cv)).reshape(6, 10).T.ravel()[picks]
+  np.testing.assert_array_equal(sc.Function.from_exprs("gp", [a, b, c], [got.block()], ["a", "b", "c"], ["g"])((av, bv, cv)), want)

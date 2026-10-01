@@ -151,10 +151,10 @@ def _fold_tables(body: list[ProgramNode], reserved: set[str]) -> list[ProgramNod
     return found is not None and found[0] is not None
 
   def value_read(n: ProgramNode) -> bool:
-    """A constant table of another type (the values a gather picks) read at a table this pass made,
-    when the values picked are no more than the table held."""
+    """A constant table of another type (the values a gather picks) read at an index table's entry,
+    when the values picked are no more than the table held: the gather is done here."""
     decl = constants.get(n.args[0].attrs["buffer"])
-    if decl is None or decl.attrs["name"] in tables or len(n.args[0].args) != 1 or not divides(n.args[0].args[0]):
+    if decl is None or decl.attrs["name"] in tables or len(n.args[0].args) != 1:
       return False
     at = _table_function(n.args[0].args[0], tables)
     if at is None or at[0] is None or not at[1].size or at[1].size > len(decl.attrs["values"]):

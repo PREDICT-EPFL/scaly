@@ -366,8 +366,8 @@ def test_index_arithmetic_that_is_not_a_table_stays(why: str) -> None:
 
 
 def test_a_constant_table_read_at_a_folded_index_becomes_the_values_picked() -> None:
-  """The values a gather picks through a composed table are a table of their own when they are no
-  more than the table held; through a plain index table they stay where they are."""
+  """The values a gather picks through an index table are a table of their own when they are no
+  more than the table held."""
   values = p.const_buffer("c", dtypes.float64, (4, 6), [float(v) * 0.5 for v in range(24)])
   picks = [0, 5, 7, 23, 11, 18]
   k = _index_table("k", picks)
@@ -376,8 +376,8 @@ def test_a_constant_table_read_at_a_folded_index_becomes_the_values_picked() -> 
   (table,) = buffers
   assert table.dtype == dtypes.float64 and list(table.attrs["values"]) == [(q // 4 + (q % 4) * 6) * 0.5 for q in picks]
   assert stored.args[1].args[0].args[0].op == ProgramOp.VAR  # read at the loop's own index
-  buffers, stored = _folded_gather(lambda i: load(view(k, [i])), [k], source=values)
-  assert {b.attrs["name"] for b in buffers} == {"c", "k"}
+  buffers, stored = _folded_gather(lambda i: load(view(k, [i])), [k], source=values)  # a plain index table too
+  assert [list(b.attrs["values"]) for b in buffers] == [[q * 0.5 for q in picks]] and stored.args[1].args[0].args[0].op == ProgramOp.VAR
   wide = _index_table("w", [q % 24 for q in range(0, 300, 50)])  # six picks of a table of four: it would grow
   small = p.const_buffer("c", dtypes.float64, (4,), [1.0, 2.0, 3.0, 4.0])
   buffers, stored = _folded_gather(lambda i: p.div(load(view(wide, [i])), const_int(8)), [wide], source=small)
@@ -1039,6 +1039,34 @@ def test_slot_assignment_matches_the_linear_scan() -> None:
       free_at[slot] = last + 1
       expected.append(slot)
     assert _assign_slots(items) == expected
+
+
+def test_a_periodic_gather_splits_at_its_table() -> None:
+  """A gather whose map repeats with a period reads ``x[k[i % 13] + (i / 13) * 12]``. The split takes
+  the index apart at the table: one loop per period and one within it, the table read at the inner
+  coordinate, and no division left. A table read at an index no factorization makes affine keeps
+  the flat loop."""
+  from scaly.codegen import render_c_source
+
+  base = np.array([0, 3, 1, 7, 2, 11, 5, 4, 9, 6, 10, 8, 1])
+  periodic = (base[None, :] + 12 * np.arange(5)[:, None]).ravel()
+  x = sc.sym("x", 72)
+  fn = sc.Function.from_exprs("periodic_gather", [x], [(sc.gather(x, periodic) * 2.0).block()], ["x"], ["y"])
+  body = render_c_source(fn, target="apple-m3").split("int periodic_gather(")[1]
+  assert " / " not in body and " % " not in body
+  assert re.search(r"for \(long long (\w+) = 0; \1 < 5;.*\n\s+for \(long long (\w+) = 0; \2 < 13;", body)
+  assert re.search(r"arg\[0\]\[\(k\d+\[\w+\] \+ \(12 \* \w+\)\)\]", body)
+  xv = np.arange(72.0) * 0.25
+  np.testing.assert_array_equal(np.asarray(fn(xv)), xv[periodic] * 2.0)
+
+  from scaly.passes.program.delinearize_loops import delinearize_loops
+
+  k = p.const_buffer("k", dtypes.int64, (13,), [int(v) for v in base])
+  xb, yb, i = buffer("x", dtypes.float64, (200,)), buffer("y", dtypes.float64, (65,)), var("i")
+  skewed = p.add(load(view(k, [p.mod(p.mul(i, i), const_int(13))])), p.mul(p.div(i, const_int(13)), const_int(12)))
+  flat = for_(range_("i", 0, 65, kind=RangeKind.GLOBAL), [store(view(yb, [i]), load(view(xb, [skewed])))])
+  kept = delinearize_loops(program([proc_("skewed", [xb, yb], [k, flat])])).args[0]
+  assert kept.args[-1] is flat
 
 
 def test_delinearized_strided_loops_index_by_the_variables_values() -> None:

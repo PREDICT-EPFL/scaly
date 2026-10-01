@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 223**
+**Next id: 224**
 
 | Prefix | Section |
 |---|---|
@@ -1067,6 +1067,19 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       nothing. Chain M = 9 0.93 of its time, M = 5 0.955, race cars 0.96-0.97 (the gate asked
       0.92: the out-of-line profile overstated the gather), their Jacobian 0.98
       (`results/corpus_c222.json`); seven corpus kernels render other C, none slower.
+- [x] **C-223. A gather reads placed blocks directly: the compressed matrix is never formed
+      (B1's first part, Tier 6).** A sparse Hessian was assembled by scattering each term's block
+      into a seeds-by-columns array, summing, transposing and gathering the nonzeros: four passes
+      over an array 2-2.5x the result's size. Three rules in `simplify` (`passes/expr.py`): a
+      gather of a transpose reads what was transposed; a gather of a sum of placed or picked
+      arrays is the sum of the terms' gathers; a gather of scattered values reads the values, each
+      place taking those scattered to it, in order. The nonzeros are then scatter-added from each
+      term's values, and `delinearize_loops` takes a periodic table read apart at the table so
+      that it costs no division. `fold_arith` picks a constant table's values through any index
+      table. Same bits on every corpus output. Chain M = 5 and 9 0.93 of their time, race cars
+      0.98-0.99, HS118's IPM 0.97; workspace 0.78 of its size on the chain
+      (`results/corpus_c223.json`). Left for C-77: the terms' loops are still separate passes,
+      and the two big ones are driven by index tables of the nonzeros' size.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

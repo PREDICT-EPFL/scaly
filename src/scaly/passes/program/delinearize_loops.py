@@ -6,6 +6,10 @@ fusing two such loops composes their maps, so one load can carry four divisions.
 in the loop is affine in the coordinates of one factorization of ``k``'s range, the loop becomes
 one loop per coordinate and each index a sum of coordinates times constants: no divisions, and the
 innermost loop reads and writes at constant strides the C compiler can vectorize.
+
+An index that reads a table (a gather whose map repeats with a period: ``t[k % 13] + (k / 13) * 12``)
+is taken apart at the table: the arithmetic around the read and the index of the read itself are
+each made affine, and the read stays, at its coordinate.
 """
 
 from __future__ import annotations
@@ -122,6 +126,21 @@ def _factor(arrays: list[np.ndarray]) -> tuple[list[int], list[list[int]], list[
   return dims, coeffs, [int(a[0]) for a in rest]
 
 
+def _loads(node: ProgramNode) -> bool:
+  return node.op == ProgramOp.LOAD or any(_loads(a) for a in node.args)
+
+
+def _pieces(component: ProgramNode, out: list[ProgramNode]) -> None:
+  """The parts of an index that must be affine in the new coordinates: the index itself, or, when
+  it reads a table, the largest subexpressions around the reads that do not (a read's own index is
+  the component of its view)."""
+  if not _loads(component):
+    out.append(component)
+  elif component.op != ProgramOp.LOAD:
+    for arg in component.args:
+      _pieces(arg, out)
+
+
 def _split(loop: ProgramNode) -> ProgramNode | None:
   rng, *body = loop.args
   if loop.attrs.get("exit_var") or rng.attrs["kind"] not in _KINDS:
@@ -132,7 +151,10 @@ def _split(loop: ProgramNode) -> ProgramNode | None:
   views: list[ProgramNode] = []
   if not all(_views(stmt, views) for stmt in body):
     return None
-  components = [c for v in views for c in v.args]
+  components: list[ProgramNode] = []
+  for v in views:
+    for c in v.args:
+      _pieces(c, components)
   if not any(_divides(c) for c in components):
     return None
   name = rng.attrs["name"]
@@ -163,8 +185,8 @@ def _split(loop: ProgramNode) -> ProgramNode | None:
     replaced[id(component)] = expr
 
   def rebuild(node: ProgramNode) -> ProgramNode:
-    if node.op == ProgramOp.VIEW:
-      return ProgramNode(ProgramOp.VIEW, tuple(replaced.get(id(c), c) for c in node.args), node.attrs, node.dtype)
+    if id(node) in replaced:
+      return replaced[id(node)]
     args = tuple(rebuild(a) for a in node.args)
     return node if all(a is b for a, b in zip(args, node.args, strict=True)) else ProgramNode(node.op, args, node.attrs, node.dtype)
 

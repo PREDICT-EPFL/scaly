@@ -37,11 +37,11 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   double s0[36];
-  static const int64_t k[36] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11};
-  static const double k_5[36] = {1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0};
-  static const double k_10[36] = {0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0};
-  static const double k_11[36] = {1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0};
-  static const double k_12[36] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1};
+  static const int64_t k_6[36] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11};
+  static const double k[36] = {1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0};
+  static const double k_7[36] = {0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0};
+  static const double k_8[36] = {1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0};
+  static const double k_9[36] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1};
   double s1[12];
   double s2[12];
   double s3[12];
@@ -64,8 +64,8 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
     }
   }
   for (long long i_spjac_eq_z = 0; i_spjac_eq_z < 36; ++i_spjac_eq_z) {
-    int64_t v0 = k[i_spjac_eq_z];
-    res[0][i_spjac_eq_z] = ((((k_5[i_spjac_eq_z] * s1[v0]) + (k_10[i_spjac_eq_z] * s2[v0])) + (k_11[i_spjac_eq_z] * s3[v0])) - k_12[i_spjac_eq_z]);
+    int64_t v0 = k_6[i_spjac_eq_z];
+    res[0][i_spjac_eq_z] = ((((k[i_spjac_eq_z] * s1[v0]) + (k_7[i_spjac_eq_z] * s2[v0])) + (k_8[i_spjac_eq_z] * s3[v0])) - k_9[i_spjac_eq_z]);
   }
   return SCALY_SUCCESS;
 }

@@ -147,3 +147,11 @@ against it.
 structural pattern, star-colors that graph once, and uses a constant recovery table to gather every
 entry from the compressed products. It bypasses the top-level `_sparse_jacobian_vmap` construction
 shortcut, while global JVP rules retain one-sided coloring on each local VMAP tile.
+
+The compressed products are a sum of blocks, each scattered to its place in a colors-by-columns
+array, and the recovery gathers the nonzeros from that array. The simplifier composes the three
+when the graph is built, so the array is never formed. A gather of a transpose reads what was
+transposed, a gather of a sum of placed arrays is the sum of the terms' gathers, and a gather of
+scattered values reads the values that reach each place, added in the order they were scattered.
+Each block's values then go straight to the nonzeros they contribute to, and the result has the
+same bits as the array would have given.
