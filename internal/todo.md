@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 233**
+**Next id: 238**
 
 | Prefix | Section |
 |---|---|
@@ -1194,15 +1194,6 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       one that reads nothing: `[2.5, 2.5, 3.5]` where NumPy and the two-slot loop give
       `[1.5, 2.5, 3.5]`. The trait is gone from both, and a path through either keeps two slots.
       The same line read `nonsmooth` while rendering, so the C depended on an option in force.
-- [x] **C-228. An interning hit rewrites the node it finds.** `Expr.__new__` returned the cached
-      node and the dataclass `__init__` then assigned the new call's fields to it: building
-      `take(fill=-0.0)` turned an existing `take(fill=0.0)` into it, and a Function built before
-      returned `-0.0`. The same for `1`, `True` and `1.0`, and for equal type objects. Found by
-      C-225's review. Fixed both ways. `Expr` takes `init=False` and `__new__` assigns the fields
-      of a new node only, so a hit returns the node as it was built, whatever the key merges
-      (equal type objects, a list with a tuple, `np.int64(1)` with `1`). And `_attrs_key` keys a
-      float by its bits and a bool and a float by kind, as `ProgramNode` interning and
-      `codegen/structure.py` do, so those are separate nodes: with the first fix alone the
       That is coarse: a body that reads through `floor` only entries it does not write loses
       the in-place form too. A tighter rule the second review prototyped (a read pattern in
       which every elementwise op and `select` reads the union of its arguments' patterns)
@@ -1222,6 +1213,15 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       had no JIT key; it compares by equality now. Tests in `tests/core/ir/test_expr.py` and
       `tests/core/codegen/test_structure.py`; taking out either half of the fix, or the change
       to the extern check, fails them.
+- [x] **C-228. An interning hit rewrites the node it finds.** `Expr.__new__` returned the cached
+      node and the dataclass `__init__` then assigned the new call's fields to it: building
+      `take(fill=-0.0)` turned an existing `take(fill=0.0)` into it, and a Function built before
+      returned `-0.0`. The same for `1`, `True` and `1.0`, and for equal type objects. Found by
+      C-225's review. Fixed both ways. `Expr` takes `init=False` and `__new__` assigns the fields
+      of a new node only, so a hit returns the node as it was built, whatever the key merges
+      (equal type objects, a list with a tuple, `np.int64(1)` with `1`). And `_attrs_key` keys a
+      float by its bits and a bool and a float by kind, as `ProgramNode` interning and
+      `codegen/structure.py` do, so those are separate nodes: with the first fix alone the
 - [x] **C-229. The rows of a single-right-hand-side triangular solve sum in the target's count of
       partial sums (B4, Tier 7).** Eight partial sums in every reduction, the form C-196 left
       for when QBEACONF's gate was settled, measured again: the corpus 1.002 in geometric mean
@@ -1255,6 +1255,33 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       `True`, left the first holding `True`. The builders coerce (`const_int` calls `int`)
       and no wrong C was known. Fixed both ways, as C-228. `ProgramNode` takes `init=False` and
       `__new__` is the whole constructor: a hit returns the node as it was built, and a node
+- [x] **C-237. A product's rows go in the fewest register tiles, and constant tables of values
+      are aligned (A9's kernel gaps, Tier 8).** Two gaps the batching prototype exposed, each
+      independent of the rewrite. (1) The rows left over after the tiles of four ran one at a
+      time, each reading all of `b`: 10 rows against a 512 x 512 `b` ran at 15 GF/s where 32
+      ran at 24. Every tile of rows reads `b` once, so the rows now go in the fewest tiles of
+      at most `Target.tile_rows_max` rows, of even heights (`_row_tiles`): the model's rows and
+      half again where the registers hold them, six on the M3. Three partitions were measured
+      (`results/a9_products.txt`): tiles of five and six rows are within the 2% noise of tiles
+      of four on a `b` in the level-1 cache, and 5-35% faster on one read from memory. (2) A
+      constant table took its element's alignment, so the vector loads of a constant `b`
+      straddled cache lines: read from the level-2 cache, the same product ran at 0.4-0.7 of
+      its rate with `b` an input. Tables of floating-point values larger than the target's
+      level-1 data cache are now declared aligned to 64 bytes (`lowering.TABLE_ALIGN`, marked
+      where the constant is lowered). No other table is: aligning every table of 64 bytes or
+      more gave the same product rates, but `sparse_ldl_mpc50` measured 5% slower three times
+      over with its index tables aligned, and the dense IPM on CVXQP3_S 9% slower twice with
+      two small tables of values aligned, by where their other tables then fell, and a `b`
+      that fits the cache had no penalty to remove. After both, every product of 5 to 64 rows
+      against a 256- to 520-wide `b` runs at 24-26 GF/s, constant or input, 0.34-1.01 of its
+      time before (the gate asked the few-row products within 10% of the 32-row rate).
+      Corpus 1.001 in geometric mean: of the eight kernels whose C changes, `matmul_48` at
+      0.93-0.98 over five timings and the rest within the 2% that kernels of unchanged C show
+      (`results/corpus_t8_c237.json`); dense IPM: no iteration count changes, the 13 problems whose C changes
+      at 0.998 in geometric mean (DUALC1 0.96 and `ex_dense` 1.03, each in three timings of
+      three) and the 42 whose C does not at 1.000, between 0.93 and 1.10, the noise of a shared
+      machine (`results/c237_dense.md`). 26 mutants, all killed after
+      a panel-form case with a lone tile was added.
       holds a tuple of its arguments and its own copy of `attrs`. `__post_init__` and
       `_initialized` are gone (nothing else read them; the op coercion there was dead, a string
       op failing in `__new__` first). And `_attr_key` keys a bool, NumPy's too, by its kind, so

@@ -323,11 +323,13 @@ def buffer(name: str, dtype: DType, shape: tuple[int, ...], *, address_space: st
   )
 
 
-def const_buffer(name: str, dtype: DType, shape: tuple[int, ...], values: Sequence[float]) -> ProgramNode:
+def const_buffer(name: str, dtype: DType, shape: tuple[int, ...], values: Sequence[float], *, align: int | None = None) -> ProgramNode:
   """A read-only ``constant``-address-space BUFFER carrying its initializer ``values``.
 
   The renderer emits it as a ``static const`` array; loads read it like any buffer.
-  Lets constants of any size lower without inline-serializing each element.
+  Lets constants of any size lower without inline-serializing each element. ``align`` asks for the
+  array to start on a multiple of that many bytes, where the C compiler would align it to its
+  element.
   """
   return ProgramNode(
     ProgramOp.BUFFER,
@@ -338,6 +340,7 @@ def const_buffer(name: str, dtype: DType, shape: tuple[int, ...], values: Sequen
       "address_space": "constant",
       "device": DeviceSpec.parse(None),
       "values": tuple(values),  # numeric type preserved; the renderer formats by dtype
+      **({"align": int(align)} if align else {}),
     },
     dtype=dtype,
   )

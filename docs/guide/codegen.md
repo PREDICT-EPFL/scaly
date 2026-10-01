@@ -104,8 +104,8 @@ The AOT output and the JIT read the same `CModule`, produced from a single lower
 ## Tuning for a processor
 
 Some choices the lowering makes depend on the processor: how many rows and columns of a matrix
-product keep their sums in registers (`Target.product_tile`, and `Target.row_blocks` for a vector or
-a product of fewer rows than a tile), how much of a matrix is kept in cache at once
+product keep their sums in registers (`Target.product_tile` and `Target.tile_rows_max`, and
+`Target.row_blocks` for a vector or a product of fewer rows than a tile), how much of a matrix is kept in cache at once
 (`Target.panel_bytes`, `Target.l2_bytes`), up to which size a factorization or triangular solve is
 straight-line code (`Target.straight_line_ops`). `sc.Target` describes the processor they are made
 for: its vector width and registers, its multiply-add units and their latency, its level-1 and

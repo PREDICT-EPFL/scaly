@@ -678,6 +678,17 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
   ctx.value_buffers[node.id] = ctx.value_buffers[node.args[0].id]
 
 
+# A table of floating-point values too large for the level-1 data cache starts on a multiple of 64
+# bytes: the width of the widest vector and a cache line of most processors (half of Apple's). The
+# C compiler aligns a table to its element, and every row of a constant ``b`` of 256 or 512
+# columns then had a vector load in four straddle two lines; read from the level-2 cache, the
+# product ran at 0.4 to 0.7 of the rate of the same product with ``b`` an input. A table that fits
+# the cache measured no slower unaligned, and index tables and small tables measured slower
+# aligned in two kernels (5% and 9%, by where the other tables then fell), so the rest stay where
+# the compiler puts them.
+TABLE_ALIGN = 64
+
+
 @lowers(ExprOp.CONST)
 def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   value = node.value
@@ -687,7 +698,9 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   # emit_outputs inserts a copy when a CONST is itself an output. ``tolist`` keeps an int64 exact,
   # where ``float`` would round one above 2**53.
   name = ctx.fresh_name("k")
-  buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), value.reshape(-1).tolist())
+  dtype = node.type.dtype
+  streamed = dtype.is_floating and value.size * dtype.itemsize > ctx.target.choices.l1d_bytes
+  buf = p.const_buffer(name, dtype, _shape_or_scalar(node.shape), value.reshape(-1).tolist(), align=TABLE_ALIGN if streamed else None)
   ctx.buffers[name] = buf
   ctx.value_buffers[node.id] = name
   ctx.emit(buf)
@@ -1115,7 +1128,7 @@ def _lower_columns_blocked(
       nm,
       segments,
       m,
-      tile_rows,
+      target.tile_rows_max,
       kk,
       lambda row, k, col, first: p.mul(a_at(row, k), p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), p.add(first, col))]))),
       lambda row, col, first: p.view(out, [p.add(p.mul(row, c(n)), p.add(first, col))]),
@@ -1127,7 +1140,7 @@ def _lower_columns_blocked(
     tag = f"{nm}_{number}"
     if outermost:
       assert m is not None
-      block = lambda start: _panel_passes(ctx, tag, a_buf, b_buf, out, m, kk, n, start, width, dtype, tile_rows if tiled else 1)  # noqa: E731
+      block = lambda start: _panel_passes(ctx, tag, a_buf, b_buf, out, m, kk, n, start, width, dtype, target.tile_rows_max if tiled else 1)  # noqa: E731
     else:
       block = lambda start: row_block(tag, start, width)  # noqa: E731
     if count > 1:
@@ -1151,6 +1164,15 @@ def _lower_columns_blocked(
   ctx.emit(*_nest([*rows, jrng], [p.store(p.view(out, [idx]), zero)]), *_nest([krng, *rows, jrng], [acc]))
 
 
+def _row_tiles(m: int, most: int) -> list[tuple[int, int, int]]:
+  """``m`` rows of a product in the fewest register tiles of at most ``most`` rows, their heights
+  within one row of each other: (first row, rows a tile, tiles), the taller tiles first. Every
+  tile of rows reads all of ``b``, so fewer tiles read it fewer times."""
+  tiles = -(-m // most)
+  rows, taller = divmod(m, tiles)
+  return [group for group in ((0, rows + 1, taller), (taller * (rows + 1), rows, tiles - taller)) if group[2]]
+
+
 def _lower_row_tiles(
   ctx: LowerCtx,
   nm: str,
@@ -1162,10 +1184,9 @@ def _lower_row_tiles(
   out_at: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode],
   dtype: DType,
 ) -> None:
-  """The tiled columns of every row of a product: ``tile_rows`` rows at a time over each segment's
-  tiles, the rows left over one at a time over the same tiles (``_tile``)."""
+  """The tiled columns of every row of a product: the rows in tiles of ``tile_rows`` rows or fewer
+  (``_row_tiles``), each over every segment's tiles (``_tile``)."""
   c = p.const_int
-  blocks, left = divmod(m, tile_rows)
 
   def over(label: str, rows: list[ProgramNode]) -> list[ProgramNode]:
     stmts: list[ProgramNode] = []
@@ -1182,13 +1203,13 @@ def _lower_row_tiles(
         stmts += tile(c(first))
     return stmts
 
-  if blocks:
-    ib = p.var(f"ib_{nm}")
-    rows = [p.add(p.mul(ib, c(tile_rows)), c(r)) for r in range(tile_rows)]
-    ctx.emit(p.for_(p.range_(ib.attrs["name"], 0, blocks, kind=RangeKind.GLOBAL), over("t", rows)))
-  if left:
-    it = p.var(f"it_{nm}")
-    ctx.emit(p.for_(p.range_(it.attrs["name"], blocks * tile_rows, m, kind=RangeKind.GLOBAL), over("l", [it])))
+  for group, (first, height, count) in enumerate(_row_tiles(m, tile_rows)):
+    if count > 1:
+      ib = p.var(f"ib{group}_{nm}")
+      rows = [p.add(p.mul(ib, c(height)), c(first + r)) for r in range(height)]
+      ctx.emit(p.for_(p.range_(ib.attrs["name"], 0, count, kind=RangeKind.GLOBAL), over(f"t{group}", rows)))
+    else:
+      ctx.emit(*over(f"t{group}", [c(first + r) for r in range(height)]))
 
 
 def _panel_passes(
@@ -1211,8 +1232,8 @@ def _panel_passes(
   would fall into a few sets of the cache and evict itself), then every row of ``a`` passes over it
   with its sums in private scalars, which the first chunk starts at zero and every later one
   resumes from the outputs the chunk before stored. Each output is one chain of multiply-adds in
-  order of ``k``, as in a single pass. With ``tile_rows`` above one, the rows pass ``tile_rows`` at a
-  time as register tiles (``_tile``), the rows left over one at a time."""
+  order of ``k``, as in a single pass. With ``tile_rows`` above one, the rows pass as register tiles
+  of ``tile_rows`` rows or fewer (``_tile``, ``_row_tiles``)."""
   c = p.const_int
   chunk = min(kk, max(1, ctx.target.panel_bytes // (width * dtype.itemsize)))
   if tile_rows > 1:
@@ -1276,10 +1297,9 @@ def _panel_tile_passes(
   tile_rows: int,
   chunk: int,
 ) -> list[ProgramNode]:
-  """``_panel_passes`` with the rows in register tiles of ``tile_rows``."""
+  """``_panel_passes`` with the rows in register tiles of ``tile_rows`` rows or fewer (``_row_tiles``)."""
   c = p.const_int
   packed = ctx.new_private(dtype, (chunk * width,))
-  blocks, left = divmod(m, tile_rows)
 
   def pass_over(name: str, start: ProgramNode, steps: int, resume: bool) -> list[ProgramNode]:
     r, q = (p.var(f"{v}{name}_{tag}") for v in ("r", "q"))
@@ -1300,22 +1320,16 @@ def _panel_tile_passes(
       return p.view(out, [p.add(p.mul(row, c(n)), p.add(first, col))])
 
     passes = [copy]
-    if blocks:
-      ib = p.var(f"ib{name}_{tag}")
-      rows = [p.add(p.mul(ib, c(tile_rows)), c(t)) for t in range(tile_rows)]
-      passes.append(
-        p.for_(
-          p.range_(ib.attrs["name"], 0, blocks, kind=RangeKind.GLOBAL), _tile(ctx, f"{tag}_{name}t", rows, width, steps, term, out_at, resume, dtype)
+    for group, (top, height, count) in enumerate(_row_tiles(m, tile_rows)):
+      label = f"{tag}_{name}t{group}"
+      if count > 1:
+        ib = p.var(f"ib{name}{group}_{tag}")
+        rows = [p.add(p.mul(ib, c(height)), c(top + t)) for t in range(height)]
+        passes.append(
+          p.for_(p.range_(ib.attrs["name"], 0, count, kind=RangeKind.GLOBAL), _tile(ctx, label, rows, width, steps, term, out_at, resume, dtype))
         )
-      )
-    if left:
-      it = p.var(f"it{name}_{tag}")
-      passes.append(
-        p.for_(
-          p.range_(it.attrs["name"], blocks * tile_rows, m, kind=RangeKind.GLOBAL),
-          _tile(ctx, f"{tag}_{name}l", [it], width, steps, term, out_at, resume, dtype),
-        )
-      )
+      else:
+        passes += _tile(ctx, label, [c(top + t) for t in range(height)], width, steps, term, out_at, resume, dtype)
     return passes
 
   full, tail = divmod(kk, chunk)

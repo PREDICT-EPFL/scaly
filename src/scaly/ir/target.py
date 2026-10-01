@@ -181,6 +181,20 @@ class Target:
     return (rows, columns)
 
   @property
+  def tile_rows_max(self) -> int:
+    """The most rows one register tile of a product takes: ``product_tile``'s rows and half as many
+    again, where the vector registers hold that many rows' sums with one register for each vector
+    of a row of ``b`` and one for an element of ``a``. A product's rows go in the fewest tiles of at
+    most this many, since every tile reads all of ``b``: ten rows are two tiles of five, where
+    tiles of four would leave two over and read ``b`` a third time. Six on the reference machine,
+    where tiles of five and six rows measured as fast as tiles of four on a ``b`` in the level-1
+    cache and faster on a larger one; taller tiles were not measured."""
+    t = self.choices
+    rows, columns = self.product_tile
+    vectors = columns // t.vector_doubles
+    return max(rows, min(rows + rows // 2, (t.vector_registers - 1 - vectors) // vectors))
+
+  @property
   def row_blocked_max(self) -> int:
     """The widest row of a vector times a matrix that is blocked at all, four of the widest blocks
     (64 columns on the reference machine); a wider one streams with the reduction outermost."""

@@ -195,9 +195,18 @@ A matrix of as many rows as a register tile holds or more runs in tiles instead,
 columns on the M3 (`Target.product_tile`), chosen from the processor's multiply-add units, their
 latency and its registers as BLIS's analytical model chooses them, so that enough independent sums
 hide the latency and each step of `k` loads four elements of `a` and four vectors of `b` for sixteen
-vector multiply-adds. The rows a tile does not fill take tiles of one row, and the columns fewer
-than a vector a tile of scalar sums. Each output still sums in order of `k`, so a tile computes what
-a row block does.
+vector multiply-adds. Every tile of rows reads all of `b`, so the rows go in the fewest tiles the
+registers hold, of even heights. A tile may take half as many rows again as the model's
+(`Target.tile_rows_max`, six on the M3), which measured as fast on a `b` in the cache and faster on
+a larger one. Ten rows are two tiles of five, where tiles of four would leave two rows to read `b` a
+third time. The columns fewer than a vector take a tile of scalar sums. Each output still sums in
+order of `k`, so a tile computes what a row block does.
+
+A constant table of floating-point values larger than the level-1 data cache (`Target.l1d_bytes`)
+is declared aligned to 64 bytes. The C compiler aligns a table to its element, eight bytes, and the
+vector loads of a constant `b` then straddle two cache lines every few loads, which costs when each
+line comes from the level-2 cache. Tables that fit the cache, and index tables, are left as the
+compiler places them.
 
 A matrix reads `b` once per tile of rows, or once per row when it has fewer rows than a tile, so a
 large `b` runs its column blocks outermost instead. In tiles that is a `b` larger than the level-1

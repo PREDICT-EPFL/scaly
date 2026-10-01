@@ -60,7 +60,7 @@ def test_portable_rounding_makes_the_reference_machines_choices() -> None:
     assert portable.choices is target_module.PORTABLE
     assert portable.row_blocks == (16, 8, 4) and portable.row_blocked_max == 64
     assert (portable.straight_line_ops, portable.body_bytes, portable.panel_bytes) == (4096, 98304, 65536)
-    assert portable.product_tile == (4, 8)
+    assert portable.product_tile == (4, 8) and portable.tile_rows_max == 6
     assert portable.sum_lanes == 8
   assert PRESETS["x86-64-v3"].choices is PRESETS["x86-64-v3"]
   assert PRESETS["x86-64-v3"].body_bytes == 16384
@@ -93,6 +93,30 @@ def test_the_product_tile_hides_the_multiply_add_latency(name: str, tile: tuple[
   # Sixteen registers cannot hold the sixteen sums and their operands: the tile that comes closest,
   # fourteen sums of one vector each, with one register for b's vector and one for a's element.
   assert dataclasses.replace(PRESETS["apple-m3"], vector_registers=16).product_tile == (14, 2)
+
+
+@pytest.mark.parametrize(
+  ("target", "most"),
+  [
+    (PRESETS["apple-m3"], 6),  # four rows and half again, which the registers hold: (32 - 1 - 4) // 4
+    (PRESETS["x86-64-v3"], 6),  # (16 - 1 - 2) // 2
+    (PRESETS["x86-64-v4"], 6),
+    (PRESETS["cortex-a76"], 6),  # the registers would hold 14 rows of 2 vectors: half again is the limit
+    (dataclasses.replace(PRESETS["apple-m3"], vector_registers=28), 5),  # (28 - 1 - 4) // 4
+    (dataclasses.replace(PRESETS["apple-m3"], vector_registers=24), 4),  # no taller tile fits
+    (dataclasses.replace(PRESETS["apple-m3"], vector_registers=16), 14),  # the tile fills the registers already
+    (PRESETS["generic"], 1),  # one lane: no tile
+    (Target("two", vector_bytes=16, vector_registers=2), 1),
+  ],
+  ids=["apple-m3", "x86-64-v3", "x86-64-v4", "cortex-a76", "28-registers", "24-registers", "16-registers", "generic", "2-registers"],
+)
+def test_a_tile_takes_half_again_of_its_rows_where_the_registers_hold_them(target: Target, most: int) -> None:
+  assert target.tile_rows_max == most
+  rows, columns = target.product_tile
+  vectors = columns // target.vector_doubles
+  assert rows <= most <= rows + rows // 2
+  if most > rows:
+    assert most * vectors + vectors + 1 <= target.vector_registers  # the sums, a row of b, an element of a
 
 
 @pytest.mark.parametrize("m, k, n", [(None, 256, 6), (20, 12, 40), (3, 70, 130), (8, 9, 100), (20, 128, 40)])

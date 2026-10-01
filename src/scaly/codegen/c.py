@@ -273,7 +273,9 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
     if stmt.attrs.get("address_space") == "constant" and "values" in stmt.attrs:
       fmt = (lambda v: str(int(v))) if stmt.dtype.is_integer else _c_float
       values = ", ".join(fmt(v) for v in stmt.attrs["values"])
-      lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}] = {{{values}}};")
+      # The alignment lowering asked for (``lowering.TABLE_ALIGN``), where the compiler's would be the element's.
+      aligned = f" __attribute__((aligned({stmt.attrs['align']})))" if "align" in stmt.attrs else ""
+      lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}]{aligned} = {{{values}}};")
     elif "alias_of" in stmt.attrs:
       # Zero-copy alias: a pointer into another buffer (contiguous slice / reshape).
       src = ptr_expr.get(stmt.attrs["alias_of"], c_ident(stmt.attrs["alias_of"]))

@@ -11,6 +11,7 @@ Step 1 coverage: elementwise unary/binary (identical shapes), RESHAPE, small CON
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import numpy as np
@@ -884,7 +885,11 @@ def test_stacks_that_are_not_tiles_keep_their_own_loops() -> None:
     (2, 3, 64),
     (3, 4, 65),
     (4, 4, 5),  # one register tile of rows: a tile of 4 columns, one streamed
-    (9, 20, 13),  # two tiles of rows and one left over; tiles of 8 and 4 columns, one streamed
+    (9, 20, 13),  # two tiles of rows, of five and four; tiles of 8 and 4 columns, one streamed
+    (11, 7, 9),  # tiles of six and of five rows
+    (13, 6, 16),  # three tiles: one of five rows, then two of four in a loop
+    (32, 5, 24),  # two tiles of six rows in a loop, then four of five in another
+    (70, 300, 64),  # the same over packed panels: ten tiles of six rows and two of five
     (6, 96, 96),  # tiles at any width, reading b in place
     (67, 300, 123),  # past the L1 cache from 64 rows: tiles over packed panels, rows and a column left over
     (64, 1100, 24),  # panels in two chunks of k: the second resumes from the outputs
@@ -933,6 +938,64 @@ def test_column_blocks_store_each_output_once(m: int | None, n: int, blocked: bo
   assert (not inside) if blocked else inside
 
 
+def _tile_heights(fn: sc.Function, vectors: int) -> list[int]:
+  """The rows of each pass a lowered product makes over ``b``, in order: a reduction over ``k``
+  holds one statement for each of a row's ``vectors`` vectors of sums, and one inside a loop over
+  tiles runs once a trip."""
+  from scaly.ir.program import RangeKind
+
+  heights: list[int] = []
+
+  def walk(node, trips: int) -> None:
+    if node.op != ProgramOp.FOR:
+      return
+    rng = node.args[0]
+    if rng.attrs["kind"] == RangeKind.REDUCE:
+      rows, rest = divmod(len(node.args) - 1, vectors)
+      assert rest == 0
+      heights.extend([rows] * trips)
+      return
+    start, stop = rng.args[0], rng.args[1]
+    for stmt in node.args[1:]:
+      walk(stmt, trips * (stop.attrs["value"] - start.attrs["value"]))
+
+  for stmt in _stmts(fn):
+    walk(stmt, 1)
+  return heights
+
+
+@pytest.mark.parametrize(
+  ("m", "heights", "starved"),
+  [
+    (4, [4], [4]),
+    (5, [5], [3, 2]),
+    (6, [6], [3, 3]),
+    (7, [4, 3], [4, 3]),
+    (9, [5, 4], [3, 3, 3]),
+    (10, [5, 5], [4, 3, 3]),  # tiles of four would leave two rows over and read b a third time
+    (11, [6, 5], [4, 4, 3]),
+    (13, [5, 4, 4], [4, 3, 3, 3]),
+    (32, [6, 6, 5, 5, 5, 5], [4] * 8),
+  ],
+  ids=[f"{m}-rows" for m in (4, 5, 6, 7, 9, 10, 11, 13, 32)],
+)
+def test_a_products_rows_go_in_the_fewest_tiles_the_registers_hold(m: int, heights: list[int], starved: list[int]) -> None:
+  """Every tile of rows reads all of ``b``, so the rows go in the fewest tiles of at most
+  ``Target.tile_rows_max`` rows, six on the M3, their heights within one of each other, and no row
+  passes over ``b`` alone. With registers for four rows and no more, the tiles are of four or fewer."""
+  from scaly.ir.target import PRESETS
+
+  a, b = sc.sym("a", (m, 5)), sc.sym("b", (5, 8))
+  fn = sc.Function.from_exprs(f"heights_{m}", [a, b], [(a @ b).block()], ["a", "b"], ["y"])
+  with sc.target("apple-m3"):
+    assert _tile_heights(fn, 4) == heights
+  four = dataclasses.replace(PRESETS["apple-m3"], vector_registers=24)
+  assert (four.product_tile, four.tile_rows_max) == ((4, 8), 4)
+  with sc.target(four):
+    assert _tile_heights(fn, 4) == starved
+  assert sum(heights) == sum(starved) == m
+
+
 # --- products past the level-1 cache (C-204) ---------------------------------------------------------
 
 
@@ -971,6 +1034,7 @@ def _chunk_lengths(fn: sc.Function) -> set[int]:
   ("m", "k", "n"),
   [
     (96, 96, 96),  # wider than 64 columns
+    (65, 300, 64),  # tiles over packed panels: ten of six rows in a loop, then one of five by itself
     (20, 12, 100),  # wider, whole blocks and a tail of four
     (16, 1100, 40),  # b past L1 at 40 columns: two whole chunks of 512 and a tail for the 16-wide blocks
     (16, 1025, 64),  # a chunk of one row of k after two whole ones
@@ -992,6 +1056,17 @@ def test_products_past_the_cache_match_numpy_exactly(m: int | None, k: int, n: i
   bv = rng.integers(-8, 9, (k, n)).astype(np.float64)
   with sc.target(target):
     np.testing.assert_array_equal(_panel_product(m, k, n)((av, bv)), av @ bv)
+
+
+def test_the_tiles_over_packed_panels_take_the_same_heights() -> None:
+  """With the column blocks outermost, every row of ``a`` passes over each packed panel in the
+  tiles a product read in place takes: 70 rows in ten tiles of six and two of five, for each of
+  the eight panels of eight columns."""
+  fn = _panel_product(70, 300, 64)
+  with sc.target("apple-m3"):
+    assert _packed_buffers(fn) == [300 * 8]
+    heights = _tile_heights(fn, 4)
+  assert sorted(set(heights)) == [5, 6] and (heights.count(6), heights.count(5)) == (8 * 10, 8 * 2)
 
 
 def test_panels_are_packed_in_chunks_that_fit_the_budget() -> None:

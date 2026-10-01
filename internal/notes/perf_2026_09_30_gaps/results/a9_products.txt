@@ -1,0 +1,67 @@
+# batch_proto/prod.py: a @ b with few rows against a wide b, as an input and as a constant, before and after
+# C-237 (rows in the fewest tiles of at most Target.tile_rows_max rows; constant tables of values larger than the
+# level-1 data cache aligned to 64 bytes). Best of two runs of each tree, alternated; GF/s counts a multiply-add
+# once. Apple M3 Max, load average 3-5.
+     m x k x n         b  before us   GF/s   after us   GF/s after/before
+   5x 512x 512     input       82.7   15.8       53.4   24.5        0.646
+   5x 512x 512  constant       82.5   15.9       52.9   24.8        0.641
+  10x 512x 512     input      163.1   16.1      103.7   25.3        0.636
+  10x 512x 512  constant      229.1   11.4      103.5   25.3        0.452
+  11x 512x 512     input      202.4   14.2      114.5   25.2        0.566
+  11x 512x 512  constant      332.4    8.7      112.5   25.6        0.338
+  20x 512x 512     input      216.3   24.2      204.8   25.6        0.947
+  20x 512x 512  constant      351.5   14.9      204.0   25.7        0.580
+  30x 512x 512     input      379.1   20.7      301.9   26.0        0.796
+  30x 512x 512  constant      530.1   14.8      300.8   26.1        0.567
+  32x 512x 512     input      344.7   24.3      317.7   26.4        0.922
+  32x 512x 512  constant      555.6   15.1      316.4   26.5        0.569
+  33x 512x 512     input      383.7   22.5      330.4   26.2        0.861
+  33x 512x 512  constant      606.2   14.3      328.9   26.3        0.543
+  64x 512x 512     input      673.8   24.9      682.0   24.6        1.012
+  64x 512x 512  constant      688.4   24.4      670.3   25.0        0.974
+  30x 128x 128     input       24.7   19.9       21.9   22.4        0.887
+  30x 128x 128  constant       25.0   19.7       23.3   21.1        0.932
+  30x 256x 256     input       90.8   21.7       77.8   25.3        0.857
+  30x 256x 256  constant      134.4   14.6       77.3   25.4        0.575
+  30x 500x 500     input      393.7   19.1      288.9   26.0        0.734
+  30x 500x 500  constant      425.7   17.6      288.6   26.0        0.678
+  30x 520x 520     input      415.2   19.5      310.1   26.2        0.747
+  30x 520x 520  constant      415.4   19.5      310.4   26.1        0.747
+  10x 500x 500     input      166.3   15.0      102.4   24.4        0.616
+  10x 500x 500  constant      179.6   13.9      102.1   24.5        0.568
+
+# Which tables to align. Aligning every table of 64 bytes or more gave the same product rates, and two kernels
+# slower by where their other tables then fell: sparse_ldl_mpc50 at 1.047, 1.068 and 1.046 of its time with its
+# index tables aligned (three timings), and the dense IPM on CVXQP3_S at 1.087 and 1.093 with two small tables of
+# values aligned (two timings). A constant b that fits the level-1 cache showed no penalty unaligned (30 x 128 x 128
+# above, before), so only tables of values larger than that cache are aligned.
+
+# The row tiles tried, interleaved in one process, nine rounds (best, and the ratio of medians in brackets):
+# plain = tiles of four rows and the rows left over as one shorter tile; merge = the rows left over join the
+# last tile when together they are six or fewer; balanced = the fewest tiles of at most six rows, of even
+# heights (taken). On a b in the level-1 cache the three are within the noise, 2% where the C is the same.
+         shape      plain      merge   balanced   merge/plain balanced/plain
+  16x  16x  16       2.45       2.44       2.49   0.996 (0.999) 1.018 (1.010)
+  24x  24x  24       2.90       2.89       2.89   0.998 (0.998) 0.997 (0.998)
+  32x  32x  32       3.57       3.63       3.61   1.018 (1.004) 1.013 (1.002)
+  40x  40x  40       4.75       4.80       4.89   1.010 (1.001) 1.028 (1.006)
+  48x  48x  48       6.74       6.74       6.75   0.999 (0.995) 1.001 (0.982)
+  64x  64x  64      12.41      12.50      12.48   1.007 (1.000) 1.006 (1.014)
+  80x  80x  80      22.95      22.72      22.15   0.990 (0.999) 0.965 (0.984)
+  96x  96x  96      36.21      36.43      36.48   1.006 (1.000) 1.007 (1.020)
+ 128x 128x 128      84.76      86.78      85.79   1.024 (1.000) 1.012 (0.986)
+ 160x 160x 160     168.10     168.35     169.61   1.001 (1.000) 1.009 (1.005)
+  32x  64x  64       7.39       7.29       7.39   0.987 (1.001) 1.000 (1.014)
+  48x  96x  96      19.60      19.32      19.67   0.986 (1.001) 1.004 (1.018)
+  24x 128x 128      18.31      18.21      18.38   0.995 (1.001) 1.004 (0.988)
+  60x  90x  90      22.83      22.36      22.40   0.980 (1.000) 0.981 (0.981)
+
+# The same three on a b of 2 MB, one run each (us):
+         shape     plain    merge balanced   merge/plain balanced/plain
+   5x 512x 512     83.00    54.62    54.62   0.658       0.658
+  10x 512x 512    130.74   102.51   106.55   0.784       0.815
+  11x 512x 512    133.94   133.46   114.67   0.996       0.856
+  13x 512x 512    173.14   137.70   141.56   0.795       0.818
+  30x 512x 512    352.68   324.83   302.74   0.921       0.858
+  32x 512x 512    344.11   360.99   327.20   1.049       0.951
+  33x 512x 512    393.84   358.84   339.32   0.911       0.862
