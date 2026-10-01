@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 222**
+**Next id: 223**
 
 | Prefix | Section |
 |---|---|
@@ -1056,6 +1056,17 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       C now pin, so start from what those problems tolerate: an update whose four quarter sums
       live in one tile's registers at once (one pass over the panel), then the pivots'
       reciprocals with one Newton step. Gate: DUAL1-4 at most 1.1x PIQP on their better backend.
+- [x] **C-222. Index tables composed when the code is generated (Tier 6).** The Tier 6 profile
+      (`results/tier6_profile.txt`): the assembly after the mapped stage is 32% of the chain
+      Hessian and 17-21% of the race cars', all data movement. Its cheapest part: an index that
+      divides a constant table's entry (`t[k[i] / 4 + (k[i] % 4) * 1206]`, a transpose fused into
+      the race cars' final gather) becomes one table in `fold_arith`, and fusion then reads a
+      transpose under a gather at constant indices through the composed table instead of copying
+      it (the chain: 82 530 doubles a call at M = 9). Only a division makes a table: folding sums
+      of an entry, or a table read at a table's entry, doubled the sparse factorization's C for
+      nothing. Chain M = 9 0.93 of its time, M = 5 0.955, race cars 0.96-0.97 (the gate asked
+      0.92: the out-of-line profile overstated the gather), their Jacobian 0.98
+      (`results/corpus_c222.json`); seven corpus kernels render other C, none slower.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

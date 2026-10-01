@@ -1522,6 +1522,7 @@ tests/core/passes/test_lowering.py::test_uncovered_case_raises_loudly
 tests/core/passes/test_pass_slots.py::test_an_inserted_pass_runs_at_its_slot
 tests/core/passes/test_pass_slots.py::test_anchors_and_names_are_checked
 tests/core/passes/test_program.py::test_a_blocks_lanes_share_slots_only_with_lanes
+tests/core/passes/test_program.py::test_a_constant_table_read_at_a_folded_index_becomes_the_values_picked
 tests/core/passes/test_program.py::test_a_map_with_no_affine_factorization_keeps_its_table
 tests/core/passes/test_program.py::test_break_if_must_sit_in_a_serial_loop
 tests/core/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes[call]
@@ -1559,6 +1560,13 @@ tests/core/passes/test_program.py::test_hoist_prunes_before_scalarization_and_pr
 tests/core/passes/test_program.py::test_hoist_recognizes_generated_pure_callees_in_nested_maps
 tests/core/passes/test_program.py::test_hoist_refuses_a_buffer_read_between_two_invariant_writes
 tests/core/passes/test_program.py::test_hoist_reserves_exported_names_across_repeated_loop_variables
+tests/core/passes/test_program.py::test_index_arithmetic_on_a_tables_entry_folds_into_one_table
+tests/core/passes/test_program.py::test_index_arithmetic_that_is_not_a_table_stays[a negative entry]
+tests/core/passes/test_program.py::test_index_arithmetic_that_is_not_a_table_stays[a table at a table's entry]
+tests/core/passes/test_program.py::test_index_arithmetic_that_is_not_a_table_stays[a variable beside the table]
+tests/core/passes/test_program.py::test_index_arithmetic_that_is_not_a_table_stays[a zero divisor]
+tests/core/passes/test_program.py::test_index_arithmetic_that_is_not_a_table_stays[sums and products only]
+tests/core/passes/test_program.py::test_index_arithmetic_that_is_not_a_table_stays[two indices]
 tests/core/passes/test_program.py::test_index_evaluation_truncates_toward_zero_like_c
 tests/core/passes/test_program.py::test_no_spill_when_temps_small
 tests/core/passes/test_program.py::test_optimized_program_still_verifies

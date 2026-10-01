@@ -1,0 +1,123 @@
+Tier 6's baseline: the chain and race-car Hessians after Tier 5. First each kernel as the JIT builds it, samples attributed to the procedure whose source lines they fall in (prof_kernel.py --inlined; '???' is code without a line); then its entry procedure by loop, from the build with every procedure out of line (step_lines.py). The entry is what runs after the mapped stage: the assembly.
+
+chain_5: 105.8 us per call as built, 3078 samples
+   39.3%  chain_eq_stage_M5_adj0_0_1_fwd24c8822932009_adj_eq_z_hoisted_1_raw
+   29.4%  chain_eq_stage_M5_adj0_0_1_fwd24cb486929f91_adj_eq_z_hoisted_1_raw
+   23.4%  chain_M5_N40_hess_lower
+    6.8%  _platform_memmove
+    0.7%  __bzero
+    0.2%  DYLD-STUB$$memcpy
+    0.1%  _platform_memset
+    0.0%  mach_absolute_time
+
+chain_M5_N40_hess_lower: 757 self samples, 0.4% outside loops; 82 loops, 74 sampled
+
+the procedure's samples by the compiler's verdict on the loop:
+   79.1%  scalar: the cost-model indicates that vectorization is not beneficial
+   20.5%  scalar: loop not vectorized
+    0.0%  scalar: no remark
+
+the loops, by samples:
+   21.3%  L256   scalar: the cost-model indicates that vector  for (long long i_t31_0 = 0; i_t31_0 < 24; ++i_t31_0) {      for (long long i_t31_1 = 0; i_t31_1 < 40; ++i_t31_1) { for (long long i_t31_2 = 0; i_t31_2 < 21; ++i_t31_2) {
+   20.9%  L510   scalar: the cost-model indicates that vector  for (long long d_t154_0 = 0; d_t154_0 < 981; ++d_t154_0) {  for (long long d_t154_1 = 0; d_t154_1 < 24; ++d_t154_1) { s0[((24 * d_t154_0) + d_t154_1)] = s2[(d_t154_0 + (981 * d_
+   20.3%  L248   scalar: the cost-model indicates that vector  for (long long i_t29_0 = 0; i_t29_0 < 24; ++i_t29_0) {      for (long long i_t29_1 = 0; i_t29_1 < 40; ++i_t29_1) { for (long long i_t29_2 = 0; i_t29_2 < 24; ++i_t29_2) {
+   15.5%  L515   scalar: loop not vectorized                   for (long long i_sphess_gamma_z_z = 0; i_sphess_gamma_z_z   res[0][i_sphess_gamma_z_z] = s0[k155[i_sphess_gamma_z_z]];
+    1.2%  L72    scalar: loop not vectorized                   for (long long it_t1 = 0; it_t1 < 40; ++it_t1) {            chain_eq_stage_M5_adj0_0_1_fwd24c8822932009_adj_eq_z_hoisted_1_raw((arg[0] + (24 * it_t1)), (arg[1] + 21), (t0 + (21 
+    0.9%  L76    scalar: loop not vectorized                   for (long long it_t14 = 0; it_t14 < 40; ++it_t14) {         chain_eq_stage_M5_adj0_0_1_fwd24cb486929f91_adj_eq_z_hoisted_1_raw((arg[0] + (24 * it_t14)), (arg[1] + 21), (t0 + (21
+    0.8%  L498   scalar: the cost-model indicates that vector  for (long long i_t150_0 = 0; i_t150_0 < 24; ++i_t150_0) {   for (long long i_t150_1 = 0; i_t150_1 < 24; ++i_t150_1) { int64_t v44 = ((24 + (981 * i_t150_0)) + i_t150_1);
+    0.7%  L264   scalar: the cost-model indicates that vector  for (long long i_t43_0 = 0; i_t43_0 < 24; ++i_t43_0) {      for (long long i_t43_1 = 0; i_t43_1 < 21; ++i_t43_1) { int64_t v5 = ((960 + (981 * i_t43_0)) + i_t43_1);
+
+chain_9: 346.2 us per call as built, 3084 samples
+   23.4%  chain_M9_N40_hess_lower
+   18.3%  chain_eq_stage_M9_adj0_0_1_fwd42c686f785438_adj_eq_z_hoisted_1_raw
+   18.1%  chain_eq_stage_M9_adj0_0_1_fwd42cbcb7d4b390_adj_eq_z_hoisted_1_raw
+   14.9%  chain_eq_stage_M9_adj0_0_1_fwd42c1057cdd9f3_adj_eq_z_hoisted_1_raw
+    8.3%  _platform_memmove
+    8.1%  chain_eq_stage_M9_adj0_0_1_fwd42c5e57b2e2b3_adj_eq_z_hoisted_1_raw
+    7.6%  chain_eq_stage_M9_adj0_0_1_fwd42c9f451e0d02_adj_eq_z_hoisted_1_raw
+    0.9%  __bzero
+    0.2%  _platform_memset
+    0.1%  DYLD-STUB$$memcpy
+    0.1%  ___chkstk_darwin
+
+chain_M9_N40_hess_lower: 774 self samples, 1.2% outside loops; 103 loops, 94 sampled
+
+the procedure's samples by the compiler's verdict on the loop:
+   61.9%  vectorized
+   22.5%  interleaved
+   14.3%  scalar: loop not vectorized
+    0.1%  scalar: the cost-model indicates that vectorization is not beneficial
+    0.0%  scalar: no remark
+
+the loops, by samples:
+   24.0%  L340   vectorized                                    for (long long i_t50_0 = 0; i_t50_0 < 42; ++i_t50_0) {      for (long long i_t50_1 = 0; i_t50_1 < 40; ++i_t50_1) { for (long long i_t50_2 = 0; i_t50_2 < 48; ++i_t50_2) {
+   23.8%  L348   vectorized                                    for (long long i_t52_0 = 0; i_t52_0 < 42; ++i_t52_0) {      for (long long i_t52_1 = 0; i_t52_1 < 40; ++i_t52_1) { for (long long i_t52_2 = 0; i_t52_2 < 45; ++i_t52_2) {
+   22.5%  L602   interleaved                                   for (long long d_t175_0 = 0; d_t175_0 < 1965; ++d_t175_0)   for (long long d_t175_1 = 0; d_t175_1 < 42; ++d_t175_1) { s0[((42 * d_t175_0) + d_t175_1)] = s2[(d_t175_0 + (1965 * d
+   12.5%  L607   scalar: loop not vectorized                   for (long long i_sphess_gamma_z_z = 0; i_sphess_gamma_z_z   res[0][i_sphess_gamma_z_z] = s0[k176[i_sphess_gamma_z_z]];
+    0.8%  L518   vectorized                                    for (long long i_t147_0 = 0; i_t147_0 < 42; ++i_t147_0) {   for (long long i_t147_1 = 0; i_t147_1 < 48; ++i_t147_1) { int64_t v32 = ((624 + (1965 * i_t147_0)) + i_t147_1);
+    0.6%  L530   vectorized                                    for (long long i_t151_0 = 0; i_t151_0 < 42; ++i_t151_0) {   for (long long i_t151_1 = 0; i_t151_1 < 48; ++i_t151_1) { int64_t v34 = ((528 + (1965 * i_t151_0)) + i_t151_1);
+    0.6%  L584   vectorized                                    for (long long i_t169_0 = 0; i_t169_0 < 42; ++i_t169_0) {   for (long long i_t169_1 = 0; i_t169_1 < 48; ++i_t169_1) { int64_t v43 = ((96 + (1965 * i_t169_0)) + i_t169_1);
+    0.6%  L590   vectorized                                    for (long long i_t171_0 = 0; i_t171_0 < 42; ++i_t171_0) {   for (long long i_t171_1 = 0; i_t171_1 < 48; ++i_t171_1) { int64_t v44 = ((48 + (1965 * i_t171_0)) + i_t171_1);
+
+race_cars_40: 9.6 us per call as built, 1884 samples
+   50.0%  race_car_eq_interstage_adj0_0_1_fwd4cb455f2851e_adj_eq_z_hoisted_1_raw
+   18.2%  race_car_closed_loop_N40_hess_lower
+   14.2%  ???
+   10.1%  tanh
+    3.3%  __sincos_stret
+    1.6%  DYLD-STUB$$__sincos_stret
+    1.0%  _platform_memset
+    0.6%  DYLD-STUB$$tanh
+    0.4%  race_car_corridor_stage_adj0_0_fwd1cd6809a3546_adj_corridor_z_raw
+    0.4%  race_car_cost_stage_fwd2c4985cb348f_residuals_z_raw
+    0.2%  race_car_cost_stage_adj0_0_fwd2c6352054f55_adj_residuals_lam_residuals_raw
+    0.1%  __open_nocancel
+
+race_car_closed_loop_N40_hess_lower: 316 self samples, 1.6% outside loops; 16 loops, 16 sampled
+
+the procedure's samples by the compiler's verdict on the loop:
+   54.7%  scalar: loop not vectorized
+   24.4%  scalar: the cost-model indicates that vectorization is not beneficial
+   19.3%  vectorized
+    0.0%  scalar: no remark
+
+the loops, by samples:
+   47.5%  L101   scalar: loop not vectorized                   for (long long i_sphess_gamma_z_z = 0; i_sphess_gamma_z_z   int64_t v4 = k43[i_sphess_gamma_z_z]; int64_t v5 = ((v4 / 4) + ((v4 % 4) * 246));
+   13.9%  L34    scalar: the cost-model indicates that vector  for (long long d_t8_0 = 0; d_t8_0 < 4; ++d_t8_0) {          for (long long d_t8_1 = 0; d_t8_1 < 40; ++d_t8_1) { for (long long d_t8_2 = 0; d_t8_2 < 12; ++d_t8_2) {
+    9.8%  L82    vectorized                                    for (long long i_t30_0 = 0; i_t30_0 < 4; ++i_t30_0) {       for (long long i_t30_1 = 0; i_t30_1 < 246; ++i_t30_1) { int64_t v3 = ((246 * i_t30_0) + i_t30_1);
+    8.5%  L44    vectorized                                    for (long long i_t5_0 = 0; i_t5_0 < 4; ++i_t5_0) {          for (long long i_t5_1 = 0; i_t5_1 < 240; ++i_t5_1) { int64_t v0 = ((6 + (246 * i_t5_0)) + i_t5_1);
+    6.6%  L50    scalar: the cost-model indicates that vector  for (long long i_t10_0 = 0; i_t10_0 < 4; ++i_t10_0) {       for (long long i_t10_1 = 0; i_t10_1 < 40; ++i_t10_1) { for (long long i_t10_2 = 0; i_t10_2 < 6; ++i_t10_2) {
+    3.8%  L58    scalar: the cost-model indicates that vector  for (long long i_t13_0 = 0; i_t13_0 < 4; ++i_t13_0) {       for (long long i_t13_1 = 0; i_t13_1 < 40; ++i_t13_1) { for (long long i_t13_2 = 0; i_t13_2 < 6; ++i_t13_2) {
+    3.2%  L77    scalar: loop not vectorized                   for (long long i_t27_0 = 0; i_t27_0 < 41; ++i_t27_0) {      for (long long i_t27_1 = 0; i_t27_1 < 6; ++i_t27_1) { s4[((6 * i_t27_0) + i_t27_1)] = s1[((6 + (12 * i_t27_0)) + i_t2
+    1.3%  L96    scalar: loop not vectorized                   for (long long i_t38_0 = 0; i_t38_0 < 41; ++i_t38_0) {      for (long long i_t38_1 = 0; i_t38_1 < 6; ++i_t38_1) { s4[((6 * i_t38_0) + i_t38_1)] = s0[((6 + (12 * i_t38_0)) + i_t3
+
+race_cars_200: 51.0 us per call as built, 1594 samples
+   46.2%  race_car_eq_interstage_adj0_0_1_fwd4cb455f2851e_adj_eq_z_hoisted_1_raw
+   22.0%  race_car_closed_loop_N200_hess_lower
+   13.4%  ???
+   10.5%  tanh
+    4.9%  __sincos_stret
+    1.4%  DYLD-STUB$$__sincos_stret
+    0.6%  DYLD-STUB$$tanh
+    0.4%  race_car_corridor_stage_adj0_0_fwd1cd6809a3546_adj_corridor_z_raw
+    0.3%  __bzero
+    0.2%  race_car_cost_stage_fwd2c4985cb348f_residuals_z_raw
+    0.1%  race_car_cost_stage_adj0_0_fwd2c6352054f55_adj_residuals_lam_residuals_raw
+
+race_car_closed_loop_N200_hess_lower: 423 self samples, 0.7% outside loops; 16 loops, 16 sampled
+
+the procedure's samples by the compiler's verdict on the loop:
+   41.6%  scalar: loop not vectorized
+   32.2%  scalar: the cost-model indicates that vectorization is not beneficial
+   25.3%  vectorized
+    0.2%  scalar: no remark
+
+the loops, by samples:
+   39.5%  L101   scalar: loop not vectorized                   for (long long i_sphess_gamma_z_z = 0; i_sphess_gamma_z_z   int64_t v4 = k43[i_sphess_gamma_z_z]; int64_t v5 = ((v4 / 4) + ((v4 % 4) * 1206));
+   13.5%  L82    vectorized                                    for (long long i_t30_0 = 0; i_t30_0 < 4; ++i_t30_0) {       for (long long i_t30_1 = 0; i_t30_1 < 1206; ++i_t30_1) { int64_t v3 = ((1206 * i_t30_0) + i_t30_1);
+   12.5%  L34    scalar: the cost-model indicates that vector  for (long long d_t8_0 = 0; d_t8_0 < 4; ++d_t8_0) {          for (long long d_t8_1 = 0; d_t8_1 < 200; ++d_t8_1) { for (long long d_t8_2 = 0; d_t8_2 < 12; ++d_t8_2) {
+    9.5%  L44    vectorized                                    for (long long i_t5_0 = 0; i_t5_0 < 4; ++i_t5_0) {          for (long long i_t5_1 = 0; i_t5_1 < 1200; ++i_t5_1) { int64_t v0 = ((6 + (1206 * i_t5_0)) + i_t5_1);
+    9.5%  L50    scalar: the cost-model indicates that vector  for (long long i_t10_0 = 0; i_t10_0 < 4; ++i_t10_0) {       for (long long i_t10_1 = 0; i_t10_1 < 200; ++i_t10_1) { for (long long i_t10_2 = 0; i_t10_2 < 6; ++i_t10_2) {
+    5.9%  L58    scalar: the cost-model indicates that vector  for (long long i_t13_0 = 0; i_t13_0 < 4; ++i_t13_0) {       for (long long i_t13_1 = 0; i_t13_1 < 200; ++i_t13_1) { for (long long i_t13_2 = 0; i_t13_2 < 6; ++i_t13_2) {
+    2.4%  L66    vectorized                                    for (long long i_t20 = 0; i_t20 < 1206; ++i_t20) {          s0[i_t20] = ((arg[2][0] * k17[i_t20]) * 2.0);
+    1.4%  L91    scalar: the cost-model indicates that vector  for (long long i_t34_0 = 0; i_t34_0 < 201; ++i_t34_0) {     for (long long i_t34_1 = 0; i_t34_1 < 6; ++i_t34_1) { s3[((6 * i_t34_0) + i_t34_1)] = s0[((12 * i_t34_0) + i_t34_1)];

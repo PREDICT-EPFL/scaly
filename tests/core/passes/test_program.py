@@ -292,6 +292,106 @@ def test_fold_leaves_a_constant_read_past_its_table() -> None:
   assert stores[1].args[1].op == ProgramOp.LOAD
 
 
+def _index_table(name: str, values: list[int]) -> ProgramNode:
+  return p.const_buffer(name, dtypes.int64, (len(values),), values)
+
+
+def _folded_gather(index, tables: list[ProgramNode], source: ProgramNode | None = None) -> tuple[list[ProgramNode], ProgramNode]:
+  """``y[i] = source[index(i)]`` over six trips after ``fold_arith``: the body's buffers, and the store."""
+  x = source if source is not None else buffer("x", dtypes.float64, (24,))
+  y = buffer("y", dtypes.float64, (6,))
+  i = var("i")
+  loop = for_(range_("i", 0, 6), [store(view(y, [i]), load(view(x, [index(i)])))])
+  params = [y] if source is not None and source.attrs["address_space"] == "constant" else [x, y]
+  body = [*([source] if len(params) == 1 else []), *tables, loop]
+  result = fold_arith(program([proc_("gather_fold", params, body)])).args[0]
+  buffers = [n for n in result.args[len(params) :] if n.op == ProgramOp.BUFFER]
+  (final,) = [n for n in result.args if n.op == ProgramOp.FOR]
+  return buffers, final.args[1]
+
+
+def test_index_arithmetic_on_a_tables_entry_folds_into_one_table() -> None:
+  """A transpose read through a gather: ``x[k[i] / 4 + (k[i] % 4) * 6]`` reads one table, computed
+  when the code is generated, and the table it came from is gone."""
+  picks = [0, 5, 7, 23, 11, 18]
+  k = _index_table("k", picks)
+  at = lambda i: load(view(k, [i]))  # noqa: E731
+  moved = lambda i: p.add(p.div(at(i), const_int(4)), p.mul(p.mod(at(i), const_int(4)), const_int(6)))  # noqa: E731
+  buffers, stored = _folded_gather(moved, [k])
+  (table,) = buffers
+  assert list(table.attrs["values"]) == [q // 4 + (q % 4) * 6 for q in picks] and table.attrs["name"] != "k"
+  index = stored.args[1].args[0].args[0]
+  assert index.op == ProgramOp.LOAD and index.args[0].attrs["buffer"] == table.attrs["name"] and index.args[0].args[0].op == ProgramOp.VAR
+  # Two tables at one index, under one division, are one table too.
+  other = _index_table("j", [3, 1, 0, 2, 5, 4])
+  buffers, stored = _folded_gather(lambda i: p.div(p.add(p.mul(at(i), const_int(2)), load(view(other, [i]))), const_int(3)), [k, other])
+  assert [list(b.attrs["values"]) for b in buffers] == [[(2 * q + r) // 3 for q, r in zip(picks, [3, 1, 0, 2, 5, 4], strict=True)]]
+
+
+STAYS = ["a negative entry", "a zero divisor", "two indices", "a variable beside the table", "sums and products only", "a table at a table's entry"]
+
+
+@pytest.mark.parametrize("why", STAYS)
+def test_index_arithmetic_that_is_not_a_table_stays(why: str) -> None:
+  """C's division truncates where NumPy's floors, so a negative entry is not divided here; tables
+  read at two indices, or mixed with a variable, are no function of one index. And only a division
+  is worth a table: a sum or product of an entry, or a table read at a table's entry, costs less
+  at run time than a second table costs in memory (the sparse factorization's C doubled, for
+  nothing)."""
+  picks = [0, 5, 7, 23, 11, 18]
+  k = _index_table("k", picks)
+  other = _index_table("j", [3, 1, 0, 2, 5, 4])
+  at = lambda i: load(view(k, [i]))  # noqa: E731
+  tables = [k]
+  if why == "a negative entry":
+    tables = [_index_table("s", [3, -5, 7, 2, 1, 0])]
+    index = lambda i: p.div(load(view(tables[0], [i])), const_int(4))  # noqa: E731
+  elif why == "a zero divisor":
+    tables = [k, _index_table("z", [1, 2, 0, 4, 5, 6])]
+    index = lambda i: p.mod(at(i), load(view(tables[1], [i])))  # noqa: E731
+  elif why == "two indices":
+    index = lambda i: p.div(p.add(at(i), at(p.sub(const_int(5), i))), const_int(2))  # noqa: E731
+  elif why == "a variable beside the table":
+    index = lambda i: p.div(p.add(at(i), i), const_int(2))  # noqa: E731
+  elif why == "sums and products only":
+    tables = [k, other]
+    index = lambda i: p.sub(p.mul(at(i), const_int(2)), load(view(other, [i])))  # noqa: E731
+  else:
+    tables = [k, other]
+    index = lambda i: load(view(k, [load(view(other, [i]))]))  # noqa: E731
+  given = {t.attrs["name"]: list(t.attrs["values"]) for t in tables}
+  buffers, stored = _folded_gather(index, tables)
+  assert {b.attrs["name"]: list(b.attrs["values"]) for b in buffers} == given
+  assert any(n.op == ProgramOp.VIEW and n.attrs["buffer"] in given for n in _walk(stored.args[1].args[0].args[0]))
+
+
+def test_a_constant_table_read_at_a_folded_index_becomes_the_values_picked() -> None:
+  """The values a gather picks through a composed table are a table of their own when they are no
+  more than the table held; through a plain index table they stay where they are."""
+  values = p.const_buffer("c", dtypes.float64, (4, 6), [float(v) * 0.5 for v in range(24)])
+  picks = [0, 5, 7, 23, 11, 18]
+  k = _index_table("k", picks)
+  moved = lambda i: p.add(p.div(load(view(k, [i])), const_int(4)), p.mul(p.mod(load(view(k, [i])), const_int(4)), const_int(6)))  # noqa: E731
+  buffers, stored = _folded_gather(moved, [k], source=values)
+  (table,) = buffers
+  assert table.dtype == dtypes.float64 and list(table.attrs["values"]) == [(q // 4 + (q % 4) * 6) * 0.5 for q in picks]
+  assert stored.args[1].args[0].args[0].op == ProgramOp.VAR  # read at the loop's own index
+  buffers, stored = _folded_gather(lambda i: load(view(k, [i])), [k], source=values)
+  assert {b.attrs["name"] for b in buffers} == {"c", "k"}
+  wide = _index_table("w", [q % 24 for q in range(0, 300, 50)])  # six picks of a table of four: it would grow
+  small = p.const_buffer("c", dtypes.float64, (4,), [1.0, 2.0, 3.0, 4.0])
+  buffers, stored = _folded_gather(lambda i: p.div(load(view(wide, [i])), const_int(8)), [wide], source=small)
+  assert (
+    sorted(b.dtype.name for b in buffers) == ["float64", "int64"] and len(next(b for b in buffers if b.dtype == dtypes.float64).attrs["values"]) == 4
+  )
+  # An entry past the values' end (in code that never runs) is not picked.
+  eight = p.const_buffer("c", dtypes.float64, (8,), [float(v) for v in range(8)])
+  past = _index_table("q", [0, 18, 4, 6, 8, 10])
+  buffers, stored = _folded_gather(lambda i: p.div(load(view(past, [i])), const_int(2)), [past], source=eight)
+  kept = next(b for b in buffers if b.dtype == dtypes.float64)
+  assert sorted(len(b.attrs["values"]) for b in buffers) == [6, 8] and list(kept.attrs["values"]) == [float(v) for v in range(8)]
+
+
 def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> None:
   leaf = proc_("leaf", [], [])
   dead = proc_("dead", [], [])

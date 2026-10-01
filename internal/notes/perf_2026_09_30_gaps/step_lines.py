@@ -75,7 +75,7 @@ def main() -> None:
   cell, proc = Path(sys.argv[1]), sys.argv[2]
   rows = int(sys.argv[3]) if len(sys.argv) > 3 else 25
   src = (cell / "prof.c").read_text().splitlines()
-  start = next(i for i, line in enumerate(src) if "static" in line and re.search(rf"\b{proc}\(", line)) + 1
+  start = next(i for i, line in enumerate(src) if line.endswith("{") and re.match(rf"^(static [^(]*|int ){proc}\(", line)) + 1  # its definition
   by_line = self_samples((cell / "sample.txt").read_text(), proc)
   total = sum(by_line.values())
   loops = top_loops(src, start)

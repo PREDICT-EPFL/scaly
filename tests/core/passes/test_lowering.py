@@ -1082,16 +1082,25 @@ def test_transposes_match_numpy_and_lose_their_divisions(shape: tuple[int, ...],
 
 def test_a_gather_reads_through_a_transposed_computation() -> None:
   """The recovery of a sparse derivative gathers a few entries of a transposed product: the
-  transpose fuses into the gather, so only the gathered entries are computed; a transpose that only
-  moves data stays a copy, since reading it through the gather's table would divide per element."""
+  transpose fuses into the gather, so only the gathered entries are computed. A transpose that only
+  moves data fuses too: the gather's table and the transpose compose into one table when the code
+  is generated, so nothing is copied and no index is divided at run time."""
   x = sc.sym("x", (4, 6))
   picks = np.array([0, 5, 7, 23, 11])
   computed = sc.Function.from_exprs("gather_computed", [x], [sc.gather(x.T.sin(), picks).block()], ["x"], ["g"])
-  body = _stmts(computed)
-  assert sum(n.op == ProgramOp.SIN for stmt in body for n in _nodes(stmt)) == 1
-  assert not [s for s in body if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 24]
+  assert sum(n.op == ProgramOp.SIN for stmt in _stmts(computed) for n in _nodes(stmt)) == 1
   moved = sc.Function.from_exprs("gather_moved", [x], [sc.gather(x.T, picks).block()], ["x"], ["g"])
-  assert [s for s in _stmts(moved) if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 24]
+  for fn in (computed, moved):
+    body = _stmts(fn)
+    assert not [s for s in body if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 24]
+    assert not [n for stmt in body for n in _nodes(stmt) if n.op in (ProgramOp.DIV, ProgramOp.MOD) and n.dtype.is_integer]
+    (table,) = [s for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs]
+    assert list(table.attrs["values"]) == [int(q // 4 + (q % 4) * 6) for q in picks]
   xv = np.random.default_rng(6).standard_normal((4, 6))
   np.testing.assert_allclose(computed(xv), np.sin(xv.T).ravel()[picks], rtol=1e-15)
   np.testing.assert_array_equal(moved(xv), xv.T.ravel()[picks])
+  # At run-time indices there is no table to compose with: the transpose is copied, then read.
+  at = sc.sym("at", 5, dtype="int64")
+  taken = sc.Function.from_exprs("take_moved", [x, at], [sc.take(x.T.reshape((24,)), at).block()], ["x", "at"], ["g"])
+  assert [s for s in _stmts(taken) if s.op == ProgramOp.BUFFER and int(np.prod(s.attrs["shape"])) == 24]
+  np.testing.assert_array_equal(taken((xv, picks)), xv.T.ravel()[picks])

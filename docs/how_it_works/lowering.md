@@ -208,10 +208,12 @@ each output is still one chain of multiply-adds in order of `k`.
 
 A `transpose` lowers to one flat loop over its output whose coordinates divide the loop variable.
 Fusion can then inline it into its one consumer: a gather reading a few entries of a transposed
-product, as the recovery of a sparse derivative does, computes only those entries. A transpose that
-only moves data stays a copy in front of a gather, since reading it through the gather's table
-would divide per element, and `delinearize_loops` splits any transpose that stays back into a loop
-per axis without the divisions.
+product, as the recovery of a sparse derivative does, computes only those entries. Read through a
+gather's index table, the transposed coordinates are a division and a remainder of the table's
+entry, which `fold_arith` computes when the code is generated: the two indices compose into one
+table, so a transpose that only moves data is never copied in front of a gather at constant
+indices. In front of a gather at run-time indices it stays a copy, and `delinearize_loops` splits
+any transpose that stays back into a loop per axis without the divisions.
 
 A `max` or `min` reduction propagates NaN as `np.max` does, so its step is a select C's `fmax`
 cannot express: `((cur < x) || (x != x)) ? x : cur`. The renderer spells that select

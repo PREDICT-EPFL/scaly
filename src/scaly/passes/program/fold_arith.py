@@ -1,13 +1,19 @@
-"""Arithmetic cleanup of loop bodies: constant-buffer reads become constants, then the shared identities fold."""
+"""Arithmetic cleanup of loop bodies: constant-buffer reads become constants, index arithmetic on a constant table becomes a table, then the shared identities fold."""
 
 from __future__ import annotations
+
+import numpy as np
 
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, _attr_key
+from ...ir.types import dtypes
+from ...utils.names import c_ident
 from ..arith import CONSTANTS, constant, fold_program
 from ._common import (
   _alias_sources,
+  _walk,
+  allocated_name,
   _map_procs,
   _private_decls,
   _proc_parts,
@@ -27,6 +33,9 @@ def fold_arith(prog: ProgramNode) -> ProgramNode:
   Runs after fusion, whose index substitution is what exposes ``x * 1``, ``x + 0`` and reads of a
   uniform constant buffer (a broadcast scalar constant) inside loop bodies. A loop that fills a
   private buffer with one constant becomes a constant buffer, so its readers fold on the next round.
+  Fusion also leaves index arithmetic on an index table's entry, where a gather reads a moved array
+  (``t[k[i] / 4 + (k[i] % 4) * n]``, a transpose under the gather): that is a table too, computed
+  here once instead of a division per element at run time (``_fold_tables``).
   """
   return _map_procs(prog, _fold_proc)
 
@@ -35,8 +44,8 @@ def _fold_proc(proc: ProgramNode) -> ProgramNode:
   params, body = _proc_parts(proc)
   changed = False
   while True:
-    new_body = _constant_fills(_fold_body(body))
-    if all(a is b for a, b in zip(new_body, body, strict=True)):
+    new_body = _constant_fills(_fold_tables(_fold_body(body), {param.attrs["name"] for param in params}))
+    if len(new_body) == len(body) and all(a is b for a, b in zip(new_body, body, strict=True)):
       break
     body, changed = new_body, True
   rebuilt = _rebuild_proc(proc, params, body) if changed else proc
@@ -64,6 +73,122 @@ def _fold_body(body: list[ProgramNode]) -> list[ProgramNode]:
 
   patterns = [Pattern(ProgramOp.LOAD, constant_read, read), Pattern(None, lambda n: bool(n.args), fold_program)]
   return [rewrite(stmt, patterns, rebuild=rebuild_program) for stmt in body]
+
+
+_TABLE_ARITH = frozenset({ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV, ProgramOp.MOD, ProgramOp.NEG})
+
+
+def _table_function(n: ProgramNode, tables: dict[str, np.ndarray]) -> tuple[ProgramNode | None, np.ndarray] | None:
+  """``n`` as a table over an index: ``(index, values)`` when ``n`` is integer arithmetic on
+  constants and on entries of constant integer tables all read at one index expression (``index``
+  is None for a constant alone), or a read of such a table at such a function, else None. A
+  division or remainder is taken only of a non-negative entry by a positive one, where C's and
+  NumPy's agree."""
+  if n.op == ProgramOp.CONST_INT:
+    return None, np.asarray(n.attrs["value"], dtype=np.int64)
+  if n.op == ProgramOp.LOAD:
+    view = n.args[0]
+    values = tables.get(view.attrs["buffer"])
+    if values is None or len(view.args) != 1:
+      return None
+    inner = _table_function(view.args[0], tables)
+    if inner is None or inner[0] is None:
+      return view.args[0], values
+    at = inner[1]  # a table read at a table's entry: the two composed
+    return (inner[0], values[at]) if at.size and at.min() >= 0 and at.max() < values.size else None
+  if n.op not in _TABLE_ARITH or not n.dtype.is_integer:
+    return None
+  parts = []
+  for arg in n.args:
+    part = _table_function(arg, tables)
+    if part is None:
+      return None
+    parts.append(part)
+  indices = {id(at): at for at, _ in parts if at is not None}
+  if len(indices) > 1 or len({values.size for at, values in parts if at is not None}) > 1:
+    return None
+  index = next(iter(indices.values()), None)
+  values = [values for _, values in parts]
+  if n.op == ProgramOp.NEG:
+    return index, -values[0]
+  x, y = values
+  if n.op in (ProgramOp.DIV, ProgramOp.MOD):
+    if np.any(x < 0) or np.any(y <= 0):
+      return None
+    return index, x // y if n.op == ProgramOp.DIV else x % y
+  return index, x + y if n.op == ProgramOp.ADD else x - y if n.op == ProgramOp.SUB else x * y
+
+
+def _fold_tables(body: list[ProgramNode], reserved: set[str]) -> list[ProgramNode]:
+  """Replace index arithmetic with a division or remainder of a constant table's entry by a read of
+  one table holding its values (``_table_function``), and a constant table read at such an index
+  by one holding the values picked. The tables left without a reader are pruned by the caller."""
+  tables = {
+    s.attrs["name"]: np.asarray(s.attrs["values"], dtype=np.int64)
+    for s in body
+    if s.op == ProgramOp.BUFFER and "values" in s.attrs and s.dtype.is_integer and len(s.attrs["shape"]) == 1
+  }
+  if not tables:
+    return body
+  spellings = {c_ident(name) for name in reserved} | {c_ident(s.attrs["name"]) for s in body if s.op == ProgramOp.BUFFER}
+  made: dict[bytes, ProgramNode] = {}
+  picks: dict[tuple, ProgramNode] = {}
+  derived: set[str] = set()
+
+  constants = {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
+
+  def divides(n: ProgramNode) -> bool:
+    """Whether ``n`` holds what a table saves at run time: an integer division or remainder, or a
+    read of a table this pass made of one (so that the whole expression around it becomes one
+    table). Sums and products of a table's entry, and a table read at a table's entry, stay as
+    they are: a derived table for each costs more memory than the arithmetic costs time."""
+    return any(m.op in (ProgramOp.DIV, ProgramOp.MOD) or (m.op == ProgramOp.VIEW and m.attrs["buffer"] in derived) for m in _walk(n))
+
+  def composed(n: ProgramNode) -> bool:
+    if n.op not in _TABLE_ARITH or not divides(n):
+      return False
+    found = _table_function(n, tables)
+    return found is not None and found[0] is not None
+
+  def value_read(n: ProgramNode) -> bool:
+    """A constant table of another type (the values a gather picks) read at a table this pass made,
+    when the values picked are no more than the table held."""
+    decl = constants.get(n.args[0].attrs["buffer"])
+    if decl is None or decl.attrs["name"] in tables or len(n.args[0].args) != 1 or not divides(n.args[0].args[0]):
+      return False
+    at = _table_function(n.args[0].args[0], tables)
+    if at is None or at[0] is None or not at[1].size or at[1].size > len(decl.attrs["values"]):
+      return False
+    return bool(at[1].min() >= 0 and at[1].max() < len(decl.attrs["values"]))
+
+  def picked(n: ProgramNode) -> ProgramNode:
+    decl = constants[n.args[0].attrs["buffer"]]
+    found = _table_function(n.args[0].args[0], tables)
+    assert found is not None and found[0] is not None
+    values = [decl.attrs["values"][int(k)] for k in found[1]]
+    key = (decl.dtype.name, tuple(_attr_key(v) for v in values))
+    if key not in picks:
+      picks[key] = p.const_buffer(allocated_name("k", spellings), decl.dtype, (len(values),), values)
+      constants[picks[key].attrs["name"]] = picks[key]
+    return p.load(p.view(picks[key], [found[0]]))
+
+  def table_read(n: ProgramNode) -> ProgramNode:
+    found = _table_function(n, tables)
+    assert found is not None and found[0] is not None
+    index, values = found[0], np.ascontiguousarray(found[1], dtype=np.int64)
+    key = values.tobytes()
+    if key not in made:
+      made[key] = p.const_buffer(allocated_name("k", spellings), dtypes.int64, (values.size,), [int(v) for v in values])
+      tables[made[key].attrs["name"]] = values
+      derived.add(made[key].attrs["name"])
+    return p.load(p.view(made[key], [index]))
+
+  patterns = [Pattern(None, composed, table_read), Pattern(ProgramOp.LOAD, value_read, picked)]
+  out = [rewrite(stmt, patterns, rebuild=rebuild_program) if stmt.op != ProgramOp.BUFFER else stmt for stmt in body]
+  if not made and not picks:
+    return body
+  first = next(i for i, stmt in enumerate(out) if stmt.op != ProgramOp.BUFFER)
+  return [*out[:first], *made.values(), *picks.values(), *out[first:]]
 
 
 def _constant_fills(body: list[ProgramNode]) -> list[ProgramNode]:

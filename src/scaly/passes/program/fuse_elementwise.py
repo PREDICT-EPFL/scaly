@@ -72,6 +72,20 @@ def _reads_through_a_table(node: ProgramNode, buf: str) -> bool:
   return False
 
 
+_INDEX_ARITH = frozenset({ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV, ProgramOp.MOD, ProgramOp.NEG, ProgramOp.CONST_INT})
+
+
+def _composes(rhs: ProgramNode, var: str, consumer: ProgramNode, buf: str, tables: set[str]) -> bool:
+  """Whether a moving producer ``buf[v] = src[g(v)]`` read as ``buf[k[..]]`` leaves an index that
+  ``fold_arith`` turns into one table: ``g`` is integer arithmetic on ``v`` and constants, and every
+  read of ``buf`` in ``consumer`` is at an entry of a constant index table."""
+  index = rhs.args[0].args
+  if len(index) != 1 or any(n.op not in _INDEX_ARITH and not (n.op == ProgramOp.VAR and n.attrs["name"] == var) for n in _walk(index[0])):
+    return False
+  reads = [n.args[0] for n in _walk(consumer) if n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf]
+  return all(len(v.args) == 1 and v.args[0].op == ProgramOp.LOAD and v.args[0].args[0].attrs["buffer"] in tables for v in reads)
+
+
 def _total_load_executions(node: ProgramNode, buf: str) -> int | None:
   """How many times the loads of ``buf`` in ``node`` run together: each occurrence (tree
   multiplicity, so ``buf*buf`` counts twice) times its enclosing loops' trip counts. None under a
@@ -117,6 +131,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   if not private:
     return proc
   aliases = _alias_sources(body)
+  tables = {s.attrs["name"] for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs and s.dtype.is_integer}
   # A buffer that backs an alias (a zero-copy pointer view) must keep its storage — never inline it.
   pinned = set(_alias_sources(body).values())
 
@@ -179,8 +194,10 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
     if execs is None or execs > producer_size:
       continue
     # A producer that only moves data (a transpose, a tile) is cheaper copied than read through a
-    # gather's table, which would divide its index per element; one that computes is not.
-    if rhs.op == ProgramOp.LOAD and rhs.args[0].attrs["buffer"] not in inlinable and _reads_through_a_table(body[ci], buf):
+    # gather's table, which would divide its index per element; one that computes is not. Under a
+    # constant table the two indices compose into one table (``fold_arith``), and nothing is copied.
+    moved = rhs.op == ProgramOp.LOAD and rhs.args[0].attrs["buffer"] not in inlinable and _reads_through_a_table(body[ci], buf)
+    if moved and not _composes(rhs, v, body[ci], buf, tables):
       continue
     rhs_loads = buffer_refs(rhs).loads
     is_expensive = _has_expensive(rhs) or any(expanded_expensive.get(name, False) for name in rhs_loads)
