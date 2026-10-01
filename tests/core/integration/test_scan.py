@@ -512,6 +512,26 @@ def test_custom_rules_are_the_ones_used_in_both_modes_and_under_vmap() -> None:
   np.testing.assert_allclose(sc.Function.from_exprs("cd_wrong_g", [q], [g], ["q"], ["g"])(P), np.diag(doubled), rtol=1e-12)
 
 
+def test_a_rule_that_does_not_read_the_solution_does_not_have_it_computed() -> None:
+  """A reverse rule is handed its Function's outputs. One that reads them gets the call's own; one
+  that works from the inputs alone gets zeros in their place, so a gradient that needs the output
+  for nothing else does not call the Function at all."""
+  x, y, bar = sc.sym("x", 3), sc.sym("y", 3), sc.sym("ybar", 3)
+  cube = sc.Function.from_exprs("unread_cube", [x], [x * x * x], ["x"], ["y"])
+  q = sc.sym("q", 3)
+  weights = sc.const(np.array([1.0, -2.0, 0.5]))
+  for label, slope, called in (("inputs", 3.0 * x * x, False), ("solution", 3.0 * y / x, True)):
+    rule = sc.Function.from_exprs(f"unread_rule_{label}", [x, y, bar], [slope * bar], ["x", "y", "ybar"], ["xbar"])
+    custom = sc.custom_derivative(cube, vjp=rule)
+    cost = sc.Function.from_exprs(f"unread_cost_{label}", [q], [(weights * custom(q)).sum()], ["q"], ["c"])
+    grad = sc.gradient(cost, "c", "q")
+    np.testing.assert_allclose(grad(P), 3.0 * P * P * np.array([1.0, -2.0, 0.5]), rtol=1e-13)
+    stages: dict = {}
+    lower_function(grad, observe=lambda name, prog, stages=stages: stages.__setitem__(name, prog))
+    names = {n.attrs["callee"] for n in _walk(stages["lowered"]) if n.op == ProgramOp.CALL}
+    assert (custom.name in names) == called, (label, names)
+
+
 def test_a_missing_direction_differentiates_the_body() -> None:
   solver = _cubic_solver(3, "cd_half_solve")
   _, vjp = _implicit_rules(3, "cd_half")

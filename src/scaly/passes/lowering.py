@@ -357,6 +357,7 @@ class LowerCtx:
     self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
     # scan identity -> buffer name per output index (0 final carry, -1 carries, 1.. stacked outputs).
     self.scan_invocations: dict[tuple[object, ...], dict[int, str]] = {}
+    self.map_invocations: dict[tuple[object, ...], dict[int, str]] = {}
     self._const_tables: dict[tuple[int, ...], ProgramNode] = {}
     self._tmp = 0
 
@@ -1509,20 +1510,30 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
 @lowers(ExprOp.VMAP)
 def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
-  reads ``outer_k[start_k + it·stride_k ...]`` and writes the selected output into ``out[it·slice_size ...]``."""
+  reads ``outer_k[start_k + it·stride_k ...]`` and writes each output a node of the graph reads
+  into that node's ``out[it·slice_size ...]``: the output nodes of one map (one callee over the
+  same windows) share the loop, as those of one scan do, where a loop each would call the callee
+  once for every output read."""
+  key = _scan_key(node)
+  if key not in ctx.map_invocations:
+    ctx.map_invocations[key] = _emit_vmap(ctx, node, key)
+  ctx.value_buffers[node.id] = ctx.map_invocations[key][int(node.attrs["output"])]
+
+
+def _emit_vmap(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int, str]:
   callee: ConcreteFunction = node.attrs["callee"]
-  out_idx = int(node.attrs["output"])
   length = int(node.attrs["length"])
   starts = tuple(int(s) for s in node.attrs["starts"])
   strides = tuple(int(s) for s in node.attrs["strides"])
-  slice_size = int(node.attrs["slice_size"])
   _ensure_callee(ctx, callee)
-  out = ctx.alloc_tmp(node)
-  # Other callee outputs are written every iteration but discarded: one reused scratch each.
-  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(callee.outputs)]
+  siblings = {int(n.attrs["output"]): n for n in topo(ctx.fun.outputs) if n.op == ExprOp.VMAP and _scan_key(n) == key}
+  outs = {j: ctx.alloc_tmp(sibling) for j, sibling in sorted(siblings.items())}
+  bufs = {j: out.attrs["name"] for j, out in outs.items()}
   if length == 0:
-    return
-  loop = f"it_{out.attrs['name']}"
+    return bufs
+  # Outputs no node reads are written every iteration but discarded: one reused scratch each.
+  scratch = {j: ctx.new_private(o.type.dtype, o.shape) for j, o in enumerate(callee.outputs) if j not in outs}
+  loop = f"it_{outs[min(outs)].attrs['name']}"
   rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
   it = p.var(loop)
   in_args = []
@@ -1530,16 +1541,16 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
     off = p.add(p.const_int(starts[k]), p.mul(p.const_int(strides[k]), it)) if strides[k] else p.const_int(starts[k])
     in_args.append(p.view(ctx.buf_of(outer), [off]))
   out_args = []
-  for i, sbuf in enumerate(scratch):
-    if i == out_idx:
-      off = p.mul(it, p.const_int(slice_size)) if slice_size != 1 else it
-      out_args.append(p.view(out, [off]))
+  for j, formal in enumerate(callee.outputs):
+    if j in outs:
+      out_args.append(p.view(outs[j], [p.mul(it, p.const_int(formal.size)) if formal.size != 1 else it]))
     else:
-      out_args.append(sbuf)
+      out_args.append(scratch[j])
   call = ProgramNode(
     ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
   ctx.emit(p.for_(rng, [call]))
+  return bufs
 
 
 def _scan_key(node: Expr) -> tuple[object, ...]:

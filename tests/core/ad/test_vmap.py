@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import scaly as sc
 
@@ -117,3 +118,117 @@ def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   np.testing.assert_allclose(adj["vmap"], jac.T @ w, rtol=1e-10, atol=1e-10)
   # Forward/reverse duality: <J v, w> == <v, J^T w>.
   np.testing.assert_allclose(w @ fwd["vmap"], v @ adj["vmap"], rtol=1e-12)
+
+
+# --- a mapped callee with a reverse rule of its own -------------------------------------------------
+
+LANES = 5
+
+
+def _layers(name: str, *, reads: str) -> tuple[sc.Function, sc.Function]:
+  """``z = W x``, ``y = tanh(z)`` as a Function of outputs ``(y, [z, 2 z])``, plain and with a
+  reverse rule. The rule needs ``1 - y^2``: it takes it from the output ``y`` (``reads="y"``), from
+  the second output, which is twice as long (``"z"``), or computes it again from the inputs
+  (``"inputs"``)."""
+  x, w = sc.sym("x", 4), sc.sym("w", 12)
+  W = w.reshape((3, 4))
+  z = W @ x
+  plain = sc.Function.from_exprs(name, [x, w], [z.tanh(), sc.concat([z, 2.0 * z])], ["x", "w"], ["y", "z"])
+  y_in, z_in, ybar, zbar = sc.sym("y", 3), sc.sym("z", 6), sc.sym("ybar", 3), sc.sym("zbar", 6)
+  slope = {"y": 1.0 - y_in * y_in, "z": 1.0 - z_in[:3].tanh() ** 2, "inputs": 1.0 - (W @ x).tanh() ** 2}[reads]
+  g = ybar * slope + zbar[:3] + 2.0 * zbar[3:]
+  rule = sc.Function.from_exprs(
+    f"{name}_rule",
+    [x, w, y_in, z_in, ybar, zbar],
+    [W.T @ g, (g.reshape((3, 1)) * x.reshape((1, 4))).reshape((12,))],
+    ["x", "w", "y", "z", "ybar", "zbar"],
+    ["xbar", "wbar"],
+  )
+  return plain, sc.custom_derivative(plain, vjp=rule)
+
+
+def _calls(prog, *, looped: bool | None = None) -> dict[str, list[str]]:
+  """Per procedure of a lowered program, the procedures it calls (from inside a loop, from outside
+  every loop, or anywhere)."""
+  from scaly.ir.program import ProgramOp
+
+  out: dict[str, list[str]] = {}
+  for proc in prog.args[: int(prog.attrs["proc_count"])]:
+    found: list[str] = []
+
+    def walk(node, inside: bool, found: list[str] = found) -> None:
+      if node.op == ProgramOp.CALL and looped in (None, inside):
+        found.append(node.attrs["callee"])
+      for arg in node.args:
+        walk(arg, inside or node.op == ProgramOp.FOR)
+
+    for stmt in proc.args[int(proc.attrs["param_count"]) :]:
+      walk(stmt, False)
+    out[proc.attrs["name"]] = found
+  return out
+
+
+def _lowered(fn: sc.Function):
+  """``fn``'s program as lowering leaves it, before any pass."""
+  from scaly.passes.lowering import lower_function
+
+  stages: dict = {}
+  lower_function(fn, observe=lambda name, prog: stages.__setitem__(name, prog))
+  return stages["lowered"]
+
+
+def _loss_gradients(name: str, callee: sc.Function, *, linear: bool = False) -> sc.Function:
+  xs, ws = sc.sym("xs", LANES * 4), sc.sym("ws", LANES * 12)
+  y = sc.vmap(callee, LANES, [(xs, 0, 4), (ws, 0, 12)])
+  loss = (y * sc.const(np.linspace(0.5, 2.0, LANES * 3))).sum() if linear else (y * y * y).sum()
+  return sc.Function.from_exprs(name, [xs, ws], list(sc.vjp((loss,), (xs, ws), (sc.const(1.0),))), ["xs", "ws"], ["gx", "gw"])
+
+
+@pytest.mark.parametrize("reads", ["y", "z"])
+def test_a_mapped_rule_reads_the_maps_own_outputs(reads: str) -> None:
+  """The gradient of a loss that is not linear in a mapped callee's output needs that output twice:
+  for the loss's own cotangent, and for the callee's reverse rule, which takes the outputs. Both
+  read the one map: it is one loop (whichever outputs the rule reads, they are outputs of one
+  call), the lane of the adjoint map calls the rule and nothing else, and the gradient is the one
+  AD gives through the body. Before, every lane called the callee again for the rule."""
+  plain, custom = _layers(f"ruled_{reads}", reads=reads)
+  ruled, reference = _loss_gradients(f"ruled_{reads}_grad", custom), _loss_gradients(f"plain_{reads}_grad", plain)
+  rng = np.random.default_rng(31)
+  xv, wv = rng.normal(size=LANES * 4), rng.normal(size=LANES * 12)
+  for got, want in zip(ruled((xv, wv)), reference((xv, wv)), strict=True):
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-14)
+  lowered = _lowered(ruled)  # before the passes, which expand small procedures into their callers
+  calls = _calls(lowered)
+  (lane,) = [n for n in calls if "_adj0_" in n]
+  assert calls[lane] == [f"ruled_{reads}_rule"]
+  assert sorted(_calls(lowered, looped=True)[f"ruled_{reads}_grad"]) == sorted([custom.name, lane])
+
+
+def test_a_rule_that_does_not_read_the_outputs_leaves_the_map_alone() -> None:
+  """A rule that works from the inputs takes no output, and a loss linear in the map never needs
+  its value: the gradient does not call the callee at all."""
+  plain, custom = _layers("unread", reads="inputs")
+  ruled, reference = _loss_gradients("unread_grad", custom, linear=True), _loss_gradients("unread_plain_grad", plain, linear=True)
+  rng = np.random.default_rng(32)
+  xv, wv = rng.normal(size=LANES * 4), rng.normal(size=LANES * 12)
+  for got, want in zip(ruled((xv, wv)), reference((xv, wv)), strict=True):
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-14)
+  assert custom.name not in {name for called in _calls(_lowered(ruled)).values() for name in called}
+
+
+def test_second_derivatives_go_through_a_mapped_rule_and_the_outputs_it_reads() -> None:
+  """The lane is a function of the inputs, the outputs and the cotangent, and the outputs are the
+  map's: forward mode over the gradient differentiates all three paths. The Hessian of the loss
+  matches the one AD gives through the body."""
+  plain, custom = _layers("second", reads="y")
+  xs, ws = sc.sym("xs", LANES * 4), sc.sym("ws", LANES * 12)
+  hessians = []
+  for label, callee in (("ruled", custom), ("plain", plain)):
+    y = sc.vmap(callee, LANES, [(xs, 0, 4), (ws, 0, 12)])
+    (gx,) = sc.vjp(((y * y * y).sum(),), (xs,), (sc.const(1.0),))
+    hessians.append(sc.Function.from_exprs(f"second_{label}", [xs, ws], [sc.jacobian(gx, xs)], ["xs", "ws"], ["h"]))
+  rng = np.random.default_rng(33)
+  xv, wv = rng.normal(size=LANES * 4), rng.normal(size=LANES * 12)
+  got, want = hessians[0]((xv, wv)), hessians[1]((xv, wv))
+  assert np.abs(want).max() > 0.1
+  np.testing.assert_allclose(got, want, rtol=1e-11, atol=1e-13)

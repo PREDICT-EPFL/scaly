@@ -264,10 +264,14 @@ tests/core/ad/test_sparsity.py::test_star_recovery_reads_each_entry_where_its_co
 tests/core/ad/test_sparsity.py::test_star_recovery_rejects_ambiguous_orientation
 tests/core/ad/test_sparsity.py::test_while_loop_pattern_is_the_closure_of_the_step
 tests/core/ad/test_sparsity.py::test_window_offset_recognizes_contiguous_runs_of_the_variable
+tests/core/ad/test_vmap.py::test_a_mapped_rule_reads_the_maps_own_outputs[y]
+tests/core/ad/test_vmap.py::test_a_mapped_rule_reads_the_maps_own_outputs[z]
+tests/core/ad/test_vmap.py::test_a_rule_that_does_not_read_the_outputs_leaves_the_map_alone
 tests/core/ad/test_vmap.py::test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual
 tests/core/ad/test_vmap.py::test_grad_factory_over_vmap_matches_unrolled_and_finite_difference
 tests/core/ad/test_vmap.py::test_jacobian_of_vmap_matches_finite_differences
 tests/core/ad/test_vmap.py::test_jvp_many_of_vmap_matches_unrolled_jvp
+tests/core/ad/test_vmap.py::test_second_derivatives_go_through_a_mapped_rule_and_the_outputs_it_reads
 tests/core/ad/test_wrt_expressions.py::test_a_slice_and_an_input_together
 tests/core/ad/test_wrt_expressions.py::test_a_triangle_taken_later_reads_no_stand_in
 tests/core/ad/test_wrt_expressions.py::test_dense_forms
@@ -1043,6 +1047,7 @@ tests/core/integration/test_runtime_index.py::test_values_match_numpy[None-padde
 tests/core/integration/test_runtime_index.py::test_values_match_numpy[None-plain]
 tests/core/integration/test_runtime_index.py::test_values_match_numpy[None-repeats]
 tests/core/integration/test_scan.py::test_a_missing_direction_differentiates_the_body
+tests/core/integration/test_scan.py::test_a_rule_that_does_not_read_the_solution_does_not_have_it_computed
 tests/core/integration/test_scan.py::test_bodies_that_read_what_they_overwrite_keep_two_slots
 tests/core/integration/test_scan.py::test_custom_derivative_copies_keep_their_own_derivatives
 tests/core/integration/test_scan.py::test_custom_derivatives_replace_differentiating_the_solver_steps
@@ -1859,6 +1864,7 @@ tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_num
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-7]
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-8]
 tests/core/passes/test_lowering.py::test_sums_and_dots_in_partial_sums_match_numpy[block-9]
+tests/core/passes/test_lowering.py::test_the_outputs_of_one_map_share_one_loop
 tests/core/passes/test_lowering.py::test_the_product_rule_follows_the_target_and_yields_to_a_scalar_hint
 tests/core/passes/test_lowering.py::test_the_tiles_over_packed_panels_take_the_same_heights
 tests/core/passes/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
@@ -1873,6 +1879,11 @@ tests/core/passes/test_lowering.py::test_uncovered_case_raises_loudly
 tests/core/passes/test_pass_slots.py::test_an_inserted_pass_runs_at_its_slot
 tests/core/passes/test_pass_slots.py::test_anchors_and_names_are_checked
 tests/core/passes/test_program.py::test_a_blocks_lanes_share_slots_only_with_lanes
+tests/core/passes/test_program.py::test_a_call_is_split_only_when_a_quarter_of_its_work_is_invariant[256-True]
+tests/core/passes/test_program.py::test_a_call_is_split_only_when_a_quarter_of_its_work_is_invariant[4-False]
+tests/core/passes/test_program.py::test_a_call_is_split_only_when_a_quarter_of_its_work_is_invariant[64-True]
+tests/core/passes/test_program.py::test_a_call_is_split_only_when_a_quarter_of_its_work_is_invariant[8-False]
+tests/core/passes/test_program.py::test_a_call_with_no_broadcast_argument_is_left_whole
 tests/core/passes/test_program.py::test_a_constant_table_read_at_a_folded_index_becomes_the_values_picked
 tests/core/passes/test_program.py::test_a_map_with_no_affine_factorization_keeps_its_table
 tests/core/passes/test_program.py::test_a_periodic_gather_splits_at_its_table
@@ -1901,6 +1912,9 @@ tests/core/passes/test_program.py::test_gathers_and_scatters_with_affine_maps_ru
 tests/core/passes/test_program.py::test_generated_code_does_not_depend_on_the_hash_seed
 tests/core/passes/test_program.py::test_generated_name_reserves_raw_and_c_identifier_collisions
 tests/core/passes/test_program.py::test_generated_names_do_not_rescan_the_namespace
+tests/core/passes/test_program.py::test_hoist_goes_through_calls_whose_arguments_are_partly_broadcast[1]
+tests/core/passes/test_program.py::test_hoist_goes_through_calls_whose_arguments_are_partly_broadcast[2]
+tests/core/passes/test_program.py::test_hoist_goes_through_calls_whose_arguments_are_partly_broadcast[3]
 tests/core/passes/test_program.py::test_hoist_keeps_unknown_call_outputs_inside_the_map
 tests/core/passes/test_program.py::test_hoist_leaves_per_trip_arguments_in_the_loop
 tests/core/passes/test_program.py::test_hoist_moves_broadcast_argument_work_before_the_mapped_loop

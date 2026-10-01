@@ -65,6 +65,13 @@ take one scatter, and overlapping windows take a fixed number of scatters, one p
 offset, whose sum accumulates the repeated destinations. Cotangents from formals bound to the same
 outer expression are accumulated by the enclosing reverse pass.
 
+A callee with a reverse rule of its own (`custom_derivative`) gives the rule its outputs. The
+adjoint function takes the outputs the rule reads as inputs, and the map's adjoint reads them from
+the map itself, which the forward pass or another reader in the adjoint has computed already. An
+output the rule does not read is passed as zero, so a rule that works from the inputs alone does
+not have the callee run for it. Lowering writes every output of one map that the graph reads in one
+loop, so a rule that reads two outputs still costs one call of the callee a trip.
+
 As a result, dense and sparse Jacobians, gradients and Hessians all work on graphs containing
 `VMAP` without the derivative code growing with the VMAP length.
 

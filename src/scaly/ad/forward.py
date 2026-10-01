@@ -700,18 +700,25 @@ def body_tangents(fn: Any, seeds: dict[int, Expr]) -> list[Expr]:
   return [_jvp(out, by_input, memo, dep) for out in fn.outputs]
 
 
-def custom_vjp_call(callee: Any, args: Sequence[Expr], cots: dict[int, Expr]) -> tuple[Expr, ...]:
+def custom_vjp_call(callee: Any, args: Sequence[Expr], cots: dict[int, Expr], outputs: Sequence[Expr] | None = None) -> tuple[Expr, ...]:
   """Input cotangents from a callee's own reverse rule, given cotangents of some of its outputs (by
   index; the rest are zero). The primal outputs it receives are the call's own outputs, so the rule
-  reuses the solution. Lives here, beside the other flat-call synthesis, for reverse mode to use."""
-  outputs = callee._flat_symbolic_call(list(args))
-  full = [cots[j] if j in cots else zeros_like(out) for j, out in enumerate(outputs)]
-  grads = callee.custom_vjp._flat_symbolic_call([*args, *outputs, *full])
+  reuses the solution, or ``outputs`` when the caller has them already (a map's lane takes them
+  from the primal map). An output the rule does not read is passed as zero, so a rule that works
+  from the inputs alone does not have the callee run for it. Lives here, beside the other
+  flat-call synthesis, for reverse mode to use."""
+  rule = callee.custom_vjp
+  n = len(callee.inputs)
+  dep: dict[tuple[int, int], bool] = {}
+  read = [any(_depends_on(out, rule.inputs[n + j], dep) for out in rule.outputs) for j in range(len(callee.outputs))]
+  if outputs is None:
+    outputs = callee._flat_symbolic_call(list(args))
+  given = [out if reads else zeros_like(formal) for out, formal, reads in zip(outputs, callee.outputs, read, strict=True)]
+  full = [cots[j] if j in cots else zeros_like(formal) for j, formal in enumerate(callee.outputs)]
+  grads = rule._flat_symbolic_call([*args, *given, *full])
   # A rule that returns a constant zero for an input says that input receives nothing: hand back the
   # constant itself, so reverse mode can see it and does not differentiate what produced the input.
-  return tuple(
-    g if not is_zero_const(r) else Expr.const(np.zeros(r.shape), dtype=r.type.dtype) for g, r in zip(grads, callee.custom_vjp.outputs, strict=True)
-  )
+  return tuple(g if not is_zero_const(r) else Expr.const(np.zeros(r.shape), dtype=r.type.dtype) for g, r in zip(grads, rule.outputs, strict=True))
 
 
 def _copysign_slope(x: Expr, s: Expr) -> Expr:

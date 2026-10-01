@@ -856,6 +856,124 @@ def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
   np.testing.assert_allclose(fn((zv, wv)), expected.reshape(-1), rtol=1e-14, atol=1e-14)
 
 
+def _after_hoisting(fn: sc.Function) -> dict[str, ProgramNode]:
+  """The procedures of ``fn`` as ``hoist_invariant`` leaves them, by name."""
+  stages: dict[str, ProgramNode] = {}
+  lower_function(fn, observe=lambda name, prog: stages.__setitem__(name, prog))
+  prog = stages["pass:hoist_invariant"]
+  return {pr.attrs["name"]: pr for pr in prog.args[: int(prog.attrs["proc_count"])]}
+
+
+def _ops(proc: ProgramNode) -> set:
+  return {n.op for stmt in proc.args[int(proc.attrs["param_count"]) :] for n in _walk(stmt)}
+
+
+def _callees(proc: ProgramNode, *, looped: bool) -> list[str]:
+  """The procedures ``proc`` calls from inside a loop, or from outside every loop."""
+  found: list[str] = []
+
+  def walk(node: ProgramNode, inside: bool) -> None:
+    if node.op == ProgramOp.CALL and inside == looped:
+      found.append(node.attrs["callee"])
+    for arg in node.args:
+      walk(arg, inside or node.op == ProgramOp.FOR)
+
+  for stmt in proc.args[int(proc.attrs["param_count"]) :]:
+    walk(stmt, False)
+  return found
+
+
+def _called_stage(depth: int, name: str) -> tuple[sc.Function, sc.Function]:
+  """``sin(exp(W) @ x)`` behind ``depth`` calls, and the stage that calls it on ``x`` and on ``2 x``:
+  the exponential of ``W`` is what a map that broadcasts ``W`` should compute once."""
+  x, w = sc.sym("x", 3), sc.sym("w", 9)
+  inner = sc.Function.from_exprs(f"{name}_inner", [x, w], [(w.reshape((3, 3)).exp() @ x).sin()], ["x", "w"], ["y"])
+  for level in range(1, depth):
+    inner = sc.Function.from_exprs(f"{name}_inner{level}", [x, w], [inner((x, w)) + x], ["x", "w"], ["y"])
+  stage = sc.Function.from_exprs(f"{name}_stage", [x, w], [inner((x, w)) * inner((2.0 * x, w))], ["x", "w"], ["y"])
+  return inner, stage
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+@pytest.mark.parametrize("depth", [1, 2, 3])
+def test_hoist_goes_through_calls_whose_arguments_are_partly_broadcast(depth: int) -> None:
+  """A mapped stage that calls a Function with the broadcast ``W`` and the trip's ``x``: the call
+  cannot move, but the callee is split as the stage is, through as many calls as there are, and
+  its prologue, which holds the exponential, runs once before the loop. Before, hoisting stopped
+  at the call and the exponential ran at every trip."""
+  name = f"through{depth}"
+  inner, stage = _called_stage(depth, name)
+  z, w = sc.sym("z", 15), sc.sym("w", 9)
+  fn = sc.Function.from_exprs(f"{name}_map", [z, w], [sc.vmap(stage, 5, [(z, 0, 3), (w, 0, 0)])], ["z", "w"], ["y"])
+  procs = _after_hoisting(fn)
+  with_exp = [n for n, pr in procs.items() if ProgramOp.EXP in _ops(pr)]
+  assert with_exp == [f"{name}_inner_hoist_1"], with_exp
+  root = procs[f"{name}_map"]
+  assert _callees(root, looped=False) == [f"{name}_stage_hoist_1"] and _callees(root, looped=True) == [f"{name}_stage_hoisted_1"]
+  # The stage's prologue reaches the exponential through prologues only; its body never does.
+  reach = lambda start: _reachable(procs, start)  # noqa: E731
+  assert f"{name}_inner_hoist_1" in reach(f"{name}_stage_hoist_1") and f"{name}_inner_hoist_1" not in reach(f"{name}_stage_hoisted_1")
+  rng = np.random.default_rng(depth)
+  zv, wv = rng.normal(size=15), rng.normal(size=9)
+  ew = np.exp(wv.reshape(3, 3))
+
+  def reference(x: np.ndarray) -> np.ndarray:
+    y = np.sin(ew @ x)
+    for _ in range(1, depth):
+      y = y + x
+    return y
+
+  expected = np.concatenate([reference(x) * reference(2.0 * x) for x in zv.reshape(5, 3)])
+  np.testing.assert_allclose(fn((zv, wv)), expected, rtol=1e-13, atol=1e-13)
+
+
+def _reachable(procs: dict[str, ProgramNode], start: str) -> set[str]:
+  seen, todo = set(), [start]
+  while todo:
+    name = todo.pop()
+    if name in seen or name not in procs:
+      continue
+    seen.add(name)
+    todo += [n.attrs["callee"] for stmt in procs[name].args for n in _walk(stmt) if n.op == ProgramOp.CALL]
+  return seen
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+def test_a_call_with_no_broadcast_argument_is_left_whole() -> None:
+  """With ``W`` per trip, nothing a call reads is invariant: no procedure is split."""
+  _, stage = _called_stage(2, "whole")
+  z, w = sc.sym("z", 15), sc.sym("w", 45)
+  fn = sc.Function.from_exprs("whole_map", [z, w], [sc.vmap(stage, 5, [(z, 0, 3), (w, 0, 9)])], ["z", "w"], ["y"])
+  assert sorted(_after_hoisting(fn)) == ["whole_inner", "whole_inner1", "whole_map", "whole_stage"]
+  rng = np.random.default_rng(9)
+  zv, wv = rng.normal(size=15), rng.normal(size=45)
+  ref = lambda x, m: np.sin(np.exp(m) @ x) + x  # noqa: E731
+  expected = np.concatenate([ref(x, m) * ref(2.0 * x, m) for x, m in zip(zv.reshape(5, 3), wv.reshape(5, 3, 3), strict=True)])
+  np.testing.assert_allclose(fn((zv, wv)), expected, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+@pytest.mark.parametrize(("invariant", "split"), [(4, False), (8, False), (64, True), (256, True)])
+def test_a_call_is_split_only_when_a_quarter_of_its_work_is_invariant(invariant: int, split: bool) -> None:
+  """A split procedure is no longer expanded into its caller as one body, which costs more than a
+  few hoisted values save: the stage derivatives of the race cars ran up to 2.5 times slower with
+  a handful of parameter products hoisted out of their ODE calls. The callee here computes 64
+  values from the trip's ``x`` and ``invariant`` from the broadcast ``w``; it is split from a
+  quarter of its work on."""
+  name = f"share{invariant}"
+  x, w = sc.sym("x", 64), sc.sym("w", invariant)
+  inner = sc.Function.from_exprs(f"{name}_inner", [x, w], [x.sin() * w.exp().sum()], ["x", "w"], ["y"])
+  stage = sc.Function.from_exprs(f"{name}_stage", [x, w], [inner((x, w)) + x], ["x", "w"], ["y"])
+  z, ws = sc.sym("z", 3 * 64), sc.sym("ws", invariant)
+  fn = sc.Function.from_exprs(f"{name}_map", [z, ws], [sc.vmap(stage, 3, [(z, 0, 64), (ws, 0, 0)])], ["z", "ws"], ["y"])
+  procs = _after_hoisting(fn)
+  assert (f"{name}_inner_hoist_1" in procs) == split, sorted(procs)
+  assert [n for n, pr in procs.items() if ProgramOp.EXP in _ops(pr)] == [f"{name}_inner_hoist_1" if split else f"{name}_inner"]
+  rng = np.random.default_rng(invariant)
+  zv, wv = rng.normal(size=3 * 64), rng.normal(size=invariant)
+  np.testing.assert_allclose(fn((zv, wv)), np.sin(zv) * np.exp(wv).sum() + zv, rtol=1e-13, atol=1e-13)
+
+
 def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
   """``t = a; y = t * x; t = 2a; y += t``: both writes of ``t`` are invariant, but the first read must see the first."""
   a, x, y = (buffer(n, dtypes.float64, (1,)) for n in ("a", "x", "y"))

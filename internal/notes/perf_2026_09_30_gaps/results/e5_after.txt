@@ -1,0 +1,27 @@
+# e5_episode.py: the DiffMPC case study's episode, forward pass and gradient through the Functions' calls, best of 7.
+# Apple M3 Max, load average 2-3. Before: the tree with C-238 in. After: C-239 (hoisting through calls, the outputs of
+# one map in one loop, a mapped rule reading the map's outputs). The gradients agree between the variants to 1e-6.
+# per_solve_outputs is not the case study's model: its MPC returns the Riccati recursion beside u0 and its rule reads
+# it from the outputs, where the case study's rule runs the recursion again (see the script).
+
+# before
+problem              variant  forward ms  gradient ms  gradient / forward  first calls s
+      1   per_solve_implicit       24.30       111.95                 4.6            2.7
+      1    per_solve_outputs       25.60        83.65                 3.3            2.5
+      1         per_solve_ad       24.16       154.93                 6.4            2.9
+      1     hoisted_implicit        0.05        58.86              1225.2            2.4
+      5   per_solve_implicit       24.70       107.70                 4.4            3.1
+      5    per_solve_outputs       26.42        86.74                 3.3            3.4
+      5         per_solve_ad       24.66       149.63                 6.1            4.7
+      5     hoisted_implicit        0.06        58.79               950.8            3.2
+
+# after
+problem              variant  forward ms  gradient ms  gradient / forward  first calls s
+      1   per_solve_implicit       24.12        84.57                 3.5            2.4
+      1    per_solve_outputs       25.36        57.95                 2.3            2.4
+      1         per_solve_ad       24.12       153.62                 6.4            2.9
+      1     hoisted_implicit        0.05         6.18               128.2            2.3
+      5   per_solve_implicit       24.68        82.35                 3.3            3.1
+      5    per_solve_outputs       25.07        58.53                 2.3            3.1
+      5         per_solve_ad       25.04       149.72                 6.0            4.6
+      5     hoisted_implicit        0.06         7.72               124.2            3.0

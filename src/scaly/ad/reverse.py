@@ -34,6 +34,7 @@ from ..ir.expr import (
   where,
   zeros_like,
 )
+from ..ir.types import TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.options import get_options
 from .forward import (
@@ -52,7 +53,9 @@ from .forward import (
 from .sparsity import _depends_on
 
 
-_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Any, tuple[int, ...], frozenset[int]]]] = weakref.WeakKeyDictionary()
+_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Any, tuple[int, ...], frozenset[int], tuple[int, ...]]]] = (
+  weakref.WeakKeyDictionary()
+)
 
 
 def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
@@ -70,10 +73,18 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
   return memo[expr.id]
 
 
-def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...], frozenset[int]]:
-  """The adjoint of one map lane for the ``active_formals``, the inputs it reads, and the formals
-  whose cotangent is a constant zero (an implicit rule's for a factor it treats as constant): the
-  map's adjoint leaves those out, so reverse mode does not walk back into what produced them."""
+def _vmap_adj_function(
+  callee: Any, output_index: int, active_formals: tuple[int, ...]
+) -> tuple[Any, tuple[int, ...], frozenset[int], tuple[int, ...]]:
+  """The adjoint of one map lane for the ``active_formals``, the inputs it reads, the formals
+  whose cotangent is a constant zero (an implicit rule's for a factor it treats as constant: the
+  map's adjoint leaves those out, so reverse mode does not walk back into what produced them), and
+  the outputs of the callee it reads.
+
+  A callee with a reverse rule of its own gives the rule its outputs. The lane takes them as
+  inputs, after the callee's: the map's adjoint reads them from the map itself, which the forward
+  pass, or whatever else in the adjoint reads the map, has computed already. Calling the callee
+  inside the lane would compute every trip a second time."""
   key = (output_index, active_formals, get_options().derivative_key())
   cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
@@ -81,19 +92,45 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     taken = {*callee.input_names, *callee.output_names}
     lam_name = claim_name(f"lam:{callee.output_names[output_index]}", taken)
     lam = Expr.sym(lam_name, out.shape, dtype=tangent_dtype(out))
-    grads = body_cotangents(callee, {output_index: lam}, active_formals)
+    primal: tuple[Expr, ...] = ()
+    if callee.custom_vjp is not None:
+      primal = tuple(
+        Expr.sym(claim_name(f"out:{name}", taken), o.shape, dtype=o.type.dtype) for name, o in zip(callee.output_names, callee.outputs, strict=True)
+      )
+      every = custom_vjp_call(callee, callee.inputs, {output_index: lam}, primal)
+      grads: tuple[Expr, ...] = tuple(every[i] for i in active_formals)
+    else:
+      grads = body_cotangents(callee, {output_index: lam}, active_formals)
     zero = frozenset(k for k, grad in zip(active_formals, grads, strict=True) if is_zero_const(simplify_cse_fixpoint(grad)))
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
-    inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
-    input_names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
+    out_indices = tuple(j for j, sym in enumerate(primal) if _depends_on(adj, sym, dep_memo))
+    inputs = (*(callee.inputs[i] for i in arg_indices), *(primal[j] for j in out_indices), lam)
+    input_names = (*(callee.input_names[i] for i in arg_indices), *(str(primal[j].name) for j in out_indices), lam_name)
     # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
     name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals) + options_tag()
     fn = ConcreteFunction.from_exprs(name, inputs, [adj], input_names, [claim_name(f"adj:{callee.output_names[output_index]}", taken)])
-    cache[key] = (fn, arg_indices, zero)
+    cache[key] = (fn, arg_indices, zero, out_indices)
   return cache[key]
+
+
+def _map_output(vmap_expr: Expr, output: int) -> Expr:
+  """The node for ``output`` of the map ``vmap_expr`` is one output of: the same callee over the
+  same windows, so the same node wherever the graph already reads that output."""
+  if output == int(vmap_expr.attrs["output"]):
+    return vmap_expr
+  out = vmap_expr.attrs["callee"].outputs[output]
+  diff = out.type.diff and any(arg.type.diff for arg in vmap_expr.args)
+  attrs = {**vmap_expr.attrs, "output": output, "slice_size": int(out.size)}
+  return Expr(
+    ExprOp.VMAP,
+    vmap_expr.args,
+    TensorType((int(vmap_expr.attrs["length"]) * out.size,), out.type.dtype, diff=diff),
+    attrs=attrs,
+    lowering=vmap_expr.lowering,
+  )
 
 
 def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
@@ -109,9 +146,10 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
   if not active_formals:
     return []
 
-  adj_fn, arg_indices, zero = _vmap_adj_function(callee, output_idx, active_formals)
+  adj_fn, arg_indices, zero, out_indices = _vmap_adj_function(callee, output_idx, active_formals)
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-  mapped = vmap(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
+  output_specs = [(_map_output(vmap_expr, j), 0, callee.outputs[j].size) for j in out_indices]
+  mapped = vmap(adj_fn, length, [*primal_specs, *output_specs, (cot, 0, slice_size)])
   adj_size = sum(callee.inputs[k].size for k in active_formals)
   ret: list[tuple[Expr, Expr]] = []
   offset = 0

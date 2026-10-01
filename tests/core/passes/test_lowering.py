@@ -996,6 +996,49 @@ def test_a_products_rows_go_in_the_fewest_tiles_the_registers_hold(m: int, heigh
   assert sum(heights) == sum(starved) == m
 
 
+def _map_loops(fn: sc.Function, prefix: str) -> list:
+  """The calls of procedures named ``prefix``... that ``fn``'s entry makes from inside a loop."""
+  calls = []
+
+  def walk(node, inside: bool) -> None:
+    if node.op == ProgramOp.CALL and inside and node.attrs["callee"].startswith(prefix):
+      calls.append(node)
+    for arg in node.args:
+      walk(arg, inside or node.op == ProgramOp.FOR)
+
+  for stmt in _stmts(fn):
+    walk(stmt, False)
+  return calls
+
+
+def test_the_outputs_of_one_map_share_one_loop() -> None:
+  """A callee of three outputs mapped over the same windows, two of them read: one loop calls it
+  once a trip and writes both, each at its own stride (the second is a scalar a trip), and the
+  third goes to a scratch buffer. A loop for each output read would call the callee twice a trip.
+  The same callee over other windows is another map, with a loop of its own."""
+  x, w = sc.sym("x", 3), sc.sym("w", 3)
+  three = sc.Function.from_exprs("share_three", [x, w], [(x * w).sin(), (x @ w).reshape((1,)), (x + w).exp()], ["x", "w"], ["a", "b", "c"])
+  xs, ws, us = sc.sym("xs", 12), sc.sym("ws", 12), sc.sym("us", 12)
+  specs = [(xs, 0, 3), (ws, 0, 3)]
+  a, b = sc.vmap(three, 4, specs, output=0), sc.vmap(three, 4, specs, output=1)
+  other = sc.vmap(three, 4, [(us, 0, 3), (ws, 0, 3)], output=2)
+  fn = sc.Function.from_exprs("share_map", [xs, ws, us], [a, b * 2.0, a.sum() + other.sum()], ["xs", "ws", "us"], ["a", "b", "s"])
+  loops = _map_loops(fn, "share_three")
+  assert len(loops) == 2
+  first = loops[0]
+  outs = first.args[int(first.attrs["n_in"]) :]
+  written = [arg.attrs.get("buffer", arg.attrs.get("name")) for arg in outs]
+  assert written[0] == "a" and len(set(written)) == 3  # the Function's own output, a temporary, a scratch
+  assert [arg.op for arg in outs] == [ProgramOp.VIEW, ProgramOp.VIEW, ProgramOp.BUFFER]  # the unread output is not indexed by the trip
+  rng = np.random.default_rng(12)
+  xv, wv, uv = rng.normal(size=12), rng.normal(size=12), rng.normal(size=12)
+  av, bv, sv = fn((xv, wv, uv))
+  X, W, U = xv.reshape(4, 3), wv.reshape(4, 3), uv.reshape(4, 3)
+  np.testing.assert_allclose(av, np.sin(X * W).reshape(-1), rtol=1e-14)
+  np.testing.assert_allclose(bv, 2.0 * (X * W).sum(axis=1), rtol=1e-14)
+  np.testing.assert_allclose(sv, np.sin(X * W).sum() + np.exp(U + W).sum(), rtol=1e-14)
+
+
 # --- products past the level-1 cache (C-204) ---------------------------------------------------------
 
 

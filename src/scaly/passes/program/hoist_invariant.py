@@ -15,9 +15,44 @@ from ._common import (
   _rebuild_proc,
   _resolve_alias,
   _walk,
+  trip_count,
 )
 
 _Split = tuple[ProgramNode, ProgramNode, tuple[int, ...], list[ProgramNode]]
+
+# A call inside a mapped callee is split when its prologue would hold at least this share of the
+# call's work (``_work``). Measured: the stage derivatives of the race cars and the chain, whose
+# ODE calls derive one to twenty-six values from broadcast parameters (under a tenth of each call),
+# ran 1.2 to 2.5 times slower split, because the halves are not expanded into one straight-line
+# stage as the whole calls were; a custom rule's Riccati recursion on broadcast data is two thirds
+# of its call, and hoisting it took a gradient from 59 to 6 ms.
+_CALL_SHARE = 0.25
+
+
+def _work(proc: ProgramNode, table: dict[str, ProgramNode], work: dict[str, int]) -> int:
+  """The values ``proc`` computes in one call, kept in ``work`` by name: its stores, each counted
+  once for every trip of the loops around it (a loop whose bounds are not constants counts as one
+  trip), and the work of the procedures it calls (one for a procedure neither in ``table`` nor
+  counted before, an extern body)."""
+  name = proc.attrs["name"]
+  if name in work:
+    return work[name]
+
+  def count(node: ProgramNode, trips: int) -> int:
+    if node.op == ProgramOp.FOR:
+      steps = trip_count(node.args[0])
+      return sum(count(stmt, trips * (1 if steps is None else steps)) for stmt in node.args[1:])
+    if node.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR):
+      return trips
+    if node.op == ProgramOp.CALL:
+      callee = node.attrs["callee"]
+      if callee not in work and callee not in table:
+        return trips
+      return trips * (work[callee] if callee in work else _work(table[callee], table, work))
+    return sum(count(arg, trips) for arg in node.args)
+
+  work[name] = sum(count(stmt, 1) for stmt in proc.args[int(proc.attrs["param_count"]) :])
+  return work[name]
 
 
 def hoist_invariant(prog: ProgramNode) -> ProgramNode:
@@ -28,15 +63,24 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   derived from them at every trip. Inside the callee, a private buffer is invariant when every
   statement writing it reads only invariant inputs, constants and other invariant buffers; the
   statements producing the invariant buffers the rest of the body reads move to the prologue.
+
+  The split goes through calls. A call inside the callee whose arguments are partly invariant is
+  split the same way, and its prologue, which reads invariant buffers only, moves out with the
+  rest: without that, everything a nested Function derives from a broadcast argument was
+  recomputed at every trip, however little of the call depended on the trip (the Riccati recursion
+  inside a custom derivative rule, mapped over a batch that shares its weights). A call is split
+  only when a quarter or more of its work is invariant (``_CALL_SHARE``): a split procedure is no
+  longer expanded into its caller as one body, which costs more than a few hoisted scalars save.
   """
   procs, kernels = _procs(prog)
   table = {pr.attrs["name"]: pr for pr in procs}
   used_names = {c_ident(name) for name in table}
   pure: set[str] = set()
   splits: dict[tuple[str, tuple[int, ...]], _Split | None] = {}
+  work: dict[str, int] = {}
   rewritten: list[ProgramNode] = []
   for pr in procs:  # callees precede callers, so a split always sees the callee's rewritten body
-    table[pr.attrs["name"]] = _hoist_proc(pr, table, splits, used_names, pure)
+    table[pr.attrs["name"]] = _hoist_proc(pr, table, splits, used_names, pure, work)
     rewritten.append(table[pr.attrs["name"]])
     if all(n.attrs["callee"] in pure for n in _walk(table[pr.attrs["name"]]) if n.op == ProgramOp.CALL):
       pure.add(pr.attrs["name"])
@@ -59,6 +103,7 @@ def _hoist_proc(
   splits: dict[tuple[str, tuple[int, ...]], _Split | None],
   used_names: set[str],
   pure: set[str],
+  work: dict[str, int],
 ) -> ProgramNode:
   params, body = _proc_parts(proc)
   aliases = _alias_sources(body)
@@ -77,7 +122,7 @@ def _hoist_proc(
       continue
     key = (c.attrs["callee"], invariant)
     if key not in splits:
-      splits[key] = _split(table[key[0]], invariant, used_names, pure)
+      splits[key] = _split(table[key[0]], invariant, used_names, pure, table, splits, work)
     split = splits[key]
     if split is None:
       new_body.append(stmt)
@@ -98,38 +143,52 @@ def _call(callee: ProgramNode, args: list[ProgramNode]) -> ProgramNode:
   return ProgramNode(ProgramOp.CALL, tuple(args), {"callee": callee.attrs["name"], "n_in": n_in, "n_out": len(args) - n_in, "returns": ()})
 
 
-def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], pure: set[str]) -> _Split | None:
+def _split(
+  proc: ProgramNode,
+  invariant: tuple[int, ...],
+  used_names: set[str],
+  pure: set[str],
+  table: dict[str, ProgramNode],
+  splits: dict[tuple[str, tuple[int, ...]], _Split | None],
+  work: dict[str, int],
+) -> _Split | None:
   params, body = _proc_parts(proc)
   n_in = int(proc.attrs["input_count"])
-  aliases = _alias_sources(body)
-  fixed = {params[k].attrs["name"] for k in invariant} | {s.attrs["name"] for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
   outputs = {pp.attrs["name"] for pp in params[n_in:]}
-  stmt_refs = {i: buffer_refs(s, aliases) for i, s in enumerate(body) if s.op != ProgramOp.BUFFER}
-  refs = {i: (set(r.reads), set(r.writes)) for i, r in stmt_refs.items()}
-  writers: dict[str, set[int]] = {}
-  for i, (_, writes) in refs.items():
-    for b in writes:
-      writers.setdefault(b, set()).add(i)
-  opaque_calls = {
-    i
-    for i, stmt in enumerate(body)
-    if stmt.op != ProgramOp.BUFFER and any(n.op == ProgramOp.CALL and n.attrs["callee"] not in pure for n in _walk(stmt))
-  }
-  call_buffers = {name for i in opaque_calls for name in stmt_refs[i].reads | stmt_refs[i].writes}
-  # A loop whose variable outlives it (``exit_var``) and a statement reading such a variable belong
-  # together, and buffer references do not show that link: neither may move.
-  scoped = {i for i, stmt in enumerate(body) if stmt.op != ProgramOp.BUFFER and _binds_or_reads_outer_var(stmt)}
-  hoist = {
-    i
-    for i, (reads, writes) in refs.items()
-    if not writes & outputs and i not in opaque_calls and i not in scoped and not (reads | writes) & call_buffers
-  }
+  local_names = {c_ident(n.attrs["name"]) for n in _walk(proc) if n.op in (ProgramOp.BUFFER, ProgramOp.RANGE, ProgramOp.VAR)}
   while True:
-    known = fixed | {b for b, ws in writers.items() if ws <= hoist}
-    kept = {i for i in hoist if refs[i][0] <= known and refs[i][1] <= known}
-    if kept == hoist:
+    aliases = _alias_sources(body)
+    fixed = {params[k].attrs["name"] for k in invariant} | {s.attrs["name"] for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
+    stmt_refs = {i: buffer_refs(s, aliases) for i, s in enumerate(body) if s.op != ProgramOp.BUFFER}
+    refs = {i: (set(r.reads), set(r.writes)) for i, r in stmt_refs.items()}
+    writers: dict[str, set[int]] = {}
+    for i, (_, writes) in refs.items():
+      for b in writes:
+        writers.setdefault(b, set()).add(i)
+    opaque_calls = {
+      i
+      for i, stmt in enumerate(body)
+      if stmt.op != ProgramOp.BUFFER and any(n.op == ProgramOp.CALL and n.attrs["callee"] not in pure for n in _walk(stmt))
+    }
+    call_buffers = {name for i in opaque_calls for name in stmt_refs[i].reads | stmt_refs[i].writes}
+    # A loop whose variable outlives it (``exit_var``) and a statement reading such a variable belong
+    # together, and buffer references do not show that link: neither may move.
+    scoped = {i for i, stmt in enumerate(body) if stmt.op != ProgramOp.BUFFER and _binds_or_reads_outer_var(stmt)}
+    hoist = {
+      i
+      for i, (reads, writes) in refs.items()
+      if not writes & outputs and i not in opaque_calls and i not in scoped and not (reads | writes) & call_buffers
+    }
+    while True:
+      known = fixed | {b for b, ws in writers.items() if ws <= hoist}
+      kept = {i for i in hoist if refs[i][0] <= known and refs[i][1] <= known}
+      if kept == hoist:
+        break
+      hoist = kept
+    through = _split_a_call(body, hoist | opaque_calls | scoped, known, aliases, local_names, used_names, pure, table, splits, work)
+    if through is None:
       break
-    hoist = kept
+    body = through
   produced = {b for b, ws in writers.items() if ws <= hoist}
   exported_names = {b for i, (reads, _) in refs.items() if i not in hoist for b in reads & produced}
   if not exported_names:
@@ -169,7 +228,49 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
   for generated in (prologue, hoisted):
     if all(n.attrs["callee"] in pure for n in _walk(generated) if n.op == ProgramOp.CALL):
       pure.add(generated.attrs["name"])
+    _work(generated, table, work)  # counted while the halves it calls are at hand
   return prologue, hoisted, used, exported
+
+
+def _split_a_call(
+  body: list[ProgramNode],
+  settled: set[int],
+  known: set[str],
+  aliases: dict[str, str],
+  local_names: set[str],
+  used_names: set[str],
+  pure: set[str],
+  table: dict[str, ProgramNode],
+  splits: dict[tuple[str, tuple[int, ...]], _Split | None],
+  work: dict[str, int],
+) -> list[ProgramNode] | None:
+  """``body`` with the first call that stays in the loop, to a callee some of whose inputs are
+  ``known`` invariant, replaced by that callee's two halves: the prologue's buffers, the call of
+  the prologue (which reads invariant buffers only, so the caller's split then moves it out), and
+  the call of the rest. None when no call splits."""
+  for i, stmt in enumerate(body):
+    if stmt.op != ProgramOp.CALL or i in settled or stmt.attrs["callee"] not in table or stmt.attrs["callee"] not in pure:
+      continue
+    n_in = int(stmt.attrs["n_in"])
+    names = [_resolve_alias(a.attrs.get("buffer", a.attrs.get("name")), aliases) for a in stmt.args]
+    invariant = tuple(k for k in range(n_in) if names[k] in known)
+    if not invariant or set(names[n_in:]) & {names[k] for k in invariant}:
+      continue
+    key = (stmt.attrs["callee"], invariant)
+    if key not in splits:
+      splits[key] = None  # while it is being split, and if it does not split
+      splits[key] = _split(table[key[0]], invariant, used_names, pure, table, splits, work)
+    split = splits[key]
+    if split is None:
+      continue
+    prologue, hoisted, used, exported = split
+    moved, kept = work[prologue.attrs["name"]], work[hoisted.attrs["name"]]
+    if moved < _CALL_SHARE * (moved + kept):
+      continue
+    bufs = [buffer(allocated_name(f"{key[0]}_{b.attrs['name']}", local_names), b.dtype, b.attrs["shape"], address_space="private") for b in exported]
+    calls = [_call(prologue, [*(stmt.args[k] for k in used), *bufs]), _call(hoisted, [*stmt.args[:n_in], *bufs, *stmt.args[n_in:]])]
+    return [*body[:i], *bufs, *calls, *body[i + 1 :]]
+  return None
 
 
 def _binds_or_reads_outer_var(stmt: ProgramNode) -> bool:

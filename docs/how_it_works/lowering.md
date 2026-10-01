@@ -111,6 +111,15 @@ that any per-trip statement also writes, such as a zero-filled accumulator, stay
 Call sites whose arguments all vary keep the original callee, which is dropped once nothing calls
 it.
 
+The split goes through calls. A call inside the callee whose arguments are partly invariant cannot
+move, but its callee is split the same way, and its prologue, which reads invariant buffers only,
+moves out with the rest of the invariant work. Without that, whatever a nested Function derived
+from a broadcast argument was recomputed at every trip, however little of the call depended on the
+trip. A custom derivative rule that runs a recursion over the problem data, mapped over a batch
+that shares the data, is such a call. A call is split only when a quarter or more of its work is
+invariant. A procedure that has been split is no longer expanded into its caller as one
+straight-line body, and that costs more than hoisting a few scalars saves.
+
 Under `auto` the prologue has `scalarize_mode="inline"`: `scalarize` inlines it into an expanding
 caller but never expands it on its own, since code that runs once per call gains nothing from
 expansion and would grow the source with the invariant argument's size. Other selection modes are

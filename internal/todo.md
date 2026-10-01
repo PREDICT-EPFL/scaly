@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 239**
+**Next id: 241**
 
 | Prefix | Section |
 |---|---|
@@ -1304,6 +1304,44 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       the body called once a trip, run on 600 more seeds before the commit. 41 mutants, all
       killed after one test was added; two more survived as checks that could not matter, and
       those were removed.
+- [x] **C-239. One forward pass: hoisting goes through calls, the outputs of one map share one
+      loop, and a mapped rule reads the map's outputs (A8, Tier 8).** E5's gradient cost 4.6x
+      its forward pass per solve and 59 ms where the forward pass, hoisted, takes 0.05
+      (`e5_episode.py`, `results/e5_after.txt`). Three causes, each general. (1) `hoist_invariant`
+      stopped at a call: the lane of the adjoint map calls the MPC and its rule, both of which
+      run a Riccati recursion on broadcast data, and neither call could move. A call whose
+      arguments are partly invariant is now split as a mapped callee is, and its prologue moves
+      out (`_split_a_call`): the hoisted gradient 58.9 -> 6.2 ms (problem 5: 58.8 -> 7.7), what
+      is left being the 3 200 adjoint rollouts. A call is split only when a quarter or more of
+      its work is invariant (`_CALL_SHARE`, by a count of stores times trips): split whenever
+      anything was invariant, the corpus's stage derivatives ran 1.16-2.5x slower (race cars,
+      chain M = 5 and 9), their ODE calls losing one to twenty-six parameter products and with
+      them the expansion into one straight-line stage; with the rule no corpus kernel's C
+      changes. (2) Each output node of a map lowered to a loop
+      of its own, which called the callee once for every output read: they share one loop now,
+      as a scan's do (`_emit_vmap`). (3) The lane of a map over a callee with a reverse rule
+      called the callee again to give the rule its outputs. It takes them as inputs, read from
+      the map itself (`_vmap_adj_function`, `_map_output`), and an output the rule does not
+      read is passed as zero, in a map or a call, so a rule that works from the inputs does not
+      have the callee run at all. Per solve: 112 -> 84.6 ms, 4.6x -> 3.5x its forward pass. The
+      Riccati recursion that is left is the one the case study's rule runs for itself; with the
+      MPC returning its recursion beside `u0` and the rule reading it (`per_solve_outputs` in
+      the script, which (2) and (3) make cost one recursion a solve): 57.9 ms, 2.3x (the gate
+      asked 2.5x; the same model on the tree before: 83.7 ms, 3.3x). AD through the recursion
+      (`per_solve_ad`) is unchanged at 6.4x. Tests: hoisting through one, two and three calls
+      and a call with nothing invariant; three outputs of one map, two read, in one loop; a
+      mapped rule reading each of two outputs of different sizes, a rule reading none, in a map
+      and in a call, second derivatives through the mapped rule, and the quarter rule on
+      both sides of its threshold. 19 mutants, all killed (one by a pass that no longer ends).
+- [ ] **C-240. The DiffMPC case study's rule runs its own Riccati recursion.** Returning the
+      recursion from `mpc_function` and reading it in `implicit_rule` takes the gradient from
+      3.5x to 2.3x its forward pass (C-239, `e5_episode.py`'s `per_solve_outputs`). The change
+      moves the notebook's cells and every recorded Scaly backward time in the study's README
+      and `results/scaly.json`, so it needs the notebook run again, which needs Jupyter.
+      Beyond it: a map's adjoint and its primal map could share the lane's intermediate values
+      without the model's help, by splitting the lane's adjoint at the cotangent (the values it
+      needs that do not depend on the cotangent, computed and stored by the primal map); that
+      would also take `per_solve_ad` from 6.4x to about 5.4x.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced
