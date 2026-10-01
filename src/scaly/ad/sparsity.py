@@ -14,16 +14,30 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, define_rules, independent, op_def, put_lanes
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, define_rules, independent, op_def, put_lanes, topo
 from ..ir.types import SparsityType, broadcast_shape
 from ..utils.options import get_options
 
 
 def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> bool:
-  key = (expr.id, wrt.id)
-  if key not in memo:
-    memo[key] = expr.id == wrt.id or any(_depends_on(arg, wrt, memo) for arg in expr.args)
-  return memo[key]
+  """Whether ``wrt`` is under ``expr``. Walked with a stack of its own: a graph may be deeper
+  than the interpreter's."""
+  target = wrt.id
+  if (expr.id, target) not in memo:
+    stack = [expr]
+    while stack:
+      node = stack[-1]
+      if (node.id, target) in memo:
+        stack.pop()
+      elif node.id == target:
+        memo[(node.id, target)] = True
+        stack.pop()
+      elif pending := [arg for arg in node.args if (arg.id, target) not in memo]:
+        stack.extend(pending)
+      else:
+        memo[(node.id, target)] = any(memo[(arg.id, target)] for arg in node.args)
+        stack.pop()
+  return memo[(expr.id, target)]
 
 
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
@@ -34,7 +48,24 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
   for the structural/arithmetic subset currently implemented here.
   """
   (expr,), (wrt,), _ = independent((expr,), (wrt,))
-  return _mask_sparsity(_jac_mask(expr, wrt, {}))
+  memo: dict[int, sparse.csr_array] = {}
+  try:
+    return _mask_sparsity(_jac_mask(expr, wrt, memo))
+  except RecursionError:
+    pass
+  # Deeper than the interpreter's stack. The rules ask for their arguments' patterns by calling
+  # back, so the patterns are filled in arguments first, each call then finding its arguments'
+  # ready. A node the rules would not have asked about may have no pattern to give: it is left
+  # for the walk from the top, which asks only for what it needs.
+  for node in topo((expr,)):
+    if node.id not in memo:
+      try:
+        _jac_mask(node, wrt, memo)
+      except RecursionError:
+        raise
+      except Exception:  # noqa: BLE001, S112
+        continue
+  return _mask_sparsity(_jac_mask(expr, wrt, memo))
 
 
 def column_coloring(sparsity: SparsityType) -> tuple[int, ...]:

@@ -106,9 +106,23 @@ This is why keeping repetition as [`vmap`](functions.md#regular-repetition-vmap)
 Python loop matters for anything horizon-shaped, and most of why scaly's generated sources stay
 small as problems grow. See [the numbers](../results/scalability.md).
 
-Anything that is not a `VMAP` piece falls back to coloring the global pattern, which is still far
-cheaper than dense. `sc.sparse_jacobian_reference` computes the dense Jacobian and gathers from it.
-It is slow and obviously correct, and it is what small tests check the fast paths against.
+Anything that is not a `VMAP` piece is colored as a whole, after two things that keep the colors
+few on a model written over the edges of a graph, where a variable of high degree is read by many
+terms.
+
+- The terms that are linear in the variable with constant coefficients (selections, sums and
+  differences, `segment_sum`, products with constants) have a constant Jacobian. It is computed when
+  the graph is built and costs no color and no work at run time. A balance row that sums the flows
+  at a bus is such a term.
+- What is left is differentiated with respect to the selections of the variable it reads (each
+  `gather`, slice, reshape or transpose, and the variable itself where it is read directly), and
+  the entries are added up at the columns they stand for. A term over an edge reads the values at
+  the edge's two ends, so with respect to those operands the pattern is one small block an edge
+  and takes as many colors as a term has operands, whatever the degree.
+
+Each is taken only when it needs fewer colors than coloring the columns of the variable itself.
+`sc.sparse_jacobian_reference` computes the dense Jacobian and gathers from it. It is slow and
+obviously correct, and it is what small tests check the fast paths against.
 
 ## Hessians
 
@@ -118,6 +132,10 @@ The same machinery gives compact Hessians, including Lagrangian ones:
 sc.sparse_hessian(fn, "f", "x")
 sc.sparse_lagrangian_hessian(fn, "x")
 ```
+
+A Hessian is differentiated with respect to the selections it reads in the same way, where that
+takes fewer colors: selections are linear, so the Hessian in the variable is the one in the
+selections with its entries added up at their rows and columns.
 
 The Hessian path symmetrizes its structural pattern and uses one global star coloring. This keeps
 the color count constant when a formal is shared across every iteration of a `VMAP` with stride 0

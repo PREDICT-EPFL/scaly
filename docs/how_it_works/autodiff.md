@@ -150,7 +150,22 @@ nonzero from its `(row, color[col])` slot. `sparse_jacobian_reference` computes 
 and gathers from it. It is slow and obviously correct, and small tests are written differentially
 against it.
 
-`sparse_hessian` takes a different global path. It differentiates the gradient, symmetrizes its
+Before coloring, `sparse_jacobian_colored` takes out the part of `y` that is linear in `x` with
+constant coefficients (`_linear_part`): what reaches `x` through selections, sums, differences,
+aggregations and products with constants. Its Jacobian is a constant sparse matrix, assembled with
+SciPy when the graph is built, and the rest is colored without it. Then the rest is differentiated
+with respect to the selections of `x` it reads (`_at_selections`): every slice, gather, reshape or
+transpose of `x` that a non-selection reads becomes a window of one new input, the derivative is
+taken in that input, and a constant-index scatter adds the entries up at the columns of `x` they
+stand for. A model over the edges of a graph gathers its variables at each edge's ends, so in `x`
+a column couples with as many others as its node has neighbours, and in the selections with as
+many as a term has operands. Both steps are kept only when they need fewer colors than coloring
+`x`, and the second is skipped when the selections read no entry twice, which is the case for the
+windows of a transcription.
+
+`sparse_hessian` takes a different global path. It first tries the selections, as above: the
+Hessian in the selections is `G' H G` for the constant selection matrix `G`, with no second term.
+Otherwise it differentiates the gradient, symmetrizes its
 structural pattern, star-colors that graph once, and uses a constant recovery table to gather every
 entry from the compressed products. It bypasses the top-level `_sparse_jacobian_vmap` construction
 shortcut, while global JVP rules retain one-sided coloring on each local VMAP tile.

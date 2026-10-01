@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 241**
+**Next id: 243**
 
 | Prefix | Section |
 |---|---|
@@ -1342,6 +1342,44 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       without the model's help, by splitting the lane's adjoint at the cotangent (the values it
       needs that do not depend on the cotangent, computed and stored by the primal map); that
       would also take `per_solve_ad` from 6.4x to about 5.4x.
+- [x] **C-241. Derivatives with respect to the selections a model reads, and the constant part
+      of a Jacobian at build time (A10, Tier 8).** E6's Hessian and Jacobian are colored, and on
+      a model written over the edges of a network the colors follow the largest bus degree:
+      time and generated C both grow as variables times colors (`e6_hessian.py` on synthetic
+      networks, the study's large cases needing its Julia baseline: 1.5-4 ns and 24 bytes each;
+      the C is loops, its size the seed tables). Two changes in `ad/sparse.py`, each taken only
+      when it needs fewer colors than coloring the variable. (1) `_at_selections`: every slice,
+      gather, reshape or transpose of the variable that a non-selection reads (and the variable
+      where it is read directly) becomes a window of one new input; the derivative is taken in
+      that input, where a term over an edge is one small block, and a constant-index scatter
+      adds the entries up where they stand in the variable. Selections are linear, so that is
+      the Jacobian, and for a Hessian `G' H G` with no second term. Skipped when the selections
+      read no entry twice (the windows of a transcription). (2) `_linear_part`: what reaches
+      the variable through selections, sums, differences, aggregations and products with
+      constants has a constant Jacobian, assembled with SciPy when the graph is built; only the
+      rest is colored. A balance row that sums the flows at a bus cost a color for every flow.
+      Synthetic networks of 300 to 9 000 buses with hubs of degree 40 to 80
+      (`results/e6_derivatives.txt`): Hessian colors 20-36 -> 4, a call 0.21-0.34 of its time
+      (3.32 -> 0.82 ms at 9 000 buses, 6 ns a nonzero), Jacobian colors 46-88 -> 4, a call
+      0.08-0.16 (9.24 -> 0.70 ms), the Hessian's C 49 -> 14 MB with render and compile 6.8 ->
+      2.3 s; building the oracles' graphs takes 2.2 -> 3.2 s, since both colorings are made to
+      compare them. One corpus kernel's C changes (`npmpc_12`, 1.007, inside the noise); the C
+      snapshot of the shooting Jacobian moves (its `-1` entries are a table now). Tests against
+      the dense derivatives: hub graphs of three sizes for both, every kind of selection with a
+      direct read, each linear op with broadcasting on either side, an all-linear Jacobian
+      (zero colors, a constant), cancelling terms, the three cases where a step is not taken,
+      triangles, and a seeded fuzz of random edge models. 30 mutants, all killed; one survivor
+      was a filter for zeros SciPy never leaves, removed. The benchmark gate caught what the
+      suite did not: the cut puts a few nodes under each selection, which took a multistage
+      QP's Lagrangian past the interpreter's stack in `jacobian_sparsity`, whose rules call
+      back for their arguments' patterns, and the first `_linear_part` recursed too. The linear
+      part is found in topological order, `_depends_on` walks with a stack of its own, and
+      `jacobian_sparsity` fills its patterns arguments first when the recursion overflows.
+- [ ] **C-242. The AC-OPF case study's recorded sweep predates C-241.** Its README explains
+      Scaly's gap to ExaModels from case2869 on by colors that follow the bus degree, and its
+      table has the function evaluations at 2.1 s for case9241. Both are out of date. The sweep
+      needs the Julia baseline (`baseline/setup.sh` downloads it) for the exported cases, and
+      the notebook run again.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced

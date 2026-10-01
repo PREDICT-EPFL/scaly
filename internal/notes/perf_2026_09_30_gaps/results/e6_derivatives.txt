@@ -1,0 +1,21 @@
+# e6_hessian.py: the AC-OPF case study's model on synthetic networks (a random tree, half as many chords again, four
+# hubs of the given degree), its Lagrangian Hessian (lower triangle) and constraint Jacobian, before and after C-241
+# (derivatives with respect to the selections a model reads; the constant part of a Jacobian computed when the graph
+# is built). Best of two runs of each tree, alternated; compile seconds from the run that compiled. Apple M3 Max,
+# load average 3-4.
+
+ buses x hub variables | Hessian nonzeros   colours         call ms  ratio  ns / nonzero | Jacobian nonzeros   colours         call ms  ratio
+      300x40      2540 |             4600   36 -> 4  0.143 -> 0.030   0.21  31.1 ->  6.5 |    14371 -> 14071   46 -> 4  0.174 -> 0.027   0.16
+     1200x40     10080 |            18240   20 -> 4  0.315 -> 0.107   0.34  17.3 ->  5.9 |    56881 -> 55681   48 -> 4  0.641 -> 0.097   0.15
+     3000x60     25192 |            45584   31 -> 4  1.201 -> 0.270   0.22  26.3 ->  5.9 |  142141 -> 139141   72 -> 4  2.463 -> 0.231   0.09
+     9000x80     75600 |           136800   29 -> 4  3.319 -> 0.817   0.25  24.3 ->  6.0 |  426601 -> 417601   88 -> 4  9.237 -> 0.695   0.08
+
+ buses x hub |      build s  C of the Hessian, MB     render s    compile s
+      300x40 |  0.1 ->  0.1       2.0 ->   0.4  0.2 ->  0.1  0.6 ->  0.4
+     1200x40 |  0.2 ->  0.4       4.8 ->   1.8  0.3 ->  0.2  0.8 ->  0.5
+     3000x60 |  0.7 ->  1.0      17.4 ->   4.6  0.9 ->  0.3  1.6 ->  0.7
+     9000x80 |  2.2 ->  3.2      49.4 ->  13.9  3.0 ->  1.0  3.8 ->  1.3
+
+# The Jacobian has fewer nonzeros after: entries whose constant coefficient is zero (the shunt conductances here) are
+# no longer in the pattern. Build is the time to the oracles' graphs, which now colours twice (the selections, and
+# the variable for comparison).

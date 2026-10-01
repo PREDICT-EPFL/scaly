@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substitute
+from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substitute, topo
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .forward import _mapped_const_seeds, jvp_many
@@ -79,6 +79,248 @@ def _at_inputs(fn, expr: Expr, wrt: Expr, *args, **kwargs) -> SparseJacobian | N
   return replace(sj, values=substitute(sj.values, back), _compressed=compressed)
 
 
+# The ops that only pick entries: a value built of these from ``wrt`` is ``wrt`` at fixed positions.
+_SELECTIONS = (ExprOp.SLICE, ExprOp.GATHER, ExprOp.RESHAPE, ExprOp.TRANSPOSE)
+
+
+def _at_selections(expr: Expr, wrt: Expr) -> tuple[Expr, Expr, np.ndarray] | None:
+  """``expr`` as a function of the selections of ``wrt`` it computes with: every slice, gather,
+  reshape or transpose of ``wrt`` that something other than a selection reads (``wrt`` itself
+  where it is read directly) replaced by a window of one new input, with that input and, for each
+  of its entries, the position in ``wrt`` it stands for. None when the selections read no entry of
+  ``wrt`` twice: the new input would be ``wrt`` in another order, with the same pattern.
+
+  A model written over the edges of a graph gathers its variables at each edge's two ends, so a
+  variable of high degree is read by many terms and its column of a Jacobian or a Hessian couples
+  with many others: a coloring needs as many colors as the largest degree. With respect to the
+  gathered operands the same derivative is separable, one small block an edge, and the colors are
+  as many as the operands a term combines. Selections are linear, so the derivative with respect
+  to ``wrt`` is that one with its entries added up at the positions they stand for."""
+  positions: dict[int, np.ndarray] = {wrt.id: np.arange(wrt.size, dtype=np.int64).reshape(wrt.shape)}
+  leaves: dict[int, Expr] = {}
+  for node in topo((expr,)):
+    if node.op in _SELECTIONS and node.args[0].id in positions:
+      positions[node.id] = _picked(node, positions[node.args[0].id])
+      continue
+    for arg in node.args:
+      if arg.id in positions:
+        leaves.setdefault(arg.id, arg)
+  if not leaves or expr.id in positions:
+    return None
+  index = np.concatenate([positions[leaf_id].reshape(-1) for leaf_id in leaves])
+  if np.unique(index).size == index.size:
+    return None
+  name = f"{wrt.name}@selected"
+  while any(node.op == ExprOp.INPUT and node.name == name for node in topo((expr,))):
+    name += "'"
+  at = Expr.sym(name, (index.size,), dtype=wrt.type.dtype)
+  replacements: dict[Expr, Expr] = {}
+  offset = 0
+  for leaf in leaves.values():
+    replacements[leaf] = at[offset : offset + leaf.size].reshape(leaf.shape)
+    offset += leaf.size
+  return substitute(expr, replacements), at, index
+
+
+def _picked(node: Expr, source: np.ndarray) -> np.ndarray:
+  """What the selection ``node`` picks of ``source``, an array shaped like its argument."""
+  if node.op == ExprOp.SLICE:
+    picked = source[node.attrs["index"]]
+  elif node.op == ExprOp.GATHER:
+    picked = source.reshape(-1)[np.asarray(node.attrs["indices"], dtype=np.int64)]
+  elif node.op == ExprOp.RESHAPE:
+    picked = source.reshape(node.shape)
+  else:
+    picked = source.transpose(node.attrs["axes"])
+  return np.asarray(picked, dtype=np.int64).reshape(node.shape)
+
+
+# A value split in two: a part linear in ``wrt`` with constant coefficients, by its Jacobian (None
+# for none), and the rest as an expression (None for zero).
+type _Split = tuple[sparse.csr_array | None, Expr | None]
+
+
+def _linear_part(expr: Expr, wrt: Expr) -> _Split:
+  """``expr`` as ``linear + rest``: the terms that reach ``wrt`` through selections, sums,
+  differences, aggregations (``segment_sum``, ``scatter``, ``sum``, ``concat``, ``stack``) and
+  products with constants only, as the constant Jacobian they have, and what is left.
+
+  A constraint that sums the flows at a bus has one Jacobian entry for every flow, each of them a
+  constant: a coloring spends a color on every one of them, as many as the largest degree, to
+  compute numbers that are known when the graph is built."""
+  n = wrt.size
+  memo: dict[int, _Split] = {}
+  dep: dict[tuple[int, int], bool] = {}
+
+  def rows_of(arg: Expr, shape: tuple[int, ...]) -> np.ndarray:
+    """For each entry of a result of ``shape``, the entry of ``arg`` broadcast to it."""
+    return np.broadcast_to(np.arange(arg.size, dtype=np.int64).reshape(arg.shape), shape).reshape(-1)
+
+  def spread(part: Expr | None, shape: tuple[int, ...]) -> Expr | None:
+    return part if part is None or part.shape == shape else part + Expr.const(np.zeros(shape), dtype=part.type.dtype)
+
+  def scaled(node: Expr, constant: Expr, other: Expr, divide: bool) -> _Split:
+    matrix, rest = split(other)
+    assert constant.value is not None
+    factor = np.broadcast_to(np.asarray(constant.value, dtype=np.float64), node.shape).reshape(-1)
+    if matrix is not None:
+      matrix = sparse.csr_array(sparse.diags_array(1.0 / factor if divide else factor) @ matrix[rows_of(other, node.shape)])
+    if rest is not None:
+      rest = Expr(
+        node.op,
+        (rest, constant) if divide or node.args[1] is constant else (constant, rest),
+        node.type,
+        attrs=dict(node.attrs),
+        lowering=node.lowering,
+      )
+    return matrix, rest
+
+  def split(node: Expr) -> _Split:
+    return memo[node.id]
+
+  def split_node(node: Expr) -> _Split:
+    if node is wrt:
+      return sparse.csr_array(sparse.eye_array(n)), None
+    if not _depends_on(node, wrt, dep):
+      return None, node
+    op, args = node.op, node.args
+    if (
+      op in _SELECTIONS
+      or (op == ExprOp.SEGMENT_REDUCE and node.attrs["reduce"] == "add" and node.attrs["fill"] == 0.0)
+      or op in (ExprOp.NEG, ExprOp.SUM)
+    ):
+      matrix, rest = split(args[0])
+      if matrix is not None:
+        if op in _SELECTIONS:
+          matrix = matrix[_picked(node, np.arange(args[0].size, dtype=np.int64).reshape(args[0].shape)).reshape(-1)]
+        elif op == ExprOp.SEGMENT_REDUCE:
+          to = np.asarray(node.attrs["indices"], dtype=np.int64).reshape(-1)
+          matrix = sparse.csr_array((np.ones(to.size), (to, np.arange(to.size))), shape=(node.size, args[0].size)) @ matrix
+        elif op == ExprOp.SUM:
+          matrix = sparse.csr_array(np.ones((1, args[0].size))) @ matrix
+        else:
+          matrix = -matrix
+      if rest is not None:
+        rest = Expr(op, (rest,), node.type, attrs=dict(node.attrs), lowering=node.lowering)
+      return (None if matrix is None else sparse.csr_array(matrix)), rest
+    if op in (ExprOp.ADD, ExprOp.SUB):
+      (ma, ra), (mb, rb) = split(args[0]), split(args[1])
+      if ma is None and mb is None:
+        return None, node
+      ma = None if ma is None else ma[rows_of(args[0], node.shape)]
+      mb = None if mb is None else mb[rows_of(args[1], node.shape)]
+      if op == ExprOp.SUB and mb is not None:
+        mb = -mb
+      matrix = mb if ma is None else ma if mb is None else ma + mb
+      ra, rb = spread(ra, node.shape), spread(rb, node.shape)
+      if ra is None or rb is None:
+        rest = ra if rb is None else rb if op == ExprOp.ADD else -rb
+      else:
+        rest = Expr(op, (ra, rb), node.type, attrs=dict(node.attrs), lowering=node.lowering)
+      return sparse.csr_array(matrix), rest
+    if op == ExprOp.MUL and ExprOp.CONST in (args[0].op, args[1].op):
+      constant, other = (args[0], args[1]) if args[0].op == ExprOp.CONST else (args[1], args[0])
+      return scaled(node, constant, other, False)
+    if op == ExprOp.DIV and args[1].op == ExprOp.CONST:
+      return scaled(node, args[1], args[0], True)
+    if op in (ExprOp.CONCAT, ExprOp.STACK):
+      parts = [split(arg) for arg in args]
+      if all(matrix is None for matrix, _ in parts):
+        return None, node
+      offsets = np.cumsum([0, *(arg.size for arg in args)])
+      numbered = [np.arange(lo, lo + arg.size, dtype=np.int64).reshape(arg.shape) for lo, arg in zip(offsets, args, strict=False)]
+      join = np.concatenate if op == ExprOp.CONCAT else np.stack
+      order = join(numbered, axis=int(node.attrs["axis"])).reshape(-1)
+      stacked = sparse.vstack(
+        [sparse.csr_array((arg.size, n)) if matrix is None else matrix for arg, (matrix, _) in zip(args, parts, strict=True)]
+      ).tocsr()
+      rests = [rest for _, rest in parts]
+      rest = None
+      if any(r is not None for r in rests):
+        filled = tuple(Expr.const(np.zeros(arg.shape), dtype=arg.type.dtype) if r is None else r for arg, r in zip(args, rests, strict=True))
+        rest = Expr(op, filled, node.type, attrs=dict(node.attrs), lowering=node.lowering)
+      return sparse.csr_array(stacked[order]), rest
+    return None, node
+
+  for node in topo((expr,)):  # arguments first: a graph may be deeper than the interpreter's stack
+    memo[node.id] = split_node(node)
+  return memo[expr.id]
+
+
+def _sparse_jacobian_linear_part(expr: Expr, wrt: Expr) -> SparseJacobian | None:
+  """The Jacobian as its constant part, computed here (``_linear_part``), plus the colored Jacobian
+  of the rest; None when nothing of ``expr`` is linear in ``wrt`` or the rest takes no fewer
+  colors than the whole."""
+  matrix, rest = _linear_part(expr, wrt)
+  if matrix is None:
+    return None
+  n = wrt.size
+  fixed = matrix.tocoo()  # SciPy's sums and products drop the entries that cancel, so these are the nonzeros
+  fixed_keys = fixed.row.astype(np.int64) * n + fixed.col.astype(np.int64)
+  if fixed_keys.size == 0:
+    return None
+  inner = None if rest is None else _sparse_jacobian_of_rest(cse(simplify(rest)), wrt)
+  inner_keys = (
+    np.zeros(0, dtype=np.int64)
+    if inner is None
+    else np.asarray(inner.sparsity.rows, dtype=np.int64) * n + np.asarray(inner.sparsity.cols, dtype=np.int64)
+  )
+  unique = np.unique(np.concatenate([fixed_keys, inner_keys]))
+  sparsity = SparsityType((expr.size, n), tuple(int(k) for k in unique // n), tuple(int(k) for k in unique % n))
+  width = 0 if inner is None else int(inner.coloring_width or 0)
+  if inner is not None and width >= _widths(column_coloring(sparsity)):
+    return None
+  constants = np.zeros(unique.size)
+  constants[np.searchsorted(unique, fixed_keys)] = fixed.data
+  values = Expr.const(constants)
+  if inner is not None and inner_keys.size:
+    values = values + scatter(inner.values, np.searchsorted(unique, inner_keys), (unique.size,))
+  return SparseJacobian(sparsity, simplify_cse_fixpoint(values), width)
+
+
+def _widths(colors: tuple[int, ...]) -> int:
+  return max(colors) + 1 if colors else 0
+
+
+def _sparse_jacobian_at_selections(expr: Expr, wrt: Expr) -> SparseJacobian | None:
+  """The colored Jacobian with respect to the selections of ``wrt`` (``_at_selections``), its
+  entries added up at the columns of ``wrt`` they stand for; None when that takes no fewer colors
+  than coloring the columns of ``wrt``."""
+  found = _at_selections(expr, wrt)
+  if found is None:
+    return None
+  inner_expr, at, index = found
+  inner = sparse_jacobian_colored(inner_expr, at)
+  n = wrt.size
+  keys = np.asarray(inner.sparsity.rows, dtype=np.int64) * n + index[np.asarray(inner.sparsity.cols, dtype=np.int64)]
+  unique, place = np.unique(keys, return_inverse=True)
+  sparsity = SparsityType((expr.size, n), tuple(int(k) for k in unique // n), tuple(int(k) for k in unique % n))
+  if inner.coloring_width is None or inner.coloring_width >= _widths(column_coloring(sparsity)):
+    return None
+  values = substitute(scatter(inner.values, place, (unique.size,)), {at: gather(wrt, index)})
+  return SparseJacobian(sparsity, simplify_cse_fixpoint(values), inner.coloring_width)
+
+
+def _sparse_hessian_at_selections(expr: Expr, wrt: Expr) -> SparseJacobian | None:
+  """The star-colored Hessian with respect to the selections of ``wrt`` (``_at_selections``), its
+  entries added up at the rows and columns of ``wrt`` they stand for: ``G' H G`` for the selection
+  matrix ``G``, which is constant, so there is no second term. None when that takes no fewer
+  colors than star-coloring the pattern in ``wrt``."""
+  found = _at_selections(expr, wrt)
+  if found is None:
+    return None
+  inner_expr, at, index = found
+  inner = sparse_hessian(inner_expr, at)
+  n = wrt.size
+  keys = index[np.asarray(inner.sparsity.rows, dtype=np.int64)] * n + index[np.asarray(inner.sparsity.cols, dtype=np.int64)]
+  unique, place = np.unique(keys, return_inverse=True)
+  sparsity = SparsityType((n, n), tuple(int(k) for k in unique // n), tuple(int(k) for k in unique % n))
+  if inner.coloring_width is None or inner.coloring_width >= _widths(star_coloring(sparsity)):
+    return None
+  values = substitute(scatter(inner.values, place, (unique.size,)), {at: gather(wrt, index)})
+  return SparseJacobian(sparsity, simplify_cse_fixpoint(values), inner.coloring_width)
+
+
 def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Reference compact Jacobian path: build dense ``J`` and gather nonzeros."""
   if (moved := _at_inputs(sparse_jacobian_reference, expr, wrt)) is not None:
@@ -95,6 +337,16 @@ def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
   if (moved := _at_inputs(sparse_jacobian_colored, expr, wrt)) is not None:
     return moved
   expr = cse(expr)
+  if (parted := _sparse_jacobian_linear_part(expr, wrt)) is not None:
+    return parted
+  return _sparse_jacobian_of_rest(expr, wrt)
+
+
+def _sparse_jacobian_of_rest(expr: Expr, wrt: Expr) -> SparseJacobian:
+  """The colored Jacobian of an expression whose linear part has been taken out, or has not been
+  found worth taking: with respect to the selections of ``wrt`` where that takes fewer colors."""
+  if (selected := _sparse_jacobian_at_selections(expr, wrt)) is not None:
+    return selected
   sparsity = jacobian_sparsity(expr, wrt)
   colors = column_coloring(sparsity)
   return _sparse_jacobian_colored(expr, wrt, sparsity, colors)
@@ -374,6 +626,8 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
     raise ValueError("sparse_hessian expects a scalar expression")
   if (moved := _at_inputs(sparse_hessian, expr, wrt, triangle=triangle)) is not None:
     return moved
+  if (selected := _sparse_hessian_at_selections(expr, wrt)) is not None:
+    return selected.triangle(triangle)
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)

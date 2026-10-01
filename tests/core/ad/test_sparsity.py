@@ -331,7 +331,7 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert spjf.output_names == ("spjac_y_x",)
-  assert spjf.output_coloring_widths == (2,)
+  assert spjf.output_coloring_widths == (0,)  # every entry of a linear function's Jacobian is a constant: no pass computes it
   assert spjf.output_sparsities[0] is not None
   assert spjf.output_sparsities[0].rows == (0, 1, 1, 2)
   assert spjf.output_sparsities[0].cols == (0, 2, 3, 1)
