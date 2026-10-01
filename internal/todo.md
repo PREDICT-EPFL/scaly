@@ -978,6 +978,25 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       128, 1.10-1.11 at 192-256; up to 2.9x faster elsewhere, none slower; corpus matmul_48 0.71,
       mlp_small_jac 0.85, riccati_50 0.86. Each output still sums in order of `k`; last bits can
       differ where Tier 3's code was left to clang's vectorizer or expanded (up to 1.1e-14).
+- [x] **C-215. Blocked Cholesky and triangular solves on the tiles (A7(a), Tier 5).** From six
+      blocks of the register tile's width (order 48 on the M3) `cholesky` goes left-looking by
+      blocks of columns: each block's update by the columns left of it in register tiles over its
+      rows transposed, then its diagonal block by Crout and the rows below solved against it. A
+      `solve_triangular` with a tile's width of right-hand sides or more goes by blocks of unknowns
+      from four blocks, in all four variants. Accuracy decided the form: each dot product in four
+      quarters added pairwise, and divisions, as the Crout tiles do. One pass took QSHARE1B past its
+      iterations, the quarters subtracted one after another left it on a knife edge (a dead store
+      moved it 12 iterations), and reciprocals took QBORE3D from 20 to 24. POTRF 0.65-0.90 of its
+      time at n = 48-256, 1.48-2.04x BLASFEO (was 2.27-2.40); TRSM 0.44-0.79 from n = 32,
+      1.16-1.21x BLASFEO from 96. Dense IPM over the 55 problems 0.904 of its time, 0.747 of
+      PIQP's dense backend (0.981 above 50 us, was 1.125); six problems' iterations move by one
+      to four. Right-looking measured worse (1.68-1.98x BLASFEO): eight steps of `k` a tile do not
+      pay for its loads and stores. The rest of the gap to BLASFEO is K3's fused kernels.
+- [ ] **C-216. The dense backend's matrices stored dense (A7(b), Tier 5).** `P`, and `G` when dense
+      enough, as dense arrays, and `P + G^T W G` as a weighted product on the tiles instead of
+      `SparseMatrix` index tables: about half of DUAL1-4's factor time in A7's profile.
+- [ ] **C-217. The dense step fused (B3, Tier 5).** DUALC's step (47-48% of its time) in fewer
+      passes over the vectors.
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's

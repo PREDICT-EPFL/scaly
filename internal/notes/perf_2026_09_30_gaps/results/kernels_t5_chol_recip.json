@@ -1,0 +1,65 @@
+{
+ "flags": [
+  "-O2",
+  "-mcpu=native",
+  "-fno-math-errno"
+ ],
+ "rows": [
+  {
+   "op": "potrf",
+   "n": 32,
+   "base_ns": 1125.02,
+   "new_ns": 1067.29,
+   "blasfeo_ns": 506.91,
+   "new_over_base": 0.9486853567047697,
+   "base_over_bf": 2.2193683296837703,
+   "new_over_bf": 2.1054822355053164,
+   "new_gflops": 10.234,
+   "diff_new_base": 2.78e-17,
+   "c_bytes_base": 65394,
+   "c_bytes_new": 65458
+  },
+  {
+   "op": "potrf",
+   "n": 64,
+   "base_ns": 4750.3,
+   "new_ns": 4508.48,
+   "blasfeo_ns": 2476.19,
+   "new_over_base": 0.9490937414479085,
+   "base_over_bf": 1.9183907535366833,
+   "new_over_bf": 1.8207326578332033,
+   "new_gflops": 19.382,
+   "diff_new_base": 2.78e-17,
+   "c_bytes_base": 65394,
+   "c_bytes_new": 65458
+  },
+  {
+   "op": "potrf",
+   "n": 128,
+   "base_ns": 26924.28,
+   "new_ns": 25739.88,
+   "blasfeo_ns": 16103.59,
+   "new_over_base": 0.9560099657261031,
+   "base_over_bf": 1.6719427158788815,
+   "new_over_bf": 1.5983938985033772,
+   "new_gflops": 27.158,
+   "diff_new_base": 8.33e-17,
+   "c_bytes_base": 65694,
+   "c_bytes_new": 65758
+  },
+  {
+   "op": "potrf",
+   "n": 256,
+   "base_ns": 165358.11,
+   "new_ns": 162137.25,
+   "blasfeo_ns": 112714.29,
+   "new_over_base": 0.9805219108999251,
+   "base_over_bf": 1.467055419503596,
+   "new_over_bf": 1.4384799833277573,
+   "new_gflops": 34.492,
+   "diff_new_base": 5.55e-17,
+   "c_bytes_base": 65694,
+   "c_bytes_new": 65758
+  }
+ ]
+}

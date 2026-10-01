@@ -1,0 +1,35 @@
+{
+ "cells": [
+  "c213r/jit",
+  "c215/jit"
+ ],
+ "kernels": [
+  "chol_solve_200",
+  "chol_solve_64",
+  "ipm_cvxqp1_dense"
+ ],
+ "best_ns": {
+  "chol_solve_200/c213r/jit": 134041.0,
+  "chol_solve_200/c215/jit": 92167.0,
+  "chol_solve_64/c213r/jit": 6375.0,
+  "chol_solve_64/c215/jit": 5927.0,
+  "ipm_cvxqp1_dense/c213r/jit": 359292.0,
+  "ipm_cvxqp1_dense/c215/jit": 310333.0
+ },
+ "median_ns": {
+  "chol_solve_200/c213r/jit": 139292.0,
+  "chol_solve_200/c215/jit": 94833.0,
+  "chol_solve_64/c213r/jit": 7250.0,
+  "chol_solve_64/c215/jit": 6114.5,
+  "ipm_cvxqp1_dense/c213r/jit": 376500.0,
+  "ipm_cvxqp1_dense/c215/jit": 324209.0
+ },
+ "err": {
+  "chol_solve_200/c213r/jit": 0.0,
+  "chol_solve_200/c215/jit": 0.0,
+  "chol_solve_64/c213r/jit": 0.0,
+  "chol_solve_64/c215/jit": 0.0,
+  "ipm_cvxqp1_dense/c213r/jit": 0.0,
+  "ipm_cvxqp1_dense/c215/jit": 0.0
+ }
+}

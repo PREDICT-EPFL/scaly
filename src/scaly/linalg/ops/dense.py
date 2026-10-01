@@ -235,7 +235,10 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(*(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n)))
     return
   if chol:
-    _cholesky_tiles(ctx, src, out, n, dt)
+    # Blocks of a tile's width, a multiple of four (the quarters), and at least six of them: on the
+    # reference machine the blocks took 1.09x the Crout tiles' time at 32, 0.99x at 40, 0.91x at 48.
+    rows, width = ctx.target.product_tile
+    (_cholesky_blocked if rows > 1 and width % 4 == 0 and n >= 6 * width else _cholesky_tiles)(ctx, src, out, n, dt)
     return
   nm = out.attrs["name"]
   i, j, z = (p.var(f"{v}_{nm}") for v in ("fi", "fj", "fz"))
@@ -394,6 +397,114 @@ def _cholesky_tiles(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, d
     ctx.emit(*tile(c(full), c(full), rest, rest, True))
   zi, zj = p.var(f"tzi_{nm}"), p.var(f"tzj_{nm}")
   upper = p.for_(p.range_(zj.attrs["name"], p.add(zi, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, zi, zj), zero)])
+  ctx.emit(p.for_(p.range_(zi.attrs["name"], 0, n, kind=RangeKind.SERIAL), [upper]))
+
+
+def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, dt: DType) -> None:
+  """Left-looking ``L L^T`` in blocks of the register tile's columns (``Target.product_tile``, 8 on
+  the reference machine). For each block of columns: subtract from it, on
+  and below the diagonal, the product of the rows' ``L`` left of the block with the block's own rows
+  of it, register tiles over a copy of those rows transposed so that they load as vectors; then
+  factor the diagonal block by Crout in straight-line code, and solve the rows below it against that
+  block, dividing by its diagonal as the Crout tiles do (multiplying by the reciprocals, a rounding
+  more, took an interior-point solve past the iterations it is held to). The columns left after the
+  last whole block form one more, narrower block. Each entry's
+  dot product runs in four quarters of the columns left of its block, each summed from zero and
+  added pairwise before the entry subtracts it, as the Crout tiles do (``_cholesky_tiles``): one
+  running sum per entry lost an interior-point solve accuracy it needed, and so did subtracting the
+  quarters one after another. The upper triangle, which the tiles crossing the
+  diagonal write too, is zeroed at the end."""
+  c = p.const_int
+  nm = out.attrs["name"]
+  rows, width = ctx.target.product_tile
+  full, tail = divmod(n, width)
+  panel = ctx.new_private(dt, (n * width,))  # panel[k * width + q] = L[J + q, k]: the block's rows, transposed
+  upper = ctx.new_private(dt, (n * width,))  # the last two quarters of the block column's dot products
+
+  def at(i: ProgramNode, j: ProgramNode) -> ProgramNode:
+    return _entry(out, n, i, j)
+
+  def block(first: ProgramNode, w: int, quarter: ProgramNode, tag: str) -> list[ProgramNode]:
+    """Block column ``first`` to ``first + w``: its update by the ``4 * quarter`` columns left of it,
+    then its factor."""
+    k, q = p.var(f"bk{tag}_{nm}"), p.var(f"bq{tag}_{nm}")
+    copy = p.for_(
+      p.range_(k.attrs["name"], 0, first, kind=RangeKind.GLOBAL),
+      [p.store(p.view(panel, [p.add(p.mul(k, c(width)), c(col))]), p.load(at(p.add(first, c(col)), k))) for col in range(w)],
+    )
+    stmts: list[ProgramNode] = [copy]
+    count = p.div(p.sub(c(n), first), c(rows))
+    # Each entry's dot product in four quarters, added as the Crout tiles add them: the first two
+    # into the block's own entries, the last two into ``upper``, then the entry minus both.
+    for part in range(4):
+      offset = p.mul(quarter, c(part))
+      into = out if part < 2 else upper
+
+      def term(row: ProgramNode, step: ProgramNode, col: ProgramNode, offset: ProgramNode = offset) -> ProgramNode:
+        kk = p.add(offset, step)
+        return p.mul(p.load(at(row, kk)), p.load(p.view(panel, [p.add(p.mul(kk, c(width)), col)])))
+
+      def out_at(row: ProgramNode, col: ProgramNode, into: ProgramNode = into) -> ProgramNode:
+        return at(row, p.add(first, col)) if into is out else p.view(upper, [p.add(p.mul(row, c(width)), col)])
+
+      def finish(row: ProgramNode, col: ProgramNode, total: ProgramNode, out_at: Any = out_at) -> ProgramNode:
+        return p.add(p.load(out_at(row, col)), total)
+
+      done = None if part % 2 == 0 else finish
+      ib, it = p.var(f"bu{tag}{part}_{nm}"), p.var(f"bl{tag}{part}_{nm}")
+      tile_rows = [p.add(first, p.add(p.mul(ib, c(rows)), c(r))) for r in range(rows)]
+      stmts += [
+        p.for_(
+          p.range_(ib.attrs["name"], 0, count, kind=RangeKind.GLOBAL), ctx.tile(f"{nm}_{tag}{part}t", tile_rows, w, quarter, term, out_at, dt, done)
+        ),
+        p.for_(
+          p.range_(it.attrs["name"], p.add(first, p.mul(count, c(rows))), n, kind=RangeKind.GLOBAL),
+          ctx.tile(f"{nm}_{tag}{part}l", [it], w, quarter, term, out_at, dt, done),
+        ),
+      ]
+    i = p.var(f"bd{tag}_{nm}")
+    stmts.append(
+      p.for_(
+        p.range_(i.attrs["name"], first, n, kind=RangeKind.GLOBAL),
+        [
+          p.store(
+            at(i, p.add(first, c(col))),
+            p.sub(
+              p.load(_entry(src, n, i, p.add(first, c(col)))),
+              p.add(p.load(at(i, p.add(first, c(col)))), p.load(p.view(upper, [p.add(p.mul(i, c(width)), c(col))]))),
+            ),
+          )
+          for col in range(w)
+        ],
+      )
+    )
+    # The diagonal block's L, each entry minus its terms inside the block; then the rows below it.
+    for a in range(w):
+      for b in range(a + 1):
+        i, j = p.add(first, c(a)), p.add(first, c(b))
+        value = p.load(at(i, j))
+        for r in range(b):
+          value = p.sub(value, p.mul(p.load(at(i, p.add(first, c(r)))), p.load(at(j, p.add(first, c(r))))))
+        stmts.append(p.store(at(i, j), _unary_node(ProgramOp.SQRT, value) if a == b else p.div(value, p.load(at(j, j)))))
+    body: list[ProgramNode] = []
+    for b in range(w):
+      col = p.add(first, c(b))
+      value = p.load(at(q, col))
+      for r in range(b):
+        value = p.sub(value, p.mul(p.load(at(q, p.add(first, c(r)))), p.load(at(col, p.add(first, c(r))))))
+      body.append(p.store(at(q, col), p.div(value, p.load(at(col, col)))))
+    stmts.append(p.for_(p.range_(q.attrs["name"], p.add(first, c(w)), n, kind=RangeKind.GLOBAL), body))
+    return stmts
+
+  # Quarters of the columns left of a block: whole blocks, so a quarter is a quarter of a block's
+  # width times the block's number, the width a multiple of four.
+  if full:
+    jb = p.var(f"bjb_{nm}")
+    ctx.emit(p.for_(p.range_(jb.attrs["name"], 0, full, kind=RangeKind.SERIAL), block(p.mul(jb, c(width)), width, p.mul(jb, c(width // 4)), "f")))
+  if tail:
+    ctx.emit(*block(c(full * width), tail, c(full * width // 4), "e"))
+  zi, zj = p.var(f"bzi_{nm}"), p.var(f"bzj_{nm}")
+  upper = p.for_(p.range_(zj.attrs["name"], p.add(zi, c(1)), n, kind=RangeKind.GLOBAL), [p.store(at(zi, zj), p.const_float(0.0, dtype=dt))])
   ctx.emit(p.for_(p.range_(zi.attrs["name"], 0, n, kind=RangeKind.SERIAL), [upper]))
 
 

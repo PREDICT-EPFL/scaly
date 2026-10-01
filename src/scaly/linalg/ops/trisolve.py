@@ -15,7 +15,7 @@ from ...ir import program as p
 from ...ir.expr import Expr, as_expr, common_lowering, diff_any, promote_dtype, register_op, zeros_like
 from ...ir.program import ProgramNode, RangeKind
 from ...ir.spec import Rule
-from ...ir.types import TensorType
+from ...ir.types import DType, TensorType
 from ...utils.options import get_options
 
 if TYPE_CHECKING:
@@ -246,6 +246,10 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
 
       ctx.emit(*per_col(solve_row))
     return
+  rows, width = ctx.target.product_tile
+  if rows > 1 and width % 4 == 0 and width % rows == 0 and n >= 4 * width and m >= width:
+    _trisolve_blocked(ctx, tb, bb, out, n, m, lower, trans, unit, dt)
+    return
   s, k = p.var(f"ss_{nm}"), p.var(f"sk_{nm}")
   i = row_at(s)
   k_rng = (
@@ -280,6 +284,108 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
       *scale(i),
     ]
   ctx.emit(p.for_(p.range_(s.attrs["name"], 0, n, kind=RangeKind.SERIAL), body))
+
+
+def _trisolve_blocked(
+  ctx: LowerCtx, tb: ProgramNode, bb: ProgramNode, out: ProgramNode, n: int, m: int, lower: bool, trans: bool, unit: bool, dt: DType
+) -> None:
+  """Substitution in blocks of the register tile's width of unknowns (``Target.product_tile``, 8 on
+  the reference machine), for ``m`` right-hand sides of a tile's width or more. For each block, in
+  the order the substitution needs: subtract from its right-hand sides the product of its rows of
+  the triangle with the unknowns already found, register tiles over the right-hand sides; then solve
+  the block itself row by row, dividing by its diagonal. The rows of ``T^T``
+  are read down the columns of ``T``, one entry at a time, which is how a tile reads its left
+  operand anyway. As in the blocked Cholesky, each unknown's dot product runs in four quarters of
+  the unknowns before its block, each summed from zero and added pairwise before the right-hand
+  side subtracts it."""
+  c = p.const_int
+  nm = out.attrs["name"]
+  rows, width = ctx.target.product_tile
+  full, tail = divmod(n, width)
+  forward = lower != trans
+  upper = ctx.new_private(dt, (n * m,))  # the last two quarters of the dot products
+  segments = ctx.tile_segments(m)
+
+  def coef(i: ProgramNode, k: ProgramNode) -> ProgramNode:
+    """Entry ``(i, k)`` of the triangle solved against: ``T``'s, or ``T^T``'s."""
+    return p.load(_entry(tb, n, k, i) if trans else _entry(tb, n, i, k))
+
+  def x(row: ProgramNode, col: ProgramNode) -> ProgramNode:
+    return p.view(out, [p.add(p.mul(row, c(m)), col)])
+
+  def block(first: ProgramNode, w: int, solved: ProgramNode, quarter: ProgramNode, tag: str) -> list[ProgramNode]:
+    """Rows ``first`` to ``first + w``, whose solved unknowns are the ``4 * quarter`` from ``solved``."""
+    stmts: list[ProgramNode] = []
+    # Each unknown's dot product in four quarters, added as the Cholesky adds them: the first two into
+    # the block's own unknowns, the last two into ``upper``, then the right-hand side minus both.
+    for part in range(4):
+      offset = p.add(solved, p.mul(quarter, c(part)))
+      into = out if part < 2 else upper
+
+      for number, (start, cols, count) in enumerate(segments):
+        jb = p.var(f"tj{tag}{part}{number}_{nm}")
+        left = p.add(c(start), p.mul(jb, c(cols))) if count > 1 else c(start)
+
+        def term(row: ProgramNode, step: ProgramNode, col: ProgramNode, offset: ProgramNode = offset, left: ProgramNode = left) -> ProgramNode:
+          k = p.add(offset, step)
+          return p.mul(coef(row, k), p.load(x(k, p.add(left, col))))
+
+        def out_at(row: ProgramNode, col: ProgramNode, left: ProgramNode = left, into: ProgramNode = into) -> ProgramNode:
+          return p.view(into, [p.add(p.mul(row, c(m)), p.add(left, col))])
+
+        def finish(row: ProgramNode, col: ProgramNode, total: ProgramNode, out_at: Any = out_at) -> ProgramNode:
+          return p.add(p.load(out_at(row, col)), total)
+
+        done = None if part % 2 == 0 else finish
+
+        ib, it = p.var(f"ti{tag}{part}{number}_{nm}"), p.var(f"tl{tag}{part}{number}_{nm}")
+        tile_rows = [p.add(first, p.add(p.mul(ib, c(rows)), c(r))) for r in range(rows)]
+        tiles = [
+          p.for_(
+            p.range_(ib.attrs["name"], 0, w // rows, kind=RangeKind.GLOBAL),
+            ctx.tile(f"{nm}_{tag}{part}{number}t", tile_rows, cols, quarter, term, out_at, dt, done),
+          )
+        ]
+        if w % rows:  # the rows a tile leaves, one at a time
+          tiles.append(
+            p.for_(
+              p.range_(it.attrs["name"], p.add(first, c(w - w % rows)), p.add(first, c(w)), kind=RangeKind.GLOBAL),
+              ctx.tile(f"{nm}_{tag}{part}{number}l", [it], cols, quarter, term, out_at, dt, done),
+            )
+          )
+        stmts += [p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), tiles)] if count > 1 else tiles
+    r, col = p.var(f"tr{tag}_{nm}"), p.var(f"tq{tag}_{nm}")
+    at = p.add(p.mul(r, c(m)), col)
+    total = p.add(p.load(p.view(out, [at])), p.load(p.view(upper, [at])))
+    stmts.append(
+      p.for_(
+        p.range_(r.attrs["name"], first, p.add(first, c(w)), kind=RangeKind.GLOBAL),
+        [p.for_(p.range_(col.attrs["name"], 0, m, kind=RangeKind.GLOBAL), [p.store(p.view(out, [at]), p.sub(p.load(p.view(bb, [at])), total))])],
+      )
+    )
+    # The block itself, row by row in the substitution's order.
+    order = list(range(w)) if forward else list(range(w - 1, -1, -1))
+    for place, a in enumerate(order):
+      i = p.add(first, c(a))
+      col = p.var(f"tc{tag}{a}_{nm}")
+      value = p.load(x(i, col))
+      for r in order[:place]:
+        value = p.sub(value, p.mul(coef(i, p.add(first, c(r))), p.load(x(p.add(first, c(r)), col))))
+      if not unit:
+        value = p.div(value, coef(i, i))
+      stmts.append(p.for_(p.range_(col.attrs["name"], 0, m, kind=RangeKind.GLOBAL), [p.store(x(i, col), value)]))
+    return stmts
+
+  # Forward, block ``j`` is rows ``j * width`` on and the unknowns before them; backward, it is the
+  # rows ``width`` above ``n - j * width`` and the unknowns from there down. The tail comes last.
+  if full:
+    jb = p.var(f"tb_{nm}")
+    first = p.mul(jb, c(width)) if forward else p.sub(c(n - width), p.mul(jb, c(width)))
+    solved = c(0) if forward else p.sub(c(n), p.mul(jb, c(width)))
+    ctx.emit(p.for_(p.range_(jb.attrs["name"], 0, full, kind=RangeKind.SERIAL), block(first, width, solved, p.mul(jb, c(width // 4)), "f")))
+  if tail:
+    first, solved = (c(full * width), c(0)) if forward else (c(0), c(tail))
+    ctx.emit(*block(first, tail, solved, c(full * width // 4), "e"))
 
 
 register_op(

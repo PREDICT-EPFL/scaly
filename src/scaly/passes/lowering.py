@@ -440,6 +440,24 @@ class LowerCtx:
     """The sum of ``term(k)`` over ``[start, stop)`` in ``lanes`` partial sums: see ``_blocked_sum``."""
     return _blocked_sum(self, tag, start, stop, term, dtype, lanes=lanes)
 
+  def tile(
+    self,
+    tag: str,
+    rows: list[ProgramNode],
+    width: int,
+    steps: int | ProgramNode,
+    term: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode],
+    out_at: Callable[[ProgramNode, ProgramNode], ProgramNode],
+    dtype: DType,
+    finish: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode] | None = None,
+  ) -> list[ProgramNode]:
+    """A register tile of ``rows`` by ``width`` sums over ``steps`` steps, from zero: see ``_tile``."""
+    return _tile(self, tag, rows, width, steps, term, out_at, False, dtype, finish)
+
+  def tile_segments(self, n: int) -> list[tuple[int, int, int]]:
+    """``n`` columns in the target's register tiles, as ``(first, width, count)``: see ``_tile_segments``."""
+    return _tile_segments(n, self.target.product_tile[1], self.target.choices.vector_doubles)[0]
+
   def lane_loops(self, tag: str, rows: int, lanes: int, kind: RangeKind, body: Any) -> None:
     """Loops over ``rows`` and ``lanes`` emitting ``body``: see ``_lane_loops``."""
     _lane_loops(self, tag, rows, lanes, kind, body)
@@ -944,16 +962,18 @@ def _tile(
   tag: str,
   rows: list[ProgramNode],
   width: int,
-  steps: int,
+  steps: int | ProgramNode,
   term: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode],
   out_at: Callable[[ProgramNode, ProgramNode], ProgramNode],
   resume: bool,
   dtype: DType,
+  finish: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode] | None = None,
 ) -> list[ProgramNode]:
   """A register tile of ``len(rows)`` rows and ``width`` columns of a product: each row's sums in
   buffers of the target's lanes (``_LaneSums``), started at zero or, when ``resume``, from the
   outputs, then ``steps`` steps of ``k`` each adding ``term(row, k, column)`` to every sum, then
-  each output stored once. Each output is still one chain of multiply-adds in order of ``k``."""
+  each output stored once: the sum, or ``finish(row, column, sum)``. Each sum is still one chain of
+  multiply-adds in order of ``k``."""
   zero = p.const_float(0.0, dtype=dtype)
   k = p.var(f"k_{tag}")
   sums = [_lane_sums(ctx, f"{tag}_{r}", width, dtype) for r in range(len(rows))]
@@ -974,7 +994,7 @@ def _tile(
     *(
       st
       for r, (row, s_r) in enumerate(zip(rows, sums, strict=True))
-      for st in s_r.each(f"s{r}", lambda s, col, row=row: p.store(out_at(row, col), p.load(s)))
+      for st in s_r.each(f"s{r}", lambda s, col, row=row: p.store(out_at(row, col), p.load(s) if finish is None else finish(row, col, p.load(s))))
     ),
   ]
 
