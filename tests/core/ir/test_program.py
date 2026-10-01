@@ -12,6 +12,9 @@ vocabulary:
 
 from __future__ import annotations
 
+from typing import Any
+
+import numpy as np
 import pytest
 
 from scaly.ir import program as p
@@ -208,3 +211,50 @@ def test_hash_consing_makes_structurally_equal_nodes_identical() -> None:
   a = p.const_int(7)
   b = p.const_int(7)
   assert a is b
+
+
+def test_interning_hit_returns_the_node_as_it_was_built() -> None:
+  """The interning key matches values that are equal and not identical, so a hit must not assign
+  them: programs already hold the node."""
+  x = p.var("intern_x", dtypes.float64)
+  node = ProgramNode(ProgramOp.NEG, (x,), {"table": [1, 2], "width": 3}, dtypes.float64)
+  args, attrs = node.args, node.attrs
+  as_list: Any = [x]  # equal under the key, and not what the node holds
+
+  again = ProgramNode(ProgramOp.NEG, as_list, {"table": (1, 2), "width": np.int64(3)}, dtypes.float64)
+
+  assert again is node
+  assert node.args is args and node.attrs is attrs
+  assert type(args) is tuple and type(attrs["table"]) is list and type(attrs["width"]) is int
+  assert type(ProgramNode(ProgramOp.ADD, as_list + [x], dtype=dtypes.float64).args) is tuple  # a new node's too
+
+
+def test_node_holds_its_own_copy_of_the_attributes() -> None:
+  """A caller that went on to change its dict would otherwise move a node under its cache key."""
+  given = {"name": "intern_v"}
+  node = ProgramNode(ProgramOp.VAR, (), given, dtypes.int64)
+
+  assert node.attrs == given and node.attrs is not given
+  given["name"] = "intern_w"
+  assert node.attrs == {"name": "intern_v"}
+  assert ProgramNode(ProgramOp.VAR, (), {"name": "intern_v"}, dtypes.int64) is node
+  assert ProgramNode(ProgramOp.VAR, (), given, dtypes.int64) is not node
+
+
+@pytest.mark.parametrize(("first", "second"), [(1, True), (True, 1), (0, False), ((1, 0), (True, False)), ({"a": 1}, {"a": True})])
+def test_interning_tells_a_flag_from_an_integer(first, second) -> None:
+  """``True == 1`` and they hash alike. They were one node, which then held whichever was built
+  last."""
+  assert first == second
+  a = ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64)
+  b = ProgramNode(ProgramOp.CONST_INT, (), {"value": second}, dtypes.int64)
+
+  assert a is not b
+  assert a.attrs["value"] is first and b.attrs["value"] is second
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64) is a
+
+
+def test_interning_shares_a_flag_with_its_numpy_spelling() -> None:
+  flag = ProgramNode(ProgramOp.CONST_INT, (), {"value": True}, dtypes.bool_)
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": np.True_}, dtypes.bool_) is flag
+  assert flag.attrs["value"] is True

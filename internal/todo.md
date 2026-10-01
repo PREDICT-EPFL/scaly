@@ -1194,14 +1194,26 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       is long is the last use, the reverse sweep reading the forward pass (320-760 values live
       at once against 32 registers, `live_ranges.py`). No order of the statements shortens
       that; a smaller adjoint would (C-58, C-214).
-- [ ] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
-      the other dialect: `ProgramNode.__new__` assigns the fields of a new node and the
-      dataclass `__init__` then runs on whatever it returned, so every construction replaces
-      the copy of `attrs` that `__new__` made with the caller's dict, and a hit replaces `args`
-      and `attrs` with the new call's. Floats key by bits there, so what a hit can change in
-      value is `1` for `True`: `ProgramNode(CONST_INT, attrs={"value": 1})`, then the same with
-      `True`, leaves the first holding `True`. The builders coerce (`const_int` calls `int`)
-      and no wrong C is known. `init=False`, as in C-228, and a bool keyed by its kind.
+- [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
+      the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
+      dataclass `__init__` then ran on whatever it returned, so every construction replaced
+      the copy of `attrs` that `__new__` made with the caller's dict, and a hit replaced `args`
+      and `attrs` with the new call's. Floats key by bits there, so what a hit could change in
+      value was `1` for `True`: `ProgramNode(CONST_INT, attrs={"value": 1})`, then the same with
+      `True`, left the first holding `True`. The builders coerce (`const_int` calls `int`)
+      and no wrong C was known. Fixed both ways, as C-228. `ProgramNode` takes `init=False` and
+      `__new__` is the whole constructor: a hit returns the node as it was built, and a node
+      holds a tuple of its arguments and its own copy of `attrs`. `__post_init__` and
+      `_initialized` are gone (nothing else read them; the op coercion there was dead, a string
+      op failing in `__new__` first). And `_attr_key` keys a bool, NumPy's too, by its kind, so
+      `1` and `True` are two nodes. `passes/program/fold_arith.py` compares table entries with
+      the same key: a table mixing `1` and `True` is no longer one repeated value, nor a gathered
+      table already made, so it keeps a load or a second table, correct either way. Over the
+      whole suite, run on a copy that looks every new node up under the old key as well, the
+      new key splits no pair of nodes outside the tests written for it and changes neither
+      comparison; no C snapshot moves. A construction takes 0.64-0.74 of its time without the
+      `__init__`, and an integer table's key 0.28 (plain ints and strings return first). Tests
+      in `tests/core/ir/test_program.py`; 6 mutants, all killed.
 - [ ] **C-58 note (Tier 6).** A prototype that inlines plain callees into a scalar-lowered mapped
       body before the reverse sweep (calls substituted, short maps unrolled) gave chain M = 5 0.97
       of its time and M = 9 1.24x: the flattened adjoint changes what C-211's seed groups see,

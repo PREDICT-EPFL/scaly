@@ -212,14 +212,23 @@ DEVICE_ONLY_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.BARRIER})
 # Hash-cons Program IR nodes the same way ``Expr`` is hash-consed: structurally-
 # equal nodes collapse to the same Python object so identity == equality. Child refs in
 # cache keys are weakrefs, not raw ``id(...)`` integers, so CPython id reuse cannot alias
-# a new Program IR subgraph to a still-cached old node.
+# a new Program IR subgraph to a still-cached old node. What the key still merges (a list with
+# a tuple, ``np.int64(1)`` with ``1``) is equal and not identical, so a hit returns the node
+# exactly as it was first built: ``ProgramNode.__new__`` assigns the fields of a new node only,
+# and the class has no ``__init__`` to assign them again.
 _PROGRAM_NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "ProgramNode"] = weakref.WeakValueDictionary()
 
 
 def _attr_key(v: Any) -> Any:
+  kind = type(v)
+  if kind is int or kind is str:
+    return v
   # A float keys by its bits: == would merge -0.0 with 0.0 and never match a NaN, whose sign C reads too.
   if isinstance(v, float):
     return (float, struct.pack("<d", v))
+  # A flag keys by its kind: True == 1 and they hash alike, so a bare key would find a node holding the other.
+  if kind is bool or isinstance(v, np.bool_):
+    return (bool, bool(v))
   if isinstance(v, dict):
     return tuple((k, _attr_key(x)) for k, x in sorted(v.items()))
   if isinstance(v, (tuple, list)):
@@ -233,7 +242,9 @@ def _attrs_key(attrs: dict[str, Any]) -> tuple[Any, ...]:
   return tuple((k, _attr_key(v)) for k, v in sorted(attrs.items()))
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
+# ``init=False``: ``__new__`` is the whole constructor. A generated ``__init__`` would run on the
+# node ``__new__`` returns, which on an interning hit is one that programs already hold.
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
 class ProgramNode:
   """A flat Program IR node.
 
@@ -247,7 +258,6 @@ class ProgramNode:
   args: tuple["ProgramNode", ...] = ()
   attrs: dict[str, Any] = field(default_factory=dict)
   dtype: DType = dtypes.float64
-  _initialized: bool = field(default=False, init=False, repr=False, compare=False)
 
   def __new__(
     cls,
@@ -256,25 +266,19 @@ class ProgramNode:
     attrs: dict[str, Any] | None = None,
     dtype: DType = dtypes.float64,
   ) -> "ProgramNode":
-    attrs = dict(attrs) if attrs else {}
-    key = (op.value, tuple(weakref.ref(a) for a in args), _attrs_key(attrs), dtype.name)
+    args = tuple(args)
+    attrs = dict(attrs) if attrs else {}  # the node's own: a caller changing its dict would move a node under its key
+    key = (op.value, tuple(map(weakref.ref, args)), _attrs_key(attrs), dtype.name)
     cached = _PROGRAM_NODE_CACHE.get(key)
     if cached is not None:
-      return cached
+      return cached  # as it was built: the arguments of this construction are dropped
     instance = object.__new__(cls)
     object.__setattr__(instance, "op", op)
-    object.__setattr__(instance, "args", tuple(args))
+    object.__setattr__(instance, "args", args)
     object.__setattr__(instance, "attrs", attrs)
     object.__setattr__(instance, "dtype", dtype)
     _PROGRAM_NODE_CACHE[key] = instance
     return instance
-
-  def __post_init__(self) -> None:
-    if self._initialized:
-      return
-    if not isinstance(self.op, ProgramOp):
-      object.__setattr__(self, "op", ProgramOp(self.op))
-    object.__setattr__(self, "_initialized", True)
 
   @property
   def id(self) -> int:
