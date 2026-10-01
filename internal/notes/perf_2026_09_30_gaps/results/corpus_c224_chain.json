@@ -1,0 +1,28 @@
+{
+ "cells": [
+  "c223/jit",
+  "c224/jit"
+ ],
+ "kernels": [
+  "chain_9",
+  "chain_5"
+ ],
+ "best_ns": {
+  "chain_9/c223/jit": 285625.0,
+  "chain_9/c224/jit": 286000.0,
+  "chain_5/c223/jit": 84791.0,
+  "chain_5/c224/jit": 84916.0
+ },
+ "median_ns": {
+  "chain_9/c223/jit": 295250.0,
+  "chain_9/c224/jit": 295166.0,
+  "chain_5/c223/jit": 93708.0,
+  "chain_5/c224/jit": 93625.0
+ },
+ "err": {
+  "chain_9/c223/jit": 0.0,
+  "chain_9/c224/jit": 0.0,
+  "chain_5/c223/jit": 0.0,
+  "chain_5/c224/jit": 0.0
+ }
+}

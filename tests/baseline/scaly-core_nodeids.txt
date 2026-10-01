@@ -1215,6 +1215,11 @@ tests/core/passes/test_arith.py::test_scalarized_procedure[uniform_tensor]
 tests/core/passes/test_arith.py::test_scalarized_procedure[zero_add]
 tests/core/passes/test_arith.py::test_scalarized_procedure[zero_div]
 tests/core/passes/test_arith.py::test_scalarized_procedure[zero_sub]
+tests/core/passes/test_expr.py::test_a_gather_of_a_concatenation_reads_the_parts[a computed part]
+tests/core/passes/test_expr.py::test_a_gather_of_a_concatenation_reads_the_parts[an entry read twice]
+tests/core/passes/test_expr.py::test_a_gather_of_a_concatenation_reads_the_parts[one part]
+tests/core/passes/test_expr.py::test_a_gather_of_a_concatenation_reads_the_parts[placed parts, each entry once]
+tests/core/passes/test_expr.py::test_a_gather_of_a_slice_reads_what_was_sliced
 tests/core/passes/test_expr.py::test_a_gather_of_a_sum_of_placed_blocks_never_forms_the_array
 tests/core/passes/test_expr.py::test_a_gather_of_a_transpose_reads_what_was_transposed
 tests/core/passes/test_expr.py::test_a_gather_of_another_segment_reduction_keeps_it
@@ -1224,6 +1229,7 @@ tests/core/passes/test_expr.py::test_a_gather_of_scattered_values_reads_the_valu
 tests/core/passes/test_expr.py::test_a_gather_of_scattered_values_reads_the_values[each place once]
 tests/core/passes/test_expr.py::test_a_gather_of_scattered_values_reads_the_values[nothing was placed there]
 tests/core/passes/test_expr.py::test_a_gather_of_scattered_values_reads_the_values[only places nothing went to]
+tests/core/passes/test_expr.py::test_a_product_with_a_mostly_zero_constant_places_the_entries_it_keeps
 tests/core/passes/test_expr.py::test_constant_mask_of_the_result_shape_folds_when_uniform
 tests/core/passes/test_expr.py::test_cse_merges_equivalent_subgraphs
 tests/core/passes/test_expr.py::test_gather_with_identity_indices_is_a_reshape

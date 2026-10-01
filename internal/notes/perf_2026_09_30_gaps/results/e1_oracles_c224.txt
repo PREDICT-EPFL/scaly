@@ -1,0 +1,21 @@
+E1's oracles on the 3-D chain, N = 25 (e1_oracles.py): Tier 5's tree, then this one after C-224.
+
+scaly from /private/tmp/claude-501/-Users-cnjones-git-projects-alloy/0973a49a-00d2-4f90-ad45-44da1d813b6e/scratchpad/t6_base/src/scaly
+masses  3  ipopt hess     174.17 us   C    269.3 KB   outputs 7500
+masses  3  ipopt jac      151.00 us   C   1538.7 KB   outputs 9996
+masses  3  stage hess     102.00 us   C    143.1 KB   outputs 15000
+masses  3  stage jac       38.17 us   C     46.4 KB   outputs 13125
+masses  5  ipopt hess     347.67 us   C    347.9 KB   outputs 13950
+masses  5  ipopt jac      395.67 us   C   3737.7 KB   outputs 18408
+masses  5  stage hess     378.33 us   C    163.7 KB   outputs 33300
+masses  5  stage jac       86.55 us   C     71.8 KB   outputs 30525
+
+scaly from /Users/cnjones/git/projects/alloy/src/scaly
+masses  3  ipopt hess     171.33 us   C    272.0 KB   outputs 7500
+masses  3  ipopt jac       64.13 us   C    235.0 KB   outputs 9996
+masses  3  stage hess      98.40 us   C    134.1 KB   outputs 15000
+masses  3  stage jac       41.50 us   C     46.4 KB   outputs 13125
+masses  5  ipopt hess     322.50 us   C    354.8 KB   outputs 13950
+masses  5  ipopt jac      153.57 us   C    475.4 KB   outputs 18408
+masses  5  stage hess     336.33 us   C    140.4 KB   outputs 33300
+masses  5  stage jac       91.73 us   C     71.8 KB   outputs 30525

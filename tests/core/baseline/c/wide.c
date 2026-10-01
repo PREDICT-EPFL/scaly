@@ -41,7 +41,6 @@ int wide(const double** arg, double** res, int* iw, double* w, int mem) {
   double s6[1];
   double s7[1];
   double s8[1];
-  const double* t83 = res[0];
   for (long long ib_t2 = 0; ib_t2 < 10; ++ib_t2) {
     s10[0] = 0.0;
     s11[0] = 0.0;
@@ -163,7 +162,7 @@ int wide(const double** arg, double** res, int* iw, double* w, int mem) {
   }
   for (long long i_tail_0 = 0; i_tail_0 < 2; ++i_tail_0) {
     for (long long i_tail_1 = 0; i_tail_1 < 2; ++i_tail_1) {
-      res[1][((2 * i_tail_0) + i_tail_1)] = t83[((3 - i_tail_0) - (2 * i_tail_1))];
+      res[1][((2 * i_tail_0) + i_tail_1)] = res[0][((3 - i_tail_0) - (2 * i_tail_1))];
     }
   }
   return SCALY_SUCCESS;

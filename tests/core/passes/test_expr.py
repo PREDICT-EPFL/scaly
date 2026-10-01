@@ -278,9 +278,85 @@ def test_a_gather_of_a_sum_of_placed_blocks_never_forms_the_array() -> None:
   assert got.shape == (8,) and not any(n.op in (sc.ExprOp.SEGMENT_REDUCE, sc.ExprOp.TRANSPOSE) and n.size == 60 for n in _ops(got))
   plain = simplify(sc.gather((c.sin() + c.cos()).reshape((6, 10)), picks))
   assert plain.op == sc.ExprOp.GATHER and plain.args[0].op in (sc.ExprOp.ADD, sc.ExprOp.RESHAPE)
+  # A gather that reads entries twice would make every term repeat them: the sum is formed once.
+  twice = simplify(sc.gather(first + second, np.concatenate([picks, picks])))
+  assert (
+    twice.op == sc.ExprOp.GATHER
+    and _ops(twice)[-1].args[0].size == 60
+    and any(n.op == sc.ExprOp.SEGMENT_REDUCE and n.size == 60 for n in _ops(twice))
+  )
   av, bv, cv = np.arange(1.0, 13.0), np.arange(12.0).reshape(3, 4) - 5.5, np.linspace(-1.0, 1.0, 60)
   dense = np.zeros(60)
   dense[np.arange(12) * 5] += av
   dense[59 - np.arange(12) * 5] += bv.T.ravel() * 3.0
   want = (dense + np.cos(cv)).reshape(6, 10).T.ravel()[picks]
   np.testing.assert_array_equal(sc.Function.from_exprs("gp", [a, b, c], [got.block()], ["a", "b", "c"], ["g"])((av, bv, cv)), want)
+
+
+def test_a_gather_of_a_slice_reads_what_was_sliced() -> None:
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("gsl_x", (5, 3, 4))
+  picks = np.array([[0, 7], [5, 3]])
+  got = simplify(sc.gather(x[1:5:2, 2, :], picks))
+  assert got.op == sc.ExprOp.GATHER and got.args[0].op != sc.ExprOp.SLICE and got.shape == (2, 2)
+  xv = np.arange(60.0).reshape(5, 3, 4) * 0.5
+  np.testing.assert_array_equal(sc.Function.from_exprs("gsl", [x], [got.block()], ["x"], ["g"])(xv), xv[1:5:2, 2, :].ravel()[picks])
+
+
+CONCATS = {
+  "one part": ([13, 20, 16], "gather"),
+  "placed parts, each entry once": ([0, 13, 5, 31, 20], "placed"),
+  "an entry read twice": ([0, 13, 13, 31], "whole"),
+  "a computed part": ([2, 33, 9], "whole"),
+}
+
+
+@pytest.mark.parametrize("why", CONCATS)
+def test_a_gather_of_a_concatenation_reads_the_parts(why: str) -> None:
+  """From one part it is a gather of that part. From several it is taken apart only when every
+  part read is a constant or made of placed values, and no entry is read twice: a computed part
+  is better computed whole in a vector loop and gathered after."""
+  from scaly.passes.expr import simplify
+
+  a, b = sc.sym("gc_a", 6), sc.sym("gc_b", (3, 4))
+  placed = sc.scatter(a, np.array([1, 4, 5, 8, 9, 11]), (12,))
+  joined = sc.concat([placed, b.reshape((12,)).gather(np.arange(12)[::-1].copy()), sc.const(np.arange(8.0)), (a * a).reshape((6,))])
+  picks, kind = CONCATS[why]
+  got = simplify(sc.gather(joined, np.array(picks)))
+  whole = any(n.op == sc.ExprOp.CONCAT for n in _ops(got))
+  assert whole == (kind == "whole")
+  if kind == "gather":
+    assert got.op == sc.ExprOp.GATHER and b in (got.args[0], *got.args[0].args) and got.attrs["indices"].tolist() == [10, 3, 7]
+  av, bv = np.arange(1.0, 7.0), np.arange(12.0).reshape(3, 4) * 0.25
+  first = np.zeros(12)
+  first[[1, 4, 5, 8, 9, 11]] = av
+  dense = np.concatenate([first, bv.ravel()[::-1], np.arange(8.0), av * av])
+  np.testing.assert_array_equal(sc.Function.from_exprs(f"gc_{kind}_{len(picks)}", [a, b], [got.block()], ["a", "b"], ["g"])((av, bv)), dense[picks])
+
+
+def test_a_product_with_a_mostly_zero_constant_places_the_entries_it_keeps() -> None:
+  """A seed or selector matrix times a broadcast array: only the kept entries are read, scaled when
+  the constant is not one, and placed. A constant with more than one entry in eight stays a product."""
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("ps_x", (5, 1, 6))  # broadcast along the middle axis
+  seeds = np.zeros((5, 4, 6))
+  seeds[0, 1, 2], seeds[3, 0, 5], seeds[4, 3, 0], seeds[4, 3, 1] = 1.0, 1.0, -2.5, 1.0
+  for left in (True, False):
+    product = sc.const(seeds) * x if left else x * sc.const(seeds)
+    got = simplify(product)
+    assert got.shape == (5, 4, 6) and not any(n.op == sc.ExprOp.CONST and n.size == 120 for n in _ops(got))
+    assert sum(n.op == sc.ExprOp.SEGMENT_REDUCE for n in _ops(got)) == 1 and any(n.op == sc.ExprOp.GATHER and n.size == 4 for n in _ops(got))
+    xv = np.linspace(-1.0, 2.0, 30).reshape(5, 1, 6)
+    np.testing.assert_array_equal(sc.Function.from_exprs(f"ps_{int(left)}", [x], [got.block()], ["x"], ["y"])(xv), seeds * xv)
+  ones = np.zeros((5, 4, 6))
+  ones[[0, 3], [1, 0], [2, 5]] = 1.0
+  unit = simplify(sc.const(ones) * x)
+  assert not any(n.op == sc.ExprOp.MUL for n in _ops(unit))  # ones need no product at all
+  dense = np.zeros((5, 4, 6))
+  dense[0::2, :, ::2] = 1.0  # more than one entry in eight
+  kept = simplify(sc.const(dense) * x)
+  assert kept.op == sc.ExprOp.MUL
+  nothing = simplify(sc.const(np.zeros((5, 4, 6))) * x)
+  assert nothing.op == sc.ExprOp.CONST and not np.asarray(nothing.value).any()

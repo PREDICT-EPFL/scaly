@@ -21,9 +21,10 @@ def simplify(expr: Expr) -> Expr:
   Covers the shared arithmetic identities of ``passes/arith.py`` (neutral elements, zero
   annihilation, ``x - x``, negation normalization, small constant powers), folding of all-constant
   subgraphs, identity reshape, transpose and gather, slice of slice, slice of stack, ``A.T @ v`` as
-  ``v @ A`` (and ``v @ A.T`` as ``A @ v``), a matmul with an all-ones vector as sums, and the
-  composition of a gather with what it reads: another gather, a transpose, a scatter, or a sum
-  of such, so that an array which is only placed and picked from is never formed.
+  ``v @ A`` (and ``v @ A.T`` as ``A @ v``), a matmul with an all-ones vector as sums, a product
+  with a mostly-zero constant as a scatter of the entries it keeps, and the composition of a
+  gather with what it reads: another gather, a transpose, a slice, a concatenation, a scatter, or
+  a sum of such, so that an array which is only placed and picked from is never formed.
   """
   return rewrite(expr, SIMPLIFY_PATTERNS, fixpoint=False, revisit=True, max_steps=100_000)
 
@@ -384,10 +385,20 @@ def _opens(e: Expr) -> bool:
   return False
 
 
+def _picks_once(e: Expr) -> bool:
+  """Whether a gather reads no entry twice: then each term of a sum under it does no more work
+  gathered than it did summed. A gather that repeats entries (a broadcast, a tiling) would make
+  every term repeat them, where the sum is formed once and then repeated: a dense stage Hessian
+  built that way ran 1.3x slower with its terms distributed."""
+  indices = np.asarray(e.attrs["indices"]).reshape(-1)
+  return np.unique(indices).size == indices.size
+
+
 def _gather_of_sum(e: Expr) -> Expr:
   """A gather of a sum whose terms are placed or picked arrays is the sum of the terms' gathers,
   each of which composes with its own table: the assembly of a sparse derivative, which sums
-  blocks scattered into a compressed matrix and then gathers the nonzeros, never forms the matrix."""
+  blocks scattered into a compressed matrix and then gathers the nonzeros, never forms the matrix.
+  Only for a gather that reads each entry at most once (``_picks_once``)."""
   total = _gathered(e)
   flat = (total.size,)
   x, y = (gather(arg.reshape(flat), e.attrs["indices"]) for arg in total.args)
@@ -414,6 +425,100 @@ def _gather_of_scatter(e: Expr) -> Expr:
   return scatter(gather(values, source), into, e.shape)
 
 
+def _gather_of_slice(e: Expr) -> Expr:
+  """A gather of a slice reads what was sliced, at the places the slice kept."""
+  cut = _gathered(e)
+  whole = cut.args[0]
+  kept = np.arange(whole.size).reshape(whole.shape)[cut.attrs["index"]].reshape(-1)
+  return gather(whole, kept[np.asarray(e.attrs["indices"])])
+
+
+# The parts of a concatenation a gather may read from and still be taken apart: each part read
+# becomes a term of its own.
+GATHERED_PARTS = 4
+
+
+def _parts_read(e: Expr) -> tuple[np.ndarray, np.ndarray]:
+  """For a gather of a concatenation: the part each index reads, and the place in that part."""
+  joined = _gathered(e)
+  axis = joined.attrs.get("axis", 0)
+  owner = np.concatenate([np.full(part.shape, at) for at, part in enumerate(joined.args)], axis=axis).reshape(-1)
+  place = np.concatenate([np.arange(part.size).reshape(part.shape) for part in joined.args], axis=axis).reshape(-1)
+  indices = np.asarray(e.attrs["indices"]).reshape(-1)
+  return owner[indices], place[indices]
+
+
+def _placed(e: Expr) -> bool:
+  """Whether ``e`` is a constant, an array built of placed and picked arrays (``_opens``), or a
+  concatenation of such: what a gather reads through without computing anything."""
+  e = _source(e)
+  if e.op == ExprOp.CONCAT:
+    return all(_placed(part) for part in e.args)
+  return e.op == ExprOp.CONST or _opens(e)
+
+
+def _takes_apart(e: Expr) -> bool:
+  """Whether a gather of a concatenation is better read from the parts: always from one part; from
+  a few when it reads no entry twice and every part read is a constant or built of placed and
+  picked arrays, which compose with the gather. A part that is computed stays whole: gathered, it
+  would be computed through an index table, where the race cars' Jacobian computes it in a
+  vector loop and gathers after (1.13x slower taken apart)."""
+  owner = np.unique(_parts_read(e)[0])
+  if owner.size == 1:
+    return True
+  parts = [_gathered(e).args[int(at)] for at in owner]
+  return owner.size <= GATHERED_PARTS and _picks_once(e) and all(_placed(part) for part in parts)
+
+
+def _gather_of_concat(e: Expr) -> Expr:
+  """A gather of a concatenation reads the parts: one part, a gather of it; a few, each part's
+  values placed where the gather wanted them."""
+  joined = _gathered(e)
+  owner, place = _parts_read(e)
+  total: Expr | None = None
+  for at in np.unique(owner):
+    into = np.flatnonzero(owner == at)
+    part = joined.args[int(at)]
+    picked = gather(part.reshape((part.size,)), place[into])
+    if into.size == owner.size:
+      return picked.reshape(e.shape)
+    term = scatter(picked, into, e.shape)
+    total = term if total is None else total + term
+  assert total is not None
+  return total
+
+
+# A constant factor with at most one nonzero entry in this many is a scatter of its nonzeros.
+SPARSE_FACTOR = 8
+
+
+def _sparse_factor(e: Expr) -> int | None:
+  """Which operand of the product ``e`` is a constant of the product's shape that is mostly zeros."""
+  for at, arg in enumerate(e.args):
+    if arg.op == ExprOp.CONST and arg.shape == e.shape and e.size >= SPARSE_FACTOR and arg.value is not None:
+      if np.count_nonzero(arg.value) * SPARSE_FACTOR <= e.size:
+        return at
+  return None
+
+
+def _product_with_sparse_constant(e: Expr) -> Expr:
+  """A product with a constant that is mostly zeros (a seed matrix, a selector) computes only the
+  entries the constant keeps and places them: the zeros are never multiplied, and a gather of the
+  result composes with the placement. A zero times anything is zero here, as in ``x * 0``."""
+  at = _sparse_factor(e)
+  assert at is not None
+  factor, other = e.args[at], e.args[1 - at]
+  values = np.asarray(factor.value).reshape(-1)
+  kept = np.flatnonzero(values)
+  if not kept.size:
+    return zeros_like(e)
+  source = np.broadcast_to(np.arange(other.size).reshape(other.shape), e.shape).reshape(-1)[kept]
+  picked = gather(other.reshape((other.size,)), source)
+  if not np.all(values[kept] == 1.0):
+    picked = picked * Expr.const(values[kept], dtype=factor.type.dtype)
+  return scatter(picked, kept, e.shape)
+
+
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
   *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
@@ -427,9 +532,12 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.GATHER, _compose_gathers),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.TRANSPOSE, _gather_of_transpose),
-  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.ADD and _opens(_gathered(e)), _gather_of_sum),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.SLICE, _gather_of_slice),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.CONCAT and _takes_apart(e), _gather_of_concat),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.ADD and _picks_once(e) and _opens(_gathered(e)), _gather_of_sum),
   Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.SEGMENT_REDUCE and _is_scatter(_gathered(e)), _gather_of_scatter),
   Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and not _is_zero(e.args[0]) and _is_permutation(e), _scatter_to_gather),
+  Pattern(ExprOp.MUL, lambda e: not _all_args_const(e) and _sparse_factor(e) is not None, _product_with_sparse_constant),
   Pattern(ExprOp.TRANSPOSE, lambda e: _source(e.args[0]).op == ExprOp.GATHER, _transpose_of_gather),
   Pattern(ExprOp.SEGMENT_REDUCE, lambda e: _is_scatter(e) and _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.STACK, _all_args_zero, _zero_unary),

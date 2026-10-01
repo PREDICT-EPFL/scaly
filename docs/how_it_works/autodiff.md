@@ -154,4 +154,7 @@ when the graph is built, so the array is never formed. A gather of a transpose r
 transposed, a gather of a sum of placed arrays is the sum of the terms' gathers, and a gather of
 scattered values reads the values that reach each place, added in the order they were scattered.
 Each block's values then go straight to the nonzeros they contribute to, and the result has the
-same bits as the array would have given.
+same bits as the array would have given. The gather reads through slices and concatenations the same
+way, and a product with a constant that is mostly zeros, as a seed matrix is, becomes a scatter of
+the entries the constant keeps, so the zeros are never multiplied. A part that is computed, not
+placed, stays whole and is gathered after, since it vectorizes that way.

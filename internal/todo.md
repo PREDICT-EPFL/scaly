@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 224**
+**Next id: 225**
 
 | Prefix | Section |
 |---|---|
@@ -1080,6 +1080,25 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       0.98-0.99, HS118's IPM 0.97; workspace 0.78 of its size on the chain
       (`results/corpus_c223.json`). Left for C-77: the terms' loops are still separate passes,
       and the two big ones are driven by index tables of the nonzeros' size.
+- [x] **C-224. A product with a mostly-zero constant places the entries it keeps (CS-2, Tier 6).**
+      The IPOPT Jacobian of a mapped multiple-shooting problem summed 25 terms, each an 18 900-entry
+      0/1 seed constant times a broadcast of one stage's tangents, for 9 996 nonzeros. Three more
+      rules in `simplify`: a product with a constant of which at most one entry in eight is
+      nonzero is a scatter of the kept entries (scaled unless they are ones); a gather of a slice
+      reads what was sliced; a gather of a concatenation reads the parts, taken apart only when
+      each part read is a constant or made of placed values and no entry is read twice. With
+      C-223's rules the nonzeros are then read straight from the map's output. E1's 3-D chain
+      (`e1_oracles.py`, new; `results/e1_oracles_c224.txt`): the IPOPT Jacobian 151 -> 64 us at
+      three masses and 396 -> 154 at five (0.39-0.42), its C 6.5-7.9x smaller; the Hessian oracle
+      0.93-0.98, the Fatrop drop-in's stage Hessians 0.89-0.96. The corpus is unchanged within
+      noise and every output has the same bits. Two guards came from measuring off the target:
+      a gather that repeats entries does not distribute over a sum (the stage Hessian ran 1.3x
+      slower), and a computed part of a concatenation stays whole (the race cars' Jacobian 1.13x).
+- [ ] **C-58 note (Tier 6).** A prototype that inlines plain callees into a scalar-lowered mapped
+      body before the reverse sweep (calls substituted, short maps unrolled) gave chain M = 5 0.97
+      of its time and M = 9 1.24x: the flattened adjoint changes what C-211's seed groups see,
+      and at M = 9 they split into 28 procedures against 10. It needs the group rule to judge the
+      flattened body first (C-214), and the audit's 26% no longer shows at M = 5 (-4% operations).
 - [ ] **C-214. Seed groups judged on the packed body, and cached per target.** Two limits of
       C-211, both toward the old code: each formal's body is judged alone, so bodies that
       `_pack_jvp_maps` joins can pass the budget together (1.76x in the review's
@@ -1526,11 +1545,12 @@ The reproductions of published benchmarks in `examples/case_studies/`, planned i
 - [ ] **CS-1. E1's acados leg.** Port the Fatrop chain to `AcadosOcp` (rockit 0.6.7's acados driver no
       longer compiles against current acados) and swap acados' generated `expl_vde_*`/`expl_ode_hess`
       for Scaly's `--casadi` output. Report: `notes/case_study_e1_report.html`, section 6.
-- [ ] **CS-2. IPOPT's oracles without the dense seed contraction.** For a mapped multiple-shooting gap
+- [x] **CS-2. IPOPT's oracles without the dense seed contraction.** For a mapped multiple-shooting gap
       the descriptor Jacobian (and Hessian) contract every stage's tangents with constant 0/1 seed
       matrices over the whole horizon, then transpose and gather: 3.3x the stagewise Jacobian at 3
       masses, and the reason Scaly's IPOPT oracles are 1.7 to 1.9x CasADi SX's on the chain. Scatter
-      the per-stage values straight into the nonzeros. E1 report, section 4.
+      the per-stage values straight into the nonzeros. E1 report, section 4. Done as C-224: the
+      Jacobian oracle 0.39-0.42 of its time.
 - [ ] **CS-3. Star-coloured stage Hessians** for stagewise oracles (the Fatrop drop-in): the dense
       `sc.hessian` over a 42-variable 3D chain stage is 1.14x CasADi SX, which drops the structural zeros.
 - [ ] **CS-4. Rerun E1 on the reference machine** (`compare.py`, `sweep.py`); every number so far is from an M3 Max.
