@@ -168,15 +168,26 @@ class RenderObserver(Protocol):
 
 
 _RENDER_OBSERVERS: list[Callable[[ConcreteFunction], RenderObserver | None]] = []
+_RENDER_WATCHES: list[Callable[[ConcreteFunction], bool] | None] = []
 
 
-def register_render_observer(begin: Callable[[ConcreteFunction], RenderObserver | None]) -> None:
+def register_render_observer(
+  begin: Callable[[ConcreteFunction], RenderObserver | None], *, watches: Callable[[ConcreteFunction], bool] | None = None
+) -> None:
   """Watch every source render. ``begin`` is called with the function about to be rendered and
-  returns an observer, or ``None`` to sit that render out.
+  returns an observer, or ``None`` to sit that render out. ``watches`` says, without starting
+  anything, whether ``begin`` would return one for a function: the JIT renders a watched function
+  even when it has its library already. Without it every function counts as watched.
 
   Codegen owns this hook so that visualization depends on codegen and not the other way round.
   """
   _RENDER_OBSERVERS.append(begin)
+  _RENDER_WATCHES.append(watches)
+
+
+def render_watched(fun: ConcreteFunction) -> bool:
+  """Whether an observer wants to see ``fun`` rendered."""
+  return any(watches is None or watches(fun) for watches in _RENDER_WATCHES)
 
 
 @dataclass(frozen=True, slots=True)

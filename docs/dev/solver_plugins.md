@@ -246,7 +246,8 @@ Plugins must not duplicate any of this:
 - The universal C ABI entry point, workspace packing, and the `_raw` kernel rendering (Program IR).
 - The `scaly_solver_stats` struct, the `SCALY_SOLVE_*` status enum (`sc.Status`), the `Info`
   outputs, and `scaly_clock_s`. Plugins fill and use them, never redefine them.
-- JIT compilation, caching (keyed on source, compiler and flags), and library/header discovery.
+- JIT compilation, caching (keyed on source, compiler and flags, and found again from the graph and
+  the C your callee renders), and library/header discovery.
 - The typed `Function` call interface and `sc.opt.solver_stats(fun)`, which reads the stats accessor
   through the extern-callee protocol (`Function.callee_state`).
 

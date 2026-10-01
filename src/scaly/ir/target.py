@@ -2,7 +2,8 @@
 
 A target is read when a Function is rendered: one graph renders for any number of targets, and the
 rendered C carries every choice a target made, so the JIT's cache key, a hash of that C, tells two
-targets' builds apart without naming them. One choice is made while a graph is built, by AD: how
+targets' builds apart without naming them. The index that finds a library without rendering
+(``codegen/structure.py``) has no C to read, and keys on every field of the target instead. One choice is made while a graph is built, by AD: how
 many groups a mapped tangent body's seeds are split into to fit the instruction cache
 (``body_bytes``), from the target in force then. The JIT compiles for the
 processor it runs on whatever the target, so rendering for another target in-process runs that

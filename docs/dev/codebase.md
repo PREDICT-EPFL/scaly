@@ -134,7 +134,8 @@ src/scaly/
     adapter.py           output adapters: named layers over a rendered module, their hooks and registry
     __main__.py          compatibility shim for `python -m scaly.codegen`
     aot.py               one lowering -> CModule, the extern callees' requirements merged, the C header, the file-writing driver, the CLI
-    jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
+    jit.py               CModule -> compile, cache, dlopen, ctypes dispatch; the index of libraries by structural key
+    structure.py         the structural key: a digest of a Function's graph and of the code that would render it
     toolchain.py         C compiler discovery, cache root, the diagnostics report
 
   roots/                 nonlinear equations and least squares, the Newton family as generated loops

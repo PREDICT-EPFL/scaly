@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 225**
+**Next id: 226**
 
 | Prefix | Section |
 |---|---|
@@ -499,7 +499,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       hand-written C version runs grid 30×30 in 12.7 µs against 20.6 (and the C baseline's 18.0),
       MPC N = 100 in 20.7 against 35.8; neutral on dense-ish QPs. Needs verify, AD and sparsity
       rules and the in-place proof for the new op (review prototype `~/review-agents/perf/`).
-- [ ] **C-115. JIT cache key without lowering.** `render_c_module` (lowering, optimization,
+- [x] **C-115. JIT cache key without lowering.** Done as C-225. `render_c_module` (lowering, optimization,
       rendering) runs before the disk-cache lookup, so every new process pays the whole Python
       generation (2.6 s for an unrolled MPC N = 20 factor) even when the library is cached. Key on
       a structural hash of the graph (callees, rules, attributes), the scaly version and the
@@ -1102,6 +1102,29 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       (`results/t6_review_cases.txt`): the product placed outside a gather made `x * mask + y`
       1.2-1.9x slower, a gather of most of a concatenation 1.1-2x, and an integer product with a
       sparse constant did not compile; all three are back at Tier 5's time and tested.
+- [x] **C-225. The JIT finds a library from the graph, without rendering (A12, C-115, CS-16;
+      Tier 7).** `codegen/structure.py` digests what rendering reads of a Function in one walk
+      (each node's op, arguments, type, name, value, attributes and hint; callees the same way;
+      an extern body by the C it renders, its sources and what it links), numbered in the order
+      met so that no address reaches the digest. The key adds the target, the compiler and its
+      flags, the resolved link flags and a digest of the code that would render: the path and
+      contents of every file of scaly and of each package behind a rule or class in the graph
+      (read once per process; a file over a megabyte by size and time).
+      `jit.py` keeps an index entry per key naming the library's directory, with the workspace
+      size and link flags. No key, and a render as before, for a value the walk does not know, a
+      dataclass field outside its class's equality, a source file written after scaly was loaded
+      (`utils.env.LOADED_AT_NS`), a watched render (`register_render_observer(watches=)`), or
+      libraries that do not resolve. `SCALY_JIT_KEY=verify` renders on every hit and raises on a
+      different source key: the whole suite ran under it on three targets, 4 400 to 4 500
+      libraries found and rendered again per run, with no mismatch, which is the evidence the
+      key is complete; CI's test jobs run under it. `source` turns the index off.
+      Seconds to a first result in a second process (`warm_start.py`,
+      `results/warm_start_c225.txt`): the corpus's IPM solvers 1.41-1.55 -> 0.17-0.19, a Riccati
+      recursion 1.01 -> 0.13, chain M = 9 22.0 -> 15.4 (what is left is building the graph,
+      C-214's), the key itself 0.3-0.6% of a render. Found on the way: a first version numbered
+      types by object, and which of two equal type objects a node holds depends on what the
+      process built before (38 of 4 900 suite Functions had two digests for one C); types are
+      now numbered by value. The index keeps the eight states of the code written last.
 - [ ] **C-58 note (Tier 6).** A prototype that inlines plain callees into a scalar-lowered mapped
       body before the reverse sweep (calls substituted, short maps unrolled) gave chain M = 5 0.97
       of its time and M = 9 1.24x: the flattened adjoint changes what C-211's seed groups see,
@@ -1606,7 +1629,7 @@ The reproductions of published benchmarks in `examples/case_studies/`, planned i
 - [ ] **CS-15. `sc.diag` and `sc.stop_gradient`.** A diagonal matrix from a vector is written
       `v.reshape((n, 1)) * I`; DiffMPC's and trajax's truncated gradients (no cotangent through the MPC's
       state) needed a custom rule, where `stop_gradient` would express it directly. E5 report.
-- [ ] **CS-16. A JIT cache hit still renders the C.** `jit.py` hashes the rendered source to find the
+- [x] **CS-16. A JIT cache hit still renders the C.** Done as C-225. `jit.py` hashes the rendered source to find the
       compiled library, so a warm start pays the whole rendering: 1.4 s of the SCvx study's 1.8 s warm
       start, against a 2 ms solve. Key the cache on the Function's structure (its IR hash and the
       compile flags) and render only on a miss. E8 report.

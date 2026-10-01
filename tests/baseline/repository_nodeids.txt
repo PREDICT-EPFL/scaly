@@ -131,6 +131,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.adap
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.aot]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.c]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.jit]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.structure]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.toolchain]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.export.acados]

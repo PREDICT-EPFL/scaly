@@ -176,7 +176,7 @@ def begin_recording(fun: ConcreteFunction) -> VisualizationRecording | None:
 
 
 # Importing scaly.viz is what arms recording: codegen owns the hook and knows nothing about us.
-register_render_observer(begin_recording)
+register_render_observer(begin_recording, watches=is_visualized)
 
 
 __all__ = [

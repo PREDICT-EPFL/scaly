@@ -7,6 +7,11 @@ rendering decisions of its own.
   or ``~/.cache/scaly/jit``).
 - ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``). Its path and
   version are part of the cache key, so switching compilers never reuses the other's library.
+- ``SCALY_JIT_KEY`` chooses how a library built before is found. ``structure`` (the default) asks
+  an index keyed on the Function's graph (``codegen/structure.py``) first, and renders only a
+  Function the index does not hold; ``source`` renders every time and keys on the C, as the JIT did
+  before the index; ``verify`` does both and raises when the index names a library built from
+  other C than the render gives, which is how the structural key is proven complete.
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
   At ``-O2`` GCC before version 12 also gets ``-ftree-vectorize``: from 12 on GCC vectorizes at
@@ -21,6 +26,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -34,10 +40,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
-from .aot import render_c_module
+from .aot import render_c_module, render_watched, requirements
 from ..function.extern import ExternState, extern_functions
 from ..ir.target import Target, resolve_target
 from ..utils.ext_api import EXT_API_VERSION
+from .structure import code_digest, graph_digest
 from .toolchain import cache_root, compiler_identity, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
@@ -172,6 +179,107 @@ class _Artifact:
 _artifact_cache: dict[str, _Artifact] = {}
 _artifact_lock = threading.Lock()
 
+_KEY_MODES = ("structure", "source", "verify")
+_INDEX_DIR = "structure"
+_INDEX_STATES_KEPT = 8
+
+
+def key_mode() -> str:
+  """How a library built before is found (``SCALY_JIT_KEY``): ``structure``, ``source`` or ``verify``."""
+  mode = os.environ.get("SCALY_JIT_KEY") or "structure"
+  if mode not in _KEY_MODES:
+    raise JitError(f"SCALY_JIT_KEY must be one of {', '.join(_KEY_MODES)}, got {mode!r}")
+  return mode
+
+
+def _structure_key(fun: ConcreteFunction, target: Target, compiler: tuple[str, ...], flags: tuple[str, ...]) -> tuple[str, str] | None:
+  """The key of ``fun``'s library that needs no rendering: a digest of the code that would render
+  it, and one of everything that code would read (the graph, the target, the compiler and its
+  flags, what its extern bodies link). None when there is none to trust: the graph holds a value
+  the digest does not know, the code on disk is not what this process loaded, an observer wants
+  to see the render, or what an extern body needs cannot be resolved (rendering then says why)."""
+  if render_watched(fun):
+    return None
+  found = graph_digest(fun)
+  if found is None:
+    return None
+  graph, packages = found
+  code = code_digest(packages)
+  if code is None:
+    return None
+  try:
+    needs = requirements(extern_functions(fun))
+    link = needs.link_flags()
+  except Exception:
+    return None
+  h = hashlib.sha256()
+  parts = (_JIT_CACHE_VERSION, f"ext{EXT_API_VERSION}", C_API_SIGNATURE, graph, repr(target), *compiler, "", *flags, "", *link)
+  for part in parts:  # what the extern bodies link at which version is in the graph's digest
+    h.update(part.encode())
+    h.update(b"\0")
+  return code, h.hexdigest()
+
+
+def _index_path(key: tuple[str, str]) -> Path:
+  # One directory per state of the code: when the code changes, its entries go stale together.
+  return cache_root() / _INDEX_DIR / key[0][:32] / f"{key[1]}.json"
+
+
+def _index_lookup(key: tuple[str, str]) -> _Artifact | None:
+  """The library the index holds for ``key``, if it is still there."""
+  with _artifact_lock:
+    cached = _artifact_cache.get(":".join(key))
+  if cached is not None:
+    return cached if cached.lib_path.exists() else None
+  try:
+    entry = json.loads(_index_path(key).read_text())
+    artifact = _Artifact(
+      lib_path=cache_root() / entry["key"] / entry["library"],
+      key=entry["key"],
+      flags=tuple(entry["flags"]),
+      workspace_size=int(entry["workspace_size"]),
+      isolated=bool(entry["isolated"]),
+    )
+  except (OSError, ValueError, KeyError, TypeError):
+    return None  # no entry, or one cut short: render
+  if not artifact.lib_path.exists():
+    return None
+  with _artifact_lock:
+    _artifact_cache[":".join(key)] = artifact
+  return artifact
+
+
+def _index_store(key: tuple[str, str], artifact: _Artifact) -> None:
+  """Record ``artifact`` under ``key``. A failure to write costs the next process a render."""
+  path = _index_path(key)
+  entry = {
+    "key": artifact.key,
+    "library": artifact.lib_path.name,
+    "flags": list(artifact.flags),
+    "workspace_size": artifact.workspace_size,
+    "isolated": artifact.isolated,
+  }
+  try:
+    fresh = not path.parent.exists()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(entry))
+    tmp.replace(path)
+    if fresh:
+      _prune_index(path.parent)
+  except OSError:
+    return
+  with _artifact_lock:
+    _artifact_cache[":".join(key)] = artifact
+
+
+def _prune_index(current: Path) -> None:
+  """Keep the index of the few states of the code written last: an edited checkout leaves one
+  behind at every edit, and nothing finds its entries again."""
+  states = [(entry.stat().st_mtime_ns, entry.path) for entry in os.scandir(current.parent) if entry.is_dir() and entry.path != str(current)]
+  for _, stale in sorted(states, reverse=True)[_INDEX_STATES_KEPT - 1 :]:
+    shutil.rmtree(stale, ignore_errors=True)
+
 
 def _build_artifact(fun: ConcreteFunction, target: Target | None = None) -> _Artifact:
   """Render ``fun`` for ``target`` (None: the target in force), compile it (if needed), and return
@@ -185,6 +293,13 @@ def _build_artifact(fun: ConcreteFunction, target: Target | None = None) -> _Art
   if compiler is None:
     raise JitUnavailable("no C compiler found (set SCALY_CC or install cc)")
   cc = compiler.cc
+  flags = compile_flags()
+  mode = key_mode()
+  # Asked first: a library the index holds for this graph is loaded without rendering anything.
+  structure = None if mode == "source" else _structure_key(fun, resolve_target(target), compiler_identity(cc), flags)
+  indexed = None if structure is None else _index_lookup(structure)
+  if indexed is not None and mode != "verify":
+    return indexed
 
   try:
     module = render_c_module(fun, target=target)
@@ -196,13 +311,21 @@ def _build_artifact(fun: ConcreteFunction, target: Target | None = None) -> _Art
   # ``.c`` carries — so the key is a hash of exactly the text handed to the compiler.
   # The compiler and the compile flags are part of the key: changing either changes the machine
   # code built from the same source, so the two builds must not share a cache entry.
-  flags = compile_flags()
   key = _compute_cache_key(
     module.body, fun_name=fun.name, compiler=compiler_identity(cc), compile_flags=(*flags, *extra_flags), versions=module.requirements.versions
   )
+  if indexed is not None:
+    if indexed.key != key or indexed.workspace_size != module.workspace_size or indexed.flags != extra_flags:
+      raise JitError(
+        f"the structural key of {fun.name!r} names a library built from other C than it renders now "
+        f"(index entry {_index_path(structure) if structure else ''}): the key misses something the rendering reads"
+      )
+    return indexed
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
+    if structure is not None:
+      _index_store(structure, cached)
     return cached
 
   symbol = c_ident(fun.name)
@@ -222,6 +345,8 @@ def _build_artifact(fun: ConcreteFunction, target: Target | None = None) -> _Art
   artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size, isolated=module.requirements.isolated)
   with _artifact_lock:
     _artifact_cache[key] = artifact
+  if structure is not None:
+    _index_store(structure, artifact)
   return artifact
 
 
@@ -450,8 +575,13 @@ def invalidate_cache(fun: ConcreteFunction, target: Target | None = None) -> Non
     compile_flags=(*compile_flags(), *module.link_flags),
     versions=module.requirements.versions,
   )
+  structure = _structure_key(fun, resolve_target(target), compiler_identity(compiler.cc), compile_flags())
   with _artifact_lock:
     _artifact_cache.pop(key, None)
+    if structure is not None:
+      _artifact_cache.pop(":".join(structure), None)
+  if structure is not None:
+    _index_path(structure).unlink(missing_ok=True)
   cache_dir = cache_root() / key
   if cache_dir.exists():
     shutil.rmtree(cache_dir, ignore_errors=True)

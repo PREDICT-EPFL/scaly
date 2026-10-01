@@ -172,6 +172,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.codegen.abi": 7,
   "scaly.codegen.adapter": 7,
   "scaly.codegen.jit": 7,
+  "scaly.codegen.structure": 7,
   "scaly.codegen.toolchain": 7,
   "scaly.codegen": 7,
   "scaly.codegen.__main__": 7,

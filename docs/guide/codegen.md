@@ -27,6 +27,18 @@ but have different names or different flags get different entries; two that are 
 Switching `SCALY_CC`, or upgrading the compiler in place, builds a new entry rather than loading one
 another compiler built.
 
+A later process does not render the C again to find that library. Beside the libraries the cache
+keeps an index keyed on the graph itself: a digest of every node, type, constant, attribute and
+name, of the Functions the graph calls, of what its extern bodies render, of the target, the
+compiler and its flags, and of the files of scaly and of any package whose rules the graph uses.
+A Function the index holds is loaded with nothing lowered or rendered, so what a second process
+pays before its first result is the building of the graph. The index is left out, and the Function
+rendered as on a first call, whenever the digest cannot be trusted: the graph holds a value it does
+not know how to digest, a source file changed after the process loaded scaly, or the visualizer is
+recording the Function. `SCALY_JIT_KEY=source` turns the index off, and `SCALY_JIT_KEY=verify`
+renders every Function anyway and raises if the index names a library built from other C, which
+is how the digest is checked against the whole test suite.
+
 ```python
 fn.recompile()    # drop the in-process handle and the on-disk entry for this function
 ```

@@ -181,6 +181,8 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
 
       - name: Pytest core suite
+        env:
+          SCALY_JIT_KEY: verify  # every library found by structural key is rendered and compared
         run: uv run pytest -n=auto -m "not method"
 
       - name: Benchmark smoke
@@ -227,6 +229,7 @@ jobs:
       - name: Pytest solver suite
         env:
           SCALY_REQUIRE_METHODS: "1"
+          SCALY_JIT_KEY: verify
         run: uv run pytest -n=auto -m method
 
       - name: Solver-call smoke

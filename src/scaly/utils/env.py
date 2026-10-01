@@ -14,6 +14,7 @@ import os
 import platform
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -34,10 +35,16 @@ ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("SCALY_CACHE_DIR", None, "Override the JIT cache root."),
   EnvVar("SCALY_CC", None, "Override the C compiler used by the JIT."),
   EnvVar("SCALY_CC_OPT", "-O2", "Optimization flag the JIT passes to the C compiler."),
+  EnvVar("SCALY_JIT_KEY", "structure", "How the JIT finds a library it built before: by the Function's graph, by the rendered C, or both, compared."),
   EnvVar("SCALY_STRICT_JVP_MANY", "0", "Raise instead of using the unrolled multi-seed JVP fallback."),
   EnvVar("SCALY_TARGET", None, "The processor preset code is generated for when none is set in code (default: the host's)."),
   EnvVar("SCALY_VIZ_DIR", None, "Visualization recording directory."),
 )
+
+
+LOADED_AT_NS = time.time_ns()
+"""When this process loaded scaly, in nanoseconds since the epoch: a source file written after it
+may not be the code a module already imported is running."""
 
 
 def env(name: str, default: str | None = None) -> str | None:
