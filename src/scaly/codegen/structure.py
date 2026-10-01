@@ -140,7 +140,9 @@ class _Walk:
       self.put(b"M", f"{self.named(kind)}.{v.name}".encode())
     elif isinstance(v, ExternCallee):
       # An extern body is digested with the Function that owns it (``extern``), by what it renders.
-      if owner is None or owner.extern is not v:
+      # Equal to the owner's, not the same object: equal bodies intern to one node, which holds
+      # the body of the Function built first.
+      if owner is None or owner.extern != v:
         raise Unkeyed("an extern callee outside the Function it is the body of")
       self.put(b"X")
     elif dataclasses.is_dataclass(v) and not isinstance(v, type):

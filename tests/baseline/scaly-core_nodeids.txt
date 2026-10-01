@@ -564,6 +564,7 @@ tests/core/codegen/test_structure.py::test_an_ops_arity_and_the_values_of_its_tr
 tests/core/codegen/test_structure.py::test_an_unknown_key_mode_is_refused
 tests/core/codegen/test_structure.py::test_code_edited_under_a_live_process_stops_the_key_and_the_function_is_rendered
 tests/core/codegen/test_structure.py::test_code_written_or_replaced_after_scaly_was_loaded_has_no_digest
+tests/core/codegen/test_structure.py::test_extern_functions_with_equal_bodies_have_one_key
 tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[a call]
 tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[a map]
 tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[an extern body]
@@ -1075,6 +1076,19 @@ tests/core/ir/test_expr.py::test_debug_printing_uses_stable_topological_names
 tests/core/ir/test_expr.py::test_differentiability_metadata_propagates_through_exprs
 tests/core/ir/test_expr.py::test_dot_sumsqr_and_norm_2
 tests/core/ir/test_expr.py::test_elementwise_eval_and_topological_order
+tests/core/ir/test_expr.py::test_function_keeps_its_fill_after_one_with_the_other_zero_is_built
+tests/core/ir/test_expr.py::test_interning_hit_returns_the_node_as_it_was_built
+tests/core/ir/test_expr.py::test_interning_shares_attributes_with_the_same_bits
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[-0.0-0.0]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[0-False]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[0.0--0.0]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[0.0-False]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[1-1.0]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[1-True]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[1.0-True]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[True-1]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first8-second8]
+tests/core/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first9-second9]
 tests/core/ir/test_expr.py::test_mixed_lowering_hints_survive_expr_graph
 tests/core/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/core/ir/test_expr.py::test_structural_equality_collapses_to_identity

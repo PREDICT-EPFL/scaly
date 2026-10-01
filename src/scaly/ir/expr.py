@@ -9,6 +9,7 @@ stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.p
 from __future__ import annotations
 
 import math
+import struct
 import weakref
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -473,6 +474,12 @@ def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
 # Python object — so structural equality becomes identity, ``is`` works as a fast equality
 # check, and any pass that builds new graphs gets CSE for free.
 #
+# The key tells apart what the generated C can: an attribute that is a float keys by its bits and
+# a number by its kind (``_attrs_key``), a constant by its bytes. What it still merges (two equal
+# ``TensorType`` objects, a list with a tuple, ``np.int64(1)`` with ``1``) is equal and not
+# identical, so a hit returns the node exactly as it was first built: ``Expr.__new__`` assigns
+# the fields of a new node only, and the class has no ``__init__`` to assign them again.
+#
 # WeakValueDictionary lets nodes be garbage-collected when no live reference remains; the
 # cache shrinks automatically. Arg refs in cache keys are weakrefs, not raw ``id(...)``
 # integers, so CPython id reuse cannot alias a new subgraph to a still-cached old node.
@@ -493,7 +500,9 @@ def _intern_key(
   return (str(op), args_key, type_, name, value_key, _attrs_key(attrs), lowering)
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
+# ``init=False``: ``__new__`` is the whole constructor. A generated ``__init__`` would run on the
+# node ``__new__`` returns, which on an interning hit is one that Functions already hold.
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
 class Expr:
   op: str  # a registered name: the ``ExprOp`` member for a builtin
   args: tuple[Expr, ...] = ()
@@ -504,7 +513,6 @@ class Expr:
   lowering: Lowering = "auto"
   # Frozen → safe to cache. Populated lazily by structural_key on first call.
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
-  _initialized: bool = field(default=False, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
 
@@ -528,23 +536,25 @@ class Expr:
   ) -> "Expr":
     if op is None:  # callers like ``copy.copy`` / pickling instantiate w/o args
       return object.__new__(cls)
+    op_name = op_def(op).name
     type_eff = type if type is not None else TensorType()
     attrs_eff = attrs if attrs is not None else {}
-    key = _intern_key(op_def(op).name, args, type_eff, name, value, attrs_eff, lowering)
+    key = _intern_key(op_name, args, type_eff, name, value, attrs_eff, lowering)
     cached = _NODE_CACHE.get(key)
     if cached is not None:
-      return cached
+      return cached  # as it was built: the arguments of this construction are dropped
     instance = object.__new__(cls)
+    put = object.__setattr__
+    put(instance, "op", op_name)
+    put(instance, "args", args)
+    put(instance, "type", type_eff)
+    put(instance, "name", name)
+    put(instance, "value", value)
+    put(instance, "attrs", attrs_eff)
+    put(instance, "lowering", lowering)
+    put(instance, "_key_cache", None)
     _NODE_CACHE[key] = instance
     return instance
-
-  def __post_init__(self) -> None:
-    # On cache hit, dataclass __init__ re-ran with the same args; everything it set was
-    # idempotent, so we only need to mark ``_initialized`` on the first construction.
-    if self._initialized:
-      return
-    object.__setattr__(self, "op", op_def(self.op).name)
-    object.__setattr__(self, "_initialized", True)
 
   @staticmethod
   def sym(
@@ -858,7 +868,19 @@ class Expr:
 
 
 def _attrs_key(attrs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+  """``attrs`` as a hashable key: equal keys mean attributes no generated code can tell apart."""
+
   def key(v: Any) -> Any:
+    kind = type(v)
+    if kind is int or kind is str or v is None:
+      return v
+    # ``==`` merges what C does not: ``-0.0`` with ``0.0``, and ``1`` with ``True`` and ``1.0``. A
+    # float keys by its bits, as a Program IR constant does (``ir.program._attr_key``), which also
+    # lets a NaN match itself; a bool and a float carry their kind, and an int is the bare value.
+    if kind is float or isinstance(v, (float, np.floating)):
+      return (float, struct.pack("<d", v))
+    if kind is bool or isinstance(v, np.bool_):
+      return (bool, bool(v))
     if isinstance(v, Expr):
       return v.structural_key()
     if hasattr(v, "structural_key") and callable(getattr(v, "structural_key")):

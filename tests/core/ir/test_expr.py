@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.ir.expr import substitute, topo
+from scaly.ir.expr import Expr, ExprOp, substitute, topo
+from scaly.ir.types import TensorType
+from scaly.passes.expr import cse_many
 
 
 def test_elementwise_eval_and_topological_order() -> None:
@@ -132,6 +134,83 @@ def test_structural_equality_collapses_to_identity() -> None:
   assert x0.structural_hash() == x1.structural_hash()
   assert x0 is not y
   assert not x0.structurally_equal(y)
+
+
+def test_interning_hit_returns_the_node_as_it_was_built() -> None:
+  """The interning key matches values that are equal and not identical, so a hit must not assign
+  them: Functions already hold the node."""
+  x = sc.sym("intern_x", 2)
+  args, type_, attrs = (x,), TensorType((2,)), {"axis": 0, "table": [1, 2], "scale": np.float64(1.5)}
+  node = Expr(ExprOp.NEG, args, type_, attrs=attrs)
+  value = np.array([1.0, -0.0])
+  const = Expr(ExprOp.CONST, type=TensorType((2,), diff=False), value=value)
+  key = node.structural_key()
+
+  again = Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"axis": np.int64(0), "table": (1, 2), "scale": 1.5})
+  const_again = Expr(ExprOp.CONST, type=TensorType((2,), diff=False), value=np.array([1.0, -0.0]))
+
+  assert again is node and const_again is const
+  assert node.args is args and node.type is type_ and node.attrs is attrs
+  assert type(attrs["table"]) is list and type(attrs["axis"]) is int and type(attrs["scale"]) is np.float64
+  assert const.value is value and const.type.diff is False
+  assert node.structural_key() is key
+
+
+@pytest.mark.parametrize(
+  ("first", "second"),
+  [(0.0, -0.0), (-0.0, 0.0), (1, True), (True, 1), (1, 1.0), (1.0, True), (0, False), (0.0, False), ((0.0, 1), (-0.0, 1)), ({"a": 1}, {"a": True})],
+)
+def test_interning_tells_apart_attributes_that_differ_in_bits_or_kind(first, second) -> None:
+  """``==`` holds between each pair, and generated code can tell them apart: a sign bit, or an
+  integer where there was a flag or a real."""
+  assert first == second
+  x = sc.sym("intern_x", 2)
+  a = Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"v": first})
+  b = Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"v": second})
+
+  assert a is not b and not a.structurally_equal(b)
+  assert a.attrs["v"] is first and b.attrs["v"] is second
+  assert len({n.id for n in cse_many([a, b])}) == 2  # the pass's own key keeps them apart too
+  assert Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"v": first}) is a
+
+
+def test_interning_shares_attributes_with_the_same_bits() -> None:
+  x = sc.sym("intern_x", 2)
+
+  def node(v):
+    return Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"v": v})
+
+  nan = node(float("nan"))
+  assert node(float("nan")) is nan  # by bits, where ``nan == nan`` is false
+  assert node(-float("nan")) is not nan
+  assert node(np.float64(1.5)) is node(1.5) and node(np.float32(1.5)) is node(1.5)
+  assert node(np.int64(3)) is node(3) and node(np.True_) is node(True)
+
+
+def test_function_keeps_its_fill_after_one_with_the_other_zero_is_built() -> None:
+  """A ``take`` filling with ``0.0`` and one filling with ``-0.0`` are two nodes. They were one,
+  rewritten in place by the second construction, so the Function built first changed its sign."""
+  x, idx = sc.sym("intern_x", 3), sc.sym("intern_idx", 2, dtype="int64")
+  xv, iv = np.array([1.0, 2.0, 3.0]), np.array([0.0, 7.0])  # the second index is out of range
+
+  def fn(name, *outputs):
+    return sc.Function.from_exprs(name, [x, idx], list(outputs), ["x", "idx"], [f"o{k}" for k in range(len(outputs))])
+
+  plus = sc.take(x, idx, fill=0.0)
+  f_plus = fn("intern_fill_plus", plus)  # built, and not compiled before the other node exists
+  minus = sc.take(x, idx, fill=-0.0)
+  f_minus = fn("intern_fill_minus", minus)
+  f_both = fn("intern_fill_both", plus, minus)
+
+  def signs(f):
+    out = f._flat_numerical_call(xv, iv)
+    np.testing.assert_array_equal([o[0] for o in out], 1.0)
+    return [bool(np.signbit(o[1])) for o in out]
+
+  assert signs(f_plus) == [False]
+  assert signs(f_minus) == [True]
+  assert signs(f_both) == [False, True]
+  assert plus is not minus and plus.attrs["fill"] == 0.0 and not np.signbit(plus.attrs["fill"])
 
 
 def test_differentiability_metadata_propagates_through_exprs() -> None:

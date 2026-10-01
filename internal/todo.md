@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 230**
+**Next id: 231**
 
 | Prefix | Section |
 |---|---|
@@ -1156,11 +1156,24 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       one that reads nothing: `[2.5, 2.5, 3.5]` where NumPy and the two-slot loop give
       `[1.5, 2.5, 3.5]`. The trait is gone from both, and a path through either keeps two slots.
       The same line read `nonsmooth` while rendering, so the C depended on an option in force.
-- [ ] **C-228. An interning hit rewrites the node it finds.** `Expr.__new__` returns the cached
-      node and the dataclass `__init__` then assigns the new call's fields to it: building
-      `take(fill=-0.0)` turns an existing `take(fill=0.0)` into it, and a Function built before
-      returns `-0.0`. The same for `1`, `True` and `1.0`, and for equal type objects. Found by
-      C-225's review; a task chip carries the reproduction and two fixes.
+- [x] **C-228. An interning hit rewrites the node it finds.** `Expr.__new__` returned the cached
+      node and the dataclass `__init__` then assigned the new call's fields to it: building
+      `take(fill=-0.0)` turned an existing `take(fill=0.0)` into it, and a Function built before
+      returned `-0.0`. The same for `1`, `True` and `1.0`, and for equal type objects. Found by
+      C-225's review. Fixed both ways. `Expr` takes `init=False` and `__new__` assigns the fields
+      of a new node only, so a hit returns the node as it was built, whatever the key merges
+      (equal type objects, a list with a tuple, `np.int64(1)` with `1`). And `_attrs_key` keys a
+      float by its bits and a bool and a float by kind, as `ProgramNode` interning and
+      `codegen/structure.py` do, so those are separate nodes: with the first fix alone the
+      second `take` would have been the first one, silently, and only while the first was
+      alive. The expression CSE pass shares the key; a NaN attribute now matches itself. Over
+      the suite (the example notebooks left out) the new key splits no pair of nodes the old one
+      merged, outside the tests written for it, and no C snapshot moves. One thing leaned on the
+      rewriting: `codegen/structure.py` took an extern body for its Function's by identity, true
+      only of the Function built last, so of two extern Functions with equal bodies the earlier
+      had no JIT key; it compares by equality now. Tests in `tests/core/ir/test_expr.py` and
+      `tests/core/codegen/test_structure.py`; taking out either half of the fix, or the change
+      to the extern check, fails them.
 - [x] **C-229. A long dot product's partial sums follow the target (B4, Tier 7).** Eight
       partial sums everywhere, the form C-196 left for when QBEACONF's gate was settled, measured
       again: the corpus 1.002 in geometric mean (the sparse factorizations 1.02-1.03, their rows
@@ -1181,6 +1194,14 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       is long is the last use, the reverse sweep reading the forward pass (320-760 values live
       at once against 32 registers, `live_ranges.py`). No order of the statements shortens
       that; a smaller adjoint would (C-58, C-214).
+- [ ] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
+      the other dialect: `ProgramNode.__new__` assigns the fields of a new node and the
+      dataclass `__init__` then runs on whatever it returned, so every construction replaces
+      the copy of `attrs` that `__new__` made with the caller's dict, and a hit replaces `args`
+      and `attrs` with the new call's. Floats key by bits there, so what a hit can change in
+      value is `1` for `True`: `ProgramNode(CONST_INT, attrs={"value": 1})`, then the same with
+      `True`, leaves the first holding `True`. The builders coerce (`const_int` calls `int`)
+      and no wrong C is known. `init=False`, as in C-228, and a bool keyed by its kind.
 - [ ] **C-58 note (Tier 6).** A prototype that inlines plain callees into a scalar-lowered mapped
       body before the reverse sweep (calls substituted, short maps unrolled) gave chain M = 5 0.97
       of its time and M = 9 1.24x: the flattened adjoint changes what C-211's seed groups see,

@@ -480,6 +480,15 @@ def test_an_extern_bodys_key_changes_with(cache, change) -> None:
   assert base == _key(_extern())
 
 
+def test_extern_functions_with_equal_bodies_have_one_key(cache) -> None:
+  """Equal bodies intern to one ``EXTERN_CALL`` node, which holds the body built first. Each
+  Function is keyed by its own body, and neither is refused for holding the other's."""
+  first, second = _extern(version="equal bodies"), _extern(version="equal bodies")  # a body no other test builds
+  assert first.extern is not second.extern and first.outputs[0] is second.outputs[0]
+  assert first.outputs[0].attrs["extern"] is first.extern
+  assert _key(first) is not None and _key(first) == _key(second)
+
+
 def test_an_extern_body_is_found_without_rendering_and_inside_a_generated_function(cache, monkeypatch) -> None:
   def host() -> sc.ConcreteFunction:
     inner = _extern()

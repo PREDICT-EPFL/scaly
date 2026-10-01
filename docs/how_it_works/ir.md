@@ -42,7 +42,9 @@ Nodes are interned: building the same operation on the same arguments with the s
 returns the object you already have. Two structurally identical subgraphs are therefore one
 subgraph, shared by both consumers, and common subexpressions collapse as you build instead of in
 a later pass. Interning is by value in a weak-reference table, so nodes nothing refers to are
-collected.
+collected. An attribute is the same when generated code could not tell the two apart: a float
+compares by its bits and a number by its kind, so a fill of `-0.0` is not a fill of `0.0`, and `1`
+is neither `True` nor `1.0`.
 
 This is why an IR class must never be importable under two module paths: two copies of the class
 mean two intern tables, and identity silently stops meaning equality. See
