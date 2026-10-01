@@ -247,7 +247,10 @@ Plugins must not duplicate any of this:
 - The `scaly_solver_stats` struct, the `SCALY_SOLVE_*` status enum (`sc.Status`), the `Info`
   outputs, and `scaly_clock_s`. Plugins fill and use them, never redefine them.
 - JIT compilation, caching (keyed on source, compiler and flags, and found again from the graph and
-  the C your callee renders), and library/header discovery.
+  the C your callee renders), and library/header discovery. The JIT asks your callee for its
+  dependencies, sources, C and build requirements every time a Function holding it is built, also
+  when the library is already cached, so those four must be cheap, must not change anything, and
+  must give the same answer for the same callee.
 - The typed `Function` call interface and `sc.opt.solver_stats(fun)`, which reads the stats accessor
   through the extern-callee protocol (`Function.callee_state`).
 

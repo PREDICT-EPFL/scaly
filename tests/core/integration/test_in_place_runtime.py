@@ -296,6 +296,41 @@ def test_whole_link_reads_and_row_positions_are_refused(monkeypatch: pytest.Monk
     np.testing.assert_allclose(got, ref, rtol=1e-14)
 
 
+@pytest.mark.parametrize(
+  ("op", "read", "in_place"),
+  [
+    ("floor", (1, 0), False),
+    ("ceil", (1, 0), False),
+    ("abs", (1, 0), False),
+    ("abs", (2, 2), True),
+    ("floor", (2, 2), False),
+    ("ceil", (2, 2), False),
+  ],
+)
+def test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry(
+  monkeypatch: pytest.MonkeyPatch, op: str, read: tuple[int, int], in_place: bool
+) -> None:
+  """``floor`` and ``ceil`` have a zero derivative, so their pattern is empty and says nothing of
+  what they read. A body that writes ``floor`` of entry 1 into entry 0 and of entry 0 into entry 1
+  reads what it writes; taken for one that reads nothing, it ran in place, and the second write
+  read the first one's result. A path through either keeps two slots, wherever it reads; through
+  ``abs``, whose pattern is what it reads, the proof follows the entries."""
+
+  def build(tag: str) -> sc.Function:
+    x = sc.sym("x", 3)
+    body = _fn(f"fl_body_{op}_{read[0]}_{tag}", [x], [sc.index_set(x, [0, 1], getattr(x, op)().gather(np.array(read)) + 0.5)])
+    x0 = sc.sym("x0", 3)
+    (out,) = sc.scan(body, x0, length=2)
+    return _fn(f"fl_{op}_{read[0]}_{tag}", [x0], [out])
+
+  point = (np.array([1.5, -2.5, 3.25]),)
+  (got,) = _run_both(monkeypatch, build, point, expect_in_place=in_place)
+  ref, f = point[0].copy(), getattr(np, op)
+  for _ in range(2):
+    ref = np.array([f(ref[read[0]]) + 0.5, f(ref[read[1]]) + 0.5, ref[2]])
+  np.testing.assert_array_equal(got, ref)
+
+
 @pytest.mark.parametrize("reads_written", [False, True])
 def test_constant_index_updates_without_step_inputs(monkeypatch: pytest.MonkeyPatch, reads_written: bool) -> None:
   """A body with no input sliced per step and constant update indices: one step stands for all.

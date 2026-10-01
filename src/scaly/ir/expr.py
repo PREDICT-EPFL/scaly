@@ -248,7 +248,13 @@ def register_op(
   a name twice raises.
 
   Registration has to happen before an ``Expr`` with the op is built, which holds by construction
-  when the module that registers the op is the one that provides its builder."""
+  when the module that registers the op is the one that provides its builder.
+
+  The JIT's key for a library it built before takes an op's definition as it stands: its arity,
+  its traits by value, its rules by module and name, and the files of the package that defines
+  them. Keep what shapes an op's C in that package, and its rules plain functions: one that is a
+  closure, a bound method or a partial application carries state no file holds, and a Function
+  with such an op is rendered at each start."""
   if name in _OPS:
     raise ValueError(f"expression op {name!r} is already registered")
   definition = OpDef(name, arity, numpy, differentiable)
@@ -434,12 +440,13 @@ define_traits(ExprOp.TAKE, runtime_index=True)
 for _op in (ExprOp.PUT_ADD, ExprOp.PUT):
   define_traits(_op, runtime_index=lambda node: node.args[1].op != ExprOp.CONST, exact_reads=lambda node: node.args[1].op == ExprOp.CONST)
 # Ops whose structural pattern is exactly the entries they read, so the pattern can stand in for a
-# read set. Everything else (predicates, ``select``'s condition, ``copysign``'s sign, casts, calls,
-# maps and loops) may read entries its pattern omits.
+# read set. Everything else (predicates, ``select``'s condition, ``copysign``'s sign, ``floor`` and
+# ``ceil``, whose derivative is zero, casts, calls, maps and loops) may read entries its pattern
+# omits.
 for _op in (
   ExprOp.INPUT,
   ExprOp.CONST,
-  *(COMMON_ELEMENTWISE_UNARY | (COMMON_ELEMENTWISE_BINARY - {ExprOp.COPYSIGN})),
+  *((COMMON_ELEMENTWISE_UNARY - {ExprOp.FLOOR, ExprOp.CEIL}) | (COMMON_ELEMENTWISE_BINARY - {ExprOp.COPYSIGN})),
   ExprOp.SUM,
   ExprOp.MAX,
   ExprOp.MIN,

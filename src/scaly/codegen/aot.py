@@ -44,6 +44,7 @@ from scaly.ir.target import Target, resolve_target
 from scaly.ir.target import target as target_block
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
+from scaly.utils.options import default_options
 
 if TYPE_CHECKING:
   from collections.abc import Callable
@@ -463,7 +464,8 @@ def _render_observed(fun: ConcreteFunction, adapters: tuple[Adapter, ...], targe
   try:
     _check_layout(fun, adapters)
     ctx = _lower(fun, target, observe if observers else None, observe_expr if observers else None)
-    source = _render_source(ctx, adapters)
+    with default_options():  # an extern body's C included: no option in force reaches the text
+      source = _render_source(ctx, adapters)
   except Exception as exc:
     for obs in observers:
       obs.finish(error=repr(exc))

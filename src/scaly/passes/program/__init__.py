@@ -55,7 +55,12 @@ def _insert(after: bool, anchor: str, name: str, fn: PassFn) -> None:
 
 def insert_after(anchor: str, name: str, fn: PassFn) -> None:
   """Run the pass ``fn``, named ``name``, right after the pass ``anchor`` (a ``PASS_PIPELINE`` name
-  or one inserted before). Its name is what an observer sees as ``pass:<name>``."""
+  or one inserted before). Its name is what an observer sees as ``pass:<name>``.
+
+  The pipeline is part of the JIT's key for a library it built before: ``fn`` by its module and
+  name, with the files of its package. A pass that is a closure, a bound method or a partial
+  application carries state no file holds, and with one inserted every Function is rendered at
+  each start, as before there was a key."""
   _insert(True, anchor, name, fn)
 
 

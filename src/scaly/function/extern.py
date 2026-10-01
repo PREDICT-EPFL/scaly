@@ -102,7 +102,12 @@ class BuildRequirements:
 
 @runtime_checkable
 class ExternCallee(Protocol):
-  """The attribute of an ``EXTERN_CALL`` node and of its Function (``Function.extern``)."""
+  """The attribute of an ``EXTERN_CALL`` node and of its Function (``Function.extern``).
+
+  ``dependencies``, ``extern_sources``, ``render`` and ``build_requirements`` are asked every time
+  a Function holding the callee is built, also when its library is cached: the JIT's key for the
+  library is a digest of their answers (``codegen/structure.py``). They must be cheap, change
+  nothing, and answer the same for the same callee; ``render`` runs under the default options."""
 
   def dependencies(self) -> tuple[ConcreteFunction, ...]:
     """The Functions the C calls; they lower to ``<name>_raw`` kernels in the same translation unit."""

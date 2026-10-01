@@ -42,7 +42,7 @@ def child(name: str) -> None:
 
   found = graph_digest(fn)
   walked = time.perf_counter()
-  code = code_digest(found[1]) if found is not None else None
+  code = code_digest(found.packages) if found is not None else None
   scanned = time.perf_counter()
   print(
     json.dumps(

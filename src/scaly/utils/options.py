@@ -2,7 +2,9 @@
 
 An option is read when a graph is built, never when it is rendered. A derivative built under one
 setting therefore carries its choice in its own structure, which reaches the generated C and the JIT
-cache key with no global state involved at render time.
+cache key with no global state involved at render time. Rendering holds itself to that: it runs
+under ``default_options``, so code it shares with graph building reads the defaults there, whatever
+is in force.
 """
 
 from __future__ import annotations
@@ -141,6 +143,18 @@ def get_options() -> Options:
   """The options in force here: the innermost ``sc.options`` block, else the process default."""
   current = _current.get()
   return _default if current is None else current
+
+
+@contextmanager
+def default_options() -> Iterator[None]:
+  """Run a block under the built-in defaults, whatever the process default or an enclosing
+  ``sc.options`` block says. Rendering runs under it, so that the C a graph renders to depends on
+  the graph alone."""
+  token = _current.set(Options())
+  try:
+    yield
+  finally:
+    _current.reset(token)
 
 
 def set_options(**changes: Any) -> None:

@@ -67,11 +67,11 @@ grad(np.array([1.0, 2.0]))
 | 5 | Calling it with array leaves runs `__call__`, `numerical_call`, `_flat_numerical_call` and `_compile`, which reaches the backend through `_jit()`. That is the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](../dev/codebase.md#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function once into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` normalizes a private copy of each ordinary Function's outputs, then walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the fixed pipeline: `hoist_invariant`, `scalarize`, `prune_procedures`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `fold_arith_after_unroll`, `pack_workspace`, `coalesce_stores`, `prepare_scalar`. | `passes/program/` |
+| 8 | `optimize_program` runs the fixed pipeline: `hoist_invariant`, `scalarize`, `prune_procedures`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `fold_arith_after_unroll`, `delinearize_loops`, `pack_workspace`, `coalesce_stores`, `prepare_scalar`. | `passes/program/` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the universal ABI, the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
-| 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compiler path and version, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. An index keyed on the graph (`codegen/structure.py`) is asked before step 6 renders anything, and a library it holds is loaded without steps 7 to 11. | `codegen/jit.py` |
+| 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compiler path and version, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. Step 6 asks an index keyed on the graph (`codegen/structure.py`) before it renders, and a library the index holds is loaded without steps 7 to 11. | `codegen/jit.py` |
 
 AOT stops at step 11 and writes the pair to disk (`uv run scaly_codegen <module>:<attr> -o <dir>`).
 Both consumers read the same `CModule`, so the header's `SZ_W`, the source's spill size and the
@@ -232,19 +232,33 @@ needs no lowering. `codegen/structure.py` walks the Function's graph once and di
 rendering reads of it: each node's op, arguments, type, name, value, attributes and lowering hint,
 the Functions it calls taken the same way, and each extern body by the C it renders, the sources it
 adds and what it links. Nodes, types and Functions are numbered in the order the walk first meets
-them, so the digest does not depend on addresses or on which of two equal objects a node holds.
-With the graph's digest go the target, the compiler and its flags, and a digest of the code that
-would do the rendering: the path and contents of every file of scaly and of each package that
-defines a rule or a class the graph uses (a file over a megabyte, a built library, by its size and
-modification time). An index entry under that key names the
-library's directory and holds the workspace size and link flags the handle needs. The key is
-refused, and the Function rendered, when the walk meets a value of a type it does not know, a
-dataclass field its class leaves out of equality, a source file written after the process loaded
-scaly, or a render observer that wants the Function. A refusal costs a render; a key that missed
-something the rendering reads would load a stale library, so `SCALY_JIT_KEY=verify` renders on
-every hit and raises when the source key differs, and the suite runs under it. The index keeps
-the entries of the eight states of the code written last, since each edit of a checkout leaves a
-state nothing finds again. On Linux,
+them and kept alive until it ends, so the digest does not depend on addresses or on which of two
+equal objects a node holds. What shapes every lowering and is no part of a graph goes in too: the
+definition of each op the graph holds (its arity, its rules by name, its traits by value), the
+pass pipeline with the passes extensions inserted, and the switch for in-place loop carries. With
+the graph's digest go the target, the compiler and its flags, and a digest of the code that would
+do the rendering: the path and contents of every file of scaly and of each package that defines a
+rule, a pass or a class the graph uses (a file over a megabyte, a built library, by its size and
+modification time). An index entry under that key names the library's directory and holds the
+workspace size and link flags the handle needs.
+
+The key is refused, and the Function rendered, in these cases:
+
+- the walk meets a value of a type it does not know, a class defined inside a function, or a
+  dataclass field its class leaves out of equality;
+- a rule or a pass from outside scaly is a closure, a bound method or a partial application, whose
+  state is in no file;
+- a source file was modified or replaced after the process loaded scaly, or in the two seconds
+  before, which is as fine as some file systems keep time;
+- a render observer wants the Function.
+
+A refusal costs a render. A key that missed something the rendering reads would load a stale
+library, so `SCALY_JIT_KEY=verify` renders on every hit and raises when the source key differs, and
+the suite runs under it. Options are the one process state rendering could read by accident, since
+it shares code with graph building: lowering and rendering run under `default_options`, so such a
+read gets the defaults and the C depends on the graph alone. The index keeps the entries of the
+eight states of the code used last, since each edit of a checkout leaves a state nothing finds
+again. On Linux,
 solver-bearing artifacts load into an isolated linker namespace to keep vendored dependencies out
 of the host process.
 

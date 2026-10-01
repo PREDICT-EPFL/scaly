@@ -53,6 +53,7 @@ from ..ir.types import DeviceSpec, DType, dtypes
 from .affine import affine_index_map
 from .expr import cse_many, simplify
 from ..utils.names import c_ident
+from ..utils.options import default_options
 
 
 class LoweringError(NotImplementedError):
@@ -101,6 +102,11 @@ def lower_function(
   target = resolve_target(target)
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
+  with default_options():  # an option shapes a graph when it is built, and nothing here
+    return _lower_function(fun, target, observe, observe_expr)
+
+
+def _lower_function(fun: ConcreteFunction, target: Target, observe: ProgramObserver | None, observe_expr: ExprObserver | None) -> ProgramNode:
   _check_function_names(fun)
   callees: dict[str, ProgramNode] = {}
   extern_fns: dict[str, ConcreteFunction] = {}

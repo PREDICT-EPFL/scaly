@@ -505,44 +505,84 @@ tests/core/codegen/test_reduction_edge_cases.py::test_integer_and_bool_extrema_r
 tests/core/codegen/test_reduction_edge_cases.py::test_segment_extrema_refuse_bad_ids
 tests/core/codegen/test_reduction_edge_cases.py::test_segment_extrema_with_gaps_runs_fills_and_nan[block]
 tests/core/codegen/test_reduction_edge_cases.py::test_segment_extrema_with_gaps_runs_fills_and_nan[scalar]
-tests/core/codegen/test_structure.py::test_a_dicts_and_a_sets_order_are_not_part_of_the_digest
+tests/core/codegen/test_structure.py::test_a_dicts_order_is_part_of_the_digest_and_a_sets_is_not
 tests/core/codegen/test_structure.py::test_a_file_is_read_once_and_a_large_one_is_taken_by_its_size_and_time
 tests/core/codegen/test_structure.py::test_a_function_built_twice_in_one_process_renders_once
+tests/core/codegen/test_structure.py::test_a_functions_class_is_part_of_the_digest
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a NumPy date]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a class]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a complex number]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a dataclass with a field outside its equality]
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a dict keyed by an integer]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a function]
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a masked array]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a set of floats]
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[a structured array]
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[an array of a subclass, which may hold more than its bytes]
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[an array of strings]
+tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[an object of a class defined in a function]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[an object of an unknown class]
 tests/core/codegen/test_structure.py::test_a_graph_holding_a_value_the_digest_does_not_know_has_no_key_and_is_rendered[an unknown object inside a tuple]
 tests/core/codegen/test_structure.py::test_a_library_built_before_is_loaded_without_rendering
 tests/core/codegen/test_structure.py::test_a_library_removed_under_a_live_process_is_rebuilt
 tests/core/codegen/test_structure.py::test_a_package_that_is_not_loaded_or_has_no_files_has_no_digest
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a NumPy ufunc]
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a bound method]
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a builtin, whose module is no state]
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a closure under a module-level name, as a decorator leaves]
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a closure]
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a lambda at module level]
+tests/core/codegen/test_structure.py::test_a_rule_that_carries_state_outside_scaly_gives_no_key[a partial application]
 tests/core/codegen/test_structure.py::test_a_single_file_module_is_digested_by_its_file
+tests/core/codegen/test_structure.py::test_a_solver_has_a_key_and_is_found_by_it
+tests/core/codegen/test_structure.py::test_a_state_of_the_index_that_is_read_is_kept_like_one_that_is_written
+tests/core/codegen/test_structure.py::test_a_symbol_without_a_name_is_not_one_named_none
 tests/core/codegen/test_structure.py::test_a_visualized_function_is_watched
 tests/core/codegen/test_structure.py::test_a_watched_function_is_rendered_although_its_library_is_there
+tests/core/codegen/test_structure.py::test_an_arrays_digest_is_of_its_entries_however_it_is_laid_out
 tests/core/codegen/test_structure.py::test_an_extern_body_is_found_without_rendering_and_inside_a_generated_function
+tests/core/codegen/test_structure.py::test_an_extern_body_that_raises_when_asked_has_no_key_and_rendering_says_why
 tests/core/codegen/test_structure.py::test_an_extern_body_whose_libraries_cannot_be_found_has_no_key
+tests/core/codegen/test_structure.py::test_an_extern_bodys_c_is_rendered_under_the_default_options
+tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[a block of its source]
+tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[a library it links, through the flags it resolves to]
 tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[an include]
 tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[the C it renders]
 tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[the body of a Function its C calls]
 tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[the name of a source it adds]
 tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[the text of a source it adds]
 tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[the version of what it links]
+tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[the workspace a source of its needs]
+tests/core/codegen/test_structure.py::test_an_extern_bodys_key_changes_with[whether it loads in a namespace of its own]
+tests/core/codegen/test_structure.py::test_an_extern_bodys_link_flags_are_part_of_the_key
 tests/core/codegen/test_structure.py::test_an_extern_callee_in_a_graph_that_is_not_its_own_has_no_key
 tests/core/codegen/test_structure.py::test_an_index_entry_cut_short_or_naming_a_missing_library_is_rebuilt
+tests/core/codegen/test_structure.py::test_an_index_entry_keeps_the_link_flags
+tests/core/codegen/test_structure.py::test_an_inserted_pass_and_the_in_place_switch_are_part_of_the_key
+tests/core/codegen/test_structure.py::test_an_isolated_library_is_loaded_isolated_from_its_index_entry
+tests/core/codegen/test_structure.py::test_an_ops_arity_and_the_values_of_its_traits_are_part_of_the_digest
 tests/core/codegen/test_structure.py::test_an_unknown_key_mode_is_refused
 tests/core/codegen/test_structure.py::test_code_edited_under_a_live_process_stops_the_key_and_the_function_is_rendered
-tests/core/codegen/test_structure.py::test_code_written_after_scaly_was_loaded_has_no_digest
+tests/core/codegen/test_structure.py::test_code_written_or_replaced_after_scaly_was_loaded_has_no_digest
+tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[a call]
+tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[a map]
+tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[an extern body]
+tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[derivatives]
+tests/core/codegen/test_structure.py::test_graphs_of_every_kind_have_a_key_and_are_found_by_it[loops]
+tests/core/codegen/test_structure.py::test_hidden_files_and_links_to_nothing_are_not_code_and_a_linked_directory_is
+tests/core/codegen/test_structure.py::test_pruning_survives_a_state_that_vanishes_and_an_index_that_is_not_there
 tests/core/codegen/test_structure.py::test_recompiling_drops_the_index_entry_and_builds_again
+tests/core/codegen/test_structure.py::test_rendering_reads_the_default_options_whatever_is_in_force
 tests/core/codegen/test_structure.py::test_the_code_behind_an_ops_rules_is_part_of_the_key
 tests/core/codegen/test_structure.py::test_the_codes_digest_changes_with_a_files_contents_and_name_not_its_time
 tests/core/codegen/test_structure.py::test_the_digest_does_not_depend_on_which_of_two_equal_types_a_node_holds
+tests/core/codegen/test_structure.py::test_the_functions_an_extern_body_builds_when_asked_are_each_digested
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[a dtype]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[a lowering hint]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[a scalar constant]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[a shape]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[a symbol's own name]
+tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[an attribute's name]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[an attribute]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[an entry of an array constant]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[an input's name]
@@ -555,6 +595,7 @@ tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[the na
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[the order of the inputs under the same names]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[the sign of a zero]
 tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[which argument is which]
+tests/core/codegen/test_structure.py::test_the_graphs_digest_changes_with[which node has which op]
 tests/core/codegen/test_structure.py::test_the_index_entry_holds_what_the_handle_needs
 tests/core/codegen/test_structure.py::test_the_index_keeps_the_states_of_the_code_written_last
 tests/core/codegen/test_structure.py::test_the_interpreters_and_numpys_code_is_named_by_version
@@ -564,7 +605,17 @@ tests/core/codegen/test_structure.py::test_the_order_of_a_callees_inputs_and_out
 tests/core/codegen/test_structure.py::test_the_order_of_two_inputs_is_part_of_the_digest
 tests/core/codegen/test_structure.py::test_the_other_key_modes_render_every_time[source]
 tests/core/codegen/test_structure.py::test_the_other_key_modes_render_every_time[verify]
+tests/core/codegen/test_structure.py::test_two_packages_with_the_same_files_have_two_digests
+tests/core/codegen/test_structure.py::test_two_rules_of_one_package_are_two_definitions
+tests/core/codegen/test_structure.py::test_two_types_in_one_graph_that_differ_in_their[a dtype's C type under one name]
+tests/core/codegen/test_structure.py::test_two_types_in_one_graph_that_differ_in_their[differentiability]
+tests/core/codegen/test_structure.py::test_two_types_in_one_graph_that_differ_in_their[dtype]
+tests/core/codegen/test_structure.py::test_two_types_in_one_graph_that_differ_in_their[having a pattern]
+tests/core/codegen/test_structure.py::test_two_types_in_one_graph_that_differ_in_their[shape]
+tests/core/codegen/test_structure.py::test_two_types_in_one_graph_that_differ_in_their[sparsity pattern]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a NumPy float and a float]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a dataclass's field]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a dict's keys]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a dict's values]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a dtype]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a set's members]
@@ -573,18 +624,26 @@ tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_d
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a string and its pieces]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[a tuple and a list]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[an array's dtype]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[an array's entries in another order]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[an array's shape]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[an integer and a NumPy integer]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[an integer and a flag]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[an integer and a float]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[bytes and a string]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[integers of five thousand digits]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[none and zero]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[strings that are not valid text]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[the sign of a zero]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[two NumPy scalars of the same bytes]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[two classes with the same fields]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[two enums with the same member]
+tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[two members of an enum]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[two splits of one string]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[where a nested tuple ends]
 tests/core/codegen/test_structure.py::test_two_values_of_an_attribute_give_two_digests[where a string ends, when it holds a tag's byte]
+tests/core/codegen/test_structure.py::test_types_with_one_name_and_other_fields_are_two_types
 tests/core/codegen/test_structure.py::test_verify_mode_catches_a_key_that_misses_what_the_rendering_reads
+tests/core/codegen/test_structure.py::test_verify_mode_compares_what_the_index_entry_holds
 tests/core/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/core/codegen/test_toolchain.py::test_env_registry_mentions_native_build_controls
 tests/core/codegen/test_vector_loops.py::test_a_vector_body_renders_as_vector_statements
@@ -698,6 +757,12 @@ tests/core/function/test_tree.py::test_leaf_declarations_take_a_name_a_shape_or_
 tests/core/function/test_tree.py::test_leaf_shapes_and_group_widths
 tests/core/function/test_tree.py::test_seeded_derivatives_accept_nondifferentiable_leaves
 tests/core/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
+tests/core/integration/test_in_place_runtime.py::test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry[abs-read2-False]
+tests/core/integration/test_in_place_runtime.py::test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry[abs-read3-True]
+tests/core/integration/test_in_place_runtime.py::test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry[ceil-read1-False]
+tests/core/integration/test_in_place_runtime.py::test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry[ceil-read5-False]
+tests/core/integration/test_in_place_runtime.py::test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry[floor-read0-False]
+tests/core/integration/test_in_place_runtime.py::test_a_read_through_floor_or_ceil_counts_as_a_read_of_every_entry[floor-read4-False]
 tests/core/integration/test_in_place_runtime.py::test_another_output_reading_the_carry_keeps_two_slots
 tests/core/integration/test_in_place_runtime.py::test_batched_carry_and_mixed_chain
 tests/core/integration/test_in_place_runtime.py::test_constant_index_updates_without_step_inputs[False]

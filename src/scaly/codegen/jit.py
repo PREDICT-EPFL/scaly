@@ -24,6 +24,7 @@ The JIT compiles for the machine it runs on, so it also passes the host CPU targ
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -40,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
-from .aot import render_c_module, render_watched, requirements
+from .aot import Requirements, render_c_module, render_watched
 from ..function.extern import ExternState, extern_functions
 from ..ir.target import Target, resolve_target
 from ..utils.ext_api import EXT_API_VERSION
@@ -99,7 +100,9 @@ class JitUnavailable(RuntimeError):
 
 
 class JitError(RuntimeError):
-  """Raised when a compiled function returns a non-zero ABI status code."""
+  """Raised when a function cannot be built or run as asked: the compiler fails, a compiled
+  function returns a non-zero ABI status code, ``SCALY_JIT_KEY`` names no mode, or under its
+  ``verify`` mode the index names a library built from other C than the function renders."""
 
 
 def _find_compiler() -> str | None:
@@ -180,6 +183,7 @@ _artifact_cache: dict[str, _Artifact] = {}
 _artifact_lock = threading.Lock()
 
 _KEY_MODES = ("structure", "source", "verify")
+_index_states_read: set[str] = set()
 _INDEX_DIR = "structure"
 _INDEX_STATES_KEPT = 8
 
@@ -203,18 +207,18 @@ def _structure_key(fun: ConcreteFunction, target: Target, compiler: tuple[str, .
   found = graph_digest(fun)
   if found is None:
     return None
-  graph, packages = found
-  code = code_digest(packages)
+  code = code_digest(found.packages)
   if code is None:
     return None
   try:
-    needs = requirements(extern_functions(fun))
-    link = needs.link_flags()
+    link = Requirements.merge(found.requirements).link_flags()
   except Exception:
     return None
   h = hashlib.sha256()
-  parts = (_JIT_CACHE_VERSION, f"ext{EXT_API_VERSION}", C_API_SIGNATURE, graph, repr(target), *compiler, "", *flags, "", *link)
-  for part in parts:  # what the extern bodies link at which version is in the graph's digest
+  # What the extern bodies link, and at which version, is in the graph's digest. The cache's
+  # version, the ABI's signature and the extension API's are constants in scaly's own files, which
+  # the code's digest covers.
+  for part in (found.digest, repr(target), *compiler, "", *flags, "", *link):
     h.update(part.encode())
     h.update(b"\0")
   return code, h.hexdigest()
@@ -246,6 +250,11 @@ def _index_lookup(key: tuple[str, str]) -> _Artifact | None:
     return None
   with _artifact_lock:
     _artifact_cache[":".join(key)] = artifact
+    first = key[0] not in _index_states_read
+    _index_states_read.add(key[0])
+  if first:  # a state that is read counts as written: pruning keeps the states used last
+    with contextlib.suppress(OSError):
+      os.utime(_index_path(key).parent)
   return artifact
 
 
@@ -265,18 +274,24 @@ def _index_store(key: tuple[str, str], artifact: _Artifact) -> None:
     tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(entry))
     tmp.replace(path)
-    if fresh:
-      _prune_index(path.parent)
   except OSError:
     return
   with _artifact_lock:
     _artifact_cache[":".join(key)] = artifact
+  if fresh:
+    _prune_index(path.parent)
 
 
 def _prune_index(current: Path) -> None:
-  """Keep the index of the few states of the code written last: an edited checkout leaves one
-  behind at every edit, and nothing finds its entries again."""
-  states = [(entry.stat().st_mtime_ns, entry.path) for entry in os.scandir(current.parent) if entry.is_dir() and entry.path != str(current)]
+  """Keep the index of the few states of the code used last: an edited checkout leaves one behind
+  at every edit, and nothing finds its entries again. Another process may be pruning too, or
+  using a state this removes, which costs it a render."""
+  states = []
+  with contextlib.suppress(OSError):
+    for entry in os.scandir(current.parent):
+      with contextlib.suppress(OSError):  # gone already
+        if entry.is_dir() and entry.path != str(current):
+          states.append((entry.stat().st_mtime_ns, entry.path))
   for _, stale in sorted(states, reverse=True)[_INDEX_STATES_KEPT - 1 :]:
     shutil.rmtree(stale, ignore_errors=True)
 
@@ -315,7 +330,8 @@ def _build_artifact(fun: ConcreteFunction, target: Target | None = None) -> _Art
     module.body, fun_name=fun.name, compiler=compiler_identity(cc), compile_flags=(*flags, *extra_flags), versions=module.requirements.versions
   )
   if indexed is not None:
-    if indexed.key != key or indexed.workspace_size != module.workspace_size or indexed.flags != extra_flags:
+    held = (module.workspace_size, extra_flags, module.requirements.isolated)
+    if indexed.key != key or (indexed.workspace_size, indexed.flags, indexed.isolated) != held:
       raise JitError(
         f"the structural key of {fun.name!r} names a library built from other C than it renders now "
         f"(index entry {_index_path(structure) if structure else ''}): the key misses something the rendering reads"
