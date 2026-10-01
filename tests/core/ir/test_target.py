@@ -47,6 +47,13 @@ def test_the_row_blocks_scale_with_the_vector_width() -> None:
   assert Target.preset("x86-64-v4").row_blocked_max == 256
 
 
+def test_a_long_dot_product_sums_in_a_vector_of_partial_sums_for_each_multiply_add_unit() -> None:
+  lanes = {name: Target.preset(name).sum_lanes for name in ("apple-m3", "generic", "x86-64", "x86-64-v3", "x86-64-v4", "cortex-a53", "armv8-a")}
+  # Two doubles by four units; one lane; two by two; four by two; eight by two; two by one; two by two.
+  assert lanes == {"apple-m3": 8, "generic": 4, "x86-64": 4, "x86-64-v3": 8, "x86-64-v4": 16, "cortex-a53": 4, "armv8-a": 4}
+  assert Target("wide", vector_bytes=32, fma_units=1).sum_lanes == 4 and Target("wider", vector_bytes=32, fma_units=3).sum_lanes == 12
+
+
 def test_portable_rounding_makes_the_reference_machines_choices() -> None:
   for preset in PRESETS.values():
     portable = dataclasses.replace(preset, rounding="portable")
@@ -54,6 +61,7 @@ def test_portable_rounding_makes_the_reference_machines_choices() -> None:
     assert portable.row_blocks == (16, 8, 4) and portable.row_blocked_max == 64
     assert (portable.straight_line_ops, portable.body_bytes, portable.panel_bytes) == (4096, 98304, 65536)
     assert portable.product_tile == (4, 8)
+    assert portable.sum_lanes == 8
   assert PRESETS["x86-64-v3"].choices is PRESETS["x86-64-v3"]
   assert PRESETS["x86-64-v3"].body_bytes == 16384
 

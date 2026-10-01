@@ -261,7 +261,10 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
     body = [*scale(i), p.for_(k_rng(RangeKind.GLOBAL), sweep)]
   elif m == 1:
     lo, hi = (c(0), i) if lower else (p.add(i, c(1)), c(n))
-    sums, total = ctx.blocked_sum(f"t_{nm}", lo, hi, lambda kk: p.mul(p.load(_entry(tb, n, i, kk)), p.load(x(kk, c(0)))), dt)
+    # One right-hand side: each row is one dot product, as long as the row is, in as many partial
+    # sums as keep the target's multiply-add units busy (``Target.sum_lanes``).
+    term = lambda kk: p.mul(p.load(_entry(tb, n, i, kk)), p.load(x(kk, c(0))))  # noqa: E731
+    sums, total = ctx.blocked_sum(f"t_{nm}", lo, hi, term, dt, lanes=ctx.target.sum_lanes)
     value = p.sub(p.load(rhs(i, c(0))), total)
     body = [*sums, p.store(x(i, c(0)), value if unit else p.div(value, p.load(_entry(tb, n, i, i))))]
   else:

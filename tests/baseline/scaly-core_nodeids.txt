@@ -1124,6 +1124,7 @@ tests/core/ir/test_program.py::test_scalar_dtype_must_match_operands
 tests/core/ir/test_program.py::test_view_requires_buffer
 tests/core/ir/test_target.py::test_a_block_is_local_to_its_context
 tests/core/ir/test_target.py::test_a_handle_is_built_for_the_target_it_is_given
+tests/core/ir/test_target.py::test_a_long_dot_product_sums_in_a_vector_of_partial_sums_for_each_multiply_add_unit
 tests/core/ir/test_target.py::test_an_invalid_field_is_refused[changes0-ValueError]
 tests/core/ir/test_target.py::test_an_invalid_field_is_refused[changes1-ValueError]
 tests/core/ir/test_target.py::test_an_invalid_field_is_refused[changes2-ValueError]

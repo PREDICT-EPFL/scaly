@@ -119,6 +119,16 @@ class Target:
     return (8 * v, 4 * v, 2 * v)
 
   @property
+  def sum_lanes(self) -> int:
+    """The partial sums a long dot product runs in, interleaved by index and combined pairwise: a
+    vector of them for each multiply-add unit, and no fewer than four, which every target can
+    overlap. Eight on the reference machine, where sixteen measured no faster on the rows of a
+    forward substitution. The partial sums fix the order of the additions: their count is a
+    rounding choice."""
+    t = self.choices
+    return max(4, t.vector_doubles * t.fma_units)
+
+  @property
   def body_bytes(self) -> int:
     """The machine code a loop body may take and still stay in the instruction cache across its
     trips: half of ``l1i_bytes``. A mapped tangent body expanded into more scalar code than this is

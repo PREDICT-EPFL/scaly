@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 226**
+**Next id: 230**
 
 | Prefix | Section |
 |---|---|
@@ -625,7 +625,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       (sparse) and 2.29× (dense), geometric means over 51 problems (C-132 found these mostly
       measurement); 0.7–5.2 s cold first call
       (`perf_2026_09_26_tier3/t3_4_ipm.py`, `notes/tier3_pr4_report.html`).
-- [ ] **C-130. QRECIPE's sparse path stalls.** 34 iterations against PIQP's 19 (both backends of
+- [x] **C-130. QRECIPE's sparse path stalls.** Done as C-226: a noise-pivot test on the diagonal entry; the ordering was not it. 34 iterations against PIQP's 19 (both backends of
       PIQP agree on 19; the problem is rounding-sensitive). From iteration 7 the generated LDL^T's
       rounding (MMD ordering) moves the path; at iterations 11–13 the steps shrink to 1e-21 until a
       factorization with an exactly zero pivot retries. Candidates: a noise-pivot test for the sparse
@@ -1105,26 +1105,82 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 - [x] **C-225. The JIT finds a library from the graph, without rendering (A12, C-115, CS-16;
       Tier 7).** `codegen/structure.py` digests what rendering reads of a Function in one walk
       (each node's op, arguments, type, name, value, attributes and hint; callees the same way;
-      an extern body by the C it renders, its sources and what it links), numbered in the order
-      met so that no address reaches the digest. The key adds the target, the compiler and its
-      flags, the resolved link flags and a digest of the code that would render: the path and
-      contents of every file of scaly and of each package behind a rule or class in the graph
-      (read once per process; a file over a megabyte by size and time).
-      `jit.py` keeps an index entry per key naming the library's directory, with the workspace
-      size and link flags. No key, and a render as before, for a value the walk does not know, a
-      dataclass field outside its class's equality, a source file written after scaly was loaded
-      (`utils.env.LOADED_AT_NS`), a watched render (`register_render_observer(watches=)`), or
-      libraries that do not resolve. `SCALY_JIT_KEY=verify` renders on every hit and raises on a
-      different source key: the whole suite ran under it on three targets, 4 400 to 4 500
-      libraries found and rendered again per run, with no mismatch, which is the evidence the
-      key is complete; CI's test jobs run under it. `source` turns the index off.
+      an extern body by the C it renders, its sources and what it links; the definition of each
+      op the graph holds; the pass pipeline and the in-place switch), numbered in the order met
+      and kept alive for the walk, so that no address reaches the digest. The key adds the
+      target, the compiler and its flags, the resolved link flags and a digest of the code that
+      would render: the path and contents of every file of scaly and of each package behind a
+      rule, a pass or a class in the graph (read once per process; a file over a megabyte by
+      size and time). `jit.py` keeps an index entry per key naming the library's directory, with
+      the workspace size, link flags and isolation. No key, and a render as before, for a value
+      the walk does not know, a class defined in a function, a dataclass field outside its
+      class's equality, a rule from outside scaly that carries state (a closure, a bound method,
+      a partial), a source file modified or replaced after scaly was loaded or within two
+      seconds before (`utils.env.LOADED_AT_NS`, by modification and change time), a watched
+      render (`register_render_observer(watches=)`), or libraries that do not resolve. Lowering
+      and rendering run under `default_options`, so no option in force reaches the C.
+      `SCALY_JIT_KEY=verify` renders on every hit and raises on a different source key: the
+      whole suite ran under it on three targets, 4 400 to 4 500 libraries found and rendered
+      again per run, with no mismatch; CI's test jobs run under it. `source` turns the index off.
       Seconds to a first result in a second process (`warm_start.py`,
-      `results/warm_start_c225.txt`): the corpus's IPM solvers 1.41-1.55 -> 0.17-0.19, a Riccati
-      recursion 1.01 -> 0.13, chain M = 9 22.0 -> 15.4 (what is left is building the graph,
-      C-214's), the key itself 0.3-0.6% of a render. Found on the way: a first version numbered
-      types by object, and which of two equal type objects a node holds depends on what the
-      process built before (38 of 4 900 suite Functions had two digests for one C); types are
-      now numbered by value. The index keeps the eight states of the code written last.
+      `results/warm_start_c225.txt`): the corpus's IPM solvers 1.49-1.65 -> 0.21-0.24, a Riccati
+      recursion 1.07 -> 0.18, chain M = 9 22.9 -> 16.0 (what is left is building the graph,
+      C-214's). The key costs 4-14 ms on those, under 1% of the render; on a Function that
+      renders in 1 ms it costs 1.3 ms (the stat of every source file), and on a solver 2 ms
+      against a 6 ms render, since the solver's own C is rendered for the digest.
+      The review proved six holes, each with one key over two renderings, all closed: a pass
+      inserted in the pipeline; `nonsmooth` read while rendering (see C-227); a file replaced
+      with its modification time kept; an op's traits and a rule's helper state; the address of
+      a Function an extern body builds when asked, reused by the next; a dtype equal by name
+      with another C type. The first version also numbered types by object, which made 38 of
+      4 900 suite Functions digest two ways for one C. The index keeps the eight states of the
+      code used last. An extension must keep what shapes its C in the package that registers
+      it: code a rule calls in another package is not digested.
+- [x] **C-226. A sparse pivot within one ulp of its diagonal entry is a zero pivot (A6, C-130;
+      Tier 7).** QRECIPE's sparse path took 74 iterations against PIQP's 19: the generated
+      `LDL^T` left pivots 12 to 40 orders below one ulp of their diagonal entries, PIQP's test
+      (a pivot exactly zero) passed them, and their steps were of length 1e-49 until a later
+      pivot came out exactly zero. The ordering alone decides whether it happens: natural, RCM
+      and MMD with other tie-breaks all take 19-20 (`results/a6_orderings.txt`), so a search
+      over orderings by fill would not have found it, and none is added. `Kernels._pivots_left`
+      takes a finite pivot at or below `eps` times the diagonal entry it came from as the zero
+      it stands for, refinement on or off, so PIQP's retry runs. QRECIPE 74 -> 19; no other of
+      the 55 problems changes its iteration count or status; the PIQP path gate holds; time
+      0.998 in geometric mean elsewhere and 0.25 on QRECIPE (`results/a6_sparse.md`). A first version that
+      bounded each pivot by its whole sum (`|a| + sum L^2 |D|`, a pass over the factor) cost
+      6-8% a solve and turned refinement on for six problems that did not need it. 11 mutants,
+      all killed.
+- [x] **C-227. `floor` and `ceil` read what their pattern omits (found by C-225's review).**
+      Both carried the `exact_reads` trait, but their derivative pattern is empty, so the
+      in-place carry proof took a body that writes `floor` of the entries it overwrites for
+      one that reads nothing: `[2.5, 2.5, 3.5]` where NumPy and the two-slot loop give
+      `[1.5, 2.5, 3.5]`. The trait is gone from both, and a path through either keeps two slots.
+      The same line read `nonsmooth` while rendering, so the C depended on an option in force.
+- [ ] **C-228. An interning hit rewrites the node it finds.** `Expr.__new__` returns the cached
+      node and the dataclass `__init__` then assigns the new call's fields to it: building
+      `take(fill=-0.0)` turns an existing `take(fill=0.0)` into it, and a Function built before
+      returns `-0.0`. The same for `1`, `True` and `1.0`, and for equal type objects. Found by
+      C-225's review; a task chip carries the reproduction and two fixes.
+- [x] **C-229. A long dot product's partial sums follow the target (B4, Tier 7).** Eight
+      partial sums everywhere, the form C-196 left for when QBEACONF's gate was settled, measured
+      again: the corpus 1.002 in geometric mean (the sparse factorizations 1.02-1.03, their rows
+      being short), the sparse IPM 0.994, the dense IPM 0.975 above 50 us. The gain is one loop,
+      the forward substitution of one right-hand side, whose rows are dot products as long as the
+      row. That loop alone now takes `Target.sum_lanes` partial sums, a vector of them for each
+      multiply-add unit and no fewer than four: 8 on the M3 (16 measured no faster), 4 on SSE2
+      and on a single lane, 8 on AVX2. Dense IPM, 50 problems with their iteration counts
+      unchanged: 0.988 of their time, 0.977 from 91 variables (0.93-1.01)
+      (`results/b4_dense.md`); corpus `ipm_cvxqp1_dense` 0.972, nothing else moved
+      (`results/corpus_t7_final.json`). The count is a rounding choice (`rounding="portable"`
+      takes the reference machine's 8): five rounding-sensitive dense problems change their
+      iteration count, four down and QGROW7 up by one, 633 -> 628 in all; the PIQP path gate
+      holds. 7 mutants, all killed.
+- [x] **B5 (Tier 7): live ranges in scalarized bodies, closed by measurement.** Stack loads and
+      stores are 37-44% of the chain stage's instructions (`stack_traffic.py`,
+      `results/b5_stack_traffic.txt`), but the statements already sit at their first use: what
+      is long is the last use, the reverse sweep reading the forward pass (320-760 values live
+      at once against 32 registers, `live_ranges.py`). No order of the statements shortens
+      that; a smaller adjoint would (C-58, C-214).
 - [ ] **C-58 note (Tier 6).** A prototype that inlines plain callees into a scalar-lowered mapped
       body before the reverse sweep (calls substituted, short maps unrolled) gave chain M = 5 0.97
       of its time and M = 9 1.24x: the flattened adjoint changes what C-211's seed groups see,

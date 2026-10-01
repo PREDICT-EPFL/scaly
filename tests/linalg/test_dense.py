@@ -316,6 +316,26 @@ def _solve_in_blocks(target: str | sc.Target, tag: str, n: int, m: int, lower: b
   np.testing.assert_allclose(got, np.linalg.solve(tri.T if trans else tri, b), rtol=1e-11, atol=1e-11)
 
 
+@pytest.mark.parametrize(("target", "lanes"), [("apple-m3", 8), ("generic", 4), ("x86-64", 4), ("x86-64-v3", 8), ("cortex-a53", 4)])
+@pytest.mark.parametrize(("lower", "unit"), [(True, False), (True, True), (False, False)])
+def test_one_right_hand_side_is_solved_in_the_targets_partial_sums(target: str, lanes: int, lower: bool, unit: bool) -> None:
+  """With one right-hand side each row is a dot product as long as the row, summed in
+  ``Target.sum_lanes`` partial sums: the loop takes that many unknowns a pass, and the solve is
+  the substitution whatever their count."""
+  n = 101  # past the straight-line budget of every target here, and no multiple of a lane count
+  tri = _triangle(_spd(n) / n + np.eye(n), lower, unit)
+  b = RNG.standard_normal(n)
+  a, bv = sc.sym("a", (n, n)), sc.sym("b", n)
+  fn = _fn(f"lanes_tri_{int(lower)}{int(unit)}_{target.replace('-', '_')}", [a, bv], [solve_triangular(a, bv, lower=lower, unit_diagonal=unit)])
+  assert sc.Target.preset(target).sum_lanes == lanes
+  assert re.findall(r"kb_t_\w+ \+= (\d+)\)", render_c_source(fn, target=target)) == [str(lanes)]
+  noise = RNG.standard_normal((n, n)) * 100.0
+  given = tri + (np.triu(noise, 1) if lower else np.tril(noise, -1)) + (np.diag(RNG.uniform(2.0, 3.0, n)) if unit else 0.0)
+  with sc.target(target):
+    got = fn._flat_numerical_call(given, b)[0]
+  np.testing.assert_allclose(got, np.linalg.solve(tri, b), rtol=1e-11, atol=1e-11)
+
+
 @pytest.mark.parametrize(("target", "n", "m"), BLOCKED_SOLVES)
 @pytest.mark.parametrize(("lower", "trans", "unit"), FLAGS)
 def test_a_solve_in_blocks_is_the_substitution(target: str, n: int, m: int, lower: bool, trans: bool, unit: bool) -> None:

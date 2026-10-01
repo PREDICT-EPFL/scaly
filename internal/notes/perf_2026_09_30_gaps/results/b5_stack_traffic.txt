@@ -1,0 +1,50 @@
+# stack_traffic.py t6final chain_9 chain_5 race_cars_40 ipm_hs118_dense
+chain_9: 95795 instructions, 39148 to or from the stack (41%), 9 functions
+  _chain_eq_stage_M9_adj0_0_1_fwd42cbcb7d4b390_adj_eq_z_hoiste    26975    11956   44%
+  _chain_eq_stage_M9_adj0_0_1_fwd42c686f785438_adj_eq_z_hoiste    25969    11508   44%
+  _chain_eq_stage_M9_adj0_0_1_fwd42c1057cdd9f3_adj_eq_z_hoiste    17545     7058   40%
+  _chain_eq_stage_M9_adj0_0_1_fwd42c5e57b2e2b3_adj_eq_z_hoiste    12440     4646   37%
+  _chain_eq_stage_M9_adj0_0_1_fwd42c9f451e0d02_adj_eq_z_hoiste     9611     3573   37%
+  _chain_M9_N40_hess_lower                                         3082      341   11%
+chain_5: 35868 instructions, 14362 to or from the stack (40%), 5 functions
+  _chain_eq_stage_M5_adj0_0_1_fwd24c8822932009_adj_eq_z_hoiste    19379     8581   44%
+  _chain_eq_stage_M5_adj0_0_1_fwd24cb486929f91_adj_eq_z_hoiste    13870     5555   40%
+  _chain_M5_N40_hess_lower                                         2499      178    7%
+  _chain_eq_stage_M5_adj0_0_1_fwd24cb486929f91_adj_eq_z_hoist_      111       48   43%
+  __stubs                                                             9        0    0%
+race_cars_40: 2323 instructions, 652 to or from the stack (28%), 7 functions
+  _race_car_eq_interstage_adj0_0_1_fwd4cb455f2851e_adj_eq_z_ho     1507      509   34%
+  _race_car_closed_loop_N40_hess_lower                              717      127   18%
+  _race_car_corridor_stage_adj0_0_fwd1cd6809a3546_adj_corridor       32        8   25%
+  _race_car_eq_interstage_adj0_0_1_fwd4cb455f2851e_adj_eq_z_ho       21        0    0%
+  _race_car_cost_stage_fwd2c4985cb348f_residuals_z_raw               17        4   24%
+  _race_car_cost_stage_adj0_0_fwd2c6352054f55_adj_residuals_la       17        4   24%
+ipm_hs118_dense: 27383 instructions, 10090 to or from the stack (37%), 7 functions
+  _ipm_HS118_dense_step_raw                                       14721     5256   36%
+  _ipm_HS118_dense                                                 7076     3063   43%
+  _ipm_HS118_dense_refine_raw                                      2537      973   38%
+  _ipm_HS118_dense_factor_try_raw                                  1271      280   22%
+  _ipm_HS118_dense_kkt_solve_raw                                    959      362   38%
+  _ipm_HS118_dense_factor_first_raw.specialized.1                   813      156   19%
+
+# live_ranges.py, the same kernels
+## chain_9
+static __attribute__((noinline)) void chain_eq_stage_M9_adj0_0_1_fwd42c686f785438_adj_eq_z
+   4335 temporaries; live span median 100, p90 3028, max 4678; def-to-first-use median 1, p90 36; live values: mean 740, peak 1137
+static __attribute__((noinline)) void chain_eq_stage_M9_adj0_0_1_fwd42cbcb7d4b390_adj_eq_z
+   4514 temporaries; live span median 97, p90 3041, max 4907; def-to-first-use median 1, p90 38; live values: mean 762, peak 1183
+static __attribute__((noinline)) void chain_eq_stage_M9_adj0_0_1_fwd42c5e57b2e2b3_adj_eq_z
+   2459 temporaries; live span median 112, p90 1640, max 2802; def-to-first-use median 1, p90 40; live values: mean 413, peak 687
+static __attribute__((noinline)) void chain_eq_stage_M9_adj0_0_1_fwd42c1057cdd9f3_adj_eq_z
+   3210 temporaries; live span median 102, p90 2011, max 3603; def-to-first-use median 1, p90 46; live values: mean 548, peak 889
+static __attribute__((noinline)) void chain_eq_stage_M9_adj0_0_1_fwd42c9f451e0d02_adj_eq_z
+   1794 temporaries; live span median 96, p90 1188, max 2141; def-to-first-use median 1, p90 47; live values: mean 321, peak 542
+## chain_5
+static __attribute__((noinline)) void chain_eq_stage_M5_adj0_0_1_fwd24c8822932009_adj_eq_z
+   3138 temporaries; live span median 96, p90 2201, max 3395; def-to-first-use median 1, p90 56; live values: mean 569, peak 919
+static __attribute__((noinline)) void chain_eq_stage_M5_adj0_0_1_fwd24cb486929f91_adj_eq_z
+   2455 temporaries; live span median 84, p90 1711, max 2712; def-to-first-use median 1, p90 58; live values: mean 462, peak 755
+## race_cars_40
+## ipm_hs118_dense
+static inline void ipm_HS118_dense_step_raw(const double* state, const double* q_P, const 
+   1206 temporaries; live span median 1, p90 3, max 7; def-to-first-use median 1, p90 3; live values: mean 1, peak 5
