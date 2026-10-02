@@ -22,6 +22,11 @@ exclusion mechanism. Anything unpublished lives in `internal/`:
   `internal/notes/benchmark_protocol.md` instead of restating it.
 - `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
   solver-plugin build-out.
+- `internal/notes/core_compiler_roadmap.md` is the maintained design and order of the core compiler
+  work (todo items C-86 onward and the API items it names). Read its decisions, order of work and
+  open questions before starting one of those items.
+- `origin/devrush` is a frozen experimental branch. Take ideas and test cases from it and merge
+  nothing. Its todo ids name different items than main's, so cite its work by file and title.
 
 `internal/notes/benchmark_protocol.md` owns what comparisons hold constant, the measurement
 protocol, the reference machine and the evidence behind each rule. Put rationale there and put the

@@ -6,21 +6,28 @@ The single actionable list. Rationale lives elsewhere and is linked, never resta
   what the comparisons hold constant, the measurement protocol, the reference machine.
 - **How the suite got here** — [`internal/notes/benchmark-buildout.md`](notes/benchmark-buildout.md):
   the completed B-track and L-track, formulation history, retired workloads.
+- **What the core compiler work is and why it is ordered this way** —
+  [`internal/notes/core_compiler_roadmap.md`](notes/core_compiler_roadmap.md): the decisions, the
+  order of work, and one paragraph of design per item below.
 - **What shape a refactoring should take** — [`internal/notes/refactorings.md`](notes/refactorings.md):
   one `#` section per refactoring, kept until that refactoring lands.
 
-Reorganized 2026-09-07. Sections are themes that outlive the first release. Inside each section,
-**Now** holds what is actively worked on or next in line, and **Deferred** holds what is
-intentionally low priority: the reasoning is still good, nothing depends on it yet. A finished item
-stays in place with its box checked until it is flushed out by hand; git history and the frozen
-notes hold the record after that.
+Reorganized 2026-09-29 around the core compiler roadmap, and again 2026-10-01 when the roadmap was
+rewritten around three milestones; completed items were flushed and their
+records live in git history and the frozen notes. Sections are themes. Inside each section, **Now**
+holds what is actively worked on or next in line, and **Deferred** holds what is intentionally low
+priority: the reasoning is still good, nothing depends on it yet. A finished item stays in place
+with its box checked until it is flushed out by hand.
 
 ### Identifiers
 
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 86**
+**Next id: 157**
+
+The frozen experimental `devrush` branch keeps its own todo list, whose ids from C-82 up name
+different items than the same ids here. Cite devrush work by file and title, never by id.
 
 | Prefix | Section |
 |---|---|
@@ -34,15 +41,13 @@ number comes from one counter shared by the whole file, which only ever grows.
 | D | Documentation |
 | R | Release |
 
-The Track C closeout at the end groups active tasks across sections without changing their identifiers.
-
 Rules:
 
 - A new item takes the next id and bumps the counter. A deleted item never frees its number.
 - Moving an item to another section changes its prefix and keeps its number. Grepping the number
   alone finds the item, or proves it is gone.
-- Other documents cite the full id and the title, `S-15 Replace METIS 4 with METIS 5`, so the
-  reference survives both a move and a retitle.
+- Other documents cite the full id and the title, `S-16 Separate the IPOPT gap into version against
+  build configuration`, so the reference survives both a move and a retitle.
 - A new section adds a row with a prefix that is not in the table and never was.
 
 Why identifiers at all: they give the short stable handle that Linear or GitHub issues give, while
@@ -52,48 +57,119 @@ section because items move between sections more often than expected, because ei
 eight places to get wrong once completed items are deleted, and because the letters then carry
 only the theme and nothing else has to stay stable.
 
+## Priority order
+
+From 2026-10-01. The roadmap's [order of work](notes/core_compiler_roadmap.md#order-of-work) has the
+dependencies and the rules that let lanes run in parallel.
+
+### 0.1.0
+
+Settled 2026-10-02, for a release planned around the end of October. 0.1.0 takes what changes what
+users write or link against, and the fixes for silent wrong answers; work that is internal or only
+adds things waits for later 0.x releases, which may break interfaces anyway (`docs/dev/versioning.md`).
+Nothing outside this list is started before 0.1.0 ships, so nothing reaches it half done.
+
+- Fixes: C-86, then C-87 and C-93; C-88, C-89, C-91, C-92, S-155, S-142.
+- Templates, the critical path: API-90, API-114, API-3, API-1 (shape holes only, keyed on the whole
+  leaf type so dtype and pattern holes are additive), API-115, then API-2 on today's `VMAP`.
+  API-1 ships the templates page of `docs/guide/functions.md`. API-156 any time.
+- `sc.print`: C-124, float64 only.
+- Toolchain: C-83, then R-71.
+- Windows: R-38, in parallel with all of the above.
+- Release: R-42, the status admonition in `docs/index.md`, Windows in the CI and release matrices,
+  release notes.
+
+Everything else follows 0.1.0 in the order below; C-94 is the first candidate after it.
+
+### After 0.1.0
+
+1. Milestone 1, differentiable loops in a debuggable core.
+   - Foundations: C-86 first, then C-87 and C-93; C-88, C-89, API-90, C-91, C-92 and C-83 in any
+     order; C-94 last. R-71 right after C-83, before C-139 and before milestone 3, so `CLibrary`
+     speaks one flag dialect and milestone 3 is measured under one compiler.
+   - Then C-124 (`sc.print`), and in parallel lanes: the AD engine C-95 to API-101; the templates
+     API-114, API-3, API-1, API-115; C-103 and C-104; C-136; C-108 and C-109; the loops C-119 to
+     C-123 and C-138.
+2. Milestone 2, static sparse functions end to end: C-127, C-148, C-149, C-128, C-129, API-116,
+   C-130 to C-132; C-154 and C-133 to C-135; C-125; C-139; C-105 to C-107.
+3. Milestone 3, competitive kernels and generated solvers: C-110 to C-112; C-150, API-2; C-8, C-113,
+   C-102, C-144; C-151, C-152; API-117, API-4; C-126; the milestone checks API-140 and API-141.
+4. Then D-36, the GPU milestone definition.
+
+Small fixes that fit between any two of these: C-82, S-17, C-143, C-145.
+
 ## API
 
 ### Now
 
-- [ ] **API-1. Implement `FunctionTemplate` over concrete Functions**, including specialization,
-      deterministic C names, one trace per instance, and lifted derivatives. Design:
-      refactorings.md "Function templates" and `typing_playground/README.md`.
-- [ ] **API-2. Preserve declared trees through `vmap` and Function-level differentiation.** Settle
-      the mapped input convention and retain runtime and static acceptance tests. Rationale:
-      refactorings.md "`vmap` and the AD entry points erase the callee's declared trees".
-- [ ] **API-3. Decide the zero-input Function contract and reduce the private flat call path.**
-      Preserve legitimate parameterless solver oracles. Rationale: refactorings.md
+- [ ] **API-90. An immutable Function.** One constructor, a public `Function.build` taking trees,
+      `_replace` as the only copy path, the solver descriptor and a `role` as constructor fields,
+      `_with_trees` no longer mutating `self`. Milestone 1. [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **API-101. `sc.custom_derivative` with residuals.** Rules set at construction: a JVP rule, and
+      a `fwd`/`bwd` pair in JAX's `custom_vjp` form whose residuals (a factorization, a trajectory)
+      are results of the same invocation, so a solve's derivatives reuse its factorization; honoured
+      by `CALL`, `LOOP` and maps through one pair of body-derivative functions; unread tangents are
+      never built; declared sparsity. After C-100 and API-90.
+      [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **API-114. The playground's declaration surface.** `arg` and `group` replace `L` and `G`, one
+      tree per parameter, keyword-only `outputs=` that may be left out. A scripted edit of every
+      decorator in `src/`, `tests/`, `benchmarks/`, `plugins/`, `examples/`, `docs/` and the
+      notebooks; bodies keep their single grouped parameter. Snapshots byte-identical.
+      [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
+- [ ] **API-3. Parameter lists typed with `TypeVarTuple`, and the zero-input contract.** The
+      playground's ladders and typed-`self` calls; a call with no arguments is numerical and
+      `symbolic_call()` is symbolic, so parameterless solver oracles stay legal and `ad/forward.py`
+      drops `_flat_symbolic_call`. The seeded wrappers and solver call convention change here; the
+      playground's static tests move to `tests/typing/`. After API-114. Rationale: refactorings.md
       "Zero-input `Function`s, and the flat call seam that survives because of them".
-- [ ] **API-4. Finish the npmpc `FunctionTemplate` example** after API-1. The public
-      typed decorators, exact `Function` annotations, and shared Scaly/CasADi runtime parameters
-      landed first. Replace the remaining decoder-architecture builders with `FunctionTemplate`.
-      This benchmark may use the packed parameter length as its specialization key because it does
-      not add more MLP layouts; a general template must distinguish individual layer shapes because
-      equal parameter counts do not prove equal architectures.
-- [x] **API-5. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
-      fixture compared against the unrolled form with a forward/reverse duality check, and a
-      finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
-      Lives in `tests/ad/test_vmap.py` (duality) and `tests/integration/test_vmap.py` (pairwise Hessian).
-
-- [x] **API-70. Infer `sc.vmap` slicing from sizes.** A bare outer tensor of `length * formal.size`
-      is cut into contiguous chunks and one of `formal.size` is broadcast; the user positions data
-      with ordinary slicing and the dict form names each slice by callee input. The
-      `(outer, start, stride)` tuple stays for overlapping windows. No axis convention: outers stay
-      rank-1 until the IR carries arbitrary-rank tensors and the loop compiler (C-8) lands, at which
-      point a rank-2 outer mapped over its leading axis is a strict extension.
-- [x] **API-69. Shorter numerical solver calls.** `sc.solver` returns a `Solver` whose call is
-      `solve(params, *, x0=None, warm=None)`: missing groups default to zeros, `warm` takes a
-      previous result since the four outputs are the first four inputs. `.function` holds the
-      plain `Function` for `write_module`, the `scaly_codegen` CLI, `input_names` and nested
-      symbolic calls; `write_module` and the CLI accept either. The C ABI does not change.
-- [x] **API-83. Retire `Function._from_exprs` from ordinary tests.** Converted 264 calls to
-      `@sc.function` bodies. Nine remain for constructor checks, sparse or lowering metadata,
-      and zero-input hosts. Tests use `walk_program`, `find_c_compiler`, and
-      `sc.jacobian_sparsity` in place of the audited private helpers.
+      [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
+- [ ] **API-1. Function instances, holes and names.** The playground's `Function` in front of
+      today's Function, which becomes the `ConcreteFunction` instance; holes for shapes, dtypes and
+      patterns, keyed on whole leaf types; the bare mode; `instantiate`; mangled names without `__`
+      that encode the nesting. After API-3 and C-87.
+      [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
+- [ ] **API-115. Lifted derivatives.** The nine derivative wrappers through `lift`, cached per
+      source instance, with seeds and multipliers copying the whole leaf type, not only the shape.
+      After API-1.
+- [ ] **API-116. Pattern holes and the numerical sparse fast path.** A pattern hole binds from a
+      sparse expression or a SciPy argument; a concrete sparse leaf also takes its values vector.
+      With C-128. [Design](notes/core_compiler_roadmap.md#signatures-and-templates).
+- [ ] **API-2. Typed vmap.** `sc.vmap(f, N)` returns a mapped callable, lifted with `lift`, that
+      builds a map at the call site and returns the callee's output tree with a leading axis;
+      `sc.window` and `sc.broadcast` markers; views read in place when affine; template callees
+      instantiated from slice shapes. Built on today's `VMAP`, so 0.1.0 does not wait for `LOOP`:
+      C-150 later moves it onto `LOOP`, and until C-119 each used output is its own loop, as with
+      today's `vmap`. After API-115. Rationale: refactorings.md
+      "`vmap` and the AD entry points erase the callee's declared trees".
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **API-156. Remove `vjp_many` from the public API** before 0.1.0, rather than as a break
+      after it: `sc`, `scaly.ad.__all__`, `docs/api/ad.md` and `docs/dev/codebase.md`; its only
+      caller is a test. Taken out of C-99.
+- [ ] **API-117. Function-level `sc.jvp` and `sc.vjp` that keep declared trees.** AD-built callees
+      stop being `Any`-typed at run time. After C-98 and API-3.
+- [ ] **API-4. Finish the npmpc `FunctionTemplate` example**, and write the template page of
+      `docs/guide/functions.md`. The public typed decorators, exact `Function` annotations, and
+      shared Scaly/CasADi runtime parameters landed first. Replace the remaining
+      decoder-architecture builders with templates. This benchmark may use the packed parameter
+      length as its specialization key because it does not add more MLP layouts; a general template
+      must distinguish individual layer shapes because equal parameter counts do not prove equal
+      architectures. After API-115.
+- [ ] **API-140. TinyMPC on main.** Port devrush's `examples/tinympc` onto the finished core as a
+      test of it: loops, constant folding, loop-invariant parameters, the library dense solves.
+      Within 10% of devrush's reported timings. After C-123, C-133 and C-113.
+      [Checks](notes/core_compiler_roadmap.md#milestone-checks).
+- [ ] **API-141. A generated sparse QP interior-point solver.** The devrush IPM's structure rebuilt
+      on the library sparse LDL^T, loops, predicates and reductions, passing devrush's
+      Maros-Meszaros subset, with devrush's split into a setup (the scaling, run once while the
+      matrices stay fixed) and a solve, which is what PIQP's solve timer measures. An example, not
+      a library. After C-135 and C-8.
+      [Checks](notes/core_compiler_roadmap.md#milestone-checks).
 
 ### Deferred
 
+- **API-118. Static Python-valued template arguments.** A horizon or an ordering as a
+  specialization key. Closures and factory functions cover them today, and refusing body defaults in
+  API-3 keeps the syntax free.
 - **API-6. A QP-subproblem contract so scaly-sqp can use other QP plugins.** Today `scaly-sqp`
   imports only `include_dir`/`lib_dir` from `scaly_piqp` and its C template calls
   `piqp_setup/update/solve` and reads `qp->result` directly, so a future OSQP, ProxQP or HPIPM
@@ -109,397 +185,383 @@ only the theme and nothing else has to stay stable.
 
 ## Compiler internals
 
-The [completed study](../docs/benchmarks/index.md) supplies the current measurements, and §8 of
-The 2026-09-07 investigation under
-[`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md) remains the rationale and validation
-record for the completed compiler tasks below.
-
 Start each compiler item by reading how the tools that shaped Scaly solve the same problem, before
 designing anything. tinygrad, whose IR and pattern-rewrite infrastructure Scaly's are modelled on,
-expands small tensor ops into scalar UOps and simplifies them symbolically (C-44), and has a
-scheduler that fuses elementwise producers into their consumers and a symbolic index arithmetic
-that turns strided views into closed-form index expressions (C-8 and C-9). MLIR's affine dialect and
-its loop-fusion, affine-map and memref-normalization passes are the standard treatment of exactly
-the loops we emit, and their design notes state the legality conditions we would otherwise
-rediscover. JAX's `vmap` batching rules are the reference for what a mapped derivative rule should
-produce without materializing per-trip index tables. The goal is to port the smallest idea that
-fits Scaly's two dialects, not to adopt a framework; write down what was read and what was rejected
-in `internal/notes/refactorings.md` before the implementation.
+expands small tensor ops into scalar UOps and simplifies them symbolically, and has a scheduler
+that fuses elementwise producers into their consumers and a symbolic index arithmetic that turns
+strided views into closed-form index expressions. MLIR's affine dialect and its loop-fusion,
+affine-map and memref-normalization passes are the standard treatment of exactly the loops we emit,
+and their design notes state the legality conditions we would otherwise rediscover. JAX's `vmap`
+batching rules are the reference for what a mapped derivative rule should produce without
+materializing per-trip index tables. The goal is to port the smallest idea that fits Scaly's two
+dialects, not to adopt a framework; write down what was read and what was rejected in the item's
+section of `internal/notes/core_compiler_roadmap.md` before the implementation.
 
-### Now
+### Foundations
 
-Ordered by measured payoff. The numbers are the 2026-09-07 note's, on the reference machine at the
-protocol's compile flags.
+- [ ] **C-86. Split `passes/lowering.py` into a package**, refuse a second `@lowers` for one op,
+      and delete the unused multi-index `VIEW` door. First in milestone 1. Snapshots byte-identical.
+      [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-87. Key callees by identity, and give generated C one name authority.** Two Functions
+      with the same name share one procedure and one invocation today, silently computing the wrong
+      result (reproduced 2026-09-29). One `NameScope` for C and C++ keywords, libm names, loop
+      variables, temporaries and header identifiers; closes the `_h{n}` collision guard C-53 left
+      open. After C-86. [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-88. Interning sets fields once, floats are keyed by bits, constants are frozen.** Fixes
+      intern hits that replace `value` and `attrs` in both dialects, `sc.const` aliasing the
+      caller's array, `const_float(0.0) is const_float(-0.0)`, and `1`, `True` and `1.0` sharing a
+      node. [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-89. Refuse wrong answers at the boundary.** Non-float64 input and output leaves raise
+      until C-107; an active derivative through `SOLVER_CALL` raises instead of returning zero;
+      `MINIMUM`/`MAXIMUM` fold with `fmin`/`fmax` like the C.
+      [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-91. Remove the GPU placeholders**: non-host `DeviceSpec`s, `BACKEND_SUPPORT`,
+      `KERNEL`/`LAUNCH`/`BARRIER`, and the range kinds `THREAD`, `LOCAL`, `WARP`, `GROUP_REDUCE`.
+      [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-92. Run the verifier, test op coverage, remove recursion.** `verify_expr` at Function
+      construction and before lowering, rules for `SLICE` and `SOLVER_CALL`, one test that every
+      `ExprOp` is classified everywhere and that no pass names a member of the elementwise table,
+      iterative `_depends_on`, `_jac_mask` and `structural_key`.
+      [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-93. `SCATTER` accumulates repeated indices**, as its docstring says; `segment_sum` as a
+      builder; linear-time gather and unbroadcast adjoints. The first step of C-136. After C-86.
+      [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-83. Fingerprint the host and the compiler in the JIT cache key.** Absorbs C-85. The CPU
+      features and compiler version macros from the probe `toolchain.native_recipe` already runs,
+      the compiler's `--version`, real path, full command and effective flags; `Compiler` becomes a
+      command tuple for R-71, which follows it. Gate: changing any of them misses the cache.
+      [Design](notes/core_compiler_roadmap.md#foundations).
+- [ ] **C-94. A JIT index key that skips lowering on a hit.** A graph digest of the immutable
+      Function plus versions, render options and C-83's fingerprint; atomic index writes through
+      `os.replace` and cache-relative paths, which hold on Windows (R-38); `invalidate_cache`
+      without rendering. Gate: a fresh process with another `PYTHONHASHSEED`
+      loads from the cache without calling `lower_function`; one test per hole devrush's reviews
+      found; a `SCALY_JIT_KEY=verify` mode that renders on every hit, which CI runs. After C-88 and
+      API-90.
+      [Design](notes/core_compiler_roadmap.md#foundations).
 
-- [x] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
-      `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
-      compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is
-      why both are slow. Emit the reduction loop outermost when the reduction axis is the matrix's
-      slow axis (`v @ A`, and `A.T @ v` after the fold below), so the inner loop runs over independent
-      outputs and vectorizes; emit a blocked dot with four accumulators as four unrolled statements
-      when the reduction axis is contiguous (`A @ v`), because a four-trip inner loop becomes gathers
-      under `-march=native`. Add `A.T @ v -> v @ A` and `v @ A.T -> A @ v` to `passes/expr.py` so the
-      adjoint products materialize no transpose. Each output keeps its summation order, so results
-      are bit-identical. Measured with the throwaway patch: npmpc N=12 83.2 to 45.7 µs (MX 51.1),
-      unbumpercars C=8 3485 to 827 µs (MX 9950). Tests: a fixture per shape class against NumPy,
-      and the C snapshots updated. The patch is `notes/perf_2026_09_07/experiments.patch`. This is
-      a stopgap: the two rules are the special case of a range split with one accumulator per lane
-      and a choice of outermost range, which C-8 provides generically; when C-8 lands, C-43's rules
-      are deleted, not kept beside it.
-- [x] **C-44. Scalarize small stage bodies, driven by the `lowering` hint.** For a callee whose
-      body is marked `Expr.scalar()`, or fits a conservative scalar-operation budget under `auto`, and never under
-      `block`: unroll to scalar SSA, hash-cons, fold `0`, `1` and constant arithmetic, and render
-      expression trees (not one op per statement, which is what stops clang from forming FMAs in
-      SX's output). The hint is now active. `notes/perf_2026_09_07/scalarize_stage.py` does the
-      transform after the fact on the generated C: race-car eq stage 23.0 to 18.1 µs, chain eq
-      stage 1910 to 247 µs, both bit-identical. The only item that moves chain, and it subsumes the
-      seed half of C-9 and most of C-10. tinygrad's expand-then-devectorize is the reference
-      (`notes/perf_2026_09_07/tinygrad_rangeify.md` §4). Gate: the two stage kernels above within
-      10% of the hand-scalarized time. Implemented 2026-09-08 in `passes/program/scalarize.py`; the
-      [validation](notes/perf_2026_09_07/README.md#c-44-validation-2026-09-08) separates runtime
-      seeds from the constant-seed control. Review follow-up replaces the tensor-width heuristic
-      with limits on scalar operations after folding and sharing, expansion work, and aggregate
-      generated-code growth. The arithmetic contract and exceptional constant cases are documented
-      and tested. The [closeout](notes/perf_2026_09_07/README.md#c-44-closeout) records minimal
-      GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
-      Automatic seed specialization remains C-45.
-      Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-scaly-arithmetic-policy);
-      rationale: [measurement protocol](notes/benchmark_protocol.md#measurement-protocol).
-- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision).
-- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout).
-- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation).
-- [x] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** Implemented
-      2026-09-08 in `ad/forward.py`: a constant `jvp_many` tangent whose per-iteration tiles repeat
-      with period `k <= 8` (and at least twice, so short horizons of distinct tiles are not unrolled)
-      is baked into one const-seed callee per tile, each mapped over its residue class and assembled
-      with stack/transpose/reshape, so no seed table or gather is emitted; other constant patterns
-      keep the local-coloring and runtime-seed paths. `tests/ad/test_const_seed_bake.py` pins equal,
-      periodic, and fallback tiles. Race-car N=50 measured 26.0 to 24.0 µs together with C-53/C-10,
-      static metadata 107 to 90 KB ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)).
-- [x] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-filled 43
-      buffers of 23,544 doubles and scattered 576 values into each before summing them: 8 MB of memset
-      per call and the 1,075,248-double workspace. `passes/program/combine_scatter_sums.py` already
-      accumulated such sums into one buffer but required every operand to have the sum's declared
-      shape, and chain's scatters are flat `(23544,)` buffers read through a `(24, 981)` reshape.
-      Comparing element counts instead (2026-09-09) lets the pass fire: chain M=5 Hessian workspace
-      1,075,248 -> 109,944 doubles and 850 -> 230 µs; M=3 266,616 -> 26,028 and 162 -> 46 µs, single
-      cells from the harness with `--repetitions 1`. `test_scatter_sum_combines_reshaped_scatters`
-      pins the zero-fill count. Arithmetic identities such as `0 / x` belong to C-53.
-- [x] **C-50. `-march=native` and `-fno-math-errno` in the JIT.** `codegen/jit.py` compiles with
-      `-O2` (or `SCALY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
-      fused multiply-adds on a machine that has them; measured on race-car N=50, `-mfma` alone is
-      32.9 to 27.8 µs. Add the two flags to the JIT compile line, check that the solver plugins'
-      compile paths (scaly-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
-      wheels themselves at the portable baseline. One line if it plays well with the solvers.
-- [x] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
-      After C-44 scalarizes a body, adjacent `buf[i], buf[i+1], ...` accesses can be emitted as one
-      clang `ext_vector_type` load or store; tinygrad's `memory_coalescing` does this in about 60
-      lines (`tinygrad_rangeify.md` §6) and it is the difference between scalar code and visible
-      SIMD on clang. After C-44. Landed as store coalescing only (`codegen/c.py`, `_emit_body`),
-      width 2 via `vector_size`: race-car N=50 24.4 to 23.2 µs on clang, 30.3 to 30.4 µs on GCC;
-      chain M=5 within noise on both. Width 4 slowed GCC on chain by about 5 %, and loads were left
-      scalar because scalarized bodies consume them lane by lane.
-- [x] **C-9. Affine index maps instead of materialized tables.** Implemented 2026-09-09 in
-      `passes/affine.py`: `affine_index_map` factors a concrete index array into ranges whose
-      contribution is affine plus a residual table, greedily, outermost first, and
-      `LowerCtx.index_at` emits one term per range over the trip index so a fully affine gather or
-      scatter declares nothing. No AD rule changed; `ad/forward.py` and `ad/reverse.py` still build
-      the arrays, and the structure is recovered at lowering, which also catches every other affine
-      gather in the graph. `passes/program/_common.py` gained `_index_values`, the counterpart that
-      reads the indices back out of the expression, so `combine_scatter_sums` still sees the
-      destinations it needs. `tests/passes/test_affine_index.py` pins the factoring, the forward and
-      reverse VMAP derivatives against NumPy and against the unrolled form, and the two gates; all
-      three gates fail with the affine path disabled.
-      Measured: unbumpercars C=32 source 52.30 MiB to 1.35 MiB and static metadata 53.9 MB to
-      345 KB, so the cell compiles and passes its correctness check under the 50 MiB cap (kernel
-      compile 49.7 s, 8011 µs). race_cars metadata 90,115 to 39,578 bytes at N=50 and 1,015,708 to
-      420,681 at N=500; all eight `int64_t` index tables are gone, and the two 6-entry `unique_j`
-      residuals that remain are constant in N.
-      Runtime is unchanged: race_cars N=50 24.0 µs and N=500 240 µs against 24.0 and 243 to 247 for
-      the tables, three repetitions each. Emitting each level as `(k // stride) % dim` did cost
-      about 5% (25.4 µs and 257 µs), because the modulo is a second division. It is gone: since
-      `k // stride[i] // dims[i] == k // stride[i - 1]`, the coordinates telescope and the index is
-      a combination of the plain quotients `k // stride[i]` with coefficients
-      `c[i] - c[i+1] * dims[i+1]`, which is the `(x % c) + (x // c) * c -> x` recombination applied
-      once at emission rather than as a folding pass. Exact integer algebra for a non-negative trip
-      index, so the indices are unchanged; `tests/passes/test_affine_index.py` gathers through every
-      factored case and compares against NumPy to pin that. A single absolute size threshold was
-      also tried and rejected: it makes the emitted shape depend on N, which
-      `test_vmap_sparse_hessian_c_source_is_constant_in_length` correctly rejects.
-      The one part of the gate not met is `static_metadata_bytes` fixed across N, and index
-      arithmetic cannot make it so; C-57 owns what still grows.
-      Design and what was rejected from tinygrad's `uop/divandmod.py`:
-      [refactorings](notes/refactorings.md#affine-index-maps-for-gathers-and-scatters).
-- [x] **C-10. Fold the identities the AD rules introduce, at the expression level.** Implemented
-      2026-09-08 in `passes/expr.py`: `v @ ones -> sum(v)`, identity-index gathers become reshapes,
-      uniform 0/1 masks of the result shape fold, each pinned in `tests/passes/test_expr.py`. The
-      matrix forms `A @ ones` and `ones @ A` were tried as stacked row sums and reverted: in loop
-      form they lower to one loop per row and lose the fused producer, slower than the matmul. They
-      wait for an axis reduction in the IR, which is C-8's accumulator lowering.
-- [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites).
+### AD engine
+
+- [ ] **C-95. A differential AD harness before any AD change.** Every op against the unrolled
+      path, the structural path, finite differences and forward/reverse duality, with unsupported
+      ops listed and their refusal tested; extended call, map and constant-seed fixtures. Proven to
+      fail on a perturbed partial. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **C-96. One derivative-helper cache and naming rule** in `ad/helpers.py`; a procedure mark
+      set by lowering from the Function's `role` replaces `_force_noinline_raw`'s `"_fwd"` substring
+      test. After C-87 and API-90. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **C-97. Move the call and map derivative rules into `ad/calls.py`**, unchanged. Snapshots
+      byte-identical. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **C-98. One forward traversal with a leading seed axis.** Steps 1 to 3 of the plan: `jvp` is
+      `jvp_many` with one seed; `_seed_axis`'s stack becomes broadcasting; callee bodies use the
+      same traversal; zero tangents are structural and typed; the rank-4 transpose cap goes;
+      `_jvp_many_structural`, `_jvp_many_unrolled` and `SCALY_STRICT_JVP_MANY` are deleted.
+      Regenerates snapshots. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **C-99. One elementwise table: partials, folding and C spelling**, lazily built, with
+      stable contraction forms and the masked-cotangent helper. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **C-100. Derivatives with respect to intermediate expressions**, and `sc.stop_gradient`.
+      Without it, forward mode returns silent zeros for a slice of a loop carry.
+      [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+- [ ] **C-102. Reverse mode keeps the call boundary**: one adjoint helper call per invocation, map
+      adjoints through the accumulating scatter, inlining left to lowering. Milestone 3, after
+      C-113; measured on every benchmark problem. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+
+### Dtypes and the scalar vocabulary
+
+- [ ] **C-103. One scalar coercion rule.** Weak Python scalars, strong NumPy values, explicit casts
+      between expression dtypes, `sc.const` keeping ndarray dtypes, same-kind numerical casts,
+      `Expr.__bool__` raising, dtype checks at calls, NumPy integer indices.
+      [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
+- [ ] **C-104. Predicates, `select`, `cast`, integer `//` and `%`** as rows of the elementwise
+      table in both dialects; integer and boolean formats for `sc.print`. The IR and lowering half
+      after C-108; the AD half, with masked cotangents and a nonlinear treatment in the QP affinity
+      proof, after C-99. [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
+- [ ] **C-105. Nonsmooth derivatives and extremum reductions.** Ties split equally, `abs` slope 0 at
+      0, zero slope for `floor` and `ceil`; `max` and `min` as `REDUCE` kinds propagating NaN;
+      `argmax`, `argmin` and the two norms as builders. After C-104 and C-109.
+      [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
+- [ ] **C-106. float32 through lowering and the program passes.** Dtype-faithful folding and
+      literals, libm names by dtype, float32 in `scalarize`, `widen_ranges`, `coalesce_stores` and
+      `pack_workspace`, no float64 default on `ProgramNode`, dtype checks in `verify_program`,
+      integer accumulators. [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
+- [ ] **C-107. A typed entry signature and workspace.** Double for all-float64 functions
+      (unchanged), float for all-float32, `void` pointers with a byte-addressed workspace otherwise;
+      typed headers, C++ buffers and JIT arrays; CasADi and solver wrappers stay float64. The
+      float32 parity gate. After C-106.
+      [Design](notes/core_compiler_roadmap.md#dtypes-and-the-scalar-vocabulary).
+
+### Tensor core and the loop compiler
+
+- [ ] **C-108. The loop-nest emitter and the iteration-plan interface.** `nest`, `reduce` and `read`
+      on `LowerCtx`, with access maps that are affine or table-driven from the start so sparse
+      kernels share the interface; affine view indices, quotient and remainder only where a
+      composition requires them; empty extents emit no store; elementwise, movement, `STACK` and
+      `CONCAT` migrated; the div/mod coordinate helpers deleted. Regenerates snapshots. After C-86.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-109. Accumulators and the contraction schedule.** Reductions as `ASSIGN` accumulators;
+      `SUM` and rank-2 `MATMUL` on them; C-43's layout branches deleted and replaced by one
+      scheduling decision. Gate: npmpc N=12 and unbumpercars C=8 within 5%. Regenerates snapshots.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-110. Axis reductions.** `REDUCE` with `add`/`max`/`min` over axes replaces `SUM`;
+      `sum(axes, keepdims)`, `mean`, `sc.diag`; `A @ ones` folds to a reduction (C-10's residue).
+      After C-98 and C-109. [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-111. Batched matmul** with NumPy semantics, its AD and sparsity rules. After C-110.
+- [ ] **C-112. `einsum`** as a builder: pairwise contractions through batched matmul, ellipses,
+      diagonals for repeated labels. After C-111.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-150. `VMAP` folds into `LOOP`** as a loop without carries: one predicate replaces the
+      `ExprOp.VMAP` tests in 14 files, one invocation model, one adjoint route. Snapshots
+      byte-identical, `vmap.c` included. After C-121 and C-119.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-8. Fusion decided at lowering time**, in the shape of tinygrad's rangeify: movement ops
+      never materialized unless required, single-consumer elementwise producers inlined, a
+      reduce-under-broadcast cap, the consumer-agreement merge, and sparse producers fused only into
+      consumers that share their traversal; `fuse_elementwise.py` deleted. Gates: race-car `SZ_W`
+      zero at W = 1, chain M=5 workspace under 100k doubles (109,944 today), npmpc within 5%, the
+      IPM's KKT assembly in one loop. Regenerates snapshots. After C-109, C-112 and C-130. The
+      2026-09-08 study (`notes/perf_2026_09_07/tinygrad_rangeify.md`) is the reference.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-113. Lanes over nests, and block callees inlined into their maps.** Per-lane accumulators
+      on any reduction, with a remainder loop on reduce ranges with loaded bounds, lanes over nests
+      and the seed axis, float32 lanes, loop order by unit-stride access. Gates: a `vmap` of a
+      12x512 matvec within 2x of `X @ W.T`, and the regressions C-79 left open (unbumpercars C=2,
+      C=16, C=32, closed-loop function evaluation) resolved under the C-79 protocol; its design and
+      gates are in [`c77_c79_implementation.md`](notes/c77_c79_implementation.md#the-c-79-todo-entry-at-closure).
+      After C-8. [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-151. Predictable lowering of hand-written kernels.** A register-blocked product written
+      in Python keeps its structure: blocks as straight-line code over C locals, small loop carries
+      in locals, slices read in place, packing hoisted, Function boundaries and lowering hints kept;
+      no `restrict`, which devrush measured as neutral. Each property tested on the generated C; a 4×4 product and a
+      panel Cholesky measured against BLASFEO. After C-121 and C-8.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-152. Demanded entries.** Which entries of a node its consumers read, so a node is computed
+      over its support intersected with them; generalizes C-130's sampled adjoint (devrush: 984
+      entries computed for 527 gathered; its CS-12). After C-130 and C-8.
+      [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **C-82. A frame budget in `pack_workspace` instead of the per-buffer spill threshold.**
+      Fusion and lane staging move memory from full-length intermediates into per-stage locals, and
+      inlined callees add their locals to the caller's frame; the hand-written kernel uses no `w[]`
+      and about 40 kB of stack. Today a slot spills to `w[]` only when it alone reaches 1024
+      doubles, so nothing bounds the frame. Replace it with a per-procedure estimate (local buffers
+      plus inlined callees' locals plus a fixed allowance for scalar spills) against a budget,
+      default about 64 kB on hosts and a compile option for embedded builds, where zero sends
+      everything to a caller-provided `w[]`; spill the largest buffers until the estimate fits;
+      report the estimate beside `SZ_W` in the header. Verify the estimate with the compiler: a test
+      builds a generated module with `-Wframe-larger-than=<budget> -Werror` on gcc and clang and
+      fails if the estimate was optimistic. Any time after C-86: the budget is computed over the
+      final program, so it stays valid as schedules change.
+
+### Sparse tensors
+
+- [ ] **C-127. The stored pattern in `TensorType`**: canonical, interned, compared by identity, over
+      the last two axes with shared-pattern batch axes; storage shape `(*batch, nnz)`; fixed pattern
+      rules shared with C-148; ops without one refuse sparse operands; the storage-size audit. After
+      API-1 and C-92. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-148. Support on every node.** `Expr.support`, lazy, cached, outside the intern key, one
+      rule per op with `None` as the sound default; used by simplification, `ad/sparsity.py` (which
+      keeps relations over nonzero entries only) and scalar lowering; a randomized soundness
+      harness. After C-127. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-149. No work proportional to a matrix's full size.** Gate: build, analyse, differentiate
+      and lower a 10⁵×10⁵ matrix with 10⁶ entries under fixed time and memory limits; fixes
+      `zeros_like`, scatter folding, `expr.size` row pointers, `arange(size)` rules, `_matmul_mask`
+      and constant hashing. After C-148. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-128. The sparse boundary.** Sparse leaves with a pattern and a layout (CSC, CSR or a given
+      coordinate order), sparse `sc.const` from SciPy or from values and a pattern, `PACK` and
+      `VALUES`, `to_dense`, `from_dense` and `sparsify` as builders, storage-aware calls and maps,
+      numerical sparse arguments and results. After C-149.
+      [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-129. Sparse inputs in the generated C, C++ and CasADi interfaces**, values in each leaf's
+      layout, batched leaves publishing their local pattern once, no zero-length arrays for empty
+      patterns. After C-128. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-130. Sparse kernels and the sampled adjoint.** Iteration plans for sparse operands: one
+      compact map with build-time union and intersection regions, `MATMUL` with a sparse operand,
+      `REDUCE` over stored entries; four kernel forms per region; outputs written in the declared
+      layout; derivatives on stored coordinates and the sampled `MATMUL` adjoint. Gate: devrush's
+      KKT assembly and products on its Maros-Meszaros subset with no dense `(m, n)` buffer. After
+      C-128, C-109 and C-98. Regenerates snapshots. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-131. Sparse-sparse products**: the Boolean product pattern at build time, a column loop
+      over a dense accumulator, bounded table and workspace growth. After C-130.
+      [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- [ ] **C-132. Sparse derivative outputs become sparse leaves** with a declared layout and triangle,
+      and `Function.output_sparsities` goes away; values switch to the declared layout under the
+      versioning policy. After C-129 and C-130. [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+
+### Loops, conditionals and printing
+
+- [ ] **C-124. `sc.print`.** An identity op carrying a format, printing whenever its value is
+      computed, a trace-time error for unreachable prints, `SCALY_PRINTF` to compile prints out.
+      float64 first; integer and boolean formats with C-104, float32 with C-106. The JIT flushes C
+      `stdout` after a call that printed, since a Windows process (R-38) may not share it with
+      Python's. Right after the foundations, after C-86 and C-87.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-119. One invocation per callee-op call.** `callees_of` replaces the hard-coded
+      `{CALL, VMAP}` sets; `invocation_key` groups sibling outputs and custom-rule residuals; each
+      invocation is emitted once with all its used results, so a `VMAP` with several used outputs
+      becomes one loop. Regenerates snapshots. After C-87 and C-108.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-120. Carried loops in the program dialect.** A `carried` range attribute, `BREAK_IF`,
+      `exit_var`, and every pass guard pinned by a test before the op exists. After C-119.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-121. `LOOP`, with `scan` and `while_loop`.** One callee op with an optional condition, a
+      user-facing run-time trip count under a static bound, several carries, an `in_place`
+      contract, documented results including an int64 trip count and per-carry trajectories;
+      derivatives raise until C-122. Gate: RK4 rollout at N=200 builds in constant C size. After
+      C-120 and C-104. [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-122. Forward AD through `LOOP`**, single and multi-seed, taking the primal's steps.
+      After C-121 and C-99.
+- [ ] **C-123. Reverse AD through `LOOP`.** One backward loop over the stored trajectory, visiting
+      exactly the steps taken; differentiable trajectories; `max_trajectory=`. After C-122.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-154. Unrolling static loops by a straight-line budget** that counts every right-hand
+      side, a constant in lowering until a measurement asks for a `BuildRecipe` field, honouring
+      lowering hints, so small library factorizations become straight-line code without an option; the
+      reference schedule's summation order unchanged. After C-121.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-125. `COND`** with branch Functions, a boolean or clamped integer selector, program `IF`,
+      and AD over branches; no separate `SWITCH`. After C-121.
+      [Design](notes/core_compiler_roadmap.md#loops-conditionals-and-printing).
+- [ ] **C-126. Checked builds**: bounds and non-finite checks naming the function and op, behind a
+      render option. After C-136 and C-124.
+
+### Linear algebra as library Functions
+
+- [ ] **C-133. Triangular solves, Cholesky, and `solve(assume="pos")`** as library Functions over
+      `LOOP` under one solve contract: stated matrix classes, one stored triangle, pivot status (a
+      pivot at most epsilon times its diagonal entry fails), an
+      implicit derivative reusing the factorization through API-101's residuals, a reference
+      schedule. After API-101, C-121, C-138 and C-154.
+      [Design](notes/core_compiler_roadmap.md#linear-algebra-as-library-functions).
+- [ ] **C-134. Dense LDL^T and LU, and `solve(assume="sym"|"gen")`**, as library Functions. After
+      C-133.
+- [ ] **C-135. Sparse LDL^T as a library Function** over a digest-named symbolic analysis that also
+      replaces `scaly-sqp`'s `_ldl_symbolic`: an outer loop over columns, inner loops with run-time
+      trip counts, `in_place` carries, column chunks as a `COND` over widths. Gate, and the test of
+      the closed language: devrush's direct kernel's loop structure and timings. After C-130,
+      C-134 and C-125. [Design](notes/core_compiler_roadmap.md#linear-algebra-as-library-functions).
+
+### Runtime indexing and external code
+
+- [ ] **C-136. `GATHER` and `SCATTER` with index operands**, absorbing C-137: a constant index is
+      the static case, `combine` in `set`, `add`, `max`, `min`, `mode` `fill` or
+      `promise_in_bounds`, defined duplicate and out-of-range behaviour, AD and sparsity; segment
+      reductions, `take` and `dynamic_slice` as builders. Snapshots byte-identical for constant
+      indices. After C-93 and C-104.
+      [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
+- [ ] **C-138. In-place loop carries** by buffer reuse in lowering: last use, same index, disjoint
+      indices; read rules stated per op, never taken from derivative patterns; the `in_place`
+      contract raises instead of copying; `inout` procedure parameters.
+      After C-136 and C-121.
+      [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
+- [ ] **C-139. `sc.extern` and `sc.CLibrary`.** A concrete C function from a frozen build
+      description, called through `EXTERN` nodes; pure and reentrant; differentiable only through
+      `custom_derivative`; the solver plugins move onto it and `SOLVER_CALL` goes away. Flags in
+      clang's dialect and libraries named rather than spelled as linker flags, so Windows (R-38)
+      adds a platform without changing the API. After C-119, API-1 and R-71; typed pointers after
+      C-107.
+      [Design](notes/core_compiler_roadmap.md#runtime-indexing-in-place-updates-and-external-code).
 
 ### Deferred
 
-The 2026-09-22 items below come from re-measuring a hand-optimized race-car Hessian on the M4 Max;
-[`notes/perf_2026_09_22/`](notes/perf_2026_09_22/README.md) holds the numbers, the generality
-analysis of each hand change, the `zig cc` and compiler-extension survey, and the rendering
-decision. Like C-8 they are deferred and not required for 0.1.0: the current kernels already beat
-CasADi on every benchmark cell, and the release work comes first. They are organized around C-8
-rather than beside it. C-77 *is* C-8's step 0 (inline scalarized callees into their mapped loop,
-which nothing in C-8 covered) and step 1 (range propagation); doing it lands the first third of
-C-8 and the assembly fix at once. C-78 is three independent passes that need none of C-8 and can
-go first if cheap wins are wanted. C-79 is one more rewrite over ranges, tinygrad's `shift_to`,
-and sits after C-8's step 1 because a widened kernel that still writes 48 outputs to memory gains
-little; it must not be built as a separate `VMAP`-loop transformation that C-8 would then delete,
-the way C-43 is scheduled for deletion. C-80 is solver work. C-81 was the x86 re-run; it
-confirmed the order C-77 then C-79 and settled C-79's lane width and loop shape. The same
-evening the "libm only, everywhere" stance was revised after a three-model review: the
-generated C stays portable by default, and a target-aware opt-in (`lanes`, `vector_libm`, a CPU
-recipe) buys the measured 2× on x86; C-79, C-83 and R-71 record the result. When
-C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
-
-- [x] **C-77. Inline scalar callees into their mapped loops and fuse the derivative assembly.**
-      C-8 step 0 and step 1. Today `_lower_vmap` emits `FOR { CALL }` and every pass stops at the
-      `CALL`, so the sparse-Hessian recovery (`gather(transpose(jvp_many(...)))`) runs as 15
-      separate array passes: 35% of the race-car N=200 Hessian, and the reason inlining alone buys
-      nothing (43.5 to 43.0 µs) while fusion lets 6 of 16 block entries die (28.4 to 18.0 µs).
-      The triangle selection in `ad/sparse.py` already gathers straight from the compressed
-      block, so the six upper entries per stage are dead only once the kernel body and its
-      gather share a range; nothing before that can drop them. They are unread rows inside seed
-      directions the star coloring needs anyway, not extra directions, so this is dead-store
-      elimination, not an AD change; computing fewer sweeps is C-11's second-order reverse pass. Gates: no assembly loops in the
-      generated C; no store of an upper-triangle compressed entry in the stage body; the
-      workspace holds no colored or transposed intermediate, so `SZ_W` is zero at W = 1 and grows
-      only with lane staging (the hand-written kernel needs no `w[]` at all); race-car hess lower
-      N=200 under 22 µs on the M4 without vectorization.
-      Implemented 2026-09-22: 957 tests pass, 3 skip; independent review passed. On the x86
-      reference host, N=200 medians are 59.71 µs GCC and 25.36 µs Clang, with zero workspace.
-      The M4 timing gate has not been remeasured.
-- [x] **C-78. Constant-tile folding, invariant-divisor reciprocals, terminal-trip peeling.** Three
-      small passes. A `static const` table that tiles a period P becomes `k[i % P]`, a scalar at
-      P=1; `k0`, `k22`, `k26` from C-57 are exactly these. `x / y` with `y` loop invariant becomes
-      `x * inv_y` hoisted, behind a policy flag because it moves the last bit; both race-car
-      divisors are invariant and this is the `-ffast-math` gap (18.0 to 15.5 µs). Peeling the last
-      trip of a mapped axis whose slice differs makes the recovery gather `k44` affine (period 24,
-      residual 13, verified) so C-9's map replaces the table. Gates: no `double` table growing
-      with N in the race-car header; no division in the stage body.
-      Implemented 2026-09-22: periodic tables and terminal intervals fold during C-77 fusion;
-      reciprocal multiplication is opt-in. No stage-body division remains when enabled.
-      Independent review and 980 tests pass (3 skip); GCC N=200 improves 59.71 to 57.01 µs,
-      while Clang remains at about 25.3 µs.
-- [ ] **C-79. Explicit lanes on mapped ranges.** Port tinygrad's `shift_to`,
-      `r -> r_outer * W + r_lane` with `r_lane` of `RangeKind.VECTOR`, applied to the mapped axis
-      first (independent trips, no dependence analysis), then a contiguous output axis, then a
-      reduction axis with terms staged per lane and accumulated in their original order. Under a widened range a unit-stride access is
-      a vector load or store, a constant stride is a staging transpose at the ABI boundary (buffers
-      created under the range are lane major; ABI arrays stay stage major), anything else is per
-      lane; `minimum` and `maximum` render per lane. W comes from a `lanes` render option:
-      `"auto"` (the AOT default) renders a preprocessor block that picks W from the compiler's
-      target macros, 8 under `__AVX512F__`, 4 under `__AVX__` or 256-bit SVE, 2 under `__SSE2__`
-      or `__aarch64__`, otherwise 1 (Cortex-M and ARMv7 have no double vectors), overridable with
-      `-DSCALY_LANES=n`, so one generated file serves several CPU builds and cross targets need
-      no target description; an integer renders a fixed W and drops the block, which is what the
-      JIT passes because the host is known and the `.so` never moves. Python caps W per kernel by
-      register pressure (`live values × W ≤ 4 × register file`, note §3.1), emitted as a cap on
-      the macro. The fused stage body is rendered once as an `always_inline` function
-      taking the stage index and a count of valid lanes; the main loop runs the `N / SCALY_LANES`
-      full trips with the count fixed at W, and one remainder call under
-      `#if (N % SCALY_LANES) != 0` handles the last partial vector with clamped loads and guarded
-      stores. No scalar tail and no second copy of the body. Staging buffers are sized for W = 8 so
-      the workspace size in the generated header does not depend on the macro. Two render modes,
-      documented in `docs/api/codegen.md` with their differences and supported compilers when this
-      lands: `gnu` (default; `vector_size` types, `v[i]`, `__builtin_shufflevector`,
-      `__builtin_convertvector`, `restrict`; gcc ≥ 12, clang, `zig cc`, armclang) and `c` (opt in;
-      the widened program as a scalar body inside an inner lane loop over the same staging buffers;
-      any C99 compiler). Transcendentals are per-lane scalar libm calls by default, and a third
-      render option `vector_libm="none" | "glibc"` (default `none`) turns on glibc libmvec: C-81
-      measured 26.6 µs at 8 lanes against 12.7 with the `_ZGVeN8v_*` prototypes declared in the
-      source, equal to the hand-written kernel on gcc, clang and `zig cc` alike, so declaring
-      them ourselves is compiler-neutral and `-fveclib`, gcc's `simd` attribute and
-      `__builtin_elementwise_*` all stay out. The `glibc` option renders a prototype block for
-      the ops the program uses, guarded on `__x86_64__`, `__GLIBC__`, the matching width
-      (`_ZGVeN8v_*` needs `__AVX512F__` and W = 8, `_ZGVdN4v_*` needs `__AVX__` and W = 4, never
-      a wider W on a narrower build) and `__GLIBC_PREREQ(2, 35)` for `tanh`; a build that fails
-      the guard hits an `#error` naming the option and the `-lmvec` link flag, so a wrong AOT
-      build fails at compile time with a sentence rather than at link time with an undefined
-      symbol. It moves results (glibc documents 4 ulp against scalar libm's under 1), so it is
-      off in distributed AOT output, on in the JIT on a glibc x86-64 host once the version check
-      passes, and off under `zig cc` cross builds, whose glibc stubs omit libmvec. Check whether
-      `-lm` alone already pulls `libmvec` through glibc's `libm.so` linker script before
-      documenting `-lmvec`. No vendored SLEEF, no Accelerate (vForce is array-based and would
-      undo C-77's fusion; Apple's scalar `sin` is 2 ns so the M4 gain is bounded at 5.7 of
-      14.2 µs), no own polynomials; `generic` means `lanes="auto"`, `vector_libm="none"`.
-      Compiler and OS are not dimensions of the generated C, only of the build recipe: a small
-      table in `codegen/toolchain.py` keyed by CPU level (`native`, `x86-64-v3`, `x86-64-v4`,
-      `apple-m4`, `generic`) yields the gcc and clang flag spellings, defines and link flags, and
-      the same `BuildRecipe` value is printed by `scaly_toolchain`, by the AOT CLI
-      (`--cpu`, `--lanes`, `--dialect`, `--vector-libm`; no named OS × arch × compiler targets,
-      which would render byte-identical C) and as a comment block at the top of the generated
-      `.c` and `.h` with the exact build line, the CPU baseline and the libc requirement.
-      Distributable AOT output requires an explicit CPU baseline; `native` is for host-local
-      builds. The complete vector-math study finished on 2026-09-23 under the
-      [shared policy](notes/benchmark_protocol.md#vector-math-study-policy). Retain the scalar-libm
-      comparison separately. Merge approved with the performance follow-up deferred to a new
-      branch. Keep C-79 open until the
-      [remaining regressions](notes/benchmark_comparison_history.md#remaining-regressions-and-limits) are resolved. Gates: compile matrix gcc × clang × W ∈ {1, 2, 4, 8} × `vector_libm` on and
-      off; byte-identical output between the two modes and across W at the same compiler and
-      flags with `vector_libm="none"` (bitwise equality across targets never existed: FMA
-      contraction and Apple versus glibc libm already move the last bits); an `nm` check that no
-      `_ZGV*` symbol appears when off, perturbed to prove it can fail; on the x86 reference
-      machine within 1.2× of `variant_w8_lane.c` (26.6 µs, gcc 13) when off and within 1.1× of
-      the hand-written kernel (12.7 µs) when on; no regression on the M4 at W = 2.
-      Implemented 2026-09-23 with original-order reduction accumulation. Independent review,
-      all 1,178 tests, and the complete vector-math study pass. All 23 Scaly sweep cells completed
-      five processes, and all 75 controller episodes succeeded. Latest five-process race N=200
-      microbenchmark medians: scalar libm 27.21 µs GCC / 24.69 µs Clang; libmvec 12.34 µs GCC /
-      12.23 µs Clang. Both x86 limits pass; M4 performance remains unmeasured.
-      Follow-up on a new branch: isolate UB base/gradient/Jacobian/Hessian costs on retained
-      canonical inputs, then compare compiler and lane-width effects without changing reduction
-      order. Recover the September 10 closed-loop function-evaluation baseline of 16.419 ms IPOPT
-      and 9.513 ms SQP; the latest study measures 17.022 and 10.045 ms. Investigate UB C=16/C=32
-      slowdowns against the intermediate scalar-policy study separately. Preserve the artifacts
-      under `benchmarks/results/study-2026-09-23-c77-c79-libmvec` and
-      `benchmarks/results/study-2026-09-23-c77-c79-final`. Recheck the race microbenchmark and
-      targeted UB comparisons before a final full study. The user approved merging the current
-      implementation on 2026-09-24 with these measured regressions deferred, not resolved.
-
-- [ ] **C-80. Parameter-only oracle prologue.** Every oracle subgraph that depends on `p` alone
-      gives the same result at every solver iteration but is recomputed on every call: the
-      race-car cost block, the 402 `cos`/`sin` of the reference heading that the cost tangent and
-      adjoint callees each recompute per stage, and in the bumper-car safety filter everything
-      derived from the cars' current states. Compute it once per solve, as `bounds` already is.
-      After `_lowered` in `solvers/nlp.py` has built `base`, `grad`, `jac` and the Hessians, one
-      pass over all their outputs marks every node that depends on `x` or the multipliers. The
-      parameter-only nodes that a marked node reads become the outputs of one shared `prologue`
-      Function, and each oracle takes them as extra parameter inputs in place of the subgraph.
-      Doing this after differentiation also catches derivative blocks that are constant in `x`,
-      such as the Hessian of a quadratic tracking cost. Inside a `CALL` or `VMAP`, split the
-      callee into a mapped parameter-only part and a body that takes its outputs as extra mapped
-      inputs. This is the expression-level counterpart of `hoist_invariant`, which hoists across
-      loop trips rather than across solver iterations. Leave in place any value cheaper to
-      recompute than to load (a view, a reshape, a parameter itself). Both plugins call the
-      prologue beside `bounds`, and the descriptor carries it. The marking asks the same structural
-      question that `_prove_quadratic` and `_prove_variable_independent_bounds` in `solvers/qp.py`
-      answer with `_jac_mask`, so share one implementation. A QP is the limiting case where the
-      whole oracle is prologue. Gate: on race cars and bumper cars, the factored oracles match
-      the unfactored ones at random `x`, `p` and multipliers, the prologue runs once per solve,
-      and closed-loop function evaluation time drops. Function or solver level, not a program
-      pass; belongs with the S items.
-- [x] **C-81. Re-run the 2026-09-22 variants on the x86 reference machine.** Done 2026-09-22,
-      section 5 of `notes/perf_2026_09_22/README.md`, `x86_variants.sh` reproduces it. C-77 stays
-      first (108.5 to 59.4 µs on gcc). A native `zig cc` links `-lmvec`. Declared
-      glibc `_ZGV*` prototypes reach the hand-written kernel (12.7 µs) and gcc's `simd` attribute
-      does so from scalar source; the prototypes became C-79's opt-in `vector_libm="glibc"` the
-      same evening, the `simd` attribute and `__builtin_elementwise_*` stay out because clang
-      ignores the former and LLVM's libmvec table stops at 4 lanes without `tanh` for the
-      latter. Side finding: gcc 13, the JIT's `cc` here, is 40% slower than clang 20 on today's
-      generated code at the protocol flags, one reason R-71 puts `zig cc` first.
-- [ ] **C-83. Fingerprint the host in the JIT cache key.** `_compute_cache_key` in
-      `codegen/jit.py` hashes the flag string `-march=native`, not the CPU it resolves to, nor the
-      compiler identity. A cache directory shared across machines (an NFS home on a mixed
-      cluster) can hand an AVX-512 `.so` to a node without AVX-512, and a compiler upgrade reuses
-      stale objects. Add the resolved CPU features (`sysctl` or `/proc/cpuinfo`), the compiler
-      command and its version string, and, once C-79 lands, the render options and the glibc
-      version to the key. Gate: a test that changing any of them misses the cache.
-- [ ] **C-82. A frame budget in `pack_workspace` instead of the per-buffer spill threshold.**
-      Fusion (C-77) and lane staging (C-79) move memory from full-length intermediates into
-      per-stage locals, and inlined callees add their locals to the caller's frame; the
-      hand-written kernel uses no `w[]` and about 40 kB of stack. Today a slot spills to `w[]`
-      only when it alone reaches 1024 doubles, so nothing bounds the frame. Replace it with a
-      per-procedure estimate (local buffers plus inlined callees' locals plus a fixed allowance
-      for scalar spills) against a budget, default about 64 kB on hosts and a compile option for
-      embedded builds, where zero sends everything to a caller-provided `w[]`; spill the largest
-      buffers until the estimate fits; report the estimate beside `SZ_W` in the header. Verify
-      the estimate with the compiler: a test builds a generated module with
-      `-Wframe-larger-than=<budget> -Werror` on gcc and clang and fails if the estimate was
-      optimistic. After C-77, since that is what shifts memory onto the stack.
-
-- [ ] **C-8. A range-based loop compiler for the program dialect, in the shape of tinygrad's
-      rangeify.** Caller workspace still grows with N on race_cars and npmpc. C-47 removed chain's
-      43 separate scatter accumulation buffers and reduced M=5 workspace to 109,944 doubles.
-      Defer the general loop compiler until after the closeout study and documentation work. The
-      2026-09-08 study (`notes/perf_2026_09_07/tinygrad_rangeify.md`) says how the reference design
-      gets fusion without a dependence analysis: loop variables (ranges) are first-class values;
-      views become index expressions over them; a producer with one consumer inherits the consumer's
-      ranges, which is fusion by construction; a producer whose consumers disagree on an axis is
-      materialized on that axis only; a reduce becomes `acc init / acc op= x / END(range)`; and one
-      substitution `r -> r_outer * amt + r_inner` expresses tile, unroll and upcast, with an
-      accumulator per upcast lane. Port that shape, not the framework, in this order, each step with
-      a `tests/` fixture: (1) ranges and the three-case propagation rule over the lowered loops, which
-      is the fusion pass and the workspace fix; (2) the accumulator lowering of reductions with a
-      per-lane split, which supersedes the layout-specific matmul rules C-43 landed in
-      `_lower_matmul` (delete them then) and generalizes them to `W @ [v1 v2 v3]`
-      and to matrix-matrix products; (3) the reduce-under-broadcast rule so a value is never
-      recomputed under an expand. Gates: race-car `workspace` free of colored and transposed
-      intermediates (zero at W = 1, lane staging only otherwise; see C-77 and C-82), chain
-      workspace under 100k doubles at M=5, npmpc within 5% of today's kernel with those rules removed.
-      The pre-optimization caller shares were 22% of race-car, 3% of npmpc, and 26% of chain.
-      Re-measure the remaining costs before resuming this work.
-
-- [ ] **C-57. The static metadata that still grows with N after C-9.** With every affine index
-      table gone, race_cars metadata is 39,578 bytes at N=50 and 420,681 at N=500, so it still
-      grows roughly linearly. Three things are left, none of them index arithmetic. The generated
-      header's sparsity tables are `O(nnz)` by construction (23,677 bytes at N=50: rows, cols, the
-      CSR and CSC pointers and both value permutations) and the question is whether a banded or
-      per-stage-block encoding can describe them in closed form for a multistage problem instead of
-      listing them. The sparse-assembly gather is a genuine `nnz`-length permutation with no affine
-      structure (`k44`, 657 entries at N=50), and would need the assembly itself restructured, not
-      its index compressed. And three `double` constant tables that C-45's periodic-tile bake did
-      not reach (`k0` 1200, `k22` and `k26` 1224 entries at N=50) grow with N; find out which
-      tangent or weight each one is and whether the bake's period test is simply too narrow.
-      Deferred 2026-09-09: growing metadata is reported separately from executable code and
-      artifacts must stay within the compile cap. Revisit if measured artifact size becomes a
-      deployment limit.
-
-- [ ] **C-11. Chain: exploit the stage-block structure.** The coloring width grows with M (12, 24,
-      42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
-      computes one symbolic Hessian. Investigate a scalar-level second-order pass inside the stage
-      body, then a scatter. Deferred beyond this closeout. The
-      [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#what-is-inherent-to-forward-over-reverse-here)
-      finds composition accounts for most excess operations, with symmetry the remaining
-      second-order opportunity. Reassess only if a current workload justifies the work. Rediscovered
-      empirically on 2026-09-22 while hand-optimizing the race-car Hessian kernel
-      ([note](notes/perf_2026_09_22/README.md)): each of the 4 seed directions yields all 4 rows of
-      the block, 16 entries where the lower triangle needs 10. There the 6 are dead rows that C-77's
-      fusion deletes for free; only where the coloring width itself grows does a second-order
-      reverse sweep (edge pushing) that touches each nonzero once pay for its complexity.
-
-- [ ] **C-58. Inline small pure callees before differentiation.** Revisit a bounded expansion policy
-      if measured workloads justify it. Excluded from C-49 closeout to preserve mapped structure
-      without introducing a new expansion policy. Diagnosis: [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#ranked-rule-and-composition-edits-for-an-implementer).
-
-- [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Deferred, like all compiler work, unless a measured workload requires it. Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization).
-- [x] **C-13. Make the Program IR passes iterative instead of recursive.** Done 2026-09-08 with
-      C-12: the program passes, `scalarize`, and the C renderer no longer recurse per expression node,
-      and the renderer hoists subtrees deeper than `MAX_SCALAR_DEPTH` into temporaries so clang's
-      bracket limit is not hit. Witnesses in `tests/passes/test_program.py`: left folds at 400 and
-      3000, the NPMPC-shaped flat per-stage reduction at N=100, and a hinted scalar fold, each
-      compiled and checked against NumPy. Recursion proportional to statement nesting (loop and call
-      depth) remains and is documented in `docs/how_it_works/lowering.md`.
+- **C-143. One copy of each constant table per generated module.** Devrush emitted a spline table
+  once per function that used it (941 kB of C; a 128x128 bicubic went from 34.9 to 5.9 MB once
+  deduplicated). Main lowers every `CONST` to a buffer per procedure, so it likely has the same
+  duplication; measure before changing.
+- **C-144. Share a call's primal with its derivative.** A `CALL` node's value and its derivative each
+  run the callee's forward pass; devrush's neural MPC case study hit it, and its DiffMPC episode ran
+  in 200 ms against 161 ms without the duplicate. C-96's cache knows which helper is the derivative of which
+  callee, and API-101's residuals are the mechanism. After C-102.
+- **C-153. Structure inside a sparse pattern.** Detect dense blocks, bands and supernodes inside a
+  static pattern and give them dense kernels; also different patterns per batch entry and
+  automatic compaction of dense-typed values. After C-131, when a workload asks.
+  [Design](notes/core_compiler_roadmap.md#sparse-tensors).
+- **C-145. Fold identity products in QP extraction.** Devrush found `_qp_data` in
+  `solvers/qp.py` building `I @ X` products and searching full patterns for dense colouring, which
+  costs cubic time on dense QPs. Main has the same function; confirm and fold.
+- **C-146. Generation and compile time of straight-line code.** Devrush measured about 1.2 ms of
+  Python per scalar op of unrolled code, and about 1,000 one-element buffers live until the final
+  stores doubling gcc's time. Measure both on main after C-8, since fusion changes them.
+- **C-57. The static metadata that still grows with N after C-9.** With every affine index
+  table gone, race_cars metadata is 39,578 bytes at N=50 and 420,681 at N=500, so it still
+  grows roughly linearly. Three things are left, none of them index arithmetic. The generated
+  header's sparsity tables are `O(nnz)` by construction (23,677 bytes at N=50: rows, cols, the
+  CSR and CSC pointers and both value permutations) and the question is whether a banded or
+  per-stage-block encoding can describe them in closed form for a multistage problem instead of
+  listing them. The sparse-assembly gather is a genuine `nnz`-length permutation with no affine
+  structure (`k44`, 657 entries at N=50), and would need the assembly itself restructured, not
+  its index compressed. And three `double` constant tables that C-45's periodic-tile bake did
+  not reach (`k0` 1200, `k22` and `k26` 1224 entries at N=50) grow with N; find out which
+  tangent or weight each one is and whether the bake's period test is simply too narrow.
+  Deferred 2026-09-09: growing metadata is reported separately from executable code and
+  artifacts must stay within the compile cap. Revisit if measured artifact size becomes a
+  deployment limit. C-132 removes the value permutations. Re-measure the constant tables, since
+  C-78's periodic-tile folding landed after this was written.
+- **C-11. Chain: exploit the stage-block structure.** The coloring width grows with M (12, 24,
+  42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
+  computes one symbolic Hessian. Investigate a scalar-level second-order pass inside the stage
+  body, then a scatter. The
+  [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#what-is-inherent-to-forward-over-reverse-here)
+  finds composition accounts for most excess operations, with symmetry the remaining
+  second-order opportunity. Reassess only if a current workload justifies the work. Rediscovered
+  empirically on 2026-09-22 while hand-optimizing the race-car Hessian kernel
+  ([note](notes/perf_2026_09_22/README.md)): each of the 4 seed directions yields all 4 rows of
+  the block, 16 entries where the lower triangle needs 10. There the 6 are dead rows that C-77's
+  fusion deletes for free; only where the coloring width itself grows does a second-order
+  reverse sweep (edge pushing) that touches each nonzero once pay for its complexity. Devrush's
+  AC-OPF case study hit the same wall at scale: 74 colours at case9241 gave 277 MB of C.
 - **C-14. Confirm or drop the reverse / row-coloured sparse-Jacobian hypothesis.** `sparse_jacobian`
   colours columns only, and npmpc's per-stage block is wider than it is tall, which is consistent
   with running more forward sweeps than a row-coloured or reverse pass would need. Prize is bounded
   and knowable, roughly 0.85 -> 1.1 at the shipped decoder width, and it does not change the
   width-axis result Scaly already wins.
-- [x] **C-84. Remove the unused `TensorType.sparsity` field.** Done, together with the unused
-      `ProgramOp.PARAM`. No expression constructor sets it,
-      and lowering, codegen and AD never read it. Real patterns live on `Function.output_sparsities`.
-      Drop the field and its `__post_init__` check in `ir/types.py`, the `sparsity-shape-matches`
-      rule in `ir/expr_spec.py`, the ` sparse` suffix in `ir/text.py`, and the positional copies in
-      `function/model.py`, `function/tree.py`, `solvers/problem.py`, `solvers/nlp.py`,
-      `solvers/qp.py` and `tests/solvers/problem_helpers.py`. Delete the test in
-      `tests/ir/test_types.py` and the `sparsity` line in `tests/ir/test_verifier.py`.
-- [ ] **C-85. Put the compiler's identity in the JIT cache key.** `_compute_cache_key` in
-      `codegen/jit.py` hashes the flags but not the compiler, so pointing `SCALY_CC` at another
-      compiler with the same flags reuses artifacts built by the first. Hash the resolved compiler
-      path and its `--version` output, and bump the cache version.
+- **C-58. Inline small pure callees before differentiation.** Revisit a bounded expansion policy
+  if measured workloads justify it. Excluded from the C-49 closeout to preserve mapped structure
+  without introducing a new expansion policy. Diagnosis: [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#ranked-rule-and-composition-edits-for-an-implementer).
+- **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.**
+  Deferred unless a measured workload requires it; C-8's lowering-time fusion removes most of the
+  intermediates it targeted. Build on the shared matcher and arithmetic rules with definition/use
+  tracking and conservative read/write/alias handling, including C-138's `inout` parameters; retain
+  required calls and output stores, and test repeated loads across writes. Broader loop motion
+  follows demonstrated workload need; load-node interning alone is not a current stale-value bug.
+  [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization).
 
 ## Solvers
 
 ### Now
 
+- [ ] **S-155. Vendor PIQP 0.6.4.** 0.6.2's dual recovery (`KKTSystem::solve`) reads one entry
+      past its index of lower-bounded rows, so in about one process in ten `ocp/linear_mpc.ipynb`'s
+      condensed QP hits `MAX_ITER` with a NaN solution. Upstream fixed it in 0.6.4 (PIQP issue 42).
+      Devrush has the bump, a `plugins/scaly-piqp/hatch_build.py` that rebuilds when a pin differs
+      from the versions the notices record, and `test_piqp_dual_recovery.py`, which makes the bad
+      read certain with a preloaded `malloc`. A cold rebuild is 5 to 8 minutes.
+- [ ] **S-142. Validate PIQP option names before code generation.** Unknown settings reach the
+      generated C and fail at compile time with a C error. Before C-139 moves the plugins onto
+      externs, so it is not written twice. Rationale:
+      [`documentation_api_review.md`](notes/documentation_api_review.md#piqp-option-errors-reach-c-compilation).
+
 ### Deferred
 
+- **S-80. Parameter-only oracle prologue.** Every oracle subgraph that depends on `p` alone
+  gives the same result at every solver iteration but is recomputed on every call: the
+  race-car cost block, the 402 `cos`/`sin` of the reference heading that the cost tangent and
+  adjoint callees each recompute per stage, and in the bumper-car safety filter everything
+  derived from the cars' current states. Compute it once per solve, as `bounds` already is.
+  After `_lowered` in `solvers/nlp.py` has built `base`, `grad`, `jac` and the Hessians, one
+  pass over all their outputs marks every node that depends on `x` or the multipliers. The
+  parameter-only nodes that a marked node reads become the outputs of one shared `prologue`
+  Function, and each oracle takes them as extra parameter inputs in place of the subgraph.
+  Doing this after differentiation also catches derivative blocks that are constant in `x`,
+  such as the Hessian of a quadratic tracking cost. Inside a `CALL` or `VMAP`, split the
+  callee into a mapped parameter-only part and a body that takes its outputs as extra mapped
+  inputs. This is the expression-level counterpart of `hoist_invariant`, which hoists across
+  loop trips rather than across solver iterations. Leave in place any value cheaper to
+  recompute than to load (a view, a reshape, a parameter itself). Both plugins call the
+  prologue beside `bounds`, and the descriptor carries it. The marking asks the same structural
+  question that `_prove_quadratic` and `_prove_variable_independent_bounds` in `solvers/qp.py`
+  answer with `_jac_mask`, so share one implementation. A QP is the limiting case where the
+  whole oracle is prologue. Gate: on race cars and bumper cars, the factored oracles match
+  the unfactored ones at random `x`, `p` and multipliers, the prologue runs once per solve,
+  and closed-loop function evaluation time drops. Function or solver level, not a program
+  pass.
 - **S-16. Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with
   our hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
   stack" is defensible; "our IPOPT is newer" is not. Rationale: [protocol](notes/benchmark_protocol.md).
@@ -513,50 +575,15 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
 
 The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_interface_2026_09_18.md).
 
-### Now
+### Deferred
 
-- [x] **CAPI-72. Native entry cleanup.** `mem` becomes `int`; the `f_sz_*()` functions and the
-      `alloc_mem/init_mem/free_mem` stubs go from `codegen/c.py` and `codegen/aot.py`; the JIT
-      reads `module.workspace_size` instead of calling `f_sz_w()`; the ABI doc follows. Touches
-      every rendered header, so the whole suite runs and the `benchmarks/results/smoke/**`
-      fixtures are regenerated if compared textually. [Design](notes/generated_interface_2026_09_18.md#the-pointer-entry-both-languages-always).
-- [x] **CAPI-73. C header with a caller-owned workspace.** After CAPI-72. Buffer structs become
-      `f_x_t` (no `_in`/`_out`), 16-byte aligned; `f_workspace_t` is passed to `f_call` instead of
-      being stack-allocated inside it. Update the two C++ smoke tests in `tests/codegen/test_c.py`.
-      [Design](notes/generated_interface_2026_09_18.md#the-c-header-langc).
-- [x] **CAPI-74. C++ header.** After CAPI-73, independent of CAPI-75. `lang="cpp"` renders `f.hpp`
-      beside the same `f.c`: a guarded `Buffer<T, Ns...>` with inline aligned storage and a
-      `constexpr shape`, a namespace per function with `x_t`/`workspace_t` aliases, `constexpr`
-      sparsity tables, `call(..., workspace_t&)`; no enclosing `scaly` namespace. Smoke test: a C++
-      caller against a `(N, nx)`-shaped function and a sparse Jacobian, reading a value through
-      `csc_val_perm`. [Design](notes/generated_interface_2026_09_18.md#the-c-header-langcpp).
-- [x] **CAPI-75. CasADi 3.8 compatible symbols.** After CAPI-73, independent of CAPI-74. `casadi=True`
-      adds the guarded `casadi_int`/`casadi_real` typedefs, the query set (`_n_in`, `_n_out`,
-      `_name_in`, `_name_out`, `_default_in`, `_sparsity_in`, `_sparsity_out`, `_work`,
-      `_work_bytes`, `_checkout`, `_release`, `_incref`, `_decref`), compressed-column sparsity
-      tables, and an entry that gathers compact sparse outputs through `csc_val_perm` (adding
-      `nnz` to `f_SZ_W`). Dense matrix inputs or outputs are rejected at render time. Tests: load
-      the library with `casadi.external` and compare against `numerical_call`; assert the six
-      symbols acados needs resolve through `ctypes`. [Design](notes/generated_interface_2026_09_18.md#the-casadi-layer-casaditrue-either-language).
-- [x] **CAPI-76. Document the generated interface.** After CAPI-74 and CAPI-75. Rename the ABI page to
-      "The generated interface": the pointer ABI, then the C, C++ and CasADi layers; say plainly
-      that both header languages compile the same kernel. Update `guide/codegen.md` and the CLI
-      help (`--lang`, `--casadi`). [Why ABI and API are both right](notes/generated_interface_2026_09_18.md#what-this-is-called).
+- **CAPI-147. Dense matrices in the CasADi layer.** `casadi=True` refuses a dense argument or
+  result with both dimensions above one, because CasADi stores column-major and Scaly row-major.
+  Transpose at the boundary, or document the refusal next to the option, when a user needs it.
+  Row-major against column-major is the dense case of the value layout a sparse leaf declares in
+  C-128 and C-129; extend that field to dense leaves rather than adding a CasADi-only transpose.
 
 ## Benchmark harness
-
-### Now
-
-- [x] **BH-48. Adopt `-march=native` in the benchmarks and the AOT guidance; keep distributed
-      binaries portable.** Decided 2026-09-08: the sweep and closed-loop harnesses compile both
-      providers with `-march=native` (and `-fno-math-errno`), fairness.md states the rule and why;
-      AOT users are told in the docs to pass it and it goes in the suggested CFLAGS; the solver
-      plugin wheels stay at the portable baseline. The JIT side is C-50. Measured reason: on
-      race-car the gain is FMA contraction (`-mfma` alone: Scaly 32.9 to 27.8 µs, SX 21.3 to 20.7,
-      because SX's one-op-per-statement code never contracts), not vector width. Record both flag
-      sets in fairness.md until BH-20 reruns. Evidence: `notes/perf_2026_09_07/README.md`.
-- [ ] **BH-21. Add an immutable publication mode**: clean release candidate, every raw run retained,
-      and an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
 
 ### Deferred
 
@@ -596,214 +623,45 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 | | METIS 5.2.1 | Apache-2.0 | notice |
 | | GKlib | Apache-2.0, plus two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file, per its `LICENSES.md` | notice for each |
 
-### Now
-
-- [x] **L-28. Root `LICENSE.md` (BSD-2-Clause, copyright EPFL, 2026)**, the holder the lab's other
-      projects name, with the author only in the pyproject `authors` entry, `license = "BSD-2-Clause"` and
-      `license-files = ["LICENSE.md"]` in the root `pyproject.toml`, and the README "License" section
-      replaces "TBD".
-- [x] **L-29. Copy the same `LICENSE.md` into each of `plugins/scaly-{sqp,piqp,ipopt}/`** with the same
-      two pyproject fields. Each plugin is its own sdist and wheel, so each needs the file in its
-      own tree; a copy, not a symlink, so sdists stay correct.
-- [x] **L-30. Third-party notices generated by the build hooks.** `hatch_build.py` in `scaly-piqp`
-      and `scaly-ipopt` copies each dependency's license text from the already-cloned
-      `third_party/` sources into `src/scaly_{piqp,ipopt}/licenses/<dep>/` and writes a short
-      `THIRD_PARTY_NOTICES.md` listing name, pinned version from `build_config.json`, license and
-      upstream URL; the directory joins the wheel `artifacts`. Generating at build time keeps the
-      notices from drifting from the pins. libgfortran and libquadmath are not cloned, so their
-      GPL-plus-runtime-exception text is vendored once in `plugins/scaly-ipopt/licenses/`, as is
-      the LGPL-2.1 text for LDL in `plugins/scaly-piqp/licenses/`. `scaly-piqp` got its own
-      `build_config.json`, which also pins BLASFEO to `0.1.4.3`; it built from an unpinned
-      `master` before. A missing notices file counts as "not built", so libraries from before this
-      change are rebuilt once.
-- [x] **L-31. Close the two PIQP questions** in the table: confirm `EIGEN_MPL2_ONLY`, and how the
-      LDL code is linked. Both answered in the table.
-- [x] **A test that the license directory exists for every dependency named in
-      `build_config.json`** in each plugin wheel's file list, shown to fail when an entry is
-      removed. Plus one paragraph in `docs/dev/contributing.md`: a new vendored dependency needs a
-      `build_config.json` entry and a license copied by the hook. `plugins/*/tests/test_*_notices.py`.
+The build hooks generate each wheel's notices from this table's pins, and
+`plugins/*/tests/test_*_notices.py` fails when a dependency in `build_config.json` has no license
+directory. A new vendored dependency needs a `build_config.json` entry and a license the hook copies.
 
 ## Documentation
-
-The same category of debt the fairness audit found in the results pages: prose that outran what
-the code does.
-
-### Now
-
-- [x] **D-32. Rewrite the user-facing documentation.** Done 2026-09-16: every page under `docs/`
-      and the README rewritten for register and accuracy, the wordmark added to both entry points,
-      the single status admonition in `docs/index.md` (remove it at 0.1.0), and the plain-speech
-      rules recorded in `docs/dev/conventions.md`. `FunctionTemplate` (API-1) is not mentioned in
-      the docs; add its page when it lands. Wheel installation instructions belong to R-41.
-- [x] **D-33. Rework `docs/how_it_works/comparison.md` (now `influences.md`).** Done 2026-09-16: every Taken/Changed row
-      checked against code; `sc.problem` returns a `Problem`, only one upward import is checked. A scoped fix landed on 2026-08-25: the
-      CasADi section's "one graph with a per-node hint" paragraph presented an inert mechanism as a
-      departure, and it now states the repetition claim that is actually true and measured, with the
-      lowering-hint discussion subsequently removed from the published docs. The rest of the page still
-      predates a lot. Check every "Taken / Changed" row against what the code does today, and check
-      the tinygrad, MLIR and JAX sections the same way.
-- [x] **D-34. Audit the whole of `docs/` for claims that outran the implementation.** Done
-      2026-09-16; every guide snippet executed, two were broken and are fixed. Originally: the way the
-      results pages were audited. The pattern to look for is a stated departure or capability whose
-      supporting mechanism is recorded but not wired up, and a number with no machine attached.
-      The lowering-hint claims have been removed. Check any surviving timing that predates the
-      reference-machine rule in `AGENTS.md`.
-- [x] **D-68. Acknowledgements and AI disclosure in the README and `docs/index.md`.** Done 2026-09-16. An
-      acknowledgement of NCCR Automation, which funded the research, and a disclosure that AI coding
-      agents (Claude, Codex and others) were used to write parts of the code and documentation.
-      Before R-67, so the first public snapshot carries both.
-- [x] **D-65. Two documentation deployments.** Done 2026-09-29. GitHub Pages publishes the docs of
-      the latest scaly release through `pages.yml`, called by `release.yml`. Cloudflare Pages
-      publishes every branch from `docs.yml`, with a banner naming the branch and commit.
-- [x] **D-35. Reconcile the problem READMEs with the audit.** Completed 2026-09-11. The problem
-      READMEs now describe only the current formulations and link measured comparisons to the
-      canonical result pages.
 
 ### Deferred
 
 - **D-36. GPU backend milestone definition**: what a first accelerator target must demonstrate before
-  any backend work starts.
+  any backend work starts. After the core compiler roadmap; C-91 leaves no placeholders to inherit.
 
 ## Release
 
-These steps make the tree public and permanent, and each is cheap to do once and expensive to redo.
+The four packages were released at `0.1.0a1` on 2026-09-29 through `release.yml`, tagged
+`<package>-v0.1.0a1`. GitHub Pages serves the docs of the latest release and Cloudflare Pages every
+branch; the [release workflow note](notes/release_workflow_design.md) has the design.
 
 ### Now
 
-- [x] **R-37. Move the paper design note out of this repository.** Done 2026-09-16; it goes to
-      the paper's own repository. The note was never on main but is in dev's history, which R-62
-      rewrites.
-- [ ] **R-38. Windows support.** Decide the toolchain (MSVC or clang) and the target: the core JIT
-      plus `scaly-sqp` and `scaly-piqp` first; `scaly-ipopt` on Windows is a separate later item
-      because it drags in Fortran and its own licensing survey. Candidate toolchain: make `ziglang`
-      (R-71) a required dependency on Windows through a `sys_platform == 'win32'` marker, and build
-      the Windows `scaly-piqp` wheel with `zig cc` as the CMake C and C++ compiler, so the JIT and
-      the solver library share one toolchain and no MSVC-versus-MinGW runtime mismatch can arise.
-- [x] **R-39. Finalize the name.** Decided 2026-09-14: `scaly`. `scali` was the first choice, but
-      PyPI refused it as too similar to `scaii`, an abandoned 2019 project: PyPI treats `l`, `i`
-      and `1` as one character when comparing names, and nobody can override that check. `scaly`
-      is pronounced the same, is a real word people spell right after hearing it, and matches the
-      scale-filled S of the logo.
-- [x] **R-60. Reserve the PyPI names** `scaly`, `scaly-sqp`, `scaly-piqp` and `scaly-ipopt`: a
-      placeholder package per name at version `0.0.0a0` whose description says what it will become,
-      built with `uv build` and uploaded with `uv publish` from the gitignored
-      `package-placeholders/`. A pre-release version so `0.1.0a1` stays free; PyPI never lets a
-      version be reused. `scaly` is reserved as of 2026-09-14; the three plugins wait on PyPI's
-      new-project rate limit. The `scali-sqp`, `scali-piqp` and `scali-ipopt` placeholders published
-      before the name changed stay up as tombstones, since deleting a project frees its name for
-      anyone; point their descriptions at the `scaly` packages once those exist.
-- [x] **R-59. Rename everything to scaly.** Done 2026-09-16: the package, the three plugin
-      distributions and directories, the `scaly_*` modules, `SCALY_*` environment variables, the two
-      console scripts, the JIT cache directory, CI cache paths, `.config/wt.toml`, `zensical.toml`,
-      `docs/` and `internal/`, and the `sc` import alias. The Foxglove layouts never contained the
-      old string. The GitHub repository was renamed in place and this
-      clone's `origin` now points at `PREDICT-EPFL/scaly`; any other clone needs
-      `git remote set-url origin git@github.com:PREDICT-EPFL/scaly.git` and, if its directory was
-      renamed too, a recreated `.venv` since uv's console scripts hardcode the venv path.
-- [x] **R-61. Remove the pre-extraction history from file contents.** Done 2026-09-16; the
-      library roadmap went with it, since everything it planned is either implemented or too
-      vague to keep.
-- [x] **R-63. Audit `internal/` for publication.** Done 2026-09-16 with an independent second
-      pass. It stays in the public repository and off the documentation site, which Zensical
-      guarantees because it builds `docs/` only. The `no-private-names` `pre-merge` hook in
-      `.config/wt.toml` keeps the gate alive after the audit.
-- [x] **R-62. Rewrite history and force-push the renamed repository.** After R-37, R-59, R-61 and
-      R-63 (all done): drop the local `refs/t3/checkpoints/*` refs, `git filter-repo --invert-paths` on
-      the paths R-37 removed, re-add `origin`, force-push every branch and
-      tag, delete stale remote branches, and hard-reset or re-clone every other clone and worktree
-      rather than pulling. Do this while the repository is still private, since GitHub keeps
-      unreachable commits fetchable by SHA until its garbage collection.
-- [x] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
-      `CITATION.cff`, a real pyproject description, and ruff's `target-version` aligned with `requires-python`.
-- [x] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
-      ruff and ty green locally. The first CI run happens here because the month's Actions minutes
-      are spent, and both workflows will consume them once they refill.
-- [x] **R-40. Versioning policy.** What a minor bump promises about the generated C symbols, the
-      sparsity-table prefixes and the plugin ABI; written into `docs/dev/versioning.md`, with the
-      plugins pinning `scaly>=0.1.0a1,<0.2`.
-- [x] **R-66. Platform-only wheel tags for the plugins.** Nothing in the plugins touches the Python
-      C API, the solvers load through ctypes, yet `hatch_build.py` in `scaly-piqp` and `scaly-ipopt`
-      sets `infer_tag = True`, which stamps the running interpreter's `cpXY-cpXY-<platform>` tag.
-      Set the tag to `py3-none-<platform>` explicitly instead, so one wheel per OS and architecture
-      serves every Python version and no per-interpreter build matrix or stable ABI is needed.
-- [x] **R-41. Wheel building and publishing.** Done 2026-09-29. `ci.yml` builds the wheels and sdists
-      on every run and `release.yml` publishes a green `main` to TestPyPI, then PyPI; the design is
-      in [the release workflow note](notes/release_workflow_design.md).
+- [ ] **R-42. Freeze measurements on `0.1.0a1`** and publish a durable archive. Absorbs BH-21: the
+      archive holds the release's source, lockfile, inputs, generated code, logs, statistics and
+      manifest, with every raw run retained. The status admonition in `docs/index.md` stays until
+      0.1.0.
 - [ ] **R-71. `zig cc` as the JIT's preferred compiler.** Order: `SCALY_CC`, then
       `python -m ziglang cc` when `ziglang` is importable, then `CC`, then `cc` on `PATH`. It wraps
       clang, so the JIT always speaks one flag dialect and gcc-only behaviour (the sincos merge
       that blocks vectorization, the 40% gap to clang measured in C-81) leaves the JIT path; on
       the x86 reference machine zig's clang 21 was within 10% of clang 20 on the baseline and
       linked `-lmvec` natively (11.6 µs on the 8-lane libmvec variant). The compiler becomes a
-      command list rather than a binary path, which `scaly_toolchain` must print. Before flipping
-      the default, check that the solver plugins' JIT paths (the `scaly-sqp` wrapper, the PIQP and
-      IPOPT hooks) link against the vendored libraries with zig's driver on all three operating
-      systems, and measure cold compile latency, since zig builds its own libc on first use.
-      Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
-- [ ] **R-42. Freeze measurements on `0.1.0a1`** and publish a durable archive. The four packages
-      were released at `0.1.0a1` on 2026-09-29, tagged `<package>-v0.1.0a1`; the measurement freeze
-      and the archive remain.
-
-## Track C closeout before merging to dev
-
-- [x] **C-59. Complete the approved optimization cleanup.** Follow the
-      [review and plan](notes/optimization_cleanup_2026_09_10.md), preserving the arithmetic and
-      measurement contracts in [protocol](notes/benchmark_protocol.md).
-  - [x] Pin regressions and capture the baseline.
-  - [x] Centralize Program analyses, names, and procedure reachability.
-  - [x] Normalize compilation expressions and consolidate derivative helpers.
-  - [x] Close fusion, arithmetic, and scalarization interactions.
-  - [x] Move store coalescing and scalar scheduling into Program passes.
-  - [x] Validate the combined compiler and refresh documentation.
-  - [x] Address Fable's review and repeat the controlled comparison. The remaining generation overhead is measured and accepted for this cleanup.
-
-Complete the implementation and independent reviews, then run BH-20 on the combined tree.
-C-56 and BP-23 can run independently. C-46 and C-49 share derivative construction and run together.
-After integration, refresh the test baselines and run the full suite, formatting, lint, and strict
-type checks. Run the study without competing tests or compilation. Remove the temporary
-implementation worktrees after integrating and reviewing their changes.
-Keep metadata and caller-workspace growth as measured limitations. After updating the results,
-merge into dev and prioritize documentation.
-
-- [x] **C-56. Prevent workspace slot names from colliding with user buffers.** `pack_workspace`
-      allocates scratch slots around every existing parameter, output, and private buffer name.
-      The regression in `tests/passes/test_program.py` reproduces silent wrong results with outputs
-      named `s1` and `s2`. Implemented and independently reviewed 2026-09-09.
-
-- [x] **C-46. Share stage-invariant and cross-formal derivative work.** The program pass hoists
-      invariant buffers before mapped loops. Forward differentiation now combines active formals
-      and packs compatible specialized results into one mapped callee output, sharing primal and
-      adjoint expressions. This does not coalesce arbitrary original Function outputs or batch
-      every runtime seed into a matrix product. Implemented and independently reviewed 2026-09-09.
-      [Controlled closeout probes](notes/perf_2026_09_07/README.md#c-46-and-c-49-closeout-2026-09-09).
-
-- [x] **C-49. Reduce derivative operation count without pre-differentiation inlining.** Joint
-      propagation across active formals, negation identities, lean division rules, vector self-dot
-      and elementwise-square rules, and shared square-root reciprocals are implemented. Tests cover
-      seed layouts, caches, overlapping slices, logical input names, and finite-scale derivatives.
-      Independently reviewed 2026-09-09. The [audit](notes/perf_2026_09_07/c49_ad_op_audit.md)
-      records the diagnosis; [closeout probes](notes/perf_2026_09_07/README.md#c-46-and-c-49-closeout-2026-09-09)
-      record the combined C-46/C-49 results. Pre-differentiation inlining is deferred as C-58.
-
-- [x] **BP-23. Vmap the unbumpercars wall rows.** The four wall barriers per car now use one
-      mapped Function, preserving constraint order and all existing numerical gates. The growth
-      check covers Jacobian source and retained pair/wall call families through the full exact
-      Lagrangian Hessian. The old inline-wall formulation fails the growth check. Outer Hessian assembly
-      still grows with car count and remains part of deferred C-8. Independently reviewed 2026-09-09.
-
-- [x] **BH-19. Harness gaps.** `dispatch_trip_count`, `dispatch_workspace` and `dispatch_arithmetic`
-      were empty for the race_cars and unbumpercars Scaly cells because `_dispatch_metrics` gave up
-      on any kernel mapped over two axes (`N` and `N+1` stages; cars and pairs). It now reports the
-      dispatch-loop family carrying the most arithmetic per call and the workspace over every
-      dispatch, so all four problems fill the columns. The unrolled pair rows no longer exist in
-      `filters.py` (removed by the pair-row port); we chose not to recover them from history for a
-      same-protocol control, so the mapped-pair result is reported descriptively.
-      Closeout follow-up implemented and independently reviewed 2026-09-09: hoisted procedures
-      retain their original callee identity for dispatch metrics. Unit-trip and longer maps exclude
-      the one-time prologue. Disabling the identity lookup makes the regression fail.
-
-- [x] **BH-20. Complete the closeout study.** Completed 2026-09-11
-      in `benchmarks/results/study-2026-09-10`. The [results overview](../docs/benchmarks/index.md)
-      and [scalability tables](../docs/benchmarks/scalability.md) contain the completed study.
-      The interrupted 2026-09-09 attempt
-      remains preserved in its original result directory and frozen investigation note.
+      command list rather than a binary path (C-83 prepares this), which `scaly_toolchain` must
+      print. Milestone 1, right after C-83 and before C-139 and milestone 3 (roadmap
+      [order of work](notes/core_compiler_roadmap.md#order-of-work)). Before flipping the default,
+      check that the solver plugins' JIT paths (the `scaly-sqp` wrapper, the PIQP and IPOPT hooks)
+      link against the vendored libraries with zig's driver on all three operating systems, and
+      measure cold compile latency, since zig builds its own libc on first use. Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
+- [ ] **R-38. Windows support** for 0.1.0: the core JIT, `scaly-sqp` and `scaly-piqp`; `scaly-ipopt`
+      later, since MUMPS needs Fortran, which zig lacks. The candidate toolchain is `zig cc`
+      throughout, `ziglang` required on Windows through a `sys_platform == 'win32'` marker. The
+      investigation so far, including how CasADi does it, was all done from macOS and Linux; the
+      first step is to try it on an actual Windows machine: a zig-built DLL loaded by ctypes, the
+      cache and DLL search path, a zig build of PIQP and BLASFEO. Runs in parallel with the rest of
+      0.1.0. [Investigation](notes/windows_support_2026_10_02.md).

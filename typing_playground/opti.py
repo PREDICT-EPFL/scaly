@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from .expr import Buffer, Expr
 from .function import Function
-from .trees import G, L, Tree, leaves
+from .trees import Tree, arg, group, leaves
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,7 @@ def _prove_quadratic(p: Problem[Any, Any, Any, Any]) -> None:
 def solver[SV, NV, SP, NP](
   p: Problem[SV, NV, SP, NP], backend: str, /, *, name: str | None = None, options: dict[str, Any] | None = None
 ) -> Function[tuple[SV, SV, Expr, Expr, SP], tuple[NV, NV, Buffer, Buffer, NP], tuple[SV, SV, Expr, Expr], tuple[NV, NV, Buffer, Buffer]]:
-  """Build a solver for ``p``: a plain ``Function`` over ``(vars_init, lam_box0, lam_eq0, lam_ineq0, params)``.
+  """Build a solver for ``p``: a plain ``Function`` with parameters ``vars_init, lam_box0, lam_eq0, lam_ineq0, params``.
   Multipliers are always present, size 0 when the category is absent, so the signature never
   depends on the problem; box multipliers have the variables' structure."""
   if backend not in BACKENDS:
@@ -119,11 +119,10 @@ def solver[SV, NV, SP, NP](
   if kind == "qp":
     _prove_quadratic(p)
   lam_box = p.vars.relabel("lam:")
-  inputs = G(p.vars, lam_box, L("lam_eq", p.n_eq), L("lam_ineq", p.n_ineq), p.params)
-  outputs = G(p.vars, lam_box, L("lam_eq", p.n_eq), L("lam_ineq", p.n_ineq))
+  inputs = group(p.vars, lam_box, arg("lam_eq", p.n_eq), arg("lam_ineq", p.n_ineq), p.params)
+  outputs = group(p.vars, lam_box, arg("lam_eq", p.n_eq), arg("lam_ineq", p.n_ineq))
 
-  def body(args: tuple[SV, SV, Expr, Expr, SP]) -> tuple[SV, SV, Expr, Expr]:
-    vars_init, lam_box0, lam_eq0, lam_ineq0, _params = args
+  def body(vars_init: SV, lam_box0: SV, lam_eq0: Expr, lam_ineq0: Expr, _params: SP) -> tuple[SV, SV, Expr, Expr]:
     return vars_init, lam_box0, lam_eq0, lam_ineq0
 
   return Function(name or f"{p.name}_{backend}", body, inputs, outputs)
@@ -137,8 +136,12 @@ def qp_problem(n: int, n_eq: int, n_ineq: int) -> Problem[Expr, Buffer, QPData[E
   parameter, so a consumer updates the QP data per call; an absent block has size 0."""
 
   @problem(
-    vars=L("x", n),
-    params=G(G(L("P", (n, n)), L("c", n)), G(L("A", (n_eq, n)), L("b", n_eq)), G(L("G", (n_ineq, n)), L("g_lb", n_ineq), L("g_ub", n_ineq))),
+    vars=arg("x", n),
+    params=group(
+      group(arg("P", (n, n)), arg("c", n)),
+      group(arg("A", (n_eq, n)), arg("b", n_eq)),
+      group(arg("G", (n_ineq, n)), arg("g_lb", n_ineq), arg("g_ub", n_ineq)),
+    ),
     name="qp",
   )
   def qp(x: Expr, params: QPData[Expr]) -> ProblemSpec[Expr]:

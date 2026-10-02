@@ -5,46 +5,48 @@ from __future__ import annotations
 import numpy as np
 
 from typing_playground.expr import Buffer, Expr, const
-from typing_playground.function import adjoint, forward, function, gradient, hessian, jacobian, lagrangian_hessian, vmap
+from typing_playground.function import Function, adjoint, forward, function, gradient, hessian, jacobian, lagrangian_hessian, vmap
 from typing_playground.opti import ProblemSpec, bounded, problem, qp_problem, solver
-from typing_playground.templates import FunctionTemplate, template
-from typing_playground.trees import G, L
+from typing_playground.trees import arg, group
 
 # --- functions ---
 
 
-@function(L("x", 3), G(L("first", ...), L("second", 3)))
+@function(arg("x", 3), outputs=group(arg("first", ...), arg("second", 3)))
 def duplicate(x: Expr) -> tuple[Expr, Expr]:
   return x, x
 
 
-@function(G(L("x", 3), L("y", 3)), L("prod", ...))
-def multiply(inputs: tuple[Expr, Expr]) -> Expr:
-  return inputs[0] * inputs[1]
+@function(arg("x", 3), arg("p", ()))  # no outputs=: one traced leaf named "energy"
+def energy(x: Expr, p: Expr) -> Expr:
+  return (x * x).sum() * p
 
 
-@function(L("x", 3), L("square", ...))
+@function(arg("x", 3), arg("y", 3), outputs=arg("prod", ...))
+def multiply(x: Expr, y: Expr) -> Expr:
+  return x * y
+
+
+@function(arg("x", 3), outputs=arg("square", ...))
 def square(x: Expr) -> Expr:
-  return multiply.symbolic_call(duplicate.symbolic_call(x))
+  return multiply.symbolic_call(*duplicate.symbolic_call(x))
 
 
-@function(G(L("x", 3), L("p", ())), L("f", ...))
-def cost(inputs: tuple[Expr, Expr]) -> Expr:
-  x, p = inputs
+@function(arg("x", 3), arg("p", ()), outputs=arg("f", ...))
+def cost(x: Expr, p: Expr) -> Expr:
   return (x * x).sum() * p
 
 
 # Five inputs grouped the way the problem thinks about them ...
-@function(G(G(L("state", 4), L("u", 2)), G(L("pw", 10), L("physics", 3), L("dt", ()))), L("next", ...))
-def step(inputs: tuple[tuple[Expr, Expr], tuple[Expr, Expr, Expr]]) -> Expr:
-  (state, _u), (_pw, _physics, _dt) = inputs
+@function(group(arg("state", 4), arg("u", 2)), group(arg("pw", 10), arg("physics", 3), arg("dt", ())), outputs=arg("next", ...))
+def step(xu: tuple[Expr, Expr], rest: tuple[Expr, Expr, Expr]) -> Expr:
+  state, _u = xu
   return state
 
 
 # ... or flat, when there is no natural grouping. Same leaves, same C signature.
-@function(G(L("state", 4), L("u", 2), L("pw", 10), L("physics", 3), L("dt", ())), L("next", ...))
-def step_flat(inputs: tuple[Expr, Expr, Expr, Expr, Expr]) -> Expr:
-  state, _u, _pw, _physics, _dt = inputs
+@function(arg("state", 4), arg("u", 2), arg("pw", 10), arg("physics", 3), arg("dt", ()), outputs=arg("next", ...))
+def step_flat(state: Expr, u: Expr, pw: Expr, physics: Expr, dt: Expr) -> Expr:
   return state
 
 
@@ -56,49 +58,76 @@ adj_square_x = adjoint(square, "square", "x")
 hess_l = lagrangian_hessian(duplicate, "x")
 cost_batch = vmap(cost, 7)
 
-# --- templates ---
 
-
-@template(G(L("x"), L("p")), L("f"), name="cost")
-def cost_t(inputs: tuple[Expr, Expr]) -> Expr:
+# A group is one parameter: the body receives the tuple.
+@function(group(arg("x", 3), arg("p", ())), outputs=arg("f", ...))
+def cost_packed(inputs: tuple[Expr, Expr]) -> Expr:
   x, p = inputs
   return (x * x).sum() * p
 
 
-@template()
-def scale(inputs):  # the "average user" spelling: no declaration, no annotations
-  a, b = inputs
+# No parameters at all: a constant, evaluated by `constant()`.
+@function(outputs=arg("c", ...))
+def constant() -> Expr:
+  return Expr((2,))
+
+
+# --- holes ---
+
+
+@function(arg("x"), arg("p"), outputs=arg("f"))
+def cost2(x: Expr, p: Expr) -> Expr:
+  return (x * x).sum() * p
+
+
+@function(group(arg("x"), arg("y")), arg("p"), outputs=arg("f"))
+def cost3(xy: tuple[Expr, Expr], p: Expr):
+  x, y = xy
+  return (x * y).sum() * p
+
+
+@function(arg("x"), arg("p"), outputs=arg("f"), name="cost")
+def cost_t(x: Expr, p: Expr) -> Expr:
+  return (x * x).sum() * p
+
+
+@function()
+def scale(a, b):  # the "average user" spelling: no declaration, no annotations
   return a * b
 
 
-def fresh_cost(name: str = "cost") -> FunctionTemplate[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer]:
-  """A template nothing else has instantiated, for cache tests."""
+@function()
+def scale_annotated(a: Expr, b: Expr) -> Expr:  # bare, but the annotations type the symbolic side
+  return a * b
 
-  @template(G(L("x"), L("p")), L("f"), name=name)
-  def fresh(inputs: tuple[Expr, Expr]) -> Expr:
-    x, p = inputs
+
+def fresh_cost(name: str = "cost") -> Function[tuple[Expr, Expr], tuple[Buffer, Buffer], Expr, Buffer]:
+  """A function with holes that nothing else has instantiated, for cache tests."""
+
+  @function(arg("x"), arg("p"), outputs=arg("f"), name=name)
+  def fresh(x: Expr, p: Expr) -> Expr:
     return (x * x).sum() * p
 
   return fresh
 
 
 # Trace-time resolution: decorating `caller` instantiates cost_t for shapes ((2,), (2,)).
-@function(L("x", 2), L("y"))
+@function(arg("x", 2), outputs=arg("y"))
 def caller(x: Expr) -> Expr:
-  return cost_t.symbolic_call((x, x))
+  return cost_t.symbolic_call(x, x)
 
 
 # --- problems ---
 
 
-@problem(vars=L("x", 3), params=L("scale", ()))
+@problem(vars=arg("x", 3), params=arg("scale", ()))
 def quadratic(x: Expr, scale: Expr) -> ProblemSpec[Expr]:
   return ProblemSpec(minimize=(x * x).sum() * scale, lb=const(-1.0), ub=const(1.0))
 
 
 # Multi-block variables, two constraint groups, box bounds in the variables' structure. The body
 # binds `vs`/`ps`, not `u`/`s`/`x`: declared names are external, body names are local.
-@problem(vars=G(L("u", 2), L("s", 1)), params=G(L("x", 4), L("u_ref", 2)))
+@problem(vars=group(arg("u", 2), arg("s", 1)), params=group(arg("x", 4), arg("u_ref", 2)))
 def filter_problem(vs: tuple[Expr, Expr], ps: tuple[Expr, Expr]) -> ProblemSpec[tuple[Expr, Expr]]:
   u, s = vs
   x, u_ref = ps
@@ -111,7 +140,7 @@ def filter_problem(vs: tuple[Expr, Expr], ps: tuple[Expr, Expr]) -> ProblemSpec[
   )
 
 
-@problem(vars=L("x", 2), params=L("w", ()))
+@problem(vars=arg("x", 2), params=arg("w", ()))
 def rosenbrock(x: Expr, w: Expr) -> ProblemSpec[Expr]:
   return ProblemSpec(minimize=(1 - x[0]) ** 2 + w * (x[1] - x[0] ** 2) ** 2, ineq=(bounded(x[0].sin(), hi=0.5, name="wave"),))
 
