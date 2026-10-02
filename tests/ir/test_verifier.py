@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ir.expr import Expr, ExprOp, binary, unary
 from scaly.ir.expr_spec import spec_expr, verify_expr
@@ -30,7 +32,7 @@ def test_simple_scalar_graph_verifies() -> None:
 
 
 def test_matmul_named_call_verifies() -> None:
-  @sc.function(sc.G(sc.L("a", (3, 4)), sc.L("b", (4, 2))), sc.L("c", ...), name="mm")
+  @sc.function(sc.group(sc.arg("a", (3, 4)), sc.arg("b", (4, 2))), outputs=sc.arg("c", ...), name="mm")
   def fn(ab: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     a, b = ab
     return a @ b
@@ -42,22 +44,22 @@ def test_matmul_named_call_verifies() -> None:
 
 
 def test_vmap_graph_verifies() -> None:
-  @sc.function(sc.L("u", 2), sc.L("y", ...))
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...))
   def stage(u: sc.Expr) -> sc.Expr:
     return u.sin().sum()
 
   batch = sc.sym("batch", 8)
-  mapped = sc.vmap(stage, length=4, inputs=[(batch, 0, 2)])
+  mapped = _mapped_call(stage, length=4, inputs=[(batch, 0, 2)])
   verify_expr(mapped)
 
 
 def test_jacobian_factory_output_verifies() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
   def fn(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 
   jac = sc.jacobian(fn, "y", "x")
-  verify_expr(jac.outputs)
+  verify_expr(as_concrete(jac).outputs)
 
 
 def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
@@ -122,7 +124,7 @@ def test_matmul_contracting_dim_mismatch_caught() -> None:
 
 
 def test_call_arg_shape_mismatch_caught() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
   def fn(x: sc.Expr) -> sc.Expr:
     return x.sum()
 
@@ -131,14 +133,14 @@ def test_call_arg_shape_mismatch_caught() -> None:
     ExprOp.CALL,
     (bad_arg,),
     TensorType((), dtype=dtypes.float64, diff=True),
-    attrs={"callee": fn, "output": 0},
+    attrs={"callee": fn.instantiate(), "output": 0},
   )
   with pytest.raises(VerifyError, match="call-attrs"):
     verify_expr(bad)
 
 
 def test_vmap_rank1_outer_required() -> None:
-  @sc.function(sc.L("u", 2), sc.L("y", ...))
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...))
   def stage(u: sc.Expr) -> sc.Expr:
     return u.sin().sum()
 
@@ -148,7 +150,7 @@ def test_vmap_rank1_outer_required() -> None:
     (bad_outer,),
     TensorType((4,), dtype=dtypes.float64, diff=True),
     attrs={
-      "callee": stage,
+      "callee": stage.instantiate(),
       "output": 0,
       "length": 4,
       "starts": (0,),
@@ -182,14 +184,14 @@ def test_verify_walks_subgraph_and_names_first_failure() -> None:
 def test_verifier_smoke_on_workload_graphs() -> None:
   """Smoke: a small structurally-rich graph (slice + matmul + sum) verifies, including its Jacobian."""
 
-  @sc.function(sc.L("z", 6), sc.L("y", ...), name="f")
+  @sc.function(sc.arg("z", 6), outputs=sc.arg("y", ...), name="f")
   def fn(z: sc.Expr) -> sc.Expr:
     A = sc.const(np.eye(4, 6))
     return (A @ z + z[:4]).sum()
 
-  verify_expr(fn.outputs)
+  verify_expr(as_concrete(fn).outputs)
   jac = sc.jacobian(fn, "y", "z")
-  verify_expr(jac.outputs)
+  verify_expr(as_concrete(jac).outputs)
 
 
 def test_binary_helper_round_trip_verifies() -> None:

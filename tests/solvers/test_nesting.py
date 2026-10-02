@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp
 from scaly.solvers.registry import available_backends
@@ -20,15 +21,15 @@ def test_solver_call_returns_expressions() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
   out_exprs = qp(mu)
-  assert len(out_exprs) == len(qp.function.output_names)
+  assert len(out_exprs) == len(as_concrete(qp.function).output_names)
   # call() inherits from Function and wraps each output in an ExprOp.CALL node
   # whose callee is the solver function — the inner SOLVER_CALL nodes live in
   # the callee's own expression graph.
   for e in out_exprs:
     assert e.op == ExprOp.CALL
-    assert e.attrs["callee"] is qp.function
+    assert e.attrs["callee"] is qp.function.instantiate()
   # Shapes line up with the descriptor's output signature.
-  expected_shapes = tuple(s for _, s in qp.function.descriptor.output_signature)
+  expected_shapes = tuple(s for _, s in as_concrete(qp.function).descriptor.output_signature)
   for e, expected in zip(out_exprs, expected_shapes, strict=True):
     assert e.shape == expected
 
@@ -36,8 +37,8 @@ def test_solver_call_returns_expressions() -> None:
 def test_solver_descriptor_present_in_inner_graph() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  solver_calls = [node for node in topo(qp.function.outputs) if node.op == ExprOp.SOLVER_CALL]
-  assert len(solver_calls) == len(qp.function.output_names)
+  solver_calls = [node for node in topo(as_concrete(qp.function).outputs) if node.op == ExprOp.SOLVER_CALL]
+  assert len(solver_calls) == len(as_concrete(qp.function).output_names)
   descriptors = {id(node.attrs["solver"]) for node in solver_calls}
   assert len(descriptors) == 1  # all outputs share one descriptor
   desc = solver_calls[0].attrs["solver"]
@@ -51,7 +52,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
 
-  @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x", ...), sc.L("lam_box", ...), sc.L("lam_eq", ...)), name="multi_out")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x", ...), sc.arg("lam_box", ...), sc.arg("lam_eq", ...)), name="multi_out")
   def multi_out(mu: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     out = qp(mu)
     return (out[0], out[1], out[2])
@@ -69,7 +70,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
 
-  @sc.function(sc.L("mu", (2,)), sc.L("x", ...), name="nested_stats_host")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.arg("x", ...), name="nested_stats_host")
   def host(mu: sc.Expr) -> sc.Expr:
     return qp(mu)[0]
 
@@ -84,7 +85,7 @@ def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = sc.sym("mu", 2)
   qps = [build_qp(P=np.eye(2), c=-mu) for _ in range(2)]
 
-  @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x0", ...), sc.L("x1", ...)), name="duplicate_solver_host")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x0", ...), sc.arg("x1", ...)), name="duplicate_solver_host")
   def host(mu: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return qps[0](mu)[0], qps[1](mu)[0]
 

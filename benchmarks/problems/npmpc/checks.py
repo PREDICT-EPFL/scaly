@@ -20,6 +20,7 @@ from dataclasses import replace
 
 import numpy as np
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import problem_stats, solve_problem
@@ -285,8 +286,8 @@ def check_constraint_rows_and_bounds() -> None:
   lower, upper = npmpc_ineq_bounds(horizon)
 
   @sc.function(
-    sc.G(sc.L("z", n_dec(horizon)), sc.L("xstart", sc.TensorType((NX,), diff=False))),
-    sc.L("g", ...),
+    sc.group(sc.arg("z", n_dec(horizon)), sc.arg("xstart", sc.TensorType((NX,), diff=False))),
+    outputs=sc.arg("g", NX + 2 * (horizon + 1)),
     name="npmpc_ineq_check",
   )
   def constraints(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -302,7 +303,7 @@ def check_constraint_rows_and_bounds() -> None:
   expected = np.concatenate([states[0] - xstart, states[:, 1] + slack, states[:, 1] - slack])
   np.testing.assert_allclose(np.asarray(constraints((z, xstart))).reshape(-1), expected, rtol=0.0, atol=1e-14)
 
-  assert constraints.outputs[0].size == NX + 2 * (horizon + 1)
+  assert as_concrete(constraints).outputs[0].size == NX + 2 * (horizon + 1)
   np.testing.assert_array_equal(lower[:NX], -X0_BAND)
   np.testing.assert_array_equal(upper[:NX], X0_BAND)
   np.testing.assert_array_equal(lower[NX : NX + horizon + 1], -PHI_LIMIT)
@@ -380,8 +381,8 @@ def check_nlp_uses_an_exact_hessian() -> None:
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
   controller = build_solver(config, "ipopt", "scaly")
-  assert controller.function.descriptor.hess is not None
-  requested = dict(controller.function.descriptor.options).get("hessian_approximation")
+  assert as_concrete(controller.function).descriptor.hess is not None
+  requested = dict(as_concrete(controller.function).descriptor.options).get("hessian_approximation")
   assert requested is None, f"the IPOPT column asks for hessian_approximation={requested!r}"
 
   n_eq, n_ineq = constraint_counts(config.horizon)

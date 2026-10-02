@@ -60,13 +60,13 @@ The `@sc.function` decorator constructs one by running a Python body with
 symbolic inputs:
 
 ```python
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), sc.L("znext", ...))
+@sc.function(sc.group(sc.arg("z", 2), sc.arg("u", 1)), outputs=sc.arg("znext", ...))
 def model(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
     return z + 0.1 * sc.concat([z[1:], u])
 ```
 
-`L` stands for *leaf* and declares one named array, `G` stands for *group* and
+`arg` declares one named array, and `group`
 combines leaves or other groups into a tree of inputs or outputs. Here, the
 input group is a tuple containing `z` and `u`. The output is one leaf named
 `znext`, whose shape is inferred from the returned expression because its
@@ -87,25 +87,18 @@ generates and compiles C. Subsequent calls reuse the compiled code. The Python
 body does not run again. A call with symbolic expressions instead includes
 the function in a larger graph, as the trajectory example below demonstrates.
 
-The input tree determines the call structure: `sc.G` introduces a tuple,
-whereas a single `sc.L` takes or returns an array directly. Shape `()` denotes
+The input tree determines the call structure: `sc.group` introduces a tuple,
+whereas a single `sc.arg` takes or returns an array directly. Shape `()` denotes
 a scalar, and shape `(1,)` denotes a one-element vector. These are distinct.
 The [functions guide](functions.md) covers nested groups and other declarations.
 
-### Optional type annotations
+### Body annotations and call types
 
-The annotations on `model` describe the symbolic Python body: a tuple of two
-`Expr` inputs and one `Expr` output. They do not change tracing or numerical
-evaluation. The example also works without them.
-
-Scaly's typing is designed to give you more checking as you provide more type
-information. With annotations, an IDE's type checker can check the body's
-argument and return types against the decorator's declared structure. For
-example, returning a tuple where the decorator declares one leaf is a type
-error. The decorated `Function` also carries symbolic and numerical input and
-output types, so calls with the wrong tuple structure can be flagged before
-execution. Array dimensions are checked at runtime as Python annotations
-cannot encode shapes.
+The decorator defines runtime behavior and the symbolic and numerical call types. Body annotations
+let a checker verify agreement with that declaration and check operations inside the body. They do
+not change evaluation. For example, `inputs: tuple[sc.Expr, sc.Expr]` lets the checker know the types
+of `z` and `u` after unpacking. See [Function authoring levels](functions.md#function-authoring-levels)
+for complete declarations, inferred outputs, shape templates, and bare helpers.
 
 ## Derivatives are Functions too
 
@@ -153,8 +146,8 @@ N = 20
 
 
 @sc.function(
-    sc.G(sc.L("z0", 2), sc.L("us", N)),
-    sc.G(sc.L("zN", ...), sc.L("cost", ...)),
+    sc.group(sc.arg("z0", 2), sc.arg("us", N)),
+    outputs=sc.group(sc.arg("zN", ...), sc.arg("cost", ...)),
 )
 def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, us = inputs
@@ -205,7 +198,7 @@ The recurrence is already built into `rollout`. `sc.problem` adds the objective,
 terminal equality, and control bounds:
 
 ```python
-@sc.problem(vars=sc.L("us", N), params=sc.L("z0", 2))
+@sc.problem(vars=sc.arg("us", N), params=sc.arg("z0", 2))
 def control_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     zN, cost = rollout((z0, us))
     return sc.ProblemSpec(
@@ -301,23 +294,19 @@ Its evaluation does not depend on the result of another defect evaluation:
 
 ```python
 @sc.function(
-    sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)),
-    sc.L("defect", ...),
+    sc.group(sc.arg("z", 2), sc.arg("u", 1), sc.arg("znext", 2)),
+    outputs=sc.arg("defect", ...),
 )
 def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, u, znext = inputs
     return model((z, u)) - znext
 
 
-@sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))
+@sc.problem(vars=sc.arg("w", 3 * N + 2), params=sc.arg("z0", 2))
 def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     states = w[: 2 * (N + 1)]
     controls = w[2 * (N + 1) :]
-    defects = sc.vmap(defect, N, {
-        "z": states[:-2],
-        "u": controls,
-        "znext": states[2:],
-    })
+    defects = sc.vmap(defect, N)((states[:-2], controls, states[2:])).vec()
     return sc.ProblemSpec(
         minimize=sc.sumsqr(states[:-2]) + 0.1 * sc.sumsqr(controls)
                  + 10.0 * sc.sumsqr(states[-2:]),
@@ -326,8 +315,8 @@ def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     )
 ```
 
-`w` stacks `N + 1` two-element states followed by `N` controls. The mapping keys
-are the input names of `defect`. Scaly splits each supplied expression into
+`w` stacks `N + 1` two-element states followed by `N` controls. The mapped call
+passes one group matching `defect`'s parameter tree. Scaly splits the expressions into
 `N` chunks of the corresponding input size: two elements for each state and
 one for each control. `states[:-2]` supplies stages `0` through `N - 1`, and
 `states[2:]` supplies stages `1` through `N`. `sc.bounded` expresses the control

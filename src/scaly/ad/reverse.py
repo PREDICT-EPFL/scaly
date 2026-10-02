@@ -7,8 +7,8 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 
-from ..function import Function
-from ..function.sugar import vmap
+from ..function.concrete import ConcreteFunction
+from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .sparsity import _depends_on
@@ -48,7 +48,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
     name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
-    fn = Function._from_exprs(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
+    fn = ConcreteFunction._from_exprs(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
     cache[key] = (fn, arg_indices)
   return cache[key]
 
@@ -68,7 +68,7 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
 
   adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals)
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-  mapped = vmap(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
+  mapped = _mapped_call(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
   adj_size = sum(callee.inputs[k].size for k in active_formals)
   ret: list[tuple[Expr, Expr]] = []
   offset = 0

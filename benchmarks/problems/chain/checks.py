@@ -18,6 +18,8 @@ from collections.abc import Callable, Iterator
 
 import numpy as np
 
+from scaly.function.model import as_concrete
+from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.passes.lowering import lower_function
 from scaly.solvers.paths import solver_loadable
@@ -63,18 +65,18 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
     dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
-    sparse = chain_nlp(n_masses, horizon).function.descriptor.jac
-    assert isinstance(sparse, sc.Function)
+    sparse = as_concrete(chain_nlp(n_masses, horizon).function).descriptor.jac
+    assert isinstance(sparse, ConcreteFunction)
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 
-    actual = np.asarray(dense((zv, pv)))
+    actual = np.asarray(dense(*(zv, pv)))
     np.testing.assert_allclose(actual, np.asarray(ca_dense(zv, pv)), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(chain_eq_jac_dense_reference(n_masses, horizon, zv, pv), actual, rtol=1e-10, atol=1e-10)
 
-    sparsity = sparse.output_sparsities[0]
+    sparsity = as_concrete(sparse).output_sparsities[0]
     assert sparsity is not None
-    compact = np.asarray(sparse((zv, pv))).reshape(-1)
+    compact = np.asarray(sparse(zv, pv)).reshape(-1)
     flat = np.asarray(sparsity.rows) * actual.shape[1] + np.asarray(sparsity.cols)
     np.testing.assert_allclose(compact, actual.ravel()[flat], rtol=1e-10, atol=1e-10)
     assert sparsity.nnz < actual.size, (sparsity.nnz, actual.size)
@@ -92,8 +94,8 @@ def check_nlp_objective_matches_casadi() -> None:
   zv[horizon * nz :] = base
 
   generated = chain_nlp(n_masses, horizon)
-  assert generated.function.descriptor.hess is not None
-  assert dict(generated.function.descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert as_concrete(generated.function).descriptor.hess is not None
+  assert dict(as_concrete(generated.function).descriptor.options).get("hessian_approximation") != "limited-memory"
   scaly_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
   stats = problem_stats(generated)
   assert stats is not None and stats.to_solver_status().ok and stats.iter > 0
@@ -306,25 +308,31 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   stage = _eq_stage_fn(n_masses)
 
   @sc.function(
-    sc.G(sc.L("z", nz), sc.L("xnext", nx), sc.L("params", sc.TensorType((N_PARAMS,), diff=False))),
-    sc.L("eq", ...),
-    name=stage.name,
+    sc.group(sc.arg("z", nz), sc.arg("xnext", nx), sc.arg("params", sc.TensorType((N_PARAMS,), diff=False))),
+    outputs=sc.arg("eq", nx),
+    name=f"{stage.name}_hinted",
   )
   def hinted(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     return stage(inputs).scalar()
 
   @sc.function(
-    sc.G(
-      sc.L("z", n_dec(n_masses, HORIZON)),
-      sc.L("p", sc.TensorType((n_param(n_masses),), diff=False)),
-      sc.L("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
+    sc.group(
+      sc.arg("z", n_dec(n_masses, HORIZON)),
+      sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
+      sc.arg("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
     ),
-    sc.L("h", ...),
+    outputs=sc.arg("h", ...),
     name="chain_hess_hinted",
   )
   def hessian_values(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, p, lam = inputs
-    mapped = sc.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+    mapped = sc.vmap(hinted, HORIZON)(
+      (
+        sc.window(z, 0, nz),
+        sc.window(z, nz, nz),
+        sc.window(p, nx, 0),
+      )
+    ).vec()
     eq = sc.concat([z[:nx] - p[:nx], mapped])
     return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
 
@@ -335,7 +343,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   selected = [
     proc
     for proc in procs
-    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{stage.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
+    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (

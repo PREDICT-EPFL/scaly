@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.ir.types import dtypes
 
@@ -57,15 +58,15 @@ def test_devicespec_parse_and_str() -> None:
 
 
 def test_function_with_device_repr_and_lower_diagnostic() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
   def fn(x: sc.Expr) -> sc.Expr:
     return x.sum()
 
-  assert fn.device.kind == "host"
+  assert as_concrete(fn).device.kind == "host"
   assert "device=" not in repr(fn)
   gpu = fn.with_device("cuda:0")
-  assert gpu.device == sc.DeviceSpec("cuda", 0)
-  assert "device=cuda:0" in repr(gpu)
+  assert as_concrete(gpu).device == sc.DeviceSpec("cuda", 0)
+  assert "device=cuda:0" in repr(gpu.instantiate())
   # only host lowers today; cuda placement should fail loudly via the JIT path
   from scaly.codegen.jit import JitError
 
@@ -75,18 +76,18 @@ def test_function_with_device_repr_and_lower_diagnostic() -> None:
 
 def test_backend_capability_table_rejects_unsupported_dtype() -> None:
   with pytest.raises(ValueError, match="cannot lower dtype float64"):
-    sc.Function("f", lambda x: x.sum(), sc.L("x", sc.TensorType((3,), dtype=dtypes.float64)), sc.L("y", ...), device="metal:0")
+    sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float64)), outputs=sc.arg("y"), name="f")(lambda x: x.sum()).with_device("metal:0")
   # but float32 on metal is fine
-  sc.Function("f32", lambda x: x.sum(), sc.L("x", sc.TensorType((3,), dtype=dtypes.float32)), sc.L("y", ...), device="metal:0")
+  sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y"), name="f32")(lambda x: x.sum()).with_device("metal:0")
 
 
 def test_float32_construction_keeps_dtype_metadata() -> None:
-  @sc.function(sc.L("x", sc.TensorType((3,), dtype=dtypes.float32)), sc.L("y", ...), name="f32")
+  @sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y", ...), name="f32")
   def fn(x: sc.Expr) -> sc.Expr:
     return (x * x).sum()
 
-  assert fn.inputs[0].type.dtype == dtypes.float32
-  assert fn.outputs[0].type.dtype == dtypes.float32
+  assert as_concrete(fn).inputs[0].type.dtype == dtypes.float32
+  assert as_concrete(fn).outputs[0].type.dtype == dtypes.float32
 
 
 def test_type_shapes_reject_negative_dimensions_and_mismatched_sparsity() -> None:

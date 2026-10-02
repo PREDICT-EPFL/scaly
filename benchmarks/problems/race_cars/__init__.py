@@ -109,25 +109,24 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", NX), name="race_car_eq_initial")
 def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="race_car_eq_interstage")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("params", N_PARAMS)), outputs=sc.arg("eq", NX), name="race_car_eq_interstage")
 def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
-# TODO(#11): Replace this horizon-specialized builder with an ``@sc.function`` template.
 def race_car_eq_function(horizon: int) -> sc.Function:
   """Build the multiple-shooting equality residual for one prediction horizon."""
 
   @sc.function(
-    sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))),
-    sc.L("eq", ...),
+    sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
+    outputs=sc.arg("eq", NX * (horizon + 1)),
     name=f"race_car_eq_N{horizon}",
   )
   def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -145,11 +144,13 @@ def race_car_eq_function(horizon: int) -> sc.Function:
 
 def _race_car_eq_vmap_expr(z: sc.Expr, p: sc.Expr, horizon: int) -> sc.Expr:
   initial = eq_initial((z[:NZ], p[:NX]))
-  mapped = sc.vmap(
-    eq_interstage,
-    length=horizon,
-    inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
-  )
+  mapped = sc.vmap(eq_interstage, horizon)(
+    (
+      sc.window(z, 0, NZ),
+      sc.window(z, NZ, NZ),
+      sc.window(p, NX * (horizon + 1), 0),
+    )
+  ).vec()
   return sc.concat([initial, mapped])
 
 

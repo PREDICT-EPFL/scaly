@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import os
 import subprocess
 import sys
@@ -63,7 +64,7 @@ def test_solver_paths_required_needs_both_libraries(tmp_path, monkeypatch) -> No
 
 def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   (tmp_path / "scaly_aot_cli_target.py").write_text(
-    "import scaly as sc\n\n\ndef build():\n  @sc.function(sc.L('x', 2), sc.L('y', ...), name='aot_cli')\n  def f(x):\n    return x * x\n\n  return f\n"
+    "import scaly as sc\n\n\ndef build():\n  @sc.function(sc.arg('x', 2), outputs=sc.arg('y', ...), name='aot_cli')\n  def f(x):\n    return x * x\n\n  return f\n"
   )
   monkeypatch.syspath_prepend(str(tmp_path))
   out = tmp_path / "generated"
@@ -165,8 +166,11 @@ def test_plain_c_module_header_compiles_as_c99(tmp_path):
   compiler = shutil.which("cc")
   if compiler is None:
     pytest.skip("C compiler required")
-  x = sc.sym("x", 5)
-  fun = sc.Function._from_exprs("plain_c99", [x], [x.sin() * x], ["x"], ["y"])
+
+  @sc.function(sc.arg("x", 5), outputs=sc.arg("y", 5), name="plain_c99")
+  def fun(x: sc.Expr) -> sc.Expr:
+    return x.sin() * x
+
   module = aot.write_module(fun, tmp_path, dialect="c")
   result = subprocess.run(
     [compiler, "-std=c99", "-pedantic-errors", "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")],

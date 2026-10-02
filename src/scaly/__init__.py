@@ -2,7 +2,7 @@
 
 from .codegen.abi import C_API_SIGNATURE, c_api_signature
 from .ad import jvp, jvp_many, vjp, vjp_many
-from .function.sugar import vmap
+from .function.sugar import vmap, broadcast, window
 from .function.api import (
   adjoint,
   forward,
@@ -35,7 +35,7 @@ from .ir.expr import (
   sumsqr,
   vec,
 )
-from .function import Function, G, L, factory
+from .function import Function, group, arg, factory
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
 from .solvers import (
@@ -80,8 +80,8 @@ __all__ = [
   "OP_INFO",
   "Expr",
   "Function",
-  "G",
-  "L",
+  "group",
+  "arg",
   "NO_LB",
   "NO_UB",
   "NotQuadratic",
@@ -131,6 +131,8 @@ __all__ = [
   "vjp_many",
   "lagrangian_hessian",
   "vmap",
+  "broadcast",
+  "window",
   "maximum",
   "minimum",
   "problem",

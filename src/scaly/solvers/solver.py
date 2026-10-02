@@ -7,7 +7,7 @@ from typing import Any, cast, overload
 
 import numpy as np
 
-from ..function import Function
+from ..function.model import Function
 from ..ir.expr import Expr
 from .nlp import build_nlp
 from .qp import build_qp
@@ -53,12 +53,12 @@ class Solver[SV, NV, SP, NP]:
     """Solve for ``params`` from ``warm``, or from ``x0`` and zero multipliers, or from zero."""
     if x0 is not None and warm is not None:
       raise TypeError("pass either x0 or warm, not both")
-    parts = cast(Any, self.function.input_tree).parts
+    parts = cast(Any, self.function.instantiate().input_tree).parts
     symbolic = parts[4].is_symbolic(params)
     if warm is None:
       warm = (_zeros(parts[0], symbolic) if x0 is None else x0, *(_zeros(part, symbolic) for part in parts[1:4]))
     init = tuple(warm)
-    return self.function((*init, params))
+    return self.function(*init, params)
 
   def stats(self) -> SolverStats:
     """The statistics of the latest numerical call."""

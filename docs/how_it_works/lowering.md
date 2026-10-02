@@ -14,7 +14,7 @@ result and a loop that fills it. For this function
 ```python
 import scaly as sc
 
-@sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), sc.L("out", ...))
+@sc.function(sc.group(sc.arg("x", 8), sc.arg("y", 8)), outputs=sc.arg("out", ...))
 def f(inputs):
     x, y = inputs
     return (x.sin() + y) * y
@@ -60,13 +60,13 @@ set of three-iteration loops. With the default `auto` policy, a small stage
 mapped over a horizon is expanded and then merged into the horizon loop:
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("y", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
 def stage(x):
     return x.sin() * x
 
-@sc.function(sc.L("xs", 15), sc.L("ys", ...))
+@sc.function(sc.arg("xs", 15), outputs=sc.arg("ys", ...))
 def horizon(xs):
-    return sc.vmap(stage, 5, [xs])
+    return sc.vmap(stage, 5)(xs).vec()
 ```
 
 ```
@@ -164,15 +164,15 @@ weight matrix. The stage function cannot know that, so each call recomputes
 everything derived from it:
 
 ```python
-@sc.function(sc.G(sc.L("x", 3), sc.L("w", 9)), sc.L("y", ...))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 9)), outputs=sc.arg("y", ...))
 def stage(inputs):
     x, w = inputs
     return (w.reshape((3, 3)).exp() @ x).sin()
 
-@sc.function(sc.G(sc.L("xs", 15), sc.L("w", 9)), sc.L("ys", ...))
+@sc.function(sc.group(sc.arg("xs", 15), sc.arg("w", 9)), outputs=sc.arg("ys", ...))
 def horizon(inputs):
     xs, w = inputs
-    return sc.vmap(stage, 5, [xs, w])
+    return sc.vmap(stage, 5)((xs, w)).vec()
 ```
 
 Here `w` has one chunk, so `vmap` passes the same nine values to all five
@@ -204,13 +204,13 @@ When the caller uses only part of a mapped result, `fuse_ranges` propagates
 that use into the loop. Taking the first element of each stage output:
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("y", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
 def stage(x):
     return x.sin() * x
 
-@sc.function(sc.L("xs", 15), sc.L("firsts", ...))
+@sc.function(sc.arg("xs", 15), outputs=sc.arg("firsts", ...))
 def firsts(xs):
-    return sc.vmap(stage, 5, [xs])[::3]
+    return sc.vmap(stage, 5)(xs).vec()[::3]
 ```
 
 ```
@@ -252,7 +252,7 @@ produced value more than once[^halide]. Broadcasting is the common case. Here
 three sines feed twelve products:
 
 ```python
-@sc.function(sc.G(sc.L("x", 3), sc.L("y", (4, 3))), sc.L("out", ...))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", (4, 3))), outputs=sc.arg("out", ...))
 def f(inputs):
     x, y = inputs
     return x.sin() * y
@@ -284,7 +284,7 @@ contribution per slice. Lowered naively, each contribution is a full-size
 temporary filled with zeros and then summed:
 
 ```python
-@sc.function(sc.L("x", 6), sc.L("c", ...))
+@sc.function(sc.arg("x", 6), outputs=sc.arg("c", ...))
 def cost(x):
     return (x[0:4].sin()).sum() + (x[2:6].cos()).sum()
 ```
@@ -320,7 +320,7 @@ modulo its length:
 ```python
 import numpy as np
 
-@sc.function(sc.L("x", 12), sc.L("y", ...))
+@sc.function(sc.arg("x", 12), outputs=sc.arg("y", ...))
 def scaled(x):
     return x * sc.const(np.tile([1.0, 2.0, 3.0], 4))
 ```
@@ -400,7 +400,7 @@ overlap. In this function, the product `A @ B` is dead once its sum is taken,
 before `B @ A` is computed:
 
 ```python
-@sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out", ...))
+@sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out", ...))
 def f(inputs):
     A, B = inputs
     return (A @ B).sum() + (B @ A).sum()
@@ -444,7 +444,7 @@ exceptional inputs:
 ```python
 import numpy as np
 
-@sc.function(sc.L("x", 4), sc.L("y", ...))
+@sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...))
 def f(x):
     return 0 / x + x / x
 

@@ -55,11 +55,12 @@ src/scaly/
       prepare_scalar.py      statement-local depth bounds before rendering
 
   function/              the frontend
-    model.py             Function, call composition, graph validation
-    tree.py              the typed pytree declarations (Tree, L, G)
+    model.py             Function declarations, instance registry, lifted transforms
+    concrete.py          concrete expression graphs, graph validation, calls and factory
+    tree.py              the typed pytree declarations (Tree, arg, group)
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
-    sugar.py             expression builders that need a Function; today just vmap
+    sugar.py             typed mapped callables, markers, and the private VMAP node builder
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
@@ -115,7 +116,7 @@ one, never a higher one.
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
-| 3 | `function/{model,tree}` | `Function` itself, a named graph boundary over import layer 1, and the pytree declarations. |
+| 3 | `function/{model,concrete,tree}` | Function declarations, concrete graph instances, and typed trees over import layer 1. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
 | 6 | `passes/lowering/*`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
@@ -142,7 +143,7 @@ These can still create dependencies, as the [text renderer example](#one-depende
 Numerical calls and visualization need connections that do not fit a simple import hierarchy.
 They use the following arrangements:
 
-1. `function/model.py`, at layer 3, imports `codegen/jit`, at layer 7, inside `_jit()`.
+1. `function/concrete.py`, at layer 3, imports `codegen/jit`, at layer 7, inside `_jit()`.
    Explicit compilation, numerical evaluation, recompilation, and solver statistics all use this helper. It is the only
    upward import recorded in `SEAM`, and the import-layer test checks that it remains one statement.
 2. Visualization registers a hook with code generation. `codegen/aot.py` defines `RenderObserver`
@@ -155,7 +156,7 @@ recording for an application that never uses visualization.
 
 ### One dependency the table cannot see
 
-`ir/text.py` renders a `Function` by reading its `name`, `inputs`, `outputs`, `input_names`, and
+`ir/text.py` resolves a declared `Function` and renders its concrete instance by reading its `name`, `inputs`, `outputs`, `input_names`, and
 `output_names` attributes. Its import exists only under `TYPE_CHECKING`, so the import-layer test
 does not see this dependency. If you change those attributes, update the renderer and run
 `tests/viz/test_assembly.py` too.

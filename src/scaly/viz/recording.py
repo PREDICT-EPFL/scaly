@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
 from scaly.ir.text import format_program, render_expr_assembly, render_program_assembly
+from scaly.function.model import Function, as_concrete
+from scaly.function.concrete import ConcreteFunction
 from scaly.codegen.aot import register_render_observer
 from scaly.ir.program import ProgramNode
 from scaly.viz.graph import expr_graph, program_graph
 
 if TYPE_CHECKING:
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
 
 _RECORDING_LOCK = threading.Lock()
 _VIZ_TARGETS: dict[int, str | None] = {}
@@ -40,26 +42,26 @@ def recording_path() -> Path:
   return recording_dir() / "recordings.json"
 
 
-def visualize_function(fun: Function, *, label: str | None = None) -> Function:
+def visualize_function[F: Function | ConcreteFunction](fun: F, *, label: str | None = None) -> F:
   """Mark ``fun`` for visualization on future AOT/JIT renders.
 
-  Capturing is exact-object opt-in: no Function is recorded unless it was passed
+  Capturing is exact-object opt-in: no ConcreteFunction is recorded unless it was passed
   here (or to ``capture``). The function itself is returned so callers can write
   ``f = visualize_function(f)``.
   """
   with _RECORDING_LOCK:
-    _VIZ_TARGETS[id(fun)] = label
+    _VIZ_TARGETS[id(as_concrete(fun))] = label
   return fun
 
 
-def unvisualize_function(fun: Function) -> None:
+def unvisualize_function(fun: Function | ConcreteFunction) -> None:
   """Stop recording renders of ``fun``. Does nothing if it was not marked."""
   with _RECORDING_LOCK:
-    _VIZ_TARGETS.pop(id(fun), None)
+    _VIZ_TARGETS.pop(id(as_concrete(fun)), None)
 
 
 @contextmanager
-def capture(fun: Function, *, label: str | None = None) -> Iterator[Function]:
+def capture[F: Function | ConcreteFunction](fun: F, *, label: str | None = None) -> Iterator[F]:
   """Record renders of ``fun`` only inside a ``with`` block, which yields ``fun``."""
   visualize_function(fun, label=label)
   try:
@@ -111,7 +113,7 @@ def _append_disk(recording: dict[str, Any]) -> None:
 
 @dataclass
 class VisualizationRecording:
-  fun: Function
+  fun: ConcreteFunction
   label: str | None = None
   recording_id: str = field(default_factory=lambda: uuid.uuid4().hex)
   started_at: float = field(default_factory=time.time)
@@ -124,10 +126,10 @@ class VisualizationRecording:
   def add_expr(self) -> None:
     self._add_expr("expression", self.fun)
 
-  def add_normalized_expr(self, name: str, fun: Function) -> None:
+  def add_normalized_expr(self, name: str, fun: ConcreteFunction) -> None:
     self._add_expr(f"{name}:{fun.name}", fun)
 
-  def _add_expr(self, name: str, fun: Function) -> None:
+  def _add_expr(self, name: str, fun: ConcreteFunction) -> None:
     self.steps.append(
       {
         "name": name,
@@ -167,7 +169,7 @@ class VisualizationRecording:
       _append_disk(recording)
 
 
-def begin_recording(fun: Function) -> VisualizationRecording | None:
+def begin_recording(fun: ConcreteFunction) -> VisualizationRecording | None:
   with _RECORDING_LOCK:
     if id(fun) not in _VIZ_TARGETS:
       return None

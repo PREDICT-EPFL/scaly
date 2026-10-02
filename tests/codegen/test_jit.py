@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 import scaly.codegen.jit as jit
 
@@ -29,7 +31,7 @@ def isolated_cache(tmp_path, monkeypatch):
 
 
 def _simple_fn() -> sc.Function:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="smoke_jit")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="smoke_jit")
   def fn(x):
     return (x.sin() + x * x).sum()
 
@@ -42,8 +44,8 @@ def test_call_uses_jit_and_matches_numpy(isolated_cache) -> None:
 
   jit_out = fn(xv)
   np.testing.assert_allclose(jit_out, (np.sin(xv) + xv * xv).sum())
-  assert fn._compiled is not None
-  assert Path(fn._compiled.lib_path).exists()
+  assert as_concrete(fn)._compiled is not None
+  assert Path(as_concrete(fn)._compiled.lib_path).exists()
 
 
 def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
@@ -51,18 +53,18 @@ def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
   b = _simple_fn()
   a(np.zeros(3))
   b(np.zeros(3))
-  assert a._compiled.cache_key == b._compiled.cache_key
+  assert as_concrete(a)._compiled.cache_key == as_concrete(b)._compiled.cache_key
 
 
 def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
   fn = _simple_fn()
   fn(np.zeros(3))
-  assert fn._compiled is not None
-  lib_path = Path(fn._compiled.lib_path)
+  assert as_concrete(fn)._compiled is not None
+  lib_path = Path(as_concrete(fn)._compiled.lib_path)
   assert lib_path.exists()
   cache_dir = lib_path.parent
   fn.recompile()
-  assert fn._compiled is None
+  assert as_concrete(fn)._compiled is None
   assert not cache_dir.exists()
   xv = np.array([0.5, 0.0, -1.0])
   out = fn(xv)
@@ -70,7 +72,9 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
 
 
 def test_jit_handles_multi_output(isolated_cache) -> None:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.G(sc.L("sum", ...), sc.L("prod", ...), sc.L("diff", ...)), name="kw_jit")
+  @sc.function(
+    sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.group(sc.arg("sum", ...), sc.arg("prod", ...), sc.arg("diff", ...)), name="kw_jit"
+  )
   def fn(inputs):
     x, y = inputs
     return (x + y, x * y, (x - y).sum())
@@ -84,7 +88,7 @@ def test_jit_handles_multi_output(isolated_cache) -> None:
 
 
 def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
-  @sc.function(sc.L("x", 4), sc.L("y", ...), name="f_sj")
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...), name="f_sj")
   def f(x):
     return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
 
@@ -95,11 +99,11 @@ def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
 
 
 def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
-  @sc.function(sc.L("x", 3), sc.L("sq", ...), name="inner_jit")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("sq", ...), name="inner_jit")
   def inner(x):
     return x * x
 
-  @sc.function(sc.L("z", 3), sc.L("s", ...), name="outer_jit")
+  @sc.function(sc.arg("z", 3), outputs=sc.arg("s", ...), name="outer_jit")
   def outer(z):
     return inner(z + 1.0).sum()
 
@@ -110,7 +114,7 @@ def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
 def test_invalidate_cache_handles_missing_directory(isolated_cache) -> None:
   fn = _simple_fn()
   fn.recompile()  # nothing to remove yet
-  assert fn._compiled is None
+  assert as_concrete(fn)._compiled is None
 
 
 def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
@@ -136,17 +140,17 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   from scaly.codegen import render_c_module
   from tests.solvers.problem_helpers import build_nlp
 
-  @sc.function(sc.G(sc.L("value", 1), sc.L("target", 1)), sc.L("cost", ...), name="oracle_stage")
+  @sc.function(sc.group(sc.arg("value", 1), sc.arg("target", 1)), outputs=sc.arg("cost", ...), name="oracle_stage")
   def stage(inputs):
     value, target = inputs
     return ((value - target.exp()) ** 2).sum().block()
 
   x, param = sc.sym("x", 3), sc.sym("param", 1)
-  cost = sc.vmap(stage, 3, [x, param]).sum()
+  cost = _mapped_call(stage, 3, [x, param]).sum()
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
 
-    @sc.function(sc.L("param", 1), sc.L("solution", ...), name="hoisted_oracle_host")
+    @sc.function(sc.arg("param", 1), outputs=sc.arg("solution", ...), name="hoisted_oracle_host")
     def fun(param):
       return solver(param)[0]
 
@@ -164,13 +168,13 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
 
 @pytest.mark.parametrize("input_name", ["_h0", "v0", "v:0"])
 def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, input_name: str) -> None:
-  @sc.function(sc.L(input_name, 1), sc.L("y", ...), name="named_deep_stage")
+  @sc.function(sc.arg(input_name, 1), outputs=sc.arg("y", ...), name="named_deep_stage")
   def stage(value):
     for _ in range(40):
       value = value.sin() + 0.1
     return value.block()
 
-  @sc.function(sc.L("z", 1), sc.L("y", ...), name="named_deep_root")
+  @sc.function(sc.arg("z", 1), outputs=sc.arg("y", ...), name="named_deep_root")
   def root(z):
     return stage(z)
 

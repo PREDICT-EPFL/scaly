@@ -12,6 +12,8 @@ import re
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.codegen.c import render_program_c_source
 from scaly.codegen.toolchain import find_c_compiler
@@ -72,7 +74,7 @@ def _sz_w(fn: sc.Function) -> int:
 def test_fusion_collapses_elementwise_chain() -> None:
   """A same-shape elementwise chain fuses into a single loop with no intermediate buffers."""
 
-  @sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), sc.L("out0", ...), name="chain")
+  @sc.function(sc.group(sc.arg("x", 8), sc.arg("y", 8)), outputs=sc.arg("out0", ...), name="chain")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return ((x.sin() + y) * y - x).tanh()
@@ -85,7 +87,7 @@ def test_fusion_collapses_elementwise_chain() -> None:
 def _long_scalar_chain(length: int, *, scalar: bool = False) -> sc.Function:
   """``x[0]*1 + x[1]*2 + ...`` accumulated as a left fold, so the expression is ``length`` deep."""
 
-  @sc.function(sc.L("x", 4), sc.L("y", ...), name=f"fold{length}")
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...), name=f"fold{length}")
   def fn(x: sc.Expr) -> sc.Expr:
     acc = sc.const(0.0)
     for i in range(length):
@@ -103,7 +105,7 @@ def _long_scalar_chain_numpy(length: int, x: np.ndarray) -> float:
 def _flat_stage_fold(stages: int, n: int = 4) -> sc.Function:
   """Per-stage ``slice * weights`` products summed flat, one term at a time, as a left fold."""
 
-  @sc.function(sc.G(sc.L("x", stages * n), sc.L("w", n)), sc.L("y", ...), name=f"stages{stages}")
+  @sc.function(sc.group(sc.arg("x", stages * n), sc.arg("w", n)), outputs=sc.arg("y", ...), name=f"stages{stages}")
   def fn(inputs):
     x, w = inputs
     terms = [(x[i * n : (i + 1) * n] * w)[k] for i in range(stages) for k in range(n)]
@@ -145,7 +147,7 @@ def test_fusion_skips_matmul_operand() -> None:
   so inlining the producer's expression there multiplies compute. Regression guard for the
   blow-up that an unguarded fusion introduces."""
 
-  @sc.function(sc.G(sc.L("A", (4, 4)), sc.L("x", 4)), sc.L("out0", ...), name="mm_operand")
+  @sc.function(sc.group(sc.arg("A", (4, 4)), sc.arg("x", 4)), outputs=sc.arg("out0", ...), name="mm_operand")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, x = inputs
     return A @ x.sin()  # sin(x) is the matvec operand — must stay materialized
@@ -158,7 +160,7 @@ def test_fusion_skips_matmul_operand() -> None:
 def test_fusion_into_reduction() -> None:
   """An elementwise producer feeding a SUM fuses into the reduce loop (each element read once)."""
 
-  @sc.function(sc.L("x", 8), sc.L("out0", ...), name="sumf")
+  @sc.function(sc.arg("x", 8), outputs=sc.arg("out0", ...), name="sumf")
   def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x).sum()
 
@@ -234,7 +236,7 @@ def test_fusion_does_not_move_a_read_past_a_write() -> None:
 
 
 def test_unit_loop_unrolls_scalar_elementwise_output() -> None:
-  @sc.function(sc.G(sc.L("x", 1), sc.L("y", 1)), sc.L("out0", ...), name="scalar_add")
+  @sc.function(sc.group(sc.arg("x", 1), sc.arg("y", 1)), outputs=sc.arg("out0", ...), name="scalar_add")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x + y
@@ -367,7 +369,7 @@ def test_hoist_reserves_exported_names_across_repeated_loop_variables() -> None:
 def test_contiguous_slice_aliases_source() -> None:
   """A contiguous slice becomes a zero-copy pointer alias (no copy loop), unlike a strided one."""
 
-  @sc.function(sc.L("x", 8), sc.L("out0", ...), name="slc")
+  @sc.function(sc.arg("x", 8), outputs=sc.arg("out0", ...), name="slc")
   def f(x: sc.Expr) -> sc.Expr:
     s = x[2:6]
     return (s * s).sin()  # use s twice so it stays materialized (not inlined) -> visible alias
@@ -379,7 +381,7 @@ def test_contiguous_slice_aliases_source() -> None:
 
 
 def test_strided_slice_is_not_aliased() -> None:
-  @sc.function(sc.L("x", 8), sc.L("out0", ...), name="strided")
+  @sc.function(sc.arg("x", 8), outputs=sc.arg("out0", ...), name="strided")
   def f(x: sc.Expr) -> sc.Expr:
     return x[::2] + x[1::2]  # strided -> no contiguous offset -> no alias
 
@@ -391,7 +393,7 @@ def test_strided_slice_is_not_aliased() -> None:
 
 
 def test_no_spill_when_temps_small() -> None:
-  @sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), sc.L("out0", ...), name="small")
+  @sc.function(sc.group(sc.arg("x", 8), sc.arg("y", 8)), outputs=sc.arg("out0", ...), name="small")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return (x.sin() + y).tanh()
@@ -403,7 +405,7 @@ def test_packing_reuses_slots_and_spills() -> None:
   """Two disjoint-lifetime 1600-element matmul temps share ONE spilled slot, so sz_w is 1600
   (not 3200) — proving both lifetime slot-reuse and the >= 1024 spill-to-w[] threshold."""
 
-  @sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out0", ...), name="spill")
+  @sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out0", ...), name="spill")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, B = inputs
     c = (A @ B).sum()  # C (1600) lives only until this reduce
@@ -416,7 +418,7 @@ def test_packing_reuses_slots_and_spills() -> None:
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric workspace collision check")
 def test_workspace_slots_do_not_collide_with_output_names() -> None:
-  @sc.function(sc.L("x", 4), sc.G(sc.L("s1", ...), sc.L("s2", ...)), name="slot_collision")
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("s1", ...), sc.arg("s2", ...)), name="slot_collision")
   def f(x):
     matrix = x.reshape((2, 2))
     square = matrix @ matrix
@@ -441,11 +443,11 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   while raw callees can remain inlineable.
   """
 
-  @sc.function(sc.L("x", 2), sc.L("y", ...), name="inner")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="inner")
   def inner(x):
     return x.sin() + x * x
 
-  @sc.function(sc.L("z", 2), sc.L("y", ...), name="outer")
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y", ...), name="outer")
   def outer(z):
     return inner(z * z)
 
@@ -461,11 +463,11 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
 
 
 def test_regular_raw_callees_stay_inline() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...), name="inner")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="inner")
   def inner(x):
     return x.sin()
 
-  @sc.function(sc.L("z", 2), sc.L("out", ...), name="outer")
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("out", ...), name="outer")
   def outer(z):
     return inner(z) + 1.0
 
@@ -479,7 +481,7 @@ def test_spilled_function_matches_numpy() -> None:
   """End-to-end: a function whose temporaries spill to w[] still computes correctly (the JIT
   allocates w from the rendered sz_w and passes it through)."""
 
-  @sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out0", ...), name="spill_num")
+  @sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out0", ...), name="spill_num")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, B = inputs
     return ((A @ B) + (B @ A)).sum()
@@ -497,7 +499,7 @@ def test_spilled_function_matches_numpy() -> None:
 def test_optimized_program_still_verifies() -> None:
   """The pass pipeline output must pass the Program IR verifier (lower_function asserts this)."""
 
-  @sc.function(sc.L("x", 6), sc.L("out0", ...), name="verif")
+  @sc.function(sc.arg("x", 6), outputs=sc.arg("out0", ...), name="verif")
   def f(x: sc.Expr) -> sc.Expr:
     m = x.reshape((2, 3))
     return (m @ x[:3]).sin() + x[3:5]  # (2,3)@(3,) -> (2,), + x[3:5] (2,)
@@ -508,7 +510,7 @@ def test_optimized_program_still_verifies() -> None:
 
 @pytest.mark.parametrize("count", [2, 8])
 def test_slice_gradient_combines_pads(count: int) -> None:
-  @sc.function(sc.L("x", 4 * count), sc.L("cost", ...), name="slice_cost")
+  @sc.function(sc.arg("x", 4 * count), outputs=sc.arg("cost", ...), name="slice_cost")
   def f(x):
     return sum(((x[2 * i : 2 * i + 3] ** 2).sum() for i in range(count)), start=sc.const(0.0))
 
@@ -540,9 +542,9 @@ def test_slice_gradient_combines_pads(count: int) -> None:
 def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None:
   from scaly.ir.expr import scatter
 
-  output_tree = sc.G(sc.L("sum", ...), sc.L("a", ...)) if shared else sc.L("sum", ...)
+  output_tree = sc.group(sc.arg("sum", ...), sc.arg("a", ...)) if shared else sc.arg("sum", ...)
 
-  @sc.function(sc.L("x", 3), output_tree, name="scatter_sum")
+  @sc.function(sc.arg("x", 3), outputs=output_tree, name="scatter_sum")
   def f(x):
     a = scatter(x, [1, 3, 5], 8)
     b = scatter(2 * x, [3, 5, 7], 8)
@@ -567,7 +569,7 @@ def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None
   from scaly.ir.expr import scatter
   from scaly.ir.program import ProgramNode, const_int
 
-  @sc.function(sc.L("x", 4), sc.L("sum", ...), name="mutated_scatter")
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("sum", ...), name="mutated_scatter")
   def f(x):
     a = scatter(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)
     b = scatter(x[2:] if alias else 2 * x, [1, 3] if alias else [1, 3, 5, 7], 8)
@@ -589,7 +591,7 @@ def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None
 def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
   from scaly.ir.expr import scatter
 
-  @sc.function(sc.L("x", 3), sc.L("sum", ...), name="grouped_scatter")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("sum", ...), name="grouped_scatter")
   def f(x):
     a, b, c = (scatter(x[i : i + 1], [1], 4) for i in range(3))
     return (a + b) + c if left_associated else a + (b + c)
@@ -603,7 +605,7 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
 
   index_sets = [[0, 3, 6], [1, 4, 7], [2, 5, 6], [0, 1, 2]]
 
-  @sc.function(sc.L("x", 3), sc.L("sum", ...), name="reshaped_scatter_sum")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("sum", ...), name="reshaped_scatter_sum")
   def f(x):
     terms = [scatter((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
     return sum(terms[1:], start=terms[0])
@@ -626,17 +628,19 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
 def _mapped_mlp(stages: int, *, broadcast: bool) -> tuple[sc.Function, np.ndarray, np.ndarray]:
   """``sin(exp(W) @ x_i)`` per stage; ``W`` is one broadcast matrix or a fresh one per stage."""
 
-  @sc.function(sc.G(sc.L("x", 3), sc.L("w", 9)), sc.L("y", ...), name="hoist_stage")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 9)), outputs=sc.arg("y", ...), name="hoist_stage")
   def stage(inputs):
     x, w = inputs
     return (w.reshape((3, 3)).exp() @ x).sin()
 
-  @sc.function(sc.G(sc.L("z", 3 * stages), sc.L("weights", 9 if broadcast else 9 * stages)), sc.L("y", ...), name=f"hoist_map_{broadcast}")
+  @sc.function(
+    sc.group(sc.arg("z", 3 * stages), sc.arg("weights", 9 if broadcast else 9 * stages)), outputs=sc.arg("y", ...), name=f"hoist_map_{broadcast}"
+  )
   def fn(inputs):
     z, weights = inputs
-    return sc.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0 if broadcast else 9)})
+    return _mapped_call(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0 if broadcast else 9)})
 
-  weights = fn.inputs[1]
+  weights = as_concrete(fn).inputs[1]
   rng = np.random.default_rng(3)
   return fn, rng.normal(size=3 * stages), rng.normal(size=weights.shape[0])
 
@@ -675,16 +679,16 @@ def test_hoist_leaves_per_trip_arguments_in_the_loop() -> None:
 def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
   """The same callee mapped once with ``w`` broadcast and once with ``x`` broadcast gets two distinct splits."""
 
-  @sc.function(sc.G(sc.L("x", 3), sc.L("w", 9)), sc.L("y", ...), name="hoist_two")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 9)), outputs=sc.arg("y", ...), name="hoist_two")
   def stage(inputs):
     x, w = inputs
     return (w.reshape((3, 3)).exp() @ x.exp()).sin()
 
-  @sc.function(sc.G(sc.L("z", 12), sc.L("weights", 36)), sc.L("y", ...), name="hoist_two_map")
+  @sc.function(sc.group(sc.arg("z", 12), sc.arg("weights", 36)), outputs=sc.arg("y", ...), name="hoist_two_map")
   def fn(inputs):
     z, weights = inputs
-    first = sc.vmap(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
-    second = sc.vmap(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
+    first = _mapped_call(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
+    second = _mapped_call(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
     return first + second
 
   assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoist_0", "hoist_two_map"]
@@ -725,15 +729,15 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
 
 @pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled"), ("opaque", "disabled")])
 def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: Lowering, mode: str) -> None:
-  @sc.function(sc.G(sc.L("x", 1), sc.L("w", 1)), sc.L("y", ...), name="policy_stage")
+  @sc.function(sc.group(sc.arg("x", 1), sc.arg("w", 1)), outputs=sc.arg("y", ...), name="policy_stage")
   def stage(inputs):
     x, w = inputs
     return (x * w.sin()).with_lowering(hint)
 
-  @sc.function(sc.G(sc.L("z", 3), sc.L("w", 1)), sc.L("y", ...), name="policy_root")
+  @sc.function(sc.group(sc.arg("z", 3), sc.arg("w", 1)), outputs=sc.arg("y", ...), name="policy_root")
   def root(inputs):
     z, w = inputs
-    return sc.vmap(stage, 3, [(z, 0, 1), (w, 0, 0)])
+    return _mapped_call(stage, 3, [(z, 0, 1), (w, 0, 0)])
 
   stages = {}
   lower_function(root, observe=lambda name, prog: stages.__setitem__(name, prog))
@@ -744,20 +748,20 @@ def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: L
 
 
 def test_hoist_recognizes_generated_pure_callees_in_nested_maps() -> None:
-  @sc.function(sc.G(sc.L("x", 1), sc.L("w", 1)), sc.L("y", ...), name="nested_inner")
+  @sc.function(sc.group(sc.arg("x", 1), sc.arg("w", 1)), outputs=sc.arg("y", ...), name="nested_inner")
   def inner(inputs):
     x, w = inputs
     return x * w.sin()
 
-  @sc.function(sc.G(sc.L("z", 2), sc.L("w", 1)), sc.L("y", ...), name="nested_middle")
+  @sc.function(sc.group(sc.arg("z", 2), sc.arg("w", 1)), outputs=sc.arg("y", ...), name="nested_middle")
   def middle(inputs):
     z, w = inputs
-    return sc.vmap(inner, 2, [(z, 0, 1), (w, 0, 0)]).block()
+    return _mapped_call(inner, 2, [(z, 0, 1), (w, 0, 0)]).block()
 
-  @sc.function(sc.G(sc.L("z", 6), sc.L("w", 1)), sc.L("y", ...), name="nested_root")
+  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 1)), outputs=sc.arg("y", ...), name="nested_root")
   def root(inputs):
     z, w = inputs
-    return sc.vmap(middle, 3, [(z, 0, 2), (w, 0, 0)])
+    return _mapped_call(middle, 3, [(z, 0, 2), (w, 0, 0)])
 
   stages = {}
   lower_function(root, observe=lambda name, prog: stages.__setitem__(name, prog))
@@ -768,21 +772,25 @@ def test_hoist_recognizes_generated_pure_callees_in_nested_maps() -> None:
 
 def test_hoist_positions_and_existing_procedure_names_do_not_collide() -> None:
   @sc.function(
-    sc.G(sc.G(*(sc.L(f"x{i}", 1) for i in range(8))), sc.G(*(sc.L(f"x{i}", 1) for i in range(8, 13)))), sc.L("y", ...), name="position_stage"
+    sc.group(sc.group(*(sc.arg(f"x{i}", 1) for i in range(8))), sc.group(*(sc.arg(f"x{i}", 1) for i in range(8, 13)))),
+    outputs=sc.arg("y", ...),
+    name="position_stage",
   )
   def stage(inputs):
     return sum((x.sin() for group in inputs for x in group), sc.const(0.0)).block()
 
-  @sc.function(sc.L("x", 1), sc.L("y", ...), name="position_stage_hoist_1_2")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="position_stage_hoist_1_2")
   def other(x):
     return x.cos().block()
 
   @sc.function(
-    sc.G(sc.G(*(sc.L(f"z{i}", 3) for i in range(8))), sc.G(*(sc.L(f"z{i}", 3) for i in range(8, 13)))), sc.L("y", ...), name="position_root"
+    sc.group(sc.group(*(sc.arg(f"z{i}", 3) for i in range(8))), sc.group(*(sc.arg(f"z{i}", 3) for i in range(8, 13)))),
+    outputs=sc.arg("y", ...),
+    name="position_root",
   )
   def root(inputs):
     outer = (*inputs[0], *inputs[1])
-    mapped = [sc.vmap(stage, 3, [(z, 0, 0 if i in fixed else 1) for i, z in enumerate(outer)]) for fixed in [(1, 2), (12,)]]
+    mapped = [_mapped_call(stage, 3, [(z, 0, 0 if i in fixed else 1) for i, z in enumerate(outer)]) for fixed in [(1, 2), (12,)]]
     return other(outer[0][:1]) + mapped[0] + mapped[1]
 
   procs = lower_function(root).args

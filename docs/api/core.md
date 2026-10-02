@@ -42,6 +42,17 @@ interfaces for inspecting or extending the compiler.
         - "!^with_device$"
 
 
+Concrete instances are returned by `Function.instantiate`; their resolved graph metadata is
+available for inspection and export.
+
+::: scaly.function.concrete.ConcreteFunction
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^with_device$"
+
+
 ## Types
 
 ::: scaly.ir.types.TensorType

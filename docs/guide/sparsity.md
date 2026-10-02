@@ -14,12 +14,12 @@ Consider a function from a four-element vector to a three-element vector:
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.L("x", 4), sc.L("y", ...))
+@sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...))
 def model(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[1], x[2], x[3] * x[3]])
 
 sparse_jac = sc.sparse_jacobian(model, "y", "x")
-pattern = sparse_jac.output_sparsities[0]
+pattern = sparse_jac.instantiate().output_sparsities[0]
 assert pattern is not None
 print(pattern.shape)  # (3, 4)
 print(pattern.nnz)    # 4
@@ -133,13 +133,13 @@ Hessians are symmetric. If a solver needs only one triangle, request that
 triangle when constructing the derivative:
 
 ```python
-@sc.function(sc.L("x", 4), sc.L("cost", ...))
+@sc.function(sc.arg("x", 4), outputs=sc.arg("cost", ...))
 def cost(x: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x) + x[0] * x[1]
 
 sparse_hess = sc.sparse_hessian(cost, "cost", "x", triangle="lower")
 hess_values = sparse_hess(np.ones(4))
-hess_pattern = sparse_hess.output_sparsities[0]
+hess_pattern = sparse_hess.instantiate().output_sparsities[0]
 assert hess_pattern is not None
 lower = np.zeros(hess_pattern.shape)
 lower[np.asarray(hess_pattern.rows), np.asarray(hess_pattern.cols)] = hess_values
@@ -184,16 +184,16 @@ J_f(z_0)&0&\cdots&0\\
 ```python
 N = 4
 
-@sc.function(sc.L("z", 2), sc.L("residual", ...))
+@sc.function(sc.arg("z", 2), outputs=sc.arg("residual", ...))
 def stage(z: sc.Expr) -> sc.Expr:
     return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2])
 
-@sc.function(sc.L("zs", 2 * N), sc.L("residuals", ...))
+@sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals", ...))
 def stages(zs: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, N, [zs])
+    return sc.vmap(stage, N)(zs).vec()
 
 stage_jac = sc.sparse_jacobian(stages, "residuals", "zs")
-stage_pattern = stage_jac.output_sparsities[0]
+stage_pattern = stage_jac.instantiate().output_sparsities[0]
 assert stage_pattern is not None
 print(stage_pattern.shape)  # (8, 8)
 print(stage_pattern.nnz)    # 16: four 2-by-2 blocks
@@ -241,12 +241,12 @@ Converting it with `to_dense()` creates a dense matrix expression:
 def chain(x: sc.Expr) -> sc.Expr:
     return x[:-1].sin() * x[1:]
 
-@sc.function(sc.G(sc.L("x", 6), sc.L("v", 6)), sc.L("jv", ...))
+@sc.function(sc.group(sc.arg("x", 6), sc.arg("v", 6)), outputs=sc.arg("jv", ...))
 def via_matrix(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, v = inputs
     return sc.sparse_jacobian(chain(x), x).to_dense() @ v
 
-@sc.function(sc.G(sc.L("x", 6), sc.L("v", 6)), sc.L("jv", ...))
+@sc.function(sc.group(sc.arg("x", 6), sc.arg("v", 6)), outputs=sc.arg("jv", ...))
 def via_product(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, v = inputs
     return sc.jvp(chain(x), x, v)

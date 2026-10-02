@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad.forward import _jvp_many_unrolled  # per-seed jvp calls, the reference structural jvp_many must match
 from scaly.ir.expr import ExprOp, topo
@@ -21,7 +23,7 @@ TILES = [
 
 
 def _stage() -> sc.Function:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="bake_stage")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="bake_stage")
   def stage(x):
     return x.sin() * (x @ sc.const(np.ones(3)))
 
@@ -62,15 +64,15 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   length = len(pattern)
   seeds = _seeds(pattern)
 
-  @sc.function(sc.L("z", 3 * length), sc.L("dy", ...), name="bake")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy", ...), name="bake")
   def fn(z):
-    return sc.jvp_many(sc.vmap(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
+    return sc.jvp_many(_mapped_call(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
 
-  @sc.function(sc.L("z", 3 * length), sc.L("dy", ...), name="bake_ref")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy", ...), name="bake_ref")
   def ref(z):
-    return _jvp_many_unrolled(sc.vmap(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
+    return _jvp_many_unrolled(_mapped_call(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
 
-  (structural,) = fn.outputs
+  (structural,) = as_concrete(fn).outputs
   zv = np.random.default_rng(1).normal(size=3 * length)
   expected = np.zeros((3, 3 * length))
   for it in range(length):

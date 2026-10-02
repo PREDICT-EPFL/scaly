@@ -17,7 +17,7 @@ Consider a function representing \(E(x)=\sum_i x_i^2\):
 ```python
 import scaly as sc
 
-@sc.function(sc.L("x", 3), sc.L("energy", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("energy", ...))
 def energy(x: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x)
 ```
@@ -241,7 +241,7 @@ also contains fixed coordinate tables so the caller can identify the matrix
 entry corresponding to each value. For example:
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("y", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
 def measurements(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[2], x[1], x[0] + x[2]])
 

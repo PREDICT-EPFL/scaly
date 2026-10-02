@@ -34,7 +34,7 @@ WEIGHTS = (np.arange(40 * 40, dtype=np.float64).reshape(40, 40) % 7 - 3.0) / 11.
 def _dynamics() -> sc.Function:
   """Elementwise math, slicing, a reduction and a concat."""
 
-  @sc.function(sc.G(sc.L("z", 4), sc.L("u", 2)), sc.L("znext", ...), name="dynamics")
+  @sc.function(sc.group(sc.arg("z", 4), sc.arg("u", 2)), outputs=sc.arg("znext", ...), name="dynamics")
   def dynamics(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
     pos, vel = z[:2], z[2:]
@@ -47,10 +47,10 @@ def _dynamics() -> sc.Function:
 def _shooting() -> sc.Function:
   """Multiple shooting defect over ``N_STAGES`` VMAP iterations."""
 
-  @sc.function(sc.G(sc.L("z", 4 * (N_STAGES + 1)), sc.L("u", 2 * N_STAGES)), sc.L("eq", ...), name="shooting")
+  @sc.function(sc.group(sc.arg("z", 4 * (N_STAGES + 1)), sc.arg("u", 2 * N_STAGES)), outputs=sc.arg("eq", ...), name="shooting")
   def shooting(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
-    return sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), u]) - z[4:]
+    return sc.vmap(_dynamics(), N_STAGES)((sc.window(z, 0, 4), u)).vec() - z[4:]
 
   return shooting
 
@@ -58,7 +58,7 @@ def _shooting() -> sc.Function:
 def _wide() -> sc.Function:
   """Two outputs, a 40x40 matmul either way round, the transcendental surface, and a scatter."""
 
-  @sc.function(sc.G(sc.L("x", 40), sc.L("y", 40)), sc.G(sc.L("z", ...), sc.L("tail", ...)), name="wide")
+  @sc.function(sc.group(sc.arg("x", 40), sc.arg("y", 40)), outputs=sc.group(sc.arg("z", ...), sc.arg("tail", ...)), name="wide")
   def wide(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     x, y = inputs
     h = sc.const(WEIGHTS) @ x
@@ -76,7 +76,7 @@ def _wide() -> sc.Function:
 def _workspace() -> sc.Function:
   """A shared intermediate large enough to spill after expression normalization."""
 
-  @sc.function(sc.L("x", 2048), sc.G(sc.L("sum", ...), sc.L("sumsqr", ...)), name="workspace")
+  @sc.function(sc.arg("x", 2048), outputs=sc.group(sc.arg("sum", ...), sc.arg("sumsqr", ...)), name="workspace")
   def workspace(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     value = x.sin()
     return (value.sum(), (value * value).sum())
@@ -87,7 +87,7 @@ def _workspace() -> sc.Function:
 def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
 
-  @sc.function(sc.L("mu", 2), sc.L("cost", ...), name="qp_host")
+  @sc.function(sc.arg("mu", 2), outputs=sc.arg("cost", ...), name="qp_host")
   def qp_host(mu: sc.Expr) -> sc.Expr:
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
     return sc.sumsqr(qp(mu)[0])

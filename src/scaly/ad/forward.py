@@ -12,8 +12,8 @@ from typing import Any
 
 import numpy as np
 
-from ..function import Function
-from ..function.sugar import vmap
+from ..function.concrete import ConcreteFunction
+from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, substitute, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
@@ -21,7 +21,7 @@ from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
 
 
 # Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
-# CPython may reuse ids after a short-lived Function is collected, which can splice a stale
+# CPython may reuse ids after a short-lived ConcreteFunction is collected, which can splice a stale
 # call-JVP helper into a different graph under xdist/CI-sized test runs.
 _CALL_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], tuple[int, ...]]]] = (
   weakref.WeakKeyDictionary()
@@ -71,13 +71,13 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     fn, arg_indices, seed_indices = _call_jvp_function(expr.attrs["callee"], expr.attrs["output"], active)
     if expr.op == ExprOp.CALL:
       call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices]
-      memo[expr.id] = ret = fn._flat_symbolic_call(call_args)[0]
+      memo[expr.id] = ret = fn.symbolic_call(*fn.input_tree.unflatten(tuple(call_args)))
     elif not seed_indices:
       memo[expr.id] = ret = zeros_like(expr)
     else:
       starts, strides = expr.attrs["starts"], expr.attrs["strides"]
       specs = [(expr.args[i], starts[i], strides[i]) for i in arg_indices] + [(tangents[i], starts[i], strides[i]) for i in seed_indices]
-      memo[expr.id] = ret = vmap(fn, expr.attrs["length"], specs)
+      memo[expr.id] = ret = _mapped_call(fn, expr.attrs["length"], specs)
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
     # Solver outputs are treated as non-differentiable today. Implicit
@@ -202,7 +202,7 @@ def _call_jvp_many_function(
       seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
       name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
       output_name = f"fwd:{callee.output_names[output_index]}"
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [output_name])
+    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name])
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
 
@@ -228,7 +228,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
     name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices)
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"])
+    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"])
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
 
@@ -259,9 +259,9 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       name_hash = hashlib.sha1(";".join(fn.name for fn in functions).encode()).hexdigest()[:10]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
-      cache[key] = Function._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
+      cache[key] = ConcreteFunction._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
     fn = cache[key]
-    mapped = vmap(fn, length, list(bindings.values()))
+    mapped = _mapped_call(fn, length, list(bindings.values()))
     width = fn.outputs[0].size
     offset = 0
     for member, function in zip(members, functions, strict=True):
@@ -410,7 +410,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     maps: list[Expr] = []
 
     def mapped_call(fn: Any, count: int, specs: list[tuple[Expr, int, int]]) -> Expr:
-      mapped = vmap(fn, count, specs)
+      mapped = _mapped_call(fn, count, specs)
       maps.append(mapped)
       return mapped
 
@@ -527,7 +527,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     constants = tuple(tangents[i].value if tangents[i].op == ExprOp.CONST else None for i in formals)
     fn, arg_indices, seed_indices, active = _call_jvp_many_function(expr.attrs["callee"], expr.attrs["output"], formals, nseed, constants)
     call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices]
-    ret = fn._flat_symbolic_call(call_args)[0]
+    ret = fn.symbolic_call(*fn.input_tree.unflatten(tuple(call_args)))
     if len(active) != nseed:
       active_pos = {row: i for i, row in enumerate(active)}
       ret = stack([ret[active_pos[row]] if row in active_pos else zeros_like(expr) for row in range(nseed)], axis=0)

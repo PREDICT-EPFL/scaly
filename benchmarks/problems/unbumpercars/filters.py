@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_module
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
@@ -493,7 +494,11 @@ def _world_vel_expr(state: sc.Expr, physics: sc.Expr) -> tuple[sc.Expr, sc.Expr,
   return vx_b * theta.cos() - vy_b * theta.sin(), vx_b * theta.sin() + vy_b * theta.cos(), omega
 
 
-@sc.function(sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS)), sc.L("xdot", ...), name="ctdt_ctfull_ode")
+@sc.function(
+  sc.group(sc.arg("state", NSTATE), sc.arg("u", NCTRL), sc.arg("pw", N_PW), sc.arg("physics", N_PHYSICS)),
+  outputs=sc.arg("xdot", NSTATE),
+  name="ctdt_ctfull_ode",
+)
 def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, u, pw, physics = inputs
   max_delta, steering_time_constant = physics[2], physics[3]
@@ -509,8 +514,8 @@ def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc
 
 
 @sc.function(
-  sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS), sc.L("dt", 1)),
-  sc.L("next", ...),
+  sc.group(sc.arg("state", NSTATE), sc.arg("u", NCTRL), sc.arg("pw", N_PW), sc.arg("physics", N_PHYSICS), sc.arg("dt", 1)),
+  outputs=sc.arg("next", NSTATE),
   name="ctdt_ctfull_rk4",
 )
 def scaly_ctfull_rk4_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -539,7 +544,7 @@ def _unpack_pw_dt_expr(pw: sc.Expr) -> tuple[sc.Expr, ...]:
   )
 
 
-@sc.function(sc.G(sc.L("state", NSTATE), sc.L("physics", N_PHYSICS)), sc.L("posedot", ...), name="ctdt_pose_dot")
+@sc.function(sc.group(sc.arg("state", NSTATE), sc.arg("physics", N_PHYSICS)), outputs=sc.arg("posedot", NSTATE), name="ctdt_pose_dot")
 def scaly_pose_dot_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   state, physics = inputs
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
@@ -548,8 +553,8 @@ def scaly_pose_dot_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 
 @sc.function(
-  sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW_DT), sc.L("physics", N_PHYSICS), sc.L("dt", 1)),
-  sc.L("next", ...),
+  sc.group(sc.arg("state", NSTATE), sc.arg("u", NCTRL), sc.arg("pw", N_PW_DT), sc.arg("physics", N_PHYSICS), sc.arg("dt", 1)),
+  outputs=sc.arg("next", NSTATE),
   name="ctdt_dt_mlp_step",
 )
 def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -572,7 +577,6 @@ def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Ex
   return sc.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 
 
-# TODO(#11): Replace this configuration-specialized builder with an ``@sc.function`` template.
 def build_scaly_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> sc.Function:
   """Build the safety filter's tracking cost and discrete barrier rows."""
   ncars = loop_cfg.ncars
@@ -583,15 +587,15 @@ def build_scaly_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> sc
     return sc.TensorType((size,), diff=False)
 
   @sc.function(
-    sc.G(
-      sc.L("z", n_u + n_s),
-      sc.L("bar_x", constant(NSTATE * ncars)),
-      sc.L("u_des", constant(n_u)),
-      sc.L("pw", constant(filter_n_pw(filt_cfg))),
-      sc.L("physics", constant(N_PHYSICS)),
-      sc.L("dt", constant(1)),
+    sc.group(
+      sc.arg("z", n_u + n_s),
+      sc.arg("bar_x", constant(NSTATE * ncars)),
+      sc.arg("u_des", constant(n_u)),
+      sc.arg("pw", constant(filter_n_pw(filt_cfg))),
+      sc.arg("physics", constant(N_PHYSICS)),
+      sc.arg("dt", constant(1)),
     ),
-    sc.G(sc.L("cost", ...), sc.L("g", ...)),
+    outputs=sc.group(sc.arg("cost", ()), sc.arg("g", n_s)),
     name=f"ctdt_scaly_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
   )
   def oracle(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
@@ -611,7 +615,15 @@ def _scaly_oracle_outputs(
   u = z[:n_u]
   slack = z[n_u:]
   step_fn = scaly_dt_mlp_step_fn if filt_cfg.model == "dt" else scaly_ctfull_rk4_fn
-  states_next = sc.vmap(step_fn, ncars, [bar_x, u, (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
+  states_next = sc.vmap(step_fn, ncars)(
+    (
+      bar_x,
+      u,
+      sc.broadcast(pw),
+      sc.broadcast(physics),
+      sc.broadcast(dt),
+    )
+  ).vec()
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
   def pair_b(xi: sc.Expr, xj: sc.Expr, physics: sc.Expr) -> sc.Expr:
@@ -647,8 +659,8 @@ def _scaly_oracle_outputs(
     return sc.stack(out)
 
   @sc.function(
-    sc.G(sc.L("xi", NSTATE), sc.L("xj", NSTATE), sc.L("xi_next", NSTATE), sc.L("xj_next", NSTATE), sc.L("physics", N_PHYSICS)),
-    sc.L("g", 1),
+    sc.group(sc.arg("xi", NSTATE), sc.arg("xj", NSTATE), sc.arg("xi_next", NSTATE), sc.arg("xj_next", NSTATE), sc.arg("physics", N_PHYSICS)),
+    outputs=sc.arg("g", 1),
     name="pair_hcbf",
   )
   def pair_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -656,8 +668,8 @@ def _scaly_oracle_outputs(
     return sc.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
 
   @sc.function(
-    sc.G(sc.L("state", NSTATE), sc.L("state_next", NSTATE), sc.L("physics", N_PHYSICS)),
-    sc.L("g", 4),
+    sc.group(sc.arg("state", NSTATE), sc.arg("state_next", NSTATE), sc.arg("physics", N_PHYSICS)),
+    outputs=sc.arg("g", 4),
     name="wall_hcbf",
   )
   def wall_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -669,20 +681,26 @@ def _scaly_oracle_outputs(
     pairs = np.triu_indices(ncars, k=1)
     idx_i, idx_j = [np.concatenate([np.arange(NSTATE) + k * NSTATE for k in bodies]) for bodies in pairs]
     rows.append(
-      sc.vmap(
-        pair_hcbf,
-        loop_cfg.n_pairs,
-        [
+      sc.vmap(pair_hcbf, loop_cfg.n_pairs)(
+        (
           sc.gather(bar_x, idx_i),
           sc.gather(bar_x, idx_j),
           sc.gather(states_next, idx_i),
           sc.gather(states_next, idx_j),
-          (physics, 0, 0),
-        ],
-      )
+          sc.broadcast(physics),
+        )
+      ).vec()
     )
   if loop_cfg.arena_avoidance:
-    rows.append(sc.vmap(wall_hcbf, ncars, [bar_x, states_next, (physics, 0, 0)]))
+    rows.append(
+      sc.vmap(wall_hcbf, ncars)(
+        (
+          bar_x,
+          states_next,
+          sc.broadcast(physics),
+        )
+      ).vec()
+    )
   g = (sc.concat(rows) + slack) if rows else sc.const(np.zeros((0,)))
   assert g.shape == (n_s,)
   diff = u - u_des
@@ -702,13 +720,13 @@ def build_scaly_nlp(
   """Build the safety-filter NLP over car controls and nonnegative barrier slacks."""
   base = build_scaly_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
   n_u, n_s = NCTRL * loop_cfg.ncars, loop_cfg.n_slack
-  vars_tree = sc.G(sc.L("u", (n_u,)), sc.L("s", (n_s,)))
-  params_tree = sc.G(
-    sc.L("bar_x", NSTATE * loop_cfg.ncars),
-    sc.L("u_des", n_u),
-    sc.L("pw", filter_n_pw(filt_cfg)),
-    sc.L("physics", N_PHYSICS),
-    sc.L("dt", 1),
+  vars_tree = sc.group(sc.arg("u", (n_u,)), sc.arg("s", (n_s,)))
+  params_tree = sc.group(
+    sc.arg("bar_x", NSTATE * loop_cfg.ncars),
+    sc.arg("u_des", n_u),
+    sc.arg("pw", filter_n_pw(filt_cfg)),
+    sc.arg("physics", N_PHYSICS),
+    sc.arg("dt", 1),
   )
   problem_name = base.name.replace("_oracle", "_problem")
 
@@ -769,7 +787,7 @@ class ScalyDTCBFSafetyFilter:
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
     base = build_scaly_oracle(loop_cfg, filt_cfg)
-    g = base.outputs[1]
+    g = as_concrete(base).outputs[1]
     self.n_g = g.shape[0]
     options: dict[str, str | int | float] = {
       "print_level": 0,
@@ -804,9 +822,9 @@ class ScalyDTCBFSafetyFilter:
         self.fallback_nlp = build_scaly_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
       else:
         self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
-    self.jac_sparsity = self.nlp.function.descriptor.jac_sparsity
-    self.hess_fn = self.nlp.function.descriptor.hess
-    hess_sp = self.nlp.function.descriptor.hess_sparsity
+    self.jac_sparsity = as_concrete(self.nlp.function).descriptor.jac_sparsity
+    self.hess_fn = as_concrete(self.nlp.function).descriptor.hess
+    hess_sp = as_concrete(self.nlp.function).descriptor.hess_sparsity
     assert self.jac_sparsity is not None and hess_sp is not None
     self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)
     self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)
@@ -853,7 +871,7 @@ class ScalyDTCBFSafetyFilter:
     self.last_solve_wall_ms = 0.0
 
     def solve(active_nlp: sc.Solver):
-      descriptor = active_nlp.function.descriptor
+      descriptor = as_concrete(active_nlp.function).descriptor
       if descriptor.n_var_blocks == 2:
         variables0 = (z0[: self.n_u], z0[self.n_u :])
         box0 = (lam_box0[: self.n_u], lam_box0[self.n_u :])

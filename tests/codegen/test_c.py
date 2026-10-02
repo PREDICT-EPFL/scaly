@@ -13,7 +13,7 @@ import scaly as sc
 
 
 def test_compiled_erf_matches_math_erf() -> None:
-  @sc.function(sc.L("x", 9), sc.L("y", ...), name="compiled_erf")
+  @sc.function(sc.arg("x", 9), outputs=sc.arg("y", ...), name="compiled_erf")
   def f(x: sc.Expr) -> sc.Expr:
     return x.erf()
 
@@ -23,7 +23,7 @@ def test_compiled_erf_matches_math_erf() -> None:
 
 
 def test_c_api_header_exposes_pointer_abi_and_typed_buffers() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
   def f(x: sc.Expr) -> sc.Expr:
     return x + 1
 
@@ -50,7 +50,7 @@ def test_c_api_header_exposes_pointer_abi_and_typed_buffers() -> None:
 
 
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
   def primal(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0], x[2]])
 
@@ -75,7 +75,7 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  @sc.function(sc.L("x", 2), sc.G(sc.L("y", ...), sc.L("s", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("y", ...), sc.arg("s", ...)))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     a = sc.const(np.array([[2.0, -1.0], [0.5, 3.0]]))
     y = sc.concat([(a @ x).sin(), x.gather([1, 0])])
@@ -123,7 +123,9 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  @sc.function(sc.G(sc.L("x", (5, 7)), sc.L("y", (5, 1, 7))), sc.G(sc.L("col1", ...), sc.L("row2", ...), sc.L("row2d", ...)), name="g")
+  @sc.function(
+    sc.group(sc.arg("x", (5, 7)), sc.arg("y", (5, 1, 7))), outputs=sc.group(sc.arg("col1", ...), sc.arg("row2", ...), sc.arg("row2d", ...)), name="g"
+  )
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     x, y = inputs
     return (x[:, 1], x[2, :], y[:, 0, :])
@@ -162,11 +164,11 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  @sc.function(sc.L("x", 2), sc.G(sc.L("sq", ...), sc.L("sum", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("sq", ...), sc.arg("sum", ...)))
   def inner(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return (x * x, x.sum())
 
-  @sc.function(sc.L("z", 2), sc.L("y", ...))
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y", ...))
   def outer(z: sc.Expr) -> sc.Expr:
     inner_sq, inner_sum = inner(z + 1.0)
     return inner_sq + inner_sum
@@ -204,7 +206,7 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  @sc.function(sc.L("x", 4), sc.L("y", ...))
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...))
   def f(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
 
@@ -243,7 +245,7 @@ def test_c_header_typed_buffers_compile_and_run_from_c(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  @sc.function(sc.L("x", 3), sc.G(sc.L("y", ...), sc.L("s", ...)))
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y", ...), sc.arg("s", ...)))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return (x.sin() + 2.0, x.sum())
 
@@ -293,7 +295,7 @@ def test_c_header_typed_buffers_compile_and_run_from_cpp(tmp_path) -> None:
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
 
-  @sc.function(sc.L("x", 2), sc.G(sc.L("f", ...), sc.L("g", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)))
   def nlp(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return (x[0] * x[0], x * x)
 
@@ -342,7 +344,7 @@ int main() {
 def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
   from scaly.codegen.c import render_program_c_source
 
-  @sc.function(sc.L("x", 7), sc.L("y", ...), name="coalesced")
+  @sc.function(sc.arg("x", 7), outputs=sc.arg("y", ...), name="coalesced")
   def f(x: sc.Expr) -> sc.Expr:
     return (x * 2.0 + 1.0).scalar()
 

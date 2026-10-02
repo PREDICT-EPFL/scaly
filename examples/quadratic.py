@@ -6,7 +6,7 @@ import scaly as sc
 from scaly.codegen import write_module
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("target", 2)), sc.L("cost", ...))
+@sc.function(sc.group(sc.arg("x", 2), sc.arg("target", 2)), outputs=sc.arg("cost", ...))
 def tracking_cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, target = inputs
   return sc.sumsqr(x - target)

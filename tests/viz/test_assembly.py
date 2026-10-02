@@ -1,13 +1,14 @@
+from scaly.function.model import as_concrete
 import json
 
-from scaly import G, Function, L, function, render_expr_assembly, render_program_assembly
+from scaly import group, Function, arg, function, render_expr_assembly, render_program_assembly
 from scaly.codegen.aot import render_c_source
 from scaly.passes.lowering import lower_function
 from scaly.viz import clear_recordings, recordings, unvisualize_function, visualize_function
 
 
 def _fun() -> Function:
-  @function(L("x", (2,)), L("y", ...))
+  @function(arg("x", (2,)), outputs=arg("y", ...))
   def square_plus_one(x):
     return x * x + 1.0
 
@@ -67,12 +68,12 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
 def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypatch):
   monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
 
-  @function(G(L("matrix", (2, 3)), L("vector", 2)), L("y", ...), name="normalized_matmul")
+  @function(group(arg("matrix", (2, 3)), arg("vector", 2)), outputs=arg("y", ...), name="normalized_matmul")
   def fun(inputs):
     matrix, vector = inputs
     return matrix.T @ vector
 
-  (output,) = fun.outputs
+  (output,) = as_concrete(fun).outputs
   clear_recordings(disk=True)
   visualize_function(fun)
   try:
@@ -82,7 +83,7 @@ def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypat
   original, normalized = recordings()[0]["steps"][:2]
   assert original["name"] == "expression" and "expr.transpose" in original["assembly"]
   assert normalized["name"] == "normalized:normalized_matmul" and "expr.transpose" not in normalized["assembly"]
-  assert fun.outputs[0] is output
+  assert as_concrete(fun).outputs[0] is output
 
 
 def test_viz_serve_is_not_shadowed_by_its_submodule():

@@ -5,7 +5,7 @@ import numpy as np
 import scaly as sc
 
 
-@sc.problem(vars=sc.L("w", 7), params=sc.L("target", ()))
+@sc.problem(vars=sc.arg("w", 7), params=sc.arg("target", ()))
 def tracking_mpc(w: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
   states, controls = w[:4], w[4:]
   return sc.ProblemSpec(

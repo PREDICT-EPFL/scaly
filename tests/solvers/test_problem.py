@@ -6,13 +6,16 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.concrete import ConcreteFunction
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.codegen import render_c_source
 from scaly.ir.expr import topo
 from scaly.solvers.registry import SolverPluginError
 
 
-@sc.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
+@sc.problem(vars=sc.arg("x", 3), params=sc.arg("scale", ()))
 def quadratic(x: sc.Expr, scale: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
   return sc.ProblemSpec(
     minimize=(x * x).sum() * scale,
@@ -21,7 +24,7 @@ def quadratic(x: sc.Expr, scale: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
   )
 
 
-@sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.G(sc.L("x", 4), sc.L("u_ref", 2)))
+@sc.problem(vars=sc.group(sc.arg("u", 2), sc.arg("s", 1)), params=sc.group(sc.arg("x", 4), sc.arg("u_ref", 2)))
 def filter_problem(
   variables: tuple[sc.Expr, sc.Expr],
   params: tuple[sc.Expr, sc.Expr],
@@ -41,7 +44,7 @@ def filter_problem(
   )
 
 
-@sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.G(sc.L("target", 2), sc.L("bias", 1)))
+@sc.problem(vars=sc.group(sc.arg("u", 2), sc.arg("s", 1)), params=sc.group(sc.arg("target", 2), sc.arg("bias", 1)))
 def two_block_quadratic(
   variables: tuple[sc.Expr, sc.Expr],
   params: tuple[sc.Expr, sc.Expr],
@@ -72,9 +75,9 @@ def test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle() -> N
   assert isinstance(quadratic.spec.ub, sc.Expr) and quadratic.spec.ub.shape == (3,)
 
   solve = sc.solver(filter_problem, "sqp", name="filter_bound_oracle")
-  bounds = solve.function.descriptor.bounds
-  assert isinstance(bounds, sc.Function)
-  x_lb, x_ub, l_ineq, u_ineq = bounds((np.zeros(4), np.zeros(2)))
+  bounds = as_concrete(solve.function).descriptor.bounds
+  assert isinstance(bounds, ConcreteFunction)
+  x_lb, x_ub, l_ineq, u_ineq = bounds(np.zeros(4), np.zeros(2))
   np.testing.assert_array_equal(x_lb, [-np.inf, -np.inf, 0.0])
   np.testing.assert_array_equal(x_ub, [np.inf, np.inf, np.inf])
   np.testing.assert_array_equal(l_ineq, [0.0, -1.0, -1.0])
@@ -96,23 +99,23 @@ def test_qp_problem_is_a_typed_problem() -> None:
 
 def test_problem_validates_body_and_declared_inputs_at_construction() -> None:
   with pytest.raises(TypeError, match="cost must be scalar"):
-    sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x))
+    sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x))
 
   with pytest.raises(TypeError, match="variables' structure|declared structure|expected an Expr"):
-    sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("p", ()))(
+    sc.problem(vars=sc.group(sc.arg("u", 2), sc.arg("s", 1)), params=sc.arg("p", ()))(
       lambda variables, p: sc.ProblemSpec(minimize=variables[0].sum(), lb=cast(Any, variables[0]))
     )
 
   undeclared = sc.sym("undeclared", ())
 
   with pytest.raises(ValueError, match="undeclared symbolic inputs"):
-    sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x.sum() + undeclared))
+    sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x.sum() + undeclared))
 
 
 def test_problem_infers_closed_over_parameters_and_retypes_them_nondifferentiable() -> None:
   state = sc.sym("state", 2)
 
-  @sc.problem(vars=sc.L("u", 2))
+  @sc.problem(vars=sc.arg("u", 2))
   def inferred(u: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=((u - state) * (u - state)).sum())
 
@@ -130,31 +133,35 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
   assert isinstance(ipopt_solver, sc.Solver)
   assert isinstance(ipopt, sc.Function)
   assert not hasattr(sc, "SolverFunction")
-  assert ipopt.input_names == ("u", "s", "lam:u", "lam:s", "lam_eq", "lam_ineq", "x", "u_ref")
-  assert ipopt.output_names == ("u", "s", "lam:u", "lam:s", "lam_eq", "lam_ineq")
-  assert ipopt.input_shapes == ((2,), (1,), (2,), (1,), (1,), (3,), (4,), (2,))
-  assert ipopt.output_shapes == ((2,), (1,), (2,), (1,), (1,), (3,))
-  assert ipopt.descriptor.base is sqp.descriptor.base
-  assert ipopt.descriptor.grad is sqp.descriptor.grad
-  assert ipopt.descriptor.jac is sqp.descriptor.jac
-  assert ipopt.descriptor.hess is not sqp.descriptor.hess
-  assert sqp.descriptor.hess is another_sqp.descriptor.hess
-  assert sqp.descriptor.hess.output_names == ("sphess_gamma_u_s_u_s",)
-  assert sqp.descriptor.hess.input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
+  assert as_concrete(ipopt).input_names == ("u", "s", "lam:u", "lam:s", "lam_eq", "lam_ineq", "x", "u_ref")
+  assert as_concrete(ipopt).output_names == ("u", "s", "lam:u", "lam:s", "lam_eq", "lam_ineq")
+  assert as_concrete(ipopt).input_shapes == ((2,), (1,), (2,), (1,), (1,), (3,), (4,), (2,))
+  assert as_concrete(ipopt).output_shapes == ((2,), (1,), (2,), (1,), (1,), (3,))
+  assert as_concrete(ipopt).descriptor.base is as_concrete(sqp).descriptor.base
+  assert as_concrete(ipopt).descriptor.grad is as_concrete(sqp).descriptor.grad
+  assert as_concrete(ipopt).descriptor.jac is as_concrete(sqp).descriptor.jac
+  assert as_concrete(ipopt).descriptor.hess is not as_concrete(sqp).descriptor.hess
+  assert as_concrete(sqp).descriptor.hess is as_concrete(another_sqp).descriptor.hess
+  assert as_concrete(as_concrete(sqp).descriptor.hess).output_names == ("sphess_gamma_u_s_u_s",)
+  assert as_concrete(as_concrete(sqp).descriptor.hess).input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
   assert sc.Function.__doc__ is not None
-  assert ipopt.descriptor.hess_sparsity is not None
-  assert sqp.descriptor.hess_sparsity is not None
-  assert all(row >= col for row, col in zip(ipopt.descriptor.hess_sparsity.rows, ipopt.descriptor.hess_sparsity.cols, strict=True))
-  assert all(row <= col for row, col in zip(sqp.descriptor.hess_sparsity.rows, sqp.descriptor.hess_sparsity.cols, strict=True))
+  assert as_concrete(ipopt).descriptor.hess_sparsity is not None
+  assert as_concrete(sqp).descriptor.hess_sparsity is not None
+  assert all(
+    row >= col for row, col in zip(as_concrete(ipopt).descriptor.hess_sparsity.rows, as_concrete(ipopt).descriptor.hess_sparsity.cols, strict=True)
+  )
+  assert all(
+    row <= col for row, col in zip(as_concrete(sqp).descriptor.hess_sparsity.rows, as_concrete(sqp).descriptor.hess_sparsity.cols, strict=True)
+  )
 
 
-@sc.function(sc.L("stage", 2), sc.L("row", ...), name="single_block_stage")
+@sc.function(sc.arg("stage", 2), outputs=sc.arg("row", ...), name="single_block_stage")
 def single_block_stage(stage: sc.Expr) -> sc.Expr:
   return stage.sin()
 
 
 def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
-  @sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("weight", ()), name="descriptor_hessian")
+  @sc.problem(vars=sc.group(sc.arg("u", 2), sc.arg("s", 1)), params=sc.arg("weight", ()), name="descriptor_hessian")
   def nonlinear_hessian(variables: tuple[sc.Expr, sc.Expr], weight: sc.Expr) -> sc.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
     u, s = variables
     objective = 0.5 * weight * u[0] ** 2 + u[0] * u[1] * s[0]
@@ -163,16 +170,16 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
     return sc.ProblemSpec(minimize=objective, eq=(equality,), ineq=(sc.bounded(inequality, hi=3.0),))
 
   solve = sc.solver(nonlinear_hessian, "sqp", name="descriptor_hessian_sqp")
-  hess = solve.function.descriptor.hess
-  assert isinstance(hess, sc.Function)
-  sparsity = hess.output_sparsities[0]
+  hess = as_concrete(solve.function).descriptor.hess
+  assert isinstance(hess, ConcreteFunction)
+  sparsity = as_concrete(hess).output_sparsities[0]
   assert sparsity is not None
 
   x = np.array([0.4, -0.7, 0.2])
   weight = np.array(1.3)
   lam_f = np.array(1.7)
   lam_g = np.array([-0.6, 0.8])
-  values = hess(((x, weight), (lam_f, lam_g)))
+  values = hess(x, weight, (lam_f, lam_g))
   actual = np.zeros((3, 3))
   actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
   actual += np.triu(actual, 1).T
@@ -185,23 +192,23 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
 
 
 def test_single_block_problem_preserves_vmap_decision_input() -> None:
-  @sc.problem(vars=sc.L("z", 6), params=sc.L("p", ()), name="single_block_vmap")
+  @sc.problem(vars=sc.arg("z", 6), params=sc.arg("p", ()), name="single_block_vmap")
   def mapped_problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    rows = sc.vmap(single_block_stage, 3, {"stage": z})
+    rows = _mapped_call(single_block_stage, 3, {"stage": z})
     return sc.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
 
   solve = sc.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
-  mapped = next(node for node in topo(solve.function.descriptor.base.outputs) if node.op == sc.ExprOp.VMAP)
-  assert mapped.args[0] is solve.function.descriptor.base.inputs[0]
+  mapped = next(node for node in topo(as_concrete(as_concrete(solve.function).descriptor.base).outputs) if node.op == sc.ExprOp.VMAP)
+  assert mapped.args[0] is as_concrete(as_concrete(solve.function).descriptor.base).inputs[0]
 
-  hess = solve.function.descriptor.hess
+  hess = as_concrete(solve.function).descriptor.hess
   assert hess is not None
-  sparsity = hess.output_sparsities[0]
+  sparsity = as_concrete(hess).output_sparsities[0]
   assert sparsity is not None
   z, p = np.linspace(-0.7, 0.9, 6), np.array(0.3)
   lam_f, lam_g = np.array(1.7), np.linspace(-1.1, 0.8, 6)
   actual = np.zeros(sparsity.shape)
-  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = hess(((z, p), (lam_f, lam_g)))
+  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = hess(z, p, (lam_f, lam_g))
   np.testing.assert_allclose(actual, np.diag(2.0 * lam_f - lam_g * np.sin(z)), rtol=1e-13, atol=1e-13)
 
 
@@ -211,7 +218,11 @@ def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
   ipopt = sc.solver(filter_problem, "ipopt", name="filter_third")
   params = (sc.const(np.zeros(4)), sc.const(np.zeros(2)))
   outputs = (left(params)[0][0], right(params)[0][0], ipopt(params)[0][0])
-  host = sc.Function._from_exprs("shared_problem_host", (), outputs, (), ("left", "right", "third"))
+
+  @sc.function(outputs=sc.group(sc.arg("left", 2), sc.arg("right", 2), sc.arg("third", 2)), name="shared_problem_host")
+  def host() -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    return outputs
+
   source = render_c_source(host)
   assert source.count("static inline void filter_problem_hess_upper_raw(") == 1
   assert source.count("static inline void filter_problem_hess_lower_raw(") == 1
@@ -243,7 +254,7 @@ def test_solver_call_defaults_initial_groups_to_zero_and_routes_x0_and_warm() ->
   params = _two_block_params()
   result = solve(params)
   zeros = (np.zeros(2), np.zeros(1))
-  full = solve.function((zeros, zeros, np.zeros(0), np.zeros(0), params))
+  full = solve.function(*(zeros, zeros, np.zeros(0), np.zeros(0), params))
   np.testing.assert_allclose(result[0][0], full[0][0])
   np.testing.assert_allclose(result[0][1], full[0][1])
   x0 = (np.ones(2), np.ones(1))
@@ -278,57 +289,57 @@ def test_solver_name_and_backend_are_selected_at_construction() -> None:
 def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
   assert sc.solver(filter_problem, "piqp").function.name == "filter_problem_piqp"
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("center", 2))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("center", 2))
   def power_cost(x: sc.Expr, center: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=((x - center) ** 2).sum())
 
   assert sc.solver(power_cost, "piqp").function.name == "power_cost_piqp"
   qp = sc.qp_problem(3, 1, 2)
-  assert sc.solver(qp, "piqp").function.input_names[-7:] == qp.params.names
+  assert as_concrete(sc.solver(qp, "piqp").function).input_names[-7:] == qp.params.names
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def quartic_cost(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x * x * x).sum() + p)
 
   with pytest.raises(sc.NotQuadratic, match="cost is not quadratic"):
     sc.solver(quartic_cost, "piqp")
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def cubic_equality(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x).sum() + p, eq=(x * x * x,))
 
   with pytest.raises(sc.NotQuadratic, match=r"eq\[0\] is not affine"):
     sc.solver(cubic_equality, "piqp")
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def wavy_inequality(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x).sum() + p, ineq=(sc.bounded(x.sin(), hi=1.0, name="w"),))
 
   with pytest.raises(sc.NotQuadratic, match="ineq w is not affine"):
     sc.solver(wavy_inequality, "piqp")
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def variable_box_bound(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x).sum() + p, lb=x)
 
   with pytest.raises(sc.NotQuadratic, match="lb for 'x' depends on the variables"):
     sc.solver(variable_box_bound, "piqp")
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def variable_box_upper_bound(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x).sum() + p, ub=x)
 
   with pytest.raises(sc.NotQuadratic, match="ub for 'x' depends on the variables"):
     sc.solver(variable_box_upper_bound, "piqp")
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def variable_group_bound(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x).sum() + p, ineq=(sc.bounded(x, lo=x, name="moving"),))
 
   with pytest.raises(sc.NotQuadratic, match="ineq moving lower bound depends on the variables"):
     sc.solver(variable_group_bound, "piqp")
 
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def variable_group_upper_bound(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=(x * x).sum() + p, ineq=(sc.bounded(x, hi=x, name="moving"),))
 
@@ -337,7 +348,7 @@ def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
 
   inner = sc.solver(quadratic, "sqp", name="nested_qp_gate_inner")
 
-  @sc.problem(vars=sc.L("outer", 3), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("outer", 3), params=sc.arg("p", ()))
   def nested_solver_cost(outer: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     nested = inner(outer[0])[0]
     return sc.ProblemSpec(minimize=((outer - nested) * (outer - nested)).sum() + p)
@@ -347,14 +358,14 @@ def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
 
 
 def test_nlp_backend_accepts_a_nonlinear_problem() -> None:
-  @sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
   def nonlinear(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=((1.0 - x[0]) ** 2 + p * (x[1] - x[0] ** 2) ** 2), ineq=(sc.bounded(x[0].sin(), hi=0.5),))
 
-  assert sc.solver(nonlinear, "ipopt").function.input_shapes == ((2,), (2,), (0,), (1,), ())
+  assert as_concrete(sc.solver(nonlinear, "ipopt").function).input_shapes == ((2,), (2,), (0,), (1,), ())
 
   qp = sc.qp_problem(3, 1, 2)
-  assert sc.solver(qp, "ipopt").function.input_names == sc.solver(qp, "piqp").function.input_names
+  assert as_concrete(sc.solver(qp, "ipopt").function).input_names == as_concrete(sc.solver(qp, "piqp").function).input_names
 
 
 def _zero_group_params(n_eq: int, n_ineq: int) -> tuple[Any, ...]:
@@ -388,9 +399,9 @@ def test_bounded_requires_at_least_one_bound() -> None:
 
 def test_single_block_solver_signature_is_not_nested() -> None:
   solve = sc.solver(quadratic, "sqp", name="quadratic_sqp")
-  assert solve.function.input_names == ("x", "lam:x", "lam_eq", "lam_ineq", "scale")
-  assert solve.function.input_shapes == ((3,), (3,), (0,), (0,), ())
-  assert solve.function.output_names == ("x", "lam:x", "lam_eq", "lam_ineq")
+  assert as_concrete(solve.function).input_names == ("x", "lam:x", "lam_eq", "lam_ineq", "scale")
+  assert as_concrete(solve.function).input_shapes == ((3,), (3,), (0,), (0,), ())
+  assert as_concrete(solve.function).output_names == ("x", "lam:x", "lam_eq", "lam_ineq")
 
 
 def test_nlp_solver_symbolic_call_preserves_variable_blocks() -> None:

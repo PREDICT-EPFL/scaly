@@ -6,7 +6,9 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
+from scaly.function import Tree
 from scaly.ir.types import Lowering
 
 
@@ -16,7 +18,7 @@ def test_cse_merges_equivalent_subgraphs() -> None:
 
   assert y.op == sc.ExprOp.MUL
   assert y.args[0] is y.args[1]
-  np.testing.assert_allclose(_eval("cse_eval", sc.L("x", 2), lambda x: sc.cse((x + 1.0) * (x + 1.0)), np.array([2.0, 3.0])), np.array([9.0, 16.0]))
+  np.testing.assert_allclose(_eval("cse_eval", sc.arg("x", 2), lambda x: sc.cse((x + 1.0) * (x + 1.0)), np.array([2.0, 3.0])), np.array([9.0, 16.0]))
 
   a, b = x[0], x[1]
   z = sc.cse(sc.stack([a * b, b * a]))
@@ -45,9 +47,9 @@ def test_simplify_rewrites_algebraic_identities_and_folds_constants() -> None:
 
   q = sc.sym("q", 2)
   qv = np.array([2.0, 3.0])
-  np.testing.assert_allclose(_eval("simp_sub", sc.L("q", 2), lambda q: sc.simplify(q - q), qv), np.zeros(2))
-  np.testing.assert_allclose(_eval("simp_div", sc.L("q", 2), lambda q: sc.simplify(q / q), qv), np.ones(2))
-  np.testing.assert_allclose(_eval("simp_cse", sc.L("q", 2), lambda q: sc.simplify(sc.cse(q + q)), qv), np.array([4.0, 6.0]))
+  np.testing.assert_allclose(_eval("simp_sub", sc.arg("q", 2), lambda q: sc.simplify(q - q), qv), np.zeros(2))
+  np.testing.assert_allclose(_eval("simp_div", sc.arg("q", 2), lambda q: sc.simplify(q / q), qv), np.ones(2))
+  np.testing.assert_allclose(_eval("simp_cse", sc.arg("q", 2), lambda q: sc.simplify(sc.cse(q + q)), qv), np.array([4.0, 6.0]))
 
   assert sc.simplify(q**1.0) is q
   power_zero = sc.simplify(q**0.0)
@@ -79,8 +81,8 @@ def test_simplify_folds_matrix_transpose_into_matmul() -> None:
   assert kept.args[0].op == sc.ExprOp.TRANSPOSE and kept.args[0].args[0] is A
 
 
-def _eval(name: str, inputs: sc.L, body: Callable[[sc.Expr], sc.Expr], value: np.ndarray) -> np.ndarray:
-  return sc.function(inputs, sc.L("y", ...), name=name)(body)(value)
+def _eval(name: str, inputs: Tree[sc.Expr, np.ndarray], body: Callable[[sc.Expr], sc.Expr], value: np.ndarray) -> np.ndarray:
+  return sc.function(inputs, outputs=sc.arg("y", ...), name=name)(body)(value)
 
 
 def test_matmul_with_ones_vector_becomes_sums() -> None:
@@ -92,7 +94,7 @@ def test_matmul_with_ones_vector_becomes_sums() -> None:
   dot = sc.simplify(v @ ones)
   assert dot.op == sc.ExprOp.SUM and dot.args[0] is v
   assert sc.simplify(ones @ v) is dot
-  np.testing.assert_allclose(_eval("ones_dot", sc.L("v", 3), lambda v: sc.simplify(v @ ones), vv), vv.sum(), rtol=1e-14)
+  np.testing.assert_allclose(_eval("ones_dot", sc.arg("v", 3), lambda v: sc.simplify(v @ ones), vv), vv.sum(), rtol=1e-14)
 
   assert sc.simplify(A @ ones).op == sc.ExprOp.MATMUL  # matrix forms wait for an axis reduction
   assert sc.simplify(sc.const(np.ones(2)) @ A).op == sc.ExprOp.MATMUL
@@ -107,7 +109,7 @@ def test_gather_with_identity_indices_is_a_reshape() -> None:
   assert reshaped.op == sc.ExprOp.RESHAPE and reshaped.args[0] is M and reshaped.shape == (3, 2)
   Mv = np.arange(6, dtype=float).reshape(2, 3) / 7
   np.testing.assert_array_equal(
-    _eval("identity_gather", sc.L("M", (2, 3)), lambda M: sc.simplify(sc.gather(M, np.arange(6).reshape(3, 2))), Mv), Mv.reshape(3, 2)
+    _eval("identity_gather", sc.arg("M", (2, 3)), lambda M: sc.simplify(sc.gather(M, np.arange(6).reshape(3, 2))), Mv), Mv.reshape(3, 2)
   )
   permuted = sc.simplify(sc.gather(x, np.array([2, 0, 1])))
   assert permuted.op == sc.ExprOp.GATHER
@@ -127,19 +129,21 @@ def test_constant_mask_of_the_result_shape_folds_when_uniform() -> None:
   kept = sc.simplify(row * sc.const(np.ones((2, 3))))
   assert kept.op == sc.ExprOp.MUL and kept.shape == (2, 3)
   data = np.array([0.5, -1.5, 2.5])
-  np.testing.assert_array_equal(_eval("mask_mixed", sc.L("x", 3), lambda x: sc.simplify(x * sc.const([1.0, 0.0, 1.0])), data), data * [1.0, 0.0, 1.0])
   np.testing.assert_array_equal(
-    _eval("mask_broadcast", sc.L("row", (1, 3)), lambda row: sc.simplify(row * sc.const(np.ones((2, 3)))), data[None, :]), np.tile(data, (2, 1))
+    _eval("mask_mixed", sc.arg("x", 3), lambda x: sc.simplify(x * sc.const([1.0, 0.0, 1.0])), data), data * [1.0, 0.0, 1.0]
+  )
+  np.testing.assert_array_equal(
+    _eval("mask_broadcast", sc.arg("row", (1, 3)), lambda row: sc.simplify(row * sc.const(np.ones((2, 3)))), data[None, :]), np.tile(data, (2, 1))
   )
 
 
 @pytest.mark.parametrize("hint", ["scalar", "block", "opaque"])
 def test_simplify_keeps_hint_when_replacement_is_declared_input(hint: Lowering) -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="hinted_identity")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="hinted_identity")
   def fn(x: sc.Expr) -> sc.Expr:
     return sc.simplify((x * 1.0).with_lowering(hint))
 
-  (x,), (simplified,) = fn.inputs, fn.outputs
+  (x,), (simplified,) = as_concrete(fn).inputs, as_concrete(fn).outputs
   assert simplified.lowering == hint
   assert simplified.op == sc.ExprOp.RESHAPE
   assert simplified.args[0] is x

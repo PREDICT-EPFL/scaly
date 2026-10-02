@@ -18,6 +18,8 @@ from collections.abc import Callable, Iterator
 from itertools import product
 from typing import cast
 
+from scaly.function.concrete import ConcreteFunction
+from scaly.function.model import as_concrete
 import scaly as sc
 import numpy as np
 
@@ -83,10 +85,12 @@ def check_oracle_matches_casadi() -> None:
         (sc.factory.SpHess("gamma", "z"), np.asarray(ca_filt.hess_fn(z, p, 0.0, np.arange(1.0, loop_cfg.n_slack + 1)))),
       ):
         is_hess = isinstance(spec, sc.factory.SpHess)
-        derivative = oracle.factory("pair_derivative", [*oracle.input_names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]})
-        sparsity = derivative.output_sparsities[0]
+        derivative = oracle.factory(
+          "pair_derivative", [*as_concrete(oracle).input_names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]}
+        )
+        sparsity = as_concrete(derivative).output_sparsities[0]
         assert sparsity is not None
-        values = derivative((*args, np.arange(1.0, loop_cfg.n_slack + 1)) if is_hess else args)
+        values = derivative(*(*args, np.arange(1.0, loop_cfg.n_slack + 1)) if is_hess else args)
         np.testing.assert_allclose(values, reference[sparsity.rows, sparsity.cols], rtol=1e-8, atol=1e-9)
         np.testing.assert_allclose(reference[~sparsity.to_mask()], 0.0, atol=1e-12)
 
@@ -101,13 +105,13 @@ def check_pair_jac_codegen_growth() -> None:
   hess_families = []
   for ncars in (2, 4, 8):
     oracle = build_scaly_oracle(ClosedLoopConfig(ncars=ncars), FilterConfig())
-    jac = oracle.factory("pair_jac", list(oracle.input_names), [sc.factory.SpJac("g", "z")])
+    jac = oracle.factory("pair_jac", list(as_concrete(oracle).input_names), [sc.factory.SpJac("g", "z")])
     lines.append(len(render_c_source(jac).splitlines()))
     if ncars < 4:
       continue
     hess = oracle.factory(
       "row_hess",
-      [*oracle.input_names, "lam:cost", "lam:g"],
+      [*as_concrete(oracle).input_names, "lam:cost", "lam:g"],
       [sc.factory.SpHess("gamma", "z")],
       aux={"gamma": ["cost", "g"]},
     )
@@ -410,9 +414,9 @@ def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
     bar_x, u_des = sim.states.reshape(-1), desired.reshape(-1)
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
-    hess_fn = cast(sc.Function, scaly_filt.hess_fn)
-    hess_inputs = ((z, (bar_x, u_des, weights.packed, physics, dt)), (np.array(1.0), lam))
-    scaly_values = np.asarray(hess_fn(hess_inputs), dtype=np.float64).reshape(-1)
+    hess_fn = cast(ConcreteFunction, scaly_filt.hess_fn)
+    hess_inputs = (z, (bar_x, u_des, weights.packed, physics, dt), (np.array(1.0), lam))
+    scaly_values = np.asarray(hess_fn(*hess_inputs), dtype=np.float64).reshape(-1)
     casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
     np.testing.assert_allclose(scaly_values, casadi_dense[scaly_filt.hess_rows, scaly_filt.hess_cols], rtol=1e-8)
     sim.step(safe)
@@ -610,7 +614,7 @@ def check_typed_problem_keeps_hessian_in_place() -> None:
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
   from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
-  hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).function.descriptor.hess
+  hessian = as_concrete(build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).function).descriptor.hess
   module = render_c_module(hessian, lanes=1)
 
   # Scalar lowering isolates CALL boundaries from vector helper code and lane staging.

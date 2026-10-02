@@ -27,7 +27,7 @@ The declarations below name the output `cost` and the target input `target`:
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("target", 2)), sc.L("cost", ...))
+@sc.function(sc.group(sc.arg("x", 2), sc.arg("target", 2)), outputs=sc.arg("cost", ...))
 def tracking_cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, target = inputs
     return sc.sumsqr(x - target)
@@ -64,7 +64,7 @@ J(x)=\frac{\partial y}{\partial x}
 \]
 
 ```python
-@sc.function(sc.L("x", 2), sc.L("y", ...))
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
 def measurements(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[1], x[0] + 2.0 * x[1]])
 
@@ -99,7 +99,7 @@ y(x+\varepsilon d)=y(x)+\varepsilon J(x)d+O(\varepsilon^2).
 
 ```python
 fwd = sc.forward(measurements, "y", "x")
-print(fwd((x_value, np.array([1.0, 0.0]))))  # [4. 1.]
+print(fwd(x_value, np.array([1.0, 0.0])))  # [4. 1.]
 ```
 
 `sc.adjoint` constructs \(J(x)^T w\), the gradient of the scalar weighted
@@ -107,11 +107,12 @@ output \(w^T y(x)\). The weights have the output's shape:
 
 ```python
 adj = sc.adjoint(measurements, "y", "x")
-print(adj((x_value, np.array([1.0, 2.0]))))  # [6. 7.]
+print(adj(x_value, np.array([1.0, 2.0])))  # [6. 7.]
 ```
 
-Both functions take `(original_inputs, seed)`. If the original function takes
-`(x, target)`, the derivative call takes `((x, target), seed)`.
+Both functions append the seed as one parameter after the original parameters.
+For `f(x, target)`, call `fwd(x, target, seed)`. For a single grouped
+parameter `f((x, target))`, call `fwd((x, target), seed)`.
 
 ## Lagrangian Hessians and multiplier structure
 
@@ -128,14 +129,14 @@ Scaly's solver interfaces construct this derivative automatically. A direct
 request uses every output of a function as one term in that weighted sum:
 
 ```python
-@sc.function(sc.L("x", 2), sc.G(sc.L("cost", ...), sc.L("constraint", ...)))
+@sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("cost", ...), sc.arg("constraint", ...)))
 def model(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return sc.sumsqr(x), sc.stack([x[0] * x[1]])
 
 lag_hess = sc.lagrangian_hessian(model, "x")
 weights = (np.array(1.0), np.array([3.0]))
 point = np.array([3.0, 4.0])
-print(lag_hess((point, weights)))  # [[2. 3.]
+print(lag_hess(point, weights))  # [[2. 3.]
                                     #  [3. 2.]]
 ```
 
@@ -154,13 +155,14 @@ combined = tracking_cost.factory(
     ["x", "target"],
     ["cost", sc.factory.Grad("cost", "x"), sc.factory.Hess("cost", "x")],
 )
-cost, gradient, hessian = combined(data)
-print(combined.output_names)
+cost, gradient, hessian = combined(*data)
+print(combined.instantiate().output_names)
 # ('cost', 'grad_cost_x', 'hess_cost_x_x')
 ```
 
-The input list selects the declared inputs, and the output list mixes output
-names with derivative requests. The [function API reference](../api/functions.md)
+The input list selects the declared leaves. Each leaf becomes one parameter
+of the factory function, even if the source groups them. The output list mixes
+output names with derivative requests. The [function API reference](../api/functions.md)
 lists the request types, including sparse and seeded derivatives.
 
 A factory request for a forward derivative also needs `fwd:<wrt>` in the input

@@ -151,7 +151,7 @@ def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
   return float(np.tanh(10.0 * v) * (params.c_r0 + params.c_r1 * v + params.c_r2 * v * v) / params.c_m0)
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX)), sc.L("corridor", ...), name="race_car_corridor_stage")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("ref", NX)), outputs=sc.arg("corridor", 2), name="race_car_corridor_stage")
 def _corridor_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, ref = inputs
   cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
@@ -163,7 +163,7 @@ def _corridor_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   return sc.stack([reach + half_width, reach - half_width])
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX), sc.L("params", N_PARAMS)), sc.L("residuals", ...), name="race_car_cost_stage")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("ref", NX), sc.arg("params", N_PARAMS)), outputs=sc.arg("residuals", NZ), name="race_car_cost_stage")
 def _cost_stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, ref, params = inputs
   c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]
@@ -238,18 +238,21 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     ub[i * NZ + NX : (i + 1) * NZ] = [T_MAX, DELTA_MAX]
   problem_name = f"race_car_closed_loop_N{n}"
 
-  @sc.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n)), name=problem_name)
+  @sc.problem(vars=sc.arg("z", n_variables), params=sc.arg("p", n_param(n)), name=problem_name)
   def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    residuals = sc.vmap(
-      _cost_stage,
-      length=n + 1,
-      inputs={"z": z, "ref": (p, 0, NX), "params": (p, NX * (n + 1), 0)},
-    )
-    corridor = sc.vmap(
-      _corridor_stage,
-      length=n,
-      inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
-    )
+    residuals = sc.vmap(_cost_stage, n + 1)(
+      (
+        z,
+        sc.window(p, 0, NX),
+        sc.window(p, NX * (n + 1), 0),
+      )
+    ).vec()
+    corridor = sc.vmap(_corridor_stage, n)(
+      (
+        sc.window(z, NZ, NZ),
+        sc.window(p, NX, NX),
+      )
+    ).vec()
     return sc.ProblemSpec(
       minimize=sc.dot(sc.const(weights.reshape(-1)), residuals**2),
       eq=(_race_car_eq_vmap_expr(z, p, n),),

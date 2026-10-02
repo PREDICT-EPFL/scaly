@@ -7,22 +7,23 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
-  @sc.function(sc.G(sc.L("x", 3), sc.L("p", sc.TensorType((3,), diff=False))), sc.L("y", ...), name="scoped")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("p", sc.TensorType((3,), diff=False))), outputs=sc.arg("y", ...), name="scoped")
   def scoped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return (x + p).sin()
 
   assert isinstance(scoped, sc.Function)
   assert scoped.name == "scoped"
-  assert scoped.input_names == ("x", "p")
-  assert scoped.output_names == ("y",)
-  assert scoped.inputs[0].type.diff
-  assert not scoped.inputs[1].type.diff
+  assert as_concrete(scoped).input_names == ("x", "p")
+  assert as_concrete(scoped).output_names == ("y",)
+  assert as_concrete(scoped).inputs[0].type.diff
+  assert not as_concrete(scoped).inputs[1].type.diff
 
   xv = np.array([0.1, 0.2, 0.3])
   pv = np.array([1.0, 2.0, 3.0])
@@ -30,23 +31,23 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
-  @sc.function(sc.L("x", 2), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="pair")
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("out0", ...), sc.arg("out1", ...)), name="pair")
   def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return x, x.sum()
 
-  assert pair.output_names == ("out0", "out1")
+  assert as_concrete(pair).output_names == ("out0", "out1")
   y, s = pair(np.array([2.0, 3.0]))
   np.testing.assert_allclose(y, np.array([2.0, 3.0]))
   np.testing.assert_allclose(s, 5.0)
 
 
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...), name="f")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="f")
   def fn(x):
     return (x * x).sum()
 
-  (x,) = fn.inputs
-  (y,) = fn.outputs
+  (x,) = as_concrete(fn).inputs
+  (y,) = as_concrete(fn).outputs
 
   builders = (sc.jacobian, sc.gradient, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian)
   for build in builders:
@@ -91,7 +92,7 @@ def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
 
 
 def test_gradient_convenience_api_matches_factory() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
   def f(x):
     return (x.sin() + x * x).sum()
 
@@ -99,13 +100,13 @@ def test_gradient_convenience_api_matches_factory() -> None:
   g_factory = f.factory("g", ["x"], [sc.factory.Grad("y", "x")])
   xv = np.array([0.1, 0.4, 0.9])
 
-  assert g_api.input_names == ("x",)
-  assert g_api.output_names == ("grad_y_x",)
+  assert as_concrete(g_api).input_names == ("x",)
+  assert as_concrete(g_api).output_names == ("grad_y_x",)
   np.testing.assert_allclose(g_api(xv), g_factory(xv))
 
 
 def test_forward_convenience_api_matches_factory() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
   def f(x):
     return sc.stack([x[0] * x[1], x[0].sin()])
 
@@ -114,13 +115,13 @@ def test_forward_convenience_api_matches_factory() -> None:
   xv = np.array([0.3, 2.0])
   seed = np.array([1.5, -0.25])
 
-  assert fwd_api.input_names == ("x", "fwd:x")
-  assert fwd_api.output_names == ("fwd_y_x",)
-  np.testing.assert_allclose(fwd_api((xv, seed)), fwd_factory((xv, seed)))
+  assert as_concrete(fwd_api).input_names == ("x", "fwd:x")
+  assert as_concrete(fwd_api).output_names == ("fwd_y_x",)
+  np.testing.assert_allclose(fwd_api(*(xv, seed)), fwd_factory(*(xv, seed)))
 
 
 def test_adjoint_convenience_api_matches_factory() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
   def f(x):
     return sc.stack([x[0] * x[1], x[0].sin()])
 
@@ -129,13 +130,13 @@ def test_adjoint_convenience_api_matches_factory() -> None:
   xv = np.array([0.3, 2.0])
   lam = np.array([1.5, -0.25])
 
-  assert adj_api.input_names == ("x", "lam:y")
-  assert adj_api.output_names == ("adj_y_x",)
-  np.testing.assert_allclose(adj_api((xv, lam)), adj_factory((xv, lam)))
+  assert as_concrete(adj_api).input_names == ("x", "lam:y")
+  assert as_concrete(adj_api).output_names == ("adj_y_x",)
+  np.testing.assert_allclose(adj_api(*(xv, lam)), adj_factory(*(xv, lam)))
 
 
 def test_seeded_factory_outputs_require_seed_inputs() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
   def f(x):
     return x * x
 
@@ -149,7 +150,7 @@ def test_seeded_factory_outputs_require_seed_inputs() -> None:
 
 
 def test_factory_unknown_names_report_value_errors() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
   def f(x):
     return x * x
 
@@ -171,7 +172,7 @@ def test_factory_unknown_names_report_value_errors() -> None:
 
 
 def test_lagrangian_hessian_convenience_api() -> None:
-  @sc.function(sc.L("x", 2), sc.G(sc.L("f", ...), sc.L("g", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)))
   def nlp(x):
     return x.sin().sum(), x * x
 
@@ -181,4 +182,4 @@ def test_lagrangian_hessian_convenience_api() -> None:
   xv = np.array([0.2, 0.5])
   lam_f = np.array(1.2)
   lam_g = np.array([0.3, -0.7])
-  np.testing.assert_allclose(h_api((xv, (lam_f, lam_g))), h_factory((xv, lam_f, lam_g)))
+  np.testing.assert_allclose(h_api(*(xv, (lam_f, lam_g))), h_factory(*(xv, lam_f, lam_g)))

@@ -13,7 +13,7 @@ Here is the gradient of \(f(x)=\sin(x^2)\) as Scaly builds it, printed with
 `sc.render_expr_assembly`:
 
 ```python
-@sc.function(sc.L("x", ()), sc.L("y", ...))
+@sc.function(sc.arg("x", ()), outputs=sc.arg("y", ...))
 def f(x: sc.Expr) -> sc.Expr:
     return (x * x).sin()
 
@@ -94,7 +94,7 @@ picks rows, and a call composes the callee's pattern with its arguments'
 patterns. No numbers and no derivatives are involved[^griewank].
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("y", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
 def f(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[2], x[1] ** 2, 2.0 * x[0] + x[2] ** 2])
 
@@ -151,7 +151,7 @@ same numbers as the compact values of `sc.sparse_jacobian`:
 seeds = np.array([[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 fwd = sc.forward(f, "y", "x")
 x_value = np.array([1.0, 2.0, 3.0])
-print(np.stack([fwd((x_value, s)) for s in seeds], axis=1))
+print(np.stack([fwd(x_value, s) for s in seeds], axis=1))
 # [[3. 1.]
 #  [4. 0.]
 #  [2. 6.]]
@@ -186,17 +186,17 @@ diagonal and one dense row and column:
 ```python
 N = 4
 
-@sc.function(sc.G(sc.L("x", 1), sc.L("p", 1)), sc.L("c", ...))
+@sc.function(sc.group(sc.arg("x", 1), sc.arg("p", 1)), outputs=sc.arg("c", ...))
 def stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return (x * p).sin().sum()
 
-@sc.function(sc.L("w", N + 1), sc.L("cost", ...))
+@sc.function(sc.arg("w", N + 1), outputs=sc.arg("cost", ...))
 def total(w: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, N, [w[:N], w[N:]]).sum()
+    return sc.vmap(stage, N)((w[:N], w[N:])).vec().sum()
 
 hess = sc.sparse_hessian(total, "cost", "w")
-pattern = hess.output_sparsities[0]
+pattern = hess.instantiate().output_sparsities[0]
 assert pattern is not None
 print(pattern.to_mask().astype(int))
 # [[1 0 0 0 1]
@@ -301,15 +301,15 @@ values and stride one, and shares a weight `p` between all stages:
 ```python
 N = 4
 
-@sc.function(sc.G(sc.L("zz", 2), sc.L("p", 1)), sc.L("c", ...))
+@sc.function(sc.group(sc.arg("zz", 2), sc.arg("p", 1)), outputs=sc.arg("c", ...))
 def link(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     zz, p = inputs
     return p[0] * (zz[1] - zz[0].sin()) ** 2
 
-@sc.function(sc.G(sc.L("z", N + 1), sc.L("p", 1)), sc.L("cost", ...))
+@sc.function(sc.group(sc.arg("z", N + 1), sc.arg("p", 1)), outputs=sc.arg("cost", ...))
 def chain(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
-    return sc.vmap(link, N, [(z, 0, 1), p]).sum()
+    return sc.vmap(link, N)((sc.window(z, 0, 1), p)).vec().sum()
 ```
 
 The windows over `z` overlap:

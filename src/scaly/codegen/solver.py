@@ -1,6 +1,6 @@
 """C codegen orchestration for ``ExprOp.SOLVER_CALL`` — plugin-rendered wrappers.
 
-A solver Function's C body is a small hand-written template per backend,
+A solver ConcreteFunction's C body is a small hand-written template per backend,
 parameterised by the ``SolverDescriptor`` — the one sanctioned non-Program-IR
 render path (see ``docs/how_it_works/solvers.md``). The templates
 themselves live in the solver plugins (``scaly_piqp.codegen``,
@@ -8,11 +8,11 @@ themselves live in the solver plugins (``scaly_piqp.codegen``,
 ``SolverBackend.render_wrapper`` hook a :class:`SolverWrapperCtx` and frames
 the returned body with the scaly-owned stats storage and accessor. The oracle
 Functions the template drives are *not* hand-written — they lower through
-Program IR like any other host Function and are rendered as ``<oracle>_raw``
+Program IR like any other host ConcreteFunction and are rendered as ``<oracle>_raw``
 by ``codegen/c``. See ``docs/dev/solver_plugins.md`` for the contract.
 
 Outer functions that contain a solver as a callee lower through Program IR with
-the ``solver Function`` callee treated as opaque (``passes.lowering.lower_function``):
+the ``solver ConcreteFunction`` callee treated as opaque (``passes.lowering.lower_function``):
 the solver renders to a ``static void qp_xxx_raw(...)`` body here, and the
 caller's lowered ``CALL`` emits a ``qp_xxx_raw(...)`` invocation.
 ``codegen.aot.render_c_source`` orchestrates the whole translation unit, ordering
@@ -27,14 +27,14 @@ from typing import TYPE_CHECKING
 
 from scaly.codegen.abi import c_ident
 from scaly.ir.expr import ExprOp, topo
-from scaly.function import Function
+from scaly.function.concrete import ConcreteFunction
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees, solver_descriptor
 
 if TYPE_CHECKING:
   from scaly.solvers.model import ExternalOracle
 
 
-def _raw_symbol(fun: Function) -> str:
+def _raw_symbol(fun: ConcreteFunction) -> str:
   return f"{c_ident(fun.name)}_raw"
 
 
@@ -46,31 +46,31 @@ class SolverWrapperCtx:
   template declares), ``raw_symbol`` the function the template must define,
   ``stats_symbol`` the ``scaly_solver_stats`` static it must fill (declared by
   core, one per solver). ``raw_symbol_of`` resolves the C symbol of an oracle
-  / derivative Function from the descriptor.
+  / derivative ConcreteFunction from the descriptor.
   """
 
   symbol: str
   raw_symbol: str
   stats_symbol: str
 
-  def raw_symbol_of(self, fun: Function | ExternalOracle) -> str:
+  def raw_symbol_of(self, fun: ConcreteFunction | ExternalOracle) -> str:
     from scaly.solvers.model import ExternalOracle
 
     return fun.raw_symbol if isinstance(fun, ExternalOracle) else _raw_symbol(fun)
 
 
-def solver_includes(fun: Function) -> list[str]:
+def solver_includes(fun: ConcreteFunction) -> list[str]:
   from scaly.solvers.registry import get_backend
 
   return [f'#include "{get_backend(name).header}"' for name in solver_backends_used(fun)]
 
 
-def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
+def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
   """C identifiers for every solver wrapper reachable from ``fun``."""
-  found: dict[str, Function] = {}
+  found: dict[str, ConcreteFunction] = {}
   seen: set[int] = set()
 
-  def visit(fn: Function) -> None:
+  def visit(fn: ConcreteFunction) -> None:
     if id(fn) in seen:
       return
     seen.add(id(fn))
@@ -95,7 +95,7 @@ def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(fun: Function, *, include_external_sources: bool = True) -> list[str]:
+def render_solver_raw(fun: ConcreteFunction, *, include_external_sources: bool = True) -> list[str]:
   """Frame a plugin-rendered wrapper body with the scaly-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""

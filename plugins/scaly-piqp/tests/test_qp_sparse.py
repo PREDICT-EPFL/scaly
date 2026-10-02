@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp, solve_qp
 from scaly.codegen import render_c_source
@@ -13,7 +14,7 @@ from scaly.codegen import render_c_source
 def _sparse_problem(sparse: bool, name: str) -> sc.Solver:
   """Parameterized expression-form QP with structural matrix zeros."""
 
-  @sc.problem(vars=sc.L("decision", 4), params=sc.L("t", 2), name=name)
+  @sc.problem(vars=sc.arg("decision", 4), params=sc.arg("t", 2), name=name)
   def problem_body(x: sc.Expr, t: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     objective = (
       0.5 * ((2.0 + t[0] * t[0]) * x[0] * x[0] + 2.0 * t[1] * x[0] * x[1] + 3.0 * x[1] * x[1] + (1.5 + t[1] * t[1]) * x[2] * x[2] + x[3] * x[3])
@@ -36,7 +37,7 @@ def _sparse_problem(sparse: bool, name: str) -> sc.Solver:
 @pytest.mark.solver("piqp")
 def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
   qp = _sparse_problem(sparse=True, name="sparse_pattern_qp")
-  desc = qp.function.descriptor
+  desc = as_concrete(qp.function).descriptor
   assert desc.P_sparsity is not None and desc.A_sparsity is not None and desc.G_sparsity is not None
   # P: upper triangle of {(0,0),(0,1),(1,1),(2,2),(3,3)}; dense triu would be 10.
   assert set(zip(desc.P_sparsity.rows, desc.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1), (2, 2), (3, 3)}
@@ -47,7 +48,7 @@ def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
     assert sp.to_csc()[2] == tuple(range(sp.nnz))
   # The oracle emits compact value buffers.
   assert desc.oracle is not None
-  out_sizes = dict(zip(desc.oracle_output_names, [int(e.size) for e in desc.oracle.outputs], strict=True))
+  out_sizes = dict(zip(desc.oracle_output_names, [int(e.size) for e in as_concrete(desc.oracle).outputs], strict=True))
   assert out_sizes["P"] == 5 and out_sizes["A_eq"] == 2 and out_sizes["G_ineq"] == 4
 
 
@@ -83,7 +84,7 @@ def test_sparse_qp_constant_data_and_stats() -> None:
     sparse=True,
     name="sparse_const_qp",
   )
-  assert qp.function.descriptor.P_sparsity is not None and qp.function.descriptor.P_sparsity.nnz == 3
+  assert as_concrete(qp.function).descriptor.P_sparsity is not None and as_concrete(qp.function).descriptor.P_sparsity.nnz == 3
   out = solve_qp(qp, np.zeros(3), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.5, -0.5, 0.0], atol=1e-7)
   stats = qp.stats()
@@ -99,8 +100,12 @@ def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
   triangle. Compare against a dense solve of that symmetrized matrix."""
   kwargs: dict = {"c": np.array([-1.0, -1.0]), "x_lb": np.full(2, -3.0), "x_ub": np.full(2, 3.0)}
   sparse_qp = build_qp(P=np.array([[4.0, 1.0], [3.0, 4.0]]), sparse=True, name="asym_sparse", **kwargs)
-  assert sparse_qp.function.descriptor.P_sparsity is not None
-  assert set(zip(sparse_qp.function.descriptor.P_sparsity.rows, sparse_qp.function.descriptor.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
+  assert as_concrete(sparse_qp.function).descriptor.P_sparsity is not None
+  assert set(zip(as_concrete(sparse_qp.function).descriptor.P_sparsity.rows, as_concrete(sparse_qp.function).descriptor.P_sparsity.cols)) == {
+    (0, 0),
+    (0, 1),
+    (1, 1),
+  }
   dense_qp = build_qp(P=np.array([[4.0, 2.0], [2.0, 4.0]]), sparse=False, name="sym_dense", **kwargs)
   sparse_out = solve_qp(sparse_qp, np.zeros(2), np.zeros(0), np.zeros(0))
   dense_out = solve_qp(dense_qp, np.zeros(2), np.zeros(0), np.zeros(0))
@@ -121,8 +126,8 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
     sparse=True,
     name="sparse_zero_P_lp",
   )
-  assert qp.function.descriptor.P_sparsity is not None
-  assert list(zip(qp.function.descriptor.P_sparsity.rows, qp.function.descriptor.P_sparsity.cols)) == [(0, 0)]
+  assert as_concrete(qp.function).descriptor.P_sparsity is not None
+  assert list(zip(as_concrete(qp.function).descriptor.P_sparsity.rows, as_concrete(qp.function).descriptor.P_sparsity.cols)) == [(0, 0)]
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
   assert qp.stats() is not None and qp.stats().status == sc.ScalySolveStatus.OK
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
@@ -130,7 +135,7 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
 
 @pytest.mark.solver("piqp")
 def test_nested_sparse_qp_in_scaly_function() -> None:
-  @sc.function(sc.L("t", (2,)), sc.L("x", ...), name="shifted_sparse_qp")
+  @sc.function(sc.arg("t", (2,)), outputs=sc.arg("x", ...), name="shifted_sparse_qp")
   def solve_shifted(t: sc.Expr) -> sc.Expr:
     qp = build_qp(
       P=np.diag([2.0, 4.0]),

@@ -10,19 +10,19 @@ from scaly.codegen import write_module
 N = 4
 
 
-@sc.function(sc.L("z", 2), sc.L("residual", ...))
+@sc.function(sc.arg("z", 2), outputs=sc.arg("residual", ...))
 def stage(z: sc.Expr) -> sc.Expr:
   return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2])
 
 
-@sc.function(sc.L("zs", 2 * N), sc.L("residuals", ...))
+@sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals", ...))
 def stages(zs: sc.Expr) -> sc.Expr:
-  return sc.vmap(stage, N, [zs])
+  return sc.vmap(stage, N)(zs).vec()
 
 
 jac = sc.sparse_jacobian(stages, "residuals", "zs")
 zs = np.arange(1.0, 2 * N + 1) / 10.0
-pattern = jac.output_sparsities[0]
+pattern = jac.instantiate().output_sparsities[0]
 assert pattern is not None
 values = jac(zs)
 print(stages(zs))

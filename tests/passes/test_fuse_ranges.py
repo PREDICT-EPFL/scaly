@@ -5,6 +5,9 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.concrete import ConcreteFunction
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ir import program as p
 from scaly.ir.program import ProgramNode, ProgramOp
@@ -16,7 +19,7 @@ from scaly.passes.program.fuse_ranges import fuse_ranges
 
 
 def _function(name, inputs, outputs):
-  return sc.Function._from_exprs(name, inputs, outputs, [x.name for x in inputs], [f"out{i}" for i in range(len(outputs))])
+  return ConcreteFunction._from_exprs(name, inputs, outputs, [x.name for x in inputs], [f"out{i}" for i in range(len(outputs))])
 
 
 def _body(proc):
@@ -36,7 +39,7 @@ def test_transpose_gather_discards_unused_scalar_outputs(length):
   x = sc.sym("x", 2)
   stage = _function("range_stage", [x], [sc.stack([x[0].sin() + x[1] ** 2, x[0].cos(), x[1].exp(), x[0] * x[1]])])
   z = sc.sym("z", 2 * length + 3)
-  mapped = sc.vmap(stage, length, [(z, 1, 2)])
+  mapped = _mapped_call(stage, length, [(z, 1, 2)])
   moved = mapped.reshape((length, 2, 2)).transpose((1, 0, 2)).reshape((4 * length,))
   selected = sc.gather(moved, np.arange(2 * length))
   fn = _function("range_selected", [z], [selected])
@@ -53,7 +56,7 @@ def test_shared_consumers_schedule_expensive_scalar_once():
   x = sc.sym("x", 1)
   stage = _function("range_shared_stage", [x], [x.sin()])
   z = sc.sym("z", 12)
-  mapped = sc.vmap(stage, 12, [(z, 0, 1)])
+  mapped = _mapped_call(stage, 12, [(z, 0, 1)])
   fn = _function("range_shared", [z], [mapped + mapped * mapped, mapped * 3])
   prog = lower_function(fn)
   _assert_fused(prog)
@@ -71,8 +74,8 @@ def test_chained_mapped_stages_share_their_scalar_values():
   first = _function("range_first", [x], [x.sin()])
   second = _function("range_second", [x], [x * x + 2])
   z = sc.sym("z", 14)
-  mapped = sc.vmap(first, 7, [(z, 0, 2)])
-  result = sc.vmap(second, 7, [(mapped, 0, 2)])
+  mapped = _mapped_call(first, 7, [(z, 0, 2)])
+  result = _mapped_call(second, 7, [(mapped, 0, 2)])
   fn = _function("range_chained", [z], [result])
   _assert_fused(lower_function(fn))
   data = np.linspace(-1.3, 0.7, 14)
@@ -84,8 +87,8 @@ def test_shifted_ranges_align_through_input_offsets():
   first = _function("range_offset_first", [x], [x.sin()])
   second = _function("range_offset_second", [x], [x * x])
   z = sc.sym("z", 14)
-  a = sc.vmap(first, 7, [(z, 0, 2)])
-  b = sc.vmap(second, 6, [(z, 2, 2)])
+  a = _mapped_call(first, 7, [(z, 0, 2)])
+  b = _mapped_call(second, 6, [(z, 2, 2)])
   out = a + sc.scatter(b, np.arange(2, 14), (14,))
   fn = _function("range_offsets", [z], [out])
   _assert_fused(lower_function(fn))
@@ -99,7 +102,7 @@ def test_cross_stage_consumer_keeps_materialized_producer():
   x = sc.sym("x", 1)
   stage = _function("range_divergent_stage", [x], [x.sin()])
   z = sc.sym("z", 9)
-  mapped = sc.vmap(stage, 9, [(z, 0, 1)])
+  mapped = _mapped_call(stage, 9, [(z, 0, 1)])
   fn = _function("range_divergent", [z], [mapped[:-1] + mapped[1:]])
   prog = lower_function(fn)
   assert any(n.op == ProgramOp.CALL for n in walk_program(main_proc(prog)))
@@ -153,9 +156,11 @@ def test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores():
   x = sc.sym("x", 2)
   stage = _function("range_hess_stage", [x], [sc.stack([x[0] * x[1] + x[0].sin() + x[1] ** 3])])
   length = 11
-  z = sc.sym("z", 2 * length)
-  mapped = sc.vmap(stage, length, [(z, 0, 2)])
-  base = sc.Function._from_exprs("range_hess_base", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
+
+  @sc.function(sc.arg("z", 2 * length), outputs=sc.group(sc.arg("f", ()), sc.arg("g", length)), name="range_hess_base")
+  def base(z: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return (z * z).sum(), sc.vmap(stage, length)(z).vec()
+
   hess = base.factory("range_hess", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z", triangle="lower")], aux={"gamma": ["f", "g"]})
   observed = {}
   prog = lower_function(hess, observe=lambda name, program: observed.__setitem__(name, program))
@@ -169,9 +174,9 @@ def test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores():
   expected = np.eye(2 * length) * (2 * objective_weight)
   for k, weight in enumerate(multipliers):
     expected[2 * k : 2 * k + 2, 2 * k : 2 * k + 2] += weight * np.array([[-np.sin(data[2 * k]), 1], [1, 6 * data[2 * k + 1]]])
-  sparsity = hess.output_sparsities[0]
+  sparsity = as_concrete(hess).output_sparsities[0]
   assert sparsity is not None
-  np.testing.assert_allclose(hess((data, objective_weight, multipliers)), expected[sparsity.rows, sparsity.cols], rtol=1e-13, atol=1e-14)
+  np.testing.assert_allclose(hess(*(data, objective_weight, multipliers)), expected[sparsity.rows, sparsity.cols], rtol=1e-13, atol=1e-14)
 
 
 def test_cross_store_loop_carried_dependency_keeps_original_schedule():
@@ -226,7 +231,7 @@ def test_discarded_callee_outputs_do_not_materialize_reused_scratch():
   x = sc.sym("x", 2)
   stage = _function("range_multiple_outputs", [x], [x.sin(), x.exp()])
   z = sc.sym("z", 12)
-  mapped = sc.vmap(stage, 6, [(z, 0, 2)], output=0)
+  mapped = _mapped_call(stage, 6, [(z, 0, 2)], output=0)
   fn = _function("range_one_output", [z], [mapped])
   prog = lower_function(fn)
   _assert_fused(prog)

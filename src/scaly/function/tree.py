@@ -25,12 +25,17 @@ def _leaves(value: Any) -> list[Any]:
 class Tree[Symbolic, Numerical]:
   """A pytree declaration whose leaves are ``Expr`` symbolically and NumPy arrays numerically.
 
-  A tree *is* its structure: only ``G`` introduces a tuple, so a one-leaf tree is the bare leaf
-  and never a one-element tuple. See ``L`` for what that means at a call site.
+  A tree *is* its structure: only ``group`` introduces a tuple, so a one-leaf tree is the bare leaf
+  and never a one-element tuple. See ``arg`` for what that means at a call site.
   """
 
   names: tuple[str, ...]
   decls: tuple[LeafDecl, ...]
+
+  @property
+  def has_holes(self) -> bool:
+    """Whether any leaf shape needs binding."""
+    return any(decl is Ellipsis for decl in self.decls)
 
   @property
   def shapes(self) -> tuple[tuple[int, ...], ...]:
@@ -114,21 +119,21 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"duplicate names in {self.names}")
 
 
-class L(Tree[Expr, np.ndarray]):
+class _Leaf(Tree[Expr, np.ndarray]):
   """Declare one named tensor.
 
   The declared name is external metadata and need not match the local name used by a decorated
   function body. Pass a ``TensorType`` to set dtype or differentiability explicitly.
 
-  **A single leaf is passed and returned unpacked.** An ``L`` input tree takes the tensor itself,
-  not ``(tensor,)``, and an ``L`` output tree returns the tensor itself, not a one-element tuple.
+  **A single leaf is passed and returned unpacked.** An ``arg`` input tree takes the tensor itself,
+  not ``(tensor,)``, and an ``arg`` output tree returns the tensor itself, not a one-element tuple.
   Do not destructure a single-leaf result: ``(y,) = fn(x)`` does not raise, it iterates the
   returned tensor along its first axis exactly as NumPy would.
   """
 
-  def __init__(self, name: str, shape: ShapeDecl, /) -> None:
+  def __init__(self, name: str, shape: ShapeDecl = ..., /) -> None:
     if not isinstance(name, str) or not name:
-      raise ValueError("L needs a non-empty name")
+      raise ValueError("arg needs a non-empty name")
     self.names = (name,)
     if shape is Ellipsis:
       self.decls = (Ellipsis,)
@@ -143,13 +148,13 @@ class L(Tree[Expr, np.ndarray]):
       type_ = TensorType(type_.shape, type_.dtype, diff)
     return Expr(ExprOp.INPUT, type=type_, name=self.names[0])
 
-  def relabel(self, prefix: str) -> L:
-    return L(prefix + self.names[0], self.decls[0])
+  def relabel(self, prefix: str) -> _Leaf:
+    return _Leaf(prefix + self.names[0], self.decls[0])
 
-  def with_types(self, types: tuple[TensorType, ...]) -> L:
+  def with_types(self, types: tuple[TensorType, ...]) -> _Leaf:
     if len(types) != 1:
-      raise ValueError(f"L expects one resolved type, got {len(types)}")
-    return L(self.names[0], types[0])
+      raise ValueError(f"arg expects one resolved type, got {len(types)}")
+    return _Leaf(self.names[0], types[0])
 
   def flatten_symbolic(self, value: Expr, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, Expr):
@@ -157,6 +162,8 @@ class L(Tree[Expr, np.ndarray]):
     decl = self.decls[0]
     if decl is not Ellipsis and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
+    if decl is not Ellipsis and value.type.dtype != decl.dtype:
+      raise ValueError(f"{what}: expected dtype {decl.dtype} for {self.names[0]!r}, got {value.type.dtype}")
     return (value,)
 
   def flatten_numerical(self, value: np.ndarray, what: str) -> tuple[np.ndarray, ...]:
@@ -169,14 +176,23 @@ class L(Tree[Expr, np.ndarray]):
 
   def unflatten(self, values: tuple[Any, ...]) -> Any:
     if len(values) != 1:
-      raise ValueError(f"L expects one flat value, got {len(values)}")
+      raise ValueError(f"arg expects one flat value, got {len(values)}")
     return values[0]
+
+
+def arg(name: str, shape: ShapeDecl = ..., /) -> Tree[Expr, np.ndarray]:
+  """Declare one named tensor, optionally leaving its shape to a call or trace.
+
+  A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
+  A ``TensorType`` sets the dtype and differentiability explicitly.
+  """
+  return _Leaf(name, shape)
 
 
 class _G(Tree[Any, Any]):
   def __init__(self, parts: tuple[Tree[Any, Any], ...], *, public: bool = True) -> None:
-    if public and not 2 <= len(parts) <= 8:
-      raise TypeError(f"G takes 2 to 8 trees, got {len(parts)}; nest for more")
+    if public and not 1 <= len(parts) <= 8:
+      raise TypeError(f"group takes 1 to 8 trees, got {len(parts)}; nest for more")
     self.parts = parts
     self.names = tuple(name for part in parts for name in part.names)
     self.decls = tuple(decl for part in parts for decl in part.decls)
@@ -216,33 +232,37 @@ class _G(Tree[Any, Any]):
 
 
 @overload
-def G[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /) -> Tree[tuple[SA, SB], tuple[NA, NB]]: ...
+def group[SA, NA](a: Tree[SA, NA], /) -> Tree[tuple[SA], tuple[NA]]: ...
 
 
 @overload
-def G[SA, NA, SB, NB, SC, NC](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], /) -> Tree[tuple[SA, SB, SC], tuple[NA, NB, NC]]: ...
+def group[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /) -> Tree[tuple[SA, SB], tuple[NA, NB]]: ...
 
 
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND](
+def group[SA, NA, SB, NB, SC, NC](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], /) -> Tree[tuple[SA, SB, SC], tuple[NA, NB, NC]]: ...
+
+
+@overload
+def group[SA, NA, SB, NB, SC, NC, SD, ND](
   a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], /
 ) -> Tree[tuple[SA, SB, SC, SD], tuple[NA, NB, NC, ND]]: ...
 
 
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE](
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE](
   a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], /
 ) -> Tree[tuple[SA, SB, SC, SD, SE], tuple[NA, NB, NC, ND, NE]]: ...
 
 
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF](
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF](
   a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], /
 ) -> Tree[tuple[SA, SB, SC, SD, SE, SF], tuple[NA, NB, NC, ND, NE, NF]]: ...
 
 
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](
   a: Tree[SA, NA],
   b: Tree[SB, NB],
   c: Tree[SC, NC],
@@ -255,7 +275,7 @@ def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](
 
 
 @overload
-def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](
+def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](
   a: Tree[SA, NA],
   b: Tree[SB, NB],
   c: Tree[SC, NC],
@@ -268,8 +288,8 @@ def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](
 ) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH]]: ...
 
 
-def G(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
-  """Group two to eight trees side by side. Nest groups for greater widths."""
+def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
+  """Group one to eight trees side by side. Nest groups for greater widths."""
   return _G(parts)
 
 
@@ -278,5 +298,37 @@ def flat_tree(names: tuple[str, ...], types: tuple[TensorType, ...]) -> Tree[Any
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")
   if len(names) == 1:
-    return L(names[0], types[0])
-  return _G(tuple(L(name, type_) for name, type_ in zip(names, types, strict=True)), public=False)
+    return arg(names[0], types[0])
+  return _G(tuple(arg(name, type_) for name, type_ in zip(names, types, strict=True)), public=False)
+
+
+def inferred_outputs(value: Any, name: str) -> Tree[Any, Any]:
+  """Read output nesting and tensor types from a symbolic trace."""
+  leaves = _leaves(value)
+  if any(not isinstance(leaf, Expr) for leaf in leaves):
+    raise TypeError("function body must return a pytree of Expr values")
+  names = iter((name,) if len(leaves) == 1 else (f"out{i}" for i in range(len(leaves))))
+
+  def build(item: Any) -> Tree[Any, Any]:
+    if isinstance(item, tuple):
+      return _G(tuple(build(part) for part in item), public=False)
+    return arg(next(names), item.type)
+
+  return build(value)
+
+
+def parameter_list(trees: tuple[Tree[Any, Any], ...], /) -> _G:
+  """Build one tree per positional parameter, including zero parameters."""
+  return _G(trees, public=False)
+
+
+def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _G:
+  """Append one parameter while preserving each existing parameter's nesting."""
+  return parameter_list((*cast(_G, params).parts, tree))
+
+
+def flat_parameters(names: tuple[str, ...], types: tuple[TensorType, ...]) -> _G:
+  """Build a parameter list with one tensor per parameter."""
+  if len(names) != len(types):
+    raise ValueError(f"expected {len(types)} names, got {len(names)}")
+  return parameter_list(tuple(arg(name, type_) for name, type_ in zip(names, types, strict=True)))

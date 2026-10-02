@@ -8,6 +8,7 @@ that builds the ``IpoptProblem``, runs ``IpoptSolve``, and fills
 """
 
 from __future__ import annotations
+from scaly.function.model import as_concrete
 
 import math
 import re
@@ -74,7 +75,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     outputs, and fills the scaly stats struct (status mapped via the vendored
     ``ApplicationReturnStatus`` enum so upstream drift breaks at compile time).
   """
-  desc: SolverDescriptor = fun.descriptor
+  desc: SolverDescriptor = as_concrete(fun).descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol
   n, n_h, n_g = desc.n, desc.n_eq, desc.n_ineq

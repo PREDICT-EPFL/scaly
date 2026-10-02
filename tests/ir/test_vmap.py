@@ -3,10 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="scale_add")
 def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
@@ -14,14 +15,14 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
   N = 4
-  inputs = sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N))
+  inputs = sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N))
 
-  @sc.function(inputs, sc.L("y", ...), name="scaled_vmap")
+  @sc.function(inputs, outputs=sc.arg("y", ...), name="scaled_vmap")
   def fn_vmap(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
-    return sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+    return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
 
-  @sc.function(inputs, sc.L("y", ...), name="scaled_concat")
+  @sc.function(inputs, outputs=sc.arg("y", ...), name="scaled_concat")
   def fn_concat(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     return sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
@@ -38,19 +39,19 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   NX = 4
   N = 3
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="step")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="step")
   def step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return (z[:NX] - znext[:NX]) + p
 
-  inputs = sc.G(sc.L("z", NZ * (N + 1)), sc.L("p", NX * (N + 1)))
+  inputs = sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", NX * (N + 1)))
 
-  @sc.function(inputs, sc.L("eq", ...), name="step_vmap")
+  @sc.function(inputs, outputs=sc.arg("eq", ...), name="step_vmap")
   def fn_vmap(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
-    return sc.vmap(step, N, [(z, 0, NZ), (z, NZ, NZ), (p, NX, NX)])
+    return _mapped_call(step, N, [(z, 0, NZ), (z, NZ, NZ), (p, NX, NX)])
 
-  @sc.function(inputs, sc.L("eq", ...), name="step_concat")
+  @sc.function(inputs, outputs=sc.arg("eq", ...), name="step_concat")
   def fn_concat(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     parts = []
@@ -66,10 +67,10 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
 
 
 def test_vmap_zero_length_returns_empty() -> None:
-  @sc.function(sc.G(sc.L("z", 3), sc.L("p", 3)), sc.L("y", ...), name="empty_vmap")
+  @sc.function(sc.group(sc.arg("z", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="empty_vmap")
   def fn(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
-    return sc.vmap(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
+    return _mapped_call(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
 
   out = fn((np.zeros(3), np.zeros(3)))
   assert isinstance(out, np.ndarray)
@@ -79,10 +80,10 @@ def test_vmap_zero_length_returns_empty() -> None:
 def test_vmap_broadcast_stride_zero_repeats_same_slice() -> None:
   N = 3
 
-  @sc.function(sc.G(sc.L("z", 3), sc.L("p", 3)), sc.L("y", ...), name="broadcast_vmap")
+  @sc.function(sc.group(sc.arg("z", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="broadcast_vmap")
   def fn(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
-    return sc.vmap(scale_add, N, [(z, 0, 0), (p, 0, 0)])
+    return _mapped_call(scale_add, N, [(z, 0, 0), (p, 0, 0)])
 
   zv = np.array([1.0, 2.0, 3.0])
   pv = np.array([0.5, -1.0, 0.25])
@@ -95,16 +96,16 @@ def test_vmap_rejects_bad_input_specs() -> None:
   p = sc.sym("p", 6)
 
   with pytest.raises(ValueError, match="vmap length"):
-    sc.vmap(scale_add, -1, [(z, 0, 3), (p, 0, 3)])
+    _mapped_call(scale_add, -1, [(z, 0, 3), (p, 0, 3)])
 
   with pytest.raises(ValueError, match="reads past outer tensor"):
-    sc.vmap(scale_add, 3, [(z, 0, 3), (p, 0, 3)])  # would need size 9 > 6
+    _mapped_call(scale_add, 3, [(z, 0, 3), (p, 0, 3)])  # would need size 9 > 6
 
   with pytest.raises(ValueError, match=r"expects 2 input specs"):
-    sc.vmap(scale_add, 2, [(z, 0, 3)])
+    _mapped_call(scale_add, 2, [(z, 0, 3)])
 
   with pytest.raises(ValueError, match="stride must be non-negative"):
-    sc.vmap(scale_add, 2, [(z, 0, -1), (p, 0, 3)])
+    _mapped_call(scale_add, 2, [(z, 0, -1), (p, 0, 3)])
 
 
 def test_vmap_structural_key_matches_for_equal_constructions() -> None:
@@ -112,8 +113,8 @@ def test_vmap_structural_key_matches_for_equal_constructions() -> None:
   # the same Expr instance, so ``a is b`` and the structural-equality contract is preserved.
   z = sc.sym("z", 6)
   p = sc.sym("p", 6)
-  a = sc.vmap(scale_add, 2, [(z, 0, 3), (p, 0, 3)])
-  b = sc.vmap(scale_add, 2, [(z, 0, 3), (p, 0, 3)])
+  a = _mapped_call(scale_add, 2, [(z, 0, 3), (p, 0, 3)])
+  b = _mapped_call(scale_add, 2, [(z, 0, 3), (p, 0, 3)])
   assert a is b
   assert a.structurally_equal(b)
 
@@ -122,23 +123,23 @@ def test_vmap_accepts_input_dict_keyed_by_name() -> None:
   N = 4
   z = sc.sym("z", 3 * N)
   p = sc.sym("p", 3 * N)
-  positional = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  by_name = sc.vmap(scale_add, length=N, inputs={"x": (z, 0, 3), "p": (p, 0, 3)})
+  positional = _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+  by_name = _mapped_call(scale_add, length=N, inputs={"x": (z, 0, 3), "p": (p, 0, 3)})
   assert positional.structurally_equal(by_name)
 
   with pytest.raises(ValueError, match="unknown callee input names"):
-    sc.vmap(scale_add, length=N, inputs={"x": (z, 0, 3), "q": (p, 0, 3)})
+    _mapped_call(scale_add, length=N, inputs={"x": (z, 0, 3), "q": (p, 0, 3)})
   with pytest.raises(ValueError, match="missing entries for callee inputs"):
-    sc.vmap(scale_add, length=N, inputs={"x": (z, 0, 3)})
+    _mapped_call(scale_add, length=N, inputs={"x": (z, 0, 3)})
 
 
 def test_vmap_infers_chunked_and_broadcast_strides_from_sizes() -> None:
   N = 4
   z = sc.sym("z", 3 * N)
   p = sc.sym("p", 3)
-  inferred = sc.vmap(scale_add, N, {"x": z, "p": p})
-  explicit = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 0)])
+  inferred = _mapped_call(scale_add, N, {"x": z, "p": p})
+  explicit = _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 0)])
   assert inferred.structurally_equal(explicit)
 
   with pytest.raises(ValueError, match="input 'x' has size 10; expected 12 .* or 3"):
-    sc.vmap(scale_add, N, [sc.sym("bad", 10), p])
+    _mapped_call(scale_add, N, [sc.sym("bad", 10), p])
