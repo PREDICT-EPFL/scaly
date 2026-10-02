@@ -379,7 +379,7 @@ constant object or sparse matrix multiplication in the model itself.
 The same solver can be called symbolically without passing any matrices:
 
 ```python
-@sc.function(sc.arg("target", ()), outputs=sc.arg("trajectory", ...))
+@sc.function(sc.arg("target", ()), outputs=sc.arg("trajectory"))
 def mpc_trajectory(target: sc.Expr) -> sc.Expr:
     return solve_mpc(target)[0]
 
@@ -403,7 +403,7 @@ A call with symbolic parameters records a solver call inside an ordinary
 [numerical calls](#numerical-calls-and-return-values):
 
 ```python
-@sc.function(sc.arg("target", 2), outputs=sc.arg("allocation", ...))
+@sc.function(sc.arg("target", 2), outputs=sc.arg("allocation"))
 def allocate(target: sc.Expr) -> sc.Expr:
     result = solve(target)
     return result[0]

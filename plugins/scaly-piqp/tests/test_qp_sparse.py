@@ -135,7 +135,7 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
 
 @pytest.mark.solver("piqp")
 def test_nested_sparse_qp_in_scaly_function() -> None:
-  @sc.function(sc.arg("t", (2,)), outputs=sc.arg("x", ...), name="shifted_sparse_qp")
+  @sc.function(sc.arg("t", (2,)), outputs=sc.arg("x"), name="shifted_sparse_qp")
   def solve_shifted(t: sc.Expr) -> sc.Expr:
     qp = build_qp(
       P=np.diag([2.0, 4.0]),

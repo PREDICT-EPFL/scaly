@@ -16,7 +16,7 @@ import scaly as sc
 
 N = 20  # the decision vector w stacks N + 1 states of size 2, then N controls
 
-@sc.function(sc.arg("z", 2), sc.arg("u", 1), sc.arg("znext", 2), outputs=sc.arg("defect", 2))
+@sc.function(sc.arg("z", 2), sc.arg("u", 1), sc.arg("znext", 2))
 def defect(z: sc.Expr, u: sc.Expr, znext: sc.Expr) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u]) - znext
 

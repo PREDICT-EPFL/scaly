@@ -465,7 +465,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
 def test_sqp_nested_in_host_function() -> None:
   solver = _problem()
 
-  @sc.function(sc.arg("target", sc.TensorType((2,), diff=False)), outputs=sc.arg("norm", ...), name="nested_sqp_host")
+  @sc.function(sc.arg("target", sc.TensorType((2,), diff=False)), outputs=sc.arg("norm"), name="nested_sqp_host")
   def host(target: sc.Expr) -> sc.Expr:
     x = solver(target)[0]
     return sc.dot(x, x)

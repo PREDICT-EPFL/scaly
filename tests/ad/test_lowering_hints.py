@@ -20,13 +20,13 @@ def _callees(prog: ProgramNode) -> list[ProgramNode]:
 
 @pytest.mark.parametrize("hint", ["scalar", "block"])
 def test_derived_procs_inherit_stage_hint(hint: Lowering) -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="hint_stage")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="hint_stage")
   def stage(x):
     return (x.sin() * (x @ sc.const(np.ones(3)))).with_lowering(hint)
 
   length = 4
   inputs = sc.group(sc.arg("z", 3 * length), sc.arg("lam", 3 * length), sc.arg("seed", 3 * length), sc.arg("seeds", (2, 3 * length)))
-  outputs = sc.group(sc.arg("g", ...), sc.arg("h", ...), sc.arg("jm", ...), sc.arg("j", ...))
+  outputs = sc.group(sc.arg("g"), sc.arg("h"), sc.arg("jm"), sc.arg("j"))
 
   @sc.function(inputs, outputs=outputs, name="hint_chain")
   def fn(inputs):

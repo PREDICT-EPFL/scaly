@@ -155,7 +155,7 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
   )
 
 
-@sc.function(sc.arg("stage", 2), outputs=sc.arg("row", ...), name="single_block_stage")
+@sc.function(sc.arg("stage", 2), outputs=sc.arg("row"), name="single_block_stage")
 def single_block_stage(stage: sc.Expr) -> sc.Expr:
   return stage.sin()
 

@@ -13,7 +13,7 @@ Here is the gradient of \(f(x)=\sin(x^2)\) as Scaly builds it, printed with
 `sc.render_expr_assembly`:
 
 ```python
-@sc.function(sc.arg("x", ()), outputs=sc.arg("y", ...))
+@sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
 def f(x: sc.Expr) -> sc.Expr:
     return (x * x).sin()
 
@@ -94,7 +94,7 @@ picks rows, and a call composes the callee's pattern with its arguments'
 patterns. No numbers and no derivatives are involved[^griewank].
 
 ```python
-@sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
 def f(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[2], x[1] ** 2, 2.0 * x[0] + x[2] ** 2])
 
@@ -186,11 +186,11 @@ diagonal and one dense row and column:
 ```python
 N = 4
 
-@sc.function(sc.arg("x", 1), sc.arg("p", 1), outputs=sc.arg("c", ...))
+@sc.function(sc.arg("x", 1), sc.arg("p", 1), outputs=sc.arg("c"))
 def stage(x: sc.Expr, p: sc.Expr) -> sc.Expr:
     return (x * p).sin().sum()
 
-@sc.function(sc.arg("w", N + 1), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("w", N + 1), outputs=sc.arg("cost"))
 def total(w: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, N)(w[:N], w[N:]).vec().sum()
 
@@ -300,11 +300,11 @@ values and stride one, and shares a weight `p` between all stages:
 ```python
 N = 4
 
-@sc.function(sc.arg("zz", 2), sc.arg("p", 1), outputs=sc.arg("c", ...))
+@sc.function(sc.arg("zz", 2), sc.arg("p", 1), outputs=sc.arg("c"))
 def link(zz: sc.Expr, p: sc.Expr) -> sc.Expr:
     return p[0] * (zz[1] - zz[0].sin()) ** 2
 
-@sc.function(sc.arg("z", N + 1), sc.arg("p", 1), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("z", N + 1), sc.arg("p", 1), outputs=sc.arg("cost"))
 def chain(z: sc.Expr, p: sc.Expr) -> sc.Expr:
     return sc.vmap(link, N)(sc.window(z, 0, 1), p).vec().sum()
 ```

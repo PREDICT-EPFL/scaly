@@ -102,17 +102,17 @@ A symbolic call to a `Function` adds one `call` node, and `sc.vmap` adds one
 the last state goes through a terminal cost:
 
 ```python
-@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext", ...))
+@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext"))
 def model(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u])
 
 
-@sc.function(sc.arg("z", 2), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("z", 2), outputs=sc.arg("cost"))
 def terminal(z: sc.Expr) -> sc.Expr:
     return sc.sumsqr(z)
 
 
-@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("J", ...))
+@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("J"))
 def stages(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
     znexts = sc.vmap(model, 10)(zs, us).vec()
     return terminal(znexts[18:])
@@ -261,12 +261,12 @@ buffer at an offset. Together they let a slice or a reshape of a computed value
 reuse its storage. Here a slice and a reshape feed a callee that takes a matrix:
 
 ```python
-@sc.function(sc.arg("M", (2, 3)), outputs=sc.arg("s", ...))
+@sc.function(sc.arg("M", (2, 3)), outputs=sc.arg("s"))
 def trace2(M: sc.Expr) -> sc.Expr:
     return M[0, 0] + M[1, 1]
 
 
-@sc.function(sc.arg("x", 8), outputs=sc.arg("t", ...))
+@sc.function(sc.arg("x", 8), outputs=sc.arg("t"))
 def f(x: sc.Expr) -> sc.Expr:
     y = x.sin()
     return trace2(y[2:].reshape((2, 3)))

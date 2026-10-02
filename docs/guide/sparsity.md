@@ -14,7 +14,7 @@ Consider a function from a four-element vector to a three-element vector:
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...))
+@sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
 def model(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[1], x[2], x[3] * x[3]])
 
@@ -133,7 +133,7 @@ Hessians are symmetric. If a solver needs only one triangle, request that
 triangle when constructing the derivative:
 
 ```python
-@sc.function(sc.arg("x", 4), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("x", 4), outputs=sc.arg("cost"))
 def cost(x: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x) + x[0] * x[1]
 
@@ -184,11 +184,11 @@ J_f(z_0)&0&\cdots&0\\
 ```python
 N = 4
 
-@sc.function(sc.arg("z", 2), outputs=sc.arg("residual", ...))
+@sc.function(sc.arg("z", 2), outputs=sc.arg("residual"))
 def stage(z: sc.Expr) -> sc.Expr:
     return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2])
 
-@sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals", ...))
+@sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals"))
 def stages(zs: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, N)(zs).vec()
 
@@ -241,11 +241,11 @@ Converting it with `to_dense()` creates a dense matrix expression:
 def chain(x: sc.Expr) -> sc.Expr:
     return x[:-1].sin() * x[1:]
 
-@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv", ...))
+@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
 def via_matrix(x: sc.Expr, v: sc.Expr) -> sc.Expr:
     return sc.sparse_jacobian(chain(x), x).to_dense() @ v
 
-@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv", ...))
+@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
 def via_product(x: sc.Expr, v: sc.Expr) -> sc.Expr:
     return sc.jvp(chain(x), x, v)
 

@@ -60,7 +60,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   def _build(self, types: tuple[TensorType, ...]) -> ConcreteFunction[Any, Any, Any, Any]:
     assert self.inputs is not None
     inputs = self.inputs.with_types(types)
-    open_types = tuple(type_ for decl, type_ in zip(self.inputs.decls, types, strict=True) if decl is Ellipsis)
+    open_types = tuple(type_ for decl, type_ in zip(self.inputs.decls, types, strict=True) if decl is None)
     name = _mangle(self.name, _skeleton(inputs, types), open_types) if self.inputs.has_holes else self.name
     return ConcreteFunction(name, self._fn, inputs, self.outputs, output_name=self.name)
 
@@ -106,12 +106,12 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         shape
         if isinstance(shape, TensorType)
         else TensorType(as_shape(shape), decl.dtype, decl.diff)
-        if decl is not Ellipsis
+        if decl is not None
         else TensorType(as_shape(shape))
         for decl, shape in zip(self.inputs.decls, shapes, strict=True)
       )
       for decl, type_ in zip(self.inputs.decls, types, strict=True):
-        expected = TensorType(type_.shape) if decl is Ellipsis else decl
+        expected = TensorType(type_.shape) if decl is None else decl
         if expected != type_:
           raise TypeError(f"{self.name}: binding type {type_} contradicts declaration {expected}")
     return cast(ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs], self._cache(types, lambda: self._build(types)))
@@ -133,14 +133,14 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       decl = tree.decls[0]
       if isinstance(value, Expr):
         shape = value.shape
-        expected_dtype = TensorType(()).dtype if decl is Ellipsis else decl.dtype
+        expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
         if value.type.dtype != expected_dtype:
           raise ValueError(f"{what}: expected dtype {expected_dtype} for {tree.names[0]!r}, got {value.type.dtype}")
       else:
         shape = np.shape(value)
-      if decl is not Ellipsis and shape != decl.shape:
+      if decl is not None and shape != decl.shape:
         raise ValueError(f"{what}: expected shape {decl.shape} for {tree.names[0]!r}, got {shape}")
-      return TensorType(shape) if decl is Ellipsis else decl
+      return TensorType(shape) if decl is None else decl
 
     skeleton = bind(self.inputs, args)
     return self._bind(skeleton, what)
@@ -270,7 +270,7 @@ def derived_name(source: Function, concrete: ConcreteFunction, requested: str | 
   if source.inputs is None:
     open_types = concrete.input_tree.types
   else:
-    open_types = tuple(type_ for decl, type_ in zip(source.inputs.decls, concrete.input_tree.types, strict=True) if decl is Ellipsis)
+    open_types = tuple(type_ for decl, type_ in zip(source.inputs.decls, concrete.input_tree.types, strict=True) if decl is None)
   return (
     _mangle(requested, _skeleton(concrete.input_tree, concrete.input_tree.types), open_types) if open_types or source.inputs is None else requested
   )

@@ -23,7 +23,7 @@ TILES = [
 
 
 def _stage() -> sc.Function:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="bake_stage")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="bake_stage")
   def stage(x):
     return x.sin() * (x @ sc.const(np.ones(3)))
 
@@ -64,11 +64,11 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   length = len(pattern)
   seeds = _seeds(pattern)
 
-  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy", ...), name="bake")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy"), name="bake")
   def fn(z):
     return sc.jvp_many(_mapped_call(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
 
-  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy", ...), name="bake_ref")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy"), name="bake_ref")
   def ref(z):
     return _jvp_many_unrolled(_mapped_call(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
 

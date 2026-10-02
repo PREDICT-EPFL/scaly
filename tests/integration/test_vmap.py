@@ -8,7 +8,7 @@ from typing import Any, cast
 from scaly.ad import finite_difference
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="scale_add")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
 def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
@@ -54,12 +54,12 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="race_car_eq_initial")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_initial")
   def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:NX] - p[:NX]
 
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="race_car_eq_interstage")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_interstage")
   def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
@@ -67,7 +67,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
   def build(N: int) -> sc.Function:
     @sc.function(
       sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False))),
-      outputs=sc.arg("eq", ...),
+      outputs=sc.arg("eq"),
       name=f"race_car_eq_vmap_N{N}",
     )
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -88,7 +88,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     pv = rng.normal(size=NX * (N + 1))
 
     # Sanity: the primal numerically matches the unrolled concat-of-call equivalent.
-    @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("eq", ...), name=f"race_car_eq_ref_N{N}")
+    @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("eq"), name=f"race_car_eq_ref_N{N}")
     def ref(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -135,12 +135,12 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="race_car_eq_initial2")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_initial2")
   def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:NX] - p[:NX]
 
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="race_car_eq_interstage2")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_interstage2")
   def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
@@ -149,7 +149,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     return sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
 
   def build_vmap(N: int) -> sc.Function:
-    @sc.function(inputs_tree(N), outputs=sc.arg("eq", ...), name=f"tr_vmap_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_vmap_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       initial = eq_initial((z[:NZ], p[:NX]))
@@ -159,7 +159,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     return fn
 
   def build_unroll(N: int) -> sc.Function:
-    @sc.function(inputs_tree(N), outputs=sc.arg("eq", ...), name=f"tr_unroll_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_unroll_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -201,7 +201,7 @@ NB, NS, NU = 3, 3, 2
 PAIRS = [(i, j) for i in range(NB) for j in range(i + 1, NB)]
 
 
-@sc.function(sc.group(sc.arg("s", NS), sc.arg("u", NU)), outputs=sc.arg("next", ...), name="pairs_step")
+@sc.function(sc.group(sc.arg("s", NS), sc.arg("u", NU)), outputs=sc.arg("next"), name="pairs_step")
 def pairs_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   s, u = inputs
   return sc.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])
@@ -209,7 +209,7 @@ def pairs_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.group(sc.arg("prev_i", NS), sc.arg("prev_j", NS), sc.arg("si", NS), sc.arg("sj", NS), sc.arg("slack", 1)),
-  outputs=sc.arg("h", ...),
+  outputs=sc.arg("h"),
   name="pairs_barrier",
 )
 def pairs_barrier(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -224,7 +224,7 @@ def pairs_barrier(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) ->
   return sc.stack([(sc.dot(d, d).sqrt() - 0.5 * (1.0 + sc.dot(dprev, dprev)).log() + soft_max + slack[0])])
 
 
-@sc.function(sc.group(sc.arg("s", NS), sc.arg("snext", NS), sc.arg("slack", 1)), outputs=sc.arg("h", ...), name="pairs_wall")
+@sc.function(sc.group(sc.arg("s", NS), sc.arg("snext", NS), sc.arg("slack", 1)), outputs=sc.arg("h"), name="pairs_wall")
 def pairs_wall(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   s, snext, slack = inputs
   return sc.stack([(snext[0] - 0.5 * s[0] + slack[0]), (1.0 - snext[1].exp() + slack[0])])
@@ -237,7 +237,7 @@ def _pair_index_table(bodies: list[int]) -> np.ndarray:
 def _build_pairs_fn(mapped: bool) -> sc.Function:
   @sc.function(
     sc.group(sc.arg("u", NU * NB + 1), sc.arg("p", sc.TensorType((NS * NB,), diff=False))),
-    outputs=sc.arg("h", ...),
+    outputs=sc.arg("h"),
     name=f"pairs_{'vmap' if mapped else 'unroll'}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -323,7 +323,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
   w = np.array([[0.4, -0.2, 0.7], [0.1, 0.9, -0.3]])
   b = np.array([0.05, -0.15])
 
-  @sc.function(sc.arg("s", 3), outputs=sc.arg("y", ...), name="vmap_dense_layer")
+  @sc.function(sc.arg("s", 3), outputs=sc.arg("y"), name="vmap_dense_layer")
   def layer(s: sc.Expr) -> sc.Expr:
     phi = sc.stack([s[0], s[1], s[2]])
     h = sc.const(w) @ phi + sc.const(b)
@@ -331,7 +331,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
   N = 4
 
-  @sc.function(sc.arg("z", 3 * N), outputs=sc.arg("y", ...), name="vmap_dense")
+  @sc.function(sc.arg("z", 3 * N), outputs=sc.arg("y"), name="vmap_dense")
   def fn(z: sc.Expr) -> sc.Expr:
     return sc.vmap(layer, N)(sc.window(z, 0, 3)).vec()
 
@@ -344,7 +344,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
 
 def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
-  @sc.function(sc.group(sc.arg("x", 2), sc.arg("ref", 2), sc.arg("scale", 1)), outputs=sc.arg("r", ...))
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("ref", 2), sc.arg("scale", 1)), outputs=sc.arg("r"))
   def residual(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, ref, scale = inputs
     return sc.stack([x[0] - ref[0], ref[1].cos() * x[1] - scale[0].tanh()])
@@ -356,7 +356,7 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
   values = []
   for name in ("mapped", "unrolled"):
 
-    @sc.function(sc.group(sc.arg("x", 2 * n), sc.arg("p", sc.TensorType((2 * n + 1,), diff=False))), outputs=sc.arg("f", ...), name=name)
+    @sc.function(sc.group(sc.arg("x", 2 * n), sc.arg("p", sc.TensorType((2 * n + 1,), diff=False))), outputs=sc.arg("f"), name=name)
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       x, p = inputs
       if name == "mapped":

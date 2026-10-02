@@ -4,7 +4,7 @@ import scaly as sc
 from scaly.codegen import write_module
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.arg("energy", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("energy"))
 def energy(x: sc.Expr) -> sc.Expr:
   return sc.sumsqr(x)
 

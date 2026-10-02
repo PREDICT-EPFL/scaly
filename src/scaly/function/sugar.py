@@ -139,7 +139,7 @@ def _batch_tree(tree: Tree, length: int) -> Tree:
   if isinstance(tree, _G):
     return _G(tuple(_batch_tree(part, length) for part in tree.parts), public=False)
   decl = tree.decls[0]
-  return _Leaf(tree.names[0], Ellipsis if decl is Ellipsis else TensorType((length, *decl.shape), decl.dtype, decl.diff))
+  return _Leaf(tree.names[0], None if decl is None else TensorType((length, *decl.shape), decl.dtype, decl.diff))
 
 
 def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False) -> tuple[Expr, int, int]:
@@ -226,7 +226,7 @@ class _Mapped(Function):
         if not isinstance(value, tuple) or len(value) != len(parts):
           raise ValueError(f"{self.name}: arguments do not match the declared parameter trees")
         return tuple(resolve(part, item) for part, item in zip(parts, value, strict=True))
-      decl = Ellipsis if tree is None else tree.decls[0]
+      decl = None if tree is None else tree.decls[0]
       marker = value if isinstance(value, (_Broadcast, _Window)) else None
       value = marker.value if marker is not None else value
       if tree is None and not isinstance(value, (Expr, np.ndarray)):
@@ -234,7 +234,7 @@ class _Mapped(Function):
       actual = value if isinstance(value, Expr) else np.asarray(value)
       repeated = isinstance(marker, _Broadcast)
       if isinstance(marker, _Window):
-        if decl is Ellipsis:
+        if decl is None:
           raise TypeError("window needs a declared slice shape; instantiate the callee or use a leading-axis view")
         if len(actual.shape) != 1:
           raise ValueError("window needs a rank-1 outer tensor")
@@ -242,11 +242,11 @@ class _Mapped(Function):
       else:
         if repeated:
           shape = actual.shape
-        elif actual.shape and actual.shape[0] == self._length and (decl is Ellipsis or actual.shape[1:] == decl.shape):
+        elif actual.shape and actual.shape[0] == self._length and (decl is None or actual.shape[1:] == decl.shape):
           shape = actual.shape[1:]
-        elif decl is not Ellipsis and len(actual.shape) == 1 and actual.size == self._length * decl.size:
+        elif decl is not None and len(actual.shape) == 1 and actual.size == self._length * decl.size:
           shape = decl.shape
-        elif decl is not Ellipsis and actual.size == decl.size:
+        elif decl is not None and actual.size == decl.size:
           shape, repeated = decl.shape, True
         else:
           raise ValueError(f"{self.name}: cannot map shape {actual.shape}; use leading axis {self._length}, broadcast, or window")
@@ -257,17 +257,17 @@ class _Mapped(Function):
         else:
           actual = actual.reshape(-1)
           start, stride = 0, 0 if repeated else width
-      if decl is not Ellipsis and shape != decl.shape:
+      if decl is not None and shape != decl.shape:
         raise ValueError(f"{self.name}: expected slice shape {decl.shape}, got {shape}")
       width = int(np.prod(shape, dtype=int))
       if self._length > 0 and start + (self._length - 1) * stride + width > actual.size:
         raise ValueError("vmap window reads past outer tensor")
-      expected_dtype = TensorType(()).dtype if decl is Ellipsis else decl.dtype
+      expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
       if isinstance(actual, Expr) and actual.type.dtype != expected_dtype:
         raise ValueError(f"{self.name}: expected dtype {expected_dtype}, got {actual.type.dtype}")
       actuals.append(actual)
       layouts.append((start, stride))
-      return TensorType(shape, expected_dtype, True if decl is Ellipsis else decl.diff)
+      return TensorType(shape, expected_dtype, True if decl is None else decl.diff)
 
     skeleton = resolve(self._source.inputs, args)
     concrete = self._source._bind(skeleton, self.name)

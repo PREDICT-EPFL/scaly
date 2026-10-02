@@ -6,7 +6,7 @@ import scaly as sc
 
 
 def test_jit_reports_input_errors() -> None:
-  @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.arg("out", ...))
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.arg("out"))
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return ((x + 2.0) * y).sum()

@@ -24,7 +24,7 @@ ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out
 
 
 def _spjac() -> sc.Function:
-  @sc.function(sc.group(sc.arg("x", 4), sc.arg("p", 2)), outputs=sc.arg("y", ...))
+  @sc.function(sc.group(sc.arg("x", 4), sc.arg("p", 2)), outputs=sc.arg("y"))
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return sc.stack([x[0] * p[0], x[2:4].sum(), x[1] * x[3] + p[1]])
@@ -137,7 +137,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
 
 
 def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y", ...), sc.arg("s", ...)), name="g")
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("s")), name="g")
   def fun(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return (x.sin(), x.sum())
 
@@ -152,7 +152,7 @@ def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
 
 
 def test_casadi_rejects_dense_matrix_buffers() -> None:
-  @sc.function(sc.arg("m", (2, 3)), outputs=sc.arg("n", ...), name="dense")
+  @sc.function(sc.arg("m", (2, 3)), outputs=sc.arg("n"), name="dense")
   def fun(m: sc.Expr) -> sc.Expr:
     return m * 2.0
 
@@ -161,7 +161,7 @@ def test_casadi_rejects_dense_matrix_buffers() -> None:
   with pytest.raises(ValueError, match="input 'm'"):
     render_c_api_header(fun, casadi=True)
 
-  @sc.function(sc.arg("row", (1, 3)), outputs=sc.arg("n", ...))
+  @sc.function(sc.arg("row", (1, 3)), outputs=sc.arg("n"))
   def row_ok(row: sc.Expr) -> sc.Expr:
     return row * 2.0
 

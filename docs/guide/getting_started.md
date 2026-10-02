@@ -60,14 +60,14 @@ The `@sc.function` decorator constructs one by running a Python body with
 symbolic inputs:
 
 ```python
-@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext", ...))
+@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext"))
 def model(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u])
 ```
 
 `sc.arg` declares one named array. Here, each Python parameter has its own
 argument declaration. The output is named `znext`, whose shape is inferred
-from the returned expression because its declaration uses `...`. Use `sc.group`
+from the returned expression because its declaration gives no shape. Use `sc.group`
 to combine arguments into a tuple when a parameter or output has several parts.
 
 The decorator creates the symbols, runs the body once, and records the returned
@@ -145,7 +145,7 @@ N = 20
 
 @sc.function(
     sc.arg("z0", 2), sc.arg("us", N),
-    outputs=sc.group(sc.arg("zN", ...), sc.arg("cost", ...)),
+    outputs=sc.group(sc.arg("zN"), sc.arg("cost")),
 )
 def rollout(z: sc.Expr, us: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     cost = sc.const(0.0)
@@ -292,7 +292,7 @@ Its evaluation does not depend on the result of another defect evaluation:
 ```python
 @sc.function(
     sc.arg("z", 2), sc.arg("u", 1), sc.arg("znext", 2),
-    outputs=sc.arg("defect", ...),
+    outputs=sc.arg("defect"),
 )
 def defect(z: sc.Expr, u: sc.Expr, znext: sc.Expr) -> sc.Expr:
     return model(z, u) - znext

@@ -3,7 +3,7 @@ import numpy as np
 import scaly as sc
 
 
-@sc.function(sc.arg("x", 4), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("x", 4), outputs=sc.arg("cost"))
 def cost(x: sc.Expr) -> sc.Expr:
   return sc.sumsqr(x) + x[0] * x[1]
 

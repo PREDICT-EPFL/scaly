@@ -9,11 +9,11 @@ from scaly.ir.expr import topo
 
 
 def test_function_call_node_eval() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def inner(x):
     return x.sin()
 
-  @sc.function(sc.arg("z", 2), outputs=sc.arg("out", ...))
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("out"))
   def outer(z):
     return inner(z) + 1.0
 
@@ -22,7 +22,7 @@ def test_function_call_node_eval() -> None:
 
 
 def test_function_call_normalizes_raw_constant_args() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def inner(x):
     return x + 1.0
 
@@ -54,7 +54,7 @@ def test_function_signature_and_call_shape_errors() -> None:
   else:  # pragma: no cover
     raise AssertionError("undeclared graph input should fail")
 
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def f(x):
     return x
 

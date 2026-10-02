@@ -124,7 +124,7 @@ def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch
 
   solver = sc.solver(problem, "ipopt", name="mode_warmup", options={"print_level": 0, "sb": "yes"})
 
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="mode_diagnostic")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="mode_diagnostic")
   def diagnostic(x: sc.Expr) -> sc.Expr:
     return x.sin()
 

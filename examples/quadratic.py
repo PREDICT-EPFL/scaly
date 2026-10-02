@@ -6,7 +6,7 @@ import scaly as sc
 from scaly.codegen import write_module
 
 
-@sc.function(sc.arg("x", 2), sc.arg("target", 2), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("x", 2), sc.arg("target", 2), outputs=sc.arg("cost"))
 def tracking_cost(x: sc.Expr, target: sc.Expr) -> sc.Expr:
   return sc.sumsqr(x - target)
 

@@ -39,11 +39,11 @@ def test_artifact_sizes_split_static_data_from_executable_source() -> None:
 
 
 def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="metric_stage")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="metric_stage")
   def stage(x: sc.Expr) -> sc.Expr:
     return 2.0 * x + x.sin()
 
-  @sc.function(sc.arg("z", 8), outputs=sc.arg("y", ...), name="metric_vmap")
+  @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 4, [z])
 
@@ -53,16 +53,16 @@ def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
 def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -> None:
   matrix = sc.Expr.const(np.arange(8.0).reshape(4, 2))
 
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="metric_workspace_inner")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="metric_workspace_inner")
   def inner(x: sc.Expr) -> sc.Expr:
     hidden = matrix @ x
     return (hidden * hidden).sum().reshape((1,)).block()
 
-  @sc.function(sc.arg("y", 2), outputs=sc.arg("z", ...), name="metric_workspace_outer")
+  @sc.function(sc.arg("y", 2), outputs=sc.arg("z"), name="metric_workspace_outer")
   def outer(y: sc.Expr) -> sc.Expr:
     return inner(y) + 1
 
-  @sc.function(sc.arg("z", 8), outputs=sc.arg("y", ...), name="metric_workspace_vmap")
+  @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_workspace_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(outer, 4, [z])
 
@@ -73,12 +73,12 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
 @pytest.mark.parametrize("stages", [1, 5])
 def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages: int) -> None:
-  @sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 9)), outputs=sc.arg("y", ...), name="metric_hoist_stage")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 9)), outputs=sc.arg("y"), name="metric_hoist_stage")
   def stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, w = inputs
     return (w.reshape((3, 3)).exp() @ x).sin().block()
 
-  @sc.function(sc.group(sc.arg("z", 3 * stages), sc.arg("weights", 9)), outputs=sc.arg("y", ...), name="metric_hoist_map")
+  @sc.function(sc.group(sc.arg("z", 3 * stages), sc.arg("weights", 9)), outputs=sc.arg("y"), name="metric_hoist_map")
   def mapped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, weights = inputs
     return _mapped_call(stage, stages, {"x": z, "w": (weights, 0, 0)})
@@ -91,11 +91,11 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
 def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None:
   from scaly.ir.program import ProgramNode, ProgramOp, const_int
 
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="metric_scheduled_stage")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="metric_scheduled_stage")
   def stage(x: sc.Expr) -> sc.Expr:
     return (2.0 * x + x.sin()).block()
 
-  @sc.function(sc.arg("z", 8), outputs=sc.arg("y", ...), name="metric_scheduled_map")
+  @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_scheduled_map")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 4, [z])
 
@@ -115,15 +115,15 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
 
 
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
-  @sc.function(sc.arg("x", 1024), outputs=sc.arg("y", ...), name="metric_spill_inner")
+  @sc.function(sc.arg("x", 1024), outputs=sc.arg("y"), name="metric_spill_inner")
   def inner(x: sc.Expr) -> sc.Expr:
     return (x * x).block()
 
-  @sc.function(sc.arg("y", 1024), outputs=sc.arg("z", ...), name="metric_spill_outer")
+  @sc.function(sc.arg("y", 1024), outputs=sc.arg("z"), name="metric_spill_outer")
   def outer(y: sc.Expr) -> sc.Expr:
     return inner(y) + 1
 
-  @sc.function(sc.arg("z", 2048), outputs=sc.arg("y", ...), name="metric_spill_vmap")
+  @sc.function(sc.arg("z", 2048), outputs=sc.arg("y"), name="metric_spill_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(outer, 2, [z])
 
@@ -131,12 +131,12 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
 
 
 def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="metric_shared_stage")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="metric_shared_stage")
   def stage(x: sc.Expr) -> sc.Expr:
     shared = x[0].sin()
     return sc.stack([shared * shared, shared + 1])
 
-  @sc.function(sc.arg("z", 4), outputs=sc.arg("y", ...), name="metric_shared_vmap")
+  @sc.function(sc.arg("z", 4), outputs=sc.arg("y"), name="metric_shared_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 4, [z])
 
@@ -147,11 +147,11 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
   from scaly.ir.program import ProgramOp, walk_program
   from scaly.passes.lowering import lower_function
 
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="metric_pair_stage")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="metric_pair_stage")
   def stage(x: sc.Expr) -> sc.Expr:
     return (x * x).scalar()
 
-  @sc.function(sc.arg("z", 12), outputs=sc.arg("y", ...), name="metric_pair_map")
+  @sc.function(sc.arg("z", 12), outputs=sc.arg("y"), name="metric_pair_map")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 4, [z]).sum()
 
@@ -164,15 +164,15 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
 
 
 def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="metric_scalar_stage")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="metric_scalar_stage")
   def stage(x: sc.Expr) -> sc.Expr:
     return x * x
 
-  @sc.function(sc.arg("z", 5), outputs=sc.arg("y", ...), name="metric_unit_vmap")
+  @sc.function(sc.arg("z", 5), outputs=sc.arg("y"), name="metric_unit_vmap")
   def unit(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 1, [(z, 0, 1)])
 
-  @sc.function(sc.arg("z", 5), outputs=sc.arg("y", ...), name="metric_mixed_vmap")
+  @sc.function(sc.arg("z", 5), outputs=sc.arg("y"), name="metric_mixed_vmap")
   def mixed(z: sc.Expr) -> sc.Expr:
     return sc.concat([_mapped_call(stage, 2, [(z, 0, 1)]), _mapped_call(stage, 3, [(z, 2, 1)])])
 
@@ -181,11 +181,11 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   # range therefore contains two squares, or the heavy expression and one square.
   assert _dispatch_metrics(mixed, render_c_module(mixed).program) == (2, 0, 2)
 
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="metric_heavy_stage")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="metric_heavy_stage")
   def heavy(x: sc.Expr) -> sc.Expr:
     return ((x * x + x) * x).sin()
 
-  @sc.function(sc.arg("z", 5), outputs=sc.arg("y", ...), name="metric_weighted_vmap")
+  @sc.function(sc.arg("z", 5), outputs=sc.arg("y"), name="metric_weighted_vmap")
   def weighted(z: sc.Expr) -> sc.Expr:
     return sc.concat([_mapped_call(heavy, 2, [(z, 0, 1)]), _mapped_call(stage, 3, [(z, 2, 1)])])
 
@@ -193,15 +193,15 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
 
 
 def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="metric_unit_stage")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="metric_unit_stage")
   def stage(x: sc.Expr) -> sc.Expr:
     return (x * x).block()
 
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y", ...), name="metric_unmapped_stage")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="metric_unmapped_stage")
   def other(x: sc.Expr) -> sc.Expr:
     return ((x + 1) * (x + 2)).block()
 
-  @sc.function(sc.arg("z", 1), outputs=sc.arg("y", ...), name="metric_unit_with_call")
+  @sc.function(sc.arg("z", 1), outputs=sc.arg("y"), name="metric_unit_with_call")
   def root(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 1, [z]) + other(z)
 
@@ -216,7 +216,7 @@ def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
 
 
 def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="sweep_width_fixture")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="sweep_width_fixture")
   def primal(x: sc.Expr) -> sc.Expr:
     return x[0] * x[0] + x[1] * x[2]
 
@@ -232,12 +232,12 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
 
 
 def test_module_info_records_constructed_local_coloring_width() -> None:
-  @sc.function(sc.group(sc.arg("a", 1), sc.arg("b", 1)), outputs=sc.arg("y", ...), name="module_info_piece")
+  @sc.function(sc.group(sc.arg("a", 1), sc.arg("b", 1)), outputs=sc.arg("y"), name="module_info_piece")
   def piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     a, b = inputs
     return sc.stack([a, b])
 
-  @sc.function(sc.arg("z", 5), outputs=sc.arg("y", ...), name="module_info_mapped")
+  @sc.function(sc.arg("z", 5), outputs=sc.arg("y"), name="module_info_mapped")
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(piece, 4, [(z, 0, 1), (z, 1, 1)])
 
@@ -566,7 +566,7 @@ int nlp_jac_g(const double** arg, double** res, int*, double*, int) {
 
 
 def test_compiled_driver_runs_a_rendered_scaly_kernel_with_sanitized_inputs(tmp_path: Path) -> None:
-  @sc.function(sc.group(sc.arg("x", 1), sc.arg("lam:f", 1), sc.arg("lam:g", 1)), outputs=sc.arg("y", ...), name="rendered_driver_kernel")
+  @sc.function(sc.group(sc.arg("x", 1), sc.arg("lam:f", 1), sc.arg("lam:g", 1)), outputs=sc.arg("y"), name="rendered_driver_kernel")
   def kernel(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, lam_f, lam_g = inputs
     return x + lam_f + 2.0 * lam_g

@@ -15,7 +15,7 @@ import scaly as sc
 from scaly.codegen.toolchain import LaneCount
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="scale_add")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
 def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
@@ -26,7 +26,7 @@ def test_vmap_c_source_loop_size_is_independent_of_length(lanes: LaneCount) -> N
   from scaly.codegen import render_c_source
 
   def render(N: int) -> str:
-    @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y", ...), name=f"scale_vmap_{N}")
+    @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y"), name=f"scale_vmap_{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
@@ -51,13 +51,13 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.
 
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("g", ...), name="vmap_sphess_codegen_piece")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("g"), name="vmap_sphess_codegen_piece")
   def piece(x: sc.Expr) -> sc.Expr:
     hidden = sc.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
     return sc.stack([(hidden.tanh() ** 2).sum()])
 
   def render(length: int) -> tuple[str, tuple[str, ...], int, dict[str, int]]:
-    @sc.function(sc.arg("z", 2 * length), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)), name=f"vmap_sphess_codegen_base_{length}")
+    @sc.function(sc.arg("z", 2 * length), outputs=sc.group(sc.arg("f"), sc.arg("g")), name=f"vmap_sphess_codegen_base_{length}")
     def base(z: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
       return ((z * z).sum(), _mapped_call(piece, length, [(z, 0, 2)]))
 
@@ -89,7 +89,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
 
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
-  @sc.function(sc.group(sc.arg("x", 2), sc.arg("shared", 1)), outputs=sc.arg("g", ...), name="triangle_shared_piece")
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("shared", 1)), outputs=sc.arg("g"), name="triangle_shared_piece")
   def piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     piece_x, shared = inputs
     hidden = sc.stack([piece_x[0] * piece_x[1] + shared[0] * piece_x[0], piece_x[0] - 0.4 * piece_x[1] + shared[0] * piece_x[1]])
@@ -97,7 +97,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
 
   length = 3
 
-  @sc.function(sc.arg("z", 2 * length + 1), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)), name="triangle_shared_vmap_base")
+  @sc.function(sc.arg("z", 2 * length + 1), outputs=sc.group(sc.arg("f"), sc.arg("g")), name="triangle_shared_vmap_base")
   def base(z: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return ((z * z).sum(), _mapped_call(piece, length, [(z, 0, 2), (z, 2 * length, 0)]))
 
@@ -130,12 +130,12 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
 def test_callee_formal_named_w_avoids_workspace_collision() -> None:
   # The rendered callee signature appends the `double* w` workspace tail; a formal named `w` used
   # to redefine that parameter and fail to compile.
-  @sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 3)), outputs=sc.arg("y", ...), name="w_name_piece")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 3)), outputs=sc.arg("y"), name="w_name_piece")
   def piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, w = inputs
     return x * w + w.sin()
 
-  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 3)), outputs=sc.arg("y", ...), name="w_name_vmap")
+  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 3)), outputs=sc.arg("y"), name="w_name_vmap")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, wv = inputs
     return _mapped_call(piece, 2, [(z, 0, 3), (wv, 0, 0)])
@@ -155,7 +155,7 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
 
   N = 5
 
-  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y", ...), name="scale_vmap_compiled")
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y"), name="scale_vmap_compiled")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
@@ -228,13 +228,13 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
     k4 = ode(x + dt * k3, u, params)
     return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.group(sc.arg("z", RK4_NZ), sc.arg("p", RK4_NX)), outputs=sc.arg("eq", ...), name="rk4_bicycle_initial")
+  @sc.function(sc.group(sc.arg("z", RK4_NZ), sc.arg("p", RK4_NX)), outputs=sc.arg("eq"), name="rk4_bicycle_initial")
   def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:RK4_NX] - p[:RK4_NX]
 
   @sc.function(
-    sc.group(sc.arg("z", RK4_NZ), sc.arg("znext", RK4_NZ), sc.arg("params", RK4_N_PARAMS)), outputs=sc.arg("eq", ...), name="rk4_bicycle_interstage"
+    sc.group(sc.arg("z", RK4_NZ), sc.arg("znext", RK4_NZ), sc.arg("params", RK4_N_PARAMS)), outputs=sc.arg("eq"), name="rk4_bicycle_interstage"
   )
   def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, params = inputs
@@ -242,7 +242,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
 
   @sc.function(
     sc.group(sc.arg("z", RK4_NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param,), diff=False))),
-    outputs=sc.arg("eq", ...),
+    outputs=sc.arg("eq"),
     name=f"rk4_bicycle_eq_vmap_N{horizon}",
   )
   def eq(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -333,17 +333,17 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
 
   NX, NZ = 4, 6
 
-  @sc.function(sc.arg("z", NZ), outputs=sc.arg("eq", ...), name="eq_initial_t")
+  @sc.function(sc.arg("z", NZ), outputs=sc.arg("eq"), name="eq_initial_t")
   def eq_initial(z: sc.Expr) -> sc.Expr:
     return z[:NX] * 2.0
 
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ)), outputs=sc.arg("eq", ...), name="eq_interstage_t")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ)), outputs=sc.arg("eq"), name="eq_interstage_t")
   def eq_interstage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext = inputs
     return z[:NX] * 1.5 - znext[:NX]
 
   def build(N: int) -> sc.Function:
-    @sc.function(sc.arg("z", NZ * (N + 1)), outputs=sc.arg("eq", ...), name=f"banded_N{N}")
+    @sc.function(sc.arg("z", NZ * (N + 1)), outputs=sc.arg("eq"), name=f"banded_N{N}")
     def banded(z: sc.Expr) -> sc.Expr:
       mapped = _mapped_call(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
       return sc.concat([eq_initial(z[:NZ]), mapped])
@@ -364,7 +364,7 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
 def test_vmap_jit_matches_unrolled_numpy() -> None:
   N = 2
 
-  @sc.function(sc.group(sc.arg("z", 6), sc.arg("p", 6)), outputs=sc.arg("y", ...), name="eval_path")
+  @sc.function(sc.group(sc.arg("z", 6), sc.arg("p", 6)), outputs=sc.arg("y"), name="eval_path")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])

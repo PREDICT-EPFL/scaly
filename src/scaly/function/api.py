@@ -2,31 +2,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import inspect
+from collections.abc import Callable
 from typing import Any, Protocol, cast, overload
-
-import numpy as np
 
 from ..ad.derivatives import gradient as _gradient_expr
 from ..ad.derivatives import hessian as _hessian_expr
 from ..ad.derivatives import jacobian as _jacobian_expr
-from ..ad.sparse import SparseJacobian, Triangle, sparse_hessian as _expr_sparse_hessian
+from ..ad.sparse import SparseJacobian, Triangle
+from ..ad.sparse import sparse_hessian as _expr_sparse_hessian
 from ..ad.sparse import sparse_jacobian as _expr_sparse_jacobian
 from ..ir.expr import Expr
-from .tree import arg, Tree, parameter_list, append_parameter
-from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
-from .model import Function, lift, derived_name
 from .concrete import ConcreteFunction
+from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
+from .model import Function, derived_name, lift
+from .tree import Array, Tree, append_parameter, arg, parameter_list
 
 
 class _InferredOutputs[NI, *Ss](Protocol):
   """What ``@function(...)`` without ``outputs=`` returns. The symbolic output type is the body's;
-  the numerical one is ``np.ndarray`` for an ``Expr`` body and ``Any`` otherwise, since no map from one
+  the numerical one is ``Array`` for an ``Expr`` body and ``Any`` otherwise, since no map from one
   to the other exists (README, "Why a wrapper class exists")."""
 
   @overload
-  def __call__(self, fn: Callable[[*Ss], Expr], /) -> Function[tuple[*Ss], NI, Expr, np.ndarray]: ...
+  def __call__(self, fn: Callable[[*Ss], Expr], /) -> Function[tuple[*Ss], NI, Expr, Array]: ...
   @overload
   def __call__[SO](self, fn: Callable[[*Ss], SO], /) -> Function[tuple[*Ss], NI, SO, Any]: ...
 
@@ -120,7 +119,7 @@ def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | st
   return function_of, function_wrt
 
 
-def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, np.ndarray]:
+def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, Array]:
   output_tree = arg(result.output_names[0], result.outputs[0].type)
   return result._with_trees(input_tree, output_tree)
 
@@ -145,7 +144,7 @@ def _unseeded[SI, NI](
   kind: type[Jac] | type[Grad] | type[Hess] | type[SpJac] | type[SpHess],
   *,
   triangle: Triangle = "full",
-) -> Function[SI, NI, Expr, np.ndarray]:
+) -> Function[SI, NI, Expr, Array]:
   source = Function._from_instance(source) if isinstance(source, ConcreteFunction) else source
   inputs, outputs = _declared(source, of, wrt)
   if inputs is not None:
@@ -187,7 +186,7 @@ def jacobian(source: Expr, wrt: Expr) -> Expr: ...
 @overload
 def jacobian[SI, NI, SO, NO](
   source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[SI, NI, Expr, np.ndarray]: ...
+) -> Function[SI, NI, Expr, Array]: ...
 
 
 def jacobian(
@@ -213,7 +212,7 @@ def gradient(source: Expr, wrt: Expr) -> Expr: ...
 @overload
 def gradient[SI, NI, SO, NO](
   source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[SI, NI, Expr, np.ndarray]: ...
+) -> Function[SI, NI, Expr, Array]: ...
 
 
 def gradient(
@@ -239,7 +238,7 @@ def hessian(source: Expr, wrt: Expr) -> Expr: ...
 @overload
 def hessian[SI, NI, SO, NO](
   source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[SI, NI, Expr, np.ndarray]: ...
+) -> Function[SI, NI, Expr, Array]: ...
 
 
 def hessian(
@@ -265,7 +264,7 @@ def sparse_jacobian(source: Expr, wrt: Expr) -> SparseJacobian: ...
 @overload
 def sparse_jacobian[SI, NI, SO, NO](
   source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[SI, NI, Expr, np.ndarray]: ...
+) -> Function[SI, NI, Expr, Array]: ...
 
 
 def sparse_jacobian(
@@ -296,7 +295,7 @@ def sparse_hessian[SI, NI, SO, NO](
   *,
   name: str | None = None,
   triangle: Triangle = "full",
-) -> Function[SI, NI, Expr, np.ndarray]: ...
+) -> Function[SI, NI, Expr, Array]: ...
 
 
 def sparse_hessian(
@@ -387,21 +386,21 @@ def _seeded(
 
 def forward[*Ss, *Ns, SO, NO](
   fn: Function[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[tuple[*Ss, Expr], tuple[*Ns, np.ndarray], Expr, np.ndarray]:
+) -> Function[tuple[*Ss, Expr], tuple[*Ns, Array], Expr, Array]:
   """Create a forward derivative with one seed parameter shaped and typed as ``wrt``."""
   return _seeded(fn, of, wrt, name, "fwd")
 
 
 def adjoint[*Ss, *Ns, SO, NO](
   fn: Function[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[tuple[*Ss, Expr], tuple[*Ns, np.ndarray], Expr, np.ndarray]:
+) -> Function[tuple[*Ss, Expr], tuple[*Ns, Array], Expr, Array]:
   """Create an adjoint derivative with one seed parameter shaped and typed as ``of``."""
   return _seeded(fn, of, wrt, name, "adj")
 
 
 def lagrangian_hessian[*Ss, *Ns, SO, NO](
   fn: Function[tuple[*Ss], tuple[*Ns], SO, NO], wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma"
-) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, np.ndarray]:
+) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, Array]:
   """Create the dense weighted Hessian with one multiplier parameter matching the output tree."""
   return _seeded(fn, None, wrt, name, "hess", aux_name)
 
@@ -413,6 +412,6 @@ def sparse_lagrangian_hessian[*Ss, *Ns, SO, NO](
   name: str | None = None,
   aux_name: str = "gamma",
   triangle: Triangle = "full",
-) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, np.ndarray]:
+) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, Array]:
   """Create compact weighted Hessian values with multipliers matching the output tree."""
   return _seeded(fn, None, wrt, name, "sphess", aux_name, triangle)

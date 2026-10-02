@@ -10,7 +10,7 @@ from scaly.ir.expr import substitute, topo
 
 
 def test_elementwise_eval_and_topological_order() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 
@@ -50,9 +50,7 @@ def test_common_ops_contains_modeling_basics() -> None:
 
 
 def test_binary_nonlinear_method_helpers_eval() -> None:
-  @sc.function(
-    sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.group(sc.arg("atan", ...), sc.arg("min", ...), sc.arg("max", ...)), name="binary_helpers"
-  )
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.group(sc.arg("atan"), sc.arg("min"), sc.arg("max")), name="binary_helpers")
   def f(xy: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     x, y = xy
     return x.atan2(y), x.minimum(y), x.maximum(y)
@@ -71,7 +69,7 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
 
 
 def test_dot_sumsqr_and_norm_2() -> None:
-  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("dot", ...), sc.arg("sumsqr", ...), sc.arg("norm", ...)))
+  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("dot"), sc.arg("sumsqr"), sc.arg("norm")))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     return sc.dot(x, x.T), x.sumsqr(), sc.norm_2(x)
 
@@ -158,7 +156,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not x.floor().type.diff
   assert not sc.minimum(x, p).type.diff
 
-  @sc.function(sc.arg("u", 3), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("u", 3), outputs=sc.arg("y"))
   def inner(u: sc.Expr) -> sc.Expr:
     return u * u
 
@@ -169,7 +167,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
 
 
 def test_mixed_lowering_hints_survive_expr_graph() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="mixed")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="mixed")
   def f(x: sc.Expr) -> sc.Expr:
     scalar_region = (x.sin() + x * x).scalar()
     block_region = (sc.const(np.eye(3)) @ x).block()
@@ -202,7 +200,7 @@ def test_substitute_rejects_incompatible_shape_or_dtype() -> None:
 
 
 def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() -> None:
-  @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...), name="sub_callee")
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name="sub_callee")
   def callee(formal: sc.Expr) -> sc.Expr:
     return formal * formal
 

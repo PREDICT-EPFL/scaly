@@ -45,7 +45,7 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
 def stage_function() -> sc.Function:
   scale, w0, w1, bias = _slices()
 
-  @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU), sc.arg("pw", N_PW)), outputs=sc.arg("eq", ...), name="vmap_mlp_stage")
+  @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU), sc.arg("pw", N_PW)), outputs=sc.arg("eq"), name="vmap_mlp_stage")
   def stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u, pw = inputs
     h = sc.concat([x, u]) * pw[scale]
@@ -65,7 +65,7 @@ def _inputs_tree(stages: int):
 
 
 def _cost_stage() -> sc.Function:
-  @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU)), outputs=sc.arg("cost", ...), name="vmap_mlp_stage_cost")
+  @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU)), outputs=sc.arg("cost"), name="vmap_mlp_stage_cost")
   def cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u = inputs
     difference = xnext - x
@@ -77,7 +77,7 @@ def _cost_stage() -> sc.Function:
 def vmapped(stages: int) -> sc.Function:
   """Objective and equalities together, both using VMAP, which is what a Lagrangian Hessian needs."""
 
-  @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost", ...), sc.arg("eq", ...)), name=f"vmap_mlp_N{stages}")
+  @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost"), sc.arg("eq")), name=f"vmap_mlp_N{stages}")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, p = inputs
     eq = sc.vmap(stage_function(), stages)((sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU), sc.window(p, 0, 0))).vec()
@@ -92,7 +92,7 @@ def unrolled(stages: int) -> sc.Function:
   stage, cost_stage = stage_function(), _cost_stage()
   offset = NX * (stages + 1)
 
-  @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost", ...), sc.arg("eq", ...)), name=f"vmap_mlp_unrolled_N{stages}")
+  @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost"), sc.arg("eq")), name=f"vmap_mlp_unrolled_N{stages}")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, p = inputs
     rows, terms = [], []

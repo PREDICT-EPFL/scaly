@@ -8,7 +8,7 @@ from scaly.viz import clear_recordings, recordings, unvisualize_function, visual
 
 
 def _fun() -> Function:
-  @function(arg("x", (2,)), outputs=arg("y", ...))
+  @function(arg("x", (2,)), outputs=arg("y"))
   def square_plus_one(x):
     return x * x + 1.0
 
@@ -68,7 +68,7 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
 def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypatch):
   monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
 
-  @function(group(arg("matrix", (2, 3)), arg("vector", 2)), outputs=arg("y", ...), name="normalized_matmul")
+  @function(group(arg("matrix", (2, 3)), arg("vector", 2)), outputs=arg("y"), name="normalized_matmul")
   def fun(inputs):
     matrix, vector = inputs
     return matrix.T @ vector

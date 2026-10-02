@@ -10,12 +10,12 @@ from scaly.codegen import write_module
 N = 4
 
 
-@sc.function(sc.arg("z", 2), outputs=sc.arg("residual", ...))
+@sc.function(sc.arg("z", 2), outputs=sc.arg("residual"))
 def stage(z: sc.Expr) -> sc.Expr:
   return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2])
 
 
-@sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals", ...))
+@sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals"))
 def stages(zs: sc.Expr) -> sc.Expr:
   return sc.vmap(stage, N)(zs).vec()
 

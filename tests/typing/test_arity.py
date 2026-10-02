@@ -11,23 +11,23 @@ from scaly.function import Tree
 from scaly.function.concrete import ConcreteFunction
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first", ...), sc.arg("second", 3)))
+@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first"), sc.arg("second", 3)))
 def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod", ...))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod"))
 def multiply(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, y = inputs
   return x * y
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.arg("square", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("square"))
 def square(x: sc.Expr) -> sc.Expr:
   return multiply.symbolic_call(duplicate.symbolic_call(x))
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f", ...))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f"))
 def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return (x * x).sum() * p
@@ -35,14 +35,14 @@ def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.group(sc.group(sc.arg("state", 4), sc.arg("u", 2)), sc.group(sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ()))),
-  outputs=sc.arg("next", ...),
+  outputs=sc.arg("next"),
 )
 def step(inputs: tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr, sc.Expr]]) -> sc.Expr:
   (state, _u), (_pw, _physics, _dt) = inputs
   return state
 
 
-@sc.function(sc.group(sc.arg("state", 4), sc.arg("u", 2), sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ())), outputs=sc.arg("next", ...))
+@sc.function(sc.group(sc.arg("state", 4), sc.arg("u", 2), sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ())), outputs=sc.arg("next"))
 def step_flat(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, _u, _pw, _physics, _dt = inputs
   return state
@@ -109,8 +109,8 @@ if TYPE_CHECKING:
   step.numerical_call((np.zeros(4), np.zeros(2), np.zeros(10), np.zeros(3), np.zeros(())))  # ty: ignore[invalid-argument-type]
   step_flat.numerical_call(((np.zeros(4), np.zeros(2)), (np.zeros(10), np.zeros(3), np.zeros(()))))  # ty: ignore[invalid-argument-type]
 
-  sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
-  sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("a", ...), sc.arg("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("z"))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("a"), sc.arg("b")))(lambda x: x)  # ty: ignore[invalid-argument-type]
 
   assert_type(multiply.symbolic_call(duplicate.symbolic_call(sc.sym("x", 3))), sc.Expr)
   multiply.symbolic_call(square.symbolic_call(sc.sym("x", 3)))  # ty: ignore[invalid-argument-type]

@@ -52,7 +52,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
 
-  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x", ...), sc.arg("lam_box", ...), sc.arg("lam_eq", ...)), name="multi_out")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x"), sc.arg("lam_box"), sc.arg("lam_eq")), name="multi_out")
   def multi_out(mu: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     out = qp(mu)
     return (out[0], out[1], out[2])
@@ -70,7 +70,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
 
-  @sc.function(sc.arg("mu", (2,)), outputs=sc.arg("x", ...), name="nested_stats_host")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.arg("x"), name="nested_stats_host")
   def host(mu: sc.Expr) -> sc.Expr:
     return qp(mu)[0]
 
@@ -85,7 +85,7 @@ def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = sc.sym("mu", 2)
   qps = [build_qp(P=np.eye(2), c=-mu) for _ in range(2)]
 
-  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x0", ...), sc.arg("x1", ...)), name="duplicate_solver_host")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x0"), sc.arg("x1")), name="duplicate_solver_host")
   def host(mu: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return qps[0](mu)[0], qps[1](mu)[0]
 

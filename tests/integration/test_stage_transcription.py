@@ -61,13 +61,13 @@ def _rk4(x: sc.Expr, u: sc.Expr, params: sc.Expr) -> sc.Expr:
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="bicycle_stage_initial")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="bicycle_stage_initial")
 def stage_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("params", N_PARAMS)), outputs=sc.arg("eq", ...), name="bicycle_stage_interstage")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("params", N_PARAMS)), outputs=sc.arg("eq"), name="bicycle_stage_interstage")
 def stage_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
@@ -78,7 +78,7 @@ def bicycle_eq_function(horizon: int) -> sc.Function:
 
   @sc.function(
     sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
-    outputs=sc.arg("eq", ...),
+    outputs=sc.arg("eq"),
     name=f"bicycle_eq_N{horizon}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -97,7 +97,7 @@ def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
 
   @sc.function(
     sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
-    outputs=sc.arg("eq", ...),
+    outputs=sc.arg("eq"),
     name=f"bicycle_eq_vmap_N{horizon}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -218,17 +218,15 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
   def rebound(expr: sc.Expr, inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return substitute(expr, dict(zip(as_concrete(fn).inputs, inputs, strict=True)))
 
-  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("colored", ...), name="bicycle_spjac_colored")
+  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("colored"), name="bicycle_spjac_colored")
   def colored_fn(inputs):
     return rebound(colored.values, inputs)
 
-  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("reference", ...), name="bicycle_spjac_reference")
+  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("reference"), name="bicycle_spjac_reference")
   def reference_fn(inputs):
     return rebound(reference.values, inputs)
 
-  @sc.function(
-    cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.group(sc.arg("colored", ...), sc.arg("reference", ...)), name="bicycle_spjac_compare"
-  )
+  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="bicycle_spjac_compare")
   def compare(inputs):
     return rebound(colored.values, inputs), rebound(reference.values, inputs)
 

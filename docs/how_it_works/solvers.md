@@ -20,7 +20,7 @@ guide in a larger function and printing `sc.render_expr_assembly(allocate)`
 shows both levels:
 
 ```python
-@sc.function(sc.arg("target", 2), outputs=sc.group(sc.arg("allocation", ...), sc.arg("lam_eq", ...)))
+@sc.function(sc.arg("target", 2), outputs=sc.group(sc.arg("allocation"), sc.arg("lam_eq")))
 def allocate(target: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     u, _, lam_eq, _ = solve(target)
     return 2.0 * u, lam_eq

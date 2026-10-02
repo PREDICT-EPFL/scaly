@@ -16,19 +16,19 @@ from scaly.ad.sparse import Triangle
 def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Function, sc.Function]:
   if shared:
 
-    @sc.function(sc.group(sc.arg("x", 2), sc.arg("s", 1)), outputs=sc.arg("g", ...), name="mapped_sphess_shared_piece")
+    @sc.function(sc.group(sc.arg("x", 2), sc.arg("s", 1)), outputs=sc.arg("g"), name="mapped_sphess_shared_piece")
     def piece(inputs):
       x, s = inputs
       hidden = sc.stack([x[0] * x[1] + s[0] * x[0], x[0] - 0.4 * x[1] + s[0] * x[1]])
       return sc.stack([(hidden.tanh() ** 2).sum()])
   else:
 
-    @sc.function(sc.arg("x", 2), outputs=sc.arg("g", ...), name="mapped_sphess_piece")
+    @sc.function(sc.arg("x", 2), outputs=sc.arg("g"), name="mapped_sphess_piece")
     def piece(x):
       hidden = sc.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
       return sc.stack([(hidden.tanh() ** 2).sum()])
 
-  output_tree = sc.group(sc.arg("f", ...), sc.arg("g", ...))
+  output_tree = sc.group(sc.arg("f"), sc.arg("g"))
 
   @sc.function(sc.arg("z", 2 * length + int(shared)), outputs=output_tree, name=f"mapped_sphess_{length}_{int(shared)}")
   def mapped_fn(z):
@@ -143,7 +143,7 @@ def test_jacobian_sparsity_tracks_concat_axis_layout() -> None:
 
 
 def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
   def f(x):
     return x[0] * x[0] + x[1] * x[2]
 
@@ -177,7 +177,7 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
 
   @sc.function(
     sc.arg("triangle_x", 4),
-    outputs=sc.group(sc.arg("full", ...), sc.arg("triangle", ...), sc.arg("selected", ...)),
+    outputs=sc.group(sc.arg("full"), sc.arg("triangle"), sc.arg("selected")),
     name=f"triangle_expr_{triangle}",
   )
   def value_fn(x):
@@ -189,7 +189,7 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(selected_values, triangle_values, rtol=1e-10, atol=1e-10)
 
-  @sc.function(sc.arg("triangle_x", 4), outputs=sc.arg("y", ...), name="triangle_fn")
+  @sc.function(sc.arg("triangle_x", 4), outputs=sc.arg("y"), name="triangle_fn")
   def fn(x):
     return (x[0] * x[1]).sin() + (x[2] * x[3]).sin()
 
@@ -210,7 +210,7 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
 
 
 def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)), name="nlp")
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f"), sc.arg("g")), name="nlp")
   def nlp(x):
     return x[0] * x[0], sc.stack([x[0] * x[1], x[1] * x[1]])
 
@@ -339,7 +339,7 @@ def test_sparse_hessian_rejects_invalid_triangle(triangle: object) -> None:
   with pytest.raises(ValueError, match="triangle must be one of"):
     sc.sparse_hessian(y, x, triangle=invalid_triangle)
 
-  @sc.function(sc.arg("invalid_triangle_x", 2), outputs=sc.arg("y", ...), name="invalid_triangle")
+  @sc.function(sc.arg("invalid_triangle_x", 2), outputs=sc.arg("y"), name="invalid_triangle")
   def fn(x):
     return x[0] * x[1]
 
@@ -348,7 +348,7 @@ def test_sparse_hessian_rejects_invalid_triangle(triangle: object) -> None:
 
 
 def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="f")
   def f(x):
     return sc.stack([x[0], x[2:4].sum(), x[1]])
 
@@ -376,14 +376,14 @@ def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
 
 
 def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
-  @sc.function(sc.group(sc.arg("a", 1), sc.arg("b", 1)), outputs=sc.arg("y", ...), name="two_formal_piece")
+  @sc.function(sc.group(sc.arg("a", 1), sc.arg("b", 1)), outputs=sc.arg("y"), name="two_formal_piece")
   def piece(inputs):
     return sc.stack(inputs)
 
   z = sc.sym("z", 5)
   mapped_expr = _mapped_call(piece, 4, [(z, 0, 1), (z, 1, 1)])
 
-  @sc.function(sc.arg("z", 5), outputs=sc.arg("y", ...), name="two_formal_mapped")
+  @sc.function(sc.arg("z", 5), outputs=sc.arg("y"), name="two_formal_mapped")
   def mapped(z):
     return _mapped_call(piece, 4, [(z, 0, 1), (z, 1, 1)])
 
@@ -403,7 +403,7 @@ def test_colored_sparse_jacobian_matches_dense_gather_reference() -> None:
   colored = sc.sparse_jacobian_colored(y, x)
   reference = sc.sparse_jacobian_reference(y, x)
 
-  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("colored", ...), sc.arg("reference", ...)), name="sj_compare")
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="sj_compare")
   def f(x):
     y = sc.stack([x[0] * x[2], x[2:4].sum(), x[1].sin()])
     return sc.sparse_jacobian_colored(y, x).values, sc.sparse_jacobian_reference(y, x).values
@@ -420,7 +420,7 @@ def test_sparse_jacobian_values_round_trip_to_dense() -> None:
   y = sc.stack([x[0], x[2:4].sum(), x[1]])
   sj = sc.sparse_jacobian(y, x)
 
-  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("values", ...), sc.arg("dense", ...)), name="sj")
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("values"), sc.arg("dense")), name="sj")
   def f(x):
     y = sc.stack([x[0], x[2:4].sum(), x[1]])
     sj = sc.sparse_jacobian(y, x)
@@ -466,7 +466,7 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
   y = a @ x
   np.testing.assert_array_equal(sc.jacobian_sparsity(y, x).to_mask(), np.ones((2, 3), dtype=bool))
 
-  @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...), name="inner")
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name="inner")
   def inner(u):
     return sc.stack([u[0], u[0] + u[1]])
 
@@ -485,7 +485,7 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
 
 
 def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
-  @sc.function(sc.arg("u", 256), outputs=sc.arg("y", ...), name="shared_256_inner")
+  @sc.function(sc.arg("u", 256), outputs=sc.arg("y"), name="shared_256_inner")
   def inner(u):
     return u.sum()
 
@@ -494,7 +494,7 @@ def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
 
   np.testing.assert_array_equal(sc.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
 
-  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("colored", ...), sc.arg("reference", ...)), name="shared_256_jac")
+  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="shared_256_jac")
   def f(x):
     y = inner(x + np.zeros(256))
     return sc.sparse_jacobian_colored(y, x).values, sc.sparse_jacobian_reference(y, x).values
@@ -512,7 +512,7 @@ def test_column_coloring_detects_exactly_256_shared_rows() -> None:
 
 def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
   def mapped_mask(length: int):
-    @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...), name=f"storage_piece_{length}")
+    @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name=f"storage_piece_{length}")
     def piece(u):
       return sc.stack([u.sum()])
 
@@ -628,9 +628,7 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytes
 
     @sc.function(
       sc.group(sc.arg("z", z.size), sc.arg("lam_f", ()), sc.arg("lam_g", length)),
-      outputs=sc.group(
-        sc.arg("star_values", ...), sc.arg("one_sided_values", ...), sc.arg("star", ...), sc.arg("one_sided", ...), sc.arg("dense", ...)
-      ),
+      outputs=sc.group(sc.arg("star_values"), sc.arg("one_sided_values"), sc.arg("star"), sc.arg("one_sided"), sc.arg("dense")),
       name=f"shared_fill_differential_{length}",
     )
     def fn(inputs):

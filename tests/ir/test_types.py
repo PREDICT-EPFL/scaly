@@ -58,7 +58,7 @@ def test_devicespec_parse_and_str() -> None:
 
 
 def test_function_with_device_repr_and_lower_diagnostic() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
   def fn(x: sc.Expr) -> sc.Expr:
     return x.sum()
 
@@ -82,7 +82,7 @@ def test_backend_capability_table_rejects_unsupported_dtype() -> None:
 
 
 def test_float32_construction_keeps_dtype_metadata() -> None:
-  @sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y", ...), name="f32")
+  @sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y"), name="f32")
   def fn(x: sc.Expr) -> sc.Expr:
     return (x * x).sum()
 

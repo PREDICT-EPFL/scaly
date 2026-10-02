@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 def test_gradient_matches_casadi_sx() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def f(x):
     return (x.sin() + x * x).sum()
 
@@ -29,7 +29,7 @@ def test_gradient_matches_casadi_sx() -> None:
 
 
 def test_jacobian_matches_casadi_sx() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def f(x):
     return sc.stack([x.sin(), x * x], axis=0).reshape((4,))
 
@@ -43,7 +43,7 @@ def test_jacobian_matches_casadi_sx() -> None:
 
 
 def test_forward_matches_casadi_sx() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def f(x):
     return sc.stack([x[0] * x[1], x[2].sin() + x[0]])
 
@@ -60,7 +60,7 @@ def test_forward_matches_casadi_sx() -> None:
 
 
 def test_adjoint_matches_casadi_sx() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def f(x):
     return sc.stack([x[0] * x[1], x[2].sin() + x[0]])
 
@@ -77,11 +77,11 @@ def test_adjoint_matches_casadi_sx() -> None:
 
 
 def test_jacobian_through_call_node_matches_casadi_mx() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def inner(x):
     return x.sin() + x * x
 
-  @sc.function(sc.arg("z", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y"))
   def outer(z):
     return inner(z * z)
 
@@ -98,7 +98,7 @@ def test_jacobian_through_call_node_matches_casadi_mx() -> None:
 
 
 def test_hessian_of_lagrangian_style_aux_matches_casadi_sx() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f"), sc.arg("g")))
   def nlp(x):
     return (x.sin()).sum(), x * x
 

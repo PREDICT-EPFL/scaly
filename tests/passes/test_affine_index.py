@@ -72,7 +72,7 @@ def test_affine_gather_and_scatter_emit_no_index_table(build) -> None:
   perturbed[9] += 1
 
   def tables(indices: np.ndarray) -> list[ProgramNode]:
-    fun = sc.function(sc.arg("x", 256), outputs=sc.arg("y", ...), name="affine_probe")(lambda x: build(x, indices))
+    fun = sc.function(sc.arg("x", 256), outputs=sc.arg("y"), name="affine_probe")(lambda x: build(x, indices))
     return _const_int_buffers(lower_function(fun))
 
   assert tables(affine) == []
@@ -85,10 +85,10 @@ def test_an_empty_index_lowers_and_declares_nothing() -> None:
   """An empty gather or scatter has no index to be affine in; its loop runs zero times."""
   empty = np.zeros(0, dtype=np.int64)
   for name, build in (("gather", lambda x: gather(x, empty)), ("scatter", lambda x: scatter(x[:0], empty, (8,)))):
-    fun = sc.function(sc.arg("x", 8), outputs=sc.arg("y", ...), name=f"affine_empty_{name}")(build)
+    fun = sc.function(sc.arg("x", 8), outputs=sc.arg("y"), name=f"affine_empty_{name}")(build)
     assert _const_int_buffers(lower_function(fun)) == []
   values = np.arange(8.0)
-  scattered = sc.function(sc.arg("x", 8), outputs=sc.arg("y", ...), name="affine_empty_scatter_values")(lambda x: scatter(x[:0], empty, (8,)))
+  scattered = sc.function(sc.arg("x", 8), outputs=sc.arg("y"), name="affine_empty_scatter_values")(lambda x: scatter(x[:0], empty, (8,)))
   np.testing.assert_array_equal(np.asarray(scattered(values)).reshape(-1), np.zeros(8))
 
 
@@ -98,7 +98,7 @@ def test_a_gather_reads_exactly_the_elements_numpy_would(case: int) -> None:
   what checks that the telescoped form agrees with ``(k // stride) % dim`` on every case above."""
   indices = np.asarray(CASES[case][0], dtype=np.int64)
   size = int(indices.max()) + 1
-  fun = sc.function(sc.arg("x", size), outputs=sc.arg("y", ...), name=f"affine_gather_values_{case}")(lambda x: gather(x, indices))
+  fun = sc.function(sc.arg("x", size), outputs=sc.arg("y"), name=f"affine_gather_values_{case}")(lambda x: gather(x, indices))
   values = np.random.default_rng(case).normal(size=size)
   np.testing.assert_array_equal(np.asarray(fun(values)).reshape(-1), values[indices])
 
@@ -106,7 +106,7 @@ def test_a_gather_reads_exactly_the_elements_numpy_would(case: int) -> None:
 # --- the VMAP derivative rules, which are where the tables came from -------------
 
 
-@sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="affine_stage")
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="affine_stage")
 def _stage(x: sc.Expr) -> sc.Expr:
   return sc.stack([x[0].sin() * x[1], x[0] * x[1] * x[1]])
 
@@ -117,7 +117,7 @@ def _stage_jac_np(x: np.ndarray) -> np.ndarray:
 
 @pytest.mark.parametrize("length", [3, 17])
 def test_vmap_forward_jacobian_matches_numpy(length: int) -> None:
-  fun = sc.function(sc.arg("z", 2 * length), outputs=sc.arg("jac", ...), name=f"affine_jac_{length}")(
+  fun = sc.function(sc.arg("z", 2 * length), outputs=sc.arg("jac"), name=f"affine_jac_{length}")(
     lambda z: sc.jacobian(_mapped_call(_stage, length, [(z, 0, 2)]), z)
   )
   values = np.random.default_rng(1).normal(size=2 * length)
@@ -129,7 +129,7 @@ def test_vmap_forward_jacobian_matches_numpy(length: int) -> None:
 
 @pytest.mark.parametrize("length", [3, 17])
 def test_vmap_reverse_gradient_matches_numpy(length: int) -> None:
-  fun = sc.function(sc.arg("z", 2 * length), outputs=sc.arg("g", ...), name=f"affine_grad_{length}")(
+  fun = sc.function(sc.arg("z", 2 * length), outputs=sc.arg("g"), name=f"affine_grad_{length}")(
     lambda z: sc.gradient(_mapped_call(_stage, length, [(z, 0, 2)]).sum(), z)
   )
   values = np.random.default_rng(2).normal(size=2 * length)
@@ -147,7 +147,7 @@ def test_vmap_hessian_matches_the_unrolled_function(length: int) -> None:
     ("unrolled", lambda z: sc.concat([_stage(z[2 * it : 2 * it + 2]) for it in range(length)])),
   ):
 
-    @sc.function(sc.arg("z", 2 * length), outputs=sc.arg("h", ...), name=f"affine_hess_{name}_{length}")
+    @sc.function(sc.arg("z", 2 * length), outputs=sc.arg("h"), name=f"affine_hess_{name}_{length}")
     def fun(z: sc.Expr) -> sc.Expr:
       expr = build(z)
       return sc.hessian((expr * expr).sum(), z)
@@ -160,7 +160,7 @@ def test_vmap_hessian_index_tables_do_not_grow_with_the_trip_count() -> None:
   """C-9's gate, at the scale of one test: the mapped index tables are no longer O(length)."""
 
   def rendered(length: int) -> str:
-    @sc.function(sc.arg("z", 2 * length), outputs=sc.arg("h", ...), name=f"affine_hess_size_{length}")
+    @sc.function(sc.arg("z", 2 * length), outputs=sc.arg("h"), name=f"affine_hess_size_{length}")
     def fun(z: sc.Expr) -> sc.Expr:
       mapped = _mapped_call(_stage, length, [(z, 0, 2)])
       return sc.hessian((mapped * mapped).sum(), z)

@@ -13,7 +13,7 @@ from scaly.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
-  @sc.function(sc.group(sc.arg("x", 3), sc.arg("p", sc.TensorType((3,), diff=False))), outputs=sc.arg("y", ...), name="scoped")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("p", sc.TensorType((3,), diff=False))), outputs=sc.arg("y"), name="scoped")
   def scoped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return (x + p).sin()
@@ -31,7 +31,7 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("out0", ...), sc.arg("out1", ...)), name="pair")
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("out0"), sc.arg("out1")), name="pair")
   def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return x, x.sum()
 
@@ -42,7 +42,7 @@ def test_scoped_function_decorator_outputs_default_names() -> None:
 
 
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="f")
   def fn(x):
     return (x * x).sum()
 
@@ -92,7 +92,7 @@ def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
 
 
 def test_gradient_convenience_api_matches_factory() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def f(x):
     return (x.sin() + x * x).sum()
 
@@ -106,7 +106,7 @@ def test_gradient_convenience_api_matches_factory() -> None:
 
 
 def test_forward_convenience_api_matches_factory() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def f(x):
     return sc.stack([x[0] * x[1], x[0].sin()])
 
@@ -121,7 +121,7 @@ def test_forward_convenience_api_matches_factory() -> None:
 
 
 def test_adjoint_convenience_api_matches_factory() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def f(x):
     return sc.stack([x[0] * x[1], x[0].sin()])
 
@@ -136,7 +136,7 @@ def test_adjoint_convenience_api_matches_factory() -> None:
 
 
 def test_seeded_factory_outputs_require_seed_inputs() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def f(x):
     return x * x
 
@@ -150,7 +150,7 @@ def test_seeded_factory_outputs_require_seed_inputs() -> None:
 
 
 def test_factory_unknown_names_report_value_errors() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def f(x):
     return x * x
 
@@ -172,7 +172,7 @@ def test_factory_unknown_names_report_value_errors() -> None:
 
 
 def test_lagrangian_hessian_convenience_api() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f"), sc.arg("g")))
   def nlp(x):
     return x.sin().sum(), x * x
 

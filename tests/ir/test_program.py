@@ -175,7 +175,7 @@ def test_every_observed_program_stage_verifies() -> None:
   import scaly as sc
   from scaly.passes.lowering import lower_function
 
-  @sc.function(sc.arg("x", 5), outputs=sc.arg("y", ...), name="observed")
+  @sc.function(sc.arg("x", 5), outputs=sc.arg("y"), name="observed")
   def fun(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).scalar()
 

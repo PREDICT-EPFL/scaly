@@ -82,7 +82,7 @@ def test_simplify_folds_matrix_transpose_into_matmul() -> None:
 
 
 def _eval(name: str, inputs: Tree[sc.Expr, np.ndarray], body: Callable[[sc.Expr], sc.Expr], value: np.ndarray) -> np.ndarray:
-  return sc.function(inputs, outputs=sc.arg("y", ...), name=name)(body)(value)
+  return sc.function(inputs, outputs=sc.arg("y"), name=name)(body)(value)
 
 
 def test_matmul_with_ones_vector_becomes_sums() -> None:
@@ -139,7 +139,7 @@ def test_constant_mask_of_the_result_shape_folds_when_uniform() -> None:
 
 @pytest.mark.parametrize("hint", ["scalar", "block", "opaque"])
 def test_simplify_keeps_hint_when_replacement_is_declared_input(hint: Lowering) -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="hinted_identity")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="hinted_identity")
   def fn(x: sc.Expr) -> sc.Expr:
     return sc.simplify((x * 1.0).with_lowering(hint))
 

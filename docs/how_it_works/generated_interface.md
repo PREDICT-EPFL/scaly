@@ -18,11 +18,11 @@ instead of being expanded into its caller (see
 import scaly as sc
 from scaly.codegen import render_c_module
 
-@sc.function(sc.arg("z", 2), sc.arg("u", ()), outputs=sc.arg("znext", ...))
+@sc.function(sc.arg("z", 2), sc.arg("u", ()), outputs=sc.arg("znext"))
 def euler(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * u.sin()]).block()
 
-@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("zn", ...))
+@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("zn"))
 def rollout(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
     return sc.vmap(euler, 10)(zs, us).vec()
 

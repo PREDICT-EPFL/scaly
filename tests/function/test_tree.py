@@ -13,23 +13,23 @@ from scaly.codegen import render_c_api_header
 from scaly.function import Tree
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first", ...), sc.arg("second", 3)))
+@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first"), sc.arg("second", 3)))
 def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod", ...))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod"))
 def multiply(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, y = inputs
   return x * y
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.arg("square", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("square"))
 def square(x: sc.Expr) -> sc.Expr:
   return multiply.symbolic_call(duplicate.symbolic_call(x))
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f", ...))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f"))
 def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return (x * x).sum() * p
@@ -37,14 +37,14 @@ def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.group(sc.group(sc.arg("state", 4), sc.arg("u", 2)), sc.group(sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ()))),
-  outputs=sc.arg("next", ...),
+  outputs=sc.arg("next"),
 )
 def step(inputs: tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr, sc.Expr]]) -> sc.Expr:
   (state, _u), (_pw, _physics, _dt) = inputs
   return state
 
 
-@sc.function(sc.group(sc.arg("state", 4), sc.arg("u", 2), sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ())), outputs=sc.arg("next", ...))
+@sc.function(sc.group(sc.arg("state", 4), sc.arg("u", 2), sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ())), outputs=sc.arg("next"))
 def step_flat(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, _u, _pw, _physics, _dt = inputs
   return state
@@ -55,7 +55,7 @@ def test_leaf_shapes_and_group_widths() -> None:
   assert sc.arg("P", (2, 2)).shapes == ((2, 2),)
   assert sc.arg("s", ()).shapes == ((),)
   with pytest.raises(TypeError, match="inferred"):
-    _ = sc.arg("f", ...).shapes
+    _ = sc.arg("f").shapes
 
   assert sc.group(sc.arg("a", 1), sc.arg("b", 1)).names == ("a", "b")
   eight = cast(Any, sc.group)(*(sc.arg(f"x{i}", 1) for i in range(8)))
@@ -82,7 +82,7 @@ def test_tree_names_are_unique_and_symbols_follow_structure() -> None:
   assert symbols[0][1].shape == (2,)
   assert symbols[1].shape == ()
 
-  tree = sc.group(sc.arg("u", 2), sc.arg("s", ...))
+  tree = sc.group(sc.arg("u", 2), sc.arg("s"))
   assert tree.relabel("lam:").names == ("lam:u", "lam:s")
   resolved = tree.with_types((sc.TensorType((2,)), sc.TensorType((1,))))
   assert resolved.shapes == ((2,), (1,))
@@ -127,7 +127,7 @@ def test_function_call_validation_uses_declared_tree() -> None:
   with pytest.raises(TypeError, match="expected shape"):
     sc.function(sc.arg("x", 3), outputs=sc.arg("y", 2))(lambda x: x)
   with pytest.raises((TypeError, ValueError), match="declared 2 outputs|declared structure"):
-    sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("a", ...), sc.arg("b", ...)))(cast(Any, lambda x: x))
+    sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("a"), sc.arg("b")))(cast(Any, lambda x: x))
 
 
 def test_derivatives_preserve_source_trees() -> None:
@@ -171,7 +171,7 @@ def test_derivatives_preserve_source_trees() -> None:
 
 
 def test_seeded_derivatives_accept_nondifferentiable_leaves() -> None:
-  @sc.function(sc.arg("x", sc.TensorType((2,), diff=False)), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("x", sc.TensorType((2,), diff=False)), outputs=sc.arg("y"))
   def frozen_square(x: sc.Expr) -> sc.Expr:
     return x * x
 
@@ -186,7 +186,7 @@ def test_seeded_derivatives_accept_nondifferentiable_leaves() -> None:
 
 
 def test_lagrangian_hessians_accept_constant_output_leaves() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("cost", ...), sc.arg("constant", ...)))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("cost"), sc.arg("constant")))
   def objective(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return (x * x).sum(), sc.const(1.0)
 

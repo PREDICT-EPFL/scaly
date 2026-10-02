@@ -32,7 +32,7 @@ def test_simple_scalar_graph_verifies() -> None:
 
 
 def test_matmul_named_call_verifies() -> None:
-  @sc.function(sc.group(sc.arg("a", (3, 4)), sc.arg("b", (4, 2))), outputs=sc.arg("c", ...), name="mm")
+  @sc.function(sc.group(sc.arg("a", (3, 4)), sc.arg("b", (4, 2))), outputs=sc.arg("c"), name="mm")
   def fn(ab: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     a, b = ab
     return a @ b
@@ -44,7 +44,7 @@ def test_matmul_named_call_verifies() -> None:
 
 
 def test_vmap_graph_verifies() -> None:
-  @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"))
   def stage(u: sc.Expr) -> sc.Expr:
     return u.sin().sum()
 
@@ -54,7 +54,7 @@ def test_vmap_graph_verifies() -> None:
 
 
 def test_jacobian_factory_output_verifies() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
   def fn(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 
@@ -124,7 +124,7 @@ def test_matmul_contracting_dim_mismatch_caught() -> None:
 
 
 def test_call_arg_shape_mismatch_caught() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
   def fn(x: sc.Expr) -> sc.Expr:
     return x.sum()
 
@@ -140,7 +140,7 @@ def test_call_arg_shape_mismatch_caught() -> None:
 
 
 def test_vmap_rank1_outer_required() -> None:
-  @sc.function(sc.arg("u", 2), outputs=sc.arg("y", ...))
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"))
   def stage(u: sc.Expr) -> sc.Expr:
     return u.sin().sum()
 
@@ -184,7 +184,7 @@ def test_verify_walks_subgraph_and_names_first_failure() -> None:
 def test_verifier_smoke_on_workload_graphs() -> None:
   """Smoke: a small structurally-rich graph (slice + matmul + sum) verifies, including its Jacobian."""
 
-  @sc.function(sc.arg("z", 6), outputs=sc.arg("y", ...), name="f")
+  @sc.function(sc.arg("z", 6), outputs=sc.arg("y"), name="f")
   def fn(z: sc.Expr) -> sc.Expr:
     A = sc.const(np.eye(4, 6))
     return (A @ z + z[:4]).sum()

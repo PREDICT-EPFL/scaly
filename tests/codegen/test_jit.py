@@ -31,7 +31,7 @@ def isolated_cache(tmp_path, monkeypatch):
 
 
 def _simple_fn() -> sc.Function:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ...), name="smoke_jit")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="smoke_jit")
   def fn(x):
     return (x.sin() + x * x).sum()
 
@@ -72,9 +72,7 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
 
 
 def test_jit_handles_multi_output(isolated_cache) -> None:
-  @sc.function(
-    sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.group(sc.arg("sum", ...), sc.arg("prod", ...), sc.arg("diff", ...)), name="kw_jit"
-  )
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.group(sc.arg("sum"), sc.arg("prod"), sc.arg("diff")), name="kw_jit")
   def fn(inputs):
     x, y = inputs
     return (x + y, x * y, (x - y).sum())
@@ -88,7 +86,7 @@ def test_jit_handles_multi_output(isolated_cache) -> None:
 
 
 def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", ...), name="f_sj")
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="f_sj")
   def f(x):
     return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
 
@@ -99,11 +97,11 @@ def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
 
 
 def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("sq", ...), name="inner_jit")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("sq"), name="inner_jit")
   def inner(x):
     return x * x
 
-  @sc.function(sc.arg("z", 3), outputs=sc.arg("s", ...), name="outer_jit")
+  @sc.function(sc.arg("z", 3), outputs=sc.arg("s"), name="outer_jit")
   def outer(z):
     return inner(z + 1.0).sum()
 
@@ -140,7 +138,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   from scaly.codegen import render_c_module
   from tests.solvers.problem_helpers import build_nlp
 
-  @sc.function(sc.group(sc.arg("value", 1), sc.arg("target", 1)), outputs=sc.arg("cost", ...), name="oracle_stage")
+  @sc.function(sc.group(sc.arg("value", 1), sc.arg("target", 1)), outputs=sc.arg("cost"), name="oracle_stage")
   def stage(inputs):
     value, target = inputs
     return ((value - target.exp()) ** 2).sum().block()
@@ -150,7 +148,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
 
-    @sc.function(sc.arg("param", 1), outputs=sc.arg("solution", ...), name="hoisted_oracle_host")
+    @sc.function(sc.arg("param", 1), outputs=sc.arg("solution"), name="hoisted_oracle_host")
     def fun(param):
       return solver(param)[0]
 
@@ -168,13 +166,13 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
 
 @pytest.mark.parametrize("input_name", ["_h0", "v0", "v:0"])
 def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, input_name: str) -> None:
-  @sc.function(sc.arg(input_name, 1), outputs=sc.arg("y", ...), name="named_deep_stage")
+  @sc.function(sc.arg(input_name, 1), outputs=sc.arg("y"), name="named_deep_stage")
   def stage(value):
     for _ in range(40):
       value = value.sin() + 0.1
     return value.block()
 
-  @sc.function(sc.arg("z", 1), outputs=sc.arg("y", ...), name="named_deep_root")
+  @sc.function(sc.arg("z", 1), outputs=sc.arg("y"), name="named_deep_root")
   def root(z):
     return stage(z)
 

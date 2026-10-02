@@ -319,7 +319,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
     sc.arg("z", n_dec(n_masses, HORIZON)),
     sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
     sc.arg("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
-    outputs=sc.arg("h", ...),
+    outputs=sc.arg("h"),
     name="chain_hess_hinted",
   )
   def hessian_values(z: sc.Expr, p: sc.Expr, lam: sc.Expr) -> sc.Expr:

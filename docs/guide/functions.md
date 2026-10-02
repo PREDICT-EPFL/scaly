@@ -86,7 +86,7 @@ buffers.
 | `sc.arg("x", 3)` | Vector with shape `(3,)` |
 | `sc.arg("A", (2, 3))` | Matrix with shape `(2, 3)` |
 | `sc.arg("dt", ())` | Scalar with no axes |
-| `sc.arg("x")` or `sc.arg("x", ...)` | Open input shape, or output shape inferred from the trace |
+| `sc.arg("x")` | Open input shape, or output shape inferred from the trace |
 | `sc.arg("p", sc.TensorType((3,), diff=False))` | Non-differentiable vector with explicit tensor metadata |
 
 A type checker sees `Expr` or `np.ndarray` leaves and tuple structure, and Scaly

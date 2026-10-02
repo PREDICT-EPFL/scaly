@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import EllipsisType
 from typing import Any, TypeGuard, cast, overload
 
 import numpy as np
@@ -10,9 +9,13 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp
 from ..ir.types import TensorType, as_shape
 
-
-type ShapeDecl = int | tuple[int, ...] | EllipsisType | TensorType
-type LeafDecl = TensorType | EllipsisType
+type ShapeDecl = int | tuple[int, ...] | TensorType | None
+type LeafDecl = TensorType | None
+type Array = np.ndarray
+# declaring a type alias makes the inferred types of functions easier to read:
+# Function[tuple[Expr, Expr, Expr], tuple[Array, Array, Array], Expr, Array]
+# instead of
+# Function[tuple[Expr, Expr, Expr], tuple[ndarray[tuple[Any, ...], dtype[Any]], ndarray[tuple[Any, ...], dtype[Any]], ndarray[tuple[Any, ...], dtype[Any]]], Expr, ndarray[tuple[Any, ...], dtype[Any]]]
 
 
 def _leaves(value: Any) -> list[Any]:
@@ -35,19 +38,19 @@ class Tree[Symbolic, Numerical]:
   @property
   def has_holes(self) -> bool:
     """Whether any leaf shape needs binding."""
-    return any(decl is Ellipsis for decl in self.decls)
+    return any(decl is None for decl in self.decls)
 
   @property
   def shapes(self) -> tuple[tuple[int, ...], ...]:
     """The leaf shapes in C-signature order."""
-    if any(decl is Ellipsis for decl in self.decls):
+    if any(decl is None for decl in self.decls):
       raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
     return tuple(cast(TensorType, decl).shape for decl in self.decls)
 
   @property
   def types(self) -> tuple[TensorType, ...]:
     """The leaf tensor types in C-signature order."""
-    if any(decl is Ellipsis for decl in self.decls):
+    if any(decl is None for decl in self.decls):
       raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
     return cast(tuple[TensorType, ...], self.decls)
 
@@ -73,7 +76,7 @@ class Tree[Symbolic, Numerical]:
     if len(traced) != self.size:
       raise TypeError(f"declared {self.size} outputs {self.names}, body returned {len(traced)}")
     for name, decl, actual in zip(self.names, self.decls, traced, strict=True):
-      if decl is not Ellipsis and (decl.shape != actual.shape or decl.dtype != actual.dtype):
+      if decl is not None and (decl.shape != actual.shape or decl.dtype != actual.dtype):
         raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
     return traced
 
@@ -106,7 +109,7 @@ class Tree[Symbolic, Numerical]:
     """Validate and flatten a symbolic value."""
     raise NotImplementedError
 
-  def flatten_numerical(self, value: Numerical, what: str) -> tuple[np.ndarray, ...]:
+  def flatten_numerical(self, value: Numerical, what: str) -> tuple[Array, ...]:
     """Validate and flatten a numerical value."""
     raise NotImplementedError
 
@@ -119,7 +122,7 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"duplicate names in {self.names}")
 
 
-class _Leaf(Tree[Expr, np.ndarray]):
+class _Leaf(Tree[Expr, Array]):
   """Declare one named tensor.
 
   The declared name is external metadata and need not match the local name used by a decorated
@@ -131,12 +134,12 @@ class _Leaf(Tree[Expr, np.ndarray]):
   returned tensor along its first axis exactly as NumPy would.
   """
 
-  def __init__(self, name: str, shape: ShapeDecl = ..., /) -> None:
+  def __init__(self, name: str, shape: ShapeDecl = None, /) -> None:
     if not isinstance(name, str) or not name:
       raise ValueError("arg needs a non-empty name")
     self.names = (name,)
-    if shape is Ellipsis:
-      self.decls = (Ellipsis,)
+    if shape is None:
+      self.decls = (None,)
     elif isinstance(shape, TensorType):
       self.decls = (shape,)
     else:
@@ -160,13 +163,13 @@ class _Leaf(Tree[Expr, np.ndarray]):
     if not isinstance(value, Expr):
       raise ValueError(f"{what}: expected an Expr for {self.names[0]!r}, got {type(value).__name__}")
     decl = self.decls[0]
-    if decl is not Ellipsis and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
+    if decl is not None and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
-    if decl is not Ellipsis and value.type.dtype != decl.dtype:
+    if decl is not None and value.type.dtype != decl.dtype:
       raise ValueError(f"{what}: expected dtype {decl.dtype} for {self.names[0]!r}, got {value.type.dtype}")
     return (value,)
 
-  def flatten_numerical(self, value: np.ndarray, what: str) -> tuple[np.ndarray, ...]:
+  def flatten_numerical(self, value: Array, what: str) -> tuple[Array, ...]:
     if isinstance(value, Expr):
       raise ValueError(f"{what}: expected a numerical value for {self.names[0]!r}, got Expr")
     array = np.asarray(value, dtype=self.types[0].dtype.numpy())
@@ -180,7 +183,7 @@ class _Leaf(Tree[Expr, np.ndarray]):
     return values[0]
 
 
-def arg(name: str, shape: ShapeDecl = ..., /) -> Tree[Expr, np.ndarray]:
+def arg(name: str, shape: ShapeDecl = None, /) -> Tree[Expr, Array]:
   """Declare one named tensor, optionally leaving its shape to a call or trace.
 
   A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
@@ -217,7 +220,7 @@ class _G(Tree[Any, Any]):
       raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
     return tuple(expr for part, item in zip(self.parts, value, strict=True) for expr in part.flatten_symbolic(item, what, allow_scalar=allow_scalar))
 
-  def flatten_numerical(self, value: Any, what: str) -> tuple[np.ndarray, ...]:
+  def flatten_numerical(self, value: Any, what: str) -> tuple[Array, ...]:
     if not isinstance(value, tuple) or len(value) != len(self.parts):
       raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
     return tuple(array for part, item in zip(self.parts, value, strict=True) for array in part.flatten_numerical(item, what))

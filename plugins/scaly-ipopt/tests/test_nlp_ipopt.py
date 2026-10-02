@@ -247,7 +247,7 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
 def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
-  @sc.function(sc.arg("piece_x", 2), outputs=sc.arg("h", ...), name="nlp_mapped_constraint_piece")
+  @sc.function(sc.arg("piece_x", 2), outputs=sc.arg("h"), name="nlp_mapped_constraint_piece")
   def piece(piece_x: sc.Expr) -> sc.Expr:
     return sc.stack([piece_x[1] - piece_x[0] ** 2])
 
@@ -280,7 +280,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   assert mapped_nlp.stats() is not None and mapped_nlp.stats().n_eval_h > 0
 
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
-    @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("f", ...), sc.arg("g", ...)), name=f"nlp_hess_base_{int(mapped)}")
+    @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("f"), sc.arg("g")), name=f"nlp_hess_base_{int(mapped)}")
     def base(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
       h_eq = sc.vmap(piece, 2)(x).vec() if mapped else sc.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
       return ((x - target) ** 2).sum(), h_eq
@@ -333,7 +333,7 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
 def test_nested_nlp_in_scaly_function() -> None:
   """NLP solver embedded in a larger Function."""
 
-  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj", ...), name="min_dist_to_unit_circle")
+  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj"), name="min_dist_to_unit_circle")
   def proj(target: sc.Expr) -> sc.Expr:
     x = sc.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
@@ -353,7 +353,7 @@ def test_nested_nlp_in_scaly_function() -> None:
 def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   """JIT path for an NLP: projects (target) onto the unit circle."""
 
-  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj", ...), name="proj_circle")
+  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj"), name="proj_circle")
   def proj(target: sc.Expr) -> sc.Expr:
     x = sc.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2

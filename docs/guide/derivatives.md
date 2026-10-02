@@ -27,7 +27,7 @@ The declarations below name the output `cost` and the inputs `x` and `target`:
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.arg("x", 2), sc.arg("target", 2), outputs=sc.arg("cost", ...))
+@sc.function(sc.arg("x", 2), sc.arg("target", 2), outputs=sc.arg("cost"))
 def tracking_cost(x: sc.Expr, target: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x - target)
 
@@ -64,7 +64,7 @@ J(x)=\frac{\partial y}{\partial x}
 \]
 
 ```python
-@sc.function(sc.arg("x", 2), outputs=sc.arg("y", ...))
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
 def measurements(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[1], x[0] + 2.0 * x[1]])
 
@@ -129,7 +129,7 @@ Scaly's solver interfaces construct this derivative automatically. A direct
 request uses every output of a function as one term in that weighted sum:
 
 ```python
-@sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("cost", ...), sc.arg("constraint", ...)))
+@sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("cost"), sc.arg("constraint")))
 def model(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return sc.sumsqr(x), sc.stack([x[0] * x[1]])
 

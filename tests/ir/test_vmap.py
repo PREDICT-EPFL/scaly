@@ -7,7 +7,7 @@ from scaly.function.sugar import _mapped_call
 import scaly as sc
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="scale_add")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
 def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
@@ -17,12 +17,12 @@ def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
   N = 4
   inputs = sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N))
 
-  @sc.function(inputs, outputs=sc.arg("y", ...), name="scaled_vmap")
+  @sc.function(inputs, outputs=sc.arg("y"), name="scaled_vmap")
   def fn_vmap(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
 
-  @sc.function(inputs, outputs=sc.arg("y", ...), name="scaled_concat")
+  @sc.function(inputs, outputs=sc.arg("y"), name="scaled_concat")
   def fn_concat(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     return sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
@@ -39,19 +39,19 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   NX = 4
   N = 3
 
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq", ...), name="step")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="step")
   def step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return (z[:NX] - znext[:NX]) + p
 
   inputs = sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", NX * (N + 1)))
 
-  @sc.function(inputs, outputs=sc.arg("eq", ...), name="step_vmap")
+  @sc.function(inputs, outputs=sc.arg("eq"), name="step_vmap")
   def fn_vmap(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     return _mapped_call(step, N, [(z, 0, NZ), (z, NZ, NZ), (p, NX, NX)])
 
-  @sc.function(inputs, outputs=sc.arg("eq", ...), name="step_concat")
+  @sc.function(inputs, outputs=sc.arg("eq"), name="step_concat")
   def fn_concat(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     parts = []
@@ -67,7 +67,7 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
 
 
 def test_vmap_zero_length_returns_empty() -> None:
-  @sc.function(sc.group(sc.arg("z", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="empty_vmap")
+  @sc.function(sc.group(sc.arg("z", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="empty_vmap")
   def fn(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     return _mapped_call(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
@@ -80,7 +80,7 @@ def test_vmap_zero_length_returns_empty() -> None:
 def test_vmap_broadcast_stride_zero_repeats_same_slice() -> None:
   N = 3
 
-  @sc.function(sc.group(sc.arg("z", 3), sc.arg("p", 3)), outputs=sc.arg("y", ...), name="broadcast_vmap")
+  @sc.function(sc.group(sc.arg("z", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="broadcast_vmap")
   def fn(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = zp
     return _mapped_call(scale_add, N, [(z, 0, 0), (p, 0, 0)])
