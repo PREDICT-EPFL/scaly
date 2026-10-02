@@ -126,7 +126,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        include:
+          - { os: ubuntu-latest, wheels: ubuntu-latest }
+          - { os: macos-latest, wheels: macos-15 }
     env:
       UV_NO_SYNC: "1"
       SCALY_BUILD_SOLVERS: skip
@@ -136,7 +138,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-scaly-*-${{ matrix.os }}
+          pattern: dist-scaly-*-${{ matrix.wheels }}
           merge-multiple: true
           path: dist
 
