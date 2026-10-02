@@ -221,9 +221,9 @@ class Iteration:
     xb = self.q.x_b
     lo, up, hl, hu = s.x_l_idx, s.x_u_idx, s.h_l_idx, s.h_u_idx
     zero_n = Expr.const(np.zeros(s.n))
-    nr_y = -(k.A @ v.x) if s.p else Expr.const(np.zeros(0))
-    work_x = (k.A.T @ v.y if s.p else zero_n) + (k.G.T @ (v.z_u - v.z_l) if s.m else zero_n)
-    g_x = k.G @ v.x if s.m else Expr.const(np.zeros(0))
+    nr_y = -k.mats.A_times(v.x) if s.p else Expr.const(np.zeros(0))
+    work_x = (k.mats.At_times(v.y) if s.p else zero_n) + (k.mats.Gt_times(v.z_u - v.z_l) if s.m else zero_n)
+    g_x = k.mats.G_times(v.x) if s.m else Expr.const(np.zeros(0))
     px = k.P_times(v.x)
     nr_x = -px
     dual_rel = _norm(self.unscale_dual_res(nr_x))
@@ -720,7 +720,7 @@ class Solver:
     """PIQP's setup: the Ruiz equilibration of ``values``, which reads only the matrices unless the
     cost is scaled too (``preconditioner_scale_cost``)."""
     t = self.settings
-    return ruiz(self.s, values, scale_cost=t.preconditioner_scale_cost, max_iter=t.preconditioner_iter, alias_cost=self.backend == "sparse")
+    return ruiz(self.s, values, scale_cost=t.preconditioner_scale_cost, max_iter=t.preconditioner_iter, alias_cost=self.backend != "dense")
 
   def solve(self, values: QPValues, *, scaling: Scaling | None = None, trace: bool = False) -> dict[str, Expr]:
     """The solve for run-time ``values`` (as ``QPValues.preprocess`` gives them): the unscaled

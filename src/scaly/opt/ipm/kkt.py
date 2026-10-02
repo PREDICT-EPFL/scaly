@@ -1,4 +1,4 @@
-"""PIQP's KKT system as generated code, behind a dense and a sparse backend."""
+"""PIQP's KKT system as generated code, behind a dense, a sparse and a stagewise backend."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Literal
 import numpy as np
 
 from ...function import ConcreteFunction
-from ...function.sugar import while_loop
+from ...function.sugar import vmap, while_loop
 from ...ir.expr import (
   Expr,
   as_expr,
@@ -29,11 +29,13 @@ from ...ir.expr import (
   where,
 )
 from ...linalg import SparseLDL, SparseMatrix, cho_solve, cholesky
+from ...linalg.blocks import BlockTridiagonalCholesky
 from ...linalg.symbolic import SymbolicLDL, analyze
 from .ruiz import ScaledQP
+from .stages import DenseBlocks, Stages, dense_blocks, pairs_in_rows, stages
 from .structure import QPStructure
 
-Backend = Literal["dense", "sparse"]
+Backend = Literal["dense", "sparse", "stagewise"]
 EPS = float(np.finfo(np.float64).eps)
 # How a factorization went, as the retry loop's header holds it under ``ok``: below one half is a failure.
 _FACTORED, _RESIDUE, _SINGULAR = 1.0, 0.25, 0.0
@@ -135,14 +137,83 @@ def _call(fn: ConcreteFunction, *args: Expr) -> Expr:
   return out[0] if isinstance(out, tuple) else out
 
 
-class Matrices:
-  """``P`` (its upper triangle), ``A`` and ``G`` of a structure over values in its entry order."""
+class StageArrays:
+  """The entries of a constraint matrix that ``Kernels.stage_dense`` takes, as one dense array per
+  block (``stages.DenseBlocks``), and the products they make: with a vector, with a vector from
+  the left, and each array with itself. The other entries stay a sparse matrix."""
 
-  def __init__(self, s: QPStructure, P: Expr, A: Expr, G: Expr):
+  def __init__(self, name: str, st: Stages, found: DenseBlocks, rows: np.ndarray, cols: np.ndarray, shape: tuple[int, int], weighted: bool):
+    K, r, nd = found.entries.shape
+    self.found, self.shape = found, shape
+    self.held, self.rest = np.flatnonzero(found.taken), np.flatnonzero(~found.taken)
+    self._rows, self._cols = rows, cols
+    # The variable each column of a block's array stands for, and the cell of the arrays' products each row reads.
+    self.variable = np.where(found.slots >= 0, st.order[np.maximum(found.slots, 0)], -1).reshape(-1)
+    self.row_cell = np.full(shape[0], K * r, dtype=np.int64)
+    in_array = np.flatnonzero(found.rows.reshape(-1) >= 0)
+    self.row_cell[found.rows.reshape(-1)[in_array]] = in_array
+    self.in_array = in_array
+    block, x, y = Expr.sym("J", (r, nd)), Expr.sym("x", (nd,)), Expr.sym("y", (r,))
+    self._times = ConcreteFunction.from_exprs(f"{name}_times", [block, x], [block @ x], ["J", "x"], ["Jx"])
+    self._t_times = ConcreteFunction.from_exprs(f"{name}_t_times", [block, y], [block.T @ y], ["J", "y"], ["Jty"])
+    if weighted:
+      self._square = ConcreteFunction.from_exprs(f"{name}_square", [block, y], [(block.T * y) @ block], ["J", "w"], ["JtWJ"])
+    else:
+      self._square = ConcreteFunction.from_exprs(f"{name}_square", [block], [block.T @ block], ["J"], ["JtJ"])
+
+  def arrays(self, values: Expr) -> Expr:
+    """The arrays, flat, over the matrix's values in entry order."""
+    entries = self.found.entries
+    return gather(concat([values, Expr.const(np.zeros(1))]), np.where(entries >= 0, entries, values.size).reshape(-1))
+
+  def other(self, values: Expr) -> SparseMatrix | None:
+    """The entries in no array, as a matrix of the whole shape."""
+    if not self.rest.size:
+      return None
+    return SparseMatrix.from_coo(self._rows[self.rest], self._cols[self.rest], gather(values, self.rest), self.shape)
+
+  def _per_row(self, v: Expr) -> Expr:
+    rows = self.found.rows.reshape(-1)
+    return gather(concat([v, Expr.const(np.zeros(1))]), np.where(rows >= 0, rows, v.size))
+
+  def times(self, values: Expr, x: Expr) -> Expr:
+    """``M x``."""
+    K, r, nd = self.found.entries.shape
+    xs = gather(concat([x, Expr.const(np.zeros(1))]), np.where(self.variable >= 0, self.variable, x.size))
+    out = gather(concat([vmap(self._times, K, [(self.arrays(values), 0, r * nd), (xs, 0, nd)]), Expr.const(np.zeros(1))]), self.row_cell)
+    other = self.other(values)
+    return out if other is None else out + other @ x
+
+  def t_times(self, values: Expr, y: Expr) -> Expr:
+    """``M^T y``. A variable can be in two blocks' arrays, and their shares add."""
+    K, r, nd = self.found.entries.shape
+    shares = vmap(self._t_times, K, [(self.arrays(values), 0, r * nd), (self._per_row(y), 0, r)])
+    there = np.flatnonzero(self.variable >= 0)
+    out = scatter(gather(shares, there), self.variable[there], (self.shape[1],))
+    other = self.other(values)
+    return out if other is None else out + other.T @ y
+
+  def squares(self, values: Expr, weights: Expr | None) -> Expr:
+    """Each array's ``J^T W J``, flat ``(K * nd * nd,)``; ``weights`` is per row of the matrix."""
+    K, r, nd = self.found.entries.shape
+    specs = [(self.arrays(values), 0, r * nd)]
+    if weights is not None:
+      specs.append((self._per_row(weights), 0, r))
+    return vmap(self._square, K, specs)
+
+
+class Matrices:
+  """``P`` (its upper triangle), ``A`` and ``G`` of a structure over values in its entry order.
+  ``staged`` holds, for the stagewise backend, the dense arrays of ``A`` and of ``G`` where they
+  have them: their products with a vector then run through the arrays."""
+
+  def __init__(self, s: QPStructure, P: Expr, A: Expr, G: Expr, staged: dict[str, StageArrays] | None = None):
     self.s = s
+    self.staged = staged or {}
     self.P = SparseMatrix.from_coo(s.P_rows, s.P_cols, P, (s.n, s.n))
     self.A = SparseMatrix.from_coo(s.A_rows, s.A_cols, A, (s.p, s.n))
     self.G = SparseMatrix.from_coo(s.G_rows, s.G_cols, G, (s.m, s.n))
+    self.P_values, self.A_values, self.G_values = P, A, G  # in the structure's entry order
     diag = np.flatnonzero(s.P_rows == s.P_cols)
     self.P_diag = scatter(gather(P, diag), s.P_rows[diag], (s.n,)) if diag.size else Expr.const(np.zeros(s.n))
     off = np.flatnonzero(s.P_rows != s.P_cols)
@@ -156,6 +227,22 @@ class Matrices:
     """``P`` with both triangles stored."""
     return self.P + self.P_lower if self.P_lower is not None else self.P
 
+  def A_times(self, x: Expr) -> Expr:
+    """``A x``."""
+    return self.staged["A"].times(self.A_values, x) if "A" in self.staged else self.A @ x
+
+  def At_times(self, y: Expr) -> Expr:
+    """``A^T y``."""
+    return self.staged["A"].t_times(self.A_values, y) if "A" in self.staged else self.A.T @ y
+
+  def G_times(self, x: Expr) -> Expr:
+    """``G x``."""
+    return self.staged["G"].times(self.G_values, x) if "G" in self.staged else self.G @ x
+
+  def Gt_times(self, z: Expr) -> Expr:
+    """``G^T z``."""
+    return self.staged["G"].t_times(self.G_values, z) if "G" in self.staged else self.G.T @ z
+
 
 class Kernels:
   """The generated pieces every KKT system over one structure shares, each a ``Function`` over
@@ -164,13 +251,15 @@ class Kernels:
 
   ``dense`` factors the condensed matrix ``P + diag(x_reg) + A^T A / delta + G^T diag(1/z_reg) G`` by
   Cholesky, as PIQP's dense backend does; ``sparse`` factors the whole KKT matrix by ``SparseLDL``,
-  as its sparse backend does. The problem travels as one data vector ``[P | A | G | x_b]``, a
+  as its sparse backend does; ``stagewise`` factors the condensed matrix block by block in the
+  order ``stages`` finds, in which it is block tridiagonal (``linalg.blocks``), as PIQP's multistage
+  backend does. The problem travels as one data vector ``[P | A | G | x_b]``, a
   factorization as a record ``[delta, delta_reg | x_reg | z_reg | z_reg_ir | factor]``: ``x_reg``
   with the static regularization, ``z_reg`` without it, as PIQP keeps them."""
 
   def __init__(self, s: QPStructure, backend: Backend, refinement: Refinement | None = None, *, name: str = "ipm"):
-    if backend not in ("dense", "sparse"):
-      raise ValueError(f"backend must be 'dense' or 'sparse', got {backend!r}")
+    if backend not in ("dense", "sparse", "stagewise"):
+      raise ValueError(f"backend must be 'dense', 'sparse' or 'stagewise', got {backend!r}")
     self.s, self.backend, self.refinement, self.name = s, backend, refinement or Refinement(), name
     has_l, has_u = np.zeros(s.m, dtype=bool), np.zeros(s.m, dtype=bool)
     has_l[s.h_l_idx], has_u[s.h_u_idx] = True, True
@@ -180,6 +269,7 @@ class Kernels:
     self.v_sizes = (s.m, s.m, nl, nu, s.m, s.m, nl, nu, 1)  # never empty: a loop param of its own
     self.size = s.n + s.p + s.m
     self._ldl: SparseLDL | None = None
+    self._blocks: BlockTridiagonalCholesky | None = None
 
   # --- layouts -----------------------------------------------------------------------------------
 
@@ -190,7 +280,22 @@ class Kernels:
   def matrices(self, d: Expr) -> tuple[Matrices, Expr]:
     """``P``, ``A`` and ``G`` over a data vector, and the box scaling ``x_b``."""
     P, A, G, x_b = _split(d, self.d_sizes)
-    return Matrices(self.s, P, A, G), x_b
+    return self.matrices_of(P, A, G), x_b
+
+  def matrices_of(self, P: Expr, A: Expr, G: Expr) -> Matrices:
+    """``P``, ``A`` and ``G`` over values in the structure's entry order, with this backend's products."""
+    return Matrices(self.s, P, A, G, self.stage_arrays)
+
+  @cached_property
+  def stage_arrays(self) -> dict[str, StageArrays]:
+    """For the stagewise backend, the dense arrays of ``A`` and of ``G``, where ``stage_dense`` finds them."""
+    s, out = self.s, {}
+    if self.backend == "stagewise":
+      for which, rows, cols, count in (("A", s.A_rows, s.A_cols, s.p), ("G", s.G_rows, s.G_cols, s.m)):
+        found = self.stage_dense(which)
+        if found is not None:
+          out[which] = StageArrays(f"{self.name}_stage_{which}", stages(s), found, rows, cols, (count, s.n), weighted=which == "G")
+    return out
 
   def bounds(self, it: Iterate) -> Expr:
     """The duals and slacks a factorization reads, as one vector."""
@@ -231,6 +336,14 @@ class Kernels:
       # Eigen's LLT fails on a pivot that is not positive; a NaN one fails here too.
       ok = where(l_diag > 0.0, 0.0, 1.0).sum() < 0.5
       digits = logical_and(ok, self._digits_left(l_diag, gather(dense.reshape((s.n * s.n,)), diag)))
+    elif self.backend == "stagewise":
+      blocks, below, c_diag = self._stage_blocks(mats, xr, dr, zr)
+      self._blocks = BlockTridiagonalCholesky(blocks, below, name=f"{self.name}_kkt")
+      f = self._blocks.values
+      l_diag = self._blocks.diagonal
+      # A pivot that is not positive fails, as BLASFEO's Cholesky does for PIQP's multistage backend.
+      ok = where(l_diag > 0.0, 0.0, 1.0).sum() < 0.5
+      digits = logical_and(ok, self._digits_left(l_diag, c_diag))
     else:
       kkt = self.kkt_matrix(mats, xr, dr, zr)
       self._ldl = SparseLDL(kkt, symbolic=kkt_symbolic(s), name=f"{self.name}_kkt")
@@ -278,6 +391,63 @@ class Kernels:
       lower = lower + mats.G.T @ mats.G.scale_rows(1.0 / zr)
     assert dense is not None
     return lower.to_dense() + dense
+
+  def stage_dense(self, which: Literal["A", "G"]) -> DenseBlocks | None:
+    """The part of ``A`` or ``G`` the stagewise backend multiplies as dense arrays, one per block,
+    or None when its products stay in the index tables: the rule is ``dense_rows``'s, on the
+    columns ``dense_blocks`` finds mostly filled."""
+    s = self.s
+    rows, cols, count = (s.A_rows, s.A_cols, s.p) if which == "A" else (s.G_rows, s.G_cols, s.m)
+    found = dense_blocks(stages(s), rows, cols, count)
+    if found is None or found.entries.shape[2] < DENSE_PRODUCT_COLUMNS or found.products < DENSE_PRODUCT_WORK or 4 * found.products < found.work:
+      return None
+    return found
+
+  def _stage_product(self, which: Literal["A", "G"], mats: Matrices, weights: Expr | None) -> list[tuple[Expr, np.ndarray]]:
+    """``M^T W M`` for ``M`` one of ``A`` and ``G`` and ``W`` a diagonal (None for the identity), as
+    values and the cells of the block storage they add to: each product of two entries of a row
+    once, and for the columns ``stage_dense`` takes, the products of their arrays, one per block."""
+    s, st = self.s, stages(self.s)
+    values = mats.A_values if which == "A" else mats.G_values
+    rows, cols, count = (s.A_rows, s.A_cols, s.p) if which == "A" else (s.G_rows, s.G_cols, s.m)
+    slot = st.slots[cols]
+    found = self.stage_dense(which)
+    first, second = pairs_in_rows(rows, count)
+    if found is not None:
+      apart = ~(found.taken[first] & found.taken[second])
+      first, second = first[apart], second[apart]
+    out: list[tuple[Expr, np.ndarray]] = []
+    if first.size:
+      products = gather(values, first) * gather(values, second)
+      if weights is not None:
+        products = products * gather(weights, rows[first])
+      out.append((products, st.cell(slot[first], slot[second])))
+    if found is not None:
+      out.append((gather(self.stage_arrays[which].squares(values, weights), found.source), found.cell))
+    return out
+
+  def _stage_blocks(self, mats: Matrices, xr: Expr, dr: Expr, zr: Expr) -> tuple[Expr, Expr | None, Expr]:
+    """The condensed matrix in the slots of ``stages``: the lower triangles of its diagonal blocks
+    ``(K, B, B)``, the last ``c`` columns of the blocks below them ``(K - 1, B, c)`` (None with one
+    block), and its diagonal. A padding slot is a row of the identity. Every term is a list of
+    values with the cell each adds to, and one scatter puts them all in place, so the matrix is
+    never formed as a sparse one: what ``stage_dense`` takes of ``A^T A`` and ``G^T W G`` is
+    multiplied as dense arrays, one per block, and the rest entry by entry."""
+    s, st = self.s, stages(self.s)
+    K, B, c = st.K, st.B, st.c
+    slot = st.slots
+    pads = np.flatnonzero(st.order < 0)
+    terms = [(mats.P_values, st.cell(slot[s.P_rows], slot[s.P_cols])), (xr, st.cell(slot, slot))]
+    if pads.size:
+      terms.append((Expr.const(np.ones(pads.size)), st.cell(pads, pads)))
+    if s.p:
+      terms += [(values * (1.0 / dr), cell) for values, cell in self._stage_product("A", mats, None)]
+    if s.m:
+      terms += self._stage_product("G", mats, 1.0 / zr)
+    cells = scatter(concat([values for values, _ in terms]), np.concatenate([cell for _, cell in terms]), (st.cells,))
+    on_diagonal = (np.arange(K)[:, None] * B * B + np.arange(B)[None, :] * (B + 1)).reshape(-1)
+    split = K * B * B
+    return cells[:split].reshape((K, B, B)), cells[split:].reshape((K - 1, B, c)) if K > 1 else None, gather(cells, on_diagonal)
 
   def kkt_matrix(self, mats: Matrices, xr: Expr, dr: Expr, zr: Expr) -> SparseMatrix:
     """The whole KKT matrix the sparse backend factors, its upper triangle:
@@ -348,7 +518,7 @@ class Kernels:
     reg = where(ir, r.static_eps + r.static_rel * max_diag, 0.0)
     x_reg, delta_reg, z_reg_ir = x_reg + reg, delta + reg, z_reg + reg
     f, ok, digits = fn.symbolic_call((d, x_reg, delta_reg, z_reg_ir))
-    if self.backend == "dense":
+    if self.backend != "sparse":
       outcome = where(where(ir, ok, digits) > 0.5, _FACTORED, _SINGULAR)
     else:
       outcome = where(digits > 0.5, _FACTORED, where(ok > 0.5, _RESIDUE, _SINGULAR))
@@ -408,7 +578,7 @@ class Kernels:
     s = self.s
     rec, d, rhs = Expr.sym("rec", (sum(self.record_sizes),)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("r", (self.size,))
     parts = self.record(rec)
-    if self.backend == "dense":
+    if self.backend != "sparse":
       mats, _ = self.matrices(d)
       n, p = s.n, s.p
       rx, ry, rz = rhs[:n], rhs[n : n + p], rhs[n + p :]
@@ -416,15 +586,23 @@ class Kernels:
       z_inv = 1.0 / parts["z_reg_ir"]
       x = rx
       if s.m:
-        x = x + mats.G.T @ (z_inv * rz)
+        x = x + mats.Gt_times(z_inv * rz)
       if s.p:
-        x = x + delta_inv * (mats.A.T @ ry)
-      x = cho_solve(parts["factor"].reshape((n, n)), x)
+        x = x + delta_inv * mats.At_times(ry)
+      if self.backend == "dense":
+        x = cho_solve(parts["factor"].reshape((n, n)), x)
+      else:
+        assert self._blocks is not None
+        st = stages(s)
+        # A padding slot is a row of the identity, coupled with nothing: whatever its right-hand
+        # side holds (here the first variable's) reaches no variable.
+        slotted = gather(x, np.maximum(st.order, 0))
+        x = gather(self._blocks.solve_with(parts["factor"], slotted), st.slots)
       out = [x]
       if s.p:
-        out.append(delta_inv * (mats.A @ x) - delta_inv * ry)
+        out.append(delta_inv * mats.A_times(x) - delta_inv * ry)
       if s.m:
-        out.append((mats.G @ x - rz) * z_inv)
+        out.append((mats.G_times(x) - rz) * z_inv)
       sol = concat(out)
     else:
       assert self._ldl is not None
@@ -442,11 +620,11 @@ class Kernels:
     rx = mats.P_times(x) + parts["x_reg"] * x
     out = []
     if s.p:
-      rx = rx + mats.A.T @ y
-      out.append(mats.A @ x - parts["delta"] * y)
+      rx = rx + mats.At_times(y)
+      out.append(mats.A_times(x) - parts["delta"] * y)
     if s.m:
-      rx = rx + mats.G.T @ z
-      out.append(mats.G @ x - parts["z_reg"] * z)
+      rx = rx + mats.Gt_times(z)
+      out.append(mats.G_times(x) - parts["z_reg"] * z)
     return concat([rx, *out])
 
   @cached_property
@@ -518,7 +696,7 @@ class KKT:
   def __init__(self, kernels: Kernels, q: ScaledQP, *, data: Expr | None = None):
     """``data``, when given, is ``kernels.data(q)`` computed elsewhere (a loop's param)."""
     self.kernels, self.s, self.q = kernels, kernels.s, q
-    self.mats = Matrices(kernels.s, q.values.P, q.values.A, q.values.G)
+    self.mats = kernels.matrices_of(q.values.P, q.values.A, q.values.G)
     self.data = kernels.data(q) if data is None else data
 
   @property

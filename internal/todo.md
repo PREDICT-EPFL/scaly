@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 245**
+**Next id: 246**
 
 | Prefix | Section |
 |---|---|
@@ -1417,6 +1417,44 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
 - [ ] **C-244. An output no trip changes, batched.** A map with such an output keeps its loop
       for all its outputs (C-238's review), which is right but gives up the batched product
       beside it. The output needs a form of its own: the value repeated over the trips.
+- [x] **C-245. A stagewise KKT backend for the generated IPM (A11, Tier 9).** Measured first
+      (M1, `m1_stagewise.py`, `results/m1_stagewise.md`): on stage-banded QPs the sparse
+      backend's scalar LDL' of the whole KKT matrix does 0.8-1.25 of a block recursion's
+      multiply-adds, so its ordering is already the recursion's, and runs them at 3.2-3.7 G a
+      second; vendored PIQP's multistage backend, which is at Fatrop's time an iteration, takes
+      0.33-0.45 of the generated sparse backend's time at blocks of 28-42. `Kernels(s,
+      "stagewise")` (`sc.opt.IPM(backend="stagewise")`) factors the dense backend's condensed
+      matrix block by block, so PIQP's iterations, regularization, pivot tests and retries are
+      the dense backend's. Three pieces:
+      - `opt/ipm/stages.py`: the blocks are the level sets of a breadth-first search of the
+        condensed matrix's graph, which make any pattern block tridiagonal. The search is tried
+        from both ends of the graph, from one variable, from those that share its rows and from
+        those that share its neighbours, each also with its first level thinned into the
+        second, and the partition of least work is kept; unconnected parts are laid beside
+        each other. On a multistage problem in any variable order that is the stages, `nx + nu`
+        slots a block, the states the `c` coupling slots.
+      - `linalg/blocks.py`, `BlockTridiagonalCholesky`: a Cholesky of a block, a triangular
+        solve of the block below against the trailing `c` by `c` triangle and a product, as one
+        `scan`; the solves are two more. The code does not grow with the horizon.
+      - the assembly. Forming `A^T A` through index tables cost as many multiply-adds as the
+        factorization at a tenth of its rate, 65% of a solve, and the first version was
+        1.2-2.1x the sparse backend's time. Now every term is values and the cells of the
+        block storage they add to, put in place by one scatter; the rows that fill most of a
+        stage's columns go into one dense array a block (`stages.dense_blocks`), whose product
+        with itself is the stage's share (the rule is `dense_rows`'s: eight columns, 4 096
+        products), and the same arrays multiply a vector in the residuals and the solves.
+      Result (`results/a11_stagewise.md`): 0.65-0.76 of the sparse backend's time at blocks of
+      28-42, 0.86-0.89 at 8-20, 1.18 at 6; 1.0-2.1x PIQP's multistage backend where the sparse
+      backend is 1.1-3.2x. The gate asked 0.65 at blocks of 28-42 and M1 predicted 0.58: the
+      prototype had no assembly in it. The same iterations as the dense and sparse backends on
+      every problem. It is not chosen by default until the cost model has it (C-247). Tests:
+      the kernel against NumPy on eight shapes, its derivative, its code size; the partition
+      on MPC problems in two variable orders and a fuzz of random patterns; the arrays against
+      the Gram matrix; the backend against the reference's KKT solves, against PIQP's decisions
+      on ten problems, against the dense backend on twelve random multistage problems with
+      path rows and a coupled stage cost in a random variable order, and through retries.
+      41 mutants: 36 killed at once, 4 after tests were added, and one was a check that could
+      not matter (a padding slot's right-hand side reaches no variable), removed.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced

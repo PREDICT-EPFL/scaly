@@ -20,6 +20,7 @@ def test_the_linalg_surface() -> None:
     "SymbolicLDL",
     "analyze",
     "banded",
+    "blocks",
     "cho_solve",
     "cholesky",
     "ldl",

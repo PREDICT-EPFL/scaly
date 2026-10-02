@@ -69,17 +69,27 @@ def _matches(pq: piqp_trace.Trace, got: dict[str, np.ndarray]) -> bool:
 # --- the gate -----------------------------------------------------------------------------------
 
 
+# The problems the stagewise backend is held to PIQP's decisions on: the two with stages, and a few
+# without, which it factors as one block or a few.
+STAGEWISE_GATE = ("mpc_4x2_N10", "mpc_12x4_N20", "HS21", "HS118", "CVXQP1_S", "DUAL1", "QAFIRO", "GENHS28", "LOTSCHD", "random_qp_30_20_5_0")
+
+
 @pytest.mark.method("opt.piqp")
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
-@pytest.mark.parametrize("name", sorted(gate_problems()))
+@pytest.mark.parametrize(
+  ("name", "backend"),
+  [(name, backend) for backend in ("sparse", "dense") for name in sorted(gate_problems())] + [(name, "stagewise") for name in STAGEWISE_GATE],
+)
 def test_decisions_match_piqp(name: str, backend: Backend) -> None:
+  """Each backend against PIQP's run through the interface it mirrors: the stagewise one, like the
+  sparse one, against PIQP's sparse interface, which is how its multistage backend is reached.
+  It factors the dense backend's matrix, so it shares that backend's allowances."""
   qp = gate_problems()[name]
   mine = piqp_trace.run(qp, dense=backend == "dense")
   other = piqp_trace.run(qp, dense=backend != "dense")
   got = solve(qp, backend)
   assert int(got["status"]) == mine.status
   if not piqp_trace.backends_agree(mine, other):
-    if backend == "dense":
+    if backend != "sparse":
       # Rounding decides the path here, but not how long it is: the dense backend stays within a
       # few iterations of one of PIQP's runs (a Cholesky that sums less accurately took QSHARE1B
       # from 27 to 56 iterations, where PIQP takes 29 and 24).
@@ -87,7 +97,7 @@ def test_decisions_match_piqp(name: str, backend: Backend) -> None:
     pytest.skip("PIQP's backends take different paths: the problem is sensitive to rounding")
   if _matches(mine, got):
     return
-  assert backend == "dense", "the sparse backend left PIQP's path"
+  assert backend != "sparse", "the sparse backend left PIQP's path"
   assert got["info"][INFO_FIELDS.index("ir")] == 1.0, "left PIQP's path without a factorization failure"
   assert abs(int(got["iter"]) - int(mine.info["iter"])) <= 3
 
@@ -138,18 +148,18 @@ def test_a_problem_that_keeps_losing_pivots_to_rounding_still_converges() -> Non
 
 
 @pytest.mark.method("opt.piqp")
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
+@pytest.mark.parametrize("backend", ["sparse", "dense", "stagewise"])
 @pytest.mark.parametrize("name", sorted(NONCONVEX))
 def test_factorization_retries_follow_piqp(name: str, backend: Backend) -> None:
   """PIQP's dense Cholesky fails on the indefinite matrix, turns refinement on, then scales rho and
   delta by 100 until it factors; the generated solver takes the same steps, and the same none
-  with the sparse backend."""
+  with the sparse backend. The stagewise backend's Cholesky is of the same matrix, and fails with it."""
   qp = NONCONVEX[name]
-  pq = piqp_trace.run(qp, dense=backend == "dense")
+  pq = piqp_trace.run(qp, dense=backend != "sparse")
   got = solve(qp, backend)
   assert _matches(pq, got)
   rho = got["trace"][:, RHO]
-  assert (backend == "dense") == bool(np.any(rho[1:] > 10 * rho[:-1])) == bool(got["info"][INFO_FIELDS.index("ir")])
+  assert (backend != "sparse") == bool(np.any(rho[1:] > 10 * rho[:-1])) == bool(got["info"][INFO_FIELDS.index("ir")])
 
 
 @pytest.mark.method("opt.piqp")
@@ -179,11 +189,12 @@ def _scale_cost_qp() -> QP:
 
 
 @pytest.mark.method("opt.piqp")
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
+@pytest.mark.parametrize("backend", ["sparse", "dense", "stagewise"])
 @pytest.mark.parametrize("name", ["scale_cost_split", "QAFIRO", "CVXQP1_S", "DUALC1", "QPCBLEND"])
 def test_cost_scaling_follows_each_backends_preconditioner(name: str, backend: Backend) -> None:
   """The preconditioners differ before the first iteration, so the first two show it at full
-  precision (whole runs of some of these are sensitive to rounding)."""
+  precision (whole runs of some of these are sensitive to rounding). The stagewise backend is
+  reached, like PIQP's multistage one, through the sparse interface, and takes its preconditioner."""
   qp = _scale_cost_qp() if name == "scale_cost_split" else maros_meszaros(name)
   EXTRA[qp.name] = qp
   for k in (1, 2):
@@ -225,7 +236,7 @@ def test_every_iteration_matches_the_reference(name: str, rtol: float) -> None:
     np.testing.assert_allclose(got["trace"][:, i], r.trace[:, i], rtol=0, atol=rtol * max(np.abs(r.trace[:, i]).max(), 1.0), err_msg=field)
 
 
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
+@pytest.mark.parametrize("backend", ["sparse", "dense", "stagewise"])
 @pytest.mark.parametrize("name", ["HS21", "QAFIRO", "DUALC1", "CVXQP1_S", "PRIMALC1", "QPCBLEND", "HS76", "mpc_4x2_N10", "unbounded_lp"])
 def test_the_result_matches_the_reference(name: str, backend: Backend) -> None:
   """The unscaled solution in PIQP's result layout: box values on their variables, and absent
@@ -251,7 +262,7 @@ def test_the_result_matches_the_reference(name: str, backend: Backend) -> None:
 # --- retries and refinement against the reference ------------------------------------------------
 
 
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
+@pytest.mark.parametrize("backend", ["sparse", "dense", "stagewise"])
 def test_a_zero_pivot_turns_refinement_on(backend: Backend) -> None:
   """With rho starting at zero, the loose variable's pivot is exactly zero: the first factorization
   fails, refinement turns on and the static regularization lets it factor; the reference, whose
@@ -266,7 +277,7 @@ def test_a_zero_pivot_turns_refinement_on(backend: Backend) -> None:
 
 
 @pytest.mark.parametrize("always", [False, True])
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
+@pytest.mark.parametrize("backend", ["sparse", "dense", "stagewise"])
 def test_a_factorization_that_never_succeeds(backend: Backend, always: bool) -> None:
   """Without static regularization and with rho at zero, no retry helps: after refinement (on
   from the start, or turned on by the first failure) and ten scalings of delta by 100 the solve

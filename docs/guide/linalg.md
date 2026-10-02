@@ -268,3 +268,33 @@ the solution, summed over the stages for a matrix they share. The recursion itse
 differentiated for the solution; `gains` and `cost_to_go` differentiate through it like any other
 loop. The factorization of the TinyMPC example's Riccati cache is the recursion from `P = rho I`,
 and `tests/linalg/test_stagewise.py` checks the two agree.
+
+## Block-tridiagonal systems
+
+`linalg.blocks.BlockTridiagonalCholesky` factors a symmetric positive definite matrix of `K`
+diagonal blocks of order `B`, each coupled with the next through its last `c` columns:
+
+```text
+[ D_0  E_0'            ]
+[ E_0  D_1  E_1'       ]      E_k is zero outside its last c columns
+[      E_1  D_2  ...   ]
+```
+
+That is the shape of the normal equations of a problem with stages once its variables are in
+stage order, where a stage couples with the next through its states and not its inputs.
+
+```python
+from scaly.linalg.blocks import BlockTridiagonalCholesky
+
+fact = BlockTridiagonalCholesky(diag, below)   # (K, B, B) and (K - 1, B, c)
+x = fact.solve(rhs)                            # rhs of K * B values
+fact.values, fact.diagonal                     # the factor, flat, and its diagonal
+```
+
+Only the lower triangles of the diagonal blocks are read. One step is a Cholesky of a block, a
+triangular solve of the block below against its trailing `c` by `c` triangle, and a product that
+updates the next block; the factorization is that step in a `scan`, and so are the two passes of
+a solve, so the generated code does not grow with `K`. `solve_with(values, rhs)` solves with a
+factor kept from another call. A matrix that is not positive definite leaves an entry of
+`diagonal` that is not positive, or not a number, from the failing block on. The generated
+interior-point solver's `"stagewise"` backend is built on it ([Solvers](solvers.md)).

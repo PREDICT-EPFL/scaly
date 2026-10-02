@@ -113,6 +113,19 @@ Cholesky. The dense backend assembles the condensed matrix through the patterns'
 multiplies a constraint matrix with dense rows as a dense array, which the lowering runs in register
 tiles. The solver `Function` has no extern callee, so it lowers, fuses and ships like any other.
 
+The stagewise backend factors the same condensed matrix in blocks. `opt.ipm.stages` partitions the
+variables into the level sets of a breadth-first search of the matrix's graph, which make any
+pattern block tridiagonal, and tries the search from both ends of the graph and from several start
+sets, keeping the partition whose factorization is the least work. On a multistage problem that is
+the stages, with a stage's states as the slots that couple it with the next. A block shorter than
+the largest is padded with rows of the identity, so every block has one size and the
+factorization is one step in a `scan` (`linalg.blocks`). The matrix is never formed as a sparse
+one. Every term is a list of values with the cell of the block storage each adds to, and one
+`scatter` puts them in place. The rows of a constraint matrix that fill most of a stage's columns
+are gathered into one dense array a block, whose product with itself is the stage's share of
+`A^T A`, and the same arrays multiply a vector in the residuals and the solves. The other entries,
+an identity beside the dynamics for instance, stay products of pairs of entries.
+
 ## The pieces
 
 | Module | Owns |

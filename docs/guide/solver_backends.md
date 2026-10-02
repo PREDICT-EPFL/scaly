@@ -86,7 +86,9 @@ problem whose bounds are parameters that are sometimes infinite (an `sc.opt.QP` 
 say) belongs to the PIQP library, which takes them as data. `sparse=True` factors the KKT system
 whole by `linalg.SparseLDL`, as PIQP's sparse interface does; `sparse=False` condenses it and factors
 it by a dense Cholesky, as its dense interface does; by default the solver takes the one a cost
-model of the problem's structure finds faster ([Solvers](solvers.md)).
+model of the problem's structure finds faster ([Solvers](solvers.md)). `backend="stagewise"`
+factors the condensed matrix block by block over the problem's stages, as PIQP's multistage
+backend does.
 
 Options are PIQP's settings by name (`eps_abs`, `eps_rel`, `max_iter`, ...), checked when the method
 is made: an unknown name raises `TypeError` listing the settings. PIQP's `verbose` is accepted and

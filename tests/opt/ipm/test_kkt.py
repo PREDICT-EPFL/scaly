@@ -1,4 +1,4 @@
-"""The KKT system as generated code against the reference's, for both backends."""
+"""The KKT system as generated code against the reference's, for each backend."""
 
 from __future__ import annotations
 
@@ -76,27 +76,27 @@ def _check(qp, backend: Backend, tag: str, *, static_eps: float = 1e-8, cases=CA
     np.testing.assert_allclose(got, want, rtol=1e-7, atol=1e-9 * (1 + np.abs(want).max()))
 
 
-@pytest.mark.parametrize("backend", ["dense", "sparse"])
+@pytest.mark.parametrize("backend", ["dense", "sparse", "stagewise"])
 @pytest.mark.parametrize("name", PROBLEMS)
 def test_solves_match_the_reference(name: str, backend: Backend) -> None:
   _check(maros_meszaros(name), backend, name)
 
 
-@pytest.mark.parametrize("backend", ["dense", "sparse"])
+@pytest.mark.parametrize("backend", ["dense", "sparse", "stagewise"])
 def test_free_rows_and_mpc(backend: Backend) -> None:
   qp, _ = infeasible_problems()["empty_slab"]
   _check(qp, backend, "slab")
   _check(mpc_qp(4, 2, 10), backend, "mpc")
 
 
-@pytest.mark.parametrize("backend", ["dense", "sparse"])
+@pytest.mark.parametrize("backend", ["dense", "sparse", "stagewise"])
 def test_two_sided_rows(backend: Backend) -> None:
   qp = random_qp(20, 15, 5, seed=0)
   assert np.any(np.isfinite(qp.h_l) & np.isfinite(qp.h_u))
   _check(qp, backend, "twosided")
 
 
-@pytest.mark.parametrize("backend", ["dense", "sparse"])
+@pytest.mark.parametrize("backend", ["dense", "sparse", "stagewise"])
 @pytest.mark.parametrize("name", ["QAFIRO", "CVXQP1_S"])
 def test_refinement_stops_when_it_slows(name: str, backend: Backend) -> None:
   """A static regularization ten times delta makes each refinement step gain only about 10%:
@@ -135,21 +135,30 @@ def _noise_pivot(
   return dict(zip(keys, (float(v) for v in fn(P[s.P_rows, s.P_cols])), strict=True))
 
 
-def test_a_noise_pivot_turns_refinement_on_and_nothing_more() -> None:
+@pytest.mark.parametrize("backend", ["dense", "stagewise"])
+def test_a_noise_pivot_turns_refinement_on_and_nothing_more(backend: Backend) -> None:
   """The dense backend's second pivot is eps against a diagonal entry of 1 + eps: positive, so
   PIQP's own test passes, but without a digit left. With refinement off it counts as a failure
   and turns refinement on; with refinement on it is accepted, with no retry. A pivot of exactly
-  zero fails PIQP's test too, and without regularization no retry helps."""
+  zero fails PIQP's test too, and without regularization no retry helps. The stagewise backend
+  factors the same matrix by Cholesky and counts its pivots the same way; it takes the second
+  variable first, so its matrix is the mirror image, the small entry in the other corner."""
   eps = float(np.finfo(np.float64).eps)
-  assert _noise_pivot(1.0 + eps, 0.0) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
-  assert _noise_pivot(1.0 + eps, 1.0) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
-  zero = _noise_pivot(1.0, 0.0)
+
+  def pivot(entry: float, ir: float, **kwargs) -> dict[str, float]:
+    if backend == "dense":
+      return _noise_pivot(entry, ir, **kwargs)
+    return _noise_pivot(4.0, ir, p11=entry, backend=backend, **kwargs)
+
+  assert pivot(1.0 + eps, 0.0) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
+  assert pivot(1.0 + eps, 1.0) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
+  zero = pivot(1.0, 0.0)
   assert zero["ok"] == 0.0 and zero["retries"] == 10.0
 
   # With no retries allowed a failure still turns refinement on once, as PIQP's loop would (its
   # settings refuse 0 retries, the generated solver takes it); with refinement already on, nothing.
-  assert _noise_pivot(1.0, 0.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
-  assert _noise_pivot(1.0, 1.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
+  assert pivot(1.0, 0.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
+  assert pivot(1.0, 1.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0, "reg_limit": 1e-10}
 
 
 @pytest.mark.parametrize("scale", [1.0, 2.0**-20, 2.0**20])
@@ -207,7 +216,7 @@ def test_a_negative_sparse_pivot_is_judged_by_its_magnitude() -> None:
 
 
 @pytest.mark.parametrize("tolerance", [0.0, 1e2])
-@pytest.mark.parametrize("backend", ["dense", "sparse"])
+@pytest.mark.parametrize("backend", ["dense", "sparse", "stagewise"])
 def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend, tolerance: float) -> None:
   """Refinement off, the solve is the kernel's solve to the last bit: its gate stays shut even where
   refinement would change the answer (tolerance zero: every residual is above it). Refinement on,

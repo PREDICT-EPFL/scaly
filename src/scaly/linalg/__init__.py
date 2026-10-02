@@ -2,7 +2,7 @@
 built on them. Everything here is generated code, built from the expression ops ``linalg.ops``
 registers (the factorizations, triangular solves and ragged runs) and the core's own."""
 
-from . import banded, stagewise
+from . import banded, blocks, stagewise
 from .options import LinalgOptions
 from .dense import cho_solve, cholesky, ldl, ldl_solve, ldl_unpack, lu, lu_solve, solve, solve_triangular
 from .sparse_factor import SparseLDL, sparse_ldl
@@ -19,6 +19,7 @@ __all__ = [
   "SymbolicLDL",
   "analyze",
   "banded",
+  "blocks",
   "cho_solve",
   "cholesky",
   "ldl",

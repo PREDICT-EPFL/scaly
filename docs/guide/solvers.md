@@ -91,6 +91,17 @@ variables and for those with a dense Hessian of moderate order, and the sparse o
 else.
 `sc.opt.ipm.choose_backend(sc.opt.ipm.QPStructure.from_patterns(...))` says which it takes.
 
+A third backend is for problems with stages. `sc.opt.IPM(backend="stagewise")` factors the same
+condensed matrix as the dense backend, block by block: in the order of the stages that matrix is
+block tridiagonal, a dynamics row coupling a stage with the next and nothing else. The stages are
+read from the sparsity (`sc.opt.ipm.stages`), in whatever order the variables are written, as the
+level sets of a search of the matrix's graph, so nothing has to say that the problem is an optimal
+control problem. A block is factored by the dense kernels
+(`linalg.blocks.BlockTridiagonalCholesky`), and the products of a stage's dense constraint rows run
+as dense arrays. It is for stages of many states and inputs, and it is not chosen by default.
+`backend` names it, and also `"dense"` and `"sparse"`, which `sparse=False` and `sparse=True` name
+too.
+
 PIQP separates setup, which equilibrates the problem (Ruiz scaling), from solve, and keeps the
 scaling when only the vectors change. `IPM.split` gives the same two steps as two Functions:
 

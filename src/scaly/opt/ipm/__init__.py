@@ -16,6 +16,7 @@ from .cost import Work, choose_backend
 from .kkt import KKT, Backend, Factor, Iterate, Kernels, Refinement
 from .method import IPM
 from .ruiz import ScaledQP, Scaling, ruiz, scale
+from .stages import Stages, stages
 from .structure import INF, QPStructure, QPValues
 
 __all__ = [
@@ -41,8 +42,10 @@ __all__ = [
   "Scaling",
   "Settings",
   "Solver",
+  "Stages",
   "Work",
   "choose_backend",
   "ruiz",
   "scale",
+  "stages",
 ]
