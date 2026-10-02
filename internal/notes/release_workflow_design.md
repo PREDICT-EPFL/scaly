@@ -3,6 +3,10 @@
 `.github/workflows/release.yml` implements this. It is kept out of the published versioning policy
 because it describes maintainer work.
 
+The four packages first shipped as `0.1.0a1` on 2026-09-29 through this workflow, tagged
+`<package>-v0.1.0a1`. The next release's execution is tracked in
+[#85]; the compiler roadmap records its agreed scope.
+
 ## Building
 
 `ci.yml` builds every release artifact on each run: the native plugin wheels with cibuildwheel (one
@@ -41,3 +45,5 @@ GitHub Pages holds the docs of the latest scaly release, built without a banner.
 holds one deployment per branch from `docs.yml`, each with a banner naming its branch and commit.
 The `github-pages` environment only accepts `main`, so `pages.yml` always runs on `main` and checks
 out the commit or tag it publishes. Run it by hand with a tag to republish an earlier release.
+
+[#85]: https://github.com/PREDICT-EPFL/scaly/issues/85

@@ -18,19 +18,20 @@ Read before changing anything:
 Everything under `docs/` is published to the documentation site, all of it, because Zensical has no
 exclusion mechanism. Anything unpublished lives in `internal/`:
 
-- `internal/todo.md` is the single actionable list. Each item links its rationale to
-  `internal/notes/benchmark_protocol.md` instead of restating it.
+- [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is the single actionable list;
+  [scaly roadmap](https://github.com/orgs/PREDICT-EPFL/projects/2) tracks status and scope.
+  Follow [Tracking work](docs/dev/issue_tracking.md) and the project skills under `.agents/skills/`.
 - `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
   solver-plugin build-out.
 - `internal/notes/core_compiler_roadmap.md` is the maintained design and order of the core compiler
-  work (todo items C-86 onward and the API items it names). Read its decisions, order of work and
-  open questions before starting one of those items.
+  work linked from compiler and API issues. Read its decisions, order of work and open questions
+  before starting one of those items.
 - `origin/devrush` is a frozen experimental branch. Take ideas and test cases from it and merge
   nothing. Its todo ids name different items than main's, so cite its work by file and title.
 
 `internal/notes/benchmark_protocol.md` owns what comparisons hold constant, the measurement
 protocol, the reference machine and the evidence behind each rule. Put rationale there and put the
-corresponding one-line task in `todo.md`. Do not repeat the same prose.
+corresponding task in GitHub Issues. Do not repeat the same prose.
 
 `docs/` is written for people reading the site, not as a record between sessions. Keep a page to
 what a reader needs to understand the topic: the main results, the decisions that shape them, the
@@ -39,8 +40,8 @@ page. If something really must be kept, put it in `internal/notes/`. Prefer a fi
 table of results.
 
 Publish only features finished enough for a user to rely on. Anything experimental, partly
-implemented, only reachable through a debugging switch, or still open in `internal/todo.md` stays
-out of the user guide, *How it works*, the benchmark pages and the API reference. Filter its names
+implemented, only reachable through a debugging switch, or still awaiting implementation in GitHub
+Issues stays out of the user guide, *How it works*, the benchmark pages and the API reference. Filter its names
 out of the API page (as `docs/api/core.md` does for `Expr.opaque` and `Function.with_device`) and
 keep roadmap or migration wording out of any docstring that renders. A known limitation of a
 finished feature is different: document it next to the behaviour it affects.
@@ -103,4 +104,5 @@ Identifier spellings, several of which reach the generated C:
 - **The vendored solver hooks are their own world.** The `$ORIGIN` escaping, the METIS
   `-march=native` strip, and the macOS `install_name` rewriting and re-signing are each explained in a
   comment beside the code in `plugins/*/hatch_build.py` — read them there before editing.
-  `internal/notes/vendored_solvers.md` tracks what is still open. A cold rebuild is 5 to 8 minutes.
+  `internal/notes/vendored_solvers.md` records the build constraints and license survey.
+  A cold rebuild is 5 to 8 minutes.

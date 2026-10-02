@@ -15,8 +15,8 @@ The 2026-09-08 [investigation](algebraic_simplification_2026_09_08.md) updates C
 and supersedes the size-only acceptance condition in "One matcher" above. The useful comparison
 is now shared arithmetic across both dialects and both program forms. Combining the verifier's
 tables with the matcher is optional. The investigation owns the source comparison and design;
-C-52 owns the fixed pipeline package, C-12 the matcher, C-53 the arithmetic rules, and C-54 later
-memory-aware cleanup. Their actionable status lives only in `internal/todo.md`.
+C-52 owns the fixed pipeline package, C-12 the matcher, C-53 the arithmetic rules, and [#98] later
+memory-aware cleanup. Current follow-up status lives in GitHub Issues.
 
 Landed 2026-09-08 (C-12, C-13, C-53): `ir/match.py` carries the one iterative driver for both
 dialects, `passes/program/_common.py` the program adapter, `passes/arith.py` the shared identities,
@@ -48,7 +48,7 @@ once, at lowering, and emitting the minimal expression is strictly cheaper than 
 a chain of views and folding it back. Rejected, therefore: the `UPat`/`PatternMatcher` port
 (`ir/match.py` already carries the one driver, and there is no tree to match), the div/mod folder as
 a rewrite over expressions, congruence folding under range bounds (the array's own bounds are
-exact), and the loop-merge/split pair, which is C-8's problem and needs a cost model Scaly does not
+exact), and the loop-merge/split pair, which is [#69]'s problem and needs a cost model Scaly does not
 have.
 
 The one rule that *is* needed is the recombination `(x % c) + (x // c) * c -> x`, and it is applied
@@ -78,7 +78,7 @@ recombination in place there is nothing to protect.
 
 The consequence is that no AD rule changes. `ad/forward.py` and `ad/reverse.py` keep building
 concrete index arrays, which stay easy to read and to test against NumPy, and the structure is
-recovered where it is needed. Views-as-index-expressions (C-8) is the case this does not cover,
+recovered where it is needed. Views-as-index-expressions ([#69]) is the case this does not cover,
 because there the index is not a materialized array to factor.
 
 ## Joint derivative callees and scalar rules
@@ -111,7 +111,7 @@ of `1e-200` and `1e200`, where squaring the denominator in the old rule loses th
 
 ## Mapped scalar ranges and derivative assembly
 
-C-77 starts the range propagation part of C-8 in the Program dialect. Sources read are
+C-77 starts the range propagation part of [#69] in the Program dialect. Sources read are
 `perf_2026_09_07/tinygrad_rangeify.md`, particularly the consumer agreement rule in sections 1
 and 2, and the current scalarizer, scalar scheduler, mapped lowering, and elementwise fusion.
 Scalarized call bodies expand back into a shared expression graph at the mapped call site.
@@ -202,3 +202,6 @@ selected width. This keeps smaller widths contiguous without changing workspace 
 Resolve private alias chains to owner-buffer offsets before inserting the lane stride, and remove
 the resulting unused alias declarations. Aliases of external buffers retain their layout by leaving
 that candidate loop scalar. The stride uses the helper width even in a partial final chunk.
+
+[#98]: https://github.com/PREDICT-EPFL/scaly/issues/98
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69

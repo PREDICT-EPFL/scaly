@@ -1,8 +1,9 @@
-# Optimization cleanup before merging to dev
+# Optimization cleanup, 2026-09-10
 
-Approved for implementation, 2026-09-10. The initial review compared the branch with its merge
-base with `dev`, including optimizations added outside the named pass pipeline. The findings below
-record that review; execution is tracked under C-59 in `internal/todo.md`.
+Frozen review and implementation record, completed 2026-09-10. The initial review compared the
+branch with its merge base with `dev`, including optimizations added outside the named pass pipeline. The findings below
+record that review; the implementation and controlled comparisons below record its outcome.
+The historical task was C-59. This is not an active implementation plan.
 
 Keep the two intermediate representations, the explicit pipeline, and the measured lowering
 choices. The cleanup should make each decision visible in the representation that can justify it,
@@ -191,96 +192,6 @@ The scalarizer's immutable output scheduling and final statement-local preparati
 one scheduling implementation where their semantics agree. Preserve scalarization's budget
 accounting over the scheduled candidate, including assignments and stores.
 
-## Implementation phases
-
-These are proposed phase contents and acceptance criteria, not a second active task list.
-On approval, link the cleanup from `internal/todo.md` and track execution there.
-
-### Phase 1: Pin the failures and pass contracts
-
-Add small self-contained regressions for duplicate hoist names, `_h0` shadowing, hint loss,
-transitive expensive fusion, post-unroll constant reads, and unreachable callees. Assert the
-specific missing behavior so each regression fails on the current implementation.
-
-Add tests that verify each observed Program stage, including global procedure-name uniqueness.
-Record a compact baseline of source size, operation counts, workspace, and selected scalarized
-procedures for the existing representative kernels. Preserve current public entry symbols,
-output order, and arithmetic contract. Internal helper names may change.
-
-### Phase 2: Centralize shared Program facts and generated names
-
-Move common helpers into `passes/program/_common.py`; introduce another narrowly owned module
-only if the resulting file warrants it. Replace pass-to-pass helper imports. Consolidate buffer
-references without weakening alias or call protections. Allocate fresh local and procedure names,
-and fix hoist suffixes. Keep workspace packing's call-input dependency protection intact.
-
-Add one procedure-reachability cleanup, respecting normal entries, solver roots, external oracles,
-and calls retained by other procedures. Keep callee-before-caller order and `hoisted_from`, which
-the benchmark dispatch metrics use. Replace hoisting's private pruning logic with that cleanup.
-
-### Phase 3: Define expression normalization and simplify AD helper construction
-
-Normalize private compilation outputs and preserve policy before rewriting. Exercise ordinary
-Function compilation without a manual `sc.simplify` call. Keep the original expressions available
-to the recorder and keep output sparsity metadata attached to the correct outputs.
-
-Move hint inheritance beside the existing Function policy. Consolidate the single-formal constant
-JVP helper with the joint constant/runtime helper where their inputs and active-row behavior agree.
-Keep periodic-tile selection, local coloring, and generic seeds as explicit branches with named
-helpers in `ad/forward.py`. Preserve weak-key cache ownership and distinguish formal sets, seed
-contents, output indices, and binding layouts. Do not unify forward and reverse derivative rules
-or move their shape logic into the generic arithmetic adapter.
-Simplify the expression-normalization loops using the shared driver's replacement revisiting,
-while preserving commutative sharing and explicit termination limits.
-
-### Phase 4: Close Program pass interactions
-
-Evaluate fusion costs on expanded producer chains. Check source-buffer writes and aliases when
-moving reads, using the shared analysis. Keep scatter grouping and the no-motion checks intact.
-Add the post-unroll arithmetic cleanup and remove declarations it makes unused. Use the shared
-reachability cleanup after scalarization and hoisting.
-
-Keep automatic scalarization's operation, expansion-work, and aggregate-growth limits unchanged,
-including explicit requests consuming capacity for later automatic candidates. Retain the
-float64-only substitution boundary, block/opaque precedence, and auto prologues that expand only
-inside an expanding caller.
-Replace the boolean-or-string `scalarize` attribute with an explicit selection mode for disabled,
-inline-only, and independently expandable procedures. Keep the original lowering hint separate
-because it also determines whether automatic budgets apply.
-
-### Phase 5: Make final scheduling and paired stores visible in Program form
-
-Add the paired-store representation, verifier, text rendering, and C spelling together. Move
-pair selection out of `_emit_body`. Extract shared scalar scheduling and remove renderer-generated
-`_h` temporaries. Cover deep store values, load/store indices, and call offsets. Keep loop-dependent
-calculations inside their loop and preserve the evaluation frequency of range expressions.
-
-Update observers and metric walkers for the final Program form. Ensure paired stores do not
-change arithmetic counts and one-time hoisted work remains excluded from per-trip dispatch cost.
-Preserve solver-bearing translation-unit ordering, including procedures created by hoisting.
-
-### Phase 6: Validate the combined compiler and refresh its documentation
-
-Run the full suite and the repository's pinned format, lint, and strict type checks. Refresh
-snapshots and the complete collection baseline only after examining the intended changes.
-Compile representative scalar, loop, and solver-bearing artifacts with GCC and Clang where
-available. Report unavailable platforms rather than claiming coverage.
-
-Run controlled performance comparisons after tests finish, with the existing fairness protocol
-and no competing compilation. Include race-car mapped derivatives, chain Hessians, npmpc
-matrix-vector work, and the large unbumpercars affine-index case. Compare source size, compile
-time, runtime, workspace, metadata, and dispatch arithmetic. Investigate regressions outside the
-measurement noise before accepting the cleanup. Keep the existing interrupted study intact;
-BH-20 remains separately tracked.
-
-Update `docs/how_it_works/architecture.md`, `lowering.md`, `autodiff.md`, and Program reference
-material to match the actual boundaries and observations. Add import-layer entries for any new
-modules. Remove stale pass-number comments and obsolete helpers as their replacements land.
-
-Phases 1 and 2 precede the semantic changes. Phase 3 and Phase 4 can be developed independently
-after the shared interfaces settle, but integrate them before Phase 5. Phase 6 runs on the complete
-result. One agent can execute the phases sequentially; parallel work is optional.
-
 ## Coverage to retain and extend
 
 | Area | Existing evidence | Required additions |
@@ -317,14 +228,14 @@ The review used the [architecture](../../docs/how_it_works/architecture.md),
 [current lowering contract](../../docs/how_it_works/lowering.md),
 [arithmetic investigation](algebraic_simplification_2026_09_08.md),
 [refactoring notes](refactorings.md), [derivative operation audit](perf_2026_09_07/c49_ad_op_audit.md),
-[closeout record](perf_2026_09_07/README.md), and [current task status](../todo.md).
+[closeout record](perf_2026_09_07/README.md), and [current issue status](https://github.com/PREDICT-EPFL/scaly/issues).
 The relevant implementations are [AD](../../src/scaly/ad/forward.py),
 [expression rewriting](../../src/scaly/passes/expr.py), [shared arithmetic](../../src/scaly/passes/arith.py),
 [lowering](../../src/scaly/passes/lowering.py), [Program passes](../../src/scaly/passes/program/),
 [rendering](../../src/scaly/codegen/c.py), and [compilation](../../src/scaly/codegen/jit.py).
 
 The range-based compiler, general memory-aware common-subexpression elimination, static metadata
-redesign, and pre-AD inlining remain C-8, C-54, C-57, and C-58. This cleanup does not need them.
+redesign, and pre-AD inlining remain [#69], [#98], [#94], and [#97]. This cleanup does not need them.
 
 
 ## Implementation record
@@ -468,3 +379,8 @@ Runtime medians change by −1.0% to +0.2%, with overlapping before/after sample
 workload. C compilation changes range from −0.3% to +2.5%. Workspace, static metadata, dispatch
 arithmetic, procedure counts, and C source sizes match the initial comparison's structural tables.
 These three-repetition development checks establish no small runtime speedup claim.
+
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69
+[#98]: https://github.com/PREDICT-EPFL/scaly/issues/98
+[#94]: https://github.com/PREDICT-EPFL/scaly/issues/94
+[#97]: https://github.com/PREDICT-EPFL/scaly/issues/97

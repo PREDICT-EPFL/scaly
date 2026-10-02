@@ -1,7 +1,6 @@
 # The generated C and C++ interface for the first release
 
-Design note, 2026-09-18, frozen. Decisions settled the same day; the tasks are CAPI-72 to CAPI-76 in
-`todo.md`. The current interface is documented in [the C ABI](../../docs/how_it_works/generated_interface.md)
+Design note, 2026-09-18, frozen. Decisions settled the same day; the historical tasks CAPI-72 to CAPI-76 are complete. The current interface is documented in [the C ABI](../../docs/how_it_works/generated_interface.md)
 and rendered by `codegen/aot.py` (`_render_header`, `_typed_cpp_wrapper`) and `codegen/c.py`
 (`_render_entry`).
 

@@ -1,6 +1,7 @@
-# Vendored solver build — known issues
+# Vendored solver build context
 
-The `plugins/scaly-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes track open issues we should fix before the wheels.yml workflow is exercised at scale. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
+The `plugins/scaly-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes preserve build constraints and the reasoning behind the hooks. Current work is tracked
+in GitHub Issues; `ci.yml` builds and tests the release wheels. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
 
 ## 1. Runtime bundling replaced static linking — done, and enforced
 
@@ -36,9 +37,9 @@ The METIS 4 legacy-C warning flags are gone with it; METIS 5 is modern C.
 
 IPOPT's install dir contains `libipopt.3.dylib` (real file) and `libipopt.dylib` (symlink). `shutil.copy2` of the symlink resolves through it but preserves the original install_name (`/abs/path/to/.../libipopt.3.dylib`), which makes the lib non-relocatable.
 
-Current fix: pick the versioned dylib directly, copy as `libipopt.dylib`, then run `install_name_tool -id @rpath/libipopt.dylib`. Same `-id` rewrite is applied to PIQP for consistency. Relevant code: `_build_ipopt_stack` near the end, which then hands off to `_bundle_macos_runtime` for the rest of the closure (issue #1).
+Current fix: pick the versioned dylib directly, copy as `libipopt.dylib`, then run `install_name_tool -id @rpath/libipopt.dylib`. Same `-id` rewrite is applied to PIQP for consistency. Relevant code: `_build_ipopt_stack` near the end, which then hands off to `_bundle_macos_runtime` for the rest of the closure described above.
 
-Linux keeps a SONAME-compatible copy next to the unversioned link target (for example `libipopt.so.3` next to `libipopt.so`) so JIT-built solver callers with `DT_NEEDED=libipopt.so.3` can resolve through their rpath. A future wheel repair pass may still prefer setting/changing SONAMEs explicitly with `patchelf`.
+Linux keeps a SONAME-compatible copy next to the unversioned link target (for example `libipopt.so.3` next to `libipopt.so`) so JIT-built solver callers with `DT_NEEDED=libipopt.so.3` can resolve through their rpath.
 
 ## 4. Wheel platform tag and editable build mode
 
@@ -55,20 +56,24 @@ ABI tag stays `none` because the vendored libs are loaded via `ctypes`, not link
 
 Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolchain is present, `uv sync` builds the solver stack; if it is missing (for example no `gfortran`), the hook skips the missing solver libraries and solver tests are skipped. CI sets `SCALY_BUILD_SOLVERS=required` so missing toolchains/build regressions remain fatal. `SCALY_BUILD_SOLVERS=skip` is available for intentionally Python-only syncs.
 
-**Still required before distribution:** a correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
+**Wheel repair:** a correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
 
-- **Linux:** cibuildwheel's `auditwheel repair` produces `manylinux_2_24` (PIQP) and `manylinux_2_27` (IPOPT) wheels and leaves the `$ORIGIN` siblings under `lib/` alone. It still grafts a second `libquadmath` into `scaly_ipopt.libs/`, and `libipopt.so` ships twice (also as `libipopt.so.3`): about 28 MB of duplicates in the IPOPT wheel, open.
+- **Linux:** cibuildwheel's `auditwheel repair` produces `manylinux_2_24` (PIQP) and `manylinux_2_27` (IPOPT) wheels and leaves the `$ORIGIN` siblings under `lib/` alone. It still grafts a second `libquadmath` into `scaly_ipopt.libs/`, and `libipopt.so` ships twice (also as `libipopt.so.3`): about 28 MB of duplicates in the wheel measured during the September packaging review.
+  This is a historical size observation, not a measurement of the latest artifact.
 - **macOS:** `delocate-wheel` finds nothing left to move after `_bundle_macos_runtime`, and the installed wheels load and solve on arm64 and x86_64. The IPOPT wheel requires macOS 15, the minimum of the bundled Homebrew runtime.
 - **Matrix:** `ci.yml` builds one wheel per OS and architecture on its native runner with cibuildwheel.
 
 **Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
 
-## 5. Things not yet exercised
+## 5. Build constraints
 
-- **CI cache key.** Keyed on OS, architecture, and both plugin `hatch_build.py` files. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
+- **CI cache key.** Keyed on the package, runner OS and architecture, cibuildwheel version, and that plugin
+  directory excluding tests, as defined in `ci.yml`. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
-- **AOT solver harness.** `sc.qp(...)` (PIQP) and `sc.nlp(...)` (IPOPT) are wired through `ctypes` for direct Python calls and through generated C for nested JIT/AOT use; see [`solvers.md`](solvers.md). What is still TODO before distribution: a CI-level standalone C/C++ harness that links `-lpiqpc`/`-lipopt` directly outside Python and exercises the exact AOT path the static-libgfortran work is meant to unblock.
+- **External solver consumers.** Generated solver calls require the plugin headers and the
+  complete bundled `lib/` directory. Python load tests alone do not establish that a standalone
+  C or C++ consumer has the correct link flags and runtime search path.
 
 ## 6. ThirdParty version pins (as of 2026-05-19)
 
@@ -81,3 +86,28 @@ OPENBLAS_BRANCH = "v0.3.28"
 ```
 
 IPOPT, MUMPS and OpenBLAS were the latest tags at extraction time. METIS moved from `ThirdParty-Metis releases/2.0.1` (METIS 4.0.3 inside) to upstream 5.2.1 in September 2026, see section 2.
+
+## License survey, 2026-09-07
+
+Scaly and the three plugins are BSD-2-Clause. The plugin wheels also ship other people's binaries,
+so each wheel carries its dependencies' license texts the way CasADi does
+(`casadi/include/licenses/<dep>/LICENSE`), except that CasADi's `mumps-external` and
+`metis-external` entries are the COIN-OR wrapper's EPL text rather than the real MUMPS and METIS
+licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it asks of us:
+
+| Package | Component | License | Obligation |
+|---|---|---|---|
+| scaly, scaly-sqp | our code | BSD-2 | none |
+| scaly-piqp | PIQP, BLASFEO | BSD-2 | notice |
+| | Eigen | MPL-2.0 | notice. PIQP does not define `EIGEN_MPL2_ONLY` itself, so `hatch_build.py` passes it through `CMAKE_CXX_FLAGS`; PIQP 0.6.2 compiles under it, which proves no LGPL Eigen file reaches the library |
+| | LDL inside PIQP (`piqp/sparse/LDL_License.txt`) | LGPL-2.1-or-later | notice plus the LGPL-2.1 text. PIQP's `sparse/ldlt` is a modified LDL, instantiated in `ldlt.cpp` and compiled into `libpiqpc`, so the shared library we ship contains LGPL code. That is allowed: the LGPL text travels with it, the modified source is PIQP's public tag, and `libpiqpc` is a separately loaded shared library the user can replace |
+| scaly-ipopt | IPOPT | EPL-2.0 | notice, upstream source of the pinned version; a separate dynamically loaded module, so our BSD-2 is unaffected |
+| | MUMPS 5.8.2, via COIN-OR `ThirdParty-Mumps` 3.0.12 | CeCILL-C, EPL-2.0 for the wrapper | notice for each |
+| | OpenBLAS (static, Linux) | BSD-3 | notice |
+| | libgfortran, libquadmath | GPL-3 + GCC runtime exception | notice; the exception covers this use |
+| | METIS 5.2.1 | Apache-2.0 | notice |
+| | GKlib | Apache-2.0, plus two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file, per its `LICENSES.md` | notice for each |
+
+The build hooks generate each wheel's notices from this table's pins, and
+`plugins/*/tests/test_*_notices.py` fails when a dependency in `build_config.json` has no license
+directory. A new vendored dependency needs a `build_config.json` entry and a license the hook copies.

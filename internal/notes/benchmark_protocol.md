@@ -3,7 +3,7 @@
 Maintained. The full measurement protocol and the reasoning behind each rule, moved out of the
 published [fairness page](../../docs/benchmarks/fairness.md), which keeps a short reader-facing
 version. Rationale for what a comparison holds constant goes here; the matching task goes in
-[`todo.md`](../todo.md).
+[GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
 The figures on the published pages read `docs/assets/benchmarks/sweep.summary.csv` (the four
 `sweep/<problem>/<problem>.summary.csv` files of a study, concatenated) and

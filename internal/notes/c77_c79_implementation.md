@@ -1,13 +1,12 @@
 # C77–C79 implementation record
 
 Archived on 2026-09-24 for merge to dev. The user approved deferring the remaining performance
-investigation to a new branch. C-113 in `internal/todo.md` owns the follow-up; unchecked items
+investigation to a new branch. [#71] owns the follow-up; unchecked items
 below record the original acceptance requirements, not an active plan for this worktree.
 
 
-Implement the compiler tasks in `internal/todo.md`, with each accepted milestone requiring the full
-regression checks, independent review, and a measured improvement in the race-car N=200 Hessian
-microbenchmark. Commit each accepted compiler milestone. Do not mark a task complete from timing
+The original acceptance requirements were full regression checks, independent review, and a
+measured improvement in the race-car N=200 Hessian microbenchmark. Do not mark a task complete from timing
 alone. Preserve scalar arithmetic by default and measure reciprocal and vector-libm policies separately.
 
 Sources: `docs/how_it_works/architecture.md`, `docs/dev/codebase.md`, `docs/dev/conventions.md`,
@@ -229,7 +228,7 @@ the study, not bounded by this scalar structural check.
 ## The C-79 todo entry at closure
 
 Moved here verbatim from `internal/todo.md` on 2026-09-29, when C-79 was closed and its open
-performance regressions moved to C-113. It holds the full design and gates that
+performance regressions moved to [#71]. It holds the full design and gates that
 `perf_2026_09_22/README.md` refers to.
 
 - [ ] **C-79. Explicit lanes on mapped ranges.** Port tinygrad's `shift_to`,
@@ -307,3 +306,5 @@ performance regressions moved to C-113. It holds the full design and gates that
       `benchmarks/results/study-2026-09-23-c77-c79-final`. Recheck the race microbenchmark and
       targeted UB comparisons before a final full study. The user approved merging the current
       implementation on 2026-09-24 with these measured regressions deferred, not resolved.
+
+[#71]: https://github.com/PREDICT-EPFL/scaly/issues/71

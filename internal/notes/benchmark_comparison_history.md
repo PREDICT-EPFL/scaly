@@ -6,7 +6,7 @@ below retain their original context and are not claims about the latest compiler
 
 The retained studies are `benchmarks/results/study-2026-09-23-c77-c79-final` for scalar libm and
 `benchmarks/results/study-2026-09-23-c77-c79-libmvec` for vector libm. The September 10 study is the
-comparison baseline used below. Actionable follow-up remains in [the todo list](../todo.md).
+comparison baseline used below. Actionable follow-up remains in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
 ## Change from the scalar-libm studies
 

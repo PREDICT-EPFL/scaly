@@ -2,8 +2,8 @@
 
 An exploration note, not a plan. It takes the 2026-09-05 sweep cells apart, measures where each
 Scaly kernel spends its time against the fastest CasADi encoding, and tests candidate fixes by
-hand-editing the generated C and by small throwaway edits to the compiler. The tasks that follow
-from it live in `internal/todo.md` (C-43 to C-49, BH-48). This note owns the evidence.
+hand-editing the generated C and by small throwaway edits to the compiler. The historical tasks C-43 to C-49 and BH-48 followed
+from it; current follow-up work lives in GitHub Issues. This note owns the evidence.
 
 Everything was measured on the reference machine, idle, `performance` governor, boost off, with the
 sweep's own compile line (`clang++ -O3 -std=c++17`, no `-march`). Numbers are Google Benchmark
@@ -28,8 +28,8 @@ Scripts in this directory:
 
 ## Summary
 
-The C track in `todo.md` attributed the runtime gap to the glue loops between stage calls, the
-materialized `N × width` intermediates and the index tables (C-8, C-9). Measured, the glue is 22%
+The old compiler backlog attributed the runtime gap to the glue loops between stage calls, the
+materialized `N × width` intermediates and the index tables ([#69], C-9). Measured, the glue is 22%
 of race-car, 3% of npmpc and 26% of chain. The stage kernels themselves carry the loss, for three
 different reasons on the three problems:
 
@@ -270,7 +270,7 @@ composition itself and is not resolved here.
 The glue is 43 zero fills of 23,544 doubles followed by 41 scatters of 576 values into them, then
 a sum: the per-piece contributions of the gradient's `jvp_many` each land in their own full
 `(24, 981)` buffer. That is the 1,075,248-double workspace, and 8 MB of memset per call. It wants a
-single accumulation buffer, or C-8's per-stage fusion. The constant-seed edit alone moves the cell
+single accumulation buffer, or [#69]'s per-stage fusion. The constant-seed edit alone moves the cell
 from 2600 to 2458 µs.
 
 ## What the evidence recommends, in order of measured payoff
@@ -295,8 +295,8 @@ from 2600 to 2458 µs.
    because the callee cannot know its argument is stage-invariant; 3.5 of 47 µs. A program-dialect
    pass, or emitting `v @ W` against the untransposed parameter, both work.
 5. **One accumulation buffer for a sum of scatters.** Chain's 43 zero-filled buffers. An expression
-   rewrite `scatter(a) + scatter(b) -> scatter_add`, or the fusion in C-8.
-6. **Glue fusion (C-8) and affine index maps (C-9)** remain right for the workspace and metadata
+   rewrite `scatter(a) + scatter(b) -> scatter_add`, or the fusion in [#69].
+6. **Glue fusion ([#69]) and affine index maps (C-9)** remain right for the workspace and metadata
    gates, and are worth 22% of race-car's runtime and 26% of chain's. They are not what closes the
    runtime gap with SX on race-car, and they do nothing for npmpc.
 
@@ -416,7 +416,7 @@ about 40 lines. The honest reading for Scaly: the two matmul rules in C-43 are t
 two generic transforms, a range split with an accumulator per lane and a choice of which range is
 outermost, and both generalize to `W @ [v1 v2 v3]` and to the matrix-matrix products a vmapped
 neural dynamics would produce. C-43 as written is the right first step because it is twenty lines
-and measured; the generic form is what C-8 should become, and the study lists the six pieces to port.
+and measured; the generic form is what [#69] should become, and the study lists the six pieces to port.
 
 ## C-44 validation, 2026-09-08
 
@@ -525,7 +525,7 @@ The hinted chain row is a diagnostic of C-55: the hint reaches the adjoint-tange
 automatically, where the C-44 closeout had to force it after the fact (1,081.8 µs then). The chain
 stage now carries the hint in `benchmarks/problems/chain`. Race-car was tried with the same hint and
 produced byte-identical source, since the automatic policy already selects its stage. The entry-point
-workspace is unchanged at 1,075,248 doubles on chain: C-8 owns that.
+workspace is unchanged at 1,075,248 doubles on chain: [#69] owns that.
 
 ## C-46 hoist, 2026-09-09
 
@@ -594,7 +594,7 @@ Lagrangian, gives these sizes at C=2, 4, and 8:
 
 The C=4 and C=8 programs have the same 16 procedures and the same pair and wall helper bodies.
 The root grows from 426 to 846 statements because sparse-Hessian output assembly and coloring still
-depend on C. C-8 owns that remaining growth.
+depend on C. [#69] owns that remaining growth.
 
 The benchmark gate uses the full `cost` and `g` Lagrangian at C=4 and C=8. It requires both mapped
 row families. Their call counts, parameter and buffer shapes, body sizes, and loop counts must match
@@ -617,3 +617,5 @@ All pre-run source-file checksums matched before the write-up. The source archiv
 `2c3c5ed9bc15355b69a2aca4c7fb8142357ea02597cd733d6023bb59bf4a303d`.
 The implementation had passed all 850 tests, Ruff formatting and lint, strict ty checks, the
 benchmark smoke run, and independent reviews before this source snapshot was frozen.
+
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69

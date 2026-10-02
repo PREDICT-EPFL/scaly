@@ -66,9 +66,9 @@ What the table says, in order of size:
 
 | Hand change | General form | Level | Payoff here |
 | --- | --- | --- | --- |
-| One pass, write `res[0]` directly | Fusion of the sparse-derivative assembly (`gather(transpose(jvp_many(...)))` in `ad/sparse.py`) into the mapped producer loop | program dialect, the C-8 range propagation | 15 µs of 43.5 |
+| One pass, write `res[0]` directly | Fusion of the sparse-derivative assembly (`gather(transpose(jvp_many(...)))` in `ad/sparse.py`) into the mapped producer loop | program dialect, the [#69] range propagation | 15 µs of 43.5 |
 | Only the lower triangle | Dead-store elimination across the call boundary once the kernel body is a fused range body | falls out of fusion plus existing `fold_arith` | 10 µs |
-| Closed-form cost block, masks and all-ones tables gone | Constant-tile folding: a `static const` table that is a tile of period P becomes `k[i % P]`, and a scalar when P = 1. `k0` (4800 ones), `k22` and `k26` (period 6 masks) are exactly what C-57 lists as unexplained | program dialect, generalizes the C-45 bake | small alone, frees `fold_arith` to kill the masked terms |
+| Closed-form cost block, masks and all-ones tables gone | Constant-tile folding: a `static const` table that is a tile of period P becomes `k[i % P]`, and a scalar when P = 1. `k0` (4800 ones), `k22` and `k26` (period 6 masks) are exactly what [#94] lists as unexplained | program dialect, generalizes the C-45 bake | small alone, frees `fold_arith` to kill the masked terms |
 | Recovery gather `k44` | Already affine: values `0,4,5,8,12,13,16,17,18,20,21,22,23` then `+24` per stage, a residual of 13 under `AffineIndexMap`; the terminal stage's 7 entries break the period. Peel the last trip of a mapped axis when its slice differs, then C-9's map applies | lowering, `passes/affine.py` | metadata, not time |
 | Replace 14 divisions by reciprocals | Both divisors (`params[2]`, `0.5 * wheelbase`) are loop invariant. `x / y` with `y` invariant becomes `x * inv_y` with `inv_y` hoisted; a policy flag, since it moves the last bit | program dialect, `hoist_invariant` plus an arith rule | about 2 µs (the `-ffast-math` gap) |
 | Cache the cost block across SQP iterations | Split every oracle into a parameter-only prologue and a body; the solver plugin runs the prologue once per solve | Function or solver level, not a compiler pass | unmeasured, problem dependent |
@@ -80,7 +80,7 @@ structure; do not build a pass for it.
 
 ## 3. The loop compiler and where vectorization sits in it
 
-C-8 (`internal/todo.md`) already plans a rangeify-shaped loop compiler in three steps: ranges with
+[#69] already plans a rangeify-shaped loop compiler in three steps: ranges with
 the three-case propagation rule, reductions to per-lane accumulators, the reduce-under-broadcast
 rule. The measurements say what to put before and after those steps.
 
@@ -90,7 +90,7 @@ Today `_lower_vmap` emits `FOR(GLOBAL) { CALL callee(views) }` and every later p
 `CALL`. `fuse_elementwise` fuses only single-store loops, so nothing downstream of a `VMAP` fuses,
 which is why the assembly exists at all. The missing step is small: after `scalarize`, a callee
 whose body is scalar form becomes the loop body of every `FOR` that calls it, with its views turned
-into index expressions over the loop variable. Then step (1) of C-8 propagates the consumers'
+into index expressions over the loop variable. Then step (1) of [#69] propagates the consumers'
 ranges into that body and the assembly collapses. Gate: `race_car_closed_loop_N200_hess_lower`
 under 22 µs on this machine with no vectorization, and `workspace` fixed across N.
 
@@ -108,7 +108,7 @@ Choosing the axis: always the mapped axis first. Trips of a `VMAP` are independe
 construction, so there is no dependence analysis and no cross-lane reduction. Only when no mapped
 axis exists (chain at M = 9 is one stage with big matmuls) fall back to the same substitution on a
 contiguous output axis (stride-1 loads) and then on a reduction axis (unroll with one accumulator
-per lane and a horizontal add, which is what C-8 step 2 does anyway). When both a long horizon and
+per lane and a horizontal add, which is what [#69] step 2 does anyway). When both a long horizon and
 an inner matmul exist (npmpc's MLP stage), the horizon takes the lanes and the matmul's inner
 loops run per lane unchanged; that composes because the inner ranges are simply carried under the
 outer `VECTOR` range.
@@ -313,18 +313,18 @@ in 3.6 is reversed as an opt-in.
 - The byte-identical gate is narrowed to same compiler, same flags, `vector_libm="none"`;
   bitwise equality across targets never existed.
 - Two side findings became items: the JIT cache key hashes `-march=native` as a string, not the
-  CPU it resolves to (C-83), and `zig cc` moves from last fallback to preferred JIT compiler
-  (R-71). The C-79 entry, moved to `c77_c79_implementation.md` when it closed, holds the full
+  CPU it resolves to ([#63]), and `zig cc` moves from last fallback to preferred JIT compiler
+  ([#82]). The C-79 entry, moved to `c77_c79_implementation.md` when it closed, holds the full
   design and gates; the docs draft above gains the `lanes` and `vector_libm` paragraphs when it
   lands.
 
-## 4. Items recorded in `internal/todo.md` as C-77 to C-81
+## 4. Historical tasks C-77 to C-81
 
-All five sit in the Deferred list beside C-8 and are not required for 0.1.0; the todo entry says
-how each relates to C-8's steps (C-77 is its steps 0 and 1, C-79 one more range rewrite after
+All five sit in the Deferred list beside [#69] and are not required for 0.1.0; the todo entry says
+how each relates to [#69]'s steps (C-77 is its steps 0 and 1, C-79 one more range rewrite after
 them, C-78 independent). In the M4's payoff order:
 
-Added after the x86 run: C-82, a frame budget in `pack_workspace`. The hand-written kernel's
+Added after the x86 run: [#76], a frame budget in `pack_workspace`. The hand-written kernel's
 "no workspace, about 40 kB of stack" is the memory side of fusion: the fifteen full-length
 intermediates disappear and per-stage locals plus lane staging remain, which is fine on a host
 and wrong on a solver thread with a small stack or a Cortex-M, where a caller-provided `w[]` in a
@@ -440,3 +440,9 @@ directory. `x86_variants.sh <repo>` derives the vector-libm variants and runs th
 table with gcc, clang and `zig cc`. `mode orig` needs the original stage kernel extracted from the generated source into
 `orig_kernel.c` (lines of `..._hoisted_1_raw`, `static` dropped). `kern_only.c` times the 200
 kernels alone; `trigcost.c` times the libm calls alone.
+
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69
+[#94]: https://github.com/PREDICT-EPFL/scaly/issues/94
+[#63]: https://github.com/PREDICT-EPFL/scaly/issues/63
+[#82]: https://github.com/PREDICT-EPFL/scaly/issues/82
+[#76]: https://github.com/PREDICT-EPFL/scaly/issues/76

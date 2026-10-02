@@ -572,7 +572,7 @@ def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Ex
   return sc.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 
 
-# TODO(API-1): Replace this configuration-specialized builder with an ``@sc.function`` template.
+# TODO(#11): Replace this configuration-specialized builder with an ``@sc.function`` template.
 def build_scaly_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> sc.Function:
   """Build the safety filter's tracking cost and discrete barrier rows."""
   ncars = loop_cfg.ncars

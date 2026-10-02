@@ -121,7 +121,7 @@ def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
-# TODO(API-1): Replace this horizon-specialized builder with an ``@sc.function`` template.
+# TODO(#11): Replace this horizon-specialized builder with an ``@sc.function`` template.
 def race_car_eq_function(horizon: int) -> sc.Function:
   """Build the multiple-shooting equality residual for one prediction horizon."""
 

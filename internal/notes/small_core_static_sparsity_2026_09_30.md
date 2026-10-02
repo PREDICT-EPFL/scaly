@@ -60,7 +60,7 @@ real data, a lowering decision that cannot be recovered afterwards, or cost. Eve
 builder (Python producing core ops) or a library `Function`, with `sc.custom_derivative` where
 tracing the derivative is wrong or slow. From tinygrad we take the rule that passes match families,
 not members, so an elementwise op is one table row read by the verifier, the constant folder, the
-partials of C-99 and the renderer, not the seven files `docs/dev/codebase.md` lists today.
+partials of [#20] and the renderer, not the seven files `docs/dev/codebase.md` lists today.
 
 | Family | Ops | Notes |
 |---|---|---|
@@ -90,7 +90,7 @@ out-of-range write through a scratch slot, and `promise_in_bounds` skips the che
 `take`, `dynamic_slice`, `index_add` and `index_set` are builders. `TAKE`, `PUT`, `PUT_ADD`,
 `SEGMENT_REDUCE`, `INDEX_ADD` and `INDEX_SET` never exist on main.
 
-**Callees.** `LOOP` is C-121's design with one change: the trip count becomes a user-facing operand
+**Callees.** `LOOP` is [#31]'s design with one change: the trip count becomes a user-facing operand
 with a static upper bound, which is what devrush's `ragged_add` and `ragged_dot` were for. A
 `VMAP` is a `LOOP` with no carry and no condition, as `lax.map` is a carry-less `scan`. The merge
 lands after `LOOP` exists, as a rename that keeps `vmap.c` and every snapshot byte for byte, because
@@ -99,7 +99,7 @@ there is no separate `SWITCH`.
 
 **`PRINT` comes early.** `sc.print` is the first tool that makes generated code debuggable, before
 the graph viewer is made useful, so it lands right after wave 0, in float64 only, with integer and
-boolean formats added by C-104. C-124's semantics stand (a print runs whenever generated code
+boolean formats added by [#30]. [#77]'s semantics stand (a print runs whenever generated code
 computes its value; identical prints intern to one; the AD rule keeps the primal), and the guide
 states them next to the feature.
 
@@ -115,7 +115,7 @@ fusion runs. The criterion is therefore: one node for a pairwise contraction, be
 intermediate is larger than its operands. `einsum` is not one op, because a contraction of several
 operands is a sequence of pairwise contractions whose order is a cost decision that should be made
 once, by the builder, rather than redone by every pass. A pairwise `einsum` is a batched `MATMUL`
-up to transposes and reshapes, which cost nothing once C-8 reads them as index maps. If those
+up to transposes and reshapes, which cost nothing once [#69] reads them as index maps. If those
 transposes ever stop being free, the fix is in lowering, or in turning `MATMUL` into a pairwise
 contraction with labelled axes (XLA's `dot_general`); `einsum` still stays a builder.
 
@@ -128,7 +128,7 @@ devrush's registered ops needed maps onto a core capability:
 | `ragged_add`, `ragged_dot` | inner runs `lo[g] <= p < hi[g]` of run-time length | `LOOP` with a run-time trip count under a static bound |
 | `ragged_add` on the work column, row swaps in `lu`, updates in the sweeps | updating a large carry without copying it | buffer reuse in lowering, see "In-place updates" |
 | `cholesky`, `ldl`, `trisolve` with `Unroll` | straight-line code on small sizes | lowering unrolls a static-length loop under the target's straight-line budget, honouring the node's lowering hint |
-| `trisolve`'s hand-written four partial sums, `blocked_sum` | lanes on a reduction whose bounds are loaded | C-113's lane split with a remainder loop on run-time bounds |
+| `trisolve`'s hand-written four partial sums, `blocked_sum` | lanes on a reduction whose bounds are loaded | [#71]'s lane split with a remainder loop on run-time bounds |
 
 The acceptance test is explicit: the library sparse LDL^T must produce the loop structure of devrush's
 direct lowering (`linalg/ops/sparse_ldl.py::_lower_sparse_ldl`) and come within its measured times.
@@ -147,7 +147,7 @@ first:
 2. *Same index.* `SCATTER(base, idx, f(GATHER(base, idx)))` reads only what it writes, so its read
    and write loops may be fused, for any index, including a pivot chosen at run time.
 3. *Disjoint indices.* When the old value is read after an earlier write in the same step, devrush's
-   proof applies (C-138): every index is evaluated at build time and the entries read are disjoint
+   proof applies ([#36]): every index is evaluated at build time and the entries read are disjoint
    from those written.
 
 When none applies, lowering copies the carry, which costs O(size) per step and can turn a factor
@@ -156,7 +156,7 @@ cannot honour it, as the no-densification contract does for sparse storage. What
 a library LDL^T from devrush's direct kernel is the quality of the loops (accumulators in registers,
 chunks of columns, lanes), which is lowering work and not a missing op.
 
-**Custom rules on library Functions.** `sc.custom_derivative(fn, jvp=, vjp=, sparsity=)` (API-101)
+**Custom rules on library Functions.** `sc.custom_derivative(fn, jvp=, vjp=, sparsity=)` ([#22])
 sets forward and reverse rules and the derivative sparsity of any Function, library ones included,
 at construction. The rules are Functions themselves, so higher derivatives differentiate the rules.
 Every call (`CALL`, `LOOP`, the map case) goes through the same funnel, so a rule holds wherever the
@@ -167,7 +167,7 @@ A solve's derivatives must also reuse the primal's factorization; today a call's
 derivative run the callee's forward pass twice. So the reverse rule takes JAX's `custom_vjp` form:
 a forward rule returns the outputs and private residuals (a factorization, a loop trajectory), and
 the backward rule receives the residuals with the cotangents. The residuals are results of the same
-invocation (C-119), computed once, and they keep their dependence on the inputs so second
+invocation ([#28]), computed once, and they keep their dependence on the inputs so second
 derivatives stay right.
 
 **External code.** Calling C through an ordinary `Function` does not fit: a Function may have holes,
@@ -176,11 +176,11 @@ values:
 
 - `sc.CLibrary(name, sources=, headers=, include_dirs=, defines=, compile_flags=, link=, versions=)`
   is a frozen description of how to build and link some C, shared by every symbol taken from it. Its
-  content (source text, flags, linked library identities and versions) enters the JIT key (C-94).
+  content (source text, flags, linked library identities and versions) enters the JIT key ([#64]).
 - `sc.extern(library, symbol, inputs=..., outputs=..., workspace=0)` declares one C function with a
   concrete signature: every leaf has a shape, dtype and pattern, so an extern is concrete by
   construction. Its calling convention is the generated one, one typed pointer per leaf and a
-  workspace (C-107). Calling it builds `EXTERN` nodes, one per output, grouped by invocation (C-119).
+  workspace ([#56]). Calling it builds `EXTERN` nodes, one per output, grouped by invocation ([#28]).
 
 A shape-generic C kernel is a Python function that builds one `extern` per shape, generating the
 source text if needed; the template machinery is not involved. An extern has no derivative unless a
@@ -199,8 +199,8 @@ carrying the block accumulator). The core owes that user predictable lowering:
 
 - a small block scalarizes into straight-line code over C locals (today's `scalarize`);
 - a small loop carry, such as a 4×4 accumulator, lives in C locals, not in workspace slots
-  (a requirement on C-121's lowering);
-- affine slices are read in place, never copied (C-8's rule that movement ops are not materialized);
+  (a requirement on [#31]'s lowering);
+- affine slices are read in place, never copied ([#69]'s rule that movement ops are not materialized);
 - a packed layout the user asks for, a transpose or reshape, is materialized once and hoisted out of
   the loops (`hoist_invariant`);
 - lowering never undoes structure the user wrote: a `Function` boundary, a loop and a lowering hint
@@ -233,8 +233,8 @@ Inside the graph the pattern is invisible, as the maintainer suspected; outside 
 four homes (the wrapper, the `S` leaf and template key, `Function.output_sparsities`, and the LDL
 op's table attributes). Devrush's `TensorType.sparsity` still exists but nothing sets it. Devrush's
 own notes record the cost: `perf_gaps_proposal_2026_09_30.html` item A7 (the dense backend cannot use
-matrix-vector kernels because every product goes through index tables) and todo item CS-12 (a
-parameter-dependent QP Hessian is built dense, then gathered, every solve).
+matrix-vector kernels because every product goes through index tables) and its QP Hessian investigation
+(the parameter-dependent Hessian is built dense, then gathered, every solve).
 
 **Support on every node.** `Expr.support` is computed lazily, cached per node, and never part of
 the intern key, since it is a pure function of the node. `None` means any entry may be nonzero.
@@ -272,7 +272,7 @@ The adversarial review found four problems with it that the hybrid does not have
 2. **Unstable output.** If storage follows inferred support, a sharper rule can cross a threshold
    and change buffers, loops and the generated C, and turn a `0 * inf` from NaN into zero. Storage
    must follow declared structure and a fixed policy.
-3. **Signatures carry patterns anyway.** `sc.S` leaves, template keys, derivative outputs (C-132)
+3. **Signatures carry patterns anyway.** `sc.S` leaves, template keys, derivative outputs ([#48])
    and headers all need the matrix identity, so the derived design moves the pattern into a second
    descriptor beside the type rather than removing it.
 4. **"No sparse AD rules" is true only for the primal.** Reverse mode through `y = A @ x` builds
@@ -284,7 +284,7 @@ The adversarial review found four problems with it that the hybrid does not have
 What the hybrid gives up is automatic compaction of dense-declared values. That stays possible
 later as an explicit, opt-in conversion (`sc.sparsify(x)` is `PACK(GATHER(x, support(x)))`) with its
 own reproducibility rule. Dense-declared zeros are still exploited without it by scalar lowering,
-by derivative sparsity and by demanded-entry analysis, which is what fixes CS-12: compute only the
+by derivative sparsity and by demanded-entry analysis, which addresses the QP Hessian investigation: compute only the
 entries a gather reads.
 
 **Layouts at boundaries.** Inside the graph the type fixes which entries are stored, never their
@@ -298,7 +298,7 @@ pattern choice (`sc.triu(H)`), since QDLDL, OSQP and PIQP read the upper triangl
 lower. Lowering writes output values straight into the requested order, with the permutation
 folded into the stores' position tables, so a CSR Hessian for one solver and a CSC one for another
 cost the same. The derivative wrappers take the same choice, as in
-`sc.sparse_hessian(f, of, wrt, layout="csr", triangle="upper")`. This replaces C-132's single CSC
+`sc.sparse_hessian(f, of, wrt, layout="csr", triangle="upper")`. This replaces [#48]'s single CSC
 order and the header's two permutation tables.
 
 Common to both designs, and a gate of its own: no analysis, constant or loop may do work
@@ -336,7 +336,7 @@ LDL^T should be built, and devrush's `linalg/symbolic.py` already is.
 **Where it sits.** After AD and simplification, lowering builds a private iteration plan per
 kernel: iteration domains, access maps (affine where `LowerCtx.index_at` recovers them, position
 tables otherwise), the scalar body, reduction order, workspace scope and output writes. The dense
-loop-nest emitter of C-108 is the all-dense case of these plans, so one emitter serves both. The
+loop-nest emitter of [#27] is the all-dense case of these plans, so one emitter serves both. The
 first sparse kernels are:
 
 - one generic **compact map**: a loop over the output's stored entries that reads each operand
@@ -353,10 +353,10 @@ with dense kernels. Detecting dense blocks, bands and supernodes inside a patter
 valuable than any run-time machinery, but it comes after the first milestone.
 
 Fusion must know about sparse traversals: whether a consumer shares a producer's traversal, inlines
-it, keeps a local workspace or materializes it. The current C-8 decides from consumer counts alone,
+it, keeps a local workspace or materializes it. The current [#69] decides from consumer counts alone,
 and it also needs the consumer-agreement case tinygrad's `run_rangeify` has, which devrush's many
 short IPM loops now justify. Sparse kernels still come before fusion (decision 5 stands), but the
-iteration plan is designed once, for both, before C-108 fixes its interface.
+iteration plan is designed once, for both, before [#27] fixes its interface.
 
 ## What is new and what is not
 
@@ -388,25 +388,25 @@ by measurements that isolate what keeping those boundaries buys.
 
 Items:
 
-- **Keep** wave 0 as written (C-86 to C-94, C-83), with C-93 as the first step of the new `SCATTER`.
-  **Keep** C-95 to C-100, API-101, C-103 to C-107, C-110, C-111, C-119 to C-123, C-126, C-129,
-  C-132, C-82.
-- **Merge** C-136 and C-137 into one early item: the index becomes an operand of `GATHER` and
+- **Keep** wave 0 as written ([#9], [#10], [#60], [#61], [#16], [#62], [#38], [#26], [#64], [#63]), with [#26] as the first step of the new `SCATTER`.
+  **Keep** [#15], [#17], [#18], [#19], [#20], [#21], [#22], [#25], [#30], [#65], [#55], [#56], [#66], [#67], [#28], [#29], [#31], [#32], [#33], [#78], [#43],
+  [#48], [#76].
+- **Merge** [#35] and the former C-137 task into one early item: the index becomes an operand of `GATHER` and
   `SCATTER`, with `combine` and `mode`.
-- **Rewrite** C-127 and C-128 around the hybrid, with `PACK`/`VALUES` only.
-  **Rewrite** C-130: support rules and harness, the compact map, sparse `MATMUL` and `REDUCE`
-  kernels, and the sampled adjoint. **Shrink** C-131 to sparse-sparse products; assembly is
+- **Rewrite** [#39] and [#42] around the hybrid, with `PACK`/`VALUES` only.
+  **Rewrite** [#46]: support rules and harness, the compact map, sparse `MATMUL` and `REDUCE`
+  kernels, and the sampled adjoint. **Shrink** [#47] to sparse-sparse products; assembly is
   composition.
-- **Rewrite** C-133 to C-135 as library `Function`s over `LOOP`, gated on devrush's measurements;
-  their ops are deleted. C-135's symbolic analysis module stays as specified.
-- **Move earlier** C-138 (in-place carries, with the syntactic case), C-102 and C-144 (keeping call
+- **Rewrite** [#51], [#52], [#54] as library `Function`s over `LOOP`, gated on devrush's measurements;
+  their ops are deleted. [#54]'s symbolic analysis module stays as specified.
+- **Move earlier** [#36] (in-place carries, with the syntactic case), [#73] and [#90] (keeping call
   boundaries and sharing the forward pass).
-- **Change** C-139 into `sc.CLibrary` and `sc.extern` with the `EXTERN` op, absorbing `SOLVER_CALL`.
-  C-125 is one `COND`. C-104 and C-105 lose their own ops, which become table rows and builders.
-- **Move** C-124 (`sc.print`) to right after wave 0, float64 first. C-112 (`einsum`) no longer comes
-  before fusion. Drop `COPYSIGN` from C-104.
+- **Change** [#83] into `sc.CLibrary` and `sc.extern` with the `EXTERN` op, absorbing `SOLVER_CALL`.
+  [#53] is one `COND`. [#30] and [#65] lose their own ops, which become table rows and builders.
+- **Move** [#77] (`sc.print`) to right after wave 0, float64 first. [#68] (`einsum`) no longer comes
+  before fusion. Drop `COPYSIGN` from [#30].
 - **Rewrite** the "Signatures and templates" section from the typing playground, and order its
-  items (API-114, API-3, API-1) before C-127 and C-128; API-116 (pattern holes) lands with the
+  items ([#7], [#8], [#11]) before [#39] and [#42]; [#44] (pattern holes) lands with the
   sparse boundary.
 - **Add**: support analysis and its soundness harness; the full-size-work gate; iteration plans for
   dense and sparse; a run-time trip count on `LOOP`; unrolling in `LOOP` lowering by the target's
@@ -415,14 +415,14 @@ Items:
 
 ## Milestones
 
-1. **Differentiable generated loops.** Wave 0, then `sc.print`, the AD engine through API-101, predicates, select
+1. **Differentiable generated loops.** Wave 0, then `sc.print`, the AD engine through [#22], predicates, select
    and cast, integer leaves, `GATHER`/`SCATTER` with index operands, `LOOP` with forward and reverse
    AD, in-place carries. Gate: an RK4 rollout with its gradient at N = 200, with build time and C
    size constant in N; a Newton iteration inside a while loop, with early exit, zero-trip loops and
-   a second derivative. In parallel, the templates (API-114, API-3, API-1), which must land before
+   a second derivative. In parallel, the templates ([#7], [#8], [#11]), which must land before
    milestone 2 starts its sparse boundary.
 2. **Static sparse functions end to end.** Stored patterns and support, sparse leaves and headers,
-   pattern holes in templates (API-116), the iteration plan with the compact map and sparse
+   pattern holes in templates ([#44]), the iteration plan with the compact map and sparse
    `MATMUL`, the sampled adjoint, the library
    LDL^T with an implicit solve and factor reuse. Gates: the full-size-work test; KKT assembly and
    matrix-vector products on devrush's Maros–Meszaros subset with no dense `(m, n)` buffer; the
@@ -430,7 +430,7 @@ Items:
    are needed.
 3. **Competitive kernels and generated solvers.** Lowering-time fusion, lanes, float32, dense
    scheduling (register blocks, batching a mapped matrix-vector product with one constant matrix
-   into a matrix product), setup and solve separation. Gates: API-140 TinyMPC and API-141 the
+   into a matrix product), setup and solve separation. Gates: [#72] TinyMPC and [#70] the
    generated sparse IPM, against devrush's reported timings.
 
 ## Decisions to take
@@ -506,3 +506,61 @@ of the roadmap. The sparse investigation proposed the derived-only design. An ad
 it against main's code produced the four problems listed under [Sparsity](#sparsity), and the
 hybrid keeps the derived design's support analysis, boundary rules and zero sparse arithmetic ops.
 Devrush was read at its tip of 2026-09-30, after its restructure and the codegen and speed-gap work.
+
+[#20]: https://github.com/PREDICT-EPFL/scaly/issues/20
+[#31]: https://github.com/PREDICT-EPFL/scaly/issues/31
+[#30]: https://github.com/PREDICT-EPFL/scaly/issues/30
+[#77]: https://github.com/PREDICT-EPFL/scaly/issues/77
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69
+[#71]: https://github.com/PREDICT-EPFL/scaly/issues/71
+[#36]: https://github.com/PREDICT-EPFL/scaly/issues/36
+[#22]: https://github.com/PREDICT-EPFL/scaly/issues/22
+[#28]: https://github.com/PREDICT-EPFL/scaly/issues/28
+[#64]: https://github.com/PREDICT-EPFL/scaly/issues/64
+[#56]: https://github.com/PREDICT-EPFL/scaly/issues/56
+[#48]: https://github.com/PREDICT-EPFL/scaly/issues/48
+[#27]: https://github.com/PREDICT-EPFL/scaly/issues/27
+[#9]: https://github.com/PREDICT-EPFL/scaly/issues/9
+[#10]: https://github.com/PREDICT-EPFL/scaly/issues/10
+[#60]: https://github.com/PREDICT-EPFL/scaly/issues/60
+[#61]: https://github.com/PREDICT-EPFL/scaly/issues/61
+[#16]: https://github.com/PREDICT-EPFL/scaly/issues/16
+[#62]: https://github.com/PREDICT-EPFL/scaly/issues/62
+[#38]: https://github.com/PREDICT-EPFL/scaly/issues/38
+[#26]: https://github.com/PREDICT-EPFL/scaly/issues/26
+[#63]: https://github.com/PREDICT-EPFL/scaly/issues/63
+[#15]: https://github.com/PREDICT-EPFL/scaly/issues/15
+[#17]: https://github.com/PREDICT-EPFL/scaly/issues/17
+[#18]: https://github.com/PREDICT-EPFL/scaly/issues/18
+[#19]: https://github.com/PREDICT-EPFL/scaly/issues/19
+[#21]: https://github.com/PREDICT-EPFL/scaly/issues/21
+[#25]: https://github.com/PREDICT-EPFL/scaly/issues/25
+[#65]: https://github.com/PREDICT-EPFL/scaly/issues/65
+[#55]: https://github.com/PREDICT-EPFL/scaly/issues/55
+[#66]: https://github.com/PREDICT-EPFL/scaly/issues/66
+[#67]: https://github.com/PREDICT-EPFL/scaly/issues/67
+[#29]: https://github.com/PREDICT-EPFL/scaly/issues/29
+[#32]: https://github.com/PREDICT-EPFL/scaly/issues/32
+[#33]: https://github.com/PREDICT-EPFL/scaly/issues/33
+[#78]: https://github.com/PREDICT-EPFL/scaly/issues/78
+[#43]: https://github.com/PREDICT-EPFL/scaly/issues/43
+[#76]: https://github.com/PREDICT-EPFL/scaly/issues/76
+[#35]: https://github.com/PREDICT-EPFL/scaly/issues/35
+[#39]: https://github.com/PREDICT-EPFL/scaly/issues/39
+[#42]: https://github.com/PREDICT-EPFL/scaly/issues/42
+[#46]: https://github.com/PREDICT-EPFL/scaly/issues/46
+[#47]: https://github.com/PREDICT-EPFL/scaly/issues/47
+[#51]: https://github.com/PREDICT-EPFL/scaly/issues/51
+[#52]: https://github.com/PREDICT-EPFL/scaly/issues/52
+[#54]: https://github.com/PREDICT-EPFL/scaly/issues/54
+[#73]: https://github.com/PREDICT-EPFL/scaly/issues/73
+[#90]: https://github.com/PREDICT-EPFL/scaly/issues/90
+[#83]: https://github.com/PREDICT-EPFL/scaly/issues/83
+[#53]: https://github.com/PREDICT-EPFL/scaly/issues/53
+[#68]: https://github.com/PREDICT-EPFL/scaly/issues/68
+[#7]: https://github.com/PREDICT-EPFL/scaly/issues/7
+[#8]: https://github.com/PREDICT-EPFL/scaly/issues/8
+[#11]: https://github.com/PREDICT-EPFL/scaly/issues/11
+[#44]: https://github.com/PREDICT-EPFL/scaly/issues/44
+[#72]: https://github.com/PREDICT-EPFL/scaly/issues/72
+[#70]: https://github.com/PREDICT-EPFL/scaly/issues/70

@@ -1,11 +1,13 @@
 # API findings from the documentation rewrite
 
-These findings came from writing and executing examples for new users. They describe current
-behavior; no implementation changes accompany this review. The solver-call and `vmap` changes tracked as API-69 and API-70 in `internal/todo.md`
-are now implemented: solvers accept parameters with optional initial guesses, and `vmap`
+These findings came from writing and executing examples for new users. They record the behavior
+observed during that review. The solver-call and `vmap` changes are now implemented: solvers accept
+parameters with optional initial guesses, and `vmap`
 infers contiguous slices or broadcasting from input sizes.
 
 ## Python truth tests silently accept symbolic expressions
+
+Follow-up: [#61].
 
 `Expr` has no `__bool__` implementation, so Python treats an expression object as true. This can
 record the wrong model without an error:
@@ -31,6 +33,9 @@ The functions guide now explains this limitation.
 
 ## Common clipping expressions cannot be differentiated
 
+Follow-up: [#25] and
+[#30].
+
 `sc.minimum`, `sc.maximum`, `.floor()`, and `.ceil()` can appear in an evaluated model, but
 requesting their gradient or Jacobian raises `NotImplementedError`. For example:
 
@@ -51,6 +56,8 @@ for all four operations. The public derivative and IR pages now describe the err
 
 ## Array reductions have no axis argument
 
+Follow-up: [#66].
+
 `Expr.sum()` reduces the entire array to a scalar. `x.sum(axis=0)` raises `TypeError`, including
 for a two-dimensional input. There is no `keepdims` argument either.
 
@@ -63,6 +70,8 @@ confirmed. The operation reference states the current whole-array behavior.
 
 ## PIQP option errors reach C compilation
 
+Follow-up: [#80].
+
 PIQP numeric and Boolean options are inserted directly as settings-struct member assignments.
 An unknown setting name is accepted during Python solver construction and becomes an invalid
 member access in generated C. A typo therefore produces a compiler error instead of a Python
@@ -73,6 +82,9 @@ Evidence: the option loop in
 The solver-backend guide now identifies this behavior.
 
 ## Solver sensitivity has inconsistent failure behavior
+
+Follow-up: [#16] and
+[#61].
 
 Differentiation through a solver is already an unsupported feature. The documentation review
 also found that different ways of asking for it fail differently.
@@ -91,3 +103,10 @@ Evidence: the `SOLVER_CALL` rules in
 differentiation, [`_unseeded`](../../src/scaly/function/api.py), and
 [`Function._with_trees`](../../src/scaly/function/model.py). Both the nested and direct requests
 were reproduced using IPOPT.
+
+[#61]: https://github.com/PREDICT-EPFL/scaly/issues/61
+[#25]: https://github.com/PREDICT-EPFL/scaly/issues/25
+[#30]: https://github.com/PREDICT-EPFL/scaly/issues/30
+[#66]: https://github.com/PREDICT-EPFL/scaly/issues/66
+[#80]: https://github.com/PREDICT-EPFL/scaly/issues/80
+[#16]: https://github.com/PREDICT-EPFL/scaly/issues/16

@@ -1,8 +1,8 @@
 # Windows support: the investigation so far
 
-Background for R-38, written 2026-10-02. Everything here was read from CasADi's sources and wheel,
+Background for [#84], written 2026-10-02. Everything here was read from CasADi's sources and wheel,
 or tried by cross-compiling from macOS with `ziglang` 0.16.0. Nothing has run on a Windows machine
-yet, and the first step of R-38 is to do so. This note records what to try, not how to build it.
+yet, and the first step of [#84] is to do so. This note records what to try, not how to build it.
 
 ## How CasADi does it
 
@@ -49,3 +49,5 @@ Scaly should not copy the JIT side: a compiler on `PATH` is exactly what CasADi'
    under zig on Windows are unverified.
 5. The first-compile cost in a fresh environment, and whether it needs a warm-up or only a
    documented note.
+
+[#84]: https://github.com/PREDICT-EPFL/scaly/issues/84

@@ -73,7 +73,7 @@ def chain_mass_accel_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Exp
   return right_accel - left_accel + sc.stack([0.0, 0.0, gravity[0]])
 
 
-# TODO(API-1): Replace these shape-specialized builders with ``@sc.function`` templates.
+# TODO(#11): Replace these shape-specialized builders with ``@sc.function`` templates.
 def chain_ode_fn(n_masses: int) -> sc.Function:
   """Build the continuous-time chain dynamics for the free masses and actuated end mass."""
   nx = n_state(n_masses)
@@ -282,7 +282,7 @@ def _objective(z: sc.Expr, n_masses: int, horizon: int) -> sc.Expr:
   return cost + 0.5 * Q_END_TERMINAL * sc.sumsqr(terminal[end : end + 3] - ref)
 
 
-# TODO(API-1): Replace this shape-specialized builder with an ``@sc.function`` template.
+# TODO(#11): Replace this shape-specialized builder with an ``@sc.function`` template.
 def chain_objective_fn(n_masses: int, horizon: int) -> sc.Function:
   """The transcribed objective on its own, so its stationary points can be checked directly."""
 

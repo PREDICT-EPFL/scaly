@@ -1,7 +1,7 @@
 # How tinygrad's rangeify loop compiler works, read 2026-09-08
 
 Report from a read-only study of a tinygrad checkout at commit `69915d61` (2026-09-07), written to
-inform C-43, C-44 and C-8. Paths are relative to that checkout. Nothing was executed; the loop-nest
+inform C-43, C-44 and [#69]. Paths are relative to that checkout. Nothing was executed; the loop-nest
 description in section 5 is derived from the code path.
 
 ## 1. The pipeline, end to end
@@ -309,3 +309,5 @@ instead of emitting an SSA temporary when `child_count[u] == 1`.
 Runner-up, cheap and high value for C: `memory_coalescing` (`coalesce.py:104-171`, about 60 lines).
 Bucket loads and stores by base index and merge consecutive offsets into vector accesses; on clang
 that is the difference between scalar code and SIMD you can actually see.
+
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69

@@ -28,9 +28,9 @@ record the minimal runtime and cold-compilation comparison. A full benchmark rer
 Track C work, as requested. Measurements follow the
 [existing protocol](benchmark_protocol.md#measurement-protocol).
 
-C-44 owns scalarization and disclosure of the current algebraic contract. C-52 owns the completed
-package split with fixed pass order. Shared rules and matcher work follow as C-12/C-53. Task status
-lives in `internal/todo.md`.
+The historical tasks C-44, C-52, C-12, and C-53 covered scalarization, the fixed pipeline, and
+shared rules and matching. They are complete; the implementation record below describes what
+landed. Current follow-up status lives in GitHub Issues.
 
 ## Library evidence
 
@@ -256,7 +256,7 @@ termination checks. Compiled pattern matching and detailed rewrite tracing can w
 need. Tinygrad's matcher itself still assumes `UOp`; copying it unchanged would not support both
 Scaly node types.
 
-New affine and integer-index rewrite families remain with C-8 and C-9. The common arithmetic
+New affine and integer-index rewrite families remain with [#69] and C-9. The common arithmetic
 machinery must preserve existing index semantics, but does not need those new analyses first.
 
 Run the arithmetic rules on expression graphs and again on program arithmetic, including loop
@@ -343,6 +343,8 @@ construction) with one instance per dialect. The expression pass, `scalarize`, a
 and refuses results outside the dtype; float evaluation refuses division by zero, invalid
 operations, and overflow but accepts underflow. `0 / x -> 0` is applied as documented above, so a
 signed zero from a negative denominator is not preserved. The matrix forms of matmul-with-ones were
-reverted after review showed them slower in loop form; see C-10 in the todo. Independent reviews
+reverted after review showed them slower in loop form; see the C-44 closeout in [the performance record](perf_2026_09_07/README.md#c-44-closeout). Independent reviews
 (one Fable, one GPT through `codex`) found no ordering error in the residue-class seed assembly or
 in the rewrite driver's memo.
+
+[#69]: https://github.com/PREDICT-EPFL/scaly/issues/69

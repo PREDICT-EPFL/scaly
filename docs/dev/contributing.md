@@ -3,6 +3,9 @@
 To contribute a change, set up a checkout and run the checks below. You do not need to build the
 optional solvers to work on expressions, derivatives, or most compiler tests.
 
+Use [Tracking work](issue_tracking.md) to find issues, interpret planning metadata, and check
+dependencies and overlapping work before starting a change.
+
 ## Setup
 
 ```bash
@@ -157,8 +160,8 @@ uv run --only-group docs zensical build    # into site/
 ```
 
 Everything under `docs/` is published. Zensical has no exclusion mechanism, so anything that should
-stay unpublished lives in `internal/` at the repository root: the actionable list and the frozen
-design notes.
+stay unpublished lives in `internal/` at the repository root, including design notes and investigation records.
+Actionable work lives in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
 The API reference is generated from docstrings, so a new public name needs one. Use Google style
 and say what the thing is for instead of restating its signature.

@@ -3,7 +3,7 @@
 **Frozen record, not a plan.** This was `BENCHMARKS.md` at the repository root until 2026-08-25,
 when the three live concerns it had accumulated were split out:
 
-- the backlog and every open task moved to [`internal/todo.md`](../todo.md);
+- the backlog and every open task now live in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues);
 - the fairness rationale and measurement protocol live in
   [`docs/benchmarks/fairness.md`](../../docs/benchmarks/fairness.md).
 
@@ -11,7 +11,7 @@ What remains here is history worth keeping: why each problem was admitted, how t
 arrived at their current shape, the solver-plugin architecture and its decided doctrine, and the
 completed L-track and B-track. Section numbering is unchanged so that older citations of the form
 "§3.4" still resolve. **Nothing here is a task.** Where a section describes a defect, the live item is
-in `internal/todo.md`; where it quotes a number, that number predates the fairness audit and the
+in GitHub Issues; where it quotes a number, that number predates the fairness audit and the
 reference-machine protocol, and `docs/benchmarks/fairness.md` supersedes it.
 
 It in turn superseded everything that lived in `fast_benchmarks/` (the FastBench prototype,

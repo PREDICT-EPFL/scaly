@@ -191,7 +191,7 @@ symbolic Hessian: the composition itself is not the problem, and there is nothin
 "symbolic Hessian" pass on this stage. What Scaly does not exploit is symmetry: it computes the full
 24 × 45 block (24 seeds, `z` and `xnext` adjoint rows), where the harness's SX `nlp_hess_l` computes
 the upper triangle and lands at 13,213 including the cost term. Star colouring cannot reduce a dense
-24 × 24 block, so the remaining structural lever is C-11's: either a reverse-over-reverse per row of
+24 × 24 block, so the remaining structural lever is [#95]'s: either a reverse-over-reverse per row of
 the triangle, or dropping the 21 `xnext` adjoint rows whose tangents are identically zero (they fold
 today, so this costs nothing but is why the output is 45 wide).
 
@@ -586,3 +586,5 @@ def joint_src(base):
 (`MODE=inlined`, no variants), evaluates both on `initial_state(5)` plus noise, `ChainParams()` and a
 random `lam`, and compares `fwd_fn(...)` reshaped `(24, 45)[:, :24]` with `inl(...)` reshaped
 `(24, 24)`: max abs difference 2.9e-17, max abs value 0.068.
+
+[#95]: https://github.com/PREDICT-EPFL/scaly/issues/95

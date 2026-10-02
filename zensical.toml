@@ -44,6 +44,7 @@ nav = [
     ] },
     { "Developer guide" = [
         { "Contributing" = "dev/contributing.md" },
+        { "Tracking work" = "dev/issue_tracking.md" },
         { "Conventions" = "dev/conventions.md" },
         { "The codebase" = "dev/codebase.md" },
         { "Solver plugins" = "dev/solver_plugins.md" },

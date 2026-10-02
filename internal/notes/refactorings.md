@@ -3,9 +3,9 @@
 
 # Open problems
 
-These remaining limitations have follow-up entries in `internal/todo.md`. The first two are now
-designed in [the core compiler roadmap](core_compiler_roadmap.md#signatures-and-templates) (API-3,
-API-2 and API-117) and stay here as the record of why. Automatic differentiation is abbreviated AD
+These remaining limitations have follow-up issues in GitHub. The first two are now
+designed in [the core compiler roadmap](core_compiler_roadmap.md#signatures-and-templates) ([#8],
+[#13] and [#58]) and stay here as the record of why. Automatic differentiation is abbreviated AD
 below.
 
 ## Zero-input `Function`s, and the flat call seam that survives because of them
@@ -58,7 +58,7 @@ Three holes remain, all on the paths that matter most for composing:
 
 A composition through `vmap` or the low-level derivative builders loses its declared tree types.
 The public Function-level derivative wrappers preserve the source input tree. Extending that
-property to mapped structure remains open (todo API-2). The playground README records this
+property to mapped structure remains open (todo [#13]). The playground README records this
 limitation, and
 `typing_playground/function.py` holds a candidate interface.
 
@@ -68,6 +68,8 @@ runtime structure tests beside `tests/function/test_tree.py`, and static ones in
 `ty: ignore` marks an expected error and an unused one fails the check.
 
 ## Compiled CasADi artifacts across worktrees
+
+Tracked in [#101].
 
 The API merge review reproduced four CasADi IPOPT test failures from cached libraries whose
 runtime search paths pointed into a deleted worktree. All five tests in
@@ -82,3 +84,8 @@ A fix must either include those paths in the cache identity or remove the artifa
 on worktree paths. Verify relocation after the original directory disappears; a successful load
 while both worktrees exist does not exercise the failure. A separate cache is the temporary
 workaround, not the intended behavior.
+
+[#8]: https://github.com/PREDICT-EPFL/scaly/issues/8
+[#13]: https://github.com/PREDICT-EPFL/scaly/issues/13
+[#58]: https://github.com/PREDICT-EPFL/scaly/issues/58
+[#101]: https://github.com/PREDICT-EPFL/scaly/issues/101
