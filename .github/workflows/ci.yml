@@ -250,7 +250,12 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
+          name: dist-pure
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*-${{ matrix.os }}
           merge-multiple: true
           path: dist
 
@@ -266,9 +271,7 @@ jobs:
           PY: ${{ matrix.python }}
         run: |
           if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
-          # pin every package to the version this run built, so a release on PyPI never wins
-          pins=$(ls dist | sed -nE 's/^(scaly(_[a-z]+)?)-([^-]+)(-py3|\.tar\.gz).*/\1==\3/p' | tr _ - | sort -u)
-          /tmp/env/bin/pip install --only-binary :all: --find-links dist "scaly[solvers]" $pins
+          /tmp/env/bin/pip install --only-binary :all: dist/*.whl
 
       - name: Solve with every backend
         run: /tmp/env/bin/python .github/scripts/solve_smoke.py

@@ -241,18 +241,16 @@ Converting it with `to_dense()` creates a dense matrix expression:
 def chain(x: sc.Expr) -> sc.Expr:
     return x[:-1].sin() * x[1:]
 
-@sc.function(sc.group(sc.arg("x", 6), sc.arg("v", 6)), outputs=sc.arg("jv", ...))
-def via_matrix(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, v = inputs
+@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv", ...))
+def via_matrix(x: sc.Expr, v: sc.Expr) -> sc.Expr:
     return sc.sparse_jacobian(chain(x), x).to_dense() @ v
 
-@sc.function(sc.group(sc.arg("x", 6), sc.arg("v", 6)), outputs=sc.arg("jv", ...))
-def via_product(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, v = inputs
+@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv", ...))
+def via_product(x: sc.Expr, v: sc.Expr) -> sc.Expr:
     return sc.jvp(chain(x), x, v)
 
 data = (np.linspace(0.1, 0.6, 6), np.arange(1.0, 7.0))
-np.testing.assert_allclose(via_matrix(data), via_product(data))
+np.testing.assert_allclose(via_matrix(*data), via_product(*data))
 ```
 
 Both compute \(J(x)v\). The second requests a Jacobian-vector product directly,

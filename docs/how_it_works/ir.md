@@ -102,9 +102,8 @@ A symbolic call to a `Function` adds one `call` node, and `sc.vmap` adds one
 the last state goes through a terminal cost:
 
 ```python
-@sc.function(sc.group(sc.arg("z", 2), sc.arg("u", 1)), outputs=sc.arg("znext", ...))
-def model(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u = inputs
+@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext", ...))
+def model(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u])
 
 
@@ -113,10 +112,9 @@ def terminal(z: sc.Expr) -> sc.Expr:
     return sc.sumsqr(z)
 
 
-@sc.function(sc.group(sc.arg("zs", 20), sc.arg("us", 10)), outputs=sc.arg("J", ...))
-def stages(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    zs, us = inputs
-    znexts = sc.vmap(model, 10)((zs, us)).vec()
+@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("J", ...))
+def stages(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
+    znexts = sc.vmap(model, 10)(zs, us).vec()
     return terminal(znexts[18:])
 
 

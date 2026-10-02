@@ -21,26 +21,26 @@ f(x,t)=\lVert x-t\rVert^2, \qquad
 \nabla_x^2 f(x,t)=2I.
 \]
 
-The declarations below name the output `cost` and the target input `target`:
+The declarations below name the output `cost` and the inputs `x` and `target`:
 
 ```python
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.group(sc.arg("x", 2), sc.arg("target", 2)), outputs=sc.arg("cost", ...))
-def tracking_cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, target = inputs
+@sc.function(sc.arg("x", 2), sc.arg("target", 2), outputs=sc.arg("cost", ...))
+def tracking_cost(x: sc.Expr, target: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x - target)
 
 grad = sc.gradient(tracking_cost, "cost", "x")
 hess = sc.hessian(tracking_cost, "cost", "x")
 data = (np.array([3.0, 5.0]), np.array([1.0, 2.0]))
-print(grad(data))  # [4. 6.]
-print(hess(data))  # [[2. 0.]
+print(grad(*data))  # [4. 6.]
+print(hess(*data))  # [[2. 0.]
                    #  [0. 2.]]
 ```
 
-The names `"cost"` and `"x"` select the declared output and input. The gradient
+The `of` and `wrt` arguments, here `"cost"` and `"x"`, select the declared output
+and input. The gradient
 is taken with respect to `x`, holding `target` fixed. Both derivative functions
 still take `(x, target)`, because their calculations may need both values.
 

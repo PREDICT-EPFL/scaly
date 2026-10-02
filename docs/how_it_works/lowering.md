@@ -14,9 +14,8 @@ result and a loop that fills it. For this function
 ```python
 import scaly as sc
 
-@sc.function(sc.group(sc.arg("x", 8), sc.arg("y", 8)), outputs=sc.arg("out", ...))
-def f(inputs):
-    x, y = inputs
+@sc.function(sc.arg("x", 8), sc.arg("y", 8), outputs=sc.arg("out", ...))
+def f(x: sc.Expr, y: sc.Expr):
     return (x.sin() + y) * y
 ```
 
@@ -164,15 +163,13 @@ weight matrix. The stage function cannot know that, so each call recomputes
 everything derived from it:
 
 ```python
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("w", 9)), outputs=sc.arg("y", ...))
-def stage(inputs):
-    x, w = inputs
+@sc.function(sc.arg("x", 3), sc.arg("w", 9), outputs=sc.arg("y", ...))
+def stage(x: sc.Expr, w: sc.Expr):
     return (w.reshape((3, 3)).exp() @ x).sin()
 
-@sc.function(sc.group(sc.arg("xs", 15), sc.arg("w", 9)), outputs=sc.arg("ys", ...))
-def horizon(inputs):
-    xs, w = inputs
-    return sc.vmap(stage, 5)((xs, w)).vec()
+@sc.function(sc.arg("xs", 15), sc.arg("w", 9), outputs=sc.arg("ys", ...))
+def horizon(xs: sc.Expr, w: sc.Expr):
+    return sc.vmap(stage, 5)(xs, w).vec()
 ```
 
 Here `w` has one chunk, so `vmap` passes the same nine values to all five
@@ -252,9 +249,8 @@ produced value more than once[^halide]. Broadcasting is the common case. Here
 three sines feed twelve products:
 
 ```python
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", (4, 3))), outputs=sc.arg("out", ...))
-def f(inputs):
-    x, y = inputs
+@sc.function(sc.arg("x", 3), sc.arg("y", (4, 3)), outputs=sc.arg("out", ...))
+def f(x: sc.Expr, y: sc.Expr):
     return x.sin() * y
 ```
 
@@ -400,9 +396,8 @@ overlap. In this function, the product `A @ B` is dead once its sum is taken,
 before `B @ A` is computed:
 
 ```python
-@sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out", ...))
-def f(inputs):
-    A, B = inputs
+@sc.function(sc.arg("A", (40, 40)), sc.arg("B", (40, 40)), outputs=sc.arg("out", ...))
+def f(A: sc.Expr, B: sc.Expr):
     return (A @ B).sum() + (B @ A).sum()
 ```
 

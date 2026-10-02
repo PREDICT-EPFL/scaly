@@ -16,8 +16,8 @@ import scaly as sc
 from scaly.utils import load_torch_state_dict
 
 type StageFunction = sc.Function[
-  tuple[tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]],
-  tuple[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
   sc.Expr,
   np.ndarray,
 ]
@@ -28,20 +28,20 @@ type StageJacFunction = sc.Function[
   tuple[np.ndarray, np.ndarray, np.ndarray],
 ]
 type StageCostFunction = sc.Function[
-  tuple[tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]],
-  tuple[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
   sc.Expr,
   np.ndarray,
 ]
 type NpmpcFunction = sc.Function[
-  tuple[tuple[sc.Expr, sc.Expr]],
-  tuple[tuple[np.ndarray, np.ndarray]],
+  tuple[sc.Expr, sc.Expr],
+  tuple[np.ndarray, np.ndarray],
   sc.Expr,
   np.ndarray,
 ]
 type NpmpcLagFunction = sc.Function[
-  tuple[tuple[sc.Expr, sc.Expr]],
-  tuple[tuple[np.ndarray, np.ndarray]],
+  tuple[sc.Expr, sc.Expr],
+  tuple[np.ndarray, np.ndarray],
   tuple[sc.Expr, sc.Expr],
   tuple[np.ndarray, np.ndarray],
 ]
@@ -309,9 +309,8 @@ def load_reference_episode(path: str | Path = DEFAULT_EPISODE_PATH) -> dict[str,
     return {key: np.asarray(stored[key]) for key in stored.files}
 
 
-# The decoder architecture changes the packed parameter-vector shape, so this remains a builder
-# until FunctionTemplate can own its shape-specialized instances. For this benchmark, the vector
-# length identifies the architecture even though that is not true for arbitrary layer layouts.
+# Decoder layer layouts fix reshapes and packed parameter slices, so cache one fully declared
+# function per architecture.
 @functools.cache
 def stage_function(decoder: Decoder = Decoder()) -> StageFunction:
   """The dynamics residual of one horizon stage: `x + f(x, u) - xnext`, with the weights read out of the parameter tail."""
@@ -319,12 +318,15 @@ def stage_function(decoder: Decoder = Decoder()) -> StageFunction:
   name = "npmpc_stage_h" + "x".join(str(h) for h in decoder.hidden)
 
   @sc.function(
-    sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU), sc.arg("pw", decoder.n_pw), sc.arg("dt", ())),
+    sc.arg("x", NX),
+    sc.arg("xnext", NX),
+    sc.arg("u", NU),
+    sc.arg("pw", decoder.n_pw),
+    sc.arg("dt", ()),
     outputs=sc.arg("eq", NX),
     name=name,
   )
-  def stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    x, xnext, u, pw, dt = inputs
+  def stage(x: sc.Expr, xnext: sc.Expr, u: sc.Expr, pw: sc.Expr, dt: sc.Expr) -> sc.Expr:
     feat = sc.stack([x[0].sin(), x[0].cos(), x[2], x[3], u[0]]) * pw[decoder.slice("x_scale_w")] + pw[decoder.slice("x_scale_b")]
     h = sc.concat([feat, pw[decoder.slice("latent")]])
     for i, shape in enumerate(shapes[:-1]):
@@ -347,17 +349,14 @@ def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcFuncti
   """
   pw_slice, dt_slice, _, _ = _param_slices(decoder)
 
-  @sc.function(sc.group(sc.arg("z", n_dec(horizon)), sc.arg("p", n_param(decoder))), outputs=sc.arg("eq", NX * horizon), name=f"npmpc_eq_N{horizon}")
-  def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p = inputs
+  @sc.function(sc.arg("z", n_dec(horizon)), sc.arg("p", n_param(decoder)), outputs=sc.arg("eq", NX * horizon), name=f"npmpc_eq_N{horizon}")
+  def equality(z: sc.Expr, p: sc.Expr) -> sc.Expr:
     return sc.vmap(stage_function(decoder), horizon)(
-      (
-        sc.window(z, 0, NX),
-        sc.window(z, NX, NX),
-        sc.window(z, NX * (horizon + 1), NU),
-        sc.broadcast(p[pw_slice]),
-        sc.broadcast(p[dt_slice].reshape(())),
-      )
+      sc.window(z, 0, NX),
+      sc.window(z, NX, NX),
+      sc.window(z, NX * (horizon + 1), NU),
+      sc.broadcast(p[pw_slice]),
+      sc.broadcast(p[dt_slice].reshape(())),
     ).vec()
 
   return equality
@@ -509,18 +508,20 @@ def riccati_residual(P: np.ndarray, A: np.ndarray, B: np.ndarray, weights: CostW
 
 
 @sc.function(
-  sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU), sc.arg("cost_weights", N_COST_WEIGHTS)),
+  sc.arg("x", NX),
+  sc.arg("xnext", NX),
+  sc.arg("u", NU),
+  sc.arg("cost_weights", N_COST_WEIGHTS),
   outputs=sc.arg("cost", ()),
   name="npmpc_stage_cost",
 )
-def stage_cost_function(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
+def stage_cost_function(x: sc.Expr, xnext: sc.Expr, u: sc.Expr, weights: sc.Expr) -> sc.Expr:
   """One horizon stage of the objective with runtime cost coefficients.
 
   Scanned over the horizon by `npmpc_cost_expr`, so the objective's generated source stays constant
   in the horizon exactly as the dynamics' does. Building it as a Python loop instead unrolls it,
   which grows the source linearly with the horizon.
   """
-  x, xnext, u, weights = inputs
   dx = xnext - x
   # The pendulum angle uses the 2*pi-periodic half-angle lift, so every upright pose costs the
   # same: (2 sin(theta/2))^2 = 2 (1 - cos theta).
@@ -539,14 +540,7 @@ def npmpc_cost_expr(z: sc.Expr, horizon: int, P: sc.Expr, weights: sc.Expr) -> s
   the loop.
   """
   offset = NX * (horizon + 1)
-  stages = sc.vmap(stage_cost_function, horizon)(
-    (
-      sc.window(z, 0, NX),
-      sc.window(z, NX, NX),
-      sc.window(z, offset, NU),
-      sc.broadcast(weights),
-    )
-  ).vec()
+  stages = sc.vmap(stage_cost_function, horizon)(sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, offset, NU), sc.broadcast(weights)).vec()
   xN = z[NX * horizon : NX * (horizon + 1)]
   e_end = sc.stack([2.0 * (xN[0] / 2.0).sin(), xN[1], xN[2], xN[3]])
   terminal = sc.dot(e_end, P.reshape((NX, NX)) @ e_end)
@@ -653,13 +647,11 @@ def npmpc_nlp(
   @sc.problem(vars=sc.arg("z", n_dec(horizon)), params=sc.arg("p", n_param(decoder)), name=problem_name)
   def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     eq = sc.vmap(stage_function(decoder), horizon)(
-      (
-        sc.window(z, 0, NX),
-        sc.window(z, NX, NX),
-        sc.window(z, NX * (horizon + 1), NU),
-        sc.broadcast(p[pw_slice]),
-        sc.broadcast(p[dt_slice].reshape(())),
-      )
+      sc.window(z, 0, NX),
+      sc.window(z, NX, NX),
+      sc.window(z, NX * (horizon + 1), NU),
+      sc.broadcast(p[pw_slice]),
+      sc.broadcast(p[dt_slice].reshape(())),
     ).vec()
     rows, l_ineq, u_ineq = npmpc_constraint_exprs(z, p[:NX], horizon)
     return sc.ProblemSpec(
@@ -686,20 +678,18 @@ def npmpc_lag_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcLagFu
   pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
 
   @sc.function(
-    sc.group(sc.arg("z", n_dec(horizon)), sc.arg("p", n_param(decoder))),
+    sc.arg("z", n_dec(horizon)),
+    sc.arg("p", n_param(decoder)),
     outputs=sc.group(sc.arg("cost", ()), sc.arg("eq", NX * horizon)),
     name=f"npmpc_lag_N{horizon}",
   )
-  def lagrangian_inputs(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    z, p = inputs
+  def lagrangian_inputs(z: sc.Expr, p: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     eq = sc.vmap(stage_function(decoder), horizon)(
-      (
-        sc.window(z, 0, NX),
-        sc.window(z, NX, NX),
-        sc.window(z, NX * (horizon + 1), NU),
-        sc.broadcast(p[pw_slice]),
-        sc.broadcast(p[dt_slice].reshape(())),
-      )
+      sc.window(z, 0, NX),
+      sc.window(z, NX, NX),
+      sc.window(z, NX * (horizon + 1), NU),
+      sc.broadcast(p[pw_slice]),
+      sc.broadcast(p[dt_slice].reshape(())),
     ).vec()
     return npmpc_cost_expr(z, horizon, p[P_slice], p[cost_slice]), eq
 

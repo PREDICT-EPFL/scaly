@@ -56,7 +56,7 @@ def check_dims_and_rk4() -> None:
   for n_masses in (3, 5):
     x = initial_state(n_masses) + rng.normal(scale=0.02, size=n_state(n_masses))
     u = rng.normal(scale=0.1, size=NU)
-    actual = chain_step_fn(n_masses)((x, u, *[np.array([value]) for value in params.array()]))
+    actual = chain_step_fn(n_masses)(x, u, *[np.array([value]) for value in params.array()])
     np.testing.assert_allclose(actual, rk4_step_np(x, u, params), rtol=1e-10, atol=1e-10)
 
 
@@ -222,9 +222,7 @@ def check_sqp_matches_ipopt() -> None:
     du = float(np.max(np.abs(ipopt_run.controls[k] - sqp_run.controls[k])))
     dplan = float(np.max(np.abs(ipopt_run.plans[k] - sqp_run.plans[k])))
     obj_i, obj_s = ipopt_run.telemetry[k].obj, sqp_run.telemetry[k].obj
-    viol_i, viol_s = (
-      float(np.max(np.abs(np.asarray(eq_fn((run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"])))))) for run in (ipopt_run, sqp_run)
-    )
+    viol_i, viol_s = (float(np.max(np.abs(np.asarray(eq_fn(run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"]))))) for run in (ipopt_run, sqp_run))
     assert du <= 3e-4 and dplan <= 3e-4 and abs(obj_i - obj_s) <= 1e-6 * (1.0 + abs(obj_i)) and max(viol_i, viol_s) <= 1e-6, (
       f"SQP first diverges from IPOPT at step {k}: |du|={du:.3e} |dplan|={dplan:.3e} |dobj|={abs(obj_i - obj_s):.3e}; "
       f"ipopt: status={ipopt_run.telemetry[k].status.name} obj={obj_i:.6e} eq_violation={viol_i:.3e}; "
@@ -308,31 +306,24 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   stage = _eq_stage_fn(n_masses)
 
   @sc.function(
-    sc.group(sc.arg("z", nz), sc.arg("xnext", nx), sc.arg("params", sc.TensorType((N_PARAMS,), diff=False))),
+    sc.arg("z", nz),
+    sc.arg("xnext", nx),
+    sc.arg("params", sc.TensorType((N_PARAMS,), diff=False)),
     outputs=sc.arg("eq", nx),
     name=f"{stage.name}_hinted",
   )
-  def hinted(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    return stage(inputs).scalar()
+  def hinted(z: sc.Expr, xnext: sc.Expr, params: sc.Expr) -> sc.Expr:
+    return stage(z, xnext, params).scalar()
 
   @sc.function(
-    sc.group(
-      sc.arg("z", n_dec(n_masses, HORIZON)),
-      sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
-      sc.arg("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
-    ),
+    sc.arg("z", n_dec(n_masses, HORIZON)),
+    sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
+    sc.arg("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
     outputs=sc.arg("h", ...),
     name="chain_hess_hinted",
   )
-  def hessian_values(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p, lam = inputs
-    mapped = sc.vmap(hinted, HORIZON)(
-      (
-        sc.window(z, 0, nz),
-        sc.window(z, nz, nz),
-        sc.window(p, nx, 0),
-      )
-    ).vec()
+  def hessian_values(z: sc.Expr, p: sc.Expr, lam: sc.Expr) -> sc.Expr:
+    mapped = sc.vmap(hinted, HORIZON)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
     eq = sc.concat([z[:nx] - p[:nx], mapped])
     return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
 

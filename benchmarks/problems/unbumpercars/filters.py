@@ -495,12 +495,14 @@ def _world_vel_expr(state: sc.Expr, physics: sc.Expr) -> tuple[sc.Expr, sc.Expr,
 
 
 @sc.function(
-  sc.group(sc.arg("state", NSTATE), sc.arg("u", NCTRL), sc.arg("pw", N_PW), sc.arg("physics", N_PHYSICS)),
+  sc.arg("state", NSTATE),
+  sc.arg("u", NCTRL),
+  sc.arg("pw", N_PW),
+  sc.arg("physics", N_PHYSICS),
   outputs=sc.arg("xdot", NSTATE),
   name="ctdt_ctfull_ode",
 )
-def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  state, u, pw, physics = inputs
+def scaly_ctfull_ode_fn(state: sc.Expr, u: sc.Expr, pw: sc.Expr, physics: sc.Expr) -> sc.Expr:
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
@@ -514,17 +516,20 @@ def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc
 
 
 @sc.function(
-  sc.group(sc.arg("state", NSTATE), sc.arg("u", NCTRL), sc.arg("pw", N_PW), sc.arg("physics", N_PHYSICS), sc.arg("dt", 1)),
+  sc.arg("state", NSTATE),
+  sc.arg("u", NCTRL),
+  sc.arg("pw", N_PW),
+  sc.arg("physics", N_PHYSICS),
+  sc.arg("dt", 1),
   outputs=sc.arg("next", NSTATE),
   name="ctdt_ctfull_rk4",
 )
-def scaly_ctfull_rk4_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  state, u, pw, physics, dt = inputs
+def scaly_ctfull_rk4_fn(state: sc.Expr, u: sc.Expr, pw: sc.Expr, physics: sc.Expr, dt: sc.Expr) -> sc.Expr:
   h = dt[0]
-  k1 = scaly_ctfull_ode_fn((state, u, pw, physics))
-  k2 = scaly_ctfull_ode_fn((state + 0.5 * h * k1, u, pw, physics))
-  k3 = scaly_ctfull_ode_fn((state + 0.5 * h * k2, u, pw, physics))
-  k4 = scaly_ctfull_ode_fn((state + h * k3, u, pw, physics))
+  k1 = scaly_ctfull_ode_fn(state, u, pw, physics)
+  k2 = scaly_ctfull_ode_fn(state + 0.5 * h * k1, u, pw, physics)
+  k3 = scaly_ctfull_ode_fn(state + 0.5 * h * k2, u, pw, physics)
+  k4 = scaly_ctfull_ode_fn(state + h * k3, u, pw, physics)
   return state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
@@ -544,29 +549,31 @@ def _unpack_pw_dt_expr(pw: sc.Expr) -> tuple[sc.Expr, ...]:
   )
 
 
-@sc.function(sc.group(sc.arg("state", NSTATE), sc.arg("physics", N_PHYSICS)), outputs=sc.arg("posedot", NSTATE), name="ctdt_pose_dot")
-def scaly_pose_dot_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  state, physics = inputs
+@sc.function(sc.arg("state", NSTATE), sc.arg("physics", N_PHYSICS), outputs=sc.arg("posedot", NSTATE), name="ctdt_pose_dot")
+def scaly_pose_dot_fn(state: sc.Expr, physics: sc.Expr) -> sc.Expr:
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   zero = 0.0 * state[3]
   return sc.stack([x_dot, y_dot, omega, zero, zero, zero, zero])
 
 
 @sc.function(
-  sc.group(sc.arg("state", NSTATE), sc.arg("u", NCTRL), sc.arg("pw", N_PW_DT), sc.arg("physics", N_PHYSICS), sc.arg("dt", 1)),
+  sc.arg("state", NSTATE),
+  sc.arg("u", NCTRL),
+  sc.arg("pw", N_PW_DT),
+  sc.arg("physics", N_PHYSICS),
+  sc.arg("dt", 1),
   outputs=sc.arg("next", NSTATE),
   name="ctdt_dt_mlp_step",
 )
-def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
+def scaly_dt_mlp_step_fn(state: sc.Expr, u: sc.Expr, pw: sc.Expr, physics: sc.Expr, dt: sc.Expr) -> sc.Expr:
   """The discrete MLP's one-step map; see ``common.dt_mlp_step_smooth_np``."""
-  state, u, pw, physics, dt = inputs
   h_dt = dt[0]
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
-  k1 = scaly_pose_dot_fn((state, physics))
-  k2 = scaly_pose_dot_fn((state + 0.5 * h_dt * k1, physics))
-  k3 = scaly_pose_dot_fn((state + 0.5 * h_dt * k2, physics))
-  k4 = scaly_pose_dot_fn((state + h_dt * k3, physics))
+  k1 = scaly_pose_dot_fn(state, physics)
+  k2 = scaly_pose_dot_fn(state + 0.5 * h_dt * k1, physics)
+  k3 = scaly_pose_dot_fn(state + 0.5 * h_dt * k2, physics)
+  k4 = scaly_pose_dot_fn(state + h_dt * k3, physics)
   pose = state + (h_dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_dt_expr(pw)
   phi = sc.concat([sc.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, sc.stack([u[1], u[0]])])
@@ -587,19 +594,17 @@ def build_scaly_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> sc
     return sc.TensorType((size,), diff=False)
 
   @sc.function(
-    sc.group(
-      sc.arg("z", n_u + n_s),
-      sc.arg("bar_x", constant(NSTATE * ncars)),
-      sc.arg("u_des", constant(n_u)),
-      sc.arg("pw", constant(filter_n_pw(filt_cfg))),
-      sc.arg("physics", constant(N_PHYSICS)),
-      sc.arg("dt", constant(1)),
-    ),
+    sc.arg("z", n_u + n_s),
+    sc.arg("bar_x", constant(NSTATE * ncars)),
+    sc.arg("u_des", constant(n_u)),
+    sc.arg("pw", constant(filter_n_pw(filt_cfg))),
+    sc.arg("physics", constant(N_PHYSICS)),
+    sc.arg("dt", constant(1)),
     outputs=sc.group(sc.arg("cost", ()), sc.arg("g", n_s)),
     name=f"ctdt_scaly_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
   )
-  def oracle(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    return _scaly_oracle_outputs(inputs, loop_cfg, filt_cfg)
+  def oracle(z: sc.Expr, bar_x: sc.Expr, u_des: sc.Expr, pw: sc.Expr, physics: sc.Expr, dt: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return _scaly_oracle_outputs((z, bar_x, u_des, pw, physics, dt), loop_cfg, filt_cfg)
 
   return oracle
 
@@ -615,15 +620,7 @@ def _scaly_oracle_outputs(
   u = z[:n_u]
   slack = z[n_u:]
   step_fn = scaly_dt_mlp_step_fn if filt_cfg.model == "dt" else scaly_ctfull_rk4_fn
-  states_next = sc.vmap(step_fn, ncars)(
-    (
-      bar_x,
-      u,
-      sc.broadcast(pw),
-      sc.broadcast(physics),
-      sc.broadcast(dt),
-    )
-  ).vec()
+  states_next = sc.vmap(step_fn, ncars)(bar_x, u, sc.broadcast(pw), sc.broadcast(physics), sc.broadcast(dt)).vec()
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
   def pair_b(xi: sc.Expr, xj: sc.Expr, physics: sc.Expr) -> sc.Expr:
@@ -659,21 +656,25 @@ def _scaly_oracle_outputs(
     return sc.stack(out)
 
   @sc.function(
-    sc.group(sc.arg("xi", NSTATE), sc.arg("xj", NSTATE), sc.arg("xi_next", NSTATE), sc.arg("xj_next", NSTATE), sc.arg("physics", N_PHYSICS)),
+    sc.arg("xi", NSTATE),
+    sc.arg("xj", NSTATE),
+    sc.arg("xi_next", NSTATE),
+    sc.arg("xj_next", NSTATE),
+    sc.arg("physics", N_PHYSICS),
     outputs=sc.arg("g", 1),
     name="pair_hcbf",
   )
-  def pair_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    xi, xj, xi_next, xj_next, physics = inputs
+  def pair_hcbf(xi: sc.Expr, xj: sc.Expr, xi_next: sc.Expr, xj_next: sc.Expr, physics: sc.Expr) -> sc.Expr:
     return sc.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
 
   @sc.function(
-    sc.group(sc.arg("state", NSTATE), sc.arg("state_next", NSTATE), sc.arg("physics", N_PHYSICS)),
+    sc.arg("state", NSTATE),
+    sc.arg("state_next", NSTATE),
+    sc.arg("physics", N_PHYSICS),
     outputs=sc.arg("g", 4),
     name="wall_hcbf",
   )
-  def wall_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    state, state_next, physics = inputs
+  def wall_hcbf(state: sc.Expr, state_next: sc.Expr, physics: sc.Expr) -> sc.Expr:
     return wall_b(state_next, physics) - (1.0 - loop_cfg.wall_gamma) * wall_b(state, physics)
 
   rows: list[sc.Expr] = []
@@ -682,25 +683,11 @@ def _scaly_oracle_outputs(
     idx_i, idx_j = [np.concatenate([np.arange(NSTATE) + k * NSTATE for k in bodies]) for bodies in pairs]
     rows.append(
       sc.vmap(pair_hcbf, loop_cfg.n_pairs)(
-        (
-          sc.gather(bar_x, idx_i),
-          sc.gather(bar_x, idx_j),
-          sc.gather(states_next, idx_i),
-          sc.gather(states_next, idx_j),
-          sc.broadcast(physics),
-        )
+        sc.gather(bar_x, idx_i), sc.gather(bar_x, idx_j), sc.gather(states_next, idx_i), sc.gather(states_next, idx_j), sc.broadcast(physics)
       ).vec()
     )
   if loop_cfg.arena_avoidance:
-    rows.append(
-      sc.vmap(wall_hcbf, ncars)(
-        (
-          bar_x,
-          states_next,
-          sc.broadcast(physics),
-        )
-      ).vec()
-    )
+    rows.append(sc.vmap(wall_hcbf, ncars)(bar_x, states_next, sc.broadcast(physics)).vec())
   g = (sc.concat(rows) + slack) if rows else sc.const(np.zeros((0,)))
   assert g.shape == (n_s,)
   diff = u - u_des
@@ -887,10 +874,7 @@ class ScalyDTCBFSafetyFilter:
       else:
         z_sol, box_sol = variables, box
       evaluator = getattr(active_nlp.function, "_benchmark_base")
-      if isinstance(evaluator, sc.Function):
-        _, constraints = evaluator.numerical_call((z_sol, *params))
-      else:
-        _, constraints = evaluator(z_sol, *params)
+      _, constraints = evaluator(z_sol, *params)
       return {
         "x": np.asarray(z_sol),
         "g_ineq": np.asarray(constraints).reshape(-1),

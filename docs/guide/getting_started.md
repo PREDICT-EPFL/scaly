@@ -60,24 +60,22 @@ The `@sc.function` decorator constructs one by running a Python body with
 symbolic inputs:
 
 ```python
-@sc.function(sc.group(sc.arg("z", 2), sc.arg("u", 1)), outputs=sc.arg("znext", ...))
-def model(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u = inputs
+@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext", ...))
+def model(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u])
 ```
 
-`arg` declares one named array, and `group`
-combines leaves or other groups into a tree of inputs or outputs. Here, the
-input group is a tuple containing `z` and `u`. The output is one leaf named
-`znext`, whose shape is inferred from the returned expression because its
-declaration uses `...`.
+`sc.arg` declares one named array. Here, each Python parameter has its own
+argument declaration. The output is named `znext`, whose shape is inferred
+from the returned expression because its declaration uses `...`. Use `sc.group`
+to combine arguments into a tuple when a parameter or output has several parts.
 
 The decorator creates the symbols, runs the body once, and records the returned
 expression. After decoration, `model` is an `sc.Function` object, rather than
 the original Python function. It remains callable:
 
 ```python
-z1 = model((np.array([1.0, 2.0]), np.array([0.5])))
+z1 = model(np.array([1.0, 2.0]), np.array([0.5]))
 print(z1)
 # [1.2  2.05]
 ```
@@ -87,18 +85,18 @@ generates and compiles C. Subsequent calls reuse the compiled code. The Python
 body does not run again. A call with symbolic expressions instead includes
 the function in a larger graph, as the trajectory example below demonstrates.
 
-The input tree determines the call structure: `sc.group` introduces a tuple,
+The input tree determines the call structure. `sc.group` introduces a tuple,
 whereas a single `sc.arg` takes or returns an array directly. Shape `()` denotes
 a scalar, and shape `(1,)` denotes a one-element vector. These are distinct.
 The [functions guide](functions.md) covers nested groups and other declarations.
 
 ### Body annotations and call types
 
-The decorator defines runtime behavior and the symbolic and numerical call types. Body annotations
-let a checker verify agreement with that declaration and check operations inside the body. They do
-not change evaluation. For example, `inputs: tuple[sc.Expr, sc.Expr]` lets the checker know the types
-of `z` and `u` after unpacking. See [Function authoring levels](functions.md#function-authoring-levels)
-for complete declarations, inferred outputs, shape templates, and bare helpers.
+The `sc.Expr` annotations let a type checker verify operations on `z` and `u`
+inside the body, and verify their agreement with the decorator. The decorator
+defines runtime behavior and the types of symbolic and numerical calls.
+See [Function authoring levels](functions.md#function-authoring-levels) for
+complete declarations, inferred outputs, shape templates, and bare helpers.
 
 ## Derivatives are Functions too
 
@@ -113,7 +111,7 @@ For the model above,
 
 ```python
 model_jac = sc.jacobian(model, "znext", "z")
-print(model_jac((np.array([1.0, 2.0]), np.array([0.5]))))
+print(model_jac(np.array([1.0, 2.0]), np.array([0.5])))
 # [[1.  0.1]
 #  [0.  1. ]]
 ```
@@ -146,28 +144,27 @@ N = 20
 
 
 @sc.function(
-    sc.group(sc.arg("z0", 2), sc.arg("us", N)),
+    sc.arg("z0", 2), sc.arg("us", N),
     outputs=sc.group(sc.arg("zN", ...), sc.arg("cost", ...)),
 )
-def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    z, us = inputs
+def rollout(z: sc.Expr, us: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     cost = sc.const(0.0)
     for k in range(N):
         u = us[k : k + 1]
         cost = cost + sc.sumsqr(z) + 0.1 * sc.sumsqr(u)
-        z = model((z, u))
+        z = model(z, u)
     return z, cost + 10.0 * sc.sumsqr(z)
 
 
 z0 = np.array([1.0, 0.0])
 us0 = np.zeros(N)
-zN, cost = rollout((z0, us0))
+zN, cost = rollout(z0, us0)
 print(zN, float(cost))
 # [1. 0.] 30.0
 ```
 
 `sc.const(0.0)` creates a constant expression, and `sc.sumsqr(z)` expresses
-\(\lVert z\rVert^2\). The symbolic call `model((z, u))` records a call to the
+\(\lVert z\rVert^2\). The symbolic call `model(z, u)` records a call to the
 existing `Function` inside `rollout`. The two output leaves give the numerical
 result its tuple structure.
 
@@ -200,7 +197,7 @@ terminal equality, and control bounds:
 ```python
 @sc.problem(vars=sc.arg("us", N), params=sc.arg("z0", 2))
 def control_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    zN, cost = rollout((z0, us))
+    zN, cost = rollout(z0, us)
     return sc.ProblemSpec(
         minimize=cost,
         eq=(zN,),
@@ -232,7 +229,7 @@ status = solve.stats().to_solver_status()
 print(status.name)
 assert status.ok
 
-zN_opt, cost_opt = rollout((z0, us_opt))
+zN_opt, cost_opt = rollout(z0, us_opt)
 print(np.round(zN_opt, 6))
 # Approximately [0. 0.]
 ```
@@ -294,19 +291,18 @@ Its evaluation does not depend on the result of another defect evaluation:
 
 ```python
 @sc.function(
-    sc.group(sc.arg("z", 2), sc.arg("u", 1), sc.arg("znext", 2)),
+    sc.arg("z", 2), sc.arg("u", 1), sc.arg("znext", 2),
     outputs=sc.arg("defect", ...),
 )
-def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u, znext = inputs
-    return model((z, u)) - znext
+def defect(z: sc.Expr, u: sc.Expr, znext: sc.Expr) -> sc.Expr:
+    return model(z, u) - znext
 
 
 @sc.problem(vars=sc.arg("w", 3 * N + 2), params=sc.arg("z0", 2))
 def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     states = w[: 2 * (N + 1)]
     controls = w[2 * (N + 1) :]
-    defects = sc.vmap(defect, N)((states[:-2], controls, states[2:])).vec()
+    defects = sc.vmap(defect, N)(states[:-2], controls, states[2:]).vec()
     return sc.ProblemSpec(
         minimize=sc.sumsqr(states[:-2]) + 0.1 * sc.sumsqr(controls)
                  + 10.0 * sc.sumsqr(states[-2:]),
@@ -316,8 +312,8 @@ def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
 ```
 
 `w` stacks `N + 1` two-element states followed by `N` controls. The mapped call
-passes one group matching `defect`'s parameter tree. Scaly splits the expressions into
-`N` chunks of the corresponding input size: two elements for each state and
+passes the three arguments of `defect` separately. Scaly splits each expression
+into `N` chunks of the corresponding input size: two elements for each state and
 one for each control. `states[:-2]` supplies stages `0` through `N - 1`, and
 `states[2:]` supplies stages `1` through `N`. `sc.bounded` expresses the control
 limits as inequalities within the larger decision vector.
@@ -342,7 +338,7 @@ for (int k = 0; k < N; ++k) {
 
 The mapped stage code stays one loop body as the horizon grows, including in
 its derivatives. Numerical work and storage still grow with `N`, as can
-[sparsity tables in the generated header](codegen.md#sparse-output-patterns). `vmap` cannot replace the sequential
-recurrence in `rollout`: it applies when the calls can be evaluated independently.
+[sparsity tables in the generated header](codegen.md#sparse-output-patterns). `vmap` applies when calls can be evaluated independently, so it cannot replace
+the sequential recurrence in `rollout`.
 The [functions guide](functions.md#regular-repetition-vmap) covers shared inputs
 and explicit slice mappings.

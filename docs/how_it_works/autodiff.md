@@ -186,14 +186,13 @@ diagonal and one dense row and column:
 ```python
 N = 4
 
-@sc.function(sc.group(sc.arg("x", 1), sc.arg("p", 1)), outputs=sc.arg("c", ...))
-def stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, p = inputs
+@sc.function(sc.arg("x", 1), sc.arg("p", 1), outputs=sc.arg("c", ...))
+def stage(x: sc.Expr, p: sc.Expr) -> sc.Expr:
     return (x * p).sin().sum()
 
 @sc.function(sc.arg("w", N + 1), outputs=sc.arg("cost", ...))
 def total(w: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, N)((w[:N], w[N:])).vec().sum()
+    return sc.vmap(stage, N)(w[:N], w[N:]).vec().sum()
 
 hess = sc.sparse_hessian(total, "cost", "w")
 pattern = hess.instantiate().output_sparsities[0]
@@ -301,15 +300,13 @@ values and stride one, and shares a weight `p` between all stages:
 ```python
 N = 4
 
-@sc.function(sc.group(sc.arg("zz", 2), sc.arg("p", 1)), outputs=sc.arg("c", ...))
-def link(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    zz, p = inputs
+@sc.function(sc.arg("zz", 2), sc.arg("p", 1), outputs=sc.arg("c", ...))
+def link(zz: sc.Expr, p: sc.Expr) -> sc.Expr:
     return p[0] * (zz[1] - zz[0].sin()) ** 2
 
-@sc.function(sc.group(sc.arg("z", N + 1), sc.arg("p", 1)), outputs=sc.arg("cost", ...))
-def chain(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p = inputs
-    return sc.vmap(link, N)((sc.window(z, 0, 1), p)).vec().sum()
+@sc.function(sc.arg("z", N + 1), sc.arg("p", 1), outputs=sc.arg("cost", ...))
+def chain(z: sc.Expr, p: sc.Expr) -> sc.Expr:
+    return sc.vmap(link, N)(sc.window(z, 0, 1), p).vec().sum()
 ```
 
 The windows over `z` overlap:

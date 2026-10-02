@@ -74,7 +74,7 @@ def check_oracle_matches_casadi() -> None:
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
 
-    cost_al, g_al = oracle((z, bar_x, u_des, weights.packed, physics, dt))
+    cost_al, g_al = oracle(z, bar_x, u_des, weights.packed, physics, dt)
     np.testing.assert_allclose(np.asarray(cost_al).reshape(-1), np.asarray(ca_filt.cost_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(np.asarray(g_al).reshape(-1), np.asarray(ca_filt.g_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
     assert np.asarray(g_al).size == loop_cfg.n_slack
@@ -166,7 +166,7 @@ def check_parameter_tail_order() -> None:
   u = rng.uniform(-0.8, 0.8, (2, 2))
   slack = rng.uniform(0.01, 0.05, loop_cfg.n_slack)
   z = np.concatenate([u.reshape(-1), slack])
-  _, g_al = oracle((z, states.reshape(-1), np.zeros(4), weights.packed, physics.array(), np.array([loop_cfg.dt])))
+  _, g_al = oracle(z, states.reshape(-1), np.zeros(4), weights.packed, physics.array(), np.array([loop_cfg.dt]))
 
   # rk4_step_np's theta wrap is a no-op here: the barriers read theta only through
   # sin/cos, and the wall rows through pose and world velocity.
@@ -326,7 +326,7 @@ def check_dt_filter_model_matches_numpy() -> None:
     u = rng.uniform(-1.0, 1.0, 2)
     want = dt_mlp_step_smooth_np(state, u, loop_cfg.dt, weights, physics)
     got_ca = np.asarray(ca_step(state, u, pw, ph, loop_cfg.dt), dtype=np.float64).reshape(-1)
-    got_al = np.asarray(scaly_dt_mlp_step_fn((state, u, pw, ph, np.array([loop_cfg.dt]))), dtype=np.float64).reshape(-1)
+    got_al = np.asarray(scaly_dt_mlp_step_fn(state, u, pw, ph, np.array([loop_cfg.dt])), dtype=np.float64).reshape(-1)
     np.testing.assert_allclose(got_ca, want, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(got_al, want, rtol=1e-10, atol=1e-10)
     # The smoothing is an approximation of the plant, not a rewrite of it. Its pose rows are the

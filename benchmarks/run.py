@@ -68,9 +68,8 @@ SAFETY_MARGIN, ALPHA = 0.5, 1.0
 def _qp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @sc.function(sc.group(sc.arg("x", (NX,)), sc.arg("u_ref", (NU,))), outputs=sc.arg("u", NU), name="smoke_safety_filter_qp")
-  def safety_filter_qp(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, u_ref = inputs
+  @sc.function(sc.arg("x", (NX,)), sc.arg("u_ref", (NU,)), outputs=sc.arg("u", NU), name="smoke_safety_filter_qp")
+  def safety_filter_qp(x: sc.Expr, u_ref: sc.Expr) -> sc.Expr:
     cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
     rows, bias = [], []
     for car in range(2):
@@ -97,9 +96,8 @@ def _qp_filter() -> sc.Function:
 def _nlp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @sc.function(sc.group(sc.arg("x", (NX,)), sc.arg("u_ref", (NU,))), outputs=sc.arg("u", NU), name="smoke_safety_filter_nlp")
-  def safety_filter_nlp(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, u_ref = inputs
+  @sc.function(sc.arg("x", (NX,)), sc.arg("u_ref", (NU,)), outputs=sc.arg("u", NU), name="smoke_safety_filter_nlp")
+  def safety_filter_nlp(x: sc.Expr, u_ref: sc.Expr) -> sc.Expr:
     cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
 
     @sc.problem(vars=sc.arg("u", (NU,)), name="smoke_safety_filter_problem")
