@@ -11,7 +11,7 @@ their call graph; ``codegen/aot.py`` orchestrates the solver-bearing case, reusi
 There is **no silent fallback**: a function outside the lowered subset raises
 ``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
 (``passes/program/pack_workspace.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
-Scalar/statement emission uses compact per-op maps — the lowerer (``passes/lowering.py``)
+Scalar/statement emission uses compact per-op maps — the lowerer (``passes/lowering/``)
 holds the extensible ``ExprOp``-keyed registry.
 """
 
@@ -282,7 +282,7 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
   elif stmt.op == ProgramOp.STORE_PAIR:
     view = stmt.args[0]
     ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
-    index = _emit_scalar(view.args[0], ptr_expr) if view.args else "0"
+    index = _emit_scalar(view.args[0], ptr_expr)
     if dialect == "c":
       for offset, value in enumerate(stmt.args[1:]):
         _emit_assignment(f"{ptr}[({index}) + {offset}]", [value], ptr_expr, lines, indent)
@@ -323,7 +323,7 @@ def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
     return ptr_expr.get(node.attrs["name"], c_ident(node.attrs["name"]))
   if node.op == ProgramOp.VIEW:
     ptr = ptr_expr.get(node.attrs["buffer"], c_ident(node.attrs["buffer"]))
-    idx = _emit_scalar(node.args[0], ptr_expr) if node.args else "0"
+    idx = _emit_scalar(node.args[0], ptr_expr)
     return ptr if idx == "0" else f"({ptr} + {idx})"
   raise LoweringError(f"unsupported CALL arg op {node.op}")
 
@@ -332,9 +332,7 @@ def _emit_view(view: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, 
   if view.op != ProgramOp.VIEW:
     raise LoweringError(f"expected a VIEW, got {view.op}")
   ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
-  if len(view.args) > 1:
-    raise LoweringError("multi-index VIEW rendering is not implemented yet (lands with SLICE/MATMUL)")
-  idx = _emit_scalar(view.args[0], ptr_expr, var_expr) if view.args else "0"
+  idx = _emit_scalar(view.args[0], ptr_expr, var_expr)
   return f"{ptr}[{idx}]"
 
 

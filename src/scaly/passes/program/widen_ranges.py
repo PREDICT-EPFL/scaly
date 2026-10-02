@@ -234,9 +234,9 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
       if source is None:
         continue
       buffer = source.attrs["buffer"] if source.op == ProgramOp.VIEW else source.attrs["name"]
-      offset = source.args[0] if source.op == ProgramOp.VIEW and source.args else p.const_int(0)
+      offset = source.args[0] if source.op == ProgramOp.VIEW else p.const_int(0)
       arguments[alias.attrs["name"]] = ProgramNode(
-        ProgramOp.VIEW, (p.add(offset, p.const_int(alias.attrs["alias_offset"])),), {"buffer": buffer, "rank": 1}, alias.dtype
+        ProgramOp.VIEW, (p.add(offset, p.const_int(alias.attrs["alias_offset"])),), {"buffer": buffer}, alias.dtype
       )
     statements = [n for n in statements if not (n.op == ProgramOp.BUFFER and n.attrs["name"] in arguments)]
     for node in walk_program(p.block(*statements)):
@@ -252,7 +252,7 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
         if name in arguments:
           arg = arguments[name]
           attrs["buffer"] = arg.attrs["buffer"] if arg.op == ProgramOp.VIEW else arg.attrs["name"]
-          if arg.op == ProgramOp.VIEW and arg.args:
+          if arg.op == ProgramOp.VIEW:
             args = (p.add(arg.args[0], args[0]),)
         elif name in renames:
           attrs["buffer"] = renames[name]

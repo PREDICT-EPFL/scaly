@@ -28,7 +28,14 @@ src/scaly/
     affine.py            the affine structure of a concrete index array, for table-free gathers
     arith.py             shared arithmetic identities (simplify_arith, fold_program)
     expr.py              simplify, constant folding, CSE            (Expr -> Expr)
-    lowering.py          lower_function, the per-ExprOp rule registry (Expr -> ProgramNode)
+    lowering/           expression-to-program lowering
+      ctx.py            lowering state, rule registry, flat indices, lower_function
+      elementwise.py    unary and binary arithmetic with broadcasting
+      movement.py       constants, reshapes, slices, transposes, stacks, concatenations
+      reduce.py         full tensor reductions
+      contraction.py    vector and matrix products
+      calls.py          Function calls, mapped calls, solver oracle dependencies
+      gather.py         gathers and scatters
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE and optimize_program
       _common.py         shared buffer references, loop helpers, names, and reachability
@@ -111,7 +118,7 @@ one, never a higher one.
 | 3 | `function/{model,tree}` | `Function` itself, a named graph boundary over import layer 1, and the pytree declarations. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
-| 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
+| 6 | `passes/lowering/*`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `scaly/__init__` | The public names sit above everything they re-export. |
@@ -159,8 +166,8 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 
 | To add | Touch |
 | --- | --- |
-| A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
-| A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` and a structural rule in `ad/sparsity.py` |
+| A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering/elementwise.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
+| A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering/` and a structural rule in `ad/sparsity.py` |
 | An expression rewrite | a pattern in `passes/expr.py` |
 | An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |
 | A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |
@@ -178,7 +185,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 3. Do not load an intermediate-representation class under two module paths. Each node class shares
    structurally identical nodes through its own intern table. Loading a second copy creates a second
    table and breaks the identity assumptions used by differentiation and expression reuse.
-4. Choose implementations in `passes/lowering.py`. `codegen/c.py` renders those choices as C.
+4. Choose implementations in `passes/lowering/`. `codegen/c.py` renders those choices as C.
    An optimization implemented only in the renderer cannot be inspected or reused by compiler passes.
 5. Lower once per render. The header, source, workspace size, and link flags must come from the
    same `_RenderCtx` so that all generated artifacts agree.
