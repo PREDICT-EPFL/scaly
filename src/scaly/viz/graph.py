@@ -74,7 +74,7 @@ def _program_node_topo(root: ProgramNode) -> list[ProgramNode]:
   return out
 
 
-def expr_graph(obj: ConcreteFunction | Expr | Iterable[Expr]) -> dict[str, Any]:
+def expr_graph(obj: Function | ConcreteFunction | Expr | Iterable[Expr]) -> dict[str, Any]:
   """An expression graph as JSON-serializable nodes and edges, with labels and per-op colors.
 
   Presentation for tooling. For text meant to be diffed or asserted on, use

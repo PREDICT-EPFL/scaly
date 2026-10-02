@@ -248,3 +248,136 @@ def test_cli_requires_an_explicit_template_binding(tmp_path, monkeypatch) -> Non
     main(["template_export:square", "-o", str(tmp_path / "unbound")])
   main(["template_export:bound", "-o", str(tmp_path / "bound")])
   assert len(tuple((tmp_path / "bound").glob("*.c"))) == 1
+
+
+def test_factory_templates_flatten_reordered_inputs_and_bind_seed_shapes() -> None:
+  traces = []
+
+  @sc.function(sc.group(sc.arg("x"), sc.arg("p", ())), sc.arg("unused", 1), outputs=sc.group(sc.arg("f", ()), sc.arg("g")))
+  def model(pair: tuple[sc.Expr, sc.Expr], unused: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    x, p = pair
+    traces.append(x.shape)
+    return p * sc.sumsqr(x), x * x
+
+  combined = model.factory(
+    "combined",
+    ["p", "x", "fwd:x"],
+    ["f", sc.factory.Grad("f", "x"), sc.factory.Fwd("g", "x"), sc.factory.SpJac("g", "x")],
+  )
+  assert traces == [] and not combined.instances
+  for size in (2, 3):
+    x, p, seed = np.arange(1.0, size + 1), np.array(3.0), np.full(size, 2.0)
+    value, grad, forward, compact = combined(p, x, seed)
+    np.testing.assert_array_equal(value, 3.0 * np.dot(x, x))
+    np.testing.assert_array_equal(grad, 6.0 * x)
+    np.testing.assert_array_equal(forward, 4.0 * x)
+    np.testing.assert_array_equal(compact, 2.0 * x)
+    pattern = combined.sparsity(p, x, seed, of="spjac_g_x")
+    assert pattern is not None and pattern.shape == (size, size) and pattern.nnz == size
+    instance = combined.instantiate(((), size, size))
+    assert instance.name.startswith(f"combined_{size}_t")
+    assert combined.symbolic_call(sc.const(3.0), sc.sym("actual", size), sc.const(seed))[0].attrs["callee"] is instance
+  assert traces == [(2,), (3,)]
+  with pytest.raises(ValueError, match="seed or argument types"):
+    combined(np.array(3.0), np.ones(2), np.ones(3))
+  with pytest.raises(ValueError, match="bind open source inputs"):
+    model.factory("missing", ["p"], ["f"])
+  with pytest.raises(ValueError, match="unknown factory input"):
+    model.factory("unknown", ["x", "unknown"], ["f"])
+
+
+def test_factory_templates_snapshot_requests_and_infer_auxiliary_weight_shapes() -> None:
+  @sc.function(sc.arg("x"))
+  def model(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.sumsqr(x), x * x * x
+
+  inputs = ["x", "lam:out0", "lam:out1"]
+  outputs = ["gamma", sc.factory.SpHess("gamma", "x")]
+  aux = {"gamma": ["out0", "out1"]}
+  combined = model.factory("weighted", inputs, outputs, aux)
+  inputs.clear()
+  outputs.clear()
+  aux["gamma"].clear()
+  x, weight, multipliers = np.array([2.0, 3.0]), np.array(2.0), np.array([1.0, 2.0])
+  gamma, hessian = combined(x, weight, multipliers)
+  np.testing.assert_array_equal(gamma, weight * np.dot(x, x) + np.dot(multipliers, x**3))
+  np.testing.assert_array_equal(hessian, 2.0 * weight + 6.0 * multipliers * x)
+  assert combined.sparsity(x, weight, multipliers, of="gamma") is None
+  pattern = combined.sparsity(x, weight, multipliers, of="sphess_gamma_x_x")
+  assert pattern is not None and pattern.nnz == 2
+  with pytest.raises(ValueError, match="seed or argument types"):
+    combined(x, weight, np.ones(3))
+  with pytest.raises(ValueError, match="of must be specified"):
+    combined.sparsity(x, weight, multipliers)
+  with pytest.raises(ValueError, match="unknown name"):
+    combined.sparsity(x, weight, multipliers, of="missing")
+
+
+def test_sparsity_queries_bind_shapes_without_compiling_or_evaluating(monkeypatch) -> None:
+  from scaly.function.concrete import ConcreteFunction
+
+  traces = []
+
+  @sc.function(sc.arg("x"), outputs=sc.arg("y"))
+  def model(x: sc.Expr) -> sc.Expr:
+    traces.append(x.shape)
+    return x * x
+
+  def forbid(*args, **kwargs):
+    raise AssertionError("metadata query compiled or evaluated the function")
+
+  monkeypatch.setattr(ConcreteFunction, "_compile", forbid)
+  monkeypatch.setattr(ConcreteFunction, "numerical_call", forbid)
+  derivative = sc.sparse_jacobian(model)
+  two = derivative.sparsity(np.ones(2))
+  three = derivative.sparsity(sc.sym("point", 3))
+  assert two is not None and two.shape == (2, 2) and two.nnz == 2
+  assert three is not None and three.shape == (3, 3) and three.nnz == 3
+  assert derivative.sparsity(np.zeros(2)) is two
+  mapped = sc.vmap(derivative, 2)
+  assert mapped.sparsity(np.ones((2, 2))) is two
+  assert mapped.sparsity(sc.broadcast(np.ones(2))) is two
+  assert sc.vmap(mapped, 3).sparsity(np.ones((3, 2, 2))) is two
+  assert model.sparsity(np.ones(2)) is None
+  assert traces == [(2,), (3,)]
+  with pytest.raises(TypeError, match="shape holes"):
+    derivative.sparsity()
+
+
+def test_sparsity_queries_cover_fixed_bare_and_zero_input_functions() -> None:
+  @sc.function(sc.arg("x", 2))
+  def model(x: sc.Expr) -> sc.Expr:
+    return x * x
+
+  derivative = sc.sparse_jacobian(model)
+  assert derivative.sparsity() is derivative.sparsity(np.ones(2))
+  assert sc.vmap(derivative, 3).sparsity() is derivative.sparsity()
+  assert sc.vmap(derivative, 3).sparsity(sc.window(np.ones(4), 0, 1)) is derivative.sparsity()
+  batch = np.arange(6.0).reshape((3, 2))
+  mapped_derivative = sc.vmap(derivative, 3)
+  pattern = mapped_derivative.sparsity(batch)
+  assert pattern is not None
+  matrices = np.zeros((3, *pattern.shape))
+  matrices[:, np.asarray(pattern.rows), np.asarray(pattern.cols)] = mapped_derivative(batch)
+  np.testing.assert_array_equal(matrices, np.stack([np.diag(2.0 * point) for point in batch]))
+  assert model.sparsity() is None
+  with pytest.raises(ValueError, match="expected shape"):
+    derivative.sparsity(np.ones(3))
+
+  @sc.function()
+  def bare(x: sc.Expr) -> sc.Expr:
+    return x * x
+
+  pattern = sc.sparse_jacobian(bare).sparsity(np.ones(2))
+  assert pattern is not None and pattern.nnz == 2
+
+  @sc.function()
+  def constant() -> sc.Expr:
+    return sc.const(2.0)
+
+  assert constant.sparsity() is None
+
+  mapped = sc.vmap(model, 3)
+  assert mapped.sparsity(np.arange(6.0)) is None
+  assert mapped.sparsity(sc.broadcast(np.ones(2))) is None
+  assert mapped.sparsity(sc.window(sc.sym("windows", 4), 0, 1)) is None

@@ -8,7 +8,6 @@ slower at every canonical benchmark point, so nothing selects it by default.
 """
 
 from __future__ import annotations
-from scaly.function.model import as_concrete
 
 import math
 import re
@@ -18,7 +17,7 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
   from scaly.solvers.model import SolverDescriptor
 
 
@@ -110,8 +109,8 @@ def _ldl_symbolic(n: int, col_ptr: list[int], rows: list[int]) -> tuple[list[int
   return parent, l_ptr
 
 
-def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-  desc: SolverDescriptor = as_concrete(fun).descriptor
+def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
+  desc: SolverDescriptor = fun.descriptor
   base, grad, jac, hess, bounds = desc.base, desc.grad, desc.jac, desc.hess, desc.bounds
   assert base is not None and grad is not None and hess is not None and bounds is not None
   assert jac is not None or not (desc.n_eq + desc.n_ineq)

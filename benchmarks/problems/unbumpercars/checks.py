@@ -65,6 +65,7 @@ def check_oracle_matches_casadi() -> None:
     filt_cfg = FilterConfig(model=model)
     weights = load_dt_mlp_weights() if model == "dt" else load_ct_full_weights()
     oracle = build_scaly_oracle(loop_cfg, filt_cfg)
+    assert oracle.inputs is not None
     ca_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
     rng = np.random.default_rng(3)
     bar_x = sample_initial_states(loop_cfg).reshape(-1)
@@ -85,10 +86,8 @@ def check_oracle_matches_casadi() -> None:
         (sc.factory.SpHess("gamma", "z"), np.asarray(ca_filt.hess_fn(z, p, 0.0, np.arange(1.0, loop_cfg.n_slack + 1)))),
       ):
         is_hess = isinstance(spec, sc.factory.SpHess)
-        derivative = oracle.factory(
-          "pair_derivative", [*as_concrete(oracle).input_names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]}
-        )
-        sparsity = as_concrete(derivative).output_sparsities[0]
+        derivative = oracle.factory("pair_derivative", [*oracle.inputs.names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]})
+        sparsity = derivative.sparsity()
         assert sparsity is not None
         values = derivative(*(*args, np.arange(1.0, loop_cfg.n_slack + 1)) if is_hess else args)
         np.testing.assert_allclose(values, reference[sparsity.rows, sparsity.cols], rtol=1e-8, atol=1e-9)
@@ -105,13 +104,14 @@ def check_pair_jac_codegen_growth() -> None:
   hess_families = []
   for ncars in (2, 4, 8):
     oracle = build_scaly_oracle(ClosedLoopConfig(ncars=ncars), FilterConfig())
-    jac = oracle.factory("pair_jac", list(as_concrete(oracle).input_names), [sc.factory.SpJac("g", "z")])
+    assert oracle.inputs is not None
+    jac = oracle.factory("pair_jac", list(oracle.inputs.names), [sc.factory.SpJac("g", "z")])
     lines.append(len(render_c_source(jac).splitlines()))
     if ncars < 4:
       continue
     hess = oracle.factory(
       "row_hess",
-      [*as_concrete(oracle).input_names, "lam:cost", "lam:g"],
+      [*oracle.inputs.names, "lam:cost", "lam:g"],
       [sc.factory.SpHess("gamma", "z")],
       aux={"gamma": ["cost", "g"]},
     )

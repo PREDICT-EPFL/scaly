@@ -195,7 +195,7 @@ def total(w: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, N)(w[:N], w[N:]).vec().sum()
 
 hess = sc.sparse_hessian(total, "cost", "w")
-pattern = hess.instantiate().output_sparsities[0]
+pattern = hess.sparsity()
 assert pattern is not None
 print(pattern.to_mask().astype(int))
 # [[1 0 0 0 1]

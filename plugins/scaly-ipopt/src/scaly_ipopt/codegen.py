@@ -8,7 +8,6 @@ that builds the ``IpoptProblem``, runs ``IpoptSolve``, and fills
 """
 
 from __future__ import annotations
-from scaly.function.model import as_concrete
 
 import math
 import re
@@ -16,7 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
   from scaly.solvers.model import SolverDescriptor
 
 _IPOPT_INF = 2e19
@@ -53,7 +52,7 @@ def _ipopt_option_call(key: str, val: object) -> str:
   raise NotImplementedError(f"IPOPT option {key}={val!r} cannot be lowered to C")
 
 
-def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
+def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   """Render the solver wrapper for an IPOPT NLP.
 
   Strategy:
@@ -75,7 +74,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     outputs, and fills the scaly stats struct (status mapped via the vendored
     ``ApplicationReturnStatus`` enum so upstream drift breaks at compile time).
   """
-  desc: SolverDescriptor = as_concrete(fun).descriptor
+  desc: SolverDescriptor = fun.descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol
   n, n_h, n_g = desc.n, desc.n_eq, desc.n_ineq

@@ -9,7 +9,7 @@ from typing import Any, cast, overload
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
-from ..ir.types import TensorType
+from ..ir.types import SparsityPattern, TensorType
 from .model import Function, as_concrete, lift
 from .tree import Tree, _G, _Leaf, _leaves
 from .concrete import ConcreteFunction
@@ -290,6 +290,17 @@ class _Mapped(Function):
       return tuple(add_axis(part) for part in item) if isinstance(item, tuple) else TensorType((self._length, *item.shape), item.dtype, item.diff)
 
     return self._registry._bind(add_axis(skeleton), self.name)
+
+  def sparsity(self, *args: Any, of: str | None = None) -> SparsityPattern | None:
+    """Return the callee's per-iteration pattern for each leading output slice.
+
+    Arguments use the same leading-axis, broadcast and window rules as a mapped call.
+    Nested maps keep the underlying matrix pattern, applied independently at each iteration.
+    """
+    if not args and self.inputs is not None:
+      return self._source.sparsity(of=of)
+    concrete, _, _, _ = self._arguments(args)
+    return self._source.sparsity(*concrete.input_tree.symbols(), of=of)
 
   def symbolic_call(self, *args: Any) -> Any:
     concrete, actuals, layouts, skeleton = self._arguments(args)

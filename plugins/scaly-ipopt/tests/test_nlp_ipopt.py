@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from scaly.function.model import as_concrete
+from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.codegen.solver import SolverWrapperCtx
 from scaly.ir.types import SparsityPattern
@@ -13,7 +14,7 @@ from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_fun
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
-def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.Function:
+def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> ConcreteFunction:
   """Build a descriptor small enough to inspect the IPOPT wrapper without compiling it."""
   base = ExternalOracle("base", "foreign_base_raw", "", (("x", (2,)),), (("f", ()),))
   grad = ExternalOracle("grad", "foreign_grad_raw", "", (("x", (2,)),), (("grad_f", (2,)),))
@@ -42,7 +43,7 @@ def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.Functio
     jac_sparsity=SparsityPattern.empty((0, 2)),
     hess_sparsity=SparsityPattern((2, 2), rows, cols),
   )
-  return descriptor_function(descriptor)
+  return descriptor_function(descriptor).instantiate()
 
 
 def test_ipopt_wrapper_rejects_a_mixed_hessian_triangle() -> None:

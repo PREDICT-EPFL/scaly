@@ -47,7 +47,7 @@ def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 4, [z])
 
-  assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 6)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 0, 6)
 
 
 def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -> None:
@@ -68,7 +68,7 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
   # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
-  assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 6, 25)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 6, 25)
 
 
 @pytest.mark.parametrize("stages", [1, 5])
@@ -85,7 +85,7 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
 
   program = render_c_module(mapped).program
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in program.args)
-  assert _dispatch_metrics(mapped, program) == (stages, 3 if stages == 1 else 24, 21)
+  assert _dispatch_metrics(mapped.instantiate(), program) == (stages, 3 if stages == 1 else 24, 21)
 
 
 def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None:
@@ -111,7 +111,7 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
   body[loop_index] = ProgramNode(loop.op, (loop.args[0], scheduled, *loop.args[1:]), {**loop.attrs, "body_len": 2}, loop.dtype)
   changed_root = ProgramNode(root.op, (*root.args[:param_count], *body), root.attrs, root.dtype)
   changed = ProgramNode(program.op, (*procs[:-1], changed_root, *program.args[proc_count:]), program.attrs, program.dtype)
-  assert _dispatch_metrics(mapped, changed) == (4, 0, 6)
+  assert _dispatch_metrics(mapped.instantiate(), changed) == (4, 0, 6)
 
 
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
@@ -127,7 +127,7 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(outer, 2, [z])
 
-  assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (2, 1024, 2048)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (2, 1024, 2048)
 
 
 def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
@@ -140,7 +140,7 @@ def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 4, [z])
 
-  assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 3)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 0, 3)
 
 
 def test_store_pairs_preserve_dispatch_arithmetic() -> None:
@@ -160,7 +160,7 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
   before, paired, prepared = (stages[name] for name in ("pass:pack_workspace", "pass:coalesce_stores", "pass:prepare_scalar"))
   assert not any(node.op == ProgramOp.STORE_PAIR for node in walk_program(before))
   assert any(node.op == ProgramOp.STORE_PAIR for node in walk_program(paired))
-  assert [_dispatch_metrics(mapped, program) for program in (before, paired, prepared)] == [(4, 0, 3)] * 3
+  assert [_dispatch_metrics(mapped.instantiate(), program) for program in (before, paired, prepared)] == [(4, 0, 3)] * 3
 
 
 def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
@@ -176,10 +176,10 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   def mixed(z: sc.Expr) -> sc.Expr:
     return sc.concat([_mapped_call(stage, 2, [(z, 0, 1)]), _mapped_call(stage, 3, [(z, 2, 1)])])
 
-  assert _dispatch_metrics(unit, render_c_module(unit).program) == (1, 0, 1)
+  assert _dispatch_metrics(unit.instantiate(), render_c_module(unit).program) == (1, 0, 1)
   # Fusion shares the first two trips, then peels the third square. The repeated
   # range therefore contains two squares, or the heavy expression and one square.
-  assert _dispatch_metrics(mixed, render_c_module(mixed).program) == (2, 0, 2)
+  assert _dispatch_metrics(mixed.instantiate(), render_c_module(mixed).program) == (2, 0, 2)
 
   @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="metric_heavy_stage")
   def heavy(x: sc.Expr) -> sc.Expr:
@@ -189,7 +189,7 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   def weighted(z: sc.Expr) -> sc.Expr:
     return sc.concat([_mapped_call(heavy, 2, [(z, 0, 1)]), _mapped_call(stage, 3, [(z, 2, 1)])])
 
-  assert _dispatch_metrics(weighted, render_c_module(weighted).program) == (2, 0, 5)
+  assert _dispatch_metrics(weighted.instantiate(), render_c_module(weighted).program) == (2, 0, 5)
 
 
 def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
@@ -205,7 +205,7 @@ def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
   def root(z: sc.Expr) -> sc.Expr:
     return _mapped_call(stage, 1, [z]) + other(z)
 
-  assert _dispatch_metrics(root, render_c_module(root).program) == (1, 0, 1)
+  assert _dispatch_metrics(root.instantiate(), render_c_module(root).program) == (1, 0, 1)
 
 
 def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
@@ -220,14 +220,14 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   def primal(x: sc.Expr) -> sc.Expr:
     return x[0] * x[0] + x[1] * x[2]
 
-  hessian = sc.sparse_hessian(primal, "y", "x")
-  descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=as_concrete(hessian).output_sparsities[0])
-  solver = cast(sc.Solver, SimpleNamespace(function=SimpleNamespace(descriptor=descriptor)))
+  hessian = sc.sparse_hessian(primal, "y", "x").instantiate()
+  descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
+  solver = cast(sc.Solver, SimpleNamespace(function=SimpleNamespace(instantiate=lambda: SimpleNamespace(descriptor=descriptor))))
 
   _, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
 
-  assert sparsity == as_concrete(hessian).output_sparsities[0]
-  assert coloring_width == as_concrete(hessian).output_coloring_widths[0]
+  assert sparsity == hessian.output_sparsities[0]
+  assert coloring_width == hessian.output_coloring_widths[0]
   assert coloring_width == 2
 
 
@@ -656,5 +656,5 @@ def test_dispatch_workspace_counts_promoted_lane_scratch():
   def mapped(z: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, 5)(z).vec()
 
-  assert _dispatch_metrics(mapped, render_c_module(mapped, lanes=1).program) == (5, 21, 81)
-  assert _dispatch_metrics(mapped, render_c_module(mapped, lanes=4).program) == (5, 168, 81)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=1).program) == (5, 21, 81)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=4).program) == (5, 168, 81)

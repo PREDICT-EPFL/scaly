@@ -19,7 +19,7 @@ def model(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[1], x[2], x[3] * x[3]])
 
 sparse_jac = sc.sparse_jacobian(model, "y", "x")
-pattern = sparse_jac.instantiate().output_sparsities[0]
+pattern = sparse_jac.sparsity()
 assert pattern is not None
 print(pattern.shape)  # (3, 4)
 print(pattern.nnz)    # 4
@@ -27,8 +27,9 @@ print(pattern.rows)   # (0, 0, 1, 2)
 print(pattern.cols)   # (0, 1, 2, 3)
 ```
 
-`output_sparsities` contains one entry per output. Ordinary dense outputs have
-`None` there, while sparse derivative outputs carry a `SparsityPattern` pattern.
+`Function.sparsity` returns `None` for an ordinary dense output and a
+`SparsityPattern` for a sparse derivative output. For a function with several
+outputs, select one by name with `of="spjac_y_x"`.
 The assertion makes that distinction explicit to a type checker.
 
 The pattern uses coordinate format, abbreviated COO. The paired `rows` and
@@ -78,8 +79,36 @@ print(J)
 ```
 
 Keep the pattern alongside the values when passing them to another library.
-The [generated C header](codegen.md#sparse-output-patterns) contains the same
-index tables, so a C caller can reconstruct the matrix without Python.
+
+For a function with open shapes, pass the same arguments to the query as to
+evaluation. The query traces that binding if needed, but does not compile or
+evaluate it. Symbolic arguments also work:
+
+```python
+@sc.function(sc.arg("x"), outputs=sc.arg("y"))
+def squares(x: sc.Expr) -> sc.Expr:
+    return x * x
+
+jac = sc.sparse_jacobian(squares)
+point = np.arange(3.0)
+pattern = jac.sparsity(point)
+values = jac(point)
+assert pattern is not None
+print(pattern.shape)  # (3, 3)
+print(pattern.nnz)    # 3
+```
+
+Different shapes can have different patterns. The query always selects the
+binding from its arguments, rather than the most recent call. A fully specified
+function can omit the arguments. A plain sparse derivative's
+[generated C header](codegen.md#sparse-output-patterns) contains the same index
+tables, so a C caller can reconstruct the matrix without Python.
+
+For a mapped sparse derivative, the query returns the per-iteration matrix
+pattern. Apply it separately to each leading output slice; nested maps use the
+same pattern for every iteration. The mapped concrete graph and its C header
+do not carry these per-iteration tables. Keep the source pattern when passing
+mapped compact values through another function or a factory.
 
 For direct expression construction, the sparse result bundles the two parts:
 
@@ -139,7 +168,7 @@ def cost(x: sc.Expr) -> sc.Expr:
 
 sparse_hess = sc.sparse_hessian(cost, "cost", "x", triangle="lower")
 hess_values = sparse_hess(np.ones(4))
-hess_pattern = sparse_hess.instantiate().output_sparsities[0]
+hess_pattern = sparse_hess.sparsity()
 assert hess_pattern is not None
 lower = np.zeros(hess_pattern.shape)
 lower[np.asarray(hess_pattern.rows), np.asarray(hess_pattern.cols)] = hess_values
@@ -193,7 +222,7 @@ def stages(zs: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, N)(zs).vec()
 
 stage_jac = sc.sparse_jacobian(stages, "residuals", "zs")
-stage_pattern = stage_jac.instantiate().output_sparsities[0]
+stage_pattern = stage_jac.sparsity()
 assert stage_pattern is not None
 print(stage_pattern.shape)  # (8, 8)
 print(stage_pattern.nnz)    # 16: four 2-by-2 blocks

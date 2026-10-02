@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, assert_type
 
 import numpy as np
 
-from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.utils import load_torch_state_dict
 
@@ -383,9 +382,10 @@ def sample_inputs(horizon: int, decoder: Decoder = Decoder(), weights: np.ndarra
 @functools.cache
 def _stage_jac_function(decoder: Decoder) -> StageJacFunction:
   stage = stage_function(decoder)
+  assert stage.inputs is not None
   return stage.factory(
     f"npmpc_stage_jac_h{'x'.join(str(h) for h in decoder.hidden)}",
-    list(as_concrete(stage).input_names),
+    list(stage.inputs.names),
     [sc.factory.Jac("eq", "x"), sc.factory.Jac("eq", "u"), sc.factory.Jac("eq", "xnext")],
   )
 

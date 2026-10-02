@@ -296,7 +296,7 @@ def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
   return _G(parts)
 
 
-def flat_tree(names: tuple[str, ...], types: tuple[TensorType, ...]) -> Tree[Any, Any]:
+def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...]) -> Tree[Any, Any]:
   """Build the private flat tree used by dynamic ``Function.factory`` results."""
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")

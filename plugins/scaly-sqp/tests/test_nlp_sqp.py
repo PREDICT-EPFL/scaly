@@ -177,7 +177,7 @@ def test_sqp_descriptor_hessian_is_the_backend_selected_upper_triangle() -> None
   assert sparsity is not None
   assert all(row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
   assert isinstance(as_concrete(solver.function).descriptor.hess, ConcreteFunction)
-  assert as_concrete(as_concrete(solver.function).descriptor.hess).output_sparsities[0] == sparsity
+  assert as_concrete(solver.function).descriptor.hess.output_sparsities[0] == sparsity
 
 
 def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:

@@ -22,7 +22,7 @@ def stages(zs: sc.Expr) -> sc.Expr:
 
 jac = sc.sparse_jacobian(stages, "residuals", "zs")
 zs = np.arange(1.0, 2 * N + 1) / 10.0
-pattern = jac.instantiate().output_sparsities[0]
+pattern = jac.sparsity()
 assert pattern is not None
 values = jac(zs)
 print(stages(zs))

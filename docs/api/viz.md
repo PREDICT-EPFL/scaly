@@ -21,6 +21,13 @@ Every render of a marked function, whether ahead of time or through the JIT, add
 Run `uv run scaly_viz --browser` to browse them. `visualize` is the same function as
 `visualize_function`.
 
+Registering a declaration does not trace it. Functions with open shapes or no
+declarations record each instance when it renders, including instances created
+before registration. Registering a concrete instance records only that instance
+and takes precedence over an open declaration's registration. Removing either
+registration leaves the other in place. A fully specified declaration and its
+sole instance share one registration, so either can unregister it.
+
 ## Recording
 
 ::: scaly.viz.recording.visualize_function

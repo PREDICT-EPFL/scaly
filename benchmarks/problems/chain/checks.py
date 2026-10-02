@@ -70,11 +70,11 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 
-    actual = np.asarray(dense(*(zv, pv)))
+    actual = np.asarray(dense(zv, pv))
     np.testing.assert_allclose(actual, np.asarray(ca_dense(zv, pv)), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(chain_eq_jac_dense_reference(n_masses, horizon, zv, pv), actual, rtol=1e-10, atol=1e-10)
 
-    sparsity = as_concrete(sparse).output_sparsities[0]
+    sparsity = sparse.output_sparsities[0]
     assert sparsity is not None
     compact = np.asarray(sparse(zv, pv)).reshape(-1)
     flat = np.asarray(sparsity.rows) * actual.shape[1] + np.asarray(sparsity.cols)

@@ -172,7 +172,7 @@ def build_nlp[SV, NV, SP, NP](
   tuple[SV, SV, Expr, Expr],
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
-  """Build a typed plain ConcreteFunction around an NLP plugin descriptor."""
+  """Build a typed plain Function around an NLP plugin descriptor."""
   cached = _lowered(problem)
   x = cast(Expr, cached["x"])
   triangle = backend.hess_triangle

@@ -48,7 +48,7 @@ def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
     assert sp.to_csc()[2] == tuple(range(sp.nnz))
   # The oracle emits compact value buffers.
   assert desc.oracle is not None
-  out_sizes = dict(zip(desc.oracle_output_names, [int(e.size) for e in as_concrete(desc.oracle).outputs], strict=True))
+  out_sizes = dict(zip(desc.oracle_output_names, [int(e.size) for e in desc.oracle.outputs], strict=True))
   assert out_sizes["P"] == 5 and out_sizes["A_eq"] == 2 and out_sizes["G_ineq"] == 4
 
 

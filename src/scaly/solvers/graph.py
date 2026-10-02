@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def is_solver_function(fun: ConcreteFunction) -> bool:
-  """Return whether ``fun`` is a solver's own function, the one ``Solver.function`` exposes."""
+  """Return whether ``fun`` is a solver's own concrete graph."""
   desc = getattr(fun, "descriptor", None)
   return isinstance(getattr(desc, "backend", None), str)
 

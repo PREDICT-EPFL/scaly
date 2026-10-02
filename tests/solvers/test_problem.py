@@ -142,8 +142,8 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
   assert as_concrete(ipopt).descriptor.jac is as_concrete(sqp).descriptor.jac
   assert as_concrete(ipopt).descriptor.hess is not as_concrete(sqp).descriptor.hess
   assert as_concrete(sqp).descriptor.hess is as_concrete(another_sqp).descriptor.hess
-  assert as_concrete(as_concrete(sqp).descriptor.hess).output_names == ("sphess_gamma_u_s_u_s",)
-  assert as_concrete(as_concrete(sqp).descriptor.hess).input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
+  assert as_concrete(sqp).descriptor.hess.output_names == ("sphess_gamma_u_s_u_s",)
+  assert as_concrete(sqp).descriptor.hess.input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
   assert sc.Function.__doc__ is not None
   assert as_concrete(ipopt).descriptor.hess_sparsity is not None
   assert as_concrete(sqp).descriptor.hess_sparsity is not None
@@ -172,7 +172,7 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
   solve = sc.solver(nonlinear_hessian, "sqp", name="descriptor_hessian_sqp")
   hess = as_concrete(solve.function).descriptor.hess
   assert isinstance(hess, ConcreteFunction)
-  sparsity = as_concrete(hess).output_sparsities[0]
+  sparsity = hess.output_sparsities[0]
   assert sparsity is not None
 
   x = np.array([0.4, -0.7, 0.2])
@@ -198,12 +198,12 @@ def test_single_block_problem_preserves_vmap_decision_input() -> None:
     return sc.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
 
   solve = sc.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
-  mapped = next(node for node in topo(as_concrete(as_concrete(solve.function).descriptor.base).outputs) if node.op == sc.ExprOp.VMAP)
-  assert mapped.args[0] is as_concrete(as_concrete(solve.function).descriptor.base).inputs[0]
+  mapped = next(node for node in topo(as_concrete(solve.function).descriptor.base.outputs) if node.op == sc.ExprOp.VMAP)
+  assert mapped.args[0] is as_concrete(solve.function).descriptor.base.inputs[0]
 
   hess = as_concrete(solve.function).descriptor.hess
   assert hess is not None
-  sparsity = as_concrete(hess).output_sparsities[0]
+  sparsity = hess.output_sparsities[0]
   assert sparsity is not None
   z, p = np.linspace(-0.7, 0.9, 6), np.array(0.3)
   lam_f, lam_g = np.array(1.7), np.linspace(-1.1, 0.8, 6)

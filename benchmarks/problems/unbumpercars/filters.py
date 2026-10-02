@@ -809,9 +809,10 @@ class ScalyDTCBFSafetyFilter:
         self.fallback_nlp = build_scaly_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
       else:
         self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
-    self.jac_sparsity = as_concrete(self.nlp.function).descriptor.jac_sparsity
-    self.hess_fn = as_concrete(self.nlp.function).descriptor.hess
-    hess_sp = as_concrete(self.nlp.function).descriptor.hess_sparsity
+    descriptor = self.nlp.function.instantiate().descriptor
+    self.jac_sparsity = descriptor.jac_sparsity
+    self.hess_fn = descriptor.hess
+    hess_sp = descriptor.hess_sparsity
     assert self.jac_sparsity is not None and hess_sp is not None
     self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)
     self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)

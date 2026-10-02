@@ -7,7 +7,6 @@ interface), and fills ``ctx.stats_symbol``. Contract: ``docs/dev/solver_plugins.
 """
 
 from __future__ import annotations
-from scaly.function.model import as_concrete
 
 import math
 
@@ -15,7 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
   from scaly.solvers.model import SolverDescriptor
   from scaly.ir.types import SparsityPattern
 
@@ -33,8 +32,8 @@ def _csc_tables(name: str, sp: SparsityPattern | None) -> list[str]:
   ]
 
 
-def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-  desc: SolverDescriptor = as_concrete(fun).descriptor
+def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
+  desc: SolverDescriptor = fun.descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol
   n, p, m = desc.n, desc.n_eq, desc.n_ineq

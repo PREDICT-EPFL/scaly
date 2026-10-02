@@ -506,19 +506,19 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
 
   lower_function(fn, observe_expr=lambda name, normalized: observed.append((name, normalized)))
 
-  assert as_concrete(fn).outputs == (output,)
-  assert as_concrete(fn).outputs[0].args[0].op == sc.ExprOp.TRANSPOSE
+  assert fn.outputs == (output,)
+  assert fn.outputs[0].args[0].op == sc.ExprOp.TRANSPOSE
   assert len(observed) == 1
   name, normalized = observed[0]
   assert name == "normalized"
   assert normalized is not fn
-  assert as_concrete(normalized).inputs == as_concrete(fn).inputs
-  assert as_concrete(normalized).input_tree is as_concrete(fn).input_tree
-  assert as_concrete(normalized).output_tree is as_concrete(fn).output_tree
-  assert as_concrete(normalized).output_sparsities == (sparsity,)
-  assert as_concrete(normalized).output_coloring_widths == (2,)
-  assert as_concrete(normalized).outputs[0].op == sc.ExprOp.MATMUL
-  assert as_concrete(normalized)._effective_lowering() == "block"
+  assert normalized.inputs == fn.inputs
+  assert normalized.input_tree is fn.input_tree
+  assert normalized.output_tree is fn.output_tree
+  assert normalized.output_sparsities == (sparsity,)
+  assert normalized.output_coloring_widths == (2,)
+  assert normalized.outputs[0].op == sc.ExprOp.MATMUL
+  assert normalized._effective_lowering() == "block"
 
 
 @pytest.mark.parametrize("identity", ["none", "compile", "simplify"])
@@ -539,15 +539,15 @@ def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str
 def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
   x = sc.sym("x", 2, lowering="block")
   fn = ConcreteFunction._from_exprs("normalized_hints", [x], [(x * 1.0).scalar(), sc.const([2.0, 3.0]).scalar()], ["x"], ["identity", "constant"])
-  observed: list[sc.Function] = []
+  observed: list[ConcreteFunction] = []
 
   lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized))
 
   normalized = observed[0]
-  assert as_concrete(normalized)._effective_lowering() == "block"
-  assert as_concrete(normalized).outputs[0] is x
-  assert as_concrete(normalized).outputs[1].op == sc.ExprOp.CONST
-  assert as_concrete(normalized).outputs[1] is as_concrete(fn).outputs[1]
+  assert normalized._effective_lowering() == "block"
+  assert normalized.outputs[0] is x
+  assert normalized.outputs[1].op == sc.ExprOp.CONST
+  assert normalized.outputs[1] is fn.outputs[1]
   assert main_proc(lower_function(fn)).attrs["lowering"] == "block"
 
 
@@ -560,11 +560,11 @@ def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: ob
     return (x * one).scalar()
 
   x = as_concrete(fn).inputs[0]
-  observed: list[sc.Function] = []
+  observed: list[ConcreteFunction] = []
 
   proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
 
-  assert as_concrete(observed[0]).outputs[0].type.dtype == x.type.dtype
+  assert observed[0].outputs[0].type.dtype == x.type.dtype
   assert proc.attrs["scalarize_mode"] == "disabled"
 
 

@@ -282,6 +282,10 @@ if TYPE_CHECKING:
   assert_type(template.instantiate((3, ())).numerical_call(np.zeros(3), np.array(2.0)), np.ndarray)
   assert_type(template.instantiate((3, ())).input_shapes, tuple[tuple[int, ...], ...])
   assert_type(sc.forward(template), sc.Function[tuple[sc.Expr, sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(template.sparsity(np.zeros(3), np.array(2.0)), sc.SparsityPattern | None)
+  assert_type(template.sparsity(sc.sym("x", 3), sc.sym("p", ())), sc.SparsityPattern | None)
+  template.sparsity(np.zeros(3))  # ty: ignore[no-matching-overload]
+  template.sparsity(sc.sym("x", 3), np.array(2.0))  # ty: ignore[no-matching-overload]
 
   @sc.function()
   def bare(x: sc.Expr, p: sc.Expr) -> sc.Expr:

@@ -355,7 +355,6 @@ class CompiledFunction:
 
 def get_compiled(fun: Function | ConcreteFunction) -> CompiledFunction:
   """Compile ``fun`` (or reuse a cached `.so`) and return a `CompiledFunction` handle."""
-  fun = as_concrete(fun)
   return CompiledFunction(fun)
 
 

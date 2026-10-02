@@ -34,8 +34,8 @@ def _zeros(tree: Any, symbolic: bool) -> Any:
 class Solver[SV, NV, SP, NP]:
   """A compiled solver called with its parameters. The initial point and multipliers default to zero.
 
-  ``function`` is the plain ``Function`` with the full five-group signature, for code generation,
-  ``input_names`` and anything else that takes a ``Function``. Its four outputs are its first four
+  ``function`` is the plain ``Function`` with the full five-group signature, for code generation
+  and symbolic composition. Its four outputs are its first four
   inputs, so passing a previous result as ``warm`` warm-starts the next call.
   """
 

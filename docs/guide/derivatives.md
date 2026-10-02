@@ -169,6 +169,24 @@ A factory request for a forward derivative also needs `fwd:<wrt>` in the input
 list. An adjoint request needs `lam:<of>`. The `sc.forward` and `sc.adjoint`
 wrappers construct those inputs for a single derivative request.
 
+Factory requests also work on shape templates. The transform runs once for each
+binding, so values and derivatives keep the shape selected by the call:
+
+```python
+@sc.function(sc.arg("x"), outputs=sc.arg("cost", ()))
+def energy(x: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x)
+
+combined = energy.factory("energy_all", ["x"], ["cost", sc.factory.Grad("cost", "x")])
+print(combined(np.array([2.0, 3.0])))       # (array(13.), array([4., 6.]))
+print(combined(np.array([2.0, 3.0, 4.0])))  # (array(29.), array([4., 6., 8.]))
+```
+
+An unbound factory source needs named input declarations. Include every input
+with an open shape in the selected input list. Fixed inputs may be omitted if
+the requested outputs do not depend on them. Seed and weight shapes are checked
+against the bound source.
+
 ## Derivatives of expressions
 
 You can also differentiate before wrapping expressions in a function:

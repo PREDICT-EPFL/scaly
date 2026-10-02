@@ -9,9 +9,9 @@ from typing import Any, cast, overload
 import numpy as np
 
 from ..ir.expr import Expr
-from ..ir.types import TensorType, as_shape
+from ..ir.types import SparsityPattern, TensorType, as_shape
 from .concrete import ConcreteFunction, DerivSpec
-from .tree import Tree, _G, _Leaf, _leaves, parameter_list
+from .tree import Tree, _G, _Leaf, _leaves, flat_tree, parameter_list
 
 
 def _structure(value: Any) -> Any:
@@ -188,8 +188,73 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     return function
 
   def factory(self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Any = None) -> Function:
-    """Derive named graph outputs from a fully specified instance."""
-    return Function._from_instance(self.instantiate().factory(name, inputs, outputs, aux))
+    """Derive named outputs once per binding, with one parameter per selected input leaf.
+
+    Shape templates must include every open source input in ``inputs``. Fixed source inputs
+    may be omitted when the requested outputs do not depend on them. Seeds use ``fwd:<input>``
+    and weights use ``lam:<output>``, as in ``ConcreteFunction.factory``.
+    """
+    if self.inputs is None or not self.inputs.has_holes:
+      return Function._from_instance(self.instantiate().factory(name, inputs, outputs, aux))
+    input_names, requests = tuple(inputs), tuple(outputs)
+    combinations = {key: tuple(value) for key, value in (aux or {}).items()}
+    source_inputs = self.inputs
+    declarations = dict(zip(source_inputs.names, source_inputs.decls, strict=True))
+    missing = [key for key, decl in declarations.items() if decl is None and key not in input_names]
+    if missing:
+      raise ValueError(f"factory inputs must bind open source inputs: {missing}")
+
+    def declaration(key: str) -> TensorType | None:
+      if key in declarations:
+        return declarations[key]
+      if key.startswith("fwd:") and key[4:] in declarations:
+        return declarations[key[4:]]
+      if key.startswith("lam:"):
+        return None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
+      raise ValueError(f"unknown factory input: {key!r}")
+
+    parameters = parameter_list(tuple(_Leaf(key, declaration(key)) for key in input_names))
+    output_names = tuple(request if isinstance(request, str) else request.output_name for request in requests)
+
+    def source_skeleton(skeleton: Any) -> Any:
+      bindings = dict(zip(input_names, _types(skeleton), strict=True))
+      return source_inputs.unflatten(tuple(bindings[key] if decl is None else decl for key, decl in declarations.items()))
+
+    return lift(
+      self,
+      parameters,
+      flat_tree(output_names, (None,) * len(output_names)),
+      lambda concrete: concrete.factory(derived_name(self, concrete, name, name), input_names, requests, combinations),
+      name=name,
+      source_skeleton=source_skeleton,
+    )
+
+  @overload
+  def sparsity(self, *, of: str | None = None) -> SparsityPattern | None: ...
+
+  @overload
+  def sparsity[*Ns](
+    self: Function[SymbolicInputs, tuple[*Ns], SymbolicOutputs, NumericalOutputs], *args: *Ns, of: str | None = None
+  ) -> SparsityPattern | None: ...
+
+  @overload
+  def sparsity[*Ss](
+    self: Function[tuple[*Ss], NumericalInputs, SymbolicOutputs, NumericalOutputs], *args: *Ss, of: str | None = None
+  ) -> SparsityPattern | None: ...
+
+  def sparsity(self, *args: Any, of: str | None = None) -> SparsityPattern | None:
+    """Return an output's compact-value pattern without numerical evaluation or compilation.
+
+    Pass the same arguments as a call to select its binding. Fully specified functions also
+    accept no arguments. ``of`` selects an output by name and is required for multiple outputs.
+    Dense outputs return ``None``; sparse derivative patterns index their compact values.
+    """
+    instance = self._resolve(args, f"{self.name}.sparsity") if args or self.inputs is None else self.instantiate()
+    if of is None:
+      if len(instance.output_names) != 1:
+        raise ValueError(f"of must be specified; declared {instance.output_names}")
+      of = instance.output_names[0]
+    return instance.output_sparsities[instance.output_tree.index(of)]
 
   def compile(self) -> None:
     """Compile a fully specified function ahead of its first numerical call."""

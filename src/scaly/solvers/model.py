@@ -105,7 +105,7 @@ def descriptor_function(
   input_tree: Tree[Any, Any] | None = None,
   output_tree: Tree[Any, Any] | None = None,
 ) -> Function[Any, Any, Any, Any]:
-  """Build the plain ConcreteFunction whose opaque outputs share ``descriptor``."""
+  """Build a Function whose concrete graph has opaque outputs sharing ``descriptor``."""
   input_exprs = tuple(Expr.sym(name, shape if shape else (), diff=False) for name, shape in descriptor.input_signature)
   args = tuple(input_exprs)
   output_exprs = tuple(

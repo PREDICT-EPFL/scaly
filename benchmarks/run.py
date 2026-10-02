@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
-from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen.aot import render_c_module
 from scaly.solvers.graph import solver_compile_flags
@@ -140,7 +139,7 @@ def _solver_call_smoke(required: bool) -> str | None:
     (out_dir / module.header_name).write_text(module.header)
     (out_dir / module.source_name).write_text(module.source)
     sources.append(module.source_name)
-    for flag in solver_compile_flags(as_concrete(fun)):
+    for flag in solver_compile_flags(module.fun):
       if flag not in flags:
         flags.append(flag)
   cpp = out_dir / "solver_smoke.cpp"
@@ -447,7 +446,7 @@ def main() -> None:
   elif args.command == "modes":
     from benchmarks.harness.timing import summarize_modes
 
-    rows = summarize_modes(as_concrete(args).inputs, args.out)
+    rows = summarize_modes(args.inputs, args.out)
     print(f"{len(rows)} deployment mode rows written to {args.out}")
     success = bool(rows)
   elif args.command == "smoke":

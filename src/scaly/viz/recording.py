@@ -10,20 +10,18 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import Any, Iterator
+from weakref import WeakKeyDictionary
 
 from scaly.ir.text import format_program, render_expr_assembly, render_program_assembly
-from scaly.function.model import Function, as_concrete
+from scaly.function.model import Function
 from scaly.function.concrete import ConcreteFunction
 from scaly.codegen.aot import register_render_observer
 from scaly.ir.program import ProgramNode
 from scaly.viz.graph import expr_graph, program_graph
 
-if TYPE_CHECKING:
-  from scaly.function.concrete import ConcreteFunction
-
 _RECORDING_LOCK = threading.Lock()
-_VIZ_TARGETS: dict[int, str | None] = {}
+_VIZ_TARGETS: WeakKeyDictionary[Function | ConcreteFunction, str | None] = WeakKeyDictionary()
 _RECORDINGS: list[dict[str, Any]] = []
 
 
@@ -42,22 +40,32 @@ def recording_path() -> Path:
   return recording_dir() / "recordings.json"
 
 
+def _target(fun: Function | ConcreteFunction) -> Function | ConcreteFunction:
+  if isinstance(fun, Function) and fun.inputs is not None and not fun.inputs.has_holes:
+    return next(iter(fun.instances.values()))
+  return fun
+
+
 def visualize_function[F: Function | ConcreteFunction](fun: F, *, label: str | None = None) -> F:
   """Mark ``fun`` for visualization on future AOT/JIT renders.
 
-  Capturing is exact-object opt-in: no ConcreteFunction is recorded unless it was passed
-  here (or to ``capture``). The function itself is returned so callers can write
-  ``f = visualize_function(f)``.
+  A declaration records all its current and future instances without tracing at registration.
+  A concrete instance records only itself and takes precedence over an open declaration.
+  Fully specified declarations share registration with their sole instance.
+  The function itself is returned so callers can write ``f = visualize_function(f)``.
   """
   with _RECORDING_LOCK:
-    _VIZ_TARGETS[id(as_concrete(fun))] = label
+    _VIZ_TARGETS[_target(fun)] = label
   return fun
 
 
 def unvisualize_function(fun: Function | ConcreteFunction) -> None:
-  """Stop recording renders of ``fun``. Does nothing if it was not marked."""
+  """Remove ``fun``'s registration. Other declarations or instances remain registered.
+
+  A fully specified declaration and its sole instance share one registration.
+  """
   with _RECORDING_LOCK:
-    _VIZ_TARGETS.pop(id(as_concrete(fun)), None)
+    _VIZ_TARGETS.pop(_target(fun), None)
 
 
 @contextmanager
@@ -171,9 +179,14 @@ class VisualizationRecording:
 
 def begin_recording(fun: ConcreteFunction) -> VisualizationRecording | None:
   with _RECORDING_LOCK:
-    if id(fun) not in _VIZ_TARGETS:
-      return None
-    label = _VIZ_TARGETS[id(fun)]
+    if fun in _VIZ_TARGETS:
+      label = _VIZ_TARGETS[fun]
+    else:
+      for target, label in _VIZ_TARGETS.items():
+        if isinstance(target, Function) and any(instance is fun for instance in tuple(target.instances.values())):
+          break
+      else:
+        return None
   recording = VisualizationRecording(fun, label)
   recording.add_expr()
   return recording

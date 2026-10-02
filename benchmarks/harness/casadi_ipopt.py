@@ -1,7 +1,6 @@
 """Fresh-process CasADi IPOPT code generation for controlled benchmark columns."""
 
 from __future__ import annotations
-from scaly.function.model import as_concrete
 
 import argparse
 import ctypes
@@ -504,7 +503,7 @@ class CasadiIpoptSolver:
       np.concatenate([np.zeros(self.n_eq), np.asarray(l_ineq, dtype=np.float64)]),
       np.concatenate([np.zeros(self.n_eq), np.asarray(u_ineq, dtype=np.float64)]),
     )
-    as_concrete(self)._compiled = make_casadi_ipopt(
+    self._compiled = make_casadi_ipopt(
       name,
       nlp,
       {
@@ -516,20 +515,20 @@ class CasadiIpoptSolver:
         **options,
       },
     )
-    self.compiled = as_concrete(self)._compiled.compiled
-    self.build_ms = as_concrete(self)._compiled.build_ms
-    self.ipopt_library = as_concrete(self)._compiled.ipopt_library
-    self.configured_ipopt_library = as_concrete(self)._compiled.configured_ipopt_library
-    self.resolved_ipopt_library = as_concrete(self)._compiled.resolved_ipopt_library
+    self.compiled = self._compiled.compiled
+    self.build_ms = self._compiled.build_ms
+    self.ipopt_library = self._compiled.ipopt_library
+    self.configured_ipopt_library = self._compiled.configured_ipopt_library
+    self.resolved_ipopt_library = self._compiled.resolved_ipopt_library
     self.expand = expand
     self.last_stats: SolverStats | None = None
     self.last_status: SolverStatus | None = None
 
   def __call__(self, z0, lam_eq0, lam_ineq0, lam_box0, p) -> dict[str, np.ndarray]:
     lam_g0 = np.concatenate([np.asarray(lam_eq0, dtype=np.float64), np.asarray(lam_ineq0, dtype=np.float64)])
-    solution = as_concrete(self)._compiled(z0, p, *self._bounds, lam_box0, lam_g0)
-    self.last_stats = as_concrete(self)._compiled.last_stats
-    self.last_status = as_concrete(self)._compiled.last_status
+    solution = self._compiled(z0, p, *self._bounds, lam_box0, lam_g0)
+    self.last_stats = self._compiled.last_stats
+    self.last_status = self._compiled.last_status
     x, f, _, lam_x, lam_g, _ = solution
     _, h_eq, g_ineq = self.base(x, p)
     return {
