@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 246**
+**Next id: 247**
 
 | Prefix | Section |
 |---|---|
@@ -1455,6 +1455,42 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       path rows and a coupled stage cost in a random variable order, and through retries.
       41 mutants: 36 killed at once, 4 after tests were added, and one was a check that could
       not matter (a padding slot's right-hand side reaches no variable), removed.
+- [x] **C-246. The stage step's kernels: running sums, reciprocal diagonals, and a symmetric
+      product that computes one triangle (K4, Tier 9).** After C-245 the block factorization
+      was 29-37% of a stagewise solve at blocks of 28-42 and the arrays' products 13-17%, with
+      the Cholesky at 3.6-4.7 G multiply-adds a second, the solve of the block below at
+      6.4-7.8 and the update a full product at 19-20 where half is wanted
+      (`results/a11_stagewise.md`). Three changes (`results/k4_kernels.md`):
+      - `cholesky(a, sums="running")` and `solve_triangular(t, b, sums="running")`: one running
+        sum an entry over every column left of its block, in one tile loop where the pairwise
+        form runs four quarters, in blocks from two of the tile's width on; and the reciprocal
+        of a diagonal entry, one division a column or a row of right-hand sides, where the
+        pairwise form divides every entry. The default is untouched, attribute and all: it
+        is held to its rounding by the dense backend's iteration counts. `linalg.blocks`
+        asks for the running form. Running sums alone gave 0.79-0.91 from order 24; a count
+        of a 28-row factorization's cycles put the divisions and the diagonal's chain ahead
+        of the dot products, and with the reciprocals it is 0.69-0.85.
+      - A product of a matrix with its own transpose in register tiles computes the tiles
+        that reach its lower triangle and copies the rest across. Entry `(i, j)` and entry
+        `(j, i)` are the same products in the same order, so it is the full product to the
+        last bit: 0.65-0.94 of its time from 28 rows. Taken from three tiles of columns
+        (with two the copy cost more than the tiles skipped) and four terms, where the
+        product stays in loops; expanded into scalar code a product rounds by which terms
+        its entries share, and the copy changed its bits.
+      - The stage step: 0.83, 0.81 and 0.77 of its time at blocks of 28, 33 and 42. The
+        stagewise solver: 0.95, 0.92 and 0.88, the same iterations; 0.67, 0.71 and 0.56 of
+        the sparse backend's time, 1.7-1.8x PIQP's multistage.
+      What is left to PIQP's multistage backend is the factorization's rate at orders of
+      24-64 (C-221, K3: packed panels and a fused kernel), the assembly's passes over the
+      block storage, and the solves. No corpus kernel's C changes. Found on the way: a
+      structure test of C-225 (two types that differ in a dtype's C type) depended on the
+      garbage collector, because interning compares a dtype by name and a cycle could keep
+      the earlier call's input alive; it collects before each digest now and checks the
+      types it got. Tests: the running forms against NumPy and SciPy on nine orders and
+      seven shapes with either triangle, transposed and unit, on three targets; where the
+      divisions are; the derivative; the symmetric product against the same product with
+      the transpose as an input of its own, bit for bit, on three targets, and the six
+      cases left whole. 25 mutants, all killed.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced

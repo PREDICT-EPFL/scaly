@@ -1160,7 +1160,11 @@ def test_two_types_in_one_graph_that_differ_in_their(first: TensorType, second: 
   # The second type must be told from the first where both are in the graph: a type is written
   # once and then referred to by number.
   def digest(types: tuple[TensorType, TensorType]) -> str:
+    # Interning compares a dtype by its name, so an input of the call before, if a cycle still
+    # holds it, would be handed back here with the type it had there.
+    gc.collect()
     a, b = (Expr(ExprOp.INPUT, type=t, name=name) for t, name in zip(types, ("a", "b"), strict=True))
+    assert (a.type, b.type) == types and a.type.dtype.c_type == types[0].dtype.c_type and b.type.dtype.c_type == types[1].dtype.c_type
     return _graph(sc.Function.from_exprs("structure_two_types", [a, b], [a, b], ["a", "b"], ["p", "q"]))[0]
 
   assert digest((first, second)) != digest((first, first))

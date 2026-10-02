@@ -5,7 +5,7 @@ and loop lowering."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from scipy import sparse
@@ -33,6 +33,15 @@ if TYPE_CHECKING:
   from ...passes.lowering import LowerCtx
 
 CHOLESKY, LDL, LU = "cholesky", "ldl", "lu"
+Sums = Literal["pairwise", "running"]
+"""How a blocked factorization or substitution adds up an entry's dot product (``cholesky``)."""
+
+
+def _factor_attrs(n: int, sums: Sums) -> dict[str, Any]:
+  if sums not in ("pairwise", "running"):
+    raise ValueError(f"sums must be 'pairwise' or 'running', got {sums!r}")
+  return {**_unroll_attr(n), **({"sums": "running"} if sums == "running" else {})}
+
 
 LU_NO_DERIVATIVE = (
   "the dense LU factorization has no derivative: linalg.solve(a, b, assume='gen') solves with it and "
@@ -41,15 +50,20 @@ LU_NO_DERIVATIVE = (
 """Why an ``lu`` node refuses a nonzero tangent or cotangent."""
 
 
-def cholesky(a: Any) -> Expr:
+def cholesky(a: Any, *, sums: Sums = "pairwise") -> Expr:
   """The lower Cholesky factor ``L`` of a symmetric positive definite matrix, ``A = L L^T``.
 
   Only the lower triangle of ``a`` is read; the upper triangle of the result is zero. No check is
   made: a matrix that is not positive definite gives NaN (a square root of a negative number).
   Differentiable, reading the derivative of the lower triangle as that of a symmetric matrix.
+
+  ``sums`` is how an entry's dot product is added up in loops. ``"pairwise"``, the default, adds
+  four partial sums in pairs, which keeps the last pivots of an ill-conditioned matrix accurate.
+  ``"running"`` adds the terms to one sum in order, as a BLAS does: a loop a block of columns
+  where the other runs four, about twice as fast on matrices of a few dozen rows.
   """
   a = _square(a, "cholesky")
-  return Expr(CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
+  return Expr(CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_factor_attrs(a.shape[0], sums), lowering=a.lowering)
 
 
 def ldl(a: Any) -> Expr:
@@ -237,9 +251,12 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(*(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n)))
     return
   if chol:
+    rows, width = ctx.target.product_tile
+    if node.attrs.get("sums") == "running" and rows > 1 and n >= RUNNING_BLOCKS * width:
+      _cholesky_blocked(ctx, src, out, n, dt, running=True)
+      return
     # Blocks of a tile's width, a multiple of four (the quarters), and at least six of them, where
     # they took 0.90 of the Crout tiles' time on the reference machine; with fewer they were no faster.
-    rows, width = ctx.target.product_tile
     (_cholesky_blocked if rows > 1 and width % 4 == 0 and n >= 6 * width else _cholesky_tiles)(ctx, src, out, n, dt)
     return
   nm = out.attrs["name"]
@@ -402,7 +419,11 @@ def _cholesky_tiles(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, d
   ctx.emit(p.for_(p.range_(zi.attrs["name"], 0, n, kind=RangeKind.SERIAL), [upper]))
 
 
-def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, dt: DType) -> None:
+# The fewest blocks of a tile's width a factorization with running sums runs in blocks from.
+RUNNING_BLOCKS = 2
+
+
+def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, dt: DType, running: bool = False) -> None:
   """Left-looking ``L L^T`` in blocks of the register tile's columns (``Target.product_tile``, 8 on
   the reference machine). For each block of columns: subtract from it, on
   and below the diagonal, the product of the rows' ``L`` left of the block with the block's own rows
@@ -416,13 +437,24 @@ def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int,
   running sum per entry took an interior-point solve past the iterations it is held to, and the
   quarters subtracted one after another kept it within them only by chance (an unrelated change of
   rounding moved it twelve iterations). The upper triangle, which the tiles crossing the
-  diagonal write too, is zeroed at the end."""
+  diagonal write too, is zeroed at the end.
+
+  With ``running`` each dot product is one sum over all the columns left of its block, in one
+  tile loop where the quarters take four: a matrix of a few dozen rows has only a few columns to
+  a quarter, and the loops' starts and stores then cost as much as their multiply-adds."""
   c = p.const_int
   nm = out.attrs["name"]
   rows, width = ctx.target.product_tile
   full, tail = divmod(n, width)
   panel = ctx.new_private(dt, (n * width,))  # panel[k * width + q] = L[J + q, k]: the block's rows, transposed
-  upper = ctx.new_private(dt, (n * width,))  # the last two quarters of the block column's dot products
+  upper = None if running else ctx.new_private(dt, (n * width,))  # the last two quarters of the block column's dot products
+  # With running sums an entry is multiplied by the reciprocal of its column's diagonal, one
+  # division a column where the pairwise form, which is held to its rounding, divides every entry.
+  recip = [p.view(ctx.new_private(dt, ()), [c(0)]) for _ in range(width)] if running else []
+  one = p.const_float(1.0, dtype=dt)
+
+  def over(value: ProgramNode, col: int, diagonal: ProgramNode) -> ProgramNode:
+    return p.mul(value, p.load(recip[col])) if running else p.div(value, p.load(diagonal))
 
   def at(i: ProgramNode, j: ProgramNode) -> ProgramNode:
     return _entry(out, n, i, j)
@@ -437,18 +469,39 @@ def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int,
     )
     stmts: list[ProgramNode] = [copy]
     count = p.div(p.sub(c(n), first), c(rows))
+    if running:
+      # One sum an entry over every column left of the block; the entry is the matrix's minus it.
+      def whole(row: ProgramNode, step: ProgramNode, col: ProgramNode) -> ProgramNode:
+        return p.mul(p.load(at(row, step)), p.load(p.view(panel, [p.add(p.mul(step, c(width)), col)])))
+
+      def entry(row: ProgramNode, col: ProgramNode) -> ProgramNode:
+        return at(row, p.add(first, col))
+
+      def minus(row: ProgramNode, col: ProgramNode, total: ProgramNode) -> ProgramNode:
+        return p.sub(p.load(_entry(src, n, row, p.add(first, col))), total)
+
+      ib, it = p.var(f"bu{tag}r_{nm}"), p.var(f"bl{tag}r_{nm}")
+      tile_rows = [p.add(first, p.add(p.mul(ib, c(rows)), c(r))) for r in range(rows)]
+      stmts += [
+        p.for_(p.range_(ib.attrs["name"], 0, count, kind=RangeKind.GLOBAL), ctx.tile(f"{nm}_{tag}rt", tile_rows, w, first, whole, entry, dt, minus)),
+        p.for_(
+          p.range_(it.attrs["name"], p.add(first, p.mul(count, c(rows))), n, kind=RangeKind.GLOBAL),
+          ctx.tile(f"{nm}_{tag}rl", [it], w, first, whole, entry, dt, minus),
+        ),
+      ]
     # Each entry's dot product in four quarters, added as the Crout tiles add them: the first two
     # into the block's own entries, the last two into ``upper``, then the entry minus both.
-    for part in range(4):
+    for part in range(0 if running else 4):
       offset = p.mul(quarter, c(part))
       into = out if part < 2 else upper
+      assert into is not None
 
       def term(row: ProgramNode, step: ProgramNode, col: ProgramNode, offset: ProgramNode = offset) -> ProgramNode:
         kk = p.add(offset, step)
         return p.mul(p.load(at(row, kk)), p.load(p.view(panel, [p.add(p.mul(kk, c(width)), col)])))
 
       def out_at(row: ProgramNode, col: ProgramNode, into: ProgramNode = into) -> ProgramNode:
-        return at(row, p.add(first, col)) if into is out else p.view(upper, [p.add(p.mul(row, c(width)), col)])
+        return at(row, p.add(first, col)) if into is out else p.view(into, [p.add(p.mul(row, c(width)), col)])
 
       def finish(row: ProgramNode, col: ProgramNode, total: ProgramNode, out_at: Any = out_at) -> ProgramNode:
         return p.add(p.load(out_at(row, col)), total)
@@ -466,21 +519,22 @@ def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int,
         ),
       ]
     i = p.var(f"bd{tag}_{nm}")
-    stmts.append(
-      p.for_(
-        p.range_(i.attrs["name"], first, n, kind=RangeKind.GLOBAL),
-        [
-          p.store(
-            at(i, p.add(first, c(col))),
-            p.sub(
-              p.load(_entry(src, n, i, p.add(first, c(col)))),
-              p.add(p.load(at(i, p.add(first, c(col)))), p.load(p.view(upper, [p.add(p.mul(i, c(width)), c(col))]))),
-            ),
-          )
-          for col in range(w)
-        ],
+    if upper is not None:
+      stmts.append(
+        p.for_(
+          p.range_(i.attrs["name"], first, n, kind=RangeKind.GLOBAL),
+          [
+            p.store(
+              at(i, p.add(first, c(col))),
+              p.sub(
+                p.load(_entry(src, n, i, p.add(first, c(col)))),
+                p.add(p.load(at(i, p.add(first, c(col)))), p.load(p.view(upper, [p.add(p.mul(i, c(width)), c(col))]))),
+              ),
+            )
+            for col in range(w)
+          ],
+        )
       )
-    )
     # The diagonal block's L, each entry minus its terms inside the block; then the rows below it.
     for a in range(w):
       for b in range(a + 1):
@@ -488,14 +542,16 @@ def _cholesky_blocked(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int,
         value = p.load(at(i, j))
         for r in range(b):
           value = p.sub(value, p.mul(p.load(at(i, p.add(first, c(r)))), p.load(at(j, p.add(first, c(r))))))
-        stmts.append(p.store(at(i, j), _unary_node(ProgramOp.SQRT, value) if a == b else p.div(value, p.load(at(j, j)))))
+        stmts.append(p.store(at(i, j), _unary_node(ProgramOp.SQRT, value) if a == b else over(value, b, at(j, j))))
+      if running:
+        stmts.append(p.store(recip[a], p.div(one, p.load(at(p.add(first, c(a)), p.add(first, c(a)))))))
     body: list[ProgramNode] = []
     for b in range(w):
       col = p.add(first, c(b))
       value = p.load(at(q, col))
       for r in range(b):
         value = p.sub(value, p.mul(p.load(at(q, p.add(first, c(r)))), p.load(at(col, p.add(first, c(r))))))
-      body.append(p.store(at(q, col), p.div(value, p.load(at(col, col)))))
+      body.append(p.store(at(q, col), over(value, b, at(col, col))))
     stmts.append(p.for_(p.range_(q.attrs["name"], p.add(first, c(w)), n, kind=RangeKind.GLOBAL), body))
     return stmts
 

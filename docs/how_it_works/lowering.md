@@ -256,6 +256,14 @@ a larger one. Ten rows are two tiles of five, where tiles of four would leave tw
 third time. The columns fewer than a vector take a tile of scalar sums. Each output still sums in
 order of `k`, so a tile computes what a row block does.
 
+A product of a matrix with its own transpose, `a @ a.T` or `a.T @ a`, is symmetric, and in tiles it
+computes one triangle. A tile of rows runs only the tiles of columns that reach its last row, and
+the entries above the diagonal are then copied from below it. Entry `(i, j)` and entry `(j, i)`
+are the same products added in the same order, so the copy is the value the full product computes,
+to the last bit. This is taken from three tiles of columns on and a reduction of four terms or
+more, where the product is certain to stay in loops. Tiles of eight columns leave a fifth of the
+work to skip at 28 rows and two fifths at 64.
+
 A constant table of floating-point values larger than the level-1 data cache (`Target.l1d_bytes`)
 is declared aligned to 64 bytes. The C compiler aligns a table to its element, eight bytes, and the
 vector loads of a constant `b` then straddle two cache lines every few loads, which costs when each

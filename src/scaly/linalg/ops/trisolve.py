@@ -71,12 +71,25 @@ def _tri_mask(n: int, lower: bool, unit: bool) -> Expr:
   return Expr.const(mask)
 
 
-def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False, unroll: Unroll | None = None) -> Expr:
+def solve_triangular(
+  t: Any,
+  b: Any,
+  *,
+  lower: bool = True,
+  trans: bool = False,
+  unit_diagonal: bool = False,
+  unroll: Unroll | None = None,
+  sums: Literal["pairwise", "running"] = "pairwise",
+) -> Expr:
   """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
   matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
   when ``unit_diagonal`` is false. ``unroll`` overrides the ``linalg`` option's choice between
   straight-line code (True), loops (False) and the target's choice (``"auto"``), as a derivative
-  does to keep its factorization's."""
+  does to keep its factorization's. ``sums`` is ``cholesky``'s: ``"running"`` adds each unknown's
+  dot product to one sum, in blocks from a smaller order on, and multiplies by the reciprocal of
+  the diagonal where ``"pairwise"`` divides by it."""
+  if sums not in ("pairwise", "running"):
+    raise ValueError(f"sums must be 'pairwise' or 'running', got {sums!r}")
   t = _square(t, "solve_triangular")
   b = as_expr(b)
   if len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0]:
@@ -85,7 +98,13 @@ def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False,
     TRISOLVE,
     (t, b),
     TensorType(b.shape, dtype=promote_dtype(t, b), diff=diff_any(t, b)),
-    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal), **_unroll_attr(t.shape[0], unroll)},
+    attrs={
+      "lower": bool(lower),
+      "trans": bool(trans),
+      "unit": bool(unit_diagonal),
+      **_unroll_attr(t.shape[0], unroll),
+      **({"sums": "running"} if sums == "running" else {}),
+    },
     lowering=common_lowering(t, b),
   )
 
@@ -196,6 +215,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   m = 1 if len(b.shape) == 1 else b.shape[1]
   tb, bb, out, dt = ctx.buf_of(t), ctx.buf_of(b), ctx.alloc_tmp(node), node.type.dtype
   lower, trans, unit = (bool(node.attrs[key]) for key in ("lower", "trans", "unit"))
+  running = node.attrs.get("sums") == "running"
   c = p.const_int
   nm = out.attrs["name"]
 
@@ -212,9 +232,14 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
     name = f"sc_{nm}_{ctx.fresh_id()}"
     return [p.for_(p.range_(name, 0, m, kind=RangeKind.GLOBAL), body(p.var(name)))]
 
+  recip = p.view(ctx.new_private(dt, ()), [c(0)]) if running and not unit and m > 1 else None
+
   def scale(i: ProgramNode) -> list[ProgramNode]:
     if unit:
       return []
+    if recip is not None:  # one division a row, then a product for each right-hand side
+      invert = p.store(recip, p.div(p.const_float(1.0, dtype=dt), p.load(_entry(tb, n, i, i))))
+      return [invert, *per_col(lambda cc: [p.store(x(i, cc), p.mul(p.load(x(i, cc)), p.load(recip)))])]
     return per_col(lambda cc: [p.store(x(i, cc), p.div(p.load(x(i, cc)), p.load(_entry(tb, n, i, i))))])
 
   # ``order(s)`` is the row handled at step ``s``; ``others(i)`` the range of the other index.
@@ -247,6 +272,9 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(*per_col(solve_row))
     return
   rows, width = ctx.target.product_tile
+  if running and rows > 1 and width % 4 == 0 and n >= RUNNING_BLOCKS * width and m >= width:
+    _trisolve_blocked(ctx, tb, bb, out, n, m, lower, trans, unit, dt, running=True)
+    return
   if rows > 1 and width % 4 == 0 and n >= 4 * width and m >= width:
     _trisolve_blocked(ctx, tb, bb, out, n, m, lower, trans, unit, dt)
     return
@@ -289,8 +317,22 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   ctx.emit(p.for_(p.range_(s.attrs["name"], 0, n, kind=RangeKind.SERIAL), body))
 
 
+# The fewest blocks of a tile's width a substitution with running sums runs in blocks from.
+RUNNING_BLOCKS = 2
+
+
 def _trisolve_blocked(
-  ctx: LowerCtx, tb: ProgramNode, bb: ProgramNode, out: ProgramNode, n: int, m: int, lower: bool, trans: bool, unit: bool, dt: DType
+  ctx: LowerCtx,
+  tb: ProgramNode,
+  bb: ProgramNode,
+  out: ProgramNode,
+  n: int,
+  m: int,
+  lower: bool,
+  trans: bool,
+  unit: bool,
+  dt: DType,
+  running: bool = False,
 ) -> None:
   """Substitution in blocks of the register tile's width of unknowns (``Target.product_tile``, 8 on
   the reference machine), for ``m`` right-hand sides of a tile's width or more. For each block, in
@@ -300,13 +342,15 @@ def _trisolve_blocked(
   are read down the columns of ``T``, one entry at a time, which is how a tile reads its left
   operand anyway. As in the blocked Cholesky, each unknown's dot product runs in four quarters of
   the unknowns before its block, each summed from zero and added pairwise before the right-hand
-  side subtracts it."""
+  side subtracts it. With ``running`` it is one sum over all of them, in one tile loop, and the
+  block's rows are multiplied by the reciprocals of their diagonal entries."""
   c = p.const_int
   nm = out.attrs["name"]
   rows, width = ctx.target.product_tile
   full, tail = divmod(n, width)
   forward = lower != trans
-  upper = ctx.new_private(dt, (n * m,))  # the last two quarters of the dot products
+  upper = None if running else ctx.new_private(dt, (n * m,))  # the last two quarters of the dot products
+  recip = p.view(ctx.new_private(dt, ()), [c(0)]) if running and not unit else None
   segments = ctx.tile_segments(m)
 
   def coef(i: ProgramNode, k: ProgramNode) -> ProgramNode:
@@ -321,9 +365,11 @@ def _trisolve_blocked(
     stmts: list[ProgramNode] = []
     # Each unknown's dot product in four quarters, added as the Cholesky adds them: the first two into
     # the block's own unknowns, the last two into ``upper``, then the right-hand side minus both.
-    for part in range(4):
-      offset = p.add(solved, p.mul(quarter, c(part)))
+    # With running sums: one part over all the solved unknowns, stored as the right-hand side minus it.
+    for part in range(1 if running else 4):
+      offset = solved if running else p.add(solved, p.mul(quarter, c(part)))
       into = out if part < 2 else upper
+      assert into is not None
 
       for number, (start, cols, count) in enumerate(segments):
         jb = p.var(f"tj{tag}{part}{number}_{nm}")
@@ -339,33 +385,38 @@ def _trisolve_blocked(
         def finish(row: ProgramNode, col: ProgramNode, total: ProgramNode, out_at: Any = out_at) -> ProgramNode:
           return p.add(p.load(out_at(row, col)), total)
 
-        done = None if part % 2 == 0 else finish
+        def minus(row: ProgramNode, col: ProgramNode, total: ProgramNode, left: ProgramNode = left) -> ProgramNode:
+          return p.sub(p.load(p.view(bb, [p.add(p.mul(row, c(m)), p.add(left, col))])), total)
+
+        done = minus if running else None if part % 2 == 0 else finish
+        steps = p.mul(quarter, c(4)) if running else quarter
 
         ib, it = p.var(f"ti{tag}{part}{number}_{nm}"), p.var(f"tl{tag}{part}{number}_{nm}")
         tile_rows = [p.add(first, p.add(p.mul(ib, c(rows)), c(r))) for r in range(rows)]
         tiles = [
           p.for_(
             p.range_(ib.attrs["name"], 0, w // rows, kind=RangeKind.GLOBAL),
-            ctx.tile(f"{nm}_{tag}{part}{number}t", tile_rows, cols, quarter, term, out_at, dt, done),
+            ctx.tile(f"{nm}_{tag}{part}{number}t", tile_rows, cols, steps, term, out_at, dt, done),
           )
         ]
         if w % rows:  # the rows a tile leaves, one at a time
           tiles.append(
             p.for_(
               p.range_(it.attrs["name"], p.add(first, c(w - w % rows)), p.add(first, c(w)), kind=RangeKind.GLOBAL),
-              ctx.tile(f"{nm}_{tag}{part}{number}l", [it], cols, quarter, term, out_at, dt, done),
+              ctx.tile(f"{nm}_{tag}{part}{number}l", [it], cols, steps, term, out_at, dt, done),
             )
           )
         stmts += [p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), tiles)] if count > 1 else tiles
     r, col = p.var(f"tr{tag}_{nm}"), p.var(f"tq{tag}_{nm}")
     at = p.add(p.mul(r, c(m)), col)
-    total = p.add(p.load(p.view(out, [at])), p.load(p.view(upper, [at])))
-    stmts.append(
-      p.for_(
-        p.range_(r.attrs["name"], first, p.add(first, c(w)), kind=RangeKind.GLOBAL),
-        [p.for_(p.range_(col.attrs["name"], 0, m, kind=RangeKind.GLOBAL), [p.store(p.view(out, [at]), p.sub(p.load(p.view(bb, [at])), total))])],
+    if upper is not None:
+      total = p.add(p.load(p.view(out, [at])), p.load(p.view(upper, [at])))
+      stmts.append(
+        p.for_(
+          p.range_(r.attrs["name"], first, p.add(first, c(w)), kind=RangeKind.GLOBAL),
+          [p.for_(p.range_(col.attrs["name"], 0, m, kind=RangeKind.GLOBAL), [p.store(p.view(out, [at]), p.sub(p.load(p.view(bb, [at])), total))])],
+        )
       )
-    )
     # The block itself, row by row in the substitution's order.
     order = list(range(w)) if forward else list(range(w - 1, -1, -1))
     for place, a in enumerate(order):
@@ -374,7 +425,10 @@ def _trisolve_blocked(
       value = p.load(x(i, col))
       for r in order[:place]:
         value = p.sub(value, p.mul(coef(i, p.add(first, c(r))), p.load(x(p.add(first, c(r)), col))))
-      if not unit:
+      if recip is not None:
+        stmts.append(p.store(recip, p.div(p.const_float(1.0, dtype=dt), coef(i, i))))
+        value = p.mul(value, p.load(recip))
+      elif not unit:
         value = p.div(value, coef(i, i))
       stmts.append(p.for_(p.range_(col.attrs["name"], 0, m, kind=RangeKind.GLOBAL), [p.store(x(i, col), value)]))
     return stmts

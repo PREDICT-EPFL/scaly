@@ -933,6 +933,11 @@ def _mm_accum(out: ProgramNode, idx: ProgramNode, a_load: ProgramNode, b_load: P
   return p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_load, b_load)))
 
 
+def _is_transpose_of(x: Expr, y: Expr) -> bool:
+  """Whether ``x`` is the node ``y.T`` for a matrix ``y``: a product of the two is symmetric."""
+  return x.op == ExprOp.TRANSPOSE and x.args[0] is y and len(y.shape) == 2 and tuple(x.attrs.get("axes") or (1, 0)) == (1, 0)
+
+
 @lowers(ExprOp.MATMUL)
 def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
@@ -967,7 +972,10 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
     _lower_columns_blocked(ctx, a_buf, b_buf, out, None, *sb, dt)
   elif len(sa) == 2 and len(sb) == 2:  # mat @ mat
-    _lower_columns_blocked(ctx, a_buf, b_buf, out, sa[0], *sb, dt)
+    # A procedure asked to be scalar code is expanded whatever its products are, and there the two
+    # halves of a symmetric product share their terms already.
+    symmetric = ctx.fun._effective_lowering() != "scalar" and (_is_transpose_of(a, b) or _is_transpose_of(b, a))
+    _lower_columns_blocked(ctx, a_buf, b_buf, out, sa[0], *sb, dt, symmetric=symmetric)
   else:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
@@ -1096,8 +1104,14 @@ def _tile_segments(n: int, columns: int, lanes: int) -> tuple[list[tuple[int, in
   return segments, n
 
 
+# The fewest whole tiles of columns a symmetric product has for it to compute one triangle: with
+# two, the tiles skipped were less work than the copy across the diagonal (16 and 20 rows, 1.03 to
+# 1.07 of the full product's time; 28 rows, 0.89 to 0.93).
+SYMMETRIC_TILES = 3
+
+
 def _lower_columns_blocked(
-  ctx: LowerCtx, a_buf: ProgramNode, b_buf: ProgramNode, out: ProgramNode, m: int | None, kk: int, n: int, dtype: DType
+  ctx: LowerCtx, a_buf: ProgramNode, b_buf: ProgramNode, out: ProgramNode, m: int | None, kk: int, n: int, dtype: DType, symmetric: bool = False
 ) -> None:
   """``out = a @ b`` for ``b`` of shape ``(kk, n)`` and ``a`` a vector (``m`` None) or ``(m, kk)``:
   row by row, the columns in blocks of the target's ``row_blocks`` widths, the widest as many times
@@ -1106,13 +1120,21 @@ def _lower_columns_blocked(
   product narrower than the narrowest block and every column of a row wider than
   ``row_blocked_max`` accumulate with ``k`` outermost, as every product did before, unless there are
   rows enough to share the copy of a panel: then a ``b`` wider than that, or larger than the L1 data
-  cache, takes the same blocks with the column blocks outermost (``_panel_passes``)."""
+  cache, takes the same blocks with the column blocks outermost (``_panel_passes``).
+
+  ``symmetric`` says ``b`` is ``a`` transposed. In register tiles, from ``SYMMETRIC_TILES`` tiles
+  of columns on and a reduction of four terms, such a product computes the tiles that reach its
+  lower triangle and copies the rest across the diagonal: entry ``(i, j)`` and entry ``(j, i)``
+  are the same products added in the same order, so the copy is the value the full product
+  computes, to the last bit. (A product that small, or of fewer terms, may be expanded into scalar
+  code, where what it rounds to depends on which terms its entries share: it is left as it is.)"""
   c = p.const_int
   nm = out.attrs["name"]
   zero = p.const_float(0.0, dtype=dtype)
   target = ctx.target
   tile_rows, tile_columns = target.product_tile
   tiled = m is not None and 1 < tile_rows <= m
+  symmetric = symmetric and tiled and kk >= 4 and n // tile_columns >= SYMMETRIC_TILES
   large = kk * n * dtype.itemsize > target.choices.l1d_bytes
   outermost = (
     m is not None
@@ -1167,7 +1189,13 @@ def _lower_columns_blocked(
       lambda row, k, col, first: p.mul(a_at(row, k), p.load(p.view(b_buf, [p.add(p.mul(k, c(n)), p.add(first, col))]))),
       lambda row, col, first: p.view(out, [p.add(p.mul(row, c(n)), p.add(first, col))]),
       dtype,
+      lower_only=symmetric,
     )
+    if symmetric:
+      si, sj = p.var(f"si_{nm}"), p.var(f"sj_{nm}")
+      across = p.store(p.view(out, [p.add(p.mul(si, c(n)), sj)]), p.load(p.view(out, [p.add(p.mul(sj, c(n)), si)])))
+      inner = p.for_(p.range_(sj.attrs["name"], p.add(si, c(1)), n, kind=RangeKind.GLOBAL), [across])
+      ctx.emit(p.for_(p.range_(si.attrs["name"], 0, n, kind=RangeKind.SERIAL), [inner]))
     segments = []
   stmts: list[ProgramNode] = []
   for number, (first, width, count) in enumerate(segments):
@@ -1217,12 +1245,20 @@ def _lower_row_tiles(
   term: Callable[[ProgramNode, ProgramNode, ProgramNode, ProgramNode], ProgramNode],
   out_at: Callable[[ProgramNode, ProgramNode, ProgramNode], ProgramNode],
   dtype: DType,
+  lower_only: bool = False,
 ) -> None:
   """The tiled columns of every row of a product: the rows in tiles of ``tile_rows`` rows or fewer
-  (``_row_tiles``), each over every segment's tiles (``_tile``)."""
-  c = p.const_int
+  (``_row_tiles``), each over every segment's tiles (``_tile``).
 
-  def over(label: str, rows: list[ProgramNode]) -> list[ProgramNode]:
+  With ``lower_only``, for a square product whose lower triangle is all that is wanted, a tile
+  of rows runs only the tiles of the first segment that hold a column up to its last row; the
+  narrower segments after it, a tile each, run for every row."""
+  c = p.const_int
+  wide = segments[0][2] if lower_only and segments and segments[0][0] == 0 and segments[0][2] > 1 else 0
+  width0 = segments[0][1] if wide else 1
+
+  def over(label: str, rows: list[ProgramNode], limit: int | ProgramNode | None = None) -> list[ProgramNode]:
+    """``limit``: how many tiles of the first segment to run, None for all."""
     stmts: list[ProgramNode] = []
     for number, (first, width, count) in enumerate(segments):
       tag = f"{nm}_{label}{number}"
@@ -1232,18 +1268,31 @@ def _lower_row_tiles(
 
       if count > 1:
         jb = p.var(f"jb_{tag}")
-        stmts.append(p.for_(p.range_(jb.attrs["name"], 0, count, kind=RangeKind.GLOBAL), tile(p.add(c(first), p.mul(jb, c(width))))))
+        bound = count if number or limit is None else limit
+        stmts.append(p.for_(p.range_(jb.attrs["name"], 0, bound, kind=RangeKind.GLOBAL), tile(p.add(c(first), p.mul(jb, c(width))))))
       else:
         stmts += tile(c(first))
     return stmts
 
+  def needed(last_row: int) -> int:
+    """The tiles of the first segment with a column at or before ``last_row``."""
+    return last_row // width0 + 1
+
   for group, (first, height, count) in enumerate(_row_tiles(m, tile_rows)):
+    # The first row tiles of the group need fewer tiles than the segment has, more with each; the rest need them all.
+    partial = sum(needed(first + ib * height + height - 1) < wide for ib in range(count)) if wide else 0
     if count > 1:
-      ib = p.var(f"ib{group}_{nm}")
-      rows = [p.add(p.mul(ib, c(height)), c(first + r)) for r in range(height)]
-      ctx.emit(p.for_(p.range_(ib.attrs["name"], 0, count, kind=RangeKind.GLOBAL), over(f"t{group}", rows)))
+      if partial:
+        il = p.var(f"il{group}_{nm}")
+        rows = [p.add(p.mul(il, c(height)), c(first + r)) for r in range(height)]
+        through = p.add(p.div(p.add(p.mul(il, c(height)), c(first + height - 1)), c(width0)), c(1))
+        ctx.emit(p.for_(p.range_(il.attrs["name"], 0, partial, kind=RangeKind.GLOBAL), over(f"l{group}", rows, through)))
+      if partial < count:
+        ib = p.var(f"ib{group}_{nm}")
+        rows = [p.add(p.mul(ib, c(height)), c(first + r)) for r in range(height)]
+        ctx.emit(p.for_(p.range_(ib.attrs["name"], partial, count, kind=RangeKind.GLOBAL), over(f"t{group}", rows)))
     else:
-      ctx.emit(*over(f"t{group}", [c(first + r) for r in range(height)]))
+      ctx.emit(*over(f"t{group}", [c(first + r) for r in range(height)], needed(first + height - 1) if partial else None))
 
 
 def _panel_passes(

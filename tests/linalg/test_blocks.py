@@ -138,6 +138,27 @@ def test_a_solve_is_differentiable_in_the_matrix_and_the_right_hand_side() -> No
     np.testing.assert_allclose(gr[index], (value(below, rhs + step) - value(below, rhs - step)) / (2 * h), rtol=1e-6, atol=1e-9)
 
 
+def test_the_blocks_are_factored_and_solved_with_running_sums() -> None:
+  """The blocks are a few dozen rows, where ``cholesky``'s and ``solve_triangular``'s running sums
+  and reciprocal diagonals are the faster form: every factorization and substitution of the
+  kernel asks for them, in the step of the factorization and in both passes of a solve."""
+  from scaly.ir.expr import topo
+
+  fac, fn = _functions("blocks_sums", 4, 20, 12)
+  seen: dict[str, set[str]] = {}
+
+  def walk(function) -> None:
+    for node in topo(function.outputs):
+      if str(node.op) in ("cholesky", "trisolve"):
+        seen.setdefault(str(node.op), set()).add(node.attrs.get("sums", "pairwise"))
+      callee = node.attrs.get("callee")
+      if callee is not None:
+        walk(callee)
+
+  walk(fn.concrete)
+  assert seen == {"cholesky": {"running"}, "trisolve": {"running"}}
+
+
 def test_the_shapes_are_checked() -> None:
   with pytest.raises(ValueError, match="stack of K square blocks"):
     BlockTridiagonalCholesky(sc.sym("d", (3, 4, 5)))

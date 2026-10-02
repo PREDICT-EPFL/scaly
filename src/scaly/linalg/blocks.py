@@ -28,10 +28,14 @@ from ..function.model import ConcreteFunction
 from ..function.sugar import scan
 from ..ir.expr import Expr, as_expr, concat, gather
 from .dense import cholesky, solve_triangular
+from .ops.dense import Sums
 
 __all__ = ["BlockTridiagonalCholesky"]
 
 _NAMES = itertools.count()
+# The blocks are a few dozen rows at most, where one running sum an entry and the reciprocals of the
+# diagonal take 0.7 to 0.85 of the pairwise form's time (``linalg.cholesky``'s ``sums``).
+SUMS: Sums = "running"
 
 
 def _backward(flat: Expr, steps: int, size: int) -> Expr:
@@ -103,18 +107,18 @@ class BlockTridiagonalCholesky:
     K, B, c = self.K, self.B, self.c
     flat = diag.reshape((K * B * B,))
     if K == 1:
-      return cholesky(diag.reshape((B, B))).reshape((B * B,))
+      return cholesky(diag.reshape((B, B)), sums=SUMS).reshape((B * B,))
     assert below is not None
     taken, d, e = Expr.sym("S", (B * B,)), Expr.sym("D", (B, B)), Expr.sym("E", (B, c))
-    lower = cholesky(d - taken.reshape((B, B)))
+    lower = cholesky(d - taken.reshape((B, B)), sums=SUMS)
     # W L' = E with W zero outside its last c columns: the trailing triangle alone decides them.
-    w = solve_triangular(lower[B - c :, B - c :], e.T, lower=True).T
+    w = solve_triangular(lower[B - c :, B - c :], e.T, lower=True, sums=SUMS).T
     step = ConcreteFunction.from_exprs(
       f"{self.name}_factor_step", [taken, d, e], [(w @ w.T).reshape((B * B,)), lower, w], ["S", "D", "E"], ["S_next", "L", "W"]
     )
     slices = [(flat, 0, B * B), (below.reshape(((K - 1) * B * c,)), 0, B * c)]
     last, lowers, ws = scan(step, Expr.const(np.zeros(B * B)), slices, length=K - 1)
-    final = cholesky(flat[(K - 1) * B * B :].reshape((B, B)) - last.reshape((B, B)))
+    final = cholesky(flat[(K - 1) * B * B :].reshape((B, B)) - last.reshape((B, B)), sums=SUMS)
     return concat([lowers, final.reshape((B * B,)), ws])
 
   # --- the solves ---------------------------------------------------------------------------------
@@ -135,19 +139,19 @@ class BlockTridiagonalCholesky:
     lowers, ws = self._parts(values)
     last = lowers[(K - 1) * B * B :].reshape((B, B))
     if K == 1:
-      return solve_triangular(last, solve_triangular(last, rhs, lower=True), lower=True, trans=True)
+      return solve_triangular(last, solve_triangular(last, rhs, lower=True, sums=SUMS), lower=True, trans=True, sums=SUMS)
     lead = Expr.const(np.zeros(B - c))
     carry, lk, wk, rk = Expr.sym("t", (B,)), Expr.sym("L", (B, B)), Expr.sym("W", (B, c)), Expr.sym("r", (B,))
-    y = solve_triangular(lk, rk - carry, lower=True)
+    y = solve_triangular(lk, rk - carry, lower=True, sums=SUMS)
     forward = ConcreteFunction.from_exprs(
       f"{self.name}_solve_forward", [carry, lk, wk, rk], [wk @ y[B - c :], y], ["t", "L", "W", "r"], ["t_next", "y"]
     )
     taken, ys = scan(forward, Expr.const(np.zeros(B)), [(lowers, 0, B * B), (ws, 0, B * c), (rhs, 0, B)], length=K - 1)
-    y_last = solve_triangular(last, rhs[(K - 1) * B :] - taken, lower=True)
-    x_last = solve_triangular(last, y_last, lower=True, trans=True)
+    y_last = solve_triangular(last, rhs[(K - 1) * B :] - taken, lower=True, sums=SUMS)
+    x_last = solve_triangular(last, y_last, lower=True, trans=True, sums=SUMS)
     # Row ``k`` of ``L'`` reads the next block through ``W_k'``, which reaches the last c entries only.
     nxt, yk = Expr.sym("x_next", (B,)), Expr.sym("y", (B,))
-    x = solve_triangular(lk, yk - concat([lead, wk.T @ nxt]), lower=True, trans=True)
+    x = solve_triangular(lk, yk - concat([lead, wk.T @ nxt]), lower=True, trans=True, sums=SUMS)
     backward = ConcreteFunction.from_exprs(f"{self.name}_solve_backward", [nxt, lk, wk, yk], [x, x], ["x_next", "L", "W", "y"], ["x", "x_out"])
     slices = [(lowers, (K - 2) * B * B, -B * B), (ws, (K - 2) * B * c, -B * c), (ys, (K - 2) * B, -B)]
     _, xs = scan(backward, x_last, slices, length=K - 1)
