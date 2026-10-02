@@ -350,7 +350,7 @@ def _bundle_macos_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> No
 
   IPOPT links libgfortran/libquadmath by absolute Homebrew path, so a library built on one
   machine will not load on another that lacks that exact formula — which is how the macOS
-  `solver tests` job broke once it stopped rebuilding IPOPT itself. Vendoring the runtime
+  `tests` job broke once it stopped rebuilding IPOPT itself. Vendoring the runtime
   and adding an `@loader_path` rpath makes the shipped library self-contained, the same job
   `_bundle_linux_runtime` does with `$ORIGIN`."""
   # each entry pairs the copy under lib_dir with the original it came from, whose rpaths

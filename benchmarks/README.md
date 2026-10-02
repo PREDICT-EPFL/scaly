@@ -24,7 +24,7 @@ fails.
 
 ```bash
 uv run python benchmarks/run.py smoke
-uv run python benchmarks/run.py smoke --skip solver_call
+uv run python benchmarks/run.py smoke --select benchmarks
 uv run python benchmarks/run.py smoke --select problems
 ```
 
@@ -67,7 +67,8 @@ Smoke runs three groups, all on by default:
 - `solver_call` — the QP/IPOPT solver-call ABI, when vendored solver libraries
   are present.
 
-Any failure produces a nonzero exit status.
+Each problem's gates and the `benchmarks` group run in parallel, each in its own process, and
+all of them report even when one fails. Any failure produces a nonzero exit status.
 
 ### Adding a problem gate
 

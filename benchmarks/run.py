@@ -3,7 +3,9 @@ from __future__ import annotations
 # ruff: noqa: E402 -- direct execution must add the repository root before package imports
 
 import argparse
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 import importlib
 import multiprocessing
 import os
@@ -333,28 +335,23 @@ def _problem_checks(problem: str) -> None:
       raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
 
 
-def _problem_smoke() -> None:
-  """Run each problem's formulation gates in a separate process."""
-  for problem in ("race_cars", "chain", "unbumpercars", "npmpc"):
-    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as pool:
-      pool.submit(_problem_checks, problem).result()
-
-
 def smoke(args) -> bool:
   selected = set(args.select or ("benchmarks", "problems", "solver_call")) - set(args.skip or ())
-  failures = []
-  if "problems" in selected:
-    try:
-      _problem_smoke()
-    except Exception as e:
-      failures.append(f"problems: {e}")
-      print(f"smoke problems: FAILED ({type(e).__name__}: {e})")
+  groups: dict[str, Callable[[], None]] = {
+    problem: partial(_problem_checks, problem) for problem in ("race_cars", "chain", "unbumpercars", "npmpc") if "problems" in selected
+  }
   if "benchmarks" in selected:
-    try:
-      _benchmark_smoke()
-    except Exception as e:
-      failures.append(f"benchmarks: {e}")
-      print(f"smoke benchmarks: FAILED ({e})")
+    groups["benchmarks"] = _benchmark_smoke
+  failures = []
+  # every group runs in its own spawned process, so the groups run in parallel and fail independently
+  with ProcessPoolExecutor(mp_context=multiprocessing.get_context("spawn"), max_tasks_per_child=1) as pool:
+    futures = {name: pool.submit(task) for name, task in groups.items()}
+    for name, future in futures.items():
+      try:
+        future.result()
+      except Exception as e:
+        failures.append(f"{name}: {e}")
+        print(f"smoke {name}: FAILED ({type(e).__name__}: {e})")
   if "solver_call" in selected:
     try:
       note = _solver_call_smoke(required="solver_call" in (args.select or ()))

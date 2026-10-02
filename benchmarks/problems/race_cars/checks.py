@@ -257,15 +257,21 @@ def check_casadi_ipopt_is_compiled() -> None:
 
 
 def check_harvested_sqp_globalizations() -> None:
-  """Both oracle providers solve the harvested hard-QP race failure."""
+  """Both oracle providers solve the harvested hard-QP race failure.
+
+  The SQP options are compiled into the solver module, so every option set recompiles the large
+  CasADi source (issue #112). The globalizations do not depend on the oracle provider, so only Scaly
+  runs both.
+  """
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
-  for oracle in ("scaly", "casadi"):
-    for name, options, expected_iter in (
-      ("filter", {}, 3),
-      ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
-    ):
+  globalizations = (
+    ("filter", {}, 3),
+    ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
+  )
+  for oracle, cases in (("scaly", globalizations), ("casadi", globalizations[:1])):
+    for name, options, expected_iter in cases:
       solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
       out = solve_problem(solver, inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
       stats = problem_stats(solver)

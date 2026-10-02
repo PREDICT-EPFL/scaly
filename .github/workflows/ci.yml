@@ -85,12 +85,8 @@ jobs:
           retention-days: 90
 
   lint-type:
-    name: lint + type / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: lint + type
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -105,9 +101,6 @@ jobs:
         env:
           SCALY_BUILD_SOLVERS: skip
         run: uv sync --frozen
-
-      - name: Native toolchain report
-        run: uv run scaly_toolchain
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -121,45 +114,13 @@ jobs:
       - name: Pytest node-ID baseline
         run: uv run pytest --collect-only -q
 
-  tests-core:
-    name: core tests / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install
-
-      - name: uv sync (Python/core only)
-        env:
-          SCALY_BUILD_SOLVERS: skip
-        run: uv sync --frozen
-
-      - name: C compiler report
-        run: |
-          cc --version
-          if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
-
-      - name: Pytest core suite
-        run: uv run pytest -n=auto -m "not solver"
-
-      - name: Benchmark smoke
-        run: uv run python benchmarks/run.py smoke --skip solver_call
-
-  # The solver tests run against the plugin wheels, not an editable build, so they check the
-  # binaries users install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the
-  # editable plugins; if something syncs anyway, the plugins return without their libraries and
-  # `SCALY_REQUIRE_SOLVERS` fails the run instead of skipping.
-  tests-solvers:
-    name: solver tests / ${{ matrix.os }}
+  # The tests run against the plugin wheels, not an editable build, so they check the binaries
+  # users install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the editable
+  # plugins; if something syncs anyway, the plugins return without their libraries and
+  # `SCALY_REQUIRE_SOLVERS` fails the run instead of skipping. Every check step runs even when an
+  # earlier one failed, so one failure never hides another.
+  tests:
+    name: tests / ${{ matrix.os }}
     needs: [wheels]
     runs-on: ${{ matrix.os }}
     strategy:
@@ -192,29 +153,25 @@ jobs:
           uv pip install --no-deps dist/*.whl
           uv run python -c "import scaly_piqp, scaly_ipopt; assert all('site-packages' in m.__file__ for m in (scaly_piqp, scaly_ipopt))"
 
-      - name: Native solver report
-        run: uv run scaly_toolchain
+      - name: Native toolchain report
+        run: |
+          cc --version
+          if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
+          uv run scaly_toolchain
 
-      - name: Pytest solver suite
-        env:
-          SCALY_REQUIRE_SOLVERS: "1"
-        run: uv run pytest -n=auto -m solver
+      - name: Pytest
+        run: uv run pytest -n=auto
 
-      - name: Solver-call smoke
-        run: uv run python benchmarks/run.py smoke --select solver_call
-
-      - name: Solver-backed problem gates
-        env:
-          SCALY_REQUIRE_SOLVERS: "1"
-        run: uv run python benchmarks/run.py smoke --select problems
+      - name: Benchmark smoke
+        if: ${{ !cancelled() }}
+        run: uv run python benchmarks/run.py smoke
 
       - name: Public closed-loop smoke commands
+        if: ${{ !cancelled() }}
         run: |
           uv run python benchmarks/run.py closed-loop --problem chain --solver ipopt --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --smoke
           uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi --smoke
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle scaly --smoke
@@ -224,6 +181,7 @@ jobs:
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none --smoke
 
       - name: Repeated benchmark commands
+        if: ${{ !cancelled() }}
         run: |
           uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
           uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
