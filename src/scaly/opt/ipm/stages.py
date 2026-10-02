@@ -83,44 +83,81 @@ def condensed_pattern(s: QPStructure) -> sparse.csr_array:
   return total
 
 
-def _levels(adj: sparse.csr_array, start: np.ndarray) -> list[np.ndarray]:
+def _neighbours(adj: sparse.csr_array, front: np.ndarray) -> np.ndarray:
+  """The column indices of the rows ``front`` of ``adj``, one after another."""
+  starts = adj.indptr[front]
+  lengths = adj.indptr[front + 1] - starts
+  return adj.indices[np.repeat(starts - np.cumsum(lengths) + lengths, lengths) + np.arange(int(lengths.sum()))]
+
+
+def _levels(adj: sparse.csr_array, start: np.ndarray, alone: np.ndarray) -> list[np.ndarray]:
   """The level sets of a breadth-first search from ``start``: each level is every unseen neighbour
   of the one before. A part of the graph the search does not reach is searched from its
-  lowest-numbered variable, and its levels are laid beside the others (``beside``)."""
+  lowest-numbered variable, and its levels are laid beside the others (``beside``). The variables
+  ``alone`` marks, which nothing couples, are left out: ``_placed`` puts them in. Each level costs
+  the entries of its rows, so a search is as long as the matrix has entries."""
   n = adj.shape[0]
-  seen = np.zeros(n, dtype=bool)
+  seen = alone.copy()
   parts: list[list[np.ndarray]] = []
   front = np.unique(start)
+  front = front[~seen[front]]
+  lowest = 0
   while front.size:
     levels: list[np.ndarray] = []
     while front.size:
       seen[front] = True
       levels.append(front)
-      reached = np.zeros(n, dtype=bool)
-      for v in front:
-        reached[adj.indices[adj.indptr[v] : adj.indptr[v + 1]]] = True
-      front = np.flatnonzero(reached & ~seen)
+      reached = np.unique(_neighbours(adj, front))
+      front = reached[~seen[reached]]
     parts.append(levels)
-    front = np.flatnonzero(~seen)[:1]
+    while lowest < n and seen[lowest]:
+      lowest += 1
+    front = np.array([lowest] if lowest < n else [], dtype=np.int64)
   return beside(parts)
 
 
 def beside(parts: list[list[np.ndarray]]) -> list[np.ndarray]:
   """Unconnected parts of a graph as one run of levels: the part with the most levels as it is,
   and each other part's levels joined to as many consecutive ones of it, where the largest level
-  that results is smallest. Nothing couples two parts, so a level may hold variables of both. A
-  variable no row reads is a part of one level, and goes to a level with room for it; a block of
-  its own would be factored as large as the others."""
+  that results is smallest (the first such place). Nothing couples two parts, so a level may hold
+  variables of both."""
+  if not parts:
+    return []
   parts = sorted(parts, key=len, reverse=True)
   levels = list(parts[0])
+  sizes = np.array([level.size for level in levels])
   for part in parts[1:]:
-    sizes = np.array([level.size for level in levels])
     add = np.array([level.size for level in part])
-    offsets = range(len(levels) - len(part) + 1)
-    at = min(offsets, key=lambda o: (int((sizes[o : o + add.size] + add).max()), o))
+    at = int(np.argmin((np.lib.stride_tricks.sliding_window_view(sizes, add.size) + add).max(axis=1)))
     for k, level in enumerate(part):
       levels[at + k] = np.concatenate([levels[at + k], level])
+    sizes[at : at + add.size] += add
   return levels
+
+
+def _placed(levels: list[np.ndarray], alone: np.ndarray) -> list[list[np.ndarray]]:
+  """``levels`` with the variables ``alone`` added, which nothing couples: first in the room the
+  levels leave below the largest, which pads them anyway; what is left either spread over every
+  level, each one larger, or in levels of their own as large as the others, in front, where they
+  couple with nothing. Both are returned when both are possible, for ``stages`` to keep the one
+  of less work: a few more slots in each of many blocks cost more than one more block, and in
+  each of one or two blocks less."""
+  if not alone.size:
+    return [levels]
+  if not levels:
+    return [[alone]]
+  size = max(level.size for level in levels)
+  filled, taken = [], 0
+  for level in levels:
+    more = min(size - level.size, alone.size - taken)
+    filled.append(np.concatenate([level, alone[taken : taken + more]]))
+    taken += more
+  rest = alone[taken:]
+  if not rest.size:
+    return [filled]
+  spread = [np.concatenate([level, extra]) for level, extra in zip(filled, np.array_split(rest, len(filled)), strict=True)]
+  own = [rest[k : k + size] for k in range(0, rest.size, size)]
+  return [spread, own + filled]
 
 
 def _shifted(levels: list[np.ndarray]) -> list[np.ndarray]:
@@ -139,9 +176,9 @@ def _shifted(levels: list[np.ndarray]) -> list[np.ndarray]:
   return [first[: first.size - moved], np.concatenate([first[first.size - moved :], levels[1]]), *levels[2:]]
 
 
-def _far_end(adj: sparse.csr_array, v: int) -> int:
+def _far_end(adj: sparse.csr_array, v: int, alone: np.ndarray) -> int:
   """A variable of least degree in the last level of the search from ``v``."""
-  last = _levels(adj, np.array([v]))[-1]
+  last = _levels(adj, np.array([v]), alone)[-1]
   degree = np.diff(adj.indptr)[last]
   return int(last[np.argmin(degree)])
 
@@ -308,21 +345,35 @@ def stages(s: QPStructure) -> Stages:
   that shares its rows, and from every variable that shares its neighbours, each also with its
   first level thinned into the second (``_shifted``); the partition whose factorization is the
   least work is kept. On a multistage problem, in any variable order, that is the stages, with as
-  many coupling slots ``c`` as there are states.
+  many coupling slots ``c`` as there are states. Variables that nothing couples (no row reads them,
+  and ``P`` only on its diagonal) take no part in the search, and are placed after it
+  (``_placed``); when there are only such variables, they are one block.
   """
   if s not in _STAGES:
     adj = condensed_pattern(s)
-    first = int(np.argmin(np.diff(adj.indptr)))
-    far = _far_end(adj, first)
-    ends = dict.fromkeys((far, _far_end(adj, far), first))
+    degree = np.diff(adj.indptr)
+    alone = degree == 1
+    if alone.all():
+      _STAGES[s] = _partition(adj, [np.arange(s.n)])
+      return _STAGES[s]
+    coupled = np.flatnonzero(~alone)
+    first = int(coupled[np.argmin(degree[coupled])])
+    far = _far_end(adj, first, alone)
+    ends = dict.fromkeys((far, _far_end(adj, far, alone), first))
+    if alone.any():
+      # Also from the first variable that is coupled, and the far end from it: where the search went
+      # when it started from a variable that nothing couples, and on some patterns the better start.
+      low = int(coupled[0])
+      ends.update(dict.fromkeys((low, _far_end(adj, low, alone))))
     best: Stages | None = None
     for v in ends:
       for start in (np.array([v]), _twins(adj, v, True), _twins(adj, v, False)):
-        levels = _levels(adj, start)
+        levels = _levels(adj, start, alone)
         for candidate in (levels, _shifted(levels)):
-          found = _partition(adj, candidate)
-          if best is None or found.factor_work < best.factor_work:
-            best = found
+          for placed in _placed(candidate, np.flatnonzero(alone)):
+            found = _partition(adj, placed)
+            if best is None or found.factor_work < best.factor_work:
+              best = found
     assert best is not None
     _STAGES[s] = best
   return _STAGES[s]

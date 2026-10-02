@@ -93,6 +93,42 @@ def test_running_sums_divide_once_a_column_and_the_default_is_untouched() -> Non
     solve_triangular(a, b, sums="kahan")  # ty: ignore[invalid-argument-type]
 
 
+def _blocked_parts(fn: sc.Function, target: str = "apple-m3") -> int:
+  """How many parts the dot products of ``fn``'s blocked substitution run in: one with running
+  sums, four (the quarters) without, none where the substitution is not blocked."""
+  parts: set[str] = set()
+
+  def walk(node: ProgramNode) -> None:
+    name = str(node.attrs.get("name", "")) if node.op == ProgramOp.RANGE else ""
+    if name.startswith("tjf"):
+      parts.add(name[3])
+    for arg in node.args:
+      walk(arg)
+
+  walk(lower_function(fn, target=target))
+  return len(parts)
+
+
+@pytest.mark.parametrize(("lower", "trans"), [(True, False), (False, True), (True, True), (False, False)])
+def test_a_backward_substitution_in_blocks_is_the_pairwise_one(lower: bool, trans: bool) -> None:
+  """From four blocks of the tile's width a substitution that runs forward (``lower`` without
+  ``trans``, upper with it) takes the running form, one part where the pairwise form takes four;
+  one that runs backward is the pairwise one, which was the faster there. Below four blocks, where
+  the pairwise form is not blocked, both directions take the running form in blocks, from two."""
+  forward = lower != trans
+  for n, blocked in ((32, True), (24, False), (16, False)):  # four, three and two blocks of apple-m3's eight columns
+    t, b = sc.sym("t", (n, n)), sc.sym("b", (n, 16))
+    parts = {
+      sums: _blocked_parts(
+        sc.Function.from_exprs(
+          f"run_back_{n}_{int(lower)}{int(trans)}_{sums}", [t, b], [solve_triangular(t, b, lower=lower, trans=trans, sums=sums)], ["t", "b"], ["x"]
+        )
+      )
+      for sums in ("pairwise", "running")
+    }
+    assert parts == {"pairwise": 4 if blocked else 0, "running": 4 if blocked and not forward else 1}, (n, parts)
+
+
 def test_a_running_factorization_differentiates_as_the_pairwise_one() -> None:
   n = 20
   rng = np.random.default_rng(1)

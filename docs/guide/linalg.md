@@ -59,10 +59,13 @@ the op is built. Larger orders become loops with triangular bounds that do not g
   factored and solved as before, dividing by the diagonal.
 - `cholesky(A, sums="running")` and `solve_triangular(T, B, sums="running")` add each dot product
   to one sum in order, as a BLAS does, and multiply by the reciprocal of a diagonal entry where the
-  default divides by it. They go by blocks from two blocks of the register tile on. The default,
-  `"pairwise"`, is the more accurate in the last pivots of an ill-conditioned matrix, which an
-  interior-point solver's iteration count can hang on; the running form is the faster on matrices
-  of a few dozen rows, and `linalg.blocks` uses it.
+  default divides by it. They go by blocks from two blocks of the register tile on, a solve for a
+  tile's width of right-hand sides or more. With fewer right-hand sides a solve takes the
+  reciprocals alone, and a single one is solved as the default solves it. A substitution that runs
+  backward (`lower` with `trans`, or upper without) from four blocks on is the default one, which
+  is the faster there. The default, `"pairwise"`, is the more accurate in the last pivots of an
+  ill-conditioned matrix, which an interior-point solver's iteration count can hang on; the running
+  factorization takes 0.62 to 0.85 of its time from 24 to 200 rows, and `linalg.blocks` uses it.
 - `ldl` runs row by row, taking dot products of contiguous rows in four interleaved partial sums.
 - A solve with the matrix transposed sweeps rows of the triangle, which are contiguous.
 - A solve for several right-hand sides takes a row of `X` at a time, four rows of the triangle per

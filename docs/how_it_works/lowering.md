@@ -258,11 +258,14 @@ order of `k`, so a tile computes what a row block does.
 
 A product of a matrix with its own transpose, `a @ a.T` or `a.T @ a`, is symmetric, and in tiles it
 computes one triangle. A tile of rows runs only the tiles of columns that reach its last row, and
-the entries above the diagonal are then copied from below it. Entry `(i, j)` and entry `(j, i)`
-are the same products added in the same order, so the copy is the value the full product computes,
-to the last bit. This is taken from three tiles of columns on and a reduction of four terms or
-more, where the product is certain to stay in loops. Tiles of eight columns leave a fifth of the
-work to skip at 28 rows and two fifths at 64.
+the entries above the diagonal are then copied from below it. The lower triangle is the full
+product's to the last bit, and the result is exactly symmetric, which the full product need not be.
+Entry `(i, j)` and entry `(j, i)` are the same products added in the same order, but the full
+product computes them in tiles of different shapes, and where one is the narrower tile of the last
+columns the C compiler may fuse the multiply-adds of one and not the other (19 rows on a target
+with vectors of two). This is taken from three tiles of columns and a reduction of sixteen terms
+on: with fewer terms the copy across the diagonal cost more than the tiles it skipped. Tiles of
+eight columns leave a fifth of the work to skip at 28 rows and two fifths at 64.
 
 A constant table of floating-point values larger than the level-1 data cache (`Target.l1d_bytes`)
 is declared aligned to 64 bytes. The C compiler aligns a table to its element, eight bytes, and the

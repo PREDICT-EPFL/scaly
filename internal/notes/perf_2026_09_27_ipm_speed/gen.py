@@ -64,15 +64,31 @@ def all_names() -> list[str]:
 
 def problem(name: str):
   """A ``tests.opt.ipm.problems.QP`` by name: a stored Maros-Meszaros problem, a generated MPC
-  (``mpc_<nx>_<nu>_<N>``) or a family of ``examples/opt/qp_solvers`` at its parameters (``ex_<case>``)."""
+  (``mpc_<nx>_<nu>_<N>``, or ``mpc_<nx>_<nu>_<N>_<r>`` with ``r`` path rows a stage), a Hessian of
+  ``K`` dense blocks of ``B`` coupled with their neighbours under boxes (``btri_<K>_<B>``) or a
+  family of ``examples/opt/qp_solvers`` at its parameters (``ex_<case>``)."""
   from scipy import sparse
 
   from scaly.testing.qp import maros_meszaros, mpc_qp
   from scaly.testing.qp import make_qp as _qp
 
   if name.startswith("mpc_"):
-    nx, nu, horizon = (int(v) for v in name.split("_")[1:])
-    return mpc_qp(nx, nu, horizon, name=name)
+    nx, nu, horizon, *rows = (int(v) for v in name.split("_")[1:])
+    return mpc_qp(nx, nu, horizon, path_rows=rows[0] if rows else 0, name=name)
+  if name.startswith("btri_"):
+    blocks, size = (int(v) for v in name.split("_")[1:])
+    rng = np.random.default_rng(blocks * 1000 + size)
+    n = blocks * size
+    hess = np.zeros((n, n))
+    for k in range(blocks):
+      x = rng.standard_normal((size, size))
+      hess[k * size : (k + 1) * size, k * size : (k + 1) * size] = x @ x.T / size
+      if k + 1 < blocks:
+        e = 0.3 * rng.standard_normal((size, size)) / np.sqrt(size)
+        hess[(k + 1) * size : (k + 2) * size, k * size : (k + 1) * size] = e
+        hess[k * size : (k + 1) * size, (k + 1) * size : (k + 2) * size] = e.T
+    hess += np.diag(0.2 * np.abs(hess).sum(axis=1) + 1.0)
+    return _qp(name, sparse.csc_array(hess), rng.standard_normal(n), x_l=-np.ones(n), x_u=np.ones(n))
   if name.startswith("ex_"):
     import compare
     import problems as families

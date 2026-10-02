@@ -4,7 +4,8 @@
 
 Reads ``perf_2026_09_27_ipm_speed/build/timing_<variant>.json`` and the cells' ``meta.json``
 (``gen.py --variant <variant> --backends sparse,stagewise,dense --split`` on the ``mpc_*`` family,
-then ``timing.py --variants <variant>``). The stagewise backend's time an iteration is modelled as
+with and without path rows, ``mpc_<nx>_<nu>_<N>_<r>``, and Hessians of dense blocks coupled with
+their neighbours, ``btri_<K>_<B>``; then ``timing.py --variants <variant>``). The stagewise backend's time an iteration is modelled as
 a non-negative combination of its counts (``scaly.opt.ipm.cost.stage_work``), fitted by
 non-negative least squares on the relative error, as ``backend_fit.py`` fits the other two.
 
@@ -35,11 +36,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(ROOT))
 BUILD = HERE.parent / "perf_2026_09_27_ipm_speed" / "build"
+sys.path.insert(0, str(BUILD.parent))
 
 
 def rows(variant: str) -> list[dict]:
+  from gen import problem
   from scaly.opt.ipm.cost import iteration_us, stage_terms, work
-  from scaly.testing.qp import mpc_qp
   from tests.opt.ipm.problems import ipm_inputs
 
   timing = {r["cell"]: r["best_us"][variant] for r in json.loads((BUILD / f"timing_{variant}.json").read_text())}
@@ -50,8 +52,7 @@ def rows(variant: str) -> list[dict]:
     row = out.setdefault(name, {"name": name})
     row[backend] = us / max(int(meta["iter"]), 1)
   for name, row in out.items():
-    nx, nu, horizon = (int(v) for v in name.split("_")[1:])
-    s, _ = ipm_inputs(mpc_qp(nx, nu, horizon))
+    s, _ = ipm_inputs(problem(name))
     row["terms"] = stage_terms(s)
     w = work(s)
     row["model"] = {b: iteration_us(w, b) for b in ("dense", "sparse")}

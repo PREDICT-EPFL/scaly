@@ -144,10 +144,13 @@ SPARSE_WEIGHTS = (6.997e-2, 0.0, 0.0, 5.457e-5, 9.041e-3)
 # blocks of 28 to 42 (the arrays' products at 25 G a second, the factorization at 14); on a family
 # of multistage problems alone they are not told apart from the counts that grow with the square of
 # a block, and a fit without them would call one block of a hundred rows cheap. The others are
-# fitted to 24 multistage problems of 3 to 52 slots a block
-# (``internal/notes/perf_2026_09_30_gaps/stagewise_fit.py``): the prediction is within 0.70 to 1.36
-# of the measured iteration.
-STAGEWISE_WEIGHTS = (0.0, 2.920e-2, 0.0, 2.989e-3, 9.718e-4, 1.359e-3, 4.0e-5, 7.0e-5, 0.0)
+# fitted to 47 multistage problems of 3 to 52 slots a block, 23 of them with inequality rows over
+# each stage, and 10 Hessians of dense blocks coupled with their neighbours
+# (``internal/notes/perf_2026_09_30_gaps/stagewise_fit.py``): the prediction is within 0.77 to 1.50
+# of the measured iteration. A fit to the 24 without such rows or blocks took the stagewise backend
+# for small stages with inequality rows, where it was 1.2-1.3x the sparse backend's time, and put
+# the Hessians' blocks at a third of their time.
+STAGEWISE_WEIGHTS = (0.0, 3.321e-2, 4.760e-3, 1.730e-4, 1.414e-3, 9.192e-4, 4.0e-5, 7.0e-5, 0.0)
 # The fewest blocks for the stagewise backend to be a candidate. With one or two it is the dense
 # backend's factorization behind another assembly, and its weights were not measured there.
 STAGEWISE_BLOCKS = 3
@@ -171,18 +174,45 @@ def stagewise_us(s: QPStructure) -> float:
   return float(np.dot(STAGEWISE_WEIGHTS, stage_terms(s)))
 
 
+def stagewise_floor_us(s: QPStructure) -> float:
+  """A time ``stagewise_us`` is not under, from counts that need no partition. A row of ``A`` or
+  ``G`` that reads ``k`` variables puts them in one block and the coupling slots of the block
+  before, so ``k <= B + c``; and the ``K`` blocks of ``B`` slots hold all ``n`` variables. So the
+  block storage, ``K B^2`` cells for the blocks and ``(K - 1) B c`` below them, has ``n k - k^2 / 4``
+  or more, and the factorization, ``K B^3 / 6`` multiply-adds for the blocks and
+  ``(K - 1)(B c^2 / 2 + B^2 c)`` for their coupling, ``n k^2 / 6`` or more. Every weight is
+  non-negative, and the other counts are taken as zero.
+  ``choose_backend`` finds the partition only when this floor is below the other backends' time:
+  a row that reads most variables makes it as large as the dense backend's, and finding the
+  partition of such a problem costs the square of its size."""
+  widest = max((int(np.bincount(rows).max()) for rows in (s.A_rows, s.G_rows) if rows.size), default=0)
+  w = StageWork(
+    vectors=s.n + s.p + s.m,
+    entries=int(s.P_rows.size + s.A_rows.size + s.G_rows.size),
+    cells=max(s.n * widest - (widest * widest + 3) // 4, 0),
+    pairs=0,
+    arrays=0,
+    products=0,
+    factor=s.n * widest * widest // 6,
+    solve=0,
+  )
+  return float(np.dot(STAGEWISE_WEIGHTS, (1.0, w.vectors, w.entries, w.cells, w.pairs, w.arrays, w.products, w.factor, w.solve)))
+
+
 def choose_backend(s: QPStructure) -> Backend:
   """The backend whose iteration the model finds cheapest for ``s``: the sparse one, the dense one,
   or, for a problem whose partition has ``STAGEWISE_BLOCKS`` blocks or more, the stagewise one. The
-  sparse backend is left out when its factorization is past what can be generated. The choice
-  decides the graph, which is built before any target is known, and the weights are the reference
-  machine's, the only one they were measured on; so it is the same for every target."""
+  sparse backend is left out when its factorization is past what can be generated, and the
+  stagewise one without its partition being found when ``stagewise_floor_us`` already exceeds
+  the others' time. The choice decides the graph, which is built before any target is known, and
+  the weights are the reference machine's, the only one they were measured on; so it is the same
+  for every target."""
   try:
     w = work(s)
     times: dict[Backend, float] = {"sparse": iteration_us(w, "sparse"), "dense": iteration_us(w, "dense")}
   except TooMuchWork:
     times = {"dense": iteration_us(_dense_work(s), "dense")}
-  if stages(s).K >= STAGEWISE_BLOCKS:
+  if stagewise_floor_us(s) < min(times.values()) and stages(s).K >= STAGEWISE_BLOCKS:
     times["stagewise"] = stagewise_us(s)
   return min(times, key=times.__getitem__)
 
@@ -198,6 +228,7 @@ __all__ = [
   "iteration_us",
   "stage_terms",
   "stage_work",
+  "stagewise_floor_us",
   "stagewise_us",
   "work",
 ]

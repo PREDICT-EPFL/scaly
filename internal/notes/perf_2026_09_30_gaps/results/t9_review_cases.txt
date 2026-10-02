@@ -1,0 +1,114 @@
+Tier 9 review, 2 Oct 2026: two agents on the tier's diff, each asked to prove what it claims by a
+reproduction. Apple M3 Max, other sessions running; kernel times are from C (the IPM speed study's
+time_entry.c), the two sides of a ratio interleaved over rounds. The second agent stalled before it
+reported; its findings file held five proven findings, and its sweeps that were still running were
+stopped (the address-sanitizer sweep, the running solves' and the symmetric product's bit sweeps
+had found nothing more by then).
+
+A. The stagewise backend and the default choice (C-245, C-247)
+--------------------------------------------------------------
+The backend held: 320 random problems against the dense backend (no equalities, no inequalities,
+one-sided, two-sided and coupling rows, variables in no row, one stage, an arrow, two independent
+parts, stages of different sizes, random variable orders, coupled stage costs, infeasible and
+unbounded problems, indefinite Hessians), statuses, x, y and z within 1e-6, iterations the same but
+on two indefinite problems (one apart, where PIQP's own two backends are one apart too). 1 500
+random patterns gave valid partitions; 3 000 multistage problems in random orders gave their stages;
+stage_work's counts are what the kernels build; the block Cholesky to a condition of 4e9.
+
+1. The default took the stagewise backend where it is slower than the sparse one it replaced:
+   multistage problems with inequality rows over each stage and blocks of 5 or 6 slots, which the
+   fit (24 problems with none) had not seen. Stagewise / sparse, measured and the model's:
+     mpcpath_4_2_20_4    1.17-1.23   0.98
+     mpcpath_4_2_10_4c   1.28        0.98
+     mpcpath_4_2_60_6c   1.22        0.94     (eleven problems, all 1.17-1.33)
+   After: the weights refitted to 57 problems, 23 with path rows and 10 Hessians of coupled dense
+   blocks (results/stagewise_fit.md): the eleven take the sparse backend, the model at 1.26-1.38.
+   Leaving each problem out of its own fit, the model picks the fastest on 50 of the 57, its worst
+   pick 1.12x; the 55 problems of the IPM speed study and the race cars' SQP take what they took.
+2. The embedded-QP case study's scaly_sparse became the stagewise backend from a horizon of 32
+   (the model's margin 55.7 against 55.8 us); its README's times, sizes and Cortex-M7 tables are
+   the sparse backend's. After: run_scaly.py, embedded_size.py and the notebook ask for sparse=True.
+3. stages() ran a Python min over every offset for every unconnected part, and a variable nothing
+   couples is a part: mpc_qp(4, 2, 400) with 5 000 of them, 16.4 s against 0.046 s for the choice
+   before C-247. Each of them also grew every block when the blocks were full (3 of them: blocks of
+   6 to 7, 1.36x the work). After: such variables are left out of the search, fill the padding,
+   then take blocks of their own or a slot more in each block, whichever is less work: 0.09 s,
+   blocks of 6. With the extra start from the first coupled variable the partition is no worse
+   than before on any of 295 problems with such variables, and less work on 184.
+4. A row that reads most variables (a budget row) made the condensed pattern dense, and the
+   partition was found for nothing (two blocks): n = 4 000, 1.06 s and 1 074 MB more; n = 8 000,
+   4.29 s and 4 061 MB. After: stagewise_floor_us, a lower bound from the row lengths, is past the
+   other backends' time and the partition is not looked for: 0.99 s and 547 MB, 4.20 s and
+   1 936 MB, as before C-247.
+5. stages() grew faster than the horizon: each level scanned an array of every variable.
+     mpc_qp(4, 2, N), N = 1 000 / 2 000 / 4 000 / 8 000: 0.12 / 0.27 / 0.66 / 1.96 s
+   After (a search costs its rows' entries): N = 2 000 / 4 000 / 8 000 / 16 000: 0.19 / 0.37 /
+   0.74 / 1.51 s.
+6. docs/guide/solvers.md ("takes it for stages of many states and inputs") and beside's docstring
+   (a variable nothing couples "goes to a level with room for it") were not what the code does.
+
+B. The stage step's kernels (C-246)
+-----------------------------------
+Held: the default's C byte-identical before and after on 209 Functions and six targets; the JIT
+key tells a running node from a pairwise one; 468 derivative checks; the running Cholesky on every
+order 1 to 130 on 30 targets (22 custom tiles); the running solves, in place, hoisted, batched,
+float32 and under Rosetta; no out-of-bounds access under the address sanitizer; the symmetric
+product in every context tried (scan, vmap, callee, shared transpose, slices, panels, hints).
+
+1. The symmetric product is not the full product to the last bit. At 19 rows on a target with
+   vectors of two (armv8-a, x86-64) the full product computes entry (15, 18) in the scalar tile of
+   the last column, which clang vectorizes with unfused multiplies and adds, and (18, 15) in a
+   vector tile with fused ones: the full product is not symmetric, and the copy differs from it in
+   one entry by 6.7e-16. The lower triangle is the full product's to the bit. After: the claim and
+   the test say so, and the test has the case.
+2. solve_triangular(..., sums="running") with one right-hand side is the pairwise C, and with two
+   to a tile's width only its reciprocals change; the block solves' two passes are vector solves.
+   The docs said otherwise. After: corrected.
+3. cholesky's docstring said "about twice as fast"; the running form takes 0.62-0.85 of the
+   pairwise one's time from 24 to 200 rows. After: corrected.
+4. A backward substitution in the running form (lower with trans, or upper without), blocked, was
+   slower than the pairwise one, which is blocked too from four tile widths:
+     lower, trans   32x16 1.12-1.16   64x16 1.11-1.13   64x33 1.08-1.16
+     upper          32x16 1.00        64x33 1.04
+   After: from four tile widths it is the pairwise one (1.00 by construction); below, where the
+   pairwise form is not blocked, it stays running (0.33-0.70 of the pairwise time).
+5. The symmetric product was taken for reductions of four terms, where the copy across the
+   diagonal costs more than the tiles skipped: symmetric / full, a @ a.T with a m x k,
+     k = 4    28 rows 1.46   64 rows 1.27
+     k = 8    28 rows 1.17
+     k = 12   28 rows 1.04
+     k = 16   28 rows 0.98   64 rows 0.79
+   After: taken from sixteen terms. No corpus kernel and no stage step of a block with 16 or more
+   coupling slots changes; a stage step with fewer now takes the full product.
+Seen in passing, older than the tier: an int64 matmul does not lower (C-243).
+
+Mutants of the fixes, each on a scratch copy of src/scaly with its own JIT cache keyed by source:
+27, 21 killed at once. Three survivors got tests: the floor's cells with the block of the whole
+row, the floor's pairs counted as entries (rows over two neighbouring blocks, all in the dense
+arrays), and a backward running solve routed from three tile widths (the test now counts the
+blocked substitution's parts). Two were valid bounds tighter than the floor's, which the floor
+now is: the factorization at n k^2 / 6 and the cells at n k - k^2 / 4, both checked by brute
+force over K and B up to 40 and on 358 problems. One was slack the factorization's bound never
+needs, removed. The final 22, all killed:
+  KILLED   placed: spread only                      3 failed, 46 passed in 0.68s
+  KILLED   placed: own blocks only                  2 failed, 27 passed in 0.65s
+  KILLED   placed: own blocks after the stages      3 failed, 46 passed in 0.68s
+  KILLED   placed: padding not filled first         4 failed, 40 passed in 0.68s
+  KILLED   levels: alone variables searched         4 failed, 10 passed in 0.65s
+  KILLED   stages: no extra start                   1 failed, 50 passed in 0.66s
+  KILLED   stages: alone means degree 0             3 failed, 46 passed in 0.69s
+  KILLED   beside: largest level largest            1 failed, 50 passed in 0.65s
+  KILLED   beside: sizes not updated                1 failed, 50 passed in 0.66s
+  KILLED   neighbours: one entry short              4 failed, 9 passed in 0.65s
+  KILLED   floor: cells of the whole row            1 failed, 43 passed in 3.68s
+  KILLED   floor: an eighth off the cells           1 failed, 43 passed in 3.76s
+  KILLED   floor: factorization of a row more       1 failed, 43 passed in 3.77s
+  KILLED   floor: pairs counted                     1 failed, 43 passed in 3.77s
+  KILLED   choice: partition always found           1 failed, 44 passed in 3.77s
+  KILLED   choice: floor test inverted              4 failed, 20 passed in 0.73s
+  KILLED   weights: C-247's                         1 failed, 24 passed in 0.78s
+  KILLED   symmetric: four terms                    1 failed, 7 passed in 11.81s
+  KILLED   symmetric: seventeen terms               1 failed, 14 passed in 23.71s
+  KILLED   trisolve: backward blocked running       1 failed, 41 passed in 26.97s
+  KILLED   trisolve: forward routed instead         3 failed, 38 passed in 35.90s
+  KILLED   trisolve: from three blocks              1 failed, 40 passed in 28.82s

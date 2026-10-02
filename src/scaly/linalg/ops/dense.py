@@ -59,8 +59,11 @@ def cholesky(a: Any, *, sums: Sums = "pairwise") -> Expr:
 
   ``sums`` is how an entry's dot product is added up in loops. ``"pairwise"``, the default, adds
   four partial sums in pairs, which keeps the last pivots of an ill-conditioned matrix accurate.
-  ``"running"`` adds the terms to one sum in order, as a BLAS does: a loop a block of columns
-  where the other runs four, about twice as fast on matrices of a few dozen rows.
+  ``"running"`` adds the terms to one sum in order, as a BLAS does, a loop a block of columns
+  where the other runs four, and multiplies a column by the reciprocal of its diagonal entry where
+  the other divides each entry by it: 0.62 to 0.85 of the pairwise form's time from 24 to 200 rows
+  on the reference machine. It runs in blocks from two of the register tile's width; a smaller
+  matrix, or one in straight-line code, is factored as the pairwise form factors it.
   """
   a = _square(a, "cholesky")
   return Expr(CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_factor_attrs(a.shape[0], sums), lowering=a.lowering)

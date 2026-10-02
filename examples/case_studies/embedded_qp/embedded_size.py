@@ -69,7 +69,7 @@ def scaly(horizon: int, work: Path) -> dict:
 
   from problem import problem
 
-  fun = sc.opt.solver(problem(horizon), sc.opt.IPM(options={"eps_abs": 1e-7, "eps_rel": 1e-7}), name=f"masses_T{horizon}_piqp")
+  fun = sc.opt.solver(problem(horizon), sc.opt.IPM(sparse=True, options={"eps_abs": 1e-7, "eps_rel": 1e-7}), name=f"masses_T{horizon}_piqp")
   module = render_c_module(fun)
   src = work / "scaly_piqp.c"
   src.write_text(module.body)

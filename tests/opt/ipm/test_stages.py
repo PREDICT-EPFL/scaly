@@ -104,6 +104,50 @@ def test_unconnected_parts_are_laid_beside_each_other_where_the_largest_block_st
   assert [level.size for level in beside(parts)] == [2, 3, 3]
 
 
+@pytest.mark.parametrize("alone", [2, 3, 9, 400])
+def test_variables_nothing_couples_fill_the_padding_then_take_blocks_of_their_own(alone: int) -> None:
+  """Variables that no row reads and ``P`` reads only on its diagonal, added to an MPC problem:
+  they first fill the two slots the block of the last states leaves, then go in blocks of their
+  own, as large as a stage, in front of the stages. One more of them is one block more, where a
+  slot more in each of the eleven stages would be 1.36 times the work. The stages stay what they
+  were, and finding them takes no longer for there being many such variables: the search leaves
+  them out, where it searched from each and laid it beside the others."""
+  base, _ = ipm_inputs(mpc_qp(4, 2, 10))
+  n = base.n + alone
+  P, A = np.zeros((n, n), dtype=bool), np.zeros((base.p, n), dtype=bool)
+  P[base.P_rows, base.P_cols] = True
+  P[np.arange(base.n, n), np.arange(base.n, n)] = True
+  A[base.A_rows, base.A_cols] = True
+  s = _structure(n, P, A, np.zeros((0, n), dtype=bool))
+  st, staged = stages(s), stages(base)
+  _check(s, st)
+  room = staged.K * staged.B - base.n
+  assert room == 2
+  own = -(-max(alone - room, 0) // staged.B)
+  assert (st.K, st.B, st.c) == (staged.K + own, staged.B, staged.c)
+  rest = st.order[own * st.B :]
+  assert np.array_equal(rest[staged.order >= 0], staged.order[staged.order >= 0])
+  assert np.all(rest[staged.order < 0] >= base.n)  # the padding filled first
+  assert np.all((st.order[: own * st.B] >= base.n) | (st.order[: own * st.B] < 0))
+
+
+def test_with_variables_nothing_couples_the_search_also_starts_from_the_first_coupled_one() -> None:
+  """A pattern the differential check against the earlier search found, with variable 0 coupled to
+  nothing: from the coupled variable of least degree and its far ends the blocks are three slots,
+  from the first coupled variable two. The earlier search began there, by way of variable 0."""
+  n = 7
+  P = np.diag([0, 1, 1, 1, 0, 1, 0]).astype(bool)
+  A = np.zeros((4, n), dtype=bool)
+  for i, row in enumerate([[1, 2, 4], [3, 5], [3], [5]]):
+    A[i, row] = True
+  G = np.zeros((2, n), dtype=bool)
+  G[0, [3, 4]] = G[1, [4, 6]] = True
+  s = _structure(n, P, A, G)
+  st = stages(s)
+  _check(s, st)
+  assert (st.K, st.B, st.c, st.factor_work) == (4, 2, 1, 19)
+
+
 def test_the_cells_of_the_block_storage_are_the_lower_triangles_and_the_coupling_columns() -> None:
   st = Stages(3, 4, 2, np.arange(12))
   assert st.cells == 3 * 16 + 2 * 4 * 2

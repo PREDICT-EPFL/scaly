@@ -85,9 +85,15 @@ def solve_triangular(
   matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
   when ``unit_diagonal`` is false. ``unroll`` overrides the ``linalg`` option's choice between
   straight-line code (True), loops (False) and the target's choice (``"auto"``), as a derivative
-  does to keep its factorization's. ``sums`` is ``cholesky``'s: ``"running"`` adds each unknown's
-  dot product to one sum, in blocks from a smaller order on, and multiplies by the reciprocal of
-  the diagonal where ``"pairwise"`` divides by it."""
+  does to keep its factorization's. ``sums`` is ``cholesky``'s, for the substitution in blocks of a
+  tile's width of right-hand sides or more: ``"running"`` adds each unknown's dot product to one
+  sum, in blocks from two of the tile's width on, and multiplies by the reciprocal of the diagonal
+  where ``"pairwise"`` divides by it. A substitution that runs backward (``lower`` with ``trans``,
+  or upper without) from four blocks on, where the pairwise form runs in blocks too, is the
+  pairwise one, which was the faster there (0.86 to 0.97 of the running form's time). With fewer
+  right-hand sides the running form takes the reciprocals alone, from two of them; one is solved as
+  ``"pairwise"`` solves it, its interleaved partial sums being what makes a single dot product
+  fast."""
   if sums not in ("pairwise", "running"):
     raise ValueError(f"sums must be 'pairwise' or 'running', got {sums!r}")
   t = _square(t, "solve_triangular")
@@ -272,7 +278,8 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(*per_col(solve_row))
     return
   rows, width = ctx.target.product_tile
-  if running and rows > 1 and width % 4 == 0 and n >= RUNNING_BLOCKS * width and m >= width:
+  backward_blocked = lower == trans and n >= 4 * width  # where the pairwise blocks are the faster
+  if running and rows > 1 and width % 4 == 0 and n >= RUNNING_BLOCKS * width and m >= width and not backward_blocked:
     _trisolve_blocked(ctx, tb, bb, out, n, m, lower, trans, unit, dt, running=True)
     return
   if rows > 1 and width % 4 == 0 and n >= 4 * width and m >= width:

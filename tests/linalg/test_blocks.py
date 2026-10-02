@@ -141,7 +141,8 @@ def test_a_solve_is_differentiable_in_the_matrix_and_the_right_hand_side() -> No
 def test_the_blocks_are_factored_and_solved_with_running_sums() -> None:
   """The blocks are a few dozen rows, where ``cholesky``'s and ``solve_triangular``'s running sums
   and reciprocal diagonals are the faster form: every factorization and substitution of the
-  kernel asks for them, in the step of the factorization and in both passes of a solve."""
+  kernel asks for them. The step's solve of the block below has a block's rows of right-hand
+  sides; the two passes of a solve have one, which the running form solves as the pairwise one."""
   from scaly.ir.expr import topo
 
   fac, fn = _functions("blocks_sums", 4, 20, 12)

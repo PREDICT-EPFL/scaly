@@ -87,15 +87,34 @@ def test_the_reference_machine_takes_the_faster_backend(name: str, backend: str)
 @pytest.mark.parametrize(
   ("stage", "backend"),
   [
-    ((4, 2, 10), "sparse"),  # blocks of 6: the sparse factorization's scalar code is the faster
-    ((12, 4, 20), "stagewise"),  # blocks of 16: 0.90 of the sparse backend's time
-    ((26, 2, 25), "stagewise"),  # blocks of 28: 0.70
-    ((27, 6, 30), "stagewise"),
+    ((4, 2, 10, 0), "sparse"),  # blocks of 6: the sparse factorization's scalar code is the faster (1.16)
+    ((4, 2, 20, 4), "sparse"),  # and with four inequality rows a stage (1.19), which a fit without them took
+    ((4, 2, 40, 4), "sparse"),  # (1.22)
+    ((12, 4, 20, 0), "stagewise"),  # blocks of 16: 0.89 of the sparse backend's time
+    ((12, 4, 20, 8), "stagewise"),  # 0.80
+    ((26, 2, 25, 0), "stagewise"),  # blocks of 28: 0.66
+    ((26, 2, 25, 4), "stagewise"),  # 0.74
+    ((27, 6, 30, 0), "stagewise"),  # 0.74
   ],
 )
-def test_a_multistage_problem_takes_the_stagewise_backend_from_blocks_that_pay(stage: tuple[int, int, int], backend: str) -> None:
+def test_a_multistage_problem_takes_the_stagewise_backend_from_blocks_that_pay(stage: tuple[int, int, int, int], backend: str) -> None:
   """On the M3, as measured (``internal/notes/perf_2026_09_30_gaps/results/stagewise_fit.md``)."""
-  s, _ = ipm_inputs(mpc_qp(*stage))
+  nx, nu, horizon, rows = stage
+  s, _ = ipm_inputs(mpc_qp(nx, nu, horizon, path_rows=rows))
+  assert choose_backend(s) == backend
+
+
+@pytest.mark.parametrize(("blocks", "size", "backend"), [(10, 4, "sparse"), (60, 3, "sparse"), (20, 12, "stagewise"), (10, 30, "stagewise")])
+def test_a_hessian_of_coupled_dense_blocks_takes_the_stagewise_backend_from_blocks_that_pay(blocks: int, size: int, backend: str) -> None:
+  """A Hessian of dense blocks, each coupled with the next, under boxes: the stagewise backend at
+  blocks of 12 and 30 (0.81 and 0.82 of the sparse backend's time), the sparse one at 3 and 4.
+  The fit before these took the cost of the Hessian's entries for a third of what it is."""
+  n = blocks * size
+  block = np.arange(n) // size
+  P = np.abs(block[:, None] - block[None, :]) <= 1
+  free = np.ones(n)
+  s = QPStructure.from_patterns(P, np.zeros((0, n)), np.zeros((0, n)), h_l=[], h_u=[], x_l=-free, x_u=free)
+  assert stages(s).B == size
   assert choose_backend(s) == backend
 
 
@@ -158,6 +177,53 @@ def test_a_sparse_factor_too_large_to_generate_leaves_the_dense_backend(monkeypa
   # A problem with stages still has the stagewise backend to weigh against the dense one.
   s, _ = ipm_inputs(mpc_qp(12, 4, 20))
   assert choose_backend(s) == "stagewise"
+
+
+def _budget(n: int) -> QPStructure:
+  """A portfolio's shape: a diagonal Hessian, one row that reads every variable, nonnegativity."""
+  P = sparse.diags_array(np.linspace(1.0, 2.0, n)).tocsc()
+  return QPStructure.from_patterns(P, np.ones((1, n)), np.zeros((0, n)), h_l=[], h_u=[], x_l=np.zeros(n), x_u=np.full(n, np.inf))
+
+
+@pytest.mark.parametrize("count", range(len(STAGEWISE_WEIGHTS)))
+def test_the_stagewise_floor_bounds_each_count_from_below(monkeypatch, count: int) -> None:
+  """``stagewise_floor_us`` with one weight at a time is a lower bound of each count on its own,
+  so it is one of the model's time for any weights the fit may give: on multistage problems with
+  and without path rows, problems of one or two blocks, and a row that reads every variable."""
+  weights = [0.0] * len(STAGEWISE_WEIGHTS)
+  weights[count] = 1.0
+  monkeypatch.setattr(cost, "STAGEWISE_WEIGHTS", tuple(weights))
+  problems = [mpc_qp(4, 2, 10), mpc_qp(4, 2, 10, path_rows=3), mpc_qp(26, 2, 5), mpc_qp(1, 1, 4), mpc_qp(2, 8, 6, path_rows=2)]
+  structures = [ipm_inputs(qp)[0] for qp in [*problems, maros_meszaros("HS118"), maros_meszaros("QAFIRO")]] + [_budget(40)]
+  # Rows over two neighbouring blocks of eight: a row reads twice a block's slots, and the dense
+  # arrays take every entry, so no pair is multiplied one by one; path rows over 28 slots likewise.
+  blocks, size = 20, 8
+  n = blocks * size
+  rows = np.zeros((blocks - 1, n), dtype=bool)
+  for k in range(blocks - 1):
+    rows[k, k * size : (k + 2) * size] = True
+  free = np.ones(n)
+  structures.append(
+    QPStructure.from_patterns(np.eye(n, dtype=bool), np.zeros((0, n)), rows, h_l=-free[: blocks - 1], h_u=free[: blocks - 1], x_l=-free, x_u=free)
+  )
+  structures.append(ipm_inputs(mpc_qp(26, 2, 5, path_rows=4))[0])
+  for s in structures:
+    assert cost.stagewise_floor_us(s) <= stagewise_us(s)
+
+
+def test_a_row_that_reads_every_variable_leaves_the_partition_unfound(monkeypatch) -> None:
+  """A budget row reads every variable, so a block holds half of them or more, and the stagewise
+  backend's floor is past the other backends' time before its partition is looked for: finding
+  it would cost the square of the problem's size."""
+  s = _budget(400)
+  w = work(s)
+  assert cost.stagewise_floor_us(s) > min(iteration_us(w, "sparse"), iteration_us(w, "dense"))
+
+  def refuse(_: QPStructure):
+    raise AssertionError("the partition was looked for")
+
+  monkeypatch.setattr(cost, "stages", refuse)
+  assert choose_backend(s) in ("sparse", "dense")
 
 
 def test_the_default_method_chooses_and_an_explicit_backend_does_not(monkeypatch) -> None:

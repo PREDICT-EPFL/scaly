@@ -138,9 +138,11 @@ def infeasible_problems() -> dict[str, tuple[QP, str]]:
   }
 
 
-def mpc_qp(nx: int, nu: int, horizon: int, *, seed: int = 0, name: str | None = None) -> QP:
+def mpc_qp(nx: int, nu: int, horizon: int, *, seed: int = 0, path_rows: int = 0, name: str | None = None) -> QP:
   """A linear MPC problem in the sparse (simultaneous) form: states ``x_0 .. x_N`` then inputs
-  ``u_0 .. u_{N-1}``, dynamics as equalities, ``x_0`` fixed, input and state boxes, quadratic cost."""
+  ``u_0 .. u_{N-1}``, dynamics as equalities, ``x_0`` fixed, input and state boxes, quadratic cost.
+  ``path_rows`` adds that many two-sided inequality rows a stage over ``x_k`` and ``u_k``, with
+  random coefficients and bounds at half of what the boxes allow, so that some of them bind."""
   rng = np.random.default_rng(seed)
   a = np.eye(nx) + 0.1 * rng.standard_normal((nx, nx))
   a /= max(1.0, 1.05 * np.abs(np.linalg.eigvals(a)).max())
@@ -156,14 +158,26 @@ def mpc_qp(nx: int, nu: int, horizon: int, *, seed: int = 0, name: str | None = 
   )
   init = sparse.hstack([sparse.eye(nx, nz), sparse.csc_array((nx, nv))])
   x0 = rng.uniform(-1.0, 1.0, nx)
+  x_l, x_u = np.r_[np.full(nz, -2.0), np.full(nv, -0.5)], np.r_[np.full(nz, 2.0), np.full(nv, 0.5)]
+  G, reach = None, None
+  if path_rows:
+    # Drawn from a generator of their own, so the rest of the problem is the one without them.
+    coef = np.random.default_rng([seed, path_rows]).standard_normal((horizon * path_rows, nx + nu))
+    stage = np.repeat(np.arange(horizon), path_rows)
+    cols = np.concatenate([stage[:, None] * nx + np.arange(nx), nz + stage[:, None] * nu + np.arange(nu)], axis=1)
+    G = sparse.csc_array((coef.ravel(), (np.repeat(np.arange(horizon * path_rows), nx + nu), cols.ravel())), shape=(horizon * path_rows, nz + nv))
+    reach = 0.5 * (abs(G) @ x_u)
   return make_qp(
-    name or f"mpc_{nx}x{nu}_N{horizon}",
+    name or f"mpc_{nx}x{nu}_N{horizon}" + (f"_r{path_rows}" if path_rows else ""),
     P,
     np.zeros(nz + nv),
     A=sparse.vstack([init, dyn], format="csc"),
     b=np.r_[x0, np.zeros(horizon * nx)],
-    x_l=np.r_[np.full(nz, -2.0), np.full(nv, -0.5)],
-    x_u=np.r_[np.full(nz, 2.0), np.full(nv, 0.5)],
+    G=G,
+    h_l=None if reach is None else -reach,
+    h_u=reach,
+    x_l=x_l,
+    x_u=x_u,
   )
 
 

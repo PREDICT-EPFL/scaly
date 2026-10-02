@@ -3,7 +3,7 @@
     uv run examples/case_studies/embedded_qp/run_scaly.py --horizon 20 --solver scaly_sparse --out results/scaly_T20_scaly_sparse.json
 
 Solvers: `scaly_sparse` is PIQP's algorithm generated for this problem's KKT pattern,
-`sc.opt.solver(problem, sc.opt.IPM())`; `piqp_sparse` is the vendored PIQP 0.6.2 library behind
+`sc.opt.solver(problem, sc.opt.IPM(sparse=True))`; `piqp_sparse` is the vendored PIQP 0.6.2 library behind
 `sc.opt.solver(problem, sc.opt.PIQP(sparse=True))`. Both at `eps_abs = eps_rel = 1e-7`, the
 benchmark's tolerance, and both take a warm start (which neither uses) and the parameters, and return
 the solution, the multipliers and an `Info`. Timing is `examples/opt/qp_solvers`' harness: the generated
@@ -33,7 +33,7 @@ def build(problem, solver: str):
   import scaly as sc
 
   options = {"eps_abs": TOL, "eps_rel": TOL}
-  method = sc.opt.IPM(options=options) if solver == "scaly_sparse" else sc.opt.PIQP(sparse=True, options=options)
+  method = sc.opt.IPM(sparse=True, options=options) if solver == "scaly_sparse" else sc.opt.PIQP(sparse=True, options=options)
   return sc.opt.solver(problem, method, name=f"{problem.name}_{solver}")
 
 

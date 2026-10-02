@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 248**
+**Next id: 249**
 
 | Prefix | Section |
 |---|---|
@@ -1455,6 +1455,15 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       path rows and a coupled stage cost in a random variable order, and through retries.
       41 mutants: 36 killed at once, 4 after tests were added, and one was a check that could
       not matter (a padding slot's right-hand side reaches no variable), removed.
+      The review (`results/t9_review_cases.txt`): 320 random problems against the dense
+      backend, no wrong result; three build costs. Variables nothing couples were each a part of
+      the search, laid beside the others by a Python search over every offset, and grew every
+      block when the blocks were full (5 000 of them: 16.4 s, blocks of 6 to 26): they are left
+      out of the search now and fill the padding, then blocks of their own or a slot more in
+      each block, whichever is less work (0.09 s, blocks of 6), and the search also starts from
+      the first coupled variable, where it went before, so no partition of 295 such problems is
+      more work than it was. A level scanned an array of every variable (N = 8 000: 1.96 s), and
+      now costs its rows' entries (0.74 s).
 - [x] **C-246. The stage step's kernels: running sums, reciprocal diagonals, and a symmetric
       product that computes one triangle (K4, Tier 9).** After C-245 the block factorization
       was 29-37% of a stagewise solve at blocks of 28-42 and the arrays' products 13-17%, with
@@ -1491,6 +1500,16 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       divisions are; the derivative; the symmetric product against the same product with
       the transpose as an input of its own, bit for bit, on three targets, and the six
       cases left whole. 25 mutants, all killed.
+      The review (`results/t9_review_cases.txt`) proved two claims wrong and two rules slower.
+      The symmetric product is not the full product to the last bit: at 19 rows on a target
+      with vectors of two the full product computes one of entry `(i, j)` and entry `(j, i)` in
+      the scalar tile of its last column, which clang compiles unfused, and is not symmetric
+      itself; the lower triangle is its to the bit, and the docs and the test say so. It was
+      also 1.04-1.46x the full product's time below sixteen terms, and is taken from sixteen
+      (0.79-0.98). A running backward substitution in blocks was 1.08-1.16x the pairwise one,
+      which is blocked too from four tile widths, and is the pairwise one there. With one
+      right-hand side the running solve is the pairwise one, which the docs now say, and
+      `cholesky`'s docstring had it twice as fast where it takes 0.62-0.85 of the time.
 - [x] **C-247. The backend choice weighs the stagewise backend (Tier 9).** `choose_backend`
       takes it where the partition has three blocks or more and its modelled iteration is
       the cheapest: `cost.stage_work` counts the block factorization's and the solves'
@@ -1509,6 +1528,23 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       race cars' generated SQP (`bench/harness/sqp_ipm.py`) is unchanged at 0.55 ms a step.
       When the sparse factorization is past what can be generated, the stagewise backend is
       still weighed against the dense one.
+      The review (`results/t9_review_cases.txt`) proved the weights wrong off their family: on
+      stages of 5 or 6 slots with inequality rows over each the default took the stagewise
+      backend at 1.17-1.33x the sparse one's time, and it put Hessians of coupled dense blocks
+      at a third of their time. Refitted to 57 problems, 23 with path rows
+      (`mpc_qp(..., path_rows=)`) and 10 of coupled blocks: the fastest on 50 of them, the worst
+      pick 1.12x, the eleven of the review on the sparse backend, the 55 and the race cars as
+      they were. The embedded-QP study, whose published tables are the sparse backend's, asks
+      for it by name. And a row that reads most variables made the choice find a partition it
+      could not use, at the square of the problem's size (n = 8 000: 4.3 s and 4 GB more):
+      `stagewise_floor_us`, a lower bound from the row lengths, now rules it out first.
+- [ ] **C-248. Unconnected parts of a QP laid one after another, as well as beside each other.**
+      `stages.beside` joins every part's levels to the longest part's, so parts of equal length
+      share its levels: eight independent cliques of five variables come out as two blocks of
+      28 slots, about 30 times the factorization work of the cliques laid one after another (or
+      as blocks of their own). Found by the Tier 9 review's tests; the model then weighs the
+      large blocks and does not pick the stagewise backend, so it costs speed, not answers. Try
+      both layouts and keep the one of less work, as `_placed` does for variables nothing couples.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced

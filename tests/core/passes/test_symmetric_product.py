@@ -24,16 +24,19 @@ def _mirrored(fn: sc.Function, target: str) -> bool:
   return False
 
 
-SHAPES = [(28, 26), (28, 28), (33, 27), (42, 39), (64, 64), (65, 30), (96, 20), (25, 4)]
+SHAPES = [(28, 26), (28, 28), (33, 27), (42, 39), (64, 64), (65, 30), (96, 20), (25, 4), (28, 12), (19, 16), (19, 40)]
 
 
 @pytest.mark.parametrize(("m", "k"), SHAPES)
 @pytest.mark.parametrize("left", [True, False], ids=["a a'", "a' a"])
-def test_a_matrix_times_its_transpose_computes_one_triangle_and_is_the_full_product_to_the_bit(m: int, k: int, left: bool) -> None:
+def test_a_matrix_times_its_transpose_computes_one_triangle_the_full_products_to_the_bit(m: int, k: int, left: bool) -> None:
   """``a @ a.T`` and ``a.T @ a`` against the same product with the transpose handed in as an
-  input of its own, which lowering cannot know is symmetric: entry ``(i, j)`` and entry ``(j, i)``
-  are the same products added in the same order, so the two agree in every bit, and the result is
-  exactly symmetric. Tiles of columns the lower triangle does not reach are not computed."""
+  input of its own, which lowering cannot know is symmetric. The lower triangle agrees in every
+  bit, and the result is exactly symmetric. The full product's upper triangle may differ in its
+  last bit: it computes entry ``(i, j)`` and entry ``(j, i)`` in tiles of different shapes, and at
+  19 rows on a target with vectors of two the C compiler fuses the multiply-adds of one and not
+  the other. Tiles of columns the lower triangle does not reach are not computed, from three
+  tiles of columns and sixteen terms."""
   rng = np.random.default_rng(m * 100 + k)
   av = rng.standard_normal((m, k))
   a, other = sc.sym("a", (m, k)), sc.sym("o", (k, m))
@@ -42,26 +45,30 @@ def test_a_matrix_times_its_transpose_computes_one_triangle_and_is_the_full_prod
   full = sc.Function.from_exprs(f"full_{tag}", [a, other], [a @ other if left else other @ a], ["a", "o"], ["y"])
   order = m if left else k
   for target, tile in (("apple-m3", 8), ("x86-64-v3", 8), ("armv8-a", 4)):
-    taken = order >= 3 * tile and (k if left else m) >= 4
+    taken = order >= 3 * tile and (k if left else m) >= 16
     assert _mirrored(symmetric, target) == taken, (target, order)
     assert not _mirrored(full, target)
     with sc.target(target):
       got, want = np.asarray(symmetric(av)), np.asarray(full((av, av.T.copy())))
-    np.testing.assert_array_equal(got, want)
-    np.testing.assert_array_equal(got, got.T)
+    if taken:
+      np.testing.assert_array_equal(np.tril(got), np.tril(want))
+      np.testing.assert_array_equal(got, got.T)
+      np.testing.assert_allclose(got, want, rtol=1e-14, atol=1e-14)
+    else:
+      np.testing.assert_array_equal(got, want)
   np.testing.assert_allclose(got, av @ av.T if left else av.T @ av, rtol=1e-12, atol=1e-12)
 
 
 def test_products_that_are_not_symmetric_or_may_be_expanded_are_left_whole() -> None:
   """A product with another matrix's transpose, one weighted between the two, one under three
-  tiles of columns wide, one of fewer than four terms, one in a procedure asked to be scalar code,
-  and any product on a target without tiles: each is computed entry by entry as before."""
-  a, b, w = sc.sym("a", (30, 12)), sc.sym("b", (30, 12)), sc.sym("w", (12,))
+  tiles of columns wide, one of fewer than sixteen terms, one in a procedure asked to be scalar
+  code, and any product on a target without tiles: each is computed entry by entry as before."""
+  a, b, w = sc.sym("a", (30, 16)), sc.sym("b", (30, 16)), sc.sym("w", (16,))
   cases = {
     "other": a @ b.T,
     "weighted": (a * w) @ a.T,
     "narrow": a[:20] @ a[:20].T,
-    "few_terms": a[:, :3] @ a[:, :3].T,
+    "few_terms": a[:, :15] @ a[:, :15].T,
   }
   for tag, expr in cases.items():
     fn = sc.Function.from_exprs(f"whole_{tag}", [a, b, w], [expr], ["a", "b", "w"], ["y"])
@@ -70,5 +77,5 @@ def test_products_that_are_not_symmetric_or_may_be_expanded_are_left_whole() -> 
   assert _mirrored(taken, "apple-m3") and not _mirrored(taken, "generic")
   scalar = sc.Function.from_exprs("whole_scalar", [a], [(a @ a.T).scalar()], ["a"], ["y"])
   assert not _mirrored(scalar, "apple-m3")
-  av = np.random.default_rng(0).standard_normal((30, 12))
+  av = np.random.default_rng(0).standard_normal((30, 16))
   np.testing.assert_allclose(scalar(av), av @ av.T, rtol=1e-12, atol=1e-12)

@@ -1108,6 +1108,10 @@ def _tile_segments(n: int, columns: int, lanes: int) -> tuple[list[tuple[int, in
 # two, the tiles skipped were less work than the copy across the diagonal (16 and 20 rows, 1.03 to
 # 1.07 of the full product's time; 28 rows, 0.89 to 0.93).
 SYMMETRIC_TILES = 3
+# And the fewest terms: the copy is a load and a store an entry, the tiles skipped a multiply-add a
+# term. With four to twelve terms it took 1.04 to 1.46 of the full product's time at 24 to 128 rows,
+# with sixteen 0.79 to 0.98.
+SYMMETRIC_TERMS = 16
 
 
 def _lower_columns_blocked(
@@ -1123,18 +1127,21 @@ def _lower_columns_blocked(
   cache, takes the same blocks with the column blocks outermost (``_panel_passes``).
 
   ``symmetric`` says ``b`` is ``a`` transposed. In register tiles, from ``SYMMETRIC_TILES`` tiles
-  of columns on and a reduction of four terms, such a product computes the tiles that reach its
-  lower triangle and copies the rest across the diagonal: entry ``(i, j)`` and entry ``(j, i)``
-  are the same products added in the same order, so the copy is the value the full product
-  computes, to the last bit. (A product that small, or of fewer terms, may be expanded into scalar
-  code, where what it rounds to depends on which terms its entries share: it is left as it is.)"""
+  of columns and ``SYMMETRIC_TERMS`` terms on, such a product computes the tiles that reach its
+  lower triangle, as the full product computes them, and copies them across the diagonal. Entry
+  ``(i, j)`` and entry ``(j, i)`` are the same products added in the same order, but the full
+  product computes them in tiles of different shapes, and where one is the narrower tile of the
+  last columns the C compiler may fuse the multiply-adds of one and not the other: the full
+  product is then not symmetric in its last bit, and this one is, with the lower triangle's
+  values. (A product that small may also be expanded into scalar code, where what it rounds to
+  depends on which terms its entries share.)"""
   c = p.const_int
   nm = out.attrs["name"]
   zero = p.const_float(0.0, dtype=dtype)
   target = ctx.target
   tile_rows, tile_columns = target.product_tile
   tiled = m is not None and 1 < tile_rows <= m
-  symmetric = symmetric and tiled and kk >= 4 and n // tile_columns >= SYMMETRIC_TILES
+  symmetric = symmetric and tiled and kk >= SYMMETRIC_TERMS and n // tile_columns >= SYMMETRIC_TILES
   large = kk * n * dtype.itemsize > target.choices.l1d_bytes
   outermost = (
     m is not None
