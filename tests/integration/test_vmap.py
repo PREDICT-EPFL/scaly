@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from scaly.function.model import as_concrete
 import scaly as sc
+from typing import Any, cast
 from scaly.ad import finite_difference
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
 def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
@@ -52,22 +54,26 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_initial")
   def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:NX] - p[:NX]
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_interstage")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_interstage")
   def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def build(N: int) -> sc.Function:
-    @sc.function(sc.G(sc.L("z", NZ * (N + 1)), sc.L("p", sc.TensorType((NX * (N + 1),), diff=False))), sc.L("eq", ...), name=f"race_car_eq_vmap_N{N}")
+    @sc.function(
+      sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False))),
+      outputs=sc.arg("eq"),
+      name=f"race_car_eq_vmap_N{N}",
+    )
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       initial = eq_initial((z[:NZ], p[:NX]))
-      mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
+      mapped = sc.vmap(eq_interstage, N)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX, NX))).vec()
       return sc.concat([initial, mapped])
 
     return fn
@@ -77,12 +83,12 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
 
   rng = np.random.default_rng(0)
   for fn in (fn_a, fn_b):
-    N = (fn.inputs[0].size // NZ) - 1
+    N = (as_concrete(fn).inputs[0].size // NZ) - 1
     zv = rng.normal(size=NZ * (N + 1))
     pv = rng.normal(size=NX * (N + 1))
 
     # Sanity: the primal numerically matches the unrolled concat-of-call equivalent.
-    @sc.function(fn.input_tree, sc.L("eq", ...), name=f"race_car_eq_ref_N{N}")
+    @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("eq"), name=f"race_car_eq_ref_N{N}")
     def ref(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -129,31 +135,31 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial2")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_initial2")
   def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:NX] - p[:NX]
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_interstage2")
+  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="race_car_eq_interstage2")
   def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def inputs_tree(N: int):
-    return sc.G(sc.L("z", NZ * (N + 1)), sc.L("p", sc.TensorType((NX * (N + 1),), diff=False)))
+    return sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
 
   def build_vmap(N: int) -> sc.Function:
-    @sc.function(inputs_tree(N), sc.L("eq", ...), name=f"tr_vmap_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_vmap_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       initial = eq_initial((z[:NZ], p[:NX]))
-      mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
+      mapped = sc.vmap(eq_interstage, N)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX, NX))).vec()
       return sc.concat([initial, mapped])
 
     return fn
 
   def build_unroll(N: int) -> sc.Function:
-    @sc.function(inputs_tree(N), sc.L("eq", ...), name=f"tr_unroll_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_unroll_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -172,7 +178,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
 
   # The nnz orderings differ (the VMAP path emits per-formal disjoint partitions), but the
   # patterns must agree as coordinate sets and the densified values must match exactly.
-  sp_m, sp_u = spj_vmap.output_sparsities[0], spj_unroll.output_sparsities[0]
+  sp_m, sp_u = as_concrete(spj_vmap).output_sparsities[0], as_concrete(spj_unroll).output_sparsities[0]
   assert sp_m is not None and sp_u is not None
   assert sp_m.shape == sp_u.shape and set(zip(sp_m.rows, sp_m.cols)) == set(zip(sp_u.rows, sp_u.cols))
 
@@ -195,13 +201,17 @@ NB, NS, NU = 3, 3, 2
 PAIRS = [(i, j) for i in range(NB) for j in range(i + 1, NB)]
 
 
-@sc.function(sc.G(sc.L("s", NS), sc.L("u", NU)), sc.L("next", ...), name="pairs_step")
+@sc.function(sc.group(sc.arg("s", NS), sc.arg("u", NU)), outputs=sc.arg("next"), name="pairs_step")
 def pairs_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   s, u = inputs
   return sc.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])
 
 
-@sc.function(sc.G(sc.L("prev_i", NS), sc.L("prev_j", NS), sc.L("si", NS), sc.L("sj", NS), sc.L("slack", 1)), sc.L("h", ...), name="pairs_barrier")
+@sc.function(
+  sc.group(sc.arg("prev_i", NS), sc.arg("prev_j", NS), sc.arg("si", NS), sc.arg("sj", NS), sc.arg("slack", 1)),
+  outputs=sc.arg("h"),
+  name="pairs_barrier",
+)
 def pairs_barrier(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   # The trailing p-norm term mirrors the smooth-max a velocity-margin barrier uses; it is what
   # brings integer POW, a *non-integer* POW (the shape of such a barrier's braking envelope,
@@ -214,7 +224,7 @@ def pairs_barrier(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) ->
   return sc.stack([(sc.dot(d, d).sqrt() - 0.5 * (1.0 + sc.dot(dprev, dprev)).log() + soft_max + slack[0])])
 
 
-@sc.function(sc.G(sc.L("s", NS), sc.L("snext", NS), sc.L("slack", 1)), sc.L("h", ...), name="pairs_wall")
+@sc.function(sc.group(sc.arg("s", NS), sc.arg("snext", NS), sc.arg("slack", 1)), outputs=sc.arg("h"), name="pairs_wall")
 def pairs_wall(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   s, snext, slack = inputs
   return sc.stack([(snext[0] - 0.5 * s[0] + slack[0]), (1.0 - snext[1].exp() + slack[0])])
@@ -226,20 +236,26 @@ def _pair_index_table(bodies: list[int]) -> np.ndarray:
 
 def _build_pairs_fn(mapped: bool) -> sc.Function:
   @sc.function(
-    sc.G(sc.L("u", NU * NB + 1), sc.L("p", sc.TensorType((NS * NB,), diff=False))), sc.L("h", ...), name=f"pairs_{'vmap' if mapped else 'unroll'}"
+    sc.group(sc.arg("u", NU * NB + 1), sc.arg("p", sc.TensorType((NS * NB,), diff=False))),
+    outputs=sc.arg("h"),
+    name=f"pairs_{'vmap' if mapped else 'unroll'}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     u, p = inputs
     uu, slack = u[: NU * NB], u[NU * NB : NU * NB + 1]
     if mapped:
-      nxt = sc.vmap(pairs_step, NB, [(p, 0, NS), (uu, 0, NU)])
+      nxt = sc.vmap(pairs_step, NB)((sc.window(p, 0, NS), sc.window(uu, 0, NU))).vec()
       idx_i, idx_j = _pair_index_table([i for i, _ in PAIRS]), _pair_index_table([j for _, j in PAIRS])
-      pair_rows = sc.vmap(
-        pairs_barrier,
-        len(PAIRS),
-        [(sc.gather(p, idx_i), 0, NS), (sc.gather(p, idx_j), 0, NS), (sc.gather(nxt, idx_i), 0, NS), (sc.gather(nxt, idx_j), 0, NS), (slack, 0, 0)],
-      )
-      body_rows = sc.vmap(pairs_wall, NB, [(p, 0, NS), (nxt, 0, NS), (slack, 0, 0)])
+      pair_rows = sc.vmap(pairs_barrier, len(PAIRS))(
+        (
+          sc.window(sc.gather(p, idx_i), 0, NS),
+          sc.window(sc.gather(p, idx_j), 0, NS),
+          sc.window(sc.gather(nxt, idx_i), 0, NS),
+          sc.window(sc.gather(nxt, idx_j), 0, NS),
+          sc.window(slack, 0, 0),
+        )
+      ).vec()
+      body_rows = sc.vmap(pairs_wall, NB)((sc.window(p, 0, NS), sc.window(nxt, 0, NS), sc.window(slack, 0, 0))).vec()
       return sc.concat([pair_rows, body_rows])
     nxt = sc.concat([pairs_step((p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)])) for k in range(NB)])
     sl = lambda e, k: e[NS * k : NS * (k + 1)]  # noqa: E731
@@ -262,43 +278,43 @@ def test_gather_fed_chained_vmaps_match_unrolled_calls() -> None:
   uv, pv = _pairs_sample()
   np.testing.assert_allclose(fn_vmap((uv, pv)), fn_unroll((uv, pv)), rtol=1e-12, atol=1e-12)
 
-  jac_vmap = fn_vmap.factory("pairs_vmap_jac", ["u", "p"], [sc.factory.Jac("h", "u")])((uv, pv))
-  jac_unroll = fn_unroll.factory("pairs_unroll_jac", ["u", "p"], [sc.factory.Jac("h", "u")])((uv, pv))
+  jac_vmap = fn_vmap.factory("pairs_vmap_jac", ["u", "p"], [sc.factory.Jac("h", "u")])(*(uv, pv))
+  jac_unroll = fn_unroll.factory("pairs_unroll_jac", ["u", "p"], [sc.factory.Jac("h", "u")])(*(uv, pv))
   np.testing.assert_allclose(jac_vmap, jac_unroll, rtol=1e-10, atol=1e-10)
 
 
 def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
   fn = _build_pairs_fn(True)
   uv, pv = _pairs_sample()
-  dense = fn.factory("pairs_vmap_jac2", ["u", "p"], [sc.factory.Jac("h", "u")])((uv, pv))
+  dense = fn.factory("pairs_vmap_jac2", ["u", "p"], [sc.factory.Jac("h", "u")])(*(uv, pv))
   assert isinstance(dense, np.ndarray)
   spjf = fn.factory("pairs_vmap_spjac", ["u", "p"], [sc.factory.SpJac("h", "u")])
-  sp = spjf.output_sparsities[0]
+  sp = as_concrete(spjf).output_sparsities[0]
   assert sp is not None
   flat = np.asarray(sp.rows) * dense.shape[1] + np.asarray(sp.cols)
-  np.testing.assert_allclose(spjf((uv, pv)), np.ravel(dense)[flat], rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(spjf(*(uv, pv)), np.ravel(dense)[flat], rtol=1e-10, atol=1e-10)
   # Coloring must not claim structural zeros that the dense Jacobian disagrees with.
   assert not np.any(np.abs(dense[~sp.to_mask()]) > 1e-12)
 
   # Second order through the same composition, against the unrolled reference.
-  lam = np.arange(1.0, fn.outputs[0].shape[0] + 1.0)
+  lam = np.arange(1.0, as_concrete(fn).outputs[0].shape[0] + 1.0)
   hess = {
     name: fn_.factory(f"pairs_{name}_sphess", ["u", "p", "lam:h"], [sc.factory.SpHess("gamma", "u")], aux={"gamma": ["h"]})
     for name, fn_ in (("vmap", fn), ("unroll", _build_pairs_fn(False)))
   }
   dense_hess = {}
   for name, hf in hess.items():
-    hsp = hf.output_sparsities[0]
+    hsp = as_concrete(hf).output_sparsities[0]
     assert hsp is not None
     dense_hess[name] = np.zeros(hsp.shape)
-    dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf((uv, pv, lam)), dtype=np.float64).reshape(-1)
+    dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf(uv, pv, lam), dtype=np.float64).reshape(-1)
   np.testing.assert_allclose(dense_hess["vmap"], dense_hess["unroll"], rtol=1e-9, atol=1e-9)
 
   # The mapped Hessian must also be the derivative of the mapped Lagrangian gradient, so a wrong
   # entry shared by both forms cannot hide behind their agreement. Entries are below 0.2 and the
   # barrier is smooth at this sample, so central differences at 1e-6 land within 1e-9 of them.
   grad_l = sc.adjoint(fn, "h", "u")
-  fd_hess = finite_difference(lambda value: np.asarray(grad_l(((value, pv), lam))), uv)
+  fd_hess = finite_difference(lambda value: np.asarray(grad_l(*((value, pv), lam))), uv)
   np.testing.assert_allclose(dense_hess["vmap"], fd_hess, rtol=1e-7, atol=1e-7)
 
 
@@ -307,7 +323,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
   w = np.array([[0.4, -0.2, 0.7], [0.1, 0.9, -0.3]])
   b = np.array([0.05, -0.15])
 
-  @sc.function(sc.L("s", 3), sc.L("y", ...), name="vmap_dense_layer")
+  @sc.function(sc.arg("s", 3), outputs=sc.arg("y"), name="vmap_dense_layer")
   def layer(s: sc.Expr) -> sc.Expr:
     phi = sc.stack([s[0], s[1], s[2]])
     h = sc.const(w) @ phi + sc.const(b)
@@ -315,9 +331,9 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
   N = 4
 
-  @sc.function(sc.L("z", 3 * N), sc.L("y", ...), name="vmap_dense")
+  @sc.function(sc.arg("z", 3 * N), outputs=sc.arg("y"), name="vmap_dense")
   def fn(z: sc.Expr) -> sc.Expr:
-    return sc.vmap(layer, N, [(z, 0, 3)])
+    return sc.vmap(layer, N)(sc.window(z, 0, 3)).vec()
 
   zv = np.random.default_rng(3).normal(size=3 * N)
   expected = np.zeros((N, 3 * N))
@@ -328,7 +344,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
 
 def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("ref", 2), sc.L("scale", 1)), sc.L("r", ...))
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("ref", 2), sc.arg("scale", 1)), outputs=sc.arg("r"))
   def residual(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, ref, scale = inputs
     return sc.stack([x[0] - ref[0], ref[1].cos() * x[1] - scale[0].tanh()])
@@ -340,16 +356,16 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
   values = []
   for name in ("mapped", "unrolled"):
 
-    @sc.function(sc.G(sc.L("x", 2 * n), sc.L("p", sc.TensorType((2 * n + 1,), diff=False))), sc.L("f", ...), name=name)
+    @sc.function(sc.group(sc.arg("x", 2 * n), sc.arg("p", sc.TensorType((2 * n + 1,), diff=False))), outputs=sc.arg("f"), name=name)
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       x, p = inputs
       if name == "mapped":
-        r = sc.vmap(residual, n, [(x, 0, 2), (p, 0, 2), (p, 2 * n, 0)])
+        r = sc.vmap(residual, n)((sc.window(x, 0, 2), sc.window(p, 0, 2), sc.window(p, 2 * n, 0))).vec()
       else:
         r = sc.concat([residual((x[2 * i : 2 * i + 2], p[2 * i : 2 * i + 2], p[-1:])) for i in range(n)])
       return sc.dot(weights, r**2)
 
     derivatives = fn.factory(name + "_derivatives", ["x", "p"], ["f", sc.factory.Grad("f", "x"), sc.factory.SpHess("f", "x")])
-    values.append(derivatives(inputs))
+    values.append(derivatives(*inputs))
   for actual, expected in zip(values[0], values[1], strict=True):
     np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)

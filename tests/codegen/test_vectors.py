@@ -281,8 +281,10 @@ def test_public_render_pipeline_keeps_ordered_reduction(tmp_path, dialect, lanes
   import scaly as sc
   from scaly.codegen.aot import render_c_module
 
-  x = sc.sym("x", 9)
-  fun = sc.Function._from_exprs("kernel", [x], [((x + 1) ** 2).sum()], ["x"], ["y"])
+  @sc.function(sc.arg("x", 9), outputs=sc.arg("y", ()), name="kernel")
+  def fun(x: sc.Expr) -> sc.Expr:
+    return ((x + 1) ** 2).sum()
+
   module = render_c_module(fun, lanes=lanes, dialect=dialect, vector_libm="none")
   scalar_dir = tmp_path / "scalar"
   scalar_dir.mkdir()
@@ -339,10 +341,14 @@ def test_call_jacobian_keeps_noinline_frame_in_c99(tmp_path, dialect):
   import scaly as sc
   from scaly.codegen.aot import render_c_module
 
-  x = sc.sym("x", 2)
-  inner = sc.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
-  z = sc.sym("z", 2)
-  outer = sc.Function._from_exprs("outer", [z], [inner(z * z)], ["z"], ["y"])
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
+  def inner(x: sc.Expr) -> sc.Expr:
+    return x.sin() + x * x
+
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y", 2))
+  def outer(z: sc.Expr) -> sc.Expr:
+    return inner(z * z)
+
   jac = outer.factory("kernel", ["z"], [sc.factory.Jac("y", "z")])
   module = render_c_module(jac, lanes=1, dialect=dialect)
   function, source = _compile_module(module, tmp_path, dialect)
@@ -372,11 +378,16 @@ def test_public_mapped_block_matrix_promotes_lane_scratch(tmp_path, dialect):
   from scaly.ir.program import walk_program
 
   size, stages = 140, 3
-  x = sc.sym("stage_x", size)
-  hidden = (sc.const(np.eye(size)) @ x).block()
-  stage = sc.Function._from_exprs("matrix_stage", [x], [hidden * hidden], ["stage_x"], ["stage_y"])
-  z = sc.sym("x", size * stages)
-  fn = sc.Function._from_exprs("kernel", [z], [sc.vmap(stage, stages, [(z, 0, size)])], ["x"], ["y"])
+
+  @sc.function(sc.arg("stage_x", size), outputs=sc.arg("stage_y", size), name="matrix_stage")
+  def stage(x: sc.Expr) -> sc.Expr:
+    hidden = (sc.const(np.eye(size)) @ x).block()
+    return hidden * hidden
+
+  @sc.function(sc.arg("x", size * stages), outputs=sc.arg("y", size * stages), name="kernel")
+  def fn(z: sc.Expr) -> sc.Expr:
+    return sc.vmap(stage, stages)(z).vec()
+
   module = render_c_module(fn, lanes=4, dialect=dialect)
   main = module.program.args[-1]
   assert any(n.attrs.get("vector_mapped") for n in walk_program(main))

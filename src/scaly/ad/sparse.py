@@ -12,7 +12,7 @@ from typing import Literal
 
 import numpy as np
 
-from ..function.sugar import vmap
+from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
@@ -195,7 +195,6 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     global_rows.extend(r + row_offset for r in sj.sparsity.rows)
     global_cols.extend(sj.sparsity.cols)
     global_values.append(sj.values)
-  total_rows = int(expr.shape[0]) if expr.shape else expr.size
   sparsity = SparsityPattern((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
   if sparsity.nnz == 0:
     return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)), coloring_width)
@@ -203,17 +202,18 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
   # into the single output concat instead of materializing an intermediate nnz-sized buffer.
   flat = [a for v in global_values for a in (v.args if v.op == ExprOp.CONCAT and v.attrs.get("axis", 0) == 0 else (v,))]
   values = flat[0] if len(flat) == 1 else concat(flat, axis=0)
-  _ = total_rows  # documentation: piece row offsets cover [0, total_rows)
   return SparseJacobian(sparsity, simplify_cse_fixpoint(values), coloring_width)
 
 
 def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
   """Split ``expr`` into a list of ``(piece, row_offset)`` along axis 0.
 
-  Only handles rank-1 expressions whose outermost producer is a single op or a ``CONCAT``
-  along axis 0 of rank-1 pieces. Returns ``None`` for anything else.
+  Reshapes preserve flat row order, including the leading-axis wrappers of typed maps.
+  Split their rank-1 producers and axis-0 concatenations; return ``None`` for other layouts.
   """
 
+  while expr.op == ExprOp.RESHAPE:
+    expr = expr.args[0]
   if len(expr.shape) != 1:
     return None
   if expr.op != ExprOp.CONCAT:
@@ -223,10 +223,11 @@ def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
   pieces: list[tuple[Expr, int]] = []
   offset = 0
   for arg in expr.args:
-    if len(arg.shape) != 1:
+    nested = _split_axis0_pieces(arg)
+    if nested is None:
       return None
-    pieces.append((arg, offset))
-    offset += arg.shape[0]
+    pieces.extend((piece, offset + relative) for piece, relative in nested)
+    offset += arg.size
   return pieces
 
 
@@ -253,6 +254,8 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   dep_memo: dict[tuple[int, int], bool] = {}
   direct_formals: list[int] = []
   for f_idx, actual in enumerate(vmap_expr.args):
+    while actual.op == ExprOp.RESHAPE:
+      actual = actual.args[0]
     if actual.id == wrt.id:
       direct_formals.append(f_idx)
     elif _depends_on(actual, wrt, dep_memo):
@@ -290,7 +293,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     if active_count == 0:
       continue
     primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-    mapped_flat = vmap(inner_fn, length, primal_specs)
+    mapped_flat = _mapped_call(inner_fn, length, primal_specs)
     # Build a per-formal contribution map for each nnz.
     formal_size = formal.size
     start_f = starts[f_idx]

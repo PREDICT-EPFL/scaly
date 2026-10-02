@@ -1,5 +1,10 @@
 """Benchmark generation, correctness, and sweep helpers."""
 
+from scaly.function.concrete import ConcreteFunction
+
+from scaly.function.model import as_concrete
+
+
 from pathlib import Path
 from functools import lru_cache
 import os
@@ -89,10 +94,10 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
     return solver(x0, lam_eq, lam_ineq, lam_box, params)
 
   x, lam_box, lam_eq, lam_ineq = solver(params, warm=(x0, lam_box, lam_eq, lam_ineq))
-  descriptor = solver.function.descriptor
+  descriptor = as_concrete(solver.function).descriptor
   base = descriptor.base
-  if isinstance(base, sc.Function):
-    values = base.numerical_call((np.asarray(x).reshape(-1), params))
+  if isinstance(base, ConcreteFunction):
+    values = base.numerical_call(np.asarray(x).reshape(-1), params)
   else:
     evaluator = getattr(solver.function, "_benchmark_base", None)
     if evaluator is None:

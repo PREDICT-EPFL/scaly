@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
 def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
@@ -14,12 +16,12 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
   N = 4
 
-  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("dy", ...), name="jvp_vmap")
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("dy"), name="jvp_vmap")
   def fn_vmap(inputs):
     z, p = inputs
-    return sc.jvp_many(sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N)))
+    return sc.jvp_many(_mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N)))
 
-  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("dy", ...), name="jvp_ref")
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("dy"), name="jvp_ref")
   def fn_ref(inputs):
     z, p = inputs
     unrolled = sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
@@ -35,15 +37,15 @@ def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
 def test_jacobian_of_vmap_matches_finite_differences() -> None:
   N = 5
 
-  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("y", ...), name="mapped")
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y"), name="mapped")
   def fn(inputs):
     z, p = inputs
-    return sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+    return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
 
-  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("jac", ...))
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("jac"))
   def jac_fn(inputs):
     z, p = inputs
-    return sc.jvp_many(sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N))).T
+    return sc.jvp_many(_mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N))).T
 
   rng = np.random.default_rng(1)
   zv = rng.normal(size=3 * N)
@@ -67,35 +69,35 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
   from scaly.ad import finite_difference
   from scaly.ir.expr import topo
 
-  @sc.function(sc.L("x", 2), sc.L("y", ...), name="vmap_grad_piece")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="vmap_grad_piece")
   def piece(x: sc.Expr) -> sc.Expr:
     return x * x + x.sin()
 
   N = 4
 
-  @sc.function(sc.L("z", 2 * N), sc.L("y", ...), name="vmap_grad_factory")
+  @sc.function(sc.arg("z", 2 * N), outputs=sc.arg("y"), name="vmap_grad_factory")
   def mapped_fn(z):
-    return sc.vmap(piece, N, [(z, 0, 2)])
+    return _mapped_call(piece, N, [(z, 0, 2)])
 
-  @sc.function(sc.L("z", 2 * N), sc.L("y", ...), name="vmap_grad_unrolled")
+  @sc.function(sc.arg("z", 2 * N), outputs=sc.arg("y"), name="vmap_grad_unrolled")
   def unrolled_fn(z):
     return sc.concat([piece(z[2 * it : 2 * (it + 1)]) for it in range(N)])
 
   mapped_grad = mapped_fn.factory("vmap_grad_factory_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   unrolled_grad = unrolled_fn.factory("vmap_grad_unrolled_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
-  vmap_nodes = [node for node in topo(mapped_grad.outputs) if node.op == sc.ExprOp.VMAP]
+  vmap_nodes = [node for node in topo(as_concrete(mapped_grad).outputs) if node.op == sc.ExprOp.VMAP]
   assert len(vmap_nodes) == 1
   assert "_adj0_0" in vmap_nodes[0].attrs["callee"].name
 
   zv = np.random.default_rng(7).normal(size=2 * N)
   lamv = np.random.default_rng(8).normal(size=2 * N)
-  np.testing.assert_allclose(mapped_grad((zv, lamv)), unrolled_grad((zv, lamv)), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(mapped_grad(*(zv, lamv)), unrolled_grad(*(zv, lamv)), rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(
-    mapped_grad((zv, lamv)), finite_difference(lambda value: np.dot(lamv, np.asarray(mapped_fn(value))), zv).reshape(-1), rtol=1e-6, atol=1e-7
+    mapped_grad(*(zv, lamv)), finite_difference(lambda value: np.dot(lamv, np.asarray(mapped_fn(value))), zv).reshape(-1), rtol=1e-6, atol=1e-7
   )
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("q", 2)), sc.L("y", ...), name="vmap_duality_piece")
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("q", 2)), outputs=sc.arg("y"), name="vmap_duality_piece")
 def duality_piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, q = inputs
   return sc.stack([x[0] * x[1] * q[0].sin() + x[2].exp(), (1.0 + sc.dot(x, x)).sqrt() * q[1] + x[0] * x[2]])
@@ -104,12 +106,12 @@ def duality_piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   N = 5
 
-  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("q", 2 * N)), sc.L("y", ...), name="duality_vmap")
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("q", 2 * N)), outputs=sc.arg("y"), name="duality_vmap")
   def fn_vmap(inputs):
     z, q = inputs
-    return sc.vmap(duality_piece, N, [(z, 0, 3), (q, 0, 2)])
+    return _mapped_call(duality_piece, N, [(z, 0, 3), (q, 0, 2)])
 
-  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("q", 2 * N)), sc.L("y", ...), name="duality_unroll")
+  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("q", 2 * N)), outputs=sc.arg("y"), name="duality_unroll")
   def fn_unroll(inputs):
     z, q = inputs
     return sc.concat([duality_piece((z[3 * k : 3 * (k + 1)], q[2 * k : 2 * (k + 1)])) for k in range(N)])
@@ -118,8 +120,8 @@ def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   zv, qv = rng.normal(size=3 * N), rng.normal(size=2 * N)
   v, w = rng.normal(size=3 * N), rng.normal(size=2 * N)
   # Inputs are unit normal and the callee holds exp and products of three, so |y|, |J| stay around 1.
-  fwd = {name: np.asarray(sc.forward(fn, "y", "z")(((zv, qv), v))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
-  adj = {name: np.asarray(sc.adjoint(fn, "y", "z")(((zv, qv), w))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
+  fwd = {name: np.asarray(sc.forward(fn, "y", "z")(*((zv, qv), v))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
+  adj = {name: np.asarray(sc.adjoint(fn, "y", "z")(*((zv, qv), w))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
   jac = np.asarray(sc.jacobian(fn_unroll, "y", "z")((zv, qv)))
   np.testing.assert_allclose(fwd["vmap"], fwd["unroll"], rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(adj["vmap"], adj["unroll"], rtol=1e-12, atol=1e-12)

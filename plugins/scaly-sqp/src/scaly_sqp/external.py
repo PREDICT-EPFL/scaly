@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from scaly.function import Function
-from scaly.function.tree import G, L, flat_tree
+from scaly.function.tree import group, arg, flat_tree
 from scaly.ir.types import SparsityPattern, TensorType
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 
@@ -52,18 +52,18 @@ def external_nlp(
   bounds = oracle("bounds", param_signature, bounds_outputs)
 
   param_tree = flat_tree(param_names, tuple(TensorType(shape, diff=False) for _, shape in param_signature))
-  input_tree = G(
-    L("x", TensorType((n,), diff=False)),
-    L("lam:x", TensorType((n,), diff=False)),
-    L("lam_eq", TensorType((n_eq,), diff=False)),
-    L("lam_ineq", TensorType((n_ineq,), diff=False)),
+  input_tree = group(
+    arg("x", TensorType((n,), diff=False)),
+    arg("lam:x", TensorType((n,), diff=False)),
+    arg("lam_eq", TensorType((n_eq,), diff=False)),
+    arg("lam_ineq", TensorType((n_ineq,), diff=False)),
     param_tree,
   )
-  output_tree = G(
-    L("x", TensorType((n,), diff=False)),
-    L("lam:x", TensorType((n,), diff=False)),
-    L("lam_eq", TensorType((n_eq,), diff=False)),
-    L("lam_ineq", TensorType((n_ineq,), diff=False)),
+  output_tree = group(
+    arg("x", TensorType((n,), diff=False)),
+    arg("lam:x", TensorType((n,), diff=False)),
+    arg("lam_eq", TensorType((n_eq,), diff=False)),
+    arg("lam_ineq", TensorType((n_ineq,), diff=False)),
   )
   resolved_options: dict[str, Any] = {"max_iter": 50, "tol": 1e-6}
   if options:

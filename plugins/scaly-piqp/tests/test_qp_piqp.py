@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp, solve_qp
 
@@ -131,7 +132,7 @@ def test_nested_qp_in_scaly_function() -> None:
   """The safety-filter assembly pattern: build QP data symbolically and wrap
   the solve as a node inside a larger ``Function``."""
 
-  @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x", ...), sc.L("cost", ...)), name="track_qp")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.group(sc.arg("x"), sc.arg("cost")), name="track_qp")
   def track_qp(mu: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     # min 0.5 |x - mu|^2  -> solution is mu itself
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
@@ -149,7 +150,7 @@ def test_nested_qp_in_scaly_function() -> None:
 def test_nested_qp_postprocessed() -> None:
   """Combine solver output with downstream symbolic math."""
 
-  @sc.function(sc.L("mu", (2,)), sc.L("y", ...), name="squared_norm_via_qp")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.arg("y"), name="squared_norm_via_qp")
   def sq_norm(mu: sc.Expr) -> sc.Expr:
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
     out = qp(mu)
@@ -165,7 +166,7 @@ def test_nested_qp_postprocessed() -> None:
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
 
-  @sc.function(sc.L("u_ref", (2,)), sc.L("u", ...), name="constrained_filter")
+  @sc.function(sc.arg("u_ref", (2,)), outputs=sc.arg("u"), name="constrained_filter")
   def filter_fn(u_ref: sc.Expr) -> sc.Expr:
     G = sc.const(np.array([[1.0, 1.0]]))
     l_ineq = sc.const(np.array([-0.5]))
@@ -186,7 +187,7 @@ def test_nested_qp_with_general_inequality() -> None:
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
 
-  @sc.function(sc.G(sc.L("x", (2,)), sc.L("u_ref", (2,))), sc.L("u", ...), name="safety_filter")
+  @sc.function(sc.group(sc.arg("x", (2,)), sc.arg("u_ref", (2,))), outputs=sc.arg("u"), name="safety_filter")
   def safety_filter(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, u_ref = inputs
     P = sc.const(np.eye(2))
@@ -213,13 +214,13 @@ def test_nested_qp_call_uses_the_declared_tree() -> None:
   """A nested solve takes the solver's declared input tree; leaf order comes from the declaration."""
   u_ref = sc.sym("u_ref", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-u_ref)
-  assert qp.function.input_names == ("decision", "lam:decision", "lam_eq", "lam_ineq", "u_ref")
-  out_exprs = qp.function((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref))
-  assert len(out_exprs) == len(qp.function.output_names)
+  assert as_concrete(qp.function).input_names == ("decision", "lam:decision", "lam_eq", "lam_ineq", "u_ref")
+  out_exprs = qp.function(*(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref))
+  assert len(out_exprs) == len(as_concrete(qp.function).output_names)
 
-  @sc.function(sc.L("u_ref", 2), sc.L("u", ...))
+  @sc.function(sc.arg("u_ref", 2), outputs=sc.arg("u"))
   def wrapped(u_ref: sc.Expr) -> sc.Expr:
-    return qp.function((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref))[0]
+    return qp.function(*(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref))[0]
 
   result = wrapped(np.array([1.5, -0.3]))
   np.testing.assert_allclose(result, [1.5, -0.3], atol=1e-7)

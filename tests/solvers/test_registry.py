@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import solver
 from scaly.solvers import graph as solver_graph
@@ -43,8 +44,8 @@ class _FakeBackend:
     return Path("/nonexistent/lib")
 
   def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201 - protocol mirror
-    inputs = ", ".join(f"const double* in{i}" for i in range(len(fun.descriptor.input_signature)))
-    outputs = ", ".join(f"double* out{i}" for i in range(len(fun.descriptor.output_signature)))
+    inputs = ", ".join(f"const double* in{i}" for i in range(len(as_concrete(fun).descriptor.input_signature)))
+    outputs = ", ".join(f"double* out{i}" for i in range(len(as_concrete(fun).descriptor.output_signature)))
     return [
       f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w) {{",
       f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
@@ -145,15 +146,15 @@ def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.Monkey
   monkeypatch.setattr(registry, "get_backend", fake_backend)
   monkeypatch.setattr(sys.modules["scaly.solvers.solver"], "get_backend", fake_backend)
 
-  @sc.problem(vars=sc.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
+  @sc.problem(vars=sc.arg(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
   def problem(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=x[0] * x[1])
 
   nlp = sc.solver(problem, "fake", name=f"layout_{triangle}")
-  sparsity = nlp.function.descriptor.hess_sparsity
+  sparsity = as_concrete(nlp.function).descriptor.hess_sparsity
   assert sparsity is not None
   assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert not hasattr(nlp.function.descriptor, "hess_lower_mask")
+  assert not hasattr(as_concrete(nlp.function).descriptor, "hess_lower_mask")
 
 
 def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -175,7 +176,7 @@ def test_missing_backend_error_lists_installed(monkeypatch: pytest.MonkeyPatch) 
 def test_render_solver_raw_dispatches_to_plugin_and_frames_stats(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
-  lines = solver.render_solver_raw(fun)
+  lines = solver.render_solver_raw(as_concrete(fun))
   # Core-owned framing: stats storage before the plugin body, accessor after.
   assert lines[0] == "static scaly_solver_stats fake_qp_stats_data;"
   assert "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w) {" in lines
@@ -207,11 +208,11 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
 
   class _ExternalBackend(_FakeBackend):
     def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201
-      assert ctx.raw_symbol_of(fun.descriptor.base) == "foreign_base_raw"
+      assert ctx.raw_symbol_of(as_concrete(fun).descriptor.base) == "foreign_base_raw"
       return super().render_wrapper(fun, ctx)
 
   monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
-  source = "\n".join(solver.render_solver_raw(descriptor_function(desc)))
+  source = "\n".join(solver.render_solver_raw(descriptor_function(desc).instantiate()))
   assert oracle.source in source
   assert source.index(oracle.source) < source.index("static scaly_solver_stats external_qp_stats_data;")
 
@@ -266,7 +267,11 @@ def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypat
   oracle = ExternalOracle("shared", "shared_raw", source, (("x", (1,)),), (("f", ()),))
   left, right = _external_solver("left_solver", oracle), _external_solver("right_solver", oracle)
   args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
-  host = sc.Function._from_exprs("two_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
+
+  @sc.function(outputs=sc.arg("x", 1), name="two_external_solvers")
+  def host() -> sc.Expr:
+    return left(*args) + right(*args)
+
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
 
   from scaly.codegen.aot import render_c_module
@@ -279,7 +284,11 @@ def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch
   second = ExternalOracle("second", "shared_raw", "static void shared_raw(int x) { (void)x; }", (), ())
   left, right = _external_solver("left_conflict", first), _external_solver("right_conflict", second)
   args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
-  host = sc.Function._from_exprs("conflicting_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
+
+  @sc.function(outputs=sc.arg("x", 1), name="conflicting_external_solvers")
+  def host() -> sc.Expr:
+    return left(*args) + right(*args)
+
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
 
   from scaly.codegen.aot import render_c_module
@@ -310,5 +319,5 @@ def test_stats_abi_v3_layout_is_additive() -> None:
 def test_solver_backends_used_and_includes(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
-  assert solver_graph.solver_backends_used(fun) == ("fake",)
-  assert solver.solver_includes(fun) == ['#include "fake/fake.h"']
+  assert solver_graph.solver_backends_used(as_concrete(fun)) == ("fake",)
+  assert solver.solver_includes(as_concrete(fun)) == ['#include "fake/fake.h"']

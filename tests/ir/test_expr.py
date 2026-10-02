@@ -3,18 +3,20 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ir.expr import substitute, topo
 
 
 def test_elementwise_eval_and_topological_order() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...))
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 
   np.testing.assert_allclose(f(np.array([1.0, 2.0, 3.0])), np.sin([1.0, 2.0, 3.0]).sum() + 14.0)
 
-  nodes = topo(f.outputs)
+  nodes = topo(as_concrete(f).outputs)
   loc = {e.id: i for i, e in enumerate(nodes)}
   assert nodes[-1].op == sc.ExprOp.SUM
   assert [e.op for e in nodes].count(sc.ExprOp.INPUT) == 1
@@ -48,12 +50,12 @@ def test_common_ops_contains_modeling_basics() -> None:
 
 
 def test_binary_nonlinear_method_helpers_eval() -> None:
-  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.G(sc.L("atan", ...), sc.L("min", ...), sc.L("max", ...)), name="binary_helpers")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.group(sc.arg("atan"), sc.arg("min"), sc.arg("max")), name="binary_helpers")
   def f(xy: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     x, y = xy
     return x.atan2(y), x.minimum(y), x.maximum(y)
 
-  atan, mn, mx = f.outputs
+  atan, mn, mx = as_concrete(f).outputs
   xv = np.array([0.5, -1.0, 2.0])
   yv = np.array([1.5, 2.0, -0.25])
 
@@ -67,7 +69,7 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
 
 
 def test_dot_sumsqr_and_norm_2() -> None:
-  @sc.function(sc.L("x", (2, 2)), sc.G(sc.L("dot", ...), sc.L("sumsqr", ...), sc.L("norm", ...)))
+  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("dot"), sc.arg("sumsqr"), sc.arg("norm")))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     return sc.dot(x, x.T), x.sumsqr(), sc.norm_2(x)
 
@@ -154,7 +156,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not x.floor().type.diff
   assert not sc.minimum(x, p).type.diff
 
-  @sc.function(sc.L("u", 3), sc.L("y", ...))
+  @sc.function(sc.arg("u", 3), outputs=sc.arg("y"))
   def inner(u: sc.Expr) -> sc.Expr:
     return u * u
 
@@ -165,14 +167,14 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
 
 
 def test_mixed_lowering_hints_survive_expr_graph() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="mixed")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="mixed")
   def f(x: sc.Expr) -> sc.Expr:
     scalar_region = (x.sin() + x * x).scalar()
     block_region = (sc.const(np.eye(3)) @ x).block()
     opaque_region = (x + 1.0).opaque()
     return scalar_region + block_region + opaque_region
 
-  lowerings = [e.lowering for e in topo(f.outputs) if e.lowering != "auto"]
+  lowerings = [e.lowering for e in topo(as_concrete(f).outputs) if e.lowering != "auto"]
   assert "scalar" in lowerings
   assert "block" in lowerings
   assert "opaque" in lowerings
@@ -198,7 +200,7 @@ def test_substitute_rejects_incompatible_shape_or_dtype() -> None:
 
 
 def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() -> None:
-  @sc.function(sc.L("u", 2), sc.L("y", ...), name="sub_callee")
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name="sub_callee")
   def callee(formal: sc.Expr) -> sc.Expr:
     return formal * formal
 
@@ -207,11 +209,11 @@ def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() ->
   called = callee(x)
   rewritten_call = substitute(called, {x: z})
   assert rewritten_call is callee(z)
-  assert rewritten_call.attrs["callee"] is callee
+  assert rewritten_call.attrs["callee"] is callee.instantiate()
 
   xs = sc.sym("sub_vmap_x", 4)
   zs = sc.sym("sub_vmap_z", 4)
-  mapped = sc.vmap(callee, 2, [(xs, 0, 2)])
+  mapped = _mapped_call(callee, 2, [(xs, 0, 2)])
   rewritten_vmap = substitute(mapped, {xs: zs})
-  assert rewritten_vmap is sc.vmap(callee, 2, [(zs, 0, 2)])
-  assert rewritten_vmap.attrs["callee"] is callee
+  assert rewritten_vmap is _mapped_call(callee, 2, [(zs, 0, 2)])
+  assert rewritten_vmap.attrs["callee"] is callee.instantiate()

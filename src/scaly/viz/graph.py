@@ -11,7 +11,8 @@ from typing import Any
 
 import numpy as np
 
-from ..function import Function
+from ..function.concrete import ConcreteFunction
+from ..function.model import Function, as_concrete
 from ..ir.expr import Expr, ExprOp, topo
 from ..ir.program import ProgramNode, ProgramOp
 
@@ -73,13 +74,14 @@ def _program_node_topo(root: ProgramNode) -> list[ProgramNode]:
   return out
 
 
-def expr_graph(obj: Function | Expr | Iterable[Expr]) -> dict[str, Any]:
+def expr_graph(obj: ConcreteFunction | Expr | Iterable[Expr]) -> dict[str, Any]:
   """An expression graph as JSON-serializable nodes and edges, with labels and per-op colors.
 
   Presentation for tooling. For text meant to be diffed or asserted on, use
   ``render_expr_assembly``.
   """
-  outs = tuple(obj.outputs) if isinstance(obj, Function) else ((obj,) if isinstance(obj, Expr) else tuple(obj))
+  obj = as_concrete(obj) if isinstance(obj, Function) else obj
+  outs = tuple(obj.outputs) if isinstance(obj, ConcreteFunction) else ((obj,) if isinstance(obj, Expr) else tuple(obj))
   nodes = topo(outs)
   loc = {e.id: f"e{i}" for i, e in enumerate(nodes)}
   graph_nodes = []

@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_source
 from scaly.codegen.toolchain import LaneCount
@@ -44,7 +45,7 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
 def stage_function() -> sc.Function:
   scale, w0, w1, bias = _slices()
 
-  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("pw", N_PW)), sc.L("eq", ...), name="vmap_mlp_stage")
+  @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU), sc.arg("pw", N_PW)), outputs=sc.arg("eq"), name="vmap_mlp_stage")
   def stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u, pw = inputs
     h = sc.concat([x, u]) * pw[scale]
@@ -60,11 +61,11 @@ def n_dec(stages: int) -> int:
 
 
 def _inputs_tree(stages: int):
-  return sc.G(sc.L("z", n_dec(stages)), sc.L("p", sc.TensorType((N_PW,), diff=False)))
+  return sc.group(sc.arg("z", n_dec(stages)), sc.arg("p", sc.TensorType((N_PW,), diff=False)))
 
 
 def _cost_stage() -> sc.Function:
-  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU)), sc.L("cost", ...), name="vmap_mlp_stage_cost")
+  @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU)), outputs=sc.arg("cost"), name="vmap_mlp_stage_cost")
   def cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u = inputs
     difference = xnext - x
@@ -76,19 +77,11 @@ def _cost_stage() -> sc.Function:
 def vmapped(stages: int) -> sc.Function:
   """Objective and equalities together, both using VMAP, which is what a Lagrangian Hessian needs."""
 
-  @sc.function(_inputs_tree(stages), sc.G(sc.L("cost", ...), sc.L("eq", ...)), name=f"vmap_mlp_N{stages}")
+  @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost"), sc.arg("eq")), name=f"vmap_mlp_N{stages}")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, p = inputs
-    eq = sc.vmap(
-      stage_function(),
-      length=stages,
-      inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU), "pw": (p, 0, 0)},
-    )
-    cost = sc.vmap(
-      _cost_stage(),
-      length=stages,
-      inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
-    )
+    eq = sc.vmap(stage_function(), stages)((sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU), sc.window(p, 0, 0))).vec()
+    cost = sc.vmap(_cost_stage(), stages)((sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU))).vec()
     return cost.sum(), eq
 
   return fn
@@ -99,7 +92,7 @@ def unrolled(stages: int) -> sc.Function:
   stage, cost_stage = stage_function(), _cost_stage()
   offset = NX * (stages + 1)
 
-  @sc.function(_inputs_tree(stages), sc.G(sc.L("cost", ...), sc.L("eq", ...)), name=f"vmap_mlp_unrolled_N{stages}")
+  @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost"), sc.arg("eq")), name=f"vmap_mlp_unrolled_N{stages}")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, p = inputs
     rows, terms = [], []
@@ -140,7 +133,7 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
   offset = NX * (stages + 1)
   dense = np.zeros((NX * stages, n_dec(stages)))
   for i in range(stages):
-    blocks = jac((z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)], z[offset + NU * i : offset + NU * (i + 1)], pw))
+    blocks = jac(*(z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)], z[offset + NU * i : offset + NU * (i + 1)], pw))
     d_x, d_u, d_xnext = (np.asarray(block).reshape(NX, -1) for block in blocks)
     rows = slice(NX * i, NX * (i + 1))
     dense[rows, NX * i : NX * (i + 1)] = d_x
@@ -150,10 +143,10 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
 
 
 def _scatter(sparse: sc.Function, z: np.ndarray, pw: np.ndarray, *extra: np.ndarray) -> np.ndarray:
-  sparsity = sparse.output_sparsities[0]
+  sparsity = as_concrete(sparse).output_sparsities[0]
   assert sparsity is not None
   dense = np.zeros(sparsity.shape)
-  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(sparse((z, *extra, pw))).reshape(-1)
+  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(sparse(z, *extra, pw)).reshape(-1)
   return dense
 
 
@@ -187,7 +180,7 @@ def test_vmapped_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
     dense = [_scatter(fn, z, pw) for fn in jacobians]
     np.testing.assert_allclose(dense[0], dense[1], rtol=0.0, atol=1e-13)
     np.testing.assert_allclose(dense[0], dense_jac_reference(stages, z, pw), rtol=0.0, atol=1e-13)
-    pattern = jacobians[0].output_sparsities[0]
+    pattern = as_concrete(jacobians[0]).output_sparsities[0]
     assert pattern is not None and pattern.nnz < dense[0].size
 
     hessians = [
@@ -218,8 +211,8 @@ def test_lagrangian_hessian_through_the_vmap_matches_finite_differences() -> Non
   for column in range(z.size):
     shift = np.zeros_like(z)
     shift[column] = step
-    forward = np.asarray(gradient((z + shift, np.array(1.0), lam, pw))).reshape(-1)
-    backward = np.asarray(gradient((z - shift, np.array(1.0), lam, pw))).reshape(-1)
+    forward = np.asarray(gradient(*(z + shift, np.array(1.0), lam, pw))).reshape(-1)
+    backward = np.asarray(gradient(*(z - shift, np.array(1.0), lam, pw))).reshape(-1)
     approx[:, column] = (forward - backward) / (2.0 * step)
   np.testing.assert_allclose(exact, approx, rtol=2e-5, atol=2e-6)
 

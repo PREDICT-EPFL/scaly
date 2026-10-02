@@ -56,7 +56,7 @@ CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.n
 
 
 def _function(name: str, build: Callable[[sc.Expr], sc.Expr], shape: int = 3) -> sc.Function:
-  @sc.function(sc.L("x", shape), sc.L("y", ...), name=name)
+  @sc.function(sc.arg("x", shape), outputs=sc.arg("y"), name=name)
   def fn(x: sc.Expr) -> sc.Expr:
     return build(x)
 

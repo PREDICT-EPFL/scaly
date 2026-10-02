@@ -102,21 +102,19 @@ A symbolic call to a `Function` adds one `call` node, and `sc.vmap` adds one
 the last state goes through a terminal cost:
 
 ```python
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), sc.L("znext", ...))
-def model(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u = inputs
+@sc.function(sc.arg("z", 2), sc.arg("u", 1), outputs=sc.arg("znext"))
+def model(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u])
 
 
-@sc.function(sc.L("z", 2), sc.L("cost", ...))
+@sc.function(sc.arg("z", 2), outputs=sc.arg("cost"))
 def terminal(z: sc.Expr) -> sc.Expr:
     return sc.sumsqr(z)
 
 
-@sc.function(sc.G(sc.L("zs", 20), sc.L("us", 10)), sc.L("J", ...))
-def stages(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    zs, us = inputs
-    znexts = sc.vmap(model, 10, [zs, us])
+@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("J"))
+def stages(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
+    znexts = sc.vmap(model, 10)(zs, us).vec()
     return terminal(znexts[18:])
 
 
@@ -130,9 +128,11 @@ expr.func @stages(%zs: tensor<20xfloat64 diff>, %us: tensor<10xfloat64 diff>) ->
   %0 = expr.input {lowering="auto", name="zs"} : tensor<20xfloat64 diff>
   %1 = expr.input {lowering="auto", name="us"} : tensor<10xfloat64 diff>
   %2 = expr.vmap(%0, %1) {callee="model", length=10, output=0, slice_size=2, starts=[0, 0], strides=[2, 1]} : tensor<20xfloat64 diff>
-  %3 = expr.slice(%2) {index=[slice(18, None, None)]} : tensor<2xfloat64 diff>
-  %4 = expr.call(%3) {callee="terminal", output=0} : tensor<float64 diff>
-  expr.return %4
+  %3 = expr.reshape(%2) {shape=[10, 2]} : tensor<10x2xfloat64 diff>
+  %4 = expr.reshape(%3) {shape=[20]} : tensor<20xfloat64 diff>
+  %5 = expr.slice(%4) {index=[slice(18, None, None)]} : tensor<2xfloat64 diff>
+  %6 = expr.call(%5) {callee="terminal", output=0} : tensor<float64 diff>
+  expr.return %6
 }
 ```
 
@@ -261,12 +261,12 @@ buffer at an offset. Together they let a slice or a reshape of a computed value
 reuse its storage. Here a slice and a reshape feed a callee that takes a matrix:
 
 ```python
-@sc.function(sc.L("M", (2, 3)), sc.L("s", ...))
+@sc.function(sc.arg("M", (2, 3)), outputs=sc.arg("s"))
 def trace2(M: sc.Expr) -> sc.Expr:
     return M[0, 0] + M[1, 1]
 
 
-@sc.function(sc.L("x", 8), sc.L("t", ...))
+@sc.function(sc.arg("x", 8), outputs=sc.arg("t"))
 def f(x: sc.Expr) -> sc.Expr:
     y = x.sin()
     return trace2(y[2:].reshape((2, 3)))

@@ -10,8 +10,9 @@ import numpy as np
 from ..ad.derivatives import jacobian
 from ..ad.sparse import SparseJacobian, sparse_hessian, sparse_jacobian
 from ..ad.sparsity import _jac_mask
-from ..function import Function
-from ..function.tree import G, L, Tree
+from ..function.concrete import ConcreteFunction
+from ..function.model import Function
+from ..function.tree import group, arg, Tree
 from ..ir.expr import Expr, ExprOp, concat, substitute, topo
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
@@ -51,7 +52,7 @@ def _gathered(mat: Expr, sparsity: SparsityPattern) -> Expr:
 
 
 def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
-  """Return whether an expression reaches a solver, including through Function calls."""
+  """Return whether an expression reaches a solver, including through ConcreteFunction calls."""
   seen: set[int] = set()
 
   def visit(targets: Sequence[Expr]) -> bool:
@@ -78,9 +79,9 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
         raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver")
       if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols):
         raise NotQuadratic(f"{problem.name}: {side} for {name!r} depends on the variables")
-  for index, group in enumerate(problem.spec.ineq):
-    label = group.name or str(index)
-    for side, bound in (("lower bound", group.lo), ("upper bound", group.hi)):
+  for index, inequality in enumerate(problem.spec.ineq):
+    label = inequality.name or str(index)
+    for side, bound in (("lower bound", inequality.lo), ("upper bound", inequality.hi)):
       if bound is not None:
         if _reaches_solver_call((bound,)):
           raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver")
@@ -106,8 +107,8 @@ def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any
 
   for index, expr in enumerate(cast(tuple[Expr, ...], cached["equalities"])):
     prove_affine(expr, f"eq[{index}]")
-  for index, (group, expr) in enumerate(zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)):
-    prove_affine(expr, f"ineq {group.name or index}")
+  for index, (inequality, expr) in enumerate(zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)):
+    prove_affine(expr, f"ineq {inequality.name or index}")
 
 
 def _bound(expr: Expr | None, shape: tuple[int, ...], fill: float) -> Expr:
@@ -134,7 +135,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
   replacements = {x: zero}
 
   hessian = cast(SparseJacobian, cached["qp_hessian"])
-  gradient = cast(Function, cached["grad"])
+  gradient = cast(ConcreteFunction, cached["grad"])
   P = simplify_cse_fixpoint(substitute(hessian.to_dense(), replacements))
   c = simplify_cse_fixpoint(substitute(gradient.outputs[0], replacements))
 
@@ -169,12 +170,14 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
   if g is not None:
     lower = _concat_vectors(
       tuple(
-        _bound(group.lo, expr.shape, -np.inf) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
+        _bound(inequality.lo, expr.shape, -np.inf)
+        for inequality, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
       )
     )
     upper = _concat_vectors(
       tuple(
-        _bound(group.hi, expr.shape, np.inf) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
+        _bound(inequality.hi, expr.shape, np.inf)
+        for inequality, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
       )
     )
     offset = simplify_cse_fixpoint(substitute(g, replacements))
@@ -212,7 +215,7 @@ def build_qp[SV, NV, SP, NP](
   P_sp = A_sp = G_sp = None
   if sparse:
     matrices = (P, A, G_mat)
-    probe = Function._from_exprs(
+    probe = ConcreteFunction._from_exprs(
       f"{name}_pattern_probe",
       params,
       tuple(matrix.vec() for matrix in matrices),
@@ -221,7 +224,7 @@ def build_qp[SV, NV, SP, NP](
     )
     rng = np.random.default_rng(0)
     sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
-    values = probe(sample)
+    values = probe(*sample)
     P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
     if n_eq:
       A_sp = _qp_matrix_sparsity(A, params, values[1])
@@ -238,21 +241,23 @@ def build_qp[SV, NV, SP, NP](
     oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
   oracle_outputs.extend((x_lb, x_ub))
   oracle_names.extend(("x_lb", "x_ub"))
-  oracle = Function._from_exprs(f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names))
+  oracle = ConcreteFunction._from_exprs(
+    f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names)
+  )
 
   solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
-  input_tree = G(
+  input_tree = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    L("lam_eq", TensorType((n_eq,), diff=False)),
-    L("lam_ineq", TensorType((n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((n_eq,), diff=False)),
+    arg("lam_ineq", TensorType((n_ineq,), diff=False)),
     problem.params,
   )
-  output_tree: Tree[Any, Any] = G(
+  output_tree: Tree[Any, Any] = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    L("lam_eq", TensorType((n_eq,), diff=False)),
-    L("lam_ineq", TensorType((n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((n_eq,), diff=False)),
+    arg("lam_ineq", TensorType((n_ineq,), diff=False)),
   )
   descriptor = SolverDescriptor(
     name=name,
@@ -279,11 +284,11 @@ def qp_problem(n: int, n_eq: int, n_ineq: int) -> Problem[Expr, np.ndarray, QPDa
   """Return the typed matrix-data form of a quadratic problem."""
 
   @problem(
-    vars=L("x", n),
-    params=G(
-      G(L("P", (n, n)), L("c", n)),
-      G(L("A", (n_eq, n)), L("b", n_eq)),
-      G(L("G", (n_ineq, n)), L("g_lb", n_ineq), L("g_ub", n_ineq)),
+    vars=arg("x", n),
+    params=group(
+      group(arg("P", (n, n)), arg("c", n)),
+      group(arg("A", (n_eq, n)), arg("b", n_eq)),
+      group(arg("G", (n_ineq, n)), arg("g_lb", n_ineq), arg("g_ub", n_ineq)),
     ),
     name="qp",
   )

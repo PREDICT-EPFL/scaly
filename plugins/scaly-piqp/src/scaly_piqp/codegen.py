@@ -7,6 +7,7 @@ interface), and fills ``ctx.stats_symbol``. Contract: ``docs/dev/solver_plugins.
 """
 
 from __future__ import annotations
+from scaly.function.model import as_concrete
 
 import math
 
@@ -33,7 +34,7 @@ def _csc_tables(name: str, sp: SparsityPattern | None) -> list[str]:
 
 
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-  desc: SolverDescriptor = fun.descriptor
+  desc: SolverDescriptor = as_concrete(fun).descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol
   n, p, m = desc.n, desc.n_eq, desc.n_ineq

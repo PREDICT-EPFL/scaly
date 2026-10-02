@@ -18,15 +18,13 @@ instead of being expanded into its caller (see
 import scaly as sc
 from scaly.codegen import render_c_module
 
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", ())), sc.L("znext", ...))
-def euler(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u = inputs
+@sc.function(sc.arg("z", 2), sc.arg("u", ()), outputs=sc.arg("znext"))
+def euler(z: sc.Expr, u: sc.Expr) -> sc.Expr:
     return sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * u.sin()]).block()
 
-@sc.function(sc.G(sc.L("zs", 20), sc.L("us", 10)), sc.L("zn", ...))
-def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    zs, us = inputs
-    return sc.vmap(euler, 10, [zs, us])
+@sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("zn"))
+def rollout(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
+    return sc.vmap(euler, 10)(zs, us).vec()
 
 print(render_c_module(rollout, lanes=1).source)
 ```

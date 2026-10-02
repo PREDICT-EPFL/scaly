@@ -18,6 +18,8 @@ from collections.abc import Callable, Iterator
 
 import numpy as np
 
+from scaly.function.model import as_concrete
+from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.passes.lowering import lower_function
 from scaly.solvers.paths import solver_loadable
@@ -54,7 +56,7 @@ def check_dims_and_rk4() -> None:
   for n_masses in (3, 5):
     x = initial_state(n_masses) + rng.normal(scale=0.02, size=n_state(n_masses))
     u = rng.normal(scale=0.1, size=NU)
-    actual = chain_step_fn(n_masses)((x, u, *[np.array([value]) for value in params.array()]))
+    actual = chain_step_fn(n_masses)(x, u, *[np.array([value]) for value in params.array()])
     np.testing.assert_allclose(actual, rk4_step_np(x, u, params), rtol=1e-10, atol=1e-10)
 
 
@@ -63,18 +65,18 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
     dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
-    sparse = chain_nlp(n_masses, horizon).function.descriptor.jac
-    assert isinstance(sparse, sc.Function)
+    sparse = as_concrete(chain_nlp(n_masses, horizon).function).descriptor.jac
+    assert isinstance(sparse, ConcreteFunction)
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 
-    actual = np.asarray(dense((zv, pv)))
+    actual = np.asarray(dense(*(zv, pv)))
     np.testing.assert_allclose(actual, np.asarray(ca_dense(zv, pv)), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(chain_eq_jac_dense_reference(n_masses, horizon, zv, pv), actual, rtol=1e-10, atol=1e-10)
 
-    sparsity = sparse.output_sparsities[0]
+    sparsity = as_concrete(sparse).output_sparsities[0]
     assert sparsity is not None
-    compact = np.asarray(sparse((zv, pv))).reshape(-1)
+    compact = np.asarray(sparse(zv, pv)).reshape(-1)
     flat = np.asarray(sparsity.rows) * actual.shape[1] + np.asarray(sparsity.cols)
     np.testing.assert_allclose(compact, actual.ravel()[flat], rtol=1e-10, atol=1e-10)
     assert sparsity.nnz < actual.size, (sparsity.nnz, actual.size)
@@ -92,8 +94,8 @@ def check_nlp_objective_matches_casadi() -> None:
   zv[horizon * nz :] = base
 
   generated = chain_nlp(n_masses, horizon)
-  assert generated.function.descriptor.hess is not None
-  assert dict(generated.function.descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert as_concrete(generated.function).descriptor.hess is not None
+  assert dict(as_concrete(generated.function).descriptor.options).get("hessian_approximation") != "limited-memory"
   scaly_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
   stats = problem_stats(generated)
   assert stats is not None and stats.to_solver_status().ok and stats.iter > 0
@@ -220,9 +222,7 @@ def check_sqp_matches_ipopt() -> None:
     du = float(np.max(np.abs(ipopt_run.controls[k] - sqp_run.controls[k])))
     dplan = float(np.max(np.abs(ipopt_run.plans[k] - sqp_run.plans[k])))
     obj_i, obj_s = ipopt_run.telemetry[k].obj, sqp_run.telemetry[k].obj
-    viol_i, viol_s = (
-      float(np.max(np.abs(np.asarray(eq_fn((run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"])))))) for run in (ipopt_run, sqp_run)
-    )
+    viol_i, viol_s = (float(np.max(np.abs(np.asarray(eq_fn(run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"]))))) for run in (ipopt_run, sqp_run))
     assert du <= 3e-4 and dplan <= 3e-4 and abs(obj_i - obj_s) <= 1e-6 * (1.0 + abs(obj_i)) and max(viol_i, viol_s) <= 1e-6, (
       f"SQP first diverges from IPOPT at step {k}: |du|={du:.3e} |dplan|={dplan:.3e} |dobj|={abs(obj_i - obj_s):.3e}; "
       f"ipopt: status={ipopt_run.telemetry[k].status.name} obj={obj_i:.6e} eq_violation={viol_i:.3e}; "
@@ -306,25 +306,24 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   stage = _eq_stage_fn(n_masses)
 
   @sc.function(
-    sc.G(sc.L("z", nz), sc.L("xnext", nx), sc.L("params", sc.TensorType((N_PARAMS,), diff=False))),
-    sc.L("eq", ...),
-    name=stage.name,
+    sc.arg("z", nz),
+    sc.arg("xnext", nx),
+    sc.arg("params", sc.TensorType((N_PARAMS,), diff=False)),
+    outputs=sc.arg("eq", nx),
+    name=f"{stage.name}_hinted",
   )
-  def hinted(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    return stage(inputs).scalar()
+  def hinted(z: sc.Expr, xnext: sc.Expr, params: sc.Expr) -> sc.Expr:
+    return stage(z, xnext, params).scalar()
 
   @sc.function(
-    sc.G(
-      sc.L("z", n_dec(n_masses, HORIZON)),
-      sc.L("p", sc.TensorType((n_param(n_masses),), diff=False)),
-      sc.L("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
-    ),
-    sc.L("h", ...),
+    sc.arg("z", n_dec(n_masses, HORIZON)),
+    sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
+    sc.arg("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
+    outputs=sc.arg("h"),
     name="chain_hess_hinted",
   )
-  def hessian_values(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p, lam = inputs
-    mapped = sc.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+  def hessian_values(z: sc.Expr, p: sc.Expr, lam: sc.Expr) -> sc.Expr:
+    mapped = sc.vmap(hinted, HORIZON)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
     eq = sc.concat([z[:nx] - p[:nx], mapped])
     return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
 
@@ -335,7 +334,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   selected = [
     proc
     for proc in procs
-    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{stage.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
+    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (

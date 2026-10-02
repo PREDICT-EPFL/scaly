@@ -1,15 +1,15 @@
-"""Lower Function calls and mapped calls, including solver oracle dependencies."""
+"""Lower ConcreteFunction calls and mapped calls, including solver oracle dependencies."""
 
 from __future__ import annotations
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
-from ...function import Function
+from ...function.concrete import ConcreteFunction
 from .ctx import LowerCtx, lowers, LoweringError, _lower_to_proc
 
 
-def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
+def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
   if callee.device.kind != ctx.fun.device.kind:
     raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
   from ...solvers.graph import is_solver_function, solver_callees
@@ -29,7 +29,7 @@ def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
 def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   """An expression CALL output: emit one Program-IR CALL writing all callee outputs into scratch
   buffers (deduped per unique invocation), then map this node to the selected output buffer."""
-  callee: Function = node.attrs["callee"]
+  callee: ConcreteFunction = node.attrs["callee"]
   out_idx = int(node.attrs["output"])
   arg_names = tuple(ctx.value_buffers[a.id] for a in node.args)
   key = (callee.name, arg_names)
@@ -50,7 +50,7 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
 def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
   reads ``outer_k[start_k + it·stride_k ...]`` and writes the selected output into ``out[it·slice_size ...]``."""
-  callee: Function = node.attrs["callee"]
+  callee: ConcreteFunction = node.attrs["callee"]
   out_idx = int(node.attrs["output"])
   length = int(node.attrs["length"])
   starts = tuple(int(s) for s in node.attrs["starts"])

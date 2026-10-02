@@ -3,14 +3,15 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
-from typing import Sequence, get_type_hints
+from collections.abc import Sequence
+from typing import get_type_hints
 
 import scaly as sc
 import scaly.codegen as codegen
 from scaly.codegen import aot
 from scaly.function.factory import Adj, DerivSpec, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from scaly.function.model import Function
-from scaly.function.tree import G, L, Tree
+from scaly.function.tree import group, arg, Tree
 from scaly.ir.expr import Expr, ExprOp
 from scaly.ir.expr_spec import spec_expr
 from scaly.ir.program import ProgramNode, ProgramOp
@@ -27,8 +28,8 @@ def test_public_exports_are_canonical() -> None:
   assert sc.Expr is Expr
   assert sc.ExprOp is ExprOp
   assert sc.Function is Function
-  assert sc.L is L
-  assert sc.G is G
+  assert sc.arg is arg
+  assert sc.group is group
   assert sc.Bounded is Bounded
   assert sc.Problem is Problem
   assert sc.ProblemSpec is ProblemSpec
@@ -60,7 +61,7 @@ def test_public_exports_are_canonical() -> None:
   assert not hasattr(sc, "SolverFunction")
   assert not hasattr(sc, "Tree")
   assert not hasattr(sc, "Buffer")
-  assert {"L", "G"} <= set(sc.__all__)
+  assert {"arg", "group"} <= set(sc.__all__)
   function_module = __import__("scaly.function", fromlist=["Tree"])
   assert function_module.Tree is Tree
   # The call surface is the two named tree methods plus the dispatching __call__; the flat leaf
@@ -68,7 +69,7 @@ def test_public_exports_are_canonical() -> None:
   assert not hasattr(Function, "call")
   assert not hasattr(Function, "eval_list")
   assert all(callable(getattr(Function, name)) for name in ("__call__", "symbolic_call", "numerical_call"))
-  assert all(callable(getattr(Function, name)) for name in ("_flat_symbolic_call", "_flat_numerical_call"))
+  assert all(callable(getattr(Function, name)) for name in ("symbolic_call", "instantiate"))
   factory_hints = get_type_hints(Function.factory)
   assert factory_hints["outputs"] == Sequence[str | DerivSpec]
   assert factory_hints["return"] is Function
@@ -88,7 +89,9 @@ def test_public_exports_are_canonical() -> None:
   assert program.ProgramNode is ProgramNode
   assert program.ProgramOp is ProgramOp
   assert codegen.render_c_source is aot.render_c_source
-  assert callable(sc.vmap)
+  assert all(callable(getattr(sc, name)) for name in ("vmap", "broadcast", "window"))
+  assert {"vmap", "broadcast", "window"} <= set(sc.__all__)
+  assert not hasattr(sc, "ConcreteFunction")
   assert not hasattr(sc, "map_")
   assert not hasattr(sc, "scan")
   assert all(

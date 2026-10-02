@@ -5,6 +5,8 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad import finite_difference
 from scaly.ad.forward import _jvp_many_structural, _jvp_many_unrolled  # jvp_many's two paths, checked against each other
@@ -12,9 +14,9 @@ from scaly.ir.expr import topo
 
 
 def _vmap_vjp_piece(name: str, nargs: int = 1) -> sc.Function:
-  leaves = [sc.L(f"x{i}", 2) for i in range(nargs)]
+  leaves = [sc.arg(f"x{i}", 2) for i in range(nargs)]
 
-  @sc.function(leaves[0] if nargs == 1 else sc.G(*leaves), sc.L("y", ...), name=name)
+  @sc.function(leaves[0] if nargs == 1 else sc.group(*leaves), outputs=sc.arg("y"), name=name)
   def piece(inputs):
     first, *rest = (inputs,) if nargs == 1 else inputs
     out = first * first + first.sin()
@@ -30,14 +32,14 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
 ) -> None:
   def objectives(z: sc.Expr, lam: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     bound = specs(z)
-    mapped = sc.vmap(callee, length, bound)
+    mapped = _mapped_call(callee, length, bound)
     unrolled = sc.concat(
       [
         callee(
-          callee.input_tree.unflatten(
+          *as_concrete(callee).input_tree.unflatten(
             tuple(
               outer[start + it * stride : start + it * stride + formal.size]
-              for formal, (outer, start, stride) in zip(callee.inputs, bound, strict=True)
+              for formal, (outer, start, stride) in zip(as_concrete(callee).inputs, bound, strict=True)
             )
           )
         )
@@ -46,10 +48,10 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
     )
     return sc.dot(lam, mapped), sc.dot(lam, unrolled)
 
-  lam_size = length * callee.outputs[0].size
-  inputs = sc.G(sc.L("z", zv.size), sc.L("lam", lam_size))
+  lam_size = length * as_concrete(callee).outputs[0].size
+  inputs = sc.group(sc.arg("z", zv.size), sc.arg("lam", lam_size))
 
-  @sc.function(inputs, sc.G(sc.L("mapped", ...), sc.L("unrolled", ...)), name=f"{name}_grads")
+  @sc.function(inputs, outputs=sc.group(sc.arg("mapped"), sc.arg("unrolled")), name=f"{name}_grads")
   def grad_fn(inputs):
     z, lam = inputs
     mapped_obj, unrolled_obj = objectives(z, lam)
@@ -57,7 +59,7 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
     (unrolled_grad,) = sc.vjp((unrolled_obj,), (z,), (sc.const(1.0),))
     return mapped_grad, unrolled_grad
 
-  @sc.function(inputs, sc.L("objective", ...), name=f"{name}_objective")
+  @sc.function(inputs, outputs=sc.arg("objective"), name=f"{name}_objective")
   def obj_fn(inputs):
     return objectives(*inputs)[0]
 
@@ -70,7 +72,7 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
 
 
 def test_vjp_scalar_output_matches_gradient() -> None:
-  @sc.function(sc.L("x", 3), sc.L("grad_x", ...), name="vjp")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("grad_x"), name="vjp")
   def f(x):
     y = (x.sin() + x * x).sum()
     (grad_x,) = sc.vjp((y,), (x,), (sc.const(1.0),))
@@ -82,7 +84,7 @@ def test_vjp_scalar_output_matches_gradient() -> None:
 
 
 def test_vjp_vector_output_uses_cotangent_seed() -> None:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("seed", 2)), sc.L("grad_x", ...), name="vjp")
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("seed", 2)), outputs=sc.arg("grad_x"), name="vjp")
   def f(inputs):
     x, seed = inputs
     y = sc.stack([x[0] * x[1], x[0].sin()])
@@ -96,7 +98,7 @@ def test_vjp_vector_output_uses_cotangent_seed() -> None:
 
 
 def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
-  @sc.function(sc.G(sc.L("x", (2, 3)), sc.L("b", 3)), sc.G(sc.L("grad_x", ...), sc.L("grad_b", ...)), name="vjp")
+  @sc.function(sc.group(sc.arg("x", (2, 3)), sc.arg("b", 3)), outputs=sc.group(sc.arg("grad_x"), sc.arg("grad_b")), name="vjp")
   def f(inputs):
     x, b = inputs
     y0 = (x + b).sum()
@@ -113,7 +115,7 @@ def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
 
 
 def test_vjp_through_structural_ops_and_matmul() -> None:
-  @sc.function(sc.G(sc.L("x", (2, 2)), sc.L("a", (2, 2)), sc.L("seed", (2, 4))), sc.L("grad_x", ...), name="vjp")
+  @sc.function(sc.group(sc.arg("x", (2, 2)), sc.arg("a", (2, 2)), sc.arg("seed", (2, 4))), outputs=sc.arg("grad_x"), name="vjp")
   def f(inputs):
     x, a, seed = inputs
     y = sc.concat([x.T, a @ x], axis=1)
@@ -132,18 +134,18 @@ def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
   # The CALL VJP inlines the callee adjoint and substitutes formals with actuals. The caller here
   # reuses the callee's formal symbol `x`, so the substitution must not rewrite occurrences of `x`
   # inside the incoming cotangent (which the second call's adjoint injects into the first call's).
-  @sc.function(sc.L("x", 1), sc.L("y", ...), name="sq")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="sq")
   def f(x):
     return x * x
 
-  @sc.function(sc.L("x", 1), sc.G(sc.L("rev", ...), sc.L("fwd", ...)), name="nested_sq")
+  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("rev"), sc.arg("fwd")), name="nested_sq")
   def fn(x):
     k1 = f(2 * x)
     k2 = f(x + k1)
     (grad_rev,) = sc.vjp((k2,), (x,), (sc.const(np.ones(1)),))
     return grad_rev, sc.jacobian(k2, x).reshape((1,))
 
-  assert fn.inputs == f.inputs
+  assert as_concrete(fn).inputs == as_concrete(f).inputs
 
   rev, fwd = fn(np.array([1.0]))
   np.testing.assert_allclose(rev, [90.0], rtol=1e-12)  # d/dx (x + 4x^2)^2 at x=1
@@ -157,7 +159,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
 
   rng = np.random.default_rng(7)
 
-  @sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.L("f", ...), name="ode2")
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("u", 1)), outputs=sc.arg("f"), name="ode2")
   def ode(inputs):
     x, u = inputs
     return sc.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])
@@ -170,9 +172,9 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
     k4 = ode((x + dt * k3, u))
     return x + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  inputs = sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("lam", 2))
+  inputs = sc.group(sc.arg("x", 2), sc.arg("u", 1), sc.arg("lam", 2))
 
-  @sc.function(inputs, sc.G(sc.L("rev", ...), sc.L("fwd", ...), sc.L("hess", ...)), name="rk4_adj")
+  @sc.function(inputs, outputs=sc.group(sc.arg("rev"), sc.arg("fwd"), sc.arg("hess")), name="rk4_adj")
   def fn(inputs):
     x, u, lam = inputs
     xnext = rk4(x, u)
@@ -180,7 +182,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
     jac_t_lam = sc.jacobian(xnext, x).transpose((1, 0)) @ lam
     return grad_rev, jac_t_lam, hessian(sc.dot(lam, xnext), x)
 
-  @sc.function(inputs, sc.L("obj", ...), name="rk4_obj")
+  @sc.function(inputs, outputs=sc.arg("obj"), name="rk4_obj")
   def obj(inputs):
     x, u, lam = inputs
     return sc.dot(lam, rk4(x, u))
@@ -195,7 +197,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
 
 
 def test_jvp_many_uses_leading_seed_axis() -> None:
-  @sc.function(sc.G(sc.L("x", 3), sc.L("seeds", (2, 3))), sc.L("dy", ...), name="jvp_many")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("seeds", (2, 3))), outputs=sc.arg("dy"), name="jvp_many")
   def f(inputs):
     x, seeds = inputs
     return sc.jvp_many(sc.stack([x[0] * x[1], x[2].sin() + x[0]]), x, seeds)
@@ -210,7 +212,7 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
 def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
-  @sc.function(sc.G(sc.L("x", 3), sc.L("seed", 3)), sc.G(sc.L("jvp", ...), sc.L("vjp", ...)), name="erf_seed_ad")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("seed", 3)), outputs=sc.group(sc.arg("jvp"), sc.arg("vjp")), name="erf_seed_ad")
   def ad(inputs):
     x, seed = inputs
     y = x.erf()
@@ -219,7 +221,7 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.Mon
 
   weights = np.array([0.5, -1.25, 2.0])
 
-  @sc.function(sc.L("x", 3), sc.G(sc.L("y", ...), sc.L("cost", ...)), name="erf_derivatives")
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("cost")), name="erf_derivatives")
   def base(x):
     y = x.erf()
     return y, (sc.const(weights) * y).sum()
@@ -235,7 +237,7 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.Mon
   np.testing.assert_allclose(jvp_value, seedv * first, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(vjp_value, seedv * first, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(jac_value, np.diag(first), rtol=1e-12, atol=1e-12)
-  sparsity = derivatives.output_sparsities[1]
+  sparsity = as_concrete(derivatives).output_sparsities[1]
   assert sparsity is not None
   assert sparsity.rows == (0, 1, 2)
   assert sparsity.cols == (0, 1, 2)
@@ -244,7 +246,7 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.Mon
 
 
 def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
-  @sc.function(sc.G(sc.L("x", 3), sc.L("seeds", (2, 3))), sc.L("dy", ...), name="jvp_many_broadcast_scalar")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("seeds", (2, 3))), outputs=sc.arg("dy"), name="jvp_many_broadcast_scalar")
   def f(inputs):
     x, seeds = inputs
     return sc.jvp_many(x.sum() * x, x, seeds)
@@ -256,13 +258,17 @@ def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
 
 
 def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
-  @sc.function(sc.G(sc.L("x", (2, 3)), sc.L("seeds", (4, 2, 3))), sc.G(sc.L("structural", ...), sc.L("reference", ...)), name="jvp_many_sum")
+  @sc.function(
+    sc.group(sc.arg("x", (2, 3)), sc.arg("seeds", (4, 2, 3))),
+    outputs=sc.group(sc.arg("structural"), sc.arg("reference")),
+    name="jvp_many_sum",
+  )
   def fn(inputs):
     x, seeds = inputs
     return _jvp_many_structural(x.sum(), x, seeds, {}, {}), _jvp_many_unrolled(x.sum(), x, seeds)
 
-  x, _ = fn.inputs
-  structural, _ = fn.outputs
+  x, _ = as_concrete(fn).inputs
+  structural, _ = as_concrete(fn).outputs
   expr = x.sum()
   one_seed = _jvp_many_structural(expr, x, sc.sym("one_seed", (1, 2, 3)), {}, {})
 
@@ -316,13 +322,13 @@ def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
   }
   for name, (build, np_fn) in cases.items():
 
-    @sc.function(sc.G(sc.L("x", 9), sc.L("seeds", (4, 9))), sc.L("dy", ...), name=f"jvp_many_{name}")
+    @sc.function(sc.group(sc.arg("x", 9), sc.arg("seeds", (4, 9))), outputs=sc.arg("dy"), name=f"jvp_many_{name}")
     def f(inputs):
       x, seeds = inputs
       return _jvp_many_structural(build(x), x, seeds, {}, {})
 
-    (dy,) = f.outputs
-    assert dy.shape == (4, *build(f.inputs[0]).shape), f"{name}: tangent shape {dy.shape}"
+    (dy,) = as_concrete(f).outputs
+    assert dy.shape == (4, *build(as_concrete(f).inputs[0]).shape), f"{name}: tangent shape {dy.shape}"
     eps = 1e-6
     fd = np.stack([(np_fn(xv + eps * sv[i]) - np_fn(xv - eps * sv[i])) / (2 * eps) for i in range(4)])
     np.testing.assert_allclose(f((xv, sv)), fd, rtol=1e-6, atol=1e-8, err_msg=name)
@@ -330,7 +336,7 @@ def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
 
 def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
   # (dx * y).sum() in the 1-D matmul JVP branch also contracted the seed axis, silently summing per-seed derivatives
-  @sc.function(sc.L("x", 6), sc.L("y", ...), name="vec_dot_vec")
+  @sc.function(sc.arg("x", 6), outputs=sc.arg("y"), name="vec_dot_vec")
   def fn(x):
     return sc.stack([x[:3] @ x[3:6] + x[0] * x[1]])
 
@@ -341,13 +347,17 @@ def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
 
 
 def test_jvp_many_scatter_and_gather_stays_structural() -> None:
-  @sc.function(sc.G(sc.L("x", 6), sc.L("seeds", (3, 6))), sc.G(sc.L("structural", ...), sc.L("reference", ...)), name="jvp_many_scatter_gather")
+  @sc.function(
+    sc.group(sc.arg("x", 6), sc.arg("seeds", (3, 6))),
+    outputs=sc.group(sc.arg("structural"), sc.arg("reference")),
+    name="jvp_many_scatter_gather",
+  )
   def fn(inputs):
     x, seeds = inputs
     expr = sc.scatter(sc.gather(x, np.array([[5, 1], [4, 0]])), np.array([[0, 4], [7, 8]]), (3, 3))
     return _jvp_many_structural(expr, x, seeds, {}, {}), _jvp_many_unrolled(expr, x, seeds)
 
-  structural, _ = fn.outputs
+  structural, _ = as_concrete(fn).outputs
   assert structural.shape == (3, 3, 3)
   nodes = topo((structural,))
   assert sum(node.op == sc.ExprOp.GATHER for node in nodes) == 1
@@ -359,13 +369,17 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
 
 
 def test_jvp_many_transpose_stays_structural() -> None:
-  @sc.function(sc.G(sc.L("x", 12), sc.L("seeds", (4, 12))), sc.G(sc.L("structural", ...), sc.L("reference", ...)), name="jvp_many_transpose")
+  @sc.function(
+    sc.group(sc.arg("x", 12), sc.arg("seeds", (4, 12))),
+    outputs=sc.group(sc.arg("structural"), sc.arg("reference")),
+    name="jvp_many_transpose",
+  )
   def fn(inputs):
     x, seeds = inputs
     expr = x.reshape((2, 3, 2)).transpose((2, 0, 1))
     return _jvp_many_structural(expr, x, seeds, {}, {}), _jvp_many_unrolled(expr, x, seeds)
 
-  structural, _ = fn.outputs
+  structural, _ = as_concrete(fn).outputs
   assert structural.shape == (4, 2, 2, 3)
   assert sum(node.op == sc.ExprOp.TRANSPOSE for node in topo((structural,))) == 1
   xv = np.random.default_rng(14).normal(size=12)
@@ -381,12 +395,12 @@ def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pyte
   def rank4(x: sc.Expr) -> sc.Expr:
     return (x * x).reshape((2, 3, 1, 2)).transpose((3, 1, 0, 2))
 
-  @sc.function(sc.G(sc.L("x", 12), sc.L("seeds", (2, 12))), sc.L("tan", ...), name="rank4_transpose_jvp")
+  @sc.function(sc.group(sc.arg("x", 12), sc.arg("seeds", (2, 12))), outputs=sc.arg("tan"), name="rank4_transpose_jvp")
   def fn(inputs):
     x, seeds = inputs
     return sc.jvp_many(rank4(x), x, seeds).reshape((24,))
 
-  x, seeds = fn.inputs
+  x, seeds = as_concrete(fn).inputs
   rng = np.random.default_rng(7)
   xv, sv = rng.normal(size=12), rng.normal(size=(2, 12))
   expected = np.concatenate([(2.0 * xv * sv[i]).reshape(2, 3, 1, 2).transpose(3, 1, 0, 2).reshape(-1) for i in range(2)])
@@ -417,14 +431,14 @@ def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:
   rng = np.random.default_rng(16)
   for index, (x_shape, y_shape) in enumerate([((4,), (4,)), ((3, 4), (4,)), ((4,), (4, 2)), ((3, 4), (4, 2))]):
     out_shape = np.broadcast_shapes(x_shape[:-1] + y_shape[1:])
-    inputs = sc.G(sc.L("x", x_shape), sc.L("y", y_shape), sc.L("cot", out_shape))
+    inputs = sc.group(sc.arg("x", x_shape), sc.arg("y", y_shape), sc.arg("cot", out_shape))
 
-    @sc.function(inputs, sc.L("objective", ...), name=f"matmul_vjp_objective_{index}")
+    @sc.function(inputs, outputs=sc.arg("objective"), name=f"matmul_vjp_objective_{index}")
     def objective_fn(inputs):
       x, y, cot = inputs
       return sc.dot(cot, x @ y)
 
-    @sc.function(inputs, sc.G(sc.L("gx", ...), sc.L("gy", ...)), name=f"matmul_vjp_{index}")
+    @sc.function(inputs, outputs=sc.group(sc.arg("gx"), sc.arg("gy")), name=f"matmul_vjp_{index}")
     def grad_fn(inputs):
       x, y, _ = inputs
       return sc.vjp((objective_fn(inputs),), (x, y), (sc.const(1.0),))
@@ -450,7 +464,7 @@ def test_matrix_vector_vjp_graph_uses_tensor_ops() -> None:
 
 
 def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
-  @sc.function(sc.L("z", 6), sc.L("dense", ...), name="spjac_scalar_plus_vec")
+  @sc.function(sc.arg("z", 6), outputs=sc.arg("dense"), name="spjac_scalar_plus_vec")
   def f(z):
     return sc.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z).to_dense()
 
@@ -462,7 +476,7 @@ def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
 
 
 def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("c0", (2, 2)), sc.L("c1", 2)), sc.L("grad_x", ...), name="vjp_many")
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("c0", (2, 2)), sc.arg("c1", 2)), outputs=sc.arg("grad_x"), name="vjp_many")
   def f(inputs):
     x, c0, c1 = inputs
     (grad_x,) = sc.vjp_many((x * x, x.sum()), (x,), (c0, c1))
@@ -495,11 +509,11 @@ def test_multi_seed_shape_errors() -> None:
 
 
 def test_vjp_through_call_node_inlines_callee_reverse_graph() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def inner(x):
     return x.sin() * x
 
-  @sc.function(sc.G(sc.L("z", 2), sc.L("seed", 2)), sc.L("grad_z", ...))
+  @sc.function(sc.group(sc.arg("z", 2), sc.arg("seed", 2)), outputs=sc.arg("grad_z"))
   def outer(inputs):
     z, seed = inputs
     (grad_z,) = sc.vjp((inner(z),), (z,), (seed,))
@@ -527,7 +541,7 @@ def test_vjp_through_vmap_cross_formal_overlap_accumulates() -> None:
 
 
 def test_vjp_through_vmap_single_formal_overlap_uses_grouped_scatter() -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="vmap_vjp_grouped_piece")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="vmap_vjp_grouped_piece")
   def piece(x):
     return x * x + x.sin()
 
@@ -552,20 +566,20 @@ def test_vjp_through_vmap_broadcast_full_outer_skips_scatter() -> None:
 def test_vjp_through_vmap_adjoint_names_disambiguate_active_formal_sets() -> None:
   # {a_b} and {a, b} would both suffix to "a_b" if adjoints were named by joined formal names;
   # lowering dedupes callees by name, so the two maps would silently share one proc body.
-  @sc.function(sc.G(sc.L("a", 2), sc.L("a_b", 2), sc.L("b", 2)), sc.L("y", ...), name="vmap_vjp_collision_piece")
+  @sc.function(sc.group(sc.arg("a", 2), sc.arg("a_b", 2), sc.arg("b", 2)), outputs=sc.arg("y"), name="vmap_vjp_collision_piece")
   def piece(inputs):
     a, a_b, b = inputs
     return a * a_b.sin() + b * a_b + a * b
 
   c0, c1 = sc.const(np.array([0.3, -0.7, 1.1, 0.2])), sc.const(np.array([0.9, 0.4, -0.5, 1.3]))
 
-  @sc.function(sc.L("z", 8), sc.L("objective", ...), name="vmap_vjp_collision_obj")
+  @sc.function(sc.arg("z", 8), outputs=sc.arg("objective"), name="vmap_vjp_collision_obj")
   def obj_fn(z):
-    m1 = sc.vmap(piece, 2, [(c0, 0, 2), (z[0:4], 0, 2), (c1, 0, 2)])
-    m2 = sc.vmap(piece, 2, [(z[0:4], 0, 2), (c0, 0, 2), (z[4:8], 0, 2)])
+    m1 = _mapped_call(piece, 2, [(c0, 0, 2), (z[0:4], 0, 2), (c1, 0, 2)])
+    m2 = _mapped_call(piece, 2, [(z[0:4], 0, 2), (c0, 0, 2), (z[4:8], 0, 2)])
     return m1.sum() + m2.sum()
 
-  @sc.function(sc.L("z", 8), sc.L("grad_z", ...), name="vmap_vjp_collision_grads")
+  @sc.function(sc.arg("z", 8), outputs=sc.arg("grad_z"), name="vmap_vjp_collision_grads")
   def grad_fn(z):
     (grad_z,) = sc.vjp((obj_fn(z),), (z,), (sc.const(1.0),))
     return grad_z
@@ -578,14 +592,16 @@ def test_vjp_through_vmap_adjoint_names_disambiguate_active_formal_sets() -> Non
 
 def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   @sc.function(
-    sc.G(sc.L("x", 2), sc.L("p", sc.TensorType((2,), diff=False)), sc.L("seed", 2)), sc.G(sc.L("dy", ...), sc.L("grad", ...)), name="smooth_wrt_x"
+    sc.group(sc.arg("x", 2), sc.arg("p", sc.TensorType((2,), diff=False)), sc.arg("seed", 2)),
+    outputs=sc.group(sc.arg("dy"), sc.arg("grad")),
+    name="smooth_wrt_x",
   )
   def f(inputs):
     x, p, seed = inputs
     y = (x * x + p.floor()).sum()
     return sc.jvp(y, x, seed), sc.gradient(y, x)
 
-  x, _, seed = f.inputs
+  x, _, seed = as_concrete(f).inputs
   xv = np.array([0.3, 1.2])
   pv = np.array([1.1, 2.9])
   sv = np.array([1.5, -0.25])

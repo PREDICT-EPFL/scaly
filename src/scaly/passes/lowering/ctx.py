@@ -1,4 +1,4 @@
-"""Own lowering state, rule registration, flat-index helpers, and the Function-to-program driver."""
+"""Own lowering state, rule registration, flat-index helpers, and the ConcreteFunction-to-program driver."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, topo
-from ...function import Function
+from ...function.concrete import ConcreteFunction
+from ...function.model import Function, as_concrete
 from ..program import ProgramObserver, optimize_program
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.program_spec import verify_program
@@ -35,7 +36,7 @@ def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
   return deco
 
 
-ExprObserver = Callable[[str, Function], None]
+ExprObserver = Callable[[str, ConcreteFunction], None]
 
 
 class LoweringError(NotImplementedError):
@@ -43,7 +44,7 @@ class LoweringError(NotImplementedError):
 
 
 def lower_function(
-  fun: Function,
+  fun: Function | ConcreteFunction,
   observe: ProgramObserver | None = None,
   observe_expr: ExprObserver | None = None,
   *,
@@ -57,17 +58,19 @@ def lower_function(
   placement raises ``LoweringError`` — GPU backends re-land from the reference
   branch after CPU parity (see ``internal/notes/program_ir_migration.md``).
 
-  A ``solver Function`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
+  A ``solver ConcreteFunction`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
   lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver``
   path (rule 6) — but its oracle Functions *are* lowered to PROCs (the wrapper
   calls them as ``<oracle>_raw``). The solver→oracle-name map is recorded on the
   PROGRAM (``solver_oracles`` attr) so ``pack_workspace`` can size the caller's
   ``w[]`` to fit the oracle and the CALL-to-solver gets ``callee_needs_w`` right.
   """
+  fun = as_concrete(fun)
+  _check_callee_names(fun)
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
   callees: dict[str, ProgramNode] = {}
-  solver_fns: dict[str, Function] = {}
+  solver_fns: dict[str, ConcreteFunction] = {}
   from ...solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(fun):
@@ -125,7 +128,7 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n
 
 
-def _normalize_function(fun: Function) -> Function:
+def _normalize_function(fun: ConcreteFunction) -> ConcreteFunction:
   outputs = fun.outputs
   for _ in range(4):
     normalized = cse_many(simplify(output) for output in outputs)
@@ -136,9 +139,9 @@ def _normalize_function(fun: Function) -> Function:
 
 
 def _lower_to_proc(
-  fun: Function,
+  fun: ConcreteFunction,
   callees: dict[str, ProgramNode],
-  solver_fns: dict[str, Function],
+  solver_fns: dict[str, ConcreteFunction],
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
@@ -175,18 +178,18 @@ def _lower_to_proc(
 
 
 class LowerCtx:
-  """Per-Function lowering state: buffers, statements, and the Expr-id -> buffer map."""
+  """Per-ConcreteFunction lowering state: buffers, statements, and the Expr-id -> buffer map."""
 
   def __init__(
     self,
-    fun: Function,
+    fun: ConcreteFunction,
     callees: dict[str, ProgramNode],
-    solver_fns: dict[str, Function],
+    solver_fns: dict[str, ConcreteFunction],
     observe_expr: ExprObserver | None = None,
   ) -> None:
     self.fun = fun
     self.callees = callees
-    self.solver_fns = solver_fns  # name -> solver Function (opaque callees; rendered by codegen/solver)
+    self.solver_fns = solver_fns  # name -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
     self.observe_expr = observe_expr
     self.params: list[ProgramNode] = []
     self.statements: list[ProgramNode] = []
@@ -397,3 +400,27 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...]) -> Pr
   rng = p.range_(vname, 0, _size_of(shape), kind=RangeKind.GLOBAL)
   i = p.var(vname)
   return p.for_(rng, [p.store(p.view(dst, [i]), p.load(p.view(src, [i])))])
+
+
+def _check_callee_names(root: ConcreteFunction) -> None:
+  from ...solvers.graph import solver_callees
+  from ...utils.names import c_ident
+
+  names: dict[str, ConcreteFunction] = {}
+  seen: set[int] = set()
+
+  def visit(function: ConcreteFunction) -> None:
+    if id(function) in seen:
+      return
+    seen.add(id(function))
+    symbol = c_ident(function.name)
+    if symbol in names and names[symbol] is not function:
+      raise LoweringError(f"distinct function instances share generated C identifier {symbol!r}; give them distinct names")
+    names[symbol] = function
+    for callee in solver_callees(function):
+      visit(callee)
+    for node in topo(function.outputs):
+      if node.op in (ExprOp.CALL, ExprOp.VMAP):
+        visit(node.attrs["callee"])
+
+  visit(root)

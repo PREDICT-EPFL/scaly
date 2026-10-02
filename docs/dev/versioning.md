@@ -49,6 +49,15 @@ structs, the C++ `Buffer` aliases and the CasADi query functions are sugar over 
 signature and follow the same rule. The `static` `_raw` bodies
 are internal and may change in any release.
 
+A fully shaped Function keeps its declared name. Instances with shape holes use
+`<name>_<shapes>_t<nesting>`: `3x4` for a matrix, `s` for a scalar, and a six-digit
+hexadecimal digest of the parameter nesting. Only open input shapes contribute shape tokens;
+a bare function includes all input shapes. An empty shape-token list omits its separator.
+Mangling never introduces `__`. The declaration determines whether to mangle, independently
+of call history, and explicit derivative names inherit the source specialization suffix.
+A specialization-name collision raises. Distinct reachable graphs that sanitize to the same C
+identifier also raise; give independently declared functions distinct names.
+
 ### Sparsity tables
 
 The `<prefix>_NNZ`, `_NROW` and `_NCOL` macros and the index tables in the

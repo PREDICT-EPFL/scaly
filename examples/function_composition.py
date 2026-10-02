@@ -8,12 +8,12 @@ import scaly as sc
 from scaly.codegen import write_module
 
 
-@sc.function(sc.L("x", 3), sc.L("square", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("square"))
 def square(x: sc.Expr) -> sc.Expr:
   return x * x
 
 
-@sc.function(sc.L("x", 3), sc.L("energy", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("energy"))
 def energy(x: sc.Expr) -> sc.Expr:
   return square(x).sum()
 

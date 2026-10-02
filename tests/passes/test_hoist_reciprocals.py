@@ -95,20 +95,22 @@ def test_compiled_reciprocal_policy(tmp_path, reciprocal, mapped):
   compiler = shutil.which("cc")
   if compiler is None:
     pytest.skip("C compiler required")
-  x, y = sc.sym("x", 6), sc.sym("y", 1)
-  value = x / y
-  if mapped:
-    stage_x, stage_y = sc.sym("stage_x", 2), sc.sym("stage_y", 1)
-    stage = sc.Function._from_exprs("reciprocal_stage", [stage_x, stage_y], [stage_x / stage_y], ["x", "y"], ["out"])
-    value = sc.vmap(stage, 3, [(x, 0, 2), (y, 0, 0)])
-  fun = sc.Function._from_exprs("reciprocal_policy", [x, y], [value], ["x", "y"], ["out"])
+
+  @sc.function(sc.arg("x", 2), sc.arg("y", 1), outputs=sc.arg("out", 2), name="reciprocal_stage")
+  def stage(x: sc.Expr, y: sc.Expr) -> sc.Expr:
+    return x / y
+
+  @sc.function(sc.arg("x", 6), sc.arg("y", 1), outputs=sc.arg("out", 6), name="reciprocal_policy")
+  def fun(x: sc.Expr, y: sc.Expr) -> sc.Expr:
+    return sc.vmap(stage, 3)(x, sc.broadcast(y)).vec() if mapped else x / y
+
   program = lower_function(fun, reciprocal=reciprocal)
   if mapped and reciprocal:
     loops = [n for n in program.args[-1].args if n.op == ProgramOp.FOR]
     assert loops and not any(n.op == ProgramOp.DIV for loop in loops for n in walk_program(loop))
   source = tmp_path / "policy.c"
   library = tmp_path / ("policy" + shared_lib_ext())
-  source.write_text(render_program_c(program, fun))
+  source.write_text(render_program_c(program, fun.instantiate()))
   subprocess.run([compiler, "-O3", "-fPIC", shared_lib_flag(), str(source), "-lm", "-o", str(library)], check=True)
   entry = ctypes.CDLL(str(library)).reciprocal_policy
   ptr = ctypes.POINTER(ctypes.c_double)
