@@ -428,7 +428,7 @@ def _import_sibling(name):
   import sys
   from pathlib import Path
 
-  here = str(Path(__file__).parents[1] / "integration")
+  here = str(Path(__file__).parents[2] / "integration")
   if here not in sys.path:
     sys.path.insert(0, here)
   return pytest.importorskip(name)

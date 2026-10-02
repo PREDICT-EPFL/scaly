@@ -33,7 +33,7 @@ class _Frame:
     if node.op == ProgramOp.BUFFER:
       return self.buffers[node.attrs["name"]]
     ptr = self.buffers[node.attrs["buffer"]]
-    offset = self.scalar(node.args[0], {}).attrs["value"] if node.args else 0
+    offset = self.scalar(node.args[0], {}).attrs["value"]
     return _Pointer(ptr.values, ptr.offset + offset)
 
   def scalar(self, node: ProgramNode, memo: dict[ProgramNode, ProgramNode]) -> ProgramNode:

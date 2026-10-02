@@ -105,8 +105,8 @@ identifies the operation that prevents batching.
 
 ## Where things live
 
-`tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering.py`
-has its tests in `tests/passes/test_lowering.py`. Outside the mirror:
+`tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering/`
+has its tests in `tests/passes/lowering/`. Outside the mirror:
 
 - `tests/integration/` holds workload-shaped end-to-end checks.
 - `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates.

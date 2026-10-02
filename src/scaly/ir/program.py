@@ -314,10 +314,11 @@ def const_buffer(name: str, dtype: DType, shape: tuple[int, ...], values: Sequen
 def view(buf: ProgramNode, index: Sequence[ProgramNode]) -> ProgramNode:
   if buf.op != ProgramOp.BUFFER:
     raise TypeError(f"view requires a BUFFER, got {buf.op}")
-  for n in index:
-    if n.op not in SCALAR_OPS:
-      raise TypeError(f"view index components must be scalar ProgramNodes, got {n.op}")
-  return ProgramNode(ProgramOp.VIEW, tuple(index), attrs={"buffer": buf.attrs["name"], "rank": len(index)}, dtype=buf.dtype)
+  if len(index) != 1:
+    raise ValueError("view requires exactly one flat index")
+  if index[0].op not in SCALAR_OPS:
+    raise TypeError(f"view index must be a scalar ProgramNode, got {index[0].op}")
+  return ProgramNode(ProgramOp.VIEW, tuple(index), attrs={"buffer": buf.attrs["name"]}, dtype=buf.dtype)
 
 
 def load(view_node: ProgramNode) -> ProgramNode:

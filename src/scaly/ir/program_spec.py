@@ -71,9 +71,10 @@ def _buffer_attrs(n: ProgramNode) -> str | None:
 
 
 def _view_args_scalar(n: ProgramNode) -> str | None:
-  for a in n.args:
-    if a.op not in SCALAR_OPS:
-      return f"VIEW index component op={a.op} is not scalar"
+  if len(n.args) != 1:
+    return "VIEW requires exactly one flat index"
+  if n.args[0].op not in SCALAR_OPS:
+    return f"VIEW index op={n.args[0].op} is not scalar"
   if "buffer" not in n.attrs:
     return "VIEW missing 'buffer' name attr"
   if "lane_stride" in n.attrs and not isinstance(n.attrs["lane_stride"], int):

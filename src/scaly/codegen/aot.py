@@ -283,7 +283,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
   oracle PROCs and before the function that calls it — so emitting each wrapper after the PROCs up
   to its oracles never forward-references a ``_raw``."""
-  fun, prog = ctx.fun, ctx.prog  # solver callees opaque; oracles + host fns are PROCs (see passes/lowering.py)
+  fun, prog = ctx.fun, ctx.prog  # solver callees opaque; oracles + host fns are PROCs (see passes/lowering/)
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
   lines: list[str] = [
