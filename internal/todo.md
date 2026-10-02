@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 247**
+**Next id: 248**
 
 | Prefix | Section |
 |---|---|
@@ -1491,6 +1491,24 @@ The proposal is [`notes/perf_gaps_proposal_2026_09_30.html`](notes/perf_gaps_pro
       divisions are; the derivative; the symmetric product against the same product with
       the transpose as an input of its own, bit for bit, on three targets, and the six
       cases left whole. 25 mutants, all killed.
+- [x] **C-247. The backend choice weighs the stagewise backend (Tier 9).** `choose_backend`
+      takes it where the partition has three blocks or more and its modelled iteration is
+      the cheapest: `cost.stage_work` counts the block factorization's and the solves'
+      multiply-adds, the arrays' products and entries, the pairs of entries multiplied one
+      by one and the cells of the block storage, all read from the patterns.
+      `STAGEWISE_WEIGHTS` are fitted to 24 multistage problems of 3 to 52 slots a block
+      (`stagewise_fit.py`, `results/stagewise_fit.md`), except the two weights of
+      multiply-adds, which are the rates the profile shows: on such a family the counts that
+      grow with a block's cube are not told apart from those that grow with its square, a
+      free fit gave the cubes no weight, and that model would have taken the stagewise
+      backend for DUAL1-4, one dense block of 75-111 rows. With one or two blocks the
+      backend is the dense one behind another assembly and is no candidate. The prediction
+      is within 0.70-1.36 of the measured iteration; the model picks the fastest of the
+      three on 20 of the 24 and its worst pick is 1.13x the fastest. Of the 55 problems of
+      the IPM speed study it takes the stagewise backend for three, all multistage. The
+      race cars' generated SQP (`bench/harness/sqp_ipm.py`) is unchanged at 0.55 ms a step.
+      When the sparse factorization is past what can be generated, the stagewise backend is
+      still weighed against the dense one.
 - [x] **C-230. A `ProgramNode` interning hit assigns its fields again.** C-228's mechanism, in
       the other dialect: `ProgramNode.__new__` assigned the fields of a new node and the
       dataclass `__init__` then ran on whatever it returned, so every construction replaced

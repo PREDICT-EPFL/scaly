@@ -11,8 +11,9 @@ from scaly.ir.target import PRESETS
 from scaly.linalg.symbolic import TooMuchWork
 from scaly.opt.ipm import QPStructure, choose_backend
 from scaly.opt.ipm import cost
-from scaly.opt.ipm.cost import DENSE_WEIGHTS, Work, iteration_us, work
+from scaly.opt.ipm.cost import DENSE_WEIGHTS, STAGEWISE_WEIGHTS, Work, iteration_us, stage_terms, stage_work, stagewise_us, work
 from scaly.opt.ipm.kkt import Kernels, kkt_symbolic
+from scaly.opt.ipm.stages import stages
 from scaly.testing.qp import maros_meszaros, mpc_qp
 
 from .problems import ipm_inputs
@@ -83,9 +84,51 @@ def test_the_reference_machine_takes_the_faster_backend(name: str, backend: str)
   assert choose_backend(s) == backend
 
 
-def test_a_long_horizon_is_sparse() -> None:
-  s, _ = ipm_inputs(mpc_qp(12, 4, 20))
-  assert choose_backend(s) == "sparse"
+@pytest.mark.parametrize(
+  ("stage", "backend"),
+  [
+    ((4, 2, 10), "sparse"),  # blocks of 6: the sparse factorization's scalar code is the faster
+    ((12, 4, 20), "stagewise"),  # blocks of 16: 0.90 of the sparse backend's time
+    ((26, 2, 25), "stagewise"),  # blocks of 28: 0.70
+    ((27, 6, 30), "stagewise"),
+  ],
+)
+def test_a_multistage_problem_takes_the_stagewise_backend_from_blocks_that_pay(stage: tuple[int, int, int], backend: str) -> None:
+  """On the M3, as measured (``internal/notes/perf_2026_09_30_gaps/results/stagewise_fit.md``)."""
+  s, _ = ipm_inputs(mpc_qp(*stage))
+  assert choose_backend(s) == backend
+
+
+def test_the_stagewise_counts_of_an_iteration() -> None:
+  """A horizon of 25 with 26 states and 2 inputs: 26 blocks of 28 slots, 26 of them coupling."""
+  s, _ = ipm_inputs(mpc_qp(26, 2, 25))
+  w = stage_work(s)
+  assert (w.vectors, w.entries) == (726 + 676, s.P_rows.size + s.A_rows.size)
+  assert w.cells == 26 * 28 * 28 + 25 * 28 * 26
+  assert w.arrays == 26 * 26 * 28 and w.products == 26 * 26 * 28 * 28  # an array of 26 rows by 28 columns a block
+  # A dynamics row: 28 entries in its array and one beside it, so 29 products the array does not make; an initial-state row: its square.
+  assert w.pairs == 650 * 29 + 26
+  assert w.factor == 26 * (28**3 // 6) + 25 * (28 * 26 * 26 // 2 + 28 * 28 * 26)
+  assert w.solve == 26 * (28 * 28 + 2 * 28 * 26)
+  assert stage_terms(s) == (1.0, w.vectors, w.entries, w.cells, w.pairs, w.arrays, w.products, w.factor, w.solve)
+  assert stagewise_us(s) == pytest.approx(np.dot(STAGEWISE_WEIGHTS, stage_terms(s)))
+  with pytest.raises(ValueError, match="stagewise_us"):
+    iteration_us(work(s), "stagewise")
+
+
+def test_one_or_two_blocks_are_not_stages(monkeypatch) -> None:
+  """A dense Hessian is one block: the stagewise backend would be the dense one behind another
+  assembly, and it is no candidate, however little the model would have it cost."""
+  s, _ = ipm_inputs(maros_meszaros("DUAL1"))
+  assert stages(s).K == 1
+  monkeypatch.setattr(cost, "STAGEWISE_WEIGHTS", (0.0,) * 9)
+  assert choose_backend(s) == "dense"
+  staged, _ = ipm_inputs(mpc_qp(4, 2, 10))
+  assert choose_backend(staged) == "stagewise"  # with the same zero weights, where there are stages
+  shortest, _ = ipm_inputs(mpc_qp(4, 2, 2))  # a horizon of two: three blocks, the fewest that count
+  assert stages(shortest).K == 3 and choose_backend(shortest) == "stagewise"
+  single, _ = ipm_inputs(mpc_qp(4, 2, 1))
+  assert stages(single).K == 2 and choose_backend(single) != "stagewise"
 
 
 def test_the_choice_is_the_same_for_every_target() -> None:
@@ -112,6 +155,9 @@ def test_a_sparse_factor_too_large_to_generate_leaves_the_dense_backend(monkeypa
 
   monkeypatch.setattr(cost, "kkt_symbolic", refuse)
   assert choose_backend(_structure()) == "dense"
+  # A problem with stages still has the stagewise backend to weigh against the dense one.
+  s, _ = ipm_inputs(mpc_qp(12, 4, 20))
+  assert choose_backend(s) == "stagewise"
 
 
 def test_the_default_method_chooses_and_an_explicit_backend_does_not(monkeypatch) -> None:

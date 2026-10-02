@@ -48,12 +48,12 @@ class IPM:
 
   A QP method, as ``PIQP`` is: it solves a problem Scaly proves quadratic. ``sparse=True`` factors
   the KKT system whole with ``linalg.SparseLDL``; ``sparse=False`` condenses it and factors it by a
-  dense Cholesky; None, the default, chooses the one whose iteration costs less, from the problem's
-  structure alone (``opt.ipm.cost``): both backends follow PIQP's path, to the same solution within
-  its tolerances. ``backend`` names one instead: ``"dense"``, ``"sparse"``, or ``"stagewise"``,
+  dense Cholesky; None, the default, chooses the backend whose iteration costs least, from the
+  problem's structure alone (``opt.ipm.cost``): every backend follows PIQP's path, to the same
+  solution within its tolerances. ``backend`` names one instead: ``"dense"``, ``"sparse"``, or ``"stagewise"``,
   which factors the condensed matrix block by block in the order in which the problem's stages
-  make it block tridiagonal (``opt.ipm.stages``), as PIQP's multistage backend does; it is for
-  problems with stages of many states, and is not chosen by default. ``options`` are PIQP's settings by
+  make it block tridiagonal (``opt.ipm.stages``), as PIQP's multistage backend does; the default
+  choice weighs it too, for a problem of three blocks or more. ``options`` are PIQP's settings by
   name (``Settings``: ``eps_abs``, ``max_iter``, ...), so a PIQP method's options carry over;
   PIQP's ``verbose`` is accepted and has no effect. Like PIQP it takes no warm start."""
 
