@@ -24,7 +24,7 @@ with its box checked until it is flushed out by hand.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 156**
+**Next id: 157**
 
 The frozen experimental `devrush` branch keeps its own todo list, whose ids from C-82 up name
 different items than the same ids here. Cite devrush work by file and title, never by id.
@@ -62,6 +62,27 @@ only the theme and nothing else has to stay stable.
 From 2026-10-01. The roadmap's [order of work](notes/core_compiler_roadmap.md#order-of-work) has the
 dependencies and the rules that let lanes run in parallel.
 
+### 0.1.0
+
+Settled 2026-10-02, for a release planned around the end of October. 0.1.0 takes what changes what
+users write or link against, and the fixes for silent wrong answers; work that is internal or only
+adds things waits for later 0.x releases, which may break interfaces anyway (`docs/dev/versioning.md`).
+Nothing outside this list is started before 0.1.0 ships, so nothing reaches it half done.
+
+- Fixes: C-86, then C-87 and C-93; C-88, C-89, C-91, C-92, S-155, S-142.
+- Templates, the critical path: API-90, API-114, API-3, API-1 (shape holes only, keyed on the whole
+  leaf type so dtype and pattern holes are additive), API-115, then API-2 on today's `VMAP`.
+  API-1 ships the templates page of `docs/guide/functions.md`. API-156 any time.
+- `sc.print`: C-124, float64 only.
+- Toolchain: C-83, then R-71.
+- Windows: R-38, in parallel with all of the above.
+- Release: R-42, the status admonition in `docs/index.md`, Windows in the CI and release matrices,
+  release notes.
+
+Everything else follows 0.1.0 in the order below; C-94 is the first candidate after it.
+
+### After 0.1.0
+
 1. Milestone 1, differentiable loops in a debuggable core.
    - Foundations: C-86 first, then C-87 and C-93; C-88, C-89, API-90, C-91, C-92 and C-83 in any
      order; C-94 last. R-71 right after C-83, before C-139 and before milestone 3, so `CLibrary`
@@ -75,8 +96,7 @@ dependencies and the rules that let lanes run in parallel.
    C-102, C-144; C-151, C-152; API-117, API-4; C-126; the milestone checks API-140 and API-141.
 4. Then D-36, the GPU milestone definition.
 
-Small fixes that fit between any two of these: C-82, S-155, S-17, S-142 (before C-139), R-42, C-143,
-C-145.
+Small fixes that fit between any two of these: C-82, S-17, C-143, C-145.
 
 ## API
 
@@ -117,9 +137,14 @@ C-145.
 - [ ] **API-2. Typed vmap.** `sc.vmap(f, N)` returns a mapped callable, lifted with `lift`, that
       builds a map at the call site and returns the callee's output tree with a leading axis;
       `sc.window` and `sc.broadcast` markers; views read in place when affine; template callees
-      instantiated from slice shapes. After API-1, C-110 and C-150. Rationale: refactorings.md
+      instantiated from slice shapes. Built on today's `VMAP`, so 0.1.0 does not wait for `LOOP`:
+      C-150 later moves it onto `LOOP`, and until C-119 each used output is its own loop, as with
+      today's `vmap`. After API-115. Rationale: refactorings.md
       "`vmap` and the AD entry points erase the callee's declared trees".
       [Design](notes/core_compiler_roadmap.md#tensor-core-and-the-loop-compiler).
+- [ ] **API-156. Remove `vjp_many` from the public API** before 0.1.0, rather than as a break
+      after it: `sc`, `scaly.ad.__all__`, `docs/api/ad.md` and `docs/dev/codebase.md`; its only
+      caller is a test. Taken out of C-99.
 - [ ] **API-117. Function-level `sc.jvp` and `sc.vjp` that keep declared trees.** AD-built callees
       stop being `Any`-typed at run time. After C-98 and API-3.
 - [ ] **API-4. Finish the npmpc `FunctionTemplate` example**, and write the template page of
@@ -232,8 +257,7 @@ section of `internal/notes/core_compiler_roadmap.md` before the implementation.
       `_jvp_many_structural`, `_jvp_many_unrolled` and `SCALY_STRICT_JVP_MANY` are deleted.
       Regenerates snapshots. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
 - [ ] **C-99. One elementwise table: partials, folding and C spelling**, lazily built, with
-      stable contraction forms and the masked-cotangent helper; `vjp_many` leaves the public API
-      (step 4). [Design](notes/core_compiler_roadmap.md#one-ad-engine).
+      stable contraction forms and the masked-cotangent helper. [Design](notes/core_compiler_roadmap.md#one-ad-engine).
 - [ ] **C-100. Derivatives with respect to intermediate expressions**, and `sc.stop_gradient`.
       Without it, forward mode returns silent zeros for a slice of a loop carry.
       [Design](notes/core_compiler_roadmap.md#one-ad-engine).
@@ -634,15 +658,10 @@ branch; the [release workflow note](notes/release_workflow_design.md) has the de
       check that the solver plugins' JIT paths (the `scaly-sqp` wrapper, the PIQP and IPOPT hooks)
       link against the vendored libraries with zig's driver on all three operating systems, and
       measure cold compile latency, since zig builds its own libc on first use. Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
-
-### Deferred
-
-- **R-38. Windows support.** Decide the toolchain (MSVC or clang) and the target: the core JIT plus
-  `scaly-sqp` and `scaly-piqp` first; `scaly-ipopt` on Windows is a separate later item because it
-  drags in Fortran and its own licensing survey. Candidate toolchain: make `ziglang` (R-71) a
-  required dependency on Windows through a `sys_platform == 'win32'` marker, and build the Windows
-  `scaly-piqp` wheel with `zig cc` as the CMake C and C++ compiler, so the JIT and the solver
-  library share one toolchain and no MSVC-versus-MinGW runtime mismatch can arise. After R-71.
-  The core compiler items are designed so this adds a platform without changing them: C-139's
-  `CLibrary` names libraries instead of spelling linker flags, C-94 writes its index through
-  `os.replace` with cache-relative paths, and C-124's JIT flushes C `stdout`.
+- [ ] **R-38. Windows support** for 0.1.0: the core JIT, `scaly-sqp` and `scaly-piqp`; `scaly-ipopt`
+      later, since MUMPS needs Fortran, which zig lacks. The candidate toolchain is `zig cc`
+      throughout, `ziglang` required on Windows through a `sys_platform == 'win32'` marker. The
+      investigation so far, including how CasADi does it, was all done from macOS and Linux; the
+      first step is to try it on an actual Windows machine: a zig-built DLL loaded by ctypes, the
+      cache and DLL search path, a zig build of PIQP and BLASFEO. Runs in parallel with the rest of
+      0.1.0. [Investigation](notes/windows_support_2026_10_02.md).

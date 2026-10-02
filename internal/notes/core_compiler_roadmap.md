@@ -201,7 +201,7 @@ Milestone 1: differentiable loops in a debuggable core
                -> C-98 one forward traversal -> C-99 partials and reverse -> C-100 intermediates
                -> API-101 custom_derivative with residuals
   templates    API-114 declaration surface -> API-3 parameter lists -> API-1 instances and holes
-               -> API-115 lifted derivatives
+               -> API-115 lifted derivatives -> API-2 typed vmap, on today's VMAP
   dtypes       C-103 coercion -> C-104 predicates, select, cast (IR and lowering after C-108,
                AD half after C-99)
   indexing     C-136 GATHER and SCATTER with index operands (after C-93, C-104)
@@ -226,7 +226,6 @@ Milestone 2: static sparse functions end to end
 Milestone 3: competitive kernels and generated solvers
   tensor       C-110 axis reductions -> C-111 batched matmul -> C-112 einsum
                C-150 VMAP folded into LOOP (after C-121, C-119)
-               API-2 typed vmap (after API-1, C-110, C-150)
                C-8 lowering-time fusion, sparse-aware (after C-109, C-130)
                -> C-113 lanes and block callees -> C-102 reverse keeps the call boundary
                -> C-144 the primal shared with its derivative
@@ -260,8 +259,11 @@ Why this order:
   C-139, because `CLibrary`'s flags are then written in one clang dialect on every operating system
   and the plugins' link paths are checked with zig's driver once, before they move onto externs.
   Before milestone 3, because changing the JIT's compiler shifts every timing, and that
-  milestone's gates must be measured under one compiler. R-38 (Windows) stays deferred, but C-139,
-  C-94 and C-124 are designed so it adds a platform without changing them.
+  milestone's gates must be measured under one compiler. R-38 (Windows) is part of 0.1.0 and runs
+  beside milestone 1; C-139, C-94 and C-124 are designed so it adds a platform without changing
+  them.
+- 0.1.0 is a subset of milestone 1: the foundations except C-94, `sc.print`, the templates lane
+  with API-2, R-71 and R-38. `internal/todo.md`'s priority order lists it.
 
 ## Rules for every item
 
@@ -482,8 +484,8 @@ partials with tangents; reverse multiplies by the cotangent and reduces broadcas
 prescribe a stable contraction form, as division does today (`(dx - y * db) / b`), so the
 finite-scale cases in `test_joint_jvp.py` keep passing. Structural ops keep explicit pushforward
 and transpose rules in their mode modules. The helper that applies a partial to a cotangent is also
-where masked cotangents live once `SELECT` lands (C-104). Remove `vjp_many` from `sc`,
-`scaly.ad.__all__`, `docs/api/ad.md` and `docs/dev/codebase.md` (step 4); its only caller is a test.
+where masked cotangents live once `SELECT` lands (C-104). `vjp_many` has
+already left the public API in API-156, before 0.1.0.
 
 **C-100. Derivatives with respect to intermediate expressions.** Devrush's `independent(exprs,
 wrts)` substitutes stand-in inputs for the chosen intermediates and maps the result back. Without
@@ -655,8 +657,10 @@ place by replaying its `SLICE`/`RESHAPE`/`TRANSPOSE` chain on `np.arange` to rec
 `(base, start, stride)`, so the node equals the hand-written one and the C is byte-identical; a
 non-affine view (`A.T`) is copied, which is semantics, not a fallback. A template callee is
 instantiated from the resolved slice shapes. A sparse leaf mapped over `N` stages shares one local
-pattern (decision 4's batch axes). Lowering emits one loop for all used outputs through C-119.
-`vmap.c` stays byte-identical.
+pattern (decision 4's batch axes), once C-127 lands. It builds today's `VMAP` node, so it lands in
+milestone 1, before 0.1.0; C-150 later turns that node into a `LOOP`, and lowering emits one loop
+for all used outputs once C-119 lands, each used output being its own loop until then, as with
+today's `vmap`. `vmap.c` stays byte-identical.
 
 **C-8. Fusion decided at lowering time.** The three cases of tinygrad's scheduler, applied in
 `LowerCtx.read`, where consumer counts are known: movement ops are never materialized unless an
