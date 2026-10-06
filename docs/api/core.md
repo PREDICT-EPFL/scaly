@@ -42,8 +42,8 @@ interfaces for inspecting or extending the compiler.
         - "!^with_device$"
 
 
-Concrete instances are returned by `Function.instantiate`; their resolved graph metadata is
-available for inspection and export.
+`Function.instantiate` returns a concrete instance, which holds the resolved shapes and
+expression graph for inspection and export.
 
 ::: scaly.function.concrete.ConcreteFunction
     options:

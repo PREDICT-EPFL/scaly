@@ -24,7 +24,7 @@ def euler(z: sc.Expr, u: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("zn"))
 def rollout(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
-    return sc.vmap(euler, 10)(zs, us).vec()
+    return sc.vmap(euler, 10)(zs.reshape((10, 2)), us).vec()
 
 print(render_c_module(rollout, lanes=1).source)
 ```

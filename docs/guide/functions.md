@@ -2,11 +2,10 @@
 
 An `Expr` represents a symbolic value. A `Function` gives a calculation named
 inputs and outputs, and is the unit of composition, differentiation, and code
-generation. Its declarations determine the structure of symbolic and numerical
-calls, and can leave input shapes open so that one definition serves several
-shapes.
+generation. Its declarations give the body its symbolic inputs and fix the
+structure of symbolic and numerical calls.
 
-## Function authoring levels
+## Input and output declarations
 
 This function computes a vector's sum and its projection through a matrix:
 
@@ -14,8 +13,10 @@ This function computes a vector's sum and its projection through a matrix:
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.arg("x", 3), sc.arg("A", (2, 3)),
-             outputs=sc.group(sc.arg("sum", ()), sc.arg("projection", 2)))
+@sc.function(
+    sc.arg("x", 3), sc.arg("A", (2, 3)),
+    outputs=sc.group(sc.arg("sum", ()), sc.arg("projection", 2)),
+)
 def features(x: sc.Expr, A: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return x.sum(), A @ x
 
@@ -24,89 +25,66 @@ print(total)      # 6.0
 print(projected)  # [1. 2.]
 ```
 
-The decorator fixes the parameter count, tuple structure, names, and shapes, and
-defines how calls behave at runtime. It also gives calls their static types.
-Symbolic calls to `features` return `tuple[sc.Expr, sc.Expr]`, and numerical
-calls return `tuple[np.ndarray, np.ndarray]`.
+`sc.arg` declares one named input or output array. `sc.group` combines several
+declarations into a tuple, and a group may contain other groups. The decorator
+takes one declaration per Python parameter, so the body receives `x` and `A`
+separately. The keyword-only `outputs=` declares what the body returns. Here
+that is a group, so the body returns a tuple and numerical calls return one.
+After decoration, `features` is a `Function`, not the original Python function.
 
-Scaly traces a function by running its Python body with symbolic inputs to record
-a calculation. Body annotations do not change tracing or evaluation. A type checker uses them
-to check agreement with the decorator, such as a return structure that disagrees
-with `outputs=`, and to check operations inside the body, such as an invalid
-`Expr` method. Without body annotations, the decorator still types calls, but
-checking inside the body is less precise.
+The decorator never calls the body with arrays. For each input declaration it
+creates a symbolic input, the same `Expr` that `sc.sym("x", 3)` creates, runs
+the body once with those symbols, and records the returned expressions. The
+recorded graph is what evaluation, differentiation, and code generation use.
+You rarely need `sc.sym` yourself, because declarations create the symbols.
 
-A declaration can be complete or leave parts out. Body annotations work the same
-way in each form:
+!!! info "Declarations form a tree"
+    Declarations nest the way [JAX pytrees](https://docs.jax.dev/en/latest/pytrees.html)
+    do. `sc.arg` is a leaf and `sc.group` is a node whose children are leaves or
+    further groups. Every symbolic call, numerical call, and result has the same
+    nested tuple structure as the declarations. The API reference uses this leaf
+    and tree vocabulary.
 
-| Declaration | Call result types | Tracing |
-| --- | --- | --- |
-| Fully shaped inputs and `outputs=` | Symbolic and numerical types from the declaration | At decoration |
-| Fully shaped inputs only | Symbolic type from the return annotation. Numerical `np.ndarray` for an `Expr` result, `Any` for a tuple | At decoration |
-| Inputs with open shapes | As above, depending on whether `outputs=` is present | Once per new set of input shapes |
-| Bare `@sc.function()` | Symbolic types from annotations, numerical `Any` | Once per new structure and shape |
+The annotations describe the symbolic body and let an IDE's type checker compare
+its parameter and return types with the declarations. They are optional and do
+not change evaluation. Array shapes remain runtime checks.
 
-Use complete declarations for exported interfaces. An inferred output can be
-useful when an operation determines its shape, such as compact sparse derivative
-values. Bare decorators suit small symbolic helpers.
-
-## Parameters, leaves, and groups
-
-`sc.arg` declares a *leaf*, one named array. `sc.group` combines arguments into
-a *group*, a tuple of leaves or other groups. Each Python parameter takes one
-declaration, and `outputs=` is keyword-only. A group suits a tuple passed around
-as one value, such as a set of cost parameters:
-
-```python
-@sc.function(sc.arg("x", 2), sc.group(sc.arg("weights", 2), sc.arg("offset", ())),
-             outputs=sc.arg("cost", ()))
-def weighted(x: sc.Expr, params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    weights, offset = params
-    return (weights * x * x).sum() + offset
-
-print(weighted(np.ones(2), (np.array([1.0, 2.0]), np.array(0.5))))  # 3.5
-```
-
-A group stays a tuple even when it contains one leaf. A leaf is passed and
-returned directly. Unpacking a single-output call as `(y,) = f(x)` iterates over
-the array instead. For a length-three result, Python raises `ValueError: too
-many values to unpack (expected 1)`. A length-one result silently loses its
-axis.
-
-The decorator has typing overloads for up to eight parameters. Each group takes
-one to eight parts at runtime. Nest groups for wider structures. Names need not
-match Python parameter names. Input names must be unique across all
-parameters, and output names must be unique across the output tree. Names such
-as `"projection"` select outputs for [differentiation](derivatives.md). The
-generated C interface takes flat leaves in declaration order. Grouping adds no C
-buffers.
+The shape after a name describes the array:
 
 | Declaration | Meaning |
 | --- | --- |
-| `sc.arg("x", 3)` | Vector with shape `(3,)` |
-| `sc.arg("A", (2, 3))` | Matrix with shape `(2, 3)` |
-| `sc.arg("dt", ())` | Scalar with no axes |
-| `sc.arg("x")` | Open input shape, or output shape inferred from the trace |
-| `sc.arg("p", sc.TensorType((3,), diff=False))` | Non-differentiable vector with explicit tensor metadata |
+| `sc.arg("x", 3)` | vector with shape `(3,)` |
+| `sc.arg("A", (2, 3))` | matrix with two rows and three columns |
+| `sc.arg("dt", ())` | scalar, with no array axes |
+| `sc.arg("y")` | shape left open, see [below](#leaving-shapes-out) |
+| `sc.arg("p", sc.TensorType((3,), diff=False))` | vector that is never differentiated |
 
-A type checker sees `Expr` or `np.ndarray` leaves and tuple structure, and Scaly
-checks shapes at runtime. A scalar `()` and a one-element vector `(1,)` are different shapes.
+A scalar with shape `()` and a one-element vector with shape `(1,)` are
+different shapes.
 
-## Inferred outputs and shape templates
+Names such as `"projection"` let you select outputs for
+[differentiation](derivatives.md). Names need not match Python parameter names,
+but each input name must be unique, as must each output name.
 
-Without `outputs=`, Scaly reads the output tree from the trace. One leaf is named
-after the function. Several leaves are named `out0`, `out1`, and so on in flat
-order. Nested tuples remain nested.
+## Leaving shapes out
+
+An output declared without a shape takes its shape from the returned expression.
+Leaving `outputs=` out altogether does the same for the whole output tree. One
+returned value is named after the function, and several are named `out0`,
+`out1`, and so on:
 
 ```python
 @sc.function(sc.arg("x", 3))
-def energy(x: sc.Expr) -> sc.Expr:
+def cost(x: sc.Expr) -> sc.Expr:
     return (x * x).sum()
 
-print(energy.instantiate().output_names)  # ('energy',)
+print(cost(np.array([1.0, 2.0, 3.0])))  # 14.0
+print(cost.instantiate().output_names)  # ('cost',)
 ```
 
-Leaving an input shape out makes a template:
+Input shapes must be known before the body can run. An input declared without a
+shape makes the function a template, whose body runs once for each new set of
+input shapes:
 
 ```python
 @sc.function(sc.arg("x"), outputs=sc.arg("squared"))
@@ -115,25 +93,16 @@ def square(x: sc.Expr) -> sc.Expr:
 
 print(square(np.ones(3)))  # [1. 1. 1.]
 print(square(np.ones(5)))  # [1. 1. 1. 1. 1.]
-
-three = square.instantiate((3,))
-assert three is square.instantiate((3,))
-assert len(square.instances) == 2
 ```
 
-Numerical and symbolic calls with the same shapes select the same instance.
-Fixed parts of a partial declaration still constrain calls. Scaly caches
-instances by their resolved `TensorType`s. An open input uses the default float64 tensor type. A declaration can fix dtype and differentiability with
-`TensorType`. Differentiability belongs to the declaration rather than the
-actual argument.
+Each set of shapes gives one *instance*, a concrete graph with its own generated
+C. Calls with the same shapes share the instance, whether they are symbolic or
+numerical. `square.instantiate((3,))` returns the instance for a tuple of input
+shapes without calling the function. A fully declared function has one
+instance, which `instantiate()` returns with no arguments.
 
-Scaly traces a function with fully shaped inputs at decoration and keeps its
-name. A template traces when it is first called with a new set of shapes. Each
-instance gets a name containing the bound shapes and a short hash of the group
-structure, so generated C symbols do not depend on call order. Two instances
-used in the same graph that would produce the same C symbol raise an error.
-
-Use explicit bindings for ahead-of-time export:
+Code generation needs a concrete graph, so pass an instance to export a
+template ahead of time:
 
 ```python
 from pathlib import Path
@@ -142,157 +111,285 @@ from scaly.codegen import write_module
 write_module(square.instantiate((3,)), Path("generated"))
 ```
 
-`instantiate` takes a tuple of shapes in flat input-leaf order, including fixed-shape
-leaves. It also accepts `TensorType` entries that agree with the declaration. A
-fully declared function needs only `instantiate()`. Exporting a template without
-bindings raises an error. A command-line target can name a bound instance or a
-function returning one.
+Passing `square` itself raises `TypeError: square has shape holes in ('x',);
+pass shapes to bind them`. The exported symbol appends the bound shapes to the
+function name, here `square_3` followed by a short suffix, so it does not depend
+on which shapes were called first. [Exported C symbols](../dev/versioning.md#exported-c-symbols)
+gives the exact spelling.
 
-## Bare helpers
+An open input is a differentiable float64 array. A `TensorType` in place of the
+shape fixes the dtype or marks an input as never differentiated, and fixes the
+shape with it.
 
-A bare decorator infers the input structure and shapes from calls:
+### Bare helpers
+
+A decorator with no declarations at all reads the parameter structure and shapes
+from each call:
 
 ```python
 @sc.function()
-def scale(x: sc.Expr, gain: sc.Expr) -> sc.Expr:
+def product(x: sc.Expr, gain: sc.Expr) -> sc.Expr:
     return x * gain
 
 @sc.function(sc.arg("x", 3), outputs=sc.arg("y", 3))
-def scaled(x: sc.Expr) -> sc.Expr:
-    return scale(x, sc.const(2.0))
+def doubled(x: sc.Expr) -> sc.Expr:
+    return product(x, sc.const(2.0))
 
-print(scaled(np.ones(3)))  # [2. 2. 2.]
+print(doubled(np.ones(3)))  # [2. 2. 2.]
 ```
 
-Bare functions accept `Expr` or `np.ndarray` leaves. A tuple argument is always
-read as a group. Lists and other array-likes are rejected because there is no
-declaration to distinguish an array from a group. Convert them with `np.asarray`
-or declare the input tree. Bare symbolic leaves use float64. Each new tuple
-structure and shape combination gets its own instance. `instantiate` needs
-declarations, so a bare function gets instances only from calls.
+Every array passed to a bare function must be an `Expr` or a NumPy array,
+because without a declaration nothing distinguishes a list from a group. Its
+inputs are named `in0`, `in1`, and so on.
 
-Bare input leaves are named `in0`, `in1`, and so on. These names can refer to
-different parameters when the same helper accepts different structures. Use
-declared names for stable derivative APIs.
+### Which declaration to use
 
-## Tracing and calling
+Declare every input shape for anything you export, differentiate by name, or
+hand to `sc.problem`. Scaly checks the shapes when the function is defined.
+There is exactly one instance, and its C symbol is the function name. Output
+shapes can always be left out. The body determines them and the number of
+instances does not change.
 
-Scaly runs the Python body with symbolic `Expr` arguments when it traces an
-instance. That happens at decoration for a fully shaped declaration, and on the
-first call with new shapes for a template. Numerical calls generate and compile
-C on first use and reuse its shared library. Results are NumPy arrays, including
-zero-dimensional arrays for scalar outputs.
+Leave an input shape open when one body is useful at several sizes, such as a
+norm or a stage cost shared by models of different dimension. Each caller binds
+its own instance at the shapes it uses, and exporting one means choosing its
+shapes with `instantiate`. The template saves repeating the body, not the
+shapes. They move from the declaration to the call sites and the export.
 
-Captured Python values become constants at tracing time:
+Use a bare decorator only for small symbolic helpers called from declared
+functions. Nothing is checked before the first call, the inputs carry generated
+names, and a derivative cannot select them by name.
+
+## Python execution and symbolic calculations
+
+The decorator runs the Python body once with symbolic values of type `sc.Expr`.
+An expression records a calculation rather than storing its result. For example,
+`A @ x` records a matrix-vector product whose numerical inputs will arrive later.
+A template runs its body at the first call with each new set of shapes instead.
+
+Use Scaly operations inside the body. Arithmetic such as `x * x` is elementwise,
+`A @ x` is matrix multiplication, and `x.sin()` applies sine elementwise. Use
+NumPy to prepare data outside the function and `sc.const(array)` to put fixed
+numerical data inside a symbolic calculation.
+
+Python runs when the function is defined, not on each evaluation. The next
+three subsections show where this changes the meaning of ordinary Python.
+
+### Python values are captured once
+
+A value read from the surrounding Python scope enters the graph as a constant:
 
 ```python
 gain = 2.0
 
-@sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
-def fixed_scale(x: sc.Expr) -> sc.Expr:
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
+def scale(x: sc.Expr) -> sc.Expr:
     return gain * x
 
 gain = 10.0
-print(fixed_scale(np.ones(2)))  # [2. 2.]
+print(scale(np.ones(2)))  # [2. 2.]
 ```
 
-!!! warning "Captured values in templates"
-    Each instance captures Python values when it is first traced. Changing `gain`
-    between calls at different shapes can give those instances different constants.
-    Put values that change between evaluations in the input declaration.
+The multiplication already contains the constant `2.0`. Changing the Python
+name `gain` cannot change that expression. A gain that varies between calls
+belongs in the input declaration. For a template, each instance captures the
+values current at its first call, so changing `gain` between calls at two
+shapes gives those instances different constants.
 
-Python loops also run during tracing and build graph nodes per iteration. Use
-`vmap` for independent repeated structure.
+A Python loop similarly executes during construction and builds its body once
+per iteration. It does not become a loop in the recorded graph. Independent
+repetition can instead use [`vmap`](#regular-repetition-vmap).
 
-Use Scaly operations inside the body. `x * x` is elementwise, `A @ x` is matrix
-multiplication, and `x.sin()` is elementwise sine. Prepare numerical data with
-NumPy outside the function and put fixed data in the graph with `sc.const`. The
-[expression reference](../api/core.md#expressions) lists the supported
-operations. For example, `x.sum()` reduces all entries and has no `axis`
-argument.
+### Prints happen while the body runs
 
-!!! warning "Symbolic values as Python conditions"
-    An `Expr` used as a Python truth value is treated as true during tracing.
-    A Python `if` cannot select a branch at evaluation time.
+A `print` in the body runs when the decorator records the graph, not when the
+function is evaluated:
 
 ```python
-@sc.function(sc.arg("x", ()), outputs=sc.arg("y", ()))
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
+def noisy(x: sc.Expr) -> sc.Expr:
+    print("called with", x)
+    return 2 * x
+
+print(noisy(np.ones(2)))   # [2. 2.]
+print(noisy(np.zeros(2)))  # [0. 0.]
+```
+
+The message appears once, before either call, and shows a symbolic `Expr`
+rather than numbers. Neither numerical call prints anything, because the
+compiled code runs instead of the Python body. The same holds for logging,
+breakpoints, and any other side effect. To inspect numerical values, print the
+result of the call.
+
+### Symbolic values are not Python conditions
+
+A condition based on a symbolic input cannot select a branch at evaluation time.
+Nothing prevents using an `Expr` as a Python truth value:
+
+```python
+@sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
 def branch(x: sc.Expr) -> sc.Expr:
     return x if x else sc.const(10.0)
 
-print(branch(np.array(0.0)))  # 0.0
+print(branch(np.array(0.0)))  # 0.0, not 10.0
 ```
 
-The recorded expression is just `x`, so a zero input returns `0.0` rather than
-`10.0`. Scaly has no symbolic conditional selection.
+The symbolic `x` is treated as true while the body runs, so only the expression
+`x` is returned. This function has no recorded branch.
 
-Symbolic calls record a call to the selected concrete instance. Derivatives
-cross these calls, so models can be composed from functions. The standalone
-[composition
-example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/function_composition.py)
-evaluates a composed function, differentiates it, and exports its C source. All
-leaves in a call must be symbolic or all numerical. Wrap fixed data in
-`sc.const` when passing it alongside a symbolic argument. The explicit methods
-`f.symbolic_call(*args)` and `f.numerical_call(*args)` select the call kind
-directly.
+!!! warning "A Python branch on an `Expr` is silently wrong"
+    Scaly has no symbolic conditional selection, and nothing raises when a body
+    tests an `Expr`. The function keeps whichever branch Python took while the
+    body ran, for every later evaluation.
 
-With no parameters, `f()` is numerical. Use `f.symbolic_call()` to embed a
-constant function:
+### Supported array operations
+
+`Expr` supports fixed shapes, indexing, broadcasting, and common arithmetic.
+The available operations cover part of the NumPy API, and a NumPy operation
+missing from the reference is not available on `Expr`. For example, `x.sum()` reduces all
+elements, but it has no `axis` argument. The
+[expression reference](../api/core.md#expressions) lists supported methods.
+NumPy arrays are numerical data, so use Scaly operations to construct symbolic
+calculations rather than assuming a NumPy function accepts `Expr`.
+
+## Numerical evaluation and symbolic composition
+
+Numerical inputs evaluate the function. The first call generates and compiles C.
+Later calls reuse the compiled code. Results are NumPy arrays, including
+zero-dimensional arrays for scalar outputs.
+
+Symbolic inputs let you use one function inside another:
+
+```python
+@sc.function(sc.arg("x", 3), outputs=sc.arg("energy"))
+def energy(x: sc.Expr) -> sc.Expr:
+    return square(x).sum()
+
+print(energy(np.array([1.0, 2.0, 3.0])))  # 14.0
+```
+
+The symbolic calculation records a call to `square`, bound at shape `(3,)`
+because that is the shape of `x`. Derivatives work across this boundary, so you
+can organize a model into functions without manually combining their bodies.
+Differentiation and compilation may expand an ordinary callee into its caller.
+The standalone
+[composition example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/function_composition.py)
+evaluates this calculation, differentiates it, and exports its C source.
+
+All inputs to a call must be numerical or all must be symbolic. To combine a
+symbolic argument with fixed data, wrap the data in `sc.const`. Explicit
+`fn.symbolic_call(*args)` and `fn.numerical_call(*args)` methods are also
+available. A function with no parameters needs them to choose, because `fn()`
+has no arguments to inspect and evaluates numerically:
 
 ```python
 @sc.function(outputs=sc.arg("value", ()))
 def constant() -> sc.Expr:
     return sc.const(2.0)
 
-assert isinstance(constant(), np.ndarray)
-assert isinstance(constant.symbolic_call(), sc.Expr)
+print(type(constant()).__name__)                # ndarray
+print(type(constant.symbolic_call()).__name__)  # Expr
 ```
 
-## Derivatives of templates
+## Arrays, tuples, and fixed shapes
 
-The [named derivative wrappers](derivatives.md) preserve the source's parameter
-trees and bind once per source instance. `of` and `wrt` can be omitted when the
-relevant name is unique. `sc.forward` appends a seed with the type of the selected
-input, and `sc.adjoint` one with the type of the selected output, including dtype
-and differentiability. Lagrangian Hessians append one multiplier parameter with
-the source's output tree.
+A single `sc.arg` takes or returns an array directly. Only `sc.group` introduces
+a tuple:
 
 ```python
-grad = sc.gradient(energy)
-print(grad(np.array([1.0, 2.0, 3.0])))  # [2. 4. 6.]
-
-jvp = sc.forward(square)
-print(jvp(np.array([2.0, 3.0]), np.ones(2)))  # [4. 6.]
+squared = square(np.ones(3))
+total, projected = features(np.ones(3), np.eye(2, 3))
 ```
 
-Names from inferred trees are checked when Scaly traces the source instance.
-Derivatives of a template carry the same shape suffix as the source, including
-when given an explicit name.
+A single-output call already returns its array. Writing `(squared,) =
+square(...)` instead iterates over that array. For this length-three result,
+Python raises `ValueError: too many values to unpack (expected 1)`. A length-one
+result would silently unpack to one element, changing its shape.
+
+A declared input shape is fixed. A numerical call with another shape is an
+error, not a new instance:
+
+```python
+try:
+    features(np.ones((3, 1)), np.eye(2, 3))
+except ValueError as error:
+    print(error)
+# features: expected shape (3,) for 'x', got (3, 1)
+```
+
+A three-element column matrix and a vector have the same number of entries,
+but different shapes. The same distinction applies to a scalar `()` and a
+one-element vector `(1,)`. Only an open input accepts a new shape, by binding
+a new instance: `square(np.ones((3, 1)))` returns a `(3, 1)` array.
+
+A group can be a parameter, and groups may contain other groups. This function
+takes its cost parameters as one tuple:
+
+```python
+@sc.function(
+    sc.arg("x", 2), sc.group(sc.arg("weights", 2), sc.arg("offset", ())),
+    outputs=sc.arg("cost", ()),
+)
+def weighted(x: sc.Expr, params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    weights, offset = params
+    return (weights * x * x).sum() + offset
+
+print(weighted(np.ones(2), (np.array([1.0, 2.0]), np.array(0.5))))  # 3.5
+```
+
+The [generated C interface](codegen.md#the-pointer-entry) uses the
+individual arrays in declaration order.
+Python grouping does not add C buffers. Runtime checks validate the structure
+and shapes. Type annotations can also catch mismatched tuple structures before
+running the code.
 
 ## Regular repetition: `vmap`
 
-`sc.vmap(f, N)` returns a callable with the same parameter and output structures
-as `f`. Each output leaf gains a leading axis of length `N`:
+Use `sc.vmap` to apply the same function to every slice along the leading axis
+of its arguments. For example, sum five groups of three values:
 
 ```python
-@sc.function(sc.arg("x"), outputs=sc.arg("sum", ()))
-def reduce(x: sc.Expr) -> sc.Expr:
+@sc.function(sc.arg("x", 3), outputs=sc.arg("sum", ()))
+def reduce3(x: sc.Expr) -> sc.Expr:
     return x.sum()
 
-print(sc.vmap(reduce, 5)(np.arange(15.0).reshape(5, 3)))
-# [ 3. 12. 21. 30. 39.]
+@sc.function(sc.arg("xs", 15), outputs=sc.arg("sums"))
+def sum_groups(xs: sc.Expr) -> sc.Expr:
+    return sc.vmap(reduce3, 5)(xs.reshape((5, 3)))
+
+print(sum_groups(np.arange(15.0)))  # [ 3. 12. 21. 30. 39.]
 ```
 
-Arguments with leading axis `N` bind the callee from their remaining axes. Use
-`sc.broadcast(p)` to pass one whole tensor to every iteration. For fixed-shape
-callees, a flat vector containing `N` chunks also works, and a tensor containing
-just one chunk is broadcast. The leading-axis interpretation takes priority when
-its per-iteration shape matches the declaration.
+`sc.vmap(reduce3, 5)` is a callable with the same parameters as `reduce3` that
+calls it five times. Each argument has a leading axis of length five, and call
+`i` receives slice `i` along that axis. Here each call receives one row of the
+`(5, 3)` matrix. The mapped axis is always the leading one, so reshape an
+argument to put it first. The reshape only describes how the vector is read,
+and the generated loop indexes the original storage. A transpose copies the
+argument first.
 
-For overlapping rank-1 windows, `sc.window(x, start, stride)` reads a slice at
-`start + i * stride` on iteration `i`. Its width comes from the callee's
-declared shape. An open shape needs a leading-axis view or an explicitly
-instantiated callee to determine that width.
+Each output gains a leading axis of length five. The result here has shape
+`(5,)`, and a callee returning a vector of length two would give `(5, 2)`.
+`.vec()` flattens such a result back into one vector when the surrounding
+calculation needs one. A callee with several outputs returns a tuple of mapped
+arrays. A mapped callable also accepts numerical arrays directly.
+
+An argument that every call should see whole, such as a shared parameter, is
+wrapped in `sc.broadcast`:
+
+```python
+@sc.function(sc.arg("x", 3), sc.arg("gain", ()), outputs=sc.arg("y", 3))
+def scaled(x: sc.Expr, gain: sc.Expr) -> sc.Expr:
+    return gain * x
+
+print(sc.vmap(scaled, 2)(np.arange(6.0).reshape(2, 3), sc.broadcast(np.array(2.0))))
+# [[ 0.  2.  4.]
+#  [ 6.  8. 10.]]
+```
+
+For overlapping or offset windows into a vector, `sc.window(x, start, stride)`
+reads from index `start + i * stride` on call `i`, taking as many elements as
+the callee declares:
 
 ```python
 @sc.function(sc.arg("pair", 2), outputs=sc.arg("difference", ()))
@@ -303,22 +400,16 @@ print(sc.vmap(difference, 4)(sc.window(np.arange(5.0), 0, 1)))
 # [1. 1. 1. 1.]
 ```
 
-Symbolic mapped calls build map nodes directly in the caller, so their structure
-stays visible to differentiation and loop optimization. Slices, reshapes, and
-transposes that describe contiguous windows with a constant nonnegative stride
-read from their base in place. Other views preserve their element order through
-a copy. A numerical mapped call assembles batched arrays from windows and
-broadcasts. Use a declared outer function when repeated evaluation should
-perform the slicing in compiled C.
+Mapped repetition remains represented as a loop, including in generated
+derivatives. In optimal control, this is useful for evaluating dynamics defects
+at all horizon stages. The calls must be independent. `vmap` does not feed one
+iteration's output into the next iteration. The loop body need not grow with
+the number of calls, but numerical work, input and output storage, and
+derivative sparsity tables can.
 
-Mapped calls return the whole output tree. Call `.vec()` on a leaf when a
-surrounding calculation needs a flat vector. Each used output has its own
-generated loop. Iterations must be independent. One iteration's output does not
-become the next iteration's input.
+## Function metadata
 
-## Inspecting a graph
-
-Shape-dependent metadata belongs to the concrete instance:
+Shapes and the recorded operations belong to an instance:
 
 ```python
 instance = features.instantiate()
@@ -327,6 +418,5 @@ print(instance.output_shapes)  # ((), (2,))
 print(sc.render_expr_assembly(instance))
 ```
 
-`Function.inputs` and `Function.outputs` hold the declarations, including any
-open shapes. Resolved input and output trees, expression nodes, tensor shapes,
-and sparsity metadata belong to instances.
+The assembly listing shows the recorded operations. `features.inputs` and
+`features.outputs` hold the declarations, including any open shapes.

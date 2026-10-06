@@ -97,8 +97,8 @@ data-dependent control flow yet, and no `expm1` or `log1p`.
 ### Calls and mapped calls
 
 A symbolic call to a `Function` adds one `call` node, and `sc.vmap` adds one
-`vmap` node, whatever the size of the callee. Here a stage model, the one from
-[Getting started](../guide/getting_started.md), is mapped over ten stages and
+`vmap` node, whatever the size of the callee. Here a stage model like the one in
+[Getting started](../guide/getting_started.md) is mapped over ten stages and
 the last state goes through a terminal cost:
 
 ```python
@@ -114,7 +114,7 @@ def terminal(z: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("J"))
 def stages(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
-    znexts = sc.vmap(model, 10)(zs, us).vec()
+    znexts = sc.vmap(model, 10)(zs.reshape((10, 2)), us.reshape((10, 1))).vec()
     return terminal(znexts[18:])
 
 
@@ -137,10 +137,11 @@ expr.func @stages(%zs: tensor<20xfloat64 diff>, %us: tensor<10xfloat64 diff>) ->
 ```
 
 Both nodes keep the callee as an attribute and select one of its outputs with
-`output`. The `vmap` node also records the slicing that `sc.vmap` inferred.
-Iteration `i` reads `zs[2i : 2i+2]` and `us[i : i+1]`, from `starts` and
-`strides`, and writes `slice_size` values of the flat output. Outer operands of
-a `vmap` are always one-dimensional. The
+`output`. The `vmap` node records the leading-axis slicing as reads of the flat
+operands. Iteration `i` reads `zs[2i : 2i+2]` and `us[i : i+1]`, from `starts`
+and `strides`, and writes `slice_size` values of the flat output. Outer operands
+of a `vmap` are always one-dimensional, so the reshapes in `stages` leave no
+node behind. The
 [functions guide](../guide/functions.md#regular-repetition-vmap) covers the
 slicing rules. The [program dialect](#calls-and-loops-after-lowering) shows what
 these two nodes become.

@@ -219,7 +219,7 @@ def stage(z: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("residuals"))
 def stages(zs: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, N)(zs).vec()
+    return sc.vmap(stage, N)(zs.reshape((N, 2))).vec()
 
 stage_jac = sc.sparse_jacobian(stages, "residuals", "zs")
 stage_pattern = stage_jac.sparsity()

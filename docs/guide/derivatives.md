@@ -40,9 +40,12 @@ print(hess(*data))  # [[2. 0.]
 ```
 
 The `of` and `wrt` arguments, here `"cost"` and `"x"`, select the declared output
-and input. The gradient
+and input. Either can be left out when the function has only one output or only
+one input. The gradient
 is taken with respect to `x`, holding `target` fixed. Both derivative functions
 still take `(x, target)`, because their calculations may need both values.
+A derivative of a function with [open input shapes](functions.md#leaving-shapes-out)
+is itself a template, bound at the shapes of each call.
 
 The gradient has the input's shape. The Hessian has shape `(x.size, x.size)`.
 Gradient and Hessian requests require a scalar output. Use a Jacobian for a
