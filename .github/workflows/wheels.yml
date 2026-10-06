@@ -1,0 +1,60 @@
+name: Wheels
+
+# A plugin wheel depends only on its own directory, the cibuildwheel release (which pins the
+# manylinux image) and the platform, so a cached wheel stays valid across runner images: it bundles
+# its runtime. Artifacts are kept for the longest period the organization allows, since
+# `release.yml` publishes the files a successful CI run on `main` built.
+on:
+  workflow_call:
+    inputs:
+      cache:
+        description: reuse a wheel cached for the same sources; the nightly run builds from scratch
+        type: boolean
+        default: true
+
+jobs:
+  wheels:
+    name: ${{ matrix.package }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [scaly-piqp, scaly-ipopt]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore the wheel
+        id: cache
+        if: inputs.cache
+        uses: actions/cache@v4
+        with:
+          path: wheelhouse
+          key: wheel-${{ matrix.package }}-${{ matrix.os }}-cibuildwheel-4.2.1-${{ hashFiles(format('plugins/{0}/**', matrix.package), format('!plugins/{0}/tests/**', matrix.package)) }}
+
+      - name: Install gfortran (macOS)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS' && matrix.package == 'scaly-ipopt'
+        run: brew install gcc
+
+      # The plugins load their solvers through ctypes, so the hooks tag every wheel
+      # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The
+      # IPOPT wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS,
+      # so its wheel cannot claim an older deployment target than that.
+      - uses: pypa/cibuildwheel@v4.2.1
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          package-dir: plugins/${{ matrix.package }}
+          output-dir: wheelhouse
+        env:
+          CIBW_BUILD: cp312-*
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
+          CIBW_ENVIRONMENT_MACOS: >-
+            SCALY_BUILD_SOLVERS=required
+            ${{ matrix.package == 'scaly-ipopt' && 'MACOSX_DEPLOYMENT_TARGET=15.0' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.package }}-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          retention-days: 90

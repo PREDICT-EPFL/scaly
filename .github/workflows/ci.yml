@@ -14,54 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A plugin wheel depends only on its own directory, the cibuildwheel release (which pins the
-  # manylinux image) and the platform, so a cached wheel stays valid across runner images: it
-  # bundles its runtime. Artifacts are kept for the longest period the organization allows, since
-  # `release.yml` publishes the files a successful run on `main` built.
   wheels:
-    name: ${{ matrix.package }} wheel / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        package: [scaly-piqp, scaly-ipopt]
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Restore the wheel
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: wheelhouse
-          key: wheel-${{ matrix.package }}-${{ matrix.os }}-cibuildwheel-4.2.1-${{ hashFiles(format('plugins/{0}/**', matrix.package), format('!plugins/{0}/tests/**', matrix.package)) }}
-
-      - name: Install gfortran (macOS)
-        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS' && matrix.package == 'scaly-ipopt'
-        run: brew install gcc
-
-      # The plugins load their solvers through ctypes, so the hooks tag every wheel
-      # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The
-      # IPOPT wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS,
-      # so its wheel cannot claim an older deployment target than that.
-      - uses: pypa/cibuildwheel@v4.2.1
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          package-dir: plugins/${{ matrix.package }}
-          output-dir: wheelhouse
-        env:
-          CIBW_BUILD: cp312-*
-          CIBW_SKIP: "*-musllinux_*"
-          CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
-          CIBW_ENVIRONMENT_MACOS: >-
-            SCALY_BUILD_SOLVERS=required
-            ${{ matrix.package == 'scaly-ipopt' && 'MACOSX_DEPLOYMENT_TARGET=15.0' || '' }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.package }}-${{ matrix.os }}
-          path: wheelhouse/*.whl
-          retention-days: 90
+    uses: ./.github/workflows/wheels.yml
 
   pure:
     name: sdists + pure wheels
@@ -114,81 +68,14 @@ jobs:
       - name: Pytest node-ID baseline
         run: uv run pytest --collect-only -q
 
-  # The tests run against the plugin wheels, not an editable build, so they check the binaries
-  # users install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the editable
-  # plugins; if something syncs anyway, the plugins return without their libraries and
-  # `SCALY_REQUIRE_SOLVERS` fails the run instead of skipping. Every check step runs even when an
-  # earlier one failed, so one failure never hides another.
+  # The nightly workflow runs the same tests across every tested environment.
   tests:
-    name: tests / ${{ matrix.os }}
     needs: [wheels]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, wheels: ubuntu-latest }
-          - { os: macos-latest, wheels: macos-15 }
-    env:
-      UV_NO_SYNC: "1"
-      SCALY_BUILD_SOLVERS: skip
-      SCALY_REQUIRE_SOLVERS: "1"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: dist-scaly-*-${{ matrix.wheels }}
-          merge-multiple: true
-          path: dist
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install
-
-      - name: Install the plugin wheels
-        run: |
-          uv sync --frozen --no-install-package scaly-piqp --no-install-package scaly-ipopt
-          uv pip install --no-deps dist/*.whl
-          uv run python -c "import scaly_piqp, scaly_ipopt; assert all('site-packages' in m.__file__ for m in (scaly_piqp, scaly_ipopt))"
-
-      - name: Native toolchain report
-        run: |
-          cc --version
-          if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
-          uv run scaly_toolchain
-
-      - name: Pytest
-        run: uv run pytest -n=auto
-
-      - name: Benchmark smoke
-        if: ${{ !cancelled() }}
-        run: uv run python benchmarks/run.py smoke
-
-      - name: Public closed-loop smoke commands
-        if: ${{ !cancelled() }}
-        run: |
-          uv run python benchmarks/run.py closed-loop --problem chain --solver ipopt --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle scaly --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none --smoke
-
-      - name: Repeated benchmark commands
-        if: ${{ !cancelled() }}
-        run: |
-          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv
+    uses: ./.github/workflows/tests.yml
+    with:
+      environments: >-
+        [{"os": "ubuntu-latest", "wheels": "ubuntu-latest"},
+         {"os": "macos-latest", "wheels": "macos-15"}]
 
   install:
     name: install / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}

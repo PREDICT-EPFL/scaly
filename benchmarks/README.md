@@ -24,11 +24,14 @@ fails.
 
 ```bash
 uv run python benchmarks/run.py smoke
+uv run python benchmarks/run.py smoke --full
 uv run python benchmarks/run.py smoke --select benchmarks
 uv run python benchmarks/run.py smoke --select problems
 ```
 
-Smoke runs three groups, all on by default:
+Smoke runs three groups, all on by default. Without `--full`, as on pull requests, each problem runs
+one gate and the `benchmarks` group runs Scaly and one CasADi encoding per problem; the nightly
+workflow passes `--full`, which runs everything below.
 
 - `problems` — each problem's own formulation gates, owned by the problem
   (`problems/*/checks.py`). For `race_cars` that is the vendored track data, the
@@ -57,9 +60,10 @@ Smoke runs three groups, all on by default:
   SQP robustness work consumes. Gates needing IPOPT or CasADi report `skipped: ...`
   rather than passing silently.
 - `benchmarks` — Python and compiled-C derivative kernels against a dense reference,
-  plus sparsity, workspace, and loop-preservation invariants. Every Scaly cell evaluates the exact
-  sparse Jacobian or Hessian and sparsity supplied by its solver descriptor. For `npmpc` the
-  loop-preservation gate runs on two axes: the generated source must not grow with the
+  plus sparsity invariants. Every Scaly cell evaluates the exact sparse Jacobian or Hessian and
+  sparsity supplied by its solver descriptor. The workspace and loop-preservation invariants only
+  need generated source, so they run in pytest (`tests/benchmarks/test_kernel_gates.py`). For `npmpc`
+  loop preservation is checked on two axes: the generated source must not grow with the
   horizon (the decoder uses VMAP, not per-stage unrolling) and must not grow with the
   decoder width either, since the weights are read out of the parameter tail rather than
   baked in as literals. Independent dense NumPy references cover every equality and inequality row
@@ -73,9 +77,10 @@ all of them report even when one fails. Any failure produces a nonzero exit stat
 ### Adding a problem gate
 
 A problem's `checks.py` holds one function per gate and a `CHECKS` table mapping a
-short name to `(check, needs_ipopt, needs_casadi)`. `run_checks()` walks the table
-and yields `(name, outcome)`, where `outcome` is `"ok"` or `"skipped: ..."` when a
-required dependency is missing — a gate never reports success without having run.
+short name to `(check, needs_ipopt, needs_casadi)`. The smoke reports each gate as `ok` or
+`skipped: ...` when a required dependency is missing — a gate never reports success without having
+run. Pull requests run only the gate `QUICK_CHECKS` in `run.py` names for each problem; `smoke
+--full` runs them all.
 Checks raise (bare `assert` or `numpy.testing`) instead of returning a bool, so the
 failure message carries the offending values.
 

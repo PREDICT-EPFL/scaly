@@ -1,0 +1,103 @@
+name: Nightly
+
+# Everything pull-request CI leaves out: wheels built from scratch, the full test and smoke run on
+# every tested runner and compiler, every closed-loop pair, and the repeated benchmark commands.
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # A scheduled run is skipped when `main` has not moved since the last one, except on Mondays,
+  # since breakage can also come from outside: new runner hardware, images or dependency releases.
+  changes:
+    name: changes since the last nightly
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(gh run list -R "$GITHUB_REPOSITORY" --workflow nightly.yml --event schedule --status completed -L 1 --json headSha -q '.[0].headSha')
+          if [ "$GITHUB_EVENT_NAME" != schedule ] || [ "$last" != "$GITHUB_SHA" ] || [ "$(date -u +%u)" = 1 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main is still at $GITHUB_SHA, which the last nightly tested"
+          fi
+
+  wheels:
+    needs: [changes]
+    if: needs.changes.outputs.run == 'true'
+    uses: ./.github/workflows/wheels.yml
+    with:
+      cache: false
+
+  # The tested environments. Ubuntu x86 runs both compiler families; elsewhere the runner's default
+  # `cc` is the one users get. macOS installs the wheels built on macOS 15 for its architecture.
+  tests:
+    needs: [wheels]
+    uses: ./.github/workflows/tests.yml
+    with:
+      full: true
+      environments: >-
+        [{"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "gcc"},
+         {"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "clang"},
+         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "gcc"},
+         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "clang"},
+         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "python": "3.12"},
+         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "gcc"},
+         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "clang"},
+         {"os": "ubuntu-22.04-arm", "wheels": "ubuntu-24.04-arm"},
+         {"os": "ubuntu-24.04-arm", "wheels": "ubuntu-24.04-arm"},
+         {"os": "ubuntu-26.04-arm", "wheels": "ubuntu-24.04-arm"},
+         {"os": "macos-15", "wheels": "macos-15"},
+         {"os": "macos-15-intel", "wheels": "macos-15-intel"},
+         {"os": "macos-26", "wheels": "macos-15"},
+         {"os": "macos-26-intel", "wheels": "macos-15-intel"}]
+
+  # A failing scheduled run on `main` files one issue and comments on it while it stays open, naming
+  # the jobs that started or stopped failing; the first green run closes it.
+  report:
+    needs: [changes, wheels, tests]
+    if: always() && needs.changes.outputs.run == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Nightly CI is failing
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - run: |
+          failed=$(gh run view "$GITHUB_RUN_ID" --json jobs -q '.jobs[] | select(.conclusion == "failure") | .name' | sort)
+          issue=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" | head -1)
+          if [ -z "$failed" ]; then
+            if [ -n "$issue" ]; then gh issue close "$issue" -c "Passing again at $GITHUB_SHA: $RUN_URL"; fi
+            exit 0
+          fi
+          list() { if [ -n "$1" ]; then printf -- '- `%s`\n' $1; else echo "- none"; fi; }
+          if [ -z "$issue" ]; then
+            gh issue create --title "$TITLE" --label source:maintainer,kind:bug,area:tooling \
+              --body "$(printf 'The nightly run at %s failed: %s\n\nFailing jobs:\n%s\n\n<!-- failing\n%s\n-->\n' "$GITHUB_SHA" "$RUN_URL" "$(IFS=$'\n'; list "$failed")" "$failed")"
+            exit 0
+          fi
+          previous=$(gh issue view "$issue" --json body,comments -q '[.body] + [.comments[].body] | last' | sed -n '/<!-- failing/,/-->/p' | sed '1d;$d' | sort)
+          IFS=$'\n'
+          new=$(comm -13 <(echo "$previous") <(echo "$failed") | grep . || true)
+          fixed=$(comm -23 <(echo "$previous") <(echo "$failed") | grep . || true)
+          still=$(comm -12 <(echo "$previous") <(echo "$failed") | grep . || true)
+          gh issue comment "$issue" --body "$(printf 'Still failing at %s: %s\n\nNewly failing:\n%s\n\nStill failing:\n%s\n\nFixed since the last report:\n%s\n\n<!-- failing\n%s\n-->\n' \
+            "$GITHUB_SHA" "$RUN_URL" "$(list "$new")" "$(list "$still")" "$(list "$fixed")" "$failed")"
