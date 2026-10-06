@@ -43,21 +43,21 @@ jobs:
     with:
       cache: false
 
-  # The tested environments. Ubuntu x86 runs both compiler families; elsewhere the runner's default
-  # `cc` is the one users get. macOS installs the wheels built on macOS 15 for its architecture.
+  # The tested environments. Ubuntu x86-64 pins the release's GCC and the image's Clang by version;
+  # elsewhere the runner's default `cc` is the one users get. macOS installs the wheels built on macOS 15 for its architecture.
   tests:
     needs: [wheels]
     uses: ./.github/workflows/tests.yml
     with:
       full: true
       environments: >-
-        [{"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "gcc"},
-         {"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "clang"},
-         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "gcc"},
-         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "clang"},
+        [{"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "gcc-11", "cxx": "g++-11"},
+         {"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "clang-14", "cxx": "clang++-14"},
+         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "gcc-13", "cxx": "g++-13"},
+         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "clang-18", "cxx": "clang++-18"},
          {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "python": "3.12"},
-         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "gcc"},
-         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "clang"},
+         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "gcc-15", "cxx": "g++-15"},
+         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "clang-22", "cxx": "clang++-22"},
          {"os": "ubuntu-22.04-arm", "wheels": "ubuntu-24.04-arm"},
          {"os": "ubuntu-24.04-arm", "wheels": "ubuntu-24.04-arm"},
          {"os": "ubuntu-26.04-arm", "wheels": "ubuntu-24.04-arm"},

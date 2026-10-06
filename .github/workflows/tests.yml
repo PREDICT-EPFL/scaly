@@ -10,8 +10,8 @@ on:
     inputs:
       environments:
         description: >-
-          JSON list of {os, wheels, cc?, python?}: the runner, the wheel build it installs, and
-          optionally the C compiler family (gcc or clang) and Python version to test with
+          JSON list of {os, wheels, cc?, cxx?, python?}: the runner, the wheel build it installs, and
+          optionally the C and C++ compilers and the Python version to test with
         type: string
         required: true
       full:
@@ -44,16 +44,14 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Select the Python version and compiler
+      - name: Select the Python version and compilers
         env:
           PY: ${{ matrix.python }}
-          CC_FAMILY: ${{ matrix.cc }}
+          MATRIX_CC: ${{ matrix.cc }}
+          MATRIX_CXX: ${{ matrix.cxx }}
         run: |
           if [ -n "$PY" ]; then echo "UV_PYTHON=$PY" >> "$GITHUB_ENV"; fi
-          case "$CC_FAMILY" in
-            gcc) printf 'CC=gcc\nCXX=g++\n' >> "$GITHUB_ENV" ;;
-            clang) printf 'CC=clang\nCXX=clang++\n' >> "$GITHUB_ENV" ;;
-          esac
+          if [ -n "$MATRIX_CC" ]; then printf 'CC=%s\nCXX=%s\n' "$MATRIX_CC" "$MATRIX_CXX" >> "$GITHUB_ENV"; fi
 
       - name: Set up Python
         run: uv python install
