@@ -14,7 +14,7 @@ so this problem can be retired without dropping compiler coverage.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 
 import numpy as np
 
@@ -22,7 +22,6 @@ from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.passes.lowering import lower_function
-from scaly.solvers.paths import solver_loadable
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,
@@ -357,22 +356,3 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "recorded_scene": (check_recorded_scene, True, False),
   "hinted_stage_hessian": (check_hinted_stage_selects_hessian_procedure, False, False),
 }
-
-
-def run_checks() -> Iterator[tuple[str, str]]:
-  """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  have_ipopt = solver_loadable("ipopt")
-  try:
-    import casadi  # noqa: F401
-
-    have_casadi = True
-  except ImportError:
-    have_casadi = False
-  for name, (check, needs_ipopt, needs_casadi) in CHECKS.items():
-    if needs_ipopt and not have_ipopt:
-      yield name, "skipped: IPOPT plugin not loadable"
-    elif needs_casadi and not have_casadi:
-      yield name, "skipped: casadi not installed"
-    else:
-      check()
-      yield name, "ok"

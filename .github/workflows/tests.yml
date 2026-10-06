@@ -1,0 +1,103 @@
+name: Tests
+
+# The tests run against the plugin wheels, not an editable build, so they check the binaries users
+# install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the editable plugins;
+# if something syncs anyway, the plugins return without their libraries and `SCALY_REQUIRE_SOLVERS`
+# fails the run instead of skipping. Every check step runs even when an earlier one failed, so one
+# failure never hides another.
+on:
+  workflow_call:
+    inputs:
+      environments:
+        description: >-
+          JSON list of {os, wheels, cc?, cxx?, python?}: the runner, the wheel build it installs, and
+          optionally the C and C++ compilers and the Python version to test with
+        type: string
+        required: true
+      full:
+        description: run every benchmark backend and closed-loop pair instead of one of each per problem
+        type: boolean
+        default: false
+
+jobs:
+  tests:
+    name: ${{ matrix.os }}${{ matrix.cc && format(' / {0}', matrix.cc) || '' }}${{ matrix.python && format(' / py{0}', matrix.python) || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.environments) }}
+    env:
+      UV_NO_SYNC: "1"
+      SCALY_BUILD_SOLVERS: skip
+      SCALY_REQUIRE_SOLVERS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-scaly-*-${{ matrix.wheels }}
+          merge-multiple: true
+          path: dist
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Select the Python version and compilers
+        env:
+          PY: ${{ matrix.python }}
+          MATRIX_CC: ${{ matrix.cc }}
+          MATRIX_CXX: ${{ matrix.cxx }}
+        run: |
+          if [ -n "$PY" ]; then echo "UV_PYTHON=$PY" >> "$GITHUB_ENV"; fi
+          if [ -n "$MATRIX_CC" ]; then printf 'CC=%s\nCXX=%s\n' "$MATRIX_CC" "$MATRIX_CXX" >> "$GITHUB_ENV"; fi
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the plugin wheels
+        run: |
+          uv sync --frozen --no-install-package scaly-piqp --no-install-package scaly-ipopt
+          uv pip install --no-deps dist/*.whl
+          uv run python -c "import scaly_piqp, scaly_ipopt; assert all('site-packages' in m.__file__ for m in (scaly_piqp, scaly_ipopt))"
+
+      - name: Native toolchain report
+        run: |
+          ${CC:-cc} --version
+          ${CXX:-c++} --version
+          if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
+          uv run python --version
+          uv run scaly_toolchain
+
+      - name: Pytest
+        run: uv run pytest -n=auto
+
+      - name: Benchmark smoke
+        if: ${{ !cancelled() }}
+        run: uv run benchmarks/run.py smoke ${{ inputs.full && '--full' || '' }}
+
+      - name: Closed-loop smoke
+        if: ${{ !cancelled() && !inputs.full }}
+        run: |
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem npmpc --solver ipopt --oracle scaly
+
+      - name: Closed-loop smoke, every pair
+        if: ${{ !cancelled() && inputs.full }}
+        run: |
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver sqp --oracle scaly,casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars,unbumpercars,npmpc --solver ipopt,sqp --oracle scaly,casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver none
+
+      - name: Repeated benchmark commands
+        if: ${{ !cancelled() && inputs.full }}
+        run: |
+          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv

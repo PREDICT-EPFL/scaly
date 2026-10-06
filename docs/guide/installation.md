@@ -44,6 +44,19 @@ For example, this selects Clang for one process:
 SCALY_CC=clang uv run scaly_toolchain
 ```
 
+## Tested environments
+
+Scaly is tested every night in these environments, with Python 3.14 and, on Ubuntu 24.04, also 3.12.
+Other compilers and systems may work, but they are not tested.
+
+| System | Architectures | C compilers |
+| --- | --- | --- |
+| Ubuntu 22.04 | x86-64, arm64 | GCC 11, and Clang 14 on x86-64 |
+| Ubuntu 24.04 | x86-64, arm64 | GCC 13, and Clang 18 on x86-64 |
+| Ubuntu 26.04 | x86-64, arm64 | GCC 15, and Clang 22 on x86-64 |
+| macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4) |
+| macOS 26 | arm64, x86-64 | Apple Clang 21 (Xcode 26) |
+
 The selected executable must exist. An invalid override does not fall back to
 the system compiler. [Environment variables](env_vars.md) describes the
 compiler and cache settings.

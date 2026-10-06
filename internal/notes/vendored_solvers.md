@@ -61,14 +61,15 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolc
 - **Linux:** cibuildwheel's `auditwheel repair` produces `manylinux_2_24` (PIQP) and `manylinux_2_27` (IPOPT) wheels and leaves the `$ORIGIN` siblings under `lib/` alone. It still grafts a second `libquadmath` into `scaly_ipopt.libs/`, and `libipopt.so` ships twice (also as `libipopt.so.3`): about 28 MB of duplicates in the wheel measured during the September packaging review.
   This is a historical size observation, not a measurement of the latest artifact.
 - **macOS:** `delocate-wheel` finds nothing left to move after `_bundle_macos_runtime`, and the installed wheels load and solve on arm64 and x86_64. The IPOPT wheel requires macOS 15, the minimum of the bundled Homebrew runtime.
-- **Matrix:** `ci.yml` builds one wheel per OS and architecture on its native runner with cibuildwheel.
+- **Matrix:** `wheels.yml`, called from `ci.yml` and `nightly.yml`, builds one wheel per OS and architecture on its native runner with cibuildwheel.
 
 **Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
 
 ## 5. Build constraints
 
 - **CI cache key.** Keyed on the package, runner OS and architecture, cibuildwheel version, and that plugin
-  directory excluding tests, as defined in `ci.yml`. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
+  directory excluding tests, as defined in `wheels.yml`. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot;
+  the nightly workflow builds every wheel without the cache for that reason.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built. On x86-64, `TARGET=PRESCOTT` fixes the common code to a Prescott baseline instead of relying on build-host CPU detection. `DYNAMIC_ARCH=1` still includes optimized kernels selected at runtime.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
 - **External solver consumers.** Generated solver calls require the plugin headers and the

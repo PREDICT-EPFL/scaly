@@ -577,7 +577,8 @@ def test_automatic_transpose_normalization_preserves_cancellation_order_and_empt
 
   matrix_value = np.array([[1e16, -1e16], [1.0, 1.0], [-1e16, 1e16]])
   vector_value = np.ones(3)
-  np.testing.assert_array_equal(product((matrix_value, vector_value)), vector_value @ matrix_value)
+  # summed row by row, (1e16 + 1) - 1e16 rounds to 0; NumPy's BLAS product may sum in another order
+  np.testing.assert_array_equal(product((matrix_value, vector_value)), np.zeros(2))
 
   @sc.function(sc.group(sc.arg("matrix", (2, 0)), sc.arg("vector", 0)), outputs=sc.arg("y"), name="normalized_empty_product")
   def empty(inputs):

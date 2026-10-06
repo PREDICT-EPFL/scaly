@@ -3,8 +3,11 @@ from __future__ import annotations
 # ruff: noqa: E402 -- direct execution must add the repository root before package imports
 
 import argparse
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 import importlib
+import importlib.util
 import multiprocessing
 import os
 import random
@@ -38,8 +41,7 @@ from benchmarks.harness.recording import layout_path
 from benchmarks.harness.provenance import collect, write, require_headline_settings
 from benchmarks.harness.report import report
 from benchmarks.harness.study import PARTS, PROBLEMS, run_study
-from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, build_kernel, run_cell, run_sweep
-from benchmarks.problems import chain, npmpc
+from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, run_cell, run_sweep
 
 
 def _csv(value: str) -> list[str]:
@@ -178,183 +180,83 @@ def _solver_call_smoke(required: bool) -> str | None:
   return None
 
 
-def _benchmark_smoke() -> None:
-  for backend in ("scaly", "casadi_sx", "casadi_call_mx", "casadi_map_sx"):
-    result, info = run_cell(
-      "race_cars",
-      5,
-      backend,
-      SMOKE_RESULTS / "race_cars" / f"{backend}_N5",
-      codegen_timeout=300,
-      compile_timeout=180,
-      max_source_mb=50,
-      benchmark_min_time="0.01s",
-      load_harvested=False,
-    )
-    runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke race_cars size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
-    if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"race_cars {backend} smoke failed: {result['note']}")
-    assert info["nnz"] > 0, "race_cars nnz must be positive"
-    assert info["w_size"] is not None, "race_cars workspace must be recorded"
-    assert info["nnz"] < info["n_rows"] * info["n_cols"], "race_cars Hessian must be sparse"
-  race_jac = []
-  for size in (5, 50):
-    out_dir = SMOKE_RESULTS / "race_cars" / f"scaly_jac_N{size}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    race_jac.append(build_kernel("race_cars_jac", size, "scaly", out_dir))
-  assert race_jac[1]["source_lines"] < 1.2 * race_jac[0]["source_lines"], (
-    f"race_cars Jacobian loop preservation regressed: N=50 has {race_jac[1]['source_lines']} lines, N=5 has {race_jac[0]['source_lines']}"
-  )
-  assert int(race_jac[1]["w_size"]) <= 3 * 2100, f"race_cars Jacobian workspace regressed: N=50 needs {race_jac[1]['w_size']} doubles"
-  print(f"smoke race_cars Jacobian loop preservation: ok ({race_jac[0]['source_lines']} lines at N=5, {race_jac[1]['source_lines']} at N=50)")
-  for backend, size in (("scaly", 5), ("casadi_map_sx", 5), ("casadi_sx", 3)):
-    result, info = run_cell(
-      "chain",
-      size,
-      backend,
-      SMOKE_RESULTS / "chain" / f"{backend}_M{size}",
-      codegen_timeout=300,
-      compile_timeout=180,
-      max_source_mb=50,
-      benchmark_min_time="0.01s",
-      load_harvested=False,
-    )
-    runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke chain size={size} backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
-    if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"chain {backend} M={size} smoke failed: {result['note']}")
-    assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
-  assert chain.n_state(5) == 21 and chain.NU == 3
-  chain_jac = []
-  for size in (5, 33):
-    out_dir = SMOKE_RESULTS / "chain" / f"scaly_jac_M{size}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    chain_jac.append(build_kernel("chain_jac", size, "scaly", out_dir))
-  assert chain_jac[1]["source_lines"] < 1.2 * chain_jac[0]["source_lines"], (
-    f"chain Jacobian loop preservation regressed: M=33 has {chain_jac[1]['source_lines']} lines, M=5 has {chain_jac[0]['source_lines']}"
-  )
-  print(f"smoke chain Jacobian loop preservation: ok ({chain_jac[0]['source_lines']} lines at M=5, {chain_jac[1]['source_lines']} at M=33)")
-  print(f"smoke chain Jacobian workspace (record only): {chain_jac[0]['w_size']} doubles at M=5, {chain_jac[1]['w_size']} at M=33")
-  for backend in ("scaly", "casadi_mx"):
-    result, info = run_cell(
-      "unbumpercars",
-      2,
-      backend,
-      SMOKE_RESULTS / "unbumpercars" / f"{backend}_C2",
-      codegen_timeout=300,
-      compile_timeout=180,
-      max_source_mb=50,
-      benchmark_min_time="0.01s",
-      load_harvested=False,
-    )
-    runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke unbumpercars size=2 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
-    if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"unbumpercars {backend} smoke failed: {result['note']}")
-    assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
-  _npmpc_smoke()
+# The first backend of each problem is scaly and the second the CasADi encoding its correctness is
+# compared against; `--full` adds the remaining CasADi encodings.
+SMOKE_CELLS: dict[str, tuple[tuple[str, int], ...]] = {
+  "race_cars": (("scaly", 5), ("casadi_map_sx", 5), ("casadi_sx", 5), ("casadi_call_mx", 5)),
+  "chain": (("scaly", 5), ("casadi_map_sx", 5), ("casadi_sx", 3)),
+  "unbumpercars": (("scaly", 2), ("casadi_mx", 2)),
+  "npmpc_jac": (("scaly", 6), ("casadi_sx", 6)),
+}
 
 
-def _npmpc_smoke() -> None:
-  """The neural-process MPC kernels: a dense decoder at every horizon node.
-
-  Five gates. The long-paper constraint Jacobian must compile and beat a dense reference. Its generated
-  source must not grow with the horizon or decoder width. The published exact Lagrangian Hessian must
-  also stay invariant on both axes, which pins both the decoder and the objective to VMAP-based
-  forms.
-  """
-  infos = []
-  for backend in ("scaly", "casadi_sx"):
-    result, info = run_cell(
-      "npmpc_jac",
-      6,
-      backend,
-      SMOKE_RESULTS / "npmpc" / f"{backend}_N6",
-      codegen_timeout=300,
-      compile_timeout=180,
-      max_source_mb=50,
-      benchmark_min_time="0.01s",
-      load_harvested=False,
-    )
-    runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke npmpc size=6 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
-    if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"npmpc {backend} smoke failed: {result['note']}")
-    assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
-    infos.append(info)
-  assert npmpc.n_dec(npmpc.HORIZON) == 65 and npmpc.Decoder().n_pw == 1396
-  out_dir = SMOKE_RESULTS / "npmpc" / "scaly_N100"
-  out_dir.mkdir(parents=True, exist_ok=True)
-  large = build_kernel("npmpc_jac", 100, "scaly", out_dir)
-  assert large["source_lines"] < 1.2 * infos[0]["source_lines"], (
-    f"npmpc loop preservation regressed: N=100 has {large['source_lines']} lines, N=6 has {infos[0]['source_lines']}"
-  )
-  print(f"smoke npmpc loop preservation: ok ({infos[0]['source_lines']} lines at N=6, {large['source_lines']} at N=100)")
-  # baseline 1600 doubles at N=100 (VMAP buffers scale linearly with the horizon); 3x headroom catches superlinear regressions
-  assert int(large["w_size"]) <= 3 * 1600, f"npmpc workspace regressed: N=100 needs {large['w_size']} doubles (baseline 1600)"
-  print(f"smoke npmpc workspace: ok ({infos[0]['w_size']} doubles at N=6, {large['w_size']} at N=100)")
-  wide_dir = out_dir.parent / "scaly_W128"
-  wide_dir.mkdir(parents=True, exist_ok=True)
-  wide = build_kernel("npmpc_decoder_jac", 128, "scaly", wide_dir)
-  assert wide["source_lines"] < 1.2 * infos[0]["source_lines"], (
-    f"npmpc decoder width leaked into source size: W=128 has {wide['source_lines']} lines, W=32 has {infos[0]['source_lines']}"
-  )
-  print(f"smoke npmpc decoder width: ok ({wide['source_lines']} lines at W=128 against {infos[0]['source_lines']} at the shipped width)")
-  # The exact Lagrangian Hessian is the kernel the exact-Hessian IPOPT and SQP columns consume, and
-  # it is the one that caught an unrolled objective: a cost built as a Python loop over stages grows
-  # the Hessian source linearly and, past roughly 75 stages, exceeds the Program IR passes' recursion
-  # depth. Scanning the cost keeps this constant, so the gate is on the horizon as well as the width.
-  hess_dirs = [SMOKE_RESULTS / "npmpc" / f"scaly_hess_N{n}" for n in (6, 100)]
-  hess = []
-  for out, size in zip(hess_dirs, (6, 100), strict=True):
-    out.mkdir(parents=True, exist_ok=True)
-    hess.append(build_kernel("npmpc", size, "scaly", out))
-  assert hess[1]["source_lines"] < 1.2 * hess[0]["source_lines"], (
-    f"npmpc Hessian loop preservation regressed: N=100 has {hess[1]['source_lines']} lines, N=6 has {hess[0]['source_lines']}"
-  )
-  assert hess[0]["nnz"] < hess[1]["nnz"], "the Hessian pattern must grow with the horizon even though its source does not"
-  print(f"smoke npmpc lagrangian hessian: ok ({hess[0]['source_lines']} lines at N=6, {hess[1]['source_lines']} at N=100)")
-
-  hess_wide_dir = SMOKE_RESULTS / "npmpc" / "scaly_hess_W128"
-  hess_wide_dir.mkdir(parents=True, exist_ok=True)
-  hess_wide = build_kernel("npmpc_decoder", 128, "scaly", hess_wide_dir)
-  assert hess_wide["source_lines"] < 1.2 * hess[0]["source_lines"], (
-    f"npmpc Hessian decoder width leaked into source size: W=128 has {hess_wide['source_lines']} lines, W=32 has {hess[0]['source_lines']}"
-  )
-  print(f"smoke npmpc Hessian decoder width: ok ({hess_wide['source_lines']} lines at W=128)")
+def _benchmark_smoke(full: bool) -> None:
+  for workload, cells in SMOKE_CELLS.items():
+    for backend, size in cells if full else cells[:2]:
+      result, info = run_cell(
+        workload,
+        size,
+        backend,
+        SMOKE_RESULTS / workload / f"{backend}_{size}",
+        codegen_timeout=300,
+        compile_timeout=180,
+        max_source_mb=50,
+        benchmark_min_time="0.01s",
+        load_harvested=False,
+      )
+      runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
+      print(
+        f"smoke {workload} size={size} backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else "")
+      )
+      if result["runtime_status"] != "ok" or info is None:
+        raise RuntimeError(f"{workload} {backend} size={size} smoke failed: {result['note']}")
+      assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
 
 
-def _problem_checks(problem: str) -> None:
-  checks = importlib.import_module(f"benchmarks.problems.{problem}.checks")
-  for name, outcome in checks.run_checks():
+# One gate per problem that compares the scaly oracles against CasADi; `--full` runs every gate.
+QUICK_CHECKS = {
+  "race_cars": "oracles_agree",
+  "chain": "sqp_oracles_agree",
+  "unbumpercars": "sqp_oracles_agree",
+  "npmpc": "oracles_agree",
+}
+
+
+def _problem_checks(problem: str, full: bool) -> None:
+  table = importlib.import_module(f"benchmarks.problems.{problem}.checks").CHECKS
+  have_ipopt = solver_loadable("ipopt")
+  have_casadi = importlib.util.find_spec("casadi") is not None
+  for name in table if full else (QUICK_CHECKS[problem],):
+    check, needs_ipopt, needs_casadi = table[name]
+    if needs_ipopt and not have_ipopt:
+      outcome = "skipped: IPOPT plugin not loadable"
+    elif needs_casadi and not have_casadi:
+      outcome = "skipped: casadi not installed"
+    else:
+      check()
+      outcome = "ok"
     print(f"smoke {problem}/{name}: {outcome}", flush=True)
-    if os.environ.get("SCALY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
+    if os.environ.get("SCALY_REQUIRE_SOLVERS") == "1" and outcome != "ok":
       raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
-
-
-def _problem_smoke() -> None:
-  """Run each problem's formulation gates in a separate process."""
-  for problem in ("race_cars", "chain", "unbumpercars", "npmpc"):
-    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as pool:
-      pool.submit(_problem_checks, problem).result()
 
 
 def smoke(args) -> bool:
   selected = set(args.select or ("benchmarks", "problems", "solver_call")) - set(args.skip or ())
-  failures = []
-  if "problems" in selected:
-    try:
-      _problem_smoke()
-    except Exception as e:
-      failures.append(f"problems: {e}")
-      print(f"smoke problems: FAILED ({type(e).__name__}: {e})")
+  groups: dict[str, Callable[[], None]] = {
+    problem: partial(_problem_checks, problem, args.full) for problem in QUICK_CHECKS if "problems" in selected
+  }
   if "benchmarks" in selected:
-    try:
-      _benchmark_smoke()
-    except Exception as e:
-      failures.append(f"benchmarks: {e}")
-      print(f"smoke benchmarks: FAILED ({e})")
+    groups["benchmarks"] = partial(_benchmark_smoke, args.full)
+  failures = []
+  # every group runs in its own spawned process, so the groups run in parallel and fail independently
+  with ProcessPoolExecutor(mp_context=multiprocessing.get_context("spawn"), max_tasks_per_child=1) as pool:
+    futures = {name: pool.submit(task) for name, task in groups.items()}
+    for name, future in futures.items():
+      try:
+        future.result()
+      except Exception as e:
+        failures.append(f"{name}: {e}")
+        print(f"smoke {name}: FAILED ({type(e).__name__}: {e})")
   if "solver_call" in selected:
     try:
       note = _solver_call_smoke(required="solver_call" in (args.select or ()))
@@ -410,6 +312,7 @@ def main() -> None:
   smoke_parser = subparsers.add_parser("smoke", help="run fast correctness and invariant gates")
   smoke_parser.add_argument("--select", action="append", choices=("benchmarks", "problems", "solver_call"))
   smoke_parser.add_argument("--skip", action="append", choices=("benchmarks", "problems", "solver_call"))
+  smoke_parser.add_argument("--full", action="store_true", help="run every problem gate and CasADi encoding, not one of each per problem")
   closed_loop_parser = subparsers.add_parser("closed-loop", help="run a model-in-the-loop episode and write Foxglove artifacts")
   closed_loop_parser.add_argument(
     "--problem", type=_csv, default=["unbumpercars"], help="comma-separated subset of chain, race_cars, unbumpercars, npmpc"

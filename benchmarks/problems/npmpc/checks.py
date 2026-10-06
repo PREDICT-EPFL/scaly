@@ -15,14 +15,14 @@ compiler coverage.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import replace
 
 import numpy as np
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from scaly.solvers.paths import solver_loadable, solver_paths
+from scaly.solvers.paths import solver_paths
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
@@ -746,22 +746,3 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "recorded_scene": (check_recorded_scene, True, False),
 }
-
-
-def run_checks() -> Iterator[tuple[str, str]]:
-  """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  have_ipopt = solver_loadable("ipopt")
-  try:
-    import casadi  # noqa: F401
-
-    have_casadi = True
-  except ImportError:
-    have_casadi = False
-  for name, (check, needs_ipopt, needs_casadi) in CHECKS.items():
-    if needs_ipopt and not have_ipopt:
-      yield name, "skipped: IPOPT plugin not loadable"
-    elif needs_casadi and not have_casadi:
-      yield name, "skipped: casadi not installed"
-    else:
-      check()
-      yield name, "ok"

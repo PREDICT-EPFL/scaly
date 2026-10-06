@@ -91,8 +91,8 @@ A test that needs a built solver carries a marker:
 def test_something(): ...
 ```
 
-The root `conftest.py` skips those when the library is absent, and CI splits the suite on
-`-m solver` against `-m "not solver"`. Never hand-roll a "is the solver loadable" skip condition.
+The root `conftest.py` skips those when the library is absent; CI installs both solver wheels and
+runs everything. Never hand-roll a "is the solver loadable" skip condition.
 
 The vendored-solver plugin tests occasionally crash an xdist worker during an isolated library
 load, including on unmodified checkouts. If that happens, rerun the affected test and compare with

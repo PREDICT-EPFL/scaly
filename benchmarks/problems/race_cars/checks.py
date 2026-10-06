@@ -16,7 +16,7 @@ this problem can be retired or reshaped without dropping compiler coverage.
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 import io
 from pathlib import Path
 
@@ -24,7 +24,7 @@ import numpy as np
 
 from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
-from scaly.solvers.paths import solver_loadable, solver_paths
+from scaly.solvers.paths import solver_paths
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
@@ -257,15 +257,21 @@ def check_casadi_ipopt_is_compiled() -> None:
 
 
 def check_harvested_sqp_globalizations() -> None:
-  """Both oracle providers solve the harvested hard-QP race failure."""
+  """Both oracle providers solve the harvested hard-QP race failure.
+
+  The SQP options are compiled into the solver module, so every option set recompiles the large
+  CasADi source (issue #112). The globalizations do not depend on the oracle provider, so only Scaly
+  runs both.
+  """
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
-  for oracle in ("scaly", "casadi"):
-    for name, options, expected_iter in (
-      ("filter", {}, 3),
-      ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
-    ):
+  globalizations = (
+    ("filter", {}, 3),
+    ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
+  )
+  for oracle, cases in (("scaly", globalizations), ("casadi", globalizations[:1])):
+    for name, options, expected_iter in cases:
       solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
       out = solve_problem(solver, inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
       stats = problem_stats(solver)
@@ -489,22 +495,3 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, True, True),
 }
-
-
-def run_checks() -> Iterator[tuple[str, str]]:
-  """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  have_ipopt = solver_loadable("ipopt")
-  try:
-    import casadi  # noqa: F401
-
-    have_casadi = True
-  except ImportError:
-    have_casadi = False
-  for name, (check, needs_ipopt, needs_casadi) in CHECKS.items():
-    if needs_ipopt and not have_ipopt:
-      yield name, "skipped: IPOPT plugin not loadable"
-    elif needs_casadi and not have_casadi:
-      yield name, "skipped: casadi not installed"
-    else:
-      check()
-      yield name, "ok"

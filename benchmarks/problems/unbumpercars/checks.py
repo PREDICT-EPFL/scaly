@@ -14,7 +14,7 @@ reproductions in ``tests/ad/test_sparsity.py`` and
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from itertools import product
 from typing import cast
 
@@ -643,24 +643,3 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, True, False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
 }
-
-
-def run_checks() -> Iterator[tuple[str, str]]:
-  """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  from scaly.solvers.paths import solver_loadable
-
-  have_ipopt = solver_loadable("ipopt")
-  try:
-    import casadi  # noqa: F401
-
-    have_casadi = True
-  except ImportError:
-    have_casadi = False
-  for name, (check, needs_ipopt, needs_casadi) in CHECKS.items():
-    if needs_ipopt and not have_ipopt:
-      yield name, "skipped: IPOPT plugin not loadable"
-    elif needs_casadi and not have_casadi:
-      yield name, "skipped: casadi not installed"
-    else:
-      check()
-      yield name, "ok"
