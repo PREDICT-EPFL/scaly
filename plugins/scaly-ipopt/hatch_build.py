@@ -162,6 +162,10 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
   build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
+  # Fix the common-code baseline instead of detecting a potentially unsupported build CPU.
+  # DYNAMIC_ARCH still selects optimized kernels at runtime.
+  if platform.machine() == "x86_64":
+    build_flags.append("TARGET=PRESCOTT")
   _run(["make", f"-j{jobs}", *build_flags], cwd=src_dir)
   install_dir.mkdir(parents=True, exist_ok=True)
   _run(["make", f"PREFIX={install_dir.resolve()}", *build_flags, "install"], cwd=src_dir)
