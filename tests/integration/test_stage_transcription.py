@@ -19,7 +19,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
+from typing import Any, cast
 from scaly.ir.expr import topo
 
 pytest.importorskip("casadi")
@@ -59,13 +61,13 @@ def _rk4(x: sc.Expr, u: sc.Expr, params: sc.Expr) -> sc.Expr:
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="bicycle_stage_initial")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("p", NX)), outputs=sc.arg("eq"), name="bicycle_stage_initial")
 def stage_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="bicycle_stage_interstage")
+@sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ), sc.arg("params", N_PARAMS)), outputs=sc.arg("eq"), name="bicycle_stage_interstage")
 def stage_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
@@ -75,7 +77,9 @@ def bicycle_eq_function(horizon: int) -> sc.Function:
   """Per-stage unrolled transcription, built from `Function.call` on the stage functions."""
 
   @sc.function(
-    sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))), sc.L("eq", ...), name=f"bicycle_eq_N{horizon}"
+    sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
+    outputs=sc.arg("eq"),
+    name=f"bicycle_eq_N{horizon}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
@@ -92,18 +96,14 @@ def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
   """Same semantics through `sc.vmap`, so the loop survives into the rendered C."""
 
   @sc.function(
-    sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))),
-    sc.L("eq", ...),
+    sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
+    outputs=sc.arg("eq"),
     name=f"bicycle_eq_vmap_N{horizon}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     initial = stage_initial((z[:NZ], p[:NX]))
-    mapped = sc.vmap(
-      stage_interstage,
-      length=horizon,
-      inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
-    )
+    mapped = sc.vmap(stage_interstage, horizon)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX * (horizon + 1), 0))).vec()
     return sc.concat([initial, mapped])
 
   return fn
@@ -190,7 +190,7 @@ def test_dense_jacobian_matches_casadi(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
   jf = fn.factory(f"bicycle_eq_jac_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 0)
-  np.testing.assert_allclose(jf((zv, pv)), np.array(ca_bicycle_eq_jac(horizon)(zv, pv)), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(jf(*(zv, pv)), np.array(ca_bicycle_eq_jac(horizon)(zv, pv)), rtol=1e-10, atol=1e-10)
 
 
 @pytest.mark.parametrize("horizon", [1, 2])
@@ -199,9 +199,9 @@ def test_sparse_jacobian_metadata_matches_dense(horizon: int) -> None:
   spjf = fn.factory(f"bicycle_eq_spjac_N{horizon}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
   jf = fn.factory(f"bicycle_eq_jac_dense_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 1)
-  sparsity = spjf.output_sparsities[0]
+  sparsity = as_concrete(spjf).output_sparsities[0]
   assert sparsity is not None
-  dense, compact = jf((zv, pv)), spjf((zv, pv))
+  dense, compact = jf(*(zv, pv)), spjf(*(zv, pv))
   assert isinstance(dense, np.ndarray) and isinstance(compact, np.ndarray)
   flat = np.asarray(sparsity.rows) * dense.shape[1] + np.asarray(sparsity.cols)
   np.testing.assert_allclose(compact, np.ravel(dense)[flat])
@@ -211,28 +211,28 @@ def test_sparse_jacobian_metadata_matches_dense(horizon: int) -> None:
 @pytest.mark.parametrize("horizon", [1, 2])
 def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
-  colored = sc.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
-  reference = sc.sparse_jacobian_reference(fn.outputs[0], fn.inputs[0])
+  colored = sc.sparse_jacobian_colored(as_concrete(fn).outputs[0], as_concrete(fn).inputs[0])
+  reference = sc.sparse_jacobian_reference(as_concrete(fn).outputs[0], as_concrete(fn).inputs[0])
   from scaly.ir.expr import substitute
 
   def rebound(expr: sc.Expr, inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    return substitute(expr, dict(zip(fn.inputs, inputs, strict=True)))
+    return substitute(expr, dict(zip(as_concrete(fn).inputs, inputs, strict=True)))
 
-  @sc.function(fn.input_tree, sc.L("colored", ...), name="bicycle_spjac_colored")
+  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("colored"), name="bicycle_spjac_colored")
   def colored_fn(inputs):
     return rebound(colored.values, inputs)
 
-  @sc.function(fn.input_tree, sc.L("reference", ...), name="bicycle_spjac_reference")
+  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("reference"), name="bicycle_spjac_reference")
   def reference_fn(inputs):
     return rebound(reference.values, inputs)
 
-  @sc.function(fn.input_tree, sc.G(sc.L("colored", ...), sc.L("reference", ...)), name="bicycle_spjac_compare")
+  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="bicycle_spjac_compare")
   def compare(inputs):
     return rebound(colored.values, inputs), rebound(reference.values, inputs)
 
   zv, pv = _sample(horizon, 2)
   assert colored.sparsity == reference.sparsity
-  assert len(topo(colored_fn.outputs)) < len(topo(reference_fn.outputs))
+  assert len(topo(as_concrete(colored_fn).outputs)) < len(topo(as_concrete(reference_fn).outputs))
   colored_values, reference_values = compare((zv, pv))
   np.testing.assert_allclose(colored_values, reference_values, rtol=1e-10, atol=1e-10)
 
@@ -245,4 +245,4 @@ def test_vmap_transcription_matches_the_unrolled_one(horizon: int) -> None:
   np.testing.assert_allclose(np.asarray(mapped((zv, pv))).reshape(-1), np.asarray(unrolled((zv, pv))).reshape(-1), rtol=1e-12, atol=1e-12)
   mapped_jac = mapped.factory(f"bicycle_vmap_jac_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   unrolled_jac = unrolled.factory(f"bicycle_unrolled_jac_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
-  np.testing.assert_allclose(mapped_jac((zv, pv)), unrolled_jac((zv, pv)), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(mapped_jac(*(zv, pv)), unrolled_jac(*(zv, pv)), rtol=1e-10, atol=1e-10)

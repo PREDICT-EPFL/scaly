@@ -49,6 +49,16 @@ structs, the C++ `Buffer` aliases and the CasADi query functions are sugar over 
 signature and follow the same rule. The `static` `_raw` bodies
 are internal and may change in any release.
 
+A fully declared Function keeps its declared name. An instance of a function with open input
+shapes is named `<name>_<shapes>_t<nesting>`, where the shapes are the bound open shapes in
+declaration order, written `3x4` for a matrix and `s` for a scalar, and the nesting is a six-digit
+hexadecimal digest of the parameter tree. A bare function includes all of its input shapes. The
+name never contains `__`, which C++ reserves. The declaration alone decides whether an instance
+name carries this suffix, never the order of calls, and a derivative given an explicit name
+inherits the suffix of its source instance. Two instances of one function that would share a name
+raise an error, as do two distinct graphs in one module whose names sanitize to the same C
+identifier. Give independently declared functions distinct names.
+
 ### Sparsity tables
 
 The `<prefix>_NNZ`, `_NROW` and `_NCOL` macros and the index tables in the

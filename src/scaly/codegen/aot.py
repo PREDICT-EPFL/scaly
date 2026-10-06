@@ -1,12 +1,12 @@
-"""AOT: lower a ``Function`` once and package the result as the :class:`CModule` that both the
+"""AOT: lower a ``ConcreteFunction`` once and package the result as the :class:`CModule` that both the
 file-writing driver here and ``codegen/jit.py`` consume.
 
 ``_lower`` is the single render context. It lowers ``fun`` exactly once and holds everything the
 artifacts read off that lowering, so the header's ``SZ_W``, the entry's null check and a consumer's
 workspace allocation cannot disagree. The header comes in two languages (``lang="c"`` here,
 ``lang="cpp"`` in ``codegen/cpp.py``) and either can carry the CasADi layer (``codegen/casadi.py``). A function with no solver in its call graph renders entirely
-through ``codegen/c``. A **solver-bearing** graph is orchestrated here: every non-solver Function
-(oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``solver Function`` is the
+through ``codegen/c``. A **solver-bearing** graph is orchestrated here: every non-solver ConcreteFunction
+(oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``solver ConcreteFunction`` is the
 ``codegen/solver`` wrapper template that drives its (Program-IR) oracles — the one sanctioned
 non-Program-IR path (see ``docs/how_it_works/solvers.md``).
 """
@@ -34,7 +34,8 @@ from scaly.codegen.casadi import (
 from scaly.codegen.cpp import render_cpp_header
 from scaly.codegen.solver import render_solver_raw, solver_includes, solver_stats_symbols
 from scaly.ir.expr import ExprOp, topo
-from scaly.function import Function
+from scaly.function.concrete import ConcreteFunction
+from scaly.function.model import Function, as_concrete
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees
@@ -61,7 +62,7 @@ class CModule:
   and asks for none of them. For a big sparse function the header alone is larger than the source.
   """
 
-  fun: Function
+  fun: ConcreteFunction
   header_name: str
   source_name: str
   body: str
@@ -98,16 +99,16 @@ class CModule:
 class RenderObserver(Protocol):
   """One render's callbacks: normalized expressions, each Program stage, the C, and the outcome. ``scaly.viz.VisualizationRecording`` is the implementation in this repository."""
 
-  def add_normalized_expr(self, name: str, fun: Function) -> None: ...
+  def add_normalized_expr(self, name: str, fun: ConcreteFunction) -> None: ...
   def add_program(self, name: str, root: ProgramNode) -> None: ...
   def add_code(self, source: str) -> None: ...
   def finish(self, *, error: str | None = None) -> None: ...
 
 
-_RENDER_OBSERVERS: list[Callable[[Function], RenderObserver | None]] = []
+_RENDER_OBSERVERS: list[Callable[[ConcreteFunction], RenderObserver | None]] = []
 
 
-def register_render_observer(begin: Callable[[Function], RenderObserver | None]) -> None:
+def register_render_observer(begin: Callable[[ConcreteFunction], RenderObserver | None]) -> None:
   """Watch every source render. ``begin`` is called with the function about to be rendered and
   returns an observer, or ``None`` to sit that render out.
 
@@ -120,7 +121,7 @@ def register_render_observer(begin: Callable[[Function], RenderObserver | None])
 class _RenderCtx:
   """One lowering of ``fun`` and the facts every artifact reads off it."""
 
-  fun: Function
+  fun: ConcreteFunction
   prog: ProgramNode
   backends: tuple[str, ...]
   workspace_size: int
@@ -128,9 +129,9 @@ class _RenderCtx:
 
 
 def _lower(
-  fun: Function,
+  fun: ConcreteFunction,
   observe: ProgramObserver | None = None,
-  observe_expr: Callable[[str, Function], None] | None = None,
+  observe_expr: Callable[[str, ConcreteFunction], None] | None = None,
   *,
   recipe: BuildRecipe = BuildRecipe(),
 ) -> _RenderCtx:
@@ -173,7 +174,7 @@ _ALIGNAS = [
 ]
 
 
-def _typed_buffers(fun: Function, symbol: str) -> list[str]:
+def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   """One struct per input and output, the caller-owned workspace struct, and a
   ``_call`` wrapper that builds the pointer arrays. C11 and C++ align to 16 bytes; C99 uses natural alignment."""
   params: list[str] = []
@@ -201,7 +202,7 @@ def _typed_buffers(fun: Function, symbol: str) -> list[str]:
   ]
 
 
-def _sparse_tables(fun: Function, symbol: str, sparsities: tuple[SparsityPattern | None, ...]) -> list[str]:
+def _sparse_tables(fun: ConcreteFunction, symbol: str, sparsities: tuple[SparsityPattern | None, ...]) -> list[str]:
   lines: list[str] = []
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is None:
@@ -227,13 +228,13 @@ def _sparse_tables(fun: Function, symbol: str, sparsities: tuple[SparsityPattern
   return ["", "// Sparse output metadata for compact derivative buffers.", *lines] if lines else []
 
 
-def header_sparsities(fun: Function, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:
+def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:
   """The patterns a header describes: the native order, or under ``casadi`` the compressed-column
   order the entry gathers into."""
   return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
 
 
-def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, lang: str, casadi: bool) -> str:
+def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, lang: str, casadi: bool) -> str:
   if lang == "cpp":
     return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
@@ -279,7 +280,7 @@ def _render_source(ctx: _RenderCtx, *, casadi: bool) -> str:
 
 def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
-  caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver Function`` is the
+  caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver ConcreteFunction`` is the
   ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
   oracle PROCs and before the function that calls it — so emitting each wrapper after the PROCs up
   to its oracles never forward-references a ``_raw``."""
@@ -314,7 +315,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   for source in external_sources:
     lines += [*source.splitlines(), ""]
   # Program order also puts a callee before its callers, and it is the only order that knows the
-  # PROCs the program passes split off a Function's PROC (``passes/program/hoist_invariant.py``).
+  # PROCs the program passes split off a ConcreteFunction's PROC (``passes/program/hoist_invariant.py``).
   pending = [pr for pr in prog.args[:pc] if pr.attrs["name"] != fun.name]
   reserved_names = _c_reserved_names(prog)
 
@@ -341,8 +342,8 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_solver_entry(fun: Function, sz_w: int, *, casadi: bool) -> list[str]:
-  """The entry of a root ``solver Function``: the null checks, then one call into its wrapper."""
+def _render_solver_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> list[str]:
+  """The entry of a root ``solver ConcreteFunction``: the null checks, then one call into its wrapper."""
   symbol = c_ident(fun.name)
   res = {name: f"res[{i}]" for i, name in enumerate(fun.output_names)}
   lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
@@ -356,7 +357,9 @@ def _render_solver_entry(fun: Function, sz_w: int, *, casadi: bool) -> list[str]
   return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 
-def _render_observed(fun: Function, *, casadi: bool, recipe: BuildRecipe = BuildRecipe(), source_name: str | None = None) -> tuple[_RenderCtx, str]:
+def _render_observed(
+  fun: ConcreteFunction, *, casadi: bool, recipe: BuildRecipe = BuildRecipe(), source_name: str | None = None
+) -> tuple[_RenderCtx, str]:
   """Lower and render ``fun`` under the registered observers: one lowering, one source, and the
   expression, Program, code, and outcome sequence ``scaly.viz`` records."""
   observers = [obs for begin in _RENDER_OBSERVERS if (obs := begin(fun)) is not None]
@@ -365,7 +368,7 @@ def _render_observed(fun: Function, *, casadi: bool, recipe: BuildRecipe = Build
     for obs in observers:
       obs.add_program(name, root)
 
-  def observe_expr(name: str, normalized: Function) -> None:
+  def observe_expr(name: str, normalized: ConcreteFunction) -> None:
     for obs in observers:
       obs.add_normalized_expr(name, normalized)
 
@@ -385,7 +388,7 @@ def _render_observed(fun: Function, *, casadi: bool, recipe: BuildRecipe = Build
 
 
 def render_c_source(
-  fun: Function,
+  fun: Function | ConcreteFunction,
   *,
   casadi: bool = False,
   lanes: LaneCount = "auto",
@@ -399,6 +402,7 @@ def render_c_source(
 
   A ``LoweringError`` for a function that cannot be lowered propagates. There is no fallback.
   """
+  fun = as_concrete(fun)
   recipe = BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)
   return _render_observed(fun, casadi=casadi, recipe=recipe)[1]
 
@@ -409,7 +413,7 @@ def _check_lang(lang: str) -> None:
 
 
 def render_c_api_header(
-  fun: Function,
+  fun: Function | ConcreteFunction,
   *,
   lang: str = "c",
   casadi: bool = False,
@@ -422,6 +426,7 @@ def render_c_api_header(
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
   buffers of the chosen ``lang``, the
   sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
+  fun = as_concrete(fun)
   _check_lang(lang)
   if casadi:
     check_casadi_layout(fun)
@@ -432,7 +437,7 @@ def render_c_api_header(
 
 
 def render_c_module(
-  fun: Function,
+  fun: Function | ConcreteFunction,
   *,
   header_name: str | None = None,
   source_name: str | None = None,
@@ -447,6 +452,7 @@ def render_c_module(
   """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C.
   ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
   CasADi 3.8 compatible symbols to both."""
+  fun = as_concrete(fun)
   _check_lang(lang)
   ctx, body = _render_observed(
     fun,
@@ -470,7 +476,7 @@ def render_c_module(
 
 
 def workspace_size(
-  fun: Function,
+  fun: Function | ConcreteFunction,
   *,
   casadi: bool = False,
   lanes: LaneCount = "auto",
@@ -482,6 +488,7 @@ def workspace_size(
   """Doubles of scratch ``fun`` needs in ``w[]``, the value its header's ``SZ_W`` quotes.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
+  fun = as_concrete(fun)
   return entry_workspace(
     fun,
     _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)).workspace_size,
@@ -490,7 +497,7 @@ def workspace_size(
 
 
 def write_module(
-  fun: Function | Solver,
+  fun: Function | ConcreteFunction | Solver,
   out_dir: Path,
   *,
   lang: str = "c",
@@ -512,8 +519,10 @@ def write_module(
 
 
 def main(argv: list[str] | None = None) -> None:
-  parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a header/source pair: a C kernel and a C or C++ header.")
-  parser.add_argument("target", help="module:attribute naming a Function or Solver, or a zero-argument factory returning one")
+  parser = argparse.ArgumentParser(
+    prog="scaly_codegen", description="Render a ConcreteFunction to a header/source pair: a C kernel and a C or C++ header."
+  )
+  parser.add_argument("target", help="module:attribute naming a Function, concrete instance or Solver, or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
   parser.add_argument(
     "--lang", choices=("c", "cpp"), default="c", help="header language: C structs and f_call (f.h), or C++ Buffer types in a namespace (f.hpp)"
@@ -533,7 +542,7 @@ def main(argv: list[str] | None = None) -> None:
   if not attr:
     parser.error(f"target {args.target!r} is not module:attribute")
   fun = getattr(importlib.import_module(module_name), attr)
-  if not isinstance(fun, Function | Solver):
+  if not isinstance(fun, Function | ConcreteFunction | Solver):
     fun = fun()
   module = write_module(
     fun,
@@ -554,11 +563,11 @@ def main(argv: list[str] | None = None) -> None:
     print("link flags: " + " ".join(module.link_flags))
 
 
-def _function_order(fun: Function) -> list[Function]:
+def _function_order(fun: ConcreteFunction) -> list[ConcreteFunction]:
   seen: set[int] = set()
-  ordered: list[Function] = []
+  ordered: list[ConcreteFunction] = []
 
-  def visit(fn: Function) -> None:
+  def visit(fn: ConcreteFunction) -> None:
     if id(fn) in seen:
       return
     seen.add(id(fn))
@@ -570,8 +579,8 @@ def _function_order(fun: Function) -> list[Function]:
   return ordered
 
 
-def _callees(fun: Function) -> list[Function]:
-  ret: list[Function] = []
+def _callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
+  ret: list[ConcreteFunction] = []
   seen: set[int] = set()
   if is_solver_function(fun):
     # solver Functions render via a custom template that calls the oracle (and for NLP, the

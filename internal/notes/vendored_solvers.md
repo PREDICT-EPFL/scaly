@@ -69,7 +69,7 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 - **CI cache key.** Keyed on the package, runner OS and architecture, cibuildwheel version, and that plugin
   directory excluding tests, as defined in `ci.yml`. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
-- **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built.
+- **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built. On x86-64, `TARGET=PRESCOTT` fixes the common code to a Prescott baseline instead of relying on build-host CPU detection. `DYNAMIC_ARCH=1` still includes optimized kernels selected at runtime.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
 - **External solver consumers.** Generated solver calls require the plugin headers and the
   complete bundled `lib/` directory. Python load tests alone do not establish that a standalone

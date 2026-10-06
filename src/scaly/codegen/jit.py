@@ -1,7 +1,7 @@
 """JIT: compile, cache, load and dispatch a ``codegen.aot.CModule`` through the universal ABI — no
 rendering decisions of its own.
 
-`Function.__call__` routes here by default. Environment variables:
+`ConcreteFunction.__call__` routes here by default. Environment variables:
 
 - ``SCALY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/scaly/jit``
   or ``~/.cache/scaly/jit``).
@@ -37,7 +37,8 @@ from .toolchain import BuildRecipe, cache_root, find_c_compiler, native_recipe
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
-  from ..function import Function
+  from ..function.concrete import ConcreteFunction
+from ..function.model import Function, as_concrete
 
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
@@ -110,7 +111,7 @@ def compile_flags(recipe: BuildRecipe | None = None) -> tuple[str, ...]:
   return (opt_flag(), *(HOST_CFLAGS if recipe is None else (*recipe.cpu_flags, "-fno-math-errno")))
 
 
-def _render_native(fun: Function, compiler: str) -> CModule:
+def _render_native(fun: ConcreteFunction, compiler: str) -> CModule:
   try:
     recipe = native_recipe(compiler)
   except (OSError, subprocess.CalledProcessError) as exc:
@@ -129,7 +130,7 @@ def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, 
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
   Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
-  previously cached artifacts. Function names and compile/link flags are included so two
+  previously cached artifacts. ConcreteFunction names and compile/link flags are included so two
   functions that happen to share a source skeleton (different symbols or solver rpaths) still
   get distinct entries.
   """
@@ -160,7 +161,7 @@ _artifact_cache: dict[str, _Artifact] = {}
 _artifact_lock = threading.Lock()
 
 
-def _build_artifact(fun: Function) -> _Artifact:
+def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   """Render, compile (if needed), and return a path to ``fun``'s cached shared object.
 
   Raises ``JitUnavailable`` if there is no usable compiler or codegen does not support
@@ -222,7 +223,7 @@ def _build_artifact(fun: Function) -> _Artifact:
 
 
 class CompiledFunction:
-  """Handle around a JIT-compiled `Function`.
+  """Handle around a JIT-compiled `ConcreteFunction`.
 
   Holds the ``ctypes.CDLL`` for the cached shared object, the resolved entry point with
   ``argtypes``/``restype`` set up for the pointer ABI, and the workspace size the rendered module
@@ -246,7 +247,8 @@ class CompiledFunction:
     "_n_res",
   )
 
-  def __init__(self, fun: Function):
+  def __init__(self, fun: Function | ConcreteFunction):
+    fun = as_concrete(fun)
     self._fun = fun
     self._artifact = _build_artifact(fun)
     self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.solver_library)
@@ -311,7 +313,7 @@ class CompiledFunction:
 
     Inputs are converted to contiguous float64 buffers with shapes validated against the
     declared input shapes. Outputs are freshly-allocated NumPy arrays reshaped to the
-    Function's declared output shapes (the compact buffer shape for sparse outputs).
+    ConcreteFunction's declared output shapes (the compact buffer shape for sparse outputs).
     Raises ``JitError`` if the C function returns a non-zero ABI status.
     """
     if len(args) != self._n_args:
@@ -351,12 +353,12 @@ class CompiledFunction:
     return [out.reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]
 
 
-def get_compiled(fun: Function) -> CompiledFunction:
+def get_compiled(fun: Function | ConcreteFunction) -> CompiledFunction:
   """Compile ``fun`` (or reuse a cached `.so`) and return a `CompiledFunction` handle."""
   return CompiledFunction(fun)
 
 
-def invalidate_cache(fun: Function) -> None:
+def invalidate_cache(fun: ConcreteFunction) -> None:
   """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
 
   Safe to call when nothing is cached yet. Codegen failures (``NotImplementedError``) are

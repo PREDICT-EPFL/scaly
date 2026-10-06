@@ -7,9 +7,10 @@ from typing import Any, cast
 import numpy as np
 
 from ..ad.sparse import SparseJacobian, sparse_hessian
-from ..function import Function
+from ..function.concrete import ConcreteFunction
+from ..function.model import Function
 from ..function.api import gradient, sparse_jacobian
-from ..function.tree import G, L, Tree
+from ..function.tree import group, arg, Tree, parameter_list, append_parameter
 from ..ir.expr import Expr, ExprOp, concat, substitute
 from ..ir.types import SparsityPattern, TensorType
 from .model import SolverDescriptor, descriptor_function
@@ -63,11 +64,11 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
 
   lower_ineq: list[Expr] = []
   upper_ineq: list[Expr] = []
-  for group, expr in zip(problem.spec.ineq, inequalities, strict=True):
+  for inequality, expr in zip(problem.spec.ineq, inequalities, strict=True):
     if not expr.size:
       continue
-    lower_ineq.append(_bound(None if group.lo is None else substitute(group.lo, replacements), expr.shape, -np.inf).vec())
-    upper_ineq.append(_bound(None if group.hi is None else substitute(group.hi, replacements), expr.shape, np.inf).vec())
+    lower_ineq.append(_bound(None if inequality.lo is None else substitute(inequality.lo, replacements), expr.shape, -np.inf).vec())
+    upper_ineq.append(_bound(None if inequality.hi is None else substitute(inequality.hi, replacements), expr.shape, np.inf).vec())
   l_ineq = _concat_vec(tuple(lower_ineq))
   u_ineq = _concat_vec(tuple(upper_ineq))
 
@@ -90,15 +91,15 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     )
     assert x_ub is not None
 
-  x_tree = L(x_name, x.type)
-  base_input_tree = G(x_tree, problem.params)
+  x_tree = arg(x_name, x.type)
+  base_input_tree = parameter_list((x_tree, problem.params))
   if g is None:
-    base_output_tree: Tree[Any, Any] = L("f", f.type)
+    base_output_tree: Tree[Any, Any] = arg("f", f.type)
     base_outputs = (f,)
   else:
-    base_output_tree = G(L("f", f.type), L("g", g.type))
+    base_output_tree = group(arg("f", f.type), arg("g", g.type))
     base_outputs = (f, g)
-  base = Function._from_exprs(
+  base = ConcreteFunction._from_exprs(
     f"{problem.name}_base",
     (x, *problem._param_symbols),
     base_outputs,
@@ -106,12 +107,12 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     base_output_tree.names,
   )._with_trees(base_input_tree, base_output_tree)
 
-  grad = gradient(base, "f", x_name, name=f"{problem.name}_grad")
+  grad = gradient(base, "f", x_name, name=f"{problem.name}_grad").instantiate()
   if g is None:
     jac = None
     jac_sparsity = SparsityPattern.empty((0, n))
   else:
-    jac = sparse_jacobian(base, "g", x_name, name=f"{problem.name}_jac")
+    jac = sparse_jacobian(base, "g", x_name, name=f"{problem.name}_jac").instantiate()
     jac_sparsity = jac.output_sparsities[0]
     assert jac_sparsity is not None
 
@@ -130,7 +131,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     assert l_ineq is not None and u_ineq is not None
     bound_outputs = (x_lb, x_ub, l_ineq, u_ineq)
     bound_names = ("x_lb", "x_ub", "l_ineq", "u_ineq")
-  bounds = Function._from_exprs(
+  bounds = ConcreteFunction._from_exprs(
     f"{problem.name}_bounds",
     problem._param_symbols,
     bound_outputs,
@@ -152,7 +153,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     "jac_sparsity": jac_sparsity,
     "hess_full": hess_full,
     "hess_inputs": (x, *problem._param_symbols, *multiplier_exprs),
-    "hess_input_tree": G(base.input_tree, multiplier_tree),
+    "hess_input_tree": append_parameter(base.input_tree, multiplier_tree),
     "bounds": bounds,
   }
   problem._cache["nlp"] = cached
@@ -176,12 +177,12 @@ def build_nlp[SV, NV, SP, NP](
   x = cast(Expr, cached["x"])
   triangle = backend.hess_triangle
   hess_key = f"hess:{triangle}"
-  hess_fn = cast(Function | None, problem._cache.get(hess_key))
+  hess_fn = cast(ConcreteFunction | None, problem._cache.get(hess_key))
   if hess_fn is None:
     hess_full = cast(SparseJacobian, cached["hess_full"])
     hess = hess_full.triangle(triangle)
     hess_name = f"sphess_gamma_{x.name}_{x.name}"
-    hess_fn = Function._from_exprs(
+    hess_fn = ConcreteFunction._from_exprs(
       f"{problem.name}_hess_{triangle}",
       cast(tuple[Expr, ...], cached["hess_inputs"]),
       (hess.values,),
@@ -189,24 +190,24 @@ def build_nlp[SV, NV, SP, NP](
       (hess_name,),
       (hess.sparsity,),
       output_coloring_widths=(hess.coloring_width,),
-    )._with_trees(cast(Tree[Any, Any], cached["hess_input_tree"]), L(hess_name, hess.values.type))
+    )._with_trees(cast(Tree[Any, Any], cached["hess_input_tree"]), arg(hess_name, hess.values.type))
     problem._cache[hess_key] = hess_fn
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None
 
   solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
-  input_tree = G(
+  input_tree = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    L("lam_eq", TensorType((problem.n_eq,), diff=False)),
-    L("lam_ineq", TensorType((problem.n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((problem.n_eq,), diff=False)),
+    arg("lam_ineq", TensorType((problem.n_ineq,), diff=False)),
     problem.params,
   )
-  output_tree = G(
+  output_tree = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    L("lam_eq", TensorType((problem.n_eq,), diff=False)),
-    L("lam_ineq", TensorType((problem.n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((problem.n_eq,), diff=False)),
+    arg("lam_ineq", TensorType((problem.n_ineq,), diff=False)),
   )
   input_signature = tuple(zip(input_tree.names, input_tree.shapes, strict=True))
   output_signature = tuple(zip(output_tree.names, output_tree.shapes, strict=True))
@@ -224,11 +225,11 @@ def build_nlp[SV, NV, SP, NP](
     output_signature=output_signature,
     param_names=problem.params.names,
     n_var_blocks=problem.vars.size,
-    base=cast(Function, cached["base"]),
-    grad=cast(Function, cached["grad"]),
-    jac=cast(Function | None, cached["jac"]),
+    base=cast(ConcreteFunction, cached["base"]),
+    grad=cast(ConcreteFunction, cached["grad"]),
+    jac=cast(ConcreteFunction | None, cached["jac"]),
     hess=hess_fn,
-    bounds=cast(Function, cached["bounds"]),
+    bounds=cast(ConcreteFunction, cached["bounds"]),
     jac_sparsity=cast(SparsityPattern, cached["jac_sparsity"]),
     hess_sparsity=hess_sparsity,
     options=tuple(sorted(resolved_options.items())),

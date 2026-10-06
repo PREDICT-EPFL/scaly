@@ -22,7 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-import scaly as sc
+from scaly.function.model import as_concrete
+from scaly.function.concrete import ConcreteFunction
 from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
@@ -145,7 +146,7 @@ def check_transcription_parameter_layout() -> None:
   for i in range(horizon):
     zi, znext = zv[i * NZ : (i + 1) * NZ], zv[(i + 1) * NZ : (i + 2) * NZ]
     parts.append(rk4_step_np(zi[:NX], zi[NX:NZ], params) - znext[:NX])
-  got = np.asarray(race_car_eq_function(horizon)((zv, pv))).reshape(-1)
+  got = np.asarray(race_car_eq_function(horizon)(zv, pv)).reshape(-1)
   np.testing.assert_allclose(got, np.concatenate(parts), rtol=1e-12, atol=1e-12)
 
 
@@ -153,8 +154,8 @@ def check_default_constants() -> None:
   """Regression pin on the full-size Formula Student defaults; any constant edit changes these."""
   horizon = 1
   solver = _race_car_nlp(EpisodeConfig(horizon=horizon))
-  fn, sparsity = solver.function.descriptor.jac, solver.function.descriptor.jac_sparsity
-  assert isinstance(fn, sc.Function) and sparsity is not None
+  fn, sparsity = as_concrete(solver.function).descriptor.jac, as_concrete(solver.function).descriptor.jac_sparsity
+  assert isinstance(fn, ConcreteFunction) and sparsity is not None
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
   pv = np.zeros(n_param(horizon))
@@ -170,7 +171,7 @@ def check_default_constants() -> None:
     ]
   )
   actual = np.zeros(sparsity.shape)
-  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn((zv, pv))).reshape(-1)
+  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn(zv, pv)).reshape(-1)
   reference = race_car_constraint_jac_dense_reference(horizon, zv, pv)
   np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(actual[: expected.shape[0]], expected, rtol=1e-12, atol=1e-12)
@@ -198,20 +199,20 @@ def check_mapped_cost_matches_casadi() -> None:
   rng = np.random.default_rng(19)
   for horizon in (1, 4):
     config = EpisodeConfig(horizon=horizon)
-    descriptor = _race_car_nlp(config).function.descriptor
+    descriptor = as_concrete(_race_car_nlp(config).function).descriptor
     pieces = build_casadi_race_car_nlp(config)
     z, p, cost = pieces["z"], pieces["p"], pieces["f"]
     reference = ca.Function("cost_reference", [z, p], [cost, ca.gradient(cost, z), ca.hessian(cost, z)[0]])
     zv = rng.normal(size=NZ * (horizon + 1))
     pv = np.concatenate([rng.normal(size=NX * (horizon + 1)), config.params.array()])
     expected = reference(zv, pv)
-    np.testing.assert_allclose(descriptor.base((zv, pv))[0], np.asarray(expected[0]).reshape(-1), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(descriptor.grad((zv, pv)), np.asarray(expected[1]).reshape(-1), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(descriptor.base(zv, pv)[0], np.asarray(expected[0]).reshape(-1), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(descriptor.grad(zv, pv), np.asarray(expected[1]).reshape(-1), rtol=1e-12, atol=1e-12)
     sparsity = descriptor.hess_sparsity
     assert descriptor.hess is not None and sparsity is not None
     actual = np.zeros(sparsity.shape)
     actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(
-      descriptor.hess(((zv, pv), (np.array(1.0), np.zeros(NX * (horizon + 1) + 2 * horizon))))
+      descriptor.hess(zv, pv, (np.array(1.0), np.zeros(NX * (horizon + 1) + 2 * horizon)))
     ).reshape(-1)
     actual += np.tril(actual, -1).T
     np.testing.assert_allclose(actual, np.asarray(expected[2]), rtol=1e-12, atol=1e-12)
@@ -220,10 +221,10 @@ def check_mapped_cost_matches_casadi() -> None:
 def check_exact_hessian_default() -> None:
   """The canonical solver asks every provider for exact Lagrangian Hessians."""
   solver = _race_car_nlp(EpisodeConfig.smoke())
-  assert solver.function.descriptor.hess is not None
-  assert dict(solver.function.descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert as_concrete(solver.function).descriptor.hess is not None
+  assert dict(as_concrete(solver.function).descriptor.options).get("hessian_approximation") != "limited-memory"
   sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
-  assert dict(sqp.function.descriptor.options).get("hessian", "exact") == "exact"
+  assert dict(as_concrete(sqp.function).descriptor.options).get("hessian", "exact") == "exact"
 
 
 def check_casadi_ipopt_is_compiled() -> None:

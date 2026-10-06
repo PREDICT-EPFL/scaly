@@ -21,28 +21,31 @@ f(x,t)=\lVert x-t\rVert^2, \qquad
 \nabla_x^2 f(x,t)=2I.
 \]
 
-The declarations below name the output `cost` and the target input `target`:
+The declarations below name the output `cost` and the inputs `x` and `target`:
 
 ```python
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("target", 2)), sc.L("cost", ...))
-def tracking_cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, target = inputs
+@sc.function(sc.arg("x", 2), sc.arg("target", 2), outputs=sc.arg("cost"))
+def tracking_cost(x: sc.Expr, target: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x - target)
 
 grad = sc.gradient(tracking_cost, "cost", "x")
 hess = sc.hessian(tracking_cost, "cost", "x")
 data = (np.array([3.0, 5.0]), np.array([1.0, 2.0]))
-print(grad(data))  # [4. 6.]
-print(hess(data))  # [[2. 0.]
+print(grad(*data))  # [4. 6.]
+print(hess(*data))  # [[2. 0.]
                    #  [0. 2.]]
 ```
 
-The names `"cost"` and `"x"` select the declared output and input. The gradient
+The `of` and `wrt` arguments, here `"cost"` and `"x"`, select the declared output
+and input. Either can be left out when the function has only one output or only
+one input. The gradient
 is taken with respect to `x`, holding `target` fixed. Both derivative functions
 still take `(x, target)`, because their calculations may need both values.
+A derivative of a function with [open input shapes](functions.md#leaving-shapes-out)
+is itself a template, bound at the shapes of each call.
 
 The gradient has the input's shape. The Hessian has shape `(x.size, x.size)`.
 Gradient and Hessian requests require a scalar output. Use a Jacobian for a
@@ -64,7 +67,7 @@ J(x)=\frac{\partial y}{\partial x}
 \]
 
 ```python
-@sc.function(sc.L("x", 2), sc.L("y", ...))
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
 def measurements(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0] * x[1], x[0] + 2.0 * x[1]])
 
@@ -99,7 +102,7 @@ y(x+\varepsilon d)=y(x)+\varepsilon J(x)d+O(\varepsilon^2).
 
 ```python
 fwd = sc.forward(measurements, "y", "x")
-print(fwd((x_value, np.array([1.0, 0.0]))))  # [4. 1.]
+print(fwd(x_value, np.array([1.0, 0.0])))  # [4. 1.]
 ```
 
 `sc.adjoint` constructs \(J(x)^T w\), the gradient of the scalar weighted
@@ -107,11 +110,12 @@ output \(w^T y(x)\). The weights have the output's shape:
 
 ```python
 adj = sc.adjoint(measurements, "y", "x")
-print(adj((x_value, np.array([1.0, 2.0]))))  # [6. 7.]
+print(adj(x_value, np.array([1.0, 2.0])))  # [6. 7.]
 ```
 
-Both functions take `(original_inputs, seed)`. If the original function takes
-`(x, target)`, the derivative call takes `((x, target), seed)`.
+Both functions append the seed as one parameter after the original parameters.
+For `f(x, target)`, call `fwd(x, target, seed)`. For a single grouped
+parameter `f((x, target))`, call `fwd((x, target), seed)`.
 
 ## Lagrangian Hessians and multiplier structure
 
@@ -128,14 +132,14 @@ Scaly's solver interfaces construct this derivative automatically. A direct
 request uses every output of a function as one term in that weighted sum:
 
 ```python
-@sc.function(sc.L("x", 2), sc.G(sc.L("cost", ...), sc.L("constraint", ...)))
+@sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("cost"), sc.arg("constraint")))
 def model(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return sc.sumsqr(x), sc.stack([x[0] * x[1]])
 
 lag_hess = sc.lagrangian_hessian(model, "x")
 weights = (np.array(1.0), np.array([3.0]))
 point = np.array([3.0, 4.0])
-print(lag_hess((point, weights)))  # [[2. 3.]
+print(lag_hess(point, weights))  # [[2. 3.]
                                     #  [3. 2.]]
 ```
 
@@ -154,18 +158,37 @@ combined = tracking_cost.factory(
     ["x", "target"],
     ["cost", sc.factory.Grad("cost", "x"), sc.factory.Hess("cost", "x")],
 )
-cost, gradient, hessian = combined(data)
-print(combined.output_names)
+cost, gradient, hessian = combined(*data)
+print(combined.instantiate().output_names)
 # ('cost', 'grad_cost_x', 'hess_cost_x_x')
 ```
 
-The input list selects the declared inputs, and the output list mixes output
-names with derivative requests. The [function API reference](../api/functions.md)
+The input list selects the declared leaves. Each leaf becomes one parameter
+of the factory function, even if the source groups them. The output list mixes
+output names with derivative requests. The [function API reference](../api/functions.md)
 lists the request types, including sparse and seeded derivatives.
 
 A factory request for a forward derivative also needs `fwd:<wrt>` in the input
 list. An adjoint request needs `lam:<of>`. The `sc.forward` and `sc.adjoint`
 wrappers construct those inputs for a single derivative request.
+
+Factory requests also work on shape templates. The transform runs once for each
+binding, so values and derivatives keep the shape selected by the call:
+
+```python
+@sc.function(sc.arg("x"), outputs=sc.arg("cost", ()))
+def energy(x: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x)
+
+combined = energy.factory("energy_all", ["x"], ["cost", sc.factory.Grad("cost", "x")])
+print(combined(np.array([2.0, 3.0])))       # (array(13.), array([4., 6.]))
+print(combined(np.array([2.0, 3.0, 4.0])))  # (array(29.), array([4., 6., 8.]))
+```
+
+An unbound factory source needs named input declarations. Include every input
+with an open shape in the selected input list. Fixed inputs may be omitted if
+the requested outputs do not depend on them. Seed and weight shapes are checked
+against the bound source.
 
 ## Derivatives of expressions
 

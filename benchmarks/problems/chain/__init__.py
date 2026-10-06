@@ -55,52 +55,54 @@ def n_param(n_masses: int) -> int:
   return n_state(n_masses) + N_PARAMS
 
 
-@sc.function(sc.G(sc.L("dist", 3), sc.L("mass", 1), sc.L("spring_d", 1), sc.L("rest_len", 1)), sc.L("accel", ...), name="chain_link_accel")
-def chain_link_accel_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  dist, mass, spring_d, rest_len = inputs
+@sc.function(sc.arg("dist", 3), sc.arg("mass", 1), sc.arg("spring_d", 1), sc.arg("rest_len", 1), outputs=sc.arg("accel", 3), name="chain_link_accel")
+def chain_link_accel_fn(dist: sc.Expr, mass: sc.Expr, spring_d: sc.Expr, rest_len: sc.Expr) -> sc.Expr:
   return (spring_d[0] / mass[0]) * (1.0 - rest_len[0] / sc.norm_2(dist)) * dist
 
 
 @sc.function(
-  sc.G(sc.L("left", 3), sc.L("pos", 3), sc.L("right", 3), sc.L("mass", 1), sc.L("spring_d", 1), sc.L("rest_len", 1), sc.L("gravity", 1)),
-  sc.L("accel", ...),
+  sc.arg("left", 3),
+  sc.arg("pos", 3),
+  sc.arg("right", 3),
+  sc.arg("mass", 1),
+  sc.arg("spring_d", 1),
+  sc.arg("rest_len", 1),
+  sc.arg("gravity", 1),
+  outputs=sc.arg("accel", 3),
   name="chain_mass_accel",
 )
-def chain_mass_accel_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  left, pos, right, mass, spring_d, rest_len, gravity = inputs
-  left_accel = chain_link_accel_fn((pos - left, mass, spring_d, rest_len))
-  right_accel = chain_link_accel_fn((right - pos, mass, spring_d, rest_len))
+def chain_mass_accel_fn(
+  left: sc.Expr, pos: sc.Expr, right: sc.Expr, mass: sc.Expr, spring_d: sc.Expr, rest_len: sc.Expr, gravity: sc.Expr
+) -> sc.Expr:
+  left_accel = chain_link_accel_fn(pos - left, mass, spring_d, rest_len)
+  right_accel = chain_link_accel_fn(right - pos, mass, spring_d, rest_len)
   return right_accel - left_accel + sc.stack([0.0, 0.0, gravity[0]])
 
 
-# TODO(#11): Replace these shape-specialized builders with ``@sc.function`` templates.
 def chain_ode_fn(n_masses: int) -> sc.Function:
   """Build the continuous-time chain dynamics for the free masses and actuated end mass."""
   nx = n_state(n_masses)
   constant = sc.TensorType((1,), diff=False)
 
   @sc.function(
-    sc.G(sc.L("x", nx), sc.L("u", NU), *(sc.L(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity"))),
-    sc.L("xdot", ...),
+    sc.arg("x", nx),
+    sc.arg("u", NU),
+    *(sc.arg(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity")),
+    outputs=sc.arg("xdot", nx),
     name=f"chain_ode_M{n_masses}",
   )
-  def ode(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    x, u, mass, spring_d, rest_len, gravity = inputs
+  def ode(x: sc.Expr, u: sc.Expr, mass: sc.Expr, spring_d: sc.Expr, rest_len: sc.Expr, gravity: sc.Expr) -> sc.Expr:
     positions = sc.concat([sc.const(np.zeros(3)), x[: 3 * (n_masses - 1)]])
     velocities = x[3 * (n_masses - 1) :]
-    accel = sc.vmap(
-      chain_mass_accel_fn,
-      length=n_masses - 2,
-      inputs={
-        "left": (positions, 0, 3),
-        "pos": (positions, 3, 3),
-        "right": (positions, 6, 3),
-        "mass": (mass, 0, 0),
-        "spring_d": (spring_d, 0, 0),
-        "rest_len": (rest_len, 0, 0),
-        "gravity": (gravity, 0, 0),
-      },
-    )
+    accel = sc.vmap(chain_mass_accel_fn, n_masses - 2)(
+      sc.window(positions, 0, 3),
+      sc.window(positions, 3, 3),
+      sc.window(positions, 6, 3),
+      sc.broadcast(mass),
+      sc.broadcast(spring_d),
+      sc.broadcast(rest_len),
+      sc.broadcast(gravity),
+    ).vec()
     return sc.concat([velocities, u, accel])
 
   return ode
@@ -113,15 +115,16 @@ def chain_step_fn(n_masses: int) -> sc.Function:
   constant = sc.TensorType((1,), diff=False)
 
   @sc.function(
-    sc.G(sc.L("x", nx), sc.L("u", NU), *(sc.L(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity", "dt"))),
-    sc.L("next", ...),
+    sc.arg("x", nx),
+    sc.arg("u", NU),
+    *(sc.arg(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity", "dt")),
+    outputs=sc.arg("next", nx),
     name=f"chain_step_M{n_masses}",
   )
-  def step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    x, u, mass, spring_d, rest_len, gravity, dt = inputs
+  def step(x: sc.Expr, u: sc.Expr, mass: sc.Expr, spring_d: sc.Expr, rest_len: sc.Expr, gravity: sc.Expr, dt: sc.Expr) -> sc.Expr:
 
     def rhs(state: sc.Expr) -> sc.Expr:
-      return ode((state, u, mass, spring_d, rest_len, gravity))
+      return ode(state, u, mass, spring_d, rest_len, gravity)
 
     h = dt[0]
     k1 = rhs(x)
@@ -137,13 +140,14 @@ def _eq_stage_fn(n_masses: int) -> sc.Function:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
 
   @sc.function(
-    sc.G(sc.L("z", nz), sc.L("xnext", nx), sc.L("params", sc.TensorType((N_PARAMS,), diff=False))),
-    sc.L("eq", ...),
+    sc.arg("z", nz),
+    sc.arg("xnext", nx),
+    sc.arg("params", sc.TensorType((N_PARAMS,), diff=False)),
+    outputs=sc.arg("eq", nx),
     name=f"chain_eq_stage_M{n_masses}",
   )
-  def equality(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    z, xnext, params = inputs
-    predicted = chain_step_fn(n_masses)((z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]))
+  def equality(z: sc.Expr, xnext: sc.Expr, params: sc.Expr) -> sc.Expr:
+    predicted = chain_step_fn(n_masses)(z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)])
     return (predicted - xnext).scalar()
 
   return equality
@@ -151,7 +155,7 @@ def _eq_stage_fn(n_masses: int) -> sc.Function:
 
 def _chain_eq_expr(z: sc.Expr, p: sc.Expr, n_masses: int, horizon: int) -> sc.Expr:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  mapped = sc.vmap(_eq_stage_fn(n_masses), length=horizon, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+  mapped = sc.vmap(_eq_stage_fn(n_masses), horizon)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
   return sc.concat([z[:nx] - p[:nx], mapped])
 
 
@@ -159,12 +163,12 @@ def chain_eq_function(n_masses: int, horizon: int) -> sc.Function:
   """Build the initial-state and multiple-shooting equalities for the full horizon."""
 
   @sc.function(
-    sc.G(sc.L("z", n_dec(n_masses, horizon)), sc.L("p", sc.TensorType((n_param(n_masses),), diff=False))),
-    sc.L("eq", ...),
+    sc.arg("z", n_dec(n_masses, horizon)),
+    sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
+    outputs=sc.arg("eq", n_state(n_masses) * (horizon + 1)),
     name=f"chain_eq_vmap_M{n_masses}_N{horizon}",
   )
-  def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p = inputs
+  def equality(z: sc.Expr, p: sc.Expr) -> sc.Expr:
     return _chain_eq_expr(z, p, n_masses, horizon)
 
   return equality
@@ -175,15 +179,15 @@ def chain_eq_function_unrolled(n_masses: int, horizon: int) -> sc.Function:
   stage = _eq_stage_fn(n_masses)
 
   @sc.function(
-    sc.G(sc.L("z", n_dec(n_masses, horizon)), sc.L("p", sc.TensorType((n_param(n_masses),), diff=False))),
-    sc.L("eq", ...),
+    sc.arg("z", n_dec(n_masses, horizon)),
+    sc.arg("p", sc.TensorType((n_param(n_masses),), diff=False)),
+    outputs=sc.arg("eq", n_state(n_masses) * (horizon + 1)),
     name=f"chain_eq_M{n_masses}_N{horizon}",
   )
-  def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p = inputs
+  def equality(z: sc.Expr, p: sc.Expr) -> sc.Expr:
     parts = [z[:nx] - p[:nx]]
     for i in range(horizon):
-      parts.append(stage((z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:])))
+      parts.append(stage(z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:]))
     return sc.concat(parts)
 
   return equality
@@ -201,7 +205,7 @@ def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: 
   dense[:nx, :nx] = np.eye(nx)
   for i in range(horizon):
     row, col = nx * (i + 1), nz * i
-    jac_z, jac_xnext = stage((z[col : col + nz], z[col + nz : col + nz + nx], p[nx:]))
+    jac_z, jac_xnext = stage(*(z[col : col + nz], z[col + nz : col + nz + nx], p[nx:]))
     dense[row : row + nx, col : col + nz] = jac_z
     dense[row : row + nx, col + nz : col + nz + nx] = jac_xnext
   return dense
@@ -282,11 +286,10 @@ def _objective(z: sc.Expr, n_masses: int, horizon: int) -> sc.Expr:
   return cost + 0.5 * Q_END_TERMINAL * sc.sumsqr(terminal[end : end + 3] - ref)
 
 
-# TODO(#11): Replace this shape-specialized builder with an ``@sc.function`` template.
 def chain_objective_fn(n_masses: int, horizon: int) -> sc.Function:
   """The transcribed objective on its own, so its stationary points can be checked directly."""
 
-  @sc.function(sc.L("z", n_dec(n_masses, horizon)), sc.L("f", ...), name=f"chain_obj_M{n_masses}_N{horizon}")
+  @sc.function(sc.arg("z", n_dec(n_masses, horizon)), outputs=sc.arg("f", ()), name=f"chain_obj_M{n_masses}_N{horizon}")
   def objective(z: sc.Expr) -> sc.Expr:
     return _objective(z, n_masses, horizon)
 
@@ -304,7 +307,7 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
     ub[i * nz + nx : (i + 1) * nz] = 1.0
   problem_name = f"chain_M{n_masses}_N{horizon}"
 
-  @sc.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n_masses)), name=problem_name)
+  @sc.problem(vars=sc.arg("z", n_variables), params=sc.arg("p", n_param(n_masses)), name=problem_name)
   def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(
       minimize=_objective(z, n_masses, horizon),

@@ -1,4 +1,4 @@
-"""Solver descriptors and their opaque plain-Function expression graphs."""
+"""Solver descriptors and their opaque plain-ConcreteFunction expression graphs."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ir.expr import Expr, ExprOp
-from ..function import Function
+from ..function.concrete import ConcreteFunction
+from ..function.model import Function
 from ..function.tree import Tree
-from ..function.tree import flat_tree
+from ..function.tree import flat_tree, flat_parameters
 from ..ir.types import SparsityPattern, TensorType
 
 
@@ -58,12 +59,12 @@ class SolverDescriptor:
   # Number of variable leaves at each end of the typed solver signature.
   n_var_blocks: int
   # Functions
-  oracle: Function | None = None  # QP only
-  base: Function | ExternalOracle | None = None  # NLP only
-  grad: Function | ExternalOracle | None = None
-  jac: Function | ExternalOracle | None = None
-  hess: Function | ExternalOracle | None = None
-  bounds: Function | ExternalOracle | None = None
+  oracle: ConcreteFunction | None = None  # QP only
+  base: ConcreteFunction | ExternalOracle | None = None  # NLP only
+  grad: ConcreteFunction | ExternalOracle | None = None
+  jac: ConcreteFunction | ExternalOracle | None = None
+  hess: ConcreteFunction | ExternalOracle | None = None
+  bounds: ConcreteFunction | ExternalOracle | None = None
   # Sparsity (NLP)
   jac_sparsity: SparsityPattern | None = None
   hess_sparsity: SparsityPattern | None = None
@@ -104,7 +105,7 @@ def descriptor_function(
   input_tree: Tree[Any, Any] | None = None,
   output_tree: Tree[Any, Any] | None = None,
 ) -> Function[Any, Any, Any, Any]:
-  """Build the plain Function whose opaque outputs share ``descriptor``."""
+  """Build a Function whose concrete graph has opaque outputs sharing ``descriptor``."""
   input_exprs = tuple(Expr.sym(name, shape if shape else (), diff=False) for name, shape in descriptor.input_signature)
   args = tuple(input_exprs)
   output_exprs = tuple(
@@ -116,9 +117,9 @@ def descriptor_function(
     )
     for i, (name, shape) in enumerate(descriptor.output_signature)
   )
-  inputs = input_tree or flat_tree(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
+  inputs = input_tree or flat_parameters(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
   outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
-  function = Function._from_exprs(
+  function = ConcreteFunction._from_exprs(
     descriptor.name,
     input_exprs,
     output_exprs,
@@ -126,4 +127,4 @@ def descriptor_function(
     tuple(name for name, _ in descriptor.output_signature),
   )._with_trees(inputs, outputs)
   function.descriptor = descriptor
-  return function
+  return Function._from_instance(function)

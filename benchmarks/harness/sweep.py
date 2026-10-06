@@ -16,6 +16,7 @@ import time
 
 import numpy as np
 
+from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.codegen.abi import c_ident
 from scaly.codegen.aot import render_c_module
@@ -66,7 +67,7 @@ def _kernel_kind(workload: str) -> str:
   return "jac" if workload.endswith("_jac") else "hess"
 
 
-def _scaly_inputs(kernel: sc.Function) -> list[tuple[str, int]]:
+def _scaly_inputs(kernel: ConcreteFunction) -> list[tuple[str, int]]:
   return [(c_ident(name), expr.size) for name, expr in zip(kernel.input_names, kernel.inputs, strict=True)]
 
 
@@ -190,7 +191,7 @@ def _storage_owner(name: str, aliases: dict[str, str]) -> str:
   return name
 
 
-def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
+def _dispatch_metrics(fun: ConcreteFunction, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
   """Return the retained mapped range trip count, workspace, and arithmetic per iteration.
 
   A function mapped over several axes (race-car stages ``N`` and ``N+1``, unbumpercars cars and
@@ -324,7 +325,7 @@ def _module_info(
 ) -> dict:
   source_path = Path(module.source_name)
   artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(module.source, module.header)
-  dispatch_trip_count, dispatch_workspace, dispatch_arithmetic = _dispatch_metrics(extra["callable"], module.program)
+  dispatch_trip_count, dispatch_workspace, dispatch_arithmetic = _dispatch_metrics(module.fun, module.program)
   return {
     "name": name,
     "backend": backend,
@@ -357,7 +358,7 @@ def _module_info(
   }
 
 
-def _render_scaly(fun: sc.Function, name: str, out_dir: Path):
+def _render_scaly(fun: sc.Function | ConcreteFunction, name: str, out_dir: Path):
   started = time.perf_counter()
   module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", vector_libm=vector_libm())
   (out_dir / module.header_name).write_text(module.header)
@@ -366,10 +367,10 @@ def _render_scaly(fun: sc.Function, name: str, out_dir: Path):
 
 
 def _descriptor_kernel(solver: sc.Solver, kind: str):
-  descriptor = solver.function.descriptor
+  descriptor = solver.function.instantiate().descriptor
   function = getattr(descriptor, kind)
   sparsity = getattr(descriptor, f"{kind}_sparsity")
-  if not isinstance(function, sc.Function) or sparsity is None:
+  if not isinstance(function, ConcreteFunction) or sparsity is None:
     raise TypeError(f"{descriptor.name} has no Scaly {kind} kernel")
   assert function.output_sparsities[0] == sparsity
   return function, sparsity, function.output_coloring_widths[0]
@@ -913,7 +914,7 @@ def _samples(
   args = list(sample_values.values())
   kernel = info["callable"]
   # CasADi takes flat positional leaves; an scaly Function takes its declared tree, so rebuild it.
-  result = kernel(*args) if info["backend"].startswith("casadi") else kernel(kernel.input_tree.unflatten(tuple(args)))
+  result = kernel(*args) if info["backend"].startswith("casadi") else kernel(*kernel.input_tree.unflatten(tuple(args)))
   if info["backend"].startswith("casadi"):
     outputs = result if isinstance(result, (tuple, list)) else (result,)
     selected = outputs[int(info["output_index"])]

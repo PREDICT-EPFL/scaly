@@ -4,7 +4,7 @@ import numpy as np
 import scaly as sc
 
 
-@sc.problem(vars=sc.L("x", 2), params=sc.L("target", 2))
+@sc.problem(vars=sc.arg("x", 2), params=sc.arg("target", 2))
 def tracking(x, target):
   return sc.ProblemSpec(minimize=sc.sumsqr(x - target), lb=sc.const(0.0))
 

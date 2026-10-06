@@ -1,5 +1,10 @@
 """Closed-loop construction and solve timings used by the deployment mode table."""
 
+from scaly.function.concrete import ConcreteFunction
+
+from scaly.function.model import as_concrete
+
+
 from time import perf_counter
 
 import numpy as np
@@ -11,8 +16,8 @@ def prepare_solver(controller) -> None:
 
   if isinstance(controller, sc.Solver):
     plain = controller.function
-    for function in (plain, plain.descriptor.base, getattr(plain, "_benchmark_base", None)):
-      if isinstance(function, sc.Function):
+    for function in (plain, as_concrete(plain).descriptor.base, getattr(plain, "_benchmark_base", None)):
+      if isinstance(function, sc.Function | ConcreteFunction):
         function.compile()
 
 

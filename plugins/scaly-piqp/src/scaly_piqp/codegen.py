@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
   from scaly.solvers.model import SolverDescriptor
   from scaly.ir.types import SparsityPattern
 
@@ -32,7 +32,7 @@ def _csc_tables(name: str, sp: SparsityPattern | None) -> list[str]:
   ]
 
 
-def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
+def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   desc: SolverDescriptor = fun.descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol

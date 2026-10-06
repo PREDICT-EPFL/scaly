@@ -67,7 +67,7 @@ import numpy as np
 import scaly as sc
 
 
-@sc.problem(vars=sc.L("u", 2), params=sc.L("target", 2))
+@sc.problem(vars=sc.arg("u", 2), params=sc.arg("target", 2))
 def allocation(u: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(
         minimize=sc.sumsqr(u - target),
@@ -151,7 +151,7 @@ needs checking before the result is used, as in the example. The
 ## Problem dimensions
 
 The declarations fix the number and shape of decision variables and parameters.
-For example, `vars=sc.L("u", 2)` and `params=sc.L("target", 2)` each declare one
+For example, `vars=sc.arg("u", 2)` and `params=sc.arg("target", 2)` each declare one
 leaf vector of length two. The builder receives `u` and `target` directly,
 `solve` takes one target array, and `x0` and the optimized variables each have
 shape `(2,)`. A scalar declaration uses `()`, distinct from the one-element
@@ -166,7 +166,7 @@ For `allocation`, `n_eq` is `1` and `n_ineq` is `0`.
 
 ## Grouped variables and parameters
 
-`sc.G` groups several leaves into tuples when separate variable blocks are
+`sc.group` groups several leaves into tuples when separate variable blocks are
 more convenient. The input to the builder, initial guess, result, and variable
 bounds follow that tree. Equality and inequality multipliers remain flat
 vectors. Type checkers can check tuple structures, while Scaly checks numerical
@@ -182,8 +182,8 @@ both entries of `u`:
 
 ```python
 @sc.problem(
-    vars=sc.G(sc.L("u", 2), sc.L("slack", 1)),
-    params=sc.L("target", 2),
+    vars=sc.group(sc.arg("u", 2), sc.arg("slack", 1)),
+    params=sc.arg("target", 2),
 )
 def softened_tracking(
     variables: tuple[sc.Expr, sc.Expr], target: sc.Expr,
@@ -212,8 +212,8 @@ The variables, `x0`, returned variables, bound multipliers, and `lb` all use
 `sc.const(0.0)` bounds the one-element slack vector. It does not replace the
 surrounding group. `sc.NO_LB` leaves the `u` leaf unbounded below.
 
-`params` can also use `sc.G`. For example, `sc.G(sc.L("target", 2),
-sc.L("weight", ()))` makes the builder's second argument a tuple of two
+`params` can also use `sc.group`. For example, `sc.group(sc.arg("target", 2),
+sc.arg("weight", ()))` makes the builder's second argument a tuple of two
 expressions. Numerical calls then take `(target_array, weight_scalar_array)`.
 
 One bounded vector contributes one multiplier per entry, even if both lower
@@ -352,7 +352,7 @@ control problem has fixed dynamics and a changing scalar reference:
 \]
 
 ```python
-@sc.problem(vars=sc.L("w", 7), params=sc.L("target", ()))
+@sc.problem(vars=sc.arg("w", 7), params=sc.arg("target", ()))
 def tracking_mpc(w: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     states, controls = w[:4], w[4:]
     return sc.ProblemSpec(
@@ -379,7 +379,7 @@ constant object or sparse matrix multiplication in the model itself.
 The same solver can be called symbolically without passing any matrices:
 
 ```python
-@sc.function(sc.L("target", ()), sc.L("trajectory", ...))
+@sc.function(sc.arg("target", ()), outputs=sc.arg("trajectory"))
 def mpc_trajectory(target: sc.Expr) -> sc.Expr:
     return solve_mpc(target)[0]
 
@@ -403,7 +403,7 @@ A call with symbolic parameters records a solver call inside an ordinary
 [numerical calls](#numerical-calls-and-return-values):
 
 ```python
-@sc.function(sc.L("target", 2), sc.L("allocation", ...))
+@sc.function(sc.arg("target", 2), outputs=sc.arg("allocation"))
 def allocate(target: sc.Expr) -> sc.Expr:
     result = solve(target)
     return result[0]

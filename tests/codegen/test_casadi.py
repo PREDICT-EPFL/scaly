@@ -13,6 +13,7 @@ import sys
 import numpy as np
 import pytest
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, render_c_source, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
@@ -23,7 +24,7 @@ ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out
 
 
 def _spjac() -> sc.Function:
-  @sc.function(sc.G(sc.L("x", 4), sc.L("p", 2)), sc.L("y", ...))
+  @sc.function(sc.group(sc.arg("x", 4), sc.arg("p", 2)), outputs=sc.arg("y"))
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return sc.stack([x[0] * p[0], x[2:4].sum(), x[1] * x[3] + p[1]])
@@ -64,7 +65,7 @@ def test_casadi_header_declares_the_query_set() -> None:
     assert f" f_spjac_{suffix}(" in header, suffix
   assert "int f_spjac_work(casadi_int* sz_arg, casadi_int* sz_res, casadi_int* sz_iw, casadi_int* sz_w);" in header
   # The header's tables describe the compressed-column order the entry gathers into.
-  sp = fun.output_sparsities[0]
+  sp = as_concrete(fun).output_sparsities[0]
   assert sp is not None and sp.to_csc()[2] != tuple(range(sp.nnz)), "the fixture must need a gather to be meaningful"
   assert f"static const int f_spjac_spjac_y_x_csc_val_perm[{sp.nnz}] = {{{', '.join(str(k) for k in range(sp.nnz))}}};" in header
   assert workspace_size(fun, casadi=True) == workspace_size(fun) + sp.nnz
@@ -91,7 +92,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
   assert ext.name_in() == ["x", "p"] and ext.name_out() == ["spjac_y_x"]
   assert ext.size_in(0) == (4, 1) and ext.size_out(0) == (3, 4)
 
-  sp = fun.output_sparsities[0]
+  sp = as_concrete(fun).output_sparsities[0]
   assert sp is not None
   rows, cols = ext.sparsity_out(0).get_triplet()
   assert set(zip(rows, cols)) == set(zip(sp.rows, sp.cols))
@@ -136,7 +137,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
 
 
 def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
-  @sc.function(sc.L("x", 3), sc.G(sc.L("y", ...), sc.L("s", ...)), name="g")
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("s")), name="g")
   def fun(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return (x.sin(), x.sum())
 
@@ -151,7 +152,7 @@ def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
 
 
 def test_casadi_rejects_dense_matrix_buffers() -> None:
-  @sc.function(sc.L("m", (2, 3)), sc.L("n", ...), name="dense")
+  @sc.function(sc.arg("m", (2, 3)), outputs=sc.arg("n"), name="dense")
   def fun(m: sc.Expr) -> sc.Expr:
     return m * 2.0
 
@@ -160,7 +161,7 @@ def test_casadi_rejects_dense_matrix_buffers() -> None:
   with pytest.raises(ValueError, match="input 'm'"):
     render_c_api_header(fun, casadi=True)
 
-  @sc.function(sc.L("row", (1, 3)), sc.L("n", ...))
+  @sc.function(sc.arg("row", (1, 3)), outputs=sc.arg("n"))
   def row_ok(row: sc.Expr) -> sc.Expr:
     return row * 2.0
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
   from scaly.solvers.model import SolverDescriptor
 
 _IPOPT_INF = 2e19
@@ -52,7 +52,7 @@ def _ipopt_option_call(key: str, val: object) -> str:
   raise NotImplementedError(f"IPOPT option {key}={val!r} cannot be lowered to C")
 
 
-def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
+def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   """Render the solver wrapper for an IPOPT NLP.
 
   Strategy:

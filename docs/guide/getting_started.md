@@ -13,42 +13,46 @@ The examples use scaly with the IPOPT plugin and a C compiler, as described in
 Consider the discrete-time model
 
 \[
-z_k = \begin{bmatrix}p_k \\ v_k\end{bmatrix}, \qquad
-z_{k+1} = f(z_k, u_k)
+x_k = \begin{bmatrix}p_k \\ v_k\end{bmatrix}, \qquad
+x_{k+1} = f(x_k, u_k)
 = \begin{bmatrix}p_k + 0.1 v_k \\ v_k + 0.1 u_k\end{bmatrix}.
 \]
 
 A symbolic variable represents an input whose numerical value is not yet
-specified. In scaly, it has a name and a fixed shape. For this model, `z`
+specified. In scaly, it has a name and a fixed shape. For this model, `x`
 represents a two-element state vector and `u` a one-element control vector:
 
 ```python
 import numpy as np
 import scaly as sc
 
-z = sc.sym("z", 2)
+x = sc.sym("x", 2)
 u = sc.sym("u", 1)
-znext = z + 0.1 * sc.concat([z[1:], u])
+xnext = x + 0.1 * sc.concat([x[1:], u])
 ```
 
-All three objects are instances of `sc.Expr`. `z` and `u` are input expressions and
-`znext` describes a calculation using them. Unlike an operation on NumPy arrays,
+All three objects are instances of `sc.Expr`. `x` and `u` are input expressions and
+`xnext` describes a calculation using them. Unlike an operation on NumPy arrays,
 this addition does not calculate a numerical result. It creates an expression
 node that records the addition and its operands.
 
 Together, the inputs and operations form an **expression graph**. Its nodes
 represent values, and its edges record which values an operation needs.
-For `znext`, the graph records the velocity slice, its concatenation with `u`,
-the multiplication by `0.1`, and the addition to `z`. Scaly uses this graph to
+For `xnext`, the graph records the velocity slice, its concatenation with `u`,
+the multiplication by `0.1`, and the addition to `x`. Scaly uses this graph to
 calculate derivatives and generate code. Assigning a new value to the Python
-name `z` later does not change the recorded graph.
+name `x` later does not change the recorded graph.
 
 Shapes, indexing, broadcasting, and arithmetic follow NumPy conventions.
-Here, `z[1:]` has shape `(1,)`, so concatenating it with `u` produces a vector
+Here, `x[1:]` has shape `(1,)`, so concatenating it with `u` produces a vector
 of shape `(2,)`. `*` is elementwise multiplication and `@` is matrix
 multiplication. The [expression reference](../api/core.md#expressions) lists
 `Expr` methods, and [array builders](../api/core.md#builders) include operations
 such as `sc.concat`, `sc.stack`, and `sc.sumsqr`.
+
+You will rarely write `sc.sym` yourself. The decorator in the next section
+creates these symbols from its declarations, and the rest of this guide never
+calls `sc.sym` again. It appears here to show what a function body works with.
 
 ## From expressions to a Function
 
@@ -60,25 +64,24 @@ The `@sc.function` decorator constructs one by running a Python body with
 symbolic inputs:
 
 ```python
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), sc.L("znext", ...))
-def model(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u = inputs
-    return z + 0.1 * sc.concat([z[1:], u])
+@sc.function(sc.arg("x", 2), sc.arg("u", 1), outputs=sc.arg("xnext"))
+def model(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    return x + 0.1 * sc.concat([x[1:], u])
 ```
 
-`L` stands for *leaf* and declares one named array, `G` stands for *group* and
-combines leaves or other groups into a tree of inputs or outputs. Here, the
-input group is a tuple containing `z` and `u`. The output is one leaf named
-`znext`, whose shape is inferred from the returned expression because its
-declaration uses `...`.
+`sc.arg` declares one named array. Here, each Python parameter has its own
+argument declaration. The output is named `xnext`, whose shape is inferred
+from the returned expression because its declaration gives no shape. Use `sc.group`
+to combine arguments into a tuple when a parameter or output has several parts.
 
-The decorator creates the symbols, runs the body once, and records the returned
-expression. After decoration, `model` is an `sc.Function` object, rather than
+The decorator creates one symbol per declaration, exactly as `sc.sym("x", 2)`
+and `sc.sym("u", 1)` did above, runs the body once with them, and records the
+returned expression. After decoration, `model` is an `sc.Function` object, rather than
 the original Python function. It remains callable:
 
 ```python
-z1 = model((np.array([1.0, 2.0]), np.array([0.5])))
-print(z1)
+x1 = model(np.array([1.0, 2.0]), np.array([0.5]))
+print(x1)
 # [1.2  2.05]
 ```
 
@@ -87,40 +90,40 @@ generates and compiles C. Subsequent calls reuse the compiled code. The Python
 body does not run again. A call with symbolic expressions instead includes
 the function in a larger graph, as the trajectory example below demonstrates.
 
-The input tree determines the call structure: `sc.G` introduces a tuple,
-whereas a single `sc.L` takes or returns an array directly. Shape `()` denotes
+The declarations determine the call structure. `sc.group` introduces a tuple,
+whereas a single `sc.arg` takes or returns an array directly. Shape `()` denotes
 a scalar, and shape `(1,)` denotes a one-element vector. These are distinct.
 The [functions guide](functions.md) covers nested groups and other declarations.
 
-### Optional type annotations
+### Body annotations and call types
 
-The annotations on `model` describe the symbolic Python body: a tuple of two
-`Expr` inputs and one `Expr` output. They do not change tracing or numerical
-evaluation. The example also works without them.
+The `sc.Expr` annotations let a type checker verify operations on `x` and `u`
+inside the body, and verify their agreement with the decorator. They are
+optional and do not change tracing or evaluation. The decorator defines
+runtime behavior and the types of symbolic and numerical calls.
 
-Scaly's typing is designed to give you more checking as you provide more type
-information. With annotations, an IDE's type checker can check the body's
-argument and return types against the decorator's declared structure. For
-example, returning a tuple where the decorator declares one leaf is a type
-error. The decorated `Function` also carries symbolic and numerical input and
-output types, so calls with the wrong tuple structure can be flagged before
-execution. Array dimensions are checked at runtime as Python annotations
-cannot encode shapes.
+Declaring every input shape is more to write than a plain Python function, and
+this guide does it everywhere. The shapes are what let one definition become
+one compiled function with fixed buffer sizes, exported as it is. Declarations
+can leave input shapes open, but each shape then has to be supplied later, at
+the call or before export. The boilerplate moves rather than disappears. The
+[functions guide](functions.md#leaving-shapes-out) covers these templates and
+when they pay off.
 
 ## Derivatives are Functions too
 
 For the model above,
 
 \[
-\frac{\partial f}{\partial z}
+\frac{\partial f}{\partial x}
 = \begin{bmatrix} 1 & 0.1 \\ 0 & 1 \end{bmatrix}.
 \]
 
 `sc.jacobian` constructs an `sc.Function` for this derivative:
 
 ```python
-model_jac = sc.jacobian(model, "znext", "z")
-print(model_jac((np.array([1.0, 2.0]), np.array([0.5]))))
+model_jac = sc.jacobian(model, "xnext", "x")
+print(model_jac(np.array([1.0, 2.0]), np.array([0.5])))
 # [[1.  0.1]
 #  [0.  1. ]]
 ```
@@ -142,9 +145,9 @@ calculating only entries that may be nonzero.
 A function can reuse `model` to compute a trajectory and its cost:
 
 \[
-z_{k+1} = f(z_k,u_k), \qquad
-J(z_0, U) = \sum_{k=0}^{N-1}\left(\lVert z_k\rVert^2 + 0.1 u_k^2\right)
-    + 10\lVert z_N\rVert^2,
+x_{k+1} = f(x_k,u_k), \qquad
+J(x_0, U) = \sum_{k=0}^{N-1}\left(\lVert x_k\rVert^2 + 0.1 u_k^2\right)
+    + 10\lVert x_N\rVert^2,
 \qquad U=(u_0,\ldots,u_{N-1}), \quad N=20.
 \]
 
@@ -153,34 +156,33 @@ N = 20
 
 
 @sc.function(
-    sc.G(sc.L("z0", 2), sc.L("us", N)),
-    sc.G(sc.L("zN", ...), sc.L("cost", ...)),
+    sc.arg("x0", 2), sc.arg("us", N),
+    outputs=sc.group(sc.arg("xN"), sc.arg("cost")),
 )
-def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    z, us = inputs
+def rollout(x: sc.Expr, us: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     cost = sc.const(0.0)
     for k in range(N):
         u = us[k : k + 1]
-        cost = cost + sc.sumsqr(z) + 0.1 * sc.sumsqr(u)
-        z = model((z, u))
-    return z, cost + 10.0 * sc.sumsqr(z)
+        cost = cost + sc.sumsqr(x) + 0.1 * sc.sumsqr(u)
+        x = model(x, u)
+    return x, cost + 10.0 * sc.sumsqr(x)
 
 
-z0 = np.array([1.0, 0.0])
+x0 = np.array([1.0, 0.0])
 us0 = np.zeros(N)
-zN, cost = rollout((z0, us0))
-print(zN, float(cost))
+xN, cost = rollout(x0, us0)
+print(xN, float(cost))
 # [1. 0.] 30.0
 ```
 
-`sc.const(0.0)` creates a constant expression, and `sc.sumsqr(z)` expresses
-\(\lVert z\rVert^2\). The symbolic call `model((z, u))` records a call to the
-existing `Function` inside `rollout`. The two output leaves give the numerical
-result its tuple structure.
+`sc.const(0.0)` creates a constant expression, and `sc.sumsqr(x)` expresses
+\(\lVert x\rVert^2\). The symbolic call `model(x, u)` records a call to the
+existing `Function` inside `rollout`. The two declarations in the output group
+give the numerical result its tuple structure.
 
 Python runs while the decorator builds the graph. Consequently, this `for`
 loop creates `N` successive calls to `model`. It does not record a loop.
-The horizon is fixed when `rollout` is defined, while `z0` and `us` can change
+The horizon is fixed when `rollout` is defined, while `x0` and `us` can change
 on every evaluation. This distinction between Python execution and recorded
 operations also matters for repeated independent calculations, covered in
 the [bonus section on `vmap`](#bonus-repeated-stages-with-vmap).
@@ -188,15 +190,15 @@ the [bonus section on `vmap`](#bonus-repeated-stages-with-vmap).
 ## Optimization problems and solvers
 
 The trajectory model gives a single-shooting formulation with controls as
-decision variables and the measured initial state \(\bar z\) as a parameter:
+decision variables and the measured initial state \(\bar x\) as a parameter:
 
 \[
 \begin{aligned}
-\min_U \quad & J(\bar z,U) \\
+\min_U \quad & J(\bar x,U) \\
 \text{subject to}\quad
-& z_0 = \bar z, \\
-& z_{k+1}=f(z_k,u_k), && k=0,\ldots,N-1, \\
-& z_N=0, \\
+& x_0 = \bar x, \\
+& x_{k+1}=f(x_k,u_k), && k=0,\ldots,N-1, \\
+& x_N=0, \\
 & -2 \le u_k \le 2, && k=0,\ldots,N-1.
 \end{aligned}
 \]
@@ -205,12 +207,12 @@ The recurrence is already built into `rollout`. `sc.problem` adds the objective,
 terminal equality, and control bounds:
 
 ```python
-@sc.problem(vars=sc.L("us", N), params=sc.L("z0", 2))
-def control_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    zN, cost = rollout((z0, us))
+@sc.problem(vars=sc.arg("us", N), params=sc.arg("x0", 2))
+def control_problem(us: sc.Expr, x0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    xN, cost = rollout(x0, us)
     return sc.ProblemSpec(
         minimize=cost,
-        eq=(zN,),
+        eq=(xN,),
         lb=sc.const(-2.0),
         ub=sc.const(2.0),
     )
@@ -219,7 +221,7 @@ def control_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
 solve = sc.solver(control_problem, "ipopt", options={"print_level": 0})
 ```
 
-Inside `control_problem`, `us` and `z0` are symbolic `sc.Expr` inputs. The cost,
+Inside `control_problem`, `us` and `x0` are symbolic `sc.Expr` inputs. The cost,
 constraint expressions, and bounds returned in `sc.ProblemSpec` are also
 `sc.Expr` objects. The builder records their dependence on variables and
 parameters without evaluating them numerically.
@@ -234,14 +236,13 @@ the objective, constraint, and derivative functions that backend needs.
 The numerical call takes the problem parameters:
 
 ```python
-us_opt, lam_box, lam_eq, lam_ineq = solve(z0)
+us_opt, lam_box, lam_eq, lam_ineq = solve(x0)
 status = solve.stats().to_solver_status()
-print(status.name)
+print(status.name)  # OK
 assert status.ok
 
-zN_opt, cost_opt = rollout((z0, us_opt))
-print(np.round(zN_opt, 6))
-# Approximately [0. 0.]
+xN_opt, cost_opt = rollout(x0, us_opt)
+print(np.abs(xN_opt).max() < 1e-6)  # True
 ```
 
 The result contains the controls and multipliers for variable bounds, equality
@@ -249,9 +250,10 @@ constraints, and inequality constraints. `lam_ineq` is empty here because the
 problem has only variable bounds and equalities. Solver status is separate
 from these arrays and indicates whether the solve succeeded.
 
-Initial variables and multipliers default to zero. `solve(z0, x0=us0)` supplies
-an initial control sequence, and `warm=` accepts a previous result for a warm
-start. The [solver guide](solvers.md) describes backend-specific warm-start
+Initial variables and multipliers default to zero. The keyword `x0` names the
+initial decision variables, not the state, so `solve(x0, x0=us0)` starts from
+the control sequence `us0`. `warm=` accepts a previous result for a warm start.
+The [solver guide](solvers.md) describes backend-specific warm-start
 behavior and the underlying `solve.function`, an `sc.Function` with explicit
 inputs for the initial variables and multipliers.
 
@@ -287,11 +289,11 @@ same control problem by including states among the decision variables:
 
 \[
 \begin{aligned}
-\min_{Z,U}\quad & \sum_{k=0}^{N-1}\left(\lVert z_k\rVert^2+0.1u_k^2\right)
-                  + 10\lVert z_N\rVert^2 \\
+\min_{X,U}\quad & \sum_{k=0}^{N-1}\left(\lVert x_k\rVert^2+0.1u_k^2\right)
+                  + 10\lVert x_N\rVert^2 \\
 \text{subject to}\quad
-& z_0=\bar z, \qquad z_N=0, \\
-& f(z_k,u_k)-z_{k+1}=0, && k=0,\ldots,N-1, \\
+& x_0=\bar x, \qquad x_N=0, \\
+& f(x_k,u_k)-x_{k+1}=0, && k=0,\ldots,N-1, \\
 & -2\le u_k\le2, && k=0,\ldots,N-1.
 \end{aligned}
 \]
@@ -301,36 +303,32 @@ Its evaluation does not depend on the result of another defect evaluation:
 
 ```python
 @sc.function(
-    sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)),
-    sc.L("defect", ...),
+    sc.arg("x", 2), sc.arg("u", 1), sc.arg("xnext", 2),
+    outputs=sc.arg("defect"),
 )
-def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u, znext = inputs
-    return model((z, u)) - znext
+def defect(x: sc.Expr, u: sc.Expr, xnext: sc.Expr) -> sc.Expr:
+    return model(x, u) - xnext
 
 
-@sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))
-def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    states = w[: 2 * (N + 1)]
+@sc.problem(vars=sc.arg("w", 3 * N + 2), params=sc.arg("x0", 2))
+def multiple_shooting(w: sc.Expr, x0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    states = w[: 2 * (N + 1)].reshape((N + 1, 2))
     controls = w[2 * (N + 1) :]
-    defects = sc.vmap(defect, N, {
-        "z": states[:-2],
-        "u": controls,
-        "znext": states[2:],
-    })
+    defects = sc.vmap(defect, N)(states[:-1], controls.reshape((N, 1)), states[1:]).vec()
     return sc.ProblemSpec(
-        minimize=sc.sumsqr(states[:-2]) + 0.1 * sc.sumsqr(controls)
-                 + 10.0 * sc.sumsqr(states[-2:]),
-        eq=(states[:2] - z0, defects, states[-2:]),
+        minimize=sc.sumsqr(states[:-1]) + 0.1 * sc.sumsqr(controls)
+                 + 10.0 * sc.sumsqr(states[-1]),
+        eq=(states[0] - x0, defects, states[-1]),
         ineq=(sc.bounded(controls, lo=-2.0, hi=2.0),),
     )
 ```
 
-`w` stacks `N + 1` two-element states followed by `N` controls. The mapping keys
-are the input names of `defect`. Scaly splits each supplied expression into
-`N` chunks of the corresponding input size: two elements for each state and
-one for each control. `states[:-2]` supplies stages `0` through `N - 1`, and
-`states[2:]` supplies stages `1` through `N`. `sc.bounded` expresses the control
+`w` stacks `N + 1` two-element states followed by `N` controls. Reshaping the
+states to `(N + 1, 2)` and the controls to `(N, 1)` puts the stage index on the
+leading axis, which is the axis `vmap` maps over. The mapped call passes the
+three arguments of `defect` separately, and call `k` receives row `k` of each.
+`states[:-1]` supplies stages `0` through `N - 1`, and `states[1:]` supplies
+stages `1` through `N`. `sc.bounded` expresses the control
 limits as inequalities within the larger decision vector.
 
 The difference in generated structure is roughly as follows. These are sketches
@@ -338,10 +336,10 @@ with simplified signatures, before any inlining or other compiler optimization:
 
 ```c
 // Single shooting: the Python loop creates N call sites.
-model(z0, u0, z1);
-model(z1, u1, z2);
+model(x0, u0, x1);
+model(x1, u1, x2);
 /* ... */
-model(z19, u19, z20);
+model(x19, u19, x20);
 ```
 
 ```c
@@ -353,7 +351,8 @@ for (int k = 0; k < N; ++k) {
 
 The mapped stage code stays one loop body as the horizon grows, including in
 its derivatives. Numerical work and storage still grow with `N`, as can
-[sparsity tables in the generated header](codegen.md#sparse-output-patterns). `vmap` cannot replace the sequential
-recurrence in `rollout`: it applies when the calls can be evaluated independently.
-The [functions guide](functions.md#regular-repetition-vmap) covers shared inputs
-and explicit slice mappings.
+[sparsity tables in the generated header](codegen.md#sparse-output-patterns).
+`vmap` applies when calls can be evaluated independently, so it cannot replace
+the sequential recurrence in `rollout`.
+The [functions guide](functions.md#regular-repetition-vmap) covers inputs shared
+by every stage and overlapping windows.

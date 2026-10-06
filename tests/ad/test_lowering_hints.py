@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad.forward import jvp, jvp_many
 from scaly.ad.reverse import vjp
@@ -19,18 +20,18 @@ def _callees(prog: ProgramNode) -> list[ProgramNode]:
 
 @pytest.mark.parametrize("hint", ["scalar", "block"])
 def test_derived_procs_inherit_stage_hint(hint: Lowering) -> None:
-  @sc.function(sc.L("x", 3), sc.L("y", ...), name="hint_stage")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="hint_stage")
   def stage(x):
     return (x.sin() * (x @ sc.const(np.ones(3)))).with_lowering(hint)
 
   length = 4
-  inputs = sc.G(sc.L("z", 3 * length), sc.L("lam", 3 * length), sc.L("seed", 3 * length), sc.L("seeds", (2, 3 * length)))
-  outputs = sc.G(sc.L("g", ...), sc.L("h", ...), sc.L("jm", ...), sc.L("j", ...))
+  inputs = sc.group(sc.arg("z", 3 * length), sc.arg("lam", 3 * length), sc.arg("seed", 3 * length), sc.arg("seeds", (2, 3 * length)))
+  outputs = sc.group(sc.arg("g"), sc.arg("h"), sc.arg("jm"), sc.arg("j"))
 
-  @sc.function(inputs, outputs, name="hint_chain")
+  @sc.function(inputs, outputs=outputs, name="hint_chain")
   def fn(inputs):
     z, lam, seed, seeds = inputs
-    mapped = sc.vmap(stage, length, [(z, 0, 3)])
+    mapped = _mapped_call(stage, length, [(z, 0, 3)])
     grad = vjp((mapped,), (z,), (lam,))[0]
     return (
       grad,

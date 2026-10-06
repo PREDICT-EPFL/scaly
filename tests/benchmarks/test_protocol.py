@@ -52,8 +52,10 @@ def test_sweep_render_uses_the_selected_math_policy(tmp_path, monkeypatch):
   import scaly as sc
   from benchmarks.harness.sweep import _render_scaly
 
-  x = sc.sym("x", 4)
-  kernel = sc.Function._from_exprs("math_policy", [x], [x.sin()], ["x"], ["y"])
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", 4), name="math_policy")
+  def kernel(x: sc.Expr) -> sc.Expr:
+    return x.sin()
+
   for policy in ("glibc", "none"):
     monkeypatch.setenv("SCALY_VECTOR_LIBM", policy)
     module, _ = _render_scaly(kernel, "math_policy", tmp_path)

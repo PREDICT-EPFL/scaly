@@ -20,7 +20,7 @@ guide in a larger function and printing `sc.render_expr_assembly(allocate)`
 shows both levels:
 
 ```python
-@sc.function(sc.L("target", 2), sc.G(sc.L("allocation", ...), sc.L("lam_eq", ...)))
+@sc.function(sc.arg("target", 2), outputs=sc.group(sc.arg("allocation"), sc.arg("lam_eq")))
 def allocate(target: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     u, _, lam_eq, _ = solve(target)
     return 2.0 * u, lam_eq
@@ -155,7 +155,7 @@ import numpy as np
 import scaly as sc
 
 
-@sc.problem(vars=sc.L("u", 2), params=sc.L("r", 2))
+@sc.problem(vars=sc.arg("u", 2), params=sc.arg("r", 2))
 def allocation(u: sc.Expr, r: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(
         minimize=sc.sumsqr(u - r) + u[0] * u[1],
@@ -166,7 +166,7 @@ def allocation(u: sc.Expr, r: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
 
 
 solve = sc.solver(allocation, "piqp")
-oracle = solve.function.descriptor.oracle
+oracle = solve.function.instantiate().descriptor.oracle
 for name, value in zip(oracle.output_names, oracle(np.array([0.2, 0.8]))):
     print(f"{name:12} {np.asarray(value).tolist()}")
 ```
@@ -219,7 +219,7 @@ constraint Jacobians or the bounds. The check fails with the part that broke
 it:
 
 ```python
-@sc.problem(vars=sc.L("u", 2), params=sc.L("r", 2))
+@sc.problem(vars=sc.arg("u", 2), params=sc.arg("r", 2))
 def curved(u: sc.Expr, r: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=sc.sumsqr(u - r), eq=(u[0] * u[1] - 1.0,))
 

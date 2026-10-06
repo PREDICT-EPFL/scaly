@@ -20,6 +20,7 @@ from dataclasses import replace
 
 import numpy as np
 
+from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import problem_stats, solve_problem
@@ -175,7 +176,7 @@ def check_parameter_tail_order() -> None:
   np.testing.assert_allclose(decoder_mu_np(decoder, pw, x, u), expected, rtol=0.0, atol=1e-13)
 
   xnext = np.array([0.1, 0.2, 0.3, 0.4])
-  residual = np.asarray(stage_function(decoder)((x, xnext, u, pw, np.array(DT)))).reshape(-1)
+  residual = np.asarray(stage_function(decoder)(x, xnext, u, pw, np.array(DT))).reshape(-1)
   np.testing.assert_allclose(residual, x + np.concatenate([DT * (x[2:4] + expected / 2.0), expected]) - xnext, rtol=0.0, atol=1e-12)
 
 
@@ -204,7 +205,7 @@ def check_decoder_matches_reference_rollout() -> None:
     x = np.array([rng.uniform(-np.pi, np.pi), rng.uniform(-2.0, 2.0), rng.normal(scale=4.0), rng.normal(scale=4.0)])
     u_sample = rng.uniform(-TORQUE_LIMIT, TORQUE_LIMIT, NU)
     xnext = step_np(decoder, pw, x, u_sample)
-    np.testing.assert_allclose(np.asarray(stage_fn((x, xnext, u_sample, pw, np.array(DT)))).reshape(-1), np.zeros(NX), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(stage_fn(x, xnext, u_sample, pw, np.array(DT))).reshape(-1), np.zeros(NX), rtol=0.0, atol=1e-12)
 
 
 def check_plant_matches_reference_oracle() -> None:
@@ -285,12 +286,12 @@ def check_constraint_rows_and_bounds() -> None:
   lower, upper = npmpc_ineq_bounds(horizon)
 
   @sc.function(
-    sc.G(sc.L("z", n_dec(horizon)), sc.L("xstart", sc.TensorType((NX,), diff=False))),
-    sc.L("g", ...),
+    sc.arg("z", n_dec(horizon)),
+    sc.arg("xstart", sc.TensorType((NX,), diff=False)),
+    outputs=sc.arg("g", NX + 2 * (horizon + 1)),
     name="npmpc_ineq_check",
   )
-  def constraints(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, xstart = inputs
+  def constraints(z: sc.Expr, xstart: sc.Expr) -> sc.Expr:
     rows, _, _ = npmpc_constraint_exprs(z, xstart, horizon)
     return rows
 
@@ -300,9 +301,9 @@ def check_constraint_rows_and_bounds() -> None:
   states = z[: NX * (horizon + 1)].reshape(horizon + 1, NX)
   slack = z[-1]
   expected = np.concatenate([states[0] - xstart, states[:, 1] + slack, states[:, 1] - slack])
-  np.testing.assert_allclose(np.asarray(constraints((z, xstart))).reshape(-1), expected, rtol=0.0, atol=1e-14)
+  np.testing.assert_allclose(np.asarray(constraints(z, xstart)).reshape(-1), expected, rtol=0.0, atol=1e-14)
 
-  assert constraints.outputs[0].size == NX + 2 * (horizon + 1)
+  assert as_concrete(constraints).outputs[0].size == NX + 2 * (horizon + 1)
   np.testing.assert_array_equal(lower[:NX], -X0_BAND)
   np.testing.assert_array_equal(upper[:NX], X0_BAND)
   np.testing.assert_array_equal(lower[NX : NX + horizon + 1], -PHI_LIMIT)
@@ -340,7 +341,7 @@ def check_runtime_tuning_parameters() -> None:
   np.testing.assert_array_equal(base[NX + decoder.n_pw + 1 : NX + decoder.n_pw + 11], [*CostWeights().x, *CostWeights().x_diff, 1.0, 1000.0])
   np.testing.assert_array_equal(base[-NX * NX :].reshape(NX, NX), np.diag(CostWeights().x_end))
   lag = npmpc_lag_function(2, decoder)
-  (base_cost, base_eq), (dt_cost, dt_eq), (weight_cost, weight_eq), (P_cost, P_eq) = (lag((z, p)) for p in parameters)
+  (base_cost, base_eq), (dt_cost, dt_eq), (weight_cost, weight_eq), (P_cost, P_eq) = (lag(z, p) for p in parameters)
   assert not np.allclose(dt_eq, base_eq)
   np.testing.assert_allclose(dt_cost, base_cost, rtol=0.0, atol=1e-12)
   np.testing.assert_allclose(weight_eq, base_eq, rtol=0.0, atol=1e-12)
@@ -360,7 +361,7 @@ def check_casadi_runtime_parameters_match() -> None:
   pieces = _ca_npmpc_joint_parameter_pieces(2, decoder, ca.MX)
   casadi = ca.Function("npmpc_runtime_parameters", [pieces["z"], pieces["p"]], [pieces["f"], pieces["h_eq"]])
   for p in parameters:
-    scaly_cost, scaly_eq = scaly((z, p))
+    scaly_cost, scaly_eq = scaly(z, p)
     casadi_cost, casadi_eq = casadi(z, p)
     np.testing.assert_allclose(np.asarray(casadi_cost), np.asarray(scaly_cost), rtol=0.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(casadi_eq).reshape(-1), np.asarray(scaly_eq).reshape(-1), rtol=0.0, atol=1e-12)
@@ -380,8 +381,8 @@ def check_nlp_uses_an_exact_hessian() -> None:
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
   controller = build_solver(config, "ipopt", "scaly")
-  assert controller.function.descriptor.hess is not None
-  requested = dict(controller.function.descriptor.options).get("hessian_approximation")
+  assert as_concrete(controller.function).descriptor.hess is not None
+  requested = dict(as_concrete(controller.function).descriptor.options).get("hessian_approximation")
   assert requested is None, f"the IPOPT column asks for hessian_approximation={requested!r}"
 
   n_eq, n_ineq = constraint_counts(config.horizon)
@@ -523,7 +524,7 @@ def check_matches_reference_episode() -> None:
     theirs = np.concatenate([episode["x"][step].reshape(-1), episode["u"][step].reshape(-1), np.zeros(1)])
     xstart = step_np(decoder, pw, episode["x0"][step], episode["u0"][step])
     p = pack_nlp_params(decoder, xstart, pw, P)
-    feasibility = float(np.max(np.abs(np.asarray(eq((theirs, p))))))
+    feasibility = float(np.max(np.abs(np.asarray(eq(theirs, p)))))
     assert feasibility <= REFERENCE_FEASIBILITY_TOL, f"their step {step} violates our dynamics by {feasibility:.3e}"
 
     # their warm start, rebuilt: the previous solution's controls shifted, the measurement advanced
@@ -540,7 +541,7 @@ def check_matches_reference_episode() -> None:
     status = None if stats is None else stats.to_solver_status()
     assert status is not None and stats is not None and status.ok, f"step {step}: {None if stats is None else stats.status.name}"
     ours = np.asarray(out["x"], dtype=np.float64).reshape(-1)
-    gap = float(out["f"]) - float(np.asarray(lag((theirs, p))[0]))
+    gap = float(out["f"]) - float(np.asarray(lag(theirs, p)[0]))
     assert gap <= 1e-6 * (1.0 + abs(float(out["f"]))), f"step {step}: our objective is {gap:.3e} worse than theirs"
     if step < REFERENCE_SETTLING_STEP:
       continue

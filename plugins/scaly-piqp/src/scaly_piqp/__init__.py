@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function.concrete import ConcreteFunction
 
 
 def include_dir() -> Path:
@@ -30,7 +30,7 @@ class _Backend:
   include_dir = staticmethod(include_dir)
   lib_dir = staticmethod(lib_dir)
 
-  def render_wrapper(self, fun: Function, ctx: SolverWrapperCtx) -> list[str]:
+  def render_wrapper(self, fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     from .codegen import render_wrapper
 
     return render_wrapper(fun, ctx)

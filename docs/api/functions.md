@@ -1,6 +1,6 @@
 # Building functions
 
-Declare the shape and structure of a function with `L`, `G`, and `@function`. The derivative
+Declare the shape and structure of a function with `arg`, `group`, and `@function`. The derivative
 wrappers, such as `gradient`, then create functions from that declaration. See the
 [functions guide](../guide/functions.md) for examples and the
 [derivatives guide](../guide/derivatives.md) for choosing a derivative.
@@ -9,9 +9,9 @@ wrappers, such as `gradient`, then create functions from that declaration. See t
 
 ::: scaly.function.tree.Tree
 
-::: scaly.function.tree.L
+::: scaly.arg
 
-::: scaly.function.tree.G
+::: scaly.group
 
 ## The decorator
 
@@ -60,3 +60,12 @@ name, and an input name.
 ::: scaly.function.api.lagrangian_hessian
 
 ::: scaly.function.api.sparse_lagrangian_hessian
+
+
+## Mapped calls
+
+::: scaly.function.sugar.vmap
+
+::: scaly.function.sugar.broadcast
+
+::: scaly.function.sugar.window

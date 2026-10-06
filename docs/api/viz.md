@@ -9,7 +9,7 @@ import scaly as sc
 from scaly.codegen import render_c_module
 from scaly.viz import visualize
 
-@sc.function(sc.L("x", 3), sc.L("energy", ...))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("energy"))
 def energy(x: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x)
 
@@ -20,6 +20,13 @@ render_c_module(energy)
 Every render of a marked function, whether ahead of time or through the JIT, adds one recording.
 Run `uv run scaly_viz --browser` to browse them. `visualize` is the same function as
 `visualize_function`.
+
+Registering a declaration does not trace it. Functions with open shapes or no
+declarations record each instance when it renders, including instances created
+before registration. Registering a concrete instance records only that instance
+and takes precedence over an open declaration's registration. Removing either
+registration leaves the other in place. A fully specified declaration and its
+sole instance share one registration, so either can unregister it.
 
 ## Recording
 

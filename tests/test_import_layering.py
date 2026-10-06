@@ -52,6 +52,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.solvers.stats": 2,
   "scaly.function": 3,
   "scaly.function.model": 3,
+  "scaly.function.concrete": 3,
   "scaly.function.tree": 3,
   "scaly.ad": 4,
   "scaly.ad.derivatives": 4,
@@ -115,7 +116,7 @@ IMPORT_LAYERS: dict[str, int] = {
 
 # The one upward import the architecture sanctions (docs/dev/codebase.md, "Import layers").
 SEAM: dict[tuple[str, str], str] = {
-  ("scaly.function.model", "scaly.codegen.jit"): "calling a Function JIT-compiles it",
+  ("scaly.function.concrete", "scaly.codegen.jit"): "calling a Function JIT-compiles it",
 }
 
 # Violations the restructure has not reached yet. Shrinks every phase; empty when it is done.
@@ -250,10 +251,8 @@ def test_each_seam_is_a_single_import() -> None:
   assert not scattered, "a sanctioned seam is one import statement:\n  " + "\n  ".join(scattered)
 
 
-# The flat leaf seams under ``symbolic_call``/``numerical_call``. ``function/model.py`` defines and
-# uses them; differentiation is the one sanctioned consumer, because it synthesizes callees from
-# flat expression lists and calls them with that same list.
-FLAT_SEAM_USERS = {"scaly.function.model", "scaly.ad.forward"}
+# The concrete graph instance owns the flat leaf call seams. Other modules use its declared tree.
+FLAT_SEAM_USERS = {"scaly.function.concrete"}
 
 
 def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
@@ -265,4 +264,4 @@ def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
     for i, line in enumerate(path.read_text().splitlines(), 1)
     if "_flat_symbolic_call" in line or "_flat_numerical_call" in line
   )
-  assert not leaked, "the flat call seam leaked outside function/model.py and ad/forward.py:\n  " + "\n  ".join(leaked)
+  assert not leaked, "the flat call seam leaked outside function/concrete.py:\n  " + "\n  ".join(leaked)

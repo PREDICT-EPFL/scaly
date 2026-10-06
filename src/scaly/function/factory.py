@@ -11,7 +11,7 @@ from ..ad.reverse import vjp
 from ..ad.sparse import Triangle, _validate_triangle, sparse_hessian, sparse_jacobian
 from ..ir.expr import Expr
 from ..ir.types import SparsityPattern
-from .model import DerivSpec
+from .concrete import DerivSpec
 
 
 @dataclass(frozen=True, slots=True)

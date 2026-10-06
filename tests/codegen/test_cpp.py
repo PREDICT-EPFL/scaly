@@ -15,7 +15,7 @@ from scaly.codegen import render_c_module
 
 
 def _spjac() -> sc.Function:
-  @sc.function(sc.L("x", 4), sc.L("y", ...))
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
   def f(x: sc.Expr) -> sc.Expr:
     return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
 
@@ -23,7 +23,7 @@ def _spjac() -> sc.Function:
 
 
 def _roll() -> sc.Function:
-  @sc.function(sc.L("traj", (3, 2)), sc.L("out", ...))
+  @sc.function(sc.arg("traj", (3, 2)), outputs=sc.arg("out"))
   def roll(traj: sc.Expr) -> sc.Expr:
     return traj.sin()
 
@@ -117,7 +117,7 @@ int main() {
 
 
 def test_cpp_header_and_c_header_compile_the_same_kernel() -> None:
-  @sc.function(sc.L("x", 2), sc.L("y", ...), name="same")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="same")
   def f(x: sc.Expr) -> sc.Expr:
     return x * 2.0
 
@@ -134,7 +134,7 @@ def test_headers_survive_buffer_names_that_collide_with_the_wrapper(tmp_path) ->
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for the generated header smoke test")
 
-  @sc.function(sc.G(sc.L("f", 2), sc.L("workspace", 2), sc.L("arg", 2)), sc.L("res", ...), name="f")
+  @sc.function(sc.group(sc.arg("f", 2), sc.arg("workspace", 2), sc.arg("arg", 2)), outputs=sc.arg("res"), name="f")
   def fun(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     f, workspace, arg = inputs
     return f + workspace + arg
@@ -168,7 +168,7 @@ def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for the generated header smoke test")
 
-  @sc.function(sc.G(sc.L("w", 3), sc.L("lam", 0), sc.L("z0", 2)), sc.G(sc.L("w", ...), sc.L("lam", ...)), name="solve")
+  @sc.function(sc.group(sc.arg("w", 3), sc.arg("lam", 0), sc.arg("z0", 2)), outputs=sc.group(sc.arg("w"), sc.arg("lam")), name="solve")
   def fun(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     w, lam, z0 = inputs
     return (w + z0[0], lam)

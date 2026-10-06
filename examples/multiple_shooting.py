@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 
 import scaly as sc
@@ -5,18 +7,19 @@ import scaly as sc
 N = 20  # the decision vector w stacks N + 1 states of size 2, then N controls
 
 
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)), sc.L("defect", ...))
-def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  z, u, znext = inputs
-  return z + 0.1 * sc.concat([z[1:], u]) - znext
+@sc.function(sc.arg("x", 2), sc.arg("u", 1), sc.arg("xnext", 2))
+def defect(x: sc.Expr, u: sc.Expr, xnext: sc.Expr) -> sc.Expr:
+  return x + 0.1 * sc.concat([x[1:], u]) - xnext
 
 
-@sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))
-def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec:
-  zs, us = w[: 2 * N + 2], w[2 * N + 2 :]
-  defects = sc.vmap(defect, N, {"z": zs[:-2], "u": us, "znext": zs[2:]})  # one loop, not N copies
-  return sc.ProblemSpec(minimize=sc.sumsqr(zs) + 0.1 * sc.sumsqr(us), eq=(zs[:2] - z0, defects))
+@sc.problem(vars=sc.arg("w", 3 * N + 2), params=sc.arg("x0", 2))
+def multiple_shooting(w: sc.Expr, x0: sc.Expr) -> sc.ProblemSpec:
+  xs, us = w[: 2 * N + 2].reshape((N + 1, 2)), w[2 * N + 2 :].reshape((N, 1))
+  defects = sc.vmap(defect, N)(xs[:-1], us, xs[1:]).vec()  # one loop, not N copies
+  return sc.ProblemSpec(minimize=sc.sumsqr(xs) + 0.1 * sc.sumsqr(us), eq=(xs[0] - x0, defects))
 
 
 solve = sc.solver(multiple_shooting, "ipopt")
 w_opt, *_ = solve(np.array([1.0, 0.0]))
+
+sc.codegen.write_module(solve, Path(__file__).parent / "generated")  # generated/multiple_shooting_ipopt.h and .c

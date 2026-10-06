@@ -61,7 +61,7 @@ exact-path override env var `SCALY_MYSOLVER_LIB`.
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]: ...
 ```
 
-`fun` is the plain typed `Function` being rendered. `fun.descriptor` (a `SolverDescriptor`,
+`fun` is the concrete graph instance being rendered. `fun.descriptor` (a `SolverDescriptor`,
 `src/scaly/solvers/model.py`) carries the problem dimensions, input/output signatures,
 oracle `Function`s, sparsity patterns, and user options. `ctx` supplies the C names and helpers
 needed by the wrapper through `scaly.codegen.solver.SolverWrapperCtx`:
