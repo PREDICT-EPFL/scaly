@@ -13,6 +13,8 @@ Two categories:
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import numpy as np
 import pytest
 
@@ -63,24 +65,27 @@ def test_jacobian_factory_output_verifies() -> None:
 
 
 def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
-  """Mutate a frozen ``Expr``'s tensor type to a shape the constructors refuse.
+  """A copy of ``expr`` outside the interning cache, typed with a shape the constructors refuse.
 
   Used to test the verifier's defensive contract: legitimate ``Expr`` construction
   already rejects this, so we have to bypass it to prove the rule fires when a
-  bug-prone pass (e.g. a future AD/lowering bug) builds a malformed node.
+  bug-prone pass (e.g. a future AD/lowering bug) builds a malformed node. Mutating ``expr``
+  itself would change the interned node every later construction returns.
   """
   bad_type = TensorType.__new__(TensorType)
   object.__setattr__(bad_type, "shape", shape)
   object.__setattr__(bad_type, "dtype", expr.type.dtype)
   object.__setattr__(bad_type, "diff", expr.type.diff)
-  object.__setattr__(expr, "type", bad_type)
-  return expr
+  forged = object.__new__(Expr)
+  for f in fields(Expr):
+    object.__setattr__(forged, f.name, getattr(expr, f.name))
+  object.__setattr__(forged, "type", bad_type)
+  return forged
 
 
 def test_negative_shape_caught() -> None:
   x = sc.sym("x", 3)
-  bad = Expr(ExprOp.NEG, (x,), TensorType((3,), dtype=dtypes.float64, diff=True))
-  _forge_negative_shape(bad, (-1,))
+  bad = _forge_negative_shape(Expr(ExprOp.NEG, (x,), TensorType((3,), dtype=dtypes.float64, diff=True)), (-1,))
   with pytest.raises(VerifyError, match="shape-nonnegative"):
     verify_expr(bad)
 

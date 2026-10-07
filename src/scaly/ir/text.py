@@ -11,7 +11,7 @@ labels — is ``viz/graph.py``.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Set
+from collections.abc import Iterable, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -56,7 +56,7 @@ def _value_asm(v: Any) -> str:
   return str(v)
 
 
-def _attrs_asm(attrs: dict[str, Any], *, skip: Set[str] = frozenset()) -> str:
+def _attrs_asm(attrs: Mapping[str, Any], *, skip: Set[str] = frozenset()) -> str:
   items = [(k, v) for k, v in sorted(attrs.items()) if k not in skip]
   if not items:
     return ""

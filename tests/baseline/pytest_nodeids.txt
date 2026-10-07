@@ -576,10 +576,22 @@ tests/integration/test_vmap_mlp.py::test_vmapped_source_is_constant_in_the_horiz
 tests/integration/test_vmap_mlp.py::test_vmapped_stage_matches_the_numpy_model
 tests/ir/test_expr.py::test_binary_nonlinear_method_helpers_eval
 tests/ir/test_expr.py::test_common_ops_contains_modeling_basics
+tests/ir/test_expr.py::test_constants_and_attributes_are_frozen_copies
 tests/ir/test_expr.py::test_debug_printing_uses_stable_topological_names
 tests/ir/test_expr.py::test_differentiability_metadata_propagates_through_exprs
 tests/ir/test_expr.py::test_dot_sumsqr_and_norm_2
 tests/ir/test_expr.py::test_elementwise_eval_and_topological_order
+tests/ir/test_expr.py::test_interning_hit_returns_the_node_as_it_was_built
+tests/ir/test_expr.py::test_interning_shares_attributes_with_the_same_bits
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[-0.0-0.0]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[0-False]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[0.0--0.0]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[1-1.0]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[1-True]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[1.0-True]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[True-1]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first7-second7]
+tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first8-second8]
 tests/ir/test_expr.py::test_mixed_lowering_hints_survive_expr_graph
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/ir/test_expr.py::test_structural_equality_collapses_to_identity
@@ -607,10 +619,19 @@ tests/ir/test_program.py::test_every_observed_program_stage_verifies
 tests/ir/test_program.py::test_for_first_arg_must_be_range
 tests/ir/test_program.py::test_full_program_verifies
 tests/ir/test_program.py::test_hash_consing_makes_structurally_equal_nodes_identical
+tests/ir/test_program.py::test_interning_hit_returns_the_node_as_it_was_built
+tests/ir/test_program.py::test_interning_shares_numpy_scalars_with_their_python_kind
+tests/ir/test_program.py::test_interning_tells_attributes_apart_by_kind_and_bits[0-False]
+tests/ir/test_program.py::test_interning_tells_attributes_apart_by_kind_and_bits[1-1.0]
+tests/ir/test_program.py::test_interning_tells_attributes_apart_by_kind_and_bits[1-True]
+tests/ir/test_program.py::test_interning_tells_attributes_apart_by_kind_and_bits[True-1]
+tests/ir/test_program.py::test_interning_tells_attributes_apart_by_kind_and_bits[first4-second4]
+tests/ir/test_program.py::test_interning_tells_attributes_apart_by_kind_and_bits[first5-second5]
 tests/ir/test_program.py::test_invalid_scalar_assignment_rejected[attrs0-args0]
 tests/ir/test_program.py::test_invalid_scalar_assignment_rejected[attrs1-args1]
 tests/ir/test_program.py::test_invalid_scalar_assignment_rejected[attrs2-args2]
 tests/ir/test_program.py::test_no_gpu_vocabulary
+tests/ir/test_program.py::test_node_holds_a_frozen_copy_of_its_attributes
 tests/ir/test_program.py::test_paired_store_rejects_non_double_values
 tests/ir/test_program.py::test_paired_store_verifies_and_prints
 tests/ir/test_program.py::test_program_rejects_duplicate_procedure_names
@@ -618,6 +639,7 @@ tests/ir/test_program.py::test_range_kind_value_must_be_enum_member
 tests/ir/test_program.py::test_reduction_kind_range_verifies
 tests/ir/test_program.py::test_scalar_declaration_verifies_and_prints
 tests/ir/test_program.py::test_scalar_dtype_must_match_operands
+tests/ir/test_program.py::test_signed_zeros_are_two_constants
 tests/ir/test_program.py::test_view_rejects_non_scalar_index
 tests/ir/test_program.py::test_view_requires_buffer
 tests/ir/test_program.py::test_view_requires_one_flat_index[0]
@@ -1101,6 +1123,10 @@ tests/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[wide]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[workspace]
 tests/test_c_snapshot.py::test_generated_solver_c_matches_snapshot[solver]
+tests/test_determinism.py::test_no_module_level_counters
+tests/test_determinism.py::test_the_check_finds_a_counter[_n = 0\ndef fresh():\n  global _n\n  _n += 1\n  return f't{_n}'\n]
+tests/test_determinism.py::test_the_check_finds_a_counter[from itertools import count\n_ids = count()\n]
+tests/test_determinism.py::test_the_check_finds_a_counter[import itertools\n_ids = itertools.count()\n]
 tests/test_docs_prose.py::test_published_prose[README.md]
 tests/test_docs_prose.py::test_published_prose[docs/benchmarks/closed_loop.md]
 tests/test_docs_prose.py::test_published_prose[docs/benchmarks/fairness.md]

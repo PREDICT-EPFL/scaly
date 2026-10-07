@@ -9,9 +9,11 @@ stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.p
 from __future__ import annotations
 
 import math
+import struct
 import weakref
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
@@ -196,13 +198,19 @@ def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
 _NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "Expr"] = weakref.WeakValueDictionary()
 
 
+def _frozen(array: np.ndarray) -> np.ndarray:
+  out = array.copy()
+  out.flags.writeable = False
+  return out
+
+
 def _intern_key(
   op: ExprOp | str,
   args: tuple["Expr", ...],
   type_: "TensorType",
   name: str | None,
   value: np.ndarray | None,
-  attrs: dict[str, Any],
+  attrs: Mapping[str, Any],
   lowering: Lowering,
 ) -> tuple[Any, ...]:
   op_norm = op if isinstance(op, ExprOp) else ExprOp(op)
@@ -211,7 +219,9 @@ def _intern_key(
   return (op_norm.value, args_key, type_, name, value_key, _attrs_key(attrs), lowering)
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
+# ``init=False``: ``__new__`` is the whole constructor. A generated ``__init__`` would run again on
+# the node an interning hit returns, which Functions already hold.
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
 class Expr:
   """One node of the expression graph: an op, its argument nodes and the resulting ``TensorType``.
 
@@ -225,11 +235,10 @@ class Expr:
   type: TensorType = field(default_factory=TensorType)
   name: str | None = None
   value: np.ndarray | None = None
-  attrs: dict[str, Any] = field(default_factory=dict)
+  attrs: Mapping[str, Any] = field(default_factory=dict)
   lowering: Lowering = "auto"
   # Frozen → safe to cache. Populated lazily by structural_key on first call.
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
-  _initialized: bool = field(default=False, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
 
@@ -248,7 +257,7 @@ class Expr:
     type: TensorType | None = None,
     name: str | None = None,
     value: np.ndarray | None = None,
-    attrs: dict[str, Any] | None = None,
+    attrs: Mapping[str, Any] | None = None,
     lowering: Lowering = "auto",
   ) -> "Expr":
     if op is None:  # callers like ``copy.copy`` / pickling instantiate w/o args
@@ -260,17 +269,17 @@ class Expr:
     if cached is not None:
       return cached
     instance = object.__new__(cls)
+    put = object.__setattr__
+    put(instance, "op", ExprOp(op))
+    put(instance, "args", tuple(args))
+    put(instance, "type", type_eff)
+    put(instance, "name", name)
+    put(instance, "value", None if value is None else _frozen(value))
+    put(instance, "attrs", MappingProxyType({k: _frozen(v) if isinstance(v, np.ndarray) else v for k, v in attrs_eff.items()}))
+    put(instance, "lowering", lowering)
+    put(instance, "_key_cache", None)
     _NODE_CACHE[key] = instance
     return instance
-
-  def __post_init__(self) -> None:
-    # On cache hit, dataclass __init__ re-ran with the same args; everything it set was
-    # idempotent, so we only need to mark ``_initialized`` on the first construction.
-    if self._initialized:
-      return
-    if not isinstance(self.op, ExprOp):
-      object.__setattr__(self, "op", ExprOp(self.op))
-    object.__setattr__(self, "_initialized", True)
 
   @staticmethod
   def sym(
@@ -513,8 +522,14 @@ class Expr:
     return ret
 
 
-def _attrs_key(attrs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
   def key(v: Any) -> Any:
+    # ``==`` merges what generated code tells apart: ``-0.0`` with ``0.0``, and ``1`` with ``True``
+    # and ``1.0``. A float keys by its bits, which also lets a NaN match itself, and a flag by its kind.
+    if isinstance(v, (bool, np.bool_)):
+      return (bool, bool(v))
+    if isinstance(v, (float, np.floating)):
+      return (float, struct.pack("<d", v))
     if isinstance(v, Expr):
       return v.structural_key()
     if hasattr(v, "structural_key") and callable(getattr(v, "structural_key")):

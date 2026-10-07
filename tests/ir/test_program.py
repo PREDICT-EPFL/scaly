@@ -11,6 +11,9 @@ vocabulary:
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import pytest
 
 from scaly.ir import program as p
@@ -191,3 +194,50 @@ def test_view_rejects_non_scalar_index() -> None:
     p.view(buf, [buf])
   with pytest.raises(VerifyError, match="index op=.*not scalar"):
     verify_program(ProgramNode(ProgramOp.VIEW, (buf,), {"buffer": "matrix"}, dtypes.float64))
+
+
+def test_signed_zeros_are_two_constants() -> None:
+  plus, minus = p.const_float(0.0), p.const_float(-0.0)
+  assert plus is not minus
+  assert math.copysign(1.0, plus.attrs["value"]) == 1.0 and math.copysign(1.0, minus.attrs["value"]) == -1.0
+  assert p.const_float(float("nan")) is p.const_float(float("nan"))
+
+
+def test_interning_hit_returns_the_node_as_it_was_built() -> None:
+  """The key matches values that are equal and not identical, so a hit must not assign them:
+  programs already hold the node."""
+  x = p.var("intern_x", dtypes.float64)
+  node = ProgramNode(ProgramOp.NEG, (x,), {"width": 3}, dtypes.float64)
+  attrs = node.attrs
+
+  again = ProgramNode(ProgramOp.NEG, (x,), {"width": np.int64(3)}, dtypes.float64)
+
+  assert again is node and node.attrs is attrs and type(attrs["width"]) is int
+
+
+def test_node_holds_a_frozen_copy_of_its_attributes() -> None:
+  given = {"name": "intern_v"}
+  node = ProgramNode(ProgramOp.VAR, (), given, dtypes.int64)
+  given["name"] = "intern_w"
+
+  assert node.attrs == {"name": "intern_v"}
+  assert ProgramNode(ProgramOp.VAR, (), {"name": "intern_v"}, dtypes.int64) is node
+  with pytest.raises(TypeError):
+    node.attrs["name"] = "intern_w"  # ty: ignore[invalid-assignment]
+
+
+@pytest.mark.parametrize(("first", "second"), [(1, True), (True, 1), (0, False), (1, 1.0), ((1, 0), (True, False)), ((0.0, 1.0), (-0.0, 1.0))])
+def test_interning_tells_attributes_apart_by_kind_and_bits(first, second) -> None:
+  assert first == second
+  a = ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64)
+  b = ProgramNode(ProgramOp.CONST_INT, (), {"value": second}, dtypes.int64)
+
+  assert a is not b
+  assert a.attrs["value"] is first and b.attrs["value"] is second
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64) is a
+
+
+def test_interning_shares_numpy_scalars_with_their_python_kind() -> None:
+  flag = ProgramNode(ProgramOp.CONST_INT, (), {"value": True}, dtypes.bool_)
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": np.True_}, dtypes.bool_) is flag
+  assert p.const_float(np.float64(1.5)) is p.const_float(1.5)
