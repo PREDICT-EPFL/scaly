@@ -100,7 +100,7 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 |---|---|---|---|
 | scaly, scaly-sqp | our code | BSD-2 | none |
 | scaly-piqp | PIQP, BLASFEO | BSD-2 | notice |
-| | Eigen | MPL-2.0 | notice. PIQP does not define `EIGEN_MPL2_ONLY` itself, so `hatch_build.py` passes it through `CMAKE_CXX_FLAGS`; PIQP 0.6.2 compiles under it, which proves no LGPL Eigen file reaches the library |
+| | Eigen | MPL-2.0 | notice. PIQP does not define `EIGEN_MPL2_ONLY` itself, so `hatch_build.py` passes it through `CMAKE_CXX_FLAGS`; PIQP 0.6.2 and 0.6.4 compile under it, which proves no LGPL Eigen file reaches the library |
 | | LDL inside PIQP (`piqp/sparse/LDL_License.txt`) | LGPL-2.1-or-later | notice plus the LGPL-2.1 text. PIQP's `sparse/ldlt` is a modified LDL, instantiated in `ldlt.cpp` and compiled into `libpiqpc`, so the shared library we ship contains LGPL code. That is allowed: the LGPL text travels with it, the modified source is PIQP's public tag, and `libpiqpc` is a separately loaded shared library the user can replace |
 | scaly-ipopt | IPOPT | EPL-2.0 | notice, upstream source of the pinned version; a separate dynamically loaded module, so our BSD-2 is unaffected |
 | | MUMPS 5.8.2, via COIN-OR `ThirdParty-Mumps` 3.0.12 | CeCILL-C, EPL-2.0 for the wrapper | notice for each |
