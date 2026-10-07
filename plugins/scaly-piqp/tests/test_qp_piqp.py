@@ -270,8 +270,7 @@ def test_valid_settings_still_render_and_solve(sparse: bool) -> None:
   options = {"sparse": sparse, "eps_abs": 1e-8, "max_iter": 100, "verbose": False, "preconditioner_reuse_on_update": True}
   solve = sc.solver(tracking, "piqp", options=options)
   source = render_c_source(solve.function)
-  for key, value in options.items():
+  for key in options:
     if key != "sparse":
-      assert f'!strcmp(option->name, "{key}")' in source
-      assert f"settings.{key} = " in source
+      assert f'"{key}", offsetof(piqp_settings, {key})' in source
   np.testing.assert_allclose(solve(np.array([2.0]))[0], [2.0], atol=1e-7)

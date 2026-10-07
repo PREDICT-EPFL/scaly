@@ -142,9 +142,9 @@ An upstream rename or renumbering then causes a compile error instead of an inco
 
 `prepare_options` runs during Python solver construction, before any C generation.
 It checks names, types and combinations and supplies the backend's defaults.
-It returns two dicts. Core stores structural choices in `desc.compile_options`
-and packs runtime tuning into a null-terminated `scaly_solver_option` array
-and passes it through the `_with_options` entry on every numerical call.
+It returns two dicts. Core stores structural choices in `desc.compile_options`.
+It packs runtime tuning into a null-terminated `scaly_solver_option` array and
+passes it through the `_with_options` entry on every numerical call.
 The wrapper reads its array at `solver_options[ctx.options_index]`.
 
 Option kind `0` stores an integer, kind `1` a number and kind `2` a string.

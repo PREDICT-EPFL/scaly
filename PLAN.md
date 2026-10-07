@@ -35,8 +35,18 @@ checks pass. Only solver.c changed among C snapshots, as the maintainer approved
 alongside the disjoint vector snapshot work. README snippets and ten examples run.
 The new structural gate fails for both backends under a forced-mode perturbation.
 
-Fable 5.1 high-effort review is running as delegated task
-`scaly-112-static-fable-review-1`. Read its terminal result before finalizing.
-Source/.text bytes after specialization: SQP 29164/14641, PIQP 14307/4081,
-IPOPT 17134/3793. Previous PR: 30318/15745, 16349/4865, 17154/3793.
+Fable 5.1 high-effort review found an unused SQP-only helper in native solver
+exports and repetitive PIQP settings dispatch. The helper now belongs to each
+SQP wrapper, with distinct symbols. PIQP uses one typed field table for dispatch
+and comparison, preserving workspace rebuilds without PIQP-internal assumptions.
+SQP checkpoint saves, watchdog trials and the merit fallback share their logic.
+The C/C++ warning gate failed before the fix and now passes. A two-SQP host test
+covers helper isolation, and the reuse cases exercise the native enum field.
+
+All pre-merge checks pass again with 1317 tests and no skips. The nine backend
+records plus four globalization/watchdog records exactly match main. The full
+harvested gate still records one CasADi compile. PIQP/IPOPT C and C++ exports
+compile with -Wall -Werror. Fable's one low-effort delta check is next.
+Source/.text bytes after simplification: SQP 27011/12817, PIQP 11477/2433,
+IPOPT 16919/3793. Previous PR: 30318/15745, 16349/4865, 17154/3793.
 Logs are `/tmp/scaly-112-static-*.log`; these are local diagnostics, not benchmarks.

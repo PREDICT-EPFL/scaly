@@ -58,7 +58,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
     *(
       pytest.param(
         "piqp",
-        ({"sparse": sparse, "eps_abs": 1e-8}, {"sparse": sparse, "eps_abs": 1e-5, "max_iter": 1}),
+        ({"sparse": sparse, "eps_abs": 1e-8}, {"sparse": sparse, "eps_abs": 1e-5, "max_iter": 1, "kkt_solver": int(sparse)}),
         marks=pytest.mark.solver("piqp"),
       )
       for sparse in (False, True)
@@ -208,6 +208,23 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
   np.testing.assert_allclose(host(tv), [1.5, 1.5], atol=1e-7)
 
 
+@pytest.mark.solver("sqp")
+def test_two_sqp_wrappers_in_one_translation_unit() -> None:
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("target", 2), name="tu_tracking")
+  def tracking(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - target))
+
+  first = sc.solver(tracking, "sqp", name="tu_sqp_a")
+  second = sc.solver(tracking, "sqp", name="tu_sqp_b", options={"qp": "dense"})
+
+  @sc.function(sc.arg("target", 2), outputs=sc.arg("sum"), name="two_sqp_host")
+  def host(target: sc.Expr) -> sc.Expr:
+    return first(target)[0] + second(2.0 * target)[0]
+
+  target = np.array([1.0, -2.0])
+  np.testing.assert_allclose(host(target), 3.0 * target, atol=2e-5, rtol=0)
+
+
 @pytest.mark.solver("piqp")
 @pytest.mark.parametrize("lang", ["c", "cpp"])
 def test_exported_solver_accepts_runtime_options(lang: str, tmp_path: Path) -> None:
@@ -245,7 +262,7 @@ int main(void) {{
   )
   executable = tmp_path / "driver"
   subprocess.run(
-    ["c++" if lang == "cpp" else "cc", "-O2", str(source), str(driver), *module.link_flags, "-lm", "-o", str(executable)],
+    ["c++" if lang == "cpp" else "cc", "-O2", "-Wall", "-Werror", str(source), str(driver), *module.link_flags, "-lm", "-o", str(executable)],
     check=True,
     capture_output=True,
   )

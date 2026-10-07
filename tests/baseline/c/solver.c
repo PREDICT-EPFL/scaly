@@ -73,10 +73,6 @@ static double scaly_clock_s(void) {
 #define SCALY_SOLVER_OPTION_DEFINED
 typedef struct { const char* name; int kind; int64_t integer; double number; const char* text; } scaly_solver_option;
 #endif
-static double scaly_option_number(const scaly_solver_option* options, const char* name) {
-  while (strcmp(options->name, name)) ++options;
-  return options->kind == 0 ? (double)options->integer : options->number;
-}
 
 #ifdef __cplusplus
 extern "C" {
@@ -110,40 +106,54 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   double stats_t_fe = scaly_clock_s() - fe_t0;
   static piqp_workspace* corpus_qp_ws = NULL;
   static piqp_settings previous_settings;
-  piqp_settings settings = {0};
+  piqp_settings settings;
   double solver_t0 = scaly_clock_s();
   piqp_set_default_settings_dense(&settings);
-  for (const scaly_solver_option* option = options; option->name; ++option) {
-    if (!strcmp(option->name, "check_duality_gap")) settings.check_duality_gap = option->integer;
-    if (!strcmp(option->name, "compute_timings")) settings.compute_timings = option->integer;
-    if (!strcmp(option->name, "delta_init")) settings.delta_init = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "eps_abs")) settings.eps_abs = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "eps_duality_gap_abs")) settings.eps_duality_gap_abs = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "eps_duality_gap_rel")) settings.eps_duality_gap_rel = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "eps_rel")) settings.eps_rel = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "infeasibility_threshold")) settings.infeasibility_threshold = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "iterative_refinement_always_enabled")) settings.iterative_refinement_always_enabled = option->integer;
-    if (!strcmp(option->name, "iterative_refinement_eps_abs")) settings.iterative_refinement_eps_abs = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "iterative_refinement_eps_rel")) settings.iterative_refinement_eps_rel = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "iterative_refinement_max_iter")) settings.iterative_refinement_max_iter = option->integer;
-    if (!strcmp(option->name, "iterative_refinement_min_improvement_rate")) settings.iterative_refinement_min_improvement_rate = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "iterative_refinement_static_regularization_eps")) settings.iterative_refinement_static_regularization_eps = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "iterative_refinement_static_regularization_rel")) settings.iterative_refinement_static_regularization_rel = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "kkt_solver")) settings.kkt_solver = (piqp_kkt_solver)option->integer;
-    if (!strcmp(option->name, "max_factor_retires")) settings.max_factor_retires = option->integer;
-    if (!strcmp(option->name, "max_iter")) settings.max_iter = option->integer;
-    if (!strcmp(option->name, "preconditioner_iter")) settings.preconditioner_iter = option->integer;
-    if (!strcmp(option->name, "preconditioner_reuse_on_update")) settings.preconditioner_reuse_on_update = option->integer;
-    if (!strcmp(option->name, "preconditioner_scale_cost")) settings.preconditioner_scale_cost = option->integer;
-    if (!strcmp(option->name, "reg_finetune_dual_update_threshold")) settings.reg_finetune_dual_update_threshold = option->integer;
-    if (!strcmp(option->name, "reg_finetune_lower_limit")) settings.reg_finetune_lower_limit = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "reg_finetune_primal_update_threshold")) settings.reg_finetune_primal_update_threshold = option->integer;
-    if (!strcmp(option->name, "reg_lower_limit")) settings.reg_lower_limit = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "rho_init")) settings.rho_init = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "tau")) settings.tau = (option->kind == 0 ? (double)option->integer : option->number);
-    if (!strcmp(option->name, "verbose")) settings.verbose = option->integer;
+  static const struct { const char* name; size_t offset; int kind; } fields[] = {
+    { "check_duality_gap", offsetof(piqp_settings, check_duality_gap), 1 },
+    { "compute_timings", offsetof(piqp_settings, compute_timings), 1 },
+    { "delta_init", offsetof(piqp_settings, delta_init), 0 },
+    { "eps_abs", offsetof(piqp_settings, eps_abs), 0 },
+    { "eps_duality_gap_abs", offsetof(piqp_settings, eps_duality_gap_abs), 0 },
+    { "eps_duality_gap_rel", offsetof(piqp_settings, eps_duality_gap_rel), 0 },
+    { "eps_rel", offsetof(piqp_settings, eps_rel), 0 },
+    { "infeasibility_threshold", offsetof(piqp_settings, infeasibility_threshold), 0 },
+    { "iterative_refinement_always_enabled", offsetof(piqp_settings, iterative_refinement_always_enabled), 1 },
+    { "iterative_refinement_eps_abs", offsetof(piqp_settings, iterative_refinement_eps_abs), 0 },
+    { "iterative_refinement_eps_rel", offsetof(piqp_settings, iterative_refinement_eps_rel), 0 },
+    { "iterative_refinement_max_iter", offsetof(piqp_settings, iterative_refinement_max_iter), 1 },
+    { "iterative_refinement_min_improvement_rate", offsetof(piqp_settings, iterative_refinement_min_improvement_rate), 0 },
+    { "iterative_refinement_static_regularization_eps", offsetof(piqp_settings, iterative_refinement_static_regularization_eps), 0 },
+    { "iterative_refinement_static_regularization_rel", offsetof(piqp_settings, iterative_refinement_static_regularization_rel), 0 },
+    { "kkt_solver", offsetof(piqp_settings, kkt_solver), 2 },
+    { "max_factor_retires", offsetof(piqp_settings, max_factor_retires), 1 },
+    { "max_iter", offsetof(piqp_settings, max_iter), 1 },
+    { "preconditioner_iter", offsetof(piqp_settings, preconditioner_iter), 1 },
+    { "preconditioner_reuse_on_update", offsetof(piqp_settings, preconditioner_reuse_on_update), 1 },
+    { "preconditioner_scale_cost", offsetof(piqp_settings, preconditioner_scale_cost), 1 },
+    { "reg_finetune_dual_update_threshold", offsetof(piqp_settings, reg_finetune_dual_update_threshold), 1 },
+    { "reg_finetune_lower_limit", offsetof(piqp_settings, reg_finetune_lower_limit), 0 },
+    { "reg_finetune_primal_update_threshold", offsetof(piqp_settings, reg_finetune_primal_update_threshold), 1 },
+    { "reg_lower_limit", offsetof(piqp_settings, reg_lower_limit), 0 },
+    { "rho_init", offsetof(piqp_settings, rho_init), 0 },
+    { "tau", offsetof(piqp_settings, tau), 0 },
+    { "verbose", offsetof(piqp_settings, verbose), 1 },
+  };
+  int changed = 0;
+  for (size_t k = 0; k < sizeof fields / sizeof *fields; ++k) {
+    char* field = (char*)&settings + fields[k].offset;
+    const char* previous = (const char*)&previous_settings + fields[k].offset;
+    for (const scaly_solver_option* option = options; option->name; ++option) {
+      if (strcmp(option->name, fields[k].name)) continue;
+      if (fields[k].kind == 1) *(piqp_int*)field = (piqp_int)option->integer;
+      else if (fields[k].kind == 2) *(piqp_kkt_solver*)field = (piqp_kkt_solver)option->integer;
+      else *(piqp_float*)field = option->kind == 0 ? (piqp_float)option->integer : option->number;
+    }
+    if (fields[k].kind == 1) changed |= *(const piqp_int*)previous != *(piqp_int*)field;
+    else if (fields[k].kind == 2) changed |= *(const piqp_kkt_solver*)previous != *(piqp_kkt_solver*)field;
+    else changed |= *(const piqp_float*)previous != *(piqp_float*)field;
   }
-  if (corpus_qp_ws && (previous_settings.check_duality_gap != settings.check_duality_gap || previous_settings.compute_timings != settings.compute_timings || previous_settings.delta_init != settings.delta_init || previous_settings.eps_abs != settings.eps_abs || previous_settings.eps_duality_gap_abs != settings.eps_duality_gap_abs || previous_settings.eps_duality_gap_rel != settings.eps_duality_gap_rel || previous_settings.eps_rel != settings.eps_rel || previous_settings.infeasibility_threshold != settings.infeasibility_threshold || previous_settings.iterative_refinement_always_enabled != settings.iterative_refinement_always_enabled || previous_settings.iterative_refinement_eps_abs != settings.iterative_refinement_eps_abs || previous_settings.iterative_refinement_eps_rel != settings.iterative_refinement_eps_rel || previous_settings.iterative_refinement_max_iter != settings.iterative_refinement_max_iter || previous_settings.iterative_refinement_min_improvement_rate != settings.iterative_refinement_min_improvement_rate || previous_settings.iterative_refinement_static_regularization_eps != settings.iterative_refinement_static_regularization_eps || previous_settings.iterative_refinement_static_regularization_rel != settings.iterative_refinement_static_regularization_rel || previous_settings.kkt_solver != settings.kkt_solver || previous_settings.max_factor_retires != settings.max_factor_retires || previous_settings.max_iter != settings.max_iter || previous_settings.preconditioner_iter != settings.preconditioner_iter || previous_settings.preconditioner_reuse_on_update != settings.preconditioner_reuse_on_update || previous_settings.preconditioner_scale_cost != settings.preconditioner_scale_cost || previous_settings.reg_finetune_dual_update_threshold != settings.reg_finetune_dual_update_threshold || previous_settings.reg_finetune_lower_limit != settings.reg_finetune_lower_limit || previous_settings.reg_finetune_primal_update_threshold != settings.reg_finetune_primal_update_threshold || previous_settings.reg_lower_limit != settings.reg_lower_limit || previous_settings.rho_init != settings.rho_init || previous_settings.tau != settings.tau || previous_settings.verbose != settings.verbose)) { piqp_cleanup(corpus_qp_ws); corpus_qp_ws = NULL; }
+  if (corpus_qp_ws && changed) { piqp_cleanup(corpus_qp_ws); corpus_qp_ws = NULL; }
   previous_settings = settings;
   piqp_data_dense data = { 2, 0, 0, P_buf, c_buf, NULL, NULL, NULL, NULL, NULL, xlb_buf, xub_buf };
   if (!corpus_qp_ws) piqp_setup_dense(&corpus_qp_ws, &data, &settings);

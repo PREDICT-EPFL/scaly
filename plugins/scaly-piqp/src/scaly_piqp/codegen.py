@@ -117,18 +117,31 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
 
   lines.append(f"  static piqp_workspace* {symbol}_ws = NULL;")
   lines.append("  static piqp_settings previous_settings;")
-  lines.append("  piqp_settings settings = {0};")
+  lines.append("  piqp_settings settings;")
   lines.append("  double solver_t0 = scaly_clock_s();")
   lines.append(f"  piqp_set_default_settings_{interface}(&settings);")
-  lines.append("  for (const scaly_solver_option* option = options; option->name; ++option) {")
+  lines.append("  static const struct { const char* name; size_t offset; int kind; } fields[] = {")
   for key in sorted(_SETTINGS):
-    value = "option->integer" if key in _INTEGER_SETTINGS else "(option->kind == 0 ? (double)option->integer : option->number)"
-    if key == "kkt_solver":
-      value = f"(piqp_kkt_solver){value}"
-    lines.append(f'    if (!strcmp(option->name, "{key}")) settings.{key} = {value};')
-  lines.append("  }")
-  changed = " || ".join(f"previous_settings.{key} != settings.{key}" for key in sorted(_SETTINGS))
-  lines.append(f"  if ({symbol}_ws && ({changed})) {{ piqp_cleanup({symbol}_ws); {symbol}_ws = NULL; }}")
+    kind = 2 if key == "kkt_solver" else int(key in _INTEGER_SETTINGS)
+    lines.append(f'    {{ "{key}", offsetof(piqp_settings, {key}), {kind} }},')
+  lines += [
+    "  };",
+    "  int changed = 0;",
+    "  for (size_t k = 0; k < sizeof fields / sizeof *fields; ++k) {",
+    "    char* field = (char*)&settings + fields[k].offset;",
+    "    const char* previous = (const char*)&previous_settings + fields[k].offset;",
+    "    for (const scaly_solver_option* option = options; option->name; ++option) {",
+    "      if (strcmp(option->name, fields[k].name)) continue;",
+    "      if (fields[k].kind == 1) *(piqp_int*)field = (piqp_int)option->integer;",
+    "      else if (fields[k].kind == 2) *(piqp_kkt_solver*)field = (piqp_kkt_solver)option->integer;",
+    "      else *(piqp_float*)field = option->kind == 0 ? (piqp_float)option->integer : option->number;",
+    "    }",
+    "    if (fields[k].kind == 1) changed |= *(const piqp_int*)previous != *(piqp_int*)field;",
+    "    else if (fields[k].kind == 2) changed |= *(const piqp_kkt_solver*)previous != *(piqp_kkt_solver*)field;",
+    "    else changed |= *(const piqp_float*)previous != *(piqp_float*)field;",
+    "  }",
+  ]
+  lines.append(f"  if ({symbol}_ws && changed) {{ piqp_cleanup({symbol}_ws); {symbol}_ws = NULL; }}")
   lines.append("  previous_settings = settings;")
   P = "&P_csc" if sparse else "P_buf"
   A = ("&A_csc" if sparse else "A_buf") if p else "NULL"

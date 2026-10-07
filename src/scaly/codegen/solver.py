@@ -142,16 +142,6 @@ def solver_options_c_defs() -> list[str]:
   ]
 
 
-def solver_options_c_helpers() -> list[str]:
-  """Read numeric options after the plugin has checked names, types and defaults in Python."""
-  return [
-    "static double scaly_option_number(const scaly_solver_option* options, const char* name) {",
-    "  while (strcmp(options->name, name)) ++options;",
-    "  return options->kind == 0 ? (double)options->integer : options->number;",
-    "}",
-  ]
-
-
 def render_solver_defaults(fun: ConcreteFunction) -> list[str]:
   """Render backend defaults from their Python owner for the universal entry and C callers."""
   from scaly.solvers.registry import get_backend

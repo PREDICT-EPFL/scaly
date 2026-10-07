@@ -38,7 +38,6 @@ from scaly.codegen.solver import (
   solver_stats_symbols,
   solver_functions,
   solver_options_c_defs,
-  solver_options_c_helpers,
   render_solver_defaults,
   solver_options_declarations,
 )
@@ -314,7 +313,6 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     "",
     *stats_c_timing_defs(),
     *solver_options_c_defs(),
-    *solver_options_c_helpers(),
     "",
     *(casadi_defines() + [""] if casadi else []),
     "#ifdef __cplusplus",

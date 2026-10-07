@@ -498,5 +498,5 @@ Solver wrappers keep static state and are not reentrant. Concurrent calls to
 the same wrapper are unsupported. Python passes tuning options on each call.
 Constructing another solver with different tuning reuses the compiled module.
 Changing PIQP's `sparse` or SQP's `qp` selects a different compiled interface.
-An exported module
-accepts options through its [`_with_options` entry](codegen.md#solver-options-in-c).
+An exported module accepts options through its
+[`_with_options` entry](codegen.md#solver-options-in-c).
