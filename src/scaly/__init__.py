@@ -61,17 +61,15 @@ from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
 from .ir.spec import Rule, Spec, VerifyError
 from .ad.sparse import SparseJacobian, sparse_jacobian_colored, sparse_jacobian_reference
 from .ad.sparsity import color_groups, column_coloring, jacobian_sparsity, star_coloring
-from .ir.types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, SparsityPattern, TensorType, as_dtype, backend_supports, dtypes
+from .ir.types import DeviceSpec, DType, SparsityPattern, TensorType, as_dtype, dtypes
 
 sym = Expr.sym
 const = Expr.const
 
 
 __all__ = [
-  "BACKEND_SUPPORT",
   "SCALY_SOLVER_STATS_VERSION",
   "ScalySolveStatus",
-  "BackendSupport",
   "Bounded",
   "C_API_SIGNATURE",
   "COMMON_OPS",
@@ -104,7 +102,6 @@ __all__ = [
   "adjoint",
   "as_dtype",
   "atan2",
-  "backend_supports",
   "bounded",
   "c_api_signature",
   "dtypes",

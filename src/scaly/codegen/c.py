@@ -56,8 +56,6 @@ def can_render_program_c(fun: Function | ConcreteFunction) -> bool:
   """True iff ``fun`` lowers and renders through the Program IR path. Diagnostic helper
   (e.g. for coverage probes); the hot path is ``aot._render_source`` calling ``render_program_c``."""
   fun = as_concrete(fun)
-  if fun.device.kind != "host":
-    return False
   try:
     render_program_c_source(fun)
   except LoweringError:
@@ -298,8 +296,6 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
     _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration)
   elif stmt.op == ProgramOp.CALL:
-    if stmt.attrs.get("external"):
-      raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")
     n_in, n_out = int(stmt.attrs["n_in"]), int(stmt.attrs["n_out"])
     ptrs = [_emit_call_arg(a, ptr_expr) for a in stmt.args[: n_in + n_out]]
     # Workspace tail: a callee needing its own w[] gets this proc's w advanced past its spill

@@ -15,7 +15,7 @@ src/scaly/
   __init__.py            curated public re-exports, and nothing else
 
   ir/                    dialect definitions, verification, text, pass infrastructure
-    types.py             DType, DeviceSpec, TensorType, SparsityPattern, backend support
+    types.py             DType, DeviceSpec, TensorType, SparsityPattern
     expr.py              ExprOp, OP_INFO, Expr, interning, builders, topo, format_expr
     expr_spec.py         expression-dialect verify rules, verify_expr
     program.py           ProgramOp, RangeKind, ProgramNode, interning, builders

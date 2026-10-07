@@ -2,8 +2,7 @@
 
 Covers:
 - ``DType`` registry and back-compat string equality (so legacy ``"float64"`` code paths keep working).
-- ``DeviceSpec.parse`` / ``Function.with_device`` placement policy and its
-  diagnostics (loud failure on unsupported placement).
+- ``DeviceSpec.parse``, which accepts only the host.
 - dtype propagation through expression construction and the rejection of
   mixed-dtype binary ops.
 """
@@ -49,36 +48,20 @@ def test_const_dtype_round_trip() -> None:
 
 
 def test_devicespec_parse_and_str() -> None:
-  assert sc.DeviceSpec.parse(None) == sc.DeviceSpec("host", 0)
-  assert sc.DeviceSpec.parse("host") == sc.DeviceSpec("host", 0)
-  assert sc.DeviceSpec.parse("cuda:1") == sc.DeviceSpec("cuda", 1)
-  assert str(sc.DeviceSpec("cuda", 0)) == "cuda:0"
-  with pytest.raises(ValueError):
-    sc.DeviceSpec("tpu", 0)
+  assert sc.DeviceSpec.parse(None) == sc.DeviceSpec("host")
+  assert sc.DeviceSpec.parse("host") == sc.DeviceSpec("host")
+  assert str(sc.DeviceSpec()) == "host"
+  for kind in ("cuda", "opencl", "metal", "cuda:0"):
+    with pytest.raises(ValueError, match="expected host"):
+      sc.DeviceSpec.parse(kind)
+  for name in ("BACKEND_SUPPORT", "BackendSupport", "backend_supports"):
+    assert not hasattr(sc, name)
 
 
-def test_function_with_device_repr_and_lower_diagnostic() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
-  def fn(x: sc.Expr) -> sc.Expr:
-    return x.sum()
-
-  assert as_concrete(fn).device.kind == "host"
-  assert "device=" not in repr(fn)
-  gpu = fn.with_device("cuda:0")
-  assert as_concrete(gpu).device == sc.DeviceSpec("cuda", 0)
-  assert "device=cuda:0" in repr(gpu.instantiate())
-  # only host lowers today; cuda placement should fail loudly via the JIT path
-  from scaly.codegen.jit import JitError
-
-  with pytest.raises(JitError, match="only host lowering"):
-    gpu(np.array([1.0, 2.0, 3.0]))
-
-
-def test_backend_capability_table_rejects_unsupported_dtype() -> None:
-  with pytest.raises(ValueError, match="cannot lower dtype float64"):
-    sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float64)), outputs=sc.arg("y"), name="f")(lambda x: x.sum()).with_device("metal:0")
-  # but float32 on metal is fine
-  sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y"), name="f32")(lambda x: x.sum()).with_device("metal:0")
+def test_function_rejects_a_dtype_the_host_cannot_lower() -> None:
+  half = sc.DType("float16", 16, "float16_t", is_floating=True)
+  with pytest.raises(ValueError, match="cannot lower dtype float16"):
+    sc.function(sc.arg("x", sc.TensorType((3,), dtype=half)), outputs=sc.arg("y"), name="f16")(lambda x: x.sum()).instantiate()
 
 
 def test_float32_construction_keeps_dtype_metadata() -> None:

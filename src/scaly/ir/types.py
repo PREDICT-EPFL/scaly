@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import reduce
 from operator import mul
 from collections.abc import Sequence
@@ -90,24 +90,16 @@ def as_dtype(value: DType | str | None) -> DType:
 
 @dataclass(frozen=True, slots=True)
 class DeviceSpec:
-  """Where a region/function should run.
-
-  ``kind`` is one of ``host``, ``cuda``, ``opencl``, ``metal``. ``index`` is the
-  device index for backends that have one. Backends register their
-  ``BackendSupport`` separately; ``DeviceSpec`` is only the policy value.
-  """
+  """Where a region/function should run. ``host`` is the only kind."""
 
   kind: str = "host"
-  index: int = 0
 
   def __post_init__(self) -> None:
-    if self.kind not in {"host", "cuda", "opencl", "metal"}:
-      raise ValueError(f"unsupported device kind {self.kind!r}; expected host/cuda/opencl/metal")
-    if self.index < 0:
-      raise ValueError(f"device index must be non-negative, got {self.index}")
+    if self.kind != "host":
+      raise ValueError(f"unsupported device kind {self.kind!r}; expected host")
 
   def __str__(self) -> str:
-    return self.kind if self.kind == "host" else f"{self.kind}:{self.index}"
+    return self.kind
 
   @staticmethod
   def parse(spec: "DeviceSpec | str | None") -> "DeviceSpec":
@@ -116,45 +108,8 @@ class DeviceSpec:
     if isinstance(spec, DeviceSpec):
       return spec
     if isinstance(spec, str):
-      if spec == "host":
-        return DeviceSpec("host", 0)
-      if ":" in spec:
-        kind, idx = spec.split(":", 1)
-        return DeviceSpec(kind, int(idx))
-      return DeviceSpec(spec, 0)
+      return DeviceSpec(spec)
     raise TypeError(f"cannot interpret {spec!r} as a DeviceSpec")
-
-
-@dataclass(frozen=True, slots=True)
-class BackendSupport:
-  """The dtypes one device backend can compute in. ``BACKEND_SUPPORT`` holds one per device kind."""
-
-  name: str
-  dtypes: frozenset[DType] = field(default_factory=frozenset)
-
-  def supports(self, dtype: DType) -> bool:
-    return dtype in self.dtypes
-
-
-BACKEND_SUPPORT: dict[str, BackendSupport] = {
-  "host": BackendSupport("host", frozenset(dtypes.all())),
-  # placeholder capability tables for the lowering policy: backends that exist
-  # at policy time but cannot lower yet still record their dtype constraints
-  # so an early diagnostic can reject e.g. float64 on Metal.
-  "cuda": BackendSupport("cuda", frozenset({dtypes.float32, dtypes.float64, dtypes.int32, dtypes.int64, dtypes.bool_})),
-  "opencl": BackendSupport("opencl", frozenset({dtypes.float32, dtypes.float64, dtypes.int32, dtypes.int64, dtypes.bool_})),
-  "metal": BackendSupport("metal", frozenset({dtypes.float32, dtypes.int32, dtypes.int64, dtypes.bool_})),
-}
-
-
-def backend_supports(device: DeviceSpec, dtype: DType) -> bool:
-  """Whether ``device``'s backend advertises support for ``dtype``.
-
-  ``Function`` checks this at construction, so an unsupported placement fails where it is
-  written rather than at run time or as a silent fall back to the host.
-  """
-  support = BACKEND_SUPPORT.get(device.kind)
-  return support is not None and support.supports(dtype)
 
 
 def _check_shape(name: str, shape: tuple[int, ...]) -> None:

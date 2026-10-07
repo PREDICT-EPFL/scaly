@@ -11,7 +11,6 @@ from ._common import (
   prune_procedures,
   _alias_sources,
   _proc_parts,
-  _procs,
   _rebuild_proc,
   _resolve_alias,
 )
@@ -28,7 +27,7 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   statement writing it reads only invariant inputs, constants and other invariant buffers; the
   statements producing the invariant buffers the rest of the body reads move to the prologue.
   """
-  procs, kernels = _procs(prog)
+  procs = prog.args
   table = {pr.attrs["name"]: pr for pr in procs}
   used_names = {c_ident(name) for name in table}
   pure: set[str] = set()
@@ -49,7 +48,7 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   for pr in rewritten:
     out.extend(inserted.get(pr.attrs["name"], ()))
     out.append(pr)
-  return prune_procedures(ProgramNode(ProgramOp.PROGRAM, (*out, *kernels), {**prog.attrs, "proc_count": len(out)}, prog.dtype))
+  return prune_procedures(ProgramNode(ProgramOp.PROGRAM, tuple(out), {**prog.attrs, "proc_count": len(out)}, prog.dtype))
 
 
 def _hoist_proc(

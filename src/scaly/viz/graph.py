@@ -41,7 +41,6 @@ _EXPR_COLORS = {
 _PROGRAM_NODE_COLORS = {
   ProgramOp.PROGRAM: "#c07788",
   ProgramOp.PROC: "#c07788",
-  ProgramOp.KERNEL: "#c07788",
   ProgramOp.BUFFER: "#b0bdff",
   ProgramOp.VIEW: "#e5eaff",
   ProgramOp.RANGE: "#c8a0e0",
@@ -51,7 +50,6 @@ _PROGRAM_NODE_COLORS = {
   ProgramOp.ASSIGN: "#87ceeb",
   ProgramOp.LOAD: "#ffc0c0",
   ProgramOp.CALL: "#00b7c8",
-  ProgramOp.LAUNCH: "#00b7c8",
   ProgramOp.CONST_INT: "#e0e0e0",
   ProgramOp.CONST_FLOAT: "#e0e0e0",
   ProgramOp.VAR: "#cef263",

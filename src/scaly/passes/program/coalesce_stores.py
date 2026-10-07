@@ -42,7 +42,7 @@ def coalesce_stores(prog: ProgramNode) -> ProgramNode:
 
   args: list[ProgramNode] = []
   for node in prog.args:
-    if node.op in {ProgramOp.PROC, ProgramOp.KERNEL}:
+    if node.op == ProgramOp.PROC:
       pc = node.attrs["param_count"]
       node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], {})), node.attrs, node.dtype)
     args.append(node)

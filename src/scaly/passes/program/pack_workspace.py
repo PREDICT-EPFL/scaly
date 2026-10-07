@@ -12,7 +12,6 @@ from ._common import (
   buffer_refs,
   _private_decls,
   _proc_parts,
-  _procs,
   _rebuild_proc,
   _resolve_alias,
   _size_of,
@@ -122,7 +121,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
 
 
 def pack_workspace(prog: ProgramNode) -> ProgramNode:
-  procs, kernels = _procs(prog)
+  procs = prog.args
   plans = {pr.attrs["name"]: _plan_pack(pr) for pr in procs}
 
   # A solver wrapper (rendered by codegen/solver, so it has no PROC here) is an opaque callee: it owns
@@ -151,7 +150,7 @@ def pack_workspace(prog: ProgramNode) -> ProgramNode:
     total(name)
 
   procs = [_apply_pack(pr, plans[pr.attrs["name"]], sz_w) for pr in procs]
-  return ProgramNode(ProgramOp.PROGRAM, (*procs, *kernels), prog.attrs, prog.dtype)
+  return ProgramNode(ProgramOp.PROGRAM, tuple(procs), prog.attrs, prog.dtype)
 
 
 def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> ProgramNode:

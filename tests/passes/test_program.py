@@ -203,12 +203,11 @@ def test_fusion_does_not_move_reads_into_a_consumer_that_overwrites_them() -> No
   assert fuse_elementwise(prog) is prog
 
 
-@pytest.mark.parametrize("invocation", ["call", "launch"])
-def test_buffer_analysis_keeps_arguments_with_unspecified_access_modes(invocation: str) -> None:
+def test_buffer_analysis_keeps_arguments_with_unspecified_access_modes() -> None:
   from scaly.passes.program._common import buffer_refs, prune_dead_buffers
 
   a = buffer("a", dtypes.float64, (4,), address_space="private")
-  stmt = p.call("external", [a]) if invocation == "call" else p.launch("kernel", [1], [1], [a])
+  stmt = p.call("external", [a])
   proc = proc_("invoke", [], [a, stmt])
   verify_program(proc)
   refs = buffer_refs(stmt)
@@ -282,18 +281,11 @@ def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> No
   leaf = proc_("leaf", [], [])
   dead = proc_("dead", [], [])
   oracle = proc_("oracle", [], [])
-  kernel_proc = proc_("kernel_proc", [], [])
   call = ProgramNode(ProgramOp.CALL, (), {"callee": "leaf", "n_in": 0, "n_out": 0, "returns": ()})
   entry = proc_("entry", [], [call])
-  kernel_call = ProgramNode(ProgramOp.CALL, (), {"callee": "kernel_proc", "n_in": 0, "n_out": 0, "returns": ()})
-  kernel = ProgramNode(ProgramOp.KERNEL, (kernel_call,), {"name": "kernel", "param_count": 0})
-  prog = ProgramNode(
-    ProgramOp.PROGRAM,
-    (leaf, dead, oracle, kernel_proc, entry, kernel),
-    {"proc_count": 5, "kernel_count": 1, "solver_oracles": {"solver": ("oracle",)}},
-  )
+  prog = ProgramNode(ProgramOp.PROGRAM, (leaf, dead, oracle, entry), {"proc_count": 4, "solver_oracles": {"solver": ("oracle",)}})
   result = prune_procedures(prog)
-  assert [proc.attrs["name"] for proc in result.args] == ["leaf", "oracle", "kernel_proc", "entry", "kernel"]
+  assert [proc.attrs["name"] for proc in result.args] == ["leaf", "oracle", "entry"]
 
 
 def test_generated_name_reserves_raw_and_c_identifier_collisions() -> None:
