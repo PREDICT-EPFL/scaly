@@ -45,6 +45,7 @@ jobs:
 
   # The tested environments. Ubuntu x86-64 pins the release's GCC and the image's Clang by version;
   # elsewhere the runner's default `cc` is the one users get. macOS installs the wheels built on macOS 15 for its architecture.
+  # There is no ubuntu-22.04-arm: CasADi's aarch64 wheel needs a newer libstdc++ than 22.04 ships.
   tests:
     needs: [wheels]
     uses: ./.github/workflows/tests.yml
@@ -58,7 +59,6 @@ jobs:
          {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "python": "3.12"},
          {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "gcc-15", "cxx": "g++-15"},
          {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "clang-22", "cxx": "clang++-22"},
-         {"os": "ubuntu-22.04-arm", "wheels": "ubuntu-24.04-arm"},
          {"os": "ubuntu-24.04-arm", "wheels": "ubuntu-24.04-arm"},
          {"os": "ubuntu-26.04-arm", "wheels": "ubuntu-24.04-arm"},
          {"os": "macos-15", "wheels": "macos-15"},

@@ -22,12 +22,12 @@ jobs:
         package: [scaly-piqp, scaly-ipopt]
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Restore the wheel
         id: cache
         if: inputs.cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: wheelhouse
           key: wheel-${{ matrix.package }}-${{ matrix.os }}-cibuildwheel-4.2.1-${{ hashFiles(format('plugins/{0}/**', matrix.package), format('!plugins/{0}/tests/**', matrix.package)) }}
@@ -53,7 +53,7 @@ jobs:
             SCALY_BUILD_SOLVERS=required
             ${{ matrix.package == 'scaly-ipopt' && 'MACOSX_DEPLOYMENT_TARGET=15.0' || '' }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.package }}-${{ matrix.os }}
           path: wheelhouse/*.whl

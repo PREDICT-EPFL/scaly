@@ -32,15 +32,15 @@ jobs:
       SCALY_BUILD_SOLVERS: skip
       SCALY_REQUIRE_SOLVERS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-scaly-*-${{ matrix.wheels }}
           merge-multiple: true
           path: dist
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
@@ -72,6 +72,12 @@ jobs:
 
       - name: Pytest
         run: uv run pytest -n=auto
+
+      # The benchmark harness accepts only GCC for vector-libm JIT builds, so Clang runs the
+      # benchmark commands with scalar libm. Pytest compiles vector libm with both GCC and Clang.
+      - name: Benchmark math policy
+        if: ${{ !cancelled() }}
+        run: case "${CC:-}" in clang*) echo "SCALY_VECTOR_LIBM=none" >> "$GITHUB_ENV" ;; esac
 
       - name: Benchmark smoke
         if: ${{ !cancelled() }}
