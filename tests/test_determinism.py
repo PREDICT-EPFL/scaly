@@ -26,11 +26,15 @@ def module_counters(source: str) -> list[str]:
     for t in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target])
     if isinstance(t, ast.Name)
   }
+  itertools_names = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.name == "itertools"}
+  count_names = {
+    a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == "itertools" for a in n.names if a.name == "count"
+  }
   for node in ast.walk(tree):
     if isinstance(node, ast.Call):
       fn = node.func
-      if (isinstance(fn, ast.Attribute) and fn.attr == "count" and isinstance(fn.value, ast.Name) and fn.value.id == "itertools") or (
-        isinstance(fn, ast.Name) and fn.id == "count"
+      if (isinstance(fn, ast.Attribute) and fn.attr == "count" and isinstance(fn.value, ast.Name) and fn.value.id in itertools_names) or (
+        isinstance(fn, ast.Name) and fn.id in count_names
       ):
         found.append(f"line {node.lineno}: itertools.count")
     if isinstance(node, ast.Global):
@@ -48,6 +52,8 @@ def test_no_module_level_counters() -> None:
   [
     "import itertools\n_ids = itertools.count()\n",
     "from itertools import count\n_ids = count()\n",
+    "import itertools as it\n_ids = it.count()\n",
+    "from itertools import count as fresh\n_ids = fresh()\n",
     "_n = 0\ndef fresh():\n  global _n\n  _n += 1\n  return f't{_n}'\n",
   ],
 )

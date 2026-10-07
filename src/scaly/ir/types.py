@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import reduce
 from operator import mul
-from collections.abc import Sequence
-from typing import Literal
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
+from typing import Any, Literal
 
 import numpy as np
 
@@ -274,3 +275,17 @@ def broadcast_shape(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
   longer = a if len(a) > len(b) else b
   out.extend(reversed(longer[: abs(len(a) - len(b))]))
   return tuple(reversed(out))
+
+
+def frozen(value: Any) -> Any:
+  """``value`` as an immutable copy, for an interned node's ``attrs``: a mapping becomes a read-only
+  view, a list a tuple and an array a read-only copy, all the way down."""
+  if isinstance(value, np.ndarray):
+    out = value.copy()
+    out.flags.writeable = False
+    return out
+  if isinstance(value, Mapping):
+    return MappingProxyType({k: frozen(v) for k, v in value.items()})
+  if isinstance(value, list) or type(value) is tuple:
+    return tuple(frozen(v) for v in value)
+  return value

@@ -7,7 +7,7 @@ from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ir.expr import Expr, ExprOp, substitute, topo
-from scaly.ir.types import TensorType
+from scaly.ir.types import TensorType, frozen
 from scaly.passes.expr import cse_many
 
 
@@ -180,7 +180,7 @@ def test_interning_tells_apart_attributes_that_differ_in_bits_or_kind(first, sec
   b = Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"v": second})
 
   assert a is not b and not a.structurally_equal(b)
-  assert a.attrs["v"] is first and b.attrs["v"] is second
+  assert repr(a.attrs["v"]) == repr(frozen(first)) and repr(b.attrs["v"]) == repr(frozen(second))
   assert len({n.id for n in cse_many([a, b])}) == 2
   assert Expr(ExprOp.NEG, (x,), TensorType((2,)), attrs={"v": first}) is a
 

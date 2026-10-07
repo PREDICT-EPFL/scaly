@@ -31,12 +31,11 @@ import weakref
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 
-from .types import DType, DeviceSpec, dtypes
+from .types import DType, DeviceSpec, dtypes, frozen
 
 
 class ProgramOp(StrEnum):
@@ -185,7 +184,7 @@ def _attr_key(v: Any) -> Any:
   if isinstance(v, Mapping):
     return tuple((k, _attr_key(x)) for k, x in sorted(v.items()))
   if isinstance(v, (tuple, list)):
-    if v and all(type(x) is float for x in v):  # a constant table packs at once, much faster than value by value
+    if v and all(isinstance(x, float) for x in v):  # a constant table packs at once, much faster than value by value
       return (tuple, struct.pack(f"<{len(v)}d", *v))
     return tuple(map(_attr_key, v))
   return v
@@ -227,7 +226,7 @@ class ProgramNode:
     instance = object.__new__(cls)
     object.__setattr__(instance, "op", op)
     object.__setattr__(instance, "args", tuple(args))
-    object.__setattr__(instance, "attrs", MappingProxyType(dict(attrs)))
+    object.__setattr__(instance, "attrs", frozen(attrs))
     object.__setattr__(instance, "dtype", dtype)
     _PROGRAM_NODE_CACHE[key] = instance
     return instance

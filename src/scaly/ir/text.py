@@ -49,7 +49,7 @@ def _value_asm(v: Any) -> str:
     return "[" + ", ".join(_value_asm(x) for x in v) + "]"
   if isinstance(v, list):
     return "[" + ", ".join(_value_asm(x) for x in v) + "]"
-  if isinstance(v, dict):
+  if isinstance(v, Mapping):
     return "{" + ", ".join(f"{k}={_value_asm(val)}" for k, val in sorted(v.items())) + "}"
   if hasattr(v, "name") and v.__class__.__name__ == "ConcreteFunction":
     return "@" + v.name

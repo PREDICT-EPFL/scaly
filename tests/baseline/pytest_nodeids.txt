@@ -612,6 +612,7 @@ tests/ir/test_match.py::test_program_rebuild_keeps_untouched_subtrees_shared
 tests/ir/test_match.py::test_revisit_rejects_a_replacement_that_contains_the_replaced_node
 tests/ir/test_match.py::test_revisit_walks_into_replacements_in_the_program_dialect
 tests/ir/test_match.py::test_shared_subgraph_is_rewritten_once_and_stays_shared
+tests/ir/test_program.py::test_a_constant_table_is_copied_all_the_way_down
 tests/ir/test_program.py::test_buffer_address_space_validated
 tests/ir/test_program.py::test_buffer_dtype_and_device_recorded
 tests/ir/test_program.py::test_elementwise_proc_verifies_and_prints
@@ -1125,7 +1126,9 @@ tests/test_c_snapshot.py::test_generated_c_matches_snapshot[workspace]
 tests/test_c_snapshot.py::test_generated_solver_c_matches_snapshot[solver]
 tests/test_determinism.py::test_no_module_level_counters
 tests/test_determinism.py::test_the_check_finds_a_counter[_n = 0\ndef fresh():\n  global _n\n  _n += 1\n  return f't{_n}'\n]
+tests/test_determinism.py::test_the_check_finds_a_counter[from itertools import count as fresh\n_ids = fresh()\n]
 tests/test_determinism.py::test_the_check_finds_a_counter[from itertools import count\n_ids = count()\n]
+tests/test_determinism.py::test_the_check_finds_a_counter[import itertools as it\n_ids = it.count()\n]
 tests/test_determinism.py::test_the_check_finds_a_counter[import itertools\n_ids = itertools.count()\n]
 tests/test_docs_prose.py::test_published_prose[README.md]
 tests/test_docs_prose.py::test_published_prose[docs/benchmarks/closed_loop.md]

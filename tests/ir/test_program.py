@@ -21,7 +21,7 @@ from scaly.ir.program import ProgramNode, ProgramOp, RangeKind
 from scaly.ir.text import format_program
 from scaly.ir.program_spec import verify_program
 from scaly.ir.spec import VerifyError
-from scaly.ir.types import dtypes
+from scaly.ir.types import dtypes, frozen
 
 
 def _elementwise_neg_proc() -> ProgramNode:
@@ -226,6 +226,20 @@ def test_node_holds_a_frozen_copy_of_its_attributes() -> None:
     node.attrs["name"] = "intern_w"  # ty: ignore[invalid-assignment]
 
 
+def test_a_constant_table_is_copied_all_the_way_down() -> None:
+  values = [1.0, 2.0]
+  node = ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": values, "nested": {"rows": [0, 1]}}, dtypes.float64)
+  values[0] = 9.0
+
+  assert node.attrs["values"] == (1.0, 2.0) and node.attrs["nested"]["rows"] == (0, 1)
+  assert ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": [1.0, 2.0], "nested": {"rows": [0, 1]}}, dtypes.float64) is node
+  assert p.const_buffer("intern_t", dtypes.float64, (2,), [1.0, 2.0]) is p.const_buffer(
+    "intern_t", dtypes.float64, (2,), [np.float64(1), np.float64(2)]
+  )
+  with pytest.raises(TypeError):
+    node.attrs["nested"]["rows"] = ()
+
+
 @pytest.mark.parametrize(("first", "second"), [(1, True), (True, 1), (0, False), (1, 1.0), ((1, 0), (True, False)), ((0.0, 1.0), (-0.0, 1.0))])
 def test_interning_tells_attributes_apart_by_kind_and_bits(first, second) -> None:
   assert first == second
@@ -233,7 +247,7 @@ def test_interning_tells_attributes_apart_by_kind_and_bits(first, second) -> Non
   b = ProgramNode(ProgramOp.CONST_INT, (), {"value": second}, dtypes.int64)
 
   assert a is not b
-  assert a.attrs["value"] is first and b.attrs["value"] is second
+  assert repr(a.attrs["value"]) == repr(frozen(first)) and repr(b.attrs["value"]) == repr(frozen(second))
   assert ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64) is a
 
 

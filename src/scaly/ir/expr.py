@@ -13,12 +13,11 @@ import struct
 import weakref
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
-from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes
+from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes, frozen
 
 
 class ExprOp(StrEnum):
@@ -198,12 +197,6 @@ def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
 _NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "Expr"] = weakref.WeakValueDictionary()
 
 
-def _frozen(array: np.ndarray) -> np.ndarray:
-  out = array.copy()
-  out.flags.writeable = False
-  return out
-
-
 def _intern_key(
   op: ExprOp | str,
   args: tuple["Expr", ...],
@@ -274,8 +267,8 @@ class Expr:
     put(instance, "args", tuple(args))
     put(instance, "type", type_eff)
     put(instance, "name", name)
-    put(instance, "value", None if value is None else _frozen(value))
-    put(instance, "attrs", MappingProxyType({k: _frozen(v) if isinstance(v, np.ndarray) else v for k, v in attrs_eff.items()}))
+    put(instance, "value", None if value is None else frozen(value))
+    put(instance, "attrs", frozen(attrs_eff))
     put(instance, "lowering", lowering)
     put(instance, "_key_cache", None)
     _NODE_CACHE[key] = instance
@@ -538,7 +531,7 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
       return ("Function", weakref.ref(v))
     if isinstance(v, np.ndarray):
       return ("ndarray", v.shape, str(v.dtype), v.tobytes())
-    if isinstance(v, dict):
+    if isinstance(v, Mapping):
       return tuple((k, key(x)) for k, x in sorted(v.items()))
     if isinstance(v, slice):
       return ("slice", v.start, v.stop, v.step)
