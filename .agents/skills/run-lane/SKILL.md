@@ -38,6 +38,10 @@ Launch one thread per issue with `t3_thread_launch`, a title naming the issue, a
  "message": "<brief>"}
 ```
 
+Pick the provider with `modelSelection` (`instanceId` `codex` or `claudeAgent`). Keep each
+returned thread id. A launch has no retry key, so after an error check `t3_thread_list` before
+launching again.
+
 Independent issues start at once. A dependent issue starts when the branch below has its review
 verdict, not when it merges. Start with two threads at a time across the lane, and do not launch
 past about 70% of a provider's usage window. Alternate providers between implementation and review
@@ -58,9 +62,15 @@ Report: the pull request link, evidence per criterion, open points, follow-up is
 
 ## Watch
 
-Keep each thread id. Read their progress with `t3_thread_read` when notified, not by polling in
-a loop. Relay a question to the maintainer in one batched message per round, with a recommended
-answer for each.
+Launched threads are top-level, so nothing notifies the coordinator. While threads run, loop:
+`t3_thread_wait` on one thread with a timeout of about ten minutes, then `t3_thread_list` across
+the lane for any thread that finished or is `waiting`. A timeout does not stop the thread. Read new
+output with `t3_thread_read` from the last position. Answer a child's question with
+`t3_pending_request_respond`, or relay it to the maintainer in one batched message per round, with
+a recommended answer for each. Permission requests need the maintainer. Send instructions with
+`t3_thread_send`, `mode: queue` unless the running turn must change. Stop a thread that has become
+pointless with `t3_thread_interrupt`. Once every running thread waits on the maintainer's review,
+end the turn and let the maintainer wake the coordinator.
 
 When the bottom of a stack is squash-merged, let `gh stack` rebase the rest and tell each thread
 to rerun its checks. Without the extension, rebase the next branch with
