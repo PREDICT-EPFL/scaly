@@ -77,7 +77,7 @@ including the sparse matrix-pattern probe. An unknown name raises `ValueError` i
 all supported PIQP 0.6.4 settings. The plugin's accepted names match the vendored
 `piqp_settings` struct. Scaly's `sparse` option is handled separately.
 Numeric and Boolean values still become settings-struct assignments, and string-valued
-settings still raise during rendering. [#112] will carry the name check into runtime options.
+settings still raise during rendering. Moving options to run time is [#112].
 
 Evidence: `scaly_piqp._Backend.validate_options`, called at the start of
 [`build_qp`](../../src/scaly/solvers/qp.py), and the regression tests in
