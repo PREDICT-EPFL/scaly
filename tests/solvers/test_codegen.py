@@ -121,6 +121,31 @@ def test_solver_options_share_one_build(
     assert int(compiled.solver_stats().status) == status
 
 
+@pytest.mark.parametrize("backend", [pytest.param("piqp", marks=pytest.mark.solver("piqp")), pytest.param("sqp", marks=pytest.mark.solver("sqp"))])
+def test_sparse_solver_needs_no_dense_staging_memory(backend: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+  from scaly.codegen import aot
+
+  @sc.problem(vars=sc.arg("x", 2), name="staging_memory")
+  def tracking(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - 1.0))
+
+  render = aot._render_solver_bearing_source
+  monkeypatch.setattr(
+    aot,
+    "_render_solver_bearing_source",
+    lambda *args, **kwargs: render(*args, **kwargs).replace("#include <stdlib.h>", "#include <stdlib.h>\n#define malloc(size) NULL"),
+  )
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+  sparse = {"sparse": True} if backend == "piqp" else {"qp": "sparse"}
+  dense = {"sparse": False} if backend == "piqp" else {"qp": "dense"}
+  solve = sc.solver(tracking, backend, options=sparse)
+  np.testing.assert_allclose(solve(())[0], np.ones(2), atol=1e-5, rtol=0)
+  assert solve.stats().status == sc.ScalySolveStatus.OK
+  solve = sc.solver(tracking, backend, options=dense)
+  np.testing.assert_array_equal(solve(())[0], np.zeros(2))
+  assert solve.stats().status == sc.ScalySolveStatus.ERROR
+
+
 @pytest.mark.solver("piqp")
 def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
   """The `scaly_solver_stats` handshake is Scaly's contract with every backend."""
@@ -172,7 +197,11 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
 def test_exported_solver_accepts_runtime_options(lang: str, tmp_path: Path) -> None:
   from scaly.codegen import render_c_module
 
-  qp = build_qp(P=np.eye(2), c=np.array([-1.0, -2.0]), name="export_options", options={"max_iter": 1})
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("solver_options", 2), name="export_options")
+  def tracking(x: sc.Expr, solver_options: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=0.5 * sc.sumsqr(x) - sc.dot(x, solver_options))
+
+  qp = sc.solver(tracking, "piqp", name="export_options", options={"max_iter": 1})
   module = render_c_module(qp.function, lang=lang)
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
@@ -182,7 +211,8 @@ def test_exported_solver_accepts_runtime_options(lang: str, tmp_path: Path) -> N
     f"""#include "{module.header_name}"
 int main(void) {{
   double zero[2] = {{0, 0}}, x[2], lam[2], empty[1] = {{0}};
-  const double* arg[] = {{zero, zero, empty, empty}};
+  double target[2] = {{1, 2}};
+  const double* arg[] = {{zero, zero, empty, empty, target}};
   double* res[] = {{x, lam, empty, empty}};
   scaly_solver_option values[] = {{{{ "max_iter", 0, 1, 0.0, 0 }}, {{ "verbose", 0, 0, 0.0, 0 }}, {{ "sparse", 0, 0, 0.0, 0 }}, {{ 0, 0, 0, 0.0, 0 }}}};
   const scaly_solver_option* options[] = {{values}};

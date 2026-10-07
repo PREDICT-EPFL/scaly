@@ -382,7 +382,9 @@ def check_nlp_uses_an_exact_hessian() -> None:
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
   controller = build_solver(config, "ipopt", "scaly")
   assert as_concrete(controller.function).descriptor.hess is not None
-  requested = dict(as_concrete(controller.function).descriptor.options).get("hessian_approximation")
+  requested = next(
+    (option.text for option in as_concrete(controller.function).descriptor.runtime_options if option.name == b"hessian_approximation"), None
+  )
   assert requested is None, f"the IPOPT column asks for hessian_approximation={requested!r}"
 
   n_eq, n_ineq = constraint_counts(config.horizon)

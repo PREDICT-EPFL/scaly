@@ -208,32 +208,30 @@ def build_qp[SV, NV, SP, NP](
 
   params = problem._param_symbols
 
-  P_sp = A_sp = G_sp = None
-  if backend.name == "piqp":
-    matrices = (P, A, G_mat)
-    probe = ConcreteFunction._from_exprs(
-      f"{name}_pattern_probe",
-      params,
-      tuple(matrix.vec() for matrix in matrices),
-      problem.params.names,
-      ("P", "A", "G"),
-    )
-    rng = np.random.default_rng(0)
-    sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
-    values = probe(*sample)
-    P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
-    if n_eq:
-      A_sp = _qp_matrix_sparsity(A, params, values[1])
-    if n_ineq:
-      G_sp = _qp_matrix_sparsity(G_mat, params, values[2])
+  matrices = (P, A, G_mat)
+  probe = ConcreteFunction._from_exprs(
+    f"{name}_pattern_probe",
+    params,
+    tuple(matrix.vec() for matrix in matrices),
+    problem.params.names,
+    ("P", "A", "G"),
+  )
+  rng = np.random.default_rng(0)
+  sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
+  values = probe(*sample)
+  P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
+  A_sp = _qp_matrix_sparsity(A, params, values[1]) if n_eq else None
+  G_sp = _qp_matrix_sparsity(G_mat, params, values[2]) if n_ineq else None
 
-  oracle_outputs: list[Expr] = [_gathered(P, P_sp) if P_sp is not None else P.vec(), c]
+  oracle_outputs: list[Expr] = [_gathered(P, P_sp), c]
   oracle_names = ["P", "c"]
   if n_eq:
-    oracle_outputs.extend((_gathered(A, A_sp) if A_sp is not None else A.vec(), b))
+    assert A_sp is not None
+    oracle_outputs.extend((_gathered(A, A_sp), b))
     oracle_names.extend(("A_eq", "b_eq"))
   if n_ineq:
-    oracle_outputs.extend((_gathered(G_mat, G_sp) if G_sp is not None else G_mat.vec(), g_lb, g_ub))
+    assert G_sp is not None
+    oracle_outputs.extend((_gathered(G_mat, G_sp), g_lb, g_ub))
     oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
   oracle_outputs.extend((x_lb, x_ub))
   oracle_names.extend(("x_lb", "x_ub"))

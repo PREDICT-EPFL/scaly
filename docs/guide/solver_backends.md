@@ -7,8 +7,7 @@ and warm-start behavior differ.
 
 Options belong to the Python `Solver` and are passed to the generated code on
 each call. Solvers for the same problem and with the same name share one compiled
-module even when their options differ. Constructing another solver with different
-options reuses the compiled wrapper and oracles.
+module even when their options differ.
 
 ## Problem types and backend selection
 

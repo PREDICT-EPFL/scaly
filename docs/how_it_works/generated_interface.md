@@ -365,9 +365,7 @@ The key is a SHA-256 hash over, in order:
 Changing the optimization level therefore gives a new key, as the `-O3` run
 shows. The compiler binary is not part of the key, so pointing `SCALY_CC` at a
 different compiler with the same flags reuses artifacts built by the old one.
-Numerical inputs and user solver options never enter the key. Backend defaults
-come from the plugin's Python option preparation and also provide the exported
-module's default option arrays.
+Numerical inputs and user solver options never enter the key.
 
 ### Where artifacts live
 

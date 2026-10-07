@@ -31,3 +31,16 @@ blocks run. The full suite passes (1307 passed, three skipped); the remaining
 pre-merge smoke/docs checks are running before review. Only the solver C/header
 snapshots changed; diagnostic source-size, generation and native timing records
 are in /tmp/scaly-112-measure-{main,after}.log.
+
+Independent Opus review requested two fixes: obsolete benchmark reads of the
+removed option field, and unconditional dense static buffers in sparse mode.
+Both are fixed. Three full benchmark gates pass. Dense staging is allocated only
+for dense calls and freed after the solve; allocation-denial tests cover both
+backends. The typed C/C++ name collision is fixed. Core QP oracles now uniformly
+use compact patterns instead of naming PIQP. Reader prose notes are resolved.
+The complete final collection passes: 1312 tests, no skips. The cold N=40 gate
+still compiles CasADi once, and the nine-case comparison still exactly matches
+main. A focused nonparallel test invocation crashed in the existing isolated
+Fortran library loader; the affected IPOPT cases passed in the full rerun, and
+main's equivalent nine-case run passed. Delta review remains after final smoke
+and documentation checks finish.

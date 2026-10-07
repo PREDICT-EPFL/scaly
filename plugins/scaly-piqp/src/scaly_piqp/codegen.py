@@ -86,16 +86,22 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append('  int sparse = (int)scaly_option_number(options, "sparse");')
   lines.append("  double stats_t0 = scaly_clock_s();")
 
-  # 1. Local QP data buffers (static: row-major P/A/G are O(n^2) in the dense
-  # case and would overflow the stack at larger sizes; the wrapper is
-  # non-reentrant anyway).
   for buf, size in oracle_outs:
     lines.append(f"  static double {buf}[{size}];")
-  lines.append(f"  static double Pcol[{n * n}];")
+  lines.append(f"  double* dense_values = sparse ? NULL : (double*)malloc({(n + p + m) * n}ULL * sizeof(double));")
+  lines.append("  if (!sparse && !dense_values) {")
+  for block, (_, shape) in enumerate(desc.output_signature):
+    lines.append(f"    for (int i = 0; i < {math.prod(shape)}; ++i) out{block}[i] = in{block}[i];")
+  lines.append(
+    f"    {ctx.stats_symbol} = (scaly_solver_stats){{ .version = SCALY_SOLVER_STATS_VERSION, .status = SCALY_SOLVE_ERROR, .native_status = PIQP_UNSOLVED }};"
+  )
+  lines.append("    return;")
+  lines.append("  }")
+  lines.append("  double* Pcol = dense_values;")
   if p:
-    lines.append(f"  static double Acol[{p * n}];")
+    lines.append(f"  double* Acol = dense_values ? dense_values + {n * n}ULL : NULL;")
   if m:
-    lines.append(f"  static double Gcol[{m * n}];")
+    lines.append(f"  double* Gcol = dense_values ? dense_values + {(n + p) * n}ULL : NULL;")
 
   # 2. Call the oracle. The oracle's input order is the param list; its
   # output order matches oracle_outs above.
@@ -124,12 +130,12 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     lines += _csc_tables(matrix, pattern)
     lines.append(f"  static piqp_csc {matrix}_csc = {{ {rows}, {cols}, {nnz}, {matrix}_p, {matrix}_i, {matrix}_buf }};")
     lines.append("  if (!sparse) {")
-    lines.append(f"    for (int i = 0; i < {rows * cols}; ++i) {matrix}col[i] = 0.0;")
+    lines.append(f"    for (size_t i = 0; i < {rows * cols}ULL; ++i) {matrix}col[i] = 0.0;")
     lines.append(f"    for (int j = 0; j < {cols}; ++j) for (int k = {matrix}_p[j]; k < {matrix}_p[j + 1]; ++k) {{")
-    index = f"{matrix}_i[k] + j * {rows}" if matrix == "P" else f"{matrix}_i[k] * {cols} + j"
+    index = f"{matrix}_i[k] + (size_t)j * {rows}" if matrix == "P" else f"(size_t){matrix}_i[k] * {cols} + j"
     lines.append(f"      {matrix}col[{index}] = {matrix}_buf[k];")
     if matrix == "P":
-      lines.append(f"      Pcol[j + P_i[k] * {n}] = P_buf[k];")
+      lines.append(f"      Pcol[j + (size_t)P_i[k] * {n}] = P_buf[k];")
     lines.append("    }")
     lines.append("  }")
 
@@ -204,6 +210,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {ctx.stats_symbol}.merit_penalty = 0.0;")
   lines.append(f"  {ctx.stats_symbol}.backtracks = 0;")
   lines.append(f"  {ctx.stats_symbol}.qp_iter = (int32_t)res->info.iter;")
+  lines.append("  free(dense_values);")
   lines.append("  double stats_t_total = scaly_clock_s() - stats_t0;")
   lines.append(f"  {ctx.stats_symbol}.t_total = stats_t_total;")
   lines.append(f"  {ctx.stats_symbol}.t_glue = stats_t_total - stats_t_fe - stats_t_solver;")

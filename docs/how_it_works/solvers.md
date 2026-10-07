@@ -15,7 +15,7 @@ the generated wrappers do.
 `sc.solver` returns a `Solver` whose `function` is an ordinary `Function`. Its
 outputs are `expr.solver_call` nodes that all carry the same
 `SolverDescriptor`, the record of everything the plugin needs: dimensions,
-oracles and sparsity patterns. Options stay in Python for call-time dispatch.
+oracles and sparsity patterns. Python supplies the options on each call.
 Nesting the allocation solver from the guide in a larger function and printing `sc.render_expr_assembly(allocate)`
 shows both levels:
 

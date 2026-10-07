@@ -27,13 +27,13 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   """The identifiers the typed wrappers use for ``fun``'s inputs and outputs. A name is ``c_ident``
   of itself, with ``_in``/``_out`` appended when the same name is both an input and an output (a
   solver ConcreteFunction's warm start and solution), and a trailing underscore when it would shadow the
-  entry the wrapper calls or its workspace."""
+  entry the wrapper calls, its workspace or its option context."""
   symbol = c_ident(fun.name)
   shared = set(fun.input_names) & set(fun.output_names)
 
   def ident(name: str, suffix: str) -> str:
     out = c_ident(name + suffix if name in shared else name)
-    return f"{out}_" if out in (symbol, "workspace") else out
+    return f"{out}_" if out in (symbol, f"{symbol}_with_options", "workspace", "solver_options") else out
 
   return [ident(n, "_in") for n in fun.input_names], [ident(n, "_out") for n in fun.output_names]
 

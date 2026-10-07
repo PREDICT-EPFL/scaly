@@ -302,7 +302,10 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
   lines: list[str] = [
     *_includes(
-      ("#include <time.h>", "#include <string.h>", *solver_includes(fun)), dialect=ctx.recipe.dialect, prog=prog, vector_libm=ctx.recipe.vector_libm
+      ("#include <time.h>", "#include <string.h>", "#include <stdlib.h>", *solver_includes(fun)),
+      dialect=ctx.recipe.dialect,
+      prog=prog,
+      vector_libm=ctx.recipe.vector_libm,
     ),
     "",
     *abi_status_defines(),

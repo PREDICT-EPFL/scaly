@@ -188,7 +188,7 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 
 - The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
-- Without matrix sparsity patterns, oracle matrices are row-major. With `P_sparsity`, `A_sparsity`, and `G_sparsity`, the oracle emits compact compressed sparse column values in their baked order. `P_sparsity` contains the upper triangle. PIQP uses this compact oracle for both interfaces and expands dense matrices at run time.
+- The oracle emits compact compressed sparse column values in the baked order of `P_sparsity`, `A_sparsity`, and `G_sparsity`. `P_sparsity` contains the upper triangle. PIQP uses this compact oracle for both interfaces and expands dense matrices at run time.
 - The oracle emits IEEE infinities for absent bounds, and the wrapper converts them to the QP solver's native convention.
 - A QP plugin is a standalone solver only. scaly-sqp does not consume this contract for its subproblems. Its wrapper is written against PIQP's C API and links `scaly-piqp`'s library. See the [user guide](../guide/solver_backends.md#scaly-sqp).
 

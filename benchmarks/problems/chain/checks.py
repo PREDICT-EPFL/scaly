@@ -94,7 +94,10 @@ def check_nlp_objective_matches_casadi() -> None:
 
   generated = chain_nlp(n_masses, horizon)
   assert as_concrete(generated.function).descriptor.hess is not None
-  assert dict(as_concrete(generated.function).descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert not any(
+    option.name == b"hessian_approximation" and option.text == b"limited-memory"
+    for option in as_concrete(generated.function).descriptor.runtime_options
+  )
   scaly_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
   stats = problem_stats(generated)
   assert stats is not None and stats.to_solver_status().ok and stats.iter > 0

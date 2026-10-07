@@ -223,9 +223,11 @@ def check_exact_hessian_default() -> None:
   """The canonical solver asks every provider for exact Lagrangian Hessians."""
   solver = _race_car_nlp(EpisodeConfig.smoke())
   assert as_concrete(solver.function).descriptor.hess is not None
-  assert dict(as_concrete(solver.function).descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert not any(
+    option.name == b"hessian_approximation" and option.text == b"limited-memory" for option in as_concrete(solver.function).descriptor.runtime_options
+  )
   sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
-  assert dict(as_concrete(sqp.function).descriptor.options).get("hessian", "exact") == "exact"
+  assert next(option.integer for option in as_concrete(sqp.function).descriptor.runtime_options if option.name == b"hessian") == 1
 
 
 def check_casadi_ipopt_is_compiled() -> None:

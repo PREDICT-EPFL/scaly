@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <string.h>
+#include <stdlib.h>
 #include "piqp/piqp.h"
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
@@ -104,7 +105,16 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   static double c_buf[2];
   static double xlb_buf[2];
   static double xub_buf[2];
-  static double Pcol[4];
+  double* dense_values = sparse ? NULL : (double*)malloc(4ULL * sizeof(double));
+  if (!sparse && !dense_values) {
+    for (int i = 0; i < 2; ++i) out0[i] = in0[i];
+    for (int i = 0; i < 2; ++i) out1[i] = in1[i];
+    for (int i = 0; i < 0; ++i) out2[i] = in2[i];
+    for (int i = 0; i < 0; ++i) out3[i] = in3[i];
+    corpus_qp_stats_data = (scaly_solver_stats){ .version = SCALY_SOLVER_STATS_VERSION, .status = SCALY_SOLVE_ERROR, .native_status = PIQP_UNSOLVED };
+    return;
+  }
+  double* Pcol = dense_values;
   double fe_t0 = scaly_clock_s();
   corpus_qp_oracle_raw(in4, P_buf, c_buf, xlb_buf, xub_buf, w, solver_options);
   for (int i = 0; i < 2; ++i) { if (isinf(xlb_buf[i]) && xlb_buf[i] < 0.0) xlb_buf[i] = -PIQP_INF; if (isinf(xub_buf[i]) && xub_buf[i] > 0.0) xub_buf[i] = PIQP_INF; }
@@ -113,10 +123,10 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   static piqp_int P_i[2] = { 0, 1 };
   static piqp_csc P_csc = { 2, 2, 2, P_p, P_i, P_buf };
   if (!sparse) {
-    for (int i = 0; i < 4; ++i) Pcol[i] = 0.0;
+    for (size_t i = 0; i < 4ULL; ++i) Pcol[i] = 0.0;
     for (int j = 0; j < 2; ++j) for (int k = P_p[j]; k < P_p[j + 1]; ++k) {
-      Pcol[P_i[k] + j * 2] = P_buf[k];
-      Pcol[j + P_i[k] * 2] = P_buf[k];
+      Pcol[P_i[k] + (size_t)j * 2] = P_buf[k];
+      Pcol[j + (size_t)P_i[k] * 2] = P_buf[k];
     }
   }
   static piqp_workspace* workspaces[2] = {NULL, NULL};
@@ -203,6 +213,7 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   corpus_qp_stats_data.merit_penalty = 0.0;
   corpus_qp_stats_data.backtracks = 0;
   corpus_qp_stats_data.qp_iter = (int32_t)res->info.iter;
+  free(dense_values);
   double stats_t_total = scaly_clock_s() - stats_t0;
   corpus_qp_stats_data.t_total = stats_t_total;
   corpus_qp_stats_data.t_glue = stats_t_total - stats_t_fe - stats_t_solver;
