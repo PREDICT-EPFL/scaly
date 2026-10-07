@@ -45,19 +45,20 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 extern "C" {
 #endif
 
-typedef double shooting_spjac_eq_z_lanes_1_vec __attribute__((vector_size(8 * SCALY_WIDTH_shooting_spjac_eq_z_lanes_1), aligned(8), may_alias));
+typedef double shooting_spjac_eq_z_lanes_1_vec __attribute__((vector_size(8 * SCALY_WIDTH_shooting_spjac_eq_z_lanes_1)));
+typedef shooting_spjac_eq_z_lanes_1_vec shooting_spjac_eq_z_lanes_1_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void shooting_spjac_eq_z_lanes_1(long long v0_chunk, long long shooting_spjac_eq_z_lanes_1_valid, double* spjac_eq_z, const double* z) {
   int64_t v1[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_shooting_spjac_eq_z_lanes_1; ++v0_lane) v1[v0_lane] = (4 * (0 + (((v0_chunk * SCALY_WIDTH_shooting_spjac_eq_z_lanes_1) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_shooting_spjac_eq_z_lanes_1) + v0_lane) : 2)));
   shooting_spjac_eq_z_lanes_1_vec shooting_spjac_eq_z_lanes_1_load_1;
   double shooting_spjac_eq_z_lanes_1_load_1_stage[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_shooting_spjac_eq_z_lanes_1; ++v0_lane) shooting_spjac_eq_z_lanes_1_load_1_stage[v0_lane] = z[(v1[v0_lane] + 2)];
-  shooting_spjac_eq_z_lanes_1_load_1 = *(const shooting_spjac_eq_z_lanes_1_vec*)shooting_spjac_eq_z_lanes_1_load_1_stage;
+  shooting_spjac_eq_z_lanes_1_load_1 = *(const shooting_spjac_eq_z_lanes_1_vec_mem*)shooting_spjac_eq_z_lanes_1_load_1_stage;
   shooting_spjac_eq_z_lanes_1_vec v2 = shooting_spjac_eq_z_lanes_1_load_1;
   shooting_spjac_eq_z_lanes_1_vec shooting_spjac_eq_z_lanes_1_load_2;
   double shooting_spjac_eq_z_lanes_1_load_2_stage[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_shooting_spjac_eq_z_lanes_1; ++v0_lane) shooting_spjac_eq_z_lanes_1_load_2_stage[v0_lane] = z[(v1[v0_lane] + 3)];
-  shooting_spjac_eq_z_lanes_1_load_2 = *(const shooting_spjac_eq_z_lanes_1_vec*)shooting_spjac_eq_z_lanes_1_load_2_stage;
+  shooting_spjac_eq_z_lanes_1_load_2 = *(const shooting_spjac_eq_z_lanes_1_vec_mem*)shooting_spjac_eq_z_lanes_1_load_2_stage;
   shooting_spjac_eq_z_lanes_1_vec v4 = shooting_spjac_eq_z_lanes_1_load_2;
   shooting_spjac_eq_z_lanes_1_vec shooting_spjac_eq_z_lanes_1_broadcast_3;
   for (int v0_lane = 0; v0_lane < SCALY_WIDTH_shooting_spjac_eq_z_lanes_1; ++v0_lane) shooting_spjac_eq_z_lanes_1_broadcast_3[v0_lane] = 1.0;

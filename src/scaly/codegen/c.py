@@ -528,7 +528,11 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
     params += [f"{n.dtype.c_type} {c_ident(n.attrs['name'])}" for n in variables]
     operations = {n.op for n in walk_program(vector) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
     if dialect == "gnu":
-      lines.append(f"typedef double {vec} __attribute__((vector_size(8 * {width}), aligned(8), may_alias));")
+      # Values and parameters use the natural type: aarch64 GCC 13.1 and 14 to 16.1 crash on a by-value
+      # parameter whose vector type carries both ``aligned`` and ``may_alias``. ``_mem`` is the
+      # under-aligned aliasing view for loads and stores through double buffers.
+      lines.append(f"typedef double {vec} __attribute__((vector_size(8 * {width})));")
+      lines.append(f"typedef {vec} {vec}_mem __attribute__((aligned(8), may_alias));")
       for op in sorted(operations):
         lines += _vector_math(helper, vec, width, op, vector_libm)
     qualifier = "static inline __attribute__((always_inline))" if dialect == "gnu" else "static inline"
@@ -606,12 +610,12 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, helper: str, lane: str,
         source = _emit_view(view, {}, lane_vars)
         if view.attrs.get("lane_stride") == 1:
           first = _emit_view(view, {}, {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"})
-          lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}*)(&{first});")
+          lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
           lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {source};")
         else:
           lines.append(f"  double {name}_stage[8];")
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}_stage[{lane}] = {source};")
-          lines.append(f"  {name} = *(const {vec}*){name}_stage;")
+          lines.append(f"  {name} = *(const {vec}_mem*){name}_stage;")
         value = name
       elif node.op == ProgramOp.VAR and node.attrs["name"] in vector_vars:
         value = c_ident(node.attrs["name"])
@@ -680,7 +684,7 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, helper: str, lane: str,
           valid = width if view.attrs.get("lane_local") else valid_count
           if view.attrs.get("lane_stride") == 1:
             first = _emit_scalar(view.args[0], {}, {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"})
-            lines.append(f"  if ({valid} == {width}) *({vec}*)(&{pointer}[({first}) + {offset}]) = {name};")
+            lines.append(f"  if ({valid} == {width}) *({vec}_mem*)(&{pointer}[({first}) + {offset}]) = {name};")
             lines.append(f"  else for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {pointer}[({index}) + {offset}] = {name}[{lane}];")
           else:
             lines.append(f"  for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {pointer}[({index}) + {offset}] = {name}[{lane}];")
