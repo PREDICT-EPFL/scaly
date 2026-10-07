@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,25 @@ from ..function.model import Function
 from ..function.tree import Tree
 from ..function.tree import flat_tree, flat_parameters
 from ..ir.types import SparsityPattern, TensorType
+
+
+class CSolverOption(ctypes.Structure):
+  """One call-time solver option; a null name terminates the option array."""
+
+  _fields_ = [("name", ctypes.c_char_p), ("kind", ctypes.c_int), ("integer", ctypes.c_int64), ("number", ctypes.c_double), ("text", ctypes.c_char_p)]
+
+
+def solver_options(options: dict[str, Any]) -> ctypes.Array[CSolverOption]:
+  """Pack validated options for the generated solver entry point."""
+  values = []
+  for name, value in options.items():
+    if isinstance(value, (bool, int)):
+      values.append(CSolverOption(name.encode(), 0, int(value), 0.0, None))
+    elif isinstance(value, float):
+      values.append(CSolverOption(name.encode(), 1, 0, value, None))
+    else:
+      values.append(CSolverOption(name.encode(), 2, 0, 0.0, value.encode()))
+  return (CSolverOption * (len(values) + 1))(*values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,20 +91,15 @@ class SolverDescriptor:
   # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
   # triangle), A_eq, G_ineq, baked into the generated wrapper as static
   # tables; the oracle emits compact CSC-ordered value buffers. None => dense.
-  sparse: bool = False
   P_sparsity: SparsityPattern | None = None
   A_sparsity: SparsityPattern | None = None
   G_sparsity: SparsityPattern | None = None
-  # Solver-specific options
-  options: tuple[tuple[str, Any], ...] = ()
   # Oracle output naming (QP); the order in which the oracle's outputs encode
   # the QP data buffers.
   oracle_output_names: tuple[str, ...] = ()
   # Hash key used as a stable identifier (set in __post_init__)
   _key: int = field(default=0, hash=False, compare=False, repr=False)
-  # Mutable per-descriptor runtime state (e.g. PIQP workspace handle). Frozen
-  # is fine — we mutate the dict's contents, not the binding itself.
-  runtime: dict[str, Any] = field(default_factory=dict, hash=False, compare=False, repr=False)
+  runtime_options: ctypes.Array[CSolverOption] = field(default_factory=lambda: (CSolverOption * 1)(), hash=False, compare=False, repr=False)
 
   def __post_init__(self) -> None:
     object.__setattr__(self, "_key", id(self))

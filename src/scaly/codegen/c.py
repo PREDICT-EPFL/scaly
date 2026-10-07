@@ -124,24 +124,36 @@ def entry_workspace(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> int:
   return sz_w + (casadi_scratch(fun) if casadi else 0)
 
 
-def entry_prologue(fun: ConcreteFunction, sz_w: int) -> list[str]:
+def entry_prologue(fun: ConcreteFunction, sz_w: int, *, options_count: int = 0) -> list[str]:
   """The opening of a pointer-ABI entry: the signature and the null checks behind the status codes.
   ``iw`` and ``mem`` are accepted and ignored; ``sz_w`` is the total workspace the entry reads."""
   symbol = c_ident(fun.name)
   lines = [
-    c_api_signature(symbol) + " {",
+    c_api_signature(f"{symbol}_with_options" if options_count else symbol, solver_options=bool(options_count)) + " {",
     "  (void)iw;",
     "  (void)mem;",
     "  if (!arg || !res) return SCALY_ERR_NULL_ABI;",
     "  if (!w) return SCALY_ERR_NULL_WORK;" if sz_w else "  (void)w;",
   ]
+  if options_count:
+    lines += [
+      "  if (!solver_options) return SCALY_ERR_NULL_INPUT;",
+      *(f"  if (!solver_options[{i}]) return SCALY_ERR_NULL_INPUT;" for i in range(options_count)),
+    ]
   lines += [f"  if (!arg[{i}]) return SCALY_ERR_NULL_INPUT;" for i in range(len(fun.inputs))]
   lines += [f"  if (!res[{i}]) return SCALY_ERR_NULL_RESULT;" for i in range(len(fun.outputs))]
   return lines
 
 
 def _render_entry(
-  proc: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none"
+  proc: ProgramNode,
+  fun: ConcreteFunction,
+  *,
+  casadi: bool = False,
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
+  solver_callees: frozenset[str] = frozenset(),
+  options_count: int = 0,
 ) -> list[str]:
   """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
   inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
@@ -157,7 +169,10 @@ def _render_entry(
   for i, name in enumerate(fun.output_names):
     ptr_expr[name] = f"res[{i}]"
 
-  lines = [*_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm), *entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))]
+  lines = [
+    *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm),
+    *entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi), options_count=options_count),
+  ]
   epilogue: list[str] = []
   if casadi:
     gather = casadi_gather(fun, sz_w)
@@ -165,7 +180,7 @@ def _render_entry(
     lines += gather.setup
     epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect)
+  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, solver_callees=solver_callees)
   lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
   return lines
 
@@ -186,7 +201,12 @@ def _c_reserved_names(prog: ProgramNode) -> set[str]:
 
 
 def _render_raw_callee(
-  proc: ProgramNode, *, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none", reserved_names: set[str] | None = None
+  proc: ProgramNode,
+  *,
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
+  reserved_names: set[str] | None = None,
+  solver_callees: frozenset[str] = frozenset(),
 ) -> list[str]:
   """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
@@ -202,11 +222,13 @@ def _render_raw_callee(
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))
+  options_name = allocated_name("solver_options", _c_reserved_names(proc))
   ptr_expr = {pp.attrs["name"]: c_ident(pp.attrs["name"]) for pp in params}
   param_decls = ", ".join(
     [
       *(f"{'const ' if i < input_count else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}" for i, pp in enumerate(params)),
       "double* w",
+      *((f"const scaly_solver_option* const* {options_name}",) if solver_callees else ()),
     ]
   )
   proc_name = proc.attrs["name"]
@@ -222,7 +244,7 @@ def _render_raw_callee(
   if not sz_w:
     out.append("  (void)w;")
   _emit_local_buffers(body, out, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect)
+  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
   out.append("}")
   if implementation != raw_name:
     out.append(f"static void (*volatile {raw_name})({param_decls}) = {implementation};")
@@ -258,15 +280,33 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
-def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: CDialect = "gnu") -> None:
+def _emit_body(
+  body: list[ProgramNode],
+  ptr_expr: dict[str, str],
+  lines: list[str],
+  indent: int,
+  *,
+  dialect: CDialect = "gnu",
+  solver_callees: frozenset[str] = frozenset(),
+  options_name: str = "solver_options",
+) -> None:
   """Render Program statements in order."""
   for stmt in body:
     if stmt.op == ProgramOp.BUFFER:
       continue
-    _emit_statement(stmt, ptr_expr, lines, indent, dialect=dialect)
+    _emit_statement(stmt, ptr_expr, lines, indent, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
 
 
-def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: CDialect = "gnu") -> None:
+def _emit_statement(
+  stmt: ProgramNode,
+  ptr_expr: dict[str, str],
+  lines: list[str],
+  indent: int,
+  *,
+  dialect: CDialect = "gnu",
+  solver_callees: frozenset[str] = frozenset(),
+  options_name: str = "solver_options",
+) -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
@@ -278,7 +318,7 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     step = _emit_scalar(rng.args[2], ptr_expr)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
     lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
-    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, dialect=dialect)
+    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
     _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
@@ -305,6 +345,8 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
       ptrs.append("w" if offset == 0 else f"w + {offset}")
     else:
       ptrs.append("NULL")
+    if stmt.attrs["callee"] in solver_callees:
+      ptrs.append(options_name)
     lines.append(f"{pad}{c_ident(stmt.attrs['callee'])}_raw({', '.join(ptrs)});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")

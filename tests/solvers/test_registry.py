@@ -43,11 +43,14 @@ class _FakeBackend:
   def lib_dir(self) -> Path:
     return Path("/nonexistent/lib")
 
+  def prepare_options(self, options):
+    return dict(options)
+
   def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201 - protocol mirror
     inputs = ", ".join(f"const double* in{i}" for i in range(len(as_concrete(fun).descriptor.input_signature)))
     outputs = ", ".join(f"double* out{i}" for i in range(len(as_concrete(fun).descriptor.output_signature)))
     return [
-      f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w) {{",
+      f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w, const scaly_solver_option* const* solver_options) {{",
       f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
       "}",
     ]
@@ -83,12 +86,12 @@ def test_entry_point_name_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) 
     registry.get_backend("other")
 
 
-def test_missing_render_wrapper_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _NoRender(_FakeBackend):
-    render_wrapper = None
-
-  monkeypatch.setattr(registry, "available_backends", lambda: {"fake": _FakeEntryPoint(_NoRender())})
-  with pytest.raises(SolverPluginError, match="render_wrapper"):
+@pytest.mark.parametrize("hook", ["prepare_options", "render_wrapper"])
+def test_missing_backend_hook_is_rejected(monkeypatch: pytest.MonkeyPatch, hook: str) -> None:
+  backend = _FakeBackend()
+  monkeypatch.setattr(backend, hook, None)
+  monkeypatch.setattr(registry, "available_backends", lambda: {"fake": _FakeEntryPoint(backend)})
+  with pytest.raises(SolverPluginError, match=hook):
     registry.get_backend("fake")
 
 
@@ -176,10 +179,13 @@ def test_missing_backend_error_lists_installed(monkeypatch: pytest.MonkeyPatch) 
 def test_render_solver_raw_dispatches_to_plugin_and_frames_stats(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
-  lines = solver.render_solver_raw(as_concrete(fun))
+  lines = solver.render_solver_raw(as_concrete(fun), options_index=0)
   # Core-owned framing: stats storage before the plugin body, accessor after.
   assert lines[0] == "static scaly_solver_stats fake_qp_stats_data;"
-  assert "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w) {" in lines
+  assert (
+    "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w, const scaly_solver_option* const* solver_options) {"
+    in lines
+  )
   assert "int fake_qp_stats(scaly_solver_stats* out) {" in lines
   # The plugin body was told about the same stats symbol core declared.
   assert "  fake_qp_stats_data.version = SCALY_SOLVER_STATS_VERSION;" in lines
@@ -212,7 +218,7 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
       return super().render_wrapper(fun, ctx)
 
   monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
-  source = "\n".join(solver.render_solver_raw(descriptor_function(desc).instantiate()))
+  source = "\n".join(solver.render_solver_raw(descriptor_function(desc).instantiate(), options_index=0))
   assert oracle.source in source
   assert source.index(oracle.source) < source.index("static scaly_solver_stats external_qp_stats_data;")
 

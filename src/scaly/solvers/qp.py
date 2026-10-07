@@ -16,7 +16,7 @@ from ..function.tree import group, arg, Tree
 from ..ir.expr import Expr, ExprOp, concat, substitute, topo
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
-from .model import SolverDescriptor, descriptor_function
+from .model import SolverDescriptor, descriptor_function, solver_options
 from .nlp import _lowered
 from .problem import Problem, ProblemSpec, bounded, problem
 from .registry import SolverBackend
@@ -199,24 +199,17 @@ def build_qp[SV, NV, SP, NP](
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
   """Build a typed QP solver after proving and extracting the problem's matrix data."""
-  validate_options = getattr(backend, "validate_options", None)
-  if validate_options is not None:
-    validate_options(options or {})
+  resolved_options = backend.prepare_options(options or {})
   _prove_variable_independent_bounds(problem)
   cached = _lowered(problem)
   _prove_quadratic(problem, cached)
   P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
   n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]
 
-  resolved_options = dict(options or {})
-  sparse_option = resolved_options.pop("sparse", False)
-  if not isinstance(sparse_option, bool):
-    raise TypeError("PIQP option 'sparse' must be a bool")
-  sparse = sparse_option
   params = problem._param_symbols
 
   P_sp = A_sp = G_sp = None
-  if sparse:
+  if backend.name == "piqp":
     matrices = (P, A, G_mat)
     probe = ConcreteFunction._from_exprs(
       f"{name}_pattern_probe",
@@ -273,9 +266,8 @@ def build_qp[SV, NV, SP, NP](
     param_names=problem.params.names,
     n_var_blocks=problem.vars.size,
     oracle=oracle,
-    options=tuple(sorted({"verbose": 0, **resolved_options}.items())),
+    runtime_options=solver_options(resolved_options),
     oracle_output_names=tuple(oracle_names),
-    sparse=sparse,
     P_sparsity=P_sp,
     A_sparsity=A_sp,
     G_sparsity=G_sp,

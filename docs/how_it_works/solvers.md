@@ -15,8 +15,8 @@ the generated wrappers do.
 `sc.solver` returns a `Solver` whose `function` is an ordinary `Function`. Its
 outputs are `expr.solver_call` nodes that all carry the same
 `SolverDescriptor`, the record of everything the plugin needs: dimensions,
-oracles, sparsity patterns and options. Nesting the allocation solver from the
-guide in a larger function and printing `sc.render_expr_assembly(allocate)`
+oracles and sparsity patterns. Options stay in Python for call-time dispatch.
+Nesting the allocation solver from the guide in a larger function and printing `sc.render_expr_assembly(allocate)`
 shows both levels:
 
 ```python
@@ -235,8 +235,9 @@ A term that simplification removes, such as `0.0 * u[0] ** 3`, is accepted.
 
 ### Sparse QP data
 
-With `options={"sparse": True}` each matrix gets a fixed compressed sparse
-column pattern and the oracle emits only its values. An entry is in the
+PIQP matrices have fixed compressed sparse column patterns, and the oracle emits
+only their values. With `options={"sparse": True}` the wrapper passes these compact
+arrays to PIQP. Otherwise it expands them into dense matrices at run time. An entry is in the
 pattern if it is nonzero when the oracle is evaluated at random parameter
 values, or if it depends on a parameter at all, so an entry that happens to be
 zero at one parameter value is still kept. `P` keeps its upper triangle only.

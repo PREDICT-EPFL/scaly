@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
+#include <string.h>
 #include "piqp/piqp.h"
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
@@ -68,61 +69,105 @@ static double scaly_clock_s(void) {
 #endif
 }
 #endif
+#ifndef SCALY_SOLVER_OPTION_DEFINED
+#define SCALY_SOLVER_OPTION_DEFINED
+typedef struct { const char* name; int kind; int64_t integer; double number; const char* text; } scaly_solver_option;
+#endif
+static double scaly_option_number(const scaly_solver_option* options, const char* name) {
+  while (strcmp(options->name, name)) ++options;
+  return options->kind == 0 ? (double)options->integer : options->number;
+}
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w) {
+static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w, const scaly_solver_option* const* solver_options) {
   (void)w;
-  *(double2*)(qp_P) = (double2){1.0, 0.0};
-  *(double2*)(qp_P + 2) = (double2){0.0, 1.0};
+  *(double2*)(qp_P) = (double2){1.0, 1.0};
   *(double2*)(qp_c) = (double2){(-mu[0]), (-mu[1])};
   *(double2*)(qp_x_lb) = (double2){((double)(-INFINITY)), ((double)(-INFINITY))};
   *(double2*)(qp_x_ub) = (double2){((double)INFINITY), ((double)INFINITY)};
 }
 
 static scaly_solver_stats corpus_qp_stats_data;
-// PIQP dense solver wrapper for corpus_qp (n=2, p=0, m=0).
-static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w) {
+// PIQP solver wrapper for corpus_qp (n=2, p=0, m=0, nnz P/A/G = 2/0/0).
+static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w, const scaly_solver_option* const* solver_options) {
   (void)in0;
   (void)in1;
   (void)in2;
   (void)in3;
+  const scaly_solver_option* options = solver_options[0];
+  int sparse = (int)scaly_option_number(options, "sparse");
   double stats_t0 = scaly_clock_s();
-  static double P_buf[4];
+  static double P_buf[2];
   static double c_buf[2];
   static double xlb_buf[2];
   static double xub_buf[2];
   static double Pcol[4];
   double fe_t0 = scaly_clock_s();
-  corpus_qp_oracle_raw(in4, P_buf, c_buf, xlb_buf, xub_buf, w);
+  corpus_qp_oracle_raw(in4, P_buf, c_buf, xlb_buf, xub_buf, w, solver_options);
   for (int i = 0; i < 2; ++i) { if (isinf(xlb_buf[i]) && xlb_buf[i] < 0.0) xlb_buf[i] = -PIQP_INF; if (isinf(xub_buf[i]) && xub_buf[i] > 0.0) xub_buf[i] = PIQP_INF; }
   double stats_t_fe = scaly_clock_s() - fe_t0;
-  for (int j = 0; j < 2; ++j) for (int i = 0; i < 2; ++i) Pcol[i + j * 2] = P_buf[i * 2 + j];
-  static piqp_workspace* corpus_qp_ws = NULL;
-  static piqp_settings corpus_qp_settings;
-  double solver_t0 = scaly_clock_s();
-  if (corpus_qp_ws == NULL) {
-    piqp_set_default_settings_dense(&corpus_qp_settings);
-    corpus_qp_settings.verbose = 0;
-    piqp_data_dense setup_data;
-    setup_data.n = 2;
-    setup_data.p = 0;
-    setup_data.m = 0;
-    setup_data.P = Pcol;
-    setup_data.c = c_buf;
-    setup_data.A = NULL;
-    setup_data.b = NULL;
-    setup_data.G = NULL;
-    setup_data.h_l = NULL;
-    setup_data.h_u = NULL;
-    setup_data.x_l = xlb_buf;
-    setup_data.x_u = xub_buf;
-    piqp_setup_dense(&corpus_qp_ws, &setup_data, &corpus_qp_settings);
-  } else {
-    piqp_update_dense(corpus_qp_ws, Pcol, c_buf, NULL, NULL, NULL, NULL, NULL, xlb_buf, xub_buf);
+  static piqp_int P_p[3] = { 0, 1, 2 };
+  static piqp_int P_i[2] = { 0, 1 };
+  static piqp_csc P_csc = { 2, 2, 2, P_p, P_i, P_buf };
+  if (!sparse) {
+    for (int i = 0; i < 4; ++i) Pcol[i] = 0.0;
+    for (int j = 0; j < 2; ++j) for (int k = P_p[j]; k < P_p[j + 1]; ++k) {
+      Pcol[P_i[k] + j * 2] = P_buf[k];
+      Pcol[j + P_i[k] * 2] = P_buf[k];
+    }
   }
+  static piqp_workspace* workspaces[2] = {NULL, NULL};
+  static piqp_settings previous_settings[2];
+  piqp_workspace** workspace = &workspaces[sparse];
+  piqp_settings settings = {0};
+  double solver_t0 = scaly_clock_s();
+  if (sparse) piqp_set_default_settings_sparse(&settings); else piqp_set_default_settings_dense(&settings);
+  for (const scaly_solver_option* option = options; option->name; ++option) {
+    if (!strcmp(option->name, "check_duality_gap")) settings.check_duality_gap = option->integer;
+    if (!strcmp(option->name, "compute_timings")) settings.compute_timings = option->integer;
+    if (!strcmp(option->name, "delta_init")) settings.delta_init = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "eps_abs")) settings.eps_abs = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "eps_duality_gap_abs")) settings.eps_duality_gap_abs = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "eps_duality_gap_rel")) settings.eps_duality_gap_rel = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "eps_rel")) settings.eps_rel = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "infeasibility_threshold")) settings.infeasibility_threshold = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "iterative_refinement_always_enabled")) settings.iterative_refinement_always_enabled = option->integer;
+    if (!strcmp(option->name, "iterative_refinement_eps_abs")) settings.iterative_refinement_eps_abs = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "iterative_refinement_eps_rel")) settings.iterative_refinement_eps_rel = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "iterative_refinement_max_iter")) settings.iterative_refinement_max_iter = option->integer;
+    if (!strcmp(option->name, "iterative_refinement_min_improvement_rate")) settings.iterative_refinement_min_improvement_rate = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "iterative_refinement_static_regularization_eps")) settings.iterative_refinement_static_regularization_eps = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "iterative_refinement_static_regularization_rel")) settings.iterative_refinement_static_regularization_rel = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "kkt_solver")) settings.kkt_solver = (piqp_kkt_solver)option->integer;
+    if (!strcmp(option->name, "max_factor_retires")) settings.max_factor_retires = option->integer;
+    if (!strcmp(option->name, "max_iter")) settings.max_iter = option->integer;
+    if (!strcmp(option->name, "preconditioner_iter")) settings.preconditioner_iter = option->integer;
+    if (!strcmp(option->name, "preconditioner_reuse_on_update")) settings.preconditioner_reuse_on_update = option->integer;
+    if (!strcmp(option->name, "preconditioner_scale_cost")) settings.preconditioner_scale_cost = option->integer;
+    if (!strcmp(option->name, "reg_finetune_dual_update_threshold")) settings.reg_finetune_dual_update_threshold = option->integer;
+    if (!strcmp(option->name, "reg_finetune_lower_limit")) settings.reg_finetune_lower_limit = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "reg_finetune_primal_update_threshold")) settings.reg_finetune_primal_update_threshold = option->integer;
+    if (!strcmp(option->name, "reg_lower_limit")) settings.reg_lower_limit = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "rho_init")) settings.rho_init = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "tau")) settings.tau = (option->kind == 0 ? (double)option->integer : option->number);
+    if (!strcmp(option->name, "verbose")) settings.verbose = option->integer;
+  }
+  if (*workspace && (previous_settings[sparse].check_duality_gap != settings.check_duality_gap || previous_settings[sparse].compute_timings != settings.compute_timings || previous_settings[sparse].delta_init != settings.delta_init || previous_settings[sparse].eps_abs != settings.eps_abs || previous_settings[sparse].eps_duality_gap_abs != settings.eps_duality_gap_abs || previous_settings[sparse].eps_duality_gap_rel != settings.eps_duality_gap_rel || previous_settings[sparse].eps_rel != settings.eps_rel || previous_settings[sparse].infeasibility_threshold != settings.infeasibility_threshold || previous_settings[sparse].iterative_refinement_always_enabled != settings.iterative_refinement_always_enabled || previous_settings[sparse].iterative_refinement_eps_abs != settings.iterative_refinement_eps_abs || previous_settings[sparse].iterative_refinement_eps_rel != settings.iterative_refinement_eps_rel || previous_settings[sparse].iterative_refinement_max_iter != settings.iterative_refinement_max_iter || previous_settings[sparse].iterative_refinement_min_improvement_rate != settings.iterative_refinement_min_improvement_rate || previous_settings[sparse].iterative_refinement_static_regularization_eps != settings.iterative_refinement_static_regularization_eps || previous_settings[sparse].iterative_refinement_static_regularization_rel != settings.iterative_refinement_static_regularization_rel || previous_settings[sparse].kkt_solver != settings.kkt_solver || previous_settings[sparse].max_factor_retires != settings.max_factor_retires || previous_settings[sparse].max_iter != settings.max_iter || previous_settings[sparse].preconditioner_iter != settings.preconditioner_iter || previous_settings[sparse].preconditioner_reuse_on_update != settings.preconditioner_reuse_on_update || previous_settings[sparse].preconditioner_scale_cost != settings.preconditioner_scale_cost || previous_settings[sparse].reg_finetune_dual_update_threshold != settings.reg_finetune_dual_update_threshold || previous_settings[sparse].reg_finetune_lower_limit != settings.reg_finetune_lower_limit || previous_settings[sparse].reg_finetune_primal_update_threshold != settings.reg_finetune_primal_update_threshold || previous_settings[sparse].reg_lower_limit != settings.reg_lower_limit || previous_settings[sparse].rho_init != settings.rho_init || previous_settings[sparse].tau != settings.tau || previous_settings[sparse].verbose != settings.verbose)) { piqp_cleanup(*workspace); *workspace = NULL; }
+  previous_settings[sparse] = settings;
+  if (sparse) {
+    piqp_data_sparse data = { 2, 0, 0, &P_csc, c_buf, NULL, NULL, NULL, NULL, NULL, xlb_buf, xub_buf };
+    if (!*workspace) piqp_setup_sparse(workspace, &data, &settings);
+    else piqp_update_sparse(*workspace, &P_csc, c_buf, NULL, NULL, NULL, NULL, NULL, xlb_buf, xub_buf);
+  }
+  if (!sparse) {
+    piqp_data_dense data = { 2, 0, 0, Pcol, c_buf, NULL, NULL, NULL, NULL, NULL, xlb_buf, xub_buf };
+    if (!*workspace) piqp_setup_dense(workspace, &data, &settings);
+    else piqp_update_dense(*workspace, Pcol, c_buf, NULL, NULL, NULL, NULL, NULL, xlb_buf, xub_buf);
+  }
+  piqp_workspace* corpus_qp_ws = *workspace;
   piqp_solve(corpus_qp_ws);
   double stats_t_solver = scaly_clock_s() - solver_t0;
   piqp_result* res = corpus_qp_ws->result;
@@ -169,11 +214,13 @@ int corpus_qp_stats(scaly_solver_stats* out) {
   return 0;
 }
 
-int qp_host(const double** arg, double** res, int* iw, double* w, int mem) {
+int qp_host_with_options(const double** arg, double** res, int* iw, double* w, int mem, const scaly_solver_option* const* solver_options) {
   (void)iw;
   (void)mem;
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
+  if (!solver_options) return SCALY_ERR_NULL_INPUT;
+  if (!solver_options[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   static const double k0[2] = {0, 0};
@@ -182,13 +229,27 @@ int qp_host(const double** arg, double** res, int* iw, double* w, int mem) {
   double s1[2];
   double s2[1];
   double s3[1];
-  corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL);
+  corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL, solver_options);
   res[0][0] = 0.0;
   for (long long i_cost = 0; i_cost < 2; ++i_cost) {
     double v0 = s0[i_cost];
     res[0][0] = (res[0][0] + (v0 * v0));
   }
   return SCALY_SUCCESS;
+}
+
+const scaly_solver_option* corpus_qp_default_options(void) {
+  static const scaly_solver_option options[] = {
+    { "verbose", 0, 0, 0.0, NULL },
+    { "sparse", 0, 0, 0.0, NULL },
+    { NULL, 0, 0, 0.0, NULL }
+  };
+  return options;
+}
+
+int qp_host(const double** arg, double** res, int* iw, double* w, int mem) {
+  const scaly_solver_option* options[] = { corpus_qp_default_options() };
+  return qp_host_with_options(arg, res, iw, w, mem, options);
 }
 
 #ifdef __cplusplus

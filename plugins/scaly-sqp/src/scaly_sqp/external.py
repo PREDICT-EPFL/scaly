@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
 
 from scaly.function import Function
 from scaly.function.tree import group, arg, flat_tree
 from scaly.ir.types import SparsityPattern, TensorType
-from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
+from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function, solver_options
 
 
 def external_nlp(
@@ -65,9 +64,9 @@ def external_nlp(
     arg("lam_eq", TensorType((n_eq,), diff=False)),
     arg("lam_ineq", TensorType((n_ineq,), diff=False)),
   )
-  resolved_options: dict[str, Any] = {"max_iter": 50, "tol": 1e-6}
-  if options:
-    resolved_options.update(options)
+  from . import BACKEND
+
+  resolved_options = BACKEND.prepare_options(dict(options or {}))
   descriptor = SolverDescriptor(
     name=name,
     backend="sqp",
@@ -85,6 +84,6 @@ def external_nlp(
     bounds=bounds,
     jac_sparsity=jac_sparsity,
     hess_sparsity=hess_sparsity,
-    options=tuple(sorted(resolved_options.items())),
+    runtime_options=solver_options(resolved_options),
   )
   return descriptor_function(descriptor, input_tree, output_tree)

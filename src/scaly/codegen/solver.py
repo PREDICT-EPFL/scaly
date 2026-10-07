@@ -52,6 +52,11 @@ class SolverWrapperCtx:
   symbol: str
   raw_symbol: str
   stats_symbol: str
+  options_index: int
+
+  def oracle_options(self, fun: ConcreteFunction | ExternalOracle | None) -> tuple[str, ...]:
+    """The runtime context argument for a generated oracle, empty for a foreign oracle."""
+    return ("solver_options",) if isinstance(fun, ConcreteFunction) else ()
 
   def raw_symbol_of(self, fun: ConcreteFunction | ExternalOracle) -> str:
     from scaly.solvers.model import ExternalOracle
@@ -65,8 +70,8 @@ def solver_includes(fun: ConcreteFunction) -> list[str]:
   return [f'#include "{get_backend(name).header}"' for name in solver_backends_used(fun)]
 
 
-def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
-  """C identifiers for every solver wrapper reachable from ``fun``."""
+def solver_functions(fun: ConcreteFunction) -> tuple[ConcreteFunction, ...]:
+  """Every reachable solver, in the call-time options order."""
   found: dict[str, ConcreteFunction] = {}
   seen: set[int] = set()
 
@@ -87,7 +92,12 @@ def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
         visit(node.attrs["callee"])
 
   visit(fun)
-  return tuple(found)
+  return tuple(found.values())
+
+
+def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
+  """C identifiers for every solver wrapper reachable from ``fun``."""
+  return tuple(c_ident(fn.name) for fn in solver_functions(fun))
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +105,7 @@ def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(fun: ConcreteFunction, *, include_external_sources: bool = True) -> list[str]:
+def render_solver_raw(fun: ConcreteFunction, *, options_index: int, include_external_sources: bool = True) -> list[str]:
   """Frame a plugin-rendered wrapper body with the scaly-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""
@@ -107,7 +117,7 @@ def render_solver_raw(fun: ConcreteFunction, *, include_external_sources: bool =
     if include_external_sources and oracle.source and oracle.source not in external_sources:
       external_sources.append(oracle.source)
   symbol = c_ident(fun.name)
-  ctx = SolverWrapperCtx(symbol=symbol, raw_symbol=_raw_symbol(fun), stats_symbol=f"{symbol}_stats_data")
+  ctx = SolverWrapperCtx(symbol=symbol, raw_symbol=_raw_symbol(fun), stats_symbol=f"{symbol}_stats_data", options_index=options_index)
   body = get_backend(desc.backend).render_wrapper(fun, ctx)
   return [
     *(line for source in external_sources for line in (*source.splitlines(), "")),
@@ -119,4 +129,61 @@ def render_solver_raw(fun: ConcreteFunction, *, include_external_sources: bool =
     f"  *out = {ctx.stats_symbol};",
     "  return 0;",
     "}",
+  ]
+
+
+def solver_options_c_defs() -> list[str]:
+  """The call-time option layout shared by Python and generated C/C++ consumers."""
+  return [
+    "#ifndef SCALY_SOLVER_OPTION_DEFINED",
+    "#define SCALY_SOLVER_OPTION_DEFINED",
+    "typedef struct { const char* name; int kind; int64_t integer; double number; const char* text; } scaly_solver_option;",
+    "#endif",
+  ]
+
+
+def solver_options_c_helpers() -> list[str]:
+  """Read numeric options after the plugin has checked names, types and defaults in Python."""
+  return [
+    "static double scaly_option_number(const scaly_solver_option* options, const char* name) {",
+    "  while (strcmp(options->name, name)) ++options;",
+    "  return options->kind == 0 ? (double)options->integer : options->number;",
+    "}",
+  ]
+
+
+def render_solver_defaults(fun: ConcreteFunction) -> list[str]:
+  """Render backend defaults from their Python owner for the universal entry and C callers."""
+  from scaly.solvers.registry import get_backend
+
+  lines = []
+  for fn in solver_functions(fun):
+    symbol = c_ident(fn.name)
+    lines.append(f"const scaly_solver_option* {symbol}_default_options(void) {{")
+    lines.append("  static const scaly_solver_option options[] = {")
+    for name, value in get_backend(fn.descriptor.backend).prepare_options({}).items():
+      if isinstance(value, (bool, int)):
+        literal = f"0, {int(value)}, 0.0, NULL"
+      elif isinstance(value, float):
+        literal = f"1, 0, {value!r}, NULL"
+      else:
+        literal = f'2, 0, 0.0, "{value}"'
+      lines.append(f'    {{ "{name}", {literal} }},')
+    lines += ["    { NULL, 0, 0, 0.0, NULL }", "  };", "  return options;", "}", ""]
+  return lines
+
+
+def solver_options_declarations(fun: ConcreteFunction) -> list[str]:
+  """Declare the runtime entry, default option accessors and option-array indices."""
+  from .abi import c_api_signature
+
+  solvers = solver_functions(fun)
+  if not solvers:
+    return []
+  symbol = c_ident(fun.name)
+  return [
+    c_api_signature(f"{symbol}_with_options", solver_options=True) + ";",
+    f"#define {symbol}_N_SOLVERS {len(solvers)}",
+    *(f"#define {symbol}_OPTIONS_{c_ident(fn.name)} {i}" for i, fn in enumerate(solvers)),
+    *(f"const scaly_solver_option* {c_ident(fn.name)}_default_options(void);" for fn in solvers),
   ]

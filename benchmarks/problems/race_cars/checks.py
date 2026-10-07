@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
+from scaly.codegen.jit import get_compiled
 from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 from scaly.solvers.paths import solver_paths
@@ -257,12 +258,7 @@ def check_casadi_ipopt_is_compiled() -> None:
 
 
 def check_harvested_sqp_globalizations() -> None:
-  """Both oracle providers solve the harvested hard-QP race failure.
-
-  The SQP options are compiled into the solver module, so every option set recompiles the large
-  CasADi source (issue #112). The globalizations do not depend on the oracle provider, so only Scaly
-  runs both.
-  """
+  """Both oracle providers solve the harvested hard-QP race failure with both globalizations."""
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
@@ -270,10 +266,15 @@ def check_harvested_sqp_globalizations() -> None:
     ("filter", {}, 3),
     ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
   )
-  for oracle, cases in (("scaly", globalizations), ("casadi", globalizations[:1])):
-    for name, options, expected_iter in cases:
+  for oracle in ("scaly", "casadi"):
+    cache_key = None
+    for name, options, expected_iter in globalizations:
       solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
       out = solve_problem(solver, inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
+      compiled = get_compiled(solver.function)
+      if cache_key is None:
+        cache_key = compiled.cache_key
+      assert compiled.cache_key == cache_key, f"sqp/{oracle}/{name}: options changed the compiled module"
       stats = problem_stats(solver)
       assert stats is not None and stats.status.value == 0, f"sqp/{oracle}/{name}: {stats}"
       assert stats.iter == expected_iter and stats.primal_viol < 1e-7 and stats.alpha == 1.0, f"sqp/{oracle}/{name}: {stats}"

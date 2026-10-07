@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
 from .casadi import casadi_declarations, casadi_defines
-from .solver import solver_stats_symbols
+from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_declarations
 from ..function.concrete import ConcreteFunction
 from ..solvers.stats import stats_c_defs
 
@@ -90,7 +90,7 @@ def render_cpp_header(
     "#include <array>",
     "#include <cassert>",
     "#include <cstddef>",
-    *(["#include <cstdint>", "", *stats_c_defs()] if backends else []),
+    *(["#include <cstdint>", "", *stats_c_defs(), *solver_options_c_defs()] if backends else []),
     "",
     *abi_status_defines(guarded=True),
     *(["", *casadi_defines()] if casadi else []),
@@ -105,6 +105,7 @@ def render_cpp_header(
     f"namespace {symbol} {{",
     f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
     'extern "C" ' + c_api_signature(symbol) + ";",
+    *(decl if decl.startswith("#") else 'extern "C" ' + decl for decl in solver_options_declarations(fun)),
     *(f'extern "C" int {s}_stats(scaly_solver_stats* out);' for s in solver_stats_symbols(fun)),
     *(f'extern "C" {decl}' for decl in (casadi_declarations(symbol) if casadi else [])),
     "",
@@ -116,12 +117,17 @@ def render_cpp_header(
     f"constexpr int sz_iw = {symbol}_SZ_IW;",
     f"constexpr int sz_w = {symbol}_SZ_W;",
     "",
-    f"inline int call({', '.join(params)}) {{",
-    f"  const double* arg[sz_arg > 0 ? sz_arg : 1] = {{{arg_init}}};",
-    f"  double* res[sz_res > 0 ? sz_res : 1] = {{{res_init}}};",
-    f"  return {symbol}(arg, res, nullptr, sz_w ? workspace.ptr() : nullptr, 0);",
-    "}",
   ]
+  for runtime in (False, True) if backends else (False,):
+    suffix = "_with_options" if runtime else ""
+    call_params = [*params, *(("const scaly_solver_option* const* solver_options",) if runtime else ())]
+    lines += [
+      f"inline int call({', '.join(call_params)}) {{",
+      f"  const double* arg[sz_arg > 0 ? sz_arg : 1] = {{{arg_init}}};",
+      f"  double* res[sz_res > 0 ? sz_res : 1] = {{{res_init}}};",
+      f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? workspace.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
+      "}",
+    ]
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is not None:
       lines += ["", *_sparse_namespace(name, sp)]

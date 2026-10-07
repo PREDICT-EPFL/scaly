@@ -272,5 +272,6 @@ def test_valid_settings_still_render_and_solve(sparse: bool) -> None:
   source = render_c_source(solve.function)
   for key, value in options.items():
     if key != "sparse":
-      assert f"_settings.{key} = {int(value) if isinstance(value, bool) else value};" in source
+      assert f'!strcmp(option->name, "{key}")' in source
+      assert f"settings.{key} = " in source
   np.testing.assert_allclose(solve(np.array([2.0]))[0], [2.0], atol=1e-7)

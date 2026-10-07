@@ -44,6 +44,7 @@ uses the library and header paths when it builds the generated code.
 | `link_flags` | linker flags, e.g. `("-lmysolver",)` |
 | `header` | C header path relative to `include_dir()`, e.g. `"mysolver/api.h"`; core emits `#include "<header>"` in solver-bearing translation units |
 | `lib_dir()` / `include_dir()` | vendored library / header directories; they join the JIT's `-L`/`-I`/rpath search path |
+| `prepare_options(options)` | validate option names and types, supply defaults, and return the call-time option dict |
 | `render_wrapper(fun, ctx)` | the C wrapper template (below) |
 
 NLP backends also satisfy `scaly.solvers.registry.NlpSolverBackend`. They declare `hess_triangle`
@@ -63,14 +64,18 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]: ...
 
 `fun` is the concrete graph instance being rendered. `fun.descriptor` (a `SolverDescriptor`,
 `src/scaly/solvers/model.py`) carries the problem dimensions, input/output signatures,
-oracle `Function`s, sparsity patterns, and user options. `ctx` supplies the C names and helpers
-needed by the wrapper through `scaly.codegen.solver.SolverWrapperCtx`:
+oracle `Function`s and sparsity patterns. User options are Python runtime data.
+`ctx` supplies the C names and helpers needed by the wrapper through
+`scaly.codegen.solver.SolverWrapperCtx`:
 
 - `ctx.symbol` is the solver's mangled C identifier. Prefix every static the template declares with
   it, since multiple solvers can share one translation unit.
 - `ctx.raw_symbol` is the name of the function the template must define.
 - `ctx.stats_symbol` is the `scaly_solver_stats` static the template must fill on every call. Core
   declares it and exports the `<symbol>_stats(...)` accessor, and the plugin only writes the fields.
+- `ctx.options_index` is this solver's index in the call-time `solver_options` array.
+- `ctx.oracle_options(fn)` returns the context argument for a generated oracle,
+  or an empty tuple for an external oracle. Append it after the oracle's workspace argument.
 - `ctx.raw_symbol_of(fn)` gives the C symbol of an oracle/derivative `Function` or `ExternalOracle`
   from the descriptor. Scaly renders ordinary functions into the same translation unit.
   An external oracle contributes its declared source and raw symbol directly before the wrapper.
@@ -86,10 +91,12 @@ With `I = len(desc.input_signature)` and `O = len(desc.output_signature)`:
 ```c
 static void <ctx.raw_symbol>(const double* in0, ..., const double* in{I-1},
                              double* out0, ..., double* out{O-1},
-                             double* w) { ... }
+                             double* w,
+                             const scaly_solver_option* const* solver_options) { ... }
 ```
 
-`w` is the caller's scratch workspace. Pass it as the last argument of every oracle `_raw` call.
+`w` is the caller's scratch workspace. Pass it after the output pointers of every oracle `_raw` call,
+followed by the context argument returned by `ctx.oracle_options(oracle)`.
 An oracle that needs workspace cannot accept `NULL`. Do not use it for the
 wrapper's own storage. Solver workspaces and O(n²) buffers belong in `static` locals, since the
 wrapper is non-reentrant by contract (see [the generated interface](../how_it_works/generated_interface.md)).
@@ -97,8 +104,10 @@ wrapper is non-reentrant by contract (see [the generated interface](../how_it_wo
 ### Oracle calling convention
 
 Every descriptor `Function` renders as
-`static void <name>_raw(const double* <in0>, ..., double* <out0>, ..., double* w)` with inputs and
-outputs in the Function's declared order.
+`static void <name>_raw(const double* <in0>, ..., double* <out0>, ..., double* w,
+const scaly_solver_option* const* solver_options)` inside a solver-bearing module,
+with inputs and outputs in the Function's declared order. External oracles retain
+their declared flat-buffer interface ending in `double* w`.
 
 ### Statistics
 
@@ -130,10 +139,21 @@ An upstream rename or renumbering then causes a compile error instead of an inco
 
 ### Options
 
-`desc.options` is the user's `options={...}` dict as a tuple of pairs. Lower each option into the
-generated C (settings-struct assignments, `AddIpopt*Option` calls, ...) and raise
-`NotImplementedError` for values that cannot be lowered. Options are baked as constants. The JIT
-cache key includes the source hash, so each distinct set of options requires compilation.
+`prepare_options` runs during Python solver construction, before any C generation.
+It checks names, types and combinations and supplies the backend's defaults.
+Core packs the returned dict into a null-terminated `scaly_solver_option` array
+and passes it through the `_with_options` entry on every numerical call.
+The wrapper reads its array at `solver_options[ctx.options_index]`.
+
+Option kind `0` stores an integer, kind `1` a number and kind `2` a string.
+The [C option interface](../guide/codegen.md#solver-options-in-c) describes the
+layout. Apply options on every call, including when reusing a native workspace.
+Option names and values from the user's solver must never enter rendered source.
+
+Keep defaults in `prepare_options`. Core calls it with an empty dict when
+rendering the exported default arrays and the standard five-argument entry.
+This entry uses backend defaults. Configured Python and ahead-of-time calls use
+the same `_with_options` path. All configurations share one source and cache key.
 
 ## Descriptor families
 
@@ -168,7 +188,7 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 
 - The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
-- Dense matrices are row-major. When `desc.sparse` is true, the oracle emits compact compressed sparse column values in the baked `P_sparsity`, `A_sparsity`, and `G_sparsity` order. `P_sparsity` contains the upper triangle.
+- Without matrix sparsity patterns, oracle matrices are row-major. With `P_sparsity`, `A_sparsity`, and `G_sparsity`, the oracle emits compact compressed sparse column values in their baked order. `P_sparsity` contains the upper triangle. PIQP uses this compact oracle for both interfaces and expands dense matrices at run time.
 - The oracle emits IEEE infinities for absent bounds, and the wrapper converts them to the QP solver's native convention.
 - A QP plugin is a standalone solver only. scaly-sqp does not consume this contract for its subproblems. Its wrapper is written against PIQP's C API and links `scaly-piqp`'s library. See the [user guide](../guide/solver_backends.md#scaly-sqp).
 
@@ -207,6 +227,10 @@ History:
 - v7: IEEE-infinity semantics for absent bounds in core QP and NLP oracles. Plugins normalize them
   to native solver sentinels.
 
+- v8: call-time option arrays, `prepare_options`, the `_with_options` entry and
+  its context argument on generated internal calls. PIQP uses compact matrix
+  oracles in both dense and sparse modes.
+
 ## What core owns
 
 Plugins must not duplicate any of this:
@@ -223,7 +247,7 @@ Plugins must not duplicate any of this:
 
 1. Create the package. If the solver has its own C API, add a hatch build hook that bundles the
    library and headers. Use `plugins/scaly-piqp` as a reference.
-2. Define `BACKEND` with the metadata fields and `render_wrapper`. Expose it through the
+2. Define `BACKEND` with the metadata fields, `prepare_options` and `render_wrapper`. Expose it through the
    `scaly.solvers` entry point.
 3. Implement the wrapper. Call the oracles, normalize infinite bounds, and drive the solver's C API.
    Use native enum constants for statuses and fill the statistics on every return path.

@@ -59,7 +59,8 @@ def test_sparse_qp_renders_baked_csc_tables() -> None:
   assert "piqp_setup_sparse" in source and "piqp_update_sparse" in source
   assert "static piqp_int P_p[5] = { 0, 1, 3, 4, 5 };" in source
   assert "static piqp_int P_i[5] = { 0, 0, 1, 2, 3 };" in source
-  assert "piqp_setup_dense" not in source
+  assert "piqp_setup_dense" in source
+  assert 'scaly_option_number(options, "sparse")' in source
 
 
 @pytest.mark.solver("piqp")

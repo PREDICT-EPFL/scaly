@@ -32,7 +32,16 @@ from scaly.codegen.casadi import (
   render_casadi_queries,
 )
 from scaly.codegen.cpp import render_cpp_header
-from scaly.codegen.solver import render_solver_raw, solver_includes, solver_stats_symbols
+from scaly.codegen.solver import (
+  render_solver_raw,
+  solver_includes,
+  solver_stats_symbols,
+  solver_functions,
+  solver_options_c_defs,
+  solver_options_c_helpers,
+  render_solver_defaults,
+  solver_options_declarations,
+)
 from scaly.ir.expr import ExprOp, topo
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import Function, as_concrete
@@ -191,15 +200,18 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
     params.append(f"{symbol}_{ident}_t* {ident}")
     res_values.append(f"{ident}->data")
   params.append(f"{symbol}_workspace_t* workspace")
-  return [
-    *lines,
-    f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;",
-    f"static inline int {symbol}_call({', '.join(params)}) {{",
-    f"  const double* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
-    f"  double* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
-    f"  return {symbol}(arg, res, NULL, workspace ? workspace->data : NULL, 0);",
-    "}",
-  ]
+  lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
+  for runtime in (False, True) if solver_backends_used(fun) else (False,):
+    suffix = "_with_options" if runtime else ""
+    call_params = [*params, *(("const scaly_solver_option* const* solver_options",) if runtime else ())]
+    lines += [
+      f"static inline int {symbol}_call{suffix}({', '.join(call_params)}) {{",
+      f"  const double* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
+      f"  double* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
+      f"  return {symbol}{suffix}(arg, res, NULL, workspace ? workspace->data : NULL, 0{', solver_options' if runtime else ''});",
+      "}",
+    ]
+  return lines
 
 
 def _sparse_tables(fun: ConcreteFunction, symbol: str, sparsities: tuple[SparsityPattern | None, ...]) -> list[str]:
@@ -242,7 +254,7 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
     "#pragma once",
     "",
     "#include <stddef.h>",
-    *(["#include <stdint.h>", "", *stats_c_defs()] if backends else []),
+    *(["#include <stdint.h>", "", *stats_c_defs(), *solver_options_c_defs()] if backends else []),
     "",
     *abi_status_defines(guarded=True),
     *(["", *casadi_defines()] if casadi else []),
@@ -259,6 +271,7 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
     'extern "C" {',
     "#endif",
     c_api_signature(symbol) + ";",
+    *solver_options_declarations(fun),
     *(f"int {solver_symbol}_stats(scaly_solver_stats* out);" for solver_symbol in solver_stats_symbols(fun)),
     *(casadi_declarations(symbol) if casadi else []),
     "#ifdef __cplusplus",
@@ -288,13 +301,17 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
   lines: list[str] = [
-    *_includes(("#include <time.h>", *solver_includes(fun)), dialect=ctx.recipe.dialect, prog=prog, vector_libm=ctx.recipe.vector_libm),
+    *_includes(
+      ("#include <time.h>", "#include <string.h>", *solver_includes(fun)), dialect=ctx.recipe.dialect, prog=prog, vector_libm=ctx.recipe.vector_libm
+    ),
     "",
     *abi_status_defines(),
     "",
     *stats_c_defs(),
     "",
     *stats_c_timing_defs(),
+    *solver_options_c_defs(),
+    *solver_options_c_helpers(),
     "",
     *(casadi_defines() + [""] if casadi else []),
     "#ifdef __cplusplus",
@@ -303,6 +320,9 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     "",
   ]
   order = _function_order(fun)
+  solvers = solver_functions(fun)
+  options_indices = {fn.name: i for i, fn in enumerate(solvers)}
+  runtime_callees = frozenset((*procs, *options_indices))
   external_sources: list[str] = []
   raw_definitions: dict[str, str] = {}
   for fn in order:
@@ -323,37 +343,60 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     names = [pr.attrs["name"] for pr in pending]
     count = names.index(until) + 1 if until in names else len(pending) if until is None else 0
     for pr in pending[:count]:
-      lines.extend((*_render_raw_callee(pr, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm, reserved_names=reserved_names), ""))
+      lines.extend(
+        (
+          *_render_raw_callee(
+            pr, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm, reserved_names=reserved_names, solver_callees=runtime_callees
+          ),
+          "",
+        )
+      )
     del pending[:count]
 
   for fn in order if is_solver_function(fun) else order[:-1]:
     if is_solver_function(fn):
-      lines.extend((*render_solver_raw(fn, include_external_sources=False), ""))
+      lines.extend((*render_solver_raw(fn, options_index=options_indices[fn.name], include_external_sources=False), ""))
     else:
       flush(fn.name)
   flush(None)
   if is_solver_function(fun):
-    lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi)
+    lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi, options_count=len(solvers))
   else:
-    lines += _render_entry(procs[fun.name], fun, casadi=casadi, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm)
+    lines += _render_entry(
+      procs[fun.name],
+      fun,
+      casadi=casadi,
+      dialect=ctx.recipe.dialect,
+      vector_libm=ctx.recipe.vector_libm,
+      solver_callees=runtime_callees,
+      options_count=len(solvers),
+    )
+  symbol = c_ident(fun.name)
+  lines += ["", *render_solver_defaults(fun)]
+  lines += [
+    c_api_signature(symbol) + " {",
+    f"  const scaly_solver_option* options[] = {{ {', '.join(f'{c_ident(fn.name)}_default_options()' for fn in solvers)} }};",
+    f"  return {symbol}_with_options(arg, res, iw, w, mem, options);",
+    "}",
+  ]
   if casadi:
     lines += ["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_solver_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> list[str]:
+def _render_solver_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool, options_count: int) -> list[str]:
   """The entry of a root ``solver ConcreteFunction``: the null checks, then one call into its wrapper."""
   symbol = c_ident(fun.name)
   res = {name: f"res[{i}]" for i, name in enumerate(fun.output_names)}
-  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
+  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi), options_count=options_count)
   epilogue: list[str] = []
   if casadi:
     gather = casadi_gather(fun, sz_w)
     res.update(gather.ptr)
     lines += gather.setup
     epilogue = gather.epilogue
-  args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *res.values(), "w"]
+  args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *res.values(), "w", "solver_options"]
   return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 

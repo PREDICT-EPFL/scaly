@@ -154,6 +154,8 @@ static inline void circle_bounds_raw(const double* p, double* x_lb, double* x_ub
 static scaly_solver_stats circle_sqp_stats_data;
 static void circle_sqp_raw(const double* in0, const double* in1, const double* in2, const double ...
 int circle_sqp_stats(scaly_solver_stats* out) {
+int circle_sqp_with_options(const double** arg, double** res, int* iw, double* w, int mem, ...
+const scaly_solver_option* circle_sqp_default_options(void) {
 int circle_sqp(const double** arg, double** res, int* iw, double* w, int mem) {
 ```
 
@@ -164,8 +166,12 @@ wrapper does.
 
 ## The pointer ABI
 
-The entry has the same five-argument signature for every function, and the
-[guide](../guide/codegen.md#the-pointer-entry) explains each argument. Every
+The standard entry has the same five-argument signature for every function, and
+the [guide](../guide/codegen.md#the-pointer-entry) explains each argument. A module
+containing a solver also exports a `_with_options` entry with a sixth argument
+for call-time option arrays. Python uses this entry. The standard entry calls it
+with backend defaults. The [option interface](../guide/codegen.md#solver-options-in-c)
+describes the arrays and their lifetime. Every
 input and output buffer is an array of `double`, whatever the data type of the
 matching value in the graph. An `int64` or `bool` input is read from `double`
 values, and an integer or Boolean output is written as `double` values, so a
@@ -359,7 +365,9 @@ The key is a SHA-256 hash over, in order:
 Changing the optimization level therefore gives a new key, as the `-O3` run
 shows. The compiler binary is not part of the key, so pointing `SCALY_CC` at a
 different compiler with the same flags reuses artifacts built by the old one.
-Numerical inputs never enter the key.
+Numerical inputs and user solver options never enter the key. Backend defaults
+come from the plugin's Python option preparation and also provide the exported
+module's default option arrays.
 
 ### Where artifacts live
 

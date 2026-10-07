@@ -138,6 +138,37 @@ the compiled library with `dlopen` and no header, where this fixed signature
 is the whole contract. The C++ header and the CasADi layer are both built on
 the same symbol, so every generated module can be called this way.
 
+### Solver options in C
+
+A module containing a solver exports an additional `<name>_with_options` entry.
+Its first five arguments match the pointer entry. The sixth is
+`const scaly_solver_option* const* solver_options`, with one option array per
+solver. The header's `<name>_OPTIONS_<solver>` macros give each array's index,
+and `<name>_N_SOLVERS` gives the count.
+
+An option array ends with a null `name`. Each entry has `name`, `kind`,
+`integer`, `number` and `text` fields. Kind `0` uses the `int64_t` integer,
+kind `1` uses the `double` number, and kind `2` uses the string pointer.
+Names and string values must remain alive throughout the call.
+
+Each `<solver>_default_options()` accessor returns the backend's complete,
+read-only default array. Copy this array, including its terminator, before
+changing entries. SQP's `globalization`, `hessian` and `qp` entries use integers.
+Their value `1` selects `"l1"`, `"exact"` and `"sparse"`, respectively.
+Value `0` selects the other choice listed in the
+[backend guide](solver_backends.md#scaly-sqp).
+
+The typed C helper `<name>_call_with_options` accepts the same option-pointer
+array after its workspace argument. The C++ `call` helper has a corresponding
+overload. Python supplies validated options automatically. A C or C++ caller
+must supply names and values valid for the backend and include every entry
+required by its default array.
+
+The standard five-argument entry and the typed helpers without an option argument
+use backend defaults. Options supplied to `sc.solver` affect Python calls and do
+not change the exported source. An ahead-of-time caller supplies its chosen
+configuration through `_with_options`.
+
 ## Generated text and export options
 
 `render_c_module` returns a `CModule` without writing files:

@@ -38,6 +38,7 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   return [ident(n, "_in") for n in fun.input_names], [ident(n, "_out") for n in fun.output_names]
 
 
-def c_api_signature(symbol: str = "f") -> str:
+def c_api_signature(symbol: str = "f", *, solver_options: bool = False) -> str:
   """The universal ABI entry signature, spelled for a given symbol name."""
-  return C_API_SIGNATURE.replace(" f(", f" {symbol}(")
+  signature = C_API_SIGNATURE.replace(" f(", f" {symbol}(")
+  return signature[:-1] + ", const scaly_solver_option* const* solver_options)" if solver_options else signature

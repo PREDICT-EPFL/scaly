@@ -51,14 +51,14 @@ def test_ipopt_wrapper_rejects_a_mixed_hessian_triangle() -> None:
 
   solver = _wrapper_fixture((0, 1), (1, 0))
   with pytest.raises(ValueError, match="exactly one triangle"):
-    render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats"))
+    render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0))
 
 
 def test_ipopt_wrapper_writes_the_selected_hessian_directly() -> None:
   from scaly_ipopt.codegen import render_wrapper
 
   solver = _wrapper_fixture((0, 0, 1), (0, 1, 1))
-  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats")))
+  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0)))
   assert "h_scratch" not in source
   assert "hess_lower_idx" not in source
   assert "foreign_hess_raw(x, obj_buf, values, ctx->w);" in source
@@ -79,7 +79,7 @@ def test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns(rows: t
   from scaly_ipopt.codegen import render_wrapper
 
   solver = _wrapper_fixture(rows, cols)
-  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats")))
+  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0)))
   if rows:
     assert "ipopt_fixture_hess_rows" in source
     assert "ipopt_fixture_hess_cols" in source

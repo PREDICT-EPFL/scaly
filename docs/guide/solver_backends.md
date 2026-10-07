@@ -5,6 +5,11 @@ programming (SQP) solver. The model declaration and solver input structure stay 
 same when you switch backend. Their supported problems, numerical methods,
 and warm-start behavior differ.
 
+Options belong to the Python `Solver` and are passed to the generated code on
+each call. Solvers for the same problem and with the same name share one compiled
+module even when their options differ. Constructing another solver with different
+options reuses the compiled wrapper and oracles.
+
 ## Problem types and backend selection
 
 | Backend | Supported problem | Installation |
@@ -63,8 +68,8 @@ The sparse option stores only structurally nonzero entries of the Hessian and
 constraint matrices. Sparse storage does not necessarily make small problems
 faster, so the useful choice depends on the problem and its matrix sizes.
 
-Sparse matrix analysis compiles a probe function during solver
-construction, so it needs a C compiler before the first solve. The QP check
+PIQP matrix analysis compiles a probe function during solver construction in
+both dense and sparse modes, so it needs a C compiler before the first solve. The QP check
 rejects costs, constraints, and bounds that contain another solver call because
 it cannot prove the required dependence on the decision variables through that
 call. This restriction applies to both dense and sparse PIQP modes.
@@ -144,7 +149,7 @@ limit is not reported as success.
 
 With `options={"trace": True}`, the generated solver prints iteration residuals,
 QP outcomes, step lengths, and rejected trial counts to standard error. This
-option changes generated code, so enabling it recompiles the solver.
+option is passed at run time, so enabling it reuses the compiled solver.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -162,8 +167,8 @@ option changes generated code, so enabling it recompiles the solver.
 | `qp_max_iter` | `50` | QP iteration limit |
 | `trace` | `False` | print iteration diagnostics |
 
-Invalid option combinations are rejected when generating the wrapper. How
-Scaly SQP repairs an indefinite Hessian and handles a failed subproblem is
+Invalid option names, types and combinations are rejected when constructing the
+solver. How Scaly SQP repairs an indefinite Hessian and handles a failed subproblem is
 described under [Hessian regularization](../how_it_works/solvers.md#hessian-regularization)
 and [stopping and failure rules](../how_it_works/solvers.md#stopping-and-failure-rules).
 
