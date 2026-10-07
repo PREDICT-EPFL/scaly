@@ -2,6 +2,7 @@
 
 import ctypes
 import platform
+import re
 import shutil
 import subprocess
 
@@ -187,6 +188,18 @@ def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler,
   assert _evaluate(vector, values, 1).tobytes() == _evaluate(scalar, values, 1).tobytes()
 
 
+@pytest.mark.parametrize("lanes", [1, 2, 4, 8])
+def test_by_value_vector_types_are_not_under_aligned_aliases(lanes):
+  # aarch64 GCC 13.1 and 14 to 16.1 crash on a by-value parameter whose type has both attributes.
+  prog = widen_ranges(_program(), lanes=lanes)
+  source = "\n".join([*_includes(prog=prog), *_render_raw_callee(prog.args[0], dialect="gnu", vector_libm="glibc")])
+  aliases = set(re.findall(r"typedef \w+ (\w+) __attribute__\(\(.*aligned.*may_alias", source))
+  parameters = set(re.findall(r"[(,]\s*(?:const\s+)?(\w+)(?:\s+\w+)?\s*(?=[,)])", source))
+  assert aliases - {"double2"}
+  assert "kernel_lanes_1_vec" in parameters
+  assert not aliases & parameters
+
+
 def test_helper_names_do_not_capture_user_names(tmp_path):
   x = p.buffer("scaly_valid", dtypes.float64, (9,))
   y = p.buffer("scaly_load_1", dtypes.float64, (9,))
@@ -246,7 +259,7 @@ def test_contiguous_output_axis_retains_inner_reduction(tmp_path, dialect):
   values = np.arange(27, dtype=float)
   np.testing.assert_array_equal(_evaluate(function, values, 9)[:9], values.reshape(3, 9).sum(axis=0))
   if dialect == "gnu":
-    assert "*(const kernel_lanes_1_vec*)" in source
+    assert "*(const kernel_lanes_1_vec_mem*)" in source
 
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
@@ -427,7 +440,7 @@ def test_contiguous_access_with_sanitized_range_name(tmp_path, dialect, lanes):
   np.testing.assert_array_equal(result[:11], values)
   np.testing.assert_array_equal(result[11:], 8765.0)
   if dialect == "gnu":
-    assert "*(const kernel_lanes_1_vec*)" in source
+    assert "*(const kernel_lanes_1_vec_mem*)" in source
 
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
