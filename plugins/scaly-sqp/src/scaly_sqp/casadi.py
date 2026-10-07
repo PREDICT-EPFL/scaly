@@ -43,6 +43,9 @@ def build_casadi_external_sqp(
   options: dict[str, str | int | float] | None = None,
 ) -> Solver:
   """Embed CasADi-codegenerated oracles behind the same SQP descriptor as Scaly."""
+  from . import BACKEND
+
+  BACKEND.prepare_options(options or {})
   import casadi as ca
 
   n, np_ = int(base.size1_in(0)), int(base.size1_in(1))

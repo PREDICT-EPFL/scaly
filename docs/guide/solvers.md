@@ -495,5 +495,8 @@ Generated solver code needs the relevant native solver libraries, whose link
 flags are available in the rendered module comments.
 
 Solver wrappers keep static state and are not reentrant. Concurrent calls to
-the same wrapper are unsupported. Backend options are fixed in the generated
-code, so changing an option means constructing another solver.
+the same wrapper are unsupported. Python passes tuning options on each call.
+Constructing another solver with different tuning reuses the compiled module.
+Changing PIQP's `sparse` or SQP's `qp` selects a different compiled interface.
+An exported module accepts options through its
+[`_with_options` entry](codegen.md#solver-options-in-c).

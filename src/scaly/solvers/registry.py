@@ -23,13 +23,13 @@ from collections.abc import Sequence
 from functools import cache
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function.concrete import ConcreteFunction
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 7
+SOLVER_PLUGIN_PROTOCOL_VERSION = 8
 ENTRY_POINT_GROUP = "scaly.solvers"
 
 
@@ -53,11 +53,16 @@ class SolverBackend(Protocol):
 
   def include_dir(self) -> Path: ...
 
+  def prepare_options(self, options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate options, supply defaults, and split compilation choices from runtime tuning."""
+    ...
+
   def render_wrapper(self, fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     """Emit the C wrapper for one solver ``ConcreteFunction`` (see docs/dev/solver_plugins.md).
 
     Must define ``static void <ctx.raw_symbol>(...)`` with the descriptor's
-    ``in*``/``out*`` signature plus a trailing ``double* w``, drive the solver's
+    ``in*``/``out*`` signature followed by ``double* w`` and the option context,
+    drive the solver's
     C API with the oracle kernels (``ctx.raw_symbol_of``), and fill
     ``ctx.stats_symbol`` on every call.
     """
@@ -96,8 +101,9 @@ def get_backend(name: str) -> SolverBackend:
     )
   if getattr(backend, "name", None) != name:
     raise SolverPluginError(f"solver plugin {name!r} declares name {getattr(backend, 'name', None)!r}; it must equal the entry-point name")
-  if not callable(getattr(backend, "render_wrapper", None)):
-    raise SolverPluginError(f"solver plugin {name!r} does not provide a callable render_wrapper(fun, ctx) hook")
+  for hook in ("prepare_options", "render_wrapper"):
+    if not callable(getattr(backend, hook, None)):
+      raise SolverPluginError(f"solver plugin {name!r} does not provide a callable {hook} hook")
   return backend
 
 

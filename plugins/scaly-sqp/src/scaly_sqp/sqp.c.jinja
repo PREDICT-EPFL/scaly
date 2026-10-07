@@ -1,7 +1,3 @@
-{% set sparse = qp_mode == 'sparse' %}
-{% set qp_P = '&P_csc' if sparse else 'Pcol' %}
-{% set qp_A = ('&A_csc' if sparse else 'Acol') if nh else 'NULL' %}
-{% set qp_G = ('&G_csc' if sparse else 'Gcol') if ng else 'NULL' %}
 {% macro int_table(ctype, name, values) %}
   static {{ ctype }} {{ name }}[{{ [values|length, 1]|max }}] = { {{ values|join(', ') if values else '0' }} };
 {%- endmacro %}
@@ -64,11 +60,22 @@ for (int i = 0; i < {{ m }}; ++i) trial_ok = trial_ok && isfinite(trial_g[i]);
 {{ violation('trial_g', 'trial', 'trial_violation') }}
 {%- endmacro %}
 
-{% if trace %}
 #include <stdio.h>
-{% endif %}
-// PIQP-backed SQP wrapper for {{ name }} (n={{ n }}, equality={{ nh }}, inequality={{ ng }}, qp={{ qp_mode }}, nnz jac/hess = {{ nnz_j }}/{{ nnz_h }}, nnz P/A/G = {{ nnz_p }}/{{ a_rows|length }}/{{ g_rows|length }}).
+static double {{ raw_symbol }}_option_number(const scaly_solver_option* options, const char* name) {
+  while (strcmp(options->name, name)) ++options;
+  return options->kind == 0 ? (double)options->integer : options->number;
+}
+// PIQP-backed SQP wrapper for {{ name }} (n={{ n }}, equality={{ nh }}, inequality={{ ng }}, nnz jac/hess = {{ nnz_j }}/{{ nnz_h }}, nnz P/A/G = {{ nnz_p }}/{{ a_rows|length }}/{{ g_rows|length }}).
 static void {{ raw_symbol }}({{ signature }}) {
+  const scaly_solver_option* options = solver_options[{{ options_index }}];
+  const int l1 = (int){{ raw_symbol }}_option_number(options, "globalization");
+  const int exact_hessian = (int){{ raw_symbol }}_option_number(options, "hessian"), trace = (int){{ raw_symbol }}_option_number(options, "trace");
+  const int max_iter = (int){{ raw_symbol }}_option_number(options, "max_iter"), watchdog = (int){{ raw_symbol }}_option_number(options, "watchdog");
+  const int qp_max_iter = (int){{ raw_symbol }}_option_number(options, "qp_max_iter");
+  const double qp_tol = {{ raw_symbol }}_option_number(options, "qp_tol");
+  const double sqp_tol = {{ raw_symbol }}_option_number(options, "tol"), sqp_dual_tol = {{ raw_symbol }}_option_number(options, "dual_tol");
+  const double ls_beta = {{ raw_symbol }}_option_number(options, "line_search_beta"), merit_offset = {{ raw_symbol }}_option_number(options, "merit");
+  const double min_reg = {{ raw_symbol }}_option_number(options, "regularization");
   double stats_t0 = scaly_clock_s();
   static double x[{{ n }}], trial[{{ n }}], step[{{ n }}], grad_buf[{{ n }}], dual_buf[{{ n }}], cq[{{ n }}];
   static double g[{{ [m, 1]|max }}], trial_g[{{ [m, 1]|max }}], jac_buf[{{ [nnz_j, 1]|max }}], hess_buf[{{ [nnz_h, 1]|max }}];
@@ -80,7 +87,9 @@ static void {{ raw_symbol }}({{ signature }}) {
 {{ int_table('const int', 'jac_cols', jcols) }}
 {{ int_table('piqp_int', 'P_p', p_ptr) }}
 {{ int_table('piqp_int', 'P_i', p_rows) }}
+{% if qp_mode == 'dense' %}
 {{ int_table('const int', 'P_j', p_cols) }}
+{% endif %}
 {{ int_table('const int', 'P_src', p_src) }}
 {{ int_table('const int', 'P_diag', p_diag) }}
   static double P_x[{{ nnz_p }}];
@@ -94,44 +103,42 @@ static void {{ raw_symbol }}({{ signature }}) {
 {% endif %}
   static int ldl_i[{{ [nnz_l, 1]|max }}], ldl_nz[{{ n }}], ldl_flag[{{ n }}], ldl_pattern[{{ n }}];
   static double ldl_x[{{ [nnz_l, 1]|max }}], ldl_y[{{ n }}], ldl_d[{{ n }}];
-{% if sparse %}
+{% if qp_mode == 'sparse' %}
   static piqp_csc P_csc = { {{ n }}, {{ n }}, {{ nnz_p }}, P_p, P_i, P_x };
-{% if nh %}
-{{ int_table('piqp_int', 'A_p', a_ptr) }}
-{{ int_table('piqp_int', 'A_i', a_rows) }}
-{{ int_table('const int', 'A_src', a_src) }}
-  static double A_x[{{ a_rows|length }}];
-  static piqp_csc A_csc = { {{ nh }}, {{ n }}, {{ a_rows|length }}, A_p, A_i, A_x };
-{% endif %}
-{% if ng %}
-{{ int_table('piqp_int', 'G_p', g_ptr) }}
-{{ int_table('piqp_int', 'G_i', g_rows) }}
-{{ int_table('const int', 'G_src', g_src) }}
-  static double G_x[{{ g_rows|length }}];
-  static piqp_csc G_csc = { {{ ng }}, {{ n }}, {{ g_rows|length }}, G_p, G_i, G_x };
-{% endif %}
 {% else %}
   static double Pcol[{{ n * n }}];
+{% endif %}
 {% if nh %}
-  static double Acol[{{ nh * n }}];
-{{ int_table('const int', 'A_src', a_src) }}
+{% if qp_mode == 'sparse' %}
+{{ int_table('piqp_int', 'A_p', a_ptr) }}
+{% endif %}
 {{ int_table('piqp_int', 'A_i', a_rows) }}
+{{ int_table('const int', 'A_src', a_src) }}
+{% if qp_mode == 'sparse' %}
+  static double A_x[{{ [a_rows|length, 1]|max }}];
+  static piqp_csc A_csc = { {{ nh }}, {{ n }}, {{ a_rows|length }}, A_p, A_i, A_x };
+{% else %}
+  static double Acol[{{ nh * n }}];
+{% endif %}
 {% endif %}
 {% if ng %}
-  static double Gcol[{{ ng * n }}];
-{{ int_table('const int', 'G_src', g_src) }}
+{% if qp_mode == 'sparse' %}
+{{ int_table('piqp_int', 'G_p', g_ptr) }}
+{% endif %}
 {{ int_table('piqp_int', 'G_i', g_rows) }}
+{{ int_table('const int', 'G_src', g_src) }}
+{% if qp_mode == 'sparse' %}
+  static double G_x[{{ [g_rows|length, 1]|max }}];
+  static piqp_csc G_csc = { {{ ng }}, {{ n }}, {{ g_rows|length }}, G_p, G_i, G_x };
+{% else %}
+  static double Gcol[{{ ng * n }}];
 {% endif %}
 {% endif %}
-{% if globalization == 'filter' %}
   static double filter_f[20], filter_v[20]; int filter_count = 0;
-{% endif %}
-{% if globalization == 'l1' and watchdog %}
   static double checkpoint_x[{{ n }}], checkpoint_lam_g[{{ [m, 1]|max }}], checkpoint_lam_box[{{ n }}];
   static double checkpoint_step[{{ n }}], checkpoint_qp_lam_g[{{ [m, 1]|max }}], checkpoint_qp_lam_box[{{ n }}];
   static double checkpoint_g[{{ [m, 1]|max }}], checkpoint_grad[{{ n }}];
   double checkpoint_f = 0.0, watchdog_phi = 0.0, watchdog_dphi = 0.0, watchdog_mu = 0.0; int watchdog_step = 0;
-{% endif %}
   double stats_t_fe = 0.0, stats_t_qp = 0.0, stats_t_globalization = 0.0;
   double stats_step_inf = 0.0, stats_alpha = 0.0, stats_merit_penalty = 0.0;
   int stats_backtracks = 0, stats_qp_iter = 0;
@@ -157,10 +164,9 @@ static void {{ raw_symbol }}({{ signature }}) {
   double f = 0.0, trial_f = 0.0, primal = 0.0, complementarity = 0.0, stationarity = 0.0;
   int status = SCALY_SOLVE_MAX_ITER, native_status = PIQP_SOLVED, iterations = 0;
   piqp_workspace* qp = NULL; piqp_settings settings; piqp_set_default_settings_{{ qp_mode }}(&settings);
-  settings.max_iter = {{ qp_max_iter }}; settings.eps_abs = {{ qp_tol }}; settings.eps_rel = {{ qp_tol }}; settings.eps_duality_gap_abs = {{ qp_tol }}; settings.eps_duality_gap_rel = {{ qp_tol }}; settings.verbose = 0; settings.preconditioner_reuse_on_update = 0;
-  const double sqp_tol = {{ tol }}, sqp_dual_tol = {{ dual_tol }}, ls_beta = {{ beta }}, merit_offset = {{ merit_offset }}, min_reg = {{ regularization }};
+  settings.max_iter = qp_max_iter; settings.eps_abs = qp_tol; settings.eps_rel = qp_tol; settings.eps_duality_gap_abs = qp_tol; settings.eps_duality_gap_rel = qp_tol; settings.verbose = 0; settings.preconditioner_reuse_on_update = 0;
   if (!inputs_ok) status = SCALY_SOLVE_NUMERICS;
-  for (int sqp_iter = 0; sqp_iter <= {{ max_iter }} && inputs_ok; ++sqp_iter) {
+  for (int sqp_iter = 0; sqp_iter <= max_iter && inputs_ok; ++sqp_iter) {
     iterations = sqp_iter;
     double fe0 = scaly_clock_s();
     {{ base_raw }}({{ base_args }}); n_eval_f++;{{ ' n_eval_g++;' if m else '' }}
@@ -185,11 +191,9 @@ static void {{ raw_symbol }}({{ signature }}) {
     for (int i = 0; i < {{ n }}; ++i) dual_buf[i] = grad_buf[i] + lam_box[i];
     for (int k = 0; k < {{ nnz_j }}; ++k) dual_buf[jac_cols[k]] += jac_buf[k] * lam_g[jac_rows[k]];
     for (int i = 0; i < {{ n }}; ++i) if (fabs(dual_buf[i]) > stationarity) stationarity = fabs(dual_buf[i]);
-{% if trace %}
-    fprintf(stderr, "{{ trace_prefix }} iter=%d primal=%.3e complementarity=%.3e stationarity=%.3e\n", sqp_iter, primal, complementarity, stationarity);
-{% endif %}
+    if (trace) fprintf(stderr, "{{ trace_prefix }} iter=%d primal=%.3e complementarity=%.3e stationarity=%.3e\n", sqp_iter, primal, complementarity, stationarity);
     if (primal <= sqp_tol && complementarity <= sqp_dual_tol && stationarity <= sqp_dual_tol) { status = SCALY_SOLVE_OK; break; }
-    if (sqp_iter == {{ max_iter }}) break;
+    if (sqp_iter == max_iter) break;
     double hess_fe0 = scaly_clock_s();
     {{ hess_raw }}({{ hess_args }}); n_eval_h++;
     stats_t_fe += scaly_clock_s() - hess_fe0;
@@ -214,8 +218,8 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
 {% endif %}
 {# If negative reduced curvature survived normal-space damping, drop the
    constraint multipliers and convexify the objective Hessian instead. #}
-{% if hessian_mode == 'exact' and nh %}
-    if (shift > 0.0) {
+{% if nh %}
+    if (exact_hessian && shift > 0.0) {
       double objective_hess_fe0 = scaly_clock_s();
       {{ hess_raw }}({{ objective_hess_args }}); n_eval_h++;
       stats_t_fe += scaly_clock_s() - objective_hess_fe0; hess_ok = 1;
@@ -226,39 +230,43 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
     }
 {% endif %}
     for (int i = 0; i < {{ n }}; ++i) cq[i] = grad_buf[i];
-{% if not sparse %}
-    for (int i = 0; i < {{ n * n }}; ++i) Pcol[i] = 0.0;
-    for (int k = 0; k < {{ nnz_p }}; ++k) { Pcol[P_i[k] + P_j[k] * {{ n }}] = P_x[k]; Pcol[P_j[k] + P_i[k] * {{ n }}] = P_x[k]; }
+{% if qp_mode == 'dense' %}
+    for (size_t i = 0; i < {{ n * n }}ULL; ++i) Pcol[i] = 0.0;
+    for (int k = 0; k < {{ nnz_p }}; ++k) { Pcol[P_i[k] + (size_t)P_j[k] * {{ n }}] = P_x[k]; Pcol[P_j[k] + (size_t)P_i[k] * {{ n }}] = P_x[k]; }
 {% endif %}
 {% if nh %}
-{% if sparse %}
+{% if qp_mode == 'sparse' %}
     for (int k = 0; k < {{ a_rows|length }}; ++k) A_x[k] = jac_buf[A_src[k]];
 {% else %}
-    for (int i = 0; i < {{ nh * n }}; ++i) Acol[i] = 0.0;
-    for (int k = 0; k < {{ a_rows|length }}; ++k) Acol[A_i[k] * {{ n }} + jac_cols[A_src[k]]] = jac_buf[A_src[k]];
+    for (size_t i = 0; i < {{ nh * n }}ULL; ++i) Acol[i] = 0.0;
+    for (int k = 0; k < {{ a_rows|length }}; ++k) Acol[(size_t)A_i[k] * {{ n }} + jac_cols[A_src[k]]] = jac_buf[A_src[k]];
 {% endif %}
     for (int i = 0; i < {{ nh }}; ++i) b[i] = -g[i];
 {% endif %}
 {% if ng %}
-{% if sparse %}
+{% if qp_mode == 'sparse' %}
     for (int k = 0; k < {{ g_rows|length }}; ++k) G_x[k] = jac_buf[G_src[k]];
 {% else %}
-    for (int i = 0; i < {{ ng * n }}; ++i) Gcol[i] = 0.0;
-    for (int k = 0; k < {{ g_rows|length }}; ++k) Gcol[G_i[k] * {{ n }} + jac_cols[G_src[k]]] = jac_buf[G_src[k]];
+    for (size_t i = 0; i < {{ ng * n }}ULL; ++i) Gcol[i] = 0.0;
+    for (int k = 0; k < {{ g_rows|length }}; ++k) Gcol[(size_t)G_i[k] * {{ n }} + jac_cols[G_src[k]]] = jac_buf[G_src[k]];
 {% endif %}
 {# Core bounds use IEEE infinities; the PIQP subproblem uses PIQP_INF. #}
     for (int i = 0; i < {{ ng }}; ++i) { hl[i] = gl[i] <= -1e19 ? -PIQP_INF : gl[i] - g[{{ nh }} + i]; hu[i] = gu[i] >= 1e19 ? PIQP_INF : gu[i] - g[{{ nh }} + i]; }
 {% endif %}
     for (int i = 0; i < {{ n }}; ++i) { dl[i] = xlb[i] <= -1e19 ? -PIQP_INF : xlb[i] - x[i]; du[i] = xub[i] >= 1e19 ? PIQP_INF : xub[i] - x[i]; }
-    piqp_data_{{ qp_mode }} data = { {{ n }}, {{ nh }}, {{ ng }}, {{ qp_P }}, cq, {{ qp_A }}, {{ 'b' if nh else 'NULL' }}, {{ qp_G }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du };
     double qp0 = scaly_clock_s();
-    if (qp == NULL) piqp_setup_{{ qp_mode }}(&qp, &data, &settings);
-    else piqp_update_{{ qp_mode }}(qp, {{ qp_P }}, cq, {{ qp_A }}, {{ 'b' if nh else 'NULL' }}, {{ qp_G }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du);
+{% if qp_mode == 'sparse' %}
+      piqp_data_sparse data = { {{ n }}, {{ nh }}, {{ ng }}, &P_csc, cq, {{ '&A_csc' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ '&G_csc' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du };
+      if (qp == NULL) piqp_setup_sparse(&qp, &data, &settings);
+      else piqp_update_sparse(qp, &P_csc, cq, {{ '&A_csc' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ '&G_csc' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du);
+{% else %}
+      piqp_data_dense data = { {{ n }}, {{ nh }}, {{ ng }}, Pcol, cq, {{ 'Acol' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ 'Gcol' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du };
+      if (qp == NULL) piqp_setup_dense(&qp, &data, &settings);
+      else piqp_update_dense(qp, Pcol, cq, {{ 'Acol' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ 'Gcol' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du);
+{% endif %}
     piqp_status qp_status = piqp_solve(qp); stats_t_qp += scaly_clock_s() - qp0; native_status = (int)qp_status;
     stats_qp_iter += (int)qp->result->info.iter;
-{% if trace %}
-    if (qp_status != PIQP_SOLVED) fprintf(stderr, "{{ trace_prefix }} iter=%d qp_status=%d qp_iter=%d primal_res=%.3e dual_res=%.3e gap=%.3e rel_gap=%.3e qp not solved\n", sqp_iter + 1, (int)qp_status, (int)qp->result->info.iter, qp->result->info.primal_res, qp->result->info.dual_res, qp->result->info.duality_gap, qp->result->info.duality_gap_rel);
-{% endif %}
+    if (trace) if (qp_status != PIQP_SOLVED) fprintf(stderr, "{{ trace_prefix }} iter=%d qp_status=%d qp_iter=%d primal_res=%.3e dual_res=%.3e gap=%.3e rel_gap=%.3e qp not solved\n", sqp_iter + 1, (int)qp_status, (int)qp->result->info.iter, qp->result->info.primal_res, qp->result->info.dual_res, qp->result->info.duality_gap, qp->result->info.duality_gap_rel);
     // like laopt, continue with PIQP's best iterate on max-iter or infeasibility; globalization and the KKT test judge it
     if (qp_status != PIQP_SOLVED && qp_status != PIQP_MAX_ITER_REACHED && qp_status != PIQP_PRIMAL_INFEASIBLE && qp_status != PIQP_DUAL_INFEASIBLE) { status = SCALY_SOLVE_NUMERICS; break; }
     for (int i = 0; i < {{ n }}; ++i) step[i] = qp->result->x[i];
@@ -272,11 +280,9 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
     double step_inf = 0.0, grad_step = 0.0;
     for (int i = 0; i < {{ n }}; ++i) { if (fabs(step[i]) > step_inf) step_inf = fabs(step[i]); grad_step += grad_buf[i] * step[i]; }
     stats_step_inf = step_inf;
-{% if trace %}
-    fprintf(stderr, "{{ trace_prefix }} iter=%d qp_status=%d qp_iter=%d primal=%.3e step_inf=%.3e shift=%.3e\n", sqp_iter + 1, (int)qp_status, (int)qp->result->info.iter, primal, step_inf, shift);
-{% endif %}
+    if (trace) fprintf(stderr, "{{ trace_prefix }} iter=%d qp_status=%d qp_iter=%d primal=%.3e step_inf=%.3e shift=%.3e\n", sqp_iter + 1, (int)qp_status, (int)qp->result->info.iter, primal, step_inf, shift);
     double globalization0 = scaly_clock_s(), globalization_fe = 0.0, alpha = 1.0; int accepted = 0, ls_backtracks = 0;
-{% if globalization == 'filter' %}
+    if (!l1) {
 {{ violation('g', 'x', 'violation')|indent(4, true) }}
     if (filter_count == 0) { filter_f[0] = f; filter_v[0] = violation; filter_count = 1; }
     for (int attempt = 0; attempt < 100 && alpha >= 1e-4; ++attempt) {
@@ -295,68 +301,52 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
       }
       alpha *= ls_beta; ls_backtracks++;
     }
-{% else %}
+    } else {
 {{ violation('g', 'x', 'violation')|indent(4, true) }}
-{% if watchdog %}
     int fallback = 0;
-    if (watchdog_step == 0) {
-      watchdog_mu = merit_offset;
-      for (int i = 0; i < {{ m }}; ++i) if (fabs(qp_lam_g[i]) + merit_offset > watchdog_mu) watchdog_mu = fabs(qp_lam_g[i]) + merit_offset;
-      for (int i = 0; i < {{ n }}; ++i) if (fabs(qp_lam_box[i]) + merit_offset > watchdog_mu) watchdog_mu = fabs(qp_lam_box[i]) + merit_offset;
-      watchdog_phi = f + watchdog_mu * violation; watchdog_dphi = grad_step - watchdog_mu * violation;
-      for (int i = 0; i < {{ n }}; ++i) { checkpoint_x[i] = x[i]; checkpoint_lam_box[i] = lam_box[i]; checkpoint_step[i] = step[i]; checkpoint_qp_lam_box[i] = qp_lam_box[i]; checkpoint_grad[i] = grad_buf[i]; }
-      for (int i = 0; i < {{ m }}; ++i) { checkpoint_lam_g[i] = lam_g[i]; checkpoint_qp_lam_g[i] = qp_lam_g[i]; checkpoint_g[i] = g[i]; }
-      checkpoint_f = f;
-{{ trial()|indent(6, true) }}
-      double trial_phi = trial_f + watchdog_mu * trial_violation;
-      if (trial_ok && trial_phi <= watchdog_phi + 0.25 * watchdog_dphi) accepted = 1;
-      else if (trial_ok && trial_phi < 1e3 * fmax(1.0, fabs(watchdog_phi))) { watchdog_step = 1; accepted = 1; }
-      else fallback = 1;
-    } else if (watchdog_step < {{ watchdog }}) {
-      double current_phi = f + watchdog_mu * violation;
-      if (current_phi <= watchdog_phi) {
+    if (watchdog) {
+      if (watchdog_step == 0) {
+        watchdog_mu = merit_offset;
+        for (int i = 0; i < {{ m }}; ++i) if (fabs(qp_lam_g[i]) + merit_offset > watchdog_mu) watchdog_mu = fabs(qp_lam_g[i]) + merit_offset;
+        for (int i = 0; i < {{ n }}; ++i) if (fabs(qp_lam_box[i]) + merit_offset > watchdog_mu) watchdog_mu = fabs(qp_lam_box[i]) + merit_offset;
+        watchdog_phi = f + watchdog_mu * violation; watchdog_dphi = grad_step - watchdog_mu * violation;
+      }
+      if (watchdog_step == 0 || (watchdog_step < watchdog && f + watchdog_mu * violation <= watchdog_phi)) {
         for (int i = 0; i < {{ n }}; ++i) { checkpoint_x[i] = x[i]; checkpoint_lam_box[i] = lam_box[i]; checkpoint_step[i] = step[i]; checkpoint_qp_lam_box[i] = qp_lam_box[i]; checkpoint_grad[i] = grad_buf[i]; }
         for (int i = 0; i < {{ m }}; ++i) { checkpoint_lam_g[i] = lam_g[i]; checkpoint_qp_lam_g[i] = qp_lam_g[i]; checkpoint_g[i] = g[i]; }
         checkpoint_f = f;
       }
+      if (watchdog_step < watchdog) {
 {{ trial()|indent(6, true) }}
-      double trial_phi = trial_f + watchdog_mu * trial_violation;
-      if (trial_ok && trial_phi <= watchdog_phi + 0.25 * watchdog_dphi) { watchdog_step = 0; accepted = 1; }
-      else if (trial_ok && trial_phi < 1e3 * fmax(1.0, fabs(watchdog_phi))) { watchdog_step++; accepted = 1; }
-      else fallback = 1;
-    } else fallback = 1;
-    if (fallback) {
-      for (int i = 0; i < {{ n }}; ++i) { x[i] = checkpoint_x[i]; lam_box[i] = checkpoint_lam_box[i]; step[i] = checkpoint_step[i]; qp_lam_box[i] = checkpoint_qp_lam_box[i]; grad_buf[i] = checkpoint_grad[i]; }
-      for (int i = 0; i < {{ m }}; ++i) { lam_g[i] = checkpoint_lam_g[i]; qp_lam_g[i] = checkpoint_qp_lam_g[i]; g[i] = checkpoint_g[i]; }
-      f = checkpoint_f; grad_step = 0.0;
-      for (int i = 0; i < {{ n }}; ++i) grad_step += grad_buf[i] * step[i];
+        double trial_phi = trial_f + watchdog_mu * trial_violation;
+        if (trial_ok && trial_phi <= watchdog_phi + 0.25 * watchdog_dphi) { watchdog_step = 0; accepted = 1; }
+        else if (trial_ok && trial_phi < 1e3 * fmax(1.0, fabs(watchdog_phi))) { watchdog_step++; accepted = 1; }
+        else fallback = 1;
+      } else fallback = 1;
+      if (fallback) {
+        for (int i = 0; i < {{ n }}; ++i) { x[i] = checkpoint_x[i]; lam_box[i] = checkpoint_lam_box[i]; step[i] = checkpoint_step[i]; qp_lam_box[i] = checkpoint_qp_lam_box[i]; grad_buf[i] = checkpoint_grad[i]; }
+        for (int i = 0; i < {{ m }}; ++i) { lam_g[i] = checkpoint_lam_g[i]; qp_lam_g[i] = checkpoint_qp_lam_g[i]; g[i] = checkpoint_g[i]; }
+        f = checkpoint_f; grad_step = 0.0;
+        for (int i = 0; i < {{ n }}; ++i) grad_step += grad_buf[i] * step[i];
 {{ violation('g', 'x', 'fallback_violation')|indent(6, true) }}
-      double mu = merit_offset; if (fallback_violation > 0.0) mu += fabs(grad_step) / (0.5 * fallback_violation);
-      stats_merit_penalty = mu; double merit = f + mu * fallback_violation, dmerit = grad_step - mu * fallback_violation; alpha = 1.0; accepted = 0;
+        violation = fallback_violation;
+      } else stats_merit_penalty = watchdog_mu;
+    }
+    if (!watchdog || fallback) {
+      double mu = merit_offset; if (violation > 0.0) mu += fabs(grad_step) / (0.5 * violation);
+      stats_merit_penalty = mu; double merit = f + mu * violation, dmerit = grad_step - mu * violation; alpha = 1.0; accepted = 0;
       for (int attempt = 0; attempt < 100 && alpha >= 1e-4; ++attempt) {
-{{ trial()|indent(8, true) }}
+{{ trial()|indent(6, true) }}
         double trial_merit = trial_f + mu * trial_violation;
         if (trial_ok && trial_merit <= merit + alpha * 0.25 * dmerit) { accepted = 1; break; }
         alpha *= ls_beta; ls_backtracks++;
       }
       watchdog_step = 0;
-    } else stats_merit_penalty = watchdog_mu;
-{% else %}
-    double mu = merit_offset; if (violation > 0.0) mu += fabs(grad_step) / (0.5 * violation);
-    stats_merit_penalty = mu; double merit = f + mu * violation, dmerit = grad_step - mu * violation;
-    for (int attempt = 0; attempt < 100 && alpha >= 1e-4; ++attempt) {
-{{ trial()|indent(6, true) }}
-      double trial_merit = trial_f + mu * trial_violation;
-      if (trial_ok && trial_merit <= merit + alpha * 0.25 * dmerit) { accepted = 1; break; }
-      alpha *= ls_beta; ls_backtracks++;
     }
-{% endif %}
-{% endif %}
+    }
     double globalization_elapsed = scaly_clock_s() - globalization0 - globalization_fe; if (globalization_elapsed > 0.0) stats_t_globalization += globalization_elapsed;
     stats_backtracks += ls_backtracks; if (accepted) stats_alpha = alpha;
-{% if trace %}
-    fprintf(stderr, "{{ trace_prefix }} iter=%d globalization={{ globalization }} trial_f=%.9e alpha=%.3e accepted=%d backtracks=%d penalty=%.3e\n", sqp_iter + 1, trial_f, alpha, accepted, ls_backtracks, stats_merit_penalty);
-{% endif %}
+    if (trace) fprintf(stderr, "{{ trace_prefix }} iter=%d globalization=%s trial_f=%.9e alpha=%.3e accepted=%d backtracks=%d penalty=%.3e\n", sqp_iter + 1, l1 ? "l1" : "filter", trial_f, alpha, accepted, ls_backtracks, stats_merit_penalty);
     if (!accepted) { status = SCALY_SOLVE_NUMERICS; break; }
     for (int i = 0; i < {{ n }}; ++i) { x[i] += alpha * step[i]; lam_box[i] += alpha * (qp_lam_box[i] - lam_box[i]); }
     for (int i = 0; i < {{ m }}; ++i) lam_g[i] += alpha * (qp_lam_g[i] - lam_g[i]);

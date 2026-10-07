@@ -13,7 +13,7 @@ from ..function.api import gradient, sparse_jacobian
 from ..function.tree import group, arg, Tree, parameter_list, append_parameter
 from ..ir.expr import Expr, ExprOp, concat, substitute
 from ..ir.types import SparsityPattern, TensorType
-from .model import SolverDescriptor, descriptor_function
+from .model import SolverDescriptor, descriptor_function, solver_options
 from .problem import Problem
 from .registry import NlpSolverBackend
 
@@ -173,6 +173,7 @@ def build_nlp[SV, NV, SP, NP](
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
   """Build a typed plain Function around an NLP plugin descriptor."""
+  compile_options, resolved_options = backend.prepare_options(options or {})
   cached = _lowered(problem)
   x = cast(Expr, cached["x"])
   triangle = backend.hess_triangle
@@ -211,10 +212,6 @@ def build_nlp[SV, NV, SP, NP](
   )
   input_signature = tuple(zip(input_tree.names, input_tree.shapes, strict=True))
   output_signature = tuple(zip(output_tree.names, output_tree.shapes, strict=True))
-  resolved_options: dict[str, str | int | float] = {"print_level": 0}
-  if options:
-    resolved_options.update(options)
-
   descriptor = SolverDescriptor(
     name=name,
     backend=backend.name,
@@ -232,6 +229,7 @@ def build_nlp[SV, NV, SP, NP](
     bounds=cast(ConcreteFunction, cached["bounds"]),
     jac_sparsity=cast(SparsityPattern, cached["jac_sparsity"]),
     hess_sparsity=hess_sparsity,
-    options=tuple(sorted(resolved_options.items())),
+    compile_options=tuple(sorted(compile_options.items())),
+    runtime_options=solver_options(resolved_options),
   )
   return cast(Any, descriptor_function(descriptor, input_tree, output_tree))

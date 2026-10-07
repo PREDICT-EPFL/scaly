@@ -31,7 +31,8 @@ import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import CModule, render_c_module
-from .solver import solver_stats_symbols
+from .solver import solver_stats_symbols, solver_functions
+from ..solvers.model import CSolverOption
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import BuildRecipe, cache_root, find_c_compiler, native_recipe
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
@@ -237,6 +238,7 @@ class CompiledFunction:
     "_symbol",
     "_entry",
     "_stats_entries",
+    "_options",
     "_sz_w",
     "_input_sizes",
     "_input_shapes",
@@ -254,7 +256,8 @@ class CompiledFunction:
     self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.solver_library)
     symbol = c_ident(fun.name)
     self._symbol = symbol
-    entry = getattr(self._lib, symbol)
+    solvers = solver_functions(fun)
+    entry = getattr(self._lib, f"{symbol}_with_options" if solvers else symbol)
     entry.argtypes = [
       ctypes.POINTER(_C_DOUBLE_P),
       ctypes.POINTER(_C_DOUBLE_P),
@@ -262,6 +265,9 @@ class CompiledFunction:
       _C_DOUBLE_P,
       ctypes.c_int,
     ]
+    self._options = (ctypes.POINTER(CSolverOption) * len(solvers))(*(fn.descriptor.runtime_options for fn in solvers))
+    if solvers:
+      entry.argtypes = [*entry.argtypes, ctypes.POINTER(ctypes.POINTER(CSolverOption))]
     entry.restype = ctypes.c_int
     self._entry = entry
     self._stats_entries: dict[str, Any] = {}
@@ -346,7 +352,7 @@ class CompiledFunction:
       w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
       w_ptr = _C_DOUBLE_P()
 
-    status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0)
+    status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

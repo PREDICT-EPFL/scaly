@@ -73,7 +73,12 @@ def solver[SV, NV, SP, NP](
   name: str | None = None,
   options: dict[str, Any] | None = None,
 ) -> Solver[SV, NV, SP, NP]:
-  """Build a typed ``Solver`` for one backend-free problem."""
+  """Build a typed ``Solver`` for one backend-free problem.
+
+  Options are checked at construction. Runtime tuning is supplied to each numerical
+  call and shares the generated module and cache entry. PIQP's ``sparse`` and SQP's
+  ``qp`` select a fixed compiled matrix interface.
+  """
   selected = get_backend(backend)
   solver_name = name or f"{problem.name}_{backend}"
   if selected.kind == "nlp":

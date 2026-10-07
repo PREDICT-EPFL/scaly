@@ -42,8 +42,8 @@ def test_sqp_generated_wrapper_reuses_one_qp_workspace(interface: str) -> None:
   assert f"if (qp == NULL) piqp_setup_{interface}" in source
   assert f"else piqp_update_{interface}" in source
   assert "settings.preconditioner_reuse_on_update = 0" in source
-  assert "settings.eps_duality_gap_abs = 1e-08" in source
-  assert "settings.eps_duality_gap_rel = 1e-08" in source
+  assert "settings.eps_duality_gap_abs = qp_tol" in source
+  assert "settings.eps_duality_gap_rel = qp_tol" in source
 
 
 @pytest.mark.solver("sqp")
@@ -94,9 +94,11 @@ def test_sqp_rejects_nonfinite_warm_starts_before_the_kkt_check() -> None:
     assert solver.stats() is not None and solver.stats().status == sc.ScalySolveStatus.NUMERICS
 
 
-def test_sqp_trace_is_off_by_default() -> None:
-  source = render_c_source(_problem().function)
-  assert "fprintf" not in source and "stdio.h" not in source
+@pytest.mark.solver("sqp")
+def test_sqp_trace_is_off_by_default(capfd: pytest.CaptureFixture[str]) -> None:
+  solver = _problem()
+  solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
+  assert "[scaly-sqp" not in capfd.readouterr().err
 
 
 def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
@@ -555,9 +557,8 @@ def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
 )
 def test_sqp_rejects_invalid_options(options: dict[str, str | int | float | bool], match: str) -> None:
   x = sc.sym("x", 1)
-  solver = build_nlp(x=x, f=x[0] ** 2, solver="sqp", name=f"sqp_invalid_{match}", options=options)
   with pytest.raises(ValueError, match=match):
-    solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))
+    build_nlp(x=x, f=x[0] ** 2, solver="sqp", name="sqp_invalid_options", options=options)
 
 
 @pytest.mark.solver("sqp")
@@ -617,7 +618,7 @@ def test_same_sqp_wrapper_accepts_casadi_codegen_oracles(monkeypatch: pytest.Mon
   np.testing.assert_allclose(out["x"], [0.2, 0.8], atol=2e-6)
 
 
-def test_casadi_external_sqp_validates_oracle_and_bound_shapes() -> None:
+def test_casadi_external_sqp_validates_oracle_and_bound_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
   import casadi as ca
 
   from scaly_sqp.casadi import build_casadi_external_sqp
@@ -656,6 +657,26 @@ def test_casadi_external_sqp_validates_oracle_and_bound_shapes() -> None:
       x_ub=np.full(2, np.inf),
       l_ineq=np.zeros(0),
       u_ineq=np.zeros(0),
+    )
+
+  def unexpected_codegen(*args, **kwargs):
+    raise AssertionError("invalid options reached C generation")
+
+  monkeypatch.setattr(ca, "CodeGenerator", unexpected_codegen)
+  with pytest.raises(ValueError, match="max_iter"):
+    build_casadi_external_sqp(
+      name="invalid_options_external_sqp",
+      base=base,
+      grad=grad,
+      jac=None,
+      hess=hess,
+      n_eq=0,
+      n_ineq=0,
+      x_lb=np.zeros(2),
+      x_ub=np.ones(2),
+      l_ineq=np.zeros(0),
+      u_ineq=np.zeros(0),
+      options={"max_iter": True},
     )
 
 

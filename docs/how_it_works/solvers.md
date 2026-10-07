@@ -15,8 +15,9 @@ the generated wrappers do.
 `sc.solver` returns a `Solver` whose `function` is an ordinary `Function`. Its
 outputs are `expr.solver_call` nodes that all carry the same
 `SolverDescriptor`, the record of everything the plugin needs: dimensions,
-oracles, sparsity patterns and options. Nesting the allocation solver from the
-guide in a larger function and printing `sc.render_expr_assembly(allocate)`
+oracles, sparsity patterns and matrix interface. Python supplies tuning options
+on each call.
+Nesting the allocation solver from the guide in a larger function and printing `sc.render_expr_assembly(allocate)`
 shows both levels:
 
 ```python
@@ -235,8 +236,10 @@ A term that simplification removes, such as `0.0 * u[0] ** 3`, is accepted.
 
 ### Sparse QP data
 
-With `options={"sparse": True}` each matrix gets a fixed compressed sparse
-column pattern and the oracle emits only its values. An entry is in the
+With `options={"sparse": True}`, PIQP matrices have fixed compressed sparse column
+patterns, and the oracle emits only their values. Dense mode instead constructs
+an oracle emitting row-major matrices. The wrapper uses the chosen interface
+throughout its lifetime. An entry is in the sparse
 pattern if it is nonzero when the oracle is evaluated at random parameter
 values, or if it depends on a parameter at all, so an entry that happens to be
 zero at one parameter value is still kept. `P` keeps its upper triangle only.
@@ -358,9 +361,8 @@ Its wrapper registers the oracles as the evaluation functions of IPOPT's C
 interface, along with the fixed Jacobian and lower-triangle Hessian index
 tables. PIQP is a
 proximal interior-point method for convex QPs[^piqp]. Its wrapper evaluates the
-QP oracle once per solve, converts dense matrices from row-major to PIQP's
-column-major layout, and passes sparse values directly because they are
-already in compressed column order.
+QP oracle once per solve and passes its buffers directly to PIQP's C interface,
+which accepts row-major dense matrices or compressed-column sparse values.
 
 [Solver plugins](../dev/solver_plugins.md) describes the interface for adding
 another backend.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
@@ -28,52 +28,6 @@ _TEMPLATE = Environment(
   trim_blocks=True,
   lstrip_blocks=True,
 ).get_template("sqp.c.jinja")
-
-
-def _option_map(options: tuple[tuple[str, Any], ...]) -> dict[str, Any]:
-  out = dict(options)
-  for ignored in ("print_level", "sb", "warm_start_init_point"):
-    out.pop(ignored, None)
-  allowed = {
-    "dual_tol",
-    "globalization",
-    "hessian",
-    "line_search_beta",
-    "max_iter",
-    "merit",
-    "qp",
-    "qp_max_iter",
-    "qp_tol",
-    "regularization",
-    "tol",
-    "trace",
-    "watchdog",
-  }
-  unknown = sorted(set(out) - allowed)
-  if unknown:
-    raise NotImplementedError(f"scaly-sqp options are not supported: {unknown}")
-  return out
-
-
-def _positive_int(options: dict[str, Any], name: str, default: int) -> int:
-  value = options.get(name, default)
-  if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-    raise ValueError(f"scaly-sqp {name} must be a positive integer, got {value!r}")
-  return value
-
-
-def _nonnegative_int(options: dict[str, Any], name: str, default: int) -> int:
-  value = options.get(name, default)
-  if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-    raise ValueError(f"scaly-sqp {name} must be a non-negative integer, got {value!r}")
-  return value
-
-
-def _positive_float(options: dict[str, Any], name: str, default: float) -> float:
-  value = options.get(name, default)
-  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0.0:
-    raise ValueError(f"scaly-sqp {name} must be finite and positive, got {value!r}")
-  return float(value)
 
 
 def _csc(entries: list[tuple[int, int, int]], n_cols: int) -> tuple[list[int], list[int], list[int], list[int]]:
@@ -125,32 +79,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   eq_output, ineq_output = 2 * nv, 2 * nv + 1
   jrows, jcols = desc.jac_sparsity.rows, desc.jac_sparsity.cols
   hrows, hcols = desc.hess_sparsity.rows, desc.hess_sparsity.cols
-  opts = _option_map(desc.options)
-  max_iter = _positive_int(opts, "max_iter", 50)
-  tol = _positive_float(opts, "tol", 1e-6)
-  dual_tol = _positive_float(opts, "dual_tol", 1e-4)
-  beta = _positive_float(opts, "line_search_beta", 0.7)
-  merit_offset = _positive_float(opts, "merit", 10.0)
-  regularization = _positive_float(opts, "regularization", 1e-6)
-  qp_max_iter = _positive_int(opts, "qp_max_iter", 50)
-  qp_tol = _positive_float(opts, "qp_tol", 1e-6)
-  watchdog = _nonnegative_int(opts, "watchdog", 0)
-  if beta >= 1.0:
-    raise ValueError(f"scaly-sqp line_search_beta must be below 1, got {beta!r}")
-  globalization = opts.get("globalization", "filter")
-  if globalization not in ("filter", "l1"):
-    raise ValueError(f"scaly-sqp globalization must be 'filter' or 'l1', got {globalization!r}")
-  if globalization == "filter" and "watchdog" in opts:
-    raise ValueError("scaly-sqp watchdog applies only to globalization='l1'")
-  hessian_mode = opts.get("hessian", "exact")
-  if hessian_mode not in ("exact", "objective"):
-    raise ValueError(f"scaly-sqp hessian must be 'exact' or 'objective', got {hessian_mode!r}")
-  qp_mode = opts.get("qp", "sparse")
-  if qp_mode not in ("sparse", "dense"):
-    raise ValueError(f"scaly-sqp qp must be 'sparse' or 'dense', got {qp_mode!r}")
-  trace = opts.get("trace", False)
-  if not isinstance(trace, bool):
-    raise ValueError(f"scaly-sqp trace must be a bool, got {trace!r}")
   trace_prefix = f"[scaly-sqp {re.sub(r'\W', '_', fun.name)}]"
 
   # QP patterns, fixed across SQP iterations: P is the canonical upper-triangle
@@ -183,20 +111,23 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   normal_b = [kb for _, _, _, kb in normal_terms]
 
   param_args = [f"in{param_start + i}" for i in range(len(desc.param_names))]
-  base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), "w"])  # noqa: E731
-  one_out_args = lambda x, out: ", ".join([x, *param_args, out, "w"])  # noqa: E731
-  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, "w"])  # noqa: E731
-  bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), "w"])
+  base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), "w", *ctx.oracle_options(base)])  # noqa: E731
+  one_out_args = lambda x, out: ", ".join([x, *param_args, out, "w", *ctx.oracle_options(grad if out == "grad_buf" else jac)])  # noqa: E731
+  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, "w", *ctx.oracle_options(hess)])  # noqa: E731
+  bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), "w", *ctx.oracle_options(bounds)])
   signature = [
     *(f"const double* in{i}" for i in range(len(desc.input_signature))),
     *(f"double* out{i}" for i in range(len(desc.output_signature))),
     "double* w",
+    "const scaly_solver_option* const* solver_options",
   ]
   base_raw, grad_raw = ctx.raw_symbol_of(base), ctx.raw_symbol_of(grad)
   jac_raw = ctx.raw_symbol_of(jac) if jac is not None else ""
   hess_raw, bounds_raw = ctx.raw_symbol_of(hess), ctx.raw_symbol_of(bounds)
   return _TEMPLATE.render(
+    qp_mode=dict(desc.compile_options)["qp"],
     name=fun.name,
+    options_index=ctx.options_index,
     raw_symbol=ctx.raw_symbol,
     stats_symbol=ctx.stats_symbol,
     signature=", ".join(signature),
@@ -242,21 +173,8 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     trial_args=base_args("trial", "&trial_f", "trial_g"),
     grad_args=one_out_args("x", "grad_buf"),
     jac_args=one_out_args("x", "jac_buf"),
-    hess_args=hess_args("x", "&(double){1.0}", "lam_g" if hessian_mode == "exact" else "zero_lam", "hess_buf"),
+    hess_args=hess_args("x", "&(double){1.0}", "exact_hessian ? lam_g : zero_lam", "hess_buf"),
     objective_hess_args=hess_args("x", "&(double){1.0}", "zero_lam", "hess_buf"),
     bounds_args=bounds_args,
-    qp_mode=qp_mode,
-    globalization=globalization,
-    hessian_mode=hessian_mode,
-    watchdog=watchdog,
-    trace=trace,
     trace_prefix=trace_prefix,
-    max_iter=max_iter,
-    tol=tol,
-    dual_tol=dual_tol,
-    beta=beta,
-    merit_offset=merit_offset,
-    regularization=regularization,
-    qp_max_iter=qp_max_iter,
-    qp_tol=qp_tol,
   ).split("\n")
