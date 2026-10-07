@@ -597,7 +597,9 @@ the constant `C_API_SIGNATURE`. All float64 (leaves and every buffer the workspa
 signature and `double* w`, unchanged. All float32: `const float** arg, float** res, float* w`.
 Anything else: `const void** arg, void** res, void* w`, with one cast per leaf in the prologue
 (defined, because each pointer came from an object of that type) and a byte-addressed workspace in
-which every spilled buffer sits at an offset aligned to its type and `SZ_W` counts bytes. Settle the
+which `SZ_W` counts bytes. In every workspace each spilled buffer starts at a 64-byte offset, with
+the padding counted in `SZ_W`. Nothing runs faster for it yet, because the vector typedefs are
+`aligned(8)`; it fixes the layout once for [#71]'s alignment measurement. Settle the
 C spelling of that workspace in the header (a caller `malloc` or a union) with a test compiled under
 `-fstrict-aliasing`. `int32_t`, `int64_t` and `bool` leaves cross as themselves (`<stdint.h>`,
 `<stdbool.h>`). Headers and the C++ `Buffer<T, ...>` follow; the JIT passes `c_void_p` pointers and
@@ -712,7 +714,15 @@ innermost so the lanes run over it and the matrix entry is invariant (devrush's 
 ran at 0.05 times PyTorch there). Gates: a `vmap` of a 12x512 matvec within 2x of the explicit
 `X @ W.T`; the regressions C-79 left open (unbumpercars C=2, C=16, C=32 and the closed-loop function
 evaluation), re-measured under the C-79 protocol. C-77 and C-79 close into this track; the C-79
-design and gates are in `c77_c79_implementation.md`.
+design and gates are in `c77_c79_implementation.md`. Once lanes cover nests, measure alignment before changing
+the 16-byte ABI: the C-79 benchmarks and the matvec gate on la015 (AVX2), and on an AVX-512 machine
+if one is available, with every input, output and workspace buffer 64-byte aligned against every
+pointer moved by 8 bytes. Aligning the buffers alone cannot help today, because unaligned loads cost
+extra only across a cache line and sliced views, stage offsets and lane starts are rarely multiples
+of the lane count. Under a few percent, keep the 16-byte ABI. Above that, raise the header and
+`Buffer` alignment to 64, allocate 64-byte-aligned JIT arrays, start each unit-stride lane access on
+a lane boundary in lowering and declare the alignment to the compiler. Stack-local buffers stay as
+they are.
 
 **[#74]. Predictable lowering of hand-written kernels.** Decision 14 as tests and the changes they
 need. A register-blocked dense product written in Python (4×4 blocks of slices, a `LOOP` over the
