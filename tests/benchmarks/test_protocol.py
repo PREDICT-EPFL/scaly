@@ -165,3 +165,18 @@ def test_intel_boost_uses_the_inverse_no_turbo_flag(tmp_path):
   for disabled in (0, 1):
     turbo.write_text(str(disabled))
     assert provenance.cpu_settings(tmp_path)["boost_enabled"] is (not bool(disabled))
+
+
+def test_smoke_skips_a_comparison_backend_over_the_compile_budget(monkeypatch, capsys):
+  from benchmarks import run
+
+  timeout = {"compile_status": "timeout", "runtime_status": "skipped", "runtime_ns": "", "note": "compile > 180s (kernel_compile_ms)"}
+  ok = {"compile_status": "ok", "runtime_status": "ok", "runtime_ns": 1.0, "note": ""}
+  info = {"nnz": 1, "w_size": 0, "n_rows": 2, "n_cols": 2}
+  monkeypatch.setattr(run, "SMOKE_CELLS", {"npmpc_jac": (("scaly", 6), ("casadi_sx", 6))})
+  monkeypatch.setattr(run, "run_cell", lambda workload, size, backend, *a, **k: (dict(ok if backend == "scaly" else timeout), info))
+  run._benchmark_smoke(full=True)
+  assert "backend=casadi_sx: skipped (compile > 180s" in capsys.readouterr().out
+  monkeypatch.setattr(run, "run_cell", lambda *a, **k: (dict(timeout), info))
+  with pytest.raises(RuntimeError, match="npmpc_jac scaly size=6 smoke failed"):
+    run._benchmark_smoke(full=True)
