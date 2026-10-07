@@ -66,7 +66,7 @@ def external_nlp(
   )
   from . import BACKEND
 
-  resolved_options = BACKEND.prepare_options(dict(options or {}))
+  compile_options, resolved_options = BACKEND.prepare_options(dict(options or {}))
   descriptor = SolverDescriptor(
     name=name,
     backend="sqp",
@@ -84,6 +84,7 @@ def external_nlp(
     bounds=bounds,
     jac_sparsity=jac_sparsity,
     hess_sparsity=hess_sparsity,
+    compile_options=tuple(sorted(compile_options.items())),
     runtime_options=solver_options(resolved_options),
   )
   return descriptor_function(descriptor, input_tree, output_tree)

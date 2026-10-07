@@ -64,7 +64,7 @@ for (int i = 0; i < {{ m }}; ++i) trial_ok = trial_ok && isfinite(trial_g[i]);
 // PIQP-backed SQP wrapper for {{ name }} (n={{ n }}, equality={{ nh }}, inequality={{ ng }}, nnz jac/hess = {{ nnz_j }}/{{ nnz_h }}, nnz P/A/G = {{ nnz_p }}/{{ a_rows|length }}/{{ g_rows|length }}).
 static void {{ raw_symbol }}({{ signature }}) {
   const scaly_solver_option* options = solver_options[{{ options_index }}];
-  const int sparse_qp = (int)scaly_option_number(options, "qp"), l1 = (int)scaly_option_number(options, "globalization");
+  const int l1 = (int)scaly_option_number(options, "globalization");
   const int exact_hessian = (int)scaly_option_number(options, "hessian"), trace = (int)scaly_option_number(options, "trace");
   const int max_iter = (int)scaly_option_number(options, "max_iter"), watchdog = (int)scaly_option_number(options, "watchdog");
   const int qp_max_iter = (int)scaly_option_number(options, "qp_max_iter");
@@ -83,7 +83,9 @@ static void {{ raw_symbol }}({{ signature }}) {
 {{ int_table('const int', 'jac_cols', jcols) }}
 {{ int_table('piqp_int', 'P_p', p_ptr) }}
 {{ int_table('piqp_int', 'P_i', p_rows) }}
+{% if qp_mode == 'dense' %}
 {{ int_table('const int', 'P_j', p_cols) }}
+{% endif %}
 {{ int_table('const int', 'P_src', p_src) }}
 {{ int_table('const int', 'P_diag', p_diag) }}
   static double P_x[{{ nnz_p }}];
@@ -97,24 +99,36 @@ static void {{ raw_symbol }}({{ signature }}) {
 {% endif %}
   static int ldl_i[{{ [nnz_l, 1]|max }}], ldl_nz[{{ n }}], ldl_flag[{{ n }}], ldl_pattern[{{ n }}];
   static double ldl_x[{{ [nnz_l, 1]|max }}], ldl_y[{{ n }}], ldl_d[{{ n }}];
+{% if qp_mode == 'sparse' %}
   static piqp_csc P_csc = { {{ n }}, {{ n }}, {{ nnz_p }}, P_p, P_i, P_x };
-  double* dense_values = sparse_qp ? NULL : (double*)malloc({{ (n + nh + ng) * n }}ULL * sizeof(double));
-  double* Pcol = dense_values;
+{% else %}
+  static double Pcol[{{ n * n }}];
+{% endif %}
 {% if nh %}
+{% if qp_mode == 'sparse' %}
 {{ int_table('piqp_int', 'A_p', a_ptr) }}
+{% endif %}
 {{ int_table('piqp_int', 'A_i', a_rows) }}
 {{ int_table('const int', 'A_src', a_src) }}
+{% if qp_mode == 'sparse' %}
   static double A_x[{{ [a_rows|length, 1]|max }}];
-  double* Acol = dense_values ? dense_values + {{ n * n }}ULL : NULL;
   static piqp_csc A_csc = { {{ nh }}, {{ n }}, {{ a_rows|length }}, A_p, A_i, A_x };
+{% else %}
+  static double Acol[{{ nh * n }}];
+{% endif %}
 {% endif %}
 {% if ng %}
+{% if qp_mode == 'sparse' %}
 {{ int_table('piqp_int', 'G_p', g_ptr) }}
+{% endif %}
 {{ int_table('piqp_int', 'G_i', g_rows) }}
 {{ int_table('const int', 'G_src', g_src) }}
+{% if qp_mode == 'sparse' %}
   static double G_x[{{ [g_rows|length, 1]|max }}];
-  double* Gcol = dense_values ? dense_values + {{ (n + nh) * n }}ULL : NULL;
   static piqp_csc G_csc = { {{ ng }}, {{ n }}, {{ g_rows|length }}, G_p, G_i, G_x };
+{% else %}
+  static double Gcol[{{ ng * n }}];
+{% endif %}
 {% endif %}
   static double filter_f[20], filter_v[20]; int filter_count = 0;
   static double checkpoint_x[{{ n }}], checkpoint_lam_g[{{ [m, 1]|max }}], checkpoint_lam_box[{{ n }}];
@@ -145,10 +159,9 @@ static void {{ raw_symbol }}({{ signature }}) {
   int n_eval_f = 0, n_eval_grad_f = 0, n_eval_g = 0, n_eval_jac_g = 0, n_eval_h = 0;
   double f = 0.0, trial_f = 0.0, primal = 0.0, complementarity = 0.0, stationarity = 0.0;
   int status = SCALY_SOLVE_MAX_ITER, native_status = PIQP_SOLVED, iterations = 0;
-  piqp_workspace* qp = NULL; piqp_settings settings; if (sparse_qp) piqp_set_default_settings_sparse(&settings); else piqp_set_default_settings_dense(&settings);
+  piqp_workspace* qp = NULL; piqp_settings settings; piqp_set_default_settings_{{ qp_mode }}(&settings);
   settings.max_iter = qp_max_iter; settings.eps_abs = qp_tol; settings.eps_rel = qp_tol; settings.eps_duality_gap_abs = qp_tol; settings.eps_duality_gap_rel = qp_tol; settings.verbose = 0; settings.preconditioner_reuse_on_update = 0;
   if (!inputs_ok) status = SCALY_SOLVE_NUMERICS;
-  if (!sparse_qp && !dense_values) { status = SCALY_SOLVE_ERROR; inputs_ok = 0; }
   for (int sqp_iter = 0; sqp_iter <= max_iter && inputs_ok; ++sqp_iter) {
     iterations = sqp_iter;
     double fe0 = scaly_clock_s();
@@ -213,40 +226,40 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
     }
 {% endif %}
     for (int i = 0; i < {{ n }}; ++i) cq[i] = grad_buf[i];
-    if (!sparse_qp) {
+{% if qp_mode == 'dense' %}
     for (size_t i = 0; i < {{ n * n }}ULL; ++i) Pcol[i] = 0.0;
     for (int k = 0; k < {{ nnz_p }}; ++k) { Pcol[P_i[k] + (size_t)P_j[k] * {{ n }}] = P_x[k]; Pcol[P_j[k] + (size_t)P_i[k] * {{ n }}] = P_x[k]; }
-    }
+{% endif %}
 {% if nh %}
-    if (sparse_qp) {
+{% if qp_mode == 'sparse' %}
     for (int k = 0; k < {{ a_rows|length }}; ++k) A_x[k] = jac_buf[A_src[k]];
-    } else {
+{% else %}
     for (size_t i = 0; i < {{ nh * n }}ULL; ++i) Acol[i] = 0.0;
     for (int k = 0; k < {{ a_rows|length }}; ++k) Acol[(size_t)A_i[k] * {{ n }} + jac_cols[A_src[k]]] = jac_buf[A_src[k]];
-    }
+{% endif %}
     for (int i = 0; i < {{ nh }}; ++i) b[i] = -g[i];
 {% endif %}
 {% if ng %}
-    if (sparse_qp) {
+{% if qp_mode == 'sparse' %}
     for (int k = 0; k < {{ g_rows|length }}; ++k) G_x[k] = jac_buf[G_src[k]];
-    } else {
+{% else %}
     for (size_t i = 0; i < {{ ng * n }}ULL; ++i) Gcol[i] = 0.0;
     for (int k = 0; k < {{ g_rows|length }}; ++k) Gcol[(size_t)G_i[k] * {{ n }} + jac_cols[G_src[k]]] = jac_buf[G_src[k]];
-    }
+{% endif %}
 {# Core bounds use IEEE infinities; the PIQP subproblem uses PIQP_INF. #}
     for (int i = 0; i < {{ ng }}; ++i) { hl[i] = gl[i] <= -1e19 ? -PIQP_INF : gl[i] - g[{{ nh }} + i]; hu[i] = gu[i] >= 1e19 ? PIQP_INF : gu[i] - g[{{ nh }} + i]; }
 {% endif %}
     for (int i = 0; i < {{ n }}; ++i) { dl[i] = xlb[i] <= -1e19 ? -PIQP_INF : xlb[i] - x[i]; du[i] = xub[i] >= 1e19 ? PIQP_INF : xub[i] - x[i]; }
     double qp0 = scaly_clock_s();
-    if (sparse_qp) {
+{% if qp_mode == 'sparse' %}
       piqp_data_sparse data = { {{ n }}, {{ nh }}, {{ ng }}, &P_csc, cq, {{ '&A_csc' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ '&G_csc' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du };
       if (qp == NULL) piqp_setup_sparse(&qp, &data, &settings);
       else piqp_update_sparse(qp, &P_csc, cq, {{ '&A_csc' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ '&G_csc' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du);
-    } else {
+{% else %}
       piqp_data_dense data = { {{ n }}, {{ nh }}, {{ ng }}, Pcol, cq, {{ 'Acol' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ 'Gcol' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du };
       if (qp == NULL) piqp_setup_dense(&qp, &data, &settings);
       else piqp_update_dense(qp, Pcol, cq, {{ 'Acol' if nh else 'NULL' }}, {{ 'b' if nh else 'NULL' }}, {{ 'Gcol' if ng else 'NULL' }}, {{ 'hl' if ng else 'NULL' }}, {{ 'hu' if ng else 'NULL' }}, dl, du);
-    }
+{% endif %}
     piqp_status qp_status = piqp_solve(qp); stats_t_qp += scaly_clock_s() - qp0; native_status = (int)qp_status;
     stats_qp_iter += (int)qp->result->info.iter;
     if (trace) if (qp_status != PIQP_SOLVED) fprintf(stderr, "{{ trace_prefix }} iter=%d qp_status=%d qp_iter=%d primal_res=%.3e dual_res=%.3e gap=%.3e rel_gap=%.3e qp not solved\n", sqp_iter + 1, (int)qp_status, (int)qp->result->info.iter, qp->result->info.primal_res, qp->result->info.dual_res, qp->result->info.duality_gap, qp->result->info.duality_gap_rel);
@@ -368,7 +381,6 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
   {{ stats_symbol }}.alpha = stats_alpha; {{ stats_symbol }}.merit_penalty = stats_merit_penalty;
   {{ stats_symbol }}.backtracks = stats_backtracks; {{ stats_symbol }}.qp_iter = stats_qp_iter;
   if (qp) { piqp_cleanup(qp); qp = NULL; }
-  free(dense_values);
   double stats_t_total = scaly_clock_s() - stats_t0;
   {{ stats_symbol }}.t_total = stats_t_total;
   {{ stats_symbol }}.t_glue = stats_t_total - stats_t_fe - stats_t_qp - stats_t_globalization;

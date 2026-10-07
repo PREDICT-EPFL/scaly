@@ -153,8 +153,8 @@ Names and string values must remain alive throughout the call.
 
 Each `<solver>_default_options()` accessor returns the backend's complete,
 read-only default array. Copy this array, including its terminator, before
-changing entries. SQP's `globalization`, `hessian` and `qp` entries use integers.
-Their value `1` selects `"l1"`, `"exact"` and `"sparse"`, respectively.
+changing entries. SQP's `globalization` and `hessian` entries use integers.
+Their value `1` selects `"l1"` and `"exact"`, respectively.
 Value `0` selects the other choice listed in the
 [backend guide](solver_backends.md#scaly-sqp).
 
@@ -165,9 +165,10 @@ must supply names and values valid for the backend and include every entry
 required by its default array.
 
 The standard five-argument entry and the typed helpers without an option argument
-use backend defaults. Options supplied to `sc.solver` affect Python calls and do
-not change the exported source. An ahead-of-time caller supplies its chosen
-configuration through `_with_options`.
+use backend tuning defaults. PIQP's `sparse` and SQP's `qp` select the compiled
+matrix interface and are absent from the runtime arrays. Other options supplied
+to `sc.solver` affect Python calls without changing the exported source. An
+ahead-of-time caller supplies its chosen tuning through `_with_options`.
 
 ## Generated text and export options
 

@@ -58,7 +58,7 @@ def _positive_float(options: dict[str, Any], name: str, default: float) -> float
   return float(value)
 
 
-def _prepare_options(options: dict[str, Any]) -> dict[str, Any]:
+def _prepare_options(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
   opts = _option_map(options)
   max_iter = _positive_int(opts, "max_iter", 50)
   tol = _positive_float(opts, "tol", 1e-6)
@@ -85,7 +85,7 @@ def _prepare_options(options: dict[str, Any]) -> dict[str, Any]:
   trace = opts.get("trace", False)
   if not isinstance(trace, bool):
     raise ValueError(f"scaly-sqp trace must be a bool, got {trace!r}")
-  return dict(
+  return {"qp": qp_mode}, dict(
     max_iter=max_iter,
     tol=tol,
     dual_tol=dual_tol,
@@ -97,7 +97,6 @@ def _prepare_options(options: dict[str, Any]) -> dict[str, Any]:
     watchdog=watchdog,
     globalization=int(globalization == "l1"),
     hessian=int(hessian_mode == "exact"),
-    qp=int(qp_mode == "sparse"),
     trace=trace,
   )
 

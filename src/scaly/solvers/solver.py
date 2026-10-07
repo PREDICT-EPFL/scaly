@@ -75,8 +75,9 @@ def solver[SV, NV, SP, NP](
 ) -> Solver[SV, NV, SP, NP]:
   """Build a typed ``Solver`` for one backend-free problem.
 
-  Options are checked at construction and supplied to each numerical call.
-  Solvers differing only in options share the generated module and its cache entry.
+  Options are checked at construction. Runtime tuning is supplied to each numerical
+  call and shares the generated module and cache entry. PIQP's ``sparse`` and SQP's
+  ``qp`` select a fixed compiled matrix interface.
   """
   selected = get_backend(backend)
   solver_name = name or f"{problem.name}_{backend}"

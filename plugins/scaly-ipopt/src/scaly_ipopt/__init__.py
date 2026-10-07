@@ -39,7 +39,7 @@ class _Backend:
   include_dir = staticmethod(include_dir)
   lib_dir = staticmethod(lib_dir)
 
-  def prepare_options(self, options: dict[str, Any]) -> dict[str, Any]:
+  def prepare_options(self, options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     resolved = {"print_level": 0, **options}
     token = re.compile(r"[A-Za-z0-9_./+-]+\Z")
     for key, value in resolved.items():
@@ -49,7 +49,7 @@ class _Backend:
         raise TypeError(f"IPOPT option {key!r} must be a string, integer or float")
       if isinstance(value, str) and not token.fullmatch(value):
         raise ValueError(f"Invalid IPOPT option {key}={value!r}")
-    return resolved
+    return {}, resolved
 
   def render_wrapper(self, fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     from .codegen import render_wrapper

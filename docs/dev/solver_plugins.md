@@ -44,7 +44,7 @@ uses the library and header paths when it builds the generated code.
 | `link_flags` | linker flags, e.g. `("-lmysolver",)` |
 | `header` | C header path relative to `include_dir()`, e.g. `"mysolver/api.h"`; core emits `#include "<header>"` in solver-bearing translation units |
 | `lib_dir()` / `include_dir()` | vendored library / header directories; they join the JIT's `-L`/`-I`/rpath search path |
-| `prepare_options(options)` | validate option names and types, supply defaults, and return the call-time option dict |
+| `prepare_options(options)` | validate option names and types, supply defaults, and return `(compile_options, runtime_options)` dicts |
 | `render_wrapper(fun, ctx)` | the C wrapper template (below) |
 
 NLP backends also satisfy `scaly.solvers.registry.NlpSolverBackend`. They declare `hess_triangle`
@@ -64,7 +64,8 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]: ...
 
 `fun` is the concrete graph instance being rendered. `fun.descriptor` (a `SolverDescriptor`,
 `src/scaly/solvers/model.py`) carries the problem dimensions, input/output signatures,
-oracle `Function`s and sparsity patterns. User options are Python runtime data.
+oracle `Function`s and sparsity patterns. Its `compile_options` records structural
+choices. Tuning options are Python runtime data.
 `ctx` supplies the C names and helpers needed by the wrapper through
 `scaly.codegen.solver.SolverWrapperCtx`:
 
@@ -141,19 +142,24 @@ An upstream rename or renumbering then causes a compile error instead of an inco
 
 `prepare_options` runs during Python solver construction, before any C generation.
 It checks names, types and combinations and supplies the backend's defaults.
-Core packs the returned dict into a null-terminated `scaly_solver_option` array
+It returns two dicts. Core stores structural choices in `desc.compile_options`
+and packs runtime tuning into a null-terminated `scaly_solver_option` array
 and passes it through the `_with_options` entry on every numerical call.
 The wrapper reads its array at `solver_options[ctx.options_index]`.
 
 Option kind `0` stores an integer, kind `1` a number and kind `2` a string.
 The [C option interface](../guide/codegen.md#solver-options-in-c) describes the
 layout. Apply options on every call, including when reusing a native workspace.
-Option names and values from the user's solver must never enter rendered source.
+Runtime option names and values from the user's solver must never enter rendered
+source. Compile choices select one fixed interface, such as PIQP's dense or sparse
+matrix layout. Include only parameters with a useful call-time purpose in the
+runtime dict, such as convergence tolerances, iteration limits and diagnostics.
 
 Keep defaults in `prepare_options`. Core calls it with an empty dict when
 rendering the exported default arrays and the standard five-argument entry.
 This entry uses backend defaults. Configured Python and ahead-of-time calls use
-the same `_with_options` path. All configurations share one source and cache key.
+the same `_with_options` path. Configurations with the same compilation choices
+share one source and cache key.
 
 ## Descriptor families
 
@@ -188,7 +194,7 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 
 - The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
-- The oracle emits compact compressed sparse column values in the baked order of `P_sparsity`, `A_sparsity`, and `G_sparsity`. `P_sparsity` contains the upper triangle. PIQP uses this compact oracle for both interfaces and expands dense matrices at run time.
+- With `compile_options["sparse"]` selected, the oracle emits compact compressed sparse column values in the baked order of `P_sparsity`, `A_sparsity`, and `G_sparsity`. `P_sparsity` contains the upper triangle. Otherwise the patterns are absent and the oracle emits dense row-major matrices.
 - The oracle emits IEEE infinities for absent bounds, and the wrapper converts them to the QP solver's native convention.
 - A QP plugin is a standalone solver only. scaly-sqp does not consume this contract for its subproblems. Its wrapper is written against PIQP's C API and links `scaly-piqp`'s library. See the [user guide](../guide/solver_backends.md#scaly-sqp).
 
@@ -228,8 +234,8 @@ History:
   to native solver sentinels.
 
 - v8: call-time option arrays, `prepare_options`, the `_with_options` entry and
-  its context argument on generated internal calls. PIQP uses compact matrix
-  oracles in both dense and sparse modes.
+  its context argument on generated internal calls. The preparation hook separates
+  fixed compilation choices from runtime tuning.
 
 ## What core owns
 

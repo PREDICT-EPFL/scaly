@@ -5,9 +5,10 @@ programming (SQP) solver. The model declaration and solver input structure stay 
 same when you switch backend. Their supported problems, numerical methods,
 and warm-start behavior differ.
 
-Options belong to the Python `Solver` and are passed to the generated code on
-each call. Solvers for the same problem and with the same name share one compiled
-module even when their options differ.
+Tuning options belong to the Python `Solver` and are passed to the generated code
+on each call. Solvers for the same problem, name and matrix interface share one
+compiled module even when their tuning differs. PIQP's `sparse` and SQP's `qp`
+select the matrix interface at construction and require separate builds.
 
 ## Problem types and backend selection
 
@@ -67,8 +68,8 @@ The sparse option stores only structurally nonzero entries of the Hessian and
 constraint matrices. Sparse storage does not necessarily make small problems
 faster, so the useful choice depends on the problem and its matrix sizes.
 
-PIQP matrix analysis compiles a probe function during solver construction in
-both dense and sparse modes, so it needs a C compiler before the first solve. The QP check
+Sparse PIQP matrix analysis compiles a probe function during solver construction,
+so it needs a C compiler before the first solve. The QP check
 rejects costs, constraints, and bounds that contain another solver call because
 it cannot prove the required dependence on the decision variables through that
 call. This restriction applies to both dense and sparse PIQP modes.

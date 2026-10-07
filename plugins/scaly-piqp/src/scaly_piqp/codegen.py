@@ -41,11 +41,11 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   n, p, m = desc.n, desc.n_eq, desc.n_ineq
   oracle = desc.oracle
   assert oracle is not None, "PIQP solver descriptor must carry an oracle Function"
-  assert desc.P_sparsity is not None
-  assert (desc.A_sparsity is not None) == bool(p) and (desc.G_sparsity is not None) == bool(m)
-  nnz_P = desc.P_sparsity.nnz
-  nnz_A = desc.A_sparsity.nnz if desc.A_sparsity is not None else 0
-  nnz_G = desc.G_sparsity.nnz if desc.G_sparsity is not None else 0
+  sparse = dict(desc.compile_options)["sparse"]
+  interface = "sparse" if sparse else "dense"
+  nnz_P = desc.P_sparsity.nnz if desc.P_sparsity is not None else n * n
+  nnz_A = desc.A_sparsity.nnz if desc.A_sparsity is not None else p * n
+  nnz_G = desc.G_sparsity.nnz if desc.G_sparsity is not None else m * n
 
   param_count = len(desc.param_names)
   nv = desc.n_var_blocks
@@ -83,25 +83,10 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   for input_index in range(param_start):
     lines.append(f"  (void)in{input_index};")
   lines.append(f"  const scaly_solver_option* options = solver_options[{ctx.options_index}];")
-  lines.append('  int sparse = (int)scaly_option_number(options, "sparse");')
   lines.append("  double stats_t0 = scaly_clock_s();")
 
   for buf, size in oracle_outs:
     lines.append(f"  static double {buf}[{size}];")
-  lines.append(f"  double* dense_values = sparse ? NULL : (double*)malloc({(n + p + m) * n}ULL * sizeof(double));")
-  lines.append("  if (!sparse && !dense_values) {")
-  for block, (_, shape) in enumerate(desc.output_signature):
-    lines.append(f"    for (int i = 0; i < {math.prod(shape)}; ++i) out{block}[i] = in{block}[i];")
-  lines.append(
-    f"    {ctx.stats_symbol} = (scaly_solver_stats){{ .version = SCALY_SOLVER_STATS_VERSION, .status = SCALY_SOLVE_ERROR, .native_status = PIQP_UNSOLVED }};"
-  )
-  lines.append("    return;")
-  lines.append("  }")
-  lines.append("  double* Pcol = dense_values;")
-  if p:
-    lines.append(f"  double* Acol = dense_values ? dense_values + {n * n}ULL : NULL;")
-  if m:
-    lines.append(f"  double* Gcol = dense_values ? dense_values + {(n + p) * n}ULL : NULL;")
 
   # 2. Call the oracle. The oracle's input order is the param list; its
   # output order matches oracle_outs above.
@@ -124,27 +109,17 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     ("A", desc.A_sparsity, p, n, nnz_A),
     ("G", desc.G_sparsity, m, n, nnz_G),
   ):
-    if not rows:
+    if not sparse or not rows:
       continue
     assert pattern is not None
     lines += _csc_tables(matrix, pattern)
     lines.append(f"  static piqp_csc {matrix}_csc = {{ {rows}, {cols}, {nnz}, {matrix}_p, {matrix}_i, {matrix}_buf }};")
-    lines.append("  if (!sparse) {")
-    lines.append(f"    for (size_t i = 0; i < {rows * cols}ULL; ++i) {matrix}col[i] = 0.0;")
-    lines.append(f"    for (int j = 0; j < {cols}; ++j) for (int k = {matrix}_p[j]; k < {matrix}_p[j + 1]; ++k) {{")
-    index = f"{matrix}_i[k] + (size_t)j * {rows}" if matrix == "P" else f"(size_t){matrix}_i[k] * {cols} + j"
-    lines.append(f"      {matrix}col[{index}] = {matrix}_buf[k];")
-    if matrix == "P":
-      lines.append(f"      Pcol[j + (size_t)P_i[k] * {n}] = P_buf[k];")
-    lines.append("    }")
-    lines.append("  }")
 
-  lines.append("  static piqp_workspace* workspaces[2] = {NULL, NULL};")
-  lines.append("  static piqp_settings previous_settings[2];")
-  lines.append("  piqp_workspace** workspace = &workspaces[sparse];")
+  lines.append(f"  static piqp_workspace* {symbol}_ws = NULL;")
+  lines.append("  static piqp_settings previous_settings;")
   lines.append("  piqp_settings settings = {0};")
   lines.append("  double solver_t0 = scaly_clock_s();")
-  lines.append("  if (sparse) piqp_set_default_settings_sparse(&settings); else piqp_set_default_settings_dense(&settings);")
+  lines.append(f"  piqp_set_default_settings_{interface}(&settings);")
   lines.append("  for (const scaly_solver_option* option = options; option->name; ++option) {")
   for key in sorted(_SETTINGS):
     value = "option->integer" if key in _INTEGER_SETTINGS else "(option->kind == 0 ? (double)option->integer : option->number)"
@@ -152,19 +127,16 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
       value = f"(piqp_kkt_solver){value}"
     lines.append(f'    if (!strcmp(option->name, "{key}")) settings.{key} = {value};')
   lines.append("  }")
-  changed = " || ".join(f"previous_settings[sparse].{key} != settings.{key}" for key in sorted(_SETTINGS))
-  lines.append(f"  if (*workspace && ({changed})) {{ piqp_cleanup(*workspace); *workspace = NULL; }}")
-  lines.append("  previous_settings[sparse] = settings;")
-  for interface, condition, P, A, G in (("sparse", "sparse", "&P_csc", "&A_csc", "&G_csc"), ("dense", "!sparse", "Pcol", "Acol", "Gcol")):
-    A, G = A if p else "NULL", G if m else "NULL"
-    data = f"{n}, {p}, {m}, {P}, c_buf, {A}, {'b_buf' if p else 'NULL'}, {G}, {'lineq_buf' if m else 'NULL'}, {'uineq_buf' if m else 'NULL'}, xlb_buf, xub_buf"
-    args = f"{P}, c_buf, {A}, {'b_buf' if p else 'NULL'}, {G}, {'lineq_buf' if m else 'NULL'}, {'uineq_buf' if m else 'NULL'}, xlb_buf, xub_buf"
-    lines.append(f"  if ({condition}) {{")
-    lines.append(f"    piqp_data_{interface} data = {{ {data} }};")
-    lines.append(f"    if (!*workspace) piqp_setup_{interface}(workspace, &data, &settings);")
-    lines.append(f"    else piqp_update_{interface}(*workspace, {args});")
-    lines.append("  }")
-  lines.append(f"  piqp_workspace* {symbol}_ws = *workspace;")
+  changed = " || ".join(f"previous_settings.{key} != settings.{key}" for key in sorted(_SETTINGS))
+  lines.append(f"  if ({symbol}_ws && ({changed})) {{ piqp_cleanup({symbol}_ws); {symbol}_ws = NULL; }}")
+  lines.append("  previous_settings = settings;")
+  P = "&P_csc" if sparse else "P_buf"
+  A = ("&A_csc" if sparse else "A_buf") if p else "NULL"
+  G = ("&G_csc" if sparse else "G_buf") if m else "NULL"
+  args = f"{P}, c_buf, {A}, {'b_buf' if p else 'NULL'}, {G}, {'lineq_buf' if m else 'NULL'}, {'uineq_buf' if m else 'NULL'}, xlb_buf, xub_buf"
+  lines.append(f"  piqp_data_{interface} data = {{ {n}, {p}, {m}, {args} }};")
+  lines.append(f"  if (!{symbol}_ws) piqp_setup_{interface}(&{symbol}_ws, &data, &settings);")
+  lines.append(f"  else piqp_update_{interface}({symbol}_ws, {args});")
 
   # 5. Solve and read results.
   lines.append(f"  piqp_solve({symbol}_ws);")
@@ -210,7 +182,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {ctx.stats_symbol}.merit_penalty = 0.0;")
   lines.append(f"  {ctx.stats_symbol}.backtracks = 0;")
   lines.append(f"  {ctx.stats_symbol}.qp_iter = (int32_t)res->info.iter;")
-  lines.append("  free(dense_values);")
   lines.append("  double stats_t_total = scaly_clock_s() - stats_t0;")
   lines.append(f"  {ctx.stats_symbol}.t_total = stats_t_total;")
   lines.append(f"  {ctx.stats_symbol}.t_glue = stats_t_total - stats_t_fe - stats_t_solver;")

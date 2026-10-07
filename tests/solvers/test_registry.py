@@ -44,7 +44,7 @@ class _FakeBackend:
     return Path("/nonexistent/lib")
 
   def prepare_options(self, options):
-    return dict(options)
+    return {}, dict(options)
 
   def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201 - protocol mirror
     inputs = ", ".join(f"const double* in{i}" for i in range(len(as_concrete(fun).descriptor.input_signature)))

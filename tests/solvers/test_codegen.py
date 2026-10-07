@@ -55,10 +55,25 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
 @pytest.mark.parametrize(
   "backend,options",
   [
-    pytest.param("piqp", ({"eps_abs": 1e-8}, {"eps_abs": 1e-5, "max_iter": 1, "sparse": True}), marks=pytest.mark.solver("piqp")),
+    *(
+      pytest.param(
+        "piqp",
+        ({"sparse": sparse, "eps_abs": 1e-8}, {"sparse": sparse, "eps_abs": 1e-5, "max_iter": 1}),
+        marks=pytest.mark.solver("piqp"),
+      )
+      for sparse in (False, True)
+    ),
     pytest.param(
       "sqp",
-      ({"max_iter": 30}, {"max_iter": 1, "globalization": "l1", "watchdog": 5, "hessian": "objective", "qp": "dense", "trace": True}),
+      ({"max_iter": 30}, {"max_iter": 1, "globalization": "l1", "watchdog": 5, "hessian": "objective", "trace": True}),
+      marks=pytest.mark.solver("sqp"),
+    ),
+    pytest.param(
+      "sqp",
+      (
+        {"qp": "dense", "max_iter": 30},
+        {"qp": "dense", "max_iter": 1, "globalization": "l1", "watchdog": 5, "hessian": "objective", "trace": True},
+      ),
       marks=pytest.mark.solver("sqp"),
     ),
     pytest.param(
@@ -122,28 +137,29 @@ def test_solver_options_share_one_build(
 
 
 @pytest.mark.parametrize("backend", [pytest.param("piqp", marks=pytest.mark.solver("piqp")), pytest.param("sqp", marks=pytest.mark.solver("sqp"))])
-def test_sparse_solver_needs_no_dense_staging_memory(backend: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-  from scaly.codegen import aot
-
-  @sc.problem(vars=sc.arg("x", 2), name="staging_memory")
+def test_solver_interface_is_static(backend: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+  @sc.problem(vars=sc.arg("x", 2), name="static_interface")
   def tracking(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=sc.sumsqr(x - 1.0))
 
-  render = aot._render_solver_bearing_source
-  monkeypatch.setattr(
-    aot,
-    "_render_solver_bearing_source",
-    lambda *args, **kwargs: render(*args, **kwargs).replace("#include <stdlib.h>", "#include <stdlib.h>\n#define malloc(size) NULL"),
-  )
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
-  sparse = {"sparse": True} if backend == "piqp" else {"qp": "sparse"}
-  dense = {"sparse": False} if backend == "piqp" else {"qp": "dense"}
-  solve = sc.solver(tracking, backend, options=sparse)
-  np.testing.assert_allclose(solve(())[0], np.ones(2), atol=1e-5, rtol=0)
-  assert solve.stats().status == sc.ScalySolveStatus.OK
-  solve = sc.solver(tracking, backend, options=dense)
-  np.testing.assert_array_equal(solve(())[0], np.zeros(2))
-  assert solve.stats().status == sc.ScalySolveStatus.ERROR
+  solvers = [
+    sc.solver(tracking, backend, options={"sparse": sparse} if backend == "piqp" else {"qp": "sparse" if sparse else "dense"})
+    for sparse in (False, True)
+  ]
+  compiled = [CompiledFunction(solve.function) for solve in solvers]
+  assert compiled[0].cache_key != compiled[1].cache_key
+  for sparse, solve in zip((False, True), solvers, strict=True):
+    source = render_c_source(solve.function)
+    assert f"piqp_setup_{'sparse' if sparse else 'dense'}(" in source
+    assert f"piqp_setup_{'dense' if sparse else 'sparse'}(" not in source
+    descriptor = solve.function.instantiate().descriptor
+    assert not any(option.name in (b"sparse", b"qp") for option in descriptor.runtime_options)
+    if backend == "piqp":
+      assert (descriptor.P_sparsity is not None) == sparse
+      assert descriptor.oracle.outputs[0].size == (2 if sparse else 4)
+    np.testing.assert_allclose(solve(())[0], np.ones(2), atol=1e-5, rtol=0)
+    assert solve.stats().status == sc.ScalySolveStatus.OK
 
 
 @pytest.mark.solver("piqp")
@@ -214,7 +230,7 @@ int main(void) {{
   double target[2] = {{1, 2}};
   const double* arg[] = {{zero, zero, empty, empty, target}};
   double* res[] = {{x, lam, empty, empty}};
-  scaly_solver_option values[] = {{{{ "max_iter", 0, 1, 0.0, 0 }}, {{ "verbose", 0, 0, 0.0, 0 }}, {{ "sparse", 0, 0, 0.0, 0 }}, {{ 0, 0, 0, 0.0, 0 }}}};
+  scaly_solver_option values[] = {{{{ "max_iter", 0, 1, 0.0, 0 }}, {{ "verbose", 0, 0, 0.0, 0 }}, {{ 0, 0, 0, 0.0, 0 }}}};
   const scaly_solver_option* options[] = {{values}};
   double w[export_options_SZ_W > 0 ? export_options_SZ_W : 1];
   scaly_solver_stats stats;

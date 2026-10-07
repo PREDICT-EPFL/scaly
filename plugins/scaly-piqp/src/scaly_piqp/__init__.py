@@ -89,7 +89,7 @@ class _Backend:
       if key != "sparse" and key not in _SETTINGS:
         raise ValueError(f"Unknown PIQP option {key!r}. Supported settings: {', '.join(sorted(_SETTINGS))}")
 
-  def prepare_options(self, options: dict[str, Any]) -> dict[str, Any]:
+  def prepare_options(self, options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     self.validate_options(options)
     resolved = {"verbose": 0, "sparse": False, **options}
     for key, value in resolved.items():
@@ -101,7 +101,7 @@ class _Backend:
           raise TypeError(f"PIQP option {key!r} must be an integer")
       elif isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"PIQP option {key!r} must be a number")
-    return resolved
+    return {"sparse": resolved.pop("sparse")}, resolved
 
   def render_wrapper(self, fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     from .codegen import render_wrapper

@@ -199,7 +199,7 @@ def build_qp[SV, NV, SP, NP](
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
   """Build a typed QP solver after proving and extracting the problem's matrix data."""
-  resolved_options = backend.prepare_options(options or {})
+  compile_options, resolved_options = backend.prepare_options(options or {})
   _prove_variable_independent_bounds(problem)
   cached = _lowered(problem)
   _prove_quadratic(problem, cached)
@@ -208,30 +208,30 @@ def build_qp[SV, NV, SP, NP](
 
   params = problem._param_symbols
 
-  matrices = (P, A, G_mat)
-  probe = ConcreteFunction._from_exprs(
-    f"{name}_pattern_probe",
-    params,
-    tuple(matrix.vec() for matrix in matrices),
-    problem.params.names,
-    ("P", "A", "G"),
-  )
-  rng = np.random.default_rng(0)
-  sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
-  values = probe(*sample)
-  P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
-  A_sp = _qp_matrix_sparsity(A, params, values[1]) if n_eq else None
-  G_sp = _qp_matrix_sparsity(G_mat, params, values[2]) if n_ineq else None
+  P_sp = A_sp = G_sp = None
+  if compile_options.get("sparse", False):
+    matrices = (P, A, G_mat)
+    probe = ConcreteFunction._from_exprs(
+      f"{name}_pattern_probe",
+      params,
+      tuple(matrix.vec() for matrix in matrices),
+      problem.params.names,
+      ("P", "A", "G"),
+    )
+    rng = np.random.default_rng(0)
+    sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
+    values = probe(*sample)
+    P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
+    A_sp = _qp_matrix_sparsity(A, params, values[1]) if n_eq else None
+    G_sp = _qp_matrix_sparsity(G_mat, params, values[2]) if n_ineq else None
 
-  oracle_outputs: list[Expr] = [_gathered(P, P_sp), c]
+  oracle_outputs: list[Expr] = [_gathered(P, P_sp) if P_sp is not None else P.vec(), c]
   oracle_names = ["P", "c"]
   if n_eq:
-    assert A_sp is not None
-    oracle_outputs.extend((_gathered(A, A_sp), b))
+    oracle_outputs.extend((_gathered(A, A_sp) if A_sp is not None else A.vec(), b))
     oracle_names.extend(("A_eq", "b_eq"))
   if n_ineq:
-    assert G_sp is not None
-    oracle_outputs.extend((_gathered(G_mat, G_sp), g_lb, g_ub))
+    oracle_outputs.extend((_gathered(G_mat, G_sp) if G_sp is not None else G_mat.vec(), g_lb, g_ub))
     oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
   oracle_outputs.extend((x_lb, x_ub))
   oracle_names.extend(("x_lb", "x_ub"))
@@ -264,6 +264,7 @@ def build_qp[SV, NV, SP, NP](
     param_names=problem.params.names,
     n_var_blocks=problem.vars.size,
     oracle=oracle,
+    compile_options=tuple(sorted(compile_options.items())),
     runtime_options=solver_options(resolved_options),
     oracle_output_names=tuple(oracle_names),
     P_sparsity=P_sp,

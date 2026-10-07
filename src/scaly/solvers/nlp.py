@@ -173,7 +173,7 @@ def build_nlp[SV, NV, SP, NP](
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
   """Build a typed plain Function around an NLP plugin descriptor."""
-  resolved_options = backend.prepare_options(options or {})
+  compile_options, resolved_options = backend.prepare_options(options or {})
   cached = _lowered(problem)
   x = cast(Expr, cached["x"])
   triangle = backend.hess_triangle
@@ -229,6 +229,7 @@ def build_nlp[SV, NV, SP, NP](
     bounds=cast(ConcreteFunction, cached["bounds"]),
     jac_sparsity=cast(SparsityPattern, cached["jac_sparsity"]),
     hess_sparsity=hess_sparsity,
+    compile_options=tuple(sorted(compile_options.items())),
     runtime_options=solver_options(resolved_options),
   )
   return cast(Any, descriptor_function(descriptor, input_tree, output_tree))

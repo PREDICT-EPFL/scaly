@@ -10,11 +10,11 @@ Sources: the #112 discussion, solver descriptors and builders, plugin option
 preparation and wrappers, generated C interface, reuse tests and exported-call
 tests. The earlier independent review and its fixes remain applicable.
 
-- [ ] Record the approved decision on #112 and return #125 to draft.
-- [ ] Add a failing static-interface/cache test and adjust the runtime reuse cases.
-- [ ] Split validated compilation choices from runtime parameters in the plugin
+- [x] Record the approved decision on #112 and return #125 to draft.
+- [x] Add a failing static-interface/cache test and adjust the runtime reuse cases.
+- [x] Split validated compilation choices from runtime parameters in the plugin
       contract and carry them through core builders and the external SQP adapter.
-- [ ] Emit one PIQP/SQP interface and remove obsolete staging, allocation and
+- [x] Emit one PIQP/SQP interface and remove obsolete staging, allocation and
       runtime-mode machinery. Restore the fixed PIQP oracle layouts.
 - [ ] Update the guides and deliberate solver snapshots. Measure source and
       executable-code size, generation time and native solve time.

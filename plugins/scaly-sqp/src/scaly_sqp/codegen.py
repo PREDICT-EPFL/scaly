@@ -125,6 +125,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   jac_raw = ctx.raw_symbol_of(jac) if jac is not None else ""
   hess_raw, bounds_raw = ctx.raw_symbol_of(hess), ctx.raw_symbol_of(bounds)
   return _TEMPLATE.render(
+    qp_mode=dict(desc.compile_options)["qp"],
     name=fun.name,
     options_index=ctx.options_index,
     raw_symbol=ctx.raw_symbol,

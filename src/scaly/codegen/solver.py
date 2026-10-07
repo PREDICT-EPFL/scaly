@@ -161,7 +161,8 @@ def render_solver_defaults(fun: ConcreteFunction) -> list[str]:
     symbol = c_ident(fn.name)
     lines.append(f"const scaly_solver_option* {symbol}_default_options(void) {{")
     lines.append("  static const scaly_solver_option options[] = {")
-    for name, value in get_backend(fn.descriptor.backend).prepare_options({}).items():
+    _, defaults = get_backend(fn.descriptor.backend).prepare_options({})
+    for name, value in defaults.items():
       if isinstance(value, (bool, int)):
         literal = f"0, {int(value)}, 0.0, NULL"
       elif isinstance(value, float):

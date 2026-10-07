@@ -53,8 +53,8 @@ class SolverBackend(Protocol):
 
   def include_dir(self) -> Path: ...
 
-  def prepare_options(self, options: dict[str, Any]) -> dict[str, Any]:
-    """Validate user options and supply the backend defaults at solver construction."""
+  def prepare_options(self, options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate options, supply defaults, and split compilation choices from runtime tuning."""
     ...
 
   def render_wrapper(self, fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:

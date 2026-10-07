@@ -365,7 +365,9 @@ The key is a SHA-256 hash over, in order:
 Changing the optimization level therefore gives a new key, as the `-O3` run
 shows. The compiler binary is not part of the key, so pointing `SCALY_CC` at a
 different compiler with the same flags reuses artifacts built by the old one.
-Numerical inputs and user solver options never enter the key.
+Numerical inputs and runtime solver tuning never enter the key. Structural
+choices such as PIQP's `sparse` and SQP's `qp` change the generated interface and
+therefore the key.
 
 ### Where artifacts live
 

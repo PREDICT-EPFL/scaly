@@ -97,6 +97,7 @@ class SolverDescriptor:
   # Oracle output naming (QP); the order in which the oracle's outputs encode
   # the QP data buffers.
   oracle_output_names: tuple[str, ...] = ()
+  compile_options: tuple[tuple[str, Any], ...] = ()
   # Hash key used as a stable identifier (set in __post_init__)
   _key: int = field(default=0, hash=False, compare=False, repr=False)
   runtime_options: ctypes.Array[CSolverOption] = field(default_factory=lambda: (CSolverOption * 1)(), hash=False, compare=False, repr=False)
