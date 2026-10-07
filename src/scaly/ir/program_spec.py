@@ -1,13 +1,11 @@
 """Program-dialect verifier: the rule tables and ``verify_program``.
 
-``spec_program_shared`` holds the invariants every node must satisfy, ``spec_host_program`` and
-``spec_kernel_program`` the host-only and device-only restrictions, and ``spec_program_full`` both.
-The shared ``Rule``/``Spec`` machinery is ``ir/spec.py``.
+``spec_program_full`` holds the invariants every node must satisfy. The shared ``Rule``/``Spec`` machinery is ``ir/spec.py``.
 """
 
 from __future__ import annotations
 
-from .program import ADDRESS_SPACES, DEVICE_ONLY_OPS, HOST_ONLY_OPS, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind, walk_program
+from .program import ADDRESS_SPACES, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind, walk_program
 from .spec import Rule, Spec, VerifyError
 from .types import DType, DeviceSpec
 
@@ -157,33 +155,20 @@ def _call_attrs(n: ProgramNode) -> str | None:
   return None
 
 
-def _launch_attrs(n: ProgramNode) -> str | None:
-  for k in ("kernel", "grid_dims", "block_dims"):
-    if k not in n.attrs:
-      return f"LAUNCH missing {k!r} attr"
-  return None
-
-
-def _barrier_kind(n: ProgramNode) -> str | None:
-  if n.attrs.get("kind") not in {"device", "group", "warp"}:
-    return f"BARRIER kind {n.attrs.get('kind')!r} not in device/group/warp"
-  return None
-
-
-def _proc_or_kernel_params(n: ProgramNode) -> str | None:
+def _proc_params(n: ProgramNode) -> str | None:
   pc = n.attrs.get("param_count")
   if pc is None:
-    return "PROC/KERNEL missing 'param_count'"
+    return "PROC missing 'param_count'"
   for i in range(pc):
     if n.args[i].op != ProgramOp.BUFFER:
-      return f"PROC/KERNEL param {i} op={n.args[i].op} is not BUFFER"
+      return f"PROC param {i} op={n.args[i].op} is not BUFFER"
   mode = n.attrs.get("scalarize_mode")
   if mode is not None and mode not in {"disabled", "inline", "procedure"}:
-    return f"PROC/KERNEL scalarize_mode {mode!r} is not disabled/inline/procedure"
+    return f"PROC scalarize_mode {mode!r} is not disabled/inline/procedure"
   return None
 
 
-spec_program_shared = Spec(
+spec_program_full = Spec(
   [
     Rule(None, "dtype-is-DType", _dtype_is_dtype),
     Rule(ProgramOp.CONST_INT, "const-int-value", _const_int_has_value),
@@ -198,56 +183,6 @@ spec_program_shared = Spec(
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),
-    Rule(ProgramOp.LAUNCH, "launch-attrs", _launch_attrs),
-    Rule(ProgramOp.BARRIER, "barrier-kind", _barrier_kind),
-    Rule(ProgramOp.PROC, "proc-params", _proc_or_kernel_params),
-    Rule(ProgramOp.KERNEL, "kernel-params", _proc_or_kernel_params),
-  ]
-)
-
-
-def _host_proc_no_device_only(n: ProgramNode) -> str | None:
-  for sub in walk_program(n):
-    if sub is n:
-      continue
-    if sub.op in DEVICE_ONLY_OPS:
-      return f"host PROC contains device-only op {sub.op.value}"
-  return None
-
-
-def _kernel_no_host_only(n: ProgramNode) -> str | None:
-  for sub in walk_program(n):
-    if sub is n:
-      continue
-    if sub.op in HOST_ONLY_OPS:
-      return f"KERNEL contains host-only op {sub.op.value}"
-  return None
-
-
-spec_host_program = Spec(
-  [
-    *spec_program_shared.any,
-    *(r for rs in spec_program_shared.by_op.values() for r in rs),
-    Rule(ProgramOp.PROC, "host-proc-no-device-only", _host_proc_no_device_only),
-  ]
-)
-
-
-spec_kernel_program = Spec(
-  [
-    *spec_program_shared.any,
-    *(r for rs in spec_program_shared.by_op.values() for r in rs),
-    Rule(ProgramOp.KERNEL, "kernel-no-host-only", _kernel_no_host_only),
-  ]
-)
-
-
-# Full spec: shared + host + kernel checks together. Suitable for whole-program verify.
-spec_program_full = Spec(
-  [
-    *spec_program_shared.any,
-    *(r for rs in spec_program_shared.by_op.values() for r in rs),
-    Rule(ProgramOp.PROC, "host-proc-no-device-only", _host_proc_no_device_only),
-    Rule(ProgramOp.KERNEL, "kernel-no-host-only", _kernel_no_host_only),
+    Rule(ProgramOp.PROC, "proc-params", _proc_params),
   ]
 )

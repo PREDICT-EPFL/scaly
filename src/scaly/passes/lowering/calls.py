@@ -6,12 +6,10 @@ from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...function.concrete import ConcreteFunction
-from .ctx import LowerCtx, lowers, LoweringError, _lower_to_proc
+from .ctx import LowerCtx, lowers, _lower_to_proc
 
 
 def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
-  if callee.device.kind != ctx.fun.device.kind:
-    raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
   from ...solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(callee):

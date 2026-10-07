@@ -4,8 +4,7 @@ The verify rules are ``ir/program_spec.py`` and the printers are ``ir/text.py``.
 
 Program IR is the lower representation that looks like
 code. Where ``Expr`` (expression IR) preserves mathematical meaning, Program IR
-chooses an implementation: which loops run, which buffer holds which value,
-which kernel runs on which device.
+chooses an implementation: which loops run and which buffer holds which value.
 
 Design choices:
 
@@ -17,9 +16,8 @@ Design choices:
   (``address_space`` ∈ ``global`` / ``local`` / ``private`` / ``constant``;
   ``device`` is a ``DeviceSpec``).
 - Range kinds borrow from tinygrad's ``AxisType``: ``SERIAL``, ``VECTOR``,
-  ``GLOBAL``, ``THREAD``, ``LOCAL``, ``WARP``, ``REDUCE``, ``GROUP_REDUCE``,
-  ``UNROLL``. The kind is a verifier-checked attribute of ``RANGE`` and ``FOR``,
-  not a separate op; backend scheduling uses it to bind loops to launch axes.
+  ``GLOBAL``, ``REDUCE``, ``UNROLL``. The kind is a verifier-checked attribute of
+  ``RANGE`` and ``FOR``, not a separate op.
 
 Per the roadmap, Program IR is a real language: every construct must verify and every malformed
 node must produce a clear diagnostic. The pretty-printer that has to show enough to debug
@@ -43,7 +41,6 @@ class ProgramOp(StrEnum):
   # Declarations
   PROGRAM = "program"
   PROC = "proc"
-  KERNEL = "kernel"
   BUFFER = "buffer"
   VIEW = "view"
 
@@ -55,8 +52,6 @@ class ProgramOp(StrEnum):
   STORE = "store"
   STORE_PAIR = "store_pair"
   CALL = "call"
-  LAUNCH = "launch"
-  BARRIER = "barrier"
 
   # Scalar/index-level
   CONST_INT = "const_int"
@@ -94,19 +89,14 @@ class ProgramOp(StrEnum):
 class RangeKind(StrEnum):
   """Loop binding kinds borrowed from tinygrad's ``AxisType``.
 
-  Backends use these to bind loops to launch axes (``GLOBAL``/``THREAD``),
-  to choose between vectorized or unrolled emission (``VECTOR``/``UNROLL``),
-  or to lower reductions (``REDUCE``/``GROUP_REDUCE``).
+  Backends use these to choose between vectorized or unrolled emission
+  (``VECTOR``/``UNROLL``) or to lower reductions (``REDUCE``).
   """
 
   SERIAL = "serial"
   VECTOR = "vector"
   GLOBAL = "global"
-  THREAD = "thread"
-  LOCAL = "local"
-  WARP = "warp"
   REDUCE = "reduce"
-  GROUP_REDUCE = "group_reduce"
   UNROLL = "unroll"
 
 
@@ -172,10 +162,6 @@ UNARY_FN_OPS: frozenset[ProgramOp] = frozenset(
   }
 )
 BINARY_FN_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.POW, ProgramOp.ATAN2, ProgramOp.MINIMUM, ProgramOp.MAXIMUM})
-
-
-HOST_ONLY_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.LAUNCH})
-DEVICE_ONLY_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.BARRIER})
 
 
 # Hash-cons Program IR nodes the same way ``Expr`` is hash-consed: structurally-
@@ -376,18 +362,6 @@ def call(callee: str, args: Sequence[ProgramNode], *, returns: Sequence[str] = (
   return ProgramNode(ProgramOp.CALL, tuple(args), attrs={"callee": callee, "returns": tuple(returns)})
 
 
-def launch(kernel: str, grid: Sequence[ProgramNode | int], block_dims: Sequence[ProgramNode | int], args: Sequence[ProgramNode]) -> ProgramNode:
-  gr = tuple(g if isinstance(g, ProgramNode) else const_int(g) for g in grid)
-  bl = tuple(b if isinstance(b, ProgramNode) else const_int(b) for b in block_dims)
-  return ProgramNode(ProgramOp.LAUNCH, (*gr, *bl, *args), attrs={"kernel": kernel, "grid_dims": len(gr), "block_dims": len(bl)})
-
-
-def barrier(kind: str = "device") -> ProgramNode:
-  if kind not in {"device", "group", "warp"}:
-    raise ValueError(f"barrier kind {kind!r} not in device/group/warp")
-  return ProgramNode(ProgramOp.BARRIER, (), attrs={"kind": kind})
-
-
 def proc(name: str, params: Sequence[ProgramNode], body: Sequence[ProgramNode], *, device: DeviceSpec | str | None = None) -> ProgramNode:
   for p in params:
     if p.op != ProgramOp.BUFFER:
@@ -395,27 +369,11 @@ def proc(name: str, params: Sequence[ProgramNode], body: Sequence[ProgramNode], 
   return ProgramNode(ProgramOp.PROC, (*params, *body), attrs={"name": name, "param_count": len(params), "device": DeviceSpec.parse(device)})
 
 
-def kernel(
-  name: str, params: Sequence[ProgramNode], body: Sequence[ProgramNode], *, grid_dims: int = 1, device: DeviceSpec | str | None = None
-) -> ProgramNode:
-  for p in params:
-    if p.op != ProgramOp.BUFFER:
-      raise TypeError(f"kernel params must be BUFFER nodes, got {p.op}")
-  return ProgramNode(
-    ProgramOp.KERNEL,
-    (*params, *body),
-    attrs={"name": name, "param_count": len(params), "grid_dims": int(grid_dims), "device": DeviceSpec.parse(device)},
-  )
-
-
-def program(procs: Sequence[ProgramNode], kernels: Sequence[ProgramNode] = ()) -> ProgramNode:
+def program(procs: Sequence[ProgramNode]) -> ProgramNode:
   for p in procs:
     if p.op != ProgramOp.PROC:
       raise TypeError(f"program procs must be PROC nodes, got {p.op}")
-  for k in kernels:
-    if k.op != ProgramOp.KERNEL:
-      raise TypeError(f"program kernels must be KERNEL nodes, got {k.op}")
-  return ProgramNode(ProgramOp.PROGRAM, (*procs, *kernels), attrs={"proc_count": len(procs), "kernel_count": len(kernels)})
+  return ProgramNode(ProgramOp.PROGRAM, tuple(procs), attrs={"proc_count": len(procs)})
 
 
 # Binary scalar helpers — used by the lowerer (Phase 5+) and by tests.

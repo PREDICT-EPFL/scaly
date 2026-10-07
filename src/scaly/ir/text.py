@@ -167,19 +167,15 @@ def render_program_assembly(root: ProgramNode) -> str:
 def _render_program_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
   pad = "  " * indent
   if n.op == ProgramOp.PROGRAM:
-    lines.append(f"{pad}prog.module{_attrs_asm(n.attrs, skip={'proc_count', 'kernel_count'})} {{")
-    pc = int(n.attrs.get("proc_count", 0))
-    for sub in n.args[:pc]:
-      _render_program_node(sub, indent + 1, lines)
-    for sub in n.args[pc:]:
+    lines.append(f"{pad}prog.module{_attrs_asm(n.attrs, skip={'proc_count'})} {{")
+    for sub in n.args:
       _render_program_node(sub, indent + 1, lines)
     lines.append(f"{pad}}}")
-  elif n.op in (ProgramOp.PROC, ProgramOp.KERNEL):
-    label = "proc" if n.op == ProgramOp.PROC else "kernel"
+  elif n.op == ProgramOp.PROC:
     pc = int(n.attrs["param_count"])
     params = ", ".join(f"%{p.attrs['name']}: {_memref_asm(p)}" for p in n.args[:pc])
     attrs = _attrs_asm(n.attrs, skip={"name", "param_count"})
-    lines.append(f"{pad}prog.{label} @{n.attrs['name']}({params}){attrs} {{")
+    lines.append(f"{pad}prog.proc @{n.attrs['name']}({params}){attrs} {{")
     for stmt in n.args[pc:]:
       _render_stmt(stmt, indent + 1, lines)
     lines.append(f"{pad}}}")
@@ -222,15 +218,6 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     rets = n.attrs.get("returns", ())
     ret_prefix = f"{', '.join('%' + r for r in rets)} = " if rets else ""
     lines.append(f"{pad}{ret_prefix}prog.call @{n.attrs['callee']}({args}){_attrs_asm(n.attrs, skip={'callee', 'returns'})}")
-  elif n.op == ProgramOp.LAUNCH:
-    gd = int(n.attrs["grid_dims"])
-    bd = int(n.attrs["block_dims"])
-    grid = ", ".join(_render_scalar(a) for a in n.args[:gd])
-    block = ", ".join(_render_scalar(a) for a in n.args[gd : gd + bd])
-    args = ", ".join(_render_call_arg(a) for a in n.args[gd + bd :])
-    lines.append(f"{pad}prog.launch @{n.attrs['kernel']} grid({grid}) block({block}) ({args})")
-  elif n.op == ProgramOp.BARRIER:
-    lines.append(f"{pad}prog.barrier {n.attrs['kind']}")
   else:
     lines.append(f"{pad}// stmt {n.op.value}: {_render_scalar(n) if n.op in SCALAR_OPS else _attrs_asm(n.attrs)}")
 
@@ -287,17 +274,11 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
   pad = "  " * indent
   if n.op == ProgramOp.PROGRAM:
     lines.append(f"{pad}program")
-    pc = n.attrs.get("proc_count", 0)
-    for sub in n.args[:pc]:
+    for sub in n.args:
       _format_node(sub, indent + 1, lines)
-    for sub in n.args[pc:]:
-      _format_node(sub, indent + 1, lines)
-  elif n.op in (ProgramOp.PROC, ProgramOp.KERNEL):
-    label = "proc" if n.op == ProgramOp.PROC else "kernel"
+  elif n.op == ProgramOp.PROC:
     params = ", ".join(f"{p.attrs['name']}:{p.dtype.name}{p.attrs['shape']}" for p in n.args[: n.attrs["param_count"]])
-    device = n.attrs.get("device")
-    suffix = f" device={device}" if device and str(device) != "host" else ""
-    lines.append(f"{pad}{label} {n.attrs['name']}({params}){suffix}:")
+    lines.append(f"{pad}proc {n.attrs['name']}({params}):")
     for sub in n.args[n.attrs["param_count"] :]:
       _format_node(sub, indent + 1, lines)
   elif n.op == ProgramOp.BLOCK:
@@ -327,15 +308,6 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     rets = n.attrs.get("returns", ())
     ret_prefix = f"{', '.join(rets)} = " if rets else ""
     lines.append(f"{pad}{ret_prefix}call {n.attrs['callee']}({args})")
-  elif n.op == ProgramOp.LAUNCH:
-    gd = int(n.attrs["grid_dims"])
-    bd = int(n.attrs["block_dims"])
-    grid = ", ".join(_format_scalar(a) for a in n.args[:gd])
-    block_dims = ", ".join(_format_scalar(a) for a in n.args[gd : gd + bd])
-    kargs = ", ".join(_format_scalar_or_view(a) for a in n.args[gd + bd :])
-    lines.append(f"{pad}launch {n.attrs['kernel']}<<<({grid}), ({block_dims})>>>({kargs})")
-  elif n.op == ProgramOp.BARRIER:
-    lines.append(f"{pad}barrier {n.attrs['kind']}")
   else:
     # fallback for unknown / scalar at statement scope
     lines.append(f"{pad}{n.op.value}")

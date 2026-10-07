@@ -81,7 +81,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       refs = buffer_refs(stmt)
       if count is None or count < 2 or rng.args[2].attrs.get("value") != 1:
         return recurse()
-      statements = [n for n in walk_program(p.block(*inner)) if n.op in (ProgramOp.CALL, ProgramOp.LAUNCH, ProgramOp.FOR)]
+      statements = [n for n in walk_program(p.block(*inner)) if n.op in (ProgramOp.CALL, ProgramOp.FOR)]
       if any(n.op != ProgramOp.FOR or any(a.op != ProgramOp.CONST_INT for a in n.args[0].args) for n in statements):
         return recurse()
       if any(n.dtype.is_floating and n.dtype.bits != 64 for n in walk_program(p.block(*inner))):
@@ -223,7 +223,7 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
       continue
     callee = procedures[stmt.attrs["callee"]]
     params, statements = _proc_parts(callee)
-    if any(n.op in (ProgramOp.CALL, ProgramOp.LAUNCH) for n in walk_program(p.block(*statements))):
+    if any(n.op == ProgramOp.CALL for n in walk_program(p.block(*statements))):
       out.append(stmt)
       continue
     arguments = dict(zip((n.attrs["name"] for n in params), stmt.args, strict=True))

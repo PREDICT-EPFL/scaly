@@ -4,9 +4,8 @@ These tests pin the Program IR contract before lowering (Phase 5) starts to
 build real Program IR from expression IR. Each example walks one piece of the
 vocabulary:
 
-- elementwise kernel-like loop with LOAD/STORE through VIEWs;
+- elementwise loop with LOAD/STORE through VIEWs;
 - nested loop with reduction-kind range;
-- host PROC that LAUNCHes a KERNEL and synchronizes;
 - negative cases: malformed nodes are rejected with a clear diagnostic.
 """
 
@@ -17,13 +16,13 @@ import pytest
 from scaly.ir import program as p
 from scaly.ir.program import ProgramNode, ProgramOp, RangeKind
 from scaly.ir.text import format_program
-from scaly.ir.program_spec import spec_host_program, spec_kernel_program, spec_program_full, verify_program
+from scaly.ir.program_spec import verify_program
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import dtypes
 
 
-def _elementwise_neg_kernel() -> ProgramNode:
-  """A tiny elementwise kernel: ``out[i] = -in[i]`` for ``i in [0, N)``."""
+def _elementwise_neg_proc() -> ProgramNode:
+  """A tiny elementwise proc: ``out[i] = -in[i]`` for ``i in [0, N)``."""
   in_buf = p.buffer("in_", dtypes.float64, (16,), address_space="global")
   out_buf = p.buffer("out_", dtypes.float64, (16,), address_space="global")
   rng = p.range_("i", 0, 16, kind=RangeKind.GLOBAL)
@@ -39,59 +38,16 @@ def _elementwise_neg_kernel() -> ProgramNode:
       ],
     ),
   )
-  return p.kernel("k_neg", [in_buf, out_buf], body, grid_dims=1, device="cuda:0")
+  return p.proc("k_neg", [in_buf, out_buf], body)
 
 
-def test_elementwise_kernel_verifies_and_prints() -> None:
-  k = _elementwise_neg_kernel()
-  verify_program(k, spec=spec_kernel_program)
+def test_elementwise_proc_verifies_and_prints() -> None:
+  k = _elementwise_neg_proc()
+  verify_program(k)
   dump = format_program(k)
-  assert "kernel k_neg" in dump
-  assert "device=cuda:0" in dump
+  assert "proc k_neg" in dump
   assert "for i in [0, 16) step 1 kind=global" in dump
   assert "out_[i] <- (-in_[i])" in dump
-
-
-def test_host_proc_with_launch_and_barrier_verifies() -> None:
-  in_buf = p.buffer("in_", dtypes.float64, (16,))
-  out_buf = p.buffer("out_", dtypes.float64, (16,))
-  host = p.proc(
-    "host_drive",
-    [in_buf, out_buf],
-    [
-      p.launch("k_neg", grid=[16], block_dims=[1], args=[in_buf, out_buf]),
-    ],
-  )
-  verify_program(host, spec=spec_host_program)
-  text = format_program(host)
-  assert "proc host_drive" in text
-  assert "launch k_neg<<<(16), (1)>>>" in text
-
-
-def test_host_proc_rejects_device_only_op() -> None:
-  in_buf = p.buffer("in_", dtypes.float64, (16,))
-  bad = p.proc(
-    "host_bad",
-    [in_buf],
-    [
-      p.barrier("device"),  # BARRIER must live inside a KERNEL, not a host PROC
-    ],
-  )
-  with pytest.raises(VerifyError, match="host-proc-no-device-only"):
-    verify_program(bad, spec=spec_host_program)
-
-
-def test_kernel_rejects_host_only_op() -> None:
-  in_buf = p.buffer("in_", dtypes.float64, (16,))
-  bad = p.kernel(
-    "k_bad",
-    [in_buf],
-    [
-      p.launch("k_neg", grid=[16], block_dims=[1], args=[in_buf]),  # LAUNCH only lives in host code
-    ],
-  )
-  with pytest.raises(VerifyError, match="kernel-no-host-only"):
-    verify_program(bad, spec=spec_kernel_program)
 
 
 def test_for_first_arg_must_be_range() -> None:
@@ -112,27 +68,25 @@ def test_buffer_address_space_validated() -> None:
 
 
 def test_buffer_dtype_and_device_recorded() -> None:
-  b = p.buffer("x", dtypes.float32, (3, 4), address_space="local", device="metal:0")
+  b = p.buffer("x", dtypes.float32, (3, 4), address_space="local")
   assert b.dtype == dtypes.float32
   assert b.attrs["address_space"] == "local"
-  assert str(b.attrs["device"]) == "metal:0"
+  assert str(b.attrs["device"]) == "host"
+
+
+def test_no_gpu_vocabulary() -> None:
+  assert not {"KERNEL", "LAUNCH", "BARRIER"} & set(ProgramOp.__members__)
+  assert set(RangeKind.__members__) == {"SERIAL", "VECTOR", "GLOBAL", "REDUCE", "UNROLL"}
+  for name in ("kernel", "launch", "barrier"):
+    assert not hasattr(p, name)
 
 
 def test_full_program_verifies() -> None:
-  k = _elementwise_neg_kernel()
-  in_buf = p.buffer("in_", dtypes.float64, (16,))
-  out_buf = p.buffer("out_", dtypes.float64, (16,))
-  host = p.proc(
-    "host_drive",
-    [in_buf, out_buf],
-    [p.launch("k_neg", grid=[16], block_dims=[1], args=[in_buf, out_buf])],
-  )
-  prog = p.program([host], [k])
-  verify_program(prog, spec=spec_program_full)
+  prog = p.program([_elementwise_neg_proc()])
+  verify_program(prog)
   text = format_program(prog)
   assert text.startswith("program")
-  assert "kernel k_neg" in text
-  assert "proc host_drive" in text
+  assert "proc k_neg" in text
 
 
 def test_reduction_kind_range_verifies() -> None:
