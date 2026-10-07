@@ -29,6 +29,15 @@ plugins/scaly-piqp/tests/test_qp_piqp.py::test_qp_against_analytic_kkt_reference
 plugins/scaly-piqp/tests/test_qp_piqp.py::test_qp_equality_constrained_quadratic
 plugins/scaly-piqp/tests/test_qp_piqp.py::test_qp_two_sided_inequality_box
 plugins/scaly-piqp/tests/test_qp_piqp.py::test_qp_with_symbolic_parameters
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_supported_settings_match_vendored_struct
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_unknown_option_fails_before_c_generation[1e-08-False]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_unknown_option_fails_before_c_generation[1e-08-True]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_unknown_option_fails_before_c_generation[True-False]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_unknown_option_fails_before_c_generation[True-True]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_unknown_option_fails_before_c_generation[bad-False]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_unknown_option_fails_before_c_generation[bad-True]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_valid_settings_still_render_and_solve[False]
+plugins/scaly-piqp/tests/test_qp_piqp.py::test_valid_settings_still_render_and_solve[True]
 plugins/scaly-piqp/tests/test_qp_sparse.py::test_nested_sparse_qp_in_scaly_function
 plugins/scaly-piqp/tests/test_qp_sparse.py::test_sparse_qp_bakes_exactly_the_upper_triangle
 plugins/scaly-piqp/tests/test_qp_sparse.py::test_sparse_qp_constant_data_and_stats

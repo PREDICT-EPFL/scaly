@@ -70,16 +70,19 @@ confirmed. The operation reference states the current whole-array behavior.
 
 ## PIQP option errors reach C compilation
 
-Follow-up: [#80].
+Resolved by [#80].
 
-PIQP numeric and Boolean options are inserted directly as settings-struct member assignments.
-An unknown setting name is accepted during Python solver construction and becomes an invalid
-member access in generated C. A typo therefore produces a compiler error instead of a Python
-error identifying supported settings. String-valued PIQP settings raise during rendering.
+PIQP option names are checked during Python solver construction, before any C generation,
+including the sparse matrix-pattern probe. An unknown name raises `ValueError` identifying
+all supported PIQP 0.6.4 settings. The plugin's accepted names match the vendored
+`piqp_settings` struct. Scaly's `sparse` option is handled separately.
+Numeric and Boolean values still become settings-struct assignments, and string-valued
+settings still raise during rendering. Moving options to run time is [#112].
 
-Evidence: the option loop in
-[`scaly_piqp.codegen.render_wrapper`](../../plugins/scaly-piqp/src/scaly_piqp/codegen.py).
-The solver-backend guide now identifies this behavior.
+Evidence: `scaly_piqp._Backend.validate_options`, called at the start of
+[`build_qp`](../../src/scaly/solvers/qp.py), and the regression tests in
+[`test_qp_piqp.py`](../../plugins/scaly-piqp/tests/test_qp_piqp.py).
+The solver-backend guide describes the construction-time error.
 
 ## Solver sensitivity has inconsistent failure behavior
 
@@ -110,3 +113,5 @@ were reproduced using IPOPT.
 [#66]: https://github.com/PREDICT-EPFL/scaly/issues/66
 [#80]: https://github.com/PREDICT-EPFL/scaly/issues/80
 [#16]: https://github.com/PREDICT-EPFL/scaly/issues/16
+
+[#112]: https://github.com/PREDICT-EPFL/scaly/issues/112
