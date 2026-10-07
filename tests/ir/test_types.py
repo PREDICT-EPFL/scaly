@@ -58,6 +58,12 @@ def test_devicespec_parse_and_str() -> None:
     assert not hasattr(sc, name)
 
 
+def test_function_rejects_a_dtype_the_host_cannot_lower() -> None:
+  half = sc.DType("float16", 16, "float16_t", is_floating=True)
+  with pytest.raises(ValueError, match="cannot lower dtype float16"):
+    sc.function(sc.arg("x", sc.TensorType((3,), dtype=half)), outputs=sc.arg("y"), name="f16")(lambda x: x.sum()).instantiate()
+
+
 def test_float32_construction_keeps_dtype_metadata() -> None:
   @sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y"), name="f32")
   def fn(x: sc.Expr) -> sc.Expr:

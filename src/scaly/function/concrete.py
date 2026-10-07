@@ -9,7 +9,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, linear_combination, topo
 from ..ir.match import _apply_lowering
-from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType
+from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
 from .tree import Tree, flat_tree, flat_parameters, inferred_outputs
 
 if TYPE_CHECKING:
@@ -152,6 +152,9 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     self.input_tree = input_tree
     self.output_tree = output_tree
     self.device: DeviceSpec = DeviceSpec.parse(device)
+    for expr in (*self.inputs, *self.outputs):
+      if expr.type.dtype not in dtypes.all():
+        raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")
     self.input_names = input_tree.names
     self.output_names = output_tree.names
     self.output_sparsities = tuple(output_sparsities) if output_sparsities is not None else (None,) * len(self.outputs)
