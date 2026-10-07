@@ -1,0 +1,21 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  title:
+    name: pr title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject conventional-commit prefixes
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if printf '%s' "$TITLE" | grep -Eq '^[a-z]+(\([^)]*\))?!?: '; then
+            echo "::error::The title becomes the squash commit title on main. Drop the prefix and write a plain imperative title, such as 'Merge CI test jobs'."
+            exit 1
+          fi

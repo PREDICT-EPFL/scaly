@@ -105,7 +105,7 @@ function can omit the arguments. A plain sparse derivative's
 tables, so a C caller can reconstruct the matrix without Python.
 
 For a mapped sparse derivative, the query returns the per-iteration matrix
-pattern. Apply it separately to each leading output slice; nested maps use the
+pattern. Apply it separately to each leading output slice. Nested maps use the
 same pattern for every iteration. The mapped concrete graph and its C header
 do not carry these per-iteration tables. Keep the source pattern when passing
 mapped compact values through another function or a factory.

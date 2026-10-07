@@ -1,6 +1,6 @@
 ---
 name: inspect-work
-description: Inspect Scaly GitHub issues, Project status, dependencies, ownership, and overlapping work before planning or starting a task. Use for task briefings and finding ready work; this skill makes no tracker updates.
+description: Inspect Scaly GitHub issues, Project status, dependencies, ownership, and overlapping work before planning or starting a task. Makes no tracker updates. Use only when the user or another skill asks for it by name, never on your own initiative.
 ---
 
 # Inspect Scaly work

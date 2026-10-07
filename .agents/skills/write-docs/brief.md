@@ -1,7 +1,7 @@
 # Writing the scaly user guides
 
 This is the maintained writing brief agreed with Ted during the user-guide review. The edited
-[Getting started](../../docs/guide/getting_started.md) is the reference for tone and depth.
+[Getting started](../../../docs/guide/getting_started.md) is the reference for tone and depth.
 These preferences take precedence over generic writing-skill advice, including advice to make
 every tutorial a sequence of commands or separate every explanation from an example.
 

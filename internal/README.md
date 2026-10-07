@@ -12,7 +12,6 @@ instead.
   maintained. The maintained notes include
   [`notes/core_compiler_roadmap.md`](notes/core_compiler_roadmap.md), the design and order of the core
   compiler work, [`notes/refactorings.md`](notes/refactorings.md), which explains open refactoring issues,
-  [`notes/user_guide_writing.md`](notes/user_guide_writing.md), the agreed user-guide writing brief,
   [`notes/benchmark_protocol.md`](notes/benchmark_protocol.md), the full benchmark measurement protocol,
   and [`notes/vendored_solvers.md`](notes/vendored_solvers.md), the solver-build constraints and license survey.
 
@@ -39,7 +38,6 @@ For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_i
 | `compiler_maintenance_context.md` | implementation details moved out of the public compiler explanations |
 | `release_workflow_design.md` | how `ci.yml` builds release artifacts and `release.yml` publishes them |
 | `documentation_api_review.md` | API gaps reproduced while rewriting the user documentation |
-| `user_guide_writing.md` | maintained writing principles agreed during the user-guide review |
 | `generated_interface_2026_09_18.md` | completed interface design, including native and CasADi storage-order decisions |
 | `optimization_cleanup_2026_09_10.md` | completed optimization review and controlled before/after measurements |
 | `c77_c79_implementation.md` | completed range and lane work, original acceptance limits, and deferred performance evidence |

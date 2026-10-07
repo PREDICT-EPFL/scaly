@@ -1,6 +1,6 @@
 ---
 name: update-work
-description: Update Scaly GitHub issue classification, dependencies, Project status, and progress or handoff records within an authorized task. Use when maintaining tracking metadata or linking completed work, not to choose tasks or resolve ownership conflicts.
+description: Update Scaly GitHub issue classification, dependencies, Project status, and progress or handoff records within an authorized task. Not for choosing tasks or resolving ownership conflicts. Use only when the user or another skill asks for it by name, never on your own initiative.
 ---
 
 # Update Scaly work
@@ -24,6 +24,15 @@ gh issue edit ISSUE -R PREDICT-EPFL/scaly --add-blocked-by PREREQUISITE
 gh issue edit ISSUE -R PREDICT-EPFL/scaly --milestone MILESTONE
 gh issue comment ISSUE -R PREDICT-EPFL/scaly --body-file COMMENT_FILE
 ```
+
+When writing an issue, follow the format in the tracking conventions, and also:
+
+- write completion criteria a reviewer can check: a test, a command and its result, or an
+  observable behaviour
+- link the roadmap section or design note the issue implements, by its heading anchor, so that a
+  revised decision can find every issue depending on it
+- size it for one fresh thread and one reviewable pull request, and split it into sub-issues
+  otherwise
 
 Choose native issue types or kind labels according to the configured tracker, not both. Record
 prerequisites with dependency fields and decomposition with sub-issues. Origin describes where

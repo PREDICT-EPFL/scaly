@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -24,6 +25,9 @@ PARTS = ("sweep", "closed-loop")
 
 
 def run_study(args, cli_args: list[str]) -> bool:
+  measuring = Path.home() / ".scaly-measuring"
+  if measuring.exists():
+    raise SystemExit(f"measurement already owns this machine ({measuring}):\n{measuring.read_text()}")
   out = args.out_dir.resolve()
   if out.exists() and any(out.iterdir()) and not args.overwrite:
     raise SystemExit(f"study requires an unused output directory: {out} (or pass --overwrite)")
@@ -63,13 +67,14 @@ def run_study(args, cli_args: list[str]) -> bool:
           ]
         )
   record = []
+  manifest = {**collect(ROOT, gbench.compiler(), cli_args), "commands": record}
   for command in commands:
     print("$ " + " ".join(command[1:]), flush=True)
     started = datetime.now(timezone.utc)
     tick = time.monotonic()
     status = subprocess.run(command).returncode
     record.append({"command": command[1:], "returncode": status, "started": started.isoformat(), "seconds": round(time.monotonic() - tick, 1)})
-  manifest = {**collect(ROOT, gbench.compiler(), cli_args), "commands": record}
+    (out / "study.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
   (out / "study.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
   print(f"report written to {report(out)}")
   return all(item["returncode"] == 0 for item in record)

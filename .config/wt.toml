@@ -23,3 +23,9 @@ docs-build = "uv run zensical build"
 # `.config/private-names` (see `AGENTS.local.md`); a checkout without that file skips the check.
 [[pre-merge]]
 no-private-names = "pat=$(cat .config/private-names 2>/dev/null); [ -z \"$pat\" ] || ! git grep -qiE \"$pat\" -- . || { git grep -niE \"$pat\" -- .; echo 'the tracked tree contains a word listed in .config/private-names'; exit 1; }"
+
+[commit.generation]
+template-append = """
+- Write the subject as a plain imperative sentence, without a conventional prefix such as `feat:` or `fix(ci):`
+- Never cite a commit hash from this branch, since the branch lands squashed. Name the file, function or change instead
+"""

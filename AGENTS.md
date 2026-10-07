@@ -20,7 +20,7 @@ exclusion mechanism. Anything unpublished lives in `internal/`:
 
 - [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is the single actionable list;
   [scaly roadmap](https://github.com/orgs/PREDICT-EPFL/projects/2) tracks status and scope.
-  Follow [Tracking work](docs/dev/issue_tracking.md) and the project skills under `.agents/skills/`.
+  Follow [Tracking work](docs/dev/issue_tracking.md).
 - `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
   solver-plugin build-out.
 - `internal/notes/core_compiler_roadmap.md` is the maintained design and order of the core compiler
@@ -45,6 +45,15 @@ Issues stays out of the user guide, *How it works*, the benchmark pages and the 
 out of the API page (as `docs/api/core.md` does for `Expr.opaque` and `Function.with_device`) and
 keep roadmap or migration wording out of any docstring that renders. A known limitation of a
 finished feature is different: document it next to the behaviour it affects.
+
+## Optional procedures
+
+`.agents/skills/` holds the maintainer's procedures for working through issues with agents.
+`run-lane` coordinates a batch of related issues and starts only when a user invokes it.
+`implement-issue` takes one issue to a pull request, and the others (`record-decisions`,
+`write-docs`, `benchmark-study`, `port-from-devrush`, `inspect-work` and `update-work`) cover
+parts of that work. Use any of them only when the user or another of these skills asks for it by
+name. Nothing else in this repository requires them.
 
 ## Commands
 
