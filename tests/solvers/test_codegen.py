@@ -265,7 +265,19 @@ int main(void) {{
   includes = [flag for flag in module.link_flags if flag.startswith("-I")]
   subprocess.run(["cc", "-O2", "-Wall", "-Werror", "-c", str(source), *includes, "-o", str(obj)], check=True, capture_output=True)
   subprocess.run(
-    ["c++" if lang == "cpp" else "cc", "-O2", "-Wall", "-Werror", str(obj), str(driver), *module.link_flags, "-lm", "-o", str(executable)],
+    [
+      "c++" if lang == "cpp" else "cc",
+      "-std=c++17" if lang == "cpp" else "-std=c11",
+      "-O2",
+      "-Wall",
+      "-Werror",
+      str(obj),
+      str(driver),
+      *module.link_flags,
+      "-lm",
+      "-o",
+      str(executable),
+    ],
     check=True,
     capture_output=True,
   )
