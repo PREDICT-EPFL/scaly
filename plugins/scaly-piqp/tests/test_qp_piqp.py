@@ -224,3 +224,53 @@ def test_nested_qp_call_uses_the_declared_tree() -> None:
 
   result = wrapped(np.array([1.5, -0.3]))
   np.testing.assert_allclose(result, [1.5, -0.3], atol=1e-7)
+
+
+@pytest.mark.parametrize("sparse", [False, True])
+@pytest.mark.parametrize("value", [1e-8, True, "bad"])
+def test_unknown_option_fails_before_c_generation(monkeypatch: pytest.MonkeyPatch, sparse: bool, value: Any) -> None:
+  import scaly.codegen.jit as codegen
+
+  @sc.problem(vars=sc.arg("x", 1), params=sc.arg("target", 1))
+  def tracking(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - target))
+
+  def forbid_render(*args: Any, **kwargs: Any) -> None:
+    pytest.fail("unknown PIQP option reached C generation")
+
+  monkeypatch.setattr(codegen, "render_c_module", forbid_render)
+  with pytest.raises(ValueError, match="Unknown PIQP option 'eps_abss'.*Supported settings:") as error:
+    sc.solver(tracking, "piqp", options={"sparse": sparse, "eps_abss": value})
+  from scaly_piqp import _SETTINGS
+
+  assert error.value.args[0].split("Supported settings: ")[1] == ", ".join(sorted(_SETTINGS))
+
+
+@pytest.mark.solver("piqp")
+def test_supported_settings_match_vendored_struct() -> None:
+  import re
+
+  from scaly_piqp import _SETTINGS, include_dir
+
+  header = (include_dir() / "piqp/piqp_typedef.h").read_text()
+  settings = header.split("} piqp_settings;")[0].rsplit("typedef struct {", 1)[1]
+  names = set(re.findall(r"\bpiqp_(?:int|float|kkt_solver)\s+(\w+)\s*;", settings))
+  assert names == _SETTINGS
+
+
+@pytest.mark.parametrize("sparse", [False, True])
+@pytest.mark.solver("piqp")
+def test_valid_settings_still_render_and_solve(sparse: bool) -> None:
+  from scaly.codegen.aot import render_c_source
+
+  @sc.problem(vars=sc.arg("x", 1), params=sc.arg("target", 1))
+  def tracking(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - target))
+
+  options = {"sparse": sparse, "eps_abs": 1e-8, "max_iter": 100, "verbose": False, "preconditioner_reuse_on_update": True}
+  solve = sc.solver(tracking, "piqp", options=options)
+  source = render_c_source(solve.function)
+  for key, value in options.items():
+    if key != "sparse":
+      assert f"_settings.{key} = {int(value) if isinstance(value, bool) else value};" in source
+  np.testing.assert_allclose(solve(np.array([2.0]))[0], [2.0], atol=1e-7)

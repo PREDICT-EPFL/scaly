@@ -69,8 +69,8 @@ rejects costs, constraints, and bounds that contain another solver call because
 it cannot prove the required dependence on the decision variables through that
 call. This restriction applies to both dense and sparse PIQP modes.
 
-Other option names correspond to PIQP settings. Scaly does not validate unknown
-names in Python. A misspelled setting causes a C compilation error.
+Other option names correspond to PIQP settings. An unknown name raises a Python
+`ValueError` listing the supported settings when `sc.solver` builds the solver.
 
 PIQP ignores `x0` and `warm` because its C interface has no warm-start entry
 point. Repeated calls reuse the wrapper's solver workspace and update numerical

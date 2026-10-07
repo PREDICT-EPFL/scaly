@@ -199,6 +199,9 @@ def build_qp[SV, NV, SP, NP](
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
   """Build a typed QP solver after proving and extracting the problem's matrix data."""
+  validate_options = getattr(backend, "validate_options", None)
+  if validate_options is not None:
+    validate_options(options or {})
   _prove_variable_independent_bounds(problem)
   cached = _lowered(problem)
   _prove_quadratic(problem, cached)
