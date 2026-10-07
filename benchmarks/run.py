@@ -208,6 +208,9 @@ def _benchmark_smoke(full: bool) -> None:
       print(
         f"smoke {workload} size={size} backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else "")
       )
+      # a comparison backend over budget is its own limitation, as in the sweep; scaly over budget is a regression
+      if backend != "scaly" and result["compile_status"] in {"timeout", "skipped_size", "codegen_timeout"}:
+        continue
       if result["runtime_status"] != "ok" or info is None:
         raise RuntimeError(f"{workload} {backend} size={size} smoke failed: {result['note']}")
       assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]

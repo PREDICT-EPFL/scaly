@@ -5,14 +5,13 @@ from pathlib import Path
 import sys
 from typing import Any, cast
 
+import casadi as ca
 import numpy as np
 import pytest
 
 from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt, _transformed_nlpsol
 from benchmarks.harness.provenance import collect
 from scaly_ipopt import BUILD_CONFIG
-
-ca = pytest.importorskip("casadi")
 
 pytestmark = pytest.mark.solver("ipopt")
 

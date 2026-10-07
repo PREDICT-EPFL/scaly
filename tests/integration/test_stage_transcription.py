@@ -24,8 +24,6 @@ import scaly as sc
 from typing import Any, cast
 from scaly.ir.expr import topo
 
-pytest.importorskip("casadi")
-
 NX, NU, NZ = 4, 2, 6
 N_PARAMS = 7
 # [wheelbase, dt, mass, c_m0, c_r0, c_r1, c_r2] — one distinct value each, so a permuted

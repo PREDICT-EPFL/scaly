@@ -304,7 +304,8 @@ def test_casadi_descriptor_kernel_uses_nlpsol_and_applies_cse_before_it() -> Non
 
 
 def test_casadi_output_metadata_tracks_jacobian_output_and_full_layout() -> None:
-  ca = pytest.importorskip("casadi")
+  import casadi as ca
+
   x, p = ca.MX.sym("x", 2), ca.MX.sym("p")
   constraints = ca.vertcat(x[0] + p, x[0] + x[1] * x[1])
   fn = _casadi_descriptor_kernel(
@@ -334,7 +335,8 @@ def test_casadi_output_metadata_tracks_jacobian_output_and_full_layout() -> None
 
 
 def test_casadi_hessian_metadata_and_values_use_upper_triangle() -> None:
-  ca = pytest.importorskip("casadi")
+  import casadi as ca
+
   x, p = ca.MX.sym("x", 2), ca.MX.sym("p")
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", 2)
   cost = x[0] * x[0] + x[0] * x[1] + p * x[1]
