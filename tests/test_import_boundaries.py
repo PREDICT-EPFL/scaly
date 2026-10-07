@@ -102,6 +102,7 @@ def test_public_exports_are_canonical() -> None:
   assert "vmap" in sc.__all__
   assert {"map_", "scan"}.isdisjoint(sc.__all__)
   assert {"Ops", "VerifyRule", "spec_semantic", "spec_semantic_shared"}.isdisjoint(sc.__all__)
+  assert not hasattr(sc, "vjp_many") and not hasattr(sc.ad, "vjp_many")
 
 
 def test_both_dialects_use_the_shared_spec_types() -> None:

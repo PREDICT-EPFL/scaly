@@ -64,7 +64,7 @@ src/scaly/
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
-    reverse.py           vjp, vjp_many, and the per-op local adjoint rules
+    reverse.py           vjp and the per-op local adjoint rules
     derivatives.py       jacobian, gradient, hessian, finite_difference
     sparsity.py          structural sparsity patterns and greedy coloring; no AD in it
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
