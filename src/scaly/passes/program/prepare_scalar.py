@@ -51,7 +51,7 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
 
   args: list[ProgramNode] = []
   for node in prog.args:
-    if node.op in {ProgramOp.PROC, ProgramOp.KERNEL}:
+    if node.op == ProgramOp.PROC:
       pc = node.attrs["param_count"]
       reserved = {arg.attrs["name"] for arg in node.args[:pc]}
       for current in walk_program(ProgramNode(ProgramOp.BLOCK, node.args[pc:])):

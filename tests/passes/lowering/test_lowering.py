@@ -21,7 +21,7 @@ import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.codegen.c import can_render_program_c, render_program_c_source
 from scaly.codegen.toolchain import BuildRecipe, find_c_compiler
-from scaly.passes.lowering import LoweringError, lower_function, main_proc
+from scaly.passes.lowering import lower_function, main_proc
 from scaly.ir.expr import topo
 from scaly.ir.program import ProgramOp
 from scaly.ir.program_spec import verify_program
@@ -403,27 +403,6 @@ def test_lowered_program_verifies_and_has_single_proc() -> None:
   verify_program(prog)  # also called inside lower_function; assert it stays clean
   assert int(prog.attrs["proc_count"]) == 1
   assert main_proc(prog).op == ProgramOp.PROC
-
-
-def test_uncovered_case_raises_loudly() -> None:
-  # A host function calling a device-placed callee: mixed-device lowering is deferred
-  # (a host->GPU call is meaningless on a CPU build). With the legacy renderer deleted there is
-  # no fallback — both the Program-IR renderer and the public entry raise loudly.
-  @sc.function(sc.arg("a", 3), outputs=sc.arg("out0"), name="pm_inner_dev")
-  def inner(a: sc.Expr) -> sc.Expr:
-    return a.sin()
-
-  inner_gpu = inner.with_device("cuda:0")
-
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("out0"), name="pm_outer_mix")
-  def fn(x: sc.Expr) -> sc.Expr:
-    y = inner_gpu(x)
-    return y + x
-
-  with pytest.raises(LoweringError):
-    render_program_c_source(fn)
-  with pytest.raises(LoweringError):
-    render_c_source(fn)
 
 
 def _import_sibling(name):

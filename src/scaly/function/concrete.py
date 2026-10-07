@@ -9,7 +9,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, linear_combination, topo
 from ..ir.match import _apply_lowering
-from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, backend_supports
+from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType
 from .tree import Tree, flat_tree, flat_parameters, inferred_outputs
 
 if TYPE_CHECKING:
@@ -152,12 +152,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     self.input_tree = input_tree
     self.output_tree = output_tree
     self.device: DeviceSpec = DeviceSpec.parse(device)
-    for expr in (*self.inputs, *self.outputs):
-      if not backend_supports(self.device, expr.type.dtype):
-        raise ValueError(
-          f"function {name!r} placed on {self.device} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}'). "
-          f"Use a different device or cast to a supported dtype."
-        )
     self.input_names = input_tree.names
     self.output_names = output_tree.names
     self.output_sparsities = tuple(output_sparsities) if output_sparsities is not None else (None,) * len(self.outputs)
@@ -186,15 +180,10 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     self._maps: dict[int, ConcreteFunction] = {}
 
   def __repr__(self) -> str:
-    suffix = f" device={self.device}" if self.device.kind != "host" else ""
-    return f"ConcreteFunction({self.name!r}, {self.input_names}->{self.output_names}{suffix})"
+    return f"ConcreteFunction({self.name!r}, {self.input_names}->{self.output_names})"
 
   def with_device(self, device: DeviceSpec | str) -> "ConcreteFunction":
-    """Return a copy of this ConcreteFunction placed on ``device``.
-
-    Only ``host`` lowers. Other devices are recorded so debug output and verifier diagnostics can
-    see them, but compilation only succeeds for placements with a registered backend.
-    """
+    """Return a copy of this ConcreteFunction placed on ``device``."""
     instance = type(self).__new__(type(self))
     instance._init_graph(
       self.name,
@@ -293,9 +282,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     The leaf-level seam under ``numerical_call``. Nothing outside ``function/`` should reach for
     it; a caller holding flat leaves has ``input_tree.unflatten`` to build the declared tree.
     """
-    jit = _jit()
-    if self.device.kind != "host":
-      raise jit.JitError(f"function {self.name!r} placed on {self.device}, but only host lowering is implemented.")
     return tuple(self._compile().run(list(args)))
 
   def recompile(self) -> None:

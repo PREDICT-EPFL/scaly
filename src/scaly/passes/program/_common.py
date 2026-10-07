@@ -71,12 +71,6 @@ def trip_count(rng: ProgramNode) -> int | None:
   return max(0, -(-span // stride)) if stride > 0 else None
 
 
-def _procs(prog: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
-  """Split a PROGRAM into (procs, kernels)."""
-  pc = int(prog.attrs.get("proc_count", 0))
-  return list(prog.args[:pc]), list(prog.args[pc:])
-
-
 def _proc_parts(proc: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
   """Split a PROC into (params, body statements)."""
   pc = int(proc.attrs["param_count"])
@@ -89,10 +83,8 @@ def _rebuild_proc(proc: ProgramNode, params: list[ProgramNode], body: list[Progr
 
 
 def _map_procs(prog: ProgramNode, fn: Callable[[ProgramNode], ProgramNode]) -> ProgramNode:
-  """Apply a per-PROC transform to every proc, preserving kernels and proc/kernel counts."""
-  procs, kernels = _procs(prog)
-  procs = [fn(pr) for pr in procs]
-  return ProgramNode(ProgramOp.PROGRAM, (*procs, *kernels), prog.attrs, prog.dtype)
+  """Apply a per-PROC transform to every proc."""
+  return ProgramNode(ProgramOp.PROGRAM, tuple(fn(pr) for pr in prog.args), prog.attrs, prog.dtype)
 
 
 def _size_of(shape: tuple[int, ...]) -> int:
@@ -143,10 +135,9 @@ def buffer_refs(stmt: ProgramNode, aliases: dict[str, str] | None = None) -> Buf
       loads.add(n.args[0].attrs["buffer"])
     elif n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR):
       stores.add(n.args[0].attrs["buffer"])
-    elif n.op in (ProgramOp.CALL, ProgramOp.LAUNCH):
-      args = n.args if n.op == ProgramOp.CALL else n.args[int(n.attrs["grid_dims"]) + int(n.attrs["block_dims"]) :]
+    elif n.op == ProgramOp.CALL:
       n_in, n_out = n.attrs.get("n_in"), n.attrs.get("n_out")
-      for k, a in enumerate(args):
+      for k, a in enumerate(n.args):
         name = _call_arg_buffer(a)
         if name is not None:
           if n_in is None or k < n_in:
@@ -263,13 +254,12 @@ def prune_dead_buffers(proc: ProgramNode) -> ProgramNode:
 
 def prune_procedures(prog: ProgramNode) -> ProgramNode:
   """Keep procedures reachable from the entry procedure and solver oracle roots."""
-  procs, kernels = _procs(prog)
+  procs = prog.args
   if not procs:
     return prog
   table = {proc.attrs["name"]: proc for proc in procs}
   roots = {procs[-1].attrs["name"]}
   roots.update(name for names in prog.attrs.get("solver_oracles", {}).values() for name in names)
-  roots.update(node.attrs["callee"] for kernel in kernels for node in walk_program(kernel) if node.op == ProgramOp.CALL)
   reachable: set[str] = set()
   pending = list(roots)
   while pending:
@@ -281,4 +271,4 @@ def prune_procedures(prog: ProgramNode) -> ProgramNode:
   kept = [proc for proc in procs if proc.attrs["name"] in reachable]
   if len(kept) == len(procs):
     return prog
-  return ProgramNode(ProgramOp.PROGRAM, (*kept, *kernels), {**prog.attrs, "proc_count": len(kept)}, prog.dtype)
+  return ProgramNode(ProgramOp.PROGRAM, tuple(kept), {**prog.attrs, "proc_count": len(kept)}, prog.dtype)

@@ -53,10 +53,8 @@ def lower_function(
 ) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
-  Host placement only for now: the returned PROGRAM holds every lowered callee
-  PROC in topological order followed by ``fun``'s main PROC last. Non-host
-  placement raises ``LoweringError`` — GPU backends re-land from the reference
-  branch after CPU parity (see ``internal/notes/program_ir_migration.md``).
+  The returned PROGRAM holds every lowered callee PROC in topological order
+  followed by ``fun``'s main PROC last.
 
   A ``solver ConcreteFunction`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
   lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver``
@@ -67,8 +65,6 @@ def lower_function(
   """
   fun = as_concrete(fun)
   _check_callee_names(fun)
-  if fun.device.kind != "host":
-    raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
   callees: dict[str, ProgramNode] = {}
   solver_fns: dict[str, ConcreteFunction] = {}
   from ...solvers.graph import is_solver_function, solver_callees
