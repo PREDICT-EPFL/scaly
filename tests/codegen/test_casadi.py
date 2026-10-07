@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 
+import casadi
 import numpy as np
 import pytest
 
@@ -17,8 +18,6 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, render_c_source, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
-
-casadi = pytest.importorskip("casadi")
 
 ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out")
 

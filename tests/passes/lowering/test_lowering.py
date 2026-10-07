@@ -407,19 +407,19 @@ def test_lowered_program_verifies_and_has_single_proc() -> None:
 
 def _import_sibling(name):
   """Import a sibling test-fixture module (e.g. test_stage_transcription)."""
+  import importlib
   import sys
   from pathlib import Path
 
   here = str(Path(__file__).parents[2] / "integration")
   if here not in sys.path:
     sys.path.insert(0, here)
-  return pytest.importorskip(name)
+  return importlib.import_module(name)
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("kind", ["forward", "jacobian", "sparse_jacobian"])
 def test_stage_transcription_renders_and_matches(kind) -> None:
-  pytest.importorskip("casadi")  # the fixture module needs CasADi at import
   tw = _import_sibling("test_stage_transcription")
   base = tw.bicycle_eq_function(3)
   fn = {

@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+import casadi
 import numpy as np
-import pytest
 
 import scaly as sc
-
-casadi = pytest.importorskip("casadi")
-if TYPE_CHECKING:
-  import casadi
 
 
 def test_gradient_matches_casadi_sx() -> None:
