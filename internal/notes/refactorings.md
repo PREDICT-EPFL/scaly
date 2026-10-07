@@ -47,7 +47,7 @@ Three holes remain, all on the paths that matter most for composing:
   -> Expr` in `function/sugar.py`. The callee's declared trees are never read, the result is a bare
   flat `Expr` rather than the callee's output tree repeated, and an output is selected by integer
   index — the addressing-by-position that the declared trees removed everywhere else.
-- **`sc.jvp`, `sc.jvp_many`, `sc.vjp` and `sc.vjp_many` are expression-level.** They take
+- **`sc.jvp`, `sc.jvp_many` and `sc.vjp` are expression-level.** They take
   `Sequence[Expr]` and return `tuple[Expr, ...]`: typed, but tree-blind, with no Function-level
   spelling that preserves structure.
 - **The callees AD synthesizes are `Any`-typed.** Every builder in `ad/forward.py` and

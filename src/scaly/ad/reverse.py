@@ -1,4 +1,4 @@
-"""Reverse-mode AD: ``vjp``, ``vjp_many``, and the per-op local adjoint rules."""
+"""Reverse-mode AD: ``vjp`` and the per-op local adjoint rules."""
 
 from __future__ import annotations
 
@@ -131,30 +131,6 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
-
-
-def vjp_many(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
-  """Reverse mode over several cotangent seeds at once.
-
-  Each cotangent has a leading seed axis, ``(n, *output.shape)``, and each returned adjoint
-  carries the same leading axis.
-  """
-  if len(outputs) != len(cotangents):
-    raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
-  nseed: int | None = None
-  for out, cot in zip(outputs, cotangents, strict=True):
-    if len(cot.shape) < 1 or cot.shape[1:] != out.shape:
-      raise ValueError(f"multi-seed VJP expects cotangent shape (nseed, *{out.shape}), got {cot.shape}")
-    if nseed is None:
-      nseed = cot.shape[0]
-    elif cot.shape[0] != nseed:
-      raise ValueError(f"all VJP cotangents must have the same leading seed axis, got {nseed} and {cot.shape[0]}")
-  nseed = 0 if nseed is None else nseed
-  if nseed == 0:
-    return tuple(Expr.const(np.zeros((0, *wrt.shape), dtype=np.float64)) for wrt in wrts)
-
-  per_seed = [vjp(outputs, wrts, tuple(cot[i] for cot in cotangents)) for i in range(nseed)]
-  return tuple(stack([seed_grads[i] for seed_grads in per_seed], axis=0) for i in range(len(wrts)))
 
 
 def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:

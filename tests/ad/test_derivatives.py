@@ -475,20 +475,6 @@ def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
   np.testing.assert_allclose(f(zv), dense)
 
 
-def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
-  @sc.function(sc.group(sc.arg("x", 2), sc.arg("c0", (2, 2)), sc.arg("c1", 2)), outputs=sc.arg("grad_x"), name="vjp_many")
-  def f(inputs):
-    x, c0, c1 = inputs
-    (grad_x,) = sc.vjp_many((x * x, x.sum()), (x,), (c0, c1))
-    return grad_x
-
-  xv = np.array([0.3, 1.2])
-  c0v = np.array([[1.5, -0.25], [-0.5, 2.0]])
-  c1v = np.array([0.75, -1.25])
-
-  np.testing.assert_allclose(f((xv, c0v, c1v)), c0v * (2 * xv) + c1v[:, None])
-
-
 def test_multi_seed_shape_errors() -> None:
   x = sc.sym("x", 2)
   y = x * x
@@ -499,13 +485,6 @@ def test_multi_seed_shape_errors() -> None:
     assert "multi-seed JVP expects seeds shape" in str(e)
   else:  # pragma: no cover
     raise AssertionError("bad multi-seed JVP shape should fail")
-
-  try:
-    _ = sc.vjp_many((y,), (x,), (sc.sym("bad", 2),))
-  except ValueError as e:
-    assert "multi-seed VJP expects cotangent shape" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("bad multi-seed VJP shape should fail")
 
 
 def test_vjp_through_call_node_inlines_callee_reverse_graph() -> None:

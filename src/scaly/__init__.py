@@ -1,7 +1,7 @@
 """The curated public surface: re-exports only, no definitions of its own (``docs/dev/codebase.md``)."""
 
 from .codegen.abi import C_API_SIGNATURE, c_api_signature
-from .ad import jvp, jvp_many, vjp, vjp_many
+from .ad import jvp, jvp_many, vjp
 from .function.sugar import vmap, broadcast, window
 from .function.api import (
   adjoint,
@@ -125,7 +125,6 @@ __all__ = [
   "jvp",
   "jvp_many",
   "vjp",
-  "vjp_many",
   "lagrangian_hessian",
   "vmap",
   "broadcast",

@@ -108,7 +108,6 @@ tests/ad/test_derivatives.py::test_matrix_vector_vjp_graph_uses_tensor_ops
 tests/ad/test_derivatives.py::test_multi_seed_shape_errors
 tests/ad/test_derivatives.py::test_sparse_jacobian_colored_scalar_plus_vector
 tests/ad/test_derivatives.py::test_vjp_broadcast_and_multi_output_accumulates_adjoint
-tests/ad/test_derivatives.py::test_vjp_many_uses_leading_seed_axis_and_multiple_outputs
 tests/ad/test_derivatives.py::test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd
 tests/ad/test_derivatives.py::test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp
 tests/ad/test_derivatives.py::test_vjp_scalar_output_matches_gradient

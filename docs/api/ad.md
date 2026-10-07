@@ -8,15 +8,13 @@ The [derivatives guide](../guide/derivatives.md) explains gradients, Jacobians, 
 
 A Jacobian-vector product, `jvp`, computes a directional derivative without constructing the full
 Jacobian. A vector-Jacobian product, `vjp`, propagates output weights back to the inputs.
-The `*_many` forms handle several directions or output weights together.
+`jvp_many` handles several directions together.
 
 ::: scaly.ad.forward.jvp
 
 ::: scaly.ad.forward.jvp_many
 
 ::: scaly.ad.reverse.vjp
-
-::: scaly.ad.reverse.vjp_many
 
 ## Whole derivatives
 
