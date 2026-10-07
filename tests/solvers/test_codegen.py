@@ -261,8 +261,11 @@ int main(void) {{
 """.replace('#include "', '#include <math.h>\n#include "', 1)
   )
   executable = tmp_path / "driver"
+  obj = source.with_suffix(".o")
+  includes = [flag for flag in module.link_flags if flag.startswith("-I")]
+  subprocess.run(["cc", "-O2", "-Wall", "-Werror", "-c", str(source), *includes, "-o", str(obj)], check=True, capture_output=True)
   subprocess.run(
-    ["c++" if lang == "cpp" else "cc", "-O2", "-Wall", "-Werror", str(source), str(driver), *module.link_flags, "-lm", "-o", str(executable)],
+    ["c++" if lang == "cpp" else "cc", "-O2", "-Wall", "-Werror", str(obj), str(driver), *module.link_flags, "-lm", "-o", str(executable)],
     check=True,
     capture_output=True,
   )
