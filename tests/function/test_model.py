@@ -125,6 +125,12 @@ def test_build_takes_trees_and_records_descriptor_and_role() -> None:
   assert fn._replace(name="renamed").descriptor is descriptor
   with pytest.raises(ValueError, match="output tree"):
     ConcreteFunction.build("bad", input_tree, [x], sc.arg("y", 3), [x])
+  with pytest.raises(ValueError, match="non-input"):
+    ConcreteFunction.build("bad", sc.arg("c", ()), [sc.const(2.0)], sc.arg("y", ()), [sc.const(2.0)])
+  with pytest.raises(TypeError, match="build"):
+    ConcreteFunction("bad", input_tree, [x], output_tree, [x], (None,), (None,), fn.device)  # ty: ignore[invalid-argument-type]
+  with pytest.raises(AttributeError):
+    output_tree.names = ("renamed",)
 
 
 def test_call_helpers_record_their_role() -> None:

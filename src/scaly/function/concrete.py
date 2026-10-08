@@ -175,6 +175,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
 
   def __post_init__(self) -> None:
     name = self.name
+    if not all(isinstance(part, tuple) for part in (self.inputs, self.outputs, self.output_sparsities, self.output_coloring_widths)):
+      raise TypeError(f"function {name!r}: construct ConcreteFunction through ConcreteFunction.build")
+    non_inputs = [expr.name or f"%{expr.id}" for expr in self.inputs if expr.op != ExprOp.INPUT]
+    if non_inputs:
+      raise ValueError(f"function {name!r} declares non-input expressions as inputs: {non_inputs}")
     for expr in (*self.inputs, *self.outputs):
       if expr.type.dtype not in dtypes.all():
         raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")
