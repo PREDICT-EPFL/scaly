@@ -796,7 +796,9 @@ the codemod. The playground's static tests move to `tests/typing/` under `ty che
 **[#11]. Instances, holes and names.** The registry in front of today's Function, which becomes the
 instance: holes on input leaves for shapes, dtypes and patterns; output shapes and patterns from the
 trace; `instantiate` for ahead-of-time export; the bare mode `@sc.function()` reading structure and
-shapes off each call, instantiated only by calling; a fast argument cache keyed on the call
+shapes off each call, instantiated only by calling, except that a body with no parameters at all
+counts as fully declared, traced at the decorator, named after the function and typed with
+`tuple[()]` numerical inputs ([#115]); a fast argument cache keyed on the call
 skeleton and leaf types. Names follow the playground's rule (the declaration decides whether an
 instance name is mangled, never the call history) with tokens: `3x4`, `s` for a scalar, only the
 open parts of a partial declaration, `f32` or `i64` for a bound dtype, `p` plus 8 hex digits of a
@@ -1353,6 +1355,7 @@ writing the guide).
 [#85]: https://github.com/PREDICT-EPFL/scaly/issues/85
 [#56]: https://github.com/PREDICT-EPFL/scaly/issues/56
 [#109]: https://github.com/PREDICT-EPFL/scaly/issues/109
+[#115]: https://github.com/PREDICT-EPFL/scaly/issues/115
 [#40]: https://github.com/PREDICT-EPFL/scaly/issues/40
 [#35]: https://github.com/PREDICT-EPFL/scaly/issues/35
 [#15]: https://github.com/PREDICT-EPFL/scaly/issues/15
