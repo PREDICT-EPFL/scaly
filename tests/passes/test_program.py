@@ -579,6 +579,35 @@ def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None
   assert combine_scatter_sums(prog) is prog
 
 
+@pytest.mark.parametrize("repeated", [False, True])
+def test_scatter_sum_rejects_self_reading_sources(repeated: bool) -> None:
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("sum"))
+  def f(x):
+    a = sc.scatter(x, [0, 2, 4, 6], 8)
+    b = sc.scatter(2 * x, [1, 1, 3, 5] if repeated else [1, 3, 5, 7], 8)
+    return a + b
+
+  stages = {}
+  lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
+  original = main_proc(stages["lowered"])
+  params = list(original.args[: int(original.attrs["param_count"])])
+  body = list(original.args[len(params) :])
+  scatters = [
+    i
+    for i, stmt in enumerate(body)
+    if stmt.op == ProgramOp.FOR and stmt.args[1].op == ProgramOp.STORE and stmt.args[1].args[0].args[0].op != ProgramOp.VAR
+  ]
+  i = scatters[1]
+  loop = body[i]
+  target, value = loop.args[1].args
+  source = value.args[1].args[0] if repeated else value.args[0]
+  self_view = ProgramNode(ProgramOp.VIEW, source.args, {**source.attrs, "buffer": target.attrs["buffer"]}, source.dtype)
+  value = add(load(target), load(self_view)) if repeated else load(self_view)
+  body[i] = for_(loop.args[0], [store(target, value)])
+  mutated = program([ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, original.dtype)])
+  assert combine_scatter_sums(mutated) is mutated
+
+
 @pytest.mark.parametrize("left_associated", [False, True])
 def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
   from scaly.ir.expr import scatter

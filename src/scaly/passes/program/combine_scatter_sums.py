@@ -77,6 +77,8 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     source = value.args[0]
     if len(source.args) != 1 or source.args[0].op != ProgramOp.VAR or source.args[0].attrs["name"] != iv:
       continue
+    if source.attrs["buffer"] == buf:
+      continue
     indices = _index_values(target.args[0], scatter.args[0], decls)
     if indices is None or not len(indices) or (not accumulating and len(np.unique(indices)) != len(indices)):
       continue
