@@ -19,7 +19,7 @@ this host (AVX-512, native lanes 8): CT lanes=1 5.25 s, 0.29 MB; lanes=8 10.43 s
 - [x] Measure CT at lanes 1, 4, 8; perturb the rule and see the test fail
 - [x] `wt hook pre-merge`, snapshots byte-identical
 - [x] Draft PR #142 on #136, linked as stack #143 with `gh stack link 136 142`
-- [ ] Cross-review (gpt-6.1-sol, high) and delta check; post verdict on the PR
+- [x] Cross-review (gpt-6.1-sol, high) and delta check (gpt-6-astra): resolved, posted on the PR
 - [ ] Kernel timings on la015 (unreachable from this session: open point, PR stays draft)
 - [ ] Source-size criterion: not met by the decided design (CT 1.50 MB at 4 lanes vs 0.58 MB
       bound). Evidence and options posted on #118; waiting for the maintainer's decision
