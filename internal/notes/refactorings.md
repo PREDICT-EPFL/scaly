@@ -67,25 +67,6 @@ runtime structure tests beside `tests/function/test_tree.py`, and static ones in
 `tests/typing/test_arity.py`, which runs under `ty check --error-on-warning` where every
 `ty: ignore` marks an expected error and an unused one fails the check.
 
-## Compiled CasADi artifacts across worktrees
-
-Tracked in [#101].
-
-The API merge review reproduced four CasADi IPOPT test failures from cached libraries whose
-runtime search paths pointed into a deleted worktree. All five tests in
-`tests/benchmarks/test_casadi_ipopt.py` passed with a fresh `SCALY_CASADI_IPOPT_CACHE`.
-
-`benchmarks/harness/casadi_ipopt.py` keys its cache on the serialized problem, options, CasADi
-version, solver library content, compiler, and optimization flag. The key omits the library search
-paths supplied by `backend_compile_flags`. Identical solver libraries in a new worktree therefore
-reuse an artifact whose runtime search paths still name the old one.
-
-A fix must either include those paths in the cache identity or remove the artifact's dependency
-on worktree paths. Verify relocation after the original directory disappears; a successful load
-while both worktrees exist does not exercise the failure. A separate cache is the temporary
-workaround, not the intended behavior.
-
 [#8]: https://github.com/PREDICT-EPFL/scaly/issues/8
 [#13]: https://github.com/PREDICT-EPFL/scaly/issues/13
 [#58]: https://github.com/PREDICT-EPFL/scaly/issues/58
-[#101]: https://github.com/PREDICT-EPFL/scaly/issues/101
