@@ -336,35 +336,37 @@ def test_public_render_pipeline_keeps_ordered_reduction(tmp_path, dialect, lanes
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
 def test_store_schedule_preserves_compiled_values(tmp_path, dialect):
-  x, y = p.buffer("x", dtypes.float64, (9,)), p.buffer("y", dtypes.float64, (180,))
+  x, y = p.buffer("x", dtypes.float64, (17,)), p.buffer("y", dtypes.float64, (340,))
   i = p.var("i")
   base = p.var("base", dtypes.float64)
   body = [p.assign("base", p.load(p.view(x, [i])), declare=True)]
   body += [p.assign(f"value{j}", p.add(p.mul(base, p.const_float(j)), p.const_float(0.25)), declare=True) for j in range(20)]
   body += [p.store(p.view(y, [p.add(p.mul(i, p.const_int(20)), p.const_int(j))]), p.var(f"value{j}", dtypes.float64)) for j in range(20)]
-  rng = p.range_("i", 0, 9)
+  rng = p.range_("i", 0, 17)
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, body)])])
   baseline = tmp_path / "baseline"
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline)
-  vector, _ = _compile(widen_ranges(prog, lanes=8), tmp_path, dialect=dialect)
-  values = np.random.default_rng(194).normal(size=9)
-  assert _evaluate(vector, values, 60).tobytes() == _evaluate(scalar, values, 60).tobytes()
+  vector, source = _compile(widen_ranges(prog, lanes=8), tmp_path, dialect=dialect)
+  assert "void kernel_lanes_1(" in source
+  values = np.random.default_rng(194).normal(size=17)
+  assert _evaluate(vector, values, 114).tobytes() == _evaluate(scalar, values, 114).tobytes()
 
 
 @pytest.mark.parametrize("lanes", [2, 4, 8])
 def test_scheduled_nonaffine_index_uses_gather(tmp_path, lanes):
-  x, y = p.buffer("x", dtypes.float64, (21,)), p.buffer("y", dtypes.float64, (9,))
+  x, y = p.buffer("x", dtypes.float64, (41,)), p.buffer("y", dtypes.float64, (17,))
   i = p.var("i")
   offset = p.assign("offset", p.mul(p.div(i, p.const_int(2)), p.const_int(3)), declare=True)
   index = p.add(p.var("offset"), i)
   store = p.store(p.view(y, [i]), p.load(p.view(x, [index])))
-  prog = p.program([p.proc("kernel", [x, y], [p.for_(p.range_("i", 0, 9), [offset, store])])])
-  function, _ = _compile(widen_ranges(prog, lanes=lanes), tmp_path)
-  values = np.arange(21, dtype=np.float64)
-  expected = values[(np.arange(9) // 2) * 3 + np.arange(9)]
-  np.testing.assert_array_equal(_evaluate(function, values, 9)[:9], expected)
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(p.range_("i", 0, 17), [offset, store])])])
+  function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path)
+  assert "void kernel_lanes_1(" in source
+  values = np.arange(41, dtype=np.float64)
+  expected = values[(np.arange(17) // 2) * 3 + np.arange(17)]
+  np.testing.assert_array_equal(_evaluate(function, values, 17)[:17], expected)
 
 
 def _compile_module(module, tmp_path, dialect):

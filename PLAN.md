@@ -11,11 +11,15 @@ byte-identical (brief) and is listed as an open point on the pull request.
 Reproduction: `/tmp/scaly118/measure.py` (copied into the pull request description). Baseline on
 this host (AVX-512, native lanes 8): CT lanes=1 5.25 s, 0.29 MB; lanes=8 10.43 s, 3.64 MB, 732 helpers.
 
-- [ ] Failing test in `tests/codegen/test_vectors.py`: scalar below twice the lanes, one shared
+- [x] Failing test in `tests/codegen/test_vectors.py`: scalar below twice the lanes, one shared
       typedef and width macro, bytes equal to the unwidened program
-- [ ] Scalar rule
-- [ ] Shared width macro and vector type (fixed lanes only), allocated through `NameScope`
-- [ ] Single walk of the loop body in `transform`
-- [ ] Measure CT at lanes 1, 4, 8; perturb the rule and see the test fail
-- [ ] `wt hook pre-merge`, snapshots byte-identical
-- [ ] Draft PR on #136 via `gh stack`, cross-review (Codex), kernel timings on la015 or open point
+- [x] Scalar rule
+- [x] Shared width macro and vector type (fixed lanes only), allocated through `NameScope`
+- [x] Single walk of the loop body in `transform`
+- [x] Measure CT at lanes 1, 4, 8; perturb the rule and see the test fail
+- [x] `wt hook pre-merge`, snapshots byte-identical
+- [x] Draft PR #142 on #136, linked as stack #143 with `gh stack link 136 142`
+- [ ] Cross-review (gpt-6.1-sol, high) and delta check; post verdict on the PR
+- [ ] Kernel timings on la015 (unreachable from this session: open point, PR stays draft)
+- [ ] Source-size criterion: not met by the decided design (CT 1.50 MB at 4 lanes vs 0.58 MB
+      bound). Evidence and options posted on #118; waiting for the maintainer's decision
