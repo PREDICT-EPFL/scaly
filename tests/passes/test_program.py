@@ -22,7 +22,8 @@ from scaly.passes.program.combine_scatter_sums import combine_scatter_sums
 from scaly.passes.program.fold_arith import fold_arith
 from scaly.passes.program.fuse_elementwise import fuse_elementwise
 from scaly.passes.program.hoist_invariant import hoist_invariant
-from scaly.passes.program._common import allocated_name, prune_procedures
+from scaly.passes.program._common import prune_procedures
+from scaly.utils.names import NameScope
 from scaly.ir import program as p
 from scaly.ir.program_spec import verify_program
 from scaly.passes.program.pack_workspace import WORKSPACE_SPILL_THRESHOLD
@@ -292,24 +293,25 @@ def test_generated_name_reserves_raw_and_c_identifier_collisions() -> None:
   from scaly.utils.names import c_ident
 
   used = {c_ident(name) for name in ("split-name", "split_name_2")}
-  assert allocated_name("split_name", used) == "split_name_3"
+  assert NameScope(used).allocate("split_name") == "split_name_3"
 
 
 def test_generated_names_do_not_rescan_the_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
-  from scaly.passes.program import _common
+  from scaly.utils import names
 
   calls = 0
-  c_ident = _common.c_ident
+  c_ident = names.c_ident
 
   def counted(name: str) -> str:
     nonlocal calls
     calls += 1
     return c_ident(name)
 
-  monkeypatch.setattr(_common, "c_ident", counted)
+  monkeypatch.setattr(names, "c_ident", counted)
   spellings = {f"input_{i}" for i in range(1000)}
+  scope = NameScope(spellings)
   for i in range(100):
-    assert allocated_name(f"output_{i}", spellings) == f"output_{i}"
+    assert scope.allocate(f"output_{i}") == f"output_{i}"
   assert calls <= 200
 
 

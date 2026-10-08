@@ -22,8 +22,9 @@ both — which Functions are solvers, what they reach — are ``solvers/graph.py
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from collections.abc import Mapping
 
 from scaly.codegen.abi import c_ident
 from scaly.ir.expr import ExprOp, topo
@@ -53,6 +54,7 @@ class SolverWrapperCtx:
   raw_symbol: str
   stats_symbol: str
   options_index: int
+  function_symbols: Mapping[ConcreteFunction, str] = field(default_factory=dict)
 
   def oracle_options(self, fun: ConcreteFunction | ExternalOracle | None) -> tuple[str, ...]:
     """The runtime context argument for a generated oracle, empty for a foreign oracle."""
@@ -61,7 +63,7 @@ class SolverWrapperCtx:
   def raw_symbol_of(self, fun: ConcreteFunction | ExternalOracle) -> str:
     from scaly.solvers.model import ExternalOracle
 
-    return fun.raw_symbol if isinstance(fun, ExternalOracle) else _raw_symbol(fun)
+    return fun.raw_symbol if isinstance(fun, ExternalOracle) else f"{self.function_symbols.get(fun, c_ident(fun.name))}_raw"
 
 
 def solver_includes(fun: ConcreteFunction) -> list[str]:
@@ -105,7 +107,9 @@ def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(fun: ConcreteFunction, *, options_index: int, include_external_sources: bool = True) -> list[str]:
+def render_solver_raw(
+  fun: ConcreteFunction, *, options_index: int, include_external_sources: bool = True, function_symbols: Mapping[ConcreteFunction, str] | None = None
+) -> list[str]:
   """Frame a plugin-rendered wrapper body with the scaly-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""
@@ -117,7 +121,13 @@ def render_solver_raw(fun: ConcreteFunction, *, options_index: int, include_exte
     if include_external_sources and oracle.source and oracle.source not in external_sources:
       external_sources.append(oracle.source)
   symbol = c_ident(fun.name)
-  ctx = SolverWrapperCtx(symbol=symbol, raw_symbol=_raw_symbol(fun), stats_symbol=f"{symbol}_stats_data", options_index=options_index)
+  ctx = SolverWrapperCtx(
+    symbol=symbol,
+    raw_symbol=_raw_symbol(fun),
+    stats_symbol=f"{symbol}_stats_data",
+    options_index=options_index,
+    function_symbols=function_symbols or {},
+  )
   body = get_backend(desc.backend).render_wrapper(fun, ctx)
   return [
     *(line for source in external_sources for line in (*source.splitlines(), "")),

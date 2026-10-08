@@ -13,6 +13,7 @@ from scaly.codegen.c import _includes, _render_raw_callee
 from scaly.ir import program as p
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.types import dtypes
+from scaly.utils.names import NameScope
 from scaly.passes.program.fold_tiles import fold_tiles
 from scaly.passes.program.pack_workspace import pack_workspace
 from scaly.passes.program.coalesce_stores import coalesce_stores
@@ -379,7 +380,7 @@ def test_call_jacobian_keeps_noinline_frame_in_c99(tmp_path, dialect):
 def test_c99_noinline_implementation_name_is_reserved():
   x, y = p.buffer("x", dtypes.float64, (1,)), p.buffer("y", dtypes.float64, (1,))
   proc = p.proc("f_fwd", [x, y], [p.store(p.view(y, [p.const_int(0)]), p.load(p.view(x, [p.const_int(0)])))])
-  source = "\n".join(_render_raw_callee(proc, dialect="c", reserved_names={"f_fwd_raw_impl"}))
+  source = "\n".join(_render_raw_callee(proc, dialect="c", reserved_names=NameScope({"f_fwd_raw_impl"})))
   assert "void f_fwd_raw_impl_2(" in source
   assert "(*volatile f_fwd_raw)" in source
 

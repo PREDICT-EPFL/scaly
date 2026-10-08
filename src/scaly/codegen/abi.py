@@ -5,7 +5,7 @@ the symbol mangling (``docs/how_it_works/generated_interface.md``). The typed st
 from __future__ import annotations
 
 from ..function.concrete import ConcreteFunction
-from ..utils.names import c_ident as c_ident
+from ..utils.names import c_ident as c_ident, NameScope
 
 # ``mem`` follows CasADi 3.8: an ``int`` memory handle a stateful function would index a pool with.
 # Every scaly function is stateless and ignores it.
@@ -30,10 +30,13 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   entry the wrapper calls, its workspace or its option context."""
   symbol = c_ident(fun.name)
   shared = set(fun.input_names) & set(fun.output_names)
+  names = NameScope((symbol, f"{symbol}_with_options", "workspace", "workspace_t", "solver_options", "call", "sz_arg", "sz_res", "sz_iw", "sz_w"))
 
   def ident(name: str, suffix: str) -> str:
     out = c_ident(name + suffix if name in shared else name)
-    return f"{out}_" if out in (symbol, f"{symbol}_with_options", "workspace", "solver_options") else out
+    if names.contains(out) or names.reserved(out):
+      out += "_"
+    return names.allocate(out)
 
   return [ident(n, "_in") for n in fun.input_names], [ident(n, "_out") for n in fun.output_names]
 

@@ -140,7 +140,7 @@ def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) ->
 
 def test_explicit_scalar_root_and_block_precedence(monkeypatch) -> None:
   monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
-  scalar = sc.function(sc.arg("x", 4), outputs=sc.arg("out0"), name="explicit")(lambda x: (x.sin() + x * x).scalar())
+  scalar = sc.function(sc.arg("x", 4), outputs=sc.arg("out0"), name="explicit_scalar")(lambda x: (x.sin() + x * x).scalar())
   _assert_scalar(main_proc(lower_function(scalar)))
   blocked = sc.function(sc.arg("x", 4), outputs=sc.arg("out0"), name="blocked")(lambda x: (x.sin().block() + x * x).scalar())
   assert not main_proc(lower_function(blocked)).attrs.get("scalarized")

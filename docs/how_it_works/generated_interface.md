@@ -123,6 +123,12 @@ Every module is one C source and one header. The source contains, in order:
 4. For a module that reaches a solver, the solver wrappers.
 5. The exported entry, named after the root function.
 
+Distinct functions may share a Python name. Scaly gives their internal C
+procedures distinct names and keeps each call attached to its own function.
+The exported entry keeps its C identifier, so a clash with a reserved name
+such as `log` raises `ValueError` before compilation. Buffer and loop names
+are renamed when needed, including C++ keywords in typed headers.
+
 A `_raw` procedure takes one pointer per input, `const`-qualified, one pointer
 per output and a trailing workspace pointer. It has no null checks and no
 status code, so the entry pays for those once rather than at every stage. A

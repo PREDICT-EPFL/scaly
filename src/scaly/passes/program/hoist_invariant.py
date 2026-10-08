@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from ...ir.program import ProgramNode, ProgramOp, buffer, for_, walk_program
-from ...utils.names import c_ident
+from ...utils.names import NameScope
 from ._common import (
-  allocated_name,
+  name_scope,
   buffer_refs,
   prune_dead_buffers,
   prune_procedures,
@@ -29,7 +29,7 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   """
   procs = prog.args
   table = {pr.attrs["name"]: pr for pr in procs}
-  used_names = {c_ident(name) for name in table}
+  used_names = name_scope(prog)
   pure: set[str] = set()
   splits: dict[tuple[str, tuple[int, ...]], _Split | None] = {}
   rewritten: list[ProgramNode] = []
@@ -55,12 +55,12 @@ def _hoist_proc(
   proc: ProgramNode,
   table: dict[str, ProgramNode],
   splits: dict[tuple[str, tuple[int, ...]], _Split | None],
-  used_names: set[str],
+  used_names: NameScope,
   pure: set[str],
 ) -> ProgramNode:
   params, body = _proc_parts(proc)
   aliases = _alias_sources(body)
-  local_names = {c_ident(n.attrs["name"]) for n in walk_program(proc) if n.op in (ProgramOp.BUFFER, ProgramOp.RANGE, ProgramOp.VAR)}
+  local_names = used_names.child(name_scope(proc).occupied)
   new_body: list[ProgramNode] = []
   for stmt in body:
     if stmt.op != ProgramOp.FOR or len(stmt.args) != 2 or stmt.args[1].op != ProgramOp.CALL or stmt.args[1].attrs["callee"] not in table:
@@ -82,8 +82,7 @@ def _hoist_proc(
       continue
     prologue, hoisted, used, exported = split
     bufs = [
-      buffer(allocated_name(f"{rng.attrs['name']}_{b.attrs['name']}", local_names), b.dtype, b.attrs["shape"], address_space="private")
-      for b in exported
+      buffer(local_names.allocate(f"{rng.attrs['name']}_{b.attrs['name']}"), b.dtype, b.attrs["shape"], address_space="private") for b in exported
     ]
     new_body.extend(bufs)
     new_body.append(_call(prologue, [*(c.args[k] for k in used), *bufs]))
@@ -96,7 +95,7 @@ def _call(callee: ProgramNode, args: list[ProgramNode]) -> ProgramNode:
   return ProgramNode(ProgramOp.CALL, tuple(args), {"callee": callee.attrs["name"], "n_in": n_in, "n_out": len(args) - n_in, "returns": ()})
 
 
-def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], pure: set[str]) -> _Split | None:
+def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope, pure: set[str]) -> _Split | None:
   params, body = _proc_parts(proc)
   n_in = int(proc.attrs["input_count"])
   aliases = _alias_sources(body)
@@ -143,7 +142,7 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
     prologue_mode = "inline"
   prologue = _proc(
     proc,
-    allocated_name(f"{name}_hoist_{tag}", used_names),
+    used_names.procedure(f"{name}_hoist_{tag}"),
     [params[k] for k in used],
     shared,
     [s for i, s in enumerate(body) if keep(s) or i in hoist],
@@ -151,7 +150,7 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
   )
   hoisted = _proc(
     proc,
-    allocated_name(f"{name}_hoisted_{tag}", used_names),
+    used_names.procedure(f"{name}_hoisted_{tag}"),
     [*params[:n_in], *shared],
     params[n_in:],
     [s for i, s in enumerate(body) if keep(s) or (i in refs and i not in hoist)],

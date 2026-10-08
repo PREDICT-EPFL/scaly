@@ -12,7 +12,6 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_source, render_c_module
-from scaly.passes.lowering import LoweringError
 
 
 def test_shape_bindings_trace_once_and_share_symbolic_and_numerical_instances() -> None:
@@ -86,7 +85,7 @@ def test_specializations_generate_distinct_procedures() -> None:
     render_c_module(square)
 
 
-def test_duplicate_generated_identifiers_fail_before_call_reuse() -> None:
+def test_duplicate_generated_identifiers_keep_distinct_calls() -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name="same")
   def left(x: sc.Expr) -> sc.Expr:
     return x * x
@@ -99,8 +98,7 @@ def test_duplicate_generated_identifiers_fail_before_call_reuse() -> None:
   def host(x: sc.Expr) -> sc.Expr:
     return left(x) + right(x)
 
-  with pytest.raises(LoweringError, match="distinct function instances"):
-    render_c_source(host)
+  np.testing.assert_array_equal(host(np.array([2.0, 3.0])), [8.0, 14.0])
 
 
 @pytest.mark.parametrize("operation", [sc.gradient, sc.jacobian, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian])

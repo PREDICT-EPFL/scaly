@@ -15,12 +15,12 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
   if is_solver_function(callee):
     # Opaque: the solver wrapper is rendered by codegen/solver (rule 6), not lowered. Its body is
     # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
-    ctx.solver_fns[callee.name] = callee
+    ctx.solver_fns[callee] = callee
     for oracle in solver_callees(callee):
       _ensure_callee(ctx, oracle)
     return
-  if callee.name not in ctx.callees:
-    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr)
+  if callee not in ctx.callees:
+    ctx.callees[callee] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, observe_expr=ctx.observe_expr)
 
 
 @lowers(ExprOp.CALL)
@@ -30,14 +30,14 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   callee: ConcreteFunction = node.attrs["callee"]
   out_idx = int(node.attrs["output"])
   arg_names = tuple(ctx.value_buffers[a.id] for a in node.args)
-  key = (callee.name, arg_names)
+  key = (callee, arg_names)
   if key not in ctx.call_invocations:
     _ensure_callee(ctx, callee)
     out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in callee.outputs]
     in_bufs = [ctx.buffers[n] for n in arg_names]
     ctx.statements.append(
       ProgramNode(
-        ProgramOp.CALL, tuple(in_bufs + out_bufs), attrs={"callee": callee.name, "n_in": len(in_bufs), "n_out": len(out_bufs), "returns": ()}
+        ProgramOp.CALL, tuple(in_bufs + out_bufs), attrs={"callee": ctx.symbols[callee], "n_in": len(in_bufs), "n_out": len(out_bufs), "returns": ()}
       )
     )
     ctx.call_invocations[key] = tuple(b.attrs["name"] for b in out_bufs)
@@ -60,7 +60,7 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(callee.outputs)]
   if length == 0:
     return
-  loop = f"it_{out.attrs['name']}"
+  loop = ctx.names.allocate(f"it_{out.attrs['name']}")
   rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
   it = p.var(loop)
@@ -76,6 +76,6 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
     else:
       out_args.append(sbuf)
   call = ProgramNode(
-    ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
+    ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": ctx.symbols[callee], "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
   ctx.statements.append(p.for_(rng, [call]))

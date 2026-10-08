@@ -7,8 +7,7 @@ from collections import Counter
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp
-from ...utils.names import c_ident
-from ._common import _map_procs, _proc_parts, _rebuild_proc, allocated_name, buffer_refs, rebuild_program, trip_count
+from ._common import _map_procs, _proc_parts, _rebuild_proc, name_scope, buffer_refs, rebuild_program, trip_count
 
 
 def hoist_reciprocals(prog: ProgramNode) -> ProgramNode:
@@ -19,7 +18,7 @@ def hoist_reciprocals(prog: ProgramNode) -> ProgramNode:
 def _hoist_proc(proc: ProgramNode) -> ProgramNode:
   params, body = _proc_parts(proc)
   nodes = list(walk_program(proc))
-  spellings = {c_ident(n.attrs[key]) for n in nodes for key in ("name", "target") if key in n.attrs}
+  spellings = name_scope(proc)
   aliases = {n.attrs["name"]: n.attrs["alias_of"] for n in nodes if n.op == ProgramOp.BUFFER and "alias_of" in n.attrs}
 
   def transform(stmt: ProgramNode) -> list[ProgramNode]:
@@ -74,7 +73,7 @@ def _hoist_proc(proc: ProgramNode) -> ProgramNode:
     def replace(node: ProgramNode) -> ProgramNode:
       divisor = divisors[node]
       if divisor not in reciprocals:
-        name = allocated_name("inv", spellings)
+        name = spellings.allocate("inv")
         reciprocals[divisor] = p.var(name, divisor.dtype)
         prologue.append(p.assign(name, p.div(p.const_float(1, divisor.dtype), divisor), declare=True))
       return p.mul(node.args[0], reciprocals[divisor])

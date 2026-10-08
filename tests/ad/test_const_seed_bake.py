@@ -84,7 +84,7 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   observed = {}
   lower_function(fn, observe=lambda name, program: observed.__setitem__(name, program))
   params = _callee_params(observed["pass:scalarize"])
-  has_seed_input = any(name.startswith("fwd:") and ":" not in name[4:] for name in params)
+  has_seed_input = any(name.startswith("fwd_") and "_" not in name[4:] for name in params)
   has_gather = any(n.op == ExprOp.GATHER for n in topo([structural]))
   assert has_seed_input is (not baked)
   assert has_gather is (not baked)
