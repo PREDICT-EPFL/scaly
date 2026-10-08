@@ -422,7 +422,7 @@ def _linux_major_so_name(path: Path) -> str:
 
 
 # Everything else that decides the built files, beside this hook, the pins and the license texts.
-_KEY_ENV = ("CC", "CXX", "FC", "CFLAGS", "CXXFLAGS", "FFLAGS", "FCFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET")
+_KEY_ENV = ("CC", "CXX", "FC", "CFLAGS", "CXXFLAGS", "FFLAGS", "FCFLAGS", "CPPFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET")
 _OUTPUTS = ("lib", "include", "licenses")
 _CACHE_MAX_AGE = 30 * 24 * 3600
 
@@ -475,22 +475,25 @@ def _prune_cache(cache: Path) -> None:
   cutoff = time.time() - _CACHE_MAX_AGE
   with _locked(cache / "locks" / "prune.lock", wait=False) as pruning:
     for path in cache.iterdir() if pruning else ():
-      if path.name == "locks" or path.stat().st_mtime > cutoff:
+      if path.name == "locks":
         continue
       with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
-        if held and path.stat().st_mtime <= cutoff:
+        # a build may have replaced or published the path since it was listed
+        if held and path.exists() and path.stat().st_mtime <= cutoff:
           shutil.rmtree(path)
 
 
-def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, build) -> None:
+def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build) -> list[str]:
   """Copy the cached build `entry` into `package_dir`, first running `build(src_dir, out_dir)` if no checkout made it yet.
 
-  A build runs in a fresh scratch directory and is renamed into the cache only once complete, so a
+  Returns the native tools that are missing when a build is needed and cannot run. A build runs in a fresh scratch directory and is renamed into the cache only once complete, so a
   cache entry is never partial. A failed build keeps its scratch directory for inspection until the
   next attempt at the same key replaces it."""
   cache = entry.parent
   with _locked(cache / "locks" / f"{entry.name}.lock"):
     if not entry.exists():
+      if missing := missing_tools():
+        return missing
       scratch = cache / f"build-{entry.name}"
       shutil.rmtree(scratch, ignore_errors=True)
       (scratch / "src").mkdir(parents=True)
@@ -510,6 +513,7 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
     stamp.write_text(key)
   hook.app.display_info(f"Installed the build {entry} into {package_dir}")
   _prune_cache(cache)
+  return []
 
 
 def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path, vendored: Path) -> None:
@@ -641,19 +645,16 @@ class BuildHook(BuildHookInterface):
     if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
       self.app.display_info(f"IPOPT already built at {lib_dir}")
       return
-    entry = _cache_root() / f"ipopt-{key}"
-    missing = [] if entry.exists() else _missing_ipopt_tools()
+
+    def build(src: Path, out: Path) -> None:
+      _build_ipopt_stack(self, src, out / "lib", out / "include", out / "licenses", root / "licenses")
+
+    missing = _install_build(self, root, package_dir, _cache_root() / f"ipopt-{key}", key, _missing_ipopt_tools, build)
     if missing:
       msg = f"missing native toolchain for IPOPT build: {', '.join(missing)}"
       if strict:
         raise RuntimeError(f"{msg}. Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux).")
       self.app.display_info(f"Skipping IPOPT build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
-      return
-
-    def build(src: Path, out: Path) -> None:
-      _build_ipopt_stack(self, src, out / "lib", out / "include", out / "licenses", root / "licenses")
-
-    _install_build(self, root, package_dir, entry, key, build)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)

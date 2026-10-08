@@ -46,8 +46,9 @@ Without `SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv syn
 libraries instead of failing. The solver tests then skip, and everything else works. See
 [Environment variables](../guide/env_vars.md).
 
-To force a clean rebuild, delete the plugin's entry in the cache (`piqp-*` or `ipopt-*`) and run
-`uv sync --reinstall-package scaly-piqp` or `scaly-ipopt`.
+To force a clean rebuild, delete the plugin's entry in the cache (`piqp-*` or `ipopt-*`) and the
+checkout's `plugins/scaly-*/.build_key`, then run `uv sync --reinstall-package scaly-piqp` or
+`scaly-ipopt`.
 
 In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
 in `src/scaly_*/build_config.json`, which pins its version, and a row in the
