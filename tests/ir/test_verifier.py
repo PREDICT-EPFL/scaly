@@ -13,6 +13,7 @@ Two categories:
 
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import fields
 
 import numpy as np
@@ -211,3 +212,81 @@ def test_binary_helper_round_trip_verifies() -> None:
 def test_spec_expr_check_returns_none_on_valid() -> None:
   x = sc.sym("x", 3)
   assert spec_expr.check(x) is None
+
+
+@pytest.mark.parametrize("index,shape", [(None, (2,)), ((slice(None),), (3,)), ((4,), ())])
+def test_slice_contract_rejects_invalid_nodes(index, shape) -> None:
+  x = sc.sym("slice_contract_x", 2)
+  attrs = {} if index is None else {"index": index}
+  bad = Expr(ExprOp.SLICE, (x,), TensorType(shape), attrs=attrs)
+  with pytest.raises(VerifyError, match="slice-index"):
+    verify_expr(bad)
+
+
+def test_function_construction_verifies_inner_nodes() -> None:
+  x = sc.sym("construction_verify_x", 3)
+  bad = Expr(ExprOp.RESHAPE, (x,), TensorType((4,)), attrs={"shape": (4,)})
+  with pytest.raises(VerifyError, match="reshape-size"):
+    sc.function(sc.arg("construction_verify_x", 3), outputs=sc.arg("out"))(lambda _: bad).instantiate()
+
+
+def test_lowering_verifies_before_normalizing(monkeypatch) -> None:
+  from scaly.passes.lowering import ctx
+
+  @sc.function(sc.arg("lowering_verify_x", 3), outputs=sc.arg("out"))
+  def fn(x):
+    return x.sum()
+
+  concrete = copy(as_concrete(fn))
+  bad = Expr(ExprOp.RESHAPE, (concrete.inputs[0],), TensorType((4,)), attrs={"shape": (4,)})
+  object.__setattr__(concrete, "outputs", (bad,))
+
+  def must_not_normalize(_):
+    pytest.fail("invalid graph reached normalization")
+
+  monkeypatch.setattr(ctx, "_normalize_function", must_not_normalize)
+  with pytest.raises(VerifyError, match="reshape-size"):
+    ctx.lower_function(concrete)
+
+
+@pytest.mark.parametrize("fault", ["solver", "output", "output_name", "arity", "input_shape", "shape", "diff"])
+def test_solver_call_contract(fault) -> None:
+  from scaly.solvers.model import SolverDescriptor
+
+  descriptor = SolverDescriptor("verify_solver", "test", 2, 0, 0, (("p", (2,)),), (("x", (2,)),), (), 1)
+  arg = sc.sym("solver_contract_p", 2, diff=False)
+  attrs = {"solver": descriptor, "output": 0, "output_name": "x"}
+  args = (arg,)
+  shape, diff = (2,), False
+  if fault == "solver":
+    del attrs["solver"]
+  elif fault == "output":
+    attrs["output"] = 1
+  elif fault == "output_name":
+    attrs["output_name"] = "wrong"
+  elif fault == "arity":
+    args = ()
+  elif fault == "input_shape":
+    args = (sc.sym("solver_bad_p", 3, diff=False),)
+  elif fault == "shape":
+    shape = (3,)
+  else:
+    diff = True
+  bad = Expr(ExprOp.SOLVER_CALL, args, TensorType(shape, diff=diff), attrs=attrs)
+  with pytest.raises(VerifyError, match="solver-call-signature"):
+    verify_expr(bad)
+
+
+@pytest.mark.parametrize("index", [(slice(None, None, -1), -1), (slice(1, 1), slice(None)), (1, slice(None, None, 2))])
+def test_slice_contract_accepts_normalized_index(index) -> None:
+  x = sc.sym("slice_positive_x", (3, 4))
+  sliced = x[index]
+  verify_expr(sliced)
+  assert sliced.shape == np.empty(x.shape)[index].shape
+
+
+def test_solver_call_contract_accepts_descriptor_function() -> None:
+  from scaly.solvers.model import SolverDescriptor, descriptor_function
+
+  descriptor = SolverDescriptor("valid_verify_solver", "test", 2, 0, 0, (("p", (2,)),), (("x", (2,)),), (), 1)
+  verify_expr(as_concrete(descriptor_function(descriptor)).outputs)

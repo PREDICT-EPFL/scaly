@@ -313,23 +313,30 @@ class Expr:
     return self.type.size
 
   def structural_key(self) -> tuple[Any, ...]:
-    cached = self._key_cache
-    if cached is not None:
-      return cached
-    value_key = None if self.value is None else (self.value.shape, str(self.value.dtype), self.value.tobytes())
-    key = (
-      ExprOp(self.op).value,
-      self.name,
-      self.type.shape,
-      self.type.dtype,
-      self.type.diff,
-      self.lowering,
-      _attrs_key(self.attrs),
-      value_key,
-      tuple(arg.structural_key() for arg in self.args),
-    )
-    object.__setattr__(self, "_key_cache", key)
-    return key
+    stack: list[tuple[Expr, bool]] = [(self, False)]
+    while stack:
+      node, visited = stack.pop()
+      if node._key_cache is not None:
+        continue
+      if not visited:
+        stack.append((node, True))
+        stack.extend((arg, False) for arg in reversed(node.args) if arg._key_cache is None)
+        continue
+      value_key = None if node.value is None else (node.value.shape, str(node.value.dtype), node.value.tobytes())
+      key = (
+        ExprOp(node.op).value,
+        node.name,
+        node.type.shape,
+        node.type.dtype,
+        node.type.diff,
+        node.lowering,
+        _attrs_key(node.attrs),
+        value_key,
+        tuple(arg._key_cache for arg in node.args),
+      )
+      object.__setattr__(node, "_key_cache", key)
+    assert self._key_cache is not None
+    return self._key_cache
 
   def structural_hash(self) -> int:
     return hash(self.structural_key())

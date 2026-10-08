@@ -695,3 +695,30 @@ def test_nested_callee_sparsity_is_analyzed_once_per_variable(monkeypatch, mappe
 
   reference = np.array([[a * d + c * b, b + d] for a, b, c, d in values.reshape(2, 4)])
   np.testing.assert_array_equal(fn(values), reference.reshape(-1))
+
+
+@pytest.mark.parametrize("walk", ["depends", "jac_mask", "structural_key"])
+def test_deep_euler_graph(walk) -> None:
+  from scaly.ad.sparsity import _depends_on, _jac_mask
+
+  x = sc.sym("deep_euler_x", 2)
+  y = x
+  steps, dt = 800, 0.001
+  rates = np.array([0.2, -0.1])
+  for _ in range(steps):
+    y = y + dt * rates * y
+  if walk == "depends":
+    memo = {}
+    assert _depends_on(y, x, memo)
+    assert not _depends_on(y, sc.sym("deep_euler_unrelated", 2), memo)
+  elif walk == "jac_mask":
+    expected_jac = np.diag((1 + dt * rates) ** steps)
+    np.testing.assert_array_equal(_jac_mask(y, x, {}).toarray(), expected_jac != 0)
+  else:
+    key = y.structural_key()
+    assert key is y.structural_key()
+    for _ in range(steps):
+      assert key[0] == "add"
+      key = key[-1][0]
+    assert key[0] == "input"
+    assert key[1] == x.name
