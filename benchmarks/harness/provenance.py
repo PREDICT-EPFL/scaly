@@ -73,7 +73,7 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
 
   paths = solver_paths()
   c_compiler = find_c_compiler()
-  c_math = math_flags(c_compiler.cc) if c_compiler is not None else ((), ())
+  c_math = math_flags(*c_compiler.command) if c_compiler is not None else ((), ())
   cxx_math = math_flags(compiler)
   cache = os.environ.get("SCALY_CACHE_DIR")
   jit_symbols = {str(path.relative_to(cache)): vector_symbols(path) for path in Path(cache).rglob("*.so")} if cache else {}
@@ -97,8 +97,8 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
     "compiler_commands": {
       "sweep": {"compiler": compiler, "cflags": ["-O3", *NATIVE_CFLAGS, *cxx_math[0], "-std=c++17"], "math_libs": [*cxx_math[1], "-lm"]},
       "closed_loop": {
-        "compiler": c_compiler.cc if c_compiler else None,
-        "version": compiler_version(c_compiler.cc) if c_compiler else None,
+        "compiler": list(c_compiler.command) if c_compiler else None,
+        "version": compiler_version(*c_compiler.command) if c_compiler else None,
         "cflags": [opt_flag(), *NATIVE_CFLAGS, *c_math[0]],
         "math_libs": [*c_math[1], "-lm"],
       },

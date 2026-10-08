@@ -19,6 +19,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -34,7 +35,7 @@ from .aot import CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..solvers.model import CSolverOption
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import BuildRecipe, cache_root, find_c_compiler, native_recipe
+from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ from ..function.model import Function, as_concrete
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Scaly version.
-_JIT_CACHE_VERSION = "4"
+_JIT_CACHE_VERSION = "5"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
@@ -92,12 +93,6 @@ class JitError(RuntimeError):
   """Raised when a compiled function returns a non-zero ABI status code."""
 
 
-def _find_compiler() -> str | None:
-  """Compatibility wrapper for tests; use ``scaly.codegen.toolchain.find_c_compiler`` in new code."""
-  compiler = find_c_compiler()
-  return compiler.cc if compiler is not None else None
-
-
 def opt_flag() -> str:
   """Optimization flag for JIT compilation. ``-O2`` unless ``SCALY_CC_OPT`` says otherwise."""
   return os.environ.get("SCALY_CC_OPT") or "-O2"
@@ -112,7 +107,7 @@ def compile_flags(recipe: BuildRecipe | None = None) -> tuple[str, ...]:
   return (opt_flag(), *(HOST_CFLAGS if recipe is None else (*recipe.cpu_flags, "-fno-math-errno")))
 
 
-def _render_native(fun: ConcreteFunction, compiler: str) -> CModule:
+def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
   try:
     recipe = native_recipe(compiler)
   except (OSError, subprocess.CalledProcessError) as exc:
@@ -127,26 +122,38 @@ def _render_native(fun: ConcreteFunction, compiler: str) -> CModule:
   )
 
 
-def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
+def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, output: str) -> list[str]:
+  # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
+  # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
+  # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
+  return [*compiler, *compile_flags(module.recipe), "-fPIC", shared_lib_flag(), source, *module.link_flags, "-lm", "-o", output]
+
+
+def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str) -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
   Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
-  previously cached artifacts. ConcreteFunction names and compile/link flags are included so two
-  functions that happen to share a source skeleton (different symbols or solver rpaths) still
-  get distinct entries.
+  previously cached artifacts. ConcreteFunction names and the full compile command are included so
+  two functions that happen to share a source skeleton (different symbols or solver rpaths) still
+  get distinct entries. ``toolchain`` is the compiler's ``compiler_fingerprint``, so another
+  compiler, a changed one at the same path, or another CPU misses the cache.
   """
   h = hashlib.sha256()
-  h.update(_JIT_CACHE_VERSION.encode())
-  h.update(b"\0")
-  h.update(C_API_SIGNATURE.encode())
-  h.update(b"\0")
-  h.update(fun_name.encode())
-  h.update(b"\0")
-  h.update(source.encode())
-  for flag in compile_flags:
+  for part in (_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, *command):
+    h.update(part.encode())
     h.update(b"\0")
-    h.update(flag.encode())
   return h.hexdigest()
+
+
+def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule, str]:
+  """Render ``fun`` for the host and derive its cache key, which hashes exactly the text handed to the compiler."""
+  module = _render_native(fun, compiler.command)
+  try:
+    toolchain = compiler_fingerprint(compiler.command)
+  except (OSError, subprocess.CalledProcessError) as exc:
+    raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
+  command = _compile_command(compiler.command, module, "module.c", "module" + shared_lib_ext())
+  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,20 +179,11 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   compiler = find_c_compiler()
   if compiler is None:
     raise JitUnavailable("no C compiler found (set SCALY_CC or install cc)")
-  cc = compiler.cc
 
   try:
-    module = _render_native(fun, cc)
+    module, key = _render_and_key(fun, compiler)
   except NotImplementedError as exc:
     raise JitUnavailable(f"codegen does not support function {fun.name!r}: {exc}") from exc
-
-  extra_flags = module.link_flags
-  # The cache compiles ``body`` — the translation unit without the header include a written-out
-  # ``.c`` carries — so the key is a hash of exactly the text handed to the compiler.
-  # The compile flags are part of the key: two flag sets produce different machine code from the
-  # same source, so they must not share a cache entry.
-  flags = compile_flags(module.recipe)
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*flags, *extra_flags))
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
@@ -206,18 +204,16 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
     # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
     tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
-    # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
-    # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
-    # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
-    cmd = [cc, *flags, "-fPIC", shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
     try:
-      subprocess.run(cmd, check=True, capture_output=True, text=True)
+      subprocess.run(_compile_command(compiler.command, module, str(source_path), str(tmp_lib)), check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
       tmp_lib.unlink(missing_ok=True)
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
     tmp_lib.replace(lib_path)
 
-  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size, solver_library=bool(module.backends))
+  artifact = _Artifact(
+    lib_path=lib_path, key=key, flags=module.link_flags, workspace_size=module.workspace_size, solver_library=bool(module.backends)
+  )
   with _artifact_lock:
     _artifact_cache[key] = artifact
   return artifact
@@ -374,10 +370,9 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
   if compiler is None:
     return
   try:
-    module = _render_native(fun, compiler.cc)
+    _, key = _render_and_key(fun, compiler)
   except NotImplementedError:
     return
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*compile_flags(module.recipe), *module.link_flags))
   with _artifact_lock:
     _artifact_cache.pop(key, None)
   cache_dir = cache_root() / key

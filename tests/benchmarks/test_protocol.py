@@ -14,7 +14,7 @@ def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch):
   from benchmarks import harness
   from scaly.codegen.toolchain import BuildRecipe, Compiler
 
-  monkeypatch.setattr(harness, "compiler_version", lambda compiler: compiler)
+  monkeypatch.setattr(harness, "compiler_version", lambda *command: command[0])
   monkeypatch.setenv("SCALY_VECTOR_LIBM", "glibc")
   assert harness.math_flags("clang version 20") == (("-fveclib=libmvec",), ("-lmvec",))
   assert harness.math_flags("gcc version 13") == ((), ("-lmvec",))
@@ -22,7 +22,7 @@ def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch):
   assert harness.math_flags("clang version 20") == ((), ())
   assert harness.math_flags("gcc version 13") == ((), ())
   monkeypatch.delenv("SCALY_VECTOR_LIBM")
-  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler("gcc", "CC"))
+  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler(("gcc",), "CC"))
   monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="none"))
   harness.configure_math_policy()
   assert harness.vector_libm() == "none"
@@ -35,9 +35,9 @@ def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch):
   from benchmarks import harness
   from scaly.codegen.toolchain import BuildRecipe, Compiler
 
-  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler("clang", "SCALY_CC"))
+  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler(("clang",), "SCALY_CC"))
   monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="glibc"))
-  monkeypatch.setattr(harness, "compiler_version", lambda compiler: "clang version 20")
+  monkeypatch.setattr(harness, "compiler_version", lambda *command: "clang version 20")
   # configure_math_policy writes os.environ directly, which monkeypatch would not undo
   monkeypatch.setattr(os, "environ", {k: v for k, v in os.environ.items() if k != "SCALY_VECTOR_LIBM"})
   with pytest.raises(ValueError, match="Scaly JIT does not pass"):

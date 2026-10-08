@@ -7,6 +7,8 @@ module reads it for the report and nothing else depends on that direction.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import platform
 import shlex
@@ -23,7 +25,9 @@ from ..utils.env import env_path
 
 @dataclass(frozen=True, slots=True)
 class Compiler:
-  cc: str
+  """The command the JIT runs as its C compiler, and the setting that supplied it."""
+
+  command: tuple[str, ...]
   source: str
 
 
@@ -94,23 +98,44 @@ class BuildRecipe:
 
 
 @lru_cache(maxsize=8)
-def native_recipe(compiler: str) -> BuildRecipe:
-  """Resolve fixed host lanes and the available native math library for JIT compilation."""
-  recipe = BuildRecipe(cpu="native")
-  result = subprocess.run(
-    [compiler, *recipe.cpu_flags, "-dM", "-E", "-x", "c", "-"],
+def _native_macros(command: tuple[str, ...]) -> str:
+  """The compiler's predefined macros for the native CPU: its target features and its version."""
+  return subprocess.run(
+    [*command, *BuildRecipe(cpu="native").cpu_flags, "-dM", "-E", "-x", "c", "-"],
     input="",
     text=True,
     capture_output=True,
     check=True,
-  )
-  macros = {parts[1]: parts[2] if len(parts) > 2 else "" for line in result.stdout.splitlines() if (parts := line.split())[:1] == ["#define"]}
+  ).stdout
+
+
+@lru_cache(maxsize=8)
+def native_recipe(command: tuple[str, ...]) -> BuildRecipe:
+  """Resolve fixed host lanes and the available native math library for JIT compilation."""
+  macros = {
+    parts[1]: parts[2] if len(parts) > 2 else "" for line in _native_macros(command).splitlines() if (parts := line.split())[:1] == ["#define"]
+  }
   sve256 = macros.get("__ARM_FEATURE_SVE_BITS", "0").isdigit() and int(macros.get("__ARM_FEATURE_SVE_BITS", "0")) >= 256
   lanes = 8 if "__AVX512F__" in macros else 4 if "__AVX__" in macros or sve256 else 2 if {"__SSE2__", "__aarch64__"} & macros.keys() else 1
   libc, version = platform.libc_ver()
   version_parts = tuple(int(part) for part in version.split(".")[:2]) if version and all(p.isdigit() for p in version.split(".")[:2]) else ()
   vector_libm = "glibc" if "__x86_64__" in macros and libc == "glibc" and version_parts >= (2, 35) and lanes > 1 else "none"
   return BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
+
+
+@lru_cache(maxsize=8)
+def compiler_fingerprint(command: tuple[str, ...]) -> str:
+  """Hash what decides the machine code ``command`` emits on this host, for the JIT cache key.
+
+  Covers the command, its executable's real path, size and modification time, its ``--version``
+  output, and its native target macros, so a wrapper, a patched compiler at the same path or another
+  CPU misses the cache.
+  """
+  executable = Path(command[0]).resolve()
+  stat = executable.stat()
+  version = subprocess.run([*command, "--version"], text=True, capture_output=True, check=True).stdout
+  parts = [command, str(executable), stat.st_size, stat.st_mtime_ns, version, _native_macros(command)]
+  return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
 
 
 def cache_root() -> Path:
@@ -126,24 +151,24 @@ def cache_root() -> Path:
 def find_c_compiler() -> Compiler | None:
   """Find the C compiler the JIT uses: ``SCALY_CC``, else ``CC``, else ``cc`` on ``PATH``.
 
-  Returns the compiler path and which of those three supplied it, or ``None`` if nothing is found.
+  Returns the compiler command and which of those three supplied it, or ``None`` if nothing is found.
   """
   for key in ("SCALY_CC", "CC"):
     override = os.environ.get(key)
     if override:
       found = shutil.which(override)
-      return Compiler(found, key) if found is not None else None
+      return Compiler((found,), key) if found is not None else None
   found = shutil.which("cc")
-  return Compiler(found, "PATH") if found is not None else None
+  return Compiler((found,), "PATH") if found is not None else None
 
 
 def _format_report() -> str:
   paths = solver_paths(required=False)
   compiler = find_c_compiler()
   lines = ["Scaly native toolchain", f"  cache root: {cache_root()}"]
-  lines.append(f"  cc: {compiler.cc} ({compiler.source})" if compiler is not None else "  cc: <missing>")
+  lines.append(f"  cc: {shlex.join(compiler.command)} ({compiler.source})" if compiler is not None else "  cc: <missing>")
   if compiler is not None:
-    lines.extend(("  native build recipe:", native_recipe(compiler.cc).comment("module.c").rstrip()))
+    lines.extend(("  native build recipe:", native_recipe(compiler.command).comment("module.c").rstrip()))
   lines += [
     f"  solver source: {paths.source}",
     f"  include dirs: {', '.join(str(p) for p in paths.include_dirs) or '<none>'}",

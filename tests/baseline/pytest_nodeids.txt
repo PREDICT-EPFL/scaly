@@ -298,6 +298,7 @@ tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_ou
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
 tests/codegen/test_input_validation.py::test_jit_reports_input_errors
 tests/codegen/test_jit.py::test_call_uses_jit_and_matches_numpy
+tests/codegen/test_jit.py::test_compiler_wrapper_change_misses_the_cache
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[_h0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v:0]
@@ -325,6 +326,11 @@ tests/codegen/test_jit.py::test_vector_math_override_rejects_invalid_values[auto
 tests/codegen/test_jit.py::test_vector_math_override_rejects_invalid_values[sleef]
 tests/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/codegen/test_toolchain.py::test_build_recipe_validates_render_controls
+tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[command]
+tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[executable]
+tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[macros]
+tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[real path]
+tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[version]
 tests/codegen/test_toolchain.py::test_env_registry_mentions_native_build_controls
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[glibc-2.34-none]
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[glibc-2.35-glibc]

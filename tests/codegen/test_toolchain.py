@@ -117,6 +117,7 @@ def test_native_recipe_uses_compiler_target_macros(monkeypatch, macros: str, exp
   from scaly.codegen import toolchain
 
   toolchain.native_recipe.cache_clear()
+  toolchain._native_macros.cache_clear()
   commands = []
 
   def preprocess(command, **kwargs):
@@ -125,11 +126,12 @@ def test_native_recipe_uses_compiler_target_macros(monkeypatch, macros: str, exp
 
   monkeypatch.setattr(toolchain.subprocess, "run", preprocess)
   monkeypatch.setattr(toolchain.platform, "libc_ver", lambda: ("", ""))
-  recipe = toolchain.native_recipe("cc")
+  recipe = toolchain.native_recipe(("cc",))
   assert recipe.lanes == expected
   assert recipe.vector_libm == "none"
   assert commands[0][-5:] == ["-dM", "-E", "-x", "c", "-"]
   toolchain.native_recipe.cache_clear()
+  toolchain._native_macros.cache_clear()
 
 
 @pytest.mark.parametrize("libc,version,expected", [("glibc", "2.35", "glibc"), ("glibc", "2.34", "none"), ("musl", "1.2", "none")])
@@ -137,26 +139,69 @@ def test_native_recipe_checks_vector_libm_host(monkeypatch, libc: str, version: 
   from scaly.codegen import toolchain
 
   toolchain.native_recipe.cache_clear()
+  toolchain._native_macros.cache_clear()
   monkeypatch.setattr(
     toolchain.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "#define __AVX__ 1\n#define __x86_64__ 1\n", "")
   )
   monkeypatch.setattr(toolchain.platform, "libc_ver", lambda: (libc, version))
-  assert toolchain.native_recipe("cc").vector_libm == expected
+  assert toolchain.native_recipe(("cc",)).vector_libm == expected
   toolchain.native_recipe.cache_clear()
+  toolchain._native_macros.cache_clear()
 
 
 def test_native_recipe_uses_fixed_sve_width(monkeypatch):
   from scaly.codegen import toolchain
 
   toolchain.native_recipe.cache_clear()
+  toolchain._native_macros.cache_clear()
   monkeypatch.setattr(
     toolchain.subprocess,
     "run",
     lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "#define __ARM_FEATURE_SVE_BITS 256\n#define __aarch64__ 1\n", ""),
   )
   monkeypatch.setattr(toolchain.platform, "libc_ver", lambda: ("", ""))
-  assert toolchain.native_recipe("cc").lanes == 4
+  assert toolchain.native_recipe(("cc",)).lanes == 4
   toolchain.native_recipe.cache_clear()
+  toolchain._native_macros.cache_clear()
+
+
+@pytest.mark.parametrize("change", ["command", "version", "macros", "real path", "executable"])
+def test_compiler_fingerprint_changes_with_the_compiler_and_host(tmp_path, monkeypatch, change: str) -> None:
+  from scaly.codegen import toolchain
+
+  outputs = {"version": "cc 1.0\n", "macros": "#define __AVX__ 1\n"}
+  monkeypatch.setattr(
+    toolchain.subprocess,
+    "run",
+    lambda command, **kwargs: subprocess.CompletedProcess(command, 0, outputs["version" if command[-1] == "--version" else "macros"], ""),
+  )
+  first, second = tmp_path / "cc-1", tmp_path / "cc-2"
+  first.write_text("compiler")
+  second.write_text("compiler")
+  os.utime(second, ns=(first.stat().st_atime_ns, first.stat().st_mtime_ns))
+  cc = tmp_path / "cc"
+  cc.symlink_to(first)
+  command = (str(cc),)
+
+  def fingerprint() -> str:
+    toolchain.compiler_fingerprint.cache_clear()
+    toolchain._native_macros.cache_clear()
+    return toolchain.compiler_fingerprint(command)
+
+  before = fingerprint()
+  assert fingerprint() == before
+  if change == "command":
+    command = (str(cc), "-fwrapv")
+  elif change in outputs:
+    outputs[change] += "patched\n"
+  elif change == "real path":
+    cc.unlink()
+    cc.symlink_to(second)
+  else:
+    first.write_text("patched compiler")
+  assert fingerprint() != before
+  toolchain.compiler_fingerprint.cache_clear()
+  toolchain._native_macros.cache_clear()
 
 
 def test_plain_c_module_header_compiles_as_c99(tmp_path):

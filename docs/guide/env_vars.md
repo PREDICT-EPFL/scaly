@@ -40,14 +40,11 @@ forces scalar math calls. `SCALY_VECTOR_LIBM=glibc` requests libmvec explicitly 
 compatible target. Vector and scalar math implementations can produce different rounded results.
 `scaly_toolchain` reports the detected native build recipe.
 
-The build recipe and compiler flags contribute to the cache key. Changing the optimization level
-therefore produces a different artifact when the function is compiled again.
-An already loaded function continues using its current library. The key does
-not identify the compiler executable or the CPU that `-march=native` resolved
-to. After pointing `SCALY_CC` at another compiler, or when several machines
-share one cache directory, clear the cache or call `recompile()` on the
-affected functions. See
-[compilation and caching](codegen.md#compilation-and-caching-in-python).
+The build recipe, the compiler and its flags, and the CPU that `-march=native` resolves to
+contribute to the cache key. Changing the optimization level or pointing `SCALY_CC` at another
+compiler therefore produces a different artifact when the function is compiled again, and several
+machines can share one cache directory. An already loaded function continues using its current
+library. See [compilation and caching](codegen.md#compilation-and-caching-in-python).
 
 ## Cache directory
 

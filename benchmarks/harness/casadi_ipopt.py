@@ -206,9 +206,9 @@ def _build(spec_path: Path) -> None:
   tmp_source.replace(source_path)
   library = work / f"lib{spec['name']}{shared_lib_ext()}"
   tmp_library = library.with_suffix(library.suffix + suffix)
-  math_cflags, math_libs = math_flags(spec["compiler"])
+  math_cflags, math_libs = math_flags(*spec["compiler"])
   command = [
-    spec["compiler"],
+    *spec["compiler"],
     spec["opt"],
     *NATIVE_CFLAGS,
     *math_cflags,
@@ -275,7 +275,7 @@ class CompiledCasadiIpopt:
     self.expand = bool(options.get("expand", False))
     opt = opt or opt_flag()
     compiler_info = find_c_compiler()
-    compiler = compiler_info.cc if compiler_info is not None else "cc"
+    compiler = list(compiler_info.command) if compiler_info is not None else ["cc"]
     self.configured_ipopt_library = Path(solver_paths(required=True).loads["ipopt"] or "").resolve()
     solver_digest = _library_digest(self.configured_ipopt_library)
     payload = json.dumps({"nlp": nlp.serialize(), "options": options}, sort_keys=True)
@@ -286,10 +286,10 @@ class CompiledCasadiIpopt:
       + _SHIM
       + importlib.metadata.version("casadi")
       + solver_digest
-      + compiler
+      + shlex.join(compiler)
       + opt
       + " ".join(NATIVE_CFLAGS)
-      + repr(math_flags(compiler))
+      + repr(math_flags(*compiler))
       + " ".join(backend_compile_flags(("ipopt",)))  # the rpath baked into the library must match this checkout
     )
     key = hashlib.sha256(cache_inputs.encode()).hexdigest()[:20]

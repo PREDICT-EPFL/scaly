@@ -359,13 +359,18 @@ The key is a SHA-256 hash over, in order:
 - the pointer ABI signature
 - the function's name
 - the rendered translation unit, which includes the recipe comment
-- the optimization, CPU and `-fno-math-errno` flags, and the link flags
-  (solver paths, `-lmvec`). The fixed `-fPIC -shared` and `-lm` are left out.
+- a fingerprint of the compiler and host: the compiler command, the real path,
+  size and modification time of its executable, its `--version` output, and
+  the macros the host recipe probe prints, which name the CPU features and the
+  compiler version
+- the full compile command apart from file paths: the optimization, CPU and
+  `-fno-math-errno` flags, `-fPIC -shared`, the link flags (solver paths,
+  `-lmvec`) and `-lm`
 
 Changing the optimization level therefore gives a new key, as the `-O3` run
-shows. The compiler binary is not part of the key, so pointing `SCALY_CC` at a
-different compiler with the same flags reuses artifacts built by the old one.
-Numerical inputs and runtime solver tuning never enter the key. Structural
+shows. So does pointing `SCALY_CC` at another compiler, replacing the compiler
+or a wrapper script at the same path, or running on a CPU with other features.
+The fingerprint is computed once per process. Numerical inputs and runtime solver tuning never enter the key. Structural
 choices such as PIQP's `sparse` and SQP's `qp` change the generated interface and
 therefore the key.
 
