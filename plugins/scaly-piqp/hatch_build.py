@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
@@ -63,11 +66,11 @@ def _has_cxx_compiler() -> bool:
   return any(shutil.which(cmd) for cmd in ("c++", "g++", "clang++"))
 
 
-def _missing_piqp_tools(*, build_piqp: bool) -> list[str]:
-  missing = [cmd for cmd in ("git", "cmake") if build_piqp and shutil.which(cmd) is None]
-  if build_piqp and shutil.which("cc") is None:
+def _missing_piqp_tools() -> list[str]:
+  missing = [cmd for cmd in ("git", "cmake") if shutil.which(cmd) is None]
+  if shutil.which("cc") is None:
     missing.append("cc")
-  if build_piqp and not _has_cxx_compiler():
+  if not _has_cxx_compiler():
     missing.append("c++")
   return missing
 
@@ -78,8 +81,21 @@ EIGEN_TAG = _BUILD_CONFIG["eigen"]["tag"]
 BLASFEO_TAG = _BUILD_CONFIG["blasfeo"]["tag"]
 
 
-def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
-  subprocess.run(cmd, cwd=cwd, env=env, check=True)
+def _run(cmd: list[str], cwd: Path, env: dict | None = None, attempts: int = 1) -> None:
+  """Run `cmd`, retrying a failure `attempts - 1` times; downloads use 3 to ride out a busy host."""
+  for attempt in range(1, attempts + 1):
+    try:
+      subprocess.run(cmd, cwd=cwd, env=env, check=True)
+      return
+    except subprocess.CalledProcessError:
+      if attempt == attempts:
+        raise
+      time.sleep(10 * attempt)
+
+
+def _clone(hook: "BuildHook", url: str, tag: str, dest: Path) -> None:
+  hook.app.display_info(f"Cloning {url}@{tag} to {dest}")
+  _run(["git", "clone", "--depth=1", "--branch", tag, url, str(dest)], cwd=dest.parent, attempts=3)
 
 
 NOTICES = "THIRD_PARTY_NOTICES.md"
@@ -116,110 +132,167 @@ def _write_third_party_notices(
   hook.app.display_info(f"Wrote {licenses_dir / NOTICES}")
 
 
-def _piqp_built(system: str, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> bool:
-  """Check that the library, headers and notices exist at the pinned versions."""
-  lib_path = lib_dir / _shared_lib_name(system, "piqpc")
-  notices = licenses_dir / NOTICES
-  if not (lib_path.exists() and notices.exists() and (include_dir / "piqp.h").exists() and (include_dir / "piqp_typedef.h").exists()):
-    return False
-  text = notices.read_text()
-  return all(f"| {name} | {pin['version']} |" in text for name, pin in _BUILD_CONFIG.items())
+# Everything else that decides the built files, beside this hook, the pins and the license texts.
+_KEY_ENV = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET")
+_OUTPUTS = ("lib", "include", "licenses")
+_CACHE_MAX_AGE = 30 * 24 * 3600
 
 
-def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> None:
+def _cache_root() -> Path:
+  if path := os.environ.get("SCALY_SOLVER_CACHE"):
+    return Path(path)
+  return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "scaly" / "solvers"
+
+
+def _tool_identity(cmd: str) -> str:
+  path = shutil.which(cmd)
+  if path is None:
+    return f"{cmd}: none"
+  out = subprocess.run([path, "--version"], capture_output=True, text=True).stdout.strip()
+  return f"{path}: {out.splitlines()[0] if out else ''}"
+
+
+def _cache_key(root: Path) -> str:
+  """Hash every input of the build, so two checkouts share a build exactly when it would come out the same."""
+  digest = hashlib.sha256()
+  inputs = [Path(__file__), root / "src" / "scaly_piqp" / "build_config.json", *(root / "licenses").rglob("*")]
+  for path in sorted(p for p in inputs if p.is_file()):
+    digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
+  tools = [_tool_identity(os.environ.get("CC", "cc")), _tool_identity(os.environ.get("CXX", "c++"))]
+  env = [f"{name}={os.environ.get(name, '')}" for name in _KEY_ENV]
+  for part in (platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0], *tools, *env):
+    digest.update(part.encode() + b"\0")
+  return digest.hexdigest()[:16]
+
+
+@contextmanager
+def _locked(path: Path, *, wait: bool = True):
+  """Hold an exclusive lock on `path`, yielding whether it was taken. Lock files are never deleted."""
+  import fcntl
+
+  path.parent.mkdir(parents=True, exist_ok=True)
+  with path.open("w") as f:
+    try:
+      fcntl.flock(f, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+      yield False
+      return
+    yield True
+
+
+def _prune_cache(cache: Path) -> None:
+  """Delete builds unused for 30 days. A checkout holds its own copy, so this only ever costs a rebuild."""
+  cutoff = time.time() - _CACHE_MAX_AGE
+  with _locked(cache / "locks" / "prune.lock", wait=False) as pruning:
+    for path in cache.iterdir() if pruning else ():
+      if path.name == "locks":
+        continue
+      with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
+        # a build may have replaced or published the path since it was listed
+        if held and path.exists() and path.stat().st_mtime <= cutoff:
+          shutil.rmtree(path)
+
+
+def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build) -> list[str]:
+  """Copy the cached build `entry` into `package_dir`, first running `build(src_dir, out_dir)` if no checkout made it yet.
+
+  Returns the native tools that are missing when a build is needed and cannot run. A build runs in a fresh scratch directory and is renamed into the cache only once complete, so a
+  cache entry is never partial. A failed build keeps its scratch directory for inspection until the
+  next attempt at the same key replaces it."""
+  cache = entry.parent
+  with _locked(cache / "locks" / f"{entry.name}.lock"):
+    if not entry.exists():
+      if missing := missing_tools():
+        return missing
+      scratch = cache / f"build-{entry.name}"
+      shutil.rmtree(scratch, ignore_errors=True)
+      (scratch / "src").mkdir(parents=True)
+      try:
+        build(scratch / "src", scratch / "out")
+      except BaseException:
+        hook.app.display_error(f"The build failed; its sources and build trees are kept in {scratch}")
+        raise
+      (scratch / "out").rename(entry)
+      shutil.rmtree(scratch)
+    os.utime(entry)
+    stamp = root / ".build_key"
+    stamp.unlink(missing_ok=True)
+    for name in _OUTPUTS:
+      shutil.rmtree(package_dir / name, ignore_errors=True)
+      shutil.copytree(entry / name, package_dir / name, symlinks=True)
+    stamp.write_text(key)
+  hook.app.display_info(f"Installed the build {entry} into {package_dir}")
+  _prune_cache(cache)
+  return []
+
+
+def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path, vendored: Path) -> None:
+  """Build into `lib_dir`, `include_dir` and `licenses_dir` from sources cloned into the empty `third_party_dir`.
+
+  `vendored` holds the license texts checked into the plugin."""
   system = platform.system()
   machine = platform.machine().lower()
   lib_name = _shared_lib_name(system, "piqpc")
 
-  if _piqp_built(system, lib_dir, include_dir, licenses_dir):
-    hook.app.display_info(f"PIQP C interface already built at {lib_dir}")
-    return
-
   hook.app.display_info("Building PIQP C interface...")
 
-  # Tag-specific source and install directories prevent reuse after a pin changes.
   eigen_dir = third_party_dir / f"eigen-{EIGEN_TAG}"
   eigen_install_dir = third_party_dir / f"eigen-{EIGEN_TAG}-install"
   eigen_cmake_dir = eigen_install_dir / "share" / "eigen3" / "cmake"
-  third_party_dir.mkdir(parents=True, exist_ok=True)
-  if not eigen_dir.exists():
-    hook.app.display_info(f"Cloning Eigen {EIGEN_TAG} to {eigen_dir}")
-    subprocess.run(
-      ["git", "clone", "--depth=1", "--branch", EIGEN_TAG, "https://gitlab.com/libeigen/eigen.git", str(eigen_dir)],
-      check=True,
-    )
-  if not eigen_cmake_dir.exists():
-    eigen_build_dir = eigen_dir / "build"
-    eigen_build_dir.mkdir(exist_ok=True)
-    eigen_install_dir.mkdir(exist_ok=True)
-    eigen_install_path = str(eigen_install_dir.resolve())
-    hook.app.display_info(f"Configuring Eigen (install to {eigen_install_path})...")
-    subprocess.run(
-      [
-        "cmake",
-        "..",
-        f"-DCMAKE_INSTALL_PREFIX={eigen_install_path}",
-        "-DBUILD_TESTING=OFF",
-        "-DEIGEN_BUILD_DOC=OFF",
-        "-DEIGEN_BUILD_BLAS=OFF",
-        "-DEIGEN_BUILD_LAPACK=OFF",
-      ],
-      cwd=eigen_build_dir,
-      check=True,
-    )
-    hook.app.display_info("Installing Eigen...")
-    subprocess.run(["cmake", "--install", "."], cwd=eigen_build_dir, check=True)
-  else:
-    hook.app.display_info(f"Using existing Eigen install at {eigen_install_dir}")
+  _clone(hook, "https://gitlab.com/libeigen/eigen.git", EIGEN_TAG, eigen_dir)
+  eigen_build_dir = eigen_dir / "build"
+  eigen_build_dir.mkdir()
+  eigen_install_dir.mkdir()
+  eigen_install_path = str(eigen_install_dir.resolve())
+  hook.app.display_info(f"Configuring Eigen (install to {eigen_install_path})...")
+  subprocess.run(
+    [
+      "cmake",
+      "..",
+      f"-DCMAKE_INSTALL_PREFIX={eigen_install_path}",
+      "-DBUILD_TESTING=OFF",
+      "-DEIGEN_BUILD_DOC=OFF",
+      "-DEIGEN_BUILD_BLAS=OFF",
+      "-DEIGEN_BUILD_LAPACK=OFF",
+    ],
+    cwd=eigen_build_dir,
+    check=True,
+  )
+  hook.app.display_info("Installing Eigen...")
+  subprocess.run(["cmake", "--install", "."], cwd=eigen_build_dir, check=True)
 
   blasfeo_dir = third_party_dir / f"blasfeo-{BLASFEO_TAG}"
-  blasfeo_install_root = third_party_dir / f"blasfeo-{BLASFEO_TAG}-install"
-  if not blasfeo_dir.exists():
-    hook.app.display_info(f"Cloning Blasfeo {BLASFEO_TAG} to {blasfeo_dir}")
-    subprocess.run(["git", "clone", "--depth=1", "--branch", BLASFEO_TAG, "https://github.com/giaf/blasfeo.git", str(blasfeo_dir)], check=True)
-
+  _clone(hook, "https://github.com/giaf/blasfeo.git", BLASFEO_TAG, blasfeo_dir)
   blasfeo_target, blasfeo_suffix = _blasfeo_target(system, machine)
-  blasfeo_install_dir = blasfeo_install_root / blasfeo_suffix
-  blasfeo_include = blasfeo_install_dir / "include" / "blasfeo_target.h"
-  blasfeo_lib_marker = blasfeo_install_dir / "lib"
-  if not blasfeo_include.exists() or not blasfeo_lib_marker.exists():
-    blasfeo_build_dir = blasfeo_dir / f"build_{blasfeo_suffix}"
-    blasfeo_build_dir.mkdir(exist_ok=True)
-    blasfeo_install_dir.mkdir(parents=True, exist_ok=True)
-    hook.app.display_info(f"Configuring Blasfeo ({blasfeo_target})...")
-    subprocess.run(
-      [
-        "cmake",
-        "..",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
-        f"-DTARGET={blasfeo_target}",
-        "-DBLAS_API=OFF",
-        "-DBLASFEO_EXAMPLES=OFF",
-        f"-DCMAKE_INSTALL_PREFIX={blasfeo_install_dir}",
-      ],
-      cwd=blasfeo_build_dir,
-      check=True,
-    )
-    hook.app.display_info("Building Blasfeo...")
-    subprocess.run(["cmake", "--build", "."], cwd=blasfeo_build_dir, check=True)
-    hook.app.display_info("Installing Blasfeo...")
-    subprocess.run(["cmake", "--install", "."], cwd=blasfeo_build_dir, check=True)
-  else:
-    hook.app.display_info(f"Using existing Blasfeo install at {blasfeo_install_dir}")
+  blasfeo_install_dir = third_party_dir / f"blasfeo-{BLASFEO_TAG}-install" / blasfeo_suffix
+  blasfeo_build_dir = blasfeo_dir / f"build_{blasfeo_suffix}"
+  blasfeo_build_dir.mkdir()
+  blasfeo_install_dir.mkdir(parents=True)
+  hook.app.display_info(f"Configuring Blasfeo ({blasfeo_target})...")
+  subprocess.run(
+    [
+      "cmake",
+      "..",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+      f"-DTARGET={blasfeo_target}",
+      "-DBLAS_API=OFF",
+      "-DBLASFEO_EXAMPLES=OFF",
+      f"-DCMAKE_INSTALL_PREFIX={blasfeo_install_dir}",
+    ],
+    cwd=blasfeo_build_dir,
+    check=True,
+  )
+  hook.app.display_info("Building Blasfeo...")
+  subprocess.run(["cmake", "--build", "."], cwd=blasfeo_build_dir, check=True)
+  hook.app.display_info("Installing Blasfeo...")
+  subprocess.run(["cmake", "--install", "."], cwd=blasfeo_build_dir, check=True)
 
   piqp_dir = third_party_dir / f"piqp-{PIQP_TAG}"
-  if not piqp_dir.exists():
-    hook.app.display_info(f"Cloning PIQP {PIQP_TAG} to {piqp_dir}")
-    subprocess.run(
-      ["git", "clone", "--depth=1", "--branch", PIQP_TAG, "https://github.com/PREDICT-EPFL/piqp.git", str(piqp_dir)],
-      check=True,
-    )
-  else:
-    hook.app.display_info(f"Using existing PIQP source at {piqp_dir}")
+  _clone(hook, "https://github.com/PREDICT-EPFL/piqp.git", PIQP_TAG, piqp_dir)
 
   build_dir = piqp_dir / "build"
-  build_dir.mkdir(exist_ok=True)
+  build_dir.mkdir()
   hook.app.display_info("Configuring PIQP with CMake...")
   cmake_args = [
     "cmake",
@@ -269,7 +342,6 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
     hook.app.display_info(f"Copying {src} to {dst}")
     shutil.copy2(src, dst)
 
-  vendored = third_party_dir.parent / "licenses"
   piqp_version = _BUILD_CONFIG["piqp"]["version"]
   _write_third_party_notices(
     hook,
@@ -306,10 +378,8 @@ class BuildHook(BuildHookInterface):
       return
 
     root = Path(self.root)
-    third_party_dir = root / "third_party"
-    lib_dir = root / "src" / "scaly_piqp" / "lib"
-    include_dir = root / "src" / "scaly_piqp" / "include" / "piqp"
-    licenses_dir = root / "src" / "scaly_piqp" / "licenses"
+    package_dir = root / "src" / "scaly_piqp"
+    lib_dir = package_dir / "lib"
     mode = _solver_build_mode()
     strict = mode == "require" or (mode == "auto" and version != "editable")
     system = platform.system()
@@ -327,19 +397,27 @@ class BuildHook(BuildHookInterface):
       self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
       return
 
-    missing = _missing_piqp_tools(build_piqp=not _piqp_built(system, lib_dir, include_dir, licenses_dir))
+    key = _cache_key(root)
+    stamp = root / ".build_key"
+    if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
+      self.app.display_info(f"PIQP C interface already built at {lib_dir}")
+      return
+
+    def build(src: Path, out: Path) -> None:
+      _build_piqp(self, src, out / "lib", out / "include" / "piqp", out / "licenses", root / "licenses")
+
+    missing = _install_build(self, root, package_dir, _cache_root() / f"piqp-{key}", key, _missing_piqp_tools, build)
     if missing:
       msg = f"missing native toolchain for PIQP build: {', '.join(missing)}"
       if strict:
         raise RuntimeError(f"{msg}. Install CMake, git, and a C/C++ compiler.")
       self.app.display_info(f"Skipping PIQP build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
-    else:
-      _build_piqp(self, third_party_dir, lib_dir, include_dir, licenses_dir)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)
     package_dir = root / "src" / "scaly_piqp"
-    for path in (package_dir / "lib", package_dir / "include", package_dir / "licenses", root / "third_party"):
+    (root / ".build_key").unlink(missing_ok=True)
+    for path in (package_dir / "lib", package_dir / "include", package_dir / "licenses"):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)

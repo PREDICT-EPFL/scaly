@@ -32,5 +32,9 @@ exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/"]
 [tool.hatch.build.hooks.custom]
 path = "hatch_build.py"
 
+[tool.uv]
+# Rerun the build hook when what it builds changes; it restores the build from the shared cache when it can.
+cache-keys = [{ file = "pyproject.toml" }, { file = "hatch_build.py" }, { file = "src/scaly_ipopt/build_config.json" }, { file = "licenses/**" }]
+
 [tool.uv.sources]
 scaly = { workspace = true }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -9,6 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
@@ -109,8 +112,16 @@ GKLIB_COMMIT = _BUILD_CONFIG["metis"]["gklib_commit"]
 OPENBLAS_BRANCH = _BUILD_CONFIG["blas"]["linux"]["branch"]
 
 
-def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
-  subprocess.run(cmd, cwd=cwd, env=env, check=True)
+def _run(cmd: list[str], cwd: Path, env: dict | None = None, attempts: int = 1) -> None:
+  """Run `cmd`, retrying a failure `attempts - 1` times; downloads use 3 to ride out a busy host."""
+  for attempt in range(1, attempts + 1):
+    try:
+      subprocess.run(cmd, cwd=cwd, env=env, check=True)
+      return
+    except subprocess.CalledProcessError:
+      if attempt == attempts:
+        raise
+      time.sleep(10 * attempt)
 
 
 NOTICES = "THIRD_PARTY_NOTICES.md"
@@ -148,17 +159,8 @@ def _write_third_party_notices(
 
 
 def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path) -> Path:
-  marker = install_dir / "lib" / "libopenblas.a"
-  if marker.exists():
-    hook.app.display_info(f"Using existing OpenBLAS install at {install_dir}")
-    return install_dir
   src_dir = third_party_dir / "openblas"
-  if not src_dir.exists():
-    hook.app.display_info(f"Cloning OpenBLAS {OPENBLAS_BRANCH} to {src_dir}")
-    _run(
-      ["git", "clone", "--depth=1", "--branch", OPENBLAS_BRANCH, "https://github.com/OpenMathLib/OpenBLAS.git", str(src_dir)],
-      cwd=third_party_dir,
-    )
+  _clone(hook, "https://github.com/OpenMathLib/OpenBLAS.git", OPENBLAS_BRANCH, src_dir)
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
   build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
@@ -172,21 +174,17 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   return install_dir
 
 
-def _coinor_clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
-  if dest.exists():
-    return
+def _clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
   hook.app.display_info(f"Cloning {url}@{branch} to {dest}")
-  _run(["git", "clone", "--depth=1", "--branch", branch, url, str(dest)], cwd=dest.parent)
+  _run(["git", "clone", "--depth=1", "--branch", branch, url, str(dest)], cwd=dest.parent, attempts=3)
 
 
 def _clone_commit(hook: "BuildHook", url: str, commit: str, dest: Path) -> None:
   """Shallow-fetch one commit; `git clone --depth=1 --branch` only accepts branches and tags."""
-  if dest.exists():
-    return
   hook.app.display_info(f"Fetching {url}@{commit} to {dest}")
   dest.mkdir(parents=True)
   _run(["git", "init", "-q"], cwd=dest)
-  _run(["git", "fetch", "-q", "--depth=1", url, commit], cwd=dest)
+  _run(["git", "fetch", "-q", "--depth=1", url, commit], cwd=dest, attempts=3)
   _run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
 
 
@@ -210,16 +208,13 @@ def _build_metis(hook: "BuildHook", third_party_dir: Path, install_dir: Path) ->
   METIS 5 no longer bundles GKlib, so GKlib is built first and METIS is pointed at the same
   prefix. `make config` upstream only prepends the index and real widths to `metis.h` before
   calling CMake, so the hook does the same and MUMPS gets the 32-bit `idx_t` it requires."""
-  if (install_dir / "lib" / "libmetis.a").exists():
-    hook.app.display_info(f"Using existing METIS install at {install_dir}")
-    return install_dir
   gklib_src = third_party_dir / "GKlib"
   _clone_commit(hook, "https://github.com/KarypisLab/GKlib.git", GKLIB_COMMIT, gklib_src)
   hook.app.display_info("Building GKlib...")
   _cmake_build(hook, gklib_src, gklib_src / "build", install_dir, ["-DGKLIB_BUILD_APPS=OFF"])
 
   metis_src = third_party_dir / "METIS"
-  _coinor_clone(hook, "https://github.com/KarypisLab/METIS.git", METIS_TAG, metis_src)
+  _clone(hook, "https://github.com/KarypisLab/METIS.git", METIS_TAG, metis_src)
   # METIS' GCC flags hardcode -march=native, which would tie the wheel to the build host.
   gkbuild = metis_src / "conf" / "gkbuild.cmake"
   gkbuild.write_text(gkbuild.read_text().replace(" -march=native", ""))
@@ -241,15 +236,10 @@ def _build_mumps(
   lapack_lflags: str,
   fc: str,
 ) -> Path:
-  marker = install_dir / "lib"
-  if marker.exists() and any(marker.glob("libcoinmumps*")):
-    hook.app.display_info(f"Using existing MUMPS install at {install_dir}")
-    return install_dir
   src_dir = third_party_dir / "ThirdParty-Mumps"
-  _coinor_clone(hook, "https://github.com/coin-or-tools/ThirdParty-Mumps.git", MUMPS_BRANCH, src_dir)
-  if not (src_dir / "MUMPS").exists():
-    hook.app.display_info("Fetching MUMPS sources via get.Mumps...")
-    _run(["./get.Mumps"], cwd=src_dir)
+  _clone(hook, "https://github.com/coin-or-tools/ThirdParty-Mumps.git", MUMPS_BRANCH, src_dir)
+  hook.app.display_info("Fetching MUMPS sources via get.Mumps...")
+  _run(["./get.Mumps"], cwd=src_dir, attempts=3)
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   metis_cflags = f"-I{(metis_install / 'include').resolve()}"
@@ -283,7 +273,7 @@ def _build_ipopt(
   fc: str,
 ) -> Path:
   src_dir = third_party_dir / "Ipopt"
-  _coinor_clone(hook, "https://github.com/coin-or/Ipopt.git", IPOPT_BRANCH, src_dir)
+  _clone(hook, "https://github.com/coin-or/Ipopt.git", IPOPT_BRANCH, src_dir)
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   mumps_cflags = f"-I{(mumps_install / 'include' / 'coin-or' / 'mumps').resolve()}"
@@ -380,15 +370,6 @@ def _bundle_macos_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> No
   hook.app.display_info(f"Bundled macOS runtime: {sorted(bundled) or 'nothing to bundle'}")
 
 
-def _macos_self_contained(lib_dir: Path, lib_name: str) -> bool:
-  """Every non-OS dependency in the closure resolves to a sibling under `lib_dir`."""
-  for path in [lib_dir / lib_name, *(p for p in lib_dir.glob("*.dylib") if p.name != lib_name)]:
-    for dep in _macos_deps(path):
-      if not (lib_dir / Path(dep).name).exists():
-        return False
-  return True
-
-
 # libgcc_s and libstdc++ are part of every glibc distribution's base install, but the Fortran
 # runtime only arrives with gfortran, so it is the piece a machine without a toolchain lacks.
 _LINUX_VENDORED = ("libgfortran", "libquadmath")
@@ -424,8 +405,6 @@ def _bundle_linux_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> No
     if src is None:
       raise RuntimeError(f"cannot vendor {soname!r} needed by {lib_dir / lib_name}: ldd could not resolve it")
     dst = lib_dir / soname
-    if Path(src).resolve() == dst.resolve():
-      continue  # a stale copy from an earlier run already sits where `$ORIGIN` finds it
     hook.app.display_info(f"Bundling {src} -> {dst}")
     shutil.copy2(src, dst)
     dst.chmod(0o755)
@@ -437,32 +416,113 @@ def _linux_self_contained(lib_dir: Path, lib_name: str) -> bool:
   return all(resolved and Path(resolved).parent == lib_dir.resolve() for resolved in _linux_runtime_deps(lib_dir.resolve() / lib_name).values())
 
 
-def _ipopt_built(system: str, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> bool:
-  lib_name = _shared_lib_name(system, "ipopt")
-  has_lib = (lib_dir / lib_name).exists()
-  if system == "Linux":
-    has_lib = has_lib and any(lib_dir.glob("libipopt.so.*"))
-  # a library built before the runtime was vendored is still linked against the toolchain's
-  # copies, so it would not load off this machine: rebuild it
-  if has_lib and not (_macos_self_contained if system == "Darwin" else _linux_self_contained)(lib_dir, lib_name):
-    return False
-  return has_lib and (licenses_dir / NOTICES).exists() and (include_dir / "coin-or" / "IpStdCInterface.h").exists()
-
-
 def _linux_major_so_name(path: Path) -> str:
   parts = path.name.split(".")
   return ".".join(parts[:3]) if len(parts) >= 3 else path.name
 
 
-def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> None:
+# Everything else that decides the built files, beside this hook, the pins and the license texts.
+_KEY_ENV = ("CC", "CXX", "FC", "CFLAGS", "CXXFLAGS", "FFLAGS", "FCFLAGS", "CPPFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET")
+_OUTPUTS = ("lib", "include", "licenses")
+_CACHE_MAX_AGE = 30 * 24 * 3600
+
+
+def _cache_root() -> Path:
+  if path := os.environ.get("SCALY_SOLVER_CACHE"):
+    return Path(path)
+  return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "scaly" / "solvers"
+
+
+def _tool_identity(cmd: str) -> str:
+  path = shutil.which(cmd)
+  if path is None:
+    return f"{cmd}: none"
+  out = subprocess.run([path, "--version"], capture_output=True, text=True).stdout.strip()
+  return f"{path}: {out.splitlines()[0] if out else ''}"
+
+
+def _cache_key(root: Path) -> str:
+  """Hash every input of the build, so two checkouts share a build exactly when it would come out the same."""
+  digest = hashlib.sha256()
+  inputs = [Path(__file__), root / "src" / "scaly_ipopt" / "build_config.json", *(root / "licenses").rglob("*")]
+  for path in sorted(p for p in inputs if p.is_file()):
+    digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
+  fc = _find_fortran_compiler(required=False) or "gfortran"
+  tools = [_tool_identity(os.environ.get("CC", "cc")), _tool_identity(os.environ.get("CXX", "c++")), _tool_identity(fc)]
+  env = [f"{name}={os.environ.get(name, '')}" for name in _KEY_ENV]
+  for part in (platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0], *tools, *env):
+    digest.update(part.encode() + b"\0")
+  return digest.hexdigest()[:16]
+
+
+@contextmanager
+def _locked(path: Path, *, wait: bool = True):
+  """Hold an exclusive lock on `path`, yielding whether it was taken. Lock files are never deleted."""
+  import fcntl
+
+  path.parent.mkdir(parents=True, exist_ok=True)
+  with path.open("w") as f:
+    try:
+      fcntl.flock(f, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+      yield False
+      return
+    yield True
+
+
+def _prune_cache(cache: Path) -> None:
+  """Delete builds unused for 30 days. A checkout holds its own copy, so this only ever costs a rebuild."""
+  cutoff = time.time() - _CACHE_MAX_AGE
+  with _locked(cache / "locks" / "prune.lock", wait=False) as pruning:
+    for path in cache.iterdir() if pruning else ():
+      if path.name == "locks":
+        continue
+      with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
+        # a build may have replaced or published the path since it was listed
+        if held and path.exists() and path.stat().st_mtime <= cutoff:
+          shutil.rmtree(path)
+
+
+def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build) -> list[str]:
+  """Copy the cached build `entry` into `package_dir`, first running `build(src_dir, out_dir)` if no checkout made it yet.
+
+  Returns the native tools that are missing when a build is needed and cannot run. A build runs in a fresh scratch directory and is renamed into the cache only once complete, so a
+  cache entry is never partial. A failed build keeps its scratch directory for inspection until the
+  next attempt at the same key replaces it."""
+  cache = entry.parent
+  with _locked(cache / "locks" / f"{entry.name}.lock"):
+    if not entry.exists():
+      if missing := missing_tools():
+        return missing
+      scratch = cache / f"build-{entry.name}"
+      shutil.rmtree(scratch, ignore_errors=True)
+      (scratch / "src").mkdir(parents=True)
+      try:
+        build(scratch / "src", scratch / "out")
+      except BaseException:
+        hook.app.display_error(f"The build failed; its sources and build trees are kept in {scratch}")
+        raise
+      (scratch / "out").rename(entry)
+      shutil.rmtree(scratch)
+    os.utime(entry)
+    stamp = root / ".build_key"
+    stamp.unlink(missing_ok=True)
+    for name in _OUTPUTS:
+      shutil.rmtree(package_dir / name, ignore_errors=True)
+      shutil.copytree(entry / name, package_dir / name, symlinks=True)
+    stamp.write_text(key)
+  hook.app.display_info(f"Installed the build {entry} into {package_dir}")
+  _prune_cache(cache)
+  return []
+
+
+def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path, vendored: Path) -> None:
+  """Build into `lib_dir`, `include_dir` and `licenses_dir` from sources cloned into the empty `third_party_dir`.
+
+  `vendored` holds the license texts checked into the plugin."""
   system = platform.system()
   lib_name = _shared_lib_name(system, "ipopt")
-  if _ipopt_built(system, lib_dir, include_dir, licenses_dir):
-    hook.app.display_info(f"IPOPT already built at {lib_dir}")
-    return
-
   hook.app.display_info("Building IPOPT stack (METIS -> MUMPS -> IPOPT)...")
-  third_party_dir.mkdir(parents=True, exist_ok=True)
   if system not in {"Darwin", "Linux"}:
     raise RuntimeError(f"Unsupported platform: {system}")
   ldflags = "" if system == "Darwin" else LINUX_RPATH_LDFLAGS
@@ -534,7 +594,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
       ", ".join(runtime),
       "GPL-3.0-or-later WITH GCC-exception-3.1",
       "https://gcc.gnu.org",
-      [third_party_dir.parent / "licenses" / "gcc-runtime" / name for name in ("COPYING3", "COPYING.RUNTIME")],
+      [vendored / "gcc-runtime" / name for name in ("COPYING3", "COPYING.RUNTIME")],
     ),
   ]
   if system == "Linux":
@@ -561,10 +621,8 @@ class BuildHook(BuildHookInterface):
       return
 
     root = Path(self.root)
-    third_party_dir = root / "third_party"
-    lib_dir = root / "src" / "scaly_ipopt" / "lib"
-    include_dir = root / "src" / "scaly_ipopt" / "include"
-    licenses_dir = root / "src" / "scaly_ipopt" / "licenses"
+    package_dir = root / "src" / "scaly_ipopt"
+    lib_dir = package_dir / "lib"
     mode = _solver_build_mode()
     strict = mode == "require" or (mode == "auto" and version != "editable")
     system = platform.system()
@@ -582,23 +640,26 @@ class BuildHook(BuildHookInterface):
       self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
       return
 
-    missing = [] if _ipopt_built(system, lib_dir, include_dir, licenses_dir) else _missing_ipopt_tools()
+    key = _cache_key(root)
+    stamp = root / ".build_key"
+    if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
+      self.app.display_info(f"IPOPT already built at {lib_dir}")
+      return
+
+    def build(src: Path, out: Path) -> None:
+      _build_ipopt_stack(self, src, out / "lib", out / "include", out / "licenses", root / "licenses")
+
+    missing = _install_build(self, root, package_dir, _cache_root() / f"ipopt-{key}", key, _missing_ipopt_tools, build)
     if missing:
       msg = f"missing native toolchain for IPOPT build: {', '.join(missing)}"
       if strict:
         raise RuntimeError(f"{msg}. Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux).")
       self.app.display_info(f"Skipping IPOPT build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
-    else:
-      _build_ipopt_stack(self, third_party_dir, lib_dir, include_dir, licenses_dir)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)
-    for path in (
-      root / "src" / "scaly_ipopt" / "lib",
-      root / "src" / "scaly_ipopt" / "include",
-      root / "src" / "scaly_ipopt" / "licenses",
-      root / "third_party",
-    ):
+    (root / ".build_key").unlink(missing_ok=True)
+    for path in (root / "src" / "scaly_ipopt" / "lib", root / "src" / "scaly_ipopt" / "include", root / "src" / "scaly_ipopt" / "licenses"):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)

@@ -73,6 +73,10 @@ installing from source. It does not rebuild libraries in an installed wheel.
 | `skip`, `0`, or `false` | Skip native solver builds |
 | `required`, `1`, or `true` | Require the native build even for an editable install |
 
+`SCALY_SOLVER_CACHE` sets the directory where the build hooks keep finished
+builds, shared by every source checkout on the machine. It defaults to
+`$XDG_CACHE_HOME/scaly/solvers`, otherwise `~/.cache/scaly/solvers`.
+
 Skipping a build does not provide a Python solver alternative. Solver calls
 still need the native libraries. This setting is mainly relevant to source
 checkouts and custom packaging. [Installation](installation.md) covers normal

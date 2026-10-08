@@ -35,13 +35,20 @@ Then:
 SCALY_BUILD_SOLVERS=required uv sync
 ```
 
-A cold build takes 5 to 8 minutes, and later syncs reuse the cached artifacts. Without
-`SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
+A cold build takes 5 to 8 minutes. Each build lands in a cache shared by every checkout on the
+machine, `~/.cache/scaly/solvers` by default, under a hash of everything that decides its result:
+the plugin's `hatch_build.py`, its pins, its license texts, the platform and the compilers. A new
+worktree therefore copies the build its branch needs from the cache, and builds only when no
+checkout has built that version yet. Builds unused for 30 days are deleted. A failed build keeps its
+sources and build trees in the cache directory, at the path it prints.
+
+Without `SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
 libraries instead of failing. The solver tests then skip, and everything else works. See
 [Environment variables](../guide/env_vars.md).
 
-To force a clean rebuild, delete the plugin's `src/*/lib`, `src/*/include` and `third_party`
-directories.
+To force a clean rebuild, delete the plugin's entry in the cache (`piqp-*` or `ipopt-*`) and the
+checkout's `plugins/scaly-*/.build_key`, then run `uv sync --reinstall-package scaly-piqp` or
+`scaly-ipopt`.
 
 In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
 in `src/scaly_*/build_config.json`, which pins its version, and a row in the
