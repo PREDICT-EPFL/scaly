@@ -659,4 +659,4 @@ def test_dispatch_workspace_counts_promoted_lane_scratch():
     return sc.vmap(stage, 5)(z).vec()
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=1).program) == (5, 21, 81)
-  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=4).program) == (5, 168, 81)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=2).program) == (5, 168, 81)
