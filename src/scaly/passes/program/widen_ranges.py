@@ -57,6 +57,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
 
   procedures = {n.attrs["name"]: n for n in prog.args if n.op == ProgramOp.PROC}
   global_spellings = name_scope(prog)
+  widths: dict[tuple[int, ...], tuple[str, str]] = {}
 
   def widen_proc(proc: ProgramNode) -> ProgramNode:
     params, body = _proc_parts(proc)
@@ -64,6 +65,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
     ordinal = 0
     promoted: list[ProgramNode] = []
     declarations = {n.attrs["name"]: n for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
+    proc_aliases = {name: n.attrs["alias_of"] for name, n in declarations.items() if "alias_of" in n.attrs}
 
     def transform(stmt: ProgramNode) -> ProgramNode:
       nonlocal ordinal
@@ -74,26 +76,25 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       def recurse() -> ProgramNode:
         return ProgramNode(stmt.op, (rng, *(transform(child) for child in stmt.args[1:])), stmt.attrs, stmt.dtype)
 
+      count = trip_count(rng)
+      if count is None or count < 2 or rng.args[2].attrs.get("value") != 1 or (lanes != "auto" and count < 2 * lanes):
+        return recurse()
       if rng.attrs.get("mapped"):
         inner = _inline_calls(inner, procedures, spellings)
-      count = trip_count(rng)
-      refs = buffer_refs(stmt)
-      if count is None or count < 2 or rng.args[2].attrs.get("value") != 1:
-        return recurse()
-      statements = [n for n in walk_program(p.block(*inner)) if n.op in (ProgramOp.CALL, ProgramOp.FOR)]
-      if any(n.op != ProgramOp.FOR or any(a.op != ProgramOp.CONST_INT for a in n.args[0].args) for n in statements):
-        return recurse()
-      if any(n.dtype.is_floating and n.dtype.bits != 64 for n in walk_program(p.block(*inner))):
-        return recurse()
+      nodes = list(walk_program(p.block(*inner)))
       if any(
-        n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64) for n in walk_program(p.block(*inner))
+        n.op == ProgramOp.CALL
+        or (n.op == ProgramOp.FOR and any(a.op != ProgramOp.CONST_INT for a in n.args[0].args))
+        or (n.dtype.is_floating and n.dtype.bits != 64)
+        or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64))
+        for n in nodes
       ):
         return recurse()
-      assigned = [n for n in walk_program(p.block(*inner)) if n.op == ProgramOp.ASSIGN]
+      assigned = [n for n in nodes if n.op == ProgramOp.ASSIGN]
       declared = {n.attrs["target"] for n in assigned if n.attrs.get("declare")}
       if any(n.attrs["target"] not in declared for n in assigned):
         return recurse()
-      local_buffers = {n.attrs["name"]: n for n in walk_program(p.block(*inner)) if n.op == ProgramOp.BUFFER and "values" not in n.attrs}
+      local_buffers = {n.attrs["name"]: n for n in nodes if n.op == ProgramOp.BUFFER and "values" not in n.attrs}
       local_names = set(local_buffers)
       local_owners: dict[str, tuple[str, int]] = {}
       for name in local_names:
@@ -106,20 +107,19 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         if owner not in local_buffers or owner in seen:
           return recurse()
         local_owners[name] = owner, offset
-      aliases = {
-        n.attrs["name"]: n.attrs["alias_of"] for n in walk_program(p.block(*body, *inner)) if n.op == ProgramOp.BUFFER and "alias_of" in n.attrs
-      }
-      refs = buffer_refs(p.block(*inner), aliases)
+      aliases = proc_aliases | {n.attrs["name"]: n.attrs["alias_of"] for n in nodes if n.op == ProgramOp.BUFFER and "alias_of" in n.attrs}
+      reads = {_resolve_alias(n.args[0].attrs["buffer"], aliases) for n in nodes if n.op == ProgramOp.LOAD}
+      writes = {_resolve_alias(n.args[0].attrs["buffer"], aliases) for n in nodes if n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR)}
       index_writes = Counter(n.attrs["target"] for n in assigned if n.dtype.is_integer)
       if any(count != 1 for count in index_writes.values()) or any(n.dtype.is_integer and not n.attrs.get("declare") for n in assigned):
         return recurse()
       index_definitions = {n.attrs["target"]: n.args[0] for n in assigned if n.dtype.is_integer}
       varying_indices = set(index_writes)
       reduction = _ordered_reduction(inner, rng, aliases)
-      independent = _contiguous_outputs(inner, rng, index_definitions, varying_indices) and not any(
-        n.op == ProgramOp.VIEW and n.attrs["buffer"] in aliases for n in walk_program(p.block(*inner))
+      independent = _contiguous_outputs(nodes, rng, index_definitions, varying_indices) and not any(
+        n.op == ProgramOp.VIEW and n.attrs["buffer"] in aliases for n in nodes
       )
-      if ((refs.reads & refs.writes) - local_names and reduction is None and not independent) or refs.call_args:
+      if (reads & writes) - local_names and reduction is None and not independent:
         return recurse()
       if reduction is not None:
         inner = [reduction]
@@ -128,14 +128,24 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       inner = _interleave_stores(_split_pairs(inner), aliases)
       peak = _peak_live(inner)
       trip_cap = 1 << (count - 1).bit_length()
-      caps = tuple(max(w for w in (1, 2, 4, 8) if w <= trip_cap and (peak * w <= 4 * slots or w == 1)) for slots in (16, 32, 64, 256))
+      fits = [w for w in (1, 2, 4, 8) if w <= trip_cap and (lanes == "auto" or w <= lanes)]
+      caps = tuple(max(w for w in fits if peak * w <= 4 * slots or w == 1) for slots in (16, 32, 64, 256))
       cap = caps[-1]
       ordinal += 1
       helper = global_spellings.allocate(f"{c_ident(proc.attrs['name'])}_lanes_{ordinal}")
       prefix = helper
       while any(name.startswith(prefix + "_") for name in spellings.occupied | global_spellings.occupied):
         prefix += "_local"
-      width_macro = global_spellings.allocate(f"SCALY_WIDTH_{helper}", generated=True)
+      if lanes == "auto":
+        width_macro, vector = global_spellings.allocate(f"SCALY_WIDTH_{helper}", generated=True), f"{prefix}_vec"
+      else:
+        if caps not in widths:
+          key = "_".join(map(str, caps))
+          widths[caps] = (
+            global_spellings.allocate(f"SCALY_WIDTH_{key}", generated=True),
+            global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem",)),
+          )
+        width_macro, vector = widths[caps]
       width = p.var(width_macro)
       outer_name = spellings.allocate(f"{rng.attrs['name']}_chunk")
       lane_name = spellings.allocate(f"{rng.attrs['name']}_lane")
@@ -147,7 +157,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       lane_range = ProgramNode(
         lane_range.op,
         lane_range.args,
-        {**lane_range.attrs, "lanes": lanes, "lane_cap": cap, "lane_caps": caps, "lane_width": width_macro, "peak_live": peak},
+        {**lane_range.attrs, "lanes": lanes, "lane_cap": cap, "lane_caps": caps, "lane_width": width_macro, "lane_vector": vector, "peak_live": peak},
         lane_range.dtype,
       )
 
@@ -301,8 +311,7 @@ def _axis_stride(index: ProgramNode, axis: str, varying: set[str]) -> int | None
   return None
 
 
-def _contiguous_outputs(body: list[ProgramNode], rng: ProgramNode, definitions: dict[str, ProgramNode], varying: set[str]) -> bool:
-  nodes = list(walk_program(p.block(*body)))
+def _contiguous_outputs(nodes: list[ProgramNode], rng: ProgramNode, definitions: dict[str, ProgramNode], varying: set[str]) -> bool:
   if any(n.op == ProgramOp.STORE_PAIR for n in nodes):
     return False
   stores = [n.args[0] for n in nodes if n.op == ProgramOp.STORE]

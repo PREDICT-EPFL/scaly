@@ -227,7 +227,7 @@ def name_scope(prog: ProgramNode) -> NameScope:
   names = {
     c_ident(n.attrs[key])
     for n in walk_program(prog)
-    for key in ("name", "target", "callee", "vector_helper", "vector_prefix", "lane_width")
+    for key in ("name", "target", "callee", "vector_helper", "vector_prefix", "lane_width", "lane_vector")
     if key in n.attrs
   }
   names.update(f"{c_ident(n.attrs['name'])}_raw" for n in walk_program(prog) if n.op == ProgramOp.PROC)
