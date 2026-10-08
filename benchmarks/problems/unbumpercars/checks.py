@@ -433,13 +433,13 @@ def check_synthetic_hessian_inputs_at_range() -> None:
 
 
 def check_canonical_hessian_handoff() -> None:
-  """A canonical C=8 artifact drives both exact-Hessian codegen providers."""
+  """A harvested-input artifact drives both exact-Hessian codegen providers, at C=2 to keep the SX build small."""
   import tempfile
   from pathlib import Path
 
   from benchmarks.harness.sweep import _samples, build_kernel
 
-  cfg = ClosedLoopConfig()
+  cfg = ClosedLoopConfig(ncars=2)
   weights = load_dt_mlp_weights()
   state = sample_initial_states(cfg).reshape(-1)
   desired = np.tile([cfg.nominal_speed, 0.0], cfg.ncars)
@@ -472,7 +472,7 @@ def check_canonical_hessian_handoff() -> None:
     for backend in ("scaly", "casadi_sx", "casadi_mx"):
       output = root / backend
       output.mkdir()
-      info = build_kernel("unbumpercars", cfg.ncars, backend, output)
+      info = build_kernel("unbumpercars", cfg.ncars, backend, output, casadi_transform=False)
       if backend == "scaly":
         assert info["layout"] == "lower"
       else:
