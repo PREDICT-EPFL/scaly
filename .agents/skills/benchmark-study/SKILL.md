@@ -26,7 +26,7 @@ to paste and stop there.
 ## Prepare
 
 1. Measure only a pushed revision, in a worktree no other thread is using, with no uncommitted
-   changes. Copy the solver artifacts and sync: `wt step copy-ignored && uv sync`.
+   changes. Sync with `uv sync`, which restores the solver builds from the shared cache.
 2. Headline numbers come only from la015. Check the `performance` governor and the boost state the
    plan names. `--headline` verifies them but does not set them.
 3. Check that nothing else is measuring or compiling: `tmux ls`, `pgrep -af benchmarks/run.py` and
