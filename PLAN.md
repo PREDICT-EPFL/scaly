@@ -14,12 +14,14 @@ codebase, conventions, contributing and issue tracking. The dispatched brief lim
 - [x] Maintainer chose to retain and pin existing AD formulas and arithmetic identities.
   Generic pass code may not add individual elementwise references. #20 owns shared partials.
 - [x] Show coverage fails on a missing classification and an individual elementwise dispatch.
-- [ ] Update collection baseline, run pre-merge checks and confirm C snapshots unchanged.
-- [ ] Check #138 state, rebase and rerun if merged. Push draft PR and run cross-review.
+- [x] Updated collection baseline; all seven pre-merge checks passed. C snapshots unchanged.
+- [x] #138 remained open and main unchanged at review launch. Draft PR #141 pushed and linked.
+- [ ] Opus 5.5 found one blocker: operand CONST guards could mask a missing dispatch.
+  Fixed the extractor to read only expr.op comparisons; delta check pending.
 - [ ] Address findings, delta check, final evidence, remove plan, ready PR and watch.
 
 Implementation and tests are sequential. Independent checks can run together. Support-rule coverage
 joins the invariant in #40, and graph-digest coverage in #64. No change to their current scope.
 
 Validation: 1370 tests passed, 3 skipped; Ruff format/check and strict ty passed.
-C snapshots are unchanged. The pre-merge benchmark smoke and documentation build are running.
+C snapshots are unchanged. Benchmark smoke, documentation build and the private-name check also passed.

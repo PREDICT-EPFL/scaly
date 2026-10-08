@@ -34,6 +34,7 @@ EXISTING_ELEMENTWISE_REFERENCES = {
 }
 
 
+# These source checks assume enum-based dispatch, not string comparisons or dynamic op lookup.
 def _dispatch_ops(*functions) -> set[ExprOp]:
   ops = set()
   families = {"COMMON_ELEMENTWISE_UNARY": COMMON_ELEMENTWISE_UNARY, "COMMON_ELEMENTWISE_BINARY": COMMON_ELEMENTWISE_BINARY}
@@ -42,10 +43,14 @@ def _dispatch_ops(*functions) -> set[ExprOp]:
       if not isinstance(node, ast.If):
         continue
       for condition in ast.walk(node.test):
-        if isinstance(condition, ast.Attribute) and isinstance(condition.value, ast.Name) and condition.value.id == "ExprOp":
-          ops.add(ExprOp[condition.attr])
-        elif isinstance(condition, ast.Name) and condition.id in families:
-          ops.update(families[condition.id])
+        if not isinstance(condition, ast.Compare) or ast.unparse(condition.left) != "expr.op":
+          continue
+        for comparator in condition.comparators:
+          for member in ast.walk(comparator):
+            if isinstance(member, ast.Attribute) and isinstance(member.value, ast.Name) and member.value.id == "ExprOp":
+              ops.add(ExprOp[member.attr])
+            elif isinstance(member, ast.Name) and member.id in families:
+              ops.update(families[member.id])
   return ops
 
 
