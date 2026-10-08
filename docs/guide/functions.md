@@ -264,6 +264,20 @@ elements, but it has no `axis` argument. The
 NumPy arrays are numerical data, so use Scaly operations to construct symbolic
 calculations rather than assuming a NumPy function accepts `Expr`.
 
+`sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
+`indices`. `sc.scatter(values, indices, shape)` places values into a zero array.
+Repeated indices sum in input order. `sc.segment_sum(values, ids, n)` uses the
+same operation to sum values into `n` segments, with zero for empty segments.
+Indices and segment ids are fixed when the function is built.
+
+```python
+@sc.function(sc.arg("values", 4), outputs=sc.arg("totals"))
+def totals(values: sc.Expr) -> sc.Expr:
+    return sc.segment_sum(values, [0, 2, 0, 2], 4)
+
+print(totals(np.array([1.0, 2.0, 3.0, 4.0])))  # [4. 0. 6. 0.]
+```
+
 ## Numerical evaluation and symbolic composition
 
 Numerical inputs evaluate the function. The first call generates and compiles C.

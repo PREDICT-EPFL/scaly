@@ -692,12 +692,18 @@ def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
   idx = _index_array(indices, int(np.prod(shape, dtype=int)))
   if idx.size != values.size:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
-  flat = idx.reshape(-1)
-  if len(set(flat.tolist())) != flat.size:
-    raise ValueError("scatter indices must be unique")
   return Expr(
     ExprOp.SCATTER, (values,), TensorType(shape, dtype=values.type.dtype, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering
   )
+
+
+def segment_sum(values: Any, ids: Any, n: int) -> Expr:
+  """Sum flat ``values`` by segment id into a vector of length ``n``.
+
+  Segment ids are fixed integers in ``[0, n)``. Empty segments are zero, and
+  repeated ids accumulate in input order.
+  """
+  return scatter(values, ids, n)
 
 
 def split(x: Any, sections: int | Iterable[int], *, axis: int = 0) -> tuple[Expr, ...]:

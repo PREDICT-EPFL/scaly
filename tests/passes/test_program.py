@@ -614,6 +614,57 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
   np.testing.assert_allclose(f(data), expected.reshape(2, 4))
 
 
+@pytest.mark.parametrize("shared", [False, True])
+def test_scatter_sum_combines_accumulate_loops(shared: bool) -> None:
+  output_tree = sc.group(sc.arg("sum"), sc.arg("a")) if shared else sc.arg("sum")
+
+  @sc.function(sc.arg("x", 5), outputs=output_tree)
+  def f(x):
+    a = sc.scatter(x, [1, 3, 1, 1, 0], 8)
+    b = sc.scatter(2 * x, [2, 4, 2, 4, 6], 8)
+    c = sc.scatter(-x, [0, 3, 7, 5, 2], 8)
+    return (a + b + c, a) if shared else a + b + c
+
+  stages = {}
+  lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
+  before = main_proc(stages["lowered"])
+  after = main_proc(stages["pass:combine_scatter_sums"])
+  if not shared:
+    before_buffers, _, _ = _classify(list(before.args[int(before.attrs["param_count"]) :]))
+    after_buffers, _, _ = _classify(list(after.args[int(after.attrs["param_count"]) :]))
+    assert len(after_buffers) < len(before_buffers)
+    loops = [s for s in after.args[int(after.attrs["param_count"]) :] if s.op == ProgramOp.FOR]
+    assert sum(loop.args[1].args[1].op == ProgramOp.CONST_FLOAT for loop in loops) == 1
+
+  data = np.array([-1.5, 2.0, 0.25, 0.5, 3.0])
+  terms = []
+  for ids, values in (([1, 3, 1, 1, 0], data), ([2, 4, 2, 4, 6], 2 * data), ([0, 3, 7, 5, 2], -data)):
+    term = np.zeros(8)
+    np.add.at(term, ids, values)
+    terms.append(term)
+  result = f(data)
+  np.testing.assert_array_equal(result[0] if shared else result, terms[0] + terms[1] + terms[2])
+  if shared:
+    np.testing.assert_array_equal(result[1], terms[0])
+
+
+def test_scatter_lowering_marks_repeats_as_reductions() -> None:
+  from scaly.ir.program import RangeKind
+
+  for ids, kind in (([3, 1, 7, 0], RangeKind.GLOBAL), ([3, 1, 3, 0], RangeKind.REDUCE)):
+
+    @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
+    def f(x):
+      return sc.scatter(x, ids, 8)
+
+    stages = {}
+    lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
+    proc = main_proc(stages["lowered"])
+    loops = [s for s in proc.args[int(proc.attrs["param_count"]) :] if s.op == ProgramOp.FOR]
+    assert loops[-1].args[0].attrs["kind"] == kind
+    assert loops[-1].args[1].args[1].op == (ProgramOp.ADD if kind == RangeKind.REDUCE else ProgramOp.LOAD)
+
+
 # --- loop-invariant hoisting ---------------------------------------------------------
 
 
@@ -812,3 +863,11 @@ def test_hoist_keeps_unknown_call_outputs_inside_the_map() -> None:
   root = proc_("opaque_root", [a, z, out], [for_(range_("i", 0, 3), [call])])
   prog = program([stage, root])
   assert hoist_invariant(prog) is prog
+
+
+def test_scatter_sum_preserves_repeated_leaf_grouping() -> None:
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("sum"))
+  def f(x):
+    return sc.scatter(x[:1], [1], 4) + sc.scatter(x[1:], [1, 1], 4)
+
+  np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 0, 0, 0])

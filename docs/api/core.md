@@ -99,6 +99,10 @@ expression graph for inspection and export.
     options:
       show_source: false
 
+::: scaly.ir.expr.segment_sum
+    options:
+      show_source: false
+
 ::: scaly.ir.expr.atan2
 
 ::: scaly.ir.expr.minimum
