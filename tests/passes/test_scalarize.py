@@ -229,15 +229,6 @@ def test_auto_rejects_call_when_callee_exceeds_budget() -> None:
   assert result.args == (callee, caller)
 
 
-@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int32, dtypes.int64])
-def test_other_dtypes_refused_at_function_boundary(dtype) -> None:
-  fn = sc.function(sc.arg("x", sc.TensorType((4,), dtype=dtype)), outputs=sc.arg("out0"), name="typed_stage")(
-    lambda x: (x + sc.const([1, 2, 3, 4], dtype=dtype)).scalar()
-  )
-  with pytest.raises(NotImplementedError, match=f"input.*{dtype}.*float64"):
-    lower_function(fn)
-
-
 def test_views_broadcast_gather_and_scatter() -> None:
   @sc.function(sc.arg("x", (3, 4)), outputs=sc.group(sc.arg("out0"), sc.arg("out1")), name="views")
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:

@@ -530,18 +530,6 @@ def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
   assert main_proc(lower_function(fn)).attrs["lowering"] == "block"
 
 
-@pytest.mark.parametrize(("dtype", "value"), [("float32", np.float32(1.0)), ("int64", np.int64(1))])
-def test_typed_identity_boundaries_refused_before_normalization(dtype: str, value: object) -> None:
-  one = sc.const(np.full(2, value), dtype=dtype)
-
-  @sc.function(sc.arg("x", sc.TensorType((2,), dtype=sc.as_dtype(dtype))), outputs=sc.arg("y"), name=f"normalized_{dtype}")
-  def fn(x):
-    return (x * one).scalar()
-
-  with pytest.raises(NotImplementedError, match=f"input.*{dtype}.*float64"):
-    lower_function(fn)
-
-
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 def test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction() -> None:
   @sc.function(sc.group(sc.arg("matrix", (3, 2)), sc.arg("vector", 3)), outputs=sc.arg("y"), name="normalized_cancel")

@@ -422,7 +422,9 @@ The generated code includes the solver call and surrounding calculations.
     This applies to forward and reverse differentiation and Jacobian sparsity
     analysis, including solver calls inside ordinary or mapped functions.
     A solver call independent of the differentiated input does not block its
-    derivative.
+    derivative. Dependency checks count every solver argument, including `x0`
+    and `warm`. They are conservative, so slicing away the solver result can
+    still leave a dependency that raises.
 
 ## Statistics
 

@@ -41,7 +41,6 @@ from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 if TYPE_CHECKING:
   from ..function.concrete import ConcreteFunction
 from ..function.model import Function, as_concrete
-from ..passes.lowering.ctx import _check_float64_leaves
 
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
@@ -248,10 +247,6 @@ class CompiledFunction:
 
   def __init__(self, fun: Function | ConcreteFunction):
     fun = as_concrete(fun)
-    try:
-      _check_float64_leaves(fun)
-    except NotImplementedError as exc:
-      raise JitUnavailable(str(exc)) from exc
     self._fun = fun
     self._artifact = _build_artifact(fun)
     self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.solver_library)

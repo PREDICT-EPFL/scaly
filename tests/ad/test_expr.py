@@ -141,6 +141,7 @@ def test_inactive_solver_derivatives_remain_zero() -> None:
   np.testing.assert_array_equal(jvp(result, unrelated, sc.const(np.ones(2))).value, np.zeros(2))
   np.testing.assert_array_equal(jvp(result, x, sc.const(np.zeros(2))).value, np.zeros(2))
   np.testing.assert_array_equal(vjp((result,), (unrelated,), (sc.const(np.ones(2)),))[0].value, np.zeros(2))
+  np.testing.assert_array_equal(vjp((result,), (x,), (sc.const(np.zeros(2)),))[0].value, np.zeros(2))
   assert jacobian_sparsity(result, unrelated).nnz == 0
 
 

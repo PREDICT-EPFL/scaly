@@ -47,9 +47,11 @@ x + sc.sym("n", 3, dtype=sc.dtypes.int64)
 # TypeError: mixed-dtype operation not supported: float64 vs int64; give all operands the same dtype
 ```
 
-Data types matter inside the graph and the generated procedures. The exported
-C entry still reads and writes every input and output as `double` values, as
-described in [the pointer ABI](generated_interface.md#the-pointer-abi).
+Data types matter inside the graph and the generated procedures. Lowering and
+numerical evaluation require every `Function` input and output leaf to be
+`float64`. Boolean and integer values inside a function are allowed. The exported
+C entry reads and writes `double` buffers, as described in
+[the pointer ABI](generated_interface.md#the-pointer-abi).
 
 The `diff` flag says whether a value can carry a derivative. Inputs have it
 unless created with `diff=False`. Constants and non-differentiable operations

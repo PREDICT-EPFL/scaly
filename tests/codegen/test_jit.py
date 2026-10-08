@@ -309,13 +309,13 @@ def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
 
 @pytest.mark.parametrize("dtype", ["bool", "int32", "int64", "float32"])
 @pytest.mark.parametrize("side", ["input", "output"])
-def test_jit_refuses_non_float64_leaves_before_build(dtype, side, monkeypatch) -> None:
+def test_jit_refuses_non_float64_leaves_before_cache(dtype, side, monkeypatch) -> None:
   from scaly.function.concrete import ConcreteFunction
 
   x = sc.Expr.sym("x", (), dtype=dtype if side == "input" else "float64")
   y = sc.Expr.const(1, dtype=dtype) if side == "output" else sc.Expr.const(1.0)
   fn = ConcreteFunction._from_exprs("jit_typed_boundary", [x], [y], ["x"], ["y"])
-  monkeypatch.setattr(jit, "_build_artifact", lambda fn: pytest.fail("invalid leaves reached artifact construction"))
+  monkeypatch.setattr(jit, "_compute_cache_key", lambda *args, **kwargs: pytest.fail("invalid leaves reached the artifact cache"))
   with pytest.raises(jit.JitUnavailable, match=rf"{side}.*{dtype}.*float64"):
     jit.CompiledFunction(fn)
 
