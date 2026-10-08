@@ -142,6 +142,18 @@ Every array passed to a bare function must be an `Expr` or a NumPy array,
 because without a declaration nothing distinguishes a list from a group. Its
 inputs are named `in0`, `in1`, and so on.
 
+A body without parameters has nothing to read from a call, so `@sc.function()`
+on it counts as fully declared. The decorator runs the body at once, and the
+single instance and its C symbol take the function name:
+
+```python
+@sc.function()
+def offset() -> sc.Expr:
+    return sc.const([1.0, -1.0])
+
+print(offset.instantiate().name)  # offset
+```
+
 ### Which declaration to use
 
 Declare every input shape for anything you export, differentiate by name, or

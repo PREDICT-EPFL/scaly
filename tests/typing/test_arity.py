@@ -295,6 +295,19 @@ if TYPE_CHECKING:
   assert_type(bare.symbolic_call(sc.sym("x", 3), sc.sym("p", ())), sc.Expr)
   bare.symbolic_call(np.zeros(3), sc.sym("p", ()))  # ty: ignore[invalid-argument-type]
 
+  @sc.function()
+  def zero() -> sc.Expr:
+    return sc.const(2.0)
+
+  assert_type(zero, sc.Function[tuple[()], tuple[()], sc.Expr, np.ndarray])
+  assert_type(zero(), np.ndarray)
+
+  @sc.function()
+  def zero_pair() -> tuple[sc.Expr, sc.Expr]:
+    return sc.const(1.0), sc.const(2.0)
+
+  assert_type(zero_pair, sc.Function[tuple[()], tuple[()], tuple[sc.Expr, sc.Expr], Any])
+
   @sc.function(sc.arg("x", 3))
   def inferred(x: sc.Expr) -> tuple[sc.Expr, tuple[sc.Expr, sc.Expr]]:
     return x, (x, x.sum())
