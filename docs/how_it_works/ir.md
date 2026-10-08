@@ -153,8 +153,9 @@ these two nodes become.
 Builders reject most invalid nodes as you write them. `x.reshape(4)` on a
 three-element `x` raises a `ValueError` before any node exists. `sc.verify_expr`
 checks a whole graph against the rule table in `ir/expr_spec.py`, which matters
-after a pass has rebuilt it. To see a failure, build a bad node directly with
-the `Expr` constructor, which skips the builder's checks:
+after a pass has rebuilt it. Function construction and lowering run this check
+automatically. To see a failure, build a bad node directly with the `Expr`
+constructor, which skips the builder's checks:
 
 ```python
 x = sc.sym("x", 3)
