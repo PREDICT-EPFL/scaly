@@ -26,13 +26,16 @@ schedule decisions is ``ir/text.py``.
 
 from __future__ import annotations
 
+import struct
 import weakref
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from .types import DType, DeviceSpec, dtypes
+import numpy as np
+
+from .types import DType, DeviceSpec, dtypes, frozen
 
 
 class ProgramOp(StrEnum):
@@ -171,19 +174,29 @@ BINARY_FN_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.POW, ProgramOp.ATAN2,
 _PROGRAM_NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "ProgramNode"] = weakref.WeakValueDictionary()
 
 
-def _attrs_key(attrs: dict[str, Any]) -> tuple[Any, ...]:
-  out: list[tuple[str, Any]] = []
-  for k, v in sorted(attrs.items()):
-    if isinstance(v, dict):
-      out.append((k, tuple(sorted(v.items()))))
-    elif isinstance(v, list):
-      out.append((k, tuple(v)))
-    else:
-      out.append((k, v))
-  return tuple(out)
+def _attr_key(v: Any) -> Any:
+  # ``==`` merges what C tells apart: ``-0.0`` with ``0.0``, and ``1`` with ``True`` and ``1.0``. A
+  # float keys by its bits, which also lets a NaN match itself, and a flag by its kind.
+  if isinstance(v, (bool, np.bool_)):
+    return (bool, bool(v))
+  if isinstance(v, (float, np.floating)):
+    return (float, struct.pack("<d", v))
+  if isinstance(v, Mapping):
+    return tuple((k, _attr_key(x)) for k, x in sorted(v.items()))
+  if isinstance(v, (tuple, list)):
+    if v and all(isinstance(x, float) for x in v):  # a constant table packs at once, much faster than value by value
+      return (tuple, struct.pack(f"<{len(v)}d", *v))
+    return tuple(map(_attr_key, v))
+  return v
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
+def _attrs_key(attrs: Mapping[str, Any]) -> tuple[Any, ...]:
+  return tuple((k, _attr_key(v)) for k, v in sorted(attrs.items()))
+
+
+# ``init=False``: ``__new__`` is the whole constructor. A generated ``__init__`` would run again on
+# the node an interning hit returns, which programs already hold.
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
 class ProgramNode:
   """A flat Program IR node.
 
@@ -195,18 +208,17 @@ class ProgramNode:
 
   op: ProgramOp
   args: tuple["ProgramNode", ...] = ()
-  attrs: dict[str, Any] = field(default_factory=dict)
+  attrs: Mapping[str, Any] = field(default_factory=dict)
   dtype: DType = dtypes.float64
-  _initialized: bool = field(default=False, init=False, repr=False, compare=False)
 
   def __new__(
     cls,
     op: ProgramOp,
     args: tuple["ProgramNode", ...] = (),
-    attrs: dict[str, Any] | None = None,
+    attrs: Mapping[str, Any] | None = None,
     dtype: DType = dtypes.float64,
   ) -> "ProgramNode":
-    attrs = dict(attrs) if attrs else {}
+    attrs = attrs or {}
     key = (op.value, tuple(weakref.ref(a) for a in args), _attrs_key(attrs), dtype.name)
     cached = _PROGRAM_NODE_CACHE.get(key)
     if cached is not None:
@@ -214,17 +226,10 @@ class ProgramNode:
     instance = object.__new__(cls)
     object.__setattr__(instance, "op", op)
     object.__setattr__(instance, "args", tuple(args))
-    object.__setattr__(instance, "attrs", attrs)
+    object.__setattr__(instance, "attrs", frozen(attrs))
     object.__setattr__(instance, "dtype", dtype)
     _PROGRAM_NODE_CACHE[key] = instance
     return instance
-
-  def __post_init__(self) -> None:
-    if self._initialized:
-      return
-    if not isinstance(self.op, ProgramOp):
-      object.__setattr__(self, "op", ProgramOp(self.op))
-    object.__setattr__(self, "_initialized", True)
 
   @property
   def id(self) -> int:

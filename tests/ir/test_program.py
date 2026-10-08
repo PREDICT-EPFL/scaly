@@ -11,6 +11,9 @@ vocabulary:
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import pytest
 
 from scaly.ir import program as p
@@ -18,7 +21,7 @@ from scaly.ir.program import ProgramNode, ProgramOp, RangeKind
 from scaly.ir.text import format_program
 from scaly.ir.program_spec import verify_program
 from scaly.ir.spec import VerifyError
-from scaly.ir.types import dtypes
+from scaly.ir.types import dtypes, frozen
 
 
 def _elementwise_neg_proc() -> ProgramNode:
@@ -191,3 +194,64 @@ def test_view_rejects_non_scalar_index() -> None:
     p.view(buf, [buf])
   with pytest.raises(VerifyError, match="index op=.*not scalar"):
     verify_program(ProgramNode(ProgramOp.VIEW, (buf,), {"buffer": "matrix"}, dtypes.float64))
+
+
+def test_signed_zeros_are_two_constants() -> None:
+  plus, minus = p.const_float(0.0), p.const_float(-0.0)
+  assert plus is not minus
+  assert math.copysign(1.0, plus.attrs["value"]) == 1.0 and math.copysign(1.0, minus.attrs["value"]) == -1.0
+  assert p.const_float(float("nan")) is p.const_float(float("nan"))
+
+
+def test_interning_hit_returns_the_node_as_it_was_built() -> None:
+  """The key matches values that are equal and not identical, so a hit must not assign them:
+  programs already hold the node."""
+  x = p.var("intern_x", dtypes.float64)
+  node = ProgramNode(ProgramOp.NEG, (x,), {"width": 3}, dtypes.float64)
+  attrs = node.attrs
+
+  again = ProgramNode(ProgramOp.NEG, (x,), {"width": np.int64(3)}, dtypes.float64)
+
+  assert again is node and node.attrs is attrs and type(attrs["width"]) is int
+
+
+def test_node_holds_a_frozen_copy_of_its_attributes() -> None:
+  given = {"name": "intern_v"}
+  node = ProgramNode(ProgramOp.VAR, (), given, dtypes.int64)
+  given["name"] = "intern_w"
+
+  assert node.attrs == {"name": "intern_v"}
+  assert ProgramNode(ProgramOp.VAR, (), {"name": "intern_v"}, dtypes.int64) is node
+  with pytest.raises(TypeError):
+    node.attrs["name"] = "intern_w"  # ty: ignore[invalid-assignment]
+
+
+def test_a_constant_table_is_copied_all_the_way_down() -> None:
+  values = [1.0, 2.0]
+  node = ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": values, "nested": {"rows": [0, 1]}}, dtypes.float64)
+  values[0] = 9.0
+
+  assert node.attrs["values"] == (1.0, 2.0) and node.attrs["nested"]["rows"] == (0, 1)
+  assert ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": [1.0, 2.0], "nested": {"rows": [0, 1]}}, dtypes.float64) is node
+  assert p.const_buffer("intern_t", dtypes.float64, (2,), [1.0, 2.0]) is p.const_buffer(
+    "intern_t", dtypes.float64, (2,), [np.float64(1), np.float64(2)]
+  )
+  with pytest.raises(TypeError):
+    node.attrs["nested"]["rows"] = ()
+
+
+@pytest.mark.parametrize(("first", "second"), [(1, True), (True, 1), (0, False), (1, 1.0), ((1, 0), (True, False)), ((0.0, 1.0), (-0.0, 1.0))])
+def test_interning_tells_attributes_apart_by_kind_and_bits(first, second) -> None:
+  assert first == second
+  a = ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64)
+  b = ProgramNode(ProgramOp.CONST_INT, (), {"value": second}, dtypes.int64)
+
+  assert a is not b
+  assert repr(a.attrs["value"]) == repr(frozen(first)) and repr(b.attrs["value"]) == repr(frozen(second))
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64) is a
+
+
+def test_interning_shares_numpy_scalars_with_their_python_kind() -> None:
+  flag = ProgramNode(ProgramOp.CONST_INT, (), {"value": True}, dtypes.bool_)
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": np.True_}, dtypes.bool_) is flag
+  assert p.const_float(np.float64(1.5)) is p.const_float(1.5)
