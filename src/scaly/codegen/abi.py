@@ -30,13 +30,16 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   entry the wrapper calls, its workspace or its option context."""
   symbol = c_ident(fun.name)
   shared = set(fun.input_names) & set(fun.output_names)
-  names = NameScope((symbol, f"{symbol}_with_options", "workspace", "workspace_t", "solver_options", "call", "sz_arg", "sz_res", "sz_iw", "sz_w"))
+  names = NameScope(
+    (symbol, f"{symbol}_with_options", "arg", "res", "workspace", "workspace_t", "solver_options", "call", "sz_arg", "sz_res", "sz_iw", "sz_w"),
+    header=True,
+  )
 
   def ident(name: str, suffix: str) -> str:
     out = c_ident(name + suffix if name in shared else name)
-    if names.contains(out) or names.reserved(out):
+    if names.contains(out):
       out += "_"
-    return names.allocate(out)
+    return names.allocate(out, suffixes=("_t",))
 
   return [ident(n, "_in") for n in fun.input_names], [ident(n, "_out") for n in fun.output_names]
 

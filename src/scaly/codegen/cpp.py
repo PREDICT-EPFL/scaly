@@ -129,7 +129,7 @@ def render_cpp_header(
       f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? workspace.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
       "}",
     ]
-  names = NameScope((symbol, "workspace_t", "call", "sz_arg", "sz_res", "sz_iw", "sz_w", *(f"{n}_t" for n in (*inputs, *outputs))))
+  names = NameScope((symbol, "workspace_t", "call", "sz_arg", "sz_res", "sz_iw", "sz_w", *(f"{n}_t" for n in (*inputs, *outputs))), header=True)
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is not None:
       lines += ["", *_sparse_namespace(name, sp, names)]

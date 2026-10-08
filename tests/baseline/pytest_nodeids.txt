@@ -381,6 +381,8 @@ tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[
 tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[log]
 tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[logf]
 tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[new]
+tests/codegen/test_name_clash.py::test_header_parameters_do_not_shadow_buffer_aliases
+tests/codegen/test_name_clash.py::test_header_scope_preserves_library_and_table_names
 tests/codegen/test_name_clash.py::test_input_names_do_not_shadow_generated_names[default]
 tests/codegen/test_name_clash.py::test_input_names_do_not_shadow_generated_names[i_y]
 tests/codegen/test_name_clash.py::test_input_names_do_not_shadow_generated_names[k0]

@@ -387,4 +387,3 @@ def test_distinct_solver_functions_with_same_exported_name_are_user_errors(isola
   with pytest.raises(ValueError, match="duplicate solver symbol 'same_solver'") as error:
     host()
   assert "codegen does not support" not in str(error.value)
-

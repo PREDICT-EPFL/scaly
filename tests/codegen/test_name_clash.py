@@ -143,3 +143,37 @@ def test_solver_oracles_with_same_name_keep_their_identity() -> None:
   module = render_c_module(host, lanes=1)
   symbols = dict(module.program.attrs["function_symbols"])
   assert symbols[left_desc.oracle] != symbols[renamed]
+
+
+def test_header_scope_preserves_library_and_table_names() -> None:
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.codegen.abi import buffer_idents
+  from scaly.function.model import as_concrete
+
+  @sc.function(sc.arg("new", 2), sc.arg("time", 2), sc.arg("k1", 2), outputs=sc.arg("log", 2), name="header_names")
+  def fun(a, b, c):
+    return a * b + c
+
+  assert buffer_idents(as_concrete(fun)) == (["new_2", "time", "k1"], ["log"])
+  for lang in ("c", "cpp"):
+    header = render_c_module(fun, lang=lang, lanes=1).header
+    for name in ("time", "k1", "log", "new_2"):
+      assert f"{name}_t" in header
+    assert "new__t" not in header
+
+  sparse = as_concrete(sc.sparse_jacobian(fun, "log", "new"))
+  named = ConcreteFunction._from_exprs("header_sparse", sparse.inputs, sparse.outputs, sparse.input_names, ["log"], sparse.output_sparsities)
+  assert "namespace log {" in render_c_module(named, lang="cpp", lanes=1).header
+
+
+def test_header_parameters_do_not_shadow_buffer_aliases() -> None:
+  from scaly.codegen.abi import buffer_idents
+  from scaly.function.model import as_concrete
+
+  @sc.function(sc.arg("x_t", 2), sc.arg("x", 2), outputs=sc.arg("y", 2), name="alias_names")
+  def fun(a, b):
+    return a + b
+
+  inputs, outputs = buffer_idents(as_concrete(fun))
+  assert inputs == ["x_t", "x_2"]
+  assert not set((*inputs, *outputs)) & {f"{name}_t" for name in (*inputs, *outputs)}

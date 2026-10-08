@@ -59,18 +59,20 @@ def c_ident(name: str) -> str:
 class NameScope:
   """Allocate deterministic identifiers against language names and enclosing declarations."""
 
-  def __init__(self, occupied: Iterable[str] = (), *, parent: NameScope | None = None) -> None:
+  def __init__(self, occupied: Iterable[str] = (), *, parent: NameScope | None = None, header: bool = False) -> None:
     self.occupied = set(occupied)
     self.parent = parent
+    self.header = header
 
   def child(self, occupied: Iterable[str] = ()) -> NameScope:
-    return NameScope(occupied, parent=self)
+    return NameScope(occupied, parent=self, header=self.header)
 
   def contains(self, name: str) -> bool:
     return name in self.occupied or bool(self.parent and self.parent.contains(name))
 
-  @staticmethod
-  def reserved(name: str) -> bool:
+  def reserved(self, name: str) -> bool:
+    if self.header:
+      return name in _KEYWORDS
     return name in _RESERVED or "__" in name or bool(re.match(r"_[A-Z]", name)) or name.startswith("SCALY_") or bool(re.fullmatch(r"k[0-9]+", name))
 
   def claim(self, name: str) -> str:
@@ -81,8 +83,8 @@ class NameScope:
     self.occupied.add(symbol)
     return symbol
 
-  def allocate(self, base: str, *, generated: bool = False) -> str:
-    """Reserve a spelling or its first available suffix. Generated macros may use SCALY_."""
+  def allocate(self, base: str, *, generated: bool = False, suffixes: tuple[str, ...] = ()) -> str:
+    """Reserve a spelling and its derived suffixes. Generated macros may use SCALY_."""
     base = c_ident(base)
     base = re.sub(r"_+", "_", base)
     if re.match(r"_[A-Z]", base):
@@ -92,18 +94,17 @@ class NameScope:
     name = base
     suffix = 2
     if not generated and self.reserved(name):
-      name = base = base + "_"
-    while self.contains(name) or (not generated and self.reserved(name)):
+      name = base = base + ("_2" if self.header else "_")
+    while (
+      self.contains(name)
+      or (not generated and self.reserved(name))
+      or any(self.contains(name + suffix) or (not generated and self.reserved(name + suffix)) for suffix in suffixes)
+    ):
       name = f"{base}{'' if base.endswith('_') else '_'}{suffix}"
       suffix += 1
-    self.occupied.add(name)
+    self.occupied.update((name, *(name + suffix for suffix in suffixes)))
     return name
 
   def procedure(self, base: str) -> str:
     """Reserve both a program procedure name and the renderer's raw symbol."""
-    base = base.rstrip("_") or "scaly"
-    name = self.allocate(base)
-    while self.contains(f"{name}_raw") or self.reserved(f"{name}_raw"):
-      name = self.allocate(base)
-    self.occupied.add(f"{name}_raw")
-    return name
+    return self.allocate(base.rstrip("_") or "scaly", suffixes=("_raw",))
