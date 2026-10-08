@@ -49,7 +49,8 @@ finished feature is different: document it next to the behaviour it affects.
 ## Optional procedures
 
 `.agents/skills/` holds the maintainer's procedures for working through issues with agents.
-`run-lane` coordinates a batch of related issues and starts only when a user invokes it.
+`plan-work` surveys the backlog and proposes what to start and in which groups, and `coordinate-issues`
+coordinates a batch of related issues. Both start only when a user invokes them.
 `implement-issue` takes one issue to a pull request, and the others (`record-decisions`,
 `write-docs`, `benchmark-study`, `port-from-devrush`, `inspect-work` and `update-work`) cover
 parts of that work. Use any of them only when the user or another of these skills asks for it by

@@ -184,10 +184,12 @@ What devrush's registered ops needed from the compiler, and the core capability 
 ## Order of work
 
 The work is three milestones. Each ends with something a user can rely on; inside a milestone,
-items run in lanes, sequential inside a lane, with arrows as hard dependencies. Two rules hold
+items run in lanes, sequential inside a lane, with arrows as hard dependencies. One rule holds
 across lanes: a pull request that regenerates C snapshots is never in flight at the same time as
-another one ([#19], [#27], [#45], [#28], [#69] and [#46] regenerate them), and edits to the shared
-vocabulary (`ir/expr.py`, `ir/program.py`, the verifiers) merge one at a time.
+another one ([#19], [#27], [#45], [#28], [#69] and [#46] regenerate them). Edits to the shared
+vocabulary (`ir/expr.py`, `ir/program.py`, the verifiers) used to merge one at a time as a second
+rule. The merge queue now does that by testing each pull request on top of the ones ahead of it,
+so they run in parallel.
 
 ```
 Milestone 1: differentiable loops in a debuggable core

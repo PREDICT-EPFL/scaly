@@ -138,21 +138,22 @@ Use separate worktrees for independent implementations. Separate checkouts preve
 file overwrites, but do not prevent incompatible designs. Compare likely files and shared
 contracts before running tasks together. Area labels alone do not establish independence.
 
-The [compiler roadmap's parallel-work rules](https://github.com/PREDICT-EPFL/scaly/blob/main/internal/notes/core_compiler_roadmap.md#order-of-work) identify
-two shared constraints:
-
-- PRs that regenerate generated-C snapshots must not be in flight simultaneously.
-- Changes to `ir/expr.py`, `ir/program.py`, and the verifiers merge one at a time.
+The [compiler roadmap's parallel-work rules](https://github.com/PREDICT-EPFL/scaly/blob/main/internal/notes/core_compiler_roadmap.md#order-of-work) keep
+one shared constraint: PRs that regenerate generated-C snapshots must not be in flight
+simultaneously. Two such PRs always conflict in their snapshots, and the second must regenerate them
+after the first merges.
 
 File moves, operation definitions, derivative rules, generated symbols, and plugin contracts can
 affect work outside the edited files. Land prerequisite changes before dependent implementation,
 and coordinate an expansion of scope that overlaps active work. Record real prerequisite
 dependencies, not artificial dependency chains for changes that merely need merge coordination.
 
-After a relevant change merges, update affected branches and repeat the checks needed to validate
-the combined behavior. Passing tests on independent branches do not prove that their combination
-is correct. Follow [the contribution checks](contributing.md#run-the-checks), including
-the full suite for IR, differentiation, or code generation changes.
+Passing tests on independent branches do not prove that their combination is correct. Main merges
+through a merge queue, which runs the required checks on each PR on top of main and the PRs queued
+ahead of it, and removes a PR whose combination fails. A branch therefore need not be updated after
+every merge, only when it conflicts with main or its PR leaves the queue. Follow
+[the contribution checks](contributing.md#run-the-checks), including the full suite for IR,
+differentiation, or code generation changes.
 
 Task claiming, conflict resolution, dispatch, and abandoned-session recovery procedures remain
 outside these conventions. The tracking conventions must expose enough information for contributors

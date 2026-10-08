@@ -5,7 +5,7 @@ description: Implement one Scaly GitHub issue end to end in its own worktree, fr
 
 # Implement a Scaly issue
 
-The input is an issue number, and optionally a brief from a lane coordinator that names the base
+The input is an issue number, and optionally a brief from `coordinate-issues` that names the base
 branch, the position in a stack and any limits on scope. The brief and the issue together replace
 a conversation with the maintainer.
 
@@ -27,11 +27,8 @@ request state scope, status, results and blockers.
 3. Stop and report on the issue if any of these holds:
    - a prerequisite is open, unless the brief stacks this branch on top of it
    - this issue will regenerate C snapshots and another open pull request does too
-   - this issue will edit `ir/expr.py`, `ir/program.py` or the verifiers and another open pull
-     request does too (`gh pr list` and `gh pr diff <n> --name-only`)
-
-   The last two do not apply to an open pull request that the brief stacks this branch on top of,
-   since the stack already merges them one at a time.
+     (`gh pr list` and `gh pr diff <n> --name-only`), unless the brief stacks this branch on top
+     of that pull request
 4. Comment on the issue with the branch, and move its Project item to In progress through
    `update-work`.
 
