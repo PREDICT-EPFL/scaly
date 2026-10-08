@@ -183,12 +183,13 @@ def _locked(path: Path, *, wait: bool = True):
 def _prune_cache(cache: Path) -> None:
   """Delete builds unused for 30 days. A checkout holds its own copy, so this only ever costs a rebuild."""
   cutoff = time.time() - _CACHE_MAX_AGE
-  for path in cache.iterdir():
-    if path.name == "locks" or path.stat().st_mtime > cutoff:
-      continue
-    with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
-      if held and path.exists() and path.stat().st_mtime <= cutoff:
-        shutil.rmtree(path)
+  with _locked(cache / "locks" / "prune.lock", wait=False) as pruning:
+    for path in cache.iterdir() if pruning else ():
+      if path.name == "locks" or path.stat().st_mtime > cutoff:
+        continue
+      with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
+        if held and path.stat().st_mtime <= cutoff:
+          shutil.rmtree(path)
 
 
 def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, build) -> None:
