@@ -131,6 +131,8 @@ def test_build_takes_trees_and_records_descriptor_and_role() -> None:
     ConcreteFunction("bad", input_tree, [x], output_tree, [x], (None,), (None,), fn.device)  # ty: ignore[invalid-argument-type]
   with pytest.raises(AttributeError):
     output_tree.names = ("renamed",)
+  with pytest.raises(AttributeError):
+    del output_tree.names
 
 
 def test_call_helpers_record_their_role() -> None:
