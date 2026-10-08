@@ -531,20 +531,15 @@ def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
 
 
 @pytest.mark.parametrize(("dtype", "value"), [("float32", np.float32(1.0)), ("int64", np.int64(1))])
-def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: object) -> None:
+def test_typed_identity_boundaries_refused_before_normalization(dtype: str, value: object) -> None:
   one = sc.const(np.full(2, value), dtype=dtype)
 
   @sc.function(sc.arg("x", sc.TensorType((2,), dtype=sc.as_dtype(dtype))), outputs=sc.arg("y"), name=f"normalized_{dtype}")
   def fn(x):
     return (x * one).scalar()
 
-  x = as_concrete(fn).inputs[0]
-  observed: list[ConcreteFunction] = []
-
-  proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
-
-  assert observed[0].outputs[0].type.dtype == x.type.dtype
-  assert proc.attrs["scalarize_mode"] == "disabled"
+  with pytest.raises(NotImplementedError, match=f"input.*{dtype}.*float64"):
+    lower_function(fn)
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")

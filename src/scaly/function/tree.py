@@ -7,7 +7,7 @@ from typing import Any, TypeGuard, cast, overload
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp
-from ..ir.types import TensorType, as_shape
+from ..ir.types import TensorType, as_shape, dtypes
 
 type ShapeDecl = int | tuple[int, ...] | TensorType | None
 type LeafDecl = TensorType | None
@@ -172,7 +172,10 @@ class _Leaf(Tree[Expr, Array]):
   def flatten_numerical(self, value: Array, what: str) -> tuple[Array, ...]:
     if isinstance(value, Expr):
       raise ValueError(f"{what}: expected a numerical value for {self.names[0]!r}, got Expr")
-    array = np.asarray(value, dtype=self.types[0].dtype.numpy())
+    dtype = self.types[0].dtype
+    if dtype != dtypes.float64:
+      raise NotImplementedError(f"{what}: input leaf {self.names[0]!r} has dtype {dtype}; only float64 leaves are supported")
+    array = np.asarray(value, dtype=dtype.numpy())
     if array.shape != self.shapes[0]:
       raise ValueError(f"{what}: expected shape {self.shapes[0]} for {self.names[0]!r}, got {array.shape}")
     return (np.require(array, requirements="C"),)

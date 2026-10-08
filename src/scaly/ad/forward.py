@@ -80,11 +80,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       memo[expr.id] = ret = _mapped_call(fn, expr.attrs["length"], specs)
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
-    # Solver outputs are treated as non-differentiable today. Implicit
-    # function theorem AD (e.g. cyipopt-style adjoint through KKT residuals)
-    # is future work; for now any JVP through a solver returns zero.
-    memo[expr.id] = ret = zeros_like(expr)
-    return ret
+    raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
 
   def save(ret: Expr) -> Expr:
     memo[expr.id] = ret
@@ -340,6 +336,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == ExprOp.CONST:
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
     return ret
+  if expr.op == ExprOp.SOLVER_CALL:
+    raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
   if expr.op == ExprOp.SLICE:
     memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)[(slice(None), *expr.attrs["index"])]
     return ret
