@@ -97,7 +97,6 @@ class BuildRecipe:
     )
 
 
-@lru_cache(maxsize=8)
 def _native_macros(command: tuple[str, ...]) -> str:
   """The compiler's predefined macros for the native CPU: its target features and its version."""
   return subprocess.run(
@@ -123,18 +122,22 @@ def native_recipe(command: tuple[str, ...]) -> BuildRecipe:
   return BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
 
 
-@lru_cache(maxsize=8)
 def compiler_fingerprint(command: tuple[str, ...]) -> str:
   """Hash what decides the machine code ``command`` emits on this host, for the JIT cache key.
 
   Covers the command, its executable's real path, size and modification time, its ``--version``
   output, and its native target macros, so a wrapper, a patched compiler at the same path or another
-  CPU misses the cache.
+  CPU misses the cache. The compiler runs again only when its executable changes.
   """
-  executable = Path(command[0]).resolve()
+  executable = Path(shutil.which(command[0]) or command[0]).resolve()
   stat = executable.stat()
+  return _executable_fingerprint(command, str(executable), stat.st_size, stat.st_mtime_ns)
+
+
+@lru_cache(maxsize=8)
+def _executable_fingerprint(command: tuple[str, ...], executable: str, size: int, mtime_ns: int) -> str:
   version = subprocess.run([*command, "--version"], text=True, capture_output=True, check=True).stdout
-  parts = [command, str(executable), stat.st_size, stat.st_mtime_ns, version, _native_macros(command)]
+  parts = [command, executable, size, mtime_ns, version, _native_macros(command)]
   return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
 
 

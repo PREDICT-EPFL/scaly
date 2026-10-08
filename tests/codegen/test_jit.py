@@ -60,8 +60,6 @@ def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the wrapper is a shell script")
 def test_compiler_wrapper_change_misses_the_cache(isolated_cache, monkeypatch) -> None:
-  from scaly.codegen import toolchain
-
   real = shutil.which(os.environ.get("SCALY_CC", "cc"))
   assert real is not None
   wrapper = isolated_cache / "bin" / "cc"
@@ -72,14 +70,11 @@ def test_compiler_wrapper_change_misses_the_cache(isolated_cache, monkeypatch) -
     if script is not None:
       wrapper.write_text(f'#!/bin/sh\n{script}exec {shlex.quote(real)} "$@"\n')
       wrapper.chmod(0o755)
-    toolchain.compiler_fingerprint.cache_clear()
-    jit._artifact_cache.clear()
     return jit._build_artifact(_simple_fn()).key
 
   first = build("")
   assert build() == first
   assert build(": patched\n") != first
-  toolchain.compiler_fingerprint.cache_clear()
 
 
 def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:

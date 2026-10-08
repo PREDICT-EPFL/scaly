@@ -370,7 +370,9 @@ The key is a SHA-256 hash over, in order:
 Changing the optimization level therefore gives a new key, as the `-O3` run
 shows. So does pointing `SCALY_CC` at another compiler, replacing the compiler
 or a wrapper script at the same path, or running on a CPU with other features.
-The fingerprint is computed once per process. Numerical inputs and runtime solver tuning never enter the key. Structural
+Each build checks the compiler's path, size and modification time, and runs
+the compiler again for the fingerprint only when one of them has changed.
+Numerical inputs and runtime solver tuning never enter the key. Structural
 choices such as PIQP's `sparse` and SQP's `qp` change the generated interface and
 therefore the key.
 
