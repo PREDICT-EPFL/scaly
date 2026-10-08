@@ -62,7 +62,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     inputs = self.inputs.with_types(types)
     open_types = tuple(type_ for decl, type_ in zip(self.inputs.decls, types, strict=True) if decl is None)
     name = _mangle(self.name, _skeleton(inputs, types), open_types) if self.inputs.has_holes else self.name
-    return ConcreteFunction(name, self._fn, inputs, self.outputs, output_name=self.name)
+    return ConcreteFunction._trace(name, self._fn, inputs, self.outputs, output_name=self.name)
 
   def _build_bare(self, skeleton: Any) -> ConcreteFunction[Any, Any, Any, Any]:
     names = iter(f"in{i}" for i in range(len(_types(skeleton))))
@@ -74,7 +74,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
 
     inputs = inferred(skeleton)
     name = _mangle(self.name, skeleton, _types(skeleton))
-    return ConcreteFunction(name, self._fn, inputs, None, output_name=self.name)
+    return ConcreteFunction._trace(name, self._fn, inputs, None, output_name=self.name)
 
   def _cache(self, key: Any, build: Callable[[], ConcreteFunction[Any, Any, Any, Any]]) -> ConcreteFunction[Any, Any, Any, Any]:
     if key not in self.instances:

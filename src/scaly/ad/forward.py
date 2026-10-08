@@ -202,7 +202,7 @@ def _call_jvp_many_function(
       seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
       name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
       output_name = f"fwd:{callee.output_names[output_index]}"
-    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name])
+    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name], role="forward")
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
 
@@ -228,7 +228,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
     name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices)
-    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"])
+    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"], role="forward")
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
 
@@ -259,7 +259,9 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       name_hash = hashlib.sha1(";".join(fn.name for fn in functions).encode()).hexdigest()[:10]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
-      cache[key] = ConcreteFunction._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
+      cache[key] = ConcreteFunction._from_exprs(
+        f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"], role="forward"
+      )
     fn = cache[key]
     mapped = _mapped_call(fn, length, list(bindings.values()))
     width = fn.outputs[0].size

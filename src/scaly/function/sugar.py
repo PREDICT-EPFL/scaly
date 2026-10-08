@@ -182,8 +182,8 @@ class _Mapped(Function):
       return TensorType(skeleton.shape[1:], skeleton.dtype, skeleton.diff)
 
     def transform(concrete: ConcreteFunction) -> ConcreteFunction:
-      if length in concrete._maps:
-        return concrete._maps[length]
+      if length in concrete._memo.maps:
+        return concrete._memo.maps[length]
       inputs = _batch_tree(concrete.input_tree, length)
       outputs = _batch_tree(concrete.output_tree, length)
 
@@ -195,8 +195,8 @@ class _Mapped(Function):
         values = tuple(_mapped_call(concrete, length, specs, i).reshape((length, *out.shape)) for i, out in enumerate(concrete.outputs))
         return outputs.unflatten(values)
 
-      concrete._maps[length] = ConcreteFunction(f"{concrete.name}_vmap{length}", body, inputs, outputs)
-      return concrete._maps[length]
+      concrete._memo.maps[length] = ConcreteFunction._trace(f"{concrete.name}_vmap{length}", body, inputs, outputs)
+      return concrete._memo.maps[length]
 
     registry = lift(
       source,

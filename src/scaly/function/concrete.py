@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, cast, overload
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Sequence, cast, overload
 
 import numpy as np
 
@@ -53,6 +53,20 @@ class DerivSpec:
     return outputs[name]
 
 
+Role = Literal["forward", "adjoint"]
+"""What built a derived helper Function: a forward-mode or an adjoint call rule."""
+
+
+@dataclass
+class _Memo:
+  """State computed from a ConcreteFunction and cached beside it, never part of its definition."""
+
+  compiled: Any = None
+  derivatives: dict[Any, ConcreteFunction] = field(default_factory=dict)
+  maps: dict[int, ConcreteFunction] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, eq=False, repr=False)
 class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
@@ -70,23 +84,65 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   Input and output names matter beyond display. Derivatives are requested by name, and the
   generated C symbols are built from them.
 
-  Use ``@scaly.function(...)`` to build one from a Python body.
+  A ConcreteFunction is immutable. Use ``@scaly.function(...)`` to build one from a Python body,
+  or ``ConcreteFunction.build`` from expressions already in hand.
   """
 
-  descriptor: Any
+  name: str
   input_tree: Tree[SymbolicInputs, NumericalInputs]
+  inputs: tuple[Expr, ...]
   output_tree: Tree[SymbolicOutputs, NumericalOutputs]
+  outputs: tuple[Expr, ...]
+  output_sparsities: tuple[SparsityPattern | None, ...]
+  output_coloring_widths: tuple[int | None, ...]
+  device: DeviceSpec
+  descriptor: Any = None
+  role: Role | None = None
+  _memo: _Memo = field(init=False, repr=False, default_factory=_Memo)
 
-  def __init__(
-    self,
+  @classmethod
+  def build(
+    cls,
+    name: str,
+    input_tree: Tree[Any, Any],
+    inputs: Sequence[Expr],
+    output_tree: Tree[Any, Any],
+    outputs: Sequence[Expr],
+    *,
+    output_sparsities: Sequence[SparsityPattern | None] | None = None,
+    output_coloring_widths: Sequence[int | None] | None = None,
+    device: DeviceSpec | str | None = None,
+    descriptor: Any = None,
+    role: Role | None = None,
+  ) -> ConcreteFunction[Any, Any, Any, Any]:
+    """Build a function from its trees and the expressions at their leaves.
+
+    ``inputs`` are the ``INPUT`` expressions of ``input_tree``'s leaves and ``outputs`` the
+    expressions of ``output_tree``'s leaves, both in flat leaf order. Every input the outputs
+    depend on must be among ``inputs``. Sparse outputs carry the pattern of their compact values.
+    """
+    return cls(
+      name,
+      input_tree,
+      tuple(inputs),
+      output_tree,
+      tuple(outputs),
+      tuple(output_sparsities) if output_sparsities is not None else (None,) * len(outputs),
+      tuple(output_coloring_widths) if output_coloring_widths is not None else (None,) * len(outputs),
+      DeviceSpec.parse(device),
+      descriptor,
+      role,
+    )
+
+  @classmethod
+  def _trace(
+    cls,
     name: str,
     fn: Callable[..., SymbolicOutputs],
     inputs: Tree[SymbolicInputs, NumericalInputs],
     outputs: Tree[SymbolicOutputs, NumericalOutputs] | None,
-    *,
-    device: DeviceSpec | str | None = None,
     output_name: str | None = None,
-  ) -> None:
+  ) -> ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
     symbolic_inputs = inputs.symbols()
     input_exprs = inputs.flatten_symbolic(symbolic_inputs, f"{name} inputs")
     symbolic_outputs = fn(*cast(tuple[Any, ...], symbolic_inputs))
@@ -97,7 +153,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     except ValueError as exc:
       raise TypeError(str(exc)) from exc
     output_types = outputs.resolved(tuple(expr.type for expr in output_exprs))
-    self._init_graph(name, input_exprs, output_exprs, inputs, outputs.with_types(output_types), device=device)
+    return cls.build(name, inputs, input_exprs, outputs.with_types(output_types), output_exprs)
 
   @classmethod
   def _from_exprs(
@@ -105,71 +161,40 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     name: str,
     inputs: Sequence[Expr],
     outputs: Sequence[Expr],
-    input_names: Sequence[str] | None = None,
-    output_names: Sequence[str] | None = None,
+    input_names: Sequence[str],
+    output_names: Sequence[str],
     output_sparsities: Sequence[SparsityPattern | None] | None = None,
-    device: DeviceSpec | str | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
+    role: Role | None = None,
   ) -> ConcreteFunction[Any, Any, Any, Any]:
-    inputs = tuple(inputs)
-    outputs = tuple(outputs)
-    raw_input_names = tuple(input_names) if input_names is not None else tuple(expr.name for expr in inputs)
-    if any(name is None for name in raw_input_names):
-      raise ValueError("all inputs must have names")
-    resolved_input_names = cast(tuple[str, ...], raw_input_names)
-    resolved_output_names = tuple(output_names) if output_names is not None else tuple(expr.name or f"out{i}" for i, expr in enumerate(outputs))
-    if len(resolved_input_names) != len(inputs):
-      raise ValueError(f"expected {len(inputs)} input names, got {len(resolved_input_names)}")
-    if len(resolved_output_names) != len(outputs):
-      raise ValueError(f"expected {len(outputs)} output names, got {len(resolved_output_names)}")
-    instance = cls.__new__(cls)
-    instance._init_graph(
-      name,
-      inputs,
-      outputs,
-      flat_parameters(resolved_input_names, tuple(expr.type for expr in inputs)),
-      flat_tree(resolved_output_names, tuple(expr.type for expr in outputs)),
-      output_sparsities,
-      device,
-      output_coloring_widths,
+    input_tree = flat_parameters(tuple(input_names), tuple(expr.type for expr in inputs))
+    output_tree = flat_tree(tuple(output_names), tuple(expr.type for expr in outputs))
+    return cls.build(
+      name, input_tree, inputs, output_tree, outputs, output_sparsities=output_sparsities, output_coloring_widths=output_coloring_widths, role=role
     )
-    return instance
 
-  def _init_graph(
-    self,
-    name: str,
-    inputs: Sequence[Expr],
-    outputs: Sequence[Expr],
-    input_tree: Tree[Any, Any],
-    output_tree: Tree[Any, Any],
-    output_sparsities: Sequence[SparsityPattern | None] | None = None,
-    device: DeviceSpec | str | None = None,
-    output_coloring_widths: Sequence[int | None] | None = None,
-  ) -> None:
-    self.name = name
-    self.inputs = tuple(inputs)
-    self.outputs = tuple(outputs)
-    self.input_tree = input_tree
-    self.output_tree = output_tree
-    self.device: DeviceSpec = DeviceSpec.parse(device)
+  def __post_init__(self) -> None:
+    name = self.name
     for expr in (*self.inputs, *self.outputs):
       if expr.type.dtype not in dtypes.all():
         raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")
-    self.input_names = input_tree.names
-    self.output_names = output_tree.names
-    self.output_sparsities = tuple(output_sparsities) if output_sparsities is not None else (None,) * len(self.outputs)
-    self.output_coloring_widths = tuple(output_coloring_widths) if output_coloring_widths is not None else (None,) * len(self.outputs)
-    if len(self.input_names) != len(self.inputs):
-      raise ValueError(f"expected {len(self.inputs)} input names, got {len(self.input_names)}")
-    if len(self.output_names) != len(self.outputs):
-      raise ValueError(f"expected {len(self.outputs)} output names, got {len(self.output_names)}")
+
+    def layout(types: Sequence[TensorType]) -> list[tuple[tuple[int, ...], Any]]:
+      return [(type_.shape, type_.dtype) for type_ in types]
+
+    if layout(self.input_tree.types) != layout([expr.type for expr in self.inputs]):
+      raise ValueError(f"function {name!r}: input tree {self.input_tree.names} does not match the input expressions")
+    if layout(self.output_tree.types) != layout([expr.type for expr in self.outputs]):
+      raise ValueError(f"function {name!r}: output tree {self.output_tree.names} does not match the output expressions")
     if len(self.output_sparsities) != len(self.outputs):
       raise ValueError(f"expected {len(self.outputs)} output sparsities, got {len(self.output_sparsities)}")
     if len(self.output_coloring_widths) != len(self.outputs):
       raise ValueError(f"expected {len(self.outputs)} output coloring widths, got {len(self.output_coloring_widths)}")
-    for name, out, sparsity in zip(self.output_names, self.outputs, self.output_sparsities, strict=True):
+    for output_name, out, sparsity in zip(self.output_names, self.outputs, self.output_sparsities, strict=True):
       if sparsity is not None and out.size != sparsity.nnz:
-        raise ValueError(f"sparse output metadata for {name!r} has {sparsity.nnz} nonzeros, but output shape {out.shape} has {out.size} entries")
+        raise ValueError(
+          f"sparse output metadata for {output_name!r} has {sparsity.nnz} nonzeros, but output shape {out.shape} has {out.size} entries"
+        )
     if len(set(self.input_names)) != len(self.input_names):
       raise ValueError(f"duplicate input names in {self.input_names}")
     if len(set(self.output_names)) != len(self.output_names):
@@ -177,37 +202,31 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     declared = {e.id for e in self.inputs}
     missing = [e.name or f"%{e.id}" for e in topo(self.outputs) if e.op == ExprOp.INPUT and e.id not in declared]
     if missing:
-      raise ValueError(f"function {self.name!r} has undeclared symbolic inputs: {missing}")
-    self._compiled: Any = None
-    self._derivatives: dict[Any, ConcreteFunction] = {}
-    self._maps: dict[int, ConcreteFunction] = {}
+      raise ValueError(f"function {name!r} has undeclared symbolic inputs: {missing}")
 
   def __repr__(self) -> str:
     return f"ConcreteFunction({self.name!r}, {self.input_names}->{self.output_names})"
 
-  def with_device(self, device: DeviceSpec | str) -> "ConcreteFunction":
+  @property
+  def input_names(self) -> tuple[str, ...]:
+    """The input leaf names in C-signature order."""
+    return self.input_tree.names
+
+  @property
+  def output_names(self) -> tuple[str, ...]:
+    """The output leaf names in C-signature order."""
+    return self.output_tree.names
+
+  def _replace(self, **changes: Any) -> ConcreteFunction[Any, Any, Any, Any]:
+    """The one copy path: a validated copy with ``changes`` applied and no compiled or derived state."""
+    return replace(self, **changes)
+
+  def with_device(self, device: DeviceSpec | str) -> ConcreteFunction[Any, Any, Any, Any]:
     """Return a copy of this ConcreteFunction placed on ``device``."""
-    instance = type(self).__new__(type(self))
-    instance._init_graph(
-      self.name,
-      self.inputs,
-      self.outputs,
-      self.input_tree,
-      self.output_tree,
-      self.output_sparsities,
-      device,
-      self.output_coloring_widths,
-    )
-    return instance
+    return self._replace(device=DeviceSpec.parse(device))
 
   def _with_trees(self, input_tree: Tree[Any, Any], output_tree: Tree[Any, Any]) -> ConcreteFunction[Any, Any, Any, Any]:
-    if input_tree.names != self.input_names or input_tree.types != tuple(expr.type for expr in self.inputs):
-      raise ValueError("replacement input tree does not match the ConcreteFunction graph")
-    if output_tree.names != self.output_names or output_tree.types != tuple(expr.type for expr in self.outputs):
-      raise ValueError("replacement output tree does not match the ConcreteFunction graph")
-    self.input_tree = input_tree
-    self.output_tree = output_tree
-    return self
+    return self._replace(input_tree=input_tree, output_tree=output_tree)
 
   def input_map(self) -> dict[str, Expr]:
     """The symbolic input leaves keyed by their declared names, in declaration order."""
@@ -275,9 +294,9 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
 
   def _compile(self) -> Any:
     """Lazily JIT-compile this function and cache the handle."""
-    if self._compiled is None:
-      self._compiled = _jit().CompiledFunction(self)
-    return self._compiled
+    if self._memo.compiled is None:
+      self._memo.compiled = _jit().CompiledFunction(self)
+    return self._memo.compiled
 
   def _flat_numerical_call(self, *args: Any) -> tuple[np.ndarray, ...]:
     """Evaluate from flat leaves: lazily compile and run through the universal ABI.
@@ -290,15 +309,15 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   def recompile(self) -> None:
     """Drop the cached compiled handle and remove the on-disk cache entry for this function."""
     jit = _jit()
-    self._compiled = None
+    self._memo.compiled = None
     jit.invalidate_cache(self)
 
   def solver_stats(self, name: str | None = None) -> SolverStats:
     """Return the latest stats for a solver reached by this compiled function."""
     jit = _jit()
-    if self._compiled is None:
+    if self._memo.compiled is None:
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")
-    return self._compiled.solver_stats(name)
+    return self._memo.compiled.solver_stats(name)
 
   def _effective_lowering(self) -> Lowering:
     """The hint that selects this ConcreteFunction's procedure: ``block`` or ``opaque`` anywhere wins, then ``scalar``, else ``auto``."""
@@ -311,19 +330,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     return _apply_lowering(derived, policy)
 
   def _with_outputs(self, outputs: Sequence[Expr]) -> ConcreteFunction[Any, Any, Any, Any]:
-    """Return a private graph copy with replacement outputs and preserved ConcreteFunction metadata."""
-    instance = type(self).__new__(type(self))
-    instance._init_graph(
-      self.name,
-      self.inputs,
-      outputs,
-      self.input_tree,
-      self.output_tree,
-      self.output_sparsities,
-      self.device,
-      self.output_coloring_widths,
-    )
-    return instance
+    return self._replace(outputs=tuple(outputs))
 
   def factory(
     self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None
