@@ -180,3 +180,17 @@ def test_smoke_skips_a_comparison_backend_over_the_compile_budget(monkeypatch, c
   monkeypatch.setattr(run, "run_cell", lambda *a, **k: (dict(timeout), info))
   with pytest.raises(RuntimeError, match="npmpc_jac scaly size=6 smoke failed"):
     run._benchmark_smoke(full=True)
+
+
+def test_problem_checks_compile_at_O0(monkeypatch):
+  from types import SimpleNamespace
+
+  from benchmarks import run
+  from scaly.codegen.jit import opt_flag
+
+  flags = []
+  monkeypatch.setenv("SCALY_CC_OPT", "-O2")
+  monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "gate"})
+  monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"gate": (lambda: flags.append(opt_flag()), False, False)}))
+  run._problem_checks("toy", full=False)
+  assert flags == ["-O0"]

@@ -226,6 +226,9 @@ QUICK_CHECKS = {
 
 
 def _problem_checks(problem: str, full: bool) -> None:
+  # the checks evaluate each module a few times, so optimizing multi-megabyte sources only costs compile time;
+  # this runs in its own spawned process, and the flag is part of the cache keys, so timed builds are unaffected
+  os.environ["SCALY_CC_OPT"] = "-O0"
   table = importlib.import_module(f"benchmarks.problems.{problem}.checks").CHECKS
   have_ipopt = solver_loadable("ipopt")
   have_casadi = importlib.util.find_spec("casadi") is not None
