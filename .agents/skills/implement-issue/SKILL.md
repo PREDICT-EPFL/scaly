@@ -29,6 +29,9 @@ request state scope, status, results and blockers.
    - this issue will regenerate C snapshots and another open pull request does too
    - this issue will edit `ir/expr.py`, `ir/program.py` or the verifiers and another open pull
      request does too (`gh pr list` and `gh pr diff <n> --name-only`)
+
+   The last two do not apply to an open pull request that the brief stacks this branch on top of,
+   since the stack already merges them one at a time.
 4. Comment on the issue with the branch, and move its Project item to In progress through
    `update-work`.
 
