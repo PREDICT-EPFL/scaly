@@ -30,6 +30,17 @@ class _InferredOutputs[NI, *Ss](Protocol):
   def __call__[SO](self, fn: Callable[[*Ss], SO], /) -> Function[tuple[*Ss], NI, SO, Any]: ...
 
 
+class _Bare(Protocol):
+  """What ``@function()`` returns. A body without parameters counts as fully declared."""
+
+  @overload
+  def __call__(self, fn: Callable[[], Expr], /) -> Function[tuple[()], tuple[()], Expr, Array]: ...
+  @overload
+  def __call__[SO](self, fn: Callable[[], SO], /) -> Function[tuple[()], tuple[()], SO, Any]: ...
+  @overload
+  def __call__[*Ss, SO](self, fn: Callable[[*Ss], SO], /) -> Function[tuple[*Ss], Any, SO, Any]: ...
+
+
 # One overload per width: turning the slots' `Tree[S, N]`s into the two parameter lists is the type-level
 # map Python lacks (README, "Why a wrapper class exists"). The second ladder omits `outputs`, which the
 # trace then supplies. Bare comes last: no slots and no `outputs`.
@@ -69,7 +80,7 @@ def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](a: Tree[SA,
 @overload
 def function[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], g: Tree[SG, NG], h: Tree[SH, NH], /, *, name: str | None = None) -> _InferredOutputs[tuple[NA, NB, NC, ND, NE, NF, NG, NH], SA, SB, SC, SD, SE, SF, SG, SH]: ...
 @overload
-def function[*Ss, SO](*, name: str | None = None) -> Callable[[Callable[[*Ss], SO]], Function[tuple[*Ss], Any, SO, Any]]: ...
+def function(*, name: str | None = None) -> _Bare: ...
 # fmt: on
 def function(
   *inputs: Tree[Any, Any], outputs: Tree[Any, Any] | None = None, name: str | None = None
@@ -83,7 +94,7 @@ def function(
       len(parameters) != len(inputs) or any(p.kind not in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in parameters)
     ):
       raise TypeError(f"{function_name}: declare one tree per positional parameter, got {len(inputs)} declarations for {len(parameters)} parameters")
-    return Function(function_name, fn, None if not inputs and outputs is None else parameter_list(inputs), outputs)
+    return Function(function_name, fn, None if not inputs and outputs is None and parameters else parameter_list(inputs), outputs)
 
   return decorate
 

@@ -196,14 +196,43 @@ def test_derivative_names_do_not_depend_on_concrete_or_template_call_history(tem
   assert fixed is not template
 
 
-def test_bare_zero_input_name_has_no_reserved_separator() -> None:
+def test_bare_zero_parameter_body_is_fully_declared() -> None:
+  traces = []
+
   @sc.function()
   def zero() -> sc.Expr:
+    traces.append(None)
     return sc.const(2.0)
 
+  assert traces == [None]
+  instance = zero.instantiate()
+  assert instance.name == "zero"
+  assert list(zero.instances.values()) == [instance]
   assert zero() == np.array(2.0)
-  instance = zero.symbolic_call().attrs["callee"]
-  assert instance.name.startswith("zero_t") and "__" not in instance.name
+  assert zero.symbolic_call().attrs["callee"] is instance
+  assert traces == [None]
+
+  with pytest.raises(ZeroDivisionError):
+
+    @sc.function()
+    def broken() -> sc.Expr:
+      raise ZeroDivisionError
+
+
+def test_bare_variadic_body_stays_bare() -> None:
+  @sc.function()
+  def total(*xs: sc.Expr) -> sc.Expr:
+    return sc.const(0.0) if not xs else xs[0] + xs[-1]
+
+  assert total.inputs is None and not total.instances
+  np.testing.assert_array_equal(total(np.ones(2), np.ones(2)), 2.0 * np.ones(2))  # ty: ignore[no-matching-overload]
+  assert total.symbolic_call().attrs["callee"].name.startswith("total_t")
+
+  @sc.function()
+  def scaled(*, gain: float = 2.0) -> sc.Expr:
+    return sc.const(gain)
+
+  assert scaled.inputs is None and not scaled.instances
 
 
 def test_concrete_symbolic_call_checks_dtype() -> None:
