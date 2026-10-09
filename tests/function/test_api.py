@@ -183,3 +183,19 @@ def test_lagrangian_hessian_convenience_api() -> None:
   lam_f = np.array(1.2)
   lam_g = np.array([0.3, -0.7])
   np.testing.assert_allclose(h_api(*(xv, (lam_f, lam_g))), h_factory(*(xv, lam_f, lam_g)))
+
+
+def test_print_unreachable_from_the_outputs_raises_at_trace_time() -> None:
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+  def f(x: sc.Expr) -> sc.Expr:
+    sc.print("x={}", x)
+    return x * 2.0
+
+  with pytest.raises(ValueError, match=r"print 'x=\{\}' in function 'f' does not reach its outputs"):
+    f.instantiate()
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+  def g(x: sc.Expr) -> sc.Expr:
+    return sc.print("g={}", x) * 2.0
+
+  g.instantiate()
