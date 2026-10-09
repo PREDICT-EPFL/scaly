@@ -297,6 +297,7 @@ def test_print_is_an_identity_node_carrying_its_format() -> None:
     ("x={0}", (sc.sym("x"),), ValueError, "only empty '{}' placeholders"),
     ("x={:.3f}", (sc.sym("x"),), ValueError, "only empty '{}' placeholders"),
     ("x={}", (sc.sym("i", dtype="int64"),), TypeError, "float64"),
+    ("x=\0{}", (sc.sym("x"),), ValueError, "NUL"),
   ],
 )
 def test_print_rejects_a_format_it_cannot_render(fmt, values, error, message) -> None:

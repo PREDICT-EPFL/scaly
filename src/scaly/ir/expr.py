@@ -13,6 +13,7 @@ import string
 import struct
 import weakref
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable, Iterable, Iterator, Mapping
@@ -600,6 +601,8 @@ def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
 
 def print_pieces(fmt: str) -> tuple[str, ...]:
   """The literal text around each ``{}`` placeholder of a print format: one more piece than placeholders."""
+  if "\0" in fmt:
+    raise ValueError(f"print format {fmt!r} contains a NUL character, which would end the C string")
   pieces = [""]
   for literal, field_name, spec, conversion in string.Formatter().parse(fmt):
     pieces[-1] += literal
@@ -611,18 +614,29 @@ def print_pieces(fmt: str) -> tuple[str, ...]:
   return tuple(pieces)
 
 
-_PRINT_TRACES: list[list[Expr]] = []
+_PRINT_TRACE: ContextVar[list[Expr] | None] = ContextVar("print_trace", default=None)
 
 
 @contextmanager
 def recording_prints() -> Iterator[list[Expr]]:
-  """Collect the prints built inside the block, so a tracer can check that each reaches its outputs."""
+  """Collect the prints this thread builds inside the block, for ``check_prints_reach``."""
   prints: list[Expr] = []
-  _PRINT_TRACES.append(prints)
+  token = _PRINT_TRACE.set(prints)
   try:
     yield prints
   finally:
-    _PRINT_TRACES.pop()
+    _PRINT_TRACE.reset(token)
+
+
+def check_prints_reach(prints: Iterable[Expr], outputs: Iterable[Expr], owner: str) -> None:
+  """Raise for a print with no print of the same format among the ancestors of ``outputs``.
+
+  Matching formats rather than nodes accepts a print that a hint, a rewrite or a substitution rebuilt.
+  """
+  reached = {e.attrs["format"] for e in topo(outputs) if e.op == ExprOp.PRINT}
+  for node in prints:
+    if node.attrs["format"] not in reached:
+      raise ValueError(f"print {node.attrs['format']!r} in {owner} does not reach its outputs; use the value it returns")
 
 
 def print_(fmt: str, *values: Any) -> Expr:
@@ -647,8 +661,8 @@ def print_(fmt: str, *values: Any) -> Expr:
   if any(e.type.dtype != dtypes.float64 for e in exprs):
     raise TypeError(f"print supports float64 values, got {', '.join(str(e.type.dtype) for e in exprs)}")
   node = Expr(ExprOp.PRINT, exprs, exprs[0].type, attrs={"format": fmt}, lowering=exprs[0].lowering)
-  if _PRINT_TRACES:
-    _PRINT_TRACES[-1].append(node)
+  if (trace := _PRINT_TRACE.get()) is not None:
+    trace.append(node)
   return node
 
 

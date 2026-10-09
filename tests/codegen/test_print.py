@@ -178,3 +178,20 @@ int main(void) {
   cc = os.environ.get("SCALY_CC", "cc")
   subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", *define, str(main), str(source), "-lm", "-o", str(exe)], check=True, cwd=tmp_path)
   assert subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout == expected
+
+
+def test_mapped_function_with_two_used_outputs_prints_once_per_used_output(capfd) -> None:
+  """Each used output of a mapped call is its own loop, as the guide states."""
+
+  @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("a"), sc.arg("b")))
+  def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    x = sc.print("x={}", x)
+    return x + 1.0, x + 2.0
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", 3))
+  def both(x: sc.Expr) -> sc.Expr:
+    a, b = sc.vmap(pair, 3)(x)
+    return a + b
+
+  np.testing.assert_allclose(both(np.arange(3.0)), 2 * np.arange(3.0) + 3.0)
+  assert capfd.readouterr().out == "x=0\nx=1\nx=2\n" * 2

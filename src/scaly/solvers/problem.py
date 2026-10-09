@@ -14,7 +14,7 @@ from ..function.api import gradient, sparse_jacobian
 from ..function.concrete import ConcreteFunction
 from ..function.tree import Tree, append_parameter, arg, flat_tree, parameter_list
 from ..function.tree import group as tree_group
-from ..ir.expr import Expr, ExprOp, as_expr, concat, substitute
+from ..ir.expr import Expr, ExprOp, as_expr, check_prints_reach, concat, recording_prints, substitute
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from ._oracle import collect_free_inputs
@@ -357,14 +357,18 @@ def problem(
       symbolic_params = params.symbols(diff=False)
       param_exprs = params.flatten_symbolic(symbolic_params, f"{problem_name} parameters")
       resolved_params = params.with_types(tuple(expr.type for expr in param_exprs))
-      spec = _normalize_spec(fn(symbolic_vars, symbolic_params), vars)
+      with recording_prints() as prints:
+        spec = _normalize_spec(fn(symbolic_vars, symbolic_params), vars)
+      check_prints_reach(prints, _spec_exprs(spec, vars), f"problem {problem_name!r}")
       declared = {expr.id for expr in (*var_exprs, *param_exprs)}
       undeclared = [expr.name or f"%{expr.id}" for expr in collect_free_inputs(_spec_exprs(spec, vars)) if expr.id not in declared]
       if undeclared:
         raise ValueError(f"problem {problem_name!r} has undeclared symbolic inputs: {undeclared}")
       return Problem(problem_name, spec, resolved_vars, resolved_params, var_exprs, param_exprs)
 
-    spec = _normalize_spec(fn(symbolic_vars), vars)
+    with recording_prints() as prints:
+      spec = _normalize_spec(fn(symbolic_vars), vars)
+    check_prints_reach(prints, _spec_exprs(spec, vars), f"problem {problem_name!r}")
     free = tuple(expr for expr in collect_free_inputs(_spec_exprs(spec, vars)) if expr.id not in {var.id for var in var_exprs})
     if any(expr.name is None for expr in free):
       raise ValueError(f"problem {problem_name!r} has unnamed inferred parameters")

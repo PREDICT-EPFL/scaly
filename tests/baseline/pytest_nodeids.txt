@@ -403,6 +403,7 @@ tests/codegen/test_print.py::test_format_text_reaches_stdout_unchanged
 tests/codegen/test_print.py::test_identical_prints_intern_to_one
 tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[direct]
 tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[nested]
+tests/codegen/test_print.py::test_mapped_function_with_two_used_outputs_prints_once_per_used_output
 tests/codegen/test_print.py::test_mapped_print_runs_once_per_trip_in_order
 tests/codegen/test_print.py::test_print_returns_its_value_and_prints_at_each_call
 tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define0-x=[0.25, -0.75] k=2\n]
@@ -609,7 +610,12 @@ tests/function/test_api.py::test_factory_unknown_names_report_value_errors
 tests/function/test_api.py::test_forward_convenience_api_matches_factory
 tests/function/test_api.py::test_gradient_convenience_api_matches_factory
 tests/function/test_api.py::test_lagrangian_hessian_convenience_api
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[block]
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[scalar]
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[simplify]
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[substitute]
 tests/function/test_api.py::test_print_unreachable_from_the_outputs_raises_at_trace_time
+tests/function/test_api.py::test_prints_are_recorded_per_thread
 tests/function/test_api.py::test_scoped_function_decorator_builds_fresh_named_function
 tests/function/test_api.py::test_scoped_function_decorator_outputs_default_names
 tests/function/test_api.py::test_seeded_factory_outputs_require_seed_inputs
@@ -716,6 +722,7 @@ tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits
 tests/ir/test_expr.py::test_mixed_lowering_hints_survive_expr_graph
 tests/ir/test_expr.py::test_print_is_an_identity_node_carrying_its_format
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x-values0-ValueError-at least one value]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x=\x00{}-values5-ValueError-NUL]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={0}-values2-ValueError-only empty '{}' placeholders]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={:.3f}-values3-ValueError-only empty '{}' placeholders]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={} y={}-values1-ValueError-2 placeholders for 1 value]
@@ -1237,6 +1244,7 @@ tests/solvers/test_problem.py::test_nlp_solver_symbolic_call_preserves_variable_
 tests/solvers/test_problem.py::test_piqp_numerical_call_preserves_multiple_variable_blocks
 tests/solvers/test_problem.py::test_problem_carries_spec_trees_and_declared_names
 tests/solvers/test_problem.py::test_problem_infers_closed_over_parameters_and_retypes_them_nondifferentiable
+tests/solvers/test_problem.py::test_problem_print_must_reach_the_spec
 tests/solvers/test_problem.py::test_problem_validates_body_and_declared_inputs_at_construction
 tests/solvers/test_problem.py::test_qp_backend_proves_quadratic_cost_and_affine_constraints
 tests/solvers/test_problem.py::test_qp_problem_is_a_typed_problem
