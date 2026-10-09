@@ -265,7 +265,7 @@ Why this order:
   beside milestone 1; [#83], [#64] and [#77] are designed so it adds a platform without changing
   them.
 - 0.1.0 is a subset of milestone 1: the foundations except [#64], `sc.print`, the templates lane
-  with [#13], [#82] and [#84]. The release scope below lists it.
+  with [#13], the AD lane, [#82] and [#84]. The release scope below lists it.
 
 ## Release scope
 
@@ -279,10 +279,14 @@ Nothing outside this list is started before 0.1.0 ships, so nothing reaches it h
   leaf type so dtype and pattern holes are additive), [#12], then [#13] on today's `VMAP`.
   [#11] ships the templates page of `docs/guide/functions.md`. [#57] any time.
 - `sc.print`: [#77], float64 only.
+- The AD lane, whole: [#15] -> [#17] -> [#18] -> [#19] -> [#20] -> [#21] -> [#22]. Added
+  2026-10-09 (it was first left for after 0.1.0 as internal work): a single derivative engine makes
+  the code people read in 0.1.0 simpler, and two weeks remained before the release.
 - Toolchain: [#63], then [#82].
 - Windows: [#84], in parallel with all of the above.
 - Release: [#81], the status admonition in `docs/index.md`, Windows in the CI and release matrices,
-  release notes.
+  release notes. [#81] freezes measurements only after [#77], [#82] and the AD lane have landed, so
+  the archive measures the code that ships; [#19] changes the generated C.
 
 Everything else follows 0.1.0 in the compiler order above; [#64] is the first candidate after it.
 
@@ -464,7 +468,10 @@ stem plus a digest of the key, checked for collisions and reserved through [#10]
 are built with [#16]'s `role`. Lowering reads the role to mark procedures that must not be
 inlined, and `codegen/c.py` prints the mark; this replaces `_force_noinline_raw`'s
 `"_fwd" in proc_name`, which also matches a user function called `car_fwd`. Byte-identical where
-names do not change.
+names do not change. The helpers themselves are stored in the callee's `_memo`, where
+[#147](https://github.com/PREDICT-EPFL/scaly/pull/147) moved the four module-level weak tables;
+`ad/helpers.py` owns the key and the name, not a cache of its own (decided 2026-10-09, replacing a
+cache inside `ad/helpers.py`, so a helper lives exactly as long as its callee).
 
 **[#18]. Call rules move to `ad/calls.py`.** `body_tangents`, `body_cotangents`, helper construction,
 mapped seed layout, constant-seed baking, `_periodic_seed_tiles`, `_local_seed_colors` and
