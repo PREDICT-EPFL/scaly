@@ -231,7 +231,7 @@ The message appears once, before either call, and shows a symbolic `Expr`
 rather than numbers. Neither numerical call prints anything, because the
 compiled code runs instead of the Python body. The same holds for logging,
 breakpoints, and any other side effect. To inspect numerical values, print the
-result of the call.
+result of the call, or [print from the generated code](#printing-from-generated-code).
 
 ### Symbolic values are not Python conditions
 
@@ -432,6 +432,59 @@ at all horizon stages. The calls must be independent. `vmap` does not feed one
 iteration's output into the next iteration. The loop body need not grow with
 the number of calls, but numerical work, input and output storage, and
 derivative sparsity tables can.
+
+## Printing from generated code
+
+`sc.print` prints numerical values each time the compiled code computes them.
+It returns its first value, and the print travels with the returned expression,
+so the body uses that expression in place of the original:
+
+```python
+@sc.function(sc.arg("x", 2), sc.arg("gain", ()), outputs=sc.arg("y", 2))
+def damped(x: sc.Expr, gain: sc.Expr) -> sc.Expr:
+    x = sc.print("x={} gain={}", x, gain)
+    return gain * x
+
+print(damped(np.array([1.0, 0.1]), np.array(0.5)))
+# x=[1, 0.10000000000000001] gain=0.5
+# [0.5  0.05]
+```
+
+The format has one `{}` for each value, and `{{` and `}}` stand for literal
+braces. Each print ends its line. A value prints with 17 significant digits,
+enough to read a float64 back exactly, which is why `0.1` prints as
+`0.10000000000000001`. A tensor prints flat as `[a, b, ...]` whatever its shape.
+Only float64 values can be printed.
+
+A print runs whenever the generated code computes its value. Inside `vmap` it
+runs once per call, in call order. Two identical prints of the same values are
+the same expression and print once, and prints that do not depend on each other
+have no guaranteed order. A function called from another runs only when the
+caller uses one of its outputs, so a print inside an unused call never runs.
+
+A derivative prints when it computes the printed value, which most derivatives
+do because their partial derivatives read it. The gradient of
+`sc.print("x={}", x).sin().sum()` is `cos(x)`, so it prints `x`. The gradient of
+`(2 * sc.print("x={}", x)).sum()` is the constant 2 and prints nothing.
+
+A print that the outputs do not use would never run, so it raises when the
+body runs:
+
+```python
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
+def forgotten(x: sc.Expr) -> sc.Expr:
+    sc.print("x={}", x)
+    return 2 * x
+# ValueError: print 'x={}' in function 'forgotten' does not reach its outputs; use the value it returns
+```
+
+Compiled code prints to the process's C standard output rather than to Python's
+`sys.stdout`. Scaly flushes both around each call of a function that prints, so
+its lines appear in order with Python's own output. Some notebook front ends
+show only Python's output, and the lines then go wherever the kernel's standard
+output goes, often the terminal that started it. Exported C can remove or
+redirect its prints, as [Code generation](codegen.md#prints-in-exported-c)
+describes.
 
 ## Function metadata
 

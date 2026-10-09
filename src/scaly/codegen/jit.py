@@ -368,9 +368,12 @@ class CompiledFunction:
       w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
       w_ptr = _C_DOUBLE_P()
 
+    # C stdout buffers apart from sys.stdout, and holds its lines until exit when it is not a terminal.
+    # Flushing both around a call that prints keeps the two in the order they were written.
+    if self._artifact.prints:
+      sys.stdout.flush()
     status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
     if self._artifact.prints:
-      # C stdout buffers apart from sys.stdout, and goes unflushed until exit when it is not a terminal.
       _process_libc().fflush(None)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")

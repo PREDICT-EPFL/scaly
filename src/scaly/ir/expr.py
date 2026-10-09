@@ -626,12 +626,12 @@ def recording_prints() -> Iterator[list[Expr]]:
 
 
 def print_(fmt: str, *values: Any) -> Expr:
-  """Print ``values`` each time generated code computes the result, which is the first value.
+  """Return the first of ``values``, printing them all each time generated code computes it.
 
   ``fmt`` has one ``{}`` for each value, and ``{{`` and ``}}`` for literal braces. Each print ends
-  with a newline. A ``float64`` prints with 17 significant digits, so it reads back exactly, and a
-  tensor prints flat as ``[a, b, ...]``. Only the returned expression carries the print: a print
-  whose result the outputs do not use raises when the function is traced.
+  its line. A value prints with 17 significant digits, enough to read a ``float64`` back exactly,
+  and a tensor prints flat as ``[a, b, ...]``. The print is part of the returned expression, so a
+  function's outputs have to use it. A print they do not use raises when the function is traced.
 
   Args:
     fmt: the text to print, with a ``{}`` placeholder for each value.

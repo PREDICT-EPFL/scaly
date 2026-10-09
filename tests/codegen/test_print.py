@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -29,6 +30,24 @@ def test_print_returns_its_value_and_prints_at_each_call(capfd) -> None:
   assert capfd.readouterr().out == "x=[1.5, -2] k=3\n"
   scaled((np.array([0.1, 0.0]), np.array(-1.0)))
   assert capfd.readouterr().out == "x=[0.10000000000000001, 0] k=-1\n"
+
+
+def test_c_and_python_output_stay_in_order_through_a_pipe() -> None:
+  """Through a pipe both stdouts buffer whole blocks, so the order holds only because the JIT flushes both."""
+  script = """
+import numpy as np
+import scaly as sc
+
+@sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+def f(x):
+  return sc.print("x={}", x) * 2.0
+
+print("before")
+f(np.array(1.0))
+print("after")
+"""
+  out = subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True).stdout
+  assert out == "before\nx=1\nafter\n"
 
 
 def test_format_text_reaches_stdout_unchanged(capfd) -> None:
