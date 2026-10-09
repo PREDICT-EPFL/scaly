@@ -50,6 +50,10 @@ def _atan2_denominator(e: Expr) -> Expr:
   return x * x + y * y
 
 
+def _reciprocal_denominator(e: Expr) -> Expr:
+  return _const(1, e) / e.args[1]
+
+
 def _mul_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   (x, y), (dx, dy) = e.args, tangents
   if x is y:
@@ -97,7 +101,7 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
   ExprOp.ADD: Elementwise(ProgramOp.ADD, np.add, "+", (lambda e: 1, lambda e: 1)),
   ExprOp.SUB: Elementwise(ProgramOp.SUB, np.subtract, "-", (lambda e: 1, lambda e: -1)),
   ExprOp.MUL: Elementwise(ProgramOp.MUL, np.multiply, "*", (lambda e: e.args[1], lambda e: e.args[0]), _mul_jvp),
-  ExprOp.DIV: Elementwise(ProgramOp.DIV, np.divide, "/", (lambda e: _const(1, e) / e.args[1], lambda e: -(e / e.args[1])), _div_jvp),
+  ExprOp.DIV: Elementwise(ProgramOp.DIV, np.divide, "/", (_reciprocal_denominator, lambda e: -(e * _reciprocal_denominator(e))), _div_jvp),
   ExprOp.POW: Elementwise(
     ProgramOp.POW,
     np.power,
