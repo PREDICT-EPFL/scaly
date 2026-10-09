@@ -72,17 +72,22 @@ new traversal those kernels have 1458 and 2473 lines, compared with 5698 and 275
 before. The small case crosses the automatic scalarization cutoff, and the
 whole source includes explicit scalarized boundary rows. The new gate measures
 the forward mass helper bodies at 33 and 65 masses, preserving the original
-requirement that the mass loop stays a loop. Restored bodies have 828 and 827
+requirement that the mass loop stays a loop. Restored bodies have 838 and 837
 lines. Forcing those helpers to use scalar expansion produces 10644 and 21428
-lines and fails the gate. The perturbation was removed.
+lines and fails the gate. The perturbation was removed. At these sizes the whole kernels still grow from
+2473 to 3752 lines, compared with 2754 to 4738 on base; the primal helper and
+scalarized boundary rows grow on both revisions. This gate covers the forward
+mass helpers, rather than every source of per-mass code.
 
 Neural MPC fixed workspace changes from zero to 6144 doubles at horizon six.
 At horizon 100 total workspace changes from 1600 to 7744 doubles, leaving the
 horizon-dependent part at 1600. Both allowed folds for a matrix-vector tangent
 were tried: `dY @ A.T` and `(A @ dY.T).T`. They put transposes in different
 places but leave the same fixed workspace with the current lowering passes.
-The batched intermediates survive as buffers that the previous scalarized
-per-seed bodies eliminated. Removing them requires more loop fusion or a
+The six new buffers each hold 1024 doubles: 32 hidden units times four seeds
+times eight horizon lanes, for the product and its transposed copy in each of
+three layers. These batched intermediates survive where the previous scalarized
+per-seed bodies eliminated them. Removing them requires more loop fusion or a
 different contraction lowering. This change keeps the decided traversal and
 uses tight bounds of 6144, 7744 and 1600 for fixed, total and horizon growth.
 It does not preserve the previous workspace limit of 4800 at horizon 100.

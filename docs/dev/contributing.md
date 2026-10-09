@@ -101,9 +101,6 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent; CI installs both solver wheels and
 runs everything. Never hand-roll a "is the solver loadable" skip condition.
 
-Scaly calculates forward derivative directions in one traversal, with a leading seed axis.
-An operation without a derivative rule raises an error naming the operation and its callee.
-
 ## Where things live
 
 `tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering/`

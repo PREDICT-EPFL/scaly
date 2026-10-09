@@ -304,9 +304,7 @@ def test_call_mixed_constant_and_runtime_seed_formals(nseed):
   "mode",
   [
     pytest.param("single", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
-    pytest.param(
-      "many", marks=pytest.mark.xfail(strict=True, reason="#161: structural power JVP divides by a zero base with an inactive runtime exponent")
-    ),
+    pytest.param("many", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
     "reverse",
   ],
 )

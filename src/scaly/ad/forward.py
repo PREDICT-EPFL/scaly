@@ -42,6 +42,7 @@ def _zero_tangent(expr: Expr, nseed: int) -> Expr:
 
 
 def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, callee: str = "<top-level>") -> tuple[Expr | None, ...]:
+  """Keep floating zeros implicit internally; nonfloating outputs have no tangent."""
   tangents: dict[int, Expr | None] = {}
   pending = [(out, False) for out in reversed(outputs)]
   while pending:
@@ -53,16 +54,14 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
       pending.append((expr, True))
       pending.extend((arg, False) for arg in reversed(args) if arg.id not in tangents)
       continue
-    if not expr.type.dtype.is_floating:
+    if not expr.type.dtype.is_floating or not nseed or expr.op == ExprOp.CONST:
       tangent = None
-    elif not nseed or expr.op == ExprOp.CONST:
-      tangent = _zero_tangent(expr, nseed)
     elif expr.op == ExprOp.INPUT:
-      tangent = seeds[expr] if expr in seeds else _zero_tangent(expr, nseed)
+      tangent = seeds.get(expr)
     else:
       d = [tangents[arg.id] for arg in args]
-      if all(t is None or _is_zero_const(t) for t in d):
-        tangent = _zero_tangent(expr, nseed)
+      if all(t is None for t in d):
+        tangent = None
       elif expr.op == ExprOp.PRINT:
         tangent = d[0]
       elif expr.op in {ExprOp.CALL, ExprOp.VMAP}:
@@ -73,8 +72,9 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           else _vmap_jvp_many(expr, call_tangents, nseed, pushforward=_pushforward)
         )
       else:
-        assert all(t is not None for t in d)
-        tangent = _pushforward_rule(expr, [t for t in d if t is not None], nseed, callee)
+        assert all(arg.type.dtype.is_floating for arg in args)
+        d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
+        tangent = _pushforward_rule(expr, d, nseed, callee)
         if expr.op in {
           ExprOp.SUM,
           ExprOp.RESHAPE,
@@ -84,12 +84,12 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           ExprOp.SCATTER,
           ExprOp.STACK,
           ExprOp.CONCAT,
-        } and all(t.op == ExprOp.CONST for t in d if t is not None):
+        } and all(t.op == ExprOp.CONST for t in d):
           tangent = simplify_cse_fixpoint(tangent)
       if tangent is not None and tangent.shape != (nseed, *expr.shape):
         tangent = tangent * Expr.const(np.ones((1, *expr.shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
-    tangents[expr.id] = tangent
-  return tuple(tangents[out.id] for out in outputs)
+    tangents[expr.id] = None if tangent is not None and _is_zero_const(tangent) else tangent
+  return tuple(tangents[out.id] if tangents[out.id] is not None or not out.type.dtype.is_floating else _zero_tangent(out, nseed) for out in outputs)
 
 
 def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) -> Expr:
