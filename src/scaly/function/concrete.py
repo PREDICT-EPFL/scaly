@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Seq
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, linear_combination, topo
+from ..ir.expr_spec import verify_expr
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
 from .tree import Tree, flat_tree, flat_parameters, inferred_outputs
@@ -180,6 +181,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     non_inputs = [expr.name or f"%{expr.id}" for expr in self.inputs if expr.op != ExprOp.INPUT]
     if non_inputs:
       raise ValueError(f"function {name!r} declares non-input expressions as inputs: {non_inputs}")
+    verify_expr((*self.inputs, *self.outputs))
     for expr in (*self.inputs, *self.outputs):
       if expr.type.dtype not in dtypes.all():
         raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")

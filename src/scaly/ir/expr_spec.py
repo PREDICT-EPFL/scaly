@@ -12,10 +12,8 @@ small and focused on Scaly's expression dialect. The contract:
   raises ``VerifyError`` at the first invalid node, naming the node, the op,
   and the failing rule.
 
-The verifier is opt-in: existing construction-time checks in ``expr.py`` keep
-the happy path fast. ``verify_expr`` is the explicit, defensive check passes
-should run after non-trivial graph rewrites or AD transforms — and the
-negative-test harness for those passes.
+Function construction and lowering run the verifier at their expression-graph boundaries.
+Passes can also call it explicitly after graph rewrites or AD transforms.
 """
 
 from __future__ import annotations
@@ -162,6 +160,52 @@ def _transpose_axes(expr: Expr) -> str | None:
   return None
 
 
+def _slice_index(expr: Expr) -> str | None:
+  index = expr.attrs.get("index")
+  src = expr.args[0]
+  if not isinstance(index, tuple) or len(index) != len(src.shape):
+    return "SLICE requires a normalized 'index' tuple with one component per source axis"
+  expected = []
+  for item, dim in zip(index, src.shape, strict=True):
+    if isinstance(item, int):
+      if not -dim <= item < dim:
+        return f"SLICE index {item} out of bounds for axis of size {dim}"
+    elif isinstance(item, slice):
+      try:
+        expected.append(len(range(*item.indices(dim))))
+      except (TypeError, ValueError) as exc:
+        return f"SLICE invalid slice: {exc}"
+    else:
+      return f"SLICE unsupported index component {item!r}"
+  if expr.shape != tuple(expected):
+    return f"SLICE output shape {expr.shape} != indexed shape {tuple(expected)}"
+  if expr.type.dtype != src.type.dtype:
+    return "SLICE must preserve source dtype"
+  return None
+
+
+def _solver_call_signature(expr: Expr) -> str | None:
+  solver = expr.attrs.get("solver")
+  if solver is None:
+    return "SOLVER_CALL missing 'solver' attr"
+  output = expr.attrs.get("output")
+  if not isinstance(output, int) or not 0 <= output < len(solver.output_signature):
+    return f"SOLVER_CALL output index {output!r} out of range"
+  if len(expr.args) != len(solver.input_signature):
+    return "SOLVER_CALL argument count does not match solver input signature"
+  for actual, (name, shape) in zip(expr.args, solver.input_signature, strict=True):
+    if actual.shape != shape:
+      return f"SOLVER_CALL arg {name!r} shape {actual.shape} != signature shape {shape}"
+  name, shape = solver.output_signature[output]
+  if expr.attrs.get("output_name") != name:
+    return f"SOLVER_CALL output_name does not match signature name {name!r}"
+  if expr.shape != shape:
+    return f"SOLVER_CALL output shape {expr.shape} != signature shape {shape}"
+  if expr.type.diff:
+    return "SOLVER_CALL output must be non-differentiable"
+  return None
+
+
 def _matmul_shape(expr: Expr) -> str | None:
   if len(expr.args) != 2:
     return f"MATMUL has {len(expr.args)} args"
@@ -290,6 +334,8 @@ spec_expr = Spec(
     Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
+    Rule(ExprOp.SLICE, "slice-index", _slice_index),
+    Rule(ExprOp.SOLVER_CALL, "solver-call-signature", _solver_call_signature),
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),

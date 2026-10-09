@@ -99,6 +99,15 @@ def test_gather_scatter_eval_and_ad() -> None:
     raise AssertionError("duplicate scatter should fail")
 
 
+def _solver_call(parameter: sc.Expr) -> sc.Expr:
+  from scaly.solvers.model import SolverDescriptor
+
+  descriptor = SolverDescriptor("ad_test_solver", "test", parameter.size, 0, 0, (("p", parameter.shape),), (("y", parameter.shape),), (), 1)
+  return sc.Expr(
+    sc.ExprOp.SOLVER_CALL, (parameter,), sc.TensorType(parameter.shape, diff=False), attrs={"solver": descriptor, "output": 0, "output_name": "y"}
+  )
+
+
 @pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp", "sparsity"])
 @pytest.mark.parametrize("wrapped", ["direct", "call", "mapped"])
 def test_active_solver_derivative_refused(mode, wrapped, monkeypatch) -> None:
@@ -106,10 +115,9 @@ def test_active_solver_derivative_refused(mode, wrapped, monkeypatch) -> None:
   from scaly.ad.reverse import vjp
   from scaly.ad.sparsity import jacobian_sparsity
   from scaly.function.concrete import ConcreteFunction
-  from scaly.ir.types import TensorType
 
   x = sc.sym("solver_parameter", 2)
-  result = sc.Expr(sc.ExprOp.SOLVER_CALL, (x,), TensorType((2,), diff=False), attrs={"output": 0})
+  result = _solver_call(x)
   if wrapped != "direct":
     fn = ConcreteFunction._from_exprs("opaque_test", [x], [result], ["x"], ["y"])
     if wrapped == "mapped":
@@ -134,10 +142,9 @@ def test_inactive_solver_derivatives_remain_zero() -> None:
   from scaly.ad.forward import jvp
   from scaly.ad.reverse import vjp
   from scaly.ad.sparsity import jacobian_sparsity
-  from scaly.ir.types import TensorType
 
   x, unrelated = sc.sym("solver_inactive", 2), sc.sym("unrelated", 2)
-  result = sc.Expr(sc.ExprOp.SOLVER_CALL, (x,), TensorType((2,), diff=False), attrs={"output": 0})
+  result = _solver_call(x)
   np.testing.assert_array_equal(jvp(result, unrelated, sc.const(np.ones(2))).value, np.zeros(2))
   np.testing.assert_array_equal(jvp(result, x, sc.const(np.zeros(2))).value, np.zeros(2))
   np.testing.assert_array_equal(vjp((result,), (unrelated,), (sc.const(np.ones(2)),))[0].value, np.zeros(2))
@@ -152,10 +159,9 @@ def test_solver_call_with_inactive_parameter_allows_other_derivatives(mapped) ->
   from scaly.ad.sparsity import jacobian_sparsity
   from scaly.function.concrete import ConcreteFunction
   from scaly.function.sugar import _mapped_call
-  from scaly.ir.types import TensorType
 
   p, q, x = sc.sym("inactive_p", 2), sc.sym("active_q", 2), sc.sym("outer_x", 2)
-  solver = sc.Expr(sc.ExprOp.SOLVER_CALL, (p,), TensorType((2,), diff=False), attrs={"output": 0})
+  solver = _solver_call(p)
   fn = ConcreteFunction._from_exprs("mixed_solver_test", [p, q], [solver + q], ["p", "q"], ["y"])
   constant = sc.const(np.ones(2))
   result = _mapped_call(fn, 1, [(constant, 0, 0), (x, 0, 0)]) if mapped else fn(constant, x)

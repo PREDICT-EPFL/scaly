@@ -15,10 +15,20 @@ from ..ir.types import SparsityPattern, broadcast_shape
 
 
 def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> bool:
-  key = (expr.id, wrt.id)
-  if key not in memo:
-    memo[key] = expr.id == wrt.id or any(_depends_on(arg, wrt, memo) for arg in expr.args)
-  return memo[key]
+  stack = [(expr, False)]
+  while stack:
+    node, visited = stack.pop()
+    key = (node.id, wrt.id)
+    if key in memo:
+      continue
+    if node.id == wrt.id:
+      memo[key] = True
+    elif visited:
+      memo[key] = any(memo[(arg.id, wrt.id)] for arg in node.args)
+    else:
+      stack.append((node, True))
+      stack.extend((arg, False) for arg in reversed(node.args) if (arg.id, wrt.id) not in memo)
+  return memo[(expr.id, wrt.id)]
 
 
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
@@ -79,12 +89,29 @@ def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sp
 
 
 def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
-  key = (expr.id, wrt.id)
-  if key in memo:
-    return memo[key]
-  mask = _jac_mask_uncached(expr, wrt, memo)
-  memo[key] = mask
-  return mask
+  stack = [(expr, wrt, 0)]
+  while stack:
+    node, variable, phase = stack.pop()
+    key = (node.id, variable.id)
+    if key in memo:
+      continue
+    if phase == 0:
+      stack.append((node, variable, 1))
+      if node.op != ExprOp.VMAP or node.attrs["length"]:
+        stack.extend((arg, variable, 0) for arg in reversed(node.args) if (arg.id, variable.id) not in memo)
+    elif phase == 1 and node.op in (ExprOp.CALL, ExprOp.VMAP):
+      stack.append((node, variable, 2))
+      callee = node.attrs["callee"]
+      callee_out = callee.outputs[node.attrs["output"]]
+      # Actual masks must be known before requesting callee masks for active formals.
+      if node.op == ExprOp.CALL or node.attrs["length"]:
+        for formal, actual in reversed(tuple(zip(callee.inputs, node.args, strict=True))):
+          if memo[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in memo:
+            stack.append((callee_out, formal, 0))
+    else:
+      memo[key] = _jac_mask_uncached(node, variable, memo)
+
+  return memo[(expr.id, wrt.id)]
 
 
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
