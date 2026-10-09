@@ -54,8 +54,8 @@ KKT the Karush–Kuhn–Tucker system of an IPM, TACO the Tensor Algebra Compile
 17. [What devrush gives us](#what-devrush-gives-us)
 18. [Devrush as a source of tests and examples](#devrush-as-a-source-of-tests-and-examples)
 19. [Open questions](#open-questions)
-19. [Evidence from devrush](#evidence-from-devrush)
-20. [How this roadmap was made](#how-this-roadmap-was-made)
+20. [Evidence from devrush](#evidence-from-devrush)
+21. [How this roadmap was made](#how-this-roadmap-was-made)
 
 ## Decisions
 
