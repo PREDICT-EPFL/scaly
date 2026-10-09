@@ -276,6 +276,8 @@ def test_call_mixed_constant_and_runtime_seed_formals(nseed, monkeypatch):
     x, y = inputs
     return (x * y).sin() + x / (y + 2)
 
+  seeds = np.array([[1.0, -0.4], [0.0, 0.0], [-0.3, 0.7]])[:nseed]
+
   @sc.function(
     sc.group(sc.arg("mixed_z", 2), sc.arg("mixed_seed", (nseed, 2))),
     outputs=sc.group(sc.arg("baked"), sc.arg("runtime"), sc.arg("single")),
@@ -284,16 +286,99 @@ def test_call_mixed_constant_and_runtime_seed_formals(nseed, monkeypatch):
   def products(inputs):
     z, seed = inputs
     value = stage((z, z.sin() + 1))
-    constant = sc.const(np.ones((nseed, 2)))
+    constant = sc.const(seeds)
     return sc.jvp_many(value, z, constant), sc.jvp_many(value, z, seed), sc.stack([sc.jvp(value, z, seed[i]) for i in range(nseed)])
 
   z = np.array([0.2, -0.7])
-  baked, runtime, single = products((z, np.ones((nseed, 2))))
+  baked, runtime, single = products((z, seeds))
   y = np.sin(z) + 1
-  expected = np.broadcast_to(np.cos(z * y) * (y + z * np.cos(z)) + 1 / (y + 2) - z * np.cos(z) / (y + 2) ** 2, (nseed, 2))
+  expected = seeds * (np.cos(z * y) * (y + z * np.cos(z)) + 1 / (y + 2) - z * np.cos(z) / (y + 2) ** 2)
   for result in (baked, runtime, single):
     np.testing.assert_allclose(result, expected, atol=1e-12, rtol=1e-12)
   calls = [node for node in topo([as_concrete(products).outputs[0]]) if node.op == ExprOp.CALL]
   assert len(calls) == 1
   helper = calls[0].attrs["callee"]
   assert sum(name.startswith("fwd:") for name in helper.input_names) == 1
+
+
+@pytest.mark.parametrize(
+  "mode",
+  [
+    pytest.param("single", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
+    pytest.param(
+      "many", marks=pytest.mark.xfail(strict=True, reason="#161: structural power JVP divides by a zero base with an inactive runtime exponent")
+    ),
+    "reverse",
+  ],
+)
+def test_power_zero_base_with_inactive_runtime_exponent(mode, monkeypatch):
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+
+  @sc.function(
+    sc.group(sc.arg("power_x", 2), sc.arg("power_p", 2), sc.arg("power_seeds", (3, 2))),
+    outputs=sc.arg("derivative"),
+    name="power_zero_base",
+  )
+  def products(inputs):
+    x, p, seeds = inputs
+    y = x**p
+    if mode == "single":
+      return sc.stack([sc.jvp(y, x, seeds[i]) for i in range(3)])
+    if mode == "many":
+      return sc.jvp_many(y, x, seeds)
+    return sc.vjp((y,), (x,), (sc.const([1.0, 1.0]),))[0]
+
+  x, p = np.array([0.0, -1.5]), np.array([2.0, 2.0])
+  seeds = np.array([[1.0, -0.4], [0.0, 0.0], [-0.3, 0.7]])
+  gradient = p * x ** (p - 1)
+  expected = gradient if mode == "reverse" else seeds * gradient
+  actual = products((x, p, seeds))
+  assert np.isfinite(actual).all()
+  np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
+  if mode != "reverse":
+    step = 1e-5
+    differences = np.stack([((x + step * seed) ** p - (x - step * seed) ** p) / (2 * step) for seed in seeds])
+    np.testing.assert_allclose(actual, differences, atol=1e-9, rtol=1e-8)
+
+
+@pytest.mark.parametrize("layout", ["call_of_map", "map_of_call"])
+@pytest.mark.parametrize("nseed", [1, 3, 5])
+def test_nested_call_and_map_against_numpy(layout, nseed, monkeypatch):
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+
+  @sc.function(sc.arg("nested_map_x", 2), outputs=sc.arg("y"), name="nested_map_leaf")
+  def leaf(x):
+    return sc.stack([x[0] * x[1], x[1].sin()])
+
+  @sc.function(sc.arg("nested_map_z", 6), outputs=sc.arg("y"), name="nested_call_of_map")
+  def call_of_map(z):
+    return _mapped_call(leaf, 3, [(z, 0, 2)]) * z
+
+  @sc.function(sc.arg("nested_map_w", 2), outputs=sc.arg("y"), name="nested_stage_with_call")
+  def stage_with_call(w):
+    return leaf(w) + w.exp()
+
+  @sc.function(
+    sc.group(sc.arg("outer_map_z", 6), sc.arg("outer_map_seeds", (nseed, 6)), sc.arg("outer_map_cot", 6)),
+    outputs=sc.group(sc.arg("value"), sc.arg("single"), sc.arg("many"), sc.arg("adj")),
+  )
+  def products(inputs):
+    z, seeds, cot = inputs
+    y = call_of_map(z) if layout == "call_of_map" else _mapped_call(stage_with_call, 3, [(z, 0, 2)])
+    return y, sc.stack([sc.jvp(y, z, seeds[i]) for i in range(nseed)]), sc.jvp_many(y, z, seeds), sc.vjp((y,), (z,), (cot,))[0]
+
+  def reference(z):
+    blocks = z.reshape(3, 2)
+    value = np.stack([blocks[:, 0] * blocks[:, 1], np.sin(blocks[:, 1])], axis=1).ravel()
+    return value * z if layout == "call_of_map" else value + np.exp(z)
+
+  rng = np.random.default_rng(19)
+  z, seeds, cot = rng.normal(size=6), rng.normal(size=(nseed, 6)), rng.normal(size=6)
+  if nseed > 1:
+    seeds[1] = 0
+  value, single, many, adj = products((z, seeds, cot))
+  expected = np.stack([(reference(z + 1e-5 * row) - reference(z - 1e-5 * row)) / 2e-5 for row in seeds])
+  np.testing.assert_allclose(value, reference(z), atol=1e-12, rtol=1e-12)
+  for tangent in (single, many):
+    np.testing.assert_allclose(tangent, expected, atol=1e-8, rtol=1e-8)
+    np.testing.assert_allclose(tangent @ cot, seeds @ adj, atol=1e-12, rtol=1e-12)
