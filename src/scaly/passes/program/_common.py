@@ -71,6 +71,11 @@ def trip_count(rng: ProgramNode) -> int | None:
   return max(0, -(-span // stride)) if stride > 0 else None
 
 
+def prints(node: ProgramNode) -> bool:
+  """Whether ``node`` holds a print, which has to run each time its statement does."""
+  return any(n.op == ProgramOp.PRINT for n in walk_program(node))
+
+
 def _proc_parts(proc: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
   """Split a PROC into (params, body statements)."""
   pc = int(proc.attrs["param_count"])

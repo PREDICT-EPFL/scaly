@@ -427,3 +427,20 @@ def test_nlp_solver_symbolic_call_preserves_variable_blocks() -> None:
   assert result[1][0].shape == (2,)
   assert result[2].shape == (1,)
   assert result[3].shape == (3,)
+
+
+def test_problem_print_must_reach_the_spec() -> None:
+  with pytest.raises(ValueError, match=r"print 'x=\{\}' in problem 'forgotten' does not reach its outputs"):
+
+    @sc.problem(vars=sc.arg("x", 2))
+    def forgotten(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+      sc.print("x={}", x)
+      return sc.ProblemSpec(minimize=(x * x).sum())
+
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()))
+  def watched(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=(sc.print("x={}", x) * x).sum() * p)
+
+  @sc.problem(vars=sc.arg("x", 2))
+  def inferred(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=(sc.print("x={} p={}", x, sc.sym("p")) * x).sum())

@@ -55,6 +55,7 @@ class ProgramOp(StrEnum):
   STORE = "store"
   STORE_PAIR = "store_pair"
   CALL = "call"
+  PRINT = "print"
 
   # Scalar/index-level
   CONST_INT = "const_int"
@@ -365,6 +366,15 @@ def block(*statements: ProgramNode) -> ProgramNode:
 
 def call(callee: str, args: Sequence[ProgramNode], *, returns: Sequence[str] = ()) -> ProgramNode:
   return ProgramNode(ProgramOp.CALL, tuple(args), attrs={"callee": callee, "returns": tuple(returns)})
+
+
+def print_(pieces: Sequence[str], values: Sequence[ProgramNode]) -> ProgramNode:
+  """Print scalar ``values`` between the literal text ``pieces``, which has one more entry than ``values``."""
+  if len(pieces) != len(values) + 1:
+    raise ValueError(f"print needs {len(values) + 1} pieces of text for {len(values)} values, got {len(pieces)}")
+  if any(v.op not in SCALAR_OPS for v in values):
+    raise TypeError("print values must be scalar ProgramNodes")
+  return ProgramNode(ProgramOp.PRINT, tuple(values), attrs={"pieces": tuple(pieces)})
 
 
 def proc(name: str, params: Sequence[ProgramNode], body: Sequence[ProgramNode], *, device: DeviceSpec | str | None = None) -> ProgramNode:

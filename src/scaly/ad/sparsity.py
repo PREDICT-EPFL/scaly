@@ -128,7 +128,7 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
     child = _jac_mask(expr.args[0], wrt, memo)
     incidence = _incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
     return _compose(incidence, child)
-  if expr.op == ExprOp.RESHAPE:
+  if expr.op in {ExprOp.RESHAPE, ExprOp.PRINT}:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op == ExprOp.TRANSPOSE:
     order = np.arange(expr.size).reshape(expr.args[0].shape).transpose(expr.attrs["axes"]).reshape(-1)

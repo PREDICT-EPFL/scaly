@@ -17,6 +17,7 @@ The JIT compiles for the machine it runs on, so it also passes the host CPU targ
 from __future__ import annotations
 
 import ctypes
+import functools
 import hashlib
 import os
 import shlex
@@ -33,6 +34,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
+from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe
@@ -90,6 +92,11 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
       _SOLVER_NAMESPACE_ANCHOR = lib
       _SOLVER_NAMESPACE_ENVIRON = ctypes.c_void_p.in_dll(lib, "environ")
   return lib
+
+
+@functools.cache
+def _process_libc() -> ctypes.CDLL:
+  return ctypes.CDLL(None)
 
 
 class JitUnavailable(RuntimeError):
@@ -170,6 +177,7 @@ class _Artifact:
   flags: tuple[str, ...]
   workspace_size: int
   solver_library: bool
+  prints: bool
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -219,7 +227,12 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     tmp_lib.replace(lib_path)
 
   artifact = _Artifact(
-    lib_path=lib_path, key=key, flags=module.link_flags, workspace_size=module.workspace_size, solver_library=bool(module.backends)
+    lib_path=lib_path,
+    key=key,
+    flags=module.link_flags,
+    workspace_size=module.workspace_size,
+    solver_library=bool(module.backends),
+    prints=prints(module.program),
   )
   with _artifact_lock:
     _artifact_cache[key] = artifact
@@ -355,7 +368,13 @@ class CompiledFunction:
       w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
       w_ptr = _C_DOUBLE_P()
 
+    # C stdout buffers apart from sys.stdout, and holds its lines until exit when it is not a terminal.
+    # Flushing both around a call that prints keeps the two in the order they were written.
+    if self._artifact.prints:
+      sys.stdout.flush()
     status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
+    if self._artifact.prints:
+      _process_libc().fflush(None)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

@@ -68,6 +68,9 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
     raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
+  if expr.op == ExprOp.PRINT:
+    memo[expr.id] = ret = _jvp(expr.args[0], seeds, memo, dep_memo)
+    return ret
 
   def save(ret: Expr) -> Expr:
     memo[expr.id] = ret
@@ -332,6 +335,9 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.RESHAPE:
     memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo).reshape((nseed, *expr.shape))
+    return ret
+  if expr.op == ExprOp.PRINT:
+    memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     return ret
   if expr.op == ExprOp.TRANSPOSE:
     if len(expr.shape) > 3:

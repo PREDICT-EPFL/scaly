@@ -408,6 +408,25 @@ libraries to be available, even though rendering their wrapper source does not.
 For deployment on another machine, provide libraries and paths appropriate to
 that target. See [Solver backends](solver_backends.md#native-libraries-and-deployment).
 
+## Prints in exported C
+
+A function containing [`sc.print`](functions.md#printing-from-generated-code)
+calls `SCALY_PRINTF` with a `printf` format and its values. Its source includes
+`<stdio.h>` and defines `SCALY_PRINTF` as `printf`, unless the macro is already
+defined, so a definition on the compiler command line replaces every print:
+
+```bash
+cc -c model.c '-DSCALY_PRINTF(...)='
+cc -c model.c -DSCALY_PRINTF=uart_printf -include uart.h
+```
+
+The first command removes the prints, and the values they return are still
+computed. The second sends each print to `uart_printf`, a function taking the
+same arguments as `printf`, such as one writing to a serial port on a
+microcontroller. Its declaration has to come from somewhere, here a header
+given to `-include`, because the source includes `<stdio.h>` only for its own
+definition. A source without prints does not mention `SCALY_PRINTF`.
+
 ## CPU targets, vector lanes, and math libraries
 
 A generated module carries a `BuildRecipe` in `module.recipe`. It records the
