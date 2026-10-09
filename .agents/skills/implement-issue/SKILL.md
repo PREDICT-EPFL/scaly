@@ -60,7 +60,8 @@ without conventional prefixes and without citing hashes from this branch.
 
 ## 5. Prove it
 
-Run `wt hook pre-merge` for every change. It runs `ty`, both Ruff checks, the full suite, the
+Run `wt hook pre-merge --yes` for every change; without `--yes` it waits for an approval that
+nobody gives in an unattended thread. It runs `ty`, both Ruff checks, the full suite, the
 benchmark smoke, the documentation build and the private-name check. Then add the proof the change
 type needs:
 
