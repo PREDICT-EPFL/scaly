@@ -494,10 +494,10 @@ On supported glibc x86-64 hosts it also selects vector math automatically.
 `SCALY_VECTOR_LIBM=none` forces scalar math calls, as described in
 [environment settings](env_vars.md#compiler-selection-and-optimization).
 The cache key includes the generated source and its recipe, function name,
-interface version, and compiler and link flags. New numerical inputs do not
-cause recompilation. The key does not identify the compiler executable or the
-exact CPU, so [environment settings](env_vars.md#compiler-selection-and-optimization)
-describes when to clear the cache.
+interface version, the compiler command and its flags, and the compiler and
+CPU it runs on. New numerical inputs do not cause recompilation. Another
+compiler, an upgraded one at the same path, or another machine sharing the
+cache directory compiles a fresh library.
 
 `compile()` prepares the library without evaluating the function:
 

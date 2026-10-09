@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import platform
+import shlex
 import shutil
+import sys
 from typing import cast
 from pathlib import Path
 
@@ -54,6 +56,25 @@ def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
   a(np.zeros(3))
   b(np.zeros(3))
   assert as_concrete(a)._compiled.cache_key == as_concrete(b)._compiled.cache_key
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the wrapper is a shell script")
+def test_compiler_wrapper_change_misses_the_cache(isolated_cache, monkeypatch) -> None:
+  real = shutil.which(os.environ.get("SCALY_CC", "cc"))
+  assert real is not None
+  wrapper = isolated_cache / "bin" / "cc"
+  wrapper.parent.mkdir()
+  monkeypatch.setenv("SCALY_CC", str(wrapper))
+
+  def build(script: str | None = None) -> str:
+    if script is not None:
+      wrapper.write_text(f'#!/bin/sh\n{script}exec {shlex.quote(real)} "$@"\n')
+      wrapper.chmod(0o755)
+    return jit._build_artifact(_simple_fn()).key
+
+  first = build("")
+  assert build() == first
+  assert build(": patched\n") != first
 
 
 def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
@@ -201,8 +222,8 @@ def test_native_render_recipe_and_math_override(monkeypatch, override, expected)
     return sentinel
 
   monkeypatch.setattr(jit, "render_c_module", render)
-  assert jit._render_native(_simple_fn(), "chosen-compiler") is sentinel
-  assert compilers == ["chosen-compiler"]
+  assert jit._render_native(_simple_fn(), ("chosen-compiler",)) is sentinel
+  assert compilers == [("chosen-compiler",)]
   assert options == {"cpu": "native", "lanes": 4, "dialect": "gnu", "vector_libm": expected, "reciprocal": False}
 
 
@@ -214,7 +235,7 @@ def test_vector_math_override_rejects_invalid_values(monkeypatch, value):
   monkeypatch.setenv("SCALY_VECTOR_LIBM", value)
   monkeypatch.setattr(jit, "native_recipe", lambda _compiler: BuildRecipe(cpu="native", lanes=1))
   with pytest.raises(ToolchainError, match="SCALY_VECTOR_LIBM"):
-    jit._render_native(_simple_fn(), "unused")
+    jit._render_native(_simple_fn(), ("unused",))
 
 
 def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
@@ -226,10 +247,10 @@ def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
   for lanes, vector_libm in ((1, "none"), (4, "none"), (4, "glibc")):
     recipe = BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
     monkeypatch.setattr(jit, "native_recipe", lambda _compiler: recipe)
-    module = jit._render_native(fun, "unused")
+    module = jit._render_native(fun, ("unused",))
     assert module.recipe == recipe
     assert "-lmvec" in module.link_flags if vector_libm == "glibc" else "-lmvec" not in module.link_flags
-    keys.append(jit._compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*jit.compile_flags(module.recipe), *module.link_flags)))
+    keys.append(jit._compute_cache_key(module.body, fun_name=fun.name, command=jit._compile_command(("cc",), module, "m.c", "m.so"), toolchain=""))
   assert len(set(keys)) == 3
 
 
@@ -283,4 +304,4 @@ def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
 
   monkeypatch.setattr(jit, "native_recipe", fail)
   with pytest.raises(jit.JitError, match="failed to probe native C compiler"):
-    jit._render_native(_simple_fn(), "cc")
+    jit._render_native(_simple_fn(), ("cc",))

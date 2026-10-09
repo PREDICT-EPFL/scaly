@@ -27,23 +27,23 @@ def vector_libm() -> str:
   policy = os.environ.get("SCALY_VECTOR_LIBM")
   if policy is None:
     compiler = find_c_compiler()
-    return native_recipe(compiler.cc).vector_libm if compiler is not None else "none"
+    return native_recipe(compiler.command).vector_libm if compiler is not None else "none"
   if policy not in {"none", "glibc"}:
     raise ValueError(f"SCALY_VECTOR_LIBM must be 'none' or 'glibc', got {policy!r}")
   return policy
 
 
 @lru_cache
-def compiler_version(compiler: str) -> str:
+def compiler_version(*command: str) -> str:
   """Read the compiler identity used to select supported math flags."""
-  return subprocess.run([compiler, "--version"], check=True, text=True, capture_output=True).stdout.splitlines()[0]
+  return subprocess.run([*command, "--version"], check=True, text=True, capture_output=True).stdout.splitlines()[0]
 
 
-def math_flags(compiler: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def math_flags(*command: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
   """Return the supported vector-library selection flag and required libraries."""
   if vector_libm() == "none":
     return (), ()
-  flags = ("-fveclib=libmvec",) if "clang" in compiler_version(compiler).lower() else ()
+  flags = ("-fveclib=libmvec",) if "clang" in compiler_version(*command).lower() else ()
   return flags, ("-lmvec",)
 
 
@@ -51,9 +51,9 @@ def configure_math_policy(*, measured_jit: bool = True) -> None:
   """Apply the benchmark math policy to JIT children and reject unequal compiler flags."""
   os.environ.setdefault("SCALY_VECTOR_LIBM", vector_libm())
   compiler = find_c_compiler()
-  if compiler is not None and vector_libm() == "glibc" and native_recipe(compiler.cc).vector_libm != "glibc":
+  if compiler is not None and vector_libm() == "glibc" and native_recipe(compiler.command).vector_libm != "glibc":
     raise ValueError("SCALY_VECTOR_LIBM=glibc requires a glibc x86-64 host with vector math support")
-  if measured_jit and compiler is not None and math_flags(compiler.cc)[0]:
+  if measured_jit and compiler is not None and math_flags(*compiler.command)[0]:
     raise ValueError("vector-libm closed-loop builds require GCC: Scaly JIT does not pass Clang's -fveclib=libmvec; set SCALY_CC=gcc")
 
 

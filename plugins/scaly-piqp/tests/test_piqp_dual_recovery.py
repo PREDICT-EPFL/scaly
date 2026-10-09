@@ -103,11 +103,11 @@ def test_rows_without_a_lower_bound_ignore_the_heap_past_the_index(tmp_path: Pat
   fill = tmp_path / ("libfill.dylib" if sys.platform == "darwin" else "libfill.so")
   (tmp_path / "fill.c").write_text(FILL)
   shared = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared", "-fPIC"]
-  subprocess.run([compiler.cc, "-O2", *shared, str(tmp_path / "fill.c"), "-o", str(fill)], check=True)
+  subprocess.run([*compiler.command, "-O2", *shared, str(tmp_path / "fill.c"), "-o", str(fill)], check=True)
   (tmp_path / "program.c").write_text(PROGRAM % {"rows": ROWS, "bounded": BOUNDED})
   program = tmp_path / "program"
   cmd = [
-    compiler.cc,
+    *compiler.command,
     "-O2",
     f"-I{include_dir}",
     str(tmp_path / "program.c"),
