@@ -1,4 +1,4 @@
-"""Reverse-mode AD: ``vjp`` and the per-op local adjoint rules."""
+"""Reverse-mode AD: ``vjp`` and the transpose rules of the structural ops."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, gather, scatter, topo, zeros_like
 from .calls import _call_vjp, _vmap_vjp
+from .rules import ELEMENTWISE, cotangent
 from .sparsity import _depends_on
 
 
@@ -41,68 +42,21 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue
-    active = tuple(i for i, arg in enumerate(expr.args) if needed(arg)) if expr.op == ExprOp.CALL else None
+    active = tuple(i for i, arg in enumerate(expr.args) if needed(arg)) if expr.op in {ExprOp.CALL, *ELEMENTWISE} else None
     for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot, active), strict=True):
-      if arg.id in expr_ids:
+      if arg_cot is not None and arg.id in expr_ids:
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 
 
-def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr, ...]:
+def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr | None, ...]:
   args = expr.args
-  if expr.op == ExprOp.NEG:
-    return (-cot,)
-  if expr.op == ExprOp.ADD:
-    return (_unbroadcast(cot, args[0].shape, expr.shape), _unbroadcast(cot, args[1].shape, expr.shape))
-  if expr.op == ExprOp.SUB:
-    return (_unbroadcast(cot, args[0].shape, expr.shape), _unbroadcast(-cot, args[1].shape, expr.shape))
-  if expr.op == ExprOp.MUL:
-    return (_unbroadcast(cot * args[1], args[0].shape, expr.shape), _unbroadcast(cot * args[0], args[1].shape, expr.shape))
-  if expr.op == ExprOp.DIV:
-    return (
-      _unbroadcast(cot / args[1], args[0].shape, expr.shape),
-      _unbroadcast(-((cot / args[1]) * expr), args[1].shape, expr.shape),
-    )
-  if expr.op == ExprOp.POW:
-    return (
-      _unbroadcast(cot * args[1] * (args[0] ** (args[1] - 1)), args[0].shape, expr.shape),
-      _unbroadcast(cot * expr * args[0].log(), args[1].shape, expr.shape),
-    )
-  if expr.op == ExprOp.SIN:
-    return (cot * args[0].cos(),)
-  if expr.op == ExprOp.COS:
-    return (-cot * args[0].sin(),)
-  if expr.op == ExprOp.TAN:
-    return (cot / (args[0].cos() ** 2),)
-  if expr.op == ExprOp.ASIN:
-    return (cot / (1 - args[0] ** 2).sqrt(),)
-  if expr.op == ExprOp.ACOS:
-    return (-cot / (1 - args[0] ** 2).sqrt(),)
-  if expr.op == ExprOp.ATAN:
-    return (cot / (1 + args[0] ** 2),)
-  if expr.op == ExprOp.ATAN2:
-    y, x = args
-    denom = x * x + y * y
-    return (_unbroadcast(cot * x / denom, y.shape, expr.shape), _unbroadcast(-cot * y / denom, x.shape, expr.shape))
-  if expr.op == ExprOp.SINH:
-    return (cot * args[0].cosh(),)
-  if expr.op == ExprOp.COSH:
-    return (cot * args[0].sinh(),)
-  if expr.op == ExprOp.TANH:
-    return (cot * (1 - expr * expr),)
-  if expr.op == ExprOp.ERF:
-    return (cot * (2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(),)
-  if expr.op == ExprOp.EXP:
-    return (cot * expr,)
-  if expr.op == ExprOp.LOG:
-    return (cot / args[0],)
-  if expr.op == ExprOp.SQRT:
-    return (cot / (2 * expr),)
-  if expr.op == ExprOp.ABS:
-    return (cot * args[0] / args[0].abs(),)
-  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL, ExprOp.MINIMUM, ExprOp.MAXIMUM}:
-    raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
+  if expr.op in ELEMENTWISE:
+    if ELEMENTWISE[expr.op].partials is None:
+      raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
+    assert active is not None
+    return tuple(cotangent(expr, cot, i) if i in active else None for i in range(len(args)))
   if expr.op == ExprOp.SUM:
     return (cot * _ones_like(args[0]),)
   if expr.op == ExprOp.RESHAPE:
@@ -137,16 +91,6 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
 
 def _ones_like(expr: Expr) -> Expr:
   return Expr.const(np.ones(expr.shape, dtype=np.float64), lowering=expr.lowering)
-
-
-def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> Expr:
-  if in_shape == out_shape:
-    return cot
-  if not in_shape:
-    return cot.sum()
-  source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
-  source = np.broadcast_to(source, out_shape).reshape(-1)
-  return scatter(cot, source, in_shape)
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:

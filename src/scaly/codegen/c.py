@@ -11,8 +11,8 @@ their call graph; ``codegen/aot.py`` orchestrates the solver-bearing case, reusi
 There is **no silent fallback**: a function outside the lowered subset raises
 ``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
 (``passes/program/pack_workspace.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
-Scalar/statement emission uses compact per-op maps — the lowerer (``passes/lowering/``)
-holds the extensible ``ExprOp``-keyed registry.
+Scalar emission spells elementwise ops as the table in ``ad/rules.py`` says — the lowerer
+(``passes/lowering/``) holds the extensible ``ExprOp``-keyed registry.
 """
 
 from __future__ import annotations
@@ -21,36 +21,22 @@ import math
 
 from .abi import abi_status_defines, c_api_signature, c_ident
 from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
+from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function, as_concrete
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
+from ..ir.expr import OP_INFO
 from ..ir.program import walk_program, ProgramNode, ProgramOp
 from ..passes.program._common import name_scope, buffer_refs, prints
 from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
 
-# Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
-_BIN_SYM = {ProgramOp.ADD: "+", ProgramOp.SUB: "-", ProgramOp.MUL: "*", ProgramOp.DIV: "/", ProgramOp.MOD: "%"}
-_UNARY_C = {
-  ProgramOp.SIN: "sin",
-  ProgramOp.COS: "cos",
-  ProgramOp.TAN: "tan",
-  ProgramOp.ASIN: "asin",
-  ProgramOp.ACOS: "acos",
-  ProgramOp.ATAN: "atan",
-  ProgramOp.SINH: "sinh",
-  ProgramOp.COSH: "cosh",
-  ProgramOp.TANH: "tanh",
-  ProgramOp.ERF: "erf",
-  ProgramOp.EXP: "exp",
-  ProgramOp.LOG: "log",
-  ProgramOp.SQRT: "sqrt",
-  ProgramOp.ABS: "fabs",
-  ProgramOp.FLOOR: "floor",
-  ProgramOp.CEIL: "ceil",
-}
-_BINARY_C = {ProgramOp.POW: "pow", ProgramOp.ATAN2: "atan2", ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax"}
+# Scalar ProgramOp -> C spelling, from the elementwise table. Operators render inline; libm ops render as calls.
+_BIN_SYM = {ProgramOp.MOD: "%"} | {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and not r.c.isidentifier()}
+_UNARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and r.c.isidentifier()}
+_BINARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and r.c.isidentifier()}
+_INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_integer is not None}
 # 17 significant digits read a double back exactly.
 _PRINTF_CONVERSION = {"double": "%.17g"}
 # Defining SCALY_PRINTF before this point reroutes prints, and ``-DSCALY_PRINTF(...)=`` removes them.
@@ -436,9 +422,8 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = f"({args[0]} {_BIN_SYM[op]} {args[1]})"
     elif op in _UNARY_C:
       s = f"{_UNARY_C[op]}({args[0]})"
-    elif op in (ProgramOp.MINIMUM, ProgramOp.MAXIMUM) and node.dtype.is_integer:
-      comparison = "<" if op == ProgramOp.MINIMUM else ">"
-      s = f"({args[0]} {comparison} {args[1]} ? {args[0]} : {args[1]})"
+    elif op in _INTEGER_C and node.dtype.is_integer:
+      s = _INTEGER_C[op].format(*args)
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
     else:

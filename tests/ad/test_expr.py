@@ -3,7 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scaly.ad.reverse import _gather_vjp, _unbroadcast
+from scaly.ad.reverse import _gather_vjp
+from scaly.ad.rules import _unbroadcast
 from scaly.ir.expr import ExprOp, topo
 
 from scaly.function.model import as_concrete
