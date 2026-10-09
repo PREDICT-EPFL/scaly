@@ -27,7 +27,7 @@ Decided:
 - [x] 1. `ConcreteFunction` caches and the AD tables (tests first)
 - [x] 2. Frozen `Function`, `_Derived`, `_Mapped`, the benchmark evaluator registry
 - [x] 3. `Problem`'s NLP form record
-- [ ] 4. Conventions rule
+- [x] 4. Conventions rule
 - [ ] 5. `wt hook pre-merge`, C snapshots unchanged, PR, cross-review
 
 Phases 1 to 3 touch different files and could run in parallel, but they are small enough to do in
