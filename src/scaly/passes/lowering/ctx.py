@@ -69,7 +69,7 @@ def lower_function(
   """
   fun = as_concrete(fun)
   verify_expr((*fun.inputs, *fun.outputs))
-  names, symbols = _function_names(fun)
+  names, symbols, residuals = _function_names(fun)
   callees: dict[ConcreteFunction, ProgramNode] = {}
   solver_fns: dict[ConcreteFunction, ConcreteFunction] = {}
   from ...solvers.graph import is_solver_function, solver_callees
@@ -78,11 +78,11 @@ def lower_function(
     solver_fns[fun] = fun
     for oracle in solver_callees(fun):
       if oracle not in callees:
-        callees[oracle] = _lower_to_proc(oracle, callees, solver_fns, names, symbols, observe_expr=observe_expr)
+        callees[oracle] = _lower_to_proc(oracle, callees, solver_fns, names, symbols, residuals, observe_expr=observe_expr)
     prog = p.program([*callees.values()])
     prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": symbols[fun]}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, solver_fns, names, symbols, auto_scalarize=False, observe_expr=observe_expr)
+    root = _lower_to_proc(fun, callees, solver_fns, names, symbols, residuals, auto_scalarize=False, observe_expr=observe_expr)
     prog = p.program([*callees.values(), root])
   if solver_fns:
     solver_oracles = {symbols[sf]: tuple(symbols[o] for o in solver_callees(sf)) for sf in solver_fns}
@@ -157,18 +157,18 @@ def _lower_to_proc(
   solver_fns: dict[ConcreteFunction, ConcreteFunction],
   names: NameScope,
   symbols: dict[ConcreteFunction, str],
+  residuals: frozenset[ConcreteFunction],
   *,
   auto_scalarize: bool = True,
-  residuals: bool = False,
   observe_expr: ExprObserver | None = None,
 ) -> ProgramNode:
   verify_expr((*fun.inputs, *fun.outputs))
   lowering = fun._effective_lowering
   symbol = symbols[fun]
-  fun = _normalize_function(fun, residuals=residuals)
+  fun = _normalize_function(fun, residuals=fun in residuals)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, solver_fns, names, symbols, observe_expr)
+  ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -208,6 +208,7 @@ class LowerCtx:
     solver_fns: dict[ConcreteFunction, ConcreteFunction],
     names: NameScope,
     symbols: dict[ConcreteFunction, str],
+    residuals: frozenset[ConcreteFunction],
     observe_expr: ExprObserver | None = None,
   ) -> None:
     self.fun = fun
@@ -216,6 +217,8 @@ class LowerCtx:
     self.program_names = names
     self.names = names.child()
     self.symbols = symbols
+    # Functions whose procedures also write their residuals, because some call reads one.
+    self.residuals = residuals
     self.input_names = tuple(self.names.allocate(n) for n in fun.input_names)
     self.output_names = tuple(self.names.allocate(n) for n in fun.output_names)
     self.observe_expr = observe_expr
@@ -430,13 +433,16 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...], names
   return p.for_(rng, [p.store(p.view(dst, [i]), p.load(p.view(src, [i])))])
 
 
-def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFunction, str]]:
+def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFunction, str], frozenset[ConcreteFunction]]:
+  """Name every reachable function, and find those whose residuals some call reads."""
   from ...solvers.graph import is_solver_function, solver_callees, external_oracles
 
   names = NameScope()
   symbols: dict[ConcreteFunction, str] = {}
   functions: list[ConcreteFunction] = []
   seen: set[ConcreteFunction] = set()
+  residuals: set[ConcreteFunction] = set()
+  oracles: set[ConcreteFunction] = set()
 
   def visit(function: ConcreteFunction) -> None:
     if function in seen:
@@ -447,9 +453,12 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
     for oracle in external_oracles(function):
       names.occupied.add(oracle.raw_symbol)
     for callee in solver_callees(function):
+      oracles.add(callee)
       visit(callee)
     for node in function.nodes:
       if node.op in (ExprOp.CALL, ExprOp.VMAP):
+        if node.attrs["output"] >= len(node.attrs["callee"].outputs):
+          residuals.add(node.attrs["callee"])
         visit(node.attrs["callee"])
 
   visit(root)
@@ -463,7 +472,11 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
   for function in functions:
     if function not in symbols:
       symbols[function] = names.procedure(function.name)
-  return names, symbols
+  if residuals & oracles:
+    raise LoweringError(
+      f"a solver passes its oracles their outputs only, but a call reads residuals of {sorted(f.name for f in residuals & oracles)}"
+    )
+  return names, symbols, frozenset(residuals)
 
 
 def _check_float64_leaves(fun: ConcreteFunction) -> None:
