@@ -315,8 +315,9 @@ is quadratic requires derivatives of the evaluated cost and constraints.
 ## Custom derivative rules
 
 `sc.custom_derivative` gives a function rules that replace differentiating its
-body. It suits a calculation whose derivative has a cheaper or more accurate
-form than its steps, such as an iterative solve. The function below solves
+body. It suits a calculation, such as an iterative solve, whose derivative has
+a closed form that is cheaper or more accurate than differentiating every step
+of the calculation. The function below solves
 \(x^3 + x = p\) entry by entry with 30 Newton steps. Differentiating
 \(x^3 + x - p = 0\) at the solution gives
 
@@ -348,21 +349,25 @@ print(sc.jacobian(root)(p))   # [[0.25       0.         0.        ]
                               #  [0.         0.         0.03571429]]
 ```
 
-The forward rule `jvp` takes the function's parameters and then one tangent per
-parameter, here `p_dot` for `p`, and returns the output tangents. Every forward
-derivative of `root` uses it, whether `root` is called directly, inside another
-function or in a `vmap`. Several directions at once, such as the three columns
-of this Jacobian, map the single-direction rule over the directions. A tangent
-the rule never reads is never computed. Because `cubic_root` leaves its input
+The forward rule `jvp` computes the product of the Jacobian with a direction,
+as `sc.forward` does. It takes the function's parameters and then one direction
+per parameter, here `p_dot` for `p`, and returns the change of each output along
+that direction. Every forward derivative of `root` uses it, whether `root` is
+called directly, inside another function or in a `vmap`. For several directions
+at once, such as the three columns of this Jacobian, scaly applies the rule to
+each direction in one mapped loop. A direction the rule never reads is never
+computed. Because `cubic_root` leaves its input
 shape open, `root` and its rule are templates, bound at the shape of each call.
 
 ### Reverse rules and residuals
 
-The reverse rule is a pair of functions in the form of JAX's `custom_vjp`. `fwd`
+The reverse rule computes the product of output weights with the Jacobian, as
+`sc.adjoint` does, and is what gradients use. It is a pair of functions. `fwd`
 takes the parameters and returns `(outputs, residuals)`. `bwd` takes the
-residuals and the output cotangents and returns one cotangent per parameter.
-The residuals hold what `bwd` needs, often the solution or a factorization.
-Here the residual is the solution itself:
+residuals and one weight per output, shaped like that output, and returns one
+weighted derivative per parameter, shaped like that parameter. The residuals
+hold what `bwd` needs, often the solution or a factorization. Readers who know
+JAX will recognise its `custom_vjp`. Here the residual is the solution itself:
 
 ```python
 @sc.function()
@@ -392,10 +397,10 @@ again. The outputs of `fwd` replace those of the body and should equal them.
 The residuals keep their dependence on the inputs, so a second derivative, such
 as the Hessian above, differentiates `bwd` and the residuals it reads.
 
-`fwd` and `bwd` are given together. A direction without a rule differentiates
-the body: with only `jvp`, a gradient goes through the Newton steps. A forward
-rule receives no residuals, which is why `cubic_root_jvp` calls `cubic_root`
-again to recover the solution.
+`fwd` and `bwd` are given together. A mode without a rule, forward or reverse,
+differentiates the body. With only `jvp`, a gradient goes through the Newton
+steps. A forward rule receives no residuals, which is why `cubic_root_jvp` calls
+`cubic_root` again to recover the solution.
 
 ### Declared sparsity
 

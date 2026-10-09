@@ -444,18 +444,19 @@ def custom_derivative[SI, NI, SO, NO](
 ) -> Function[SI, NI, SO, NO]:
   """Return ``fn`` with derivative rules that replace differentiating its body.
 
-  ``jvp(*inputs, *tangents)`` takes ``fn``'s parameters and then one tangent per parameter, and
-  returns the output tangents in ``fn``'s output structure. Several seeds call it through one map
-  over the seeds, and a tangent it never reads is never computed.
+  ``jvp(*inputs, *directions)`` is the forward rule, the product of the Jacobian with a direction.
+  It takes ``fn``'s parameters and then one direction per parameter, and returns the change of
+  each output along that direction, in ``fn``'s output structure. Several directions apply the
+  rule to each direction in one mapped loop, and a direction the rule never reads is never computed.
 
-  ``fwd`` and ``bwd`` form the reverse rule, as JAX's ``custom_vjp`` does. ``fwd(*inputs)``
-  returns ``(outputs, residuals)``, and the outputs become ``fn``'s. ``bwd(residuals, cotangents)``
-  returns one cotangent per parameter of ``fn``. A call computes its outputs and residuals
-  together, so the reverse rule reuses them instead of computing them again, and a second
-  derivative still differentiates them.
+  ``fwd`` and ``bwd`` form the reverse rule, the product of output weights with the Jacobian.
+  ``fwd(*inputs)`` returns ``(outputs, residuals)``, and the outputs become ``fn``'s.
+  ``bwd(residuals, weights)`` takes one weight per output and returns one weighted derivative per
+  parameter of ``fn``. A call computes its outputs and residuals together, so the reverse rule
+  reuses them instead of computing them again, and a second derivative still differentiates them.
 
-  A direction without a rule differentiates the body. Rules may be shape templates; they are bound
-  for each binding of ``fn``. ``sparsity(of, wrt, shape)`` gives the Jacobian pattern of output
+  A mode without a rule, forward or reverse, differentiates the body. Rules may be shape templates,
+  which take the shapes of each call of ``fn``. ``sparsity(of, wrt, shape)`` gives the Jacobian pattern of output
   ``of`` in input ``wrt``, as a ``SparsityPattern`` or a boolean mask of ``shape``, which is
   ``(of.size, wrt.size)``. Without it, the pattern of a function with rules is dense.
   """
