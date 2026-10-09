@@ -195,13 +195,6 @@ def _render_entry(
   return lines
 
 
-def _force_noinline_raw(proc_name: str) -> bool:
-  # Apple clang 17 (Xcode 16.4 / macOS 15 arm64 CI) miscompiles inlined forward-AD helper callees
-  # for CALL-node Jacobians. Keep normal user callees inline, but make generated forward helpers
-  # real call frames until the compiler issue disappears. See internal/notes/macos_clang_call_miscompile.md.
-  return "_fwd" in proc_name
-
-
 def _c_reserved_names(prog: ProgramNode) -> NameScope:
   return name_scope(prog)
 
@@ -220,8 +213,8 @@ def _render_raw_callee(
   inputs and are ``const``-qualified (read-only by construction), so a solver wrapper can pass
   its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
 
-  Normal user callees stay inline. Forward-AD helper callees are selectively noinline on purpose;
-  see ``_force_noinline_raw`` and internal/notes/macos_clang_call_miscompile.md.
+  Callees stay inline unless lowering marks them ``noinline``, which it does for forward-AD helpers;
+  see internal/notes/macos_clang_call_miscompile.md.
   """
   param_count = int(proc.attrs["param_count"])
   input_count = int(proc.attrs.get("input_count", 0))
@@ -238,7 +231,7 @@ def _render_raw_callee(
     ]
   )
   proc_name = proc.attrs["name"]
-  noinline = _force_noinline_raw(proc_name)
+  noinline = bool(proc.attrs.get("noinline"))
   qualifier = ("static __attribute__((noinline))" if dialect == "gnu" else "static") if noinline else "static inline"
   raw_name = f"{c_ident(proc_name)}_raw"
   implementation = (

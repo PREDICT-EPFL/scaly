@@ -1096,6 +1096,8 @@ tests/ad/test_expr.py::test_structural_transpose_concat_vec_eval_and_ad
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape0-out_shape0]
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape1-out_shape1]
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape2-out_shape2]
+tests/ad/test_helpers.py::test_helper_names_are_a_stem_and_a_digest_of_the_key
+tests/ad/test_helpers.py::test_same_named_callees_get_distinct_helper_procedures
 tests/ad/test_joint_jvp.py::test_call_combines_constant_and_runtime_tangents
 tests/ad/test_joint_jvp.py::test_call_helpers_are_cached_on_their_callee
 tests/ad/test_joint_jvp.py::test_call_mixed_constant_and_runtime_seed_formals[1]
@@ -2116,6 +2118,7 @@ tests/passes/test_program.py::test_spilled_function_matches_numpy
 tests/passes/test_program.py::test_strided_slice_is_not_aliased
 tests/passes/test_program.py::test_unit_loop_pass_removes_empty_and_substitutes_only_value
 tests/passes/test_program.py::test_unit_loop_unrolls_scalar_elementwise_output
+tests/passes/test_program.py::test_user_callee_named_like_a_forward_helper_stays_inline
 tests/passes/test_program.py::test_workspace_slots_do_not_collide_with_output_names
 tests/passes/test_scalarize.py::test_auto_code_growth_counts_output_stores_and_aggregates_across_procs
 tests/passes/test_scalarize.py::test_auto_counts_shared_post_fold_computation_once
@@ -2306,6 +2309,7 @@ tests/test_import_layering.py::test_flat_call_seams_stay_inside_their_sanctioned
 tests/test_import_layering.py::test_import_layer_table_covers_every_module
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.derivatives]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.forward]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.helpers]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.reverse]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.sparse]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.sparsity]
