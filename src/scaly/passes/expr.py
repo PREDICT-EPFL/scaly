@@ -10,7 +10,8 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, matmul, stack, topo, zeros_like
+from ..ad.rules import ELEMENTWISE
+from ..ir.expr import Expr, ExprOp, _attrs_key, matmul, stack, topo, zeros_like
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -125,11 +126,10 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = np.asarray(np.sum(args[0]), dtype=np.float64)
   elif e.op == ExprOp.MATMUL:
     out = args[0] @ args[1]
+  elif e.op in ELEMENTWISE:
+    out = ELEMENTWISE[e.op].numpy(*args)
   else:
-    info = OP_INFO[ExprOp(e.op)]
-    if info.numpy is None:
-      return None
-    out = info.numpy(*args)
+    return None
   return out
 
 

@@ -9,6 +9,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many
+from .rules import ELEMENTWISE, tangent as _elementwise_tangent
 
 
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
@@ -71,6 +72,10 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           if expr.op == ExprOp.CALL
           else _vmap_jvp_many(expr, call_tangents, nseed, pushforward=_pushforward)
         )
+      elif expr.op in ELEMENTWISE:
+        if ELEMENTWISE[expr.op].partials is None:
+          raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} in callee {callee!r} is not implemented")
+        tangent = _elementwise_tangent(expr, d, nseed)
       else:
         assert all(arg.type.dtype.is_floating for arg in args)
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
@@ -95,74 +100,6 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
 def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) -> Expr:
   args = expr.args
   op = expr.op
-  if op == ExprOp.NEG:
-    return -d[0]
-  if op in {ExprOp.ADD, ExprOp.SUB}:
-    dx = _broadcast_tangent(d[0], args[0], expr, nseed)
-    dy = _broadcast_tangent(d[1], args[1], expr, nseed)
-    if _is_zero_const(d[0]):
-      return dy if op == ExprOp.ADD else -dy
-    if _is_zero_const(d[1]):
-      return dx
-    return dx + dy if op == ExprOp.ADD else dx - dy
-  if op == ExprOp.MUL:
-    if args[0] is args[1]:
-      return _seed_axis(2 * args[0]) * d[0]
-    if _is_zero_const(d[0]):
-      return _seed_axis(args[0], expr) * _broadcast_tangent(d[1], args[1], expr, nseed)
-    if _is_zero_const(d[1]):
-      return _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], expr)
-    return _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], expr) + _seed_axis(args[0], expr) * _broadcast_tangent(
-      d[1], args[1], expr, nseed
-    )
-  if op == ExprOp.DIV:
-    dx = _broadcast_tangent(d[0], args[0], expr, nseed)
-    dy = _broadcast_tangent(d[1], args[1], expr, nseed)
-    numerator = dx if _is_zero_const(d[1]) else -_seed_axis(expr) * dy if _is_zero_const(d[0]) else dx - _seed_axis(expr) * dy
-    return numerator * _seed_axis(1.0 / args[1], expr)
-  if op == ExprOp.POW:
-    dx = _broadcast_tangent(d[0], args[0], expr, nseed)
-    if args[1].op == ExprOp.CONST:
-      return _seed_axis(args[1] * (args[0] ** (args[1] - 1)), expr) * dx
-    x, y = _seed_axis(args[0], expr), _seed_axis(args[1], expr)
-    dy = _broadcast_tangent(d[1], args[1], expr, nseed)
-    term = y * dx / x if _is_zero_const(d[1]) else dy * x.log() if _is_zero_const(d[0]) else dy * x.log() + y * dx / x
-    return _seed_axis(expr) * term
-  if op == ExprOp.SIN:
-    return _seed_axis(args[0].cos()) * d[0]
-  if op == ExprOp.COS:
-    return -_seed_axis(args[0].sin()) * d[0]
-  if op == ExprOp.TAN:
-    return d[0] / (_seed_axis(args[0].cos()) ** 2)
-  if op == ExprOp.ASIN:
-    return d[0] / _seed_axis((1 - args[0] ** 2).sqrt())
-  if op == ExprOp.ACOS:
-    return -d[0] / _seed_axis((1 - args[0] ** 2).sqrt())
-  if op == ExprOp.ATAN:
-    return d[0] / _seed_axis(1 + args[0] ** 2)
-  if op == ExprOp.ATAN2:
-    y, x = args
-    dy = _broadcast_tangent(d[0], y, expr, nseed)
-    dx = _broadcast_tangent(d[1], x, expr, nseed)
-    left, right = _seed_axis(x, expr), _seed_axis(y, expr)
-    numerator = -right * dx if _is_zero_const(d[0]) else left * dy if _is_zero_const(d[1]) else left * dy - right * dx
-    return numerator / _seed_axis(x * x + y * y, expr)
-  if op == ExprOp.SINH:
-    return _seed_axis(args[0].cosh()) * d[0]
-  if op == ExprOp.COSH:
-    return _seed_axis(args[0].sinh()) * d[0]
-  if op == ExprOp.TANH:
-    return d[0] * (1 - _seed_axis(expr * expr))
-  if op == ExprOp.ERF:
-    return _seed_axis((2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp()) * d[0]
-  if op == ExprOp.EXP:
-    return _seed_axis(expr) * d[0]
-  if op == ExprOp.LOG:
-    return d[0] / _seed_axis(args[0])
-  if op == ExprOp.SQRT:
-    return d[0] * _seed_axis(0.5 / expr)
-  if op == ExprOp.ABS:
-    return _seed_axis(args[0] / args[0].abs()) * d[0]
   if op == ExprOp.SUM:
     ones = Expr.const(np.ones(args[0].size, dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
     return d[0].reshape((nseed, args[0].size)) @ ones
@@ -194,19 +131,7 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     return _jvp_many_matmul_left(args[0], args[1], d[0], nseed) + _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
   if op == ExprOp.SOLVER_CALL:
     raise NotImplementedError(f"active derivative through SOLVER_CALL in callee {callee!r} is not implemented")
-  if op in {ExprOp.FLOOR, ExprOp.CEIL, ExprOp.MINIMUM, ExprOp.MAXIMUM}:
-    raise NotImplementedError(f"JVP for nonsmooth op {op!r} in callee {callee!r} is not implemented")
   raise NotImplementedError(f"JVP for op {op!r} in callee {callee!r} is not implemented")
-
-
-def _seed_axis(expr: Expr, output: Expr | None = None) -> Expr:
-  missing = 0 if output is None else len(output.shape) - len(expr.shape)
-  return expr.reshape((1, *(1,) * missing, *expr.shape))
-
-
-def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
-  missing = len(output.shape) - len(operand.shape)
-  return tangent if missing == 0 else tangent.reshape((nseed, *(1,) * missing, *operand.shape))
 
 
 def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:

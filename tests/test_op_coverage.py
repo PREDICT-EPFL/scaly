@@ -15,28 +15,22 @@ from scaly.passes.lowering.ctx import _RULES
 ROOT = Path(__file__).resolve().parents[1] / "src" / "scaly"
 ELEMENTWISE = COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
 
-# #20 replaces the existing AD formulas with shared partials. Until then, pin their references
-# rather than exempting the entire modules. Arithmetic identities and op-mapping tables remain.
+# The elementwise table names every member once; elsewhere only arithmetic identities may.
 EXISTING_ELEMENTWISE_REFERENCES = {
-  (
-    "ad/forward.py",
-    "_pushforward_rule",
-  ): "NEG ADD ADD ADD SUB MUL DIV POW SIN COS TAN ASIN ACOS ATAN ATAN2 SINH COSH TANH ERF EXP LOG SQRT ABS FLOOR CEIL MINIMUM MAXIMUM",
-  (
-    "ad/reverse.py",
-    "_local_vjp",
-  ): "NEG ADD SUB MUL DIV POW SIN COS TAN ASIN ACOS ATAN ATAN2 SINH COSH TANH ERF EXP LOG SQRT ABS FLOOR CEIL MINIMUM MAXIMUM",
+  ("ad/rules.py", "ELEMENTWISE"): " ".join(op.name for op in ELEMENTWISE),
   ("passes/expr.py", "_structural_key"): "ADD MUL",
   ("passes/expr.py", "SIMPLIFY_PATTERNS"): "ADD SUB MUL DIV NEG POW",
-  ("passes/lowering/elementwise.py", "_UNARY"): "NEG SIN COS TAN ASIN ACOS ATAN SINH COSH TANH ERF EXP LOG SQRT ABS FLOOR CEIL",
-  ("passes/lowering/elementwise.py", "_BINARY"): "ADD SUB MUL DIV POW ATAN2 MINIMUM MAXIMUM",
 }
 
 
 # These source checks assume enum-based dispatch, not string comparisons or dynamic op lookup.
 def _dispatch_ops(*functions) -> set[ExprOp]:
   ops = set()
-  families = {"COMMON_ELEMENTWISE_UNARY": COMMON_ELEMENTWISE_UNARY, "COMMON_ELEMENTWISE_BINARY": COMMON_ELEMENTWISE_BINARY}
+  families = {
+    "COMMON_ELEMENTWISE_UNARY": COMMON_ELEMENTWISE_UNARY,
+    "COMMON_ELEMENTWISE_BINARY": COMMON_ELEMENTWISE_BINARY,
+    "ELEMENTWISE": ELEMENTWISE,
+  }
   for fn in functions:
     for node in ast.walk(ast.parse(inspect.getsource(fn))):
       if not isinstance(node, ast.If):

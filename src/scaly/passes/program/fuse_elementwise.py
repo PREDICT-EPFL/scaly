@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...ad.rules import ELEMENTWISE
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ._common import (
@@ -21,25 +22,7 @@ from ._common import (
   rebuild_program,
 )
 
-_EXPENSIVE_OPS: frozenset[ProgramOp] = frozenset(
-  {
-    ProgramOp.SIN,
-    ProgramOp.COS,
-    ProgramOp.TAN,
-    ProgramOp.ASIN,
-    ProgramOp.ACOS,
-    ProgramOp.ATAN,
-    ProgramOp.SINH,
-    ProgramOp.COSH,
-    ProgramOp.TANH,
-    ProgramOp.ERF,
-    ProgramOp.EXP,
-    ProgramOp.LOG,
-    ProgramOp.SQRT,
-    ProgramOp.POW,
-    ProgramOp.ATAN2,
-  }
-)
+_EXPENSIVE_OPS = frozenset(row.program for row in ELEMENTWISE.values() if row.expensive)
 
 
 def _has_expensive(node: ProgramNode) -> bool:
