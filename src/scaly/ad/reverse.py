@@ -9,7 +9,7 @@ import numpy as np
 
 from ..function.concrete import ConcreteFunction
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .sparsity import _depends_on
 
@@ -250,19 +250,11 @@ def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...
     return cot.sum()
   source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
   source = np.broadcast_to(source, out_shape).reshape(-1)
-  vals = []
-  for i in range(int(np.prod(in_shape, dtype=int))):
-    vals.append(gather(cot, np.nonzero(source == i)[0]).sum())
-  return stack(vals).reshape(in_shape)
+  return scatter(cot, source, in_shape)
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:
-  flat = indices.reshape(-1)
-  vals = []
-  for i in range(int(np.prod(shape, dtype=int))):
-    positions = np.nonzero(flat == i)[0]
-    vals.append(gather(cot, positions).sum() if positions.size else as_expr(0.0))
-  return stack(vals).reshape(shape)
+  return scatter(cot, indices, shape)
 
 
 def _stack_vjp(cot: Expr, nargs: int, axis: int) -> tuple[Expr, ...]:

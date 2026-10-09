@@ -47,6 +47,7 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
 
   sums: dict[str, tuple[int, tuple[str, ...]]] = {}
   pads: dict[str, tuple[int, int]] = {}
+  destinations: dict[str, np.ndarray] = {}
   for i, stmt in enumerate(body):
     pr = _as_inline_producer(stmt)
     if pr is None:
@@ -67,19 +68,22 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     if j <= i or scatter.op != ProgramOp.FOR or len(scatter.args) != 2 or scatter.args[1].op != ProgramOp.STORE:
       continue
     target, value = scatter.args[1].args
+    accumulating = value.op == ProgramOp.ADD and value.args[0] == load(target)
+    if accumulating:
+      value = value.args[1]
     if target.attrs["buffer"] != buf or len(target.args) != 1 or value.op != ProgramOp.LOAD:
       continue
     iv = scatter.args[0].attrs["name"]
     source = value.args[0]
     if len(source.args) != 1 or source.args[0].op != ProgramOp.VAR or source.args[0].attrs["name"] != iv:
       continue
-    # The destinations must be distinct, so that turning each scatter into an accumulation adds
-    # every source element exactly once. They are read back from the index expression, which after
-    # ``LowerCtx.index_at`` is arithmetic on ``iv`` whenever the scatter is affine.
+    if source.attrs["buffer"] == buf:
+      continue
     indices = _index_values(target.args[0], scatter.args[0], decls)
-    if indices is None or not len(indices) or len(np.unique(indices)) != len(indices):
+    if indices is None or not len(indices) or (not accumulating and len(np.unique(indices)) != len(indices)):
       continue
     pads[buf] = i, j
+    destinations[buf] = indices
 
   removed: set[int] = set()
   replacements: dict[int, list[ProgramNode]] = {}
@@ -95,7 +99,7 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
       if buf != root and (
         buf not in private
         or buf in pinned
-        or reads.get(buf) != {consumer}
+        or reads.get(buf, set()) - ({pads[buf][1]} if buf in pads else set()) != {consumer}
         or _size_of(decls[buf].attrs["shape"]) != _size_of(decls[root].attrs["shape"])
       ):
         valid = False
@@ -111,7 +115,7 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
         start, scatter = pads[buf]
         scatter_refs = refs[scatter]
         assert scatter_refs is not None
-        sources = {_resolve_alias(b, aliases) for b in scatter_refs.loads}
+        sources = {_resolve_alias(b, aliases) for b in scatter_refs.loads if b != buf}
         if _resolve_alias(root, aliases) in sources or any(
           sources & {_resolve_alias(b, aliases) for b in ref.writes} for ref in refs[scatter + 1 : end] if ref is not None
         ):
@@ -122,6 +126,14 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
       else:
         valid = False
         break
+    occupied: set[int] = set()
+    for leaf in leaves:
+      indices = destinations[leaf]
+      # A repeated leaf must finish its own sum before adding to an earlier leaf.
+      if len(np.unique(indices)) != len(indices) and occupied.intersection(indices.tolist()):
+        valid = False
+        break
+      occupied.update(indices.tolist())
     if not valid or len(leaves) < 2 or drop & removed:
       continue
 
@@ -134,6 +146,8 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     for leaf in leaves:
       scatter = redirect(body[pads[leaf][1]])
       target, value = scatter.args[1].args
+      if value.op == ProgramOp.ADD and value.args[0] == load(target):
+        value = value.args[1]
       replacement.append(for_(scatter.args[0], [store(target, add(load(target), value))]))
     replacements[end] = replacement
     removed.update(drop)

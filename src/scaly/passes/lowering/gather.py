@@ -23,7 +23,7 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
 
 @lowers(ExprOp.SCATTER)
 def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
-  """Zero the output, then ``out[indices[k]] = src[k]`` via a ``static const`` index table."""
+  """Zero the output, then store unique indices or accumulate repeated indices in order."""
   src = node.args[0]
   idx = node.attrs["indices"].reshape(-1)
   out = ctx.alloc_tmp(node)
@@ -32,7 +32,10 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
   z = p.var(zname)
   ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
   iname = f"i_{out.attrs['name']}"
-  irng = p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL)
+  repeated = len(set(idx.tolist())) != len(idx)
+  irng = p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
-  ctx.statements.append(p.for_(irng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [i])))]))
+  target = p.view(out, [dst])
+  value = p.load(p.view(ctx.buf_of(src), [i]))
+  ctx.statements.append(p.for_(irng, [p.store(target, p.add(p.load(target), value) if repeated else value)]))

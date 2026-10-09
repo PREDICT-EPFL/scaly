@@ -111,7 +111,11 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = np.take(args[0].reshape(-1), indices).reshape(indices.shape)
   elif e.op == ExprOp.SCATTER:
     out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
-    out[e.attrs["indices"].reshape(-1)] = args[0].reshape(-1)
+    indices = e.attrs["indices"].reshape(-1)
+    if len(set(indices.tolist())) == len(indices):
+      out[indices] = args[0].reshape(-1)
+    else:
+      np.add.at(out, indices, args[0].reshape(-1))
     out = out.reshape(e.shape)
   elif e.op == ExprOp.STACK:
     out = np.stack(args, axis=e.attrs.get("axis", 0))

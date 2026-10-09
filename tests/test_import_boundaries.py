@@ -25,6 +25,10 @@ from scaly.solvers.solver import Solver
 
 def test_public_exports_are_canonical() -> None:
   program = __import__("scaly.ir.program", fromlist=["ProgramNode"])
+  from scaly.ir.expr import segment_sum
+
+  assert sc.segment_sum is segment_sum
+  assert "segment_sum" in sc.__all__
   assert sc.Expr is Expr
   assert sc.ExprOp is ExprOp
   assert sc.Function is Function

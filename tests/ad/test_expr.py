@@ -3,6 +3,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.ad.reverse import _gather_vjp, _unbroadcast
+from scaly.ir.expr import ExprOp, topo
+
 from scaly.function.model import as_concrete
 import scaly as sc
 
@@ -91,13 +94,6 @@ def test_gather_scatter_eval_and_ad() -> None:
   else:  # pragma: no cover
     raise AssertionError("out-of-range gather should fail")
 
-  try:
-    _ = sc.scatter(sc.sym("v", 2), [1, 1], 3)
-  except ValueError as e:
-    assert "scatter indices must be unique" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("duplicate scatter should fail")
-
 
 def _solver_call(parameter: sc.Expr) -> sc.Expr:
   from scaly.solvers.model import SolverDescriptor
@@ -174,3 +170,79 @@ def test_solver_call_with_inactive_parameter_allows_other_derivatives(mapped) ->
   np.testing.assert_array_equal(evaluate(jvp_many(result, x, sc.const(np.eye(2)))), np.eye(2))
   np.testing.assert_array_equal(evaluate(vjp((result,), (x,), (constant,))[0]), np.ones(2))
   np.testing.assert_array_equal(jacobian_sparsity(result, x).to_mask(), np.eye(2, dtype=bool))
+
+
+@pytest.mark.parametrize("scalar", [False, True])
+@pytest.mark.parametrize("ids", [[4, 0, 2, 5, 1], [1, 3, 1, 1, 0], [2, 2, 2, 2, 2], [0, 1, 2, 0, 1]])
+def test_scatter_accumulates_in_index_order(ids: list[int], scalar: bool) -> None:
+  @sc.function(sc.arg("v", 5), outputs=sc.arg("y"))
+  def f(v):
+    out = sc.scatter(v, ids, 6)
+    return out.scalar() if scalar else out
+
+  for values in (np.array([1.5, -2.0, 3.0, 0.5, -1.0]), np.array([1e16, 1.0, -1e16, 2.0, 3.0]), np.array([-0.0, 0.0, -0.0, 0.0, -0.0])):
+    expected = np.zeros(6)
+    if len(set(ids)) == len(ids):
+      expected[ids] = values
+    else:
+      np.add.at(expected, ids, values)
+    result = np.asarray(f(values))
+    np.testing.assert_array_equal(result, expected)
+    if len(set(ids)) == len(ids):
+      np.testing.assert_array_equal(result.view(np.uint64), expected.view(np.uint64))
+
+
+def test_segment_sum_is_scatter_builder() -> None:
+  v = sc.sym("v", 5)
+  ids = [1, 3, 1, 1, 0]
+  assert sc.segment_sum(v, ids, 6) is sc.scatter(v, ids, 6)
+
+
+@pytest.mark.parametrize("n", [20, 2000])
+def test_gather_adjoint_has_one_scatter(n: int) -> None:
+  ids = np.arange(2 * n) % n
+  cot = sc.sym("cot", (2, n))
+  adj = _gather_vjp(cot, ids.reshape(2, n), (n,))
+  assert adj.op == ExprOp.SCATTER
+  assert len(topo((adj,))) == 2
+  assert adj.attrs["indices"].size == 2 * n
+
+
+def test_repeated_gather_reverse_adjoint_matches_numpy() -> None:
+  ids = np.array([[3, 1, 3], [0, 3, 1]])
+
+  @sc.function(sc.group(sc.arg("x", 5), sc.arg("cot", (2, 3))), outputs=sc.arg("y"))
+  def f(inputs):
+    x, cot = inputs
+    return sc.vjp((sc.gather(x, ids),), (x,), (cot,))[0]
+
+  values = np.array([[1e16, 2.0, -1e16], [4.0, 1.0, 3.0]])
+  expected = np.zeros(5)
+  np.add.at(expected, ids.reshape(-1), values.reshape(-1))
+  np.testing.assert_array_equal(f((np.ones(5), values)), expected)
+
+
+@pytest.mark.parametrize("shape,out_shape", [((1, 3), (4, 3)), ((2, 1), (2, 4)), ((3,), (2, 4, 3))])
+def test_unbroadcast_uses_one_scatter(shape: tuple[int, ...], out_shape: tuple[int, ...]) -> None:
+  cot = sc.sym("cot", out_shape)
+  adj = _unbroadcast(cot, shape, out_shape)
+  assert adj.op == ExprOp.SCATTER
+  assert len(topo((adj,))) == 2
+
+  @sc.function(sc.arg("cot", out_shape), outputs=sc.arg("y"))
+  def f(cot):
+    return _unbroadcast(cot, shape, out_shape)
+
+  values = np.arange(np.prod(out_shape), dtype=float).reshape(out_shape)
+  ids = np.broadcast_to(np.arange(np.prod(shape)).reshape(shape), out_shape).reshape(-1)
+  expected = np.zeros(np.prod(shape))
+  np.add.at(expected, ids, values.reshape(-1))
+  np.testing.assert_array_equal(f(values), expected.reshape(shape))
+
+
+def test_constant_scatter_accumulates() -> None:
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"))
+  def f(x):
+    return sc.scatter(sc.const([2.0, 5.0, -1.0]), [1, 1, 0], 3) + x
+
+  np.testing.assert_array_equal(f(np.array([0.0])), [-1.0, 7.0, 0.0])
