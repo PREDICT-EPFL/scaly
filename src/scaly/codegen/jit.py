@@ -53,12 +53,13 @@ _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
 _SOLVER_NAMESPACE: int | None = None
 _SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
+_SOLVER_NAMESPACE_ENVIRON: ctypes.c_void_p | None = None
 _SOLVER_NAMESPACE_LOCK = threading.Lock()
 
 
 def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   """Load a shared library. ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
-  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
+  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR, _SOLVER_NAMESPACE_ENVIRON
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
   libc = ctypes.CDLL(None)
@@ -66,6 +67,11 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   dlmopen.argtypes = [ctypes.c_long, ctypes.c_char_p, ctypes.c_int]
   dlmopen.restype = ctypes.c_void_p
   with _SOLVER_NAMESPACE_LOCK:
+    # The namespace has its own C library, whose `environ` still points at the environment array
+    # the process had when the namespace was created. Setting a variable since then may have freed
+    # that array, and initializers that call `getenv` (libgfortran's, under IPOPT) would crash on it.
+    if _SOLVER_NAMESPACE_ENVIRON is not None:
+      _SOLVER_NAMESPACE_ENVIRON.value = ctypes.c_void_p.in_dll(libc, "environ").value
     handle = dlmopen(_LM_ID_NEWLM if _SOLVER_NAMESPACE is None else _SOLVER_NAMESPACE, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
     if not handle:
       raise OSError(f"dlmopen failed for {path}")
@@ -82,6 +88,7 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
         raise OSError(f"dlinfo failed for {path}")
       _SOLVER_NAMESPACE = namespace.value
       _SOLVER_NAMESPACE_ANCHOR = lib
+      _SOLVER_NAMESPACE_ENVIRON = ctypes.c_void_p.in_dll(lib, "environ")
   return lib
 
 
