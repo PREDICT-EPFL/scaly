@@ -236,14 +236,14 @@ def _call_attrs(expr: Expr) -> str | None:
   out_idx = expr.attrs.get("output")
   if out_idx is None:
     return "CALL missing 'output' attr"
-  if not 0 <= int(out_idx) < len(callee.outputs):
+  if not 0 <= int(out_idx) < len(callee.results):
     return f"CALL output index {out_idx} out of range for callee {callee.name!r}"
   if len(expr.args) != len(callee.inputs):
     return f"CALL has {len(expr.args)} args but callee {callee.name!r} expects {len(callee.inputs)}"
   for i, (actual, formal) in enumerate(zip(expr.args, callee.inputs, strict=True)):
     if actual.shape != formal.shape:
       return f"CALL arg {i} shape {actual.shape} != callee formal shape {formal.shape}"
-  expected_out = callee.outputs[int(out_idx)]
+  expected_out = callee.results[int(out_idx)]
   if expected_out.shape != expr.shape:
     return f"CALL output shape {expr.shape} != callee output shape {expected_out.shape}"
   return None

@@ -7,6 +7,8 @@ one-way is what lets AD ask this module for a pattern.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from scipy import sparse
 
@@ -107,9 +109,9 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arra
     elif phase == 1 and node.op in (ExprOp.CALL, ExprOp.VMAP):
       stack.append((node, variable, 2))
       callee = node.attrs["callee"]
-      callee_out = callee.outputs[node.attrs["output"]]
+      callee_out = callee.results[node.attrs["output"]]
       # Actual masks must be known before requesting callee masks for active formals.
-      if node.op == ExprOp.CALL or node.attrs["length"]:
+      if (node.op == ExprOp.CALL or node.attrs["length"]) and not _declared(callee, node.attrs["output"]):
         for formal, actual in reversed(tuple(zip(callee.inputs, node.args, strict=True))):
           if memo[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in memo:
             stack.append((callee_out, formal, 0))
@@ -226,20 +228,38 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_a
   )
 
 
+def _declared(callee: Any, output: int) -> bool:
+  """Whether the pattern of ``callee``'s result ``output`` is declared rather than read from its body."""
+  return callee.rules is not None and output < len(callee.outputs)
+
+
+def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+  """The pattern of ``callee``'s result ``output`` in its input ``k``.
+
+  A function with custom rules has the pattern it declares, or a dense one; its body need not
+  describe the derivative its rules compute.
+  """
+  out, formal = callee.results[output], callee.inputs[k]
+  if not _declared(callee, output):
+    return _jac_mask(out, formal, memo)
+  if callee.rules.sparsity is None:
+    return sparse.csr_array(np.ones((out.size, formal.size), dtype=bool))
+  pattern = callee.rules.sparsity[output][k]
+  return _incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
+
+
 def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
-  callee_out = callee.outputs[expr.attrs["output"]]
   ret = _empty((expr.size, wrt.size))
-  for formal, actual in zip(callee.inputs, expr.args, strict=True):
+  for k, actual in enumerate(expr.args):
     actual_dep = _jac_mask(actual, wrt, memo)
     if actual_dep.nnz:
-      ret = _or(ret, _compose(_jac_mask(callee_out, formal, memo), actual_dep))
+      ret = _or(ret, _compose(_callee_mask(callee, expr.attrs["output"], k, memo), actual_dep))
   return ret
 
 
 def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
-  callee_out = callee.outputs[expr.attrs["output"]]
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
@@ -251,7 +271,7 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arr
     outer_dep = _jac_mask(actual_outer, wrt, memo)
     if not outer_dep.nnz:
       continue
-    callee_dep = _jac_mask(callee_out, formal, memo)
+    callee_dep = _callee_mask(callee, expr.attrs["output"], formal_idx, memo)
     start, stride = starts[formal_idx], strides[formal_idx]
     window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
     windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)

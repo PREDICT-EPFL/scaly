@@ -20,7 +20,9 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
       _ensure_callee(ctx, oracle)
     return
   if callee not in ctx.callees:
-    ctx.callees[callee] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, observe_expr=ctx.observe_expr)
+    ctx.callees[callee] = _lower_to_proc(
+      callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, ctx.residuals, observe_expr=ctx.observe_expr
+    )
 
 
 @lowers(ExprOp.CALL)
@@ -33,7 +35,8 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   key = (callee, arg_names)
   if key not in ctx.call_invocations:
     _ensure_callee(ctx, callee)
-    out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in callee.outputs]
+    results = callee.results if callee in ctx.residuals else callee.outputs
+    out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in results]
     in_bufs = [ctx.buffers[n] for n in arg_names]
     ctx.statements.append(
       ProgramNode(
@@ -56,8 +59,9 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   slice_size = int(node.attrs["slice_size"])
   _ensure_callee(ctx, callee)
   out = ctx.alloc_tmp(node)
-  # Other callee outputs are written every iteration but discarded: one reused scratch each.
-  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(callee.outputs)]
+  # Other callee results are written every iteration but discarded: one reused scratch each.
+  results = callee.results if callee in ctx.residuals else callee.outputs
+  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(results)]
   if length == 0:
     return
   loop = ctx.names.allocate(f"it_{out.attrs['name']}")

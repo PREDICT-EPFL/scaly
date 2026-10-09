@@ -6,17 +6,20 @@ import inspect
 from collections.abc import Callable
 from typing import Any, Protocol, cast, overload
 
+import numpy as np
+
 from ..ad.derivatives import gradient as _gradient_expr
 from ..ad.derivatives import hessian as _hessian_expr
 from ..ad.derivatives import jacobian as _jacobian_expr
 from ..ad.sparse import SparseJacobian, Triangle
 from ..ad.sparse import sparse_hessian as _expr_sparse_hessian
 from ..ad.sparse import sparse_jacobian as _expr_sparse_jacobian
-from ..ir.expr import Expr
-from .concrete import ConcreteFunction
+from ..ir.expr import Expr, substitute
+from ..ir.types import SparsityPattern
+from .concrete import ConcreteFunction, CustomRules
 from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from .model import Function, _traced, derived_name, lift
-from .tree import Array, Tree, append_parameter, arg, parameter_list
+from .tree import Array, Tree, _G, append_parameter, arg, parameter_list
 
 
 class _InferredOutputs[NI, *Ss](Protocol):
@@ -426,3 +429,85 @@ def sparse_lagrangian_hessian[*Ss, *Ns, SO, NO](
 ) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, Array]:
   """Create compact weighted Hessian values with multipliers matching the output tree."""
   return _seeded(fn, None, wrt, name, "sphess", aux_name, triangle)
+
+
+type _Rule = Function[Any, Any, Any, Any] | ConcreteFunction[Any, Any, Any, Any]
+
+
+def custom_derivative[SI, NI, SO, NO](
+  fn: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO],
+  *,
+  jvp: _Rule | None = None,
+  fwd: _Rule | None = None,
+  bwd: _Rule | None = None,
+  sparsity: Callable[[str, str, tuple[int, int]], SparsityPattern | np.ndarray] | None = None,
+) -> Function[SI, NI, SO, NO]:
+  """Return ``fn`` with derivative rules that replace differentiating its body.
+
+  ``jvp(*inputs, *directions)`` is the forward rule, the product of the Jacobian with a direction.
+  It takes ``fn``'s parameters and then one direction per parameter, and returns the change of
+  each output along that direction, in ``fn``'s output structure. Several directions apply the
+  rule to each direction in one mapped loop, and a direction the rule never reads is never computed.
+
+  ``fwd`` and ``bwd`` form the reverse rule, the product of output weights with the Jacobian.
+  ``fwd(*inputs)`` returns ``(outputs, residuals)``, and the outputs become ``fn``'s.
+  ``bwd(residuals, weights)`` takes one weight per output and returns one weighted derivative per
+  parameter of ``fn``. A call computes its outputs and residuals together, so the reverse rule
+  reuses them instead of computing them again, and a second derivative still differentiates them.
+
+  A mode without a rule, forward or reverse, differentiates the body. Rules may be shape templates,
+  which take the shapes of each call of ``fn``. ``sparsity(of, wrt, shape)`` gives the Jacobian pattern of output
+  ``of`` in input ``wrt``, as a ``SparsityPattern`` or a boolean mask of ``shape``, which is
+  ``(of.size, wrt.size)``. Without it, the pattern of a function with rules is dense.
+  """
+  if (fwd is None) != (bwd is None):
+    raise TypeError("custom_derivative takes fwd and bwd together")
+  if jvp is None and fwd is None and sparsity is None:
+    raise TypeError("custom_derivative needs at least one of jvp, fwd and bwd, or sparsity")
+  source = Function._from_instance(fn) if isinstance(fn, ConcreteFunction) else fn
+  return lift(source, source.inputs, source.outputs, lambda concrete: _with_rules(concrete, jvp, fwd, bwd, sparsity), name=source.name)
+
+
+def _with_rules(
+  concrete: ConcreteFunction[Any, Any, Any, Any],
+  jvp: _Rule | None,
+  fwd: _Rule | None,
+  bwd: _Rule | None,
+  sparsity: Callable[[str, str, tuple[int, int]], SparsityPattern | np.ndarray] | None,
+) -> ConcreteFunction[Any, Any, Any, Any]:
+  def bind(rule: _Rule, skeleton: tuple[Any, ...], label: str) -> ConcreteFunction[Any, Any, Any, Any]:
+    return (Function._from_instance(rule) if isinstance(rule, ConcreteFunction) else rule)._bind(skeleton, f"{concrete.name}: {label} rule")
+
+  def check(label: str, got: tuple[Expr, ...], want: tuple[Expr, ...]) -> None:
+    if [(e.shape, e.type.dtype) for e in got] != [(e.shape, e.type.dtype) for e in want]:
+      raise TypeError(f"{concrete.name}: the {label} rule returns shapes {[e.shape for e in got]}, expected {[e.shape for e in want]}")
+
+  parameters = concrete.input_tree.unflatten(concrete.input_tree.types)
+  outputs, residuals, jvp_rule, bwd_rule = concrete.outputs, (), None, None
+  if jvp is not None:
+    jvp_rule = bind(jvp, (*parameters, *parameters), "jvp")
+    check("jvp", jvp_rule.outputs, concrete.outputs)
+  if fwd is not None and bwd is not None:
+    fwd_rule = bind(fwd, parameters, "fwd")
+    tree = fwd_rule.output_tree
+    if not isinstance(tree, _G) or len(tree.parts) != 2:
+      raise TypeError(f"{concrete.name}: the fwd rule must return (outputs, residuals)")
+    check("fwd", fwd_rule.outputs[: tree.parts[0].size], concrete.outputs)
+    results = tuple(substitute(out, dict(zip(fwd_rule.inputs, concrete.inputs, strict=True))) for out in fwd_rule.outputs)
+    outputs, residuals = results[: len(concrete.outputs)], results[len(concrete.outputs) :]
+    bwd_rule = bind(bwd, (tree.parts[1].unflatten(tree.parts[1].types), concrete.output_tree.unflatten(concrete.output_tree.types)), "bwd")
+    check("bwd", bwd_rule.outputs, concrete.inputs)
+  blocks = None
+  if sparsity is not None:
+    blocks = tuple(
+      tuple(_declared_pattern(sparsity(of, wrt, (out.size, inp.size)), (out.size, inp.size), of, wrt) for wrt, inp in concrete.input_map().items())
+      for of, out in concrete.output_map().items()
+    )
+  return concrete._replace(outputs=outputs, rules=CustomRules(jvp_rule, bwd_rule, residuals, blocks))
+
+
+def _declared_pattern(value: SparsityPattern | np.ndarray, shape: tuple[int, int], of: str, wrt: str) -> SparsityPattern:
+  pattern = value if isinstance(value, SparsityPattern) else SparsityPattern.from_mask(np.asarray(value, dtype=bool))
+  if pattern.shape != shape:
+    raise ValueError(f"declared a pattern of shape {pattern.shape} for {of!r} in {wrt!r}, expected {shape}")
+  return pattern

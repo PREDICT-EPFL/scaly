@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+import hashlib
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Sequence, cast, overload
 
 import numpy as np
@@ -59,6 +60,29 @@ Role = Literal["forward", "adjoint"]
 """What built a derived helper Function: a forward-mode or an adjoint call rule."""
 
 
+@dataclass(frozen=True, eq=False)
+class CustomRules:
+  """Derivative rules a function carries in place of its body's derivative, set by ``sc.custom_derivative``.
+
+  ``jvp`` takes the inputs and then one tangent per input, flat, and returns one tangent per
+  output. ``bwd`` takes the residuals and then one cotangent per output and returns one cotangent
+  per input. ``residuals`` are expressions over the function's own inputs; a call computes them
+  with its outputs, as the results after them. ``sparsity`` holds the declared pattern of each
+  output in each input, ``[output][input]``, or ``None`` for dense.
+  """
+
+  jvp: ConcreteFunction | None = None
+  bwd: ConcreteFunction | None = None
+  residuals: tuple[Expr, ...] = ()
+  sparsity: tuple[tuple[SparsityPattern, ...], ...] | None = None
+
+  @cached_property
+  def key(self) -> tuple[str, ...]:
+    """A deterministic identity for the names of derivative helpers."""
+    patterns = "" if self.sparsity is None else hashlib.sha1(repr(self.sparsity).encode()).hexdigest()[:10]
+    return (self.jvp.name if self.jvp else "", self.bwd.name if self.bwd else "", patterns)
+
+
 @dataclass
 class _Memo:
   """State computed from a ConcreteFunction and cached beside it, never part of its definition."""
@@ -101,6 +125,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   device: DeviceSpec
   descriptor: Any = None
   role: Role | None = None
+  rules: CustomRules | None = None
   _memo: _Memo = field(init=False, repr=False, default_factory=_Memo)
 
   @classmethod
@@ -185,8 +210,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     non_inputs = [expr.name or f"%{expr.id}" for expr in self.inputs if expr.op != ExprOp.INPUT]
     if non_inputs:
       raise ValueError(f"function {name!r} declares non-input expressions as inputs: {non_inputs}")
-    verify_expr((*self.inputs, *self.outputs))
-    for expr in (*self.inputs, *self.outputs):
+    verify_expr((*self.inputs, *self.results))
+    for expr in (*self.inputs, *self.results):
       if expr.type.dtype not in dtypes.all():
         raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")
 
@@ -250,10 +275,21 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   def output_sparsity_map(self) -> dict[str, SparsityPattern | None]:
     return dict(zip(self.output_names, self.output_sparsities, strict=True))
 
+  @property
+  def results(self) -> tuple[Expr, ...]:
+    """Everything one call computes: the outputs, then the residuals of a custom reverse rule."""
+    return self.outputs if self.rules is None else (*self.outputs, *self.rules.residuals)
+
+  @property
+  def result_names(self) -> tuple[str, ...]:
+    """The output names, then the first of ``res:0``, ``res:1``, ... that no output takes, one per residual."""
+    free = [name for name in (f"res:{k}" for k in range(len(self.results))) if name not in self.output_names]
+    return (*self.output_names, *free[: len(self.results) - len(self.outputs)])
+
   @cached_property
   def nodes(self) -> tuple[Expr, ...]:
-    """Every expression node the outputs reach, each after its operands."""
-    return tuple(topo(self.outputs))
+    """Every expression node the results reach, each after its operands."""
+    return tuple(topo(self.results))
 
   @property
   def input_shapes(self) -> tuple[tuple[int, ...], ...]:
@@ -289,12 +325,17 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
 
   def _symbolic(self, args: SymbolicInputs) -> SymbolicOutputs:
     actuals = self.input_tree.flatten_symbolic(args, f"{self.name}.symbolic_call")
+    return cast(SymbolicOutputs, self.output_tree.unflatten(self._call(actuals)[: len(self.outputs)]))
+
+  def _call(self, actuals: Sequence[Expr]) -> tuple[Expr, ...]:
+    """One ``CALL`` node per result, all of one invocation."""
     actual_diff = any(arg.type.diff for arg in actuals)
-    outputs = tuple(
-      Expr(ExprOp.CALL, actuals, TensorType(out.shape, out.type.dtype, diff=out.type.diff and actual_diff), attrs={"callee": self, "output": i})
-      for i, out in enumerate(self.outputs)
+    return tuple(
+      Expr(
+        ExprOp.CALL, tuple(actuals), TensorType(out.shape, out.type.dtype, diff=out.type.diff and actual_diff), attrs={"callee": self, "output": i}
+      )
+      for i, out in enumerate(self.results)
     )
-    return cast(SymbolicOutputs, self.output_tree.unflatten(outputs))
 
   def numerical_call[*Ns](self: ConcreteFunction[SymbolicInputs, tuple[*Ns], SymbolicOutputs, NumericalOutputs], *args: *Ns) -> NumericalOutputs:
     """Compile and evaluate one numerical argument per declared parameter."""
@@ -346,9 +387,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     policy = self._effective_lowering if lowering is None else lowering
     return _apply_lowering(derived, policy)
 
-  def _with_outputs(self, outputs: Sequence[Expr]) -> ConcreteFunction[Any, Any, Any, Any]:
-    return self._replace(outputs=tuple(outputs))
-
   def factory(
     self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None
   ) -> ConcreteFunction:
@@ -373,7 +411,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
         shadows an output.
     """
     in_expr = self.input_map()
-    out_expr = self.output_map()
+    # A function with rules differentiates through a call of itself, which is where AD reads them.
+    out_expr = dict(zip(self.output_names, self._call(self.inputs) if self.rules else self.outputs))
     aux = aux or {}
 
     duals: dict[str, Expr] = {}
