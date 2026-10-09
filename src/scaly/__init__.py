@@ -5,6 +5,7 @@ from .ad import jvp, jvp_many, vjp
 from .function.sugar import vmap, broadcast, window
 from .function.api import (
   adjoint,
+  custom_derivative,
   forward,
   function,
   gradient,
@@ -115,6 +116,7 @@ __all__ = [
   "const",
   "cse",
   "cse_many",
+  "custom_derivative",
   "dot",
   "format_expr",
   "forward",

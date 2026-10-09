@@ -13,6 +13,7 @@ from ...ir.expr_spec import verify_expr
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
+from ...function.tree import flat_tree
 from ..program import ProgramObserver, optimize_program
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.program_spec import verify_program
@@ -129,14 +130,25 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n
 
 
-def _normalize_function(fun: ConcreteFunction) -> ConcreteFunction:
-  outputs = tuple(rewrite(out, (Pattern(ExprOp.STOP_GRADIENT, lambda e: True, lambda e: e.args[0]),), revisit=True) for out in fun.outputs)
+def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> ConcreteFunction:
+  """Simplify the body and drop its derivative rules; a called procedure also writes its residuals."""
+  results = fun.results if residuals else fun.outputs
+  outputs = tuple(rewrite(out, (Pattern(ExprOp.STOP_GRADIENT, lambda e: True, lambda e: e.args[0]),), revisit=True) for out in results)
   for _ in range(4):
     normalized = cse_many(simplify(output) for output in outputs)
     if all(new is old for new, old in zip(normalized, outputs, strict=True)):
       break
     outputs = normalized
-  return fun._with_outputs(outputs)
+  if len(outputs) == len(fun.outputs):
+    return fun._replace(outputs=outputs, rules=None)
+  extra = len(outputs) - len(fun.outputs)
+  return fun._replace(
+    outputs=outputs,
+    output_tree=flat_tree(fun.result_names, tuple(out.type for out in outputs)),
+    output_sparsities=(*fun.output_sparsities, *(None,) * extra),
+    output_coloring_widths=(*fun.output_coloring_widths, *(None,) * extra),
+    rules=None,
+  )
 
 
 def _lower_to_proc(
@@ -147,12 +159,13 @@ def _lower_to_proc(
   symbols: dict[ConcreteFunction, str],
   *,
   auto_scalarize: bool = True,
+  residuals: bool = False,
   observe_expr: ExprObserver | None = None,
 ) -> ProgramNode:
   verify_expr((*fun.inputs, *fun.outputs))
   lowering = fun._effective_lowering
   symbol = symbols[fun]
-  fun = _normalize_function(fun)
+  fun = _normalize_function(fun, residuals=residuals)
   if observe_expr is not None:
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, observe_expr)
