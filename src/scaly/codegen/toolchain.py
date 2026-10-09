@@ -8,6 +8,7 @@ module reads it for the report and nothing else depends on that direction.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -152,15 +153,21 @@ def cache_root() -> Path:
 
 
 def find_c_compiler() -> Compiler | None:
-  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``CC``, else ``cc`` on ``PATH``.
+  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
 
-  Returns the compiler command and which of those three supplied it, or ``None`` if nothing is found.
+  Returns the compiler command and which of those four supplied it, or ``None`` if nothing is found.
   """
-  for key in ("SCALY_CC", "CC"):
-    override = os.environ.get(key)
-    if override:
-      found = shutil.which(override)
-      return Compiler((found,), key) if found is not None else None
+  override = os.environ.get("SCALY_CC")
+  if override:
+    found = shutil.which(override)
+    return Compiler((found,), "SCALY_CC") if found is not None else None
+  spec = importlib.util.find_spec("ziglang")
+  if spec is not None and spec.origin is not None and (zig := shutil.which("zig", path=str(Path(spec.origin).parent))) is not None:
+    return Compiler((zig, "cc"), "ziglang")
+  override = os.environ.get("CC")
+  if override:
+    found = shutil.which(override)
+    return Compiler((found,), "CC") if found is not None else None
   found = shutil.which("cc")
   return Compiler((found,), "PATH") if found is not None else None
 

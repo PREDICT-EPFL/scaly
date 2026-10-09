@@ -15,13 +15,10 @@ from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 import scaly.codegen.jit as jit
+from scaly.codegen.toolchain import find_c_compiler
 
 
-def _cc_available() -> bool:
-  return shutil.which(os.environ.get("SCALY_CC", "cc")) is not None
-
-
-pytestmark = pytest.mark.skipif(not _cc_available(), reason="cc is required for JIT smoke tests")
+pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is required for JIT smoke tests")
 
 
 @pytest.fixture
@@ -143,7 +140,8 @@ def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   _simple_fn()(np.zeros(3))
   (cmd,) = [command for command in commands if "-dM" not in command]
   flags = list(jit.compile_flags())
-  assert cmd[1 : 1 + len(flags)] == flags
+  compiler = find_c_compiler()
+  assert compiler is not None and cmd[: len(compiler.command) + len(flags)] == [*compiler.command, *flags]
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
 
 
