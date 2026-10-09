@@ -50,13 +50,13 @@ def _gathered(mat: Expr, sparsity: SparsityPattern) -> Expr:
   return mat.vec().gather(flat)
 
 
-def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
-  """Return whether an expression reaches a solver, including through ConcreteFunction calls."""
+def _reaches_op(exprs: Sequence[Expr], op: ExprOp) -> bool:
+  """Return whether an expression reaches ``op``, including through ConcreteFunction calls."""
   seen: set[int] = set()
 
   def visit(targets: Sequence[Expr]) -> bool:
     for node in topo(targets):
-      if node.op == ExprOp.SOLVER_CALL:
+      if node.op == op:
         return True
       if node.op in {ExprOp.CALL, ExprOp.VMAP}:
         callee = node.attrs["callee"]
@@ -74,16 +74,20 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
     if bound is None:
       continue
     for name, expr in zip(problem.vars.names, problem.vars.flatten_symbolic(bound, f"{problem.name} {side}"), strict=True):
-      if _reaches_solver_call((expr,)):
+      if _reaches_op((expr,), ExprOp.SOLVER_CALL):
         raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver")
+      if _reaches_op((expr,), ExprOp.STOP_GRADIENT):
+        raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through stop_gradient")
       if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols):
         raise NotQuadratic(f"{problem.name}: {side} for {name!r} depends on the variables")
   for index, inequality in enumerate(problem.spec.ineq):
     label = inequality.name or str(index)
     for side, bound in (("lower bound", inequality.lo), ("upper bound", inequality.hi)):
       if bound is not None:
-        if _reaches_solver_call((bound,)):
+        if _reaches_op((bound,), ExprOp.SOLVER_CALL):
           raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver")
+        if _reaches_op((bound,), ExprOp.STOP_GRADIENT):
+          raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through stop_gradient")
         if any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols):
           raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
 
@@ -189,8 +193,10 @@ def build_qp[SV, NV, SP, NP](
   compile_options, resolved_options = backend.prepare_options(options or {})
   _prove_variable_independent_bounds(problem)
   proof_targets = (problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))
-  if _reaches_solver_call(proof_targets):
+  if _reaches_op(proof_targets, ExprOp.SOLVER_CALL):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
+  if _reaches_op(proof_targets, ExprOp.STOP_GRADIENT):
+    raise NotQuadratic(f"{problem.name}: cannot prove QP structure through stop_gradient")
   _prove_quadratic(problem)
   P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem)
   n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]

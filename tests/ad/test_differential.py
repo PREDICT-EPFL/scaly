@@ -312,7 +312,8 @@ def test_baked_seeds_differences_and_duality(evaluated):
 def test_every_expr_op_is_accounted_for():
   assert set(UNARY) | {ExprOp.FLOOR, ExprOp.CEIL} == COMMON_ELEMENTWISE_UNARY
   assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} == COMMON_ELEMENTWISE_BINARY
-  assert {case.op for case in CASES} | set(REFUSED) | {ExprOp.SOLVER_CALL} == set(ExprOp)
+  # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences.
+  assert {case.op for case in CASES} | set(REFUSED) | {ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT} == set(ExprOp)
 
 
 @pytest.mark.parametrize(("op", "point"), [(op, point) for op in REFUSED for point in (0.5, 0.7, 1.0)] + [(ExprOp.SOLVER_CALL, None)])

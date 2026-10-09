@@ -8,7 +8,7 @@ from typing import Any, cast, overload
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
+from ..ir.expr import Expr, ExprOp, as_expr, common_lowering, stop_gradient
 from ..ir.types import SparsityPattern, TensorType
 from .model import Function, _Derived, _traced, as_concrete
 from .tree import Tree, _G, _Leaf, _leaves
@@ -145,9 +145,15 @@ def _batch_tree(tree: Tree, length: int) -> Tree:
 def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False) -> tuple[Expr, int, int]:
   base = value
   movements = []
-  while base.op in (ExprOp.SLICE, ExprOp.RESHAPE, ExprOp.TRANSPOSE):
-    movements.append(base)
+  stopped = False
+  while base.op in (ExprOp.SLICE, ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.STOP_GRADIENT):
+    if base.op == ExprOp.STOP_GRADIENT:
+      stopped = True
+    else:
+      movements.append(base)
     base = base.args[0]
+  if stopped:
+    base = stop_gradient(base)
   if all(node.op == ExprOp.RESHAPE for node in movements):
     return base if len(base.shape) == 1 else base.vec(), 0, 0 if repeated else width
   indices = np.arange(base.size).reshape(base.shape)

@@ -356,7 +356,7 @@ def _vmap_vjp(
   starts = vmap_expr.attrs["starts"]
   strides = vmap_expr.attrs["strides"]
   slice_size = vmap_expr.attrs["slice_size"]
-  active_formals = tuple(k for k, arg in enumerate(vmap_expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in wrts))
+  active_formals = tuple(k for k, arg in enumerate(vmap_expr.args) if any(_depends_on(arg, wrt, dep_memo, through_stops=False) for wrt in wrts))
   if not active_formals:
     return []
 

@@ -16,6 +16,10 @@ Jacobian. A vector-Jacobian product, `vjp`, propagates output weights back to th
 
 ::: scaly.ad.reverse.vjp
 
+## Holding a value fixed in derivatives
+
+::: scaly.stop_gradient
+
 ## Whole derivatives
 
 ::: scaly.ad.derivatives.jacobian

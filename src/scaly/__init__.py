@@ -34,6 +34,7 @@ from .ir.expr import (
   segment_sum,
   split,
   stack,
+  stop_gradient,
   sumsqr,
   vec,
 )
@@ -153,6 +154,7 @@ __all__ = [
   "spec_expr_shared",
   "split",
   "stack",
+  "stop_gradient",
   "sumsqr",
   "vec",
   "sym",
