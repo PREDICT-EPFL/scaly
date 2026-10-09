@@ -16,17 +16,21 @@ reverse cleanup, intermediate wrt and custom rules remain in #20–#22.
   retain baking, periodic tiles, local coloring, packing; remove fallback and cap.
 - [x] Update #15 harness, refusal diagnostics, stale environment documentation.
 - [x] Run focused checks, perturb new gates, regenerate and explain C snapshots.
-- [ ] Run pre-merge hook, collect after measurements; recheck snapshot overlap.
-- [ ] Commit/push, draft PR against #18, link stack 160 162 165 and the new PR.
+- [x] Run pre-merge hook, collect after measurements; recheck snapshot overlap.
+- [x] Commit/push, draft PR against #18, link stack 160 162 165 and PR #166.
 - [ ] Cross-review once, fix findings and check fixes once; record criterion evidence.
 - [ ] Delete temporary plan, mark ready, Project In review, hand back PR.
 
 Implementation and validation are sequential. The independent cross-review follows
 checks. No implementation delegation is needed.
 
-The workspace itself is on la015. Before native study: all 20 Hessian cells passed.
-Additional before Jacobian cells (chain M=33, neural MPC N=100) run in tmux
-`study-issue19-before-jac`; start no tests or builds while measuring.
+The workspace itself is on la015. Before and after studies are complete: all 60
+headline attempts passed, plus ten complete-cell reruns for generation dispersion.
+No measurement remains active. `internal/notes/perf_2026_10_09_forward/` retains
+data, provenance, comparison script, reports, gate proof and interpretation.
+All six kernels are slower; these measured runtime regressions are also maintainer
+open points. Full pre-merge hook passed with 2356 tests passing, three skipped and
+two expected failures; smoke and docs passed.
 
 The full-suite failures identified an obsolete buffer-name assertion and two
 structure gates affected by the new layout. The chain gate now measures forward
