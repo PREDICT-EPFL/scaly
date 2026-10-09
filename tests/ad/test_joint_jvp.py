@@ -100,7 +100,7 @@ def test_joint_helper_cache_distinguishes_formal_sets() -> None:
 
 
 def test_call_helpers_are_cached_on_their_callee() -> None:
-  from scaly.ad import forward, reverse
+  from scaly.ad import calls, forward, reverse
 
   @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.arg("z"), name="memo_stage")
   def stage(inputs):
@@ -115,7 +115,7 @@ def test_call_helpers_are_cached_on_their_callee() -> None:
   }
   cached = {entry[0] for entry in callee._memo.helpers.values()}
   assert cached == helpers
-  assert not [name for name in (*vars(forward), *vars(reverse)) if name.endswith("_CACHE")]
+  assert not [name for name in (*vars(calls), *vars(forward), *vars(reverse)) if name.endswith("_CACHE")]
   copy = callee._replace(name="memo_stage_copy")
   assert _call_jvp_function(copy, 0, (0,), pushforward=_jvp)[0] not in helpers
 
