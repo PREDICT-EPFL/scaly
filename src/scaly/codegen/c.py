@@ -472,16 +472,14 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect) -> list[str]:
     caps = rng.attrs["lane_caps"]
     cap = f"(SCALY_REGISTER_SLOTS == 256 ? {caps[3]} : SCALY_REGISTER_SLOTS == 64 ? {caps[2]} : SCALY_REGISTER_SLOTS == 32 ? {caps[1]} : {caps[0]})"
     lines.append(f"#define {width} (SCALY_LANES < {cap} ? SCALY_LANES : {cap})")
-    if lanes != "auto" and dialect == "gnu":
-      lines += _vector_typedefs(rng.attrs["lane_vector"], width)
+    if dialect == "gnu":
+      # Values and parameters use the natural type: aarch64 GCC 13.1 and 14 to 16.1 crash on a by-value
+      # parameter whose vector type carries both ``aligned`` and ``may_alias``. ``_mem`` is the
+      # under-aligned aliasing view for loads and stores through double buffers.
+      vec = rng.attrs["lane_vector"]
+      lines.append(f"typedef double {vec} __attribute__((vector_size(8 * {width})));")
+      lines.append(f"typedef {vec} {vec}_mem __attribute__((aligned(8), may_alias));")
   return lines
-
-
-def _vector_typedefs(vec: str, width: str) -> list[str]:
-  # Values and parameters use the natural type: aarch64 GCC 13.1 and 14 to 16.1 crash on a by-value
-  # parameter whose vector type carries both ``aligned`` and ``may_alias``. ``_mem`` is the
-  # under-aligned aliasing view for loads and stores through double buffers.
-  return [f"typedef double {vec} __attribute__((vector_size(8 * {width})));", f"typedef {vec} {vec}_mem __attribute__((aligned(8), may_alias));"]
 
 
 def _vector_captures(stmt: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
@@ -538,8 +536,6 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
     params += [f"{n.dtype.c_type} {c_ident(n.attrs['name'])}" for n in variables]
     operations = {n.op for n in walk_program(vector) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
     if dialect == "gnu":
-      if vector.args[0].attrs["lanes"] == "auto":
-        lines += _vector_typedefs(vec, width)
       for op in sorted(operations):
         lines += _vector_math(helper, vec, width, op, vector_libm)
     qualifier = "static inline __attribute__((always_inline))" if dialect == "gnu" else "static inline"

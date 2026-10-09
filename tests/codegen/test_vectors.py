@@ -514,15 +514,15 @@ def test_private_aliases_pack_active_lanes_with_tail(tmp_path, dialect, lanes):
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
 def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect):
-  from scaly.ir.match import Pattern, rewrite
-  from scaly.passes.program._common import rebuild_program
+  from scaly.ir.program import walk_program
 
-  x, y = p.buffer("x", dtypes.float64, (7,)), p.buffer("y", dtypes.float64, (14,))
+  counts = (2, 4)
+  x, y = p.buffer("x", dtypes.float64, (4,)), p.buffer("y", dtypes.float64, (6,))
   loops = []
-  for part in range(2):
+  for part, count in enumerate(counts):
     scratch = p.buffer(f"scratch{part}", dtypes.float64, (1100,), address_space="private")
     i = p.var(f"i{part}")
-    rng = p.range_(f"i{part}", 0, 7)
+    rng = p.range_(f"i{part}", 0, count)
     rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
     value = p.mul(p.load(p.view(x, [i])), p.const_float(part + 2))
     loops.append(
@@ -531,21 +531,17 @@ def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect
         [
           scratch,
           p.store(p.view(scratch, [p.const_int(1)]), value),
-          p.store(p.view(y, [p.add(i, p.const_int(part * 7))]), p.load(p.view(scratch, [p.const_int(1)]))),
+          p.store(p.view(y, [p.add(i, p.const_int(sum(counts[:part])))]), p.load(p.view(scratch, [p.const_int(1)]))),
         ],
       )
     )
   widened = widen_ranges(p.program([p.proc("kernel", [x, y], loops)]), lanes="auto")
-
-  def cap(node):
-    width = 2 if node.attrs["name"].startswith("i0") else 4
-    return ProgramNode(node.op, node.args, {**node.attrs, "lane_cap": width, "lane_caps": (width,) * 4}, node.dtype)
-
-  widened = rewrite(widened, [Pattern(ProgramOp.RANGE, lambda n: "lane_caps" in n.attrs, cap)], rebuild=rebuild_program, fixpoint=False)
+  caps = {n.attrs["lane_width"]: n.attrs["lane_caps"] for n in walk_program(widened) if n.op == ProgramOp.RANGE and "lane_caps" in n.attrs}
+  assert sorted(caps.values()) == [(2,) * 4, (4,) * 4]
   packed = pack_workspace(widened)
   assert packed.args[0].attrs["sz_w"] == 1100 * 8
   function, _ = _compile(packed, tmp_path, dialect=dialect, defines=("-DSCALY_LANES=8",))
-  values = np.linspace(-2, 3, 7)
-  actual = _evaluate(function, values, 14)
-  assert actual[:14].tobytes() == np.concatenate([values * 2, values * 3]).tobytes()
-  np.testing.assert_array_equal(actual[14:], 8765.0)
+  values = np.linspace(-2, 3, 4)
+  actual = _evaluate(function, values, 6)
+  assert actual[:6].tobytes() == np.concatenate([values[:2] * 2, values * 3]).tobytes()
+  np.testing.assert_array_equal(actual[6:], 8765.0)
