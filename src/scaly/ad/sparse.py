@@ -16,7 +16,8 @@ from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
-from .forward import _call_jvp_many_const_function, jvp_many
+from .calls import _call_jvp_many_const_function
+from .forward import _jvp, _jvp_many_unrolled, jvp_many
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
 from ..ir.types import SparsityPattern
 
@@ -288,7 +289,9 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     for j, c in enumerate(local_colors):
       seed_f[c, j] = 1.0
     seed_f_shaped = seed_f.reshape((c_f, *formal.shape)) if formal.shape != (formal.size,) else seed_f
-    inner_fn, arg_indices, active = _call_jvp_many_const_function(callee, output_idx, f_idx, seed_f_shaped)
+    inner_fn, arg_indices, active = _call_jvp_many_const_function(
+      callee, output_idx, f_idx, seed_f_shaped, pushforward=_jvp, unroll=_jvp_many_unrolled
+    )
     active_count = len(active)
     if active_count == 0:
       continue

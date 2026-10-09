@@ -14,7 +14,7 @@ Found while landing the typed call surface, by trying to ban zero-input `Functio
 the suite break. Two independent producers, both legitimate:
 
 - **Differentiation.** `_call_jvp_function`, `_call_jvp_many_function` and
-  `_call_jvp_many_const_function` in `ad/forward.py` each keep only the callee inputs the
+  `_call_jvp_many_const_function` in `ad/calls.py` each keep only the callee inputs the
   derivative actually depends on. A constant derivative depends on none, so the synthesized callee
   has no inputs at all — `duplicate_fw_second_x`, `scale_add_fw_y_x`,
   `bicycle_stage_interstage_fw_eq_znext` among others.
@@ -50,9 +50,8 @@ Three holes remain, all on the paths that matter most for composing:
 - **`sc.jvp`, `sc.jvp_many` and `sc.vjp` are expression-level.** They take
   `Sequence[Expr]` and return `tuple[Expr, ...]`: typed, but tree-blind, with no Function-level
   spelling that preserves structure.
-- **The callees AD synthesizes are `Any`-typed.** Every builder in `ad/forward.py` and
-  `ad/reverse.py` goes through `Function._from_exprs`, whose trees come from `flat_tree`, so each
-  result is a `Function[Any, Any, Any, Any]`. This already leaks into the call surface: both
+- **The callees AD synthesizes are `Any`-typed.** Every builder in `ad/calls.py` goes
+  through `Function._from_exprs`, whose trees come from `flat_tree`, so each result is a `Function[Any, Any, Any, Any]`. This already leaks into the call surface: both
   `__call__` overloads match `Any`, which is why their order in `function/model.py` is load-bearing
   and had to be commented.
 

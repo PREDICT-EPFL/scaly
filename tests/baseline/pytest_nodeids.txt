@@ -92,6 +92,7 @@ plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_trace_is_off_by_default
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_trace_prefix_sanitizes_hostile_names
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_trace_prints_per_iteration_lines_to_stderr
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_watchdog_falls_back_to_checkpoint_line_search
+tests/ad/test_calls.py::test_call_rules_live_in_shared_module
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[aperiodic]
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[distinct_short]
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[equal]
@@ -2307,6 +2308,7 @@ tests/test_import_boundaries.py::test_tests_do_not_import_benchmark_problems
 tests/test_import_layering.py::test_each_seam_is_a_single_import
 tests/test_import_layering.py::test_flat_call_seams_stay_inside_their_sanctioned_modules
 tests/test_import_layering.py::test_import_layer_table_covers_every_module
+tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.calls]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.derivatives]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.forward]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.helpers]
