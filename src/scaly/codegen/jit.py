@@ -17,6 +17,7 @@ The JIT compiles for the machine it runs on, so it also passes the host CPU targ
 from __future__ import annotations
 
 import ctypes
+import functools
 import hashlib
 import os
 import shlex
@@ -33,6 +34,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
+from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe
@@ -53,12 +55,13 @@ _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
 _SOLVER_NAMESPACE: int | None = None
 _SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
+_SOLVER_NAMESPACE_ENVIRON: ctypes.c_void_p | None = None
 _SOLVER_NAMESPACE_LOCK = threading.Lock()
 
 
 def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   """Load a shared library. ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
-  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
+  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR, _SOLVER_NAMESPACE_ENVIRON
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
   libc = ctypes.CDLL(None)
@@ -66,6 +69,11 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   dlmopen.argtypes = [ctypes.c_long, ctypes.c_char_p, ctypes.c_int]
   dlmopen.restype = ctypes.c_void_p
   with _SOLVER_NAMESPACE_LOCK:
+    # The namespace has its own C library, whose `environ` still points at the environment array
+    # the process had when the namespace was created. Setting a variable since then may have freed
+    # that array, and initializers that call `getenv` (libgfortran's, under IPOPT) would crash on it.
+    if _SOLVER_NAMESPACE_ENVIRON is not None:
+      _SOLVER_NAMESPACE_ENVIRON.value = ctypes.c_void_p.in_dll(libc, "environ").value
     handle = dlmopen(_LM_ID_NEWLM if _SOLVER_NAMESPACE is None else _SOLVER_NAMESPACE, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
     if not handle:
       raise OSError(f"dlmopen failed for {path}")
@@ -82,7 +90,13 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
         raise OSError(f"dlinfo failed for {path}")
       _SOLVER_NAMESPACE = namespace.value
       _SOLVER_NAMESPACE_ANCHOR = lib
+      _SOLVER_NAMESPACE_ENVIRON = ctypes.c_void_p.in_dll(lib, "environ")
   return lib
+
+
+@functools.cache
+def _process_libc() -> ctypes.CDLL:
+  return ctypes.CDLL(None)
 
 
 class JitUnavailable(RuntimeError):
@@ -163,6 +177,7 @@ class _Artifact:
   flags: tuple[str, ...]
   workspace_size: int
   solver_library: bool
+  prints: bool
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -212,7 +227,12 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     tmp_lib.replace(lib_path)
 
   artifact = _Artifact(
-    lib_path=lib_path, key=key, flags=module.link_flags, workspace_size=module.workspace_size, solver_library=bool(module.backends)
+    lib_path=lib_path,
+    key=key,
+    flags=module.link_flags,
+    workspace_size=module.workspace_size,
+    solver_library=bool(module.backends),
+    prints=prints(module.program),
   )
   with _artifact_lock:
     _artifact_cache[key] = artifact
@@ -348,7 +368,13 @@ class CompiledFunction:
       w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
       w_ptr = _C_DOUBLE_P()
 
+    # C stdout buffers apart from sys.stdout, and holds its lines until exit when it is not a terminal.
+    # Flushing both around a call that prints keeps the two in the order they were written.
+    if self._artifact.prints:
+      sys.stdout.flush()
     status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
+    if self._artifact.prints:
+      _process_libc().fflush(None)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

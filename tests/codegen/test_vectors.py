@@ -266,8 +266,9 @@ def test_minimum_maximum_and_negative_zero_broadcast(tmp_path, dialect):
 def test_glibc_wrong_instruction_set_fails_at_compile_time(tmp_path):
   if not _GLIBC_X86:
     pytest.skip("requires x86-64 glibc")
+  # A fixed baseline, because on AVX10 hosts GCC ignores -mno-avx512f on top of -march=native.
   with pytest.raises(subprocess.CalledProcessError) as error:
-    _compile(widen_ranges(_program(17), lanes=8), tmp_path, vector_libm="glibc", defines=["-mno-avx512f"])
+    _compile(widen_ranges(_program(17), lanes=8), tmp_path, vector_libm="glibc", defines=["-march=x86-64-v3"])
   assert b"requires __AVX512F__ and -lmvec" in error.value.stderr
 
 

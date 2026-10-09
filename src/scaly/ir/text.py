@@ -218,6 +218,8 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     rets = n.attrs.get("returns", ())
     ret_prefix = f"{', '.join('%' + r for r in rets)} = " if rets else ""
     lines.append(f"{pad}{ret_prefix}prog.call @{n.attrs['callee']}({args}){_attrs_asm(n.attrs, skip={'callee', 'returns'})}")
+  elif n.op == ProgramOp.PRINT:
+    lines.append(f"{pad}prog.print({', '.join(_render_scalar(a) for a in n.args)}){_attrs_asm(n.attrs)}")
   else:
     lines.append(f"{pad}// stmt {n.op.value}: {_render_scalar(n) if n.op in SCALAR_OPS else _attrs_asm(n.attrs)}")
 
@@ -308,6 +310,10 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     rets = n.attrs.get("returns", ())
     ret_prefix = f"{', '.join(rets)} = " if rets else ""
     lines.append(f"{pad}{ret_prefix}call {n.attrs['callee']}({args})")
+  elif n.op == ProgramOp.PRINT:
+    pieces = n.attrs["pieces"]
+    parts = [json.dumps(pieces[0]), *(f"{_format_scalar(a)} {json.dumps(piece)}" for a, piece in zip(n.args, pieces[1:], strict=True))]
+    lines.append(f"{pad}print {' '.join(parts)}")
   else:
     # fallback for unknown / scalar at statement scope
     lines.append(f"{pad}{n.op.value}")

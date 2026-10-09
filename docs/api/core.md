@@ -109,6 +109,14 @@ expression graph for inspection and export.
 
 ::: scaly.ir.expr.maximum
 
+::: scaly.ir.expr.print_
+    options:
+      show_source: false
+      show_signature: false
+      heading: "print(fmt, *values)"
+      toc_label: "print"
+      separate_signature: false
+
 ::: scaly.function.sugar.vmap
     options:
       show_source: false

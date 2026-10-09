@@ -1280,6 +1280,7 @@ tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inpu
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v:0]
 tests/codegen/test_jit.py::test_distinct_solver_functions_with_same_exported_name_are_user_errors
+tests/codegen/test_jit.py::test_environment_change_before_next_isolated_load
 tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error
 tests/codegen/test_jit.py::test_folded_extrema_nan_match_runtime_and_numpy
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[False]
@@ -1337,6 +1338,19 @@ tests/codegen/test_name_clash.py::test_same_named_callees_on_same_arguments
 tests/codegen/test_name_clash.py::test_scope_suffixes_remain_valid_and_children_see_global_names
 tests/codegen/test_name_clash.py::test_shared_input_output_names_keep_distinct_buffers
 tests/codegen/test_name_clash.py::test_solver_oracles_with_same_name_keep_their_identity
+tests/codegen/test_print.py::test_c_and_python_output_stay_in_order_through_a_pipe
+tests/codegen/test_print.py::test_derivative_prints_when_it_computes_the_primal
+tests/codegen/test_print.py::test_format_text_reaches_stdout_unchanged
+tests/codegen/test_print.py::test_identical_prints_intern_to_one
+tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[direct]
+tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[nested]
+tests/codegen/test_print.py::test_mapped_function_with_two_used_outputs_prints_once_per_used_output
+tests/codegen/test_print.py::test_mapped_print_runs_once_per_trip_in_order
+tests/codegen/test_print.py::test_print_returns_its_value_and_prints_at_each_call
+tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define0-x=[0.25, -0.75] k=2\n]
+tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define1-]
+tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define2-uart: x=[0.25, -0.75] k=2\n]
+tests/codegen/test_print.py::test_source_defines_scaly_printf_only_when_it_prints
 tests/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/codegen/test_toolchain.py::test_build_recipe_validates_render_controls
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[command]
@@ -1537,6 +1551,12 @@ tests/function/test_api.py::test_factory_unknown_names_report_value_errors
 tests/function/test_api.py::test_forward_convenience_api_matches_factory
 tests/function/test_api.py::test_gradient_convenience_api_matches_factory
 tests/function/test_api.py::test_lagrangian_hessian_convenience_api
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[block]
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[scalar]
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[simplify]
+tests/function/test_api.py::test_print_rebuilt_by_a_transform_still_reaches_the_outputs[substitute]
+tests/function/test_api.py::test_print_unreachable_from_the_outputs_raises_at_trace_time
+tests/function/test_api.py::test_prints_are_recorded_per_thread
 tests/function/test_api.py::test_scoped_function_decorator_builds_fresh_named_function
 tests/function/test_api.py::test_scoped_function_decorator_outputs_default_names
 tests/function/test_api.py::test_seeded_factory_outputs_require_seed_inputs
@@ -1641,6 +1661,13 @@ tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits
 tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first7-second7]
 tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first8-second8]
 tests/ir/test_expr.py::test_mixed_lowering_hints_survive_expr_graph
+tests/ir/test_expr.py::test_print_is_an_identity_node_carrying_its_format
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x-values0-ValueError-at least one value]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x=\x00{}-values5-ValueError-NUL]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={0}-values2-ValueError-only empty '{}' placeholders]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={:.3f}-values3-ValueError-only empty '{}' placeholders]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={} y={}-values1-ValueError-2 placeholders for 1 value]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={}-values4-TypeError-float64]
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/ir/test_expr.py::test_structural_equality_collapses_to_identity
 tests/ir/test_expr.py::test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees
@@ -2158,6 +2185,7 @@ tests/solvers/test_problem.py::test_nlp_solver_symbolic_call_preserves_variable_
 tests/solvers/test_problem.py::test_piqp_numerical_call_preserves_multiple_variable_blocks
 tests/solvers/test_problem.py::test_problem_carries_spec_trees_and_declared_names
 tests/solvers/test_problem.py::test_problem_infers_closed_over_parameters_and_retypes_them_nondifferentiable
+tests/solvers/test_problem.py::test_problem_print_must_reach_the_spec
 tests/solvers/test_problem.py::test_problem_validates_body_and_declared_inputs_at_construction
 tests/solvers/test_problem.py::test_qp_backend_proves_quadratic_cost_and_affine_constraints
 tests/solvers/test_problem.py::test_qp_problem_is_a_typed_problem
@@ -2230,6 +2258,7 @@ tests/test_docs_prose.py::test_published_prose[docs/index.md]
 tests/test_examples.py::test_example[README.md]
 tests/test_examples.py::test_example[energy.py]
 tests/test_examples.py::test_example[function_composition.py]
+tests/test_examples.py::test_example[function_with_print.py]
 tests/test_examples.py::test_example[mapped_derivatives.py]
 tests/test_examples.py::test_example[multiple_shooting.py]
 tests/test_examples.py::test_example[quadratic.py]
@@ -2283,6 +2312,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.expr]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.calls]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.contraction]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.ctx]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.effects]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.elementwise]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.gather]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.movement]

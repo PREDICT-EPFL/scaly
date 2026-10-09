@@ -4,7 +4,7 @@ name: Nightly
 # every tested runner and compiler, every closed-loop pair, and the repeated benchmark commands.
 on:
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "17 1 * * *"
   workflow_dispatch:
 
 permissions:

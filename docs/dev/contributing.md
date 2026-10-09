@@ -101,10 +101,6 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent; CI installs both solver wheels and
 runs everything. Never hand-roll a "is the solver loadable" skip condition.
 
-The vendored-solver plugin tests occasionally crash an xdist worker during an isolated library
-load, including on unmodified checkouts. If that happens, rerun the affected test and compare with
-the base revision before attributing the failure to your change.
-
 Scaly can calculate several forward derivative directions together. When an operation has no rule
 for such a batch, it silently processes the directions one at a time, which gives the same
 derivative but a larger graph. `SCALY_STRICT_JVP_MANY=1` turns that fallback into an error, which
