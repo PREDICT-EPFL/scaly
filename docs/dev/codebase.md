@@ -82,13 +82,13 @@ src/scaly/
 
   solvers/
     model.py             SolverDescriptor and its opaque plain Function
-    problem.py           typed backend-free Problem declarations
+    problem.py           typed backend-free Problem declarations and their stacked NLP form
     solver.py            backend selection and the parameter-based Solver call
     graph.py             the solver queries over a Function graph
     registry.py          plugin discovery and protocol validation
     paths.py             vendored solver library and header discovery
     stats.py             the versioned solver-statistics ABI and SolverStatus
-    qp.py nlp.py         quadratic proof/extraction and NLP oracle construction
+    qp.py nlp.py         quadratic proof/extraction and the NLP solver descriptor
     _oracle.py           shared oracle-assembly helpers
 
   viz/

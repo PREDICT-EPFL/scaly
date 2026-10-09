@@ -1,16 +1,22 @@
-"""Typed backend-free optimal-control problem declarations."""
+"""Typed backend-free optimal-control problem declarations and their stacked NLP form."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, cast, overload
 
 import numpy as np
 
-from ..function.tree import Tree, flat_tree
-from ..ir.expr import Expr, as_expr, substitute
-from ..ir.types import TensorType
+from ..ad.sparse import SparseJacobian, Triangle, sparse_hessian
+from ..function.api import gradient, sparse_jacobian
+from ..function.concrete import ConcreteFunction
+from ..function.tree import Tree, append_parameter, arg, flat_tree, parameter_list
+from ..function.tree import group as tree_group
+from ..ir.expr import Expr, ExprOp, as_expr, concat, substitute
+from ..ir.types import SparsityPattern, TensorType
+from ..passes.expr import simplify_cse_fixpoint
 from ._oracle import collect_free_inputs
 
 
@@ -63,7 +69,6 @@ class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
   params: Tree[SymbolicParams, NumericalParams]
   _var_symbols: tuple[Expr, ...] = field(repr=False)
   _param_symbols: tuple[Expr, ...] = field(repr=False)
-  _cache: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
   @property
   def n_eq(self) -> int:
@@ -74,6 +79,178 @@ class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
   def n_ineq(self) -> int:
     """The total number of scalar bounded inequality constraints."""
     return sum(group.expr.size for group in self.spec.ineq)
+
+  @cached_property
+  def _nlp(self) -> _NlpForm:
+    return _NlpForm(self)
+
+
+def _concat_vec(exprs: tuple[Expr, ...]) -> Expr | None:
+  if not exprs:
+    return None
+  vectors = tuple(expr if len(expr.shape) == 1 else expr.vec() for expr in exprs)
+  return vectors[0] if len(vectors) == 1 else concat(vectors)
+
+
+def _bound(expr: Expr | None, shape: tuple[int, ...], fill: float) -> Expr:
+  if expr is None:
+    return Expr.const(np.full(shape, fill))
+  if expr.shape == shape:
+    return expr
+  if expr.shape == ():
+    return Expr.const(np.zeros(shape)) + expr
+  raise TypeError(f"bound has shape {expr.shape}, expected scalar or {shape}")
+
+
+@dataclass(frozen=True, eq=False)
+class _NlpForm:
+  """A problem with its variable blocks stacked into one vector ``x``, the form NLP and QP solvers take.
+
+  Each part is derived when first read, so a QP never builds the Lagrangian Hessian.
+  """
+
+  problem: Problem[Any, Any, Any, Any]
+  _hessians: dict[Triangle, ConcreteFunction] = field(init=False, default_factory=dict)
+
+  @cached_property
+  def var_sizes(self) -> tuple[int, ...]:
+    return tuple(expr.size for expr in self.problem._var_symbols)
+
+  @cached_property
+  def x_name(self) -> str:
+    name = "_".join(self.problem.vars.names)
+    while name in self.problem.params.names:
+      name = "_" + name
+    return name
+
+  @cached_property
+  def x(self) -> Expr:
+    return Expr(ExprOp.INPUT, type=TensorType((sum(self.var_sizes),)), name=self.x_name)
+
+  @cached_property
+  def _replacements(self) -> dict[Expr, Expr]:
+    replacements: dict[Expr, Expr] = {}
+    offset = 0
+    for original, size in zip(self.problem._var_symbols, self.var_sizes, strict=True):
+      block = self.x if offset == 0 and size == self.x.size else self.x[offset : offset + size]
+      replacements[original] = block if original.shape == (size,) else block.reshape(original.shape)
+      offset += size
+    return replacements
+
+  def _stacked(self, expr: Expr) -> Expr:
+    return substitute(expr, self._replacements)
+
+  @cached_property
+  def f(self) -> Expr:
+    return self._stacked(self.problem.spec.minimize)
+
+  @cached_property
+  def equalities(self) -> tuple[Expr, ...]:
+    return tuple(self._stacked(expr) for expr in self.problem.spec.eq)
+
+  @cached_property
+  def inequalities(self) -> tuple[Expr, ...]:
+    return tuple(self._stacked(inequality.expr) for inequality in self.problem.spec.ineq)
+
+  @cached_property
+  def h(self) -> Expr | None:
+    return _concat_vec(tuple(expr for expr in self.equalities if expr.size))
+
+  @cached_property
+  def g_ineq(self) -> Expr | None:
+    return _concat_vec(tuple(expr for expr in self.inequalities if expr.size))
+
+  @cached_property
+  def g(self) -> Expr | None:
+    return _concat_vec(tuple(expr for expr in (self.h, self.g_ineq) if expr is not None))
+
+  @cached_property
+  def base(self) -> ConcreteFunction:
+    problem, f, g = self.problem, self.f, self.g
+    input_tree = parameter_list((arg(self.x_name, self.x.type), problem.params))
+    output_tree: Tree[Any, Any] = arg("f", f.type) if g is None else tree_group(arg("f", f.type), arg("g", g.type))
+    outputs = (f,) if g is None else (f, g)
+    return ConcreteFunction.build(f"{problem.name}_base", input_tree, (self.x, *problem._param_symbols), output_tree, outputs)
+
+  @cached_property
+  def grad(self) -> ConcreteFunction:
+    return gradient(self.base, "f", self.x_name, name=f"{self.problem.name}_grad").instantiate()
+
+  @cached_property
+  def jac(self) -> ConcreteFunction | None:
+    return None if self.g is None else sparse_jacobian(self.base, "g", self.x_name, name=f"{self.problem.name}_jac").instantiate()
+
+  @cached_property
+  def jac_sparsity(self) -> SparsityPattern:
+    if self.jac is None:
+      return SparsityPattern.empty((0, self.x.size))
+    sparsity = self.jac.output_sparsities[0]
+    assert sparsity is not None
+    return sparsity
+
+  @cached_property
+  def _multipliers(self) -> tuple[Tree[Any, Any], tuple[Expr, ...]]:
+    tree = self.base.output_tree.relabel("lam:")
+    return tree, tuple(tree.flatten_symbolic(tree.symbols(), f"{self.problem.name} multipliers"))
+
+  @cached_property
+  def hess_full(self) -> SparseJacobian:
+    """The full sparse Hessian of the Lagrangian ``lam:f * f + lam:g . g``."""
+    multipliers = self._multipliers[1]
+    lagrangian = multipliers[0] * self.f
+    if self.g is not None:
+      lagrangian = lagrangian + (multipliers[1] * self.g).sum()
+    return sparse_hessian(lagrangian, self.x)
+
+  def hess(self, triangle: Triangle) -> ConcreteFunction:
+    """The Lagrangian Hessian oracle that stores ``triangle`` of the matrix."""
+    if triangle not in self._hessians:
+      tree, multipliers = self._multipliers
+      hess = self.hess_full.triangle(triangle)
+      self._hessians[triangle] = ConcreteFunction.build(
+        f"{self.problem.name}_hess_{triangle}",
+        append_parameter(self.base.input_tree, tree),
+        (self.x, *self.problem._param_symbols, *multipliers),
+        arg(f"sphess_gamma_{self.x_name}_{self.x_name}", hess.values.type),
+        (hess.values,),
+        output_sparsities=(hess.sparsity,),
+        output_coloring_widths=(hess.coloring_width,),
+      )
+    return self._hessians[triangle]
+
+  @cached_property
+  def cost_hessian(self) -> SparseJacobian:
+    return sparse_hessian(simplify_cse_fixpoint(self.f), self.x)
+
+  @cached_property
+  def bounds(self) -> ConcreteFunction:
+    """The variable bounds and, when there are inequalities, their bounds, from the parameters."""
+    problem = self.problem
+    lower_ineq: list[Expr] = []
+    upper_ineq: list[Expr] = []
+    for inequality, expr in zip(problem.spec.ineq, self.inequalities, strict=True):
+      if not expr.size:
+        continue
+      lower_ineq.append(_bound(None if inequality.lo is None else self._stacked(inequality.lo), expr.shape, -np.inf).vec())
+      upper_ineq.append(_bound(None if inequality.hi is None else self._stacked(inequality.hi), expr.shape, np.inf).vec())
+    variable_bounds: list[Expr] = []
+    for side, declared, fill in (("lb", problem.spec.lb, -np.inf), ("ub", problem.spec.ub, np.inf)):
+      if declared is None:
+        variable_bounds.append(Expr.const(np.full(self.x.size, fill)))
+        continue
+      leaves = problem.vars.flatten_symbolic(declared, f"{problem.name} {side}")
+      stacked = _concat_vec(
+        tuple(_bound(self._stacked(expr), original.shape, fill).vec() for expr, original in zip(leaves, problem._var_symbols, strict=True))
+      )
+      assert stacked is not None
+      variable_bounds.append(stacked)
+    if self.g_ineq is None:
+      outputs, names = tuple(variable_bounds), ("x_lb", "x_ub")
+    else:
+      l_ineq, u_ineq = _concat_vec(tuple(lower_ineq)), _concat_vec(tuple(upper_ineq))
+      assert l_ineq is not None and u_ineq is not None
+      outputs, names = (*variable_bounds, l_ineq, u_ineq), ("x_lb", "x_ub", "l_ineq", "u_ineq")
+    return ConcreteFunction._from_exprs(f"{problem.name}_bounds", problem._param_symbols, outputs, problem.params.names, names)
 
 
 def _normalize_spec[SV](spec: ProblemSpec[SV], vars: Tree[SV, Any]) -> ProblemSpec[SV]:
