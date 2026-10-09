@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 def is_solver_function(fun: ConcreteFunction) -> bool:
   """Return whether ``fun`` is a solver's own concrete graph."""
-  desc = getattr(fun, "descriptor", None)
+  desc = fun.descriptor
   return isinstance(getattr(desc, "backend", None), str)
 
 

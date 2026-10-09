@@ -99,13 +99,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   else:
     base_output_tree = group(arg("f", f.type), arg("g", g.type))
     base_outputs = (f, g)
-  base = ConcreteFunction._from_exprs(
-    f"{problem.name}_base",
-    (x, *problem._param_symbols),
-    base_outputs,
-    base_input_tree.names,
-    base_output_tree.names,
-  )._with_trees(base_input_tree, base_output_tree)
+  base = ConcreteFunction.build(f"{problem.name}_base", base_input_tree, (x, *problem._param_symbols), base_output_tree, base_outputs)
 
   grad = gradient(base, "f", x_name, name=f"{problem.name}_grad").instantiate()
   if g is None:
@@ -183,15 +177,15 @@ def build_nlp[SV, NV, SP, NP](
     hess_full = cast(SparseJacobian, cached["hess_full"])
     hess = hess_full.triangle(triangle)
     hess_name = f"sphess_gamma_{x.name}_{x.name}"
-    hess_fn = ConcreteFunction._from_exprs(
+    hess_fn = ConcreteFunction.build(
       f"{problem.name}_hess_{triangle}",
+      cast(Tree[Any, Any], cached["hess_input_tree"]),
       cast(tuple[Expr, ...], cached["hess_inputs"]),
+      arg(hess_name, hess.values.type),
       (hess.values,),
-      cast(Tree[Any, Any], cached["hess_input_tree"]).names,
-      (hess_name,),
-      (hess.sparsity,),
+      output_sparsities=(hess.sparsity,),
       output_coloring_widths=(hess.coloring_width,),
-    )._with_trees(cast(Tree[Any, Any], cached["hess_input_tree"]), arg(hess_name, hess.values.type))
+    )
     problem._cache[hess_key] = hess_fn
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None

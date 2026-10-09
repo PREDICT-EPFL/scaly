@@ -46,8 +46,8 @@ def test_call_uses_jit_and_matches_numpy(isolated_cache) -> None:
 
   jit_out = fn(xv)
   np.testing.assert_allclose(jit_out, (np.sin(xv) + xv * xv).sum())
-  assert as_concrete(fn)._compiled is not None
-  assert Path(as_concrete(fn)._compiled.lib_path).exists()
+  assert as_concrete(fn)._memo.compiled is not None
+  assert Path(as_concrete(fn)._memo.compiled.lib_path).exists()
 
 
 def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
@@ -55,7 +55,7 @@ def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
   b = _simple_fn()
   a(np.zeros(3))
   b(np.zeros(3))
-  assert as_concrete(a)._compiled.cache_key == as_concrete(b)._compiled.cache_key
+  assert as_concrete(a)._memo.compiled.cache_key == as_concrete(b)._memo.compiled.cache_key
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the wrapper is a shell script")
@@ -80,12 +80,12 @@ def test_compiler_wrapper_change_misses_the_cache(isolated_cache, monkeypatch) -
 def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
   fn = _simple_fn()
   fn(np.zeros(3))
-  assert as_concrete(fn)._compiled is not None
-  lib_path = Path(as_concrete(fn)._compiled.lib_path)
+  assert as_concrete(fn)._memo.compiled is not None
+  lib_path = Path(as_concrete(fn)._memo.compiled.lib_path)
   assert lib_path.exists()
   cache_dir = lib_path.parent
   fn.recompile()
-  assert as_concrete(fn)._compiled is None
+  assert as_concrete(fn)._memo.compiled is None
   assert not cache_dir.exists()
   xv = np.array([0.5, 0.0, -1.0])
   out = fn(xv)
@@ -133,7 +133,7 @@ def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
 def test_invalidate_cache_handles_missing_directory(isolated_cache) -> None:
   fn = _simple_fn()
   fn.recompile()  # nothing to remove yet
-  assert as_concrete(fn)._compiled is None
+  assert as_concrete(fn)._memo.compiled is None
 
 
 def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:

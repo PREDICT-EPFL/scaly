@@ -135,12 +135,4 @@ def descriptor_function(
   )
   inputs = input_tree or flat_parameters(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
   outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
-  function = ConcreteFunction._from_exprs(
-    descriptor.name,
-    input_exprs,
-    output_exprs,
-    tuple(name for name, _ in descriptor.input_signature),
-    tuple(name for name, _ in descriptor.output_signature),
-  )._with_trees(inputs, outputs)
-  function.descriptor = descriptor
-  return Function._from_instance(function)
+  return Function._from_instance(ConcreteFunction.build(descriptor.name, inputs, input_exprs, outputs, output_exprs, descriptor=descriptor))

@@ -51,6 +51,7 @@ expression graph for inspection and export.
       filters:
         - "!^_"
         - "!^with_device$"
+        - "!^role$"
 
 
 ## Types

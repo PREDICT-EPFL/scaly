@@ -169,11 +169,11 @@ def _unseeded[SI, NI](
     spec = kind(output, variable, triangle=triangle) if kind is SpHess else kind(output, variable)
     instance_name = derived_name(source, concrete, name, f"{concrete.name}_{spec.output_name}")
     key = (instance_name, spec)
-    if key in concrete._derivatives:
-      return concrete._derivatives[key]
+    if key in concrete._memo.derivatives:
+      return concrete._memo.derivatives[key]
     result = concrete.factory(instance_name, list(concrete.input_names), [spec])
-    concrete._derivatives[key] = cast(Any, _typed_result(result, concrete.input_tree))
-    return concrete._derivatives[key]
+    concrete._memo.derivatives[key] = cast(Any, _typed_result(result, concrete.input_tree))
+    return concrete._memo.derivatives[key]
 
   declaration = None if of is None or wrt is None else arg(kind(of, wrt).output_name)
   public_name = name or (f"{source.name}_{kind(of, wrt).output_name}" if of is not None and wrt is not None else f"{source.name}_{kind.kind}")
@@ -367,10 +367,10 @@ def _seeded(
       aux = {aux_name: output_names}
     instance_name = derived_name(source, concrete, name, f"{concrete.name}_{spec.output_name}")
     key = (instance_name, spec)
-    if key not in concrete._derivatives:
+    if key not in concrete._memo.derivatives:
       result = concrete.factory(instance_name, factory_inputs, [spec], aux=aux)
-      concrete._derivatives[key] = _typed_result(result, append_parameter(concrete.input_tree, seed_tree))
-    return concrete._derivatives[key]
+      concrete._memo.derivatives[key] = _typed_result(result, append_parameter(concrete.input_tree, seed_tree))
+    return concrete._memo.derivatives[key]
 
   spec_name = (
     None

@@ -85,7 +85,7 @@ def lower_function(
 
     solver_external_workspace = {}
     for name, sf in solver_fns.items():
-      desc = getattr(sf, "descriptor")
+      desc = sf.descriptor
       solver_external_workspace[name] = max(
         (oracle.workspace_size for oracle in (desc.base, desc.grad, desc.jac, desc.hess, desc.bounds) if isinstance(oracle, ExternalOracle)),
         default=0,

@@ -35,6 +35,14 @@ class Tree[Symbolic, Numerical]:
   names: tuple[str, ...]
   decls: tuple[LeafDecl, ...]
 
+  def __setattr__(self, name: str, value: Any) -> None:
+    if name in self.__dict__:
+      raise AttributeError(f"tree attribute {name!r} is read-only")
+    object.__setattr__(self, name, value)
+
+  def __delattr__(self, name: str) -> None:
+    raise AttributeError(f"tree attribute {name!r} is read-only")
+
   @property
   def has_holes(self) -> bool:
     """Whether any leaf shape needs binding."""
