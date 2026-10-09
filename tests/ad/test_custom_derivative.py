@@ -67,6 +67,13 @@ def test_a_call_honours_both_rules() -> None:
   np.testing.assert_allclose(ruled(POINT), POINT**2, rtol=1e-15)
 
 
+def test_derivatives_of_the_function_itself_honour_the_rules() -> None:
+  weights = np.array([1.0, -2.0, 0.5])
+  np.testing.assert_allclose(sc.jacobian(ruled)(POINT), np.diag(3.0 * POINT), rtol=1e-15)
+  np.testing.assert_allclose(sc.forward(ruled)(POINT, weights), 3.0 * POINT * weights, rtol=1e-15)
+  np.testing.assert_allclose(sc.adjoint(ruled)(POINT, weights), 3.0 * POINT * weights, rtol=1e-15)
+
+
 def test_a_map_and_a_library_function_honour_the_rules() -> None:
   batched = sc.vmap(ruled, 2)
 
@@ -254,6 +261,60 @@ def test_forward_over_forward_differentiates_the_rule_graph() -> None:
   np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-13)
   first = sc.jacobian(smooth, "out0", "x")
   np.testing.assert_allclose(first(x, p), finite_difference(lambda z: smooth(z, p)[0], x), rtol=1e-7, atol=1e-8)
+
+
+# --- a mapped callee with a reverse rule (ported from devrush's tests/core/ad/test_vmap.py) ------
+
+LANES = 5
+
+
+@sc.function(sc.arg("x", 4), sc.arg("w", 12))
+def layer(x, w):
+  z = w.reshape((3, 4)) @ x
+  return z.tanh(), sc.concat([z, 2.0 * z])
+
+
+@sc.function()
+def layer_fwd(x, w):
+  y, z2 = layer(x, w)
+  return (y, z2), (x, w, y)
+
+
+@sc.function()
+def layer_bwd(res, cot):
+  x, w, y = res
+  ybar, zbar = cot
+  g = ybar * (1.0 - y * y) + zbar[:3] + 2.0 * zbar[3:]
+  return w.reshape((3, 4)).T @ g, (g.reshape((3, 1)) * x.reshape((1, 4))).reshape((12,))
+
+
+layer_ruled = sc.custom_derivative(layer, fwd=layer_fwd, bwd=layer_bwd)
+
+
+def _layer_loss(callee):
+  batched = sc.vmap(callee, LANES)
+
+  @sc.function(sc.arg("xs", (LANES, 4)), sc.arg("ws", (LANES, 12)))
+  def loss(xs, ws):
+    y, _ = batched(xs, ws)
+    return (y * y * y).sum()
+
+  return loss
+
+
+def test_a_mapped_reverse_rule_reads_its_residuals_in_first_and_second_derivatives() -> None:
+  """The gradient of a loss not linear in a mapped callee needs the map's output and the rule's
+  residual; forward mode over that gradient differentiates the rule and the residual."""
+  rng = np.random.default_rng(31)
+  xs, ws = rng.normal(size=(LANES, 4)), rng.normal(size=(LANES, 12))
+  ruled_loss, plain_loss = _layer_loss(layer_ruled), _layer_loss(layer)
+  rules = as_concrete(layer_ruled).rules
+  assert rules is not None and rules.bwd in _reached(sc.gradient(ruled_loss, wrt="xs"))
+  for wrt in ("xs", "ws"):
+    np.testing.assert_allclose(sc.gradient(ruled_loss, wrt=wrt)(xs, ws), sc.gradient(plain_loss, wrt=wrt)(xs, ws), rtol=1e-12, atol=1e-14)
+  want = sc.hessian(plain_loss, wrt="xs")(xs, ws)
+  assert np.abs(want).max() > 0.1
+  np.testing.assert_allclose(sc.hessian(ruled_loss, wrt="xs")(xs, ws), want, rtol=1e-11, atol=1e-13)
 
 
 # --- declared sparsity --------------------------------------------------------------------------

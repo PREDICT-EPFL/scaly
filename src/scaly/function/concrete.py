@@ -386,9 +386,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     policy = self._effective_lowering if lowering is None else lowering
     return _apply_lowering(derived, policy)
 
-  def _with_outputs(self, outputs: Sequence[Expr]) -> ConcreteFunction[Any, Any, Any, Any]:
-    return self._replace(outputs=tuple(outputs))
-
   def factory(
     self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None
   ) -> ConcreteFunction:
@@ -413,7 +410,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
         shadows an output.
     """
     in_expr = self.input_map()
-    out_expr = self.output_map()
+    # A function with rules differentiates through a call of itself, which is where AD reads them.
+    out_expr = dict(zip(self.output_names, self._call(self.inputs) if self.rules else self.outputs))
     aux = aux or {}
 
     duals: dict[str, Expr] = {}
