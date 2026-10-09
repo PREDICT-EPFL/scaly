@@ -9,20 +9,19 @@ from ...function.concrete import ConcreteFunction
 from .ctx import LowerCtx, lowers, _lower_to_proc
 
 
-def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, *, residuals: bool = True) -> None:
+def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
   from ...solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(callee):
     # Opaque: the solver wrapper is rendered by codegen/solver (rule 6), not lowered. Its body is
-    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives, which
-    # it passes their outputs only.
+    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
     ctx.solver_fns[callee] = callee
     for oracle in solver_callees(callee):
-      _ensure_callee(ctx, oracle, residuals=False)
+      _ensure_callee(ctx, oracle)
     return
   if callee not in ctx.callees:
     ctx.callees[callee] = _lower_to_proc(
-      callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, residuals=residuals, observe_expr=ctx.observe_expr
+      callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, ctx.residuals, observe_expr=ctx.observe_expr
     )
 
 
@@ -36,7 +35,8 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   key = (callee, arg_names)
   if key not in ctx.call_invocations:
     _ensure_callee(ctx, callee)
-    out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in callee.results]
+    results = callee.results if callee in ctx.residuals else callee.outputs
+    out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in results]
     in_bufs = [ctx.buffers[n] for n in arg_names]
     ctx.statements.append(
       ProgramNode(
@@ -60,7 +60,8 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   _ensure_callee(ctx, callee)
   out = ctx.alloc_tmp(node)
   # Other callee results are written every iteration but discarded: one reused scratch each.
-  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(callee.results)]
+  results = callee.results if callee in ctx.residuals else callee.outputs
+  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(results)]
   if length == 0:
     return
   loop = ctx.names.allocate(f"it_{out.attrs['name']}")

@@ -15,6 +15,7 @@ from scaly.ad import finite_difference
 from scaly.codegen import render_c_source
 from scaly.function.model import as_concrete
 from scaly.ir.expr import ExprOp, topo
+from scaly.passes.lowering import lower_function
 
 
 def _reached(fn) -> list:
@@ -427,6 +428,14 @@ def _value_and_gradient(solve):
   return value_and_gradient
 
 
+def _value_only(solve):
+  @sc.function(sc.arg("A", (N, N)), sc.arg("b", N))
+  def value_only(A, b):
+    return (solve(A, b) ** 2).sum()
+
+  return value_only
+
+
 def _spd(seed: int) -> tuple[np.ndarray, np.ndarray]:
   rng = np.random.default_rng(seed)
   m = rng.normal(size=(N, N))
@@ -453,6 +462,11 @@ def test_a_solve_derivative_reuses_its_factorization() -> None:
   sqrts = [node for g in _reached(fn) for node in topo(g.results) if node.op == ExprOp.SQRT]
   assert len(sqrts) == N
   assert render_c_source(fn).count("sqrt(") == N
+
+  # A program that reads no residual lowers the solve with its outputs only.
+  primal = lower_function(_value_only(reusing))
+  (proc,) = [proc for proc in primal.args[: primal.attrs["proc_count"]] if proc.attrs["name"] == callee.name]
+  assert proc.attrs["param_count"] == len(callee.inputs) + len(callee.outputs)
 
 
 # --- templates and errors -----------------------------------------------------------------------
@@ -560,12 +574,12 @@ def test_residual_names_avoid_output_names() -> None:
 
 @pytest.mark.solver("sqp")
 def test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls() -> None:
-  """The solver wrapper passes an oracle its outputs only, so a called solver lowers its oracles
-  without residuals."""
+  """The solver wrapper passes an oracle its outputs only. The oracle's procedure writes no
+  residuals when it is also called directly, and a call reading one of its residuals raises."""
   from dataclasses import replace
 
   from scaly.function.concrete import ConcreteFunction
-  from scaly.passes.lowering import lower_function
+  from scaly.passes.lowering import LoweringError
   from scaly.solvers.model import descriptor_function
 
   @sc.problem(vars=sc.arg("x", 2))
@@ -584,7 +598,13 @@ def test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls() -> No
   base = as_concrete(sc.custom_derivative(descriptor.base, fwd=base_fwd, bwd=base_bwd))
   solver = as_concrete(descriptor_function(replace(descriptor, base=base)))
 
-  outer = ConcreteFunction._from_exprs("outer", solver.inputs, solver._call(solver.inputs), solver.input_names, solver.output_names)
-  program = lower_function(outer)
-  (proc,) = [proc for proc in program.args[: program.attrs["proc_count"]] if proc.attrs["name"] == base.name]
-  assert proc.attrs["param_count"] == len(base.inputs) + len(base.outputs)
+  direct = base._call(solver.inputs[:1])[0]
+  for outputs in ([solver._call(solver.inputs)[0]], [solver._call(solver.inputs)[0], direct], [direct, solver._call(solver.inputs)[0]]):
+    outer = ConcreteFunction._from_exprs("outer", solver.inputs, outputs, solver.input_names, [f"y{i}" for i in range(len(outputs))])
+    program = lower_function(outer)
+    (proc,) = [proc for proc in program.args[: program.attrs["proc_count"]] if proc.attrs["name"] == base.name]
+    assert proc.attrs["param_count"] == len(base.inputs) + len(base.outputs)
+  residual = base._call(solver.inputs[:1])[1]
+  outer = ConcreteFunction._from_exprs("outer", solver.inputs, [solver._call(solver.inputs)[0], residual], solver.input_names, ["y", "r"])
+  with pytest.raises(LoweringError, match="residuals"):
+    lower_function(outer)
