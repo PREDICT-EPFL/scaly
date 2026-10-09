@@ -1,4 +1,4 @@
-# Study report: issue19-final-after
+# Study report: after
 
 ## Sweep: chain
 
@@ -6,7 +6,7 @@
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 3 | `scaly` | 5/5 | 25.830 | 0.17 | 380842 | 26028 | 1550.3 |
+| 3 | `scaly` | 5/5 | 25.893 | 0.45 | 380842 | 26028 | 1554.1 |
 
 ## Sweep: chain_jac
 
@@ -14,7 +14,7 @@
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 33 | `scaly` | 5/5 | 3127.599 | 0.56 | 264491 | 282690 | 5450.9 |
+| 33 | `scaly` | 5/5 | 3117.109 | 0.50 | 264491 | 282690 | 5425.1 |
 
 ## Sweep: npmpc
 
@@ -22,7 +22,7 @@
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 4 | `scaly` | 5/5 | 6.654 | 1.78 | 378048 | 0 | 666.5 |
+| 4 | `scaly` | 5/5 | 6.570 | 1.06 | 378048 | 0 | 669.0 |
 
 ## Sweep: npmpc_jac
 
@@ -30,7 +30,7 @@
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 100 | `scaly` | 5/5 | 129.254 | 0.46 | 209382 | 7744 | 794.6 |
+| 100 | `scaly` | 5/5 | 129.102 | 0.72 | 209382 | 7744 | 795.9 |
 
 ## Sweep: race_cars
 
@@ -38,7 +38,7 @@
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 5 | `scaly` | 5/5 | 0.955 | 0.95 | 104519 | 0 | 334.3 |
+| 5 | `scaly` | 5/5 | 0.951 | 0.28 | 104519 | 0 | 333.4 |
 
 ## Sweep: unbumpercars
 
@@ -46,4 +46,4 @@
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 2 | `scaly` | 5/5 | 274.386 | 2.44 | 713387 | 126976 | 1229.2 |
+| 2 | `scaly` | 5/5 | 272.931 | 3.47 | 713387 | 126976 | 1229.3 |

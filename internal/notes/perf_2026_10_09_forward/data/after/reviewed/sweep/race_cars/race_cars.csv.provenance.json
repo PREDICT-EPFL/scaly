@@ -16,7 +16,7 @@
     "--order-seed",
     "0",
     "--out",
-    "benchmarks/results/issue19-final-after/race_cars.csv"
+    "benchmarks/results/issue19-after/race_cars.csv"
   ],
   "compilation_caches": {
     "SCALY_CACHE_DIR": null,
@@ -234,9 +234,9 @@
   },
   "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
   "python_version": "3.14.3",
-  "revision_branch": "t3code/issue-19-one-forward-traversal (inactive-zero review fix)",
   "scaly_vector_libm_override": "glibc",
   "scaly_version": "0.1.0a1",
-  "timestamp": "2026-10-09T15:54:35.238051+00:00",
-  "vector_libm": "glibc"
+  "timestamp": "2026-10-09T15:09:59.995888+00:00",
+  "vector_libm": "glibc",
+  "revision_branch": "t3code/issue-19-one-forward-traversal"
 }
