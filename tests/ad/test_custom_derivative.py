@@ -326,7 +326,7 @@ def coupled(x):
 
 
 def test_declared_sparsity_replaces_the_body_pattern() -> None:
-  diagonal = sc.custom_derivative(coupled, jvp=square_jvp, sparsity=lambda of, wrt: np.eye(3, dtype=bool))
+  diagonal = sc.custom_derivative(coupled, jvp=square_jvp, sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool))
   undeclared = sc.custom_derivative(coupled, jvp=square_jvp)
   q = sc.sym("q", 3)
   assert sc.jacobian_sparsity(coupled(q), q) == sc.SparsityPattern.dense((3, 3))
@@ -350,9 +350,9 @@ def test_declared_sparsity_replaces_the_body_pattern() -> None:
 def test_declared_sparsity_takes_masks_and_patterns_and_checks_their_shape() -> None:
   pattern = sc.SparsityPattern.from_mask(np.eye(3, dtype=bool))
   q = sc.sym("q", 3)
-  assert sc.jacobian_sparsity(sc.custom_derivative(coupled, sparsity=lambda of, wrt: pattern)(q), q) == pattern
+  assert sc.jacobian_sparsity(sc.custom_derivative(coupled, sparsity=lambda of, wrt, shape: pattern)(q), q) == pattern
   with pytest.raises(ValueError, match="pattern of shape"):
-    sc.custom_derivative(coupled, sparsity=lambda of, wrt: np.eye(2, dtype=bool))
+    sc.custom_derivative(coupled, sparsity=lambda of, wrt, shape: np.eye(2, dtype=bool))
 
 
 # --- a solve whose derivative reuses its factorization ------------------------------------------
