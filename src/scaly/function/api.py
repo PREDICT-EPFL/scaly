@@ -15,7 +15,7 @@ from ..ad.sparse import sparse_jacobian as _expr_sparse_jacobian
 from ..ir.expr import Expr
 from .concrete import ConcreteFunction
 from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
-from .model import Function, derived_name, lift
+from .model import Function, _traced, derived_name, lift
 from .tree import Array, Tree, append_parameter, arg, parameter_list
 
 
@@ -94,7 +94,7 @@ def function(
       len(parameters) != len(inputs) or any(p.kind not in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in parameters)
     ):
       raise TypeError(f"{function_name}: declare one tree per positional parameter, got {len(inputs)} declarations for {len(parameters)} parameters")
-    return Function(function_name, fn, None if not inputs and outputs is None and parameters else parameter_list(inputs), outputs)
+    return _traced(Function(function_name, fn, None if not inputs and outputs is None and parameters else parameter_list(inputs), outputs))
 
   return decorate
 

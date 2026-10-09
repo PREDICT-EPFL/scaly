@@ -117,5 +117,4 @@ def build_casadi_external_sqp(
     hess_sparsity=SparsityPattern((n, n), tuple(int(v) for v in hess_rows), tuple(int(v) for v in hess_cols)),
     options=options,
   )
-  setattr(solver, "_benchmark_base", base)
   return Solver(solver)

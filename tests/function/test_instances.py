@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 import os
 from pathlib import Path
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_source, render_c_module
+from scaly.function.model import Function
 
 
 def test_shape_bindings_trace_once_and_share_symbolic_and_numerical_instances() -> None:
@@ -49,6 +51,25 @@ def test_fixed_declarations_keep_names_and_fail_at_the_decorator() -> None:
   assert fixed.instantiate() is fixed.instantiate((2,))
   with pytest.raises(TypeError, match="expected shape"):
     sc.function(sc.arg("x", 2), outputs=sc.arg("y", 3))(lambda x: x)
+
+
+def test_functions_are_frozen_and_fully_declared_ones_trace_where_defined() -> None:
+  traces = []
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", 3), name="frozen")
+  def frozen(x: sc.Expr) -> sc.Expr:
+    traces.append(x.shape)
+    return x.sin()
+
+  derived, mapped = sc.jacobian(frozen), sc.vmap(frozen, 4)
+  assert traces == [(3,)] and len(derived.instances) == 1 and len(mapped.instances) == 1
+  for function in (frozen, derived, mapped):
+    with pytest.raises(FrozenInstanceError):
+      function.name = "renamed"  # ty: ignore[invalid-assignment]
+  instance = frozen.instantiate()
+  wrapped = Function._from_instance(instance)
+  assert wrapped.instantiate() is instance and wrapped.instances == {instance.input_tree.types: instance}
+  assert traces == [(3,)]
 
 
 def test_bare_structure_is_part_of_the_binding_and_name() -> None:

@@ -429,6 +429,8 @@ def ca_chain_sqp(n_masses: int, horizon: int):
 
   from scaly_sqp.casadi import build_casadi_external_sqp
 
+  from benchmarks.harness import register_base
+
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   z, p, cost, eq = _ca_nlp_pieces(n_masses, horizon, ca.MX, map_stages=True)
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(eq.shape[0]))
@@ -441,7 +443,7 @@ def ca_chain_sqp(n_masses: int, horizon: int):
   for i in range(horizon):
     lb[i * nz + nx : (i + 1) * nz] = -1.0
     ub[i * nz + nx : (i + 1) * nz] = 1.0
-  return build_casadi_external_sqp(
+  solver = build_casadi_external_sqp(
     name=stem,
     base=base,
     grad=grad,
@@ -455,6 +457,8 @@ def ca_chain_sqp(n_masses: int, horizon: int):
     u_ineq=np.zeros(0),
     options={"max_iter": 80, "tol": 1e-6},
   )
+  register_base(solver.function, base)
+  return solver
 
 
 def chain_ode_np(x: np.ndarray, u: np.ndarray, params: ChainParams = ChainParams()) -> np.ndarray:

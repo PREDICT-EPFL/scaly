@@ -9,6 +9,7 @@ from pathlib import Path
 from functools import lru_cache
 import os
 import subprocess
+from weakref import WeakKeyDictionary
 from scaly.codegen.jit import HOST_CFLAGS
 from scaly.codegen.toolchain import find_c_compiler, native_recipe
 
@@ -85,6 +86,20 @@ def solver_oracle_name(solver: str, oracle: str | None) -> str:
   return f"{solver}+{oracle}"
 
 
+_BASES: WeakKeyDictionary = WeakKeyDictionary()
+
+
+def register_base(function, base) -> None:
+  """Record the numerical cost and constraint evaluator that result checks use for a solver
+  Function whose descriptor holds no Scaly base, such as one driving CasADi oracles."""
+  _BASES[function] = base
+
+
+def registered_base(function):
+  """The evaluator ``register_base`` recorded for ``function``, or ``None``."""
+  return _BASES.get(function)
+
+
 def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
   """Run either a typed Scaly ``Solver`` or the benchmark CasADi adapter."""
   import numpy as np
@@ -99,7 +114,7 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
   if isinstance(base, ConcreteFunction):
     values = base.numerical_call(np.asarray(x).reshape(-1), params)
   else:
-    evaluator = getattr(solver.function, "_benchmark_base", None)
+    evaluator = registered_base(solver.function)
     if evaluator is None:
       raise TypeError(f"solver {solver.function.name!r} has no numerical benchmark oracle")
     values = evaluator(np.asarray(x).reshape(-1), params)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 import hashlib
 from typing import Any, cast, overload
 
@@ -32,6 +33,7 @@ def _mangle(name: str, skeleton: Any, open_types: tuple[TensorType, ...]) -> str
   return "_".join(part for part in (name, shapes, f"t{nesting}") if part)
 
 
+@dataclass(frozen=True, eq=False, repr=False)
 class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A Python body and declarations, traced once for each binding of its shape holes.
 
@@ -40,22 +42,13 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   ``instantiate`` returns the concrete graph for inspection or ahead-of-time compilation.
   """
 
-  def __init__(
-    self,
-    name: str,
-    fn: Callable[..., SymbolicOutputs],
-    inputs: Tree[SymbolicInputs, NumericalInputs] | None,
-    outputs: Tree[SymbolicOutputs, NumericalOutputs] | None,
-  ) -> None:
-    self.name = name
-    self._fn = fn
-    self.inputs = inputs
-    self.outputs = outputs
-    self.instances: dict[Any, ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]] = {}
-    self._argument_cache: dict[Any, ConcreteFunction[Any, Any, Any, Any]] = {}
-    self._instance_names: dict[str, Any] = {}
-    if inputs is not None and not inputs.has_holes:
-      self.instantiate()
+  name: str
+  _fn: Callable[..., SymbolicOutputs]
+  inputs: Tree[SymbolicInputs, NumericalInputs] | None
+  outputs: Tree[SymbolicOutputs, NumericalOutputs] | None
+  instances: dict[Any, ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]] = field(init=False, default_factory=dict)
+  _argument_cache: dict[Any, ConcreteFunction[Any, Any, Any, Any]] = field(init=False, default_factory=dict)
+  _instance_names: dict[str, Any] = field(init=False, default_factory=dict)
 
   def _build(self, types: tuple[TensorType, ...]) -> ConcreteFunction[Any, Any, Any, Any]:
     assert self.inputs is not None
@@ -177,14 +170,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
 
   @classmethod
   def _from_instance(cls, instance: ConcreteFunction[Any, Any, Any, Any]) -> Function[Any, Any, Any, Any]:
-    function = cls.__new__(cls)
-    function.name = instance.name
-    function._fn = instance.symbolic_call
-    function.inputs = instance.input_tree
-    function.outputs = instance.output_tree
-    function.instances = {instance.input_tree.types: instance}
-    function._argument_cache = {}
-    function._instance_names = {instance.name: instance.input_tree.types}
+    function = cls(instance.name, instance.symbolic_call, instance.input_tree, instance.output_tree)
+    function._cache(instance.input_tree.types, lambda: instance)
     return function
 
   def factory(self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Any = None) -> Function:
@@ -278,20 +265,18 @@ def as_concrete(function: Function[Any, Any, Any, Any] | ConcreteFunction[Any, A
   return function.instantiate() if isinstance(function, Function) else function
 
 
+def _traced[F: Function[Any, Any, Any, Any]](function: F) -> F:
+  """Trace a fully declared function where it is defined, so errors in its body surface there."""
+  if function.inputs is not None and not function.inputs.has_holes:
+    function.instantiate()
+  return function
+
+
+@dataclass(frozen=True, eq=False, repr=False)
 class _Derived(Function[Any, Any, Any, Any]):
-  def __init__(
-    self,
-    source: Function[Any, Any, Any, Any],
-    inputs: Tree[Any, Any] | None,
-    outputs: Tree[Any, Any] | None,
-    transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[Any, Any, Any, Any]],
-    source_skeleton: Callable[[Any], Any],
-    name: str,
-  ) -> None:
-    self._source = source
-    self._transform = transform
-    self._source_skeleton = source_skeleton
-    super().__init__(name, source._fn, inputs, outputs)
+  _source: Function[Any, Any, Any, Any]
+  _transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[Any, Any, Any, Any]]
+  _source_skeleton: Callable[[Any], Any]
 
   def _derive(self, skeleton: Any) -> ConcreteFunction[Any, Any, Any, Any]:
     source = self._source._bind(self._source_skeleton(skeleton), self.name)
@@ -325,7 +310,7 @@ def lift[SI, NI, SO, NO](
   source_skeleton: Callable[[Any], Any] = lambda skeleton: skeleton,
 ) -> Function[SI, NI, SO, NO]:
   """Apply a concrete graph transform once for each source binding."""
-  return cast(Function[SI, NI, SO, NO], _Derived(source, inputs, outputs, transform, source_skeleton, name))
+  return cast(Function[SI, NI, SO, NO], _traced(_Derived(name, source._fn, inputs, outputs, source, transform, source_skeleton)))
 
 
 def derived_name(source: Function, concrete: ConcreteFunction, requested: str | None, default: str) -> str:

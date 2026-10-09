@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from benchmarks.harness import register_base
 from benchmarks.harness.casadi_ipopt import CasadiIpoptSolver
 from benchmarks.problems.npmpc import _ca_npmpc_joint_parameter_pieces
 
@@ -44,9 +45,10 @@ def build_casadi_npmpc_sqp(config, pieces: dict[str, Any]):
   constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(constraints.shape[0]))
   stem = f"ca_npmpc_sqp_N{config.horizon}"
-  return build_casadi_external_sqp(
+  base = ca.Function(f"{stem}_base", [z, p], [cost, constraints])
+  solver = build_casadi_external_sqp(
     name=stem,
-    base=ca.Function(f"{stem}_base", [z, p], [cost, constraints]),
+    base=base,
     grad=ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)]),
     jac=ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(constraints, z)]),
     hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [ca.hessian(lam_f * cost + ca.dot(lam_g, constraints), z)[0]]),
@@ -59,6 +61,8 @@ def build_casadi_npmpc_sqp(config, pieces: dict[str, Any]):
     # identical SQP settings to the Scaly column in closed_loop.build_solver
     options={"tol": config.sqp_tol, "max_iter": config.sqp_max_iter},
   )
+  register_base(solver.function, base)
+  return solver
 
 
 class CasadiNpmpcSolver(CasadiIpoptSolver):
