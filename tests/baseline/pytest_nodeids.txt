@@ -339,6 +339,7 @@ tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inpu
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v:0]
 tests/codegen/test_jit.py::test_distinct_solver_functions_with_same_exported_name_are_user_errors
+tests/codegen/test_jit.py::test_environment_change_before_next_isolated_load
 tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error
 tests/codegen/test_jit.py::test_folded_extrema_nan_match_runtime_and_numpy
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[False]

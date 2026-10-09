@@ -4,6 +4,7 @@ import os
 import platform
 import shlex
 import shutil
+import subprocess
 import sys
 from typing import cast
 from pathlib import Path
@@ -296,8 +297,33 @@ def test_math_library_does_not_use_solver_namespace(isolated_cache, monkeypatch)
   assert loaded == [False]
 
 
+_ENVIRONMENT_CHANGE_SCRIPT = """
+import os
+import numpy as np
+import scaly as sc
+
+def build(k, backend):
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()), name=f"q{k}")
+  def q(x, p):
+    return sc.ProblemSpec(minimize=((x - p) * (x - p)).sum() + k, lb=sc.const(-5.0), ub=sc.const(5.0))
+  return sc.solver(q, backend)
+
+build(0, "piqp")(np.array(1.0))
+for i in range(200):
+  os.environ[f"SCALY_REPRO_{i}"] = "x" * 50
+build(1, "ipopt")(np.array(1.0))
+"""
+
+
+@pytest.mark.solver("piqp")
+@pytest.mark.solver("ipopt")
+def test_environment_change_before_next_isolated_load(tmp_path):
+  env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path)}
+  result = subprocess.run([sys.executable, "-c", _ENVIRONMENT_CHANGE_SCRIPT], env=env, capture_output=True, text=True, timeout=300)
+  assert result.returncode == 0, result.stderr
+
+
 def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
-  import subprocess
 
   def fail(_compiler):
     raise subprocess.CalledProcessError(1, ["cc", "-dM"])
