@@ -8,8 +8,8 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ad.calls import _call_jvp_function, _call_jvp_many_function, _vmap_adj_function
-from scaly.ad.forward import _jvp, _jvp_many_unrolled
+from scaly.ad.calls import _call_jvp_many_function, _vmap_adj_function
+from scaly.ad.forward import _pushforward
 from scaly.ad.reverse import vjp
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramOp, walk_program
@@ -92,9 +92,9 @@ def test_joint_helper_cache_distinguishes_formal_sets() -> None:
     a, b, c = inputs
     return a * b + c.sin()
 
-  first = _call_jvp_function(stage.instantiate(), 0, (0,), pushforward=_jvp)
-  second = _call_jvp_function(stage.instantiate(), 0, (1, 2), pushforward=_jvp)
-  assert first[0] is _call_jvp_function(stage.instantiate(), 0, (0,), pushforward=_jvp)[0]
+  first = _call_jvp_many_function(stage.instantiate(), 0, (0,), 1, (None,), pushforward=_pushforward)
+  second = _call_jvp_many_function(stage.instantiate(), 0, (1, 2), 1, (None, None), pushforward=_pushforward)
+  assert first[0] is _call_jvp_many_function(stage.instantiate(), 0, (0,), 1, (None,), pushforward=_pushforward)[0]
   assert first[0].name != second[0].name
   assert first[0] is not second[0]
 
@@ -109,15 +109,15 @@ def test_call_helpers_are_cached_on_their_callee() -> None:
 
   callee = stage.instantiate()
   helpers = {
-    _call_jvp_function(callee, 0, (0,), pushforward=_jvp)[0],
-    _call_jvp_many_function(callee, 0, (0,), 2, (None,), pushforward=_jvp, unroll=_jvp_many_unrolled)[0],
+    _call_jvp_many_function(callee, 0, (0,), 1, (None,), pushforward=_pushforward)[0],
+    _call_jvp_many_function(callee, 0, (0,), 2, (None,), pushforward=_pushforward)[0],
     _vmap_adj_function(callee, 0, (0, 1), pullback=vjp)[0],
   }
   cached = {entry[0] for entry in callee._memo.helpers.values()}
   assert cached == helpers
   assert not [name for name in (*vars(calls), *vars(forward), *vars(reverse)) if name.endswith("_CACHE")]
   copy = callee._replace(name="memo_stage_copy")
-  assert _call_jvp_function(copy, 0, (0,), pushforward=_jvp)[0] not in helpers
+  assert _call_jvp_many_function(copy, 0, (0,), 1, (None,), pushforward=_pushforward)[0] not in helpers
 
 
 @pytest.mark.parametrize("matrix", [False, True])
@@ -215,8 +215,7 @@ def test_call_combines_constant_and_runtime_tangents() -> None:
 
 
 @pytest.mark.parametrize("nseed", [0, 1, 3])
-def test_nested_calls_with_shared_formals_and_runtime_cotangents(nseed, monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_nested_calls_with_shared_formals_and_runtime_cotangents(nseed):
   tree = sc.group(sc.arg("shared_x", 2), sc.arg("shared_y", 2))
 
   @sc.function(tree, outputs=sc.group(sc.arg("a"), sc.arg("b")), name="nested_leaf")
@@ -269,8 +268,7 @@ def test_nested_calls_with_shared_formals_and_runtime_cotangents(nseed, monkeypa
 
 
 @pytest.mark.parametrize("nseed", [1, 3])
-def test_call_mixed_constant_and_runtime_seed_formals(nseed, monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_call_mixed_constant_and_runtime_seed_formals(nseed):
 
   @sc.function(sc.group(sc.arg("mixed_x", 2), sc.arg("mixed_y", 2)), outputs=sc.arg("out"), name="mixed_formal_stage")
   def stage(inputs):
@@ -306,14 +304,11 @@ def test_call_mixed_constant_and_runtime_seed_formals(nseed, monkeypatch):
   "mode",
   [
     pytest.param("single", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
-    pytest.param(
-      "many", marks=pytest.mark.xfail(strict=True, reason="#161: structural power JVP divides by a zero base with an inactive runtime exponent")
-    ),
+    pytest.param("many", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
     "reverse",
   ],
 )
-def test_power_zero_base_with_inactive_runtime_exponent(mode, monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_power_zero_base_with_inactive_runtime_exponent(mode):
 
   @sc.function(
     sc.group(sc.arg("power_x", 2), sc.arg("power_p", 2), sc.arg("power_seeds", (3, 2))),
@@ -344,8 +339,7 @@ def test_power_zero_base_with_inactive_runtime_exponent(mode, monkeypatch):
 
 @pytest.mark.parametrize("layout", ["call_of_map", "map_of_call"])
 @pytest.mark.parametrize("nseed", [1, 3, 5])
-def test_nested_call_and_map_against_numpy(layout, nseed, monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_nested_call_and_map_against_numpy(layout, nseed):
 
   @sc.function(sc.arg("nested_map_x", 2), outputs=sc.arg("y"), name="nested_map_leaf")
   def leaf(x):

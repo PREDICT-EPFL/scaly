@@ -1,0 +1,242 @@
+{
+  "casadi_version": "3.8.0",
+  "cli_args": [
+    "sweep",
+    "--workloads",
+    "npmpc_jac",
+    "--sizes",
+    "100",
+    "--backends",
+    "scaly",
+    "--repetitions",
+    "5",
+    "--headline",
+    "--boost",
+    "off",
+    "--order-seed",
+    "0",
+    "--out",
+    "benchmarks/results/issue19-final-after/npmpc_jac.csv"
+  ],
+  "compilation_caches": {
+    "SCALY_CACHE_DIR": null,
+    "SCALY_CASADI_IPOPT_CACHE": null
+  },
+  "compiler": "Ubuntu clang version 20.1.8 (++20250804090239+87f0227cb601-1~exp1~20250804210352.139)",
+  "compiler_commands": {
+    "closed_loop": {
+      "cflags": [
+        "-O2",
+        "-march=native",
+        "-fno-math-errno"
+      ],
+      "compiler": [
+        "/usr/bin/gcc"
+      ],
+      "math_libs": [
+        "-lmvec",
+        "-lm"
+      ],
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "sweep": {
+      "cflags": [
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-std=c++17"
+      ],
+      "compiler": "clang++",
+      "math_libs": [
+        "-lmvec",
+        "-lm"
+      ]
+    }
+  },
+  "cpu_settings": {
+    "affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "boost_enabled": false,
+    "policies": {
+      "policy0": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy1": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy10": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy11": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy12": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy13": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy14": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy15": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy2": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy3": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy4": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy5": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy6": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy7": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy8": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      },
+      "policy9": {
+        "energy_performance_preference": "performance",
+        "scaling_driver": "amd-pstate-epp",
+        "scaling_governor": "performance",
+        "scaling_max_freq": "4001000",
+        "scaling_min_freq": "1100947"
+      }
+    }
+  },
+  "git_dirty": false,
+  "glibc": [
+    "glibc",
+    "2.39"
+  ],
+  "jit_vector_symbols": {},
+  "native_cflags": [
+    "-march=native",
+    "-fno-math-errno"
+  ],
+  "native_solvers": {
+    "ipopt": {
+      "build": {
+        "blas": {
+          "branch": "v0.3.28",
+          "dynamic_arch": true,
+          "implementation": "OpenBLAS",
+          "linkage": "static",
+          "openmp": false,
+          "version": "0.3.28"
+        },
+        "ipopt": {
+          "branch": "releases/3.14.19",
+          "linkage": "shared",
+          "version": "3.14.19"
+        },
+        "metis": {
+          "gklib_commit": "3b7d61b9f885063c89901f3901fb4426f9cfb58f",
+          "linkage": "static",
+          "tag": "v5.2.1",
+          "version": "5.2.1"
+        },
+        "mumps": {
+          "coinor_branch": "releases/3.0.12",
+          "coinor_version": "3.0.12",
+          "linkage": "static",
+          "version": "5.8.2"
+        }
+      },
+      "library": "/tmp/scaly19-benchmark-after/plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.so.3",
+      "link_library": "/tmp/scaly19-benchmark-after/plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.so"
+    }
+  },
+  "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+  "python_version": "3.14.3",
+  "revision_branch": "t3code/issue-19-one-forward-traversal (inactive-zero review fix)",
+  "scaly_vector_libm_override": "glibc",
+  "scaly_version": "0.1.0a1",
+  "timestamp": "2026-10-09T15:57:25.130080+00:00",
+  "vector_libm": "glibc"
+}
