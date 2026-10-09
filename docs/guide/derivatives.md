@@ -210,6 +210,65 @@ weights = sc.sym("weights", 2)
 the first axis. Expression forms of sparse derivatives return a
 `SparseJacobian` containing `.values`, `.sparsity`, and `.to_dense()`.
 
+## Derivatives with respect to intermediate expressions
+
+Expression derivatives can select an intermediate value, such as a slice of a
+state vector or the result of a function call. Scaly treats the selected
+expression as an independent variable. Other paths to its original inputs stay
+fixed. For example, a calculation can differentiate only the state portion of
+a vector that also contains a parameter:
+
+```python
+@sc.function(sc.arg("carry", 3), outputs=sc.arg("state_grad"))
+def state_derivative(carry: sc.Expr) -> sc.Expr:
+    state = carry[:2]
+    cost = sc.sumsqr(state - carry[2]) + sc.sumsqr(carry[1:])
+    return sc.gradient(cost, state)
+
+print(state_derivative(np.array([1.0, 3.0, 2.0])))  # [-2.  2.]
+```
+
+The second term uses a separate slice of `carry`, so it contributes nothing to
+this derivative even though the slices overlap. The returned derivative still
+uses the original `carry` values when evaluated. Jacobians, Hessians, sparse
+derivatives and Jacobian products follow the same rule.
+
+`sc.vjp` can select several expressions at once. It treats each selection as
+independent, including when one is a slice of another. A path through one
+selection contributes only to that selection's adjoint. Results follow the
+order of `wrts`.
+
+The selection must occur in the recorded graph. Mapped affine views can read
+directly from their base, removing the intermediate slice. To retain a selected
+slice in a map, pass an explicit window, for example
+`sc.vmap(stage, 2)(sc.window(state, 0, 2))` for a four-element `state` and a
+stage taking two elements. The window's start and stride are measured in flat
+elements. See [mapped windows](functions.md#regular-repetition-vmap).
+
+## Holding a path fixed
+
+`sc.stop_gradient` returns its argument's value and holds that path fixed in
+all derivatives. Other uses of the same expression still contribute normally:
+
+```python
+@sc.function(sc.arg("x", 2), outputs=sc.arg("cost"))
+def frozen_product(x: sc.Expr) -> sc.Expr:
+    return (x * sc.stop_gradient(x)).sum()
+
+point = np.array([2.0, 3.0])
+print(frozen_product(point))                 # 13.0
+print(sc.gradient(frozen_product)(point))    # [2. 3.]
+print(sc.hessian(frozen_product)(point))     # [[0. 0.]
+                                            #  [0. 0.]]
+```
+
+Only the first factor contributes to the gradient. Differentiating again keeps
+the second factor fixed, so the Hessian is zero. This convention applies in
+forward mode, reverse mode and sparsity analysis, including inside calls and
+maps. It changes the derivative without changing the primal value or its
+generated C. Numerical differences of the primal do change the stopped value,
+so they need not agree with this derivative.
+
 ## Current limitations
 
 Derivatives work through ordinary function calls and `vmap`. Ordinary calls may

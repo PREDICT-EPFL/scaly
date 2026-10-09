@@ -8,7 +8,7 @@ from ...ir.program import ProgramNode, RangeKind
 from .ctx import LowerCtx, lowers, _shape_or_scalar, _size_of, _stride, _coord_p, _flat_index_p, _row_major_strides, _affine_sum
 
 
-@lowers(ExprOp.RESHAPE)
+@lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT)
 def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
   # Metadata-only: the result aliases its source buffer (no copy).
   ctx.value_buffers[node.id] = ctx.value_buffers[node.args[0].id]
