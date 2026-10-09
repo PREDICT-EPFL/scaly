@@ -486,7 +486,9 @@ its lines appear in order with Python's own output. Some notebook front ends
 show only Python's output, and the lines then go wherever the kernel's standard
 output goes, often the terminal that started it. Exported C can remove or
 redirect its prints, as [Code generation](codegen.md#prints-in-exported-c)
-describes.
+describes. The standalone
+[print example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/function_with_print.py)
+evaluates the function above and writes its C source.
 
 ## Function metadata
 
