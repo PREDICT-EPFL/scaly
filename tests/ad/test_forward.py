@@ -57,6 +57,48 @@ def test_forward_handles_deep_expression_graph():
   np.testing.assert_array_equal(fn(np.array(0.2)), [2001.0, -1000.5])
 
 
+@pytest.mark.parametrize("dtype", [sc.dtypes.float32, sc.dtypes.float64])
+@pytest.mark.parametrize("callee", [False, True])
+def test_inactive_subgraphs_do_not_allocate_tangents(monkeypatch, dtype, callee):
+  from scaly.ad import forward
+
+  def build(x, p):
+    for _ in range(200):
+      p = p.sin()
+    return x.sin() * p
+
+  if callee:
+
+    @sc.function(
+      sc.arg("inactive_x", sc.TensorType((8,), dtype=dtype)),
+      sc.arg("inactive_p", sc.TensorType((8,), dtype=dtype)),
+      outputs=sc.arg("y"),
+      name="inactive_body",
+    )
+    def body(x, p):
+      return build(x, p)
+
+    evaluate = body
+  else:
+    evaluate = build
+  x = sc.sym("inactive_x", 8, dtype=dtype)
+  p = sc.sym("inactive_p", 8, dtype=dtype)
+  seeds = sc.sym("inactive_seeds", (3, 8), dtype=dtype)
+  zeros = []
+  zero_tangent = forward._zero_tangent
+
+  def counted(expr, nseed):
+    zeros.append(expr)
+    return zero_tangent(expr, nseed)
+
+  monkeypatch.setattr(forward, "_zero_tangent", counted)
+  dy, dp = forward._pushforward((evaluate(x, p), p.sin()), {x: seeds}, 3)
+  assert len(zeros) <= 2
+  assert dy is not None and dy.type.dtype == dtype
+  assert dp is not None and dp.type.dtype == dtype and dp.op == ExprOp.CONST
+  np.testing.assert_array_equal(dp.value, np.zeros((3, 8)))
+
+
 @pytest.mark.parametrize("case", ["scalar_times", "times_const", "over_const", "matmul"])
 @pytest.mark.parametrize("depth", [0, 1, 3])
 def test_linear_tangent_never_depends_on_primal(case, depth):

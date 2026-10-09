@@ -35,7 +35,7 @@ two expected failures; smoke and docs passed.
 The full-suite failures identified an obsolete buffer-name assertion and two
 structure gates affected by the new layout. The chain gate now measures forward
 mass helper bodies at M=33 and M=65, above the automatic scalarization cutoff.
-Restored bodies have 828/827 lines; forcing their scalar expansion has 10644/21428
+Restored bodies have 838/837 lines; forcing their scalar expansion has 10644/21428
 and fails the gate. Neural MPC fixed workspace is 6144 instead of 0 doubles;
 N=100 is 7744 instead of 1600. Both permitted matrix-vector folds were tried and
 retain this fixed workspace. Tight gates pin 6144 and 7744 and growth to 1600.
