@@ -10,8 +10,9 @@ on:
     inputs:
       environments:
         description: >-
-          JSON list of {os, wheels, cc?, cxx?, python?}: the runner, the wheel build it installs, and
-          optionally the C and C++ compilers and the Python version to test with
+          JSON list of {os, wheels, cc?, cxx?, python?, toolchain?}: the runner, the wheel build it
+          installs, and optionally the C and C++ compilers, the Python version to test with, and
+          whether to install the `toolchain` extra so the JIT compiles with `zig cc`
         type: string
         required: true
       full:
@@ -21,7 +22,7 @@ on:
 
 jobs:
   tests:
-    name: ${{ matrix.os }}${{ matrix.cc && format(' / {0}', matrix.cc) || '' }}${{ matrix.python && format(' / py{0}', matrix.python) || '' }}
+    name: ${{ matrix.os }}${{ matrix.cc && format(' / {0}', matrix.cc) || '' }}${{ matrix.toolchain && ' / zig cc' || '' }}${{ matrix.python && format(' / py{0}', matrix.python) || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -58,7 +59,7 @@ jobs:
 
       - name: Install the plugin wheels
         run: |
-          uv sync --frozen --no-install-package scaly-piqp --no-install-package scaly-ipopt
+          uv sync --frozen ${{ matrix.toolchain && '--extra toolchain' || '' }} --no-install-package scaly-piqp --no-install-package scaly-ipopt
           uv pip install --no-deps dist/*.whl
           uv run python -c "import scaly_piqp, scaly_ipopt; assert all('site-packages' in m.__file__ for m in (scaly_piqp, scaly_ipopt))"
 
@@ -73,11 +74,13 @@ jobs:
       - name: Pytest
         run: uv run pytest -n=auto
 
-      # The benchmark harness accepts only GCC for vector-libm JIT builds, so Clang runs the
-      # benchmark commands with scalar libm. Pytest compiles vector libm with both GCC and Clang.
+      # The benchmark harness accepts only GCC for vector-libm JIT builds, so Clang and `zig cc` run
+      # the benchmark commands with scalar libm. Pytest compiles vector libm with every compiler.
       - name: Benchmark math policy
         if: ${{ !cancelled() }}
-        run: case "${CC:-}" in clang*) echo "SCALY_VECTOR_LIBM=none" >> "$GITHUB_ENV" ;; esac
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: case "${TOOLCHAIN:-}:${CC:-}" in true:*|*:clang*) echo "SCALY_VECTOR_LIBM=none" >> "$GITHUB_ENV" ;; esac
 
       - name: Benchmark smoke
         if: ${{ !cancelled() }}

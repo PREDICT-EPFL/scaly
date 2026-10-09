@@ -404,6 +404,7 @@ tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_comp
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[macros]
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[real path]
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[version]
+tests/codegen/test_toolchain.py::test_compiler_order_prefers_ziglang_after_scaly_cc
 tests/codegen/test_toolchain.py::test_env_registry_mentions_native_build_controls
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[glibc-2.34-none]
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[glibc-2.35-glibc]
@@ -417,6 +418,7 @@ tests/codegen/test_toolchain.py::test_native_recipe_uses_fixed_sve_width
 tests/codegen/test_toolchain.py::test_plain_c_module_header_compiles_as_c99
 tests/codegen/test_toolchain.py::test_solver_dir_override_discovery_and_flags
 tests/codegen/test_toolchain.py::test_solver_paths_required_needs_both_libraries
+tests/codegen/test_toolchain.py::test_ziglang_compiles_a_jit_function
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[1]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[2]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[4]

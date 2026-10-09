@@ -123,3 +123,9 @@ jobs:
 
       - name: Solve with every backend
         run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+      - name: Solve with every backend through zig cc
+        run: |
+          /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]"
+          /tmp/env/bin/scaly_toolchain | grep -F '(ziglang)'
+          /tmp/env/bin/python .github/scripts/solve_smoke.py
