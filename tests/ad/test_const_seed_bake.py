@@ -8,7 +8,6 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ad.forward import _jvp_many_unrolled  # per-seed jvp calls, the reference structural jvp_many must match
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramNode
 from scaly.passes.lowering import lower_function
@@ -59,7 +58,8 @@ def _callee_params(prog: ProgramNode) -> list[str]:
   ],
   ids=["equal", "equal_with_zero_row", "period2", "period3", "period8", "period9", "aperiodic", "distinct_short"],
 )
-def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
+def test_constant_seed_tiles(pattern: list[int], baked: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   stage = _stage()
   length = len(pattern)
   seeds = _seeds(pattern)
@@ -70,7 +70,13 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
 
   @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy"), name="bake_ref")
   def ref(z):
-    return _jvp_many_unrolled(_mapped_call(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
+    mapped = _mapped_call(stage, length, [(z, 0, 3)])
+    return sc.stack([sc.jvp(mapped, z, sc.const(seed)) for seed in seeds])
+
+  @sc.function(sc.group(sc.arg("z", 3 * length), sc.arg("runtime_seed", seeds.shape)), outputs=sc.arg("dy"), name="bake_runtime")
+  def runtime(inputs):
+    z, seed = inputs
+    return sc.jvp_many(_mapped_call(stage, length, [(z, 0, 3)]), z, seed)
 
   (structural,) = as_concrete(fn).outputs
   zv = np.random.default_rng(1).normal(size=3 * length)
@@ -80,6 +86,9 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
     expected[:, block] = seeds[:, block] @ _jac_np(zv[block]).T
   np.testing.assert_allclose(fn(zv), ref(zv), rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(fn(zv), expected, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(runtime((zv, seeds)), expected, rtol=1e-12, atol=1e-12)
+  permutation = [2, 0, 1]
+  np.testing.assert_allclose(runtime((zv, seeds[permutation])), expected[permutation], rtol=1e-12, atol=1e-12)
 
   observed = {}
   lower_function(fn, observe=lambda name, program: observed.__setitem__(name, program))
@@ -88,3 +97,37 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   has_gather = any(n.op == ExprOp.GATHER for n in topo([structural]))
   assert has_seed_input is (not baked)
   assert has_gather is (not baked)
+
+
+def test_local_coloring_and_packed_contributions_keep_seed_order(monkeypatch):
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+
+  @sc.function(sc.group(sc.arg("local_x", 2), sc.arg("dense_y", 2)), outputs=sc.arg("out"), name="local_dense_stage")
+  def stage(inputs):
+    x, y = inputs
+    return x.sin() + sc.stack([y[0] * y[1], y[0] / (y[1] + 2)])
+
+  @sc.function(sc.group(sc.arg("local_z", 12), sc.arg("local_seeds", (2, 12))), outputs=sc.arg("dy"), name="local_dense_products")
+  def products(inputs):
+    z, seeds = inputs
+    return sc.jvp_many(_mapped_call(stage, 3, [(z, 0, 4), (z, 2, 4)]), z, seeds)
+
+  z = np.linspace(-0.4, 0.7, 12)
+  seeds = np.random.default_rng(14).normal(size=(2, 12))
+  expected = np.empty((2, 6))
+  for it in range(3):
+    x, y = z[4 * it : 4 * it + 2], z[4 * it + 2 : 4 * it + 4]
+    dx, dy = seeds[:, 4 * it : 4 * it + 2], seeds[:, 4 * it + 2 : 4 * it + 4]
+    expected[:, 2 * it : 2 * it + 2] = dx * np.cos(x) + np.column_stack(
+      [
+        dy[:, 0] * y[1] + y[0] * dy[:, 1],
+        dy[:, 0] / (y[1] + 2) - y[0] * dy[:, 1] / (y[1] + 2) ** 2,
+      ]
+    )
+  np.testing.assert_allclose(products((z, seeds)), expected, atol=1e-12, rtol=1e-12)
+  np.testing.assert_allclose(products((z, seeds[::-1])), expected[::-1], atol=1e-12, rtol=1e-12)
+  maps = [node for node in topo(as_concrete(products).outputs) if node.op == ExprOp.VMAP]
+  assert len(maps) == 1 and "_fwd_pack_" in maps[0].attrs["callee"].name
+  helpers = [entry[0] for entry in stage.instantiate()._memo.jvp_many.values()]
+  assert {helper.outputs[0].shape for helper in helpers} == {(1, 2), (2, 2)}
+  assert sum(name.startswith("fwd:") for name in maps[0].attrs["callee"].input_names) == 1
