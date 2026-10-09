@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 import scaly as sc
@@ -72,3 +73,29 @@ def test_partials_are_built_only_for_active_operands(monkeypatch):
   sc.jvp(y, x, sc.sym("lazy_seed", 2))
   sc.jvp_many(y, x, sc.sym("lazy_seeds", (3, 2)))
   sc.vjp((y,), (x,), (sc.sym("lazy_cot", 2),))
+
+
+@pytest.mark.parametrize(
+  ("op", "x", "y", "direction", "expected"),
+  [
+    ("div", 1e200, 1e-100, 1e-300, -1e100),
+    ("div", 1e-100, 1e200, 1e300, -1e-200),
+    ("atan2", 1e-100, 1e150, 1e300, -1e-100),
+    ("log", 1e-310, 1.0, 1e-310, 1.0),
+  ],
+)
+def test_quotient_partials_keep_finite_products(op, x, y, direction, expected):
+  """A partial written as a quotient multiplies its numerator into the tangent before dividing."""
+
+  @sc.function(
+    sc.group(sc.arg("scale_x", ()), sc.arg("scale_y", ()), sc.arg("scale_t", ())),
+    outputs=sc.group(sc.arg("forward"), sc.arg("reverse")),
+    name=f"scale_{op}_{np.log10(x):.0f}",
+  )
+  def products(inputs):
+    a, b, t = inputs
+    out, wrt = {"div": (a / b, b), "atan2": (sc.atan2(a, b), b), "log": (a.log(), a)}[op]
+    return sc.jvp(out, wrt, t), sc.vjp((out,), (wrt,), (t,))[0]
+
+  for value in products((np.array(x), np.array(y), np.array(direction))):
+    np.testing.assert_allclose(value, expected, rtol=1e-12, atol=0)

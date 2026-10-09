@@ -11,7 +11,8 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, scatter
 from ..ir.program import ProgramOp
 
-type Partial = Callable[[Expr], Expr | int]
+type Local = Expr | int | tuple[Expr | int, Expr]
+type Partial = Callable[[Expr], Local]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +21,9 @@ class Elementwise:
 
   ``partials[i]`` builds the partial of a node with respect to operand ``i``, and is called only
   when that operand is active. A partial of ``1`` or ``-1`` passes the tangent through or negates
-  it. ``partials`` is ``None`` for an op without a derivative. ``jvp`` replaces the sum of partials
+  it. A pair ``(numerator, denominator)`` is a quotient: the tangent is multiplied by the numerator
+  before the division, so a finite product does not overflow or underflow through the partial.
+  ``partials`` is ``None`` for an op without a derivative. ``jvp`` replaces the sum of partials
   times tangents with a prescribed form, more stable or cheaper; it receives the tangents aligned
   with the output.
   ``c`` is the C spelling, a libm function or an operator, and ``c_integer`` a different spelling
@@ -40,18 +43,13 @@ def _const(value: float, like: Expr) -> Expr:
   return Expr.const(value, dtype=like.type.dtype)
 
 
-def _inverse_sqrt_one_minus_square(e: Expr) -> Expr:
-  x = e.args[0]
-  return _const(1, e) / (_const(1, e) - x ** _const(2, e)).sqrt()
+def _sqrt_one_minus_square(e: Expr) -> Expr:
+  return (_const(1, e) - e.args[0] ** _const(2, e)).sqrt()
 
 
 def _atan2_denominator(e: Expr) -> Expr:
   y, x = e.args
   return x * x + y * y
-
-
-def _reciprocal_denominator(e: Expr) -> Expr:
-  return _const(1, e) / e.args[1]
 
 
 def _mul_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
@@ -82,10 +80,10 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
   ExprOp.NEG: Elementwise(ProgramOp.NEG, np.negative, "-", (lambda e: -1,)),
   ExprOp.SIN: Elementwise(ProgramOp.SIN, np.sin, "sin", (lambda e: e.args[0].cos(),), expensive=True),
   ExprOp.COS: Elementwise(ProgramOp.COS, np.cos, "cos", (lambda e: -e.args[0].sin(),), expensive=True),
-  ExprOp.TAN: Elementwise(ProgramOp.TAN, np.tan, "tan", (lambda e: _const(1, e) / e.args[0].cos() ** _const(2, e),), expensive=True),
-  ExprOp.ASIN: Elementwise(ProgramOp.ASIN, np.arcsin, "asin", (_inverse_sqrt_one_minus_square,), expensive=True),
-  ExprOp.ACOS: Elementwise(ProgramOp.ACOS, np.arccos, "acos", (lambda e: -_inverse_sqrt_one_minus_square(e),), expensive=True),
-  ExprOp.ATAN: Elementwise(ProgramOp.ATAN, np.arctan, "atan", (lambda e: _const(1, e) / (_const(1, e) + e.args[0] ** _const(2, e)),), expensive=True),
+  ExprOp.TAN: Elementwise(ProgramOp.TAN, np.tan, "tan", (lambda e: (1, e.args[0].cos() ** _const(2, e)),), expensive=True),
+  ExprOp.ASIN: Elementwise(ProgramOp.ASIN, np.arcsin, "asin", (lambda e: (1, _sqrt_one_minus_square(e)),), expensive=True),
+  ExprOp.ACOS: Elementwise(ProgramOp.ACOS, np.arccos, "acos", (lambda e: (-1, _sqrt_one_minus_square(e)),), expensive=True),
+  ExprOp.ATAN: Elementwise(ProgramOp.ATAN, np.arctan, "atan", (lambda e: (1, _const(1, e) + e.args[0] ** _const(2, e)),), expensive=True),
   ExprOp.SINH: Elementwise(ProgramOp.SINH, np.sinh, "sinh", (lambda e: e.args[0].cosh(),), expensive=True),
   ExprOp.COSH: Elementwise(ProgramOp.COSH, np.cosh, "cosh", (lambda e: e.args[0].sinh(),), expensive=True),
   ExprOp.TANH: Elementwise(ProgramOp.TANH, np.tanh, "tanh", (lambda e: _const(1, e) - e * e,), expensive=True),
@@ -93,7 +91,7 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     ProgramOp.ERF, _erf, "erf", (lambda e: _const(2 / math.sqrt(math.pi), e) * (-(e.args[0] ** _const(2, e))).exp(),), expensive=True
   ),
   ExprOp.EXP: Elementwise(ProgramOp.EXP, np.exp, "exp", (lambda e: e,), expensive=True),
-  ExprOp.LOG: Elementwise(ProgramOp.LOG, np.log, "log", (lambda e: _const(1, e) / e.args[0],), expensive=True),
+  ExprOp.LOG: Elementwise(ProgramOp.LOG, np.log, "log", (lambda e: (1, e.args[0]),), expensive=True),
   ExprOp.SQRT: Elementwise(ProgramOp.SQRT, np.sqrt, "sqrt", (lambda e: _const(0.5, e) / e,), expensive=True),
   ExprOp.ABS: Elementwise(ProgramOp.ABS, np.abs, "fabs", (lambda e: e.args[0] / e,)),
   ExprOp.FLOOR: Elementwise(ProgramOp.FLOOR, np.floor, "floor"),
@@ -101,7 +99,7 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
   ExprOp.ADD: Elementwise(ProgramOp.ADD, np.add, "+", (lambda e: 1, lambda e: 1)),
   ExprOp.SUB: Elementwise(ProgramOp.SUB, np.subtract, "-", (lambda e: 1, lambda e: -1)),
   ExprOp.MUL: Elementwise(ProgramOp.MUL, np.multiply, "*", (lambda e: e.args[1], lambda e: e.args[0]), _mul_jvp),
-  ExprOp.DIV: Elementwise(ProgramOp.DIV, np.divide, "/", (_reciprocal_denominator, lambda e: -(e * _reciprocal_denominator(e))), _div_jvp),
+  ExprOp.DIV: Elementwise(ProgramOp.DIV, np.divide, "/", (lambda e: (1, e.args[1]), lambda e: (-e, e.args[1])), _div_jvp),
   ExprOp.POW: Elementwise(
     ProgramOp.POW,
     np.power,
@@ -113,7 +111,7 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     ProgramOp.ATAN2,
     np.arctan2,
     "atan2",
-    (lambda e: e.args[1] / _atan2_denominator(e), lambda e: -e.args[0] / _atan2_denominator(e)),
+    (lambda e: (e.args[1], _atan2_denominator(e)), lambda e: (-e.args[0], _atan2_denominator(e))),
     expensive=True,
   ),
   ExprOp.MINIMUM: Elementwise(ProgramOp.MINIMUM, np.fmin, "fmin", c_integer="({0} < {1} ? {0} : {1})"),
@@ -138,7 +136,7 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
       continue
     local = partial(expr)
     negate = isinstance(local, int) and local < 0
-    term = dx if isinstance(local, int) else _seed_axis(local, expr) * dx
+    term = dx if negate else _times_partial(local, dx, lambda partial: _seed_axis(partial, expr))
     total = (-term if negate else term) if total is None else total - term if negate else total + term
   assert total is not None
   return total
@@ -150,9 +148,18 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
   partials = ELEMENTWISE[ExprOp(expr.op)].partials
   assert partials is not None
   local = partials[position](expr)
-  # A masked partial, a select's where(c, cot, 0), would apply to cot here instead of a product.
-  scaled = (-cot if local < 0 else cot) if isinstance(local, int) else cot * local
-  return _unbroadcast(scaled, expr.args[position].shape, expr.shape)
+  # A masked partial, a select's where(c, cot, 0), would take the place of the product here.
+  return _unbroadcast(_times_partial(local, cot), expr.args[position].shape, expr.shape)
+
+
+def _times_partial(local: Local, t: Expr, align: Callable[[Expr], Expr] | None = None) -> Expr:
+  """``t`` times a partial. Forward mode passes ``align`` to put the partial on the seed axis."""
+  if isinstance(local, tuple):
+    numerator, denominator = local
+    return _times_partial(numerator, t, align) / (denominator if align is None else align(denominator))
+  if isinstance(local, int):
+    return -t if local < 0 else t
+  return t * local if align is None else align(local) * t
 
 
 def _seed_axis(expr: Expr, output: Expr | None = None) -> Expr:
