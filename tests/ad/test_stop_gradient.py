@@ -97,3 +97,62 @@ def test_stop_gradient_mapped_primal_c_is_identical(stop_inside: bool) -> None:
   ordinary_value = ordinary.factory("frozen_primal", ["x"], ["y"])
   stopped_value = stopped.factory("frozen_primal", ["x"], ["y"])
   assert render_c_source(stopped_value) == render_c_source(ordinary_value)
+
+
+def test_reverse_ignores_nonsmooth_operations_of_stopped_inputs() -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("value"), sc.arg("grad"), sc.arg("jac"), sc.arg("sparse")))
+  def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
+    scale = sc.maximum(sc.stop_gradient(sc.sumsqr(x)), 1e-6)
+    cost = (x / scale).sum()
+    return cost, sc.gradient(cost, x), sc.jacobian(cost, x), sc.sparse_jacobian(cost, x).to_dense()
+
+  point = np.array([0.3, 2.0])
+  value, grad, jac, sparse = fn(point)
+  scale = max(np.sum(point**2), 1e-6)
+  np.testing.assert_allclose(value, np.sum(point) / scale)
+  expected = np.ones(2) / scale
+  np.testing.assert_allclose(grad, expected)
+  np.testing.assert_allclose(jac, expected.reshape(1, 2))
+  np.testing.assert_allclose(sparse, jac)
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_reverse_ignores_nonsmooth_calls_of_stopped_inputs(mapped: bool) -> None:
+  @sc.function(sc.arg("a", 2), outputs=sc.arg("out"))
+  def rounded(a: sc.Expr) -> sc.Expr:
+    return a.floor() * 2.0
+
+  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("value"), sc.arg("grad"), sc.arg("jac"), sc.arg("sparse")))
+  def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
+    frozen = sc.stop_gradient(x)
+    value = sc.vmap(rounded, 2)(frozen) if mapped else sc.stack([rounded(frozen[i]) for i in range(2)])
+    cost = (x * value).sum()
+    return cost, sc.gradient(cost, x), sc.jacobian(cost, x), sc.sparse_jacobian(cost, x).to_dense()
+
+  point = np.array([[0.3, 2.5], [1.7, -0.4]])
+  value, grad, jac, sparse = fn(point)
+  expected = 2 * np.floor(point)
+  np.testing.assert_allclose(value, np.sum(point * expected))
+  np.testing.assert_allclose(grad, expected)
+  np.testing.assert_allclose(jac, expected.reshape(1, 4))
+  np.testing.assert_allclose(sparse, jac)
+
+
+@pytest.mark.solver("sqp")
+def test_reverse_ignores_a_solver_with_stopped_parameters() -> None:
+  @sc.problem(vars=sc.arg("y", ()), params=sc.arg("p", ()))
+  def inner_problem(y: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=(y - p) ** 2)
+
+  inner = sc.solver(inner_problem, "sqp", options={"tol": 1e-9, "dual_tol": 1e-9, "qp_tol": 1e-10})
+
+  @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("value"), sc.arg("grad"), sc.arg("jac")))
+  def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    cost = x * inner(sc.stop_gradient(x))[0]
+    return cost, sc.gradient(cost, x), sc.jacobian(cost, x)
+
+  point = np.array(1.5)
+  value, grad, jac = fn(point)
+  np.testing.assert_allclose(value, point**2, atol=1e-7)
+  np.testing.assert_allclose(grad, point, atol=1e-7)
+  np.testing.assert_allclose(jac, point.reshape(1, 1), atol=1e-7)

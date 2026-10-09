@@ -667,10 +667,10 @@ def print_(fmt: str, *values: Any) -> Expr:
 
 
 def stop_gradient(value: Any) -> Expr:
-  """Return ``value`` unchanged in evaluation, holding this path fixed during differentiation.
+  """Return ``value`` unchanged in evaluation and treat it as a constant in derivatives.
 
   Forward and reverse derivatives through this expression are zero, as is its Jacobian sparsity.
-  Other uses of ``value`` still contribute their derivatives. The generated primal C is unchanged.
+  Other uses of ``value`` still contribute their derivatives. Its generated evaluation C is unchanged.
   """
   expr = as_expr(value)
   return Expr(ExprOp.STOP_GRADIENT, (expr,), expr.type, lowering=expr.lowering)

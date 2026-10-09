@@ -14,7 +14,8 @@ from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr,
 from ..ir.types import SparsityPattern, broadcast_shape
 
 
-def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> bool:
+def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool], *, through_stops: bool = True) -> bool:
+  """Trace value dependencies, or derivative activity when ``through_stops`` is false."""
   stack = [(expr, False)]
   while stack:
     node, visited = stack.pop()
@@ -23,6 +24,8 @@ def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> boo
       continue
     if node.id == wrt.id:
       memo[key] = True
+    elif not through_stops and node.op == ExprOp.STOP_GRADIENT:
+      memo[key] = False
     elif visited:
       memo[key] = any(memo[(arg.id, wrt.id)] for arg in node.args)
     else:

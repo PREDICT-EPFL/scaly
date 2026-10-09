@@ -17,9 +17,9 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
   Each cotangent is shaped like its output. One sweep computes the derivative of a scalar with
   respect to every selected expression at once, which is why gradients go through here.
-  Intermediate selections act as independent inputs, with all replacements made simultaneously.
-  Other paths to their original inputs stay fixed. Overlapping or nested selections contribute
-  only to the adjoint of the selection through which that path passes.
+  Intermediate selections act as independent inputs. Calculations that use their inputs without
+  using a selected expression stay fixed. When one selection uses another, differentiating a use
+  of the former does not also contribute to the derivative of the latter. Results follow ``wrts`` order.
   """
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
@@ -30,7 +30,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   dep_memo: dict[tuple[int, int], bool] = {}
 
   def needed(expr: Expr) -> bool:
-    return any(_depends_on(expr, wrt, dep_memo) for wrt in wrts)
+    return any(_depends_on(expr, wrt, dep_memo, through_stops=False) for wrt in wrts)
 
   for out, cot in zip(outputs, cotangents, strict=True):
     if out.shape != cot.shape:
