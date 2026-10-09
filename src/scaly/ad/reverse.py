@@ -1,4 +1,4 @@
-"""Reverse-mode AD: ``vjp`` and the per-op local adjoint rules."""
+"""Reverse-mode AD: ``vjp`` and the transpose rules of the structural ops."""
 
 from __future__ import annotations
 
