@@ -126,14 +126,15 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue
-    for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot), strict=True):
+    active = tuple(i for i, arg in enumerate(expr.args) if needed(arg)) if expr.op == ExprOp.CALL else None
+    for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot, active), strict=True):
       if arg.id in expr_ids:
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 
 
-def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr, ...]:
   args = expr.args
   if expr.op == ExprOp.NEG:
     return (-cot,)
@@ -220,10 +221,14 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     lam = Expr.sym(f"lam:{callee.output_names[output_idx]}", callee_out.shape)
     replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
     replacements[lam.id] = cot
-    return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (lam,)))
+    indices = tuple(range(len(args))) if active is None else active
+    grads = vjp((callee_out,), tuple(callee.inputs[i] for i in indices), (lam,))
+    adjoints = dict(zip(indices, grads, strict=True))
+    return tuple(_substitute(adjoints[i], replacements) if i in adjoints else zeros_like(arg) for i, arg in enumerate(args))
   if expr.op == ExprOp.SOLVER_CALL:
-    # Non-differentiable: every arg cotangent is zero. See the matching JVP rule.
-    return tuple(zeros_like(arg) for arg in args)
+    if cot.op == ExprOp.CONST and cot.value is not None and not np.any(cot.value):
+      return tuple(zeros_like(arg) for arg in args)
+    raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
 
 

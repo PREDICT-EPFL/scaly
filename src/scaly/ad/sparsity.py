@@ -126,6 +126,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
   if expr.op == ExprOp.VMAP:
     return _vmap_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
+    if any(_jac_mask(arg, wrt, memo).nnz for arg in expr.args):
+      raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
     return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
 
@@ -197,7 +199,9 @@ def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arr
   callee_out = callee.outputs[expr.attrs["output"]]
   ret = _empty((expr.size, wrt.size))
   for formal, actual in zip(callee.inputs, expr.args, strict=True):
-    ret = _or(ret, _compose(_jac_mask(callee_out, formal, memo), _jac_mask(actual, wrt, memo)))
+    actual_dep = _jac_mask(actual, wrt, memo)
+    if actual_dep.nnz:
+      ret = _or(ret, _compose(_jac_mask(callee_out, formal, memo), actual_dep))
   return ret
 
 
@@ -212,8 +216,10 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arr
     return ret
   for formal_idx, actual_outer in enumerate(expr.args):
     formal = callee.inputs[formal_idx]
-    callee_dep = _jac_mask(callee_out, formal, memo)
     outer_dep = _jac_mask(actual_outer, wrt, memo)
+    if not outer_dep.nnz:
+      continue
+    callee_dep = _jac_mask(callee_out, formal, memo)
     start, stride = starts[formal_idx], strides[formal_idx]
     window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
     windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)

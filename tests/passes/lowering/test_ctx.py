@@ -28,3 +28,28 @@ def test_rule_registration_returns_the_rule(monkeypatch) -> None:
 
   assert ctx.lowers(ExprOp.INPUT)(rule) is rule
   assert ctx._RULES[ExprOp.INPUT] is rule
+
+
+@pytest.mark.parametrize("dtype", ["bool", "int32", "int64", "float32"])
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_non_float64_leaves_refused(dtype, side) -> None:
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.ir.expr import Expr
+
+  x = Expr.sym("x", (), dtype=dtype if side == "input" else "float64")
+  y = Expr.const(1, dtype=dtype) if side == "output" else Expr.const(1.0)
+  fn = ConcreteFunction._from_exprs("typed_boundary", [x], [y], ["x"], ["y"])
+  with pytest.raises(ctx.LoweringError, match=rf"{side}.*{dtype}.*float64"):
+    ctx.lower_function(fn)
+
+
+def test_non_float64_callee_leaf_refused() -> None:
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.ir.expr import Expr
+
+  x = Expr.sym("x", ())
+  z = Expr.sym("z", (), dtype="int64")
+  child = ConcreteFunction._from_exprs("typed_child", [z], [Expr.const(1.0)], ["z"], ["y"])
+  fn = ConcreteFunction._from_exprs("typed_parent", [x], [child(Expr.const(1, dtype="int64")) + x], ["x"], ["y"])
+  with pytest.raises(ctx.LoweringError, match="typed_child.*input.*int64.*float64"):
+    ctx.lower_function(fn)

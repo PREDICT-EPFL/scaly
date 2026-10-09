@@ -374,8 +374,8 @@ Only mapped calls get a separate stage adjoint function.
 
 ## Non-smooth and unsupported derivatives
 
-The operations without derivative rules, and the zero returned through a solver
-call, are listed in the guide's
+The operations without derivative rules, including the refusal of an active
+derivative through a solver call, are listed in the guide's
 [current limitations](../guide/derivatives.md#current-limitations).
 
 [^griewank]: Andreas Griewank and Andrea Walther, *Evaluating Derivatives:

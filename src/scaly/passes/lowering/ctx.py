@@ -409,6 +409,7 @@ def _check_callee_names(root: ConcreteFunction) -> None:
     if id(function) in seen:
       return
     seen.add(id(function))
+    _check_float64_leaves(function)
     symbol = c_ident(function.name)
     if symbol in names and names[symbol] is not function:
       raise LoweringError(f"distinct function instances share generated C identifier {symbol!r}; give them distinct names")
@@ -420,3 +421,10 @@ def _check_callee_names(root: ConcreteFunction) -> None:
         visit(node.attrs["callee"])
 
   visit(root)
+
+
+def _check_float64_leaves(fun: ConcreteFunction) -> None:
+  for side, names, leaves in (("input", fun.input_names, fun.inputs), ("output", fun.output_names, fun.outputs)):
+    for name, leaf in zip(names, leaves, strict=True):
+      if leaf.type.dtype != dtypes.float64:
+        raise LoweringError(f"function {fun.name!r} {side} leaf {name!r} has dtype {leaf.type.dtype}; only float64 leaves are supported")

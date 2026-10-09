@@ -418,10 +418,13 @@ can be wrapped with `sc.const`.
 The generated code includes the solver call and surrounding calculations.
 
 !!! warning "Solver sensitivities are not supported"
-    Differentiating an ordinary function containing a solve can return zero
-    through that call. Differentiating the underlying solver function directly
-    can instead fail. Neither result gives the sensitivity of the optimum to
-    the parameters.
+    An active derivative through a solver call raises `NotImplementedError`.
+    This applies to forward and reverse differentiation and Jacobian sparsity
+    analysis, including solver calls inside ordinary or mapped functions.
+    A solver call independent of the differentiated input does not block its
+    derivative. Dependency checks count every solver argument, including `x0`
+    and `warm`. They are conservative, so slicing away the solver result can
+    still leave a dependency that raises.
 
 ## Statistics
 

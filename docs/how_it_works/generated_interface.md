@@ -171,11 +171,10 @@ the [guide](../guide/codegen.md#the-pointer-entry) explains each argument. A mod
 containing a solver also exports a `_with_options` entry with a sixth argument
 for call-time option arrays. Python uses this entry. The standard entry calls it
 with backend defaults. The [option interface](../guide/codegen.md#solver-options-in-c)
-describes the arrays and their lifetime. Every
-input and output buffer is an array of `double`, whatever the data type of the
-matching value in the graph. An `int64` or `bool` input is read from `double`
-values, and an integer or Boolean output is written as `double` values, so a
-numerical call from Python returns `float64` arrays for them too. The body
+describes the arrays and their lifetime. Every input and output buffer is an
+array of `double`. Lowering and just-in-time compilation reject a `Function`
+whose input or output leaves have a data type other than `float64`, including
+callees. Boolean and integer values inside a function are allowed. The body
 starts with null checks that return one of five codes:
 
 | Code                    | Value | Returned when                                         |

@@ -305,3 +305,44 @@ def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
   monkeypatch.setattr(jit, "native_recipe", fail)
   with pytest.raises(jit.JitError, match="failed to probe native C compiler"):
     jit._render_native(_simple_fn(), ("cc",))
+
+
+@pytest.mark.parametrize("dtype", ["bool", "int32", "int64", "float32"])
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_jit_refuses_non_float64_leaves_before_cache(dtype, side, monkeypatch) -> None:
+  from scaly.function.concrete import ConcreteFunction
+
+  x = sc.Expr.sym("x", (), dtype=dtype if side == "input" else "float64")
+  y = sc.Expr.const(1, dtype=dtype) if side == "output" else sc.Expr.const(1.0)
+  fn = ConcreteFunction._from_exprs("jit_typed_boundary", [x], [y], ["x"], ["y"])
+  monkeypatch.setattr(jit, "_compute_cache_key", lambda *args, **kwargs: pytest.fail("invalid leaves reached the artifact cache"))
+  with pytest.raises(jit.JitUnavailable, match=rf"{side}.*{dtype}.*float64"):
+    jit.CompiledFunction(fn)
+
+
+def test_numerical_call_refuses_integer_leaf_before_cast(monkeypatch) -> None:
+  from scaly.function.concrete import ConcreteFunction
+
+  x = sc.Expr.sym("x", (), dtype="int64")
+  fn = ConcreteFunction._from_exprs("integer_cast_boundary", [x], [sc.Expr.const(1.0)], ["x"], ["y"])
+  monkeypatch.setattr(np, "asarray", lambda *args, **kwargs: pytest.fail("integer input reached numerical coercion"))
+  with pytest.raises(NotImplementedError, match="int64.*float64"):
+    fn(1.75)
+
+
+def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache) -> None:
+  a = np.array([np.nan, 1.0, np.nan, -np.inf, np.inf, -2.0])
+  b = np.array([1.0, np.nan, np.nan, np.inf, -np.inf, 3.0])
+
+  @sc.function(sc.group(sc.arg("a", 6), sc.arg("b", 6)), outputs=sc.group(sc.arg("lo"), sc.arg("hi")), name="runtime_extrema")
+  def runtime(inputs):
+    x, y = inputs
+    return sc.minimum(x, y), sc.maximum(x, y)
+
+  @sc.function(sc.arg("unused", 6), outputs=sc.group(sc.arg("lo"), sc.arg("hi")), name="folded_extrema")
+  def folded(unused):
+    return sc.minimum(sc.const(a), sc.const(b)), sc.maximum(sc.const(a), sc.const(b))
+
+  for got in (runtime((a, b)), folded(np.zeros(6))):
+    np.testing.assert_array_equal(got[0], np.fmin(a, b))
+    np.testing.assert_array_equal(got[1], np.fmax(a, b))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from scaly.function.model import as_concrete
 import scaly as sc
@@ -96,3 +97,74 @@ def test_gather_scatter_eval_and_ad() -> None:
     assert "scatter indices must be unique" in str(e)
   else:  # pragma: no cover
     raise AssertionError("duplicate scatter should fail")
+
+
+@pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp", "sparsity"])
+@pytest.mark.parametrize("wrapped", ["direct", "call", "mapped"])
+def test_active_solver_derivative_refused(mode, wrapped, monkeypatch) -> None:
+  from scaly.ad.forward import jvp, jvp_many
+  from scaly.ad.reverse import vjp
+  from scaly.ad.sparsity import jacobian_sparsity
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.ir.types import TensorType
+
+  x = sc.sym("solver_parameter", 2)
+  result = sc.Expr(sc.ExprOp.SOLVER_CALL, (x,), TensorType((2,), diff=False), attrs={"output": 0})
+  if wrapped != "direct":
+    fn = ConcreteFunction._from_exprs("opaque_test", [x], [result], ["x"], ["y"])
+    if wrapped == "mapped":
+      from scaly.function.sugar import _mapped_call
+
+      result = _mapped_call(fn, 1, [(x, 0, 0)])
+    else:
+      result = fn(x * 2.0)
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  with pytest.raises(NotImplementedError, match="SOLVER_CALL"):
+    if mode == "jvp":
+      jvp(result, x, sc.const(np.ones(2)))
+    elif mode == "jvp_many":
+      jvp_many(result, x, sc.const(np.eye(2)))
+    elif mode == "vjp":
+      vjp((result,), (x,), (sc.const(np.ones(2)),))
+    else:
+      jacobian_sparsity(result, x)
+
+
+def test_inactive_solver_derivatives_remain_zero() -> None:
+  from scaly.ad.forward import jvp
+  from scaly.ad.reverse import vjp
+  from scaly.ad.sparsity import jacobian_sparsity
+  from scaly.ir.types import TensorType
+
+  x, unrelated = sc.sym("solver_inactive", 2), sc.sym("unrelated", 2)
+  result = sc.Expr(sc.ExprOp.SOLVER_CALL, (x,), TensorType((2,), diff=False), attrs={"output": 0})
+  np.testing.assert_array_equal(jvp(result, unrelated, sc.const(np.ones(2))).value, np.zeros(2))
+  np.testing.assert_array_equal(jvp(result, x, sc.const(np.zeros(2))).value, np.zeros(2))
+  np.testing.assert_array_equal(vjp((result,), (unrelated,), (sc.const(np.ones(2)),))[0].value, np.zeros(2))
+  np.testing.assert_array_equal(vjp((result,), (x,), (sc.const(np.zeros(2)),))[0].value, np.zeros(2))
+  assert jacobian_sparsity(result, unrelated).nnz == 0
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_solver_call_with_inactive_parameter_allows_other_derivatives(mapped) -> None:
+  from scaly.ad.forward import jvp, jvp_many
+  from scaly.ad.reverse import vjp
+  from scaly.ad.sparsity import jacobian_sparsity
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.function.sugar import _mapped_call
+  from scaly.ir.types import TensorType
+
+  p, q, x = sc.sym("inactive_p", 2), sc.sym("active_q", 2), sc.sym("outer_x", 2)
+  solver = sc.Expr(sc.ExprOp.SOLVER_CALL, (p,), TensorType((2,), diff=False), attrs={"output": 0})
+  fn = ConcreteFunction._from_exprs("mixed_solver_test", [p, q], [solver + q], ["p", "q"], ["y"])
+  constant = sc.const(np.ones(2))
+  result = _mapped_call(fn, 1, [(constant, 0, 0), (x, 0, 0)]) if mapped else fn(constant, x)
+
+  def evaluate(expr):
+    derivative = ConcreteFunction._from_exprs(f"inactive_solver_{mapped}_{expr.id}", [x], [expr], ["x"], ["y"])
+    return derivative(np.ones(2))
+
+  np.testing.assert_array_equal(evaluate(jvp(result, x, constant)), np.ones(2))
+  np.testing.assert_array_equal(evaluate(jvp_many(result, x, sc.const(np.eye(2)))), np.eye(2))
+  np.testing.assert_array_equal(evaluate(vjp((result,), (x,), (constant,))[0]), np.ones(2))
+  np.testing.assert_array_equal(jacobian_sparsity(result, x).to_mask(), np.eye(2, dtype=bool))

@@ -214,10 +214,11 @@ the first axis. Expression forms of sparse derivatives return a
 
 Derivatives work through ordinary function calls and `vmap`. Ordinary calls may
 expand during differentiation or compilation. Mapped repetition remains
-represented as a loop. Differentiation through an optimization solve is not supported.
-A function containing a solve can return zero derivatives through that call,
-while a derivative requested directly from the solver can fail. Do not use
-these results as sensitivities of the optimized solution.
+represented as a loop. An active derivative through an optimization solve
+raises `NotImplementedError`, including when the solve is inside an ordinary
+or mapped function. A solve independent of the differentiated input does not
+block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
+for the limits of dependency analysis.
 
 Differentiation through `minimum`, `maximum`, `floor`, and `ceil`
 raises `NotImplementedError`, even at points where the mathematical derivative
