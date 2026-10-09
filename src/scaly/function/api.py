@@ -440,7 +440,7 @@ def custom_derivative[SI, NI, SO, NO](
   jvp: _Rule | None = None,
   fwd: _Rule | None = None,
   bwd: _Rule | None = None,
-  sparsity: Callable[[str, str], SparsityPattern | np.ndarray] | None = None,
+  sparsity: Callable[[str, str, tuple[int, int]], SparsityPattern | np.ndarray] | None = None,
 ) -> Function[SI, NI, SO, NO]:
   """Return ``fn`` with derivative rules that replace differentiating its body.
 
@@ -455,9 +455,9 @@ def custom_derivative[SI, NI, SO, NO](
   derivative still differentiates them.
 
   A direction without a rule differentiates the body. Rules may be shape templates; they are bound
-  for each binding of ``fn``. ``sparsity(of, wrt)`` gives the Jacobian pattern of output ``of`` in
-  input ``wrt``, as a ``SparsityPattern`` or a boolean mask of shape ``(of.size, wrt.size)``.
-  Without it, the pattern of a function with rules is dense.
+  for each binding of ``fn``. ``sparsity(of, wrt, shape)`` gives the Jacobian pattern of output
+  ``of`` in input ``wrt``, as a ``SparsityPattern`` or a boolean mask of ``shape``, which is
+  ``(of.size, wrt.size)``. Without it, the pattern of a function with rules is dense.
   """
   if (fwd is None) != (bwd is None):
     raise TypeError("custom_derivative takes fwd and bwd together")
@@ -472,7 +472,7 @@ def _with_rules(
   jvp: _Rule | None,
   fwd: _Rule | None,
   bwd: _Rule | None,
-  sparsity: Callable[[str, str], SparsityPattern | np.ndarray] | None,
+  sparsity: Callable[[str, str, tuple[int, int]], SparsityPattern | np.ndarray] | None,
 ) -> ConcreteFunction[Any, Any, Any, Any]:
   def bind(rule: _Rule, skeleton: tuple[Any, ...], label: str) -> ConcreteFunction[Any, Any, Any, Any]:
     return (Function._from_instance(rule) if isinstance(rule, ConcreteFunction) else rule)._bind(skeleton, f"{concrete.name}: {label} rule")
@@ -499,7 +499,7 @@ def _with_rules(
   blocks = None
   if sparsity is not None:
     blocks = tuple(
-      tuple(_declared_pattern(sparsity(of, wrt), (out.size, inp.size), of, wrt) for wrt, inp in concrete.input_map().items())
+      tuple(_declared_pattern(sparsity(of, wrt, (out.size, inp.size)), (out.size, inp.size), of, wrt) for wrt, inp in concrete.input_map().items())
       for of, out in concrete.output_map().items()
     )
   return concrete._replace(outputs=outputs, rules=CustomRules(jvp_rule, bwd_rule, residuals, blocks))

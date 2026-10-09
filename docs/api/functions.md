@@ -61,6 +61,10 @@ name, and an input name.
 
 ::: scaly.function.api.sparse_lagrangian_hessian
 
+## Custom derivative rules
+
+::: scaly.function.api.custom_derivative
+
 
 ## Mapped calls
 
