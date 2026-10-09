@@ -38,21 +38,22 @@ KKT the Karush–Kuhn–Tucker system of an IPM, TACO the Tensor Algebra Compile
 1. [Decisions](#decisions)
 2. [The core language](#the-core-language)
 3. [Order of work](#order-of-work)
-4. [Release scope](#release-scope) and [Windows support](#windows-toolchain-and-support)
-5. [Rules for every item](#rules-for-every-item)
-6. [Foundations](#foundations)
-7. [One AD engine](#one-ad-engine)
-8. [Dtypes and the scalar vocabulary](#dtypes-and-the-scalar-vocabulary)
-9. [Tensor core and the loop compiler](#tensor-core-and-the-loop-compiler)
-10. [Signatures and templates](#signatures-and-templates)
-11. [Sparse tensors](#sparse-tensors)
-12. [Loops, conditionals and printing](#loops-conditionals-and-printing)
-13. [Linear algebra as library Functions](#linear-algebra-as-library-functions)
-14. [Runtime indexing, in-place updates and external code](#runtime-indexing-in-place-updates-and-external-code)
-15. [Milestone checks](#milestone-checks)
-16. [What devrush gives us](#what-devrush-gives-us)
-17. [Devrush as a source of tests and examples](#devrush-as-a-source-of-tests-and-examples)
-18. [Open questions](#open-questions)
+4. [Release scope](#release-scope)
+5. [Windows toolchain and support](#windows-toolchain-and-support)
+6. [Rules for every item](#rules-for-every-item)
+7. [Foundations](#foundations)
+8. [One AD engine](#one-ad-engine)
+9. [Dtypes and the scalar vocabulary](#dtypes-and-the-scalar-vocabulary)
+10. [Tensor core and the loop compiler](#tensor-core-and-the-loop-compiler)
+11. [Signatures and templates](#signatures-and-templates)
+12. [Sparse tensors](#sparse-tensors)
+13. [Loops, conditionals and printing](#loops-conditionals-and-printing)
+14. [Linear algebra as library Functions](#linear-algebra-as-library-functions)
+15. [Runtime indexing, in-place updates and external code](#runtime-indexing-in-place-updates-and-external-code)
+16. [Milestone checks](#milestone-checks)
+17. [What devrush gives us](#what-devrush-gives-us)
+18. [Devrush as a source of tests and examples](#devrush-as-a-source-of-tests-and-examples)
+19. [Open questions](#open-questions)
 19. [Evidence from devrush](#evidence-from-devrush)
 20. [How this roadmap was made](#how-this-roadmap-was-made)
 
@@ -271,9 +272,9 @@ Why this order:
   link paths are checked with zig's driver before they move onto externs. Windows linking is
   checked in [#84]'s native Windows issues, so it does not block #82 or #83.
   Before milestone 3, because changing the JIT's compiler shifts every timing, and that
-  milestone's gates must be measured under one compiler. [#84] (Windows) is part of 0.1.0 and runs
-  beside milestone 1; [#83], [#64] and [#77] are designed so it adds a platform without changing
-  them.
+  milestone's gates must be measured under one compiler. [#84] groups #82 with the Windows work
+  for 0.1.0. Its native probe runs beside milestone 1; [#83], [#64] and [#77] are designed so
+  Windows support adds a platform without changing them.
 - 0.1.0 is a subset of milestone 1: the foundations except [#64], `sc.print`, the templates lane
   with [#13], [#82] and [#84]. The release scope below lists it.
 
@@ -311,13 +312,17 @@ Windows release.
 
 [#84] is the shared parent for the compiler switch and native Windows support. The initial
 Windows release contains the core, `scaly-piqp` and `scaly-sqp` on x86-64. ARM64, 32-bit Windows
-and `scaly-ipopt` wait for separate work. Python users install a pinned Zig package and prebuilt
-solver wheels, without setting up Visual Studio or MinGW. The exact initial compiler version
+and `scaly-ipopt` wait for separate work. #156 adds the pinned Zig package as an automatic
+Windows dependency of the core package. Python users install Scaly and prebuilt solver wheels
+without setting up Visual Studio or MinGW. The exact initial compiler version
 belongs to #82, and the [dated investigation](windows_toolchain_options_2026_10_09.md#decisions)
 records package availability and the rejected alternatives.
 
-The native compiler probe [#152] can run beside #82. Core compilation and loading [#153] follow
-both; cache handling [#154] and PIQP packaging [#155] then proceed independently. The final
+The native compiler probe [#152] can run beside #82 and keeps its evidence in a separate dated
+note, so it can start from main without editing the unmerged planning files. Core compilation
+and loading [#153] follow both and #77's printing support. Cache handling [#154] and PIQP
+packaging [#155] then proceed independently. These issues record manual native runs in their
+own internal notes before the final integration adds Windows CI. The final
 Windows integration issue [#156] checks the generated SQP solver, installs the built wheels in an
 environment without native build tools, and supplies the continuous-integration and release
 matrices. #85 verifies those completed matrices and writes release notes. Closing the component

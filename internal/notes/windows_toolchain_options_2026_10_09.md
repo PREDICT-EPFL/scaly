@@ -29,8 +29,8 @@ Python wheel does not by itself require Microsoft Visual C++ (MSVC) or a separat
 ## Decisions
 
 Keep #82 and use `ziglang==0.16.0` as the initial shared compiler version across supported
-platforms. Pin the toolchain extra, and use the same version for the Windows dependency when its
-package metadata ships.
+platforms. #82 pins the toolchain extra. #156 adds the same version as an automatic dependency
+of the core package on Windows through its platform-conditional package metadata.
 Upgrade after package availability and the compiler and solver checks pass. An unpinned Windows
 install can currently select 0.16.0 itself, but a deliberate pin also fixes the compiler used for
 validation and avoids depending on installer behavior across platforms.
@@ -77,9 +77,10 @@ the cache, and forced recompilation while the old function remains callable. The
 uses content-derived directories, but publishing with `Path.replace` and invalidating with
 `shutil.rmtree` still need tests against Windows' loaded-DLL restrictions.
 
-The core checks also cover `sc.print`. As recorded on #84 after #149, the JIT currently flushes
-C standard output through `ctypes.CDLL(None).fflush(None)` on Linux and macOS. Windows needs
-the C runtime used by the generated DLL, rather than a symbol lookup on the process handle.
+The core checks also cover `sc.print` once #77 lands. Its open pull request #149 proposes a flush
+of C standard output through `ctypes.CDLL(None).fflush(None)` on Linux and macOS, as recorded
+on #84. Windows needs the C runtime used by the generated DLL, rather than a symbol lookup on
+the process handle.
 
 Finally build PIQP and BLASFEO with an explicitly selected compiler and CMake generator. Run a
 PIQP solve, a generated call into PIQP, then a `scaly-sqp` solve. Inspect the wheel's import
@@ -98,16 +99,20 @@ inside Windows Subsystem for Linux, which would exercise the existing Linux path
 
 [#84] is the shared delivery parent for [#82] and [#152] through [#156]. [#82] owns the compiler
 switch, the exact pin and the Linux/macOS checks, including its reference-machine comparison.
-[#152] owns native compiler evidence and the first-compilation recommendation. [#153] owns the
-core compilation, loading and printing behavior; [#154] owns loaded-DLL cache behavior. [#155]
-owns PIQP packaging, DLL dependencies and the BLASFEO implementation choice. [#156] owns the
-complete installed SQP path, supported Python checks, Windows workflows and public installation
-instructions. GitHub records the prerequisites and status.
+[#152] owns native compiler evidence and the first-compilation recommendation. It can start from
+main and writes a separate dated evidence note instead of editing these unmerged planning files.
+[#153] owns the core compilation, loading and printing behavior; [#154] owns loaded-DLL cache
+behavior. [#155] owns PIQP packaging, DLL dependencies and the BLASFEO implementation choice.
+[#156] owns the complete installed SQP path, the automatic Windows compiler dependency, supported
+Python checks, Windows workflows and public installation instructions. #153 through #155 record
+manual runs on the native Windows machine in their own internal notes; #156 puts those checks in CI. GitHub
+records the prerequisites and status.
 
 #83 retains its #82 prerequisite and Clang flag convention. #85 verifies the completed Windows
 matrices and release artifacts and writes the release notes; workflow implementation belongs to
 [#156]. Parent closure requires the installed package combination to pass together, rather than
-only the component issues to close.
+only the component issues to close. Issue links use the published planning branch until these
+notes land on main. Repoint them to main before deleting that branch.
 
 ## Repository context
 
