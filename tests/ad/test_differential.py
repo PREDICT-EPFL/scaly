@@ -56,7 +56,6 @@ REFUSED = {
   ExprOp.MINIMUM: lambda x: sc.minimum(x, 0.5),
   ExprOp.MAXIMUM: lambda x: sc.maximum(x, 0.5),
 }
-STRUCTURAL_REFUSED = {ExprOp.ASIN, ExprOp.ACOS, ExprOp.ATAN, ExprOp.ATAN2, ExprOp.ABS}
 
 
 @sc.function(sc.arg("differential_x", 2), outputs=sc.arg("y"), name="differential_piece")
@@ -197,10 +196,6 @@ def _cases() -> list[Case]:
 CASES = _cases()
 
 
-def _structural_refusal(case: Case) -> bool:
-  return case.op in STRUCTURAL_REFUSED or case.name == "transpose-rank4"
-
-
 @dataclass
 class Evaluation:
   case: Case
@@ -265,10 +260,8 @@ def evaluated(request):
     adjoints = sc.vjp((y,), values, (sc.const(cotangent),))
     return (sc.stack(singles), *many, sc.stack(baked_rows), baked_many, (*adjoints, *((y,) if case.op == ExprOp.PRINT else ())))
 
-  with pytest.MonkeyPatch.context() as patch:
-    patch.setenv("SCALY_STRICT_JVP_MANY", "0" if _structural_refusal(case) else "1")
-    run: Any = products
-    result = run((case.values, seeds))
+  run: Any = products
+  result = run((case.values, seeds))
   return Evaluation(
     case,
     primal,
@@ -316,32 +309,15 @@ def test_baked_seeds_differences_and_duality(evaluated):
     _assert_differential(evaluated, tangent)
 
 
-def test_migration_structural_matches_stacked_single(evaluated):
-  for count in (0, 1, 3):
-    np.testing.assert_allclose(evaluated.many[count], evaluated.single[:count], atol=1e-12, rtol=1e-12)
-
-
 def test_every_expr_op_is_accounted_for():
   assert set(UNARY) | {ExprOp.FLOOR, ExprOp.CEIL} == COMMON_ELEMENTWISE_UNARY
   assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} == COMMON_ELEMENTWISE_BINARY
   assert {case.op for case in CASES} | set(REFUSED) | {ExprOp.SOLVER_CALL} == set(ExprOp)
 
 
-@pytest.mark.parametrize("case", [case for case in CASES if _structural_refusal(case)], ids=lambda case: case.name)
-def test_structural_refusals(case, monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
-  inputs = tuple(sc.sym(f"refused{i}", value.shape) for i, value in enumerate(case.values))
-  y = case.build(*inputs)
-  for x in inputs:
-    with pytest.raises(NotImplementedError, match=f"{case.op.value}.*forbids the unrolled fallback"):
-      sc.jvp_many(y, x, sc.sym("refused_seeds", (3, *x.shape)))
-    assert sc.jvp_many(y, x, sc.const(np.empty((0, *x.shape)))).shape == (0, *y.shape)
-
-
 @pytest.mark.parametrize(("op", "point"), [(op, point) for op in REFUSED for point in (0.5, 0.7, 1.0)] + [(ExprOp.SOLVER_CALL, None)])
 @pytest.mark.parametrize("mode", ["single", "many", "reverse"])
-def test_active_derivative_refusals(op, mode, point, monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_active_derivative_refusals(op, mode, point):
   x = sc.sym("refused_x", ())
   if op == ExprOp.SOLVER_CALL:
     descriptor = SolverDescriptor("differential_solver", "test", 1, 0, 0, (("p", ()),), (("y", ()),), (), 1)
@@ -380,9 +356,8 @@ def test_abs_zero_uses_x_over_abs_x_convention():
 
 
 @pytest.mark.parametrize("op", [ExprOp.SQRT, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2])
-def test_singular_boundary_conventions(op, monkeypatch):
+def test_singular_boundary_conventions(op):
   """Pin the nonfinite entries at points where the derivative is undefined."""
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "0" if op == ExprOp.ATAN2 else "1")
 
   @sc.function(sc.group(sc.arg("boundary_x", 2), sc.arg("boundary_p", 2)), outputs=sc.group(sc.arg("single"), sc.arg("many"), sc.arg("reverse")))
   def products(inputs):

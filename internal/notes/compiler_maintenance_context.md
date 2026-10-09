@@ -20,7 +20,7 @@ compatibility entry point.
 
 Forward-mode helper cache keys include the active formal indices, seed count, and specialized
 constant seed values. Helpers omit primal and seed arguments that their expressions do not use.
-For mapped constant seeds, `ad/forward.py` can specialize periodic seed tiles with periods up to
+For mapped constant seeds, `ad/calls.py` can specialize periodic seed tiles with periods up to
 eight. Compatible specialized results can share a concatenated mapped output, with gathers
 recovering the requested layouts.
 
@@ -28,9 +28,6 @@ The structured sparse Jacobian path in `ad/sparse.py` first tries mapped pieces 
 inputs match the differentiated expression. If per-formal contributions partition the nonzeros,
 it concatenates their compact values and adjusts coordinate order. Overlapping contributions use
 scatters and addition. Sparse Hessians instead use global star coloring and a recovery table.
-
-`SCALY_STRICT_JVP_MANY=1` makes unsupported batched forward rules raise instead of falling back to
-individual seeds. It is useful when checking that a new batched rule actually runs.
 
 ## Program optimization
 

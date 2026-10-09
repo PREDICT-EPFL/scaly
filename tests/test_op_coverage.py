@@ -20,9 +20,8 @@ ELEMENTWISE = COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
 EXISTING_ELEMENTWISE_REFERENCES = {
   (
     "ad/forward.py",
-    "_jvp",
-  ): "NEG ADD SUB MUL DIV POW SIN COS TAN ASIN ACOS ATAN ATAN2 SINH COSH TANH ERF EXP LOG SQRT ABS FLOOR CEIL MINIMUM MAXIMUM",
-  ("ad/forward.py", "_jvp_many_structural"): "ADD SUB NEG MUL DIV POW SIN COS TAN EXP LOG SQRT TANH ERF COSH SINH",
+    "_pushforward_rule",
+  ): "NEG ADD ADD ADD SUB MUL DIV POW SIN COS TAN ASIN ACOS ATAN ATAN2 SINH COSH TANH ERF EXP LOG SQRT ABS FLOOR CEIL MINIMUM MAXIMUM",
   (
     "ad/reverse.py",
     "_local_vjp",
@@ -43,7 +42,7 @@ def _dispatch_ops(*functions) -> set[ExprOp]:
       if not isinstance(node, ast.If):
         continue
       for condition in ast.walk(node.test):
-        if not isinstance(condition, ast.Compare) or ast.unparse(condition.left) != "expr.op":
+        if not isinstance(condition, ast.Compare) or ast.unparse(condition.left) not in {"expr.op", "op"}:
           continue
         for comparator in condition.comparators:
           for member in ast.walk(comparator):
@@ -81,7 +80,7 @@ def _elementwise_references() -> dict[tuple[str, str], Counter[str]]:
 def test_every_expr_op_is_classified_in_every_pass() -> None:
   classifications = {
     "verifier": set(spec_expr.by_op),
-    "forward AD": _dispatch_ops(forward._jvp),
+    "forward AD": _dispatch_ops(forward._pushforward, forward._pushforward_rule),
     "reverse AD": _dispatch_ops(reverse.vjp, reverse._local_vjp),
     "sparsity": _dispatch_ops(sparsity._jac_mask_uncached),
     # INPUT is bound by emit_inputs; SOLVER_CALL is opaque and handled by the solver wrapper.

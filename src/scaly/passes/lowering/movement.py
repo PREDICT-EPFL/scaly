@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, RangeKind
-from .ctx import LowerCtx, lowers, LoweringError, _shape_or_scalar, _size_of, _stride, _coord_p, _flat_index_p, _row_major_strides, _affine_sum
+from .ctx import LowerCtx, lowers, _shape_or_scalar, _size_of, _stride, _coord_p, _flat_index_p, _row_major_strides, _affine_sum
 
 
 @lowers(ExprOp.RESHAPE)
@@ -104,8 +104,6 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   src = node.args[0]
   axes = tuple(int(a) for a in node.attrs["axes"])
   src_shape, out_shape = src.shape, node.shape
-  if len(src_shape) > 4:
-    raise LoweringError(f"TRANSPOSE lowering handles rank <= 4; got {src_shape}")
   out = ctx.alloc_tmp(node)
   src_strides = _row_major_strides(src_shape)
   out_strides = _row_major_strides(out_shape)

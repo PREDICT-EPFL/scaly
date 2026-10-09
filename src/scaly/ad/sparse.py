@@ -17,7 +17,7 @@ from ..ir.expr import Expr, ExprOp, concat, gather, scatter
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
-from .forward import _jvp, _jvp_many_unrolled, jvp_many
+from .forward import _pushforward, jvp_many
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
 from ..ir.types import SparsityPattern
 
@@ -103,12 +103,12 @@ def _sparse_jacobian_colored(
 ) -> SparseJacobian:
   """Build compact values from a coloring and an optional compressed-row recovery table."""
   if sparsity.nnz == 0:
-    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)), 0)
+    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), 0)
   ncolors = max(colors) + 1 if colors else 0
-  seeds = np.zeros((ncolors, wrt.size), dtype=np.float64)
+  seeds = np.zeros((ncolors, wrt.size), dtype=wrt.type.dtype.numpy())
   for col, color in enumerate(colors):
     seeds[color, col] = 1.0
-  compressed = jvp_many(expr, wrt, Expr.const(seeds.reshape((ncolors, *wrt.shape)))).reshape((ncolors, expr.size)).T
+  compressed = jvp_many(expr, wrt, Expr.const(seeds.reshape((ncolors, *wrt.shape)), dtype=wrt.type.dtype)).reshape((ncolors, expr.size)).T
   rows = np.asarray(sparsity.rows, dtype=np.int64)
   cols = np.asarray(sparsity.cols, dtype=np.int64)
   if recovery_indices is None:
@@ -198,7 +198,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     global_values.append(sj.values)
   sparsity = SparsityPattern((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
   if sparsity.nnz == 0:
-    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)), coloring_width)
+    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), coloring_width)
   # Flatten piece values that are themselves axis-0 CONCATs so their producers write straight
   # into the single output concat instead of materializing an intermediate nnz-sized buffer.
   flat = [a for v in global_values for a in (v.args if v.op == ExprOp.CONCAT and v.attrs.get("axis", 0) == 0 else (v,))]
@@ -250,7 +250,9 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
 
   global_sparsity = jacobian_sparsity(vmap_expr, wrt)
   if global_sparsity.nnz == 0 or length == 0:
-    return SparseJacobian(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=np.float64)), 0)
+    return SparseJacobian(
+      global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), 0
+    )
 
   dep_memo: dict[tuple[int, int], bool] = {}
   direct_formals: list[int] = []
@@ -264,7 +266,9 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
       return sparse_jacobian_colored(vmap_expr, wrt)
 
   if not direct_formals:
-    return SparseJacobian(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=np.float64)), 0)
+    return SparseJacobian(
+      global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), 0
+    )
 
   rows_arr = np.asarray(global_sparsity.rows, dtype=np.int64)
   cols_arr = np.asarray(global_sparsity.cols, dtype=np.int64)
@@ -285,13 +289,11 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
       continue
     c_f = max(local_colors) + 1
     coloring_width += c_f
-    seed_f = np.zeros((c_f, formal.size), dtype=np.float64)
+    seed_f = np.zeros((c_f, formal.size), dtype=formal.type.dtype.numpy())
     for j, c in enumerate(local_colors):
       seed_f[c, j] = 1.0
     seed_f_shaped = seed_f.reshape((c_f, *formal.shape)) if formal.shape != (formal.size,) else seed_f
-    inner_fn, arg_indices, active = _call_jvp_many_const_function(
-      callee, output_idx, f_idx, seed_f_shaped, pushforward=_jvp, unroll=_jvp_many_unrolled
-    )
+    inner_fn, arg_indices, active = _call_jvp_many_const_function(callee, output_idx, f_idx, seed_f_shaped, pushforward=_pushforward)
     active_count = len(active)
     if active_count == 0:
       continue
@@ -318,7 +320,9 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     pieces.append((gather(mapped_flat, flat_indices), contrib_idx))
 
   if not pieces:
-    return SparseJacobian(global_sparsity, Expr.const(np.zeros((nnz,), dtype=np.float64)), coloring_width)
+    return SparseJacobian(
+      global_sparsity, Expr.const(np.zeros((nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), coloring_width
+    )
   perm = np.concatenate([idx for _, idx in pieces])
   if perm.size == nnz and np.bincount(perm, minlength=nnz).max() == 1:
     # Piece supports exactly partition the nnz (verified: every slot covered exactly once), so
