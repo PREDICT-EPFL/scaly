@@ -1,16 +1,17 @@
 ---
-name: implement-issue
-description: Implement one Scaly GitHub issue end to end in its own worktree, from the brief and a failing test through the checks, one cross-review and the pull request, then address the maintainer's review. Use only when the user or another skill asks for it by name, never on your own initiative.
+name: implement
+description: Implement one Scaly GitHub issue, or a small change the maintainer describes, end to end in its own worktree, from the brief and a failing test through the checks, one cross-review and the pull request, then address the maintainer's review. Use only when the user or another skill asks for it by name, never on your own initiative.
 ---
 
-# Implement a Scaly issue
+# Implement a Scaly change
 
-The input is an issue number, and optionally a brief from `coordinate-issues` that names the base
+The input is an issue number, and optionally a brief from `coordinate` that names the base
 branch, the position in a stack and any limits on scope. The brief and the issue together replace
-a conversation with the maintainer.
+a conversation with the maintainer. Without an issue, the input is a small change the maintainer
+describes in the conversation, and [Without an issue](#without-an-issue) says what changes.
 
-Invoking this skill authorizes committing, pushing this issue's branch, opening and updating its
-pull request, and updating the issue and its Project item. It does not authorize merging a pull
+Invoking this skill authorizes committing, pushing the change's branch, opening and updating its
+pull request, and updating the issue and its Project item when there is one. It does not authorize merging a pull
 request, pushing to main, creating tags or releases, running the deployment workflows, closing
 issues by hand or changing an issue's completion criteria. Those stay with the maintainer.
 
@@ -18,6 +19,31 @@ Implementation steps stay out of public records. When the work has several steps
 `PLAN.md` at the root of the worktree, committed on the branch so another thread can resume it, and
 delete it in the last commit before the pull request is marked ready. Issue comments and the pull
 request state scope, status, results and blockers.
+
+## Without an issue
+
+The pull request takes the issue's place as the record. Before writing code:
+
+1. Write the completion criteria down in a few lines in the conversation, unless the request
+   already states them. They go into the pull request description in step 6.
+2. Decide whether the change should have an issue after all. Recommend one, with a draft title and
+   body, and wait for the maintainer when the change:
+   - needs a design decision, or reopens a decided one
+   - regenerates C snapshots
+   - is unlikely to finish in one thread
+   - reaches beyond what the maintainer described
+
+   Check again whenever the work grows, and stop to recommend the issue when it crosses one of
+   these lines. Once the maintainer agrees, file it through `update-work` and continue as for an
+   issue.
+
+The steps below then apply with these differences:
+
+- In step 1, only check the checkout.
+- In step 2, read what the change touches, and the roadmap section it falls under if there is one.
+- In step 6, the description states the completion criteria itself and names the pull request
+  the change follows up, if any. There is no `Closes` line and no Project item.
+- In step 8, the handoff comment goes on the draft pull request.
 
 ## 1. Brief
 

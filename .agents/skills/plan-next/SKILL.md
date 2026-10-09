@@ -1,6 +1,6 @@
 ---
-name: plan-work
-description: Survey the Scaly backlog, propose which issues to make Ready or move into the current release, group the Ready ones by what they share, and after the maintainer approves, write the coordinate-issues and implement-issue messages that start them. Never edits code or launches threads.
+name: plan-next
+description: Survey the Scaly backlog, propose which issues to make Ready or move into the current release, group the Ready ones by what they share, and after the maintainer approves, write the coordinate and implement messages that start them. Never edits code or launches threads.
 disable-model-invocation: true
 ---
 
@@ -62,9 +62,9 @@ so a stack ties together work that does not otherwise depend on each other.
 
 ## 4. Choose how each group starts
 
-- A group of more than one issue goes to `coordinate-issues`, with its shape stated in the invocation:
+- A group of more than one issue goes to `coordinate`, with its shape stated in the invocation:
   which issues start at once, which wait and for what.
-- A lone issue goes to its own `implement-issue` thread, with the brief from `coordinate-issues`.
+- A lone issue goes to its own `implement` thread, with the brief from `coordinate`.
 - Follow the budget in the global `AGENTS.md`: at most two implementing threads per provider at
   once, no new launch past about 70% of a provider's window, and implementation and review on
   different providers. Put Linux-bound and measurement work on la015.
@@ -84,8 +84,8 @@ Then stop and wait for the maintainer.
 ## 6. Hand over
 
 Apply the approved tracker changes through `update-work`. Then write out, for each group and each
-lone issue, the message that starts it: the `coordinate-issues` invocation with the shape, or the
-`implement-issue` brief. Recommend a provider for each, and a machine where the work needs one. The
+lone issue, the message that starts it: the `coordinate` invocation with the shape, or the
+`implement` brief. Recommend a provider for each, and a machine where the work needs one. The
 maintainer chooses where each one runs and starts it.
 
 Forbidden: editing code, merging, launching threads, and closing an issue without the check from

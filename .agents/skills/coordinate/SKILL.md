@@ -1,6 +1,6 @@
 ---
-name: coordinate-issues
-description: Coordinate a batch of related, partly dependent Scaly issues that belong in one pull request or one stack, launching one implement-issue thread per issue in its own worktree. Use when the maintainer hands over a batch of issues. The coordinator never edits code.
+name: coordinate
+description: Coordinate a batch of related, partly dependent Scaly issues that belong in one pull request or one stack, launching one implement thread per issue in its own worktree. Use when the maintainer hands over a batch of issues. The coordinator never edits code.
 disable-model-invocation: true
 ---
 
@@ -8,13 +8,13 @@ disable-model-invocation: true
 
 The input is a list of issues, or a parent issue whose children form the batch. The coordinator
 plans, launches, watches and relays. It never edits code, and it inherits the forbidden actions of
-`implement-issue`.
+`implement`.
 
 ## Plan
 
 1. Read each issue with `inspect-work`: prerequisites, the roadmap sections linked, the files
    likely touched.
-2. Order the issues with the table in `plan-work`'s *Order and group the Ready issues*. When the
+2. Order the issues with the table in `plan-next`'s *Order and group the Ready issues*. When the
    invocation already states the order, follow it.
 3. Choose the shape by asking whether the pieces will land together anyway:
    - **One lane branch** when they will, or when they cannot pass CI separately. Each child works
@@ -50,7 +50,7 @@ so neither subscription carries both.
 The brief, pasted into each launch:
 
 ```text
-Use the implement-issue skill on #<n>.
+Use the implement skill on #<n>.
 Goal: <one sentence>.
 Scope: <files and behaviour in scope>. Out of scope: <what neighbours own>.
 Design: <roadmap section>. It is decided.
