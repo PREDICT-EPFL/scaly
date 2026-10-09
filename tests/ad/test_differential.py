@@ -78,6 +78,17 @@ def _cases() -> list[Case]:
       if op == ExprOp.ABS and values.size > 1:
         values.reshape(-1)[::2] *= -1
       cases.append(Case(f"{op}-{layout}", op, (values,), build, reference))
+  for layout, shape in [("scalar", ()), ("tensor", (2, 3)), ("empty", (2, 0))]:
+    value = np.linspace(0.2, 0.7, int(np.prod(shape))).reshape(shape)
+    cases.append(Case(f"print-{layout}", ExprOp.PRINT, (value,), lambda x: sc.print("ad {}", x), lambda x: x))
+  cases.extend(
+    [
+      Case(
+        "print-extra-scalar", ExprOp.PRINT, (np.arange(6.0).reshape(2, 3), np.array(0.4)), lambda x, y: sc.print("ad {} {}", x, y), lambda x, y: x
+      ),
+      Case("print-repeated", ExprOp.PRINT, (np.array([0.2, 0.7]),), lambda x: sc.print("ad {} {}", x, x), lambda x: x),
+    ]
+  )
   for op, (build, reference) in BINARY.items():
     for layout, shapes in [
       ("scalars", ((), ())),
@@ -217,10 +228,18 @@ def evaluated(request):
   def primal(args):
     return case.build(*args)
 
+  adjoint_names = tuple(f"adj{i}" for i in range(len(seeds))) + (("printed",) if case.op == ExprOp.PRINT else ())
+
   @sc.function(
     sc.group(inputs, sc.group(*(sc.arg(f"seed{i}", s.shape) for i, s in enumerate(seeds)))),
     outputs=sc.group(
-      *(sc.arg(name) for name in ("single", "many0", "many1", "many3", "baked_single", "baked_many", *(f"adj{i}" for i in range(len(seeds)))))
+      sc.arg("single"),
+      sc.arg("many0"),
+      sc.arg("many1"),
+      sc.arg("many3"),
+      sc.arg("baked_single"),
+      sc.arg("baked_many"),
+      sc.group(*(sc.arg(name) for name in adjoint_names)),
     ),
     name=f"products_{case.name}",
   )
@@ -244,7 +263,7 @@ def evaluated(request):
     baked_terms = [sc.jvp_many(y, x, seed) for x, seed in zip(values, constants, strict=True)]
     baked_many = sum(baked_terms[1:], baked_terms[0])
     adjoints = sc.vjp((y,), values, (sc.const(cotangent),))
-    return (sc.stack(singles), *many, sc.stack(baked_rows), baked_many, *adjoints)
+    return (sc.stack(singles), *many, sc.stack(baked_rows), baked_many, (*adjoints, *((y,) if case.op == ExprOp.PRINT else ())))
 
   with pytest.MonkeyPatch.context() as patch:
     patch.setenv("SCALY_STRICT_JVP_MANY", "0" if _structural_refusal(case) else "1")
@@ -257,7 +276,7 @@ def evaluated(request):
     dict(zip((0, 1, 3), map(np.asarray, result[1:4]), strict=True)),
     seeds,
     cotangent,
-    tuple(result[6:]),
+    tuple(result[6][: len(seeds)]),
     (np.asarray(result[4]), np.asarray(result[5])),
   )
 
