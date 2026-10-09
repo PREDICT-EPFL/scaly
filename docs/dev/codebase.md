@@ -65,7 +65,8 @@ src/scaly/
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
-    reverse.py           vjp and the per-op local adjoint rules
+    reverse.py           vjp and the transpose rules of the structural ops
+    rules.py             the elementwise table: partials, NumPy folds, program ops and C spellings
     calls.py             call and map derivative rules, helper construction, mapped seed layout
     helpers.py           the key and the name of every forward and adjoint helper AD derives for a call
     derivatives.py       jacobian, gradient, hessian, finite_difference
@@ -118,7 +119,7 @@ one, never a higher one.
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
+| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
 | 3 | `function/{model,concrete,tree}` | Function declarations, concrete graph instances, and typed trees over import layer 1. |
 | 4 | `ad/{forward,reverse,calls,helpers,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
@@ -166,12 +167,13 @@ does not see this dependency. If you change those attributes, update the rendere
 
 ## Where to add things
 
-A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is expensive.
+A scalar math op touches three files. Its row in the elementwise table carries everything the
+passes need to know about it.
 
 | To add | Touch |
 | --- | --- |
-| A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering/elementwise.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
-| A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering/` and a structural rule in `ad/sparsity.py` |
+| A scalar math op | `ExprOp`, `OP_INFO` and the `COMMON_ELEMENTWISE_UNARY` or `_BINARY` set in `ir/expr.py`; a matching `ProgramOp` in `ir/program.py` and its category set; a row in `ELEMENTWISE` in `ad/rules.py` giving its partials, NumPy fold, program op, C spelling and whether it is an expensive libm call. Verification, both AD modes, constant folding, lowering, C rendering and fusion read these |
+| A structural expression op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; its pushforward in `ad/forward.py` and its transpose in `ad/reverse.py`; its own `@lowers` rule in `passes/lowering/`; and a structural rule in `ad/sparsity.py` |
 | An expression rewrite | a pattern in `passes/expr.py` |
 | An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |
 | A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |
