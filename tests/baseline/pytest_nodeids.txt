@@ -167,6 +167,7 @@ tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape0-out_shape0]
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape1-out_shape1]
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape2-out_shape2]
 tests/ad/test_joint_jvp.py::test_call_combines_constant_and_runtime_tangents
+tests/ad/test_joint_jvp.py::test_call_helpers_are_cached_on_their_callee
 tests/ad/test_joint_jvp.py::test_division_and_sqrt_derivatives_across_finite_scales[1.0]
 tests/ad/test_joint_jvp.py::test_division_and_sqrt_derivatives_across_finite_scales[1e+200]
 tests/ad/test_joint_jvp.py::test_division_and_sqrt_derivatives_across_finite_scales[1e-200]
@@ -615,6 +616,7 @@ tests/function/test_instances.py::test_duplicate_generated_identifiers_keep_dist
 tests/function/test_instances.py::test_factory_templates_flatten_reordered_inputs_and_bind_seed_shapes
 tests/function/test_instances.py::test_factory_templates_snapshot_requests_and_infer_auxiliary_weight_shapes
 tests/function/test_instances.py::test_fixed_declarations_keep_names_and_fail_at_the_decorator
+tests/function/test_instances.py::test_functions_are_frozen_and_fully_declared_ones_trace_where_defined
 tests/function/test_instances.py::test_partial_declaration_names_encode_only_holes_and_detect_collisions
 tests/function/test_instances.py::test_seeded_derivative_defaults_preserve_whole_leaf_types
 tests/function/test_instances.py::test_seeded_templates_and_lagrangian_multiplier_trees
@@ -631,6 +633,7 @@ tests/function/test_instances.py::test_unseeded_derivatives_bind_and_keep_declar
 tests/function/test_model.py::test_build_takes_trees_and_records_descriptor_and_role
 tests/function/test_model.py::test_call_helpers_record_their_role
 tests/function/test_model.py::test_concrete_functions_are_immutable_and_copies_leave_the_source_unchanged
+tests/function/test_model.py::test_concrete_functions_walk_their_graph_once
 tests/function/test_model.py::test_declaration_rejects_wrong_body_arity
 tests/function/test_model.py::test_function_call_node_eval
 tests/function/test_model.py::test_function_call_normalizes_raw_constant_args
@@ -1208,6 +1211,7 @@ tests/solvers/test_problem.py::test_ipopt_compiles_present_zero_length_constrain
 tests/solvers/test_problem.py::test_ipopt_compiles_present_zero_length_constraint_groups[1-0]
 tests/solvers/test_problem.py::test_ipopt_numerical_call_preserves_multiple_variable_blocks
 tests/solvers/test_problem.py::test_nlp_backend_accepts_a_nonlinear_problem
+tests/solvers/test_problem.py::test_nlp_form_is_derived_once_and_only_as_far_as_it_is_read
 tests/solvers/test_problem.py::test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles
 tests/solvers/test_problem.py::test_nlp_solver_symbolic_call_preserves_variable_blocks
 tests/solvers/test_problem.py::test_piqp_numerical_call_preserves_multiple_variable_blocks

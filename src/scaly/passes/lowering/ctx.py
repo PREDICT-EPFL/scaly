@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, topo
+from ...ir.expr import Expr, ExprOp
 from ...ir.expr_spec import verify_expr
 from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
@@ -149,7 +149,7 @@ def _lower_to_proc(
   observe_expr: ExprObserver | None = None,
 ) -> ProgramNode:
   verify_expr((*fun.inputs, *fun.outputs))
-  lowering = fun._effective_lowering()
+  lowering = fun._effective_lowering
   symbol = symbols[fun]
   fun = _normalize_function(fun)
   if observe_expr is not None:
@@ -162,7 +162,7 @@ def _lower_to_proc(
   proc = p.proc(symbol, ctx.params, ctx.statements)
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
-  nodes = topo(fun.outputs)
+  nodes = fun.nodes
   # Narrower stores round or truncate; scalar substitution must not erase those conversions.
   return ProgramNode(
     ProgramOp.PROC,
@@ -247,7 +247,7 @@ class LowerCtx:
   # --- body -----------------------------------------------------------------
 
   def emit_body(self) -> None:
-    for node in topo(self.fun.outputs):
+    for node in self.fun.nodes:
       if node.id in self.value_buffers:
         continue  # input (or already lowered)
       rule = _RULES.get(ExprOp(node.op))
@@ -431,7 +431,7 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
       names.occupied.add(oracle.raw_symbol)
     for callee in solver_callees(function):
       visit(callee)
-    for node in topo(function.outputs):
+    for node in function.nodes:
       if node.op in (ExprOp.CALL, ExprOp.VMAP):
         visit(node.attrs["callee"])
 

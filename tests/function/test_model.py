@@ -135,6 +135,20 @@ def test_build_takes_trees_and_records_descriptor_and_role() -> None:
     del output_tree.names
 
 
+def test_concrete_functions_walk_their_graph_once(monkeypatch: pytest.MonkeyPatch) -> None:
+  from scaly.function import concrete
+
+  walks: list[int] = []
+  monkeypatch.setattr(concrete, "topo", lambda outputs: walks.append(1) or topo(outputs))
+  x = sc.sym("x", 2)
+  fn = ConcreteFunction._from_exprs("walked", [x], [(x * x).sin()], ["x"], ["y"])
+  assert fn.nodes is fn.nodes and fn.nodes == tuple(topo(fn.outputs))
+  assert fn._effective_lowering == fn._effective_lowering == "auto"
+  assert len(walks) == 1
+  copy = fn._replace(name="walked_copy")
+  assert copy.nodes == fn.nodes and len(walks) == 2
+
+
 def test_call_helpers_record_their_role() -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def inner(x):

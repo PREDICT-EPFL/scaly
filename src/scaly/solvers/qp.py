@@ -8,7 +8,7 @@ from typing import Any, cast
 import numpy as np
 
 from ..ad.derivatives import jacobian
-from ..ad.sparse import SparseJacobian, sparse_hessian, sparse_jacobian
+from ..ad.sparse import sparse_jacobian
 from ..ad.sparsity import _jac_mask
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function
@@ -17,7 +17,6 @@ from ..ir.expr import Expr, ExprOp, concat, substitute, topo
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function, solver_options
-from .nlp import _lowered
 from .problem import Problem, ProblemSpec, bounded, problem
 from .registry import SolverBackend
 
@@ -89,12 +88,10 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
           raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
 
 
-def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> None:
+def _prove_quadratic(problem: Problem[Any, Any, Any, Any]) -> None:
   """Prove that the cost is quadratic and every constraint is affine in the variables."""
-  x = cast(Expr, cached["x"])
-  hessian = sparse_hessian(simplify_cse_fixpoint(cast(Expr, cached["f"])), x)
-  cached["qp_hessian"] = hessian
-  if _jac_mask(hessian.values, x, {}).nnz:
+  x = problem._nlp.x
+  if _jac_mask(problem._nlp.cost_hessian.values, x, {}).nnz:
     raise NotQuadratic(f"{problem.name}: cost is not quadratic in the variables")
 
   def prove_affine(expr: Expr, label: str) -> None:
@@ -102,9 +99,9 @@ def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any
     if _jac_mask(derivative, x, {}).nnz:
       raise NotQuadratic(f"{problem.name}: {label} is not affine in the variables")
 
-  for index, expr in enumerate(cast(tuple[Expr, ...], cached["equalities"])):
+  for index, expr in enumerate(problem._nlp.equalities):
     prove_affine(expr, f"eq[{index}]")
-  for index, (inequality, expr) in enumerate(zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)):
+  for index, (inequality, expr) in enumerate(zip(problem.spec.ineq, problem._nlp.inequalities, strict=True)):
     prove_affine(expr, f"ineq {inequality.name or index}")
 
 
@@ -125,18 +122,17 @@ def _concat_vectors(exprs: tuple[Expr, ...]) -> Expr:
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
-def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr]:
-  x = cast(Expr, cached["x"])
+def _qp_data(problem: Problem[Any, Any, Any, Any]) -> tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr]:
+  nlp = problem._nlp
+  x = nlp.x
   n = x.size
   zero = Expr.const(np.zeros(x.shape))
   replacements = {x: zero}
 
-  hessian = cast(SparseJacobian, cached["qp_hessian"])
-  gradient = cast(ConcreteFunction, cached["grad"])
-  P = simplify_cse_fixpoint(substitute(hessian.to_dense(), replacements))
-  c = simplify_cse_fixpoint(substitute(gradient.outputs[0], replacements))
+  P = simplify_cse_fixpoint(substitute(nlp.cost_hessian.to_dense(), replacements))
+  c = simplify_cse_fixpoint(substitute(nlp.grad.outputs[0], replacements))
 
-  h = cast(Expr | None, cached["h"])
+  h = nlp.h
   if h is None:
     A = Expr.const(np.zeros((0, n)))
     b = Expr.const(np.zeros(0))
@@ -144,7 +140,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
     A = simplify_cse_fixpoint(substitute(sparse_jacobian(h, x).to_dense(), replacements))
     b = simplify_cse_fixpoint(-substitute(h, replacements))
 
-  g = cast(Expr | None, cached["g_ineq"])
+  g = nlp.g_ineq
   if g is None:
     G_mat = Expr.const(np.zeros((0, n)))
     g_lb = Expr.const(np.zeros(0))
@@ -166,16 +162,10 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
   x_lb, x_ub = variable_bounds
   if g is not None:
     lower = _concat_vectors(
-      tuple(
-        _bound(inequality.lo, expr.shape, -np.inf)
-        for inequality, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
-      )
+      tuple(_bound(inequality.lo, expr.shape, -np.inf) for inequality, expr in zip(problem.spec.ineq, nlp.inequalities, strict=True))
     )
     upper = _concat_vectors(
-      tuple(
-        _bound(inequality.hi, expr.shape, np.inf)
-        for inequality, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
-      )
+      tuple(_bound(inequality.hi, expr.shape, np.inf) for inequality, expr in zip(problem.spec.ineq, nlp.inequalities, strict=True))
     )
     offset = simplify_cse_fixpoint(substitute(g, replacements))
     g_lb = simplify_cse_fixpoint(lower - offset)
@@ -201,9 +191,8 @@ def build_qp[SV, NV, SP, NP](
   proof_targets = (problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))
   if _reaches_solver_call(proof_targets):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
-  cached = _lowered(problem)
-  _prove_quadratic(problem, cached)
-  P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
+  _prove_quadratic(problem)
+  P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem)
   n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]
 
   params = problem._param_symbols

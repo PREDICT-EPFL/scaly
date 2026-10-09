@@ -124,6 +124,19 @@ def test_problem_infers_closed_over_parameters_and_retypes_them_nondifferentiabl
   assert state not in topo((inferred.spec.minimize,))
 
 
+def test_nlp_form_is_derived_once_and_only_as_far_as_it_is_read() -> None:
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("target", 2), name="lazy_form")
+  def lazy(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - target), eq=(x.sum() - 1.0,))
+
+  form = lazy._nlp
+  assert form is lazy._nlp and form.problem is lazy
+  assert form.cost_hessian is form.cost_hessian and form.grad is form.grad
+  assert not {"jac", "hess_full"} & set(vars(form))
+  assert form.hess("upper") is form.hess("upper") and form.hess("upper") is not form.hess("lower")
+  assert form.hess("upper").output_names == ("sphess_gamma_x_x",)
+
+
 def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None:
   ipopt_solver = sc.solver(filter_problem, "ipopt", name="filter_ipopt")
   ipopt = ipopt_solver.function

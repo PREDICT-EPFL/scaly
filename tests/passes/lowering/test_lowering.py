@@ -497,7 +497,7 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
   assert normalized.output_sparsities == (sparsity,)
   assert normalized.output_coloring_widths == (2,)
   assert normalized.outputs[0].op == sc.ExprOp.MATMUL
-  assert normalized._effective_lowering() == "block"
+  assert normalized._effective_lowering == "block"
 
 
 @pytest.mark.parametrize("identity", ["none", "compile", "simplify"])
@@ -523,7 +523,7 @@ def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
   lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized))
 
   normalized = observed[0]
-  assert normalized._effective_lowering() == "block"
+  assert normalized._effective_lowering == "block"
   assert normalized.outputs[0] is x
   assert normalized.outputs[1].op == sc.ExprOp.CONST
   assert normalized.outputs[1] is fn.outputs[1]

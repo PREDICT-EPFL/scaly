@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from benchmarks.harness import register_base
 from benchmarks.harness.casadi_ipopt import CasadiIpoptSolver
 from benchmarks.problems.race_cars import CAR_LENGTH, CAR_WIDTH, DELTA_MAX, N_PARAMS, NU, NX, NZ, T_MAX, n_param
 
@@ -122,9 +123,10 @@ def build_casadi_race_car_sqp(config, *, sqp_options: dict[str, str | int | floa
   constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(constraints.shape[0]))
   stem = f"ca_race_sqp_N{config.horizon}"
-  return build_casadi_external_sqp(
+  base = ca.Function(f"{stem}_base", [z, p], [cost, constraints])
+  solver = build_casadi_external_sqp(
     name=stem,
-    base=ca.Function(f"{stem}_base", [z, p], [cost, constraints]),
+    base=base,
     grad=ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)]),
     jac=ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(constraints, z)]),
     hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [ca.hessian(lam_f * cost + ca.dot(lam_g, constraints), z)[0]]),
@@ -137,6 +139,8 @@ def build_casadi_race_car_sqp(config, *, sqp_options: dict[str, str | int | floa
     # Identical SQP settings to closed_loop._race_car_nlp.
     options={"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})},
   )
+  register_base(solver.function, base)
+  return solver
 
 
 class CasadiRaceCarSolver(CasadiIpoptSolver):

@@ -114,7 +114,7 @@ def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch
   import scaly as sc
   import numpy as np
   from scaly.codegen import jit
-  from benchmarks.harness import solve_problem
+  from benchmarks.harness import register_base, solve_problem
 
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
 
@@ -128,7 +128,7 @@ def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch
   def diagnostic(x: sc.Expr) -> sc.Expr:
     return x.sin()
 
-  setattr(solver.function, "_benchmark_base", diagnostic)
+  register_base(solver.function, diagnostic)
   timing = SolveTiming()
   timing.prepared(solver)
 

@@ -4,6 +4,8 @@ from scaly.function.concrete import ConcreteFunction
 
 from scaly.function.model import as_concrete
 
+from benchmarks.harness import registered_base
+
 
 from time import perf_counter
 
@@ -16,7 +18,7 @@ def prepare_solver(controller) -> None:
 
   if isinstance(controller, sc.Solver):
     plain = controller.function
-    for function in (plain, as_concrete(plain).descriptor.base, getattr(plain, "_benchmark_base", None)):
+    for function in (plain, as_concrete(plain).descriptor.base, registered_base(plain)):
       if isinstance(function, sc.Function | ConcreteFunction):
         function.compile()
 

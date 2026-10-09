@@ -10,7 +10,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
 from ..ir.types import SparsityPattern, TensorType
-from .model import Function, as_concrete, lift
+from .model import Function, _Derived, _traced, as_concrete
 from .tree import Tree, _G, _Leaf, _leaves
 from .concrete import ConcreteFunction
 
@@ -169,52 +169,9 @@ def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False
   return value if len(value.shape) == 1 else value.vec(), 0, 0 if repeated else width
 
 
-class _Mapped(Function):
-  def __init__(self, source: Function, length: int) -> None:
-    self._source = source
-    self._length = length
-
-    def strip_axis(skeleton):
-      if isinstance(skeleton, tuple):
-        return tuple(strip_axis(part) for part in skeleton)
-      if not skeleton.shape or skeleton.shape[0] != length:
-        raise ValueError(f"vmap needs leading axis {length}, got {skeleton.shape}")
-      return TensorType(skeleton.shape[1:], skeleton.dtype, skeleton.diff)
-
-    def transform(concrete: ConcreteFunction) -> ConcreteFunction:
-      if length in concrete._memo.maps:
-        return concrete._memo.maps[length]
-      inputs = _batch_tree(concrete.input_tree, length)
-      outputs = _batch_tree(concrete.output_tree, length)
-
-      def body(*args):
-        actuals = inputs.flatten_symbolic(args, "vmap inputs")
-        specs = [
-          (actual if len(actual.shape) == 1 else actual.vec(), 0, formal.size) for actual, formal in zip(actuals, concrete.inputs, strict=True)
-        ]
-        values = tuple(_mapped_call(concrete, length, specs, i).reshape((length, *out.shape)) for i, out in enumerate(concrete.outputs))
-        return outputs.unflatten(values)
-
-      concrete._memo.maps[length] = ConcreteFunction._trace(f"{concrete.name}_vmap{length}", body, inputs, outputs)
-      return concrete._memo.maps[length]
-
-    registry = lift(
-      source,
-      None if source.inputs is None else _batch_tree(source.inputs, length),
-      None if source.outputs is None else _batch_tree(source.outputs, length),
-      transform,
-      name=f"{source.name}_vmap{length}",
-      source_skeleton=strip_axis,
-    )
-    self._registry = registry
-    self.name, self.inputs, self.outputs, self.instances = registry.name, registry.inputs, registry.outputs, registry.instances
-    self._fn = registry._fn
-
-  def instantiate(self, shapes: tuple[int | tuple[int, ...] | TensorType, ...] | None = None, /) -> ConcreteFunction:
-    return self._registry.instantiate(shapes)
-
-  def _bind(self, skeleton: Any, what: str) -> ConcreteFunction:
-    return self._registry._bind(skeleton, what)
+@dataclass(frozen=True, eq=False, repr=False)
+class _Mapped(_Derived):
+  _length: int
 
   def _arguments(self, args: tuple[Any, ...]) -> tuple[ConcreteFunction, list[Any], list[tuple[int, int]], Any]:
     actuals = []
@@ -289,7 +246,7 @@ class _Mapped(Function):
     def add_axis(item):
       return tuple(add_axis(part) for part in item) if isinstance(item, tuple) else TensorType((self._length, *item.shape), item.dtype, item.diff)
 
-    return self._registry._bind(add_axis(skeleton), self.name)
+    return self._bind(add_axis(skeleton), self.name)
 
   def sparsity(self, *args: Any, of: str | None = None) -> SparsityPattern | None:
     """Return the callee's per-iteration pattern for each leading output slice.
@@ -336,4 +293,37 @@ def vmap[SI, NI, SO, NO](callee: Function[SI, NI, SO, NO] | ConcreteFunction[SI,
   if length < 0:
     raise ValueError("vmap length must be non-negative")
   source = Function._from_instance(callee) if isinstance(callee, ConcreteFunction) else callee
-  return cast(Function[SI, NI, SO, NO], _Mapped(source, length))
+
+  def strip_axis(skeleton):
+    if isinstance(skeleton, tuple):
+      return tuple(strip_axis(part) for part in skeleton)
+    if not skeleton.shape or skeleton.shape[0] != length:
+      raise ValueError(f"vmap needs leading axis {length}, got {skeleton.shape}")
+    return TensorType(skeleton.shape[1:], skeleton.dtype, skeleton.diff)
+
+  def transform(concrete: ConcreteFunction) -> ConcreteFunction:
+    if length in concrete._memo.maps:
+      return concrete._memo.maps[length]
+    inputs = _batch_tree(concrete.input_tree, length)
+    outputs = _batch_tree(concrete.output_tree, length)
+
+    def body(*args):
+      actuals = inputs.flatten_symbolic(args, "vmap inputs")
+      specs = [(actual if len(actual.shape) == 1 else actual.vec(), 0, formal.size) for actual, formal in zip(actuals, concrete.inputs, strict=True)]
+      values = tuple(_mapped_call(concrete, length, specs, i).reshape((length, *out.shape)) for i, out in enumerate(concrete.outputs))
+      return outputs.unflatten(values)
+
+    concrete._memo.maps[length] = ConcreteFunction._trace(f"{concrete.name}_vmap{length}", body, inputs, outputs)
+    return concrete._memo.maps[length]
+
+  mapped = _Mapped(
+    f"{source.name}_vmap{length}",
+    source._fn,
+    None if source.inputs is None else _batch_tree(source.inputs, length),
+    None if source.outputs is None else _batch_tree(source.outputs, length),
+    source,
+    transform,
+    strip_axis,
+    length,
+  )
+  return cast(Function[SI, NI, SO, NO], _traced(mapped))

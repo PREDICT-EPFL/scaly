@@ -34,6 +34,34 @@ Prefer small, direct implementations that follow the surrounding code.
 - Comments explain why, and only when the why is not evident. Code that needs a comment to say
   what it does usually needs different code.
 
+## Frozen lazy records
+
+A class that turns a few fixed inputs into derived data is a
+[frozen lazy record](https://gist.github.com/tudoroancea/cca107e4dc47743b4062c26291a9655e).
+`ConcreteFunction`, `Function`, `CModule` and the stacked NLP form behind a `Problem` are examples.
+Any value such a record derives can be read and checked on its own, in a test or a debugger.
+
+- Declare it with `@dataclass(frozen=True)`, adding `eq=False` when a field holds an array or a
+  callable, so that records compare by identity. Leave out `slots=True`, because a
+  `cached_property` stores its value in the instance dictionary that slots remove.
+- The fields are the only inputs, and their contents do not change: tuples, frozensets, read-only
+  arrays, interned expressions, other records. A factory function copies and freezes mutable input.
+- A derived value is a `cached_property`, or a plain `property` when it is a trivial alias. It reads
+  only the record, never an environment variable, a file or the clock.
+- Nothing changes a record once it is built. A new input means a new record, made by a factory, a
+  transformation such as `sc.gradient`, or `dataclasses.replace`.
+- `__post_init__` runs cheap checks and leaves expensive values to their first read.
+- Methods take inputs that vary from call to call. When results are cached per argument, as
+  `Function.instantiate` caches one instance per binding, they go in a dictionary field declared
+  with `field(init=False, default_factory=dict)`.
+- State that evolves, such as solver statistics, stays in ordinary objects.
+
+`ConcreteFunction.recompile()` is the one deliberate exception to the rule against changes. It
+drops the loaded library so that the next call compiles again. `Expr` and `ProgramNode` are frozen
+but not lazy records. A graph can hold millions of them, so they are slotted and interned, and the
+one value an `Expr` caches, its structural key, lives in a slot. `CompiledFunction` compiles in its
+constructor, which callers rely on, so it stays an ordinary class.
+
 ## Where a module belongs
 
 Every module has an import layer. A module may import its own import layer or a lower one, never a

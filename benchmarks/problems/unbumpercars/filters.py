@@ -10,6 +10,7 @@ import numpy as np
 from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_module
+from benchmarks.harness import register_base, registered_base
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
 from .common import (
   ClosedLoopConfig,
@@ -448,9 +449,10 @@ def build_casadi_sqp(
   z, p = ca.MX.sym("z", controller.n_z), ca.MX.sym("p", controller.n_p)
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", controller.n_s)
   stem = f"ca_unbumpercars_sqp_C{loop_cfg.ncars}"
-  return build_casadi_external_sqp(
+  base = ca.Function(f"{stem}_base", [z, p], [controller.cost_fn(z, p), controller.g_fn(z, p)])
+  solver = build_casadi_external_sqp(
     name=stem,
-    base=ca.Function(f"{stem}_base", [z, p], [controller.cost_fn(z, p), controller.g_fn(z, p)]),
+    base=base,
     grad=ca.Function(f"{stem}_grad", [z, p], [controller.grad_fn(z, p)]),
     jac=ca.Function(f"{stem}_jac", [z, p], [controller.jac_fn(z, p)]),
     hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [controller.hess_fn(z, p, lam_f, lam_g)]),
@@ -462,6 +464,8 @@ def build_casadi_sqp(
     u_ineq=np.full(controller.n_s, np.inf),
     options={"max_iter": SQP_MAX_ITER, "tol": filt_cfg.ipopt_tol, "dual_tol": SQP_DUAL_TOL, **(sqp_options or {})},
   )
+  register_base(solver.function, base)
+  return solver
 
 
 # ---------------------------------------------------------------------------
@@ -732,7 +736,7 @@ def build_scaly_nlp(
     )
 
   result = sc.solver(problem, solver, name=base.name.replace("_oracle", f"_{solver}_nlp"), options=options)
-  setattr(result.function, "_benchmark_base", base)
+  register_base(result.function, base)
   return result
 
 
@@ -874,7 +878,7 @@ class ScalyDTCBFSafetyFilter:
         box_sol = np.concatenate(box)
       else:
         z_sol, box_sol = variables, box
-      evaluator = getattr(active_nlp.function, "_benchmark_base")
+      evaluator = registered_base(active_nlp.function)
       _, constraints = evaluator(z_sol, *params)
       return {
         "x": np.asarray(z_sol),

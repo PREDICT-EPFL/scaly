@@ -7,7 +7,6 @@ to unrolling ``jvp`` per seed unless ``SCALY_STRICT_JVP_MANY`` forbids it.
 from __future__ import annotations
 
 import hashlib
-import weakref
 from typing import Any
 
 import numpy as np
@@ -18,18 +17,6 @@ from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, substitute, 
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
-
-
-# Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
-# CPython may reuse ids after a short-lived ConcreteFunction is collected, which can splice a stale
-# call-JVP helper into a different graph under xdist/CI-sized test runs.
-_CALL_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], tuple[int, ...]]]] = (
-  weakref.WeakKeyDictionary()
-)
-_CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]]] = (
-  weakref.WeakKeyDictionary()
-)
-_CALL_JVP_PACK_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Any]] = weakref.WeakKeyDictionary()
 
 
 class _JVPManyUnsupported(Exception):
@@ -167,7 +154,7 @@ def _call_jvp_many_function(
   callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
   key = (output_index, formal_indices, nseed, tuple(None if value is None else value.tobytes() for value in constants))
-  cache = _CALL_JVP_MANY_CACHE.setdefault(callee, {})
+  cache = callee._memo.jvp_many
   if key not in cache:
     active = tuple(range(nseed))
     if all(value is not None for value in constants):
@@ -214,7 +201,7 @@ def _call_jvp_many_const_function(
 
 def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int, ...]) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
   key = (output_index, formal_indices)
-  cache = _CALL_JVP_CACHE.setdefault(callee, {})
+  cache = callee._memo.jvp
   if key not in cache:
     seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
     deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
@@ -243,7 +230,7 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
     else:
       groups.append((mapped.attrs["length"], specs, [mapped]))
   replacements = {}
-  cache = _CALL_JVP_PACK_CACHE.setdefault(callee, {})
+  cache = callee._memo.jvp_packs
   for length, bindings, members in groups:
     if len(members) == 1:
       continue

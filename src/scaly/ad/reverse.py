@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import weakref
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -12,9 +11,6 @@ from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .sparsity import _depends_on
-
-
-_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...]]]] = weakref.WeakKeyDictionary()
 
 
 def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
@@ -34,7 +30,7 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
 
 def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
   key = (output_index, active_formals)
-  cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
+  cache = callee._memo.vmap_adjoints
   if key not in cache:
     out = callee.outputs[output_index]
     lam_name = f"lam:{callee.output_names[output_index]}"
