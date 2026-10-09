@@ -20,12 +20,12 @@ def _program(count=9):
 
 @pytest.mark.parametrize("lanes", ["auto", 1, 2, 4, 8])
 def test_explicit_lane_range_and_clamped_stage(lanes):
-  result = widen_ranges(_program(), lanes=lanes)
+  result = widen_ranges(_program(17), lanes=lanes)
   verify_program(result)
   ranges = [n for n in walk_program(result) if n.op == ProgramOp.RANGE]
   assert sum(n.attrs["kind"] == RangeKind.VECTOR for n in ranges) == 1
   assert any(n.op == ProgramOp.MINIMUM for n in walk_program(result))
-  assert any(n.attrs.get("vector_count") == 9 for n in walk_program(result))
+  assert any(n.attrs.get("vector_count") == 17 for n in walk_program(result))
 
 
 @pytest.mark.parametrize(("count", "cap"), [(2, 2), (3, 4), (5, 8)])

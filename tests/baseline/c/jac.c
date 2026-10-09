@@ -33,13 +33,12 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 #else
 #define SCALY_REGISTER_SLOTS 16
 #endif
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_7 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4))
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_6 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4))
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_5 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4))
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_4 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_3 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_2 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
-#define SCALY_WIDTH_dynamics_jac_znext_z_lanes_1 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
+#define SCALY_WIDTH_4_4_4_4 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4))
+typedef double lanes_4_4_4_4_vec __attribute__((vector_size(8 * SCALY_WIDTH_4_4_4_4)));
+typedef lanes_4_4_4_4_vec lanes_4_4_4_4_vec_mem __attribute__((aligned(8), may_alias));
+#define SCALY_WIDTH_2_2_2_2 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
+typedef double lanes_2_2_2_2_vec __attribute__((vector_size(8 * SCALY_WIDTH_2_2_2_2)));
+typedef lanes_2_2_2_2_vec lanes_2_2_2_2_vec_mem __attribute__((aligned(8), may_alias));
 
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
@@ -51,77 +50,63 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 extern "C" {
 #endif
 
-typedef double dynamics_jac_znext_z_lanes_1_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1)));
-typedef dynamics_jac_znext_z_lanes_1_vec dynamics_jac_znext_z_lanes_1_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_1(long long j_t7_0_chunk, long long dynamics_jac_znext_z_lanes_1_valid, const double* s0, double* s1) {
-  dynamics_jac_znext_z_lanes_1_vec dynamics_jac_znext_z_lanes_1_load_1;
-  if (dynamics_jac_znext_z_lanes_1_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) dynamics_jac_znext_z_lanes_1_load_1 = *(const dynamics_jac_znext_z_lanes_1_vec_mem*)(&s0[(0 + (((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + 0) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + 0) : 1))]);
-  else for (long long j_t7_0_lane = 0; j_t7_0_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_1; ++j_t7_0_lane) dynamics_jac_znext_z_lanes_1_load_1[j_t7_0_lane] = s0[(0 + (((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + j_t7_0_lane) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + j_t7_0_lane) : 1))];
-  dynamics_jac_znext_z_lanes_1_vec dynamics_jac_znext_z_lanes_1_store_2 = dynamics_jac_znext_z_lanes_1_load_1;
-  if (dynamics_jac_znext_z_lanes_1_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) *(dynamics_jac_znext_z_lanes_1_vec_mem*)(&s1[((0 + (((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + 0) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + 0) : 1))) + 0]) = dynamics_jac_znext_z_lanes_1_store_2;
-  else for (long long j_t7_0_lane = 0; j_t7_0_lane < dynamics_jac_znext_z_lanes_1_valid; ++j_t7_0_lane) s1[((0 + (((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + j_t7_0_lane) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) + j_t7_0_lane) : 1))) + 0] = dynamics_jac_znext_z_lanes_1_store_2[j_t7_0_lane];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_1_load_1;
+  if (dynamics_jac_znext_z_lanes_1_valid == SCALY_WIDTH_2_2_2_2) dynamics_jac_znext_z_lanes_1_load_1 = *(const lanes_2_2_2_2_vec_mem*)(&s0[(0 + (((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1))]);
+  else for (long long j_t7_0_lane = 0; j_t7_0_lane < SCALY_WIDTH_2_2_2_2; ++j_t7_0_lane) dynamics_jac_znext_z_lanes_1_load_1[j_t7_0_lane] = s0[(0 + (((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_0_lane) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_0_lane) : 1))];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_1_store_2 = dynamics_jac_znext_z_lanes_1_load_1;
+  if (dynamics_jac_znext_z_lanes_1_valid == SCALY_WIDTH_2_2_2_2) *(lanes_2_2_2_2_vec_mem*)(&s1[((0 + (((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1))) + 0]) = dynamics_jac_znext_z_lanes_1_store_2;
+  else for (long long j_t7_0_lane = 0; j_t7_0_lane < dynamics_jac_znext_z_lanes_1_valid; ++j_t7_0_lane) s1[((0 + (((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_0_lane) < 1 ? ((j_t7_0_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_0_lane) : 1))) + 0] = dynamics_jac_znext_z_lanes_1_store_2[j_t7_0_lane];
 }
-typedef double dynamics_jac_znext_z_lanes_2_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2)));
-typedef dynamics_jac_znext_z_lanes_2_vec dynamics_jac_znext_z_lanes_2_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_2(long long j_t7_1_chunk, long long dynamics_jac_znext_z_lanes_2_valid, const double* s0, double* s1) {
-  dynamics_jac_znext_z_lanes_2_vec dynamics_jac_znext_z_lanes_2_load_1;
-  if (dynamics_jac_znext_z_lanes_2_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) dynamics_jac_znext_z_lanes_2_load_1 = *(const dynamics_jac_znext_z_lanes_2_vec_mem*)(&s0[(0 + (((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + 0) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + 0) : 1))]);
-  else for (long long j_t7_1_lane = 0; j_t7_1_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_2; ++j_t7_1_lane) dynamics_jac_znext_z_lanes_2_load_1[j_t7_1_lane] = s0[(0 + (((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + j_t7_1_lane) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + j_t7_1_lane) : 1))];
-  dynamics_jac_znext_z_lanes_2_vec dynamics_jac_znext_z_lanes_2_store_2 = dynamics_jac_znext_z_lanes_2_load_1;
-  if (dynamics_jac_znext_z_lanes_2_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) *(dynamics_jac_znext_z_lanes_2_vec_mem*)(&s1[((2 + (0 + (((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + 0) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + 0) : 1)))) + 0]) = dynamics_jac_znext_z_lanes_2_store_2;
-  else for (long long j_t7_1_lane = 0; j_t7_1_lane < dynamics_jac_znext_z_lanes_2_valid; ++j_t7_1_lane) s1[((2 + (0 + (((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + j_t7_1_lane) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) + j_t7_1_lane) : 1)))) + 0] = dynamics_jac_znext_z_lanes_2_store_2[j_t7_1_lane];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_2_load_1;
+  if (dynamics_jac_znext_z_lanes_2_valid == SCALY_WIDTH_2_2_2_2) dynamics_jac_znext_z_lanes_2_load_1 = *(const lanes_2_2_2_2_vec_mem*)(&s0[(0 + (((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1))]);
+  else for (long long j_t7_1_lane = 0; j_t7_1_lane < SCALY_WIDTH_2_2_2_2; ++j_t7_1_lane) dynamics_jac_znext_z_lanes_2_load_1[j_t7_1_lane] = s0[(0 + (((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_1_lane) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_1_lane) : 1))];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_2_store_2 = dynamics_jac_znext_z_lanes_2_load_1;
+  if (dynamics_jac_znext_z_lanes_2_valid == SCALY_WIDTH_2_2_2_2) *(lanes_2_2_2_2_vec_mem*)(&s1[((2 + (0 + (((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1)))) + 0]) = dynamics_jac_znext_z_lanes_2_store_2;
+  else for (long long j_t7_1_lane = 0; j_t7_1_lane < dynamics_jac_znext_z_lanes_2_valid; ++j_t7_1_lane) s1[((2 + (0 + (((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_1_lane) < 1 ? ((j_t7_1_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_1_lane) : 1)))) + 0] = dynamics_jac_znext_z_lanes_2_store_2[j_t7_1_lane];
 }
-typedef double dynamics_jac_znext_z_lanes_3_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3)));
-typedef dynamics_jac_znext_z_lanes_3_vec dynamics_jac_znext_z_lanes_3_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_3(long long j_t7_2_chunk, long long dynamics_jac_znext_z_lanes_3_valid, const double* s0, double* s1) {
-  dynamics_jac_znext_z_lanes_3_vec dynamics_jac_znext_z_lanes_3_load_1;
-  if (dynamics_jac_znext_z_lanes_3_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) dynamics_jac_znext_z_lanes_3_load_1 = *(const dynamics_jac_znext_z_lanes_3_vec_mem*)(&s0[(0 + (((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + 0) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + 0) : 1))]);
-  else for (long long j_t7_2_lane = 0; j_t7_2_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_3; ++j_t7_2_lane) dynamics_jac_znext_z_lanes_3_load_1[j_t7_2_lane] = s0[(0 + (((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + j_t7_2_lane) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + j_t7_2_lane) : 1))];
-  dynamics_jac_znext_z_lanes_3_vec dynamics_jac_znext_z_lanes_3_store_2 = dynamics_jac_znext_z_lanes_3_load_1;
-  if (dynamics_jac_znext_z_lanes_3_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) *(dynamics_jac_znext_z_lanes_3_vec_mem*)(&s1[((4 + (0 + (((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + 0) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + 0) : 1)))) + 0]) = dynamics_jac_znext_z_lanes_3_store_2;
-  else for (long long j_t7_2_lane = 0; j_t7_2_lane < dynamics_jac_znext_z_lanes_3_valid; ++j_t7_2_lane) s1[((4 + (0 + (((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + j_t7_2_lane) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) + j_t7_2_lane) : 1)))) + 0] = dynamics_jac_znext_z_lanes_3_store_2[j_t7_2_lane];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_3_load_1;
+  if (dynamics_jac_znext_z_lanes_3_valid == SCALY_WIDTH_2_2_2_2) dynamics_jac_znext_z_lanes_3_load_1 = *(const lanes_2_2_2_2_vec_mem*)(&s0[(0 + (((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1))]);
+  else for (long long j_t7_2_lane = 0; j_t7_2_lane < SCALY_WIDTH_2_2_2_2; ++j_t7_2_lane) dynamics_jac_znext_z_lanes_3_load_1[j_t7_2_lane] = s0[(0 + (((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_2_lane) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_2_lane) : 1))];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_3_store_2 = dynamics_jac_znext_z_lanes_3_load_1;
+  if (dynamics_jac_znext_z_lanes_3_valid == SCALY_WIDTH_2_2_2_2) *(lanes_2_2_2_2_vec_mem*)(&s1[((4 + (0 + (((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1)))) + 0]) = dynamics_jac_znext_z_lanes_3_store_2;
+  else for (long long j_t7_2_lane = 0; j_t7_2_lane < dynamics_jac_znext_z_lanes_3_valid; ++j_t7_2_lane) s1[((4 + (0 + (((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_2_lane) < 1 ? ((j_t7_2_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_2_lane) : 1)))) + 0] = dynamics_jac_znext_z_lanes_3_store_2[j_t7_2_lane];
 }
-typedef double dynamics_jac_znext_z_lanes_4_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4)));
-typedef dynamics_jac_znext_z_lanes_4_vec dynamics_jac_znext_z_lanes_4_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_4(long long j_t7_3_chunk, long long dynamics_jac_znext_z_lanes_4_valid, const double* s0, double* s1) {
-  dynamics_jac_znext_z_lanes_4_vec dynamics_jac_znext_z_lanes_4_load_1;
-  if (dynamics_jac_znext_z_lanes_4_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) dynamics_jac_znext_z_lanes_4_load_1 = *(const dynamics_jac_znext_z_lanes_4_vec_mem*)(&s0[(0 + (((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + 0) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + 0) : 1))]);
-  else for (long long j_t7_3_lane = 0; j_t7_3_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_4; ++j_t7_3_lane) dynamics_jac_znext_z_lanes_4_load_1[j_t7_3_lane] = s0[(0 + (((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + j_t7_3_lane) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + j_t7_3_lane) : 1))];
-  dynamics_jac_znext_z_lanes_4_vec dynamics_jac_znext_z_lanes_4_store_2 = dynamics_jac_znext_z_lanes_4_load_1;
-  if (dynamics_jac_znext_z_lanes_4_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) *(dynamics_jac_znext_z_lanes_4_vec_mem*)(&s1[((6 + (0 + (((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + 0) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + 0) : 1)))) + 0]) = dynamics_jac_znext_z_lanes_4_store_2;
-  else for (long long j_t7_3_lane = 0; j_t7_3_lane < dynamics_jac_znext_z_lanes_4_valid; ++j_t7_3_lane) s1[((6 + (0 + (((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + j_t7_3_lane) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) + j_t7_3_lane) : 1)))) + 0] = dynamics_jac_znext_z_lanes_4_store_2[j_t7_3_lane];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_4_load_1;
+  if (dynamics_jac_znext_z_lanes_4_valid == SCALY_WIDTH_2_2_2_2) dynamics_jac_znext_z_lanes_4_load_1 = *(const lanes_2_2_2_2_vec_mem*)(&s0[(0 + (((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1))]);
+  else for (long long j_t7_3_lane = 0; j_t7_3_lane < SCALY_WIDTH_2_2_2_2; ++j_t7_3_lane) dynamics_jac_znext_z_lanes_4_load_1[j_t7_3_lane] = s0[(0 + (((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_3_lane) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_3_lane) : 1))];
+  lanes_2_2_2_2_vec dynamics_jac_znext_z_lanes_4_store_2 = dynamics_jac_znext_z_lanes_4_load_1;
+  if (dynamics_jac_znext_z_lanes_4_valid == SCALY_WIDTH_2_2_2_2) *(lanes_2_2_2_2_vec_mem*)(&s1[((6 + (0 + (((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1)))) + 0]) = dynamics_jac_znext_z_lanes_4_store_2;
+  else for (long long j_t7_3_lane = 0; j_t7_3_lane < dynamics_jac_znext_z_lanes_4_valid; ++j_t7_3_lane) s1[((6 + (0 + (((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_3_lane) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + j_t7_3_lane) : 1)))) + 0] = dynamics_jac_znext_z_lanes_4_store_2[j_t7_3_lane];
 }
-typedef double dynamics_jac_znext_z_lanes_5_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_5)));
-typedef dynamics_jac_znext_z_lanes_5_vec dynamics_jac_znext_z_lanes_5_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_5(long long i_t10_chunk, long long dynamics_jac_znext_z_lanes_5_valid, double* s0) {
-  dynamics_jac_znext_z_lanes_5_vec dynamics_jac_znext_z_lanes_5_broadcast_1;
-  for (int i_t10_lane = 0; i_t10_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_5; ++i_t10_lane) dynamics_jac_znext_z_lanes_5_broadcast_1[i_t10_lane] = 0.0;
-  dynamics_jac_znext_z_lanes_5_vec dynamics_jac_znext_z_lanes_5_store_2 = dynamics_jac_znext_z_lanes_5_broadcast_1;
-  if (dynamics_jac_znext_z_lanes_5_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_5) *(dynamics_jac_znext_z_lanes_5_vec_mem*)(&s0[((0 + (((i_t10_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_5) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_5) + 0) : 3))) + 0]) = dynamics_jac_znext_z_lanes_5_store_2;
-  else for (long long i_t10_lane = 0; i_t10_lane < dynamics_jac_znext_z_lanes_5_valid; ++i_t10_lane) s0[((0 + (((i_t10_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_5) + i_t10_lane) < 3 ? ((i_t10_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_5) + i_t10_lane) : 3))) + 0] = dynamics_jac_znext_z_lanes_5_store_2[i_t10_lane];
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_5_broadcast_1;
+  for (int i_t10_lane = 0; i_t10_lane < SCALY_WIDTH_4_4_4_4; ++i_t10_lane) dynamics_jac_znext_z_lanes_5_broadcast_1[i_t10_lane] = 0.0;
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_5_store_2 = dynamics_jac_znext_z_lanes_5_broadcast_1;
+  if (dynamics_jac_znext_z_lanes_5_valid == SCALY_WIDTH_4_4_4_4) *(lanes_4_4_4_4_vec_mem*)(&s0[((0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0]) = dynamics_jac_znext_z_lanes_5_store_2;
+  else for (long long i_t10_lane = 0; i_t10_lane < dynamics_jac_znext_z_lanes_5_valid; ++i_t10_lane) s0[((0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + i_t10_lane) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + i_t10_lane) : 3))) + 0] = dynamics_jac_znext_z_lanes_5_store_2[i_t10_lane];
 }
-typedef double dynamics_jac_znext_z_lanes_6_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6)));
-typedef dynamics_jac_znext_z_lanes_6_vec dynamics_jac_znext_z_lanes_6_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_6(long long i_t11_chunk, long long dynamics_jac_znext_z_lanes_6_valid, const double* s0, double* s1) {
-  dynamics_jac_znext_z_lanes_6_vec dynamics_jac_znext_z_lanes_6_broadcast_1;
-  for (int i_t11_lane = 0; i_t11_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_6; ++i_t11_lane) dynamics_jac_znext_z_lanes_6_broadcast_1[i_t11_lane] = 0.10000000000000001;
-  dynamics_jac_znext_z_lanes_6_vec dynamics_jac_znext_z_lanes_6_load_2;
-  if (dynamics_jac_znext_z_lanes_6_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) dynamics_jac_znext_z_lanes_6_load_2 = *(const dynamics_jac_znext_z_lanes_6_vec_mem*)(&s0[(0 + (((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + 0) : 3))]);
-  else for (long long i_t11_lane = 0; i_t11_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_6; ++i_t11_lane) dynamics_jac_znext_z_lanes_6_load_2[i_t11_lane] = s0[(0 + (((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + i_t11_lane) < 3 ? ((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + i_t11_lane) : 3))];
-  dynamics_jac_znext_z_lanes_6_vec dynamics_jac_znext_z_lanes_6_store_3 = (dynamics_jac_znext_z_lanes_6_broadcast_1 * dynamics_jac_znext_z_lanes_6_load_2);
-  if (dynamics_jac_znext_z_lanes_6_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) *(dynamics_jac_znext_z_lanes_6_vec_mem*)(&s1[((0 + (((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + 0) : 3))) + 0]) = dynamics_jac_znext_z_lanes_6_store_3;
-  else for (long long i_t11_lane = 0; i_t11_lane < dynamics_jac_znext_z_lanes_6_valid; ++i_t11_lane) s1[((0 + (((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + i_t11_lane) < 3 ? ((i_t11_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) + i_t11_lane) : 3))) + 0] = dynamics_jac_znext_z_lanes_6_store_3[i_t11_lane];
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_6_broadcast_1;
+  for (int i_t11_lane = 0; i_t11_lane < SCALY_WIDTH_4_4_4_4; ++i_t11_lane) dynamics_jac_znext_z_lanes_6_broadcast_1[i_t11_lane] = 0.10000000000000001;
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_6_load_2;
+  if (dynamics_jac_znext_z_lanes_6_valid == SCALY_WIDTH_4_4_4_4) dynamics_jac_znext_z_lanes_6_load_2 = *(const lanes_4_4_4_4_vec_mem*)(&s0[(0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))]);
+  else for (long long i_t11_lane = 0; i_t11_lane < SCALY_WIDTH_4_4_4_4; ++i_t11_lane) dynamics_jac_znext_z_lanes_6_load_2[i_t11_lane] = s0[(0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + i_t11_lane) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + i_t11_lane) : 3))];
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_6_store_3 = (dynamics_jac_znext_z_lanes_6_broadcast_1 * dynamics_jac_znext_z_lanes_6_load_2);
+  if (dynamics_jac_znext_z_lanes_6_valid == SCALY_WIDTH_4_4_4_4) *(lanes_4_4_4_4_vec_mem*)(&s1[((0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0]) = dynamics_jac_znext_z_lanes_6_store_3;
+  else for (long long i_t11_lane = 0; i_t11_lane < dynamics_jac_znext_z_lanes_6_valid; ++i_t11_lane) s1[((0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + i_t11_lane) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + i_t11_lane) : 3))) + 0] = dynamics_jac_znext_z_lanes_6_store_3[i_t11_lane];
 }
-typedef double dynamics_jac_znext_z_lanes_7_vec __attribute__((vector_size(8 * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7)));
-typedef dynamics_jac_znext_z_lanes_7_vec dynamics_jac_znext_z_lanes_7_vec_mem __attribute__((aligned(8), may_alias));
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_7(long long d1_jac_znext_z_chunk, long long dynamics_jac_znext_z_lanes_7_valid, double* jac_znext_z, const double* s2, int64_t d0_jac_znext_z) {
-  dynamics_jac_znext_z_lanes_7_vec dynamics_jac_znext_z_lanes_7_load_1;
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_7_load_1;
   double dynamics_jac_znext_z_lanes_7_load_1_stage[8];
-  for (long long d1_jac_znext_z_lane = 0; d1_jac_znext_z_lane < SCALY_WIDTH_dynamics_jac_znext_z_lanes_7; ++d1_jac_znext_z_lane) dynamics_jac_znext_z_lanes_7_load_1_stage[d1_jac_znext_z_lane] = s2[(d0_jac_znext_z + ((0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) + d1_jac_znext_z_lane) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) + d1_jac_znext_z_lane) : 3)) * 4))];
-  dynamics_jac_znext_z_lanes_7_load_1 = *(const dynamics_jac_znext_z_lanes_7_vec_mem*)dynamics_jac_znext_z_lanes_7_load_1_stage;
-  dynamics_jac_znext_z_lanes_7_vec dynamics_jac_znext_z_lanes_7_store_2 = dynamics_jac_znext_z_lanes_7_load_1;
-  if (dynamics_jac_znext_z_lanes_7_valid == SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) *(dynamics_jac_znext_z_lanes_7_vec_mem*)(&jac_znext_z[(((d0_jac_znext_z * 4) + (0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) + 0) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) + 0) : 3)))) + 0]) = dynamics_jac_znext_z_lanes_7_store_2;
-  else for (long long d1_jac_znext_z_lane = 0; d1_jac_znext_z_lane < dynamics_jac_znext_z_lanes_7_valid; ++d1_jac_znext_z_lane) jac_znext_z[(((d0_jac_znext_z * 4) + (0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) + d1_jac_znext_z_lane) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) + d1_jac_znext_z_lane) : 3)))) + 0] = dynamics_jac_znext_z_lanes_7_store_2[d1_jac_znext_z_lane];
+  for (long long d1_jac_znext_z_lane = 0; d1_jac_znext_z_lane < SCALY_WIDTH_4_4_4_4; ++d1_jac_znext_z_lane) dynamics_jac_znext_z_lanes_7_load_1_stage[d1_jac_znext_z_lane] = s2[(d0_jac_znext_z + ((0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) : 3)) * 4))];
+  dynamics_jac_znext_z_lanes_7_load_1 = *(const lanes_4_4_4_4_vec_mem*)dynamics_jac_znext_z_lanes_7_load_1_stage;
+  lanes_4_4_4_4_vec dynamics_jac_znext_z_lanes_7_store_2 = dynamics_jac_znext_z_lanes_7_load_1;
+  if (dynamics_jac_znext_z_lanes_7_valid == SCALY_WIDTH_4_4_4_4) *(lanes_4_4_4_4_vec_mem*)(&jac_znext_z[(((d0_jac_znext_z * 4) + (0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3)))) + 0]) = dynamics_jac_znext_z_lanes_7_store_2;
+  else for (long long d1_jac_znext_z_lane = 0; d1_jac_znext_z_lane < dynamics_jac_znext_z_lanes_7_valid; ++d1_jac_znext_z_lane) jac_znext_z[(((d0_jac_znext_z * 4) + (0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) : 3)))) + 0] = dynamics_jac_znext_z_lanes_7_store_2[d1_jac_znext_z_lane];
 }
 int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -141,35 +126,35 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   for (long long i_t6 = 0; i_t6 < 2; ++i_t6) {
     s0[i_t6] = (2.0 * t5[i_t6]);
   }
-  for (long long j_t7_0_chunk = 0; j_t7_0_chunk < 2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_1; ++j_t7_0_chunk) {
-    dynamics_jac_znext_z_lanes_1(j_t7_0_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_1, s0, s1);
+  for (long long j_t7_0_chunk = 0; j_t7_0_chunk < 2 / SCALY_WIDTH_2_2_2_2; ++j_t7_0_chunk) {
+    dynamics_jac_znext_z_lanes_1(j_t7_0_chunk, SCALY_WIDTH_2_2_2_2, s0, s1);
   }
-#if (2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_1) != 0
-  dynamics_jac_znext_z_lanes_1(2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_1, 2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_1, s0, s1);
+#if (2 % SCALY_WIDTH_2_2_2_2) != 0
+  dynamics_jac_znext_z_lanes_1(2 / SCALY_WIDTH_2_2_2_2, 2 % SCALY_WIDTH_2_2_2_2, s0, s1);
 #endif
-  for (long long j_t7_1_chunk = 0; j_t7_1_chunk < 2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_2; ++j_t7_1_chunk) {
-    dynamics_jac_znext_z_lanes_2(j_t7_1_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_2, s0, s1);
+  for (long long j_t7_1_chunk = 0; j_t7_1_chunk < 2 / SCALY_WIDTH_2_2_2_2; ++j_t7_1_chunk) {
+    dynamics_jac_znext_z_lanes_2(j_t7_1_chunk, SCALY_WIDTH_2_2_2_2, s0, s1);
   }
-#if (2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_2) != 0
-  dynamics_jac_znext_z_lanes_2(2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_2, 2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_2, s0, s1);
+#if (2 % SCALY_WIDTH_2_2_2_2) != 0
+  dynamics_jac_znext_z_lanes_2(2 / SCALY_WIDTH_2_2_2_2, 2 % SCALY_WIDTH_2_2_2_2, s0, s1);
 #endif
-  for (long long j_t7_2_chunk = 0; j_t7_2_chunk < 2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_3; ++j_t7_2_chunk) {
-    dynamics_jac_znext_z_lanes_3(j_t7_2_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_3, s0, s1);
+  for (long long j_t7_2_chunk = 0; j_t7_2_chunk < 2 / SCALY_WIDTH_2_2_2_2; ++j_t7_2_chunk) {
+    dynamics_jac_znext_z_lanes_3(j_t7_2_chunk, SCALY_WIDTH_2_2_2_2, s0, s1);
   }
-#if (2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_3) != 0
-  dynamics_jac_znext_z_lanes_3(2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_3, 2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_3, s0, s1);
+#if (2 % SCALY_WIDTH_2_2_2_2) != 0
+  dynamics_jac_znext_z_lanes_3(2 / SCALY_WIDTH_2_2_2_2, 2 % SCALY_WIDTH_2_2_2_2, s0, s1);
 #endif
-  for (long long j_t7_3_chunk = 0; j_t7_3_chunk < 2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_4; ++j_t7_3_chunk) {
-    dynamics_jac_znext_z_lanes_4(j_t7_3_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_4, s0, s1);
+  for (long long j_t7_3_chunk = 0; j_t7_3_chunk < 2 / SCALY_WIDTH_2_2_2_2; ++j_t7_3_chunk) {
+    dynamics_jac_znext_z_lanes_4(j_t7_3_chunk, SCALY_WIDTH_2_2_2_2, s0, s1);
   }
-#if (2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_4) != 0
-  dynamics_jac_znext_z_lanes_4(2 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_4, 2 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_4, s0, s1);
+#if (2 % SCALY_WIDTH_2_2_2_2) != 0
+  dynamics_jac_znext_z_lanes_4(2 / SCALY_WIDTH_2_2_2_2, 2 % SCALY_WIDTH_2_2_2_2, s0, s1);
 #endif
-  for (long long i_t10_chunk = 0; i_t10_chunk < 4 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_5; ++i_t10_chunk) {
-    dynamics_jac_znext_z_lanes_5(i_t10_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_5, s0);
+  for (long long i_t10_chunk = 0; i_t10_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++i_t10_chunk) {
+    dynamics_jac_znext_z_lanes_5(i_t10_chunk, SCALY_WIDTH_4_4_4_4, s0);
   }
-#if (4 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_5) != 0
-  dynamics_jac_znext_z_lanes_5(4 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_5, 4 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_5, s0);
+#if (4 % SCALY_WIDTH_4_4_4_4) != 0
+  dynamics_jac_znext_z_lanes_5(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s0);
 #endif
   for (long long k_t10 = 0; k_t10 < 2; ++k_t10) {
     s0[0] = (s0[0] + (s1[k_t10] * k1[k_t10]));
@@ -180,11 +165,11 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     int64_t v2 = (6 + k_t10);
     s0[3] = (s0[3] + (s1[v2] * k1[v2]));
   }
-  for (long long i_t11_chunk = 0; i_t11_chunk < 4 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_6; ++i_t11_chunk) {
-    dynamics_jac_znext_z_lanes_6(i_t11_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_6, s0, s1);
+  for (long long i_t11_chunk = 0; i_t11_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++i_t11_chunk) {
+    dynamics_jac_znext_z_lanes_6(i_t11_chunk, SCALY_WIDTH_4_4_4_4, s0, s1);
   }
-#if (4 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_6) != 0
-  dynamics_jac_znext_z_lanes_6(4 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_6, 4 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_6, s0, s1);
+#if (4 % SCALY_WIDTH_4_4_4_4) != 0
+  dynamics_jac_znext_z_lanes_6(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s0, s1);
 #endif
   for (long long j_t12_0 = 0; j_t12_0 < 2; ++j_t12_0) {
     s0[j_t12_0] = t5[j_t12_0];
@@ -213,11 +198,11 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     s2[((v4 * 4) + (2 + (j_t21_1 % 2)))] = (v5 - (0.050000000000000003 * ((s1[v4] * s0[j_t21_1]) + (s3[0] * v5))));
   }
   for (long long d0_jac_znext_z = 0; d0_jac_znext_z < 4; ++d0_jac_znext_z) {
-    for (long long d1_jac_znext_z_chunk = 0; d1_jac_znext_z_chunk < 4 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_7; ++d1_jac_znext_z_chunk) {
-      dynamics_jac_znext_z_lanes_7(d1_jac_znext_z_chunk, SCALY_WIDTH_dynamics_jac_znext_z_lanes_7, res[0], s2, d0_jac_znext_z);
+    for (long long d1_jac_znext_z_chunk = 0; d1_jac_znext_z_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++d1_jac_znext_z_chunk) {
+      dynamics_jac_znext_z_lanes_7(d1_jac_znext_z_chunk, SCALY_WIDTH_4_4_4_4, res[0], s2, d0_jac_znext_z);
     }
-#if (4 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_7) != 0
-    dynamics_jac_znext_z_lanes_7(4 / SCALY_WIDTH_dynamics_jac_znext_z_lanes_7, 4 % SCALY_WIDTH_dynamics_jac_znext_z_lanes_7, res[0], s2, d0_jac_znext_z);
+#if (4 % SCALY_WIDTH_4_4_4_4) != 0
+    dynamics_jac_znext_z_lanes_7(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[0], s2, d0_jac_znext_z);
 #endif
   }
   return SCALY_SUCCESS;
