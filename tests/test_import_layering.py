@@ -57,6 +57,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.ad": 4,
   "scaly.ad.derivatives": 4,
   "scaly.ad.forward": 4,
+  "scaly.ad.helpers": 4,
   "scaly.ad.reverse": 4,
   "scaly.ad.sparse": 4,
   # Import layer 4, not the plan's 5: ``vmap`` needs a ``Function``, and ``ad`` needs ``vmap``.

@@ -171,6 +171,9 @@ def _lower_to_proc(
       **proc.attrs,
       "input_count": len(fun.inputs),
       "lowering": lowering,
+      # Apple clang 17 (Xcode 16.4, macOS 15 arm64) miscompiles inlined forward-AD helpers for CALL
+      # Jacobians, so they stay real call frames. See internal/notes/macos_clang_call_miscompile.md.
+      **({"noinline": True} if fun.role == "forward" else {}),
       # A procedure may expand on its own and inside an expanding caller. Hoisted prologues use
       # "inline" because they only expand with their caller.
       "scalarize_mode": "procedure"
