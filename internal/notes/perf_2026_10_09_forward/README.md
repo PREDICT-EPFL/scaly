@@ -16,8 +16,9 @@ Jacobian cells cover the structure gates affected by this change.
 The before worktree is `/tmp/scaly19-benchmark-before`. The after worktree is
 `/tmp/scaly19-benchmark-after`. Raw artifacts, logs, provenance, generated C and
 native binaries live in their `benchmarks/results/issue19-before` and
-`benchmarks/results/issue19-after` directories. This directory retains the raw
-and summary comma-separated value files under `data/{before,after}/sweep/`.
+`benchmarks/results/issue19-final-after` directories. The original after
+artifacts remain in `benchmarks/results/issue19-after`. This directory retains
+the raw and summary comma-separated value files under `data/{before,after}/sweep/`.
 `comparison.md` comes from `uv run internal/notes/perf_2026_10_09_forward/compare.py`.
 Generation time includes derivative construction and C rendering. The raw
 records also give these two times separately. Native time comes from Google
@@ -25,17 +26,22 @@ Benchmark. CV is the sample coefficient of variation across five processes.
 The retained provenance names each revision by branch. The original sidecars,
 including the transient branch commit identifier, remain with the raw artifacts.
 
-All 60 original headline attempts and ten rerun attempts passed their correctness
-gates and native timing. There were no compile failures, timeouts or skipped
-measurement cells. Before race-car generation had 5.5% CV, and after neural MPC
-Jacobian generation had 5.3% CV. Both complete five-process cells were rerun under
-the same policy. The comparison uses those reruns, whose generation CVs are 2.1%
-and 1.3%. `data/*/original/` retains the first attempts. Selected native CVs range
-from 0.2% to 3.5%.
+All 100 headline attempts passed their correctness gates and native timing: 60
+original attempts, ten complete-cell dispersion reruns, and 30 final-after
+attempts following the inactive-zero review fix. There were no compile failures,
+timeouts or skipped measurement cells. The comparison uses the retained before
+study and all six final-after cells. Before race-car generation originally had
+5.5% CV, so its full five-process rerun is selected (2.1% CV). The original after
+neural MPC Jacobian cell had 5.3% CV and was also rerun. `data/*/original/`
+retains these first attempts; `data/after/reviewed/` retains the earlier selected
+after study. Final-after generation CVs range from 0.5% to 1.5%; selected native
+CVs range from 0.2% to 2.6%. All six final C sources and headers are byte-identical
+to their reviewed benchmark artifacts. The allocation fix changes construction,
+so generation and native measurements were nevertheless repeated in full.
 
-All six selected kernels run slower. The four Hessian increases are 11.5% for
-race cars, 18.2% for chain, 20.5% for unbumpercars and 13.1% for neural MPC. The
-chain and neural MPC Jacobians increase by 77.2% and 61.1%. These are measurements
+All six selected kernels run slower. The four Hessian increases are 11.9% for
+race cars, 17.9% for chain, 21.2% for unbumpercars and 14.5% for neural MPC. The
+chain and neural MPC Jacobians increase by 77.8% and 61.2%. These are measurements
 of the listed sizes. They do not establish the cause or performance at other
 sizes. The runtime regressions are another maintainer open point. Batched matrix
 products in #67 and loop fusion in #69 are relevant follow-ups, but no recovery
@@ -49,8 +55,10 @@ PYTHONHASHSEED=0 SCALY_VECTOR_LIBM=glibc SCALY_CC=gcc CC=gcc CXX=clang++ uv run 
 uv run benchmarks/run.py report benchmarks/results/issue19-REVISION
 ```
 
+The sweep records are grouped under `sweep/WORKLOAD/` before running `report`.
 Cells are `race_cars:5`, `chain:3`, `unbumpercars:2`, `npmpc:4`,
-`chain_jac:33` and `npmpc_jac:100`. No published benchmark page changes.
+`chain_jac:33` and `npmpc_jac:100`. The after revision is the pushed inactive-zero
+review fix. No published benchmark page changes.
 
 ## Snapshot diff
 
@@ -74,8 +82,8 @@ whole source includes explicit scalarized boundary rows. The new gate measures
 the forward mass helper bodies at 33 and 65 masses, preserving the original
 requirement that the mass loop stays a loop. Restored bodies have 838 and 837
 lines. Forcing those helpers to use scalar expansion produces 10644 and 21428
-lines and fails the gate. The perturbation was removed. At these sizes the whole kernels still grow from
-2473 to 3752 lines, compared with 2754 to 4738 on base; the primal helper and
+lines and fails the gate. The perturbation was removed. At these sizes the
+whole kernels still grow from 2473 to 3752 lines, compared with 2754 to 4738 on base; the primal helper and
 scalarized boundary rows grow on both revisions. This gate covers the forward
 mass helpers, rather than every source of per-mass code.
 
