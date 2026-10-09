@@ -211,3 +211,89 @@ def test_call_combines_constant_and_runtime_tangents() -> None:
   expected = seeds * (np.cos(zv * (np.sin(zv) + 2)) * (np.sin(zv) + 2 + zv * np.cos(zv)))
   np.testing.assert_allclose(fn(zv), expected, atol=1e-12, rtol=1e-12)
   assert sum(node.op == ExprOp.CALL for node in topo([derivative])) == 1
+
+
+@pytest.mark.parametrize("nseed", [0, 1, 3])
+def test_nested_calls_with_shared_formals_and_runtime_cotangents(nseed, monkeypatch):
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  tree = sc.group(sc.arg("shared_x", 2), sc.arg("shared_y", 2))
+
+  @sc.function(tree, outputs=sc.group(sc.arg("a"), sc.arg("b")), name="nested_leaf")
+  def leaf(inputs):
+    x, y = inputs
+    return (x * y).sin(), x / (y + 2)
+
+  @sc.function(tree, outputs=sc.arg("out"), name="nested_middle")
+  def middle(inputs):
+    x, y = inputs
+    a, b = leaf((y + 0.3, x * 0.7))
+    return a + b * y
+
+  @sc.function(
+    sc.group(tree, sc.arg("nested_seeds", (nseed, 4)), sc.arg("nested_cot", 2)),
+    outputs=sc.group(sc.arg("value"), sc.arg("single"), sc.arg("many"), sc.arg("gx"), sc.arg("gy")),
+    name="nested_products",
+  )
+  def products(inputs):
+    (x, y), seeds, cot = inputs
+    assert x is as_concrete(leaf).inputs[0] is as_concrete(middle).inputs[0]
+    assert y is as_concrete(leaf).inputs[1] is as_concrete(middle).inputs[1]
+    value = middle((x, y)) + middle((y, x))
+    rows = [sc.jvp(value, x, seeds[i, :2]) + sc.jvp(value, y, seeds[i, 2:]) for i in range(nseed)]
+    single = sc.stack(rows) if rows else sc.const(np.empty((0, 2)))
+    many = sc.jvp_many(value, x, seeds[:, :2]) + sc.jvp_many(value, y, seeds[:, 2:])
+    gx, gy = sc.vjp((value,), (x, y), (cot,))
+    return value, single, many, gx, gy
+
+  def reference(z):
+    x, y = z[:2], z[2:]
+
+    def body(x, y):
+      return np.sin((y + 0.3) * (x * 0.7)) + (y + 0.3) / (x * 0.7 + 2) * y
+
+    return body(x, y) + body(y, x)
+
+  z = np.array([0.4, -0.3, 0.8, 0.2])
+  seeds = np.random.default_rng(8).normal(size=(nseed, 4))
+  if nseed > 1:
+    seeds[1] = 0
+  cot = np.array([-0.7, 1.2])
+  value, single, many, gx, gy = products(((z[:2], z[2:]), seeds, cot))
+  step = 1e-5
+  expected = np.stack([(reference(z + step * seed) - reference(z - step * seed)) / (2 * step) for seed in seeds]) if nseed else np.empty((0, 2))
+  np.testing.assert_allclose(value, reference(z), atol=1e-12, rtol=1e-12)
+  np.testing.assert_allclose(single, expected, atol=1e-9, rtol=1e-8)
+  np.testing.assert_allclose(many, expected, atol=1e-9, rtol=1e-8)
+  np.testing.assert_allclose(many @ cot, seeds @ np.concatenate([gx, gy]), atol=1e-12, rtol=1e-12)
+
+
+@pytest.mark.parametrize("nseed", [1, 3])
+def test_call_mixed_constant_and_runtime_seed_formals(nseed, monkeypatch):
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+
+  @sc.function(sc.group(sc.arg("mixed_x", 2), sc.arg("mixed_y", 2)), outputs=sc.arg("out"), name="mixed_formal_stage")
+  def stage(inputs):
+    x, y = inputs
+    return (x * y).sin() + x / (y + 2)
+
+  @sc.function(
+    sc.group(sc.arg("mixed_z", 2), sc.arg("mixed_seed", (nseed, 2))),
+    outputs=sc.group(sc.arg("baked"), sc.arg("runtime"), sc.arg("single")),
+    name="mixed_formal_products",
+  )
+  def products(inputs):
+    z, seed = inputs
+    value = stage((z, z.sin() + 1))
+    constant = sc.const(np.ones((nseed, 2)))
+    return sc.jvp_many(value, z, constant), sc.jvp_many(value, z, seed), sc.stack([sc.jvp(value, z, seed[i]) for i in range(nseed)])
+
+  z = np.array([0.2, -0.7])
+  baked, runtime, single = products((z, np.ones((nseed, 2))))
+  y = np.sin(z) + 1
+  expected = np.broadcast_to(np.cos(z * y) * (y + z * np.cos(z)) + 1 / (y + 2) - z * np.cos(z) / (y + 2) ** 2, (nseed, 2))
+  for result in (baked, runtime, single):
+    np.testing.assert_allclose(result, expected, atol=1e-12, rtol=1e-12)
+  calls = [node for node in topo([as_concrete(products).outputs[0]]) if node.op == ExprOp.CALL]
+  assert len(calls) == 1
+  helper = calls[0].attrs["callee"]
+  assert sum(name.startswith("fwd:") for name in helper.input_names) == 1
