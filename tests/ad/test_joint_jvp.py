@@ -8,8 +8,9 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ad.forward import _call_jvp_function, _call_jvp_many_function
-from scaly.ad.reverse import _vmap_adj_function
+from scaly.ad.calls import _call_jvp_function, _call_jvp_many_function, _vmap_adj_function
+from scaly.ad.forward import _jvp, _jvp_many_unrolled
+from scaly.ad.reverse import vjp
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.passes.lowering import lower_function
@@ -91,9 +92,9 @@ def test_joint_helper_cache_distinguishes_formal_sets() -> None:
     a, b, c = inputs
     return a * b + c.sin()
 
-  first = _call_jvp_function(stage.instantiate(), 0, (0,))
-  second = _call_jvp_function(stage.instantiate(), 0, (1, 2))
-  assert first[0] is _call_jvp_function(stage.instantiate(), 0, (0,))[0]
+  first = _call_jvp_function(stage.instantiate(), 0, (0,), pushforward=_jvp)
+  second = _call_jvp_function(stage.instantiate(), 0, (1, 2), pushforward=_jvp)
+  assert first[0] is _call_jvp_function(stage.instantiate(), 0, (0,), pushforward=_jvp)[0]
   assert first[0].name != second[0].name
   assert first[0] is not second[0]
 
@@ -108,15 +109,15 @@ def test_call_helpers_are_cached_on_their_callee() -> None:
 
   callee = stage.instantiate()
   helpers = {
-    _call_jvp_function(callee, 0, (0,))[0],
-    _call_jvp_many_function(callee, 0, (0,), 2, (None,))[0],
-    _vmap_adj_function(callee, 0, (0, 1))[0],
+    _call_jvp_function(callee, 0, (0,), pushforward=_jvp)[0],
+    _call_jvp_many_function(callee, 0, (0,), 2, (None,), pushforward=_jvp, unroll=_jvp_many_unrolled)[0],
+    _vmap_adj_function(callee, 0, (0, 1), pullback=vjp)[0],
   }
   cached = {entry[0] for entry in callee._memo.helpers.values()}
   assert cached == helpers
   assert not [name for name in (*vars(forward), *vars(reverse)) if name.endswith("_CACHE")]
   copy = callee._replace(name="memo_stage_copy")
-  assert _call_jvp_function(copy, 0, (0,))[0] not in helpers
+  assert _call_jvp_function(copy, 0, (0,), pushforward=_jvp)[0] not in helpers
 
 
 @pytest.mark.parametrize("matrix", [False, True])

@@ -56,6 +56,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.function.tree": 3,
   "scaly.ad": 4,
   "scaly.ad.derivatives": 4,
+  "scaly.ad.calls": 4,
   "scaly.ad.forward": 4,
   "scaly.ad.helpers": 4,
   "scaly.ad.reverse": 4,
