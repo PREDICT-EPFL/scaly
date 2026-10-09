@@ -3,13 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
-import pytest
 
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad import finite_difference
-from scaly.ad.forward import _jvp_many_structural, _jvp_many_unrolled  # jvp_many's two paths, checked against each other
 from scaly.ir.expr import topo
 
 
@@ -209,8 +207,7 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
   np.testing.assert_allclose(f((xv, sv)), sv @ jac.T)
 
 
-def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_erf_forward_reverse_jacobian_and_sparse_hessian() -> None:
 
   @sc.function(sc.group(sc.arg("x", 3), sc.arg("seed", 3)), outputs=sc.group(sc.arg("jvp"), sc.arg("vjp")), name="erf_seed_ad")
   def ad(inputs):
@@ -260,17 +257,17 @@ def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
 def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
   @sc.function(
     sc.group(sc.arg("x", (2, 3)), sc.arg("seeds", (4, 2, 3))),
-    outputs=sc.group(sc.arg("structural"), sc.arg("reference")),
+    outputs=sc.arg("tangent"),
     name="jvp_many_sum",
   )
   def fn(inputs):
     x, seeds = inputs
-    return _jvp_many_structural(x.sum(), x, seeds, {}, {}), _jvp_many_unrolled(x.sum(), x, seeds)
+    return sc.jvp_many(x.sum(), x, seeds)
 
   x, _ = as_concrete(fn).inputs
-  structural, _ = as_concrete(fn).outputs
+  (structural,) = as_concrete(fn).outputs
   expr = x.sum()
-  one_seed = _jvp_many_structural(expr, x, sc.sym("one_seed", (1, 2, 3)), {}, {})
+  one_seed = sc.jvp_many(expr, x, sc.sym("one_seed", (1, 2, 3)))
 
   assert structural.shape == (4,)
   nodes = topo((structural,))
@@ -281,12 +278,10 @@ def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
 
   xv = np.random.default_rng(16).normal(size=(2, 3))
   seedv = np.random.default_rng(17).normal(size=(4, 2, 3))
-  actual, expected = fn((xv, seedv))
-  np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(fn((xv, seedv)), seedv.sum(axis=(1, 2)), rtol=1e-12, atol=1e-12)
 
 
-def test_float32_reduction_derivative_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_float32_reduction_derivative_paths() -> None:
   x = sc.sym("float32_x", 3, dtype=sc.dtypes.float32)
   expr = x.sum()
   seeds = sc.sym("float32_seeds", (2, 3), dtype=sc.dtypes.float32)
@@ -325,7 +320,7 @@ def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
     @sc.function(sc.group(sc.arg("x", 9), sc.arg("seeds", (4, 9))), outputs=sc.arg("dy"), name=f"jvp_many_{name}")
     def f(inputs):
       x, seeds = inputs
-      return _jvp_many_structural(build(x), x, seeds, {}, {})
+      return sc.jvp_many(build(x), x, seeds)
 
     (dy,) = as_concrete(f).outputs
     assert dy.shape == (4, *build(as_concrete(f).inputs[0]).shape), f"{name}: tangent shape {dy.shape}"
@@ -349,49 +344,47 @@ def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
 def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   @sc.function(
     sc.group(sc.arg("x", 6), sc.arg("seeds", (3, 6))),
-    outputs=sc.group(sc.arg("structural"), sc.arg("reference")),
+    outputs=sc.arg("tangent"),
     name="jvp_many_scatter_gather",
   )
   def fn(inputs):
     x, seeds = inputs
     expr = sc.scatter(sc.gather(x, np.array([[5, 1], [4, 0]])), np.array([[0, 4], [7, 8]]), (3, 3))
-    return _jvp_many_structural(expr, x, seeds, {}, {}), _jvp_many_unrolled(expr, x, seeds)
+    return sc.jvp_many(expr, x, seeds)
 
-  structural, _ = as_concrete(fn).outputs
+  (structural,) = as_concrete(fn).outputs
   assert structural.shape == (3, 3, 3)
   nodes = topo((structural,))
   assert sum(node.op == sc.ExprOp.GATHER for node in nodes) == 1
   assert sum(node.op == sc.ExprOp.SCATTER for node in nodes) == 1
   xv = np.random.default_rng(12).normal(size=6)
   seedv = np.random.default_rng(13).normal(size=(3, 6))
-  actual, expected = fn((xv, seedv))
-  np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+  expected = np.zeros((3, 9))
+  expected[:, [0, 4, 7, 8]] = seedv[:, [5, 1, 4, 0]]
+  np.testing.assert_allclose(fn((xv, seedv)), expected.reshape(3, 3, 3), rtol=1e-12, atol=1e-12)
 
 
 def test_jvp_many_transpose_stays_structural() -> None:
   @sc.function(
     sc.group(sc.arg("x", 12), sc.arg("seeds", (4, 12))),
-    outputs=sc.group(sc.arg("structural"), sc.arg("reference")),
+    outputs=sc.arg("tangent"),
     name="jvp_many_transpose",
   )
   def fn(inputs):
     x, seeds = inputs
     expr = x.reshape((2, 3, 2)).transpose((2, 0, 1))
-    return _jvp_many_structural(expr, x, seeds, {}, {}), _jvp_many_unrolled(expr, x, seeds)
+    return sc.jvp_many(expr, x, seeds)
 
-  structural, _ = as_concrete(fn).outputs
+  (structural,) = as_concrete(fn).outputs
   assert structural.shape == (4, 2, 2, 3)
   assert sum(node.op == sc.ExprOp.TRANSPOSE for node in topo((structural,))) == 1
   xv = np.random.default_rng(14).normal(size=12)
   seedv = np.random.default_rng(15).normal(size=(4, 12))
-  actual, expected = fn((xv, seedv))
-  np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+  expected = seedv.reshape(4, 2, 3, 2).transpose(0, 3, 1, 2)
+  np.testing.assert_allclose(fn((xv, seedv)), expected, rtol=1e-12, atol=1e-12)
 
 
-def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-  # A rank-4 primal TRANSPOSE would need a rank-5 tangent TRANSPOSE, beyond the rank-4 lowering
-  # limit; the structural rule must decline (unrolled fallback lowers fine) instead of building an
-  # un-lowerable graph that only fails later at compile time.
+def test_jvp_many_rank4_transpose_keeps_seed_axis() -> None:
   def rank4(x: sc.Expr) -> sc.Expr:
     return (x * x).reshape((2, 3, 1, 2)).transpose((3, 1, 0, 2))
 
@@ -405,26 +398,6 @@ def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pyte
   xv, sv = rng.normal(size=12), rng.normal(size=(2, 12))
   expected = np.concatenate([(2.0 * xv * sv[i]).reshape(2, 3, 1, 2).transpose(3, 1, 0, 2).reshape(-1) for i in range(2)])
   np.testing.assert_allclose(fn((xv, sv)), expected, rtol=1e-12, atol=1e-12)
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
-  with pytest.raises(NotImplementedError, match="structural jvp_many does not support"):
-    sc.jvp_many(rank4(x), x, seeds)
-
-
-def test_jvp_many_strict_mode_raises_on_unsupported_structural_rule(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
-  x = sc.sym("x", 2)
-  with pytest.raises(NotImplementedError, match="structural jvp_many does not support"):
-    sc.jvp_many(x.abs(), x, sc.const(np.eye(2)))
-
-
-def test_jvp_many_strict_mode_raises_on_structural_shape_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-  import scaly.ad.forward as ad
-
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
-  x = sc.sym("x", 2)
-  monkeypatch.setattr(ad, "_jvp_many_structural", lambda *_args: sc.const(np.zeros((1, 2))))
-  with pytest.raises(NotImplementedError, match=r"structural jvp_many returned shape \(1, 2\).+expected \(2, 2\)"):
-    ad.jvp_many(x * x, x, sc.const(np.eye(2)))
 
 
 def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:

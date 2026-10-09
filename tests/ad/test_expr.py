@@ -106,7 +106,7 @@ def _solver_call(parameter: sc.Expr) -> sc.Expr:
 
 @pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp", "sparsity"])
 @pytest.mark.parametrize("wrapped", ["direct", "call", "mapped"])
-def test_active_solver_derivative_refused(mode, wrapped, monkeypatch) -> None:
+def test_active_solver_derivative_refused(mode, wrapped) -> None:
   from scaly.ad.forward import jvp, jvp_many
   from scaly.ad.reverse import vjp
   from scaly.ad.sparsity import jacobian_sparsity
@@ -122,7 +122,6 @@ def test_active_solver_derivative_refused(mode, wrapped, monkeypatch) -> None:
       result = _mapped_call(fn, 1, [(x, 0, 0)])
     else:
       result = fn(x * 2.0)
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   with pytest.raises(NotImplementedError, match="SOLVER_CALL"):
     if mode == "jvp":
       jvp(result, x, sc.const(np.ones(2)))

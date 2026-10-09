@@ -226,8 +226,7 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   np.testing.assert_allclose(shf(*(np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5])))), np.array([3.0, 0.25, 0.25, -1.0]))
 
 
-def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd() -> None:
   mapped, unrolled = _mapped_sphess_fixture(3)
   mapped_sphess = mapped.factory("mapped_sphess_exact", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
   unrolled_sphess = unrolled.factory("unrolled_sphess_exact", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
@@ -248,8 +247,7 @@ def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(mo
   np.testing.assert_allclose(mapped_dense, finite_difference(lambda value: unrolled_grad(*(value, lam_f, lam_g)), zv), rtol=2e-5, atol=2e-6)
 
 
-def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill() -> None:
   mapped, _ = _mapped_sphess_fixture(3)
   sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
   sparsity = as_concrete(sphess).output_sparsities[0]
@@ -287,8 +285,7 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
 
 
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
-def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(monkeypatch: pytest.MonkeyPatch, triangle: Triangle) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(triangle: Triangle) -> None:
   mapped, unrolled = _mapped_sphess_fixture(3, shared=True)
   full = mapped.factory(
     "shared_triangle_full",
@@ -605,8 +602,7 @@ def test_star_recovery_rejects_ambiguous_orientation() -> None:
     _star_recovery_indices(sparsity, (0, 0, 0))
 
 
-def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_shared_fill_star_hessian_matches_one_sided_and_dense() -> None:
   star_widths: list[int] = []
   one_sided_widths: list[int] = []
 
