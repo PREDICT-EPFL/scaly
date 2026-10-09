@@ -436,8 +436,9 @@ derivative sparsity tables can.
 ## Printing from generated code
 
 `sc.print` prints numerical values each time the compiled code computes them.
-It returns its first value, and the print travels with the returned expression,
-so the body uses that expression in place of the original:
+It returns its first value, and the print belongs to that returned expression.
+The body uses it in place of the original value, which keeps the print in the
+compiled function:
 
 ```python
 @sc.function(sc.arg("x", 2), sc.arg("gain", ()), outputs=sc.arg("y", 2))
@@ -462,8 +463,7 @@ the same expression and print once, and prints that do not depend on each other
 have no guaranteed order. A function called from another runs only when the
 caller uses one of its outputs, so a print inside an unused call never runs.
 
-A derivative prints when it computes the printed value, which most derivatives
-do because their partial derivatives read it. The gradient of
+A derivative prints when it computes the printed value. The gradient of
 `sc.print("x={}", x).sin().sum()` is `cos(x)`, so it prints `x`. The gradient of
 `(2 * sc.print("x={}", x)).sum()` is the constant 2 and prints nothing.
 

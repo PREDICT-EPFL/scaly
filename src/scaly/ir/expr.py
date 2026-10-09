@@ -631,7 +631,8 @@ def print_(fmt: str, *values: Any) -> Expr:
   ``fmt`` has one ``{}`` for each value, and ``{{`` and ``}}`` for literal braces. Each print ends
   its line. A value prints with 17 significant digits, enough to read a ``float64`` back exactly,
   and a tensor prints flat as ``[a, b, ...]``. The print is part of the returned expression, so a
-  function's outputs have to use it. A print they do not use raises when the function is traced.
+  function's outputs have to use it. A print they do not use raises ``ValueError`` when Scaly runs
+  the function body to build its expression graph.
 
   Args:
     fmt: the text to print, with a ``{}`` placeholder for each value.
