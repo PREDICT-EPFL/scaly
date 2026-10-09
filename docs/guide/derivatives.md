@@ -214,9 +214,10 @@ the first axis. Expression forms of sparse derivatives return a
 
 Expression derivatives can select an intermediate value, such as a slice of a
 state vector or the result of a function call. Scaly treats the selected
-expression as an independent variable. Other paths to its original inputs stay
-fixed. For example, a calculation can differentiate only the state portion of
-a vector that also contains a parameter:
+expression as an independent variable. Calculations that use its inputs
+without using the selected expression stay fixed. For example, a calculation
+can differentiate only the state portion of a vector that also contains a
+parameter:
 
 ```python
 @sc.function(sc.arg("carry", 3), outputs=sc.arg("state_grad"))
@@ -228,26 +229,64 @@ def state_derivative(carry: sc.Expr) -> sc.Expr:
 print(state_derivative(np.array([1.0, 3.0, 2.0])))  # [-2.  2.]
 ```
 
-The second term uses a separate slice of `carry`, so it contributes nothing to
-this derivative even though the slices overlap. The returned derivative still
-uses the original `carry` values when evaluated. Jacobians, Hessians, sparse
-derivatives and Jacobian products follow the same rule.
+The second term uses `carry[1:]`, which is a different expression from `state`,
+so it contributes nothing to this derivative even though the slices overlap.
+Writing `carry[:2]` again gives the same expression as `state`, so a term using
+that slice would contribute too. Jacobians, Hessians, sparse derivatives and
+Jacobian products follow the same rule.
 
 `sc.vjp` can select several expressions at once. It treats each selection as
-independent, including when one is a slice of another. A path through one
-selection contributes only to that selection's adjoint. Results follow the
-order of `wrts`.
+independent, including when one is a slice of another. In the following example,
+the cubic term contributes only to the derivative with respect to `tail`:
 
-The selection must occur in the recorded graph. Mapped affine views can read
-directly from their base, removing the intermediate slice. To retain a selected
-slice in a map, pass an explicit window, for example
-`sc.vmap(stage, 2)(sc.window(state, 0, 2))` for a four-element `state` and a
-stage taking two elements. The window's start and stride are measured in flat
-elements. See [mapped windows](functions.md#regular-repetition-vmap).
+```python
+@sc.function(
+    sc.arg("carry", 3),
+    outputs=sc.group(sc.arg("segment_grad"), sc.arg("tail_grad")),
+)
+def joint_derivatives(carry: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    segment = carry[1:]
+    tail = segment[1:]
+    cost = sc.sumsqr(segment) + (tail ** 3).sum()
+    segment_grad, tail_grad = sc.vjp((cost,), (segment, tail), (sc.const(1.0),))
+    return segment_grad, tail_grad
 
-## Holding a path fixed
+print(joint_derivatives(np.array([1.0, 2.0, 3.0])))
+# (array([4., 6.]), array([27.]))
+```
 
-`sc.stop_gradient` returns its argument's value and holds that path fixed in
+The results follow the order of `wrts`, here `(segment, tail)`.
+
+!!! warning "Mapped slices must remain in the graph"
+    A map can replace a slice and reshape with direct reads from the original
+    vector. Differentiating with respect to the removed slice then returns
+    zeros without raising an error. An explicit `sc.window` retains the selected
+    slice, as the two forms below show.
+
+```python
+@sc.function(sc.arg("pair", 2), outputs=sc.arg("cost"))
+def pair_cost(pair: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(pair)
+
+@sc.function(
+    sc.arg("carry", 5), outputs=sc.group(sc.arg("removed"), sc.arg("retained")),
+)
+def mapped_gradients(carry: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    state = carry[:4]
+    removed = sc.vmap(pair_cost, 2)(state.reshape((2, 2))).sum()
+    retained = sc.vmap(pair_cost, 2)(sc.window(state, 0, 2)).sum()
+    return sc.gradient(removed, state), sc.gradient(retained, state)
+
+print(mapped_gradients(np.arange(1.0, 6.0)))
+# (array([0., 0., 0., 0.]), array([2., 4., 6., 8.]))
+```
+
+See [mapped windows](functions.md#regular-repetition-vmap) for the start and
+stride arguments.
+
+## Holding a value fixed in derivatives
+
+`sc.stop_gradient` returns its argument's value and treats it as a constant in
 all derivatives. Other uses of the same expression still contribute normally:
 
 ```python
@@ -265,9 +304,13 @@ print(sc.hessian(frozen_product)(point))     # [[0. 0.]
 Only the first factor contributes to the gradient. Differentiating again keeps
 the second factor fixed, so the Hessian is zero. This convention applies in
 forward mode, reverse mode and sparsity analysis, including inside calls and
-maps. It changes the derivative without changing the primal value or its
-generated C. Numerical differences of the primal do change the stopped value,
-so they need not agree with this derivative.
+maps. It changes the derivative without changing the evaluated value or its
+generated C. Finite-difference checks perturb the input and recompute the
+stopped value, so they need not agree with this derivative.
+
+Quadratic-program extraction rejects problems containing `stop_gradient`,
+including in their bounds or inside called functions. The proof that a problem
+is quadratic requires derivatives of the evaluated cost and constraints.
 
 ## Current limitations
 
