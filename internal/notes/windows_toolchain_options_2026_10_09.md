@@ -1,9 +1,9 @@
 # Windows toolchain options after Zig 0.17
 
 Settled with the maintainer on 2026-10-09 for [#82] and [#84]. None of the native Windows checks
-below have run. The earlier
-[Windows investigation](windows_support_2026_10_02.md) records cross-compilation results, not
-native Windows validation.
+below have run. The earlier [Windows investigation](windows_support_2026_10_02.md) records
+cross-compilation results, not native Windows validation. The compiler policy and release scope
+are recorded in the [core roadmap](core_compiler_roadmap.md#windows-toolchain-and-support).
 
 ## What the missing wheel means
 
@@ -83,9 +83,9 @@ the C runtime used by the generated DLL, rather than a symbol lookup on the proc
 
 Finally build PIQP and BLASFEO with an explicitly selected compiler and CMake generator. Run a
 PIQP solve, a generated call into PIQP, then a `scaly-sqp` solve. Inspect the wheel's import
-libraries and DLL dependencies, and install it in an environment without the build tools. Users should receive
-built solver wheels, rather than compiling C++ merely to install a solver. Capture the successful
-checks in Windows continuous integration before claiming support.
+libraries and DLL dependencies, and install it in an environment without the build tools. Users
+should receive built solver wheels, rather than compiling C++ merely to install a solver. Capture
+the successful checks in Windows continuous integration before claiming support.
 
 Try the existing BLASFEO kernels first. If their Windows build or calling convention fails, use
 its generic implementation and record that limitation. Kernel optimization can follow separately.
@@ -93,6 +93,21 @@ its generic implementation and record that limitation. Kernel optimization can f
 Use Python for the checks and `subprocess` argument lists for compiler and build commands. Keep
 PowerShell to environment setup and launching Python. Test native Windows Python, not Python
 inside Windows Subsystem for Linux, which would exercise the existing Linux path.
+
+## Issue ownership
+
+[#84] is the shared delivery parent for [#82] and [#152] through [#156]. [#82] owns the compiler
+switch, the exact pin and the Linux/macOS checks, including its reference-machine comparison.
+[#152] owns native compiler evidence and the first-compilation recommendation. [#153] owns the
+core compilation, loading and printing behavior; [#154] owns loaded-DLL cache behavior. [#155]
+owns PIQP packaging, DLL dependencies and the BLASFEO implementation choice. [#156] owns the
+complete installed SQP path, supported Python checks, Windows workflows and public installation
+instructions. GitHub records the prerequisites and status.
+
+#83 retains its #82 prerequisite and Clang flag convention. #85 verifies the completed Windows
+matrices and release artifacts and writes the release notes; workflow implementation belongs to
+[#156]. Parent closure requires the installed package combination to pass together, rather than
+only the component issues to close.
 
 ## Repository context
 
@@ -106,3 +121,8 @@ Windows runner. Changing compiler discovery alone therefore cannot complete #84.
 
 [#82]: https://github.com/PREDICT-EPFL/scaly/issues/82
 [#84]: https://github.com/PREDICT-EPFL/scaly/issues/84
+[#152]: https://github.com/PREDICT-EPFL/scaly/issues/152
+[#153]: https://github.com/PREDICT-EPFL/scaly/issues/153
+[#154]: https://github.com/PREDICT-EPFL/scaly/issues/154
+[#155]: https://github.com/PREDICT-EPFL/scaly/issues/155
+[#156]: https://github.com/PREDICT-EPFL/scaly/issues/156

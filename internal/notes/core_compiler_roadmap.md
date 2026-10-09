@@ -38,7 +38,7 @@ KKT the Karush–Kuhn–Tucker system of an IPM, TACO the Tensor Algebra Compile
 1. [Decisions](#decisions)
 2. [The core language](#the-core-language)
 3. [Order of work](#order-of-work)
-4. [Release scope](#release-scope)
+4. [Release scope](#release-scope) and [Windows support](#windows-toolchain-and-support)
 5. [Rules for every item](#rules-for-every-item)
 6. [Foundations](#foundations)
 7. [One AD engine](#one-ad-engine)
@@ -58,8 +58,8 @@ KKT the Karush–Kuhn–Tucker system of an IPM, TACO the Tensor Algebra Compile
 
 ## Decisions
 
-The rest of the roadmap is built from these. All were confirmed by the maintainer on 2026-09-29 or
-2026-10-01.
+The rest of the roadmap is built from these. Decisions 1 to 15 were confirmed by the maintainer
+on 2026-09-29 or 2026-10-01. Decision 16 was confirmed on 2026-10-09.
 
 1. **One forward traversal, one table of elementwise partials.** A forward rule is written once,
    with the tangent carrying a leading seed axis, and reverse mode reads the same partials. No new
@@ -151,6 +151,15 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
     read its target while building seed groups, and its caches kept the first target's grouping).
     A library Function that wants a schedule chosen by size says so with a lowering hint, which
     lowering resolves against the recipe.
+16. **A tested, package-supplied Zig compiler.** [#82] prefers `python -m ziglang cc` after an
+    explicit `SCALY_CC` override, with `CC` and `cc` as fallbacks. The toolchain extra and the
+    Windows dependency use the same pinned version, promoted only after wheel availability and
+    compiler and installed-solver checks pass on the supported platforms. The Windows work
+    first validates Zig natively and ships the core, PIQP and the generated sequential quadratic
+    programming solver, `scaly-sqp`, on x86-64. Additional compiler backends wait for a demonstrated
+    need: Microsoft Visual C++ would change the current flags and vector code, while a separate
+    MinGW installation adds setup before the package-supplied compiler has been tested.
+    [Windows toolchain and support](#windows-toolchain-and-support) owns the scope and order.
 
 ## The core language
 
@@ -258,8 +267,9 @@ Why this order:
 - Fusion and lanes come last because they change the emitted code of everything before them, and
   they must know about sparse traversals ([#69]).
 - [#82] (`zig cc` as the JIT's compiler) lands in milestone 1, right after [#63] prepares it. Before
-  [#83], because `CLibrary`'s flags are then written in one clang dialect on every operating system
-  and the plugins' link paths are checked with zig's driver once, before they move onto externs.
+  [#83], because `CLibrary`'s flags use clang's dialect and the supported Linux and macOS plugins'
+  link paths are checked with zig's driver before they move onto externs. Windows linking is
+  checked in [#84]'s native Windows issues, so it does not block #82 or #83.
   Before milestone 3, because changing the JIT's compiler shifts every timing, and that
   milestone's gates must be measured under one compiler. [#84] (Windows) is part of 0.1.0 and runs
   beside milestone 1; [#83], [#64] and [#77] are designed so it adds a platform without changing
@@ -280,15 +290,46 @@ Nothing outside this list is started before 0.1.0 ships, so nothing reaches it h
   [#11] ships the templates page of `docs/guide/functions.md`. [#57] any time.
 - `sc.print`: [#77], float64 only.
 - Toolchain: [#63], then [#82].
-- Windows: [#84], in parallel with all of the above.
-- Release: [#81], the status admonition in `docs/index.md`, Windows in the CI and release matrices,
-  release notes.
+- Toolchain and Windows support share parent [#84], with the native compiler probe independent of
+  #82 and the rest ordered under [Windows toolchain and support](#windows-toolchain-and-support).
+- Release: [#81], the status admonition in `docs/index.md`, verification of the completed Windows
+  matrices, and release notes. Implementing those matrices belongs to #84.
 
 Everything else follows 0.1.0 in the compiler order above; [#64] is the first candidate after it.
 
 The current milestone and issue states are tracked in GitHub. This paragraph preserves the
 release decisions; it is not a separate completion checklist. Release execution is tracked in
 [#85].
+
+## Windows toolchain and support
+
+Confirmed 2026-10-09. This replaces #82's earlier requirement to validate Windows solver linking
+before changing the compiler default. That requirement would block the compiler switch on the
+Windows implementation that needs it. #82 retains Linux and macOS solver checks and its kernel
+comparison on the reference machine. #83 retains its #82 prerequisite; it does not wait for the
+Windows release.
+
+[#84] is the shared parent for the compiler switch and native Windows support. The initial
+Windows release contains the core, `scaly-piqp` and `scaly-sqp` on x86-64. ARM64, 32-bit Windows
+and `scaly-ipopt` wait for separate work. Python users install a pinned Zig package and prebuilt
+solver wheels, without setting up Visual Studio or MinGW. The exact initial compiler version
+belongs to #82, and the [dated investigation](windows_toolchain_options_2026_10_09.md#decisions)
+records package availability and the rejected alternatives.
+
+The native compiler probe [#152] can run beside #82. Core compilation and loading [#153] follow
+both; cache handling [#154] and PIQP packaging [#155] then proceed independently. The final
+Windows integration issue [#156] checks the generated SQP solver, installs the built wheels in an
+environment without native build tools, and supplies the continuous-integration and release
+matrices. #85 verifies those completed matrices and writes release notes. Closing the component
+issues alone does not establish Windows support. #84 also requires the clean installation and
+solver checks to pass together.
+
+The native probe settles first-compilation cost. Document the measured delay unless it justifies
+a warm-up mechanism. The PIQP build tests BLASFEO's existing kernels first and may use its generic
+implementation if the Windows build or calling convention fails, with the limitation recorded.
+Use native Windows Python for this evidence; a Linux process inside Windows Subsystem for Linux
+does not test the Windows path. Keep unfinished support out of published pages until the final
+integration checks pass.
 
 ## Rules for every item
 
@@ -1335,6 +1376,11 @@ writing the guide).
 [#63]: https://github.com/PREDICT-EPFL/scaly/issues/63
 [#83]: https://github.com/PREDICT-EPFL/scaly/issues/83
 [#84]: https://github.com/PREDICT-EPFL/scaly/issues/84
+[#152]: https://github.com/PREDICT-EPFL/scaly/issues/152
+[#153]: https://github.com/PREDICT-EPFL/scaly/issues/153
+[#154]: https://github.com/PREDICT-EPFL/scaly/issues/154
+[#155]: https://github.com/PREDICT-EPFL/scaly/issues/155
+[#156]: https://github.com/PREDICT-EPFL/scaly/issues/156
 [#64]: https://github.com/PREDICT-EPFL/scaly/issues/64
 [#77]: https://github.com/PREDICT-EPFL/scaly/issues/77
 [#13]: https://github.com/PREDICT-EPFL/scaly/issues/13
