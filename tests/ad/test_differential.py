@@ -175,7 +175,7 @@ def _cases() -> list[Case]:
     cases.append(Case(f"matmul-self-rank{len(shape)}", ExprOp.MATMUL, (values,), lambda x: x @ x, lambda x: x @ x))
   cases.extend(
     [
-      Case("pow-negative-constant-exponent", ExprOp.POW, (np.array([-0.5, -1.4]),), lambda x: x**3, lambda x: x**3),
+      Case("pow-negative-base-constant-exponent", ExprOp.POW, (np.array([-0.5, -1.4]),), lambda x: x**3, lambda x: x**3),
       Case("call", ExprOp.CALL, (np.array([0.2, -0.7]),), lambda x: _piece(x), lambda x: np.sin(x) + x * x),
       Case("vmap", ExprOp.VMAP, (np.linspace(0.1, 0.8, 6),), lambda x: _mapped_call(_piece, 3, [(x, 0, 2)]), lambda x: np.sin(x) + x * x),
     ]
@@ -199,6 +199,7 @@ class Evaluation:
   seeds: tuple[np.ndarray, ...]
   cotangent: np.ndarray
   adjoints: tuple[np.ndarray, ...]
+  baked: tuple[np.ndarray, np.ndarray]
 
 
 @pytest.fixture(scope="module", params=CASES, ids=lambda case: case.name)
@@ -218,7 +219,9 @@ def evaluated(request):
 
   @sc.function(
     sc.group(inputs, sc.group(*(sc.arg(f"seed{i}", s.shape) for i, s in enumerate(seeds)))),
-    outputs=sc.group(*(sc.arg(name) for name in ("single", "many0", "many1", "many3", *(f"adj{i}" for i in range(len(seeds)))))),
+    outputs=sc.group(
+      *(sc.arg(name) for name in ("single", "many0", "many1", "many3", "baked_single", "baked_many", *(f"adj{i}" for i in range(len(seeds)))))
+    ),
     name=f"products_{case.name}",
   )
   def products(args):
@@ -233,15 +236,29 @@ def evaluated(request):
     for count in (0, 1, 3):
       terms = [sc.jvp_many(y, x, seed[:count]) for x, seed in zip(values, directions, strict=True)]
       many.append(sum(terms[1:], terms[0]))
+    constants = tuple(sc.const(seed) for seed in seeds)
+    baked_rows = []
+    for row in range(3):
+      terms = [sc.jvp(y, x, sc.const(seed[row])) for x, seed in zip(values, seeds, strict=True)]
+      baked_rows.append(sum(terms[1:], terms[0]))
+    baked_terms = [sc.jvp_many(y, x, seed) for x, seed in zip(values, constants, strict=True)]
+    baked_many = sum(baked_terms[1:], baked_terms[0])
     adjoints = sc.vjp((y,), values, (sc.const(cotangent),))
-    return (sc.stack(singles), *many, *adjoints)
+    return (sc.stack(singles), *many, sc.stack(baked_rows), baked_many, *adjoints)
 
   with pytest.MonkeyPatch.context() as patch:
     patch.setenv("SCALY_STRICT_JVP_MANY", "0" if _structural_refusal(case) else "1")
     run: Any = products
     result = run((case.values, seeds))
   return Evaluation(
-    case, primal, np.asarray(result[0]), dict(zip((0, 1, 3), map(np.asarray, result[1:4]), strict=True)), seeds, cotangent, tuple(result[4:])
+    case,
+    primal,
+    np.asarray(result[0]),
+    dict(zip((0, 1, 3), map(np.asarray, result[1:4]), strict=True)),
+    seeds,
+    cotangent,
+    tuple(result[6:]),
+    (np.asarray(result[4]), np.asarray(result[5])),
   )
 
 
@@ -275,6 +292,11 @@ def test_many_seed_differences_and_duality(evaluated, nseed):
   _assert_differential(evaluated, evaluated.many[nseed])
 
 
+def test_baked_seeds_differences_and_duality(evaluated):
+  for tangent in evaluated.baked:
+    _assert_differential(evaluated, tangent)
+
+
 def test_migration_structural_matches_stacked_single(evaluated):
   for count in (0, 1, 3):
     np.testing.assert_allclose(evaluated.many[count], evaluated.single[:count], atol=1e-12, rtol=1e-12)
@@ -297,9 +319,8 @@ def test_structural_refusals(case, monkeypatch):
     assert sc.jvp_many(y, x, sc.const(np.empty((0, *x.shape)))).shape == (0, *y.shape)
 
 
-@pytest.mark.parametrize("op", list(REFUSED) + [ExprOp.SOLVER_CALL])
+@pytest.mark.parametrize(("op", "point"), [(op, point) for op in REFUSED for point in (0.5, 0.7, 1.0)] + [(ExprOp.SOLVER_CALL, None)])
 @pytest.mark.parametrize("mode", ["single", "many", "reverse"])
-@pytest.mark.parametrize("point", [0.5, 0.7, 1.0])
 def test_active_derivative_refusals(op, mode, point, monkeypatch):
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   x = sc.sym("refused_x", ())
@@ -337,3 +358,31 @@ def test_abs_zero_uses_x_over_abs_x_convention():
 
   for result in products(np.array([-0.7, 0.0, 0.6])):
     np.testing.assert_allclose(result, [-1.0, np.nan, 1.0], equal_nan=True)
+
+
+@pytest.mark.parametrize("op", [ExprOp.SQRT, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2])
+def test_singular_boundary_conventions(op, monkeypatch):
+  """Pin the nonfinite entries at points where the derivative is undefined."""
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "0" if op == ExprOp.ATAN2 else "1")
+
+  @sc.function(sc.group(sc.arg("boundary_x", 2), sc.arg("boundary_p", 2)), outputs=sc.group(sc.arg("single"), sc.arg("many"), sc.arg("reverse")))
+  def products(inputs):
+    x, p = inputs
+    y = {
+      ExprOp.SQRT: lambda: x.sqrt(),
+      ExprOp.LOG: lambda: x.log(),
+      ExprOp.POW: lambda: x**0.5,
+      ExprOp.ATAN2: lambda: sc.atan2(x, p - 2.0),
+    }[op]()
+    rows = [sc.const(row) for row in np.eye(2)]
+    return (
+      sc.stack([sc.jvp(y, x, row) for row in rows]).T,
+      sc.jvp_many(y, x, sc.const(np.eye(2))).T,
+      sc.stack([sc.vjp((y,), (x,), (row,))[0] for row in rows]),
+    )
+
+  singular, smooth = (np.nan, 0.0) if op == ExprOp.ATAN2 else (np.inf, 1.0 if op == ExprOp.LOG else 0.5)
+  single, many, reverse = products((np.array([0.0, 1.0]), np.array([2.0, 2.0])))
+  for forward in (single, many):
+    np.testing.assert_equal(forward, [[singular, np.nan], [0.0, smooth]])
+  np.testing.assert_equal(reverse, [[singular, 0.0], [np.nan, smooth]])
