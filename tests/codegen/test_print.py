@@ -23,11 +23,11 @@ def scaled(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 def test_print_returns_its_value_and_prints_at_each_call(capfd) -> None:
   x = np.array([1.5, -2.0])
-  np.testing.assert_allclose(scaled((x, 3.0)), (x * 3.0).sum())
+  np.testing.assert_allclose(scaled((x, np.array(3.0))), (x * 3.0).sum())
   # Read straight after the call: C stdout is buffered when it is not a terminal, so the line is
   # only there because the JIT flushed it.
   assert capfd.readouterr().out == "x=[1.5, -2] k=3\n"
-  scaled((np.array([0.1, 0.0]), -1.0))
+  scaled((np.array([0.1, 0.0]), np.array(-1.0)))
   assert capfd.readouterr().out == "x=[0.10000000000000001, 0] k=-1\n"
 
 
@@ -36,7 +36,7 @@ def test_format_text_reaches_stdout_unchanged(capfd) -> None:
   def f(x: sc.Expr) -> sc.Expr:
     return sc.print('100% "{}" \\ {{ok}}\t%s', x) + 1.0
 
-  assert f(2.5) == 3.5
+  assert f(np.array(2.5)) == 3.5
   assert capfd.readouterr().out == '100% "2.5" \\ {ok}\t%s\n'
 
 
@@ -45,19 +45,44 @@ def test_identical_prints_intern_to_one(capfd) -> None:
   def f(x: sc.Expr) -> sc.Expr:
     return sc.print("x={}", x) * sc.print("x={}", x)
 
-  assert f(3.0) == 9.0
+  assert f(np.array(3.0)) == 9.0
   assert capfd.readouterr().out == "x=3\n"
 
 
+def test_mapped_print_runs_once_per_trip_in_order(capfd) -> None:
+  @sc.function(sc.arg("z", ()), outputs=sc.arg("y"))
+  def stage(z: sc.Expr) -> sc.Expr:
+    return sc.print("z={}", z) * 2.0
+
+  @sc.function(sc.arg("z", 16), outputs=sc.arg("y", 16))
+  def rollout(z: sc.Expr) -> sc.Expr:
+    return sc.vmap(stage, 16)(z)
+
+  z = np.arange(16.0)
+  np.testing.assert_allclose(rollout(z), 2.0 * z)
+  assert capfd.readouterr().out == "".join(f"z={i}\n" for i in range(16))
+
+
+@sc.function(sc.arg("p", ()), outputs=sc.arg("s"))
+def gain(p: sc.Expr) -> sc.Expr:
+  return sc.print("p={}", p).sin()
+
+
 @sc.function(sc.group(sc.arg("z", 2), sc.arg("p", ())), outputs=sc.arg("y", 2))
-def stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+def direct_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
-  return sc.print("z={}", z) * sc.print("p={}", p).sin()
+  return z * sc.print("p={}", p).sin()
 
 
-def test_mapped_print_runs_once_per_trip(capfd) -> None:
-  """``p`` is the same at every trip, so the ``sin`` of it is loop-invariant work that would leave
-  the loop; its print must still run at every trip, in trip order."""
+@sc.function(sc.group(sc.arg("z", 2), sc.arg("p", ())), outputs=sc.arg("y", 2))
+def nested_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+  z, p = inputs
+  return z * gain.symbolic_call(p)
+
+
+@pytest.mark.parametrize("stage", [direct_stage, nested_stage], ids=["direct", "nested"])
+def test_loop_invariant_print_runs_every_trip(capfd, stage) -> None:
+  """``p`` is the same at every trip, so its ``sin`` is work that could leave the loop. Its print runs at every trip."""
 
   @sc.function(sc.group(sc.arg("z", (8, 2)), sc.arg("p", ())), outputs=sc.arg("y", (8, 2)))
   def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -65,10 +90,8 @@ def test_mapped_print_runs_once_per_trip(capfd) -> None:
     return sc.vmap(stage, 8)((z, sc.broadcast(p)))
 
   z = np.arange(16.0).reshape(8, 2)
-  np.testing.assert_allclose(rollout((z, 0.5)), z * np.sin(0.5))
-  lines = capfd.readouterr().out.splitlines()
-  assert sorted(lines) == sorted([*(f"z=[{2 * i:g}, {2 * i + 1:g}]" for i in range(8)), *["p=0.5"] * 8])
-  assert [line for line in lines if line.startswith("z")] == [f"z=[{2 * i:g}, {2 * i + 1:g}]" for i in range(8)]
+  np.testing.assert_allclose(rollout((z, np.array(0.5))), z * np.sin(0.5))
+  assert capfd.readouterr().out == "p=0.5\n" * 8
 
 
 def test_derivative_prints_when_it_computes_the_primal(capfd) -> None:
@@ -92,7 +115,11 @@ def test_source_defines_scaly_printf_only_when_it_prints() -> None:
 
 @pytest.mark.parametrize(
   ("define", "expected"),
-  [((), "x=[0.25, -0.75] k=2\n"), (("-DSCALY_PRINTF(...)=",), ""), (("-DSCALY_PRINTF=uart_printf", "-include", "uart.h"), "uart: x=[0.25, -0.75] k=2\n")],
+  [
+    ((), "x=[0.25, -0.75] k=2\n"),
+    (("-DSCALY_PRINTF(...)=",), ""),
+    (("-DSCALY_PRINTF=uart_printf", "-include", "uart.h"), "uart: x=[0.25, -0.75] k=2\n"),
+  ],
 )
 def test_scaly_printf_compiles_prints_out_or_reroutes_them(tmp_path, define, expected) -> None:
   module = render_c_module(scaled)

@@ -83,7 +83,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         inner = _inline_calls(inner, procedures, spellings)
       nodes = list(walk_program(p.block(*inner)))
       if any(
-        n.op == ProgramOp.CALL
+        n.op in (ProgramOp.CALL, ProgramOp.PRINT)
         or (n.op == ProgramOp.FOR and any(a.op != ProgramOp.CONST_INT for a in n.args[0].args))
         or (n.dtype.is_floating and n.dtype.bits != 64)
         or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64))

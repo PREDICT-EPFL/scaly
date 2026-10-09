@@ -9,11 +9,13 @@ stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.p
 from __future__ import annotations
 
 import math
+import string
 import struct
 import weakref
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import numpy as np
 
@@ -66,6 +68,7 @@ class ExprOp(StrEnum):
   CALL = "call"
   VMAP = "vmap"
   SOLVER_CALL = "solver_call"
+  PRINT = "print"
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -114,6 +117,7 @@ COMMON_STRUCTURAL = {
   ExprOp.CALL,
   ExprOp.VMAP,
   ExprOp.SOLVER_CALL,
+  ExprOp.PRINT,
 }
 
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
@@ -178,6 +182,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
+  ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, None),
 }
 
 
@@ -591,6 +596,59 @@ def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
     TensorType(broadcast_shape(x.shape, y.shape), dtype=promote_dtype(x, y), diff=op_diff(op, x, y)),
     lowering=common_lowering(x, y),
   )
+
+
+def print_pieces(fmt: str) -> tuple[str, ...]:
+  """The literal text around each ``{}`` placeholder of a print format: one more piece than placeholders."""
+  pieces = [""]
+  for literal, field_name, spec, conversion in string.Formatter().parse(fmt):
+    pieces[-1] += literal
+    if field_name is None:
+      continue
+    if field_name or spec or conversion:
+      raise ValueError(f"print format {fmt!r} may contain only empty '{{}}' placeholders")
+    pieces.append("")
+  return tuple(pieces)
+
+
+_PRINT_TRACES: list[list[Expr]] = []
+
+
+@contextmanager
+def recording_prints() -> Iterator[list[Expr]]:
+  """Collect the prints built inside the block, so a tracer can check that each reaches its outputs."""
+  prints: list[Expr] = []
+  _PRINT_TRACES.append(prints)
+  try:
+    yield prints
+  finally:
+    _PRINT_TRACES.pop()
+
+
+def print_(fmt: str, *values: Any) -> Expr:
+  """Print ``values`` each time generated code computes the result, which is the first value.
+
+  ``fmt`` has one ``{}`` for each value, and ``{{`` and ``}}`` for literal braces. Each print ends
+  with a newline. A ``float64`` prints with 17 significant digits, so it reads back exactly, and a
+  tensor prints flat as ``[a, b, ...]``. Only the returned expression carries the print: a print
+  whose result the outputs do not use raises when the function is traced.
+
+  Args:
+    fmt: the text to print, with a ``{}`` placeholder for each value.
+    values: the ``float64`` expressions to print. The first is returned.
+  """
+  exprs = tuple(as_expr(value) for value in values)
+  if not exprs:
+    raise ValueError("print needs at least one value, the one it returns")
+  placeholders = len(print_pieces(fmt)) - 1
+  if placeholders != len(exprs):
+    raise ValueError(f"print format {fmt!r} has {placeholders} placeholders for {len(exprs)} values")
+  if any(e.type.dtype != dtypes.float64 for e in exprs):
+    raise TypeError(f"print supports float64 values, got {', '.join(str(e.type.dtype) for e in exprs)}")
+  node = Expr(ExprOp.PRINT, exprs, exprs[0].type, attrs={"format": fmt}, lowering=exprs[0].lowering)
+  if _PRINT_TRACES:
+    _PRINT_TRACES[-1].append(node)
+  return node
 
 
 def atan2(y: Any, x: Any) -> Expr:

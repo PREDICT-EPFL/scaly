@@ -155,6 +155,17 @@ def _call_attrs(n: ProgramNode) -> str | None:
   return None
 
 
+def _print_pieces(n: ProgramNode) -> str | None:
+  pieces = n.attrs.get("pieces")
+  if not isinstance(pieces, tuple) or not all(isinstance(piece, str) for piece in pieces):
+    return "PRINT missing tuple of string 'pieces'"
+  if len(pieces) != len(n.args) + 1:
+    return f"PRINT has {len(pieces)} pieces of text for {len(n.args)} values"
+  if any(a.op not in SCALAR_OPS for a in n.args):
+    return "PRINT values must be scalar"
+  return None
+
+
 def _proc_params(n: ProgramNode) -> str | None:
   pc = n.attrs.get("param_count")
   if pc is None:
@@ -183,6 +194,7 @@ spec_program_full = Spec(
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),
+    Rule(ProgramOp.PRINT, "print-pieces", _print_pieces),
     Rule(ProgramOp.PROC, "proc-params", _proc_params),
   ]
 )

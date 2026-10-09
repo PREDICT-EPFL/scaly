@@ -397,6 +397,17 @@ tests/codegen/test_name_clash.py::test_same_named_callees_on_same_arguments
 tests/codegen/test_name_clash.py::test_scope_suffixes_remain_valid_and_children_see_global_names
 tests/codegen/test_name_clash.py::test_shared_input_output_names_keep_distinct_buffers
 tests/codegen/test_name_clash.py::test_solver_oracles_with_same_name_keep_their_identity
+tests/codegen/test_print.py::test_derivative_prints_when_it_computes_the_primal
+tests/codegen/test_print.py::test_format_text_reaches_stdout_unchanged
+tests/codegen/test_print.py::test_identical_prints_intern_to_one
+tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[direct]
+tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[nested]
+tests/codegen/test_print.py::test_mapped_print_runs_once_per_trip_in_order
+tests/codegen/test_print.py::test_print_returns_its_value_and_prints_at_each_call
+tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define0-x=[0.25, -0.75] k=2\n]
+tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define1-]
+tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define2-uart: x=[0.25, -0.75] k=2\n]
+tests/codegen/test_print.py::test_source_defines_scaly_printf_only_when_it_prints
 tests/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/codegen/test_toolchain.py::test_build_recipe_validates_render_controls
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[command]
@@ -597,6 +608,7 @@ tests/function/test_api.py::test_factory_unknown_names_report_value_errors
 tests/function/test_api.py::test_forward_convenience_api_matches_factory
 tests/function/test_api.py::test_gradient_convenience_api_matches_factory
 tests/function/test_api.py::test_lagrangian_hessian_convenience_api
+tests/function/test_api.py::test_print_unreachable_from_the_outputs_raises_at_trace_time
 tests/function/test_api.py::test_scoped_function_decorator_builds_fresh_named_function
 tests/function/test_api.py::test_scoped_function_decorator_outputs_default_names
 tests/function/test_api.py::test_seeded_factory_outputs_require_seed_inputs
@@ -701,6 +713,12 @@ tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits
 tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first7-second7]
 tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[first8-second8]
 tests/ir/test_expr.py::test_mixed_lowering_hints_survive_expr_graph
+tests/ir/test_expr.py::test_print_is_an_identity_node_carrying_its_format
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x-values0-ValueError-at least one value]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={0}-values2-ValueError-only empty '{}' placeholders]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={:.3f}-values3-ValueError-only empty '{}' placeholders]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={} y={}-values1-ValueError-2 placeholders for 1 value]
+tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={}-values4-TypeError-float64]
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/ir/test_expr.py::test_structural_equality_collapses_to_identity
 tests/ir/test_expr.py::test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees
@@ -1343,6 +1361,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.expr]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.calls]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.contraction]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.ctx]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.effects]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.elementwise]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.gather]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.movement]

@@ -26,7 +26,7 @@ from ..function.model import Function, as_concrete
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
 from ..ir.program import walk_program, ProgramNode, ProgramOp
-from ..passes.program._common import name_scope, buffer_refs
+from ..passes.program._common import name_scope, buffer_refs, prints
 from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
 
@@ -51,6 +51,10 @@ _UNARY_C = {
   ProgramOp.CEIL: "ceil",
 }
 _BINARY_C = {ProgramOp.POW: "pow", ProgramOp.ATAN2: "atan2", ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax"}
+# 17 significant digits read a double back exactly.
+_PRINTF_CONVERSION = {"double": "%.17g"}
+# Defining SCALY_PRINTF before this point reroutes prints, and ``-DSCALY_PRINTF(...)=`` removes them.
+_PRINTF_DEFINES = ["#ifndef SCALY_PRINTF", "#include <stdio.h>", "#define SCALY_PRINTF printf", "#endif"]
 
 
 def can_render_program_c(fun: Function | ConcreteFunction) -> bool:
@@ -74,6 +78,7 @@ def _includes(
     "#include <stddef.h>",
     "#include <stdint.h>",
     *extra,
+    *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
     *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),
     *_lane_defines(prog, dialect=dialect),
   ]
@@ -349,6 +354,10 @@ def _emit_statement(
     if stmt.attrs["callee"] in solver_callees:
       ptrs.append(options_name)
     lines.append(f"{pad}{c_ident(stmt.attrs['callee'])}_raw({', '.join(ptrs)});")
+  elif stmt.op == ProgramOp.PRINT:
+    pieces = [piece.replace("%", "%%") for piece in stmt.attrs["pieces"]]
+    fmt = pieces[0] + "".join(_PRINTF_CONVERSION[a.dtype.c_type] + piece for a, piece in zip(stmt.args, pieces[1:], strict=True))
+    lines.append(f"{pad}SCALY_PRINTF({', '.join([_c_string(fmt), *(_emit_scalar(a, ptr_expr) for a in stmt.args)])});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
@@ -378,6 +387,21 @@ def _emit_view(view: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, 
   ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
   idx = _emit_scalar(view.args[0], ptr_expr, var_expr)
   return f"{ptr}[{idx}]"
+
+
+def _c_string(text: str) -> str:
+  """A C string literal holding ``text`` as UTF-8. ``?`` is escaped so no trigraph forms under ``-std=c11``."""
+  out = []
+  for byte in text.encode():
+    if chr(byte) in '"\\?':
+      out.append("\\" + chr(byte))
+    elif byte == 10:
+      out.append("\\n")
+    elif 32 <= byte < 127:
+      out.append(chr(byte))
+    else:
+      out.append(f"\\{byte:03o}")
+  return '"' + "".join(out) + '"'
 
 
 def _c_float(value: float) -> str:

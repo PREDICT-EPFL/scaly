@@ -186,16 +186,17 @@ def test_lagrangian_hessian_convenience_api() -> None:
 
 
 def test_print_unreachable_from_the_outputs_raises_at_trace_time() -> None:
-  @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
-  def f(x: sc.Expr) -> sc.Expr:
-    sc.print("x={}", x)
-    return x * 2.0
-
   with pytest.raises(ValueError, match=r"print 'x=\{\}' in function 'f' does not reach its outputs"):
-    f.instantiate()
+
+    @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+    def f(x: sc.Expr) -> sc.Expr:
+      sc.print("x={}", x)
+      return x * 2.0
 
   @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
   def g(x: sc.Expr) -> sc.Expr:
     return sc.print("g={}", x) * 2.0
 
-  g.instantiate()
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+  def h(x: sc.Expr) -> sc.Expr:
+    return g.symbolic_call(x) + 1.0

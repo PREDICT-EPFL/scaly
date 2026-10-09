@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Seq
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, linear_combination, topo
+from ..ir.expr import Expr, ExprOp, linear_combination, recording_prints, topo
 from ..ir.expr_spec import verify_expr
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
@@ -151,13 +151,18 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   ) -> ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
     symbolic_inputs = inputs.symbols()
     input_exprs = inputs.flatten_symbolic(symbolic_inputs, f"{name} inputs")
-    symbolic_outputs = fn(*cast(tuple[Any, ...], symbolic_inputs))
+    with recording_prints() as prints:
+      symbolic_outputs = fn(*cast(tuple[Any, ...], symbolic_inputs))
     if outputs is None:
       outputs = inferred_outputs(symbolic_outputs, output_name or name)
     try:
       output_exprs = outputs.flatten_symbolic(symbolic_outputs, f"{name} outputs")
     except ValueError as exc:
       raise TypeError(str(exc)) from exc
+    reached = {e.id for e in topo(output_exprs)}
+    for node in prints:
+      if node.id not in reached:
+        raise ValueError(f"print {node.attrs['format']!r} in function {name!r} does not reach its outputs; use the value it returns")
     output_types = outputs.resolved(tuple(expr.type for expr in output_exprs))
     return cls.build(name, inputs, input_exprs, outputs.with_types(output_types), output_exprs)
 
