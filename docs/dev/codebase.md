@@ -98,7 +98,7 @@ src/scaly/
 
   utils/
     env.py               the environment variables and platform facts scaly reads
-    names.py             C identifier spelling shared by passes and code generation
+    names.py             NameScope allocation and C identifier spelling for passes and code generation
     torch_state_dict.py  reading PyTorch checkpoints without depending on torch
 ```
 

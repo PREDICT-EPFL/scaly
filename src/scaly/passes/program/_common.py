@@ -9,7 +9,7 @@ import numpy as np
 
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
-from ...utils.names import c_ident
+from ...utils.names import c_ident, NameScope
 
 
 def _postorder(root: ProgramNode) -> Iterable[ProgramNode]:
@@ -222,15 +222,16 @@ def _resolve_alias(name: str, alias_src: dict[str, str]) -> str:
   return name
 
 
-def allocated_name(base: str, spellings: set[str]) -> str:
-  """Reserve ``base`` or a numbered suffix against occupied C identifier spellings."""
-  name = base
-  suffix = 2
-  while c_ident(name) in spellings:
-    name = f"{base}_{suffix}"
-    suffix += 1
-  spellings.add(c_ident(name))
-  return name
+def name_scope(prog: ProgramNode) -> NameScope:
+  """Seed the program name authority with the declarations already in the IR."""
+  names = {
+    c_ident(n.attrs[key])
+    for n in walk_program(prog)
+    for key in ("name", "target", "callee", "vector_helper", "vector_prefix", "lane_width")
+    if key in n.attrs
+  }
+  names.update(f"{c_ident(n.attrs['name'])}_raw" for n in walk_program(prog) if n.op == ProgramOp.PROC)
+  return NameScope(names)
 
 
 def prune_dead_buffers(proc: ProgramNode) -> ProgramNode:

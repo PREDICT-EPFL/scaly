@@ -16,6 +16,7 @@ from ..program import ProgramObserver, optimize_program
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.program_spec import verify_program
 from ...ir.types import DeviceSpec, DType, dtypes
+from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..expr import cse_many, simplify
 
@@ -66,29 +67,29 @@ def lower_function(
   """
   fun = as_concrete(fun)
   verify_expr((*fun.inputs, *fun.outputs))
-  _check_callee_names(fun)
-  callees: dict[str, ProgramNode] = {}
-  solver_fns: dict[str, ConcreteFunction] = {}
+  names, symbols = _function_names(fun)
+  callees: dict[ConcreteFunction, ProgramNode] = {}
+  solver_fns: dict[ConcreteFunction, ConcreteFunction] = {}
   from ...solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(fun):
-    solver_fns[fun.name] = fun
+    solver_fns[fun] = fun
     for oracle in solver_callees(fun):
-      if oracle.name not in callees:
-        callees[oracle.name] = _lower_to_proc(oracle, callees, solver_fns, observe_expr=observe_expr)
+      if oracle not in callees:
+        callees[oracle] = _lower_to_proc(oracle, callees, solver_fns, names, symbols, observe_expr=observe_expr)
     prog = p.program([*callees.values()])
-    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": fun.name}, prog.dtype)
+    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": symbols[fun]}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False, observe_expr=observe_expr)
+    root = _lower_to_proc(fun, callees, solver_fns, names, symbols, auto_scalarize=False, observe_expr=observe_expr)
     prog = p.program([*callees.values(), root])
   if solver_fns:
-    solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
+    solver_oracles = {symbols[sf]: tuple(symbols[o] for o in solver_callees(sf)) for sf in solver_fns}
     from ...solvers.model import ExternalOracle
 
     solver_external_workspace = {}
-    for name, sf in solver_fns.items():
+    for sf in solver_fns:
       desc = sf.descriptor
-      solver_external_workspace[name] = max(
+      solver_external_workspace[symbols[sf]] = max(
         (oracle.workspace_size for oracle in (desc.base, desc.grad, desc.jac, desc.hess, desc.bounds) if isinstance(oracle, ExternalOracle)),
         default=0,
       )
@@ -98,6 +99,7 @@ def lower_function(
       {**prog.attrs, "solver_oracles": solver_oracles, "solver_external_workspace": solver_external_workspace},
       prog.dtype,
     )
+  prog = ProgramNode(prog.op, prog.args, {**prog.attrs, "function_symbols": tuple(symbols.items())}, prog.dtype)
   if observe is not None:
     observe("lowered", prog)
   prog = optimize_program(prog, observe=observe, reciprocal=reciprocal, lanes=lanes)
@@ -138,23 +140,26 @@ def _normalize_function(fun: ConcreteFunction) -> ConcreteFunction:
 
 def _lower_to_proc(
   fun: ConcreteFunction,
-  callees: dict[str, ProgramNode],
-  solver_fns: dict[str, ConcreteFunction],
+  callees: dict[ConcreteFunction, ProgramNode],
+  solver_fns: dict[ConcreteFunction, ConcreteFunction],
+  names: NameScope,
+  symbols: dict[ConcreteFunction, str],
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
 ) -> ProgramNode:
   verify_expr((*fun.inputs, *fun.outputs))
   lowering = fun._effective_lowering()
+  symbol = symbols[fun]
   fun = _normalize_function(fun)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, solver_fns, observe_expr)
+  ctx = LowerCtx(fun, callees, solver_fns, names, symbols, observe_expr)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
   ctx.emit_outputs()
-  proc = p.proc(fun.name, ctx.params, ctx.statements)
+  proc = p.proc(symbol, ctx.params, ctx.statements)
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
   nodes = topo(fun.outputs)
@@ -182,13 +187,20 @@ class LowerCtx:
   def __init__(
     self,
     fun: ConcreteFunction,
-    callees: dict[str, ProgramNode],
-    solver_fns: dict[str, ConcreteFunction],
+    callees: dict[ConcreteFunction, ProgramNode],
+    solver_fns: dict[ConcreteFunction, ConcreteFunction],
+    names: NameScope,
+    symbols: dict[ConcreteFunction, str],
     observe_expr: ExprObserver | None = None,
   ) -> None:
     self.fun = fun
     self.callees = callees
-    self.solver_fns = solver_fns  # name -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
+    self.solver_fns = solver_fns  # identity -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
+    self.program_names = names
+    self.names = names.child()
+    self.symbols = symbols
+    self.input_names = tuple(self.names.allocate(n) for n in fun.input_names)
+    self.output_names = tuple(self.names.allocate(n) for n in fun.output_names)
     self.observe_expr = observe_expr
     self.params: list[ProgramNode] = []
     self.statements: list[ProgramNode] = []
@@ -197,14 +209,14 @@ class LowerCtx:
     self.value_buffers: dict[int, str] = {}
     # Output Expr.id -> output buffer name, so the body writes outputs in place.
     self._output_alias: dict[int, str] = {}
-    # (callee_name, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
-    self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
+    # (callee identity, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
+    self.call_invocations: dict[tuple[ConcreteFunction, tuple[str, ...]], tuple[str, ...]] = {}
     self._tmp = 0
 
   # --- declarations ---------------------------------------------------------
 
   def emit_inputs(self) -> None:
-    for name, expr in zip(self.fun.input_names, self.fun.inputs, strict=True):
+    for name, expr in zip(self.input_names, self.fun.inputs, strict=True):
       buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global")
       self.params.append(buf)
       self.buffers[name] = buf
@@ -214,7 +226,7 @@ class LowerCtx:
     """Register output BUFFER params and alias each unique computed output Expr to
     its output buffer, so its rule writes directly into the output (no copy)."""
     seen: set[int] = set()
-    for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
+    for name, expr in zip(self.output_names, self.fun.outputs, strict=True):
       buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global")
       self.params.append(buf)
       self.buffers[name] = buf
@@ -224,13 +236,13 @@ class LowerCtx:
       self._output_alias[expr.id] = name
 
   def emit_outputs(self) -> None:
-    for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
+    for name, expr in zip(self.output_names, self.fun.outputs, strict=True):
       src = self.value_buffers.get(expr.id)
       if src is None:
         raise LoweringError(f"output {name!r} expression was not lowered")
       if src == name:
         continue  # already written in place via the output alias
-      self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.shape))
+      self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.shape, self.names))
 
   # --- body -----------------------------------------------------------------
 
@@ -250,7 +262,7 @@ class LowerCtx:
 
   def new_private(self, dtype: DType, shape: tuple[int, ...]) -> ProgramNode:
     """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
-    name = f"t{self._tmp}"
+    name = self.names.allocate(f"t{self._tmp}")
     self._tmp += 1
     buf = p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private")
     self.buffers[name] = buf
@@ -272,7 +284,7 @@ class LowerCtx:
     ``const T* tN = <src> + offset;``). Carries ``alias_of`` / ``alias_offset`` so the workspace
     pass leaves it unpacked and keeps its source live. Port of ``codegen/c.py``'s contiguous
     SLICE / RESHAPE pointer aliasing."""
-    name = f"t{self._tmp}"
+    name = self.names.allocate(f"t{self._tmp}")
     self._tmp += 1
     buf = ProgramNode(
       ProgramOp.BUFFER,
@@ -294,7 +306,7 @@ class LowerCtx:
   def new_const_index(self, idx: Iterable[int]) -> ProgramNode:
     """A read-only int64 index table (for GATHER/SCATTER), declared ``static const``."""
     values = [int(v) for v in idx]
-    buf = p.const_buffer(f"k{self._tmp}", dtypes.int64, (len(values),), values)
+    buf = p.const_buffer(self.names.allocate(f"k{self._tmp}", generated=True), dtypes.int64, (len(values),), values)
     self._tmp += 1
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)
@@ -394,29 +406,29 @@ def _broadcast_index_p(flat: ProgramNode, in_shape: tuple[int, ...], out_shape: 
   return _flat_index_p(coords, in_shape)
 
 
-def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...]) -> ProgramNode:
-  vname = f"c_{dst.attrs['name']}"
+def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...], names: NameScope) -> ProgramNode:
+  vname = names.allocate(f"c_{dst.attrs['name']}")
   rng = p.range_(vname, 0, _size_of(shape), kind=RangeKind.GLOBAL)
   i = p.var(vname)
   return p.for_(rng, [p.store(p.view(dst, [i]), p.load(p.view(src, [i])))])
 
 
-def _check_callee_names(root: ConcreteFunction) -> None:
-  from ...solvers.graph import solver_callees
-  from ...utils.names import c_ident
+def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFunction, str]]:
+  from ...solvers.graph import is_solver_function, solver_callees, external_oracles
 
-  names: dict[str, ConcreteFunction] = {}
-  seen: set[int] = set()
+  names = NameScope()
+  symbols: dict[ConcreteFunction, str] = {}
+  functions: list[ConcreteFunction] = []
+  seen: set[ConcreteFunction] = set()
 
   def visit(function: ConcreteFunction) -> None:
-    if id(function) in seen:
+    if function in seen:
       return
-    seen.add(id(function))
+    seen.add(function)
     _check_float64_leaves(function)
-    symbol = c_ident(function.name)
-    if symbol in names and names[symbol] is not function:
-      raise LoweringError(f"distinct function instances share generated C identifier {symbol!r}; give them distinct names")
-    names[symbol] = function
+    functions.append(function)
+    for oracle in external_oracles(function):
+      names.occupied.add(oracle.raw_symbol)
     for callee in solver_callees(function):
       visit(callee)
     for node in topo(function.outputs):
@@ -424,6 +436,17 @@ def _check_callee_names(root: ConcreteFunction) -> None:
         visit(node.attrs["callee"])
 
   visit(root)
+  symbols[root] = names.claim(root.name)
+  for function in functions:
+    if is_solver_function(function):
+      if function is not root:
+        symbols[function] = names.claim(function.name)
+      for suffix in ("stats", "default_options", "stats_data", "raw"):
+        names.claim(f"{symbols[function]}_{suffix}")
+  for function in functions:
+    if function not in symbols:
+      symbols[function] = names.procedure(function.name)
+  return names, symbols
 
 
 def _check_float64_leaves(fun: ConcreteFunction) -> None:

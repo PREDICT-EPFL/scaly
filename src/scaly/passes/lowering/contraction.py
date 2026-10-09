@@ -51,47 +51,48 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   dt = node.type.dtype
   sa, sb = a.shape, b.shape
   nm = out.attrs["name"]
+  indices = {prefix: ctx.names.allocate(f"{prefix}_{nm}") for prefix in ("i", "j", "k", "ib", "it")}
   if len(sa) == 1 and len(sb) == 1:  # dot
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, sa[0], kind=RangeKind.REDUCE)
+    k = p.var(indices["k"])
+    krng = p.range_(indices["k"], 0, sa[0], kind=RangeKind.REDUCE)
     _mm_accumulate(ctx, out, p.const_int(0), p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [k])), dt, [], krng)
   elif len(sa) == 2 and len(sb) == 1:  # mat @ vec: the reduction axis is contiguous in ``a``
     m, kk = sa
-    i = p.var(f"i_{nm}")
-    irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
+    i = p.var(indices["i"])
+    irng = p.range_(indices["i"], 0, m, kind=RangeKind.GLOBAL)
+    k = p.var(indices["k"])
+    krng = p.range_(indices["k"], 0, kk, kind=RangeKind.REDUCE)
     row_dot = lambda row: _mm_accum(out, row, p.load(p.view(a_buf, [p.add(p.mul(row, p.const_int(kk)), k)])), p.load(p.view(b_buf, [k])))
     ctx.statements.extend(_nest([irng], [_mm_init(out, i, dt)]))
     # Four output rows per pass as four unrolled statements, so the compiler keeps four independent
     # accumulators; a four-trip inner loop over the rows becomes gathers under -march=native.
     blocks, tail = divmod(m, 4)
     if blocks:
-      ib = p.var(f"ib_{nm}")
-      ibrng = p.range_(f"ib_{nm}", 0, blocks, kind=RangeKind.GLOBAL)
+      ib = p.var(indices["ib"])
+      ibrng = p.range_(indices["ib"], 0, blocks, kind=RangeKind.GLOBAL)
       rows = [p.add(p.mul(ib, p.const_int(4)), p.const_int(r)) for r in range(4)]
       ctx.statements.extend(_nest([ibrng, krng], [row_dot(row) for row in rows]))
     if tail:
-      it = p.var(f"it_{nm}")
-      itrng = p.range_(f"it_{nm}", 4 * blocks, m, kind=RangeKind.GLOBAL)
+      it = p.var(indices["it"])
+      itrng = p.range_(indices["it"], 4 * blocks, m, kind=RangeKind.GLOBAL)
       ctx.statements.extend(_nest([itrng, krng], [row_dot(it)]))
   elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
     kk, n = sb
-    j = p.var(f"j_{nm}")
-    jrng = p.range_(f"j_{nm}", 0, n, kind=RangeKind.GLOBAL)
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
+    j = p.var(indices["j"])
+    jrng = p.range_(indices["j"], 0, n, kind=RangeKind.GLOBAL)
+    k = p.var(indices["k"])
+    krng = p.range_(indices["k"], 0, kk, kind=RangeKind.REDUCE)
     b_idx = p.add(p.mul(k, p.const_int(n)), j)
     _mm_accumulate(ctx, out, j, p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [b_idx])), dt, [jrng], krng)
   elif len(sa) == 2 and len(sb) == 2:  # mat @ mat
     m, kk = sa
     n = sb[1]
-    i = p.var(f"i_{nm}")
-    irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
-    j = p.var(f"j_{nm}")
-    jrng = p.range_(f"j_{nm}", 0, n, kind=RangeKind.GLOBAL)
-    k = p.var(f"k_{nm}")
-    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
+    i = p.var(indices["i"])
+    irng = p.range_(indices["i"], 0, m, kind=RangeKind.GLOBAL)
+    j = p.var(indices["j"])
+    jrng = p.range_(indices["j"], 0, n, kind=RangeKind.GLOBAL)
+    k = p.var(indices["k"])
+    krng = p.range_(indices["k"], 0, kk, kind=RangeKind.REDUCE)
     out_idx = p.add(p.mul(i, p.const_int(n)), j)
     a_idx = p.add(p.mul(i, p.const_int(kk)), k)
     b_idx = p.add(p.mul(k, p.const_int(n)), j)

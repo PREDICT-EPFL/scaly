@@ -15,7 +15,7 @@ def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
   acc = ctx.alloc_tmp(node)
   z = p.const_int(0)
   ctx.statements.append(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
-  name = f"i_{acc.attrs['name']}"
+  name = ctx.names.allocate(f"i_{acc.attrs['name']}")
   rng = p.range_(name, 0, _size_of(src.shape), kind=RangeKind.REDUCE)
   i = p.var(name)
   ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))

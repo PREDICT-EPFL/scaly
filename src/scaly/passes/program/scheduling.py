@@ -4,28 +4,27 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp
 from ..arith import CONSTANTS
+from ...utils.names import NameScope
 
 MAX_SCALAR_DEPTH = 32
 
 
-@dataclass(slots=True)
 class ScalarNameAllocator:
-  """Allocate scalar locals against reserved C identifier spellings."""
+  """Allocate scalar locals through the procedure's name authority."""
 
-  occupied: set[str]
-  serial: int = 0
+  def __init__(self, occupied: set[str]) -> None:
+    self.scope = NameScope(occupied)
+    self.serial = 0
 
   def fresh(self) -> str:
-    while (name := f"v{self.serial}") in self.occupied:
+    while self.scope.contains(name := f"v{self.serial}"):
       self.serial += 1
     self.serial += 1
-    self.occupied.add(name)
-    return name
+    return self.scope.allocate(name)
 
 
 def schedule_values(

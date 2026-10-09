@@ -150,7 +150,9 @@ def _lower(
   if backends:
     solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
   prog = lower_function(fun, observe=observe, observe_expr=observe_expr, reciprocal=recipe.reciprocal, lanes=recipe.lanes)
-  sz_w = _solver_root_workspace(prog, fun.name) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
+  sz_w = (
+    _solver_root_workspace(prog, dict(prog.attrs["function_symbols"])[fun]) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
+  )
   return _RenderCtx(fun, prog, backends, sz_w, recipe)
 
 
@@ -322,8 +324,9 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   ]
   order = _function_order(fun)
   solvers = solver_functions(fun)
-  options_indices = {fn.name: i for i, fn in enumerate(solvers)}
-  runtime_callees = frozenset((*procs, *options_indices))
+  symbols = dict(prog.attrs["function_symbols"])
+  options_indices = {fn: i for i, fn in enumerate(solvers)}
+  runtime_callees = frozenset((*procs, *(symbols[fn] for fn in solvers)))
   external_sources: list[str] = []
   raw_definitions: dict[str, str] = {}
   for fn in order:
@@ -337,7 +340,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     lines += [*source.splitlines(), ""]
   # Program order also puts a callee before its callers, and it is the only order that knows the
   # PROCs the program passes split off a ConcreteFunction's PROC (``passes/program/hoist_invariant.py``).
-  pending = [pr for pr in prog.args[:pc] if pr.attrs["name"] != fun.name]
+  pending = [pr for pr in prog.args[:pc] if pr.attrs["name"] != symbols[fun]]
   reserved_names = _c_reserved_names(prog)
 
   def flush(until: str | None) -> None:
@@ -356,15 +359,15 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
 
   for fn in order if is_solver_function(fun) else order[:-1]:
     if is_solver_function(fn):
-      lines.extend((*render_solver_raw(fn, options_index=options_indices[fn.name], include_external_sources=False), ""))
+      lines.extend((*render_solver_raw(fn, options_index=options_indices[fn], include_external_sources=False, function_symbols=symbols), ""))
     else:
-      flush(fn.name)
+      flush(symbols[fn])
   flush(None)
   if is_solver_function(fun):
     lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi, options_count=len(solvers))
   else:
     lines += _render_entry(
-      procs[fun.name],
+      procs[symbols[fun]],
       fun,
       casadi=casadi,
       dialect=ctx.recipe.dialect,

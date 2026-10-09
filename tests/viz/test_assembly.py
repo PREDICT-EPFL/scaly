@@ -128,7 +128,7 @@ def test_visualization_instance_labels_and_capture_scope(tmp_path, monkeypatch):
 
   monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
 
-  @function(arg("x"), outputs=arg("y"))
+  @function(arg("x"), outputs=arg("y"), name="capture_template")
   def template(x):
     return x * x
 

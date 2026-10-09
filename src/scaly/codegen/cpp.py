@@ -12,6 +12,7 @@ from .casadi import casadi_declarations, casadi_defines
 from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_declarations
 from ..function.concrete import ConcreteFunction
 from ..solvers.stats import stats_c_defs
+from ..utils.names import NameScope
 
 if TYPE_CHECKING:
   from ..ir.types import SparsityPattern
@@ -53,11 +54,11 @@ def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
   return f"constexpr std::array<int, {size}> {name} = {{{', '.join(str(v) for v in values)}}};"
 
 
-def _sparse_namespace(name: str, sp: SparsityPattern) -> list[str]:
+def _sparse_namespace(name: str, sp: SparsityPattern, names: NameScope) -> list[str]:
   row_ptr, col_ind, csr_perm = sp.to_csr()
   col_ptr, row_ind, csc_perm = sp.to_csc()
   return [
-    f"namespace {c_ident(name)} {{",
+    f"namespace {names.allocate(name + '_' if names.contains(c_ident(name)) else name)} {{",
     f"constexpr int nrow = {sp.shape[0]};",
     f"constexpr int ncol = {sp.shape[1]};",
     f"constexpr int nnz = {sp.nnz};",
@@ -128,8 +129,9 @@ def render_cpp_header(
       f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? workspace.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
       "}",
     ]
+  names = NameScope((symbol, "workspace_t", "call", "sz_arg", "sz_res", "sz_iw", "sz_w", *(f"{n}_t" for n in (*inputs, *outputs))), header=True)
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is not None:
-      lines += ["", *_sparse_namespace(name, sp)]
+      lines += ["", *_sparse_namespace(name, sp, names)]
   lines += [f"}}  // namespace {symbol}"]
   return "\n".join(lines) + "\n"

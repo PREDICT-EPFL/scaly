@@ -56,8 +56,7 @@ def test_qp_stats_maps_max_iter_status() -> None:
 
 
 @pytest.mark.solver("piqp")
-def test_qp_reserved_name_compiles_solves_and_exposes_stats() -> None:
+def test_qp_reserved_name_is_a_user_error() -> None:
   qp = build_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
-  out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
-  np.testing.assert_allclose(out["x"], [0.25, -0.5], atol=1e-8)
-  assert qp.function.solver_stats("w").status == sc.ScalySolveStatus.OK
+  with pytest.raises(ValueError, match="exported C identifier 'w'"):
+    solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))

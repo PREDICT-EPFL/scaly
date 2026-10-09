@@ -21,7 +21,7 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   # A constant of any size materializes as a read-only ``constant``-space buffer
   # (rendered ``static const``). Output-aliasing never applies to CONST, so
   # emit_outputs inserts a copy when a CONST is itself an output.
-  name = f"k{ctx._tmp}"
+  name = ctx.names.allocate(f"k{ctx._tmp}", generated=True)
   ctx._tmp += 1
   buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), [float(v) for v in value.reshape(-1)])
   ctx.buffers[name] = buf
@@ -79,7 +79,7 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     ctx.value_buffers[node.id] = alias.attrs["name"]
     return
   out = ctx.alloc_tmp(node)
-  vname = f"i_{out.attrs['name']}"
+  vname = ctx.names.allocate(f"i_{out.attrs['name']}")
   rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   k = p.var(vname)
   coords: list[ProgramNode] = []
@@ -111,7 +111,7 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   out_strides = _row_major_strides(out_shape)
   ranges, loop_vars = [], []
   for i, d in enumerate(out_shape):
-    name = f"d{i}_{out.attrs['name']}"
+    name = ctx.names.allocate(f"d{i}_{out.attrs['name']}")
     ranges.append(p.range_(name, 0, int(d), kind=RangeKind.GLOBAL))
     loop_vars.append(p.var(name))
   out_idx = _affine_sum(loop_vars, out_strides)
@@ -132,7 +132,7 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
   out = ctx.alloc_tmp(node)
   for i, src in enumerate(node.args):
     src_shape = src.shape
-    name = f"j_{out.attrs['name']}_{i}"
+    name = ctx.names.allocate(f"j_{out.attrs['name']}_{i}")
     rng = p.range_(name, 0, _size_of(src_shape), kind=RangeKind.GLOBAL)
     j = p.var(name)
     src_coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]
@@ -151,7 +151,7 @@ def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
   offset = 0
   for i, src in enumerate(node.args):
     src_shape = src.shape
-    name = f"j_{out.attrs['name']}_{i}"
+    name = ctx.names.allocate(f"j_{out.attrs['name']}_{i}")
     rng = p.range_(name, 0, _size_of(src_shape), kind=RangeKind.GLOBAL)
     j = p.var(name)
     coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]

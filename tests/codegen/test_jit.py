@@ -346,3 +346,44 @@ def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache) -> None:
   for got in (runtime((a, b)), folded(np.zeros(6))):
     np.testing.assert_array_equal(got[0], np.fmin(a, b))
     np.testing.assert_array_equal(got[1], np.fmax(a, b))
+
+
+def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name="log")
+  def fun(x):
+    return x + 1
+
+  with pytest.raises(ValueError) as error:
+    fun(np.ones(2))
+  assert str(error.value) == "exported C identifier 'log' clashes with another declaration; give the function a distinct name"
+
+
+def test_unsupported_lowering_still_raises_jit_unavailable(isolated_cache, monkeypatch) -> None:
+  from scaly.passes.lowering import LoweringError
+
+  def unsupported(*args, **kwargs):
+    raise LoweringError("unsupported construct")
+
+  monkeypatch.setattr(jit, "_render_native", unsupported)
+  with pytest.raises(jit.JitUnavailable, match="codegen does not support function 'smoke_jit': unsupported construct"):
+    _simple_fn()(np.ones(3))
+
+
+def test_distinct_solver_functions_with_same_exported_name_are_user_errors(isolated_cache) -> None:
+  from tests.solvers.problem_helpers import build_qp
+  from scaly.solvers.model import descriptor_function
+
+  left = build_qp(P=np.eye(2), c=np.ones(2), name="same_solver")
+  right = build_qp(P=np.eye(2), c=np.ones(2) * 2, name="same_solver")
+
+  left = as_concrete(descriptor_function(as_concrete(left.function).descriptor))
+  right = as_concrete(descriptor_function(as_concrete(right.function).descriptor))
+
+  @sc.function(outputs=sc.arg("y", 2), name="solver_host")
+  def host():
+    zero, empty = sc.const(np.zeros(2)), sc.const(np.zeros(0))
+    return left(zero, zero, empty, empty)[0] + right(zero, zero, empty, empty)[0]
+
+  with pytest.raises(ValueError, match="duplicate solver symbol 'same_solver'") as error:
+    host()
+  assert "codegen does not support" not in str(error.value)

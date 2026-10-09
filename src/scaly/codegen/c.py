@@ -26,7 +26,8 @@ from ..function.model import Function, as_concrete
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
 from ..ir.program import walk_program, ProgramNode, ProgramOp
-from ..passes.program._common import allocated_name, buffer_refs
+from ..passes.program._common import name_scope, buffer_refs
+from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
@@ -164,10 +165,8 @@ def _render_entry(
 
   # Buffer name -> C pointer expression for the ABI entry (inputs are arg[i], outputs res[i]).
   ptr_expr: dict[str, str] = {}
-  for i, name in enumerate(fun.input_names):
-    ptr_expr[name] = f"arg[{i}]"
-  for i, name in enumerate(fun.output_names):
-    ptr_expr[name] = f"res[{i}]"
+  for i, param in enumerate(proc.args[:param_count]):
+    ptr_expr[param.attrs["name"]] = f"arg[{i}]" if i < len(fun.inputs) else f"res[{i - len(fun.inputs)}]"
 
   lines = [
     *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm),
@@ -176,7 +175,13 @@ def _render_entry(
   epilogue: list[str] = []
   if casadi:
     gather = casadi_gather(fun, sz_w)
-    ptr_expr.update(gather.ptr)
+    ptr_expr.update(
+      {
+        param.attrs["name"]: gather.ptr[name]
+        for param, name in zip(proc.args[len(fun.inputs) : param_count], fun.output_names, strict=True)
+        if name in gather.ptr
+      }
+    )
     lines += gather.setup
     epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2)
@@ -192,12 +197,8 @@ def _force_noinline_raw(proc_name: str) -> bool:
   return "_fwd" in proc_name
 
 
-def _c_reserved_names(prog: ProgramNode) -> set[str]:
-  names = {
-    c_ident(n.attrs[key]) for n in walk_program(prog) for key in ("name", "target", "vector_helper", "vector_prefix", "lane_width") if key in n.attrs
-  }
-  names.update(f"{c_ident(n.attrs['name'])}_raw" for n in walk_program(prog) if n.op == ProgramOp.PROC)
-  return names
+def _c_reserved_names(prog: ProgramNode) -> NameScope:
+  return name_scope(prog)
 
 
 def _render_raw_callee(
@@ -205,7 +206,7 @@ def _render_raw_callee(
   *,
   dialect: CDialect = "gnu",
   vector_libm: VectorLibm = "none",
-  reserved_names: set[str] | None = None,
+  reserved_names: NameScope | None = None,
   solver_callees: frozenset[str] = frozenset(),
 ) -> list[str]:
   """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
@@ -222,7 +223,7 @@ def _render_raw_callee(
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))
-  options_name = allocated_name("solver_options", _c_reserved_names(proc))
+  options_name = _c_reserved_names(proc).allocate("solver_options", generated=True)
   ptr_expr = {pp.attrs["name"]: c_ident(pp.attrs["name"]) for pp in params}
   param_decls = ", ".join(
     [
@@ -236,7 +237,7 @@ def _render_raw_callee(
   qualifier = ("static __attribute__((noinline))" if dialect == "gnu" else "static") if noinline else "static inline"
   raw_name = f"{c_ident(proc_name)}_raw"
   implementation = (
-    allocated_name(f"{raw_name}_impl", reserved_names if reserved_names is not None else _c_reserved_names(proc))
+    (reserved_names if reserved_names is not None else _c_reserved_names(proc)).allocate(f"{raw_name}_impl")
     if noinline and dialect == "c"
     else raw_name
   )

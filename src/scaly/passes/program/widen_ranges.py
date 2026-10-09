@@ -9,14 +9,14 @@ from collections import Counter
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp, RangeKind
-from ...utils.names import c_ident
+from ...utils.names import c_ident, NameScope
 from ._common import (
   _map_procs,
   _proc_parts,
   _rebuild_proc,
   _resolve_alias,
   _index_values,
-  allocated_name,
+  name_scope,
   buffer_refs,
   rebuild_program,
   substitute_var,
@@ -56,12 +56,11 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
     raise ValueError("lanes must be 'auto', 1, 2, 4 or 8")
 
   procedures = {n.attrs["name"]: n for n in prog.args if n.op == ProgramOp.PROC}
-  global_spellings = {c_ident(n.attrs[k]) for n in walk_program(prog) for k in ("name", "target", "callee") if k in n.attrs}
-  global_spellings.update(f"{c_ident(name)}_raw" for name in procedures)
+  global_spellings = name_scope(prog)
 
   def widen_proc(proc: ProgramNode) -> ProgramNode:
     params, body = _proc_parts(proc)
-    spellings = {c_ident(n.attrs[k]) for n in walk_program(proc) for k in ("name", "target") if k in n.attrs}
+    spellings = global_spellings.child(name_scope(proc).occupied)
     ordinal = 0
     promoted: list[ProgramNode] = []
     declarations = {n.attrs["name"]: n for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
@@ -132,14 +131,14 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       caps = tuple(max(w for w in (1, 2, 4, 8) if w <= trip_cap and (peak * w <= 4 * slots or w == 1)) for slots in (16, 32, 64, 256))
       cap = caps[-1]
       ordinal += 1
-      helper = allocated_name(f"{c_ident(proc.attrs['name'])}_lanes_{ordinal}", global_spellings)
+      helper = global_spellings.allocate(f"{c_ident(proc.attrs['name'])}_lanes_{ordinal}")
       prefix = helper
-      while any(name.startswith(prefix + "_") for name in spellings | global_spellings):
+      while any(name.startswith(prefix + "_") for name in spellings.occupied | global_spellings.occupied):
         prefix += "_local"
-      width_macro = allocated_name(f"SCALY_WIDTH_{helper}", global_spellings)
+      width_macro = global_spellings.allocate(f"SCALY_WIDTH_{helper}", generated=True)
       width = p.var(width_macro)
-      outer_name = allocated_name(f"{rng.attrs['name']}_chunk", spellings)
-      lane_name = allocated_name(f"{rng.attrs['name']}_lane", spellings)
+      outer_name = spellings.allocate(f"{rng.attrs['name']}_chunk")
+      lane_name = spellings.allocate(f"{rng.attrs['name']}_lane")
       outer, lane = p.var(outer_name), p.var(lane_name)
       offset = p.mul(outer, width)
       index = p.add(rng.args[0], _minimum(p.add(offset, lane), p.const_int(count - 1)))
@@ -215,7 +214,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
   return _map_procs(prog, widen_proc)
 
 
-def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], spellings: set[str]) -> list[ProgramNode]:
+def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], spellings: NameScope) -> list[ProgramNode]:
   out: list[ProgramNode] = []
   for stmt in body:
     if stmt.op != ProgramOp.CALL or stmt.attrs["callee"] not in procedures:
@@ -242,7 +241,7 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
     for node in walk_program(p.block(*statements)):
       key = "target" if node.op == ProgramOp.ASSIGN else "name" if node.op in (ProgramOp.BUFFER, ProgramOp.RANGE) else None
       if key is not None and node.attrs[key] not in renames:
-        renames[node.attrs[key]] = allocated_name(f"lane_{node.attrs[key]}", spellings)
+        renames[node.attrs[key]] = spellings.allocate(f"lane_{node.attrs[key]}")
 
     def replace(node: ProgramNode) -> ProgramNode:
       attrs = dict(node.attrs)

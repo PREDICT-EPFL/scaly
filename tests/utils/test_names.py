@@ -8,7 +8,7 @@ from scaly.utils.names import c_ident
 
 @pytest.mark.parametrize(
   "name,expected",
-  [("fwd:eq:z", "fwd_eq_z"), ("1value", "_1value"), ("w", "w_"), ("arg", "arg_"), ("_h0", "_h0")],
+  [("fwd:eq:z", "fwd_eq_z"), ("1value", "_1value"), ("w", "w"), ("arg", "arg"), ("_h0", "_h0")],
 )
 def test_c_identifier_spelling(name: str, expected: str) -> None:
   assert c_ident(name) == expected

@@ -42,7 +42,7 @@ _BINARY: dict[ExprOp, ProgramOp] = {
 
 def _emit_elementwise(ctx: LowerCtx, node: Expr, pop: ProgramOp, *, arity: int) -> None:
   out = ctx.alloc_tmp(node)
-  vname = f"i_{out.attrs['name']}"
+  vname = ctx.names.allocate(f"i_{out.attrs['name']}")
   rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   i = p.var(vname)
   loads = tuple(p.load(p.view(ctx.buf_of(a), [_broadcast_index_p(i, a.shape, node.shape)])) for a in node.args[:arity])
