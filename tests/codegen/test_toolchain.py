@@ -103,11 +103,18 @@ def test_compiler_order_prefers_ziglang_after_scaly_cc(tmp_path, monkeypatch, ca
     path.chmod(0o755)
     return str(path)
 
-  monkeypatch.setattr(sys, "path", [str(tmp_path / "site"), *sys.path])
-  monkeypatch.setenv("CC", fake_cc("from-cc"))
   monkeypatch.delenv("SCALY_CC", raising=False)
-  if importlib.util.find_spec("ziglang") is None:
-    assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["CC"],), "CC")
+  monkeypatch.delenv("CC", raising=False)
+  monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+  real_find_spec = importlib.util.find_spec
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", lambda name: None)
+  assert toolchain.find_c_compiler() is None
+  cc = fake_cc("cc")
+  assert toolchain.find_c_compiler() == toolchain.Compiler((cc,), "PATH")
+  monkeypatch.setenv("CC", fake_cc("from-cc"))
+  assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["CC"],), "CC")
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", real_find_spec)
+  monkeypatch.setattr(sys, "path", [str(tmp_path / "site"), *sys.path])
   zig = tmp_path / "site" / "ziglang" / "zig"
   zig.parent.mkdir(parents=True)
   (zig.parent / "__init__.py").write_text("")
