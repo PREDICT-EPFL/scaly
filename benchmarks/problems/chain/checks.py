@@ -336,7 +336,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   selected = [
     proc
     for proc in procs
-    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
+    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj_eq_z")
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (
