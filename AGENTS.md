@@ -49,11 +49,11 @@ finished feature is different: document it next to the behaviour it affects.
 ## Optional procedures
 
 `.agents/skills/` holds the maintainer's procedures for working through issues with agents.
-`plan-work` surveys the backlog and proposes what to start and in which groups, and `coordinate-issues`
-coordinates a batch of related issues. Both start only when a user invokes them.
-`implement-issue` takes one issue to a pull request, and the others (`record-decisions`,
-`write-docs`, `benchmark-study`, `port-from-devrush`, `inspect-work` and `update-work`) cover
-parts of that work. Use any of them only when the user or another of these skills asks for it by
+`plan-next` surveys the backlog and proposes what to start and in which groups, and `coordinate`
+coordinates a batch of related issues. Both start only when a user invokes them. `implement` takes
+one issue, or a small change described in the conversation, to a pull request, and the others
+(`record-decisions`, `write-docs`, `benchmark-study`, `port-from-devrush`, `inspect-work` and
+`update-work`) cover parts of that work. Use any of them only when the user or another of these skills asks for it by
 name. Nothing else in this repository requires them.
 
 ## Commands
