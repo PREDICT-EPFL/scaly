@@ -69,6 +69,7 @@ class ExprOp(StrEnum):
   VMAP = "vmap"
   SOLVER_CALL = "solver_call"
   PRINT = "print"
+  STOP_GRADIENT = "stop_gradient"
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -118,6 +119,7 @@ COMMON_STRUCTURAL = {
   ExprOp.VMAP,
   ExprOp.SOLVER_CALL,
   ExprOp.PRINT,
+  ExprOp.STOP_GRADIENT,
 }
 
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
@@ -181,6 +183,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
   ExprOp.PRINT: OpInfo(ExprOp.PRINT, None),
+  ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1),
 }
 
 
@@ -663,6 +666,16 @@ def print_(fmt: str, *values: Any) -> Expr:
   return node
 
 
+def stop_gradient(value: Any) -> Expr:
+  """Return ``value`` unchanged in evaluation, holding this path fixed during differentiation.
+
+  Forward and reverse derivatives through this expression are zero, as is its Jacobian sparsity.
+  Other uses of ``value`` still contribute their derivatives. The generated primal C is unchanged.
+  """
+  expr = as_expr(value)
+  return Expr(ExprOp.STOP_GRADIENT, (expr,), expr.type, lowering=expr.lowering)
+
+
 def atan2(y: Any, x: Any) -> Expr:
   """Two-argument arctangent, elementwise: the angle of the point ``(x, y)``."""
   return binary(ExprOp.ATAN2, as_expr(y), as_expr(x))
@@ -908,6 +921,23 @@ def substitute(expr: Expr, replacements: Mapping[Expr, Expr]) -> Expr:
       else Expr(node.op, args, node.type, node.name, node.value, dict(node.attrs), node.lowering)
     )
   return rebuilt[expr.id]
+
+
+def _independent(exprs: Iterable[Expr], wrts: Iterable[Expr]) -> tuple[tuple[Expr, ...], tuple[Expr, ...], dict[Expr, Expr]]:
+  """Replace selected intermediates simultaneously with inputs and return the map back."""
+  exprs, wrts = tuple(exprs), tuple(wrts)
+  replacements = {
+    wrt: Expr(ExprOp.INPUT, type=wrt.type, name=f"_wrt{wrt.id}", attrs={"independent": wrt.id}, lowering=wrt.lowering)
+    for wrt in wrts
+    if wrt.op not in {ExprOp.INPUT, ExprOp.CONST}
+  }
+  if not replacements:
+    return exprs, wrts, {}
+  return (
+    tuple(substitute(expr, replacements) for expr in exprs),
+    tuple(replacements.get(wrt, wrt) for wrt in wrts),
+    {v: k for k, v in replacements.items()},
+  )
 
 
 def topo(outputs: Iterable[Expr]) -> list[Expr]:

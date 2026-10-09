@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, gather, scatter, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _independent, substitute, gather, scatter, topo, zeros_like
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, cotangent
 from .sparsity import _depends_on
@@ -16,10 +16,14 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   """Reverse-mode derivative: one adjoint per entry of ``wrts``, seeded by ``cotangents``.
 
   Each cotangent is shaped like its output. One sweep computes the derivative of a scalar with
-  respect to every input at once, which is why gradients go through here.
+  respect to every selected expression at once, which is why gradients go through here.
+  Intermediate selections act as independent inputs, with all replacements made simultaneously.
+  Other paths to their original inputs stay fixed. Overlapping or nested selections contribute
+  only to the adjoint of the selection through which that path passes.
   """
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
+  outputs, wrts, restore = _independent(outputs, wrts)
   adjoints: dict[int, Expr] = {}
   nodes = topo(outputs)
   expr_ids = {e.id for e in nodes}
@@ -35,7 +39,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
-    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or not needed(expr):
+    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST, ExprOp.STOP_GRADIENT} or not needed(expr):
       continue
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):
@@ -47,7 +51,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       if arg_cot is not None and arg.id in expr_ids:
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
-  return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
+  result = tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
+  return tuple(substitute(expr, restore) for expr in result) if restore else result
 
 
 def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr | None, ...]:

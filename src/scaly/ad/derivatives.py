@@ -19,6 +19,7 @@ from .reverse import _ones_like, vjp
 def jacobian(expr: Expr, wrt: Expr) -> Expr:
   """Dense Jacobian ``d expr / d wrt``, shape ``(expr.size, wrt.size)``.
 
+  An intermediate ``wrt`` acts as an independent input. Other paths to its inputs stay fixed.
   Column ``j`` is the derivative with respect to ``wrt[j]``. Computed by pushing the whole
   identity through forward mode in one batched pass, then simplifying.
   """
@@ -29,14 +30,20 @@ def jacobian(expr: Expr, wrt: Expr) -> Expr:
 
 
 def gradient(expr: Expr, wrt: Expr) -> Expr:
-  """Gradient of a scalar ``expr`` with respect to ``wrt``, as one reverse sweep."""
+  """Gradient of a scalar ``expr`` with respect to ``wrt``, as one reverse sweep.
+
+  An intermediate ``wrt`` acts as an independent input. Other paths to its inputs stay fixed.
+  """
   if expr.size != 1:
     raise ValueError("gradient expects a scalar expression")
   return vjp((expr,), (wrt,), (_ones_like(expr),))[0]
 
 
 def hessian(expr: Expr, wrt: Expr) -> Expr:
-  """Second derivatives of a scalar ``expr``: the Jacobian of its gradient."""
+  """Second derivatives of a scalar ``expr``: the Jacobian of its gradient.
+
+  An intermediate ``wrt`` acts as an independent input in both derivative steps.
+  """
   return jacobian(gradient(expr, wrt).reshape((wrt.size,)), wrt)
 
 
