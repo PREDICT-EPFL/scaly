@@ -89,22 +89,28 @@ def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sp
 
 
 def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
-  stack = [(expr, wrt, False)]
+  stack = [(expr, wrt, 0)]
   while stack:
-    node, variable, visited = stack.pop()
+    node, variable, phase = stack.pop()
     key = (node.id, variable.id)
     if key in memo:
       continue
-    if visited:
-      memo[key] = _jac_mask_uncached(node, variable, memo)
-      continue
-    stack.append((node, variable, True))
-    dependencies = [] if node.op == ExprOp.SOLVER_CALL else [(arg, variable) for arg in node.args]
-    if node.op in (ExprOp.CALL, ExprOp.VMAP):
+    if phase == 0:
+      stack.append((node, variable, 1))
+      if node.op != ExprOp.VMAP or node.attrs["length"]:
+        stack.extend((arg, variable, 0) for arg in reversed(node.args) if (arg.id, variable.id) not in memo)
+    elif phase == 1 and node.op in (ExprOp.CALL, ExprOp.VMAP):
+      stack.append((node, variable, 2))
       callee = node.attrs["callee"]
+      callee_out = callee.outputs[node.attrs["output"]]
+      # Actual masks must be known before requesting callee masks for active formals.
       if node.op == ExprOp.CALL or node.attrs["length"]:
-        dependencies.extend((callee.outputs[node.attrs["output"]], formal) for formal in callee.inputs)
-    stack.extend((child, formal, False) for child, formal in reversed(dependencies) if (child.id, formal.id) not in memo)
+        for formal, actual in reversed(tuple(zip(callee.inputs, node.args, strict=True))):
+          if memo[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in memo:
+            stack.append((callee_out, formal, 0))
+    else:
+      memo[key] = _jac_mask_uncached(node, variable, memo)
+
   return memo[(expr.id, wrt.id)]
 
 

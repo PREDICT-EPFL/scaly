@@ -722,3 +722,18 @@ def test_deep_euler_graph(walk) -> None:
       key = key[-1][0]
     assert key[0] == "input"
     assert key[1] == x.name
+
+
+def test_deep_callee_masks_skip_inactive_solver_parameters() -> None:
+  from scaly.ad.sparsity import jacobian_sparsity
+  from scaly.solvers.model import SolverDescriptor
+
+  p, x = sc.sym("deep_callee_p", 2), sc.sym("deep_callee_x", 2)
+  descriptor = SolverDescriptor("deep_callee_solver", "test", 2, 0, 0, (("p", (2,)),), (("y", (2,)),), (), 1)
+  solver = sc.Expr(sc.ExprOp.SOLVER_CALL, (p,), sc.TensorType((2,), diff=False), attrs={"solver": descriptor, "output": 0, "output_name": "y"})
+  fn = ConcreteFunction._from_exprs("deep_callee_base", [p, x], [solver + x], ["p", "x"], ["y"])
+  result = fn(sc.const(np.zeros(2)), x)
+  for i in range(800):
+    fn = ConcreteFunction._from_exprs(f"deep_callee_{i}", [x], [result], ["x"], ["y"])
+    result = fn(x)
+  np.testing.assert_array_equal(jacobian_sparsity(result, x).to_mask(), np.eye(2, dtype=bool))

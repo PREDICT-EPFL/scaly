@@ -176,6 +176,7 @@ tests/ad/test_lowering_hints.py::test_derived_procs_inherit_stage_hint[scalar]
 tests/ad/test_sparsity.py::test_colored_sparse_jacobian_matches_dense_gather_reference
 tests/ad/test_sparsity.py::test_column_coloring_detects_exactly_256_shared_rows
 tests/ad/test_sparsity.py::test_column_coloring_groups_nonoverlapping_columns
+tests/ad/test_sparsity.py::test_deep_callee_masks_skip_inactive_solver_parameters
 tests/ad/test_sparsity.py::test_deep_euler_graph[depends]
 tests/ad/test_sparsity.py::test_deep_euler_graph[jac_mask]
 tests/ad/test_sparsity.py::test_deep_euler_graph[structural_key]
