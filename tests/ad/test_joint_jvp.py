@@ -8,7 +8,8 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ad.forward import _call_jvp_function
+from scaly.ad.forward import _call_jvp_function, _call_jvp_many_function
+from scaly.ad.reverse import _vmap_adj_function
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.passes.lowering import lower_function
@@ -95,6 +96,27 @@ def test_joint_helper_cache_distinguishes_formal_sets() -> None:
   assert first[0] is _call_jvp_function(stage.instantiate(), 0, (0,))[0]
   assert first[0].name != second[0].name
   assert first[0] is not second[0]
+
+
+def test_call_helpers_are_cached_on_their_callee() -> None:
+  from scaly.ad import forward, reverse
+
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.arg("z"), name="memo_stage")
+  def stage(inputs):
+    x, y = inputs
+    return (x * y).sin()
+
+  callee = stage.instantiate()
+  helpers = {
+    _call_jvp_function(callee, 0, (0,))[0],
+    _call_jvp_many_function(callee, 0, (0,), 2, (None,))[0],
+    _vmap_adj_function(callee, 0, (0, 1))[0],
+  }
+  cached = {entry[0] for cache in (callee._memo.jvp, callee._memo.jvp_many, callee._memo.vmap_adjoints) for entry in cache.values()}
+  assert cached == helpers
+  assert not [name for name in (*vars(forward), *vars(reverse)) if name.endswith("_CACHE")]
+  copy = callee._replace(name="memo_stage_copy")
+  assert _call_jvp_function(copy, 0, (0,))[0] not in helpers
 
 
 @pytest.mark.parametrize("matrix", [False, True])

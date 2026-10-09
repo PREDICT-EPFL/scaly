@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..ir.expr import ExprOp, topo
+from ..ir.expr import ExprOp
 from ..function.concrete import ConcreteFunction
 from .paths import backend_compile_flags
 from .model import ExternalOracle
@@ -56,7 +56,7 @@ def solver_backends_used(fun: ConcreteFunction) -> tuple[str, ...]:
       for callee in solver_callees(fn):
         visit(callee)
       return
-    for node in topo(fn.outputs):
+    for node in fn.nodes:
       if node.op in {ExprOp.CALL, ExprOp.VMAP}:
         visit(node.attrs["callee"])
       elif node.op == ExprOp.SOLVER_CALL:

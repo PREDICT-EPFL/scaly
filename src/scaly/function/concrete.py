@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Sequence, cast, overload
 
 import numpy as np
@@ -65,6 +66,10 @@ class _Memo:
   compiled: Any = None
   derivatives: dict[Any, ConcreteFunction] = field(default_factory=dict)
   maps: dict[int, ConcreteFunction] = field(default_factory=dict)
+  jvp: dict[Any, Any] = field(default_factory=dict)
+  jvp_many: dict[Any, Any] = field(default_factory=dict)
+  jvp_packs: dict[Any, Any] = field(default_factory=dict)
+  vmap_adjoints: dict[Any, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -207,7 +212,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     if len(set(self.output_names)) != len(self.output_names):
       raise ValueError(f"duplicate output names in {self.output_names}")
     declared = {e.id for e in self.inputs}
-    missing = [e.name or f"%{e.id}" for e in topo(self.outputs) if e.op == ExprOp.INPUT and e.id not in declared]
+    missing = [e.name or f"%{e.id}" for e in self.nodes if e.op == ExprOp.INPUT and e.id not in declared]
     if missing:
       raise ValueError(f"function {name!r} has undeclared symbolic inputs: {missing}")
 
@@ -245,6 +250,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
 
   def output_sparsity_map(self) -> dict[str, SparsityPattern | None]:
     return dict(zip(self.output_names, self.output_sparsities, strict=True))
+
+  @cached_property
+  def nodes(self) -> tuple[Expr, ...]:
+    """Every expression node the outputs reach, each after its operands."""
+    return tuple(topo(self.outputs))
 
   @property
   def input_shapes(self) -> tuple[tuple[int, ...], ...]:
@@ -326,14 +336,15 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")
     return self._memo.compiled.solver_stats(name)
 
+  @cached_property
   def _effective_lowering(self) -> Lowering:
     """The hint that selects this ConcreteFunction's procedure: ``block`` or ``opaque`` anywhere wins, then ``scalar``, else ``auto``."""
-    hints = {n.lowering for n in (*self.inputs, *topo(self.outputs))}
+    hints = {n.lowering for n in (*self.inputs, *self.nodes)}
     return "block" if hints & {"block", "opaque"} else "scalar" if "scalar" in hints else "auto"
 
   def _inherit_lowering(self, derived: Expr, lowering: Lowering | None = None) -> Expr:
     """Apply this ConcreteFunction's effective lowering policy to a derived expression."""
-    policy = self._effective_lowering() if lowering is None else lowering
+    policy = self._effective_lowering if lowering is None else lowering
     return _apply_lowering(derived, policy)
 
   def _with_outputs(self, outputs: Sequence[Expr]) -> ConcreteFunction[Any, Any, Any, Any]:
