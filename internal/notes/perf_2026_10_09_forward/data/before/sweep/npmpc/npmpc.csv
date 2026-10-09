@@ -1,0 +1,6 @@
+process_id,repetition,backend_order,workload,size,backend,layout,codegen_ms,source_bytes,artifact_bytes,executable_bytes,static_metadata_bytes,source_lines,workspace,integer_workspace,argument_pointers,result_pointers,dispatch_trip_count,dispatch_workspace,dispatch_arithmetic,coloring_width,nnz,compile_ms,kernel_compile_ms,wrapper_compile_ms,link_ms,compile_status,runtime_ns,runtime_status,note,build_ms,render_ms
+3359743,1,1,npmpc,4,scaly,lower,1298.9,553730,558795,548269,10526,4428,0,0,4,1,4,13280,28138,7,71,1350.7,768.7,517.0,64.8,ok,5676.4,ok,,130.6,1168.3
+3359814,2,1,npmpc,4,scaly,lower,1296.3,553730,558795,548269,10526,4428,0,0,4,1,4,13280,28138,7,71,1351.8,768.6,516.8,66.1,ok,5935.6,ok,,128.7,1167.6
+3359869,3,1,npmpc,4,scaly,lower,1284.5,553730,558795,548269,10526,4428,0,0,4,1,4,13280,28138,7,71,1352.0,768.0,518.7,65.2,ok,6002.3,ok,,129.9,1154.6
+3359916,4,1,npmpc,4,scaly,lower,1279.6,553730,558795,548269,10526,4428,0,0,4,1,4,13280,28138,7,71,1351.1,766.5,518.2,66.2,ok,5761.0,ok,,129.6,1150.0
+3359961,5,1,npmpc,4,scaly,lower,1294.3,553730,558795,548269,10526,4428,0,0,4,1,4,13280,28138,7,71,1364.9,777.6,520.1,67.0,ok,5672.5,ok,,129.2,1165.2

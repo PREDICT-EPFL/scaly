@@ -1,0 +1,24 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________ test_chain_jacobian_preserves_the_mass_loop __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-ted/pytest-1062/test_chain_jacobian_preserves_0')
+
+    def test_chain_jacobian_preserves_the_mass_loop(tmp_path: Path) -> None:
+      lines = []
+      for size in (33, 65):
+        _build(tmp_path, "chain_jac", size)
+        source = next((tmp_path / f"chain_jac_{size}").glob("*.c")).read_text()
+        bodies = re.findall(rf"^static[^\n]+ chain_ode_M{size}_fwd_\w+\([^\n]*\) \{{\n.*?^\}}", source, re.MULTILINE | re.DOTALL)
+        assert bodies
+        lines.append(sum(len(body.splitlines()) for body in bodies))
+>     assert lines[1] < 1.2 * lines[0]
+E     assert 21428 < (1.2 * 10644)
+
+tests/benchmarks/test_kernel_gates.py:32: AssertionError
+=========================== short test summary info ============================
+FAILED tests/benchmarks/test_kernel_gates.py::test_chain_jacobian_preserves_the_mass_loop
+1 failed in 35.47s
+
+
+PERTURBED_EXIT 1
