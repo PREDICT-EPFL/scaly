@@ -282,8 +282,9 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
 
   @property
   def result_names(self) -> tuple[str, ...]:
-    """The output names, then ``res:0``, ``res:1``, ... for the residuals."""
-    return (*self.output_names, *(f"res:{k}" for k in range(len(self.results) - len(self.outputs))))
+    """The output names, then the first of ``res:0``, ``res:1``, ... that no output takes, one per residual."""
+    free = [name for name in (f"res:{k}" for k in range(len(self.results))) if name not in self.output_names]
+    return (*self.output_names, *free[: len(self.results) - len(self.outputs)])
 
   @cached_property
   def nodes(self) -> tuple[Expr, ...]:

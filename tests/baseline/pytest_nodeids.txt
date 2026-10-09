@@ -106,6 +106,7 @@ tests/ad/test_custom_derivative.py::test_a_call_honours_both_rules
 tests/ad/test_custom_derivative.py::test_a_map_and_a_library_function_honour_the_rules
 tests/ad/test_custom_derivative.py::test_a_mapped_reverse_rule_reads_its_residuals_in_first_and_second_derivatives
 tests/ad/test_custom_derivative.py::test_a_solve_derivative_reuses_its_factorization
+tests/ad/test_custom_derivative.py::test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls
 tests/ad/test_custom_derivative.py::test_declared_sparsity_replaces_the_body_pattern
 tests/ad/test_custom_derivative.py::test_declared_sparsity_takes_masks_and_patterns_and_checks_their_shape
 tests/ad/test_custom_derivative.py::test_derivatives_of_the_function_itself_honour_the_rules
@@ -114,6 +115,7 @@ tests/ad/test_custom_derivative.py::test_forward_over_reverse_differentiates_the
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs0-at least one]
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs1-together]
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs2-together]
+tests/ad/test_custom_derivative.py::test_residual_names_avoid_output_names
 tests/ad/test_custom_derivative.py::test_rules_are_fields_and_name_their_helpers
 tests/ad/test_custom_derivative.py::test_rules_are_linear_dual_and_match_the_body[0]
 tests/ad/test_custom_derivative.py::test_rules_are_linear_dual_and_match_the_body[1]

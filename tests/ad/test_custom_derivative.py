@@ -533,3 +533,58 @@ def test_rules_of_the_wrong_type_raise() -> None:
     sc.custom_derivative(square, jvp=wrong_jvp)
   with pytest.raises(TypeError, match="fwd"):
     sc.custom_derivative(square, fwd=unpaired_fwd, bwd=square_bwd)
+
+
+def test_residual_names_avoid_output_names() -> None:
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("res:0"))
+  def named(x):
+    return x * x
+
+  @sc.function()
+  def named_fwd(x):
+    return x * x, x
+
+  @sc.function()
+  def named_bwd(x, ybar):
+    return 2.0 * x * ybar
+
+  ruled_named = sc.custom_derivative(named, fwd=named_fwd, bwd=named_bwd)
+
+  @sc.function(sc.arg("q", ()))
+  def outer(q):
+    return ruled_named(q)
+
+  assert len(set(as_concrete(ruled_named).result_names)) == 2
+  np.testing.assert_allclose(outer(np.array(2.0)), 4.0)
+
+
+@pytest.mark.solver("sqp")
+def test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls() -> None:
+  """The solver wrapper passes an oracle its outputs only, so a called solver lowers its oracles
+  without residuals."""
+  from dataclasses import replace
+
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.passes.lowering import lower_function
+  from scaly.solvers.model import descriptor_function
+
+  @sc.problem(vars=sc.arg("x", 2))
+  def quadratic(x):
+    return sc.ProblemSpec(minimize=(x * x).sum())
+
+  @sc.function()
+  def base_fwd(x, params):
+    return (x * x).sum(), x
+
+  @sc.function()
+  def base_bwd(x, cot):
+    return 2.0 * x * cot, ()
+
+  descriptor = as_concrete(sc.solver(quadratic, "sqp").function).descriptor
+  base = as_concrete(sc.custom_derivative(descriptor.base, fwd=base_fwd, bwd=base_bwd))
+  solver = as_concrete(descriptor_function(replace(descriptor, base=base)))
+
+  outer = ConcreteFunction._from_exprs("outer", solver.inputs, solver._call(solver.inputs), solver.input_names, solver.output_names)
+  program = lower_function(outer)
+  (proc,) = [proc for proc in program.args[: program.attrs["proc_count"]] if proc.attrs["name"] == base.name]
+  assert proc.attrs["param_count"] == len(base.inputs) + len(base.outputs)

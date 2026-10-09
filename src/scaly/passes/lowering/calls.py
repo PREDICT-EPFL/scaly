@@ -9,19 +9,20 @@ from ...function.concrete import ConcreteFunction
 from .ctx import LowerCtx, lowers, _lower_to_proc
 
 
-def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
+def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, *, residuals: bool = True) -> None:
   from ...solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(callee):
     # Opaque: the solver wrapper is rendered by codegen/solver (rule 6), not lowered. Its body is
-    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
+    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives, which
+    # it passes their outputs only.
     ctx.solver_fns[callee] = callee
     for oracle in solver_callees(callee):
-      _ensure_callee(ctx, oracle)
+      _ensure_callee(ctx, oracle, residuals=False)
     return
   if callee not in ctx.callees:
     ctx.callees[callee] = _lower_to_proc(
-      callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, residuals=True, observe_expr=ctx.observe_expr
+      callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, residuals=residuals, observe_expr=ctx.observe_expr
     )
 
 
