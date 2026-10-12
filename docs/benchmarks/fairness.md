@@ -28,7 +28,7 @@ fixed, the machine they ran on, and what the results do not show.
 | CPU | AMD Ryzen 9 7940HS, 8 cores, boost disabled, `performance` governor |
 | System | Ubuntu 24.04, glibc 2.39 |
 | Compilers | GCC 13.3.0 for controllers, Clang 20.1.8 for the Hessian kernels |
-| Versions | Python 3.14, Scaly 0.1.0a1, CasADi 3.8.0 |
+| Versions | Python 3.14, Scaly `main` after 0.1.0a1 (commit `1c955a07`), CasADi 3.8.0 |
 
 Absolute times depend on the machine. The results come from this one machine only and say
 nothing about others, such as Apple silicon.
@@ -42,6 +42,6 @@ nothing about others, such as Apple silicon.
   no CasADi counterpart, and Scaly evaluates the objective and constraints together where CasADi
   evaluates them separately. These differences are part of what is measured.
 - **One controller does not do identical work.** Unbumpercars with SQP takes a different number of
-  iterations on 5 of 1,000 steps, as described on the [closed-loop page](closed_loop.md).
+  iterations on 15 of 1,000 steps, as described on the [closed-loop page](closed_loop.md).
 - **Code size is not normalized.** The two generators store constants and sparsity patterns in
   different forms, so code size compares the files each one ships, not the information in them.

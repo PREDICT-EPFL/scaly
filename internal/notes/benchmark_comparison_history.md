@@ -8,6 +8,84 @@ The retained studies are `benchmarks/results/study-2026-09-23-c77-c79-final` for
 `benchmarks/results/study-2026-09-23-c77-c79-libmvec` for vector libm. The September 10 study is the
 comparison baseline used below. Actionable follow-up remains in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
+## Change since 0.1.0a1, October 12 study
+
+`benchmarks/results/study-2026-10-12-post-0.1.0a1` reran the frozen grid at `1c955a07` with the
+September 23 libmvec study's machine, toolchain, CPU policy and vector-math policy. Its baseline is
+the September 23 summary files as `docs/assets/benchmarks/` held them at `1c955a07`, since that
+study's raw files are gone.
+`internal/notes/perf_2026_10_12/compare.py` prints the tables below.
+
+Every timed cell passed its correctness check. Of 690 sweep attempts, 515 produced timings, 17
+reached the compilation limit and 158 were skipped after a failure, against 520, 15 and 155 on
+September 23. The difference is all in CasADi encodings whose compiles sit near the 180-second
+limit: npmpc `casadi_map_sx` completed only 3, 1 and 1 of 5 processes at N=12, 25 and 50. Every
+Scaly size completed all five processes. Every CasADi closed-loop total and function-evaluation
+time is within 1% of September 23, which bounds the drift of the machine and of the PIQP 0.6.2 to
+0.6.4 update between the two studies.
+
+Scaly Hessian means in µs, with the change in executable source bytes and kernel compile time:
+
+| Problem | Size | September 23 | CV, % | October 12 | CV, % | Change, % | Executable bytes, % | Kernel compile, % |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| chain | 3 | 21.810 | 1.02 | 21.672 | 0.24 | -0.6 | -17.4 | -0.5 |
+| chain | 5 | 100.037 | 0.36 | 99.802 | 0.04 | -0.2 | -17.2 | -1.5 |
+| chain | 9 | 282.649 | 0.06 | 282.448 | 0.08 | -0.1 | -15.8 | -0.6 |
+| npmpc | 6 | 12.982 | 0.68 | 13.044 | 1.39 | +0.5 | -29.7 | -0.4 |
+| npmpc | 12 | 22.786 | 4.97 | 22.342 | 0.46 | -1.9 | -29.9 | +0.6 |
+| npmpc | 25 | 45.339 | 0.87 | 44.690 | 5.49 | -1.4 | -29.9 | -0.1 |
+| npmpc | 50 | 93.701 | 0.80 | 90.509 | 2.97 | -3.4 | -29.9 | +0.1 |
+| npmpc | 100 | 143.361 | 0.77 | 142.471 | 0.35 | -0.6 | -30.1 | +0.3 |
+| npmpc | 200 | 235.705 | 1.20 | 245.132 | 0.88 | +4.0 | -30.1 | -0.1 |
+| race_cars | 1 | 0.360 | 0.83 | 0.357 | 0.10 | -0.7 | +0.0 | +0.1 |
+| race_cars | 5 | 0.861 | 0.78 | 0.864 | 1.12 | +0.4 | -15.9 | -1.4 |
+| race_cars | 10 | 1.036 | 1.10 | 1.030 | 1.90 | -0.6 | -16.2 | -0.5 |
+| race_cars | 25 | 2.015 | 2.34 | 1.977 | 1.01 | -1.9 | -16.2 | -0.1 |
+| race_cars | 40 | 3.021 | 3.11 | 3.002 | 1.80 | -0.6 | -16.2 | -1.0 |
+| race_cars | 50 | 3.495 | 1.50 | 3.471 | 2.47 | -0.7 | -16.2 | -0.7 |
+| race_cars | 100 | 6.940 | 5.66 | 6.918 | 4.12 | -0.3 | -16.5 | +0.1 |
+| race_cars | 200 | 12.502 | 1.69 | 12.649 | 2.11 | +1.2 | -16.5 | -0.8 |
+| race_cars | 500 | 32.178 | 10.73 | 31.402 | 4.77 | -2.4 | -16.5 | -0.9 |
+| unbumpercars | 2 | 185.986 | 0.74 | 185.320 | 0.22 | -0.4 | -32.9 | -5.0 |
+| unbumpercars | 4 | 215.733 | 0.78 | 212.036 | 0.12 | -1.7 | -38.1 | -25.4 |
+| unbumpercars | 8 | 484.377 | 0.60 | 487.540 | 0.46 | +0.7 | -47.8 | -61.1 |
+| unbumpercars | 16 | 1422.562 | 1.67 | 1538.086 | 0.28 | +8.1 | -60.1 | -88.1 |
+| unbumpercars | 32 | 6245.988 | 0.51 | 5167.377 | 2.25 | -17.3 | -72.2 | -91.1 |
+
+Scaly closed loops, ms per step:
+
+| Problem | Solver | September 23 total | October 12 total | CV, % | Change, % | September 23 FE | October 12 FE | Change, % |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| chain | ipopt | 6.776 | 6.849 | 0.10 | +1.1 | 0.326 | 0.402 | +23.5 |
+| chain | sqp | 6.267 | 6.306 | 0.26 | +0.6 | 0.153 | 0.181 | +18.1 |
+| npmpc | ipopt | 3.609 | 3.531 | 0.78 | -2.2 | 0.966 | 0.963 | -0.3 |
+| npmpc | sqp | 1.270 | 1.273 | 0.31 | +0.3 | 0.474 | 0.473 | -0.3 |
+| race_cars | ipopt | 4.714 | 4.597 | 0.75 | -2.5 | 0.183 | 0.143 | -21.9 |
+| race_cars | sqp | 2.489 | 2.470 | 0.47 | -0.8 | 0.053 | 0.040 | -23.7 |
+| unbumpercars | ipopt | 21.106 | 20.349 | 1.47 | -3.6 | 17.022 | 16.405 | -3.6 |
+| unbumpercars | sqp | 11.331 | 10.791 | 1.15 | -4.8 | 10.045 | 9.509 | -5.3 |
+
+Measured: unbumpercars C=32 is 17.3% faster and C=16 8.1% slower, both well outside either study's
+dispersion. Npmpc N=200 is 4.0% slower, outside its 0.9% and 1.2% CVs. Chain function evaluation
+rises 23.5% under IPOPT and 18.1% under SQP although the chain Hessian kernels are unchanged, so the
+added time lies in another chain oracle. Race-car function evaluation falls by about 22%. Unbumpercars
+function evaluation is back to its September 10 level, 16.405 against 16.419 ms with IPOPT and 9.509
+against 9.513 ms with SQP.
+
+Executable source shrinks at every Scaly size except race-car N=1: about 16% for chain and
+race-car, 30% for npmpc, and from 33% at C=2 to 72% at C=32 for unbumpercars. Unbumpercars kernel
+compile time falls with it, by 61% at C=8 and 91% at C=32, from 40.9 to 3.6 seconds. The other
+problems' compile times move by less than 2%. The harness's byte counting did not change between
+the two revisions, CasADi's executable bytes are identical and its compile times are within 2.7%,
+so these are compiler changes. Their cause was not isolated: the September 23 generated sources
+are gone.
+
+Inferred, not measured: the unbumpercars and npmpc kernel shifts come from the short-loop lane
+change (#142), the change in the range aimed at lane widths of mapped loops.
+
+The unbumpercars SQP pair now has 15 iteration mismatches across 1,000 paired steps, against 5, still with no oracle-count
+mismatch and state differences below 4e-8.
+
 ## Change from the scalar-libm studies
 
 These Scaly measurements keep the earlier studies separate from the current policy. The September 10

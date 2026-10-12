@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -26,9 +27,19 @@ PARTS = ("sweep", "closed-loop")
 
 def run_study(args, cli_args: list[str]) -> bool:
   measuring = Path.home() / ".scaly-measuring"
-  if measuring.exists():
-    raise SystemExit(f"measurement already owns this machine ({measuring}):\n{measuring.read_text()}")
   out = args.out_dir.resolve()
+  try:
+    with measuring.open("x") as f:
+      f.write(f"{out.name} pid:{os.getpid()} out:{out}\n")
+  except FileExistsError:
+    raise SystemExit(f"measurement already owns this machine ({measuring}):\n{measuring.read_text()}") from None
+  try:
+    return _run_study(args, cli_args, out)
+  finally:
+    measuring.unlink()
+
+
+def _run_study(args, cli_args: list[str], out: Path) -> bool:
   if out.exists() and any(out.iterdir()) and not args.overwrite:
     raise SystemExit(f"study requires an unused output directory: {out} (or pass --overwrite)")
   out.mkdir(parents=True, exist_ok=True)

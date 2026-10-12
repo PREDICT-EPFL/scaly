@@ -8,7 +8,7 @@ four optimal-control problems, in two ways:
 - **Closed-loop control.** How long a complete controller takes per control step when the same
   solver runs on Scaly's generated functions instead of CasADi's.
 
-All numbers come from one study run on September 23, 2026, against CasADi 3.8.0, on an AMD
+All numbers come from one study run on October 12, 2026, against CasADi 3.8.0, on an AMD
 Ryzen 9 7940HS desktop. [Are the comparisons fair?](fairness.md) explains what the two sides
 share and where the comparison has limits.
 
@@ -31,11 +31,11 @@ no CasADi encoding finished compiling within 180 seconds.
 <div class="vega-chart" data-spec="../assets/benchmarks/hessian_overview.vl.json"></div>
 
 Scaly is faster in every comparison but one, and the gap tends to grow with size. On the race car
-it goes from 1.1× at `N = 1` to 6.5× at `N = 200`. On neural-process MPC it stays between 1.5 and
-2× while CasADi's MX encoding compiles, and reaches 6 to 21× at the longer horizons, where only
+it goes from 1.1× at `N = 1` to 6.5× at `N = 500`. On neural-process MPC it stays between 1.5 and
+2× while CasADi's MX encoding compiles, and reaches 6 to 20× at the longer horizons, where only
 slower CasADi encodings still compile. Unbumpercars goes from 5× at `C = 2` to 22× at `C = 8`, and
 at `C = 16` and `C = 32` only Scaly compiles. The exception is the chain at `M = 5`, where CasADi's
-SX encoding is 1.2× faster. At `M = 9`, SX no longer compiles and Scaly is 8.8× faster than the
+SX encoding is 1.2× faster. At `M = 9`, SX no longer compiles and Scaly is 8.7× faster than the
 fastest remaining encoding.
 
 The [scalability page](scalability.md) shows every CasADi encoding separately, with compile
@@ -50,10 +50,10 @@ and derivative the solver asks for.
 
 <div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_speedup.vl.json"></div>
 
-Function evaluation is 1.8 to 53× faster. How much of that reaches the total depends on how much
+Function evaluation is 1.8 to 45× faster. How much of that reaches the total depends on how much
 of the step the solver spends on its own numerical work. The race car spends most of its step
-solving quadratic subproblems, so a 4.2× faster function evaluation makes the whole step only 7%
-faster. Unbumpercars is dominated by function evaluation, and the whole step is 7 to 9× faster.
+solving quadratic subproblems, so a 5.4× faster function evaluation makes the whole step only 8%
+faster. Unbumpercars is dominated by function evaluation, and the whole step is 7 to 10× faster.
 
 The [closed-loop page](closed_loop.md) breaks the step time down and lists the measured times.
 
