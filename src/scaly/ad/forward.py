@@ -6,7 +6,6 @@ to unrolling ``jvp`` per seed unless ``SCALY_STRICT_JVP_MANY`` forbids it.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 import numpy as np
@@ -16,6 +15,7 @@ from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, substitute, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
+from .helpers import HelperKey, helper_name
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
 
 
@@ -156,8 +156,15 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
 def _call_jvp_many_function(
   callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-  key = (output_index, formal_indices, nseed, tuple(None if value is None else value.tobytes() for value in constants))
-  cache = callee._memo.jvp_many
+  key = HelperKey(
+    "forward",
+    (output_index,),
+    formal_indices,
+    callee._effective_lowering,
+    nseed,
+    tuple(None if value is None else (value.dtype.str, value.tobytes()) for value in constants),
+  )
+  cache = callee._memo.helpers
   if key not in cache:
     active = tuple(range(nseed))
     if all(value is not None for value in constants):
@@ -179,16 +186,10 @@ def _call_jvp_many_function(
     seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(f"fwd:{callee.input_names[i]}" for i in seed_indices)
+    output_name = f"fwd:{callee.output_names[output_index]}"
     if single_constant:
-      formal_index = formal_indices[0]
-      seed_hash = hashlib.sha1(constants[0].tobytes()).hexdigest()[:10]  # type: ignore[union-attr]
-      name = f"{callee.name}_fwd{nseed}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
-      output_name = f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"
-    else:
-      seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
-      name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
-      output_name = f"fwd:{callee.output_names[output_index]}"
-    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name], role="forward")
+      output_name += f":{callee.input_names[formal_indices[0]]}"
+    fn = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [deriv], input_names, [output_name], role="forward")
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
 
@@ -203,8 +204,8 @@ def _call_jvp_many_const_function(
 
 
 def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int, ...]) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  key = (output_index, formal_indices)
-  cache = callee._memo.jvp
+  key = HelperKey("forward", (output_index,), formal_indices, callee._effective_lowering)
+  cache = callee._memo.helpers
   if key not in cache:
     seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
     deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
@@ -213,8 +214,9 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
-    name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices)
-    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"], role="forward")
+    fn = ConcreteFunction._from_exprs(
+      helper_name(callee, key), inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"], role="forward"
+    )
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
 
@@ -233,21 +235,18 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
     else:
       groups.append((mapped.attrs["length"], specs, [mapped]))
   replacements = {}
-  cache = callee._memo.jvp_packs
+  cache = callee._memo.helpers
   for length, bindings, members in groups:
     if len(members) == 1:
       continue
     functions = tuple(mapped.attrs["callee"] for mapped in members)
     inputs = tuple(bindings)
-    key = (*functions, inputs)
+    key = HelperKey("forward", (), (), callee._effective_lowering, members=functions)
     if key not in cache:
       outputs = [fn.outputs[0].reshape((fn.outputs[0].size,)) for fn in functions]
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
-      name_hash = hashlib.sha1(";".join(fn.name for fn in functions).encode()).hexdigest()[:10]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
-      cache[key] = ConcreteFunction._from_exprs(
-        f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"], role="forward"
-      )
+      cache[key] = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [packed], [names[inp] for inp in inputs], ["fwd"], role="forward")
     fn = cache[key]
     mapped = _mapped_call(fn, length, list(bindings.values()))
     width = fn.outputs[0].size

@@ -408,6 +408,7 @@ def test_call_jacobian_keeps_noinline_frame_in_c99(tmp_path, dialect):
 def test_c99_noinline_implementation_name_is_reserved():
   x, y = p.buffer("x", dtypes.float64, (1,)), p.buffer("y", dtypes.float64, (1,))
   proc = p.proc("f_fwd", [x, y], [p.store(p.view(y, [p.const_int(0)]), p.load(p.view(x, [p.const_int(0)])))])
+  proc = ProgramNode(proc.op, proc.args, {**proc.attrs, "noinline": True}, proc.dtype)
   source = "\n".join(_render_raw_callee(proc, dialect="c", reserved_names=NameScope({"f_fwd_raw_impl"})))
   assert "void f_fwd_raw_impl_2(" in source
   assert "(*volatile f_fwd_raw)" in source

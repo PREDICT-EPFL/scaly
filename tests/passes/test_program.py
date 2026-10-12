@@ -448,7 +448,7 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   jf = outer.factory("J", ["z"], [sc.factory.Jac("y", "z")])
 
   source = render_program_c_source(jf)
-  declaration = re.search(r"static __attribute__\(\(noinline\)\) void (inner_fwd2\w+_raw)\(", source)
+  declaration = re.search(r"static __attribute__\(\(noinline\)\) void (inner_fwd_\w+_raw)\(", source)
   assert declaration is not None
   match = re.search(re.escape(declaration.group(1)) + r"\(([^)]*)\);", source)
   assert match is not None
@@ -467,6 +467,20 @@ def test_regular_raw_callees_stay_inline() -> None:
 
   source = render_program_c_source(outer)
   assert "static inline void inner_raw" in source
+  assert "noinline" not in source
+
+
+def test_user_callee_named_like_a_forward_helper_stays_inline() -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="car_fwd")
+  def car_fwd(x):
+    return x.sin()
+
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("out"), name="outer")
+  def outer(z):
+    return car_fwd(z) + 1.0
+
+  source = render_program_c_source(outer)
+  assert "static inline void car_fwd_raw" in source
   assert "noinline" not in source
 
 
