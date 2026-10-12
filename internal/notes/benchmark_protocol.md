@@ -8,10 +8,8 @@ version. Rationale for what a comparison holds constant goes here; the matching 
 The figures on the published pages read `docs/assets/benchmarks/sweep.summary.csv` (the four
 `sweep/<problem>/<problem>.summary.csv` files of a study, concatenated) and
 `docs/assets/benchmarks/closed_loop.summary.csv` (written by `benchmarks/run.py report`). The files
-currently there are stubs rebuilt from the tables of the September 23, 2026 study,
-`benchmarks/results/study-2026-09-23-c77-c79-libmvec`, whose raw artifacts are gone. They carry
-means, coefficients of variation, compile means and executable bytes only; replace them with a real
-study's output.
+currently there come from the October 12, 2026 study, `benchmarks/results/study-2026-10-12-post-0.1.0a1`,
+measured at `1c955a07`.
 
 ## Reference machine
 
@@ -24,7 +22,7 @@ Every published timing comes from one machine.
 | Memory | 30 GB |
 | Operating system | Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, glibc 2.39 |
 | Compilers | gcc 13.3.0 for Scaly just-in-time compilation, clang 20.1.8 for the Google Benchmark harness |
-| Stack | Python 3.14.3, Scaly 0.1.0a1, CasADi 3.8.0, NumPy 2.4.6 |
+| Stack | Python 3.14.3, Scaly `main` at `1c955a07` (after 0.1.0a1), CasADi 3.8.0, NumPy 2.4.6, PIQP 0.6.4 |
 | CPU policy | `amd-pstate-epp`, `performance` governor, boost disabled |
 
 Absolute timings from another machine must not share these tables.
@@ -44,8 +42,8 @@ The study uses the following controls:
 - After a backend fails at one size, it skips that backend at larger sizes.
 - It reports dispersion across successful processes and retains every failed attempt.
 
-The study completed 690 sweep attempts. Of these, 520 produced timings, 15 reached the compilation
-limit, and 155 were skipped after an earlier failure.
+The study completed 690 sweep attempts. Of these, 515 produced timings, 17 reached the compilation
+limit, and 158 were skipped after an earlier failure.
 
 ## Numerical policy
 
@@ -123,17 +121,17 @@ Scaly's fused `base` kernel computes the objective and constraints together on b
 CasADi evaluates them separately. These implementation differences remain part of the measurement.
 
 Every IPOPT provider pair has identical per-step iteration and oracle-call counts. The chain,
-neural-process MPC, and race-car SQP pairs do too. Unbumpercars has five SQP iteration mismatches
+neural-process MPC, and race-car SQP pairs do too. Unbumpercars has 15 SQP iteration mismatches
 across 1,000 paired steps, with no oracle-count mismatches and maximum state and control differences
-below 5e-9. Its total-time ratio is an observed closed-loop result, not a strict equal-work
+below 4e-8. Its total-time ratio is an observed closed-loop result, not a strict equal-work
 oracle-cost comparison.
 
 ## Reading the results
 
 Kernel timings isolate derivative evaluation. Closed-loop totals include the shared solver work, so
 a faster oracle may have little effect when the quadratic program or nonlinear solver dominates.
-Race-car demonstrates this distinction: Scaly's SQP function evaluation is 4.2× faster than CasADi's,
-while its total step is only 7% faster. The IPOPT total is 5% faster.
+Race-car demonstrates this distinction: Scaly's SQP function evaluation is 5.4× faster than CasADi's,
+while its total step is only 8% faster. The IPOPT total is 7% faster.
 
 Compilation timeouts bound the claims. At unbumpercars C=16 and C=32, the study establishes that
 Scaly completed within the fixed budget while the tested CasADi encodings did not. It does not assign
@@ -141,8 +139,8 @@ a runtime ratio to a missing kernel.
 
 ## Measurement limits
 
-Race-car N=500 has a 10.73% coefficient of variation across five processes. The
-[full sweep](../../docs/benchmarks/scalability.md) reports that dispersion alongside the mean, rather than selecting
+The largest coefficient of variation across five processes is 5.49%, Scaly's npmpc N=25 Hessian. The
+[full sweep](../../docs/benchmarks/scalability.md) reports dispersion alongside the mean, rather than selecting
 the fastest process. The complete sweep also reports source size,
 workspace, and compilation cost. These measurements cover the reference x86 machine and do not
 establish Apple M4 performance.
@@ -223,8 +221,8 @@ the summary tables from the retained comma-separated value files and telemetry.
 
 ## Study coverage and reproduction
 
-The September 23 study completed 690 planned sweep attempts and 75 closed-loop episodes. Of the
-sweep attempts, 520 produced timings, 15 reached the 180-second compilation limit, and 155 were
+The October 12 study completed 690 planned sweep attempts and 75 closed-loop episodes. Of the
+sweep attempts, 515 produced timings, 17 reached the 180-second compilation limit, and 158 were
 skipped after that encoding failed at a smaller size. Every timed kernel passed its correctness
 check, and every Scaly size completed all five processes. The sweep uses Clang 20.1.8, and the
 closed-loop builds use GCC 13.3.0.
@@ -246,16 +244,16 @@ internal solver time for the IPOPT cases that report it there. Globalization inc
 work. Glue is the wrapper's remaining work. Not every backend exposes the same breakdown, so the
 parts do not always sum to the total.
 
-### Episode agreement in the September 23 study
+### Episode agreement in the October 12 study
 
 Mismatch counts sum across all five episode pairs.
 
 | Problem | Solver | Repetitions | Per-step iteration mismatches | Per-step oracle-count mismatches | Maximum state difference | Maximum control difference |
 |---|---|---:|---:|---:|---:|---:|
-| chain | sqp | 5 | 0 | 0 | 4.77e-09 | 1.6e-08 |
-| npmpc | ipopt | 5 | 0 | 0 | 4.05e-13 | 1.99e-15 |
-| npmpc | sqp | 5 | 0 | 0 | 6.64e-10 | 3.36e-12 |
-| race_cars | ipopt | 5 | 0 | 0 | 9.24e-14 | 5.53e-12 |
+| chain | sqp | 5 | 0 | 0 | 3.48e-09 | 1.29e-08 |
+| npmpc | ipopt | 5 | 0 | 0 | 1.21e-12 | 6.09e-15 |
+| npmpc | sqp | 5 | 0 | 0 | 3.02e-09 | 1.46e-11 |
+| race_cars | ipopt | 5 | 0 | 0 | 5.68e-14 | 5.19e-12 |
 | race_cars | sqp | 5 | 0 | 0 | 1.07e-11 | 6.66e-09 |
-| unbumpercars | ipopt | 5 | 0 | 0 | 1.84e-12 | 1.35e-12 |
-| unbumpercars | sqp | 5 | 5 | 0 | 4.58e-09 | 3.69e-09 |
+| unbumpercars | ipopt | 5 | 0 | 0 | 9.08e-12 | 6.62e-12 |
+| unbumpercars | sqp | 5 | 15 | 0 | 3.38e-08 | 2.58e-08 |

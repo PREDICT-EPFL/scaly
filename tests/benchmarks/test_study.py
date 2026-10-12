@@ -50,3 +50,22 @@ def test_measurement_reservation_refuses_to_start(study_args, monkeypatch):
     study.run_study(study_args, ["study"])
   assert reservation.read_text() == "owner: another study\n"
   assert not study_args.out_dir.exists()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_study_holds_the_reservation_while_it_runs(study_args, monkeypatch, fail):
+  reservation = Path.home() / ".scaly-measuring"
+
+  def run(command):
+    assert f"out:{study_args.out_dir}" in reservation.read_text()
+    if fail:
+      raise KeyboardInterrupt
+    return SimpleNamespace(returncode=0)
+
+  monkeypatch.setattr(study.subprocess, "run", run)
+  if fail:
+    with pytest.raises(KeyboardInterrupt):
+      study.run_study(study_args, ["study"])
+  else:
+    assert study.run_study(study_args, ["study"])
+  assert not reservation.exists()

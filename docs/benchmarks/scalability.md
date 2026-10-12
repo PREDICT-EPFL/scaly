@@ -28,7 +28,7 @@ study measured:
 
 On the race car and neural-process MPC, Scaly's evaluation time grows linearly with the horizon.
 On the race car, CasADi's SX encoding is 1.1× slower at `N = 1`, and the gap widens to between
-5.5× and 6.5× from `N = 50` on. On
+5.6× and 6.5× from `N = 50` on. On
 the problems that contain neural networks, SX compiles only at the shortest neural-process horizon
 and not at all on unbumpercars, and the encodings that do compile pay for their calls and matrix
 products.
@@ -39,7 +39,7 @@ products.
 
 The horizontal line is the 180-second limit. Scaly compiles the race car in under half a second at
 every horizon. It keeps the repeated stage as a loop over one compiled body, so the executable
-code stays at about 120 kB from `N = 5` to `N = 500`. Compile time is also what ends most CasADi
+code stays at about 100 kB from `N = 5` to `N = 500`. Compile time is also what ends most CasADi
 lines: the unrolled encodings produce source files that the C compiler takes minutes to digest.
 
 ## Code size
@@ -50,6 +50,7 @@ Code size counts the executable part of the generated C source, leaving out cons
 as sparsity patterns. The two generators store those tables differently, so this is a guide to
 how much code the compiler has to process rather than an exact measure of the model.
 
-Each point is the mean of the five runs. The tooltips of the evaluation-time figures also give the
-coefficient of variation across those runs. It is at most 8%, except for Scaly on the race car at
-`N = 500`, where it reaches 11%.
+Each point is the mean of the runs that succeeded, five for every Scaly point. A CasADi encoding near
+the compile limit can finish in only some of the five processes. The tooltips of the evaluation-time
+figures also give the coefficient of variation across those runs. It is at most 5.5%, and a point
+measured in a single process has none.

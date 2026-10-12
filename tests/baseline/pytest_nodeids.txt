@@ -273,6 +273,8 @@ tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumperca
 tests/benchmarks/test_study.py::test_measurement_reservation_refuses_to_start
 tests/benchmarks/test_study.py::test_progress_is_written_between_commands[0]
 tests/benchmarks/test_study.py::test_progress_is_written_between_commands[1]
+tests/benchmarks/test_study.py::test_study_holds_the_reservation_while_it_runs[False]
+tests/benchmarks/test_study.py::test_study_holds_the_reservation_while_it_runs[True]
 tests/benchmarks/test_sweep.py::test_artifact_sizes_split_static_data_from_executable_source
 tests/benchmarks/test_sweep.py::test_casadi_descriptor_kernel_uses_nlpsol_and_applies_cse_before_it
 tests/benchmarks/test_sweep.py::test_casadi_hessian_metadata_and_values_use_upper_triangle

@@ -41,16 +41,17 @@ A study outlives the thread that starts it. Start it in a named tmux session, ne
 the agent's shell:
 
 ```bash
-echo "<study-name> tmux:study-<study-name> eta:<time>" > ~/.scaly-measuring
 tmux new-session -d -s study-<study-name> \
   '<environment> uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> <options> \
-   2>&1 | tee benchmarks/results/<study-name>.log; rm -f ~/.scaly-measuring'
+   2>&1 | tee benchmarks/results/<study-name>.log'
 ```
 
-The log sits beside the output directory because `study` refuses a directory that already has
-content. Post the session name, log path, output directory and expected end on the issue, so any
-thread on la015 can check progress with `tmux has-session` and the log. While it runs, start no
-tests, builds or other measurements on la015. To follow it up, ask the maintainer or schedule a
+`study` holds `~/.scaly-measuring` while it runs and removes it when it exits. The log sits beside
+the output directory because `study` refuses a directory that already has content. Post the session
+name, log path, output directory and expected end on the issue, so any thread on la015 can check
+progress with `tmux has-session -t '=study-<study-name>:'` and the log. The trailing colon makes
+tmux read the whole name as a session, so a dot in the name is not taken for a window and pane.
+While it runs, start no tests, builds or other measurements on la015. To follow it up, ask the maintainer or schedule a
 check through T3 rather than holding the thread open.
 
 If the study fails early, stop it, report the failure and the log lines, and propose the smallest
