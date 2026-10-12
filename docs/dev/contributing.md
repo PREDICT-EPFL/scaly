@@ -101,11 +101,6 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent; CI installs both solver wheels and
 runs everything. Never hand-roll a "is the solver loadable" skip condition.
 
-Scaly can calculate several forward derivative directions together. When an operation has no rule
-for such a batch, it silently processes the directions one at a time, which gives the same
-derivative but a larger graph. `SCALY_STRICT_JVP_MANY=1` turns that fallback into an error, which
-identifies the operation that prevents batching.
-
 ## Where things live
 
 `tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering/`

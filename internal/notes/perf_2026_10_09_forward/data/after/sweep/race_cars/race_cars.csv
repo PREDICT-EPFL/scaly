@@ -1,0 +1,6 @@
+process_id,repetition,backend_order,workload,size,backend,layout,codegen_ms,source_bytes,artifact_bytes,executable_bytes,static_metadata_bytes,source_lines,workspace,integer_workspace,argument_pointers,result_pointers,dispatch_trip_count,dispatch_workspace,dispatch_arithmetic,coloring_width,nnz,compile_ms,kernel_compile_ms,wrapper_compile_ms,link_ms,compile_status,runtime_ns,runtime_status,note,build_ms,render_ms
+3481083,1,1,race_cars,5,scaly,lower,558.5,104564,110353,104519,5834,1358,0,0,4,1,3,0,1251,4,72,923.0,333.4,524.4,65.1,ok,950.3,ok,,126.4,432.0
+3481113,2,1,race_cars,5,scaly,lower,546.9,104564,110353,104519,5834,1358,0,0,4,1,3,0,1251,4,72,918.2,336.1,517.2,64.8,ok,948.6,ok,,121.6,425.3
+3481143,3,1,race_cars,5,scaly,lower,545.8,104564,110353,104519,5834,1358,0,0,4,1,3,0,1251,4,72,918.8,333.1,519.5,66.0,ok,954.4,ok,,122.1,423.8
+3481180,4,1,race_cars,5,scaly,lower,544.7,104564,110353,104519,5834,1358,0,0,4,1,3,0,1251,4,72,915.4,332.9,517.3,65.0,ok,970.6,ok,,121.4,423.3
+3481210,5,1,race_cars,5,scaly,lower,547.4,104564,110353,104519,5834,1358,0,0,4,1,3,0,1251,4,72,919.9,336.1,518.9,64.8,ok,950.5,ok,,122.8,424.5

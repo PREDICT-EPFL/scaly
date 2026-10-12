@@ -1,0 +1,6 @@
+process_id,repetition,backend_order,workload,size,backend,layout,codegen_ms,source_bytes,artifact_bytes,executable_bytes,static_metadata_bytes,source_lines,workspace,integer_workspace,argument_pointers,result_pointers,dispatch_trip_count,dispatch_workspace,dispatch_arithmetic,coloring_width,nnz,compile_ms,kernel_compile_ms,wrapper_compile_ms,link_ms,compile_status,runtime_ns,runtime_status,note,build_ms,render_ms
+3437909,1,1,npmpc_jac,100,scaly,full,1096.7,210117,294949,209382,85567,2146,7744,0,2,1,100,9656,20014,11,2508,1387.0,797.1,523.8,65.9,ok,130217.7,ok,,132.1,964.6
+3437959,2,1,npmpc_jac,100,scaly,full,1228.4,210117,294949,209382,85567,2146,7744,0,2,1,100,9656,20014,11,2508,1413.7,820.6,527.2,65.8,ok,128246.9,ok,,132.0,1096.3
+3438297,3,1,npmpc_jac,100,scaly,full,1095.0,210117,294949,209382,85567,2146,7744,0,2,1,100,9656,20014,11,2508,1384.1,796.7,521.8,65.5,ok,128208.3,ok,,132.2,962.8
+3438352,4,1,npmpc_jac,100,scaly,full,1093.9,210117,294949,209382,85567,2146,7744,0,2,1,100,9656,20014,11,2508,1395.4,802.0,528.1,65.2,ok,128359.2,ok,,134.9,958.9
+3438397,5,1,npmpc_jac,100,scaly,full,1098.7,210117,294949,209382,85567,2146,7744,0,2,1,100,9656,20014,11,2508,1448.1,808.6,572.7,66.7,ok,128783.6,ok,,131.6,967.1

@@ -58,8 +58,7 @@ def _callee_params(prog: ProgramNode) -> list[str]:
   ],
   ids=["equal", "equal_with_zero_row", "period2", "period3", "period8", "period9", "aperiodic", "distinct_short"],
 )
-def test_constant_seed_tiles(pattern: list[int], baked: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   stage = _stage()
   length = len(pattern)
   seeds = _seeds(pattern)
@@ -99,8 +98,7 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool, monkeypatch: pytes
   assert has_gather is (not baked)
 
 
-def test_local_coloring_and_packed_contributions_keep_seed_order(monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_local_coloring_and_packed_contributions_keep_seed_order():
 
   @sc.function(sc.group(sc.arg("local_x", 2), sc.arg("dense_y", 2)), outputs=sc.arg("out"), name="local_dense_stage")
   def stage(inputs):
