@@ -300,14 +300,7 @@ def test_call_mixed_constant_and_runtime_seed_formals(nseed):
   assert sum(name.startswith("fwd:") for name in helper.input_names) == 1
 
 
-@pytest.mark.parametrize(
-  "mode",
-  [
-    pytest.param("single", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
-    pytest.param("many", marks=pytest.mark.xfail(strict=True, reason="#161: power JVP divides by a zero base with an inactive runtime exponent")),
-    "reverse",
-  ],
-)
+@pytest.mark.parametrize("mode", ["single", "many", "reverse"])
 def test_power_zero_base_with_inactive_runtime_exponent(mode):
 
   @sc.function(

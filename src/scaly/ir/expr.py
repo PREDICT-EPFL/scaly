@@ -8,7 +8,6 @@ stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.p
 
 from __future__ import annotations
 
-import math
 import string
 import struct
 import weakref
@@ -16,7 +15,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Iterable, Iterator, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 import numpy as np
 
@@ -27,7 +26,7 @@ class ExprOp(StrEnum):
   """The expression dialect's operation set.
 
   A ``StrEnum``, so an op is a proper enum value and still prints and serializes as its name.
-  ``OP_INFO`` carries the arity, the NumPy evaluation rule and the differentiability of each.
+  ``OP_INFO`` carries the arity and the differentiability of each.
   """
 
   INPUT = "input"
@@ -129,12 +128,11 @@ COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_B
 
 @dataclass(frozen=True, slots=True)
 class OpInfo:
-  """What the compiler knows about one ``ExprOp``: its arity (``None`` for variadic), its NumPy
-  evaluation where it has one, and whether it has derivative rules. ``OP_INFO`` holds one per op."""
+  """What the compiler knows about one ``ExprOp``: its arity (``None`` for variadic) and whether it
+  has derivative rules. ``OP_INFO`` holds one per op."""
 
   op: ExprOp
   arity: int | None
-  numpy: Callable[..., np.ndarray | np.generic] | None = None
   differentiable: bool = True
 
   @property
@@ -143,47 +141,46 @@ class OpInfo:
 
 
 OP_INFO: dict[ExprOp, OpInfo] = {
-  ExprOp.INPUT: OpInfo(ExprOp.INPUT, 0, None),
-  ExprOp.CONST: OpInfo(ExprOp.CONST, 0, None, False),
-  ExprOp.NEG: OpInfo(ExprOp.NEG, 1, np.negative),
-  ExprOp.SIN: OpInfo(ExprOp.SIN, 1, np.sin),
-  ExprOp.COS: OpInfo(ExprOp.COS, 1, np.cos),
-  ExprOp.TAN: OpInfo(ExprOp.TAN, 1, np.tan),
-  ExprOp.ASIN: OpInfo(ExprOp.ASIN, 1, np.arcsin),
-  ExprOp.ACOS: OpInfo(ExprOp.ACOS, 1, np.arccos),
-  ExprOp.ATAN: OpInfo(ExprOp.ATAN, 1, np.arctan),
-  ExprOp.SINH: OpInfo(ExprOp.SINH, 1, np.sinh),
-  ExprOp.COSH: OpInfo(ExprOp.COSH, 1, np.cosh),
-  ExprOp.TANH: OpInfo(ExprOp.TANH, 1, np.tanh),
-  # NumPy has no erf; frompyfunc keeps constant folding vectorized without adding SciPy.
-  ExprOp.ERF: OpInfo(ExprOp.ERF, 1, lambda x: np.asarray(np.frompyfunc(math.erf, 1, 1)(x), dtype=np.float64)),
-  ExprOp.EXP: OpInfo(ExprOp.EXP, 1, np.exp),
-  ExprOp.LOG: OpInfo(ExprOp.LOG, 1, np.log),
-  ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1, np.sqrt),
-  ExprOp.ABS: OpInfo(ExprOp.ABS, 1, np.abs),
-  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, np.floor, False),
-  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, np.ceil, False),
-  ExprOp.ADD: OpInfo(ExprOp.ADD, 2, np.add),
-  ExprOp.SUB: OpInfo(ExprOp.SUB, 2, np.subtract),
-  ExprOp.MUL: OpInfo(ExprOp.MUL, 2, np.multiply),
-  ExprOp.DIV: OpInfo(ExprOp.DIV, 2, np.divide),
-  ExprOp.POW: OpInfo(ExprOp.POW, 2, np.power),
-  ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2, np.arctan2),
-  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.fmin, False),
-  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.fmax, False),
-  ExprOp.SUM: OpInfo(ExprOp.SUM, 1, np.sum),
-  ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
-  ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
-  ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
-  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 1, None),
-  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1, None),
-  ExprOp.STACK: OpInfo(ExprOp.STACK, None, np.stack),
-  ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, np.concatenate),
-  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
-  ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
-  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
-  ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
-  ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, None),
+  ExprOp.INPUT: OpInfo(ExprOp.INPUT, 0),
+  ExprOp.CONST: OpInfo(ExprOp.CONST, 0, False),
+  ExprOp.NEG: OpInfo(ExprOp.NEG, 1),
+  ExprOp.SIN: OpInfo(ExprOp.SIN, 1),
+  ExprOp.COS: OpInfo(ExprOp.COS, 1),
+  ExprOp.TAN: OpInfo(ExprOp.TAN, 1),
+  ExprOp.ASIN: OpInfo(ExprOp.ASIN, 1),
+  ExprOp.ACOS: OpInfo(ExprOp.ACOS, 1),
+  ExprOp.ATAN: OpInfo(ExprOp.ATAN, 1),
+  ExprOp.SINH: OpInfo(ExprOp.SINH, 1),
+  ExprOp.COSH: OpInfo(ExprOp.COSH, 1),
+  ExprOp.TANH: OpInfo(ExprOp.TANH, 1),
+  ExprOp.ERF: OpInfo(ExprOp.ERF, 1),
+  ExprOp.EXP: OpInfo(ExprOp.EXP, 1),
+  ExprOp.LOG: OpInfo(ExprOp.LOG, 1),
+  ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1),
+  ExprOp.ABS: OpInfo(ExprOp.ABS, 1),
+  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, False),
+  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, False),
+  ExprOp.ADD: OpInfo(ExprOp.ADD, 2),
+  ExprOp.SUB: OpInfo(ExprOp.SUB, 2),
+  ExprOp.MUL: OpInfo(ExprOp.MUL, 2),
+  ExprOp.DIV: OpInfo(ExprOp.DIV, 2),
+  ExprOp.POW: OpInfo(ExprOp.POW, 2),
+  ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2),
+  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, False),
+  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, False),
+  ExprOp.SUM: OpInfo(ExprOp.SUM, 1),
+  ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1),
+  ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1),
+  ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1),
+  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 1),
+  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1),
+  ExprOp.STACK: OpInfo(ExprOp.STACK, None),
+  ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None),
+  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2),
+  ExprOp.CALL: OpInfo(ExprOp.CALL, None),
+  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None),
+  ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
+  ExprOp.PRINT: OpInfo(ExprOp.PRINT, None),
 }
 
 
