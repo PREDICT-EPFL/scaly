@@ -11,20 +11,68 @@ from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, substitute, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
-from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
+from .sparsity import _callee_mask, _depends_on, _mask_sparsity, column_coloring
 
 _Pushforward = Callable[[Sequence[Expr], dict[Expr, Expr], int, str], tuple[Expr | None, ...]]
 _Pullback = Callable[[Sequence[Expr], Sequence[Expr], Sequence[Expr]], tuple[Expr, ...]]
 
 
-def body_tangents(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, callee: str, pushforward: _Pushforward) -> tuple[Expr | None, ...]:
-  """Differentiate callee outputs with the caller's seed-axis traversal."""
-  return pushforward(outputs, seeds, nseed, callee)
+def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], nseed: int, pushforward: _Pushforward) -> tuple[Expr | None, ...]:
+  """Tangents of the selected results of ``callee``, with ``seeds`` keyed by input index.
+
+  An output with a JVP rule maps the single-seed rule over the seeds. Every other result,
+  residuals included, differentiates the body with the caller's seed-axis traversal.
+  """
+  ruled = callee.rules is not None and callee.rules.jvp is not None
+  body = [i for i in outputs if not ruled or i >= len(callee.outputs)]
+  tangents = dict(
+    zip(body, pushforward([callee.results[i] for i in body], {callee.inputs[k]: seed for k, seed in seeds.items()}, nseed, callee.name))
+  )
+  return tuple(tangents[i] if i in tangents else _rule_tangent(callee, i, seeds, nseed) for i in outputs)
 
 
-def body_cotangents(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr], pullback: _Pullback) -> tuple[Expr, ...]:
-  """Differentiate a callee body with the caller's reverse traversal."""
-  return pullback(outputs, wrts, cotangents)
+def _rule_tangent(callee: Any, output: int, seeds: dict[int, Expr], nseed: int) -> Expr:
+  rule = callee.rules.jvp
+  reads = _reads(callee, output)
+  specs = [(inp.reshape((inp.size,)), 0, 0) for inp in callee.inputs]
+  for k, inp in enumerate(callee.inputs):
+    seed = seeds.get(k) if reads[k] else None
+    specs.append(
+      (Expr.const(np.zeros(inp.size, dtype=inp.type.dtype.numpy()), dtype=inp.type.dtype), 0, 0)
+      if seed is None
+      else (seed.reshape((nseed * inp.size,)), 0, inp.size)
+    )
+  return _mapped_call(rule, nseed, specs, output).reshape((nseed, *callee.outputs[output].shape))
+
+
+def _reads(callee: Any, output: int) -> tuple[bool, ...]:
+  """Which input tangents the derivative of ``callee``'s result ``output`` reads."""
+  rule = None if callee.rules is None or output >= len(callee.outputs) else callee.rules.jvp
+  if rule is None:
+    return (True,) * len(callee.inputs)
+  memo: dict[tuple[int, int], bool] = {}
+  return tuple(_depends_on(rule.outputs[output], tangent, memo) for tangent in rule.inputs[len(callee.inputs) :])
+
+
+def read_args(expr: Expr) -> tuple[Expr, ...]:
+  """The arguments of a call or map whose tangents its callee's derivative reads."""
+  return tuple(arg for arg, read in zip(expr.args, _reads(expr.attrs["callee"], expr.attrs["output"]), strict=True) if read)
+
+
+def body_cotangents(callee: Any, output: int, wrts: Sequence[int], cotangent: Expr, pullback: _Pullback) -> tuple[Expr, ...]:
+  """Cotangents of the inputs ``wrts`` of ``callee`` given the cotangent of its result ``output``.
+
+  An output with a reverse rule calls ``bwd`` on the residuals, as results of a call of ``callee``
+  on its own inputs, so a caller substituting its actuals shares the invocation with the primal.
+  Every other result differentiates the body with the caller's reverse traversal.
+  """
+  rules = callee.rules
+  if rules is None or rules.bwd is None or output >= len(callee.outputs):
+    return pullback((callee.results[output],), tuple(callee.inputs[k] for k in wrts), (cotangent,))
+  residuals = callee._call(callee.inputs)[len(callee.outputs) :]
+  cotangents = tuple(cotangent if j == output else zeros_like(out) for j, out in enumerate(callee.outputs))
+  grads = rules.bwd._call((*residuals, *cotangents))
+  return tuple(grads[k] for k in wrts)
 
 
 def _is_zero_const(expr: Expr) -> bool:
@@ -40,13 +88,13 @@ def _call_jvp_many_function(
   *,
   pushforward: _Pushforward,
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-  key = HelperKey(
+  key = HelperKey.of(
+    callee,
     "forward",
     (output_index,),
     formal_indices,
-    callee._effective_lowering,
-    nseed,
-    tuple(None if value is None else (value.dtype.str, value.tobytes()) for value in constants),
+    nseed=nseed,
+    constants=tuple(None if value is None else (value.dtype.str, value.tobytes()) for value in constants),
   )
   cache = callee._memo.helpers
   if key not in cache:
@@ -59,9 +107,8 @@ def _call_jvp_many_function(
       else Expr.const(value[list(active)], dtype=callee.inputs[i].type.dtype)
       for i, value in zip(formal_indices, constants, strict=True)
     }
-    out = callee.outputs[output_index]
     single_constant = len(formal_indices) == 1 and constants[0] is not None
-    (deriv,) = body_tangents((out,), {callee.inputs[i]: seed for i, seed in seeds.items()}, len(active), callee.name, pushforward)
+    (deriv,) = body_tangents(callee, (output_index,), seeds, len(active), pushforward)
     assert deriv is not None
     deriv = callee._inherit_lowering(simplify_cse_fixpoint(deriv))
     dep_memo: dict[tuple[int, int], bool] = {}
@@ -69,7 +116,7 @@ def _call_jvp_many_function(
     seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(f"fwd:{callee.input_names[i]}" for i in seed_indices)
-    output_name = f"fwd:{callee.output_names[output_index]}"
+    output_name = f"fwd:{callee.result_names[output_index]}"
     if single_constant:
       output_name += f":{callee.input_names[formal_indices[0]]}"
     fn = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [deriv], input_names, [output_name], role="forward")
@@ -113,7 +160,7 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       continue
     functions = tuple(mapped.attrs["callee"] for mapped in members)
     inputs = tuple(bindings)
-    key = HelperKey("forward", (), (), callee._effective_lowering, members=functions)
+    key = HelperKey.of(callee, "forward", (), (), members=functions)
     if key not in cache:
       outputs = [fn.outputs[0].reshape((fn.outputs[0].size,)) for fn in functions]
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
@@ -145,8 +192,8 @@ def _periodic_seed_tiles(
   return None if period is None else (tiles, period)
 
 
-def _local_seed_colors(callee_out: Expr, formal: Expr, nseed: int) -> tuple[Any, tuple[int, ...]] | None:
-  mask = _jac_mask(callee_out, formal, {})
+def _local_seed_colors(callee: Any, output: int, formal: int, nseed: int) -> tuple[Any, tuple[int, ...]] | None:
+  mask = _callee_mask(callee, output, formal, {})
   colors = column_coloring(_mask_sparsity(mask)) if mask.nnz else ()
   return (mask, colors) if colors and max(colors) + 1 < nseed else None
 
@@ -164,7 +211,6 @@ def _vmap_jvp_many(
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
   slice_size = expr.attrs["slice_size"]
-  callee_out = callee.outputs[output_idx]
 
   maps: list[Expr] = []
 
@@ -224,7 +270,7 @@ def _vmap_jvp_many(
     # size O(c_f) instead of O(nseed). The global compressed JVP is then assembled back by, for
     # each local color `c_local`, gathering the unique nonzero column of `actual_tan` for each
     # output row and multiplying with the per-iter compressed-JVP slice.
-    local = _local_seed_colors(callee_out, formal, nseed)
+    local = _local_seed_colors(callee, output_idx, formal_idx, nseed)
     if local is not None:
       local_mask, local_colors = local
       c_f = max(local_colors) + 1
@@ -326,13 +372,12 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
 
 
 def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...], *, pullback: _Pullback) -> tuple[Any, tuple[int, ...]]:
-  key = HelperKey("adjoint", (output_index,), active_formals, callee._effective_lowering)
+  key = HelperKey.of(callee, "adjoint", (output_index,), active_formals)
   cache = callee._memo.helpers
   if key not in cache:
-    out = callee.outputs[output_index]
     lam_name = f"lam:{callee.output_names[output_index]}"
-    lam = Expr.sym(lam_name, out.shape)
-    grads = body_cotangents((out,), tuple(callee.inputs[i] for i in active_formals), (lam,), pullback)
+    lam = Expr.sym(lam_name, callee.outputs[output_index].shape)
+    grads = body_cotangents(callee, output_index, active_formals, lam, pullback)
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -394,17 +439,17 @@ def _call_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None, *, pullback
   args = expr.args
   callee = expr.attrs["callee"]
   output_idx = expr.attrs["output"]
-  callee_out = callee.outputs[output_idx]
+  callee_out = callee.results[output_idx]
   # Differentiate the callee body against a fresh cotangent symbol, then graft the real ``cot``
   # in via the same substitution that maps formals to actuals. Passing ``cot`` directly into the
   # inner vjp would make it part of the substituted graph: if the caller reuses a callee formal
   # symbol (the usual construction pattern), occurrences of that symbol *inside the cotangent*
   # would be rewritten to this call's actuals, corrupting the adjoint.
-  lam = Expr.sym(f"lam:{callee.output_names[output_idx]}", callee_out.shape)
+  lam = Expr.sym(f"lam:{callee.result_names[output_idx]}", callee_out.shape)
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   replacements[lam.id] = cot
   indices = tuple(range(len(args))) if active is None else active
-  grads = body_cotangents((callee_out,), tuple(callee.inputs[i] for i in indices), (lam,), pullback)
+  grads = body_cotangents(callee, output_idx, indices, lam, pullback)
   adjoints = dict(zip(indices, grads, strict=True))
   return tuple(_substitute(adjoints[i], replacements) if i in adjoints else zeros_like(arg) for i, arg in enumerate(args))
 

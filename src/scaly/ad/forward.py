@@ -8,7 +8,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, _independent, concat, gather, scatter, stack, substitute
 from ..passes.expr import simplify_cse_fixpoint
-from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many
+from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
 
 
@@ -56,7 +56,15 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
     expr, visited = pending.pop()
     if expr.id in tangents:
       continue
-    args = () if expr.op == ExprOp.STOP_GRADIENT else expr.args[:1] if expr.op == ExprOp.PRINT else expr.args
+    args = (
+      ()
+      if expr.op == ExprOp.STOP_GRADIENT
+      else expr.args[:1]
+      if expr.op == ExprOp.PRINT
+      else read_args(expr)
+      if expr.op in {ExprOp.CALL, ExprOp.VMAP}
+      else expr.args
+    )
     if expr.type.dtype.is_floating and nseed and args and not visited:
       pending.append((expr, True))
       pending.extend((arg, False) for arg in reversed(args) if arg.id not in tangents)
@@ -72,7 +80,8 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
       elif expr.op == ExprOp.PRINT:
         tangent = d[0]
       elif expr.op in {ExprOp.CALL, ExprOp.VMAP}:
-        call_tangents = [None if t is None else simplify_cse_fixpoint(t) for t in d]
+        read = {arg.id for arg in args}
+        call_tangents = [simplify_cse_fixpoint(t) if arg.id in read and (t := tangents[arg.id]) is not None else None for arg in expr.args]
         tangent = (
           _call_jvp_many(expr, call_tangents, nseed, pushforward=_pushforward)
           if expr.op == ExprOp.CALL

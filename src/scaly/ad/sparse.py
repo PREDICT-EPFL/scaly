@@ -18,7 +18,7 @@ from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
 from .forward import _pushforward, jvp_many
-from .sparsity import _depends_on, _jac_mask, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
+from .sparsity import _callee_mask, _depends_on, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
 from ..ir.types import SparsityPattern
 
 
@@ -262,7 +262,6 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   starts = vmap_expr.attrs["starts"]
   strides = vmap_expr.attrs["strides"]
   slice_size = vmap_expr.attrs["slice_size"]
-  callee_out = callee.outputs[output_idx]
 
   global_sparsity = jacobian_sparsity(vmap_expr, wrt)
   if global_sparsity.nnz == 0 or length == 0:
@@ -296,7 +295,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   coloring_width = 0
   for f_idx in direct_formals:
     formal = callee.inputs[f_idx]
-    local_mask = _jac_mask(callee_out, formal, {})
+    local_mask = _callee_mask(callee, output_idx, f_idx, {})
     if not local_mask.nnz:
       continue
     local_sparsity = _mask_sparsity(local_mask)

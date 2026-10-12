@@ -312,6 +312,116 @@ Quadratic-program extraction rejects problems containing `stop_gradient`,
 including in their bounds or inside called functions. The proof that a problem
 is quadratic requires derivatives of the evaluated cost and constraints.
 
+## Custom derivative rules
+
+`sc.custom_derivative` gives a function rules that replace differentiating its
+body. It suits a calculation, such as an iterative solve, whose derivative has
+a closed form that is cheaper or more accurate than differentiating every step
+of the calculation. The function below solves
+\(x^3 + x = p\) entry by entry with 30 Newton steps. Differentiating
+\(x^3 + x - p = 0\) at the solution gives
+
+\[
+\frac{\partial x}{\partial p} = \frac{1}{3x^2 + 1},
+\]
+
+one division per entry, where differentiating the body would differentiate
+every Newton step:
+
+```python
+@sc.function(sc.arg("p"))
+def cubic_root(p: sc.Expr) -> sc.Expr:
+    x = p
+    for _ in range(30):
+        x = x - (x**3 + x - p) / (3.0 * x * x + 1.0)
+    return x
+
+@sc.function()
+def cubic_root_jvp(p: sc.Expr, p_dot: sc.Expr) -> sc.Expr:
+    x = cubic_root(p)
+    return p_dot / (3.0 * x * x + 1.0)
+
+root = sc.custom_derivative(cubic_root, jvp=cubic_root_jvp)
+p = np.array([2.0, 10.0, 30.0])
+print(root(p))                # [1. 2. 3.]
+print(sc.jacobian(root)(p))   # [[0.25       0.         0.        ]
+                              #  [0.         0.07692308 0.        ]
+                              #  [0.         0.         0.03571429]]
+```
+
+The forward rule `jvp` computes the product of the Jacobian with a direction,
+as `sc.forward` does. It takes the function's parameters and then one direction
+per parameter, here `p_dot` for `p`, and returns the change of each output along
+that direction. Every forward derivative of `root` uses it, whether `root` is
+called directly, inside another function or in a `vmap`. For several directions
+at once, such as the three columns of this Jacobian, scaly applies the rule to
+each direction in one mapped loop. A direction the rule never reads is never
+computed. Because `cubic_root` leaves its input
+shape open, `root` and its rule are templates, bound at the shape of each call.
+
+### Reverse rules and residuals
+
+The reverse rule computes the product of output weights with the Jacobian, as
+`sc.adjoint` does, and is what gradients use. It is a pair of functions. `fwd`
+takes the parameters and returns `(outputs, residuals)`. `bwd` takes the
+residuals and one weight per output, shaped like that output, and returns one
+weighted derivative per parameter, shaped like that parameter. The residuals
+hold what `bwd` needs, often the solution or a factorization. Readers who know
+JAX will recognise its `custom_vjp`. Here the residual is the solution itself:
+
+```python
+@sc.function()
+def cubic_root_fwd(p: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    x = cubic_root(p)
+    return x, x
+
+@sc.function()
+def cubic_root_bwd(x: sc.Expr, x_bar: sc.Expr) -> sc.Expr:
+    return x_bar / (3.0 * x * x + 1.0)
+
+root = sc.custom_derivative(cubic_root, jvp=cubic_root_jvp, fwd=cubic_root_fwd, bwd=cubic_root_bwd)
+
+@sc.function(sc.arg("p", 3), outputs=sc.arg("cost"))
+def cost(p: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(root(p))
+
+print(sc.gradient(cost)(p))  # [0.5        0.30769231 0.21428571]
+print(sc.hessian(cost)(p))   # [[-0.0625      0.          0.        ]
+                             #  [ 0.         -0.01001365  0.        ]
+                             #  [ 0.          0.         -0.0023688 ]]
+```
+
+A call of `root` computes its outputs and residuals together, so the gradient
+reuses the solution or the factorization of that call instead of computing it
+again. The outputs of `fwd` replace those of the body and should equal them.
+The residuals keep their dependence on the inputs, so a second derivative, such
+as the Hessian above, differentiates `bwd` and the residuals it reads.
+
+`fwd` and `bwd` are given together. A mode without a rule, forward or reverse,
+differentiates the body. With only `jvp`, a gradient goes through the Newton
+steps. A forward rule receives no residuals, which is why `cubic_root_jvp` calls
+`cubic_root` again to recover the solution.
+
+### Declared sparsity
+
+Sparsity analysis cannot see the derivative a rule computes, so the Jacobian
+pattern of a function with rules is dense unless it is declared. The callable
+`sparsity(of, wrt, shape)` returns the pattern of output `of` in input `wrt`,
+as a boolean mask of `shape` or a `SparsityPattern`:
+
+```python
+diagonal = sc.custom_derivative(
+    cubic_root, jvp=cubic_root_jvp, sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool)
+)
+print(sc.sparse_jacobian(diagonal)(p))     # [0.25       0.07692308 0.03571429]
+print(sc.sparse_jacobian(root)(p).shape)   # (9,)
+```
+
+!!! warning "A declared pattern is taken as given"
+    Scaly does not compare the declared pattern with the rule. A pattern that
+    leaves out an entry the rule computes gives wrong sparse derivatives
+    without an error.
+
 ## Current limitations
 
 Derivatives work through ordinary function calls and `vmap`. Ordinary calls may
