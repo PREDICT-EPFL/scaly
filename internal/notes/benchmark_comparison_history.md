@@ -21,7 +21,7 @@ reached the compilation limit and 158 were skipped after a failure, against 520,
 September 23. The difference is all in CasADi encodings whose compiles sit near the 180-second
 limit: npmpc `casadi_map_sx` completed only 3, 1 and 1 of 5 processes at N=12, 25 and 50. Every
 Scaly size completed all five processes. Every CasADi closed-loop total and function-evaluation
-time is within 1% of September 23, which bounds the drift of the machine and of the PIQP 0.6.2 to
+time is within 1.6% of September 23, which bounds the drift of the machine and of the PIQP 0.6.2 to
 0.6.4 update between the two studies.
 
 Scaly Hessian means in µs, with the change in executable source bytes and kernel compile time:
@@ -67,8 +67,9 @@ Scaly closed loops, ms per step:
 
 Measured: unbumpercars C=32 is 17.3% faster and C=16 8.1% slower, both well outside either study's
 dispersion. Npmpc N=200 is 4.0% slower, outside its 0.9% and 1.2% CVs. Chain function evaluation
-rises 23.5% under IPOPT and 18.1% under SQP although the chain Hessian kernels are unchanged, so the
-added time lies in another chain oracle. Race-car function evaluation falls by about 22%. Unbumpercars
+rises 23.5% under IPOPT and 18.1% under SQP although the chain Hessian kernels are unchanged. That
+suggests, without an oracle-level measurement to show it, that the added time lies in another chain
+oracle. Race-car function evaluation falls by about 22%. Unbumpercars
 function evaluation is back to its September 10 level, 16.405 against 16.419 ms with IPOPT and 9.509
 against 9.513 ms with SQP.
 

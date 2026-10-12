@@ -50,5 +50,7 @@ Code size counts the executable part of the generated C source, leaving out cons
 as sparsity patterns. The two generators store those tables differently, so this is a guide to
 how much code the compiler has to process rather than an exact measure of the model.
 
-Each point is the mean of the five runs. The tooltips of the evaluation-time figures also give the
-coefficient of variation across those runs. It is at most 5.5%.
+Each point is the mean of the runs that succeeded, five for every Scaly point. A CasADi encoding near
+the compile limit can finish in only some of the five processes. The tooltips of the evaluation-time
+figures also give the coefficient of variation across those runs. It is at most 5.5%, and a point
+measured in a single process has none.
