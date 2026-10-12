@@ -6,14 +6,18 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack
+from ..ir.expr import Expr, ExprOp, _independent, concat, gather, scatter, stack, substitute
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
 
 
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
-  """Forward-mode derivative: ``J(expr, wrt) @ seed``, with ``seed`` shaped like ``wrt``."""
+  """Forward-mode derivative: ``J(expr, wrt) @ seed``, with ``seed`` shaped like ``wrt``.
+
+  ``wrt`` may be an intermediate expression. Its uses act as an independent input, holding
+  other paths to its original inputs fixed.
+  """
   tangent = jvp_many(expr, wrt, seed.reshape((1, *seed.shape)))
   if tangent.op == ExprOp.CONST:
     assert tangent.value is not None
@@ -24,7 +28,8 @@ def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   """Forward mode over seeds shaped ``(nseed, *wrt.shape)``, returning ``(nseed, *expr.shape)``.
 
-  One traversal shares primal work across all seeds. A missing derivative rule raises.
+  ``wrt`` may be an intermediate expression, treated as an independent input. One traversal
+  shares primal work across all seeds. A missing derivative rule raises.
   """
   if len(seeds.shape) < 1 or seeds.shape[1:] != wrt.shape:
     raise ValueError(f"multi-seed JVP expects seeds shape (nseed, *{wrt.shape}), got {seeds.shape}")
@@ -33,9 +38,10 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   if seeds.type.dtype != wrt.type.dtype:
     raise TypeError(f"JVP seeds must have primal dtype {wrt.type.dtype}, got {seeds.type.dtype}")
   seeds = simplify_cse_fixpoint(seeds)
+  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
   (ret,) = _pushforward((expr,), {wrt: seeds}, seeds.shape[0])
   assert ret is not None
-  return ret
+  return substitute(ret, restore) if restore else ret
 
 
 def _zero_tangent(expr: Expr, nseed: int) -> Expr:
@@ -50,12 +56,12 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
     expr, visited = pending.pop()
     if expr.id in tangents:
       continue
-    args = expr.args[:1] if expr.op == ExprOp.PRINT else expr.args
+    args = () if expr.op == ExprOp.STOP_GRADIENT else expr.args[:1] if expr.op == ExprOp.PRINT else expr.args
     if expr.type.dtype.is_floating and nseed and args and not visited:
       pending.append((expr, True))
       pending.extend((arg, False) for arg in reversed(args) if arg.id not in tangents)
       continue
-    if not expr.type.dtype.is_floating or not nseed or expr.op == ExprOp.CONST:
+    if not expr.type.dtype.is_floating or not nseed or expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
       tangent = None
     elif expr.op == ExprOp.INPUT:
       tangent = seeds.get(expr)

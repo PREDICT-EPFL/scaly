@@ -10,11 +10,12 @@ from __future__ import annotations
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, _independent
 from ..ir.types import SparsityPattern, broadcast_shape
 
 
-def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> bool:
+def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool], *, through_stops: bool = True) -> bool:
+  """Trace value dependencies, or derivative activity when ``through_stops`` is false."""
   stack = [(expr, False)]
   while stack:
     node, visited = stack.pop()
@@ -23,6 +24,8 @@ def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> boo
       continue
     if node.id == wrt.id:
       memo[key] = True
+    elif not through_stops and node.op == ExprOp.STOP_GRADIENT:
+      memo[key] = False
     elif visited:
       memo[key] = any(memo[(arg.id, wrt.id)] for arg in node.args)
     else:
@@ -34,10 +37,12 @@ def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> boo
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
   """Estimate structural sparsity of ``d vec(expr) / d vec(wrt)``.
 
+  An intermediate ``wrt`` acts as an independent input, holding other paths to its inputs fixed.
   This is purely symbolic: it tracks element dependencies through the graph without using
   numerical values. It is conservative for nonsmooth elementwise ops and block ops, but exact
   for the structural/arithmetic subset currently implemented here.
   """
+  (expr,), (wrt,), _ = _independent((expr,), (wrt,))
   return _mask_sparsity(_jac_mask(expr, wrt, {}))
 
 
@@ -97,7 +102,7 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arra
       continue
     if phase == 0:
       stack.append((node, variable, 1))
-      if node.op != ExprOp.VMAP or node.attrs["length"]:
+      if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
         stack.extend((arg, variable, 0) for arg in reversed(node.args) if (arg.id, variable.id) not in memo)
     elif phase == 1 and node.op in (ExprOp.CALL, ExprOp.VMAP):
       stack.append((node, variable, 2))
@@ -117,7 +122,7 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arra
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
     return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
-  if expr.op == ExprOp.CONST:
+  if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
     return _empty((expr.size, wrt.size))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
     return _jac_mask(expr.args[0], wrt, memo)

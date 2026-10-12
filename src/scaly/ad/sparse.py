@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter
+from ..ir.expr import Expr, ExprOp, _independent, concat, gather, scatter, substitute
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
@@ -77,6 +77,16 @@ class SparseJacobian:
     return SparseJacobian(sparsity, values, self.coloring_width, source, recovery)
 
 
+def _restore_derivative(result: SparseJacobian, restore: dict[Expr, Expr]) -> SparseJacobian:
+  return SparseJacobian(
+    result.sparsity,
+    substitute(result.values, restore),
+    result.coloring_width,
+    substitute(result._compressed, restore) if result._compressed is not None else None,
+    result._recovery,
+  )
+
+
 def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Reference compact Jacobian path: build dense ``J`` and gather nonzeros."""
 
@@ -88,6 +98,9 @@ def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
 
 def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Compact sparse Jacobian values from graph-colored compressed JVPs."""
+  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
+  if restore:
+    return _restore_derivative(sparse_jacobian_colored(expr, wrt), restore)
   expr = cse(expr)
   sparsity = jacobian_sparsity(expr, wrt)
   colors = column_coloring(sparsity)
@@ -160,6 +173,9 @@ def sparse_jacobian(expr: Expr, wrt: Expr) -> SparseJacobian:
   pattern. The value order is the pattern's ``(rows, cols)`` order, which is not necessarily
   sorted.
   """
+  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
+  if restore:
+    return _restore_derivative(sparse_jacobian(expr, wrt), restore)
   structured = _sparse_jacobian_structured(expr, wrt)
   if structured is not None:
     return structured
@@ -344,6 +360,9 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
   triangle = _validate_triangle(triangle)
   if expr.size != 1:
     raise ValueError("sparse_hessian expects a scalar expression")
+  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
+  if restore:
+    return _restore_derivative(sparse_hessian(expr, wrt, triangle=triangle), restore)
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)

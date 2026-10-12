@@ -10,6 +10,7 @@ import numpy as np
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.expr_spec import verify_expr
+from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
 from ..program import ProgramObserver, optimize_program
@@ -129,7 +130,7 @@ def _size_of(shape: tuple[int, ...]) -> int:
 
 
 def _normalize_function(fun: ConcreteFunction) -> ConcreteFunction:
-  outputs = fun.outputs
+  outputs = tuple(rewrite(out, (Pattern(ExprOp.STOP_GRADIENT, lambda e: True, lambda e: e.args[0]),), revisit=True) for out in fun.outputs)
   for _ in range(4):
     normalized = cse_many(simplify(output) for output in outputs)
     if all(new is old for new, old in zip(normalized, outputs, strict=True)):
