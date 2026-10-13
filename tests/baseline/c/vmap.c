@@ -36,6 +36,11 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 #define SCALY_WIDTH_4_4_4_4 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4))
 typedef double lanes_4_4_4_4_vec __attribute__((vector_size(8 * SCALY_WIDTH_4_4_4_4)));
 typedef lanes_4_4_4_4_vec lanes_4_4_4_4_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) lanes_4_4_4_4_vec lanes_4_4_4_4_vec_splat(double x) {
+  lanes_4_4_4_4_vec v;
+  for (int i = 0; i < SCALY_WIDTH_4_4_4_4; ++i) v[i] = x;
+  return v;
+}
 static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(double* p, lanes_4_4_4_4_vec v, long long n) {
   if (n == SCALY_WIDTH_4_4_4_4) *(lanes_4_4_4_4_vec_mem*)p = v;
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
@@ -68,7 +73,7 @@ static inline __attribute__((always_inline)) void shooting_lanes_1(long long v0_
   double l_4s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_4s[v0_lane] = z[(4 + v1[v0_lane])];
   lanes_4_4_4_4_vec l_4 = *(const lanes_4_4_4_4_vec_mem*)l_4s;
-  lanes_4_4_4_4_vec r = ((l_3 + ((0.050000000000000003 - (lanes_4_4_4_4_vec){}) * v2)) - l_4);
+  lanes_4_4_4_4_vec r = ((l_3 + (lanes_4_4_4_4_vec_splat(0.050000000000000003) * v2)) - l_4);
   for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2)))) + 0] = r[v0_lane];
   double l_5s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_5s[v0_lane] = z[(v1[v0_lane] + 1)];
@@ -76,18 +81,18 @@ static inline __attribute__((always_inline)) void shooting_lanes_1(long long v0_
   double l_6s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_6s[v0_lane] = z[(5 + v1[v0_lane])];
   lanes_4_4_4_4_vec l_6 = *(const lanes_4_4_4_4_vec_mem*)l_6s;
-  lanes_4_4_4_4_vec r_2 = ((l_5 + ((0.050000000000000003 - (lanes_4_4_4_4_vec){}) * v3)) - l_6);
+  lanes_4_4_4_4_vec r_2 = ((l_5 + (lanes_4_4_4_4_vec_splat(0.050000000000000003) * v3)) - l_6);
   for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((1 + (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2))))) + 0] = r_2[v0_lane];
   int64_t v4[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) v4[v0_lane] = (2 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2)));
-  lanes_4_4_4_4_vec v5 = ((0.10000000000000001 - (lanes_4_4_4_4_vec){}) * ((v2 * v2) + (v3 * v3)));
+  lanes_4_4_4_4_vec v5 = (lanes_4_4_4_4_vec_splat(0.10000000000000001) * ((v2 * v2) + (v3 * v3)));
   double l_7s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_7s[v0_lane] = u[v4[v0_lane]];
   lanes_4_4_4_4_vec l_7 = *(const lanes_4_4_4_4_vec_mem*)l_7s;
   double l_8s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_8s[v0_lane] = z[(6 + v1[v0_lane])];
   lanes_4_4_4_4_vec l_8 = *(const lanes_4_4_4_4_vec_mem*)l_8s;
-  lanes_4_4_4_4_vec r_3 = ((v2 + ((0.050000000000000003 - (lanes_4_4_4_4_vec){}) * (l_7 - (v5 * v2)))) - l_8);
+  lanes_4_4_4_4_vec r_3 = ((v2 + (lanes_4_4_4_4_vec_splat(0.050000000000000003) * (l_7 - (v5 * v2)))) - l_8);
   for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((2 + (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2))))) + 0] = r_3[v0_lane];
   double l_9s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_9s[v0_lane] = u[(v4[v0_lane] + 1)];
@@ -95,7 +100,7 @@ static inline __attribute__((always_inline)) void shooting_lanes_1(long long v0_
   double l_10s[8];
   for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_10s[v0_lane] = z[(7 + v1[v0_lane])];
   lanes_4_4_4_4_vec l_10 = *(const lanes_4_4_4_4_vec_mem*)l_10s;
-  lanes_4_4_4_4_vec r_4 = ((v3 + ((0.050000000000000003 - (lanes_4_4_4_4_vec){}) * (l_9 - (v5 * v3)))) - l_10);
+  lanes_4_4_4_4_vec r_4 = ((v3 + (lanes_4_4_4_4_vec_splat(0.050000000000000003) * (l_9 - (v5 * v3)))) - l_10);
   for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((3 + (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2))))) + 0] = r_4[v0_lane];
 }
 int shooting(const double** arg, double** res, int* iw, double* w, int mem) {

@@ -36,6 +36,11 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 #define SCALY_WIDTH_4_4_4_4 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 4 : SCALY_REGISTER_SLOTS == 64 ? 4 : SCALY_REGISTER_SLOTS == 32 ? 4 : 4))
 typedef double lanes_4_4_4_4_vec __attribute__((vector_size(8 * SCALY_WIDTH_4_4_4_4)));
 typedef lanes_4_4_4_4_vec lanes_4_4_4_4_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) lanes_4_4_4_4_vec lanes_4_4_4_4_vec_splat(double x) {
+  lanes_4_4_4_4_vec v;
+  for (int i = 0; i < SCALY_WIDTH_4_4_4_4; ++i) v[i] = x;
+  return v;
+}
 static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(double* p, lanes_4_4_4_4_vec v, long long n) {
   if (n == SCALY_WIDTH_4_4_4_4) *(lanes_4_4_4_4_vec_mem*)p = v;
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
@@ -43,6 +48,11 @@ static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(d
 #define SCALY_WIDTH_2_2_2_2 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
 typedef double lanes_2_2_2_2_vec __attribute__((vector_size(8 * SCALY_WIDTH_2_2_2_2)));
 typedef lanes_2_2_2_2_vec lanes_2_2_2_2_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) lanes_2_2_2_2_vec lanes_2_2_2_2_vec_splat(double x) {
+  lanes_2_2_2_2_vec v;
+  for (int i = 0; i < SCALY_WIDTH_2_2_2_2; ++i) v[i] = x;
+  return v;
+}
 static inline __attribute__((always_inline, unused)) void lanes_2_2_2_2_vec_st(double* p, lanes_2_2_2_2_vec v, long long n) {
   if (n == SCALY_WIDTH_2_2_2_2) *(lanes_2_2_2_2_vec_mem*)p = v;
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
@@ -83,13 +93,13 @@ static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_4(l
   lanes_2_2_2_2_vec_st(&s1[((6 + (0 + (((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + 0) < 1 ? ((j_t7_3_chunk * SCALY_WIDTH_2_2_2_2) + 0) : 1)))) + 0], l, n);
 }
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_5(long long i_t10_chunk, long long n, double* s0) {
-  lanes_4_4_4_4_vec_st(&s0[((0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], (0.0 - (lanes_4_4_4_4_vec){}), n);
+  lanes_4_4_4_4_vec_st(&s0[((0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], lanes_4_4_4_4_vec_splat(0.0), n);
 }
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_6(long long i_t11_chunk, long long n, const double* s0, double* s1) {
   lanes_4_4_4_4_vec l;
   if (n == SCALY_WIDTH_4_4_4_4) l = *(const lanes_4_4_4_4_vec_mem*)(&s0[(0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))]);
   else for (long long i_t11_lane = 0; i_t11_lane < SCALY_WIDTH_4_4_4_4; ++i_t11_lane) l[i_t11_lane] = s0[(0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + i_t11_lane) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + i_t11_lane) : 3))];
-  lanes_4_4_4_4_vec_st(&s1[((0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], ((0.10000000000000001 - (lanes_4_4_4_4_vec){}) * l), n);
+  lanes_4_4_4_4_vec_st(&s1[((0 + (((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t11_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], (lanes_4_4_4_4_vec_splat(0.10000000000000001) * l), n);
 }
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_7(long long d1_jac_znext_z_chunk, long long n, double* jac_znext_z, const double* s2, int64_t d0_jac_znext_z) {
   double ls[8];

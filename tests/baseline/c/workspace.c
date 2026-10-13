@@ -36,6 +36,11 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 #define SCALY_WIDTH_8_8_8_8 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8))
 typedef double lanes_8_8_8_8_vec __attribute__((vector_size(8 * SCALY_WIDTH_8_8_8_8)));
 typedef lanes_8_8_8_8_vec lanes_8_8_8_8_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_splat(double x) {
+  lanes_8_8_8_8_vec v;
+  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) v[i] = x;
+  return v;
+}
 static inline __attribute__((always_inline, unused)) void lanes_8_8_8_8_vec_st(double* p, lanes_8_8_8_8_vec v, long long n) {
   if (n == SCALY_WIDTH_8_8_8_8) *(lanes_8_8_8_8_vec_mem*)p = v;
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
