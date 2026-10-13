@@ -33,3 +33,16 @@ def test_one_process_reports_paired_per_step_speedups(tmp_path):
   assert scaly["step_solver_time_ms"]["median"] == 2.0
   assert scaly["step_solver_time_ms"]["stdev"] == pytest.approx(np.std([1.0, 2.0, 4.0], ddof=1))
   assert "| race_cars | sqp | 1 | 1.50× (1.10–1.90) | 2.00× (2.00–2.80) |" in closed_loop_tables(summary)
+
+
+def test_unpaired_or_zero_time_steps_do_not_fake_a_comparison(tmp_path):
+  _episode(tmp_path, "scaly", [1.0, 2.0, 4.0], [0.0, 1.0, 1.0])
+  _episode(tmp_path, "casadi", [2.0, 3.0, 4.0], [1.0, 2.0, 3.0])
+  (comparison,) = closed_loop_summary(tmp_path)["oracle_comparisons"]
+  assert comparison["fe_time_ms_speedups"] == [2.0, 3.0]
+  telemetry = tmp_path / "repeat_1" / "race_cars" / "sqp+casadi" / "telemetry.csv"
+  telemetry.write_text(telemetry.read_text().replace("\n2,", "\n5,"))
+  summary = closed_loop_summary(tmp_path)
+  (comparison,) = summary["oracle_comparisons"]
+  assert not comparison["same_steps"] and "solver_time_ms_speedups" not in comparison
+  assert "| race_cars | sqp | 1 |  |  | steps differ | steps differ |" in closed_loop_tables(summary)

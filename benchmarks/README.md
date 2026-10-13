@@ -260,8 +260,9 @@ For CasADi's third mode, add `--casadi-interpreted` to an `ipopt+casadi` run. It
 an `interpreted/` directory, and its mode row names the CasADi wheel's IPOPT provider. That row is a
 deployment comparison and does not isolate oracle cost against the compiled columns' shared IPOPT.
 
-`closed-loop --repetitions 3` runs sequential fresh processes with separate empty compilation caches
-under `repeat_<n>/cache/<oracle>/`. Reusing one of those output directories fails. The parent writes
+`closed-loop --repetitions N`, including `--repetitions 1`, runs each episode in N sequential fresh
+processes with separate empty compilation caches under `repeat_<n>/cache/<oracle>/`; `study` always
+passes it, so `report` finds every episode. Reusing one of those output directories fails. The parent writes
 `modes.summary.csv` with startup and per-step dispersion. A single episode uses the configured cache,
 so its `jit` row may measure a cache load. Add `--headline --boost on` or `--headline --boost off` to
 check frequency settings around every repeated episode. `--oracle both` compares the compiled

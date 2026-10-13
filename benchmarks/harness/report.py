@@ -93,13 +93,14 @@ def closed_loop_summary(root: Path) -> dict:
       continue
     a, ar = episodes[(problem, solver, repetition, "scaly")]
     b, br = episodes[(problem, solver, repetition, "casadi")]
-    row: dict = dict(problem=problem, solver=solver, repetition=repetition, same_steps=len(ar) == len(br))
-    if len(ar) == len(br):
+    same_steps = [r["step"] for r in ar] == [r["step"] for r in br]
+    row: dict = dict(problem=problem, solver=solver, repetition=repetition, same_steps=same_steps)
+    if same_steps:
       for key in ("iterations", *COUNTS):
         row[f"{key}_mismatches"] = sum(x.get(key) != y.get(key) for x, y in zip(ar, br, strict=True))
       # each step repeats the same solve on both sides, so the per-step ratio is a paired speedup
       for key in ("solver_time_ms", "fe_time_ms"):
-        row[f"{key}_speedups"] = [y[key] / x[key] for x, y in zip(ar, br, strict=True)]
+        row[f"{key}_speedups"] = [y[key] / x[key] for x, y in zip(ar, br, strict=True) if x[key] > 0]
     with np.load(a / "rollout.npz") as av, np.load(b / "rollout.npz") as bv:
       for key in ("state", "applied" if problem == "unbumpercars" else "control"):
         same = av[key].shape == bv[key].shape
@@ -160,8 +161,8 @@ def closed_loop_tables(summary: dict) -> str:
     for row in summary["oracle_comparisons"]:
       by_problem[(row["problem"], row["solver"])].append(row)
     for (problem, solver), rows in sorted(by_problem.items()):
-      iterations = sum(r.get("iterations_mismatches", 0) for r in rows)
-      oracles = sum(r.get(f"{k}_mismatches", 0) for r in rows for k in COUNTS)
+      iterations = sum(r.get("iterations_mismatches", 0) for r in rows) if all(r["same_steps"] for r in rows) else "steps differ"
+      oracles = sum(r.get(f"{k}_mismatches", 0) for r in rows for k in COUNTS) if all(r["same_steps"] for r in rows) else "steps differ"
       control_key = "applied_max_abs_diff" if problem == "unbumpercars" else "control_max_abs_diff"
       state = max((r["state_max_abs_diff"] or 0.0) for r in rows)
       control = max((r[control_key] or 0.0) for r in rows)

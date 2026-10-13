@@ -328,7 +328,11 @@ def main() -> None:
   closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
   closed_loop_parser.add_argument("--out-dir", type=Path)
   closed_loop_parser.add_argument("--casadi-interpreted", action="store_true", help="measure CasADi virtual-machine mode with its wheel IPOPT")
-  closed_loop_parser.add_argument("--repetitions", type=int, default=1, help="independent cold-cache episode processes")
+  closed_loop_parser.add_argument(
+    "--repetitions",
+    type=int,
+    help="run every episode in this many fresh cold-cache processes under repeat_<n>/ (default: one episode in this process)",
+  )
   closed_loop_parser.add_argument("--order-seed", type=int, default=0, help="initial solver+oracle order, rotated between repetitions")
   closed_loop_parser.add_argument("--overwrite", action="store_true", help="replace episodes and caches already present under --out-dir")
   closed_loop_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
@@ -361,7 +365,7 @@ def main() -> None:
   elif args.command == "smoke":
     success = smoke(args)
   else:
-    if args.repetitions < 1:
+    if args.repetitions is not None and args.repetitions < 1:
       parser.error("--repetitions must be positive")
     if args.headline and args.boost is None:
       parser.error("--headline requires --boost on or off")
@@ -380,14 +384,14 @@ def main() -> None:
           parser.error(f"{solver_oracle_name(*pair)} is not available for --problem {problem} (choose from {choices})")
     episodes = [(problem, *pair) for problem in problems for pair in pairs]
     output_root = closed_loop_results_root(smoke=args.smoke, out_dir=args.out_dir).resolve()
-    if args.casadi_interpreted and args.repetitions == 1:
+    if args.casadi_interpreted and args.repetitions in (None, 1):
       output_root /= "interpreted"
-    if args.repetitions > 1 or len(episodes) > 1:
+    if args.repetitions is not None or len(episodes) > 1:
       from benchmarks.harness.timing import summarize_modes
 
       random.Random(args.order_seed).shuffle(episodes)
       run_order = []
-      for repetition in range(1, args.repetitions + 1):
+      for repetition in range(1, (args.repetitions or 1) + 1):
         if args.headline:
           require_headline_settings(args.boost == "on")
         repeat_root = output_root / f"repeat_{repetition}"
