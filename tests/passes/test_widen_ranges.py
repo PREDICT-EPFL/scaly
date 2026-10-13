@@ -142,3 +142,18 @@ def test_local_alias_of_external_buffer_stays_scalar():
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
   prog = p.program([p.proc("external_alias", [x, y], [p.for_(rng, [alias, p.store(p.view(y, [i]), p.load(p.view(alias, [i])))])])])
   assert widen_ranges(prog, lanes=4) is prog
+
+
+def test_callee_inlined_into_its_map_is_not_emitted():
+  a, b = (p.buffer(name, dtypes.float64, (1,)) for name in ("a", "b"))
+  zero = p.const_int(0)
+  square = p.proc("square", [a, b], [p.store(p.view(b, [zero]), p.mul(p.load(p.view(a, [zero])), p.load(p.view(a, [zero]))))])
+  x, y = (p.buffer(name, dtypes.float64, (9,)) for name in ("x", "y"))
+  i = p.var("stage")
+  rng = p.range_("stage", 0, 9)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  mapped = p.proc("mapped", [x, y], [p.for_(rng, [p.call("square", [p.view(x, [i]), p.view(y, [i])])])])
+  result = widen_ranges(p.program([square, mapped]), lanes=2)
+  verify_program(result)
+  assert not any(n.op == ProgramOp.CALL for n in walk_program(result))
+  assert [proc.attrs["name"] for proc in result.args] == ["mapped"]

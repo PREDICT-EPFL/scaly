@@ -83,8 +83,8 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
     z, weights = inputs
     return _mapped_call(stage, stages, {"x": z, "w": (weights, 0, 0)})
 
+  assert any(proc.attrs.get("hoisted_from") == stage.name for proc in render_c_module(mapped, lanes=1).program.args)
   program = render_c_module(mapped).program
-  assert any(proc.attrs.get("hoisted_from") == stage.name for proc in program.args)
   assert _dispatch_metrics(mapped.instantiate(), program) == (stages, 3 if stages == 1 else 24, 21)
 
 

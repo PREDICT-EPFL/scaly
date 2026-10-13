@@ -176,7 +176,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
 
   else:
     fun = cast(sc.Function, solver.function)
-  module = render_c_module(fun)
+  module = render_c_module(fun, lanes=1)
   procs = module.program.args[: module.program.attrs["proc_count"]]
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in procs)
   names = {proc.attrs["name"] for proc in procs}
