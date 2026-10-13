@@ -142,7 +142,8 @@ def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   real_run = jit.subprocess.run
   monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: commands.append(cmd) or real_run(cmd, **kwargs))
   _simple_fn()(np.zeros(3))
-  (cmd,) = [command for command in commands if "-dM" not in command]
+  # the compiler fingerprint probes `-dM` and `--version` once per process, so skip those
+  (cmd,) = [command for command in commands if "-dM" not in command and "--version" not in command]
   flags = list(jit.compile_flags())
   assert cmd[1 : 1 + len(flags)] == flags
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
