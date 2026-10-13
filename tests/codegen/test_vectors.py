@@ -546,3 +546,14 @@ def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect
   actual = _evaluate(function, values, 6)
   assert actual[:6].tobytes() == np.concatenate([values[:2] * 2, values * 3]).tobytes()
   np.testing.assert_array_equal(actual[6:], 8765.0)
+
+
+def test_glibc_vector_declarations_have_c_linkage():
+  lines = _includes(prog=widen_ranges(_program(17), lanes=4), vector_libm="glibc")
+  depth, declared = 0, 0
+  for previous, line in zip(["", *lines], lines):
+    depth += (line == 'extern "C" {') - (line == "}" and previous == "#ifdef __cplusplus")
+    if "extern" in line and "_ZGV" in line:
+      declared += 1
+      assert depth == 1, line
+  assert declared

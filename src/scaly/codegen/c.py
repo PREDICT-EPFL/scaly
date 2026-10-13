@@ -514,8 +514,11 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
         n for n in walk_program(prog) if n.op == ProgramOp.FOR and "vector_helper" in n.attrs and n.args[1].args[0].attrs["lane_vector"] == vec
       ]
       operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
-      for op in sorted(operations):
-        lines += _vector_math(vec, vec, width, op, vector_libm)
+      math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm)]
+      if math and vector_libm == "glibc":
+        # The wrappers declare the libmvec symbols; a C++ build must see them with C linkage.
+        math = ["#ifdef __cplusplus", 'extern "C" {', "#endif", *math, "#ifdef __cplusplus", "}", "#endif"]
+      lines += math
   return lines
 
 

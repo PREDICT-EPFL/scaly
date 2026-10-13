@@ -459,6 +459,7 @@ tests/codegen/test_vectors.py::test_fixed_lanes_keep_short_loops_scalar_and_shar
 tests/codegen/test_vectors.py::test_fixed_lanes_keep_short_loops_scalar_and_share_one_vector_type[4-gnu]
 tests/codegen/test_vectors.py::test_fixed_lanes_keep_short_loops_scalar_and_share_one_vector_type[8-c]
 tests/codegen/test_vectors.py::test_fixed_lanes_keep_short_loops_scalar_and_share_one_vector_type[8-gnu]
+tests/codegen/test_vectors.py::test_glibc_vector_declarations_have_c_linkage
 tests/codegen/test_vectors.py::test_glibc_vector_symbols_are_opt_in[1-clang]
 tests/codegen/test_vectors.py::test_glibc_vector_symbols_are_opt_in[1-gcc]
 tests/codegen/test_vectors.py::test_glibc_vector_symbols_are_opt_in[2-clang]
