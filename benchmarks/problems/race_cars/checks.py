@@ -26,7 +26,7 @@ from scaly.codegen.jit import get_compiled
 from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 from scaly.solvers.paths import solver_paths
-from benchmarks.harness import problem_stats, solve_problem
+from benchmarks.harness import check_fastest_casadi_encoding, problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
@@ -478,6 +478,14 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
     assert summary["failed_step"] == 1 and summary["status"] == "MAX_ITER" and summary["native_status"] == -1
 
 
+def check_closed_loop_uses_fastest_casadi_encoding() -> None:
+  """Both CasADi controllers use the sweep's fastest encoding at the canonical horizon."""
+  from benchmarks.problems.race_cars.casadi_nlp import CasadiRaceCarSolver, build_casadi_race_car_sqp
+
+  config = EpisodeConfig()
+  check_fastest_casadi_encoding("race_cars", config.horizon, lambda: CasadiRaceCarSolver(config), lambda: build_casadi_race_car_sqp(config))
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "failure_artifacts": (check_failure_closes_incremental_mcap_and_writes_partial_artifacts, False, False),
@@ -497,4 +505,5 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, True, True),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
 }

@@ -139,3 +139,53 @@ def problem_stats(solver):
   import scaly as sc
 
   return solver.stats() if isinstance(solver, sc.Solver) else solver.last_stats
+
+
+class _Captured(Exception):
+  pass
+
+
+def _casadi_encoding(fn, *, expand: bool = False) -> str:
+  import casadi as ca
+
+  if expand or fn.is_a("SXFunction"):
+    return "sx"
+  return "call_mx" if any(fn.instruction_id(k) == ca.OP_CALL for k in range(fn.n_instructions())) else "mx"
+
+
+def check_fastest_casadi_encoding(workload: str, size: int, *builds) -> None:
+  """Each closed-loop CasADi controller in ``builds`` uses the encoding the published sweep found
+  fastest for ``workload`` at ``size``. A build stops when it hands its functions to a code generator."""
+  import csv
+  from unittest import mock
+
+  import scaly_sqp.casadi
+
+  from benchmarks.harness import casadi_ipopt
+
+  rows = [
+    row
+    for row in csv.DictReader((ROOT / "docs/assets/benchmarks/sweep.summary.csv").open())
+    if row["workload"] == workload and row["size"] == str(size) and row["backend"].startswith("casadi_") and row["runtime_ns_mean"]
+  ]
+  fastest = min(rows, key=lambda row: float(row["runtime_ns_mean"]))["backend"].removeprefix("casadi_")
+
+  for build in builds:
+    seen: set[str] = set()
+
+    def sqp(**kwargs):
+      seen.update(_casadi_encoding(kwargs[key]) for key in ("base", "grad", "jac", "hess"))
+      raise _Captured
+
+    def ipopt(name, nlp, options):
+      seen.add(_casadi_encoding(nlp, expand=bool(options.get("expand"))))
+      raise _Captured
+
+    with mock.patch.object(scaly_sqp.casadi, "build_casadi_external_sqp", sqp), mock.patch.object(casadi_ipopt, "make_casadi_ipopt", ipopt):
+      try:
+        build()
+      except _Captured:
+        pass
+      else:
+        raise AssertionError(f"{build} never reached CasADi code generation")
+    assert seen == {fastest}, f"{workload} at size {size} uses CasADi {sorted(seen)}, but the sweep's fastest is {fastest}"

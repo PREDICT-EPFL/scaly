@@ -118,10 +118,10 @@ def build_casadi_race_car_sqp(config, *, sqp_options: dict[str, str | int | floa
 
   from scaly_sqp.casadi import build_casadi_external_sqp
 
-  pieces = build_casadi_race_car_nlp(config)
+  pieces = build_casadi_race_car_nlp(config, ca.SX)
   z, p, cost = pieces["z"], pieces["p"], pieces["f"]
   constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-  lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(constraints.shape[0]))
+  lam_f, lam_g = ca.SX.sym("lam_f"), ca.SX.sym("lam_g", int(constraints.shape[0]))
   stem = f"ca_race_sqp_N{config.horizon}"
   base = ca.Function(f"{stem}_base", [z, p], [cost, constraints])
   solver = build_casadi_external_sqp(

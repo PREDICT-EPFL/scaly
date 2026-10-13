@@ -23,7 +23,7 @@ import numpy as np
 from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.solvers.paths import solver_paths
-from benchmarks.harness import problem_stats, solve_problem
+from benchmarks.harness import check_fastest_casadi_encoding, problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
   HORIZON,
@@ -726,6 +726,16 @@ def check_initial_guess_reaches_upright() -> None:
   np.testing.assert_allclose(guess[NX * (config.horizon + 1) :], 0.0, rtol=0.0, atol=0.0)
 
 
+def check_closed_loop_uses_fastest_casadi_encoding() -> None:
+  """Both CasADi controllers use the sweep's fastest encoding at the canonical horizon."""
+  from benchmarks.problems.npmpc.casadi_nlp import build_casadi_npmpc
+
+  config = EpisodeConfig()
+  check_fastest_casadi_encoding(
+    "npmpc", config.horizon, *(lambda solver=solver: build_casadi_npmpc(config, solver=solver) for solver in ("ipopt", "sqp"))
+  )
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "dims_and_checkpoint": (check_dims_and_checkpoint, False, False),
@@ -747,4 +757,5 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "oracles_agree": (check_oracles_agree, True, True),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "recorded_scene": (check_recorded_scene, True, False),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
 }
