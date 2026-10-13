@@ -227,14 +227,14 @@ def test_by_value_vector_types_are_not_under_aligned_aliases(lanes):
 
 
 def test_helper_names_do_not_capture_user_names(tmp_path):
-  x = p.buffer("scaly_valid", dtypes.float64, (9,))
-  y = p.buffer("scaly_load_1", dtypes.float64, (9,))
+  x = p.buffer("n", dtypes.float64, (9,))
+  y = p.buffer("l", dtypes.float64, (9,))
   i = p.var("i")
   rng = p.range_("i", 0, 9)
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
-  scalar = p.var("kernel_lanes_1_valid", dtypes.float64)
+  scalar = p.var("l_2", dtypes.float64)
   body = [
-    p.assign("kernel_lanes_1_valid", p.const_float(2), declare=True),
+    p.assign("l_2", p.const_float(2), declare=True),
     p.for_(rng, [p.store(p.view(y, [i]), p.mul(p.load(p.view(x, [i])), scalar))]),
   ]
   prog = p.program([p.proc("kernel", [x, y], body)])

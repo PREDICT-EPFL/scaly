@@ -134,14 +134,11 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       cap = caps[-1]
       ordinal += 1
       helper = global_spellings.allocate(f"{c_ident(proc.attrs['name'])}_lanes_{ordinal}")
-      prefix = helper
-      while any(name.startswith(prefix + "_") for name in spellings.occupied | global_spellings.occupied):
-        prefix += "_local"
       if caps not in widths:
         key = "_".join(map(str, caps))
         widths[caps] = (
           global_spellings.allocate(f"SCALY_WIDTH_{key}", generated=True),
-          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem",)),
+          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_st")),
         )
       width_macro, vector = widths[caps]
       width = p.var(width_macro)
@@ -212,7 +209,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       return ProgramNode(
         result.op,
         result.args,
-        {**result.attrs, "vector_helper": helper, "vector_prefix": prefix, "vector_count": count, "vector_mapped": bool(rng.attrs.get("mapped"))},
+        {**result.attrs, "vector_helper": helper, "vector_count": count, "vector_mapped": bool(rng.attrs.get("mapped"))},
         result.dtype,
       )
 
