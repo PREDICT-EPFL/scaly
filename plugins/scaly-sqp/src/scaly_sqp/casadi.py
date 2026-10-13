@@ -83,7 +83,7 @@ def build_casadi_external_sqp(
   if n_ineq:
     bound_outputs += [ca.DM(l_ineq), ca.DM(u_ineq)]
   bounds = ca.Function(f"{name}_bounds", [p], bound_outputs)
-  hess_args = [hess.mx_in(i) for i in range(hess.n_in())]
+  hess_args = hess.sx_in() if hess.is_a("SXFunction") else hess.mx_in()
   hess = ca.Function(hess.name(), hess_args, [ca.triu(hess.call(hess_args, True, False)[0])])
   functions = {"base": base, "grad": grad, "hess": hess, "bounds": bounds}
   if jac is not None:

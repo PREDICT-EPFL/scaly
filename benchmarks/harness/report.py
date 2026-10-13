@@ -80,7 +80,7 @@ def _episode(telemetry: Path) -> tuple[dict, list[dict]]:
 
 
 def closed_loop_summary(root: Path) -> dict:
-  """Per-process means, per-provider dispersion, and the equal-work comparison of the two oracle providers."""
+  """Per-process means, per-provider spread over steps and processes, and the paired per-step comparison of the two oracle providers."""
   episodes = {}
   runs = []
   for telemetry in sorted(root.glob("**/repeat_*/*/*+*/telemetry.csv")):
@@ -93,10 +93,14 @@ def closed_loop_summary(root: Path) -> dict:
       continue
     a, ar = episodes[(problem, solver, repetition, "scaly")]
     b, br = episodes[(problem, solver, repetition, "casadi")]
-    row: dict = dict(problem=problem, solver=solver, repetition=repetition, same_steps=len(ar) == len(br))
-    if len(ar) == len(br):
+    same_steps = [r["step"] for r in ar] == [r["step"] for r in br]
+    row: dict = dict(problem=problem, solver=solver, repetition=repetition, same_steps=same_steps)
+    if same_steps:
       for key in ("iterations", *COUNTS):
         row[f"{key}_mismatches"] = sum(x.get(key) != y.get(key) for x, y in zip(ar, br, strict=True))
+      # each step repeats the same solve on both sides, so the per-step ratio is a paired speedup
+      for key in ("solver_time_ms", "fe_time_ms"):
+        row[f"{key}_speedups"] = [y[key] / x[key] for x, y in zip(ar, br, strict=True) if x[key] > 0]
     with np.load(a / "rollout.npz") as av, np.load(b / "rollout.npz") as bv:
       for key in ("state", "applied" if problem == "unbumpercars" else "control"):
         same = av[key].shape == bv[key].shape
@@ -108,6 +112,8 @@ def closed_loop_summary(root: Path) -> dict:
     group: dict = dict(problem=problem, solver=solver, oracle=oracle, processes=len(selected))
     group["all_steps_successful"] = all(r["steps"] == r["successful_steps"] for r in selected)
     group["steps"] = selected[0]["steps"]
+    steps = [r["solver_time_ms"] for key, (_, rows) in episodes.items() if (key[0], key[1], key[3]) == (problem, solver, oracle) for r in rows]
+    group["step_solver_time_ms"] = dict(median=statistics.median(steps), stdev=statistics.stdev(steps) if len(steps) > 1 else None)
     for key in (*METRICS, "build_ms", "first_solve_ms", "steady_step_ms"):
       values = [r[key] for r in selected if r.get(key) is not None]
       mean = statistics.mean(values) if values else None
@@ -124,33 +130,44 @@ def _flat(group: dict) -> dict:
   return row
 
 
+def _speedups(rows: list[dict], key: str) -> str:
+  ratios = [ratio for row in rows for ratio in row.get(f"{key}_speedups", [])]
+  if not ratios:
+    return ""
+  p10, median, p90 = np.percentile(ratios, [10, 50, 90])
+  return f"{median:.2f}× ({p10:.2f}–{p90:.2f})"
+
+
 def closed_loop_tables(summary: dict) -> str:
   """The timing table and the episode-agreement table on the results index."""
   lines = [
-    "| Problem | Solver | Provider | Total, ms | Total CV, % | Function evaluation, ms | QP, ms | Globalization, ms | Glue, ms | Steps | Processes |",
-    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| Problem | Solver | Provider | Total, ms | Step median, ms | Step SD, ms | Function evaluation, ms | QP, ms | Globalization, ms | Glue, ms | Steps | Processes |",
+    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ]
   for g in summary["groups"]:
-    total = g["solver_time_ms"]
-    cv = f"{total['cv'] * 100:.2f}" if total["cv"] is not None else ""
+    step = g["step_solver_time_ms"]
+    sd = f"{step['stdev']:.3f}" if step["stdev"] is not None else ""
     cells = " | ".join(f"{g[k]['mean']:.3f}" for k in ("fe_time_ms", "qp_time_ms", "globalization_time_ms", "glue_time_ms"))
-    lines.append(f"| {g['problem']} | {g['solver']} | {g['oracle']} | {total['mean']:.3f} | {cv} | {cells} | {g['steps']} | {g['processes']} |")
+    lines.append(
+      f"| {g['problem']} | {g['solver']} | {g['oracle']} | {g['solver_time_ms']['mean']:.3f} | {step['median']:.3f} | {sd} | {cells} | {g['steps']} | {g['processes']} |"
+    )
   if summary["oracle_comparisons"]:
     lines += [
       "",
-      "| Problem | Solver | Repetitions | Per-step iteration mismatches | Per-step oracle-count mismatches | Maximum state difference | Maximum control difference |",
-      "|---|---|---:|---:|---:|---:|---:|",
+      "| Problem | Solver | Repetitions | Per-step speedup, median (10th–90th percentile) | Per-step function-evaluation speedup | Per-step iteration mismatches | Per-step oracle-count mismatches | Maximum state difference | Maximum control difference |",
+      "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     by_problem = defaultdict(list)
     for row in summary["oracle_comparisons"]:
       by_problem[(row["problem"], row["solver"])].append(row)
     for (problem, solver), rows in sorted(by_problem.items()):
-      iterations = sum(r.get("iterations_mismatches", 0) for r in rows)
-      oracles = sum(r.get(f"{k}_mismatches", 0) for r in rows for k in COUNTS)
+      iterations = sum(r.get("iterations_mismatches", 0) for r in rows) if all(r["same_steps"] for r in rows) else "steps differ"
+      oracles = sum(r.get(f"{k}_mismatches", 0) for r in rows for k in COUNTS) if all(r["same_steps"] for r in rows) else "steps differ"
       control_key = "applied_max_abs_diff" if problem == "unbumpercars" else "control_max_abs_diff"
       state = max((r["state_max_abs_diff"] or 0.0) for r in rows)
       control = max((r[control_key] or 0.0) for r in rows)
-      lines.append(f"| {problem} | {solver} | {len(rows)} | {iterations} | {oracles} | {state:.3g} | {control:.3g} |")
+      speedups = f"{_speedups(rows, 'solver_time_ms')} | {_speedups(rows, 'fe_time_ms')}"
+      lines.append(f"| {problem} | {solver} | {len(rows)} | {speedups} | {iterations} | {oracles} | {state:.3g} | {control:.3g} |")
   return "\n".join(lines) + "\n"
 
 

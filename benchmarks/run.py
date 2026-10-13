@@ -289,7 +289,7 @@ def main() -> None:
   sweep_parser.add_argument("--codegen-timeout", type=float, default=300.0)
   sweep_parser.add_argument("--max-source-mb", type=float, default=50.0)
   sweep_parser.add_argument("--benchmark-min-time", default="0.1s")
-  sweep_parser.add_argument("--repetitions", type=int, default=3, help="fresh processes per cell (default: 3)")
+  sweep_parser.add_argument("--repetitions", type=int, default=1, help="fresh processes per cell (default: 1)")
   sweep_parser.add_argument("--order-seed", type=int, default=0, help="seed for reproducible backend order variation")
   sweep_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
   sweep_parser.add_argument("--boost", choices=("on", "off"), help="required CPU boost state for a headline run")
@@ -303,7 +303,7 @@ def main() -> None:
   study_parser.add_argument("--out-dir", type=Path, required=True, help="unused directory receiving sweep/<problem>/ and closed-loop/<problem>/")
   study_parser.add_argument("--problem", type=_csv, default=list(PROBLEMS), help="comma-separated subset of the study problems (default: all)")
   study_parser.add_argument("--only", type=_csv, default=list(PARTS), help="comma-separated subset of: sweep, closed-loop")
-  study_parser.add_argument("--repetitions", type=int, default=5, help="fresh processes per cell and per provider (default: 5)")
+  study_parser.add_argument("--repetitions", type=int, default=1, help="fresh processes per cell and per provider (default: 1)")
   study_parser.add_argument("--order-seed", type=int, default=0)
   study_parser.add_argument(
     "--headline", action=argparse.BooleanOptionalAction, default=True, help="require performance governor and the --boost state (default: enabled)"
@@ -328,7 +328,11 @@ def main() -> None:
   closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
   closed_loop_parser.add_argument("--out-dir", type=Path)
   closed_loop_parser.add_argument("--casadi-interpreted", action="store_true", help="measure CasADi virtual-machine mode with its wheel IPOPT")
-  closed_loop_parser.add_argument("--repetitions", type=int, default=1, help="independent cold-cache episode processes")
+  closed_loop_parser.add_argument(
+    "--repetitions",
+    type=int,
+    help="run every episode in this many fresh cold-cache processes under repeat_<n>/ (default: one episode in this process)",
+  )
   closed_loop_parser.add_argument("--order-seed", type=int, default=0, help="initial solver+oracle order, rotated between repetitions")
   closed_loop_parser.add_argument("--overwrite", action="store_true", help="replace episodes and caches already present under --out-dir")
   closed_loop_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
@@ -337,8 +341,8 @@ def main() -> None:
   if args.command in {"sweep", "study", "closed-loop", "smoke"}:
     configure_math_policy(measured_jit=args.command != "sweep" and (args.command != "study" or "closed-loop" in args.only))
   if args.command == "sweep":
-    if args.repetitions < 1 or (args.headline and args.repetitions < 3):
-      parser.error("--repetitions must be positive, and at least 3 for --headline")
+    if args.repetitions < 1:
+      parser.error("--repetitions must be positive")
     if args.headline and args.boost is None:
       parser.error("--headline requires --boost on or off")
     args.workloads = _choices(args.workloads, tuple(DEFAULT_SIZES), parser, "--workloads")
@@ -361,8 +365,8 @@ def main() -> None:
   elif args.command == "smoke":
     success = smoke(args)
   else:
-    if args.repetitions < 1 or (args.headline and args.repetitions < 3):
-      parser.error("--repetitions must be positive, and at least 3 for --headline")
+    if args.repetitions is not None and args.repetitions < 1:
+      parser.error("--repetitions must be positive")
     if args.headline and args.boost is None:
       parser.error("--headline requires --boost on or off")
     problems = _choices(args.problem, tuple(CLOSED_LOOP_PAIRS), parser, "--problem")
@@ -380,14 +384,12 @@ def main() -> None:
           parser.error(f"{solver_oracle_name(*pair)} is not available for --problem {problem} (choose from {choices})")
     episodes = [(problem, *pair) for problem in problems for pair in pairs]
     output_root = closed_loop_results_root(smoke=args.smoke, out_dir=args.out_dir).resolve()
-    if args.casadi_interpreted and args.repetitions == 1:
-      output_root /= "interpreted"
-    if args.repetitions > 1 or len(episodes) > 1:
+    if args.repetitions is not None or len(episodes) > 1:
       from benchmarks.harness.timing import summarize_modes
 
       random.Random(args.order_seed).shuffle(episodes)
       run_order = []
-      for repetition in range(1, args.repetitions + 1):
+      for repetition in range(1, (args.repetitions or 1) + 1):
         if args.headline:
           require_headline_settings(args.boost == "on")
         repeat_root = output_root / f"repeat_{repetition}"
@@ -432,6 +434,8 @@ def main() -> None:
       print(f"Repeated episode artifacts written to {output_root}")
       return
     ((problem, solver, oracle),) = episodes
+    if args.casadi_interpreted:
+      output_root /= "interpreted"
     output = run_closed_loop(
       problem,
       smoke=args.smoke,

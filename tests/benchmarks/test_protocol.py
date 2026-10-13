@@ -150,6 +150,35 @@ def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, mon
   assert len(calls) == 24
 
 
+def test_closed_loop_cli_runs_one_explicit_repetition_in_a_fresh_process(tmp_path, monkeypatch):
+  import sys
+
+  from benchmarks import run
+  from benchmarks.harness import timing
+
+  calls = []
+  monkeypatch.setattr(run, "configure_math_policy", lambda **kwargs: None)
+  argv = ["run.py", "closed-loop", "--problem", "chain", "--solver", "ipopt", "--oracle", "scaly", "--repetitions", "1", "--out-dir", str(tmp_path)]
+  monkeypatch.setattr(sys, "argv", argv)
+  monkeypatch.setattr(run.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
+  monkeypatch.setattr(run, "collect", lambda *args: {})
+  monkeypatch.setattr(run, "write", lambda *args: None)
+  monkeypatch.setattr(timing, "summarize_modes", lambda *args: [])
+  run.main()
+  ((command, kwargs),) = calls
+  assert command[command.index("--out-dir") + 1] == str(tmp_path / "repeat_1")
+  assert kwargs["env"]["SCALY_CACHE_DIR"] == str(tmp_path / "repeat_1" / "cache" / "chain" / "ipopt+scaly")
+  # the child episode adds interpreted/ itself, so the parent must not
+  interpreted = tmp_path / "interpreted-run"
+  argv[argv.index("chain")] = "race_cars"
+  argv[argv.index("scaly")] = "casadi"
+  argv[-1] = str(interpreted)
+  argv.append("--casadi-interpreted")
+  run.main()
+  command = calls[-1][0]
+  assert command[command.index("--out-dir") + 1] == str(interpreted / "repeat_1")
+
+
 def test_cpu_provenance_without_linux_interfaces(tmp_path, monkeypatch):
   monkeypatch.delattr(provenance.os, "sched_getaffinity", raising=False)
   settings = provenance.cpu_settings(tmp_path)

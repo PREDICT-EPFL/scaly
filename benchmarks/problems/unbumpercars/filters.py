@@ -11,7 +11,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_module
 from benchmarks.harness import register_base, registered_base
-from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
+from benchmarks.harness import casadi_ipopt
 from .common import (
   ClosedLoopConfig,
   CTFullWeights,
@@ -343,7 +343,7 @@ class CasadiDTCBFSafetyFilter:
     }
     if self.filt_cfg.limited_memory_hessian:
       opts["ipopt.hessian_approximation"] = "limited-memory"
-    self.solver = make_casadi_ipopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
+    self.solver = casadi_ipopt.make_casadi_ipopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
     self._build_ms = (time.perf_counter() - t0) * 1000.0
 
   def _pack_p(self, states: np.ndarray, desired: np.ndarray) -> np.ndarray:
@@ -446,16 +446,16 @@ def build_casadi_sqp(
 
   controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
   assert controller.hess_fn is not None
-  z, p = ca.MX.sym("z", controller.n_z), ca.MX.sym("p", controller.n_p)
+  z, p, cost, g = controller.z_expr, controller.p_expr, controller.cost_expr, controller.g_expr
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", controller.n_s)
   stem = f"ca_unbumpercars_sqp_C{loop_cfg.ncars}"
-  base = ca.Function(f"{stem}_base", [z, p], [controller.cost_fn(z, p), controller.g_fn(z, p)])
+  base = ca.Function(f"{stem}_base", [z, p], [cost, g])
   solver = build_casadi_external_sqp(
     name=stem,
     base=base,
-    grad=ca.Function(f"{stem}_grad", [z, p], [controller.grad_fn(z, p)]),
-    jac=ca.Function(f"{stem}_jac", [z, p], [controller.jac_fn(z, p)]),
-    hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [controller.hess_fn(z, p, lam_f, lam_g)]),
+    grad=ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)]),
+    jac=ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(g, z)]),
+    hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [ca.hessian(lam_f * cost + ca.dot(lam_g, g), z)[0]]),
     n_eq=0,
     n_ineq=controller.n_s,
     x_lb=np.concatenate([-np.ones(controller.n_u), np.zeros(controller.n_s)]),

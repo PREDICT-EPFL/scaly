@@ -249,6 +249,7 @@ tests/benchmarks/test_kernel_gates.py::test_npmpc_jacobian_source_is_independent
 tests/benchmarks/test_kernel_gates.py::test_npmpc_lagrangian_hessian_source_is_independent_of_horizon_and_width
 tests/benchmarks/test_kernel_gates.py::test_race_cars_jacobian_preserves_the_horizon_loop
 tests/benchmarks/test_protocol.py::test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches
+tests/benchmarks/test_protocol.py::test_closed_loop_cli_runs_one_explicit_repetition_in_a_fresh_process
 tests/benchmarks/test_protocol.py::test_cpu_provenance_without_linux_interfaces
 tests/benchmarks/test_protocol.py::test_cpu_settings_reads_linux_policies_and_boost
 tests/benchmarks/test_protocol.py::test_dispersion_uses_successful_processes_and_keeps_failure_counts
@@ -270,6 +271,8 @@ tests/benchmarks/test_public_api.py::test_formulations_use_public_api[race_cars/
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumpercars/__init__.py]
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumpercars/common.py]
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumpercars/filters.py]
+tests/benchmarks/test_report.py::test_one_process_reports_paired_per_step_speedups
+tests/benchmarks/test_report.py::test_unpaired_or_zero_time_steps_do_not_fake_a_comparison
 tests/benchmarks/test_study.py::test_measurement_reservation_refuses_to_start
 tests/benchmarks/test_study.py::test_progress_is_written_between_commands[0]
 tests/benchmarks/test_study.py::test_progress_is_written_between_commands[1]
