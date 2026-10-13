@@ -18,6 +18,7 @@ from ._common import (
   _index_values,
   name_scope,
   buffer_refs,
+  prune_procedures,
   rebuild_program,
   substitute_var,
   trip_count,
@@ -218,7 +219,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
     transformed = [transform(stmt) for stmt in body]
     return _rebuild_proc(proc, params, [*promoted, *transformed])
 
-  return _map_procs(prog, widen_proc)
+  return prune_procedures(_map_procs(prog, widen_proc))
 
 
 def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], spellings: NameScope) -> list[ProgramNode]:
