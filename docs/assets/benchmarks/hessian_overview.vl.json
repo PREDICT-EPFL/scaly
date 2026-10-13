@@ -50,10 +50,6 @@
     {
       "calculate": "datum.best.encoding",
       "as": "encoding"
-    },
-    {
-      "calculate": "datum.best.runtime_ns_cv",
-      "as": "runtime_ns_cv"
     }
   ],
   "facet": {

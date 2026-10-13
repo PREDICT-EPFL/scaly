@@ -30,9 +30,9 @@ solve times differ by less than 1%.
 
 | Problem | Solver | Scaly, ms | CasADi, ms | Speedup | Function-evaluation speedup |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Race-car MPC | SQP | 2.49 | 2.57 | 1.03× | 2.98× |
+| Race-car MPC | SQP | 2.49 | 2.57 | 1.03× | 2.95× |
 | Race-car MPC | IPOPT | 4.54 | 4.89 | 1.08× | 2.59× |
-| Neural-process MPC | SQP | 1.27 | 1.84 | 1.45× | 2.18× |
+| Neural-process MPC | SQP | 1.27 | 1.84 | 1.45× | 2.19× |
 | Neural-process MPC | IPOPT | 3.55 | 4.45 | 1.25× | 1.79× |
 | Chain of masses | SQP | 6.41 | 6.39 | 1.00× | 0.88× |
 | Chain of masses | IPOPT | 6.82 | | | |
@@ -46,8 +46,8 @@ controller with IPOPT.
 ## Variation along an episode
 
 The median describes a typical step. The sample standard deviation describes how much step
-times vary as the controller's workload changes along the episode. These are separate quantities,
-shown in separate panels, and neither estimates variation between fresh processes. Unbumpercars
+times vary as the controller's workload changes along the episode. Neither statistic estimates
+variation between fresh processes. Unbumpercars
 and neural-process MPC have larger spreads with SQP, whose iteration count changes along the
 episode. Hover over a point to see its mean, median, standard deviation and number of steps.
 

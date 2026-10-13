@@ -52,8 +52,8 @@ lines span the 10th to 90th percentiles along the episode. A value below one fav
 
 <div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_speedup.vl.json"></div>
 
-Scaly's function evaluation is 1.8 to 9.1× faster except on chain, where CasADi is about 15%
-faster and the total solve times are nearly equal. How much of an oracle speedup reaches the
+Scaly's function evaluation is 1.8 to 9.1× faster except on chain, where CasADi takes about 13%
+less time and the total solve times are nearly equal. How much of an oracle speedup reaches the
 total depends on the solver's own numerical work. Race-car SQP spends most of its step solving
 quadratic subproblems, so a 3× function-evaluation speedup gives a median total speedup of just
 1.04×. Unbumpercars is dominated by function evaluation, and its median total speedup is 7.2 to
@@ -70,8 +70,7 @@ uv run benchmarks/run.py report benchmarks/results/<study-name>
 
 The first command runs every benchmark with one fresh process per cell or provider and an empty
 compilation cache. It checks the `performance` governor and disabled boost state, and uses order
-seed 0. The second command summarizes the results. One process shortens the study but gives no
-estimate of variation between runs. Closed-loop statistics describe variation over control steps,
-not measurement noise. `--repetitions N` runs more fresh processes when a timing needs checking. The
+seed 0. The second command summarizes the results. The [fairness page](fairness.md#what-the-results-do-not-show)
+explains the limits of one-process measurements and how to check variation between runs. The
 [benchmark README](https://github.com/PREDICT-EPFL/scaly/tree/main/benchmarks) describes the
 harness and its options.

@@ -33,10 +33,12 @@ Measured executable-source reductions are about 23% for the race car beyond N=1,
 for neural-process MPC, 58 to 64% for unbumpercars, and 22 to 40% for chain. These byte counts
 are deterministic artifacts. Kernel compile times change by less than 6%. Runtime does not
 improve uniformly: unbumpercars Hessians are 7 to 32% slower, neural-process MPC ranges from
-16% faster to 28% slower, and chain stays within 0.4% of its previous means. One process gives
-no new estimate of measurement noise, so these are observed cross-study changes, not isolated
-causal measurements of either code-size pass. The smaller source alone does not establish a
-runtime improvement.
+16% faster to 28% slower, and chain stays within 0.4% of its previous means. Several slowdowns
+are far outside the October 12 dispersion: neural-process MPC N=12 rises 12.4% against a 0.46%
+coefficient of variation, and unbumpercars C=4 rises 32.4% against 0.12%. These are likely runtime
+regressions and warrant targeted follow-up. One process gives no new noise estimate, and this
+study measures the combined changes without isolating either code-size pass. The smaller
+source alone does not establish a runtime improvement.
 
 CasADi's SQP function evaluation changes most: chain falls from 8.121 to 0.160 ms per step,
 race cars from 0.220 to 0.122 ms, and unbumpercars from 105.636 to 86.024 ms. Neural-process MPC

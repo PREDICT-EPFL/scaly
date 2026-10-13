@@ -20,7 +20,7 @@ study measured:
 - **CasADi mapped SX**: an SX function applied to every stage with `Function.map`.
 - **CasADi MX with GEMM**: MX with matrix products lowered to general matrix multiplication
   (GEMM) calls. The study also measured the classic and BLASFEO GEMM lowerings, which fall within
-  similar runtimes and are left out of these figures. The overview selects among all three too.
+  3% of this one's runtime and are left out of these figures. The overview selects among all three too.
 
 ## Evaluation time
 
@@ -51,7 +51,7 @@ as sparsity patterns. The two generators store those tables differently, so this
 how much code the compiler has to process rather than an exact measure of the model.
 
 Each point comes from one successful process. Google Benchmark repeats the C call inside that
-process for at least half a second to measure runtime. This gives no estimate of variation between
-processes, so the study has no coefficient of variation. `--repetitions N` remains available to
-check a timing with more fresh processes. Smaller source does not guarantee faster evaluation,
+process for at least half a second to measure runtime. The study has no between-process
+coefficient of variation, as explained on the [fairness page](fairness.md#what-the-results-do-not-show).
+Smaller source does not guarantee faster evaluation,
 since native compilation and the generated arithmetic determine runtime too.

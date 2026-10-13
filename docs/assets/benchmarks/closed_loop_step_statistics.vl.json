@@ -83,7 +83,7 @@
       "x": {
         "field": "ms",
         "type": "quantitative",
-        "title": "Solver time per step, ms",
+        "title": "Milliseconds",
         "scale": {
           "zero": true
         }
