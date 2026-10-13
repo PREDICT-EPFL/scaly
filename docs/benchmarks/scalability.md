@@ -5,7 +5,7 @@ grows: how long the generated code takes to run, how long it takes to compile, a
 is.
 
 Each point is one generated C kernel, compiled on its own and timed with
-[Google Benchmark](https://github.com/google/benchmark) in five fresh processes. Before timing, the
+[Google Benchmark](https://github.com/google/benchmark) in one fresh process. Before timing, the
 harness checks the kernel's result against an independent reference, and a kernel that fails the
 check gets no timing. Compilation stops after 180 seconds. An encoding that runs out of time at
 one size is not tried at larger sizes, which is why some lines end early.
@@ -20,7 +20,7 @@ study measured:
 - **CasADi mapped SX**: an SX function applied to every stage with `Function.map`.
 - **CasADi MX with GEMM**: MX with matrix products lowered to general matrix multiplication
   (GEMM) calls. The study also measured the classic and BLASFEO GEMM lowerings, which fall within
-  about 2% of this one and are left out.
+  similar runtimes and are left out of these figures. The overview selects among all three too.
 
 ## Evaluation time
 
@@ -28,7 +28,7 @@ study measured:
 
 On the race car and neural-process MPC, Scaly's evaluation time grows linearly with the horizon.
 On the race car, CasADi's SX encoding is 1.1× slower at `N = 1`, and the gap widens to between
-5.6× and 6.5× from `N = 50` on. On
+5.5× and 7.1× from `N = 50` on. On
 the problems that contain neural networks, SX compiles only at the shortest neural-process horizon
 and not at all on unbumpercars, and the encodings that do compile pay for their calls and matrix
 products.
@@ -39,7 +39,7 @@ products.
 
 The horizontal line is the 180-second limit. Scaly compiles the race car in under half a second at
 every horizon. It keeps the repeated stage as a loop over one compiled body, so the executable
-code stays at about 100 kB from `N = 5` to `N = 500`. Compile time is also what ends most CasADi
+code stays at about 78 kB from `N = 5` to `N = 500`. Compile time is also what ends most CasADi
 lines: the unrolled encodings produce source files that the C compiler takes minutes to digest.
 
 ## Code size
@@ -50,7 +50,8 @@ Code size counts the executable part of the generated C source, leaving out cons
 as sparsity patterns. The two generators store those tables differently, so this is a guide to
 how much code the compiler has to process rather than an exact measure of the model.
 
-Each point is the mean of the runs that succeeded, five for every Scaly point. A CasADi encoding near
-the compile limit can finish in only some of the five processes. The tooltips of the evaluation-time
-figures also give the coefficient of variation across those runs. It is at most 5.5%, and a point
-measured in a single process has none.
+Each point comes from one successful process. Google Benchmark repeats the C call inside that
+process for at least half a second to measure runtime. This gives no estimate of variation between
+processes, so the study has no coefficient of variation. `--repetitions N` remains available to
+check a timing with more fresh processes. Smaller source does not guarantee faster evaluation,
+since native compilation and the generated arithmetic determine runtime too.

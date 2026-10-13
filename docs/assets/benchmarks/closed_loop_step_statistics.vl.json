@@ -1,0 +1,149 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.summary.csv"
+  },
+  "transform": [
+    {
+      "calculate": "datum.problem === 'race_cars' ? 'Race-car MPC' : datum.problem === 'npmpc' ? 'Neural-process MPC' : datum.problem === 'chain' ? 'Chain of masses' : 'Unbumpercars'",
+      "as": "name"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "calculate": "(datum.solver === 'sqp' ? 'SQP' : 'IPOPT') + ', ' + datum.provider",
+      "as": "controller"
+    },
+    {
+      "calculate": "(datum.solver === 'sqp' ? 0 : 2) + (datum.oracle === 'scaly' ? 0 : 1)",
+      "as": "rank"
+    },
+    {
+      "fold": [
+        "step_solver_time_ms_median",
+        "step_solver_time_ms_stdev"
+      ],
+      "as": [
+        "metric",
+        "ms"
+      ]
+    },
+    {
+      "calculate": "datum.metric === 'step_solver_time_ms_median' ? 'Median' : 'Standard deviation'",
+      "as": "statistic"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "name",
+      "type": "nominal",
+      "title": null,
+      "sort": [
+        "Race-car MPC",
+        "Neural-process MPC",
+        "Chain of masses",
+        "Unbumpercars"
+      ],
+      "header": {
+        "labelAngle": 0,
+        "labelAlign": "left",
+        "labelAnchor": "start",
+        "labelOrient": "top"
+      }
+    },
+    "column": {
+      "field": "statistic",
+      "type": "nominal",
+      "title": null,
+      "sort": [
+        "Median",
+        "Standard deviation"
+      ]
+    }
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "spec": {
+    "width": 185,
+    "height": {
+      "step": 26
+    },
+    "mark": {
+      "type": "point",
+      "filled": true,
+      "size": 80
+    },
+    "encoding": {
+      "x": {
+        "field": "ms",
+        "type": "quantitative",
+        "title": "Solver time per step, ms",
+        "scale": {
+          "zero": true
+        }
+      },
+      "y": {
+        "field": "controller",
+        "type": "nominal",
+        "title": null,
+        "sort": {
+          "field": "rank",
+          "op": "min"
+        }
+      },
+      "color": {
+        "field": "provider",
+        "title": "Provider",
+        "scale": {
+          "domain": [
+            "Scaly",
+            "CasADi"
+          ],
+          "range": [
+            "#1baf7a",
+            "#e34948"
+          ]
+        }
+      },
+      "tooltip": [
+        {
+          "field": "name",
+          "title": "Problem"
+        },
+        {
+          "field": "controller",
+          "title": "Controller"
+        },
+        {
+          "field": "solver_time_ms_mean",
+          "title": "Mean, ms",
+          "format": ".3f"
+        },
+        {
+          "field": "step_solver_time_ms_median",
+          "title": "Median, ms",
+          "format": ".3f"
+        },
+        {
+          "field": "step_solver_time_ms_stdev",
+          "title": "Sample standard deviation, ms",
+          "format": ".3f"
+        },
+        {
+          "field": "steps",
+          "title": "Steps"
+        },
+        {
+          "field": "processes",
+          "title": "Processes"
+        }
+      ]
+    }
+  }
+}

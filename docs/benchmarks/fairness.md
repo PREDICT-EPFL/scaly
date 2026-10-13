@@ -16,9 +16,12 @@ fixed, the machine they ran on, and what the results do not show.
 - **The same timing boundary.** The timers cover native code only. Python, plant simulation and
   controller construction are never inside them.
 - **CasADi's best encoding.** CasADi is measured with several encodings, and each comparison uses
-  the fastest one that compiled at that size, including where CasADi wins.
-- **Repeated, varied runs.** Every measurement runs in five fresh processes with empty caches, one
-  benchmark at a time, in a varied order, with the `performance` governor and boost disabled.
+  the fastest one that compiled at that size, including where CasADi wins. Closed loops use the
+  fastest validated Hessian encoding at their canonical size, SX for race cars and chain and MX
+  for neural-process MPC and unbumpercars. The same encoding supplies every oracle.
+- **Fresh processes and fixed CPU policy.** Each cell or provider runs once with an empty cache,
+  one benchmark at a time. Order seed 0 fixes the backend order. The runner checks the
+  `performance` governor and disabled boost state before and after each headline run.
 
 ## The machine
 
@@ -28,7 +31,7 @@ fixed, the machine they ran on, and what the results do not show.
 | CPU | AMD Ryzen 9 7940HS, 8 cores, boost disabled, `performance` governor |
 | System | Ubuntu 24.04, glibc 2.39 |
 | Compilers | GCC 13.3.0 for controllers, Clang 20.1.8 for the Hessian kernels |
-| Versions | Python 3.14, Scaly `main` after 0.1.0a1 (commit `1c955a07`), CasADi 3.8.0 |
+| Versions | Python 3.14.3, Scaly `main` at `38bd5896`, CasADi 3.8.0, PIQP 0.6.4 |
 
 Absolute times depend on the machine. The results come from this one machine only and say
 nothing about others, such as Apple silicon.
@@ -42,6 +45,11 @@ nothing about others, such as Apple silicon.
   no CasADi counterpart, and Scaly evaluates the objective and constraints together where CasADi
   evaluates them separately. These differences are part of what is measured.
 - **One controller does not do identical work.** Unbumpercars with SQP takes a different number of
-  iterations on 15 of 1,000 steps, as described on the [closed-loop page](closed_loop.md).
+  iterations on three of 200 steps, as described on the [closed-loop page](closed_loop.md).
+- **Step spread is not measurement noise.** One fresh process per cell shortens the study but
+  provides no estimate of variation between runs. Closed-loop standard deviations and percentile
+  ranges describe the changing workload along an episode. The paired per-step speedup compares
+  matching steps, with the iteration mismatch above still part of the unbumpercars SQP result.
+  `--repetitions N` retains the option to measure variation between processes.
 - **Code size is not normalized.** The two generators store constants and sparsity patterns in
   different forms, so code size compares the files each one ships, not the information in them.

@@ -8,7 +8,7 @@ four optimal-control problems, in two ways:
 - **Closed-loop control.** How long a complete controller takes per control step when the same
   solver runs on Scaly's generated functions instead of CasADi's.
 
-All numbers come from one study run on October 12, 2026, against CasADi 3.8.0, on an AMD
+All numbers come from one study run on October 13, 2026, against CasADi 3.8.0, on an AMD
 Ryzen 9 7940HS desktop. [Are the comparisons fair?](fairness.md) explains what the two sides
 share and where the comparison has limits.
 
@@ -31,11 +31,11 @@ no CasADi encoding finished compiling within 180 seconds.
 <div class="vega-chart" data-spec="../assets/benchmarks/hessian_overview.vl.json"></div>
 
 Scaly is faster in every comparison but one, and the gap tends to grow with size. On the race car
-it goes from 1.1× at `N = 1` to 6.5× at `N = 500`. On neural-process MPC it stays between 1.5 and
-2× while CasADi's MX encoding compiles, and reaches 6 to 20× at the longer horizons, where only
-slower CasADi encodings still compile. Unbumpercars goes from 5× at `C = 2` to 22× at `C = 8`, and
+it goes from 1.1× at `N = 1` to 7.1× at `N = 500`. On neural-process MPC it stays between 1.5 and
+2.3× while CasADi's MX encoding compiles, and reaches 5.2 to 18× at the longer horizons, where only
+slower CasADi encodings still compile. Unbumpercars goes from 4.2× at `C = 2` to 18× at `C = 8`, and
 at `C = 16` and `C = 32` only Scaly compiles. The exception is the chain at `M = 5`, where CasADi's
-SX encoding is 1.2× faster. At `M = 9`, SX no longer compiles and Scaly is 8.7× faster than the
+SX encoding is 1.2× faster. At `M = 9`, SX no longer compiles and Scaly is 8.6× faster than the
 fastest remaining encoding.
 
 The [scalability page](scalability.md) shows every CasADi encoding separately, with compile
@@ -44,16 +44,20 @@ time and code size.
 ## Closed-loop control
 
 Each controller runs a full simulated episode with the same solver and the same settings on both
-sides. Only the generated model functions change. The figure shows how much faster the Scaly
-version is, for the whole solve and for function evaluation alone: every objective, constraint
-and derivative the solver asks for.
+sides. Only the generated model functions change. CasADi uses the fastest validated Hessian
+encoding at each controller's size, SX for race cars and chain, and MX for the two neural-network
+problems. The figure shows the median of the paired per-step speedups for the whole solve and
+for function evaluation, every objective, constraint and derivative the solver asks for. The
+lines span the 10th to 90th percentiles along the episode. A value below one favors CasADi.
 
 <div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_speedup.vl.json"></div>
 
-Function evaluation is 1.8 to 45× faster. How much of that reaches the total depends on how much
-of the step the solver spends on its own numerical work. The race car spends most of its step
-solving quadratic subproblems, so a 5.4× faster function evaluation makes the whole step only 8%
-faster. Unbumpercars is dominated by function evaluation, and the whole step is 7 to 10× faster.
+Scaly's function evaluation is 1.8 to 9.1× faster except on chain, where CasADi is about 15%
+faster and the total solve times are nearly equal. How much of an oracle speedup reaches the
+total depends on the solver's own numerical work. Race-car SQP spends most of its step solving
+quadratic subproblems, so a 3× function-evaluation speedup gives a median total speedup of just
+1.04×. Unbumpercars is dominated by function evaluation, and its median total speedup is 7.2 to
+8.1×. Its SQP pair has three iteration mismatches, so that result compares slightly different work.
 
 The [closed-loop page](closed_loop.md) breaks the step time down and lists the measured times.
 
@@ -64,6 +68,10 @@ SCALY_VECTOR_LIBM=glibc SCALY_CC=gcc CC=gcc CXX=clang++ uv run benchmarks/run.py
 uv run benchmarks/run.py report benchmarks/results/<study-name>
 ```
 
-The first command runs every benchmark and the second summarizes the results. The
+The first command runs every benchmark with one fresh process per cell or provider and an empty
+compilation cache. It checks the `performance` governor and disabled boost state, and uses order
+seed 0. The second command summarizes the results. One process shortens the study but gives no
+estimate of variation between runs. Closed-loop statistics describe variation over control steps,
+not measurement noise. `--repetitions N` runs more fresh processes when a timing needs checking. The
 [benchmark README](https://github.com/PREDICT-EPFL/scaly/tree/main/benchmarks) describes the
 harness and its options.

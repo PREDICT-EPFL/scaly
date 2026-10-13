@@ -7,9 +7,10 @@ version. Rationale for what a comparison holds constant goes here; the matching 
 
 The figures on the published pages read `docs/assets/benchmarks/sweep.summary.csv` (the four
 `sweep/<problem>/<problem>.summary.csv` files of a study, concatenated) and
-`docs/assets/benchmarks/closed_loop.summary.csv` (written by `benchmarks/run.py report`). The files
-currently there come from the October 12, 2026 study, `benchmarks/results/study-2026-10-12-post-0.1.0a1`,
-measured at `1c955a07`.
+`docs/assets/benchmarks/closed_loop.summary.csv` (written by `benchmarks/run.py report`). Paired
+per-step ratios from that report feed `closed_loop_speedup.summary.csv`, derived by
+`internal/notes/perf_2026_10_13/compare.py --publish`. All three files come from the October 13,
+2026 study, `benchmarks/results/study-2026-10-13-post-179`, measured at `38bd5896`.
 
 ## Reference machine
 
@@ -22,7 +23,7 @@ Every published timing comes from one machine.
 | Memory | 30 GB |
 | Operating system | Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, glibc 2.39 |
 | Compilers | gcc 13.3.0 for Scaly just-in-time compilation, clang 20.1.8 for the Google Benchmark harness |
-| Stack | Python 3.14.3, Scaly `main` at `1c955a07` (after 0.1.0a1), CasADi 3.8.0, NumPy 2.4.6, PIQP 0.6.4 |
+| Stack | Python 3.14.3, Scaly `main` at `38bd5896`, CasADi 3.8.0, NumPy 2.4.6, PIQP 0.6.4 |
 | CPU policy | `amd-pstate-epp`, `performance` governor, boost disabled |
 
 Absolute timings from another machine must not share these tables.
@@ -44,8 +45,9 @@ The study uses the following controls:
 - It reports each closed loop's spread over steps and the paired per-step speedup, and retains
   every failed attempt.
 
-The study completed 690 sweep attempts. Of these, 515 produced timings, 17 reached the compilation
-limit, and 158 were skipped after an earlier failure.
+The study completed 138 sweep attempts. Of these, 103 produced timings, 15 reached the compilation
+limit, and 20 were skipped after an earlier failure. All timed kernels passed both their symbolic
+and compiled-C correctness gates. All 23 Scaly cells and all 15 closed-loop episodes completed.
 
 ## Numerical policy
 
@@ -107,6 +109,11 @@ The SQP pairs use the same Scaly SQP implementation, PIQP subsolver, settings, w
 generated C application binary interface. Only the oracle provider changes. CasADi transforms each
 generated oracle and supplies the same upper Hessian triangle as Scaly.
 
+Each closed loop uses the fastest validated CasADi Hessian encoding at its canonical size in the
+sweep: SX for race cars N=40 and chain M=5, MX for neural-process MPC N=12 and unbumpercars C=8.
+Every oracle uses that encoding, not only the Hessian. `check_fastest_casadi_encoding` checks the
+controller construction against the published sweep. The October 13 sweep confirms those choices.
+
 The IPOPT pairs use the same IPOPT 3.14.19 library, nonlinear program, variable and parameter layout,
 bounds, options, warm starts, and compiled C boundary. Chain has no IPOPT/CasADi runner,
 so the results make no IPOPT provider comparison for that problem.
@@ -123,17 +130,18 @@ Scaly's fused `base` kernel computes the objective and constraints together on b
 CasADi evaluates them separately. These implementation differences remain part of the measurement.
 
 Every IPOPT provider pair has identical per-step iteration and oracle-call counts. The chain,
-neural-process MPC, and race-car SQP pairs do too. Unbumpercars has 15 SQP iteration mismatches
-across 1,000 paired steps, with no oracle-count mismatches and maximum state and control differences
-below 4e-8. Its total-time ratio is an observed closed-loop result, not a strict equal-work
+neural-process MPC, and race-car SQP pairs do too. Unbumpercars has three SQP iteration mismatches
+across 200 paired steps, with no oracle-count mismatches and maximum state and control differences
+below 7e-9. Its total-time ratio is an observed closed-loop result, not a strict equal-work
 oracle-cost comparison.
 
 ## Reading the results
 
 Kernel timings isolate derivative evaluation. Closed-loop totals include the shared solver work, so
 a faster oracle may have little effect when the quadratic program or nonlinear solver dominates.
-Race-car demonstrates this distinction: Scaly's SQP function evaluation is 5.4× faster than CasADi's,
-while its total step is only 8% faster. The IPOPT total is 7% faster.
+Race-car demonstrates this distinction: Scaly's SQP median per-step function-evaluation speedup is
+2.96×, while the median total ratio is 1.04×. The IPOPT median total ratio is 1.08×. Chain SQP is
+nearly equal in total time, with CasADi's function evaluation faster.
 
 Compilation timeouts bound the claims. At unbumpercars C=16 and C=32, the study establishes that
 Scaly completed within the fixed budget while the tested CasADi encodings did not. It does not assign
@@ -141,11 +149,12 @@ a runtime ratio to a missing kernel.
 
 ## Measurement limits
 
-The largest coefficient of variation across five processes is 5.49%, Scaly's npmpc N=25 Hessian. The
-[full sweep](../../docs/benchmarks/scalability.md) reports dispersion alongside the mean, rather than selecting
-the fastest process. The complete sweep also reports source size,
-workspace, and compilation cost. These measurements cover the reference x86 machine and do not
-establish Apple M4 performance.
+One process gives no estimate of between-process dispersion. The closed-loop standard deviation
+is the sample standard deviation over native step times, not measurement noise. Speedup medians
+and 10th/90th percentiles describe the paired per-step ratios, not confidence intervals. They
+need not equal the ratio of provider means. The complete sweep also reports source size,
+workspace and compilation cost. These measurements cover the reference x86 machine and do not
+establish Apple M4 performance. Rerun a questionable cell with `--repetitions N` to estimate noise.
 
 ## Why one process
 
@@ -159,13 +168,13 @@ measured was small next to the reported gaps:
 - Kernel compile times moved by 0.6% at the median and 3.6% at worst.
 - Closed-loop solver time per step moved by 0.1% to 1.5% across processes for every controller.
 
-A closed loop is deterministic, and both providers take the same iterations at each step, so the
-report now describes one episode by its spread over steps. The standard deviation over steps
-measures how the controller's work varies along the episode, not measurement noise. The per-step
-ratio of CasADi's time to Scaly's compares equal work, and its median and 10th to 90th percentile
-give the speedup with its spread. On the October 12 data that ratio's 10th and 90th percentiles stay
-within 9% of the median for every pair. `--repetitions N` remains for checking a cell that looks
-noisy.
+The report describes one deterministic episode by its spread over steps. The standard deviation
+over steps measures how the controller's work varies along the episode, not measurement noise.
+The per-step ratio of CasADi's time to Scaly's pairs matching steps. Its median and 10th to 90th
+percentiles give the speedup with its spread. Iteration and oracle-count agreement must still be
+checked, and mismatches qualify the comparison. On the October 12 data that ratio's 10th and 90th
+percentiles stay within 9% of the median for every pair. `--repetitions N` remains for checking a
+cell that looks noisy.
 
 ## Why the CPU policy is fixed
 
@@ -243,20 +252,21 @@ the summary tables from the retained comma-separated value files and telemetry.
 
 ## Study coverage and reproduction
 
-The October 12 study completed 690 planned sweep attempts and 75 closed-loop episodes. Of the
-sweep attempts, 515 produced timings, 17 reached the 180-second compilation limit, and 158 were
+The October 13 study completed 138 planned sweep attempts and 15 closed-loop episodes. Of the
+sweep attempts, 103 produced timings, 15 reached the 180-second compilation limit, and 20 were
 skipped after that encoding failed at a smaller size. Every timed kernel passed its correctness
-check, and every Scaly size completed all five processes. The sweep uses Clang 20.1.8, and the
+check, and every Scaly size completed its process. The sweep uses Clang 20.1.8, and the
 closed-loop builds use GCC 13.3.0.
 
-The study command runs the frozen grids with five fresh processes, order seed 0, the `performance`
+The study command runs the frozen grids with one fresh process, order seed 0, the `performance`
 CPU governor, boost disabled, a 180-second compile limit, and a 50 MiB source limit. `--only sweep`
 restricts it to the sweep grids. The report command regenerates the Markdown tables and the summary
 CSV files from saved artifacts. Raw CSV files, generated code, samples, binaries, logs, and
 provenance live below the study directory.
 
-Sweep column meanings: mean is the mean of the five processes' Google Benchmark timings, and CV the
-sample coefficient of variation. Executable bytes exclude static metadata. Workspace counts
+Sweep column meanings: mean is the single process's Google Benchmark timing. With more than one
+successful process, CV is the sample coefficient of variation, otherwise it is blank.
+Executable bytes exclude static metadata. Workspace counts
 caller-owned doubles. Kernel compile time includes compilation of the generated kernel, but not the
 benchmark wrapper or linker. `timeout` means compilation exceeded the limit;
 `skipped_after_failure` means the attempt did not run after an earlier failure.
@@ -266,16 +276,16 @@ internal solver time for the IPOPT cases that report it there. Globalization inc
 work. Glue is the wrapper's remaining work. Not every backend exposes the same breakdown, so the
 parts do not always sum to the total.
 
-### Episode agreement in the October 12 study
+### Episode agreement in the October 13 study
 
-Mismatch counts sum across all five episode pairs.
+Every solver step succeeded. Mismatch counts cover the single episode pair for each controller.
 
 | Problem | Solver | Repetitions | Per-step iteration mismatches | Per-step oracle-count mismatches | Maximum state difference | Maximum control difference |
 |---|---|---:|---:|---:|---:|---:|
-| chain | sqp | 5 | 0 | 0 | 3.48e-09 | 1.29e-08 |
-| npmpc | ipopt | 5 | 0 | 0 | 1.21e-12 | 6.09e-15 |
-| npmpc | sqp | 5 | 0 | 0 | 3.02e-09 | 1.46e-11 |
-| race_cars | ipopt | 5 | 0 | 0 | 5.68e-14 | 5.19e-12 |
-| race_cars | sqp | 5 | 0 | 0 | 1.07e-11 | 6.66e-09 |
-| unbumpercars | ipopt | 5 | 0 | 0 | 9.08e-12 | 6.62e-12 |
-| unbumpercars | sqp | 5 | 15 | 0 | 3.38e-08 | 2.58e-08 |
+| chain | sqp | 1 | 0 | 0 | 3.53e-09 | 1.24e-08 |
+| npmpc | ipopt | 1 | 0 | 0 | 1.21e-12 | 6.09e-15 |
+| npmpc | sqp | 1 | 0 | 0 | 3.02e-09 | 1.46e-11 |
+| race_cars | ipopt | 1 | 0 | 0 | 5.68e-14 | 5.19e-12 |
+| race_cars | sqp | 1 | 0 | 0 | 4.83e-12 | 4.17e-09 |
+| unbumpercars | ipopt | 1 | 0 | 0 | 9.08e-12 | 6.62e-12 |
+| unbumpercars | sqp | 1 | 3 | 0 | 6.09e-09 | 4.91e-09 |

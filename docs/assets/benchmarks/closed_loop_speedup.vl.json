@@ -1,31 +1,9 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {
-    "url": "closed_loop.summary.csv"
+    "url": "closed_loop_speedup.summary.csv"
   },
   "transform": [
-    {
-      "fold": [
-        "solver_time_ms_mean",
-        "fe_time_ms_mean"
-      ],
-      "as": [
-        "metric",
-        "ms"
-      ]
-    },
-    {
-      "pivot": "oracle",
-      "value": "ms",
-      "groupby": [
-        "problem",
-        "solver",
-        "metric"
-      ]
-    },
-    {
-      "filter": "isValid(datum.casadi) && isValid(datum.scaly)"
-    },
     {
       "calculate": "datum.problem === 'race_cars' ? 'Race-car' : datum.problem === 'npmpc' ? 'Neural-process MPC' : datum.problem === 'chain' ? 'Chain' : datum.problem === 'unbumpercars' ? 'Unbumpercars' : ''",
       "as": "name"
@@ -33,10 +11,6 @@
     {
       "calculate": "datum.problem === 'race_cars' ? '0' : datum.problem === 'npmpc' ? '1' : datum.problem === 'chain' ? '2' : datum.problem === 'unbumpercars' ? '3' : ''",
       "as": "order"
-    },
-    {
-      "calculate": "datum.problem === 'race_cars' ? 'Race-car MPC, horizon N' : datum.problem === 'npmpc' ? 'Neural-process MPC, horizon N' : datum.problem === 'chain' ? 'Chain of masses, M masses' : datum.problem === 'unbumpercars' ? 'Unbumpercars filter, C cars' : ''",
-      "as": "problem"
     },
     {
       "calculate": "datum.solver === 'sqp' ? 'SQP' : 'IPOPT'",
@@ -51,17 +25,13 @@
       "as": "rank"
     },
     {
-      "calculate": "datum.casadi / datum.scaly",
-      "as": "speedup"
-    },
-    {
-      "calculate": "datum.metric === 'solver_time_ms_mean' ? 'Total solve time' : datum.metric === 'fe_time_ms_mean' ? 'Function evaluation' : ''",
+      "calculate": "datum.metric === 'solver_time_ms' ? 'Total solve time' : 'Function evaluation'",
       "as": "measure"
     }
   ],
   "width": 560,
   "height": {
-    "step": 34
+    "step": 17
   },
   "layer": [
     {
@@ -77,21 +47,21 @@
     },
     {
       "mark": {
-        "type": "line",
-        "strokeWidth": 2,
-        "color": "#c3c2b7"
+        "type": "rule",
+        "strokeWidth": 2
       },
       "encoding": {
         "x": {
-          "field": "speedup",
+          "field": "p10",
           "type": "quantitative",
-          "title": "Speedup over CasADi (CasADi time ÷ Scaly time)",
+          "title": "Paired per-step speedup (CasADi time ÷ Scaly time)",
           "scale": {
             "type": "log",
             "domain": [
               0.8,
-              80
-            ]
+              12
+            ],
+            "nice": false
           },
           "axis": {
             "format": "~r",
@@ -99,9 +69,7 @@
               1,
               2,
               5,
-              10,
-              20,
-              50
+              10
             ]
           }
         },
@@ -114,8 +82,64 @@
             "op": "min"
           }
         },
-        "detail": {
-          "field": "pair"
+        "color": {
+          "field": "measure",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Total solve time",
+              "Function evaluation"
+            ],
+            "range": [
+              "#0b0b0b",
+              "#898781"
+            ]
+          }
+        },
+        "tooltip": [
+          {
+            "field": "pair",
+            "title": "Controller"
+          },
+          {
+            "field": "measure",
+            "title": "Measure"
+          },
+          {
+            "field": "median",
+            "title": "Median speedup",
+            "format": ".3f"
+          },
+          {
+            "field": "p10",
+            "title": "10th percentile",
+            "format": ".3f"
+          },
+          {
+            "field": "p90",
+            "title": "90th percentile",
+            "format": ".3f"
+          },
+          {
+            "field": "steps",
+            "title": "Paired steps"
+          },
+          {
+            "field": "iteration_mismatches",
+            "title": "Iteration mismatches"
+          }
+        ],
+        "yOffset": {
+          "field": "measure",
+          "scale": {
+            "domain": [
+              "Total solve time",
+              "Function evaluation"
+            ]
+          }
+        },
+        "x2": {
+          "field": "p90"
         }
       }
     },
@@ -128,15 +152,16 @@
       },
       "encoding": {
         "x": {
-          "field": "speedup",
+          "field": "median",
           "type": "quantitative",
-          "title": "Speedup over CasADi (CasADi time ÷ Scaly time)",
+          "title": "Paired per-step speedup (CasADi time ÷ Scaly time)",
           "scale": {
             "type": "log",
             "domain": [
               0.8,
-              80
-            ]
+              12
+            ],
+            "nice": false
           },
           "axis": {
             "format": "~r",
@@ -144,9 +169,7 @@
               1,
               2,
               5,
-              10,
-              20,
-              50
+              10
             ]
           }
         },
@@ -197,21 +220,38 @@
             "title": "Measure"
           },
           {
-            "field": "scaly",
-            "title": "Scaly, ms",
+            "field": "median",
+            "title": "Median speedup",
             "format": ".3f"
           },
           {
-            "field": "casadi",
-            "title": "CasADi, ms",
+            "field": "p10",
+            "title": "10th percentile",
             "format": ".3f"
           },
           {
-            "field": "speedup",
-            "title": "Speedup",
-            "format": ".2f"
+            "field": "p90",
+            "title": "90th percentile",
+            "format": ".3f"
+          },
+          {
+            "field": "steps",
+            "title": "Paired steps"
+          },
+          {
+            "field": "iteration_mismatches",
+            "title": "Iteration mismatches"
           }
-        ]
+        ],
+        "yOffset": {
+          "field": "measure",
+          "scale": {
+            "domain": [
+              "Total solve time",
+              "Function evaluation"
+            ]
+          }
+        }
       }
     }
   ]
