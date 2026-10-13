@@ -270,6 +270,7 @@ tests/benchmarks/test_public_api.py::test_formulations_use_public_api[race_cars/
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumpercars/__init__.py]
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumpercars/common.py]
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[unbumpercars/filters.py]
+tests/benchmarks/test_report.py::test_one_process_reports_paired_per_step_speedups
 tests/benchmarks/test_study.py::test_measurement_reservation_refuses_to_start
 tests/benchmarks/test_study.py::test_progress_is_written_between_commands[0]
 tests/benchmarks/test_study.py::test_progress_is_written_between_commands[1]

@@ -32,7 +32,8 @@ Absolute timings from another machine must not share these tables.
 The study uses the following controls:
 
 - It runs one benchmark process at a time.
-- It uses five fresh processes per cell or provider, with separate empty compilation caches.
+- It uses one fresh process per cell or provider, with an empty compilation cache. The October 12
+  study used five; [Why one process](#why-one-process) records the change.
 - It rotates backend order from seed 0.
 - It checks the `performance` governor and disabled boost state before and after each headline run.
 - It compiles sweep kernels with `-O3 -march=native -fno-math-errno -fveclib=libmvec` with Clang.
@@ -40,7 +41,8 @@ The study uses the following controls:
   the artifact provenance.
 - It stops a kernel compile after 180 seconds and skips generated source above 50 MiB.
 - After a backend fails at one size, it skips that backend at larger sizes.
-- It reports dispersion across successful processes and retains every failed attempt.
+- It reports each closed loop's spread over steps and the paired per-step speedup, and retains
+  every failed attempt.
 
 The study completed 690 sweep attempts. Of these, 515 produced timings, 17 reached the compilation
 limit, and 158 were skipped after an earlier failure.
@@ -144,6 +146,26 @@ The largest coefficient of variation across five processes is 5.49%, Scaly's npm
 the fastest process. The complete sweep also reports source size,
 workspace, and compilation cost. These measurements cover the reference x86 machine and do not
 establish Apple M4 performance.
+
+## Why one process
+
+Decided on 2026-10-13, after the October 12 study, for every later study. Each extra process
+recompiled every cell, which made repetitions the bulk of a study's time, and the spread they
+measured was small next to the reported gaps:
+
+- Sweep runtimes moved by a coefficient of variation of 0.58% at the median cell across five
+  processes, 2.06% at the 90th percentile and 5.49% at worst (Scaly's npmpc N=25 Hessian, whose
+  slowest process was 13% slower than its fastest). That worst case is accepted.
+- Kernel compile times moved by 0.6% at the median and 3.6% at worst.
+- Closed-loop solver time per step moved by 0.1% to 1.5% across processes for every controller.
+
+A closed loop is deterministic, and both providers take the same iterations at each step, so the
+report now describes one episode by its spread over steps. The standard deviation over steps
+measures how the controller's work varies along the episode, not measurement noise. The per-step
+ratio of CasADi's time to Scaly's compares equal work, and its median and 10th to 90th percentile
+give the speedup with its spread. On the October 12 data that ratio's 10th and 90th percentiles stay
+within 9% of the median for every pair. `--repetitions N` remains for checking a cell that looks
+noisy.
 
 ## Why the CPU policy is fixed
 

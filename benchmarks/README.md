@@ -112,9 +112,9 @@ generating code. `--casadi-transform` is enabled by default; use `--no-casadi-tr
 descriptor. Add `_jac` to `chain`, `race_cars`, `npmpc`, or `npmpc_decoder` to run the constraint
 Jacobian row retained for the long paper. The default sweep runs only the Hessian workloads.
 
-The sweep defaults to three repetitions. Each cell starts in a fresh Python process, with backend
-order varied using `--order-seed`. `--repetitions 1` is useful for a toolchain check. The raw CSV
-records repetition and backend order. A sibling `.summary.csv` reports mean, median, sample
+The sweep runs each cell once by default, in a fresh Python process, with backend order varied
+using `--order-seed`. `--repetitions N` repeats every cell in N fresh processes, for checking how
+much a timing moves between processes. The raw CSV records repetition and backend order. A sibling `.summary.csv` reports mean, median, sample
 standard deviation, coefficient of variation, minimum, and maximum across successful processes.
 Failed attempts remain in the raw CSV and the summary counts. A single sample has no dispersion
 estimate. `kernel_compile_ms`, `wrapper_compile_ms`, and `link_ms` separate generated code from the
@@ -128,7 +128,7 @@ unsupported hosts explicitly. It does not try to change macOS power settings.
 
 For headline runs on Linux, set every CPU policy to `performance` and choose the boost state first. Then use
 `--headline --boost on` or `--headline --boost off`. The runner checks those settings before and
-after each cell and requires at least three repetitions. Provenance records the frequency policies,
+after each cell. Provenance records the frequency policies,
 boost state, and CPU affinity. Run boost-on and boost-off comparisons into separate output
 directories with the same grid and seed. Keep compilation and other benchmark jobs out of timed
 runs. The runner validates machine settings but does not change them.
@@ -197,14 +197,14 @@ The split runs both ways: a check that is about *a problem* rather than about Sc
 ```bash
 uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
 uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only sweep --problems race_cars,unbumpercars
-uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only closed-loop --no-headline --repetitions 1
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only closed-loop --no-headline
 uv run benchmarks/run.py report benchmarks/results/<study-name>
 ```
 
 `study` runs the frozen headline grids in `harness/study.py`: the exact-Hessian sweep of every
 problem over its published sizes, and each supported canonical IPOPT and SQP closed loop,
-each as its own `run.py` invocation with five fresh processes, seed 0, and the headline CPU checks
-with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
+each as its own `run.py` invocation with one fresh process per cell and per provider, seed 0, and
+the headline CPU checks with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
 `closed-loop/<problem>/` under the output directory, refuses a directory that already has content,
 and records every command and its exit status with the usual provenance in `study.json`. It ends
 by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/closed_loop.summary.json`,
@@ -212,7 +212,10 @@ by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/clos
 read `docs/assets/benchmarks/closed_loop.summary.csv` and `sweep.summary.csv`, the four
 `sweep/<problem>/<problem>.summary.csv` files concatenated. `report` can
 be rerun on any study directory, including one whose runs were launched by hand. Every episode
-writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads.
+writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads. Its closed-loop
+tables give each provider's mean, median and standard deviation over steps, and, since the two
+providers solve the same problems step for step, the median and 10th to 90th percentile of the
+per-step speedup.
 
 ## Closed-loop episodes and Foxglove
 

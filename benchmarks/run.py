@@ -289,7 +289,7 @@ def main() -> None:
   sweep_parser.add_argument("--codegen-timeout", type=float, default=300.0)
   sweep_parser.add_argument("--max-source-mb", type=float, default=50.0)
   sweep_parser.add_argument("--benchmark-min-time", default="0.1s")
-  sweep_parser.add_argument("--repetitions", type=int, default=3, help="fresh processes per cell (default: 3)")
+  sweep_parser.add_argument("--repetitions", type=int, default=1, help="fresh processes per cell (default: 1)")
   sweep_parser.add_argument("--order-seed", type=int, default=0, help="seed for reproducible backend order variation")
   sweep_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
   sweep_parser.add_argument("--boost", choices=("on", "off"), help="required CPU boost state for a headline run")
@@ -303,7 +303,7 @@ def main() -> None:
   study_parser.add_argument("--out-dir", type=Path, required=True, help="unused directory receiving sweep/<problem>/ and closed-loop/<problem>/")
   study_parser.add_argument("--problem", type=_csv, default=list(PROBLEMS), help="comma-separated subset of the study problems (default: all)")
   study_parser.add_argument("--only", type=_csv, default=list(PARTS), help="comma-separated subset of: sweep, closed-loop")
-  study_parser.add_argument("--repetitions", type=int, default=5, help="fresh processes per cell and per provider (default: 5)")
+  study_parser.add_argument("--repetitions", type=int, default=1, help="fresh processes per cell and per provider (default: 1)")
   study_parser.add_argument("--order-seed", type=int, default=0)
   study_parser.add_argument(
     "--headline", action=argparse.BooleanOptionalAction, default=True, help="require performance governor and the --boost state (default: enabled)"
@@ -337,8 +337,8 @@ def main() -> None:
   if args.command in {"sweep", "study", "closed-loop", "smoke"}:
     configure_math_policy(measured_jit=args.command != "sweep" and (args.command != "study" or "closed-loop" in args.only))
   if args.command == "sweep":
-    if args.repetitions < 1 or (args.headline and args.repetitions < 3):
-      parser.error("--repetitions must be positive, and at least 3 for --headline")
+    if args.repetitions < 1:
+      parser.error("--repetitions must be positive")
     if args.headline and args.boost is None:
       parser.error("--headline requires --boost on or off")
     args.workloads = _choices(args.workloads, tuple(DEFAULT_SIZES), parser, "--workloads")
@@ -361,8 +361,8 @@ def main() -> None:
   elif args.command == "smoke":
     success = smoke(args)
   else:
-    if args.repetitions < 1 or (args.headline and args.repetitions < 3):
-      parser.error("--repetitions must be positive, and at least 3 for --headline")
+    if args.repetitions < 1:
+      parser.error("--repetitions must be positive")
     if args.headline and args.boost is None:
       parser.error("--headline requires --boost on or off")
     problems = _choices(args.problem, tuple(CLOSED_LOOP_PAIRS), parser, "--problem")
