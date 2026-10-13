@@ -655,7 +655,8 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
       elif node.op == ProgramOp.VAR and node.attrs["name"] in vector_vars:
         value = c_ident(node.attrs["name"])
       elif node.op in (ProgramOp.VAR, ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
-        value = f"({_emit_scalar(node, {})} - ({vec}){{}})"
+        scalar = _emit_scalar(node, {}) if node.dtype.is_floating else f"(double){_emit_scalar(node, {})}"
+        value = f"({scalar} - ({vec}){{}})"
       elif node.op == ProgramOp.NEG:
         value = f"(-{args[0]})"
       elif node.op in _BIN_SYM:

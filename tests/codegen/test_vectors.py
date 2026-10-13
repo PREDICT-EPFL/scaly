@@ -25,7 +25,9 @@ _GLIBC_X86 = platform.libc_ver()[0] == "glibc" and platform.machine().lower() in
 
 
 def _compile(prog, tmp_path, *, dialect="gnu", compiler="cc", vector_libm="none", defines=()):
-  source = "\n".join([*_includes(dialect=dialect, prog=prog), *_render_raw_callee(prog.args[0], dialect=dialect, vector_libm=vector_libm)])
+  source = "\n".join(
+    [*_includes(dialect=dialect, prog=prog, vector_libm=vector_libm), *_render_raw_callee(prog.args[0], dialect=dialect, vector_libm=vector_libm)]
+  )
   workspace = int(prog.args[0].attrs.get("sz_w", 0))
   source += f"\nvoid run(double *x, double *y) {{ double w[{max(workspace, 1)}]; kernel_raw(x, y, w); }}\n"
   return _compile_source(source, tmp_path, dialect=dialect, compiler=compiler, defines=defines)
@@ -557,3 +559,31 @@ def test_glibc_vector_declarations_have_c_linkage():
       declared += 1
       assert depth == 1, line
   assert declared
+
+
+@pytest.mark.parametrize("value", [p.const_int(2), p.const_int(2**53 + 1), p.var("count", dtypes.int64)])
+def test_integer_broadcasts_convert_to_double(tmp_path, value):
+  x, y = (p.buffer(name, dtypes.float64, (17,)) for name in ("x", "y"))
+  i = p.var("i")
+  body = [
+    p.for_(p.range_("i", 0, 17), [p.assign("v", value, dtype=dtypes.float64, declare=True), p.store(p.view(y, [i]), p.var("v", dtypes.float64))])
+  ]
+  if value.op == ProgramOp.VAR:
+    body.insert(0, p.assign("count", p.const_int(3), declare=True))
+  function, _ = _compile(widen_ranges(p.program([p.proc("kernel", [x, y], body)]), lanes=4), tmp_path)
+  expected = 3.0 if value.op == ProgramOp.VAR else float(value.attrs["value"])
+  np.testing.assert_array_equal(_evaluate(function, np.zeros(34), 17)[:17], np.full(17, expected))
+
+
+@pytest.mark.parametrize("names", [("lanes_4_4_4_4_vec_sin", "x"), ("kernel", "lanes_4_4_4_4_vec_sin")])
+def test_vector_math_wrappers_do_not_capture_user_names(tmp_path, names):
+  import scaly as sc
+  from scaly.codegen.aot import render_c_module
+
+  @sc.function(sc.arg(names[1], 17), outputs=sc.arg("y", 17), name=names[0])
+  def fun(x):
+    return x.sin()
+
+  path = tmp_path / "kernel.c"
+  path.write_text(render_c_module(fun, lanes=4).body)
+  subprocess.run(["cc", "-O1", "-std=c99", "-c", str(path), "-o", str(tmp_path / "kernel.o")], check=True, capture_output=True)

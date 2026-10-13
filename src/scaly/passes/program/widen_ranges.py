@@ -9,7 +9,7 @@ from collections import Counter
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp, RangeKind
-from ...utils.names import c_ident, NameScope
+from ...utils.names import C_MATH, c_ident, NameScope
 from ._common import (
   _map_procs,
   _proc_parts,
@@ -138,7 +138,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         key = "_".join(map(str, caps))
         widths[caps] = (
           global_spellings.allocate(f"SCALY_WIDTH_{key}", generated=True),
-          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_st")),
+          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_st", *(f"_{name}" for name in sorted(C_MATH)))),
         )
       width_macro, vector = widths[caps]
       width = p.var(width_macro)
