@@ -138,7 +138,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         key = "_".join(map(str, caps))
         widths[caps] = (
           global_spellings.allocate(f"SCALY_WIDTH_{key}", generated=True),
-          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_splat", "_st", *(f"_{name}" for name in sorted(C_MATH)))),
+          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_st", *(f"_{name}" for name in sorted(C_MATH)))),
         )
       width_macro, vector = widths[caps]
       width = p.var(width_macro)

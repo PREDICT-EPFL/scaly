@@ -503,14 +503,8 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
       vec = rng.attrs["lane_vector"]
       lines.append(f"typedef double {vec} __attribute__((vector_size(8 * {width})));")
       lines.append(f"typedef {vec} {vec}_mem __attribute__((aligned(8), may_alias));")
-      # One broadcast and one store per width. The store writes the full chunk as one vector and
-      # copies only the valid lanes of the tail.
+      # One store per width: the full chunk is one vector store, the tail copies only its valid lanes.
       lines += [
-        f"static inline __attribute__((always_inline, unused)) {vec} {vec}_splat(double x) {{",
-        f"  {vec} v;",
-        f"  for (int i = 0; i < {width}; ++i) v[i] = x;",
-        "  return v;",
-        "}",
         f"static inline __attribute__((always_inline, unused)) void {vec}_st(double* p, {vec} v, long long n) {{",
         f"  if (n == {width}) *({vec}_mem*)p = v;",
         "  else for (long long i = 0; i < n; ++i) p[i] = v[i];",
@@ -661,7 +655,9 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
       elif node.op == ProgramOp.VAR and node.attrs["name"] in vector_vars:
         value = c_ident(node.attrs["name"])
       elif node.op in (ProgramOp.VAR, ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
-        value = f"{vec}_splat({_emit_scalar(node, {})})"
+        value = scope.allocate("b")
+        lines.append(f"  {vec} {value};")
+        lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {value}[{lane}] = {_emit_scalar(node, {})};")
       elif node.op == ProgramOp.NEG:
         value = f"(-{args[0]})"
       elif node.op in _BIN_SYM:
