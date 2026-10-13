@@ -384,8 +384,6 @@ def main() -> None:
           parser.error(f"{solver_oracle_name(*pair)} is not available for --problem {problem} (choose from {choices})")
     episodes = [(problem, *pair) for problem in problems for pair in pairs]
     output_root = closed_loop_results_root(smoke=args.smoke, out_dir=args.out_dir).resolve()
-    if args.casadi_interpreted and args.repetitions in (None, 1):
-      output_root /= "interpreted"
     if args.repetitions is not None or len(episodes) > 1:
       from benchmarks.harness.timing import summarize_modes
 
@@ -436,6 +434,8 @@ def main() -> None:
       print(f"Repeated episode artifacts written to {output_root}")
       return
     ((problem, solver, oracle),) = episodes
+    if args.casadi_interpreted:
+      output_root /= "interpreted"
     output = run_closed_loop(
       problem,
       smoke=args.smoke,

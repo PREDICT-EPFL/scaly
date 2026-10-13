@@ -168,6 +168,15 @@ def test_closed_loop_cli_runs_one_explicit_repetition_in_a_fresh_process(tmp_pat
   ((command, kwargs),) = calls
   assert command[command.index("--out-dir") + 1] == str(tmp_path / "repeat_1")
   assert kwargs["env"]["SCALY_CACHE_DIR"] == str(tmp_path / "repeat_1" / "cache" / "chain" / "ipopt+scaly")
+  # the child episode adds interpreted/ itself, so the parent must not
+  interpreted = tmp_path / "interpreted-run"
+  argv[argv.index("chain")] = "race_cars"
+  argv[argv.index("scaly")] = "casadi"
+  argv[-1] = str(interpreted)
+  argv.append("--casadi-interpreted")
+  run.main()
+  command = calls[-1][0]
+  assert command[command.index("--out-dir") + 1] == str(interpreted / "repeat_1")
 
 
 def test_cpu_provenance_without_linux_interfaces(tmp_path, monkeypatch):
