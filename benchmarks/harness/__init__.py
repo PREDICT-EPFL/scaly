@@ -10,6 +10,7 @@ from functools import lru_cache
 import os
 import re
 import subprocess
+import sys
 from weakref import WeakKeyDictionary
 from scaly.codegen.jit import HOST_CFLAGS
 from scaly.codegen.toolchain import find_c_compiler, native_recipe
@@ -65,12 +66,21 @@ def vector_symbols(path: Path) -> list[str]:
   return sorted({line.split()[-1] for line in result.stdout.splitlines() if "_ZGV" in line})
 
 
+# Mach-O keeps read-only data in these __TEXT sections, and Apple's `size` and `nm` lack `-A` and `-S`.
+_MACHO_RODATA = re.compile(r"Section \(__TEXT, __(?:const|literal\d+|cstring)\): (\d+)")
+_MACHO_RODATA_SYMBOL = re.compile(r"\(__TEXT,__(?:const|literal\d+|cstring)\) .* _\w+$")
+
+
 def object_bytes(path: Path) -> tuple[int, int]:
   """The total `size` reports for a compiled object, which counts machine code, constants and static
   data, and the part of it in read-only data sections."""
   header, values = subprocess.run(["size", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()[:2]
+  total = int(values.split()[header.split().index("dec")])
+  if sys.platform == "darwin":
+    sections = subprocess.run(["size", "-m", str(path)], check=True, text=True, capture_output=True).stdout
+    return total, sum(int(n) for n in _MACHO_RODATA.findall(sections))
   sections = subprocess.run(["size", "-A", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
-  return int(values.split()[header.split().index("dec")]), sum(int(line.split()[1]) for line in sections if line.startswith(".rodata"))
+  return total, sum(int(line.split()[1]) for line in sections if line.startswith(".rodata"))
 
 
 _STATIC = re.compile(rb'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|#(?:\\\n|[^\n])*|\bstatic\b', re.S)
@@ -113,6 +123,9 @@ def constant_tables(source: bytes) -> list[int]:
 def object_constant_symbols(path: Path) -> int:
   """The named read-only data objects in a compiled object. Each is a source table the compiler kept, so
   the count can never exceed the number of tables `constant_tables` finds in the source."""
+  if sys.platform == "darwin":
+    lines = subprocess.run(["nm", "-m", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
+    return sum(1 for line in lines if _MACHO_RODATA_SYMBOL.search(line))
   lines = subprocess.run(["nm", "-S", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
   return sum(1 for p in map(str.split, lines) if len(p) == 4 and p[2] in "rR" and not p[3].startswith(".L"))
 
