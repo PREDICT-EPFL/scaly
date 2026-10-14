@@ -8,7 +8,7 @@ four optimal-control problems, in two ways:
 - **Closed-loop control.** How long a complete controller takes per control step when the same
   solver runs on Scaly's generated functions instead of CasADi's.
 
-All numbers come from one study run on October 13, 2026, against CasADi 3.8.0, on an AMD
+All numbers come from one study run on October 14, 2026, against CasADi 3.8.0, on an AMD
 Ryzen 9 7940HS desktop. [Are the comparisons fair?](fairness.md) explains what the two sides
 share and where the comparison has limits.
 

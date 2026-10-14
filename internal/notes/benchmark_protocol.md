@@ -5,16 +5,14 @@ published [fairness page](../../docs/benchmarks/fairness.md), which keeps a shor
 version. Rationale for what a comparison holds constant goes here; the matching task goes in
 [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
-The figures on the published pages read `docs/assets/benchmarks/sweep.summary.csv` (the four
-`sweep/<problem>/<problem>.summary.csv` files of a study, concatenated) and
-`docs/assets/benchmarks/closed_loop.summary.csv` (written by `benchmarks/run.py report`). Paired
-per-step ratios from that report feed `closed_loop_speedup.summary.csv`, derived by
-`internal/notes/perf_2026_10_13/compare.py --publish`. `sweep.csv` concatenates the raw sweep rows,
-which keep the source size of cells that never compiled, and `closed_loop.steps.csv` holds every
-closed-loop step. All of them come from the October 13, 2026 study,
-`benchmarks/results/study-2026-10-13-post-179`, measured at `38bd5896`. The two sweep files are that
-study rewritten in the current sweep format, with sizes re-measured from its kernel objects and the
-duplicate GEMM encodings removed, as stand-in data until the next study replaces them.
+The figures on the published pages read five files in `docs/assets/benchmarks/`:
+`sweep.summary.csv` (the four `sweep/<problem>/<problem>.summary.csv` files of a study,
+concatenated), `sweep.csv` (the raw sweep rows, which keep the source size of cells that never
+compiled), `closed_loop.summary.csv` (written by `benchmarks/run.py report`),
+`closed_loop_speedup.summary.csv` (percentiles of the report's paired per-step ratios) and
+`closed_loop.steps.csv` (every closed-loop step). `internal/notes/perf_2026_10_14/publish.py`
+audits a study and writes all five. They come from the October 14, 2026 study,
+`benchmarks/results/study-2026-10-14`.
 
 ## Reference machine
 
@@ -27,7 +25,7 @@ Every published timing comes from one machine.
 | Memory | 30 GB |
 | Operating system | Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, glibc 2.39 |
 | Compilers | gcc 13.3.0 for Scaly just-in-time compilation, clang 20.1.8 for the Google Benchmark harness |
-| Stack | Python 3.14.3, Scaly `main` at `38bd5896`, CasADi 3.8.0, NumPy 2.4.6, PIQP 0.6.4 |
+| Stack | Python 3.14.3, Scaly from pull request #181, CasADi 3.8.0, NumPy 2.4.6, PIQP 0.6.4 |
 | CPU policy | `amd-pstate-epp`, `performance` governor, boost disabled |
 
 Absolute timings from another machine must not share these tables.
@@ -117,7 +115,7 @@ generated oracle and supplies the same upper Hessian triangle as Scaly.
 Each closed loop uses the fastest validated CasADi Hessian encoding at its canonical size in the
 sweep: SX for race cars N=40 and chain M=5, MX for neural-process MPC N=12 and unbumpercars C=8.
 Every oracle uses that encoding, not only the Hessian. `check_fastest_casadi_encoding` checks the
-controller construction against the published sweep. The October 13 sweep confirms those choices.
+controller construction against the published sweep. The October 14 sweep confirms those choices.
 
 The IPOPT pairs use the same IPOPT 3.14.19 library, nonlinear program, variable and parameter layout,
 bounds, options, warm starts, and compiled C boundary. Chain has no IPOPT/CasADi runner,
@@ -257,8 +255,8 @@ the summary tables from the retained comma-separated value files and telemetry.
 
 ## Study coverage and reproduction
 
-The October 13 study completed 138 planned sweep attempts and 15 closed-loop episodes. Of the
-sweep attempts, 103 produced timings, 15 reached the 180-second compilation limit, and 20 were
+The October 14 study completed 116 planned sweep attempts and 15 closed-loop episodes. Of the
+sweep attempts, 87 produced timings, 12 reached the 180-second compilation limit, and 17 were
 skipped after that encoding failed at a smaller size. Every timed kernel passed its correctness
 check, and every Scaly size completed its process. The sweep uses Clang 20.1.8, and the
 closed-loop builds use GCC 13.3.0.
@@ -281,7 +279,7 @@ internal solver time for the IPOPT cases that report it there. Globalization inc
 work. Glue is the wrapper's remaining work. Not every backend exposes the same breakdown, so the
 parts do not always sum to the total.
 
-### Episode agreement in the October 13 study
+### Episode agreement in the October 14 study
 
 Every solver step succeeded. Mismatch counts cover the single episode pair for each controller.
 
