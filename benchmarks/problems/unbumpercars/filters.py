@@ -99,7 +99,6 @@ class CasadiDTCBFSafetyFilter:
     _build_solver: bool = True,
     _sym_t=None,
     _mlp: str = "percar",
-    _mtimes: str | None = None,
   ):
     import casadi as ca
 
@@ -119,14 +118,9 @@ class CasadiDTCBFSafetyFilter:
     self.last_lam_g: np.ndarray | None = None
     self._build_ms = 0.0
     self._sym_t = ca.MX if _sym_t is None else _sym_t
-    # _mlp="batched" evaluates every car's MLP layer as one matrix-matrix product; _mtimes picks
-    # CasADi 3.8's kernel ("reference", "classic" BLAS or "blasfeo") for the dense products.
+    # _mlp="batched" evaluates every car's MLP layer as one matrix-matrix product.
     self._mlp = _mlp
-    self._mtimes = _mtimes
     self._build(_build_solver)
-
-  def _mm(self, a, b):
-    return self.ca.mtimes(a, b) if self._mtimes is None else self.ca.mtimes(a, b, self._mtimes)
 
   def _unpack_pw(self, pw):
     ca = self.ca
@@ -216,9 +210,9 @@ class CasadiDTCBFSafetyFilter:
     x_scale, w0, b0, w1, b1, w2, b2 = self._unpack_pw_dt(pw)
     phi = ca.vertcat(ca.vertcat(x[3], x[4] - delta, x[5], delta) / x_scale, u[1], u[0])
     smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
-    h = smooth_relu(self._mm(w0, phi) + b0)
-    h = smooth_relu(self._mm(w1, h) + b1)
-    learned = self._mm(w2, h) + b2
+    h = smooth_relu(ca.mtimes(w0, phi) + b0)
+    h = smooth_relu(ca.mtimes(w1, h) + b1)
+    learned = ca.mtimes(w2, h) + b2
     delta_next = delta + dt * (u[1] * max_delta - delta) / steering_time_constant
     return ca.vertcat(self._pose_rk4(x, physics, dt), learned[0], learned[1] + delta_next, learned[2], delta_next)
 
@@ -230,9 +224,9 @@ class CasadiDTCBFSafetyFilter:
     n = len(states)
     phis = [ca.vertcat(ca.vertcat(x[3], x[4] - x[6], x[5], x[6]) / x_scale, u[1], u[0]) for x, u in zip(states, us, strict=True)]
     smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
-    h = smooth_relu(self._mm(w0, ca.horzcat(*phis)) + ca.repmat(b0, 1, n))
-    h = smooth_relu(self._mm(w1, h) + ca.repmat(b1, 1, n))
-    learned = self._mm(w2, h) + ca.repmat(b2, 1, n)
+    h = smooth_relu(ca.mtimes(w0, ca.horzcat(*phis)) + ca.repmat(b0, 1, n))
+    h = smooth_relu(ca.mtimes(w1, h) + ca.repmat(b1, 1, n))
+    learned = ca.mtimes(w2, h) + ca.repmat(b2, 1, n)
     out = []
     for i, (x, u) in enumerate(zip(states, us, strict=True)):
       delta = x[6]

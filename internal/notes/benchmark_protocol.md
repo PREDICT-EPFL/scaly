@@ -9,8 +9,12 @@ The figures on the published pages read `docs/assets/benchmarks/sweep.summary.cs
 `sweep/<problem>/<problem>.summary.csv` files of a study, concatenated) and
 `docs/assets/benchmarks/closed_loop.summary.csv` (written by `benchmarks/run.py report`). Paired
 per-step ratios from that report feed `closed_loop_speedup.summary.csv`, derived by
-`internal/notes/perf_2026_10_13/compare.py --publish`. All three files come from the October 13,
-2026 study, `benchmarks/results/study-2026-10-13-post-179`, measured at `38bd5896`.
+`internal/notes/perf_2026_10_13/compare.py --publish`. `sweep.csv` concatenates the raw sweep rows,
+which keep the source size of cells that never compiled, and `closed_loop.steps.csv` holds every
+closed-loop step. All of them come from the October 13, 2026 study,
+`benchmarks/results/study-2026-10-13-post-179`, measured at `38bd5896`. The two sweep files are that
+study rewritten in the current sweep format, with sizes re-measured from its kernel objects and the
+duplicate GEMM encodings removed, as stand-in data until the next study replaces them.
 
 ## Reference machine
 
@@ -37,7 +41,8 @@ The study uses the following controls:
   study used five; [Why one process](#why-one-process) records the change.
 - It rotates backend order from seed 0.
 - It checks the `performance` governor and disabled boost state before and after each headline run.
-- It compiles sweep kernels with `-O3 -march=native -fno-math-errno -fveclib=libmvec` with Clang.
+- It compiles sweep kernels as C with Clang, using `-O3 -march=native -fno-math-errno
+  -fveclib=libmvec`. Only the Google Benchmark wrapper is C++.
 - It records the compiler, flags, CPU policy, affinity, package versions, run order, and command in
   the artifact provenance.
 - It stops a kernel compile after 180 seconds and skips generated source above 50 MiB.
@@ -99,9 +104,9 @@ the fastest completed CasADi encoding at each size and name that encoding. A mis
 means that no tested encoding completed under the compile budget. It does not establish that no
 possible CasADi formulation can complete.
 
-Executable-source and metadata sizes are not normalized between generators. Scaly emits several
-sparsity views for consumers, while CasADi emits one compressed-column pattern. Use those columns to
-understand the measured artifacts, not as a tool-independent measure of information content.
+Executable size is the compiled kernel object, so it counts the constant tables a kernel keeps, in
+whatever form each generator stores them. Source size depends on how each generator writes C. It
+shows how much code the C compiler has to process, not what the kernel adds to a binary.
 
 ## Closed-loop comparisons
 
@@ -194,12 +199,14 @@ The harness applies CasADi common-subexpression elimination with `ca.cse` to the
 nonlinear-program expressions before constructing `nlpsol`. This controls generated-source size
 and compilation cost for that formulation.
 
-## Why CasADi transformation and GEMM variants remain in the sweep
+## CasADi transformation and the single GEMM encoding
 
-The sweep transforms every CasADi oracle before code generation. It also measures three general
-matrix multiplication (GEMM) encodings under the same compile budget. CasADi's BLAS selector does
-not propagate to matrix products created by automatic differentiation, so each encoding needs its
-own measurement.
+The sweep transforms every CasADi oracle before code generation. It measures one general matrix
+multiplication (GEMM) encoding, with CasADi's own product kernel. CasADi 3.8 can generate BLAS or
+BLASFEO calls for a dense product tagged `"classic"` or `"blasfeo"`, but the products that automatic
+differentiation creates never carry the tag, and `transform` drops it from the others. In the
+October 13 study the classic and BLASFEO encodings generated C identical to the reference one, so
+the sweep no longer runs them.
 
 ## What a fair closed-loop comparison needs
 
@@ -230,15 +237,13 @@ the generated model. The sweep's `coloring_width` is also implementation-specifi
 Scaly reports the compressed tangent directions it executes, while CasADi leaves
 the field blank. It cannot support a cross-backend comparison.
 
-The executable count removes `static const` declarations from the C translation unit. Static
-metadata contains those declarations and the generated header, so the two counts sum to the full C
-and header artifact. The classification follows generated C syntax: index, seed, and numeric
-constant arrays are metadata, while an inline numeric literal remains executable source. Scaly and
-CasADi do not emit constants in the same form. Their sparse headers differ too: Scaly includes
-coordinate, row-compressed, and column-compressed views for consumers, while CasADi emits one
-column-compressed pattern. The metadata count is therefore the shipped source artifact, not a
-normalized measure of sparsity information. Report both counts. These costs need their own rows and
-must not be folded into a speed-up.
+The sweep reports two sizes. `executable_bytes` is the total `size` reports for the compiled kernel
+object: machine code, constant tables and static data, built by the same command as the timed kernel
+and without the benchmark wrapper. `source_bytes` is the generated C translation unit. Report both,
+with the constant data in each, `executable_constant_bytes` and `source_constant_bytes`: the same
+tables weigh very differently in the two, from about three bytes of text and eight compiled for a
+0/1 entry to one line of text and 281 kB compiled for CasADi's zero buffer.
+These costs need their own rows and must not be folded into a speed-up.
 
 ## Reproduce the comparison
 
@@ -266,8 +271,8 @@ provenance live below the study directory.
 
 Sweep column meanings: mean is the single process's Google Benchmark timing. With more than one
 successful process, CV is the sample coefficient of variation, otherwise it is blank.
-Executable bytes exclude static metadata. Workspace counts
-caller-owned doubles. Kernel compile time includes compilation of the generated kernel, but not the
+Source bytes count the generated C file and executable bytes the compiled kernel object. Workspace
+counts caller-owned doubles. Kernel compile time includes compilation of the generated kernel, but not the
 benchmark wrapper or linker. `timeout` means compilation exceeded the limit;
 `skipped_after_failure` means the attempt did not run after an earlier failure.
 

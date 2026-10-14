@@ -704,7 +704,6 @@ def ca_npmpc_pieces(
   cost: bool = True,
   dynamics: bool = True,
   batched: bool = False,
-  mtimes: str | None = None,
 ) -> dict:
   """The CasADi mirror's symbolic pieces, in Scaly's own row and column order.
 
@@ -716,13 +715,11 @@ def ca_npmpc_pieces(
   evaluates the oracles changes.
 
   Set ``dynamics=False`` only when the caller replaces ``h_eq`` with an equivalent encoding.
-  ``batched`` decodes every stage's features as one matrix-matrix product per layer, and ``mtimes``
-  selects CasADi 3.8's dense kernel (``"reference"``, ``"classic"`` BLAS or ``"blasfeo"``).
+  ``batched`` decodes every stage's features as one matrix-matrix product per layer.
   """
   import casadi as ca
 
   sym_t = ca.SX if sym_t is None else sym_t
-  mm = (lambda a, b: ca.mtimes(a, b)) if mtimes is None else (lambda a, b: ca.mtimes(a, b, mtimes))
   z = sym_t.sym("z", n_dec(horizon))
   xstart = sym_t.sym("xstart", NX)
   pw = sym_t.sym("pw", decoder.n_pw)
@@ -738,8 +735,8 @@ def ca_npmpc_pieces(
 
     def decode(h, k: int):
       for mat in mats[:-1]:
-        h = 1.0 / (1.0 + ca.exp(-mm(mat, h)))
-      return (mm(mats[-1], h) + ca.repmat(bias, 1, k)) * ca.repmat(yw, 1, k) + ca.repmat(yb, 1, k)
+        h = 1.0 / (1.0 + ca.exp(-ca.mtimes(mat, h)))
+      return (ca.mtimes(mats[-1], h) + ca.repmat(bias, 1, k)) * ca.repmat(yw, 1, k) + ca.repmat(yb, 1, k)
 
   offset = NX * (horizon + 1)
   stages = [(z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)], z[offset + NU * i : offset + NU * (i + 1)]) for i in range(horizon)]
@@ -800,13 +797,12 @@ def _ca_npmpc_joint_parameter_pieces(
   *,
   dynamics: bool = True,
   batched: bool = False,
-  mtimes: str | None = None,
 ) -> dict:
   """Fold the CasADi graph's two parameter symbols into the solver's single vector."""
   import casadi as ca
 
   sym_t = ca.MX if sym_t is None else sym_t
-  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, dynamics=dynamics, batched=batched, mtimes=mtimes)
+  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, dynamics=dynamics, batched=batched)
   p = sym_t.sym("p", n_param(decoder))
   pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
   f, h_eq, g_ineq = ca.substitute(

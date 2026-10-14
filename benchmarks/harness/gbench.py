@@ -17,6 +17,11 @@ def compiler() -> str:
   return os.environ.get("CXX") or shutil.which("clang++") or shutil.which("c++") or "c++"
 
 
+def c_compiler() -> str:
+  """The compiler for the generated C kernel, which the C++ wrapper links against."""
+  return shutil.which("clang") or shutil.which("cc") or "cc"
+
+
 GBENCH_TAG = "v1.9.5"
 GBENCH_REPO = "https://github.com/google/benchmark.git"
 
@@ -340,10 +345,23 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
   cflags, libs = gbench_flags()
   math_cflags, math_libs = math_flags(compiler())
-  common = [compiler(), "-O3", *NATIVE_CFLAGS, *math_cflags, "-std=c++17", "-I", str(out_dir), *cflags]
+  kernel_math_cflags, _ = math_flags(c_compiler())
   commands = {
-    "kernel_compile_ms": [*common, "-c", str(info["source"]), "-o", "kernel.o"],
-    "wrapper_compile_ms": [*common, "-c", "benchmark.cpp", "-o", "wrapper.o"],
+    "kernel_compile_ms": [c_compiler(), "-O3", *NATIVE_CFLAGS, *kernel_math_cflags, "-I", str(out_dir), "-c", str(info["source"]), "-o", "kernel.o"],
+    "wrapper_compile_ms": [
+      compiler(),
+      "-O3",
+      *NATIVE_CFLAGS,
+      *math_cflags,
+      "-std=c++17",
+      "-I",
+      str(out_dir),
+      *cflags,
+      "-c",
+      "benchmark.cpp",
+      "-o",
+      "wrapper.o",
+    ],
     "link_ms": [
       compiler(),
       *cflags,
@@ -352,7 +370,6 @@ def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, floa
       "-o",
       str(out_dir / "benchmark"),
       *libs,
-      *info.get("extra_libs", ()),
       *math_libs,
       "-lm",
     ],

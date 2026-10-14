@@ -148,13 +148,15 @@ full sweeps record compilation outcomes at each requested mass count. Unbumperca
 formulation has no single repeated stage. If an explicit backend does not apply to a workload, the
 sweep records `not_applicable` and continues.
 
-The CSV separates generated artifact bytes into `executable_bytes` and `static_metadata_bytes`.
-The executable count is the C translation unit without `static const` declarations. The metadata
-count includes those declarations and the generated header. It therefore includes sparse index
-tables, automatic-differentiation seed tables, and numeric constants that the generator emits as
-arrays. A generator that writes a constant inline counts it as executable source. Their sum is
-`artifact_bytes`; `source_bytes` remains the complete C translation unit for compatibility with
-earlier runs.
+The CSV records two sizes, each with the part spent on constant data. `source_bytes` is the
+generated C translation unit, and `source_lines` its line count. `source_constant_bytes` is the text
+of its `static const` array definitions, found by a scan that skips comments, literals and
+preprocessor lines. `executable_bytes` is the compiled kernel: the total `size` reports for
+`kernel.o`, which counts machine code, constant tables and static data, built by the same command as
+the timed kernel and without the Google Benchmark wrapper. `executable_constant_bytes` is the part in
+its read-only data sections. A cell whose object holds more named constant tables than the scan
+found stops with an error, so a change in a generator's output cannot quietly zero the source
+column. A cell that fails to compile has source sizes but no executable sizes.
 
 The CSV records floating-point and integer ABI workspace and the required lengths of the argument
 and result pointer arrays. `coloring_width` is specific to each backend and must not be compared across
