@@ -5,6 +5,60 @@
   },
   "transform": [
     {
+      "calculate": "datum.problem + ':' + datum.solver + ':solver_time_ms'",
+      "as": "total_key"
+    },
+    {
+      "lookup": "total_key",
+      "from": {
+        "data": {
+          "url": "closed_loop_speedup.summary.csv"
+        },
+        "key": "key",
+        "fields": [
+          "median",
+          "p10",
+          "p90"
+        ]
+      },
+      "as": [
+        "total_median",
+        "total_p10",
+        "total_p90"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.total_median) ? format(datum.total_median, '.3f') + '× (' + format(datum.total_p10, '.3f') + ' to ' + format(datum.total_p90, '.3f') + ')' : ''",
+      "as": "total_speedup"
+    },
+    {
+      "calculate": "datum.problem + ':' + datum.solver + ':fe_time_ms'",
+      "as": "fe_key"
+    },
+    {
+      "lookup": "fe_key",
+      "from": {
+        "data": {
+          "url": "closed_loop_speedup.summary.csv"
+        },
+        "key": "key",
+        "fields": [
+          "median",
+          "p10",
+          "p90"
+        ]
+      },
+      "as": [
+        "fe_median",
+        "fe_p10",
+        "fe_p90"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.fe_median) ? format(datum.fe_median, '.3f') + '× (' + format(datum.fe_p10, '.3f') + ' to ' + format(datum.fe_p90, '.3f') + ')' : ''",
+      "as": "fe_speedup"
+    },
+    {
       "calculate": "datum.problem === 'race_cars' ? 'Race-car' : datum.problem === 'npmpc' ? 'Neural-process MPC' : datum.problem === 'chain' ? 'Chain' : datum.problem === 'unbumpercars' ? 'Unbumpercars' : ''",
       "as": "name"
     },
@@ -166,6 +220,28 @@
           "field": "solver_time_ms_mean",
           "title": "Total, ms",
           "format": ".3f"
+        },
+        {
+          "field": "step_solver_time_ms_median",
+          "title": "Step median, ms",
+          "format": ".3f"
+        },
+        {
+          "field": "step_solver_time_ms_stdev",
+          "title": "Step standard deviation, ms",
+          "format": ".3f"
+        },
+        {
+          "field": "steps",
+          "title": "Steps"
+        },
+        {
+          "field": "total_speedup",
+          "title": "Paired total speedup, median (10th to 90th percentile)"
+        },
+        {
+          "field": "fe_speedup",
+          "title": "Paired function-evaluation speedup, median (10th to 90th percentile)"
         }
       ]
     }

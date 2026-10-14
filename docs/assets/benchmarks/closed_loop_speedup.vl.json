@@ -31,7 +31,7 @@
   ],
   "width": 560,
   "height": {
-    "step": 17
+    "step": 34
   },
   "layer": [
     {
@@ -129,15 +129,6 @@
             "title": "Iteration mismatches"
           }
         ],
-        "yOffset": {
-          "field": "measure",
-          "scale": {
-            "domain": [
-              "Total solve time",
-              "Function evaluation"
-            ]
-          }
-        },
         "x2": {
           "field": "p90"
         }
@@ -242,16 +233,7 @@
             "field": "iteration_mismatches",
             "title": "Iteration mismatches"
           }
-        ],
-        "yOffset": {
-          "field": "measure",
-          "scale": {
-            "domain": [
-              "Total solve time",
-              "Function evaluation"
-            ]
-          }
-        }
+        ]
       }
     }
   ]

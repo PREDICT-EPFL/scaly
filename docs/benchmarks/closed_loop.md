@@ -15,8 +15,10 @@ validated Hessian encoding at each canonical size in the [sweep](scalability.md)
 
 ## Where the time goes
 
-Each bar splits the step into function evaluation, the objective, constraint and derivative values
-the solver asks for, and the rest of the solver's work. Each problem has its own time axis.
+Each bar splits the mean step into function evaluation, the objective, constraint and derivative
+values the solver asks for, and the rest of the solver's work. Each problem has its own time axis.
+Hover over a bar to see the median and standard deviation of the step time and the median of the
+paired per-step speedups.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_breakdown.vl.json"></div>
 
@@ -39,26 +41,16 @@ solve times differ by less than 1%.
 | Unbumpercars | SQP | 10.72 | 87.36 | 8.15× | 9.11× |
 | Unbumpercars | IPOPT | 20.24 | 146.51 | 7.24× | 8.71× |
 
-Times are means over control steps. Speedups are ratios of those means, so they can differ from
-the medians of the per-step ratios below. The benchmark has no CasADi version of the chain
+Times are means over the control steps of one episode, and speedups are ratios of those means.
+The [overview](index.md#closed-loop-control) reports the median of the speedups between matching
+steps instead, so its figures differ slightly. The benchmark has no CasADi version of the chain
 controller with IPOPT.
 
-## Variation along an episode
-
-The median describes a typical step. The sample standard deviation describes how much step
-times vary as the controller's workload changes along the episode. Neither statistic estimates
-variation between fresh processes. Unbumpercars
-and neural-process MPC have larger spreads with SQP, whose iteration count changes along the
-episode. Hover over a point to see its mean, median, standard deviation and number of steps.
-
-<div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_step_statistics.vl.json"></div>
-
-The next figure pairs matching control steps and divides CasADi's time by Scaly's time at each
-step. Points show the median ratio and lines span its 10th to 90th percentiles. They are not
-confidence intervals. Ratios above one favor Scaly and ratios below one favor CasADi. Chain's
-median total ratio is 0.99×. Unbumpercars SQP's is 8.10×, with a range of 7.55 to 8.39×.
-
-<div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_speedup.vl.json"></div>
+Step times vary along an episode because the solver's work changes from one step to the next.
+Relative to their means, unbumpercars and neural-process MPC with SQP vary most, since their
+iteration count changes along the episode. With one process per controller, neither this spread
+nor the overview's percentile ranges estimate the variation between runs, as the
+[fairness page](fairness.md#what-the-results-do-not-show) explains.
 
 ## Do both sides do the same work?
 

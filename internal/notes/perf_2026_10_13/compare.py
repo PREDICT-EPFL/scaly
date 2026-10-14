@@ -76,6 +76,7 @@ def main(study, publish):
           problem=pair["problem"],
           solver=pair["solver"],
           metric=metric,
+          key=f"{pair['problem']}:{pair['solver']}:{metric}",
           steps=len(ratios),
           median=median,
           p10=p10,
