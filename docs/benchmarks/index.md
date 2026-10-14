@@ -1,12 +1,14 @@
 # Benchmarks
 
 Scaly and CasADi both generate C for optimization models. These benchmarks compare the two on
-four optimal-control problems, in two ways:
+four optimal-control problems, and answer three questions:
 
-- **Derivative evaluation.** How fast the generated code evaluates the Hessian of the
-  Lagrangian, the second derivatives a solver needs at every iteration, as the problem grows.
-- **Closed-loop control.** How long a complete controller takes per control step when the same
-  solver runs on Scaly's generated functions instead of CasADi's.
+- **How fast are the derivatives?** The time the generated code takes to evaluate the Hessian of
+  the Lagrangian, the second derivatives a solver needs at every iteration, as the problem grows.
+- **How fast is a controller?** The time a complete controller takes per control step when the
+  same solver runs on Scaly's generated functions instead of CasADi's.
+- **What does it cost to build?** The time from the model to compiled code, and the size of that
+  code.
 
 All numbers come from one study run on October 14, 2026, against CasADi 3.8.0, on an AMD
 Ryzen 9 7940HS desktop. [Are the comparisons fair?](fairness.md) explains what the two sides
@@ -21,45 +23,58 @@ share and where the comparison has limits.
 | Chain of masses | MPC of a chain of point masses connected by nonlinear springs | number of masses `M` |
 | Unbumpercars | A safety filter that keeps `C` cars apart, with a neural model inside pairwise constraints | number of cars `C` |
 
-## Derivative evaluation
+## Derivatives as the problem grows
 
-The figure shows the time to evaluate the Hessian once. CasADi can express the same model in
-several ways, and the fastest one depends on the problem, so its line follows whichever
-encoding was fastest at each size. Hover over a point to see which one it was. A line ends where
-no CasADi encoding finished compiling within 180 seconds.
+Each point divides the time CasADi takes to evaluate the Hessian by the time Scaly takes, at one
+size. CasADi can express the same model in several ways, called encodings, and the fastest one
+depends on the problem and its size. Each point compares with the fastest encoding at that size,
+and its color and shape say which one it was. A cross marks a size where CasADi did not compile,
+because every encoding reached the 180-second compile limit there or at a smaller size.
 
-<div class="vega-chart" data-spec="../assets/benchmarks/hessian_overview.vl.json"></div>
+<div class="vega-chart" data-spec="../assets/benchmarks/hessian_speedup.vl.json"></div>
 
-Scaly is faster in every comparison but one, and the gap tends to grow with size. On the race car
-it goes from 1.1× at `N = 1` to 7.1× at `N = 500`. On neural-process MPC it stays between 1.5 and
-2.3× while CasADi's MX encoding compiles, and reaches 5.2 to 18× at the longer horizons, where only
-slower CasADi encodings still compile. Unbumpercars goes from 4.2× at `C = 2` to 18× at `C = 8`, and
-at `C = 16` and `C = 32` only Scaly compiles. The exception is the chain at `M = 5`, where CasADi's
-SX encoding is 1.2× faster. At `M = 9`, SX no longer compiles and Scaly is 8.6× faster than the
-fastest remaining encoding.
+Scaly is faster at every size but one, and the gap grows with the problem. On the race car it
+goes from 1.1× at `N = 1` to between 5.6 and 6.7× from `N = 40` on. Unbumpercars goes from 4.2×
+at `C = 2` to 17× at `C = 8`, and at `C = 16` and `C = 32` only Scaly compiles. On neural-process
+MPC, Scaly stays 1.6 to 2.3× ahead of CasADi's MX encoding up to `N = 50`. At the two longest
+horizons MX no longer compiles, and the gap to the slower encodings that still do reaches 4.9 and
+17×. The exception is the chain at `M = 5`, where CasADi's SX encoding takes 18% less time than
+Scaly. At `M = 9`, SX no longer compiles and Scaly is 8.7× faster than the fastest encoding left.
 
-The [scalability page](scalability.md) shows every CasADi encoding separately, with compile
-time and code size.
+The [scalability page](scalability.md) shows every encoding separately, with the time to build
+each one and the size of its code.
 
-## Closed-loop control
+## Controllers
 
-Each controller runs a full simulated episode with the same solver and the same settings on both
-sides. Only the generated model functions change. CasADi uses the fastest validated Hessian
-encoding at each controller's size, SX for race cars and chain, and MX for the two neural-network
-problems. The figure shows the median of the paired per-step speedups for the whole solve and
-for function evaluation, every objective, constraint and derivative the solver asks for. The
-lines span the 10th to 90th percentiles along the episode. A value below one favors CasADi.
+Each controller runs a full simulated episode twice, once with Scaly's generated functions and
+once with CasADi's, with the same solver, settings and warm starts. Each pair of bars divides the
+mean time per control step into function evaluation, every objective, constraint and derivative
+the solver asks for, and the rest of the solver's work. Each controller has its own time axis, and
+the number next to Scaly's bar says how many times faster its step is on average.
 
-<div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_speedup.vl.json"></div>
+<div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_share.vl.json"></div>
 
-Scaly's function evaluation is 1.8 to 9.1× faster except on chain, where CasADi takes about 13%
-less time and the total solve times are nearly equal. How much of an oracle speedup reaches the
-total depends on the solver's own numerical work. Race-car SQP spends most of its step solving
-quadratic subproblems, so a 3× function-evaluation speedup gives a median total speedup of just
-1.04×. Unbumpercars is dominated by function evaluation, and its median total speedup is 7.2 to
-8.1×. Its SQP pair has three iteration mismatches, so that result compares slightly different work.
+How much of a faster function evaluation reaches the whole step depends on its share of the
+step. Unbumpercars evaluates a neural network for every pair of cars, which takes 97 to 98% of
+CasADi's step, so Scaly's 8.7 to 9.2× faster function evaluation makes the step 7.3 to 8.2×
+faster. The race car spends most of its step inside the solver. There function evaluation is 2.6
+to 3.1× faster with Scaly but only 5 to 8% of the step, so the step gains 4 to 8%. On the chain,
+CasADi's function evaluation takes 14% less time than Scaly's, and the two steps take the same
+time to within 1%.
 
-The [closed-loop page](closed_loop.md) breaks the step time down and lists the measured times.
+Before the first step, each side builds its controller: it constructs the problem, generates C
+for its functions and compiles it, starting from an empty cache.
+
+<div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_build.vl.json"></div>
+
+Scaly has the race-car controllers ready in under 3 seconds, against 9 and 16 seconds for
+CasADi, and the unbumpercars controllers 5 to 9 times sooner. On neural-process MPC Scaly is 1.3
+and 1.7 times sooner, and on the chain both take about 30 seconds, CasADi slightly less.
+
+The [closed-loop page](closed_loop.md) compares the time of every step with the controller's
+sampling time. Scaly's controllers always finish within it. With CasADi, the unbumpercars
+controllers take longer than their 100 ms sampling time on 48 of 200 steps with SQP and on 186 with
+IPOPT.
 
 ## Reproduce the study
 

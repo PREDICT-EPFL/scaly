@@ -30,7 +30,8 @@
     "direction": "horizontal",
     "columns": 3,
     "symbolStrokeWidth": 2,
-    "labelLimit": 260
+    "labelLimit": 260,
+    "titleLimit": 400
   },
   "text": {"fontSize": 13, "color": "#52514e"},
   "line": {"strokeWidth": 2, "strokeCap": "round", "strokeJoin": "round"},

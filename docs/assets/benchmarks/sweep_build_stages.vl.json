@@ -1,0 +1,433 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "build_ms": "number",
+        "render_ms": "number",
+        "kernel_compile_ms": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "calculate": "indexof(['race_cars:40', 'npmpc:12', 'chain:5', 'unbumpercars:8'], datum.workload + ':' + datum.size)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0 && (datum.compile_status === 'ok' || datum.compile_status === 'timeout')"
+    },
+    {
+      "calculate": "['Race-car MPC, N = 40', 'Neural-process MPC, N = 12', 'Chain of masses, M = 5', 'Unbumpercars, C = 8'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "calculate": "indexof(['scaly', 'casadi_sx', 'casadi_mx', 'casadi_call_mx', 'casadi_map_sx', 'casadi_mx_gemm'], datum.backend)",
+      "as": "encoding_order"
+    },
+    {
+      "calculate": "datum.compile_status === 'timeout' ? 1 : 0",
+      "as": "timeout"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "mean",
+          "field": "build_ms",
+          "as": "build"
+        },
+        {
+          "op": "mean",
+          "field": "render_ms",
+          "as": "render"
+        },
+        {
+          "op": "mean",
+          "field": "kernel_compile_ms",
+          "as": "compile"
+        },
+        {
+          "op": "max",
+          "field": "timeout",
+          "as": "timeout"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "encoding",
+        "encoding_order"
+      ]
+    },
+    {
+      "calculate": "datum.build / 1000",
+      "as": "build"
+    },
+    {
+      "calculate": "datum.render / 1000",
+      "as": "render"
+    },
+    {
+      "calculate": "datum.timeout ? 180 : datum.compile / 1000",
+      "as": "compile"
+    },
+    {
+      "calculate": "datum.build + datum.render + datum.compile",
+      "as": "total"
+    },
+    {
+      "window": [
+        {
+          "op": "row_number",
+          "as": "rank"
+        },
+        {
+          "op": "lead",
+          "field": "total",
+          "as": "next"
+        }
+      ],
+      "sort": [
+        {
+          "field": "total",
+          "order": "descending"
+        }
+      ],
+      "groupby": [
+        "problem"
+      ]
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "count",
+          "as": "rows"
+        }
+      ],
+      "groupby": [
+        "problem"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.next) && datum.next > 0 ? datum.total / datum.next : 0",
+      "as": "gap"
+    },
+    {
+      "calculate": "datum.rank <= floor((datum.rows - 1) / 2) && datum.gap > 3 ? datum.rank : 0",
+      "as": "cut_at"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "cut_at",
+          "as": "cut_rank"
+        }
+      ],
+      "groupby": [
+        "problem"
+      ]
+    },
+    {
+      "calculate": "datum.rank <= datum.cut_rank",
+      "as": "cut"
+    },
+    {
+      "calculate": "datum.cut ? null : datum.total",
+      "as": "kept"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "kept",
+          "as": "kept_max"
+        }
+      ],
+      "groupby": [
+        "problem"
+      ]
+    },
+    {
+      "calculate": "datum.cut_rank > 0 ? 1.15 * datum.kept_max : datum.kept_max",
+      "as": "cap"
+    },
+    {
+      "calculate": "(datum.cut ? '… ' : '') + (datum.timeout ? 'compile stopped at 180 s' : format(datum.total, datum.total < 10 ? '.1f' : '.0f') + ' s')",
+      "as": "label"
+    },
+    {
+      "calculate": "min(datum.total, datum.cap)",
+      "as": "label_at"
+    },
+    {
+      "calculate": "0.93 * datum.cap",
+      "as": "break_at"
+    },
+    {
+      "fold": [
+        "build",
+        "render",
+        "compile"
+      ],
+      "as": [
+        "part",
+        "value"
+      ]
+    },
+    {
+      "calculate": "indexof(['build', 'render', 'compile'], datum.part)",
+      "as": "part_order"
+    },
+    {
+      "calculate": "{'build': 'Build the Hessian', 'render': 'Generate C', 'compile': 'Compile with Clang'}[datum.part]",
+      "as": "part_label"
+    },
+    {
+      "window": [
+        {
+          "op": "sum",
+          "field": "value",
+          "as": "end"
+        }
+      ],
+      "sort": [
+        {
+          "field": "part_order"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "encoding"
+      ],
+      "frame": [
+        null,
+        0
+      ]
+    },
+    {
+      "calculate": "datum.end - datum.value",
+      "as": "start"
+    },
+    {
+      "calculate": "datum.cut ? datum.cap / datum.total : 1",
+      "as": "shrink"
+    },
+    {
+      "calculate": "datum.start * datum.shrink",
+      "as": "x"
+    },
+    {
+      "calculate": "datum.end * datum.shrink",
+      "as": "x2"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "problem",
+      "type": "nominal",
+      "title": null,
+      "sort": [
+        "Race-car MPC, N = 40",
+        "Neural-process MPC, N = 12",
+        "Chain of masses, M = 5",
+        "Unbumpercars, C = 8"
+      ],
+      "header": {
+        "labelAngle": 0,
+        "labelOrient": "top",
+        "labelAnchor": "start",
+        "labelAlign": "left",
+        "labelPadding": 2,
+        "labelFontSize": 14
+      }
+    }
+  },
+  "spacing": {
+    "row": 14
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    },
+    "axis": {
+      "x": "independent"
+    }
+  },
+  "spec": {
+    "width": 400,
+    "height": {
+      "step": 22
+    },
+    "layer": [
+      {
+        "transform": [
+          {
+            "filter": "isValid(datum.total)"
+          }
+        ],
+        "mark": {
+          "type": "bar",
+          "stroke": "#ffffff",
+          "strokeWidth": 1,
+          "cornerRadiusEnd": 0
+        },
+        "encoding": {
+          "y": {
+            "field": "encoding",
+            "type": "nominal",
+            "title": null,
+            "sort": {
+              "field": "encoding_order",
+              "op": "min"
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 8
+            }
+          },
+          "x": {
+            "field": "x",
+            "type": "quantitative",
+            "title": null,
+            "scale": {
+              "nice": false,
+              "zero": true
+            },
+            "axis": {
+              "tickCount": 4,
+              "format": "~r",
+              "labelExpr": "datum.label + ' s'"
+            }
+          },
+          "x2": {
+            "field": "x2"
+          },
+          "color": {
+            "field": "part_label",
+            "title": null,
+            "sort": [
+              "Build the Hessian",
+              "Generate C",
+              "Compile with Clang"
+            ],
+            "scale": {
+              "domain": [
+                "Build the Hessian",
+                "Generate C",
+                "Compile with Clang"
+              ],
+              "range": [
+                "#c3c2b7",
+                "#898781",
+                "#52514e"
+              ]
+            }
+          },
+          "tooltip": [
+            {
+              "field": "encoding",
+              "title": "Encoding"
+            },
+            {
+              "field": "part_label",
+              "title": "Part"
+            },
+            {
+              "field": "value",
+              "title": "Seconds",
+              "format": ",.3~r"
+            },
+            {
+              "field": "label",
+              "title": "Total"
+            }
+          ]
+        }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.part_order === 0 && datum.cut"
+          }
+        ],
+        "mark": {
+          "type": "point",
+          "shape": "M-0.6,1L-0.1,-1M0.1,1L0.6,-1",
+          "size": 300,
+          "filled": false,
+          "stroke": "#ffffff",
+          "strokeWidth": 2.5,
+          "opacity": 1
+        },
+        "encoding": {
+          "y": {
+            "field": "encoding",
+            "type": "nominal",
+            "title": null,
+            "sort": {
+              "field": "encoding_order",
+              "op": "min"
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 8
+            }
+          },
+          "x": {
+            "field": "break_at",
+            "type": "quantitative"
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.part_order === 0"
+          }
+        ],
+        "mark": {
+          "type": "text",
+          "align": "left",
+          "baseline": "middle",
+          "dx": 6,
+          "color": "#52514e",
+          "fontSize": 12
+        },
+        "encoding": {
+          "y": {
+            "field": "encoding",
+            "type": "nominal",
+            "title": null,
+            "sort": {
+              "field": "encoding_order",
+              "op": "min"
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 8
+            }
+          },
+          "x": {
+            "field": "label_at",
+            "type": "quantitative"
+          },
+          "text": {
+            "field": "label"
+          }
+        }
+      }
+    ]
+  }
+}

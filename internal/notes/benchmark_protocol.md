@@ -5,14 +5,18 @@ published [fairness page](../../docs/benchmarks/fairness.md), which keeps a shor
 version. Rationale for what a comparison holds constant goes here; the matching task goes in
 [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
-The figures on the published pages read five files in `docs/assets/benchmarks/`:
-`sweep.summary.csv` (the four `sweep/<problem>/<problem>.summary.csv` files of a study,
-concatenated), `sweep.csv` (the raw sweep rows, which keep the source size of cells that never
-compiled), `closed_loop.summary.csv` (written by `benchmarks/run.py report`),
-`closed_loop_speedup.summary.csv` (percentiles of the report's paired per-step ratios) and
-`closed_loop.steps.csv` (every closed-loop step). `internal/notes/perf_2026_10_14/publish.py`
-audits a study and writes all five. They come from the October 14, 2026 study,
-`benchmarks/results/study-2026-10-14`.
+The figures on the published pages read three files in `docs/assets/benchmarks/` and derive
+everything else in the browser, the fastest CasADi encoding at each size and the paired per-step
+speedups included. `sweep.csv` concatenates the raw rows of a study's four
+`sweep/<problem>/<problem>.csv` files, which keep the outcome, stage timings and source size of
+cells that never compiled. `closed_loop.steps.csv` holds every closed-loop step from the episodes'
+`telemetry.csv` files, with the problem, solver and oracle of each. `closed_loop.summary.csv`,
+written by `benchmarks/run.py report`, supplies the mean step split and the controller build times.
+Two more files feed no figure: `sweep.summary.csv`, the four `sweep/<problem>/<problem>.summary.csv`
+files concatenated, is what `check_fastest_casadi_encoding` reads, and
+`closed_loop_speedup.summary.csv` holds percentiles of the report's paired per-step ratios.
+`internal/notes/perf_2026_10_14/publish.py` audits a study and writes all five. They come from the
+October 14, 2026 study, `benchmarks/results/study-2026-10-14`.
 
 ## Reference machine
 

@@ -1,0 +1,202 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.summary.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "build_ms_mean": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.problem) * 2 + (datum.solver === 'sqp' ? 0 : 1)",
+      "as": "order"
+    },
+    {
+      "calculate": "{'race_cars': 'Race-car MPC', 'npmpc': 'Neural-process MPC', 'chain': 'Chain of masses', 'unbumpercars': 'Unbumpercars'}[datum.problem] + ', ' + upper(datum.solver)",
+      "as": "controller"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "calculate": "datum.build_ms_mean / 1000",
+      "as": "seconds"
+    },
+    {
+      "calculate": "datum.oracle === 'casadi' ? datum.seconds : null",
+      "as": "casadi_s"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? datum.seconds : null",
+      "as": "scaly_s"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "casadi_s",
+          "as": "casadi_s"
+        },
+        {
+          "op": "max",
+          "field": "scaly_s",
+          "as": "scaly_s"
+        },
+        {
+          "op": "max",
+          "field": "seconds",
+          "as": "slowest"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "solver"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.casadi_s) ? (datum.casadi_s >= datum.scaly_s ? format(datum.casadi_s / datum.scaly_s, '.1f') + '× sooner' : format(datum.scaly_s / datum.casadi_s, '.1f') + '× later') : 'no CasADi controller'",
+      "as": "label"
+    }
+  ],
+  "width": 420,
+  "height": {
+    "step": 26
+  },
+  "encoding": {
+    "y": {
+      "field": "controller",
+      "type": "nominal",
+      "title": null,
+      "sort": {
+        "field": "order",
+        "op": "min"
+      },
+      "axis": {
+        "ticks": false,
+        "domain": false,
+        "labelPadding": 8
+      }
+    }
+  },
+  "layer": [
+    {
+      "mark": {
+        "type": "rule",
+        "color": "#c3c2b7",
+        "strokeWidth": 2
+      },
+      "encoding": {
+        "x": {
+          "aggregate": "min",
+          "field": "seconds",
+          "type": "quantitative"
+        },
+        "x2": {
+          "aggregate": "max",
+          "field": "seconds"
+        }
+      }
+    },
+    {
+      "mark": {
+        "type": "point",
+        "size": 90,
+        "stroke": "#ffffff",
+        "strokeWidth": 1.5,
+        "opacity": 1
+      },
+      "encoding": {
+        "x": {
+          "field": "seconds",
+          "type": "quantitative",
+          "title": "Time to build the controller, s",
+          "scale": {
+            "type": "log"
+          },
+          "axis": {
+            "format": "~g",
+            "values": [
+              1,
+              2,
+              5,
+              10,
+              20,
+              50,
+              100,
+              200
+            ]
+          }
+        },
+        "color": {
+          "field": "provider",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi"
+            ],
+            "range": [
+              "#1baf7a",
+              "#e34948"
+            ]
+          }
+        },
+        "shape": {
+          "field": "provider",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi"
+            ],
+            "range": [
+              "circle",
+              "square"
+            ]
+          }
+        },
+        "tooltip": [
+          {
+            "field": "controller",
+            "title": "Controller"
+          },
+          {
+            "field": "provider",
+            "title": "Provider"
+          },
+          {
+            "field": "seconds",
+            "title": "Build, s",
+            "format": ".1f"
+          }
+        ]
+      }
+    },
+    {
+      "transform": [
+        {
+          "filter": "datum.oracle === 'scaly'"
+        }
+      ],
+      "mark": {
+        "type": "text",
+        "align": "left",
+        "baseline": "middle",
+        "dx": 10
+      },
+      "encoding": {
+        "x": {
+          "field": "slowest",
+          "type": "quantitative"
+        },
+        "text": {
+          "field": "label"
+        }
+      }
+    }
+  ]
+}

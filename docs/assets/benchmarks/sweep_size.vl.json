@@ -1,0 +1,225 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "executable_bytes": "number",
+        "executable_constant_bytes": "number",
+        "source_bytes": "number",
+        "source_lines": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "isValid(datum.executable_bytes)"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.workload)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0"
+    },
+    {
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Chain of masses, M masses', 'Unbumpercars, C cars'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "max",
+          "field": "executable_bytes",
+          "as": "executable_bytes"
+        },
+        {
+          "op": "max",
+          "field": "executable_constant_bytes",
+          "as": "executable_constant_bytes"
+        },
+        {
+          "op": "max",
+          "field": "source_bytes",
+          "as": "source_bytes"
+        },
+        {
+          "op": "max",
+          "field": "source_lines",
+          "as": "source_lines"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "size",
+        "encoding"
+      ]
+    },
+    {
+      "calculate": "datum.executable_bytes / 1000",
+      "as": "kb"
+    },
+    {
+      "calculate": "datum.executable_constant_bytes / 1000",
+      "as": "constant_kb"
+    },
+    {
+      "calculate": "datum.source_bytes / 1000",
+      "as": "source_kb"
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "type": "nominal",
+    "title": null,
+    "sort": {
+      "field": "order",
+      "op": "min"
+    }
+  },
+  "columns": 2,
+  "resolve": {
+    "scale": {
+      "x": "independent"
+    }
+  },
+  "spec": {
+    "width": 300,
+    "height": 190,
+    "encoding": {
+      "x": {
+        "field": "size",
+        "type": "quantitative",
+        "title": "Size",
+        "scale": {
+          "type": "log",
+          "nice": false
+        },
+        "axis": {
+          "format": "~g",
+          "grid": false,
+          "tickCount": 6
+        }
+      },
+      "y": {
+        "field": "kb",
+        "type": "quantitative",
+        "title": "Object file, kB",
+        "scale": {
+          "type": "log"
+        },
+        "axis": {
+          "format": ",~g",
+          "labelExpr": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6 ? datum.label : ''",
+          "gridOpacity": {
+            "condition": {
+              "test": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6",
+              "value": 1
+            },
+            "value": 0
+          }
+        }
+      },
+      "color": {
+        "field": "encoding",
+        "title": null,
+        "scale": {
+          "domain": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX",
+            "CasADi MX with GEMM"
+          ],
+          "range": [
+            "#1baf7a",
+            "#eb6834",
+            "#2a78d6",
+            "#eda100",
+            "#e87ba4",
+            "#4a3aa7"
+          ]
+        }
+      }
+    },
+    "layer": [
+      {
+        "mark": {
+          "type": "line",
+          "strokeWidth": 1.75
+        }
+      },
+      {
+        "mark": {
+          "type": "point",
+          "stroke": "#ffffff",
+          "strokeWidth": 1.25,
+          "size": 60,
+          "opacity": 1
+        },
+        "encoding": {
+          "shape": {
+            "field": "encoding",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi SX",
+                "CasADi MX",
+                "CasADi MX with calls",
+                "CasADi mapped SX",
+                "CasADi MX with GEMM"
+              ],
+              "range": [
+                "circle",
+                "square",
+                "triangle-up",
+                "diamond",
+                "triangle-down",
+                "cross"
+              ]
+            }
+          },
+          "tooltip": [
+            {
+              "field": "encoding",
+              "title": "Encoding"
+            },
+            {
+              "field": "size",
+              "title": "Size"
+            },
+            {
+              "field": "kb",
+              "title": "Object file, kB",
+              "format": ",.4~r"
+            },
+            {
+              "field": "constant_kb",
+              "title": "of which constant data, kB",
+              "format": ",.4~r"
+            },
+            {
+              "field": "source_kb",
+              "title": "Generated C, kB",
+              "format": ",.4~r"
+            },
+            {
+              "field": "source_lines",
+              "title": "Generated C, lines",
+              "format": ","
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

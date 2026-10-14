@@ -1,57 +1,125 @@
 # Scalability
 
 This page follows the Hessian of the Lagrangian as each [benchmark problem](index.md#the-problems)
-grows: how long the generated code takes to run, how long it takes to compile, and how large it
-is.
+grows: how long the generated code takes to run, which CasADi encodings still compile, how long
+it takes to get from the model to compiled code, and how large that code is.
 
-Each point is one generated C kernel, compiled on its own and timed with
-[Google Benchmark](https://github.com/google/benchmark) in one fresh process. Before timing, the
-harness checks the kernel's result against an independent reference, and a kernel that fails the
-check gets no timing. Compilation stops after 180 seconds. An encoding that runs out of time at
-one size is not tried at larger sizes, which is why some lines end early.
+Each measurement is the C function that one encoding generates for the Hessian at one size,
+compiled on its own and timed with [Google Benchmark](https://github.com/google/benchmark) in a
+fresh process. Before timing, the harness checks its result against an independent reference, and
+a function that fails the check gets no timing. Compilation stops after 180 seconds, and an encoding
+that runs out of time at one size is not tried at larger sizes.
 
 CasADi can build the same model from scalar operations or from matrix operations and function
-calls, and the choice changes both speed and compile time. The figures include each encoding the
-study measured:
+calls, and the choice changes both speed and compile time. The study measures five encodings:
 
 - **CasADi SX**: every operation unrolled into scalars.
 - **CasADi MX**: matrix operations kept whole.
 - **CasADi MX with calls**: MX with subfunctions kept as calls instead of inlined.
 - **CasADi mapped SX**: an SX function applied to every stage with `Function.map`.
-- **CasADi MX with GEMM**: MX with matrix products lowered to general matrix multiplication
-  (GEMM) calls. The study also measured the classic and BLASFEO GEMM lowerings, which fall within
-  3% of this one's runtime and are left out of these figures. The overview selects among all three too.
+- **CasADi MX with GEMM**: MX with each network layer computed for every stage or car at once,
+  as one general matrix multiplication (GEMM). Only the two problems with a neural network have
+  it.
+
+Unbumpercars has no single repeated stage, so it has no calls or mapped encoding.
 
 ## Evaluation time
 
-<div class="vega-chart" data-spec="../../assets/benchmarks/hessian_time.vl.json"></div>
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_runtime.vl.json"></div>
 
-On the race car and neural-process MPC, Scaly's evaluation time grows linearly with the horizon.
-On the race car, CasADi's SX encoding is 1.1× slower at `N = 1`, and the gap widens to between
-5.5× and 7.1× from `N = 50` on. On
-the problems that contain neural networks, SX compiles only at the shortest neural-process horizon
-and not at all on unbumpercars, and the encodings that do compile pay for their calls and matrix
-products.
+On the race car, Scaly's evaluation time grows linearly with the horizon, at 60 to 70 ns per
+stage from `N = 100` on. CasADi's fastest encoding there, SX, takes about 400 ns per stage. On the
+problems that contain neural networks, SX compiles only at the shortest neural-process horizon and
+not at all on unbumpercars. The encodings that do compile keep the network's matrix products and
+calls, and pay for them at every evaluation.
 
-## Compile time
+Each point comes from one process. Google Benchmark repeats the C call inside that process for at
+least half a second, but the study has no estimate of variation between processes, as the
+[fairness page](fairness.md#what-the-results-do-not-show) explains.
 
-<div class="vega-chart" data-spec="../../assets/benchmarks/compile_time.vl.json"></div>
+## Which encodings compile
 
-The horizontal line is the 180-second limit. Scaly compiles the race car in under half a second at
-every horizon. It keeps the repeated stage as a loop over one compiled body, so the executable
-code stays at about 78 kB from `N = 5` to `N = 500`. Compile time is also what ends most CasADi
-lines: the unrolled encodings produce source files that the C compiler takes minutes to digest.
+Each cell divides an encoding's evaluation time by Scaly's at the same size, so a green cell is a
+size where Scaly is faster and a red one a size where CasADi is. A gray cell reached the
+180-second compile limit, and "not run" marks the larger sizes skipped after it.
+
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_ratio.vl.json"></div>
+
+Of the 93 CasADi Hessians in the study, 64 compiled and were timed, 11 reached the limit and 18
+were skipped after it. Only one CasADi Hessian is faster than Scaly's, SX on the chain at `M = 5`.
+No encoding is best everywhere. SX is the fastest on the race car and the chain, and MX on the two
+problems with a neural network. MX with calls and mapped SX are the slowest at run time, up to 18×
+slower than Scaly on the race car, but at the largest sizes they are sometimes the only ones left.
+MX with calls is the only one at the longest neural-process horizon, and mapped SX the only one at
+`M = 9`.
+
+## From model to object file
+
+Turning the model into an object file takes three steps, which do different work on each side:
+
+| Step | Scaly | CasADi |
+| --- | --- | --- |
+| Build the Hessian | Traces the model into an expression graph, differentiates it, and finds the Hessian's sparsity pattern and coloring | Builds the SX or MX expressions and the IPOPT interface, which differentiates them into every oracle IPOPT needs, then simplifies the Hessian with `transform` |
+| Generate C | Runs the [optimization passes](../how_it_works/lowering.md), which turn repeated stages into loops, and writes the C | Writes the expression graph as C with `CodeGenerator` |
+| Compile with Clang | Compiles the C file at `-O3` | The same |
+
+The first figure adds the three up. An open marker above the 180-second line marks a compile
+stopped at the limit.
+
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build.vl.json"></div>
+
+Scaly keeps the repeated stage of the race car as a loop over one compiled body, so its C source
+stays at 78 kB from `N = 5` to `N = 500`, and it takes 0.8 seconds at `N = 1` and 2.1 at
+`N = 500`. CasADi's SX encoding writes 10 MB of C at `N = 500`, and takes 56 seconds. On
+neural-process MPC and unbumpercars, Scaly takes 2 to 7 seconds at every size. The chain is the
+exception. Scaly's time grows from 4 seconds at `M = 3` to 58 at `M = 9`, close to the mapped SX
+encoding, which is faster at `M = 5`.
+
+The next figure splits that time into its three steps, at each problem's size in the
+[closed-loop benchmarks](closed_loop.md). Each problem has its own time axis. A bar too long to
+draw to scale is cut: it is shortened with its parts kept in proportion, a break marks the cut, and
+its true total follows the ellipsis.
+
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build_stages.vl.json"></div>
+
+CasADi generates C in under a second and spends 77 to 99% of its time in Clang. Scaly spends 23
+to 73% of its time generating C, since that step includes its optimization passes, and usually
+hands Clang a smaller file. On the chain, generating C takes 12 of Scaly's 17 seconds.
+
+The next figure follows the race car over every horizon. The top of each bar is the total time on
+a logarithmic axis, and its shades divide the bar's height in proportion to the three steps, from
+the faint build step at the bottom to compiling in full color. Stacking the steps' own times on a
+logarithmic axis would make the bottom step look far larger than it is, so the shades show each
+step's share and not a value on the axis. The hollow triangle marks the compile stopped at 180
+seconds.
+
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build_race_cars.vl.json"></div>
+
+As the horizon grows, CasADi's time moves into Clang. The SX encoding spends 26% of its time
+compiling at `N = 1` and 89% at `N = 500`. Scaly's time grows in generating C, which takes 59% of
+its 0.8 seconds at `N = 1` and 71% of its 2.1 seconds at `N = 500`, while compiling stays at about
+a third of the total or less.
 
 ## Code size
 
-<div class="vega-chart" data-spec="../../assets/benchmarks/code_size.vl.json"></div>
+Code size is the size of the object file Clang produces, as `size` reports it: machine code,
+constant tables and static data, without the benchmark wrapper.
 
-Code size counts the executable part of the generated C source, leaving out constant tables such
-as sparsity patterns. The two generators store those tables differently, so this is a guide to
-how much code the compiler has to process rather than an exact measure of the model.
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_size.vl.json"></div>
 
-Each point comes from one successful process. Google Benchmark repeats the C call inside that
-process for at least half a second to measure runtime. The study has no between-process
-coefficient of variation, as explained on the [fairness page](fairness.md#what-the-results-do-not-show).
-Smaller source does not guarantee faster evaluation,
-since native compilation and the generated arithmetic determine runtime too.
+Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 500`, while CasADi's
+SX one grows with the horizon to 4.5 MB. Scaly's is smaller than every CasADi encoding at every
+size except the race car at `N = 1`, where SX is 1.5 kB smaller. On neural-process MPC, Scaly's
+grows from 83 kB to 695 kB, and almost all of that growth is constant tables.
+
+The next figure compares the generated C file and the object file at each problem's closed-loop
+size, and splits each into constant tables, such as sparsity patterns and numeric constants, and
+everything else. Long bars are cut as in the time figure above.
+
+<div class="vega-chart" data-spec="../../assets/benchmarks/sweep_size_contents.vl.json"></div>
+
+The same tables weigh very differently in the two files. CasADi's mapped SX encoding stores a
+large part of its object file as tables, and so does Scaly on neural-process MPC. CasADi's MX
+encoding of unbumpercars keeps 286 kB of tables in an object file whose C source holds under 3 kB
+of them, because a zero-filled buffer takes one line of C. The two generators store constants
+differently, so these sizes compare what each one ships, not the information in it.

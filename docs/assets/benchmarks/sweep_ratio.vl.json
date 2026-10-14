@@ -1,0 +1,273 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "runtime_ns": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.workload)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0"
+    },
+    {
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Chain of masses, M masses', 'Unbumpercars, C cars'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "calculate": "datum.runtime_status === 'ok' ? datum.runtime_ns / 1000 : null",
+      "as": "us"
+    },
+    {
+      "calculate": "datum.compile_status === 'timeout' ? 1 : 0",
+      "as": "timeouts"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "mean",
+          "field": "us",
+          "as": "us"
+        },
+        {
+          "op": "max",
+          "field": "timeouts",
+          "as": "timeout"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "workload",
+        "size",
+        "backend",
+        "encoding"
+      ]
+    },
+    {
+      "calculate": "datum.backend === 'scaly' ? datum.us : null",
+      "as": "scaly_us"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "scaly_us",
+          "as": "scaly_us"
+        }
+      ],
+      "groupby": [
+        "workload",
+        "size"
+      ]
+    },
+    {
+      "filter": "datum.backend !== 'scaly'"
+    },
+    {
+      "calculate": "isValid(datum.us) ? datum.us / datum.scaly_us : null",
+      "as": "ratio"
+    },
+    {
+      "calculate": "isValid(datum.ratio) ? datum.ratio : 1",
+      "as": "fill"
+    },
+    {
+      "calculate": "isValid(datum.ratio) ? format(datum.ratio, datum.ratio < 10 ? '.1f' : '.0f') + '×' : datum.timeout ? '> 180 s' : 'not run'",
+      "as": "label"
+    },
+    {
+      "calculate": "isValid(datum.ratio) ? 'timed' : datum.timeout ? 'timeout' : 'skipped'",
+      "as": "outcome"
+    },
+    {
+      "calculate": "indexof(['CasADi SX', 'CasADi MX', 'CasADi MX with calls', 'CasADi mapped SX', 'CasADi MX with GEMM'], datum.encoding)",
+      "as": "encoding_order"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "problem",
+      "type": "nominal",
+      "title": null,
+      "sort": {
+        "field": "order",
+        "op": "min"
+      },
+      "header": {
+        "labelAngle": 0,
+        "labelOrient": "top",
+        "labelAnchor": "start",
+        "labelAlign": "left",
+        "labelPadding": 2,
+        "labelFontSize": 14
+      }
+    }
+  },
+  "spacing": {
+    "row": 14
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    },
+    "axis": {
+      "x": "independent"
+    }
+  },
+  "spec": {
+    "width": {
+      "step": 50
+    },
+    "height": {
+      "step": 26
+    },
+    "encoding": {
+      "x": {
+        "field": "size",
+        "type": "ordinal",
+        "title": null,
+        "sort": "ascending",
+        "axis": {
+          "orient": "top",
+          "ticks": false,
+          "domain": false,
+          "labelAngle": 0,
+          "labelPadding": 4
+        }
+      },
+      "y": {
+        "field": "encoding",
+        "type": "nominal",
+        "title": null,
+        "sort": {
+          "field": "encoding_order",
+          "op": "min"
+        },
+        "axis": {
+          "ticks": false,
+          "domain": false,
+          "labelPadding": 8
+        }
+      }
+    },
+    "layer": [
+      {
+        "transform": [
+          {
+            "filter": "datum.outcome !== 'skipped'"
+          }
+        ],
+        "mark": {
+          "type": "rect",
+          "stroke": "#ffffff",
+          "strokeWidth": 2,
+          "cornerRadius": 3
+        },
+        "encoding": {
+          "color": {
+            "condition": {
+              "test": "datum.outcome === 'timeout'",
+              "value": "#e1e0d9"
+            },
+            "field": "fill",
+            "type": "quantitative",
+            "title": "CasADi time ÷ Scaly time",
+            "scale": {
+              "type": "log",
+              "domain": [
+                0.05,
+                20
+              ],
+              "domainMid": 1,
+              "range": [
+                "#e34948",
+                "#f0efec",
+                "#1baf7a"
+              ],
+              "interpolate": "lab",
+              "clamp": true
+            },
+            "legend": {
+              "orient": "bottom",
+              "direction": "horizontal",
+              "gradientLength": 260,
+              "values": [
+                0.05,
+                0.2,
+                0.5,
+                1,
+                2,
+                5,
+                20
+              ],
+              "labelExpr": "datum.label + '×'",
+              "format": "~g"
+            }
+          },
+          "tooltip": [
+            {
+              "field": "encoding",
+              "title": "Encoding"
+            },
+            {
+              "field": "size",
+              "title": "Size"
+            },
+            {
+              "field": "us",
+              "title": "CasADi, µs",
+              "format": ",.4~r"
+            },
+            {
+              "field": "scaly_us",
+              "title": "Scaly, µs",
+              "format": ",.4~r"
+            },
+            {
+              "field": "label",
+              "title": "CasADi ÷ Scaly"
+            }
+          ]
+        }
+      },
+      {
+        "mark": {
+          "type": "text",
+          "fontSize": 12
+        },
+        "encoding": {
+          "text": {
+            "field": "label"
+          },
+          "color": {
+            "condition": [
+              {
+                "test": "datum.outcome === 'skipped'",
+                "value": "#898781"
+              },
+              {
+                "test": "datum.outcome === 'timed' && abs(log(datum.ratio) / LN10) > 0.75",
+                "value": "#0b0b0c"
+              }
+            ],
+            "value": "#0b0b0b"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,345 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "build_ms": "number",
+        "render_ms": "number",
+        "kernel_compile_ms": "number",
+        "source_bytes": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "datum.compile_status === 'ok' || datum.compile_status === 'timeout'"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.workload)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0"
+    },
+    {
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Chain of masses, M masses', 'Unbumpercars, C cars'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "calculate": "datum.compile_status === 'timeout' ? 1 : 0",
+      "as": "timeout"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "mean",
+          "field": "build_ms",
+          "as": "build_ms"
+        },
+        {
+          "op": "mean",
+          "field": "render_ms",
+          "as": "render_ms"
+        },
+        {
+          "op": "mean",
+          "field": "kernel_compile_ms",
+          "as": "kernel_compile_ms"
+        },
+        {
+          "op": "max",
+          "field": "source_bytes",
+          "as": "source_bytes"
+        },
+        {
+          "op": "max",
+          "field": "timeout",
+          "as": "timeout"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "workload",
+        "size",
+        "backend",
+        "encoding"
+      ]
+    },
+    {
+      "calculate": "(datum.build_ms + datum.render_ms + datum.kernel_compile_ms) / 1000",
+      "as": "seconds"
+    },
+    {
+      "calculate": "datum.build_ms / 1000",
+      "as": "build_s"
+    },
+    {
+      "calculate": "datum.render_ms / 1000",
+      "as": "render_s"
+    },
+    {
+      "calculate": "datum.kernel_compile_ms / 1000",
+      "as": "compile_s"
+    },
+    {
+      "calculate": "datum.source_bytes / 1e6",
+      "as": "source_mb"
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "type": "nominal",
+    "title": null,
+    "sort": {
+      "field": "order",
+      "op": "min"
+    }
+  },
+  "columns": 2,
+  "resolve": {
+    "scale": {
+      "x": "independent"
+    }
+  },
+  "spec": {
+    "width": 300,
+    "height": 190,
+    "layer": [
+      {
+        "mark": {
+          "type": "rule",
+          "color": "#898781",
+          "strokeWidth": 1
+        },
+        "encoding": {
+          "y": {
+            "datum": 180
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.timeout === 0"
+          }
+        ],
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "title": "Size",
+            "scale": {
+              "type": "log",
+              "nice": false
+            },
+            "axis": {
+              "format": "~g",
+              "grid": false,
+              "tickCount": 6
+            }
+          },
+          "y": {
+            "field": "seconds",
+            "type": "quantitative",
+            "title": "Model to object file, s",
+            "scale": {
+              "type": "log",
+              "domain": [
+                0.1,
+                400
+              ],
+              "nice": false
+            },
+            "axis": {
+              "values": [
+                0.1,
+                1,
+                10,
+                180
+              ],
+              "format": "~g"
+            }
+          },
+          "color": {
+            "field": "encoding",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi SX",
+                "CasADi MX",
+                "CasADi MX with calls",
+                "CasADi mapped SX",
+                "CasADi MX with GEMM"
+              ],
+              "range": [
+                "#1baf7a",
+                "#eb6834",
+                "#2a78d6",
+                "#eda100",
+                "#e87ba4",
+                "#4a3aa7"
+              ]
+            }
+          }
+        },
+        "layer": [
+          {
+            "mark": {
+              "type": "line",
+              "strokeWidth": 1.75
+            }
+          },
+          {
+            "mark": {
+              "type": "point",
+              "stroke": "#ffffff",
+              "strokeWidth": 1.25,
+              "size": 60,
+              "opacity": 1
+            },
+            "encoding": {
+              "shape": {
+                "field": "encoding",
+                "title": null,
+                "scale": {
+                  "domain": [
+                    "Scaly",
+                    "CasADi SX",
+                    "CasADi MX",
+                    "CasADi MX with calls",
+                    "CasADi mapped SX",
+                    "CasADi MX with GEMM"
+                  ],
+                  "range": [
+                    "circle",
+                    "square",
+                    "triangle-up",
+                    "diamond",
+                    "triangle-down",
+                    "cross"
+                  ]
+                }
+              },
+              "tooltip": [
+                {
+                  "field": "encoding",
+                  "title": "Encoding"
+                },
+                {
+                  "field": "size",
+                  "title": "Size"
+                },
+                {
+                  "field": "seconds",
+                  "title": "Total, s",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "build_s",
+                  "title": "Build the model, s",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "render_s",
+                  "title": "Generate C, s",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "compile_s",
+                  "title": "Compile C, s",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "source_mb",
+                  "title": "C source, MB",
+                  "format": ".3~r"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.timeout === 1"
+          },
+          {
+            "window": [
+              {
+                "op": "row_number",
+                "as": "stack"
+              }
+            ],
+            "groupby": [
+              "size"
+            ]
+          },
+          {
+            "calculate": "180 * pow(1.3, datum.stack)",
+            "as": "marker"
+          },
+          {
+            "calculate": "'compile stopped at 180 s'",
+            "as": "outcome"
+          }
+        ],
+        "mark": {
+          "type": "point",
+          "filled": false,
+          "size": 60,
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "scale": {
+              "type": "log",
+              "nice": false
+            }
+          },
+          "y": {
+            "field": "marker",
+            "type": "quantitative"
+          },
+          "color": {
+            "field": "encoding"
+          },
+          "tooltip": [
+            {
+              "field": "encoding",
+              "title": "Encoding"
+            },
+            {
+              "field": "size",
+              "title": "Size"
+            },
+            {
+              "field": "outcome",
+              "title": "Outcome"
+            },
+            {
+              "field": "source_mb",
+              "title": "C source, MB",
+              "format": ".3~r"
+            }
+          ],
+          "shape": {
+            "field": "encoding"
+          }
+        }
+      }
+    ]
+  }
+}

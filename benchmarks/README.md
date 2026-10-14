@@ -211,8 +211,9 @@ the headline CPU checks with boost off unless told otherwise. It writes `sweep/<
 and records every command and its exit status with the usual provenance in `study.json`. It ends
 by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/closed_loop.summary.json`,
 `closed-loop/closed_loop.summary.csv` and a combined `report.md`. The figures on the benchmark pages
-read `docs/assets/benchmarks/closed_loop.summary.csv` and `sweep.summary.csv`, the four
-`sweep/<problem>/<problem>.summary.csv` files concatenated. `report` can
+read `docs/assets/benchmarks/sweep.csv` (the four `sweep/<problem>/<problem>.csv` files
+concatenated), `closed_loop.steps.csv` (every episode's `telemetry.csv`, with its problem, solver
+and oracle) and `closed_loop.summary.csv`. `report` can
 be rerun on any study directory, including one whose runs were launched by hand. Every episode
 writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads. Its closed-loop
 tables give each provider's mean, median and standard deviation over steps, and, since the two

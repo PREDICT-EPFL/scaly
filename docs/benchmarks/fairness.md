@@ -30,7 +30,7 @@ fixed, the machine they ran on, and what the results do not show.
 | Machine | Minisforum F7BSC desktop |
 | CPU | AMD Ryzen 9 7940HS, 8 cores, boost disabled, `performance` governor |
 | System | Ubuntu 24.04, glibc 2.39 |
-| Compilers | GCC 13.3.0 for controllers, Clang 20.1.8 for the Hessian kernels |
+| Compilers | GCC 13.3.0 for controllers, Clang 20.1.8 for the generated Hessians |
 | Versions | Python 3.14.3, Scaly `main` as of October 14, 2026, CasADi 3.8.0, PIQP 0.6.4 |
 
 Absolute times depend on the machine. The results come from this one machine only and say
@@ -41,7 +41,7 @@ nothing about others, such as Apple silicon.
 - **A missing CasADi time is not a speedup.** When no tested encoding compiles within 180
   seconds, the result is that Scaly compiled and those encodings did not. Another formulation of
   the same model might still compile.
-- **Function-evaluation timers differ slightly in scope.** Scaly's includes a bounds kernel with
+- **Function-evaluation timers differ slightly in scope.** Scaly's includes a bounds function with
   no CasADi counterpart, and Scaly evaluates the objective and constraints together where CasADi
   evaluates them separately. These differences are part of what is measured.
 - **One controller does not do identical work.** Unbumpercars with SQP takes a different number of

@@ -1,0 +1,405 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "build_ms": "number",
+        "render_ms": "number",
+        "kernel_compile_ms": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "datum.workload === 'race_cars' && (datum.compile_status === 'ok' || datum.compile_status === 'timeout')"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "calculate": "datum.compile_status === 'timeout' ? 1 : 0",
+      "as": "timeout"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "mean",
+          "field": "build_ms",
+          "as": "build"
+        },
+        {
+          "op": "mean",
+          "field": "render_ms",
+          "as": "render"
+        },
+        {
+          "op": "mean",
+          "field": "kernel_compile_ms",
+          "as": "compile"
+        },
+        {
+          "op": "max",
+          "field": "timeout",
+          "as": "timeout"
+        }
+      ],
+      "groupby": [
+        "size",
+        "encoding"
+      ]
+    },
+    {
+      "calculate": "datum.build / 1000",
+      "as": "build"
+    },
+    {
+      "calculate": "datum.render / 1000",
+      "as": "render"
+    },
+    {
+      "calculate": "datum.compile / 1000",
+      "as": "compile"
+    },
+    {
+      "calculate": "datum.build + datum.render + datum.compile",
+      "as": "total"
+    },
+    {
+      "calculate": "pow(datum.total / 0.1, 1 / datum.total)",
+      "as": "base"
+    },
+    {
+      "calculate": "0.1 * pow(datum.base, datum.build)",
+      "as": "build_top"
+    },
+    {
+      "calculate": "0.1 * pow(datum.base, datum.build + datum.render)",
+      "as": "render_top"
+    }
+  ],
+  "width": 600,
+  "height": 300,
+  "layer": [
+    {
+      "mark": {
+        "type": "rule",
+        "color": "#898781",
+        "strokeWidth": 1
+      },
+      "encoding": {
+        "y": {
+          "datum": 180,
+          "type": "quantitative",
+          "scale": {
+            "type": "log",
+            "domain": [
+              0.1,
+              400
+            ],
+            "nice": false
+          }
+        }
+      }
+    },
+    {
+      "transform": [
+        {
+          "filter": "datum.timeout === 0"
+        },
+        {
+          "fold": [
+            "build",
+            "render",
+            "compile"
+          ],
+          "as": [
+            "stage",
+            "seconds"
+          ]
+        },
+        {
+          "calculate": "{'build': 'Build the Hessian', 'render': 'Generate C', 'compile': 'Compile with Clang'}[datum.stage]",
+          "as": "stage_label"
+        },
+        {
+          "calculate": "datum.stage === 'build' ? 0.1 : datum.stage === 'render' ? datum.build_top : datum.render_top",
+          "as": "lo"
+        },
+        {
+          "calculate": "datum.stage === 'build' ? datum.build_top : datum.stage === 'render' ? datum.render_top : datum.total",
+          "as": "hi"
+        },
+        {
+          "calculate": "datum.seconds / datum.total",
+          "as": "share"
+        }
+      ],
+      "mark": {
+        "type": "bar",
+        "stroke": "#ffffff",
+        "strokeWidth": 0.75,
+        "cornerRadius": 0
+      },
+      "encoding": {
+        "x": {
+          "field": "size",
+          "type": "ordinal",
+          "title": "Horizon N",
+          "sort": "ascending",
+          "axis": {
+            "labelAngle": 0,
+            "ticks": false,
+            "domain": false
+          }
+        },
+        "xOffset": {
+          "field": "encoding",
+          "type": "nominal",
+          "sort": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX"
+          ],
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi SX",
+              "CasADi MX",
+              "CasADi MX with calls",
+              "CasADi mapped SX"
+            ],
+            "paddingInner": 0.12
+          }
+        },
+        "y": {
+          "field": "lo",
+          "type": "quantitative",
+          "title": "Seconds",
+          "scale": {
+            "type": "log",
+            "domain": [
+              0.1,
+              400
+            ],
+            "nice": false
+          },
+          "axis": {
+            "values": [
+              0.1,
+              1,
+              10,
+              100,
+              180
+            ],
+            "format": "~r",
+            "labelExpr": "datum.label + ' s'"
+          }
+        },
+        "y2": {
+          "field": "hi"
+        },
+        "color": {
+          "field": "encoding",
+          "title": null,
+          "sort": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX"
+          ],
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi SX",
+              "CasADi MX",
+              "CasADi MX with calls",
+              "CasADi mapped SX"
+            ],
+            "range": [
+              "#1baf7a",
+              "#eb6834",
+              "#2a78d6",
+              "#eda100",
+              "#e87ba4"
+            ]
+          },
+          "legend": {
+            "orient": "bottom",
+            "direction": "horizontal",
+            "columns": 3
+          }
+        },
+        "opacity": {
+          "field": "stage_label",
+          "title": "Steps, from faint to full color:",
+          "sort": [
+            "Build the Hessian",
+            "Generate C",
+            "Compile with Clang"
+          ],
+          "scale": {
+            "domain": [
+              "Build the Hessian",
+              "Generate C",
+              "Compile with Clang"
+            ],
+            "range": [
+              0.3,
+              0.6,
+              1
+            ],
+            "type": "ordinal"
+          },
+          "legend": {
+            "orient": "top",
+            "direction": "horizontal",
+            "columns": 3,
+            "symbolFillColor": "#52514e",
+            "symbolStrokeColor": "#52514e"
+          }
+        },
+        "tooltip": [
+          {
+            "field": "encoding",
+            "title": "Encoding"
+          },
+          {
+            "field": "size",
+            "title": "Horizon N"
+          },
+          {
+            "field": "stage_label",
+            "title": "Step"
+          },
+          {
+            "field": "seconds",
+            "title": "Seconds",
+            "format": ".3~r"
+          },
+          {
+            "field": "share",
+            "title": "Share of the total",
+            "format": ".0%"
+          },
+          {
+            "field": "total",
+            "title": "Total, s",
+            "format": ".3~r"
+          }
+        ]
+      }
+    },
+    {
+      "transform": [
+        {
+          "filter": "datum.timeout === 1"
+        },
+        {
+          "calculate": "'compile stopped at 180 s'",
+          "as": "outcome"
+        }
+      ],
+      "mark": {
+        "type": "point",
+        "shape": "triangle-up",
+        "filled": false,
+        "size": 60,
+        "strokeWidth": 2,
+        "opacity": 1
+      },
+      "encoding": {
+        "x": {
+          "field": "size",
+          "type": "ordinal",
+          "title": "Horizon N",
+          "sort": "ascending",
+          "axis": {
+            "labelAngle": 0,
+            "ticks": false,
+            "domain": false
+          }
+        },
+        "xOffset": {
+          "field": "encoding",
+          "type": "nominal",
+          "sort": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX"
+          ],
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi SX",
+              "CasADi MX",
+              "CasADi MX with calls",
+              "CasADi mapped SX"
+            ],
+            "paddingInner": 0.12
+          }
+        },
+        "y": {
+          "datum": 230,
+          "type": "quantitative",
+          "scale": {
+            "type": "log",
+            "domain": [
+              0.1,
+              400
+            ],
+            "nice": false
+          }
+        },
+        "color": {
+          "field": "encoding",
+          "sort": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX"
+          ],
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi SX",
+              "CasADi MX",
+              "CasADi MX with calls",
+              "CasADi mapped SX"
+            ],
+            "range": [
+              "#1baf7a",
+              "#eb6834",
+              "#2a78d6",
+              "#eda100",
+              "#e87ba4"
+            ]
+          }
+        },
+        "tooltip": [
+          {
+            "field": "encoding",
+            "title": "Encoding"
+          },
+          {
+            "field": "size",
+            "title": "Horizon N"
+          },
+          {
+            "field": "outcome",
+            "title": "Outcome"
+          }
+        ]
+      }
+    }
+  ]
+}

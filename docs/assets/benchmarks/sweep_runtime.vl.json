@@ -1,0 +1,196 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "runtime_ns": "number",
+        "nnz": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "datum.runtime_status === 'ok'"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.workload)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0"
+    },
+    {
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Chain of masses, M masses', 'Unbumpercars, C cars'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "mean",
+          "field": "runtime_ns",
+          "as": "runtime_ns"
+        },
+        {
+          "op": "max",
+          "field": "nnz",
+          "as": "nnz"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "size",
+        "encoding"
+      ]
+    },
+    {
+      "calculate": "datum.runtime_ns / 1000",
+      "as": "us"
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "type": "nominal",
+    "title": null,
+    "sort": {
+      "field": "order",
+      "op": "min"
+    }
+  },
+  "columns": 2,
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "spec": {
+    "width": 300,
+    "height": 190,
+    "encoding": {
+      "x": {
+        "field": "size",
+        "type": "quantitative",
+        "title": "Size",
+        "scale": {
+          "type": "log",
+          "nice": false
+        },
+        "axis": {
+          "format": "~g",
+          "grid": false,
+          "tickCount": 6
+        }
+      },
+      "y": {
+        "field": "us",
+        "type": "quantitative",
+        "title": "Hessian evaluation, µs",
+        "scale": {
+          "type": "log"
+        },
+        "axis": {
+          "format": ",~g",
+          "labelExpr": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6 ? datum.label : ''",
+          "gridOpacity": {
+            "condition": {
+              "test": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6",
+              "value": 1
+            },
+            "value": 0
+          }
+        }
+      },
+      "color": {
+        "field": "encoding",
+        "title": null,
+        "scale": {
+          "domain": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX",
+            "CasADi MX with GEMM"
+          ],
+          "range": [
+            "#1baf7a",
+            "#eb6834",
+            "#2a78d6",
+            "#eda100",
+            "#e87ba4",
+            "#4a3aa7"
+          ]
+        }
+      }
+    },
+    "layer": [
+      {
+        "mark": {
+          "type": "line",
+          "strokeWidth": 1.75
+        }
+      },
+      {
+        "mark": {
+          "type": "point",
+          "stroke": "#ffffff",
+          "strokeWidth": 1.25,
+          "size": 60,
+          "opacity": 1
+        },
+        "encoding": {
+          "shape": {
+            "field": "encoding",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi SX",
+                "CasADi MX",
+                "CasADi MX with calls",
+                "CasADi mapped SX",
+                "CasADi MX with GEMM"
+              ],
+              "range": [
+                "circle",
+                "square",
+                "triangle-up",
+                "diamond",
+                "triangle-down",
+                "cross"
+              ]
+            }
+          },
+          "tooltip": [
+            {
+              "field": "encoding",
+              "title": "Encoding"
+            },
+            {
+              "field": "size",
+              "title": "Size"
+            },
+            {
+              "field": "nnz",
+              "title": "Hessian nonzeros",
+              "format": ","
+            },
+            {
+              "field": "us",
+              "title": "Hessian evaluation, µs",
+              "format": ",.4~r"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

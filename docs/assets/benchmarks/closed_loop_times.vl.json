@@ -1,0 +1,857 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.steps.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "step": "number",
+        "solver_time_ms": "number",
+        "fe_time_ms": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.problem)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0"
+    },
+    {
+      "calculate": "['Race-car MPC', 'Neural-process MPC', 'Chain of masses', 'Unbumpercars'][datum.order] + ', ' + upper(datum.solver)",
+      "as": "controller"
+    },
+    {
+      "calculate": "{'race_cars': 50, 'npmpc': 20, 'chain': 200, 'unbumpercars': 100}[datum.problem]",
+      "as": "sampling_ms"
+    },
+    {
+      "calculate": "datum.controller + ', ' + datum.sampling_ms + ' ms sampling time'",
+      "as": "row"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "fold": [
+        "fe_time_ms",
+        "solver_time_ms"
+      ],
+      "as": [
+        "metric_field",
+        "ms"
+      ]
+    },
+    {
+      "calculate": "datum.metric_field === 'fe_time_ms' ? 'Function evaluation' : 'Whole solve'",
+      "as": "metric"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "row",
+      "type": "nominal",
+      "title": null,
+      "sort": [
+        "Race-car MPC, SQP, 50 ms sampling time",
+        "Race-car MPC, IPOPT, 50 ms sampling time",
+        "Neural-process MPC, SQP, 20 ms sampling time",
+        "Neural-process MPC, IPOPT, 20 ms sampling time",
+        "Chain of masses, SQP, 200 ms sampling time",
+        "Chain of masses, IPOPT, 200 ms sampling time",
+        "Unbumpercars, SQP, 100 ms sampling time",
+        "Unbumpercars, IPOPT, 100 ms sampling time"
+      ],
+      "header": {
+        "labelAngle": 0,
+        "labelOrient": "top",
+        "labelAnchor": "start",
+        "labelAlign": "left",
+        "labelPadding": 2,
+        "labelFontSize": 13
+      }
+    },
+    "column": {
+      "field": "metric",
+      "type": "nominal",
+      "title": null,
+      "sort": [
+        "Function evaluation",
+        "Whole solve"
+      ],
+      "header": {
+        "labelFontSize": 14,
+        "labelPadding": 8
+      }
+    }
+  },
+  "spacing": {
+    "row": 10,
+    "column": 36
+  },
+  "spec": {
+    "width": 300,
+    "height": {
+      "step": 12
+    },
+    "layer": [
+      {
+        "transform": [
+          {
+            "joinaggregate": [
+              {
+                "op": "max",
+                "field": "ms",
+                "as": "slowest"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "filter": "datum.metric === 'Whole solve' && datum.sampling_ms <= 3 * datum.slowest"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "max",
+                "field": "sampling_ms",
+                "as": "sampling_ms"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "calculate": "['Scaly', 'CasADi']",
+            "as": "slot"
+          },
+          {
+            "flatten": [
+              "slot"
+            ]
+          }
+        ],
+        "mark": {
+          "type": "tick",
+          "orient": "vertical",
+          "color": "#898781",
+          "thickness": 2.5,
+          "size": 16
+        },
+        "encoding": {
+          "x": {
+            "field": "sampling_ms",
+            "type": "quantitative",
+            "title": null,
+            "scale": {
+              "zero": true,
+              "nice": true
+            },
+            "axis": {
+              "tickCount": 4,
+              "format": "~r",
+              "labelExpr": "datum.label + ' ms'"
+            }
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "aggregate": [
+              {
+                "op": "min",
+                "field": "ms",
+                "as": "low"
+              },
+              {
+                "op": "q1",
+                "field": "ms",
+                "as": "q1"
+              },
+              {
+                "op": "median",
+                "field": "ms",
+                "as": "median"
+              },
+              {
+                "op": "q3",
+                "field": "ms",
+                "as": "q3"
+              },
+              {
+                "op": "max",
+                "field": "ms",
+                "as": "high"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric",
+              "provider"
+            ]
+          },
+          {
+            "calculate": "datum.provider",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "rule",
+          "strokeWidth": 1.5
+        },
+        "encoding": {
+          "x": {
+            "field": "low",
+            "type": "quantitative"
+          },
+          "x2": {
+            "field": "high"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          },
+          "color": {
+            "field": "provider",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi"
+              ],
+              "range": [
+                "#1baf7a",
+                "#e34948"
+              ]
+            },
+            "legend": null
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "aggregate": [
+              {
+                "op": "min",
+                "field": "ms",
+                "as": "low"
+              },
+              {
+                "op": "q1",
+                "field": "ms",
+                "as": "q1"
+              },
+              {
+                "op": "median",
+                "field": "ms",
+                "as": "median"
+              },
+              {
+                "op": "q3",
+                "field": "ms",
+                "as": "q3"
+              },
+              {
+                "op": "max",
+                "field": "ms",
+                "as": "high"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric",
+              "provider"
+            ]
+          },
+          {
+            "calculate": "datum.provider",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "bar",
+          "height": 10,
+          "cornerRadius": 2
+        },
+        "encoding": {
+          "x": {
+            "field": "q1",
+            "type": "quantitative"
+          },
+          "x2": {
+            "field": "q3"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          },
+          "color": {
+            "field": "provider",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi"
+              ],
+              "range": [
+                "#1baf7a",
+                "#e34948"
+              ]
+            },
+            "legend": null
+          },
+          "tooltip": [
+            {
+              "field": "provider",
+              "title": "Provider"
+            },
+            {
+              "field": "median",
+              "title": "Median, ms",
+              "format": ".3~r"
+            },
+            {
+              "field": "q1",
+              "title": "25th percentile, ms",
+              "format": ".3~r"
+            },
+            {
+              "field": "q3",
+              "title": "75th percentile, ms",
+              "format": ".3~r"
+            },
+            {
+              "field": "low",
+              "title": "Fastest step, ms",
+              "format": ".3~r"
+            },
+            {
+              "field": "high",
+              "title": "Slowest step, ms",
+              "format": ".3~r"
+            }
+          ]
+        }
+      },
+      {
+        "transform": [
+          {
+            "aggregate": [
+              {
+                "op": "min",
+                "field": "ms",
+                "as": "low"
+              },
+              {
+                "op": "q1",
+                "field": "ms",
+                "as": "q1"
+              },
+              {
+                "op": "median",
+                "field": "ms",
+                "as": "median"
+              },
+              {
+                "op": "q3",
+                "field": "ms",
+                "as": "q3"
+              },
+              {
+                "op": "max",
+                "field": "ms",
+                "as": "high"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric",
+              "provider"
+            ]
+          },
+          {
+            "calculate": "datum.provider",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "tick",
+          "color": "#0b0b0b",
+          "thickness": 2,
+          "size": 12
+        },
+        "encoding": {
+          "x": {
+            "field": "median",
+            "type": "quantitative"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "pivot": "oracle",
+            "value": "ms",
+            "groupby": [
+              "row",
+              "metric",
+              "step"
+            ]
+          },
+          {
+            "filter": "isValid(datum.scaly) && isValid(datum.casadi) && datum.scaly > 0"
+          },
+          {
+            "calculate": "datum.casadi / datum.scaly",
+            "as": "ratio"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "median",
+                "field": "scaly",
+                "as": "scaly"
+              },
+              {
+                "op": "median",
+                "field": "casadi",
+                "as": "casadi"
+              },
+              {
+                "op": "median",
+                "field": "ratio",
+                "as": "speedup"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "calculate": "min(datum.scaly, datum.casadi)",
+            "as": "left"
+          },
+          {
+            "calculate": "max(datum.scaly, datum.casadi)",
+            "as": "right"
+          },
+          {
+            "calculate": "format(datum.speedup, '.2f') + '×'",
+            "as": "label"
+          },
+          {
+            "calculate": "'speedup'",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "rule",
+          "color": "#0b0b0b",
+          "strokeWidth": 1.25
+        },
+        "encoding": {
+          "x": {
+            "field": "left",
+            "type": "quantitative"
+          },
+          "x2": {
+            "field": "right"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "pivot": "oracle",
+            "value": "ms",
+            "groupby": [
+              "row",
+              "metric",
+              "step"
+            ]
+          },
+          {
+            "filter": "isValid(datum.scaly) && isValid(datum.casadi) && datum.scaly > 0"
+          },
+          {
+            "calculate": "datum.casadi / datum.scaly",
+            "as": "ratio"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "median",
+                "field": "scaly",
+                "as": "scaly"
+              },
+              {
+                "op": "median",
+                "field": "casadi",
+                "as": "casadi"
+              },
+              {
+                "op": "median",
+                "field": "ratio",
+                "as": "speedup"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "calculate": "min(datum.scaly, datum.casadi)",
+            "as": "left"
+          },
+          {
+            "calculate": "max(datum.scaly, datum.casadi)",
+            "as": "right"
+          },
+          {
+            "calculate": "format(datum.speedup, '.2f') + '×'",
+            "as": "label"
+          },
+          {
+            "calculate": "'speedup'",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "point",
+          "shape": "triangle-left",
+          "size": 28,
+          "filled": true,
+          "color": "#0b0b0b",
+          "opacity": 1
+        },
+        "encoding": {
+          "x": {
+            "field": "left",
+            "type": "quantitative"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "pivot": "oracle",
+            "value": "ms",
+            "groupby": [
+              "row",
+              "metric",
+              "step"
+            ]
+          },
+          {
+            "filter": "isValid(datum.scaly) && isValid(datum.casadi) && datum.scaly > 0"
+          },
+          {
+            "calculate": "datum.casadi / datum.scaly",
+            "as": "ratio"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "median",
+                "field": "scaly",
+                "as": "scaly"
+              },
+              {
+                "op": "median",
+                "field": "casadi",
+                "as": "casadi"
+              },
+              {
+                "op": "median",
+                "field": "ratio",
+                "as": "speedup"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "calculate": "min(datum.scaly, datum.casadi)",
+            "as": "left"
+          },
+          {
+            "calculate": "max(datum.scaly, datum.casadi)",
+            "as": "right"
+          },
+          {
+            "calculate": "format(datum.speedup, '.2f') + '×'",
+            "as": "label"
+          },
+          {
+            "calculate": "'speedup'",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "point",
+          "shape": "triangle-right",
+          "size": 28,
+          "filled": true,
+          "color": "#0b0b0b",
+          "opacity": 1
+        },
+        "encoding": {
+          "x": {
+            "field": "right",
+            "type": "quantitative"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          },
+          "tooltip": [
+            {
+              "field": "label",
+              "title": "Median per-step speedup"
+            },
+            {
+              "field": "scaly",
+              "title": "Scaly median, ms",
+              "format": ".3~r"
+            },
+            {
+              "field": "casadi",
+              "title": "CasADi median, ms",
+              "format": ".3~r"
+            }
+          ]
+        }
+      },
+      {
+        "transform": [
+          {
+            "pivot": "oracle",
+            "value": "ms",
+            "groupby": [
+              "row",
+              "metric",
+              "step"
+            ]
+          },
+          {
+            "filter": "isValid(datum.scaly) && isValid(datum.casadi) && datum.scaly > 0"
+          },
+          {
+            "calculate": "datum.casadi / datum.scaly",
+            "as": "ratio"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "median",
+                "field": "scaly",
+                "as": "scaly"
+              },
+              {
+                "op": "median",
+                "field": "casadi",
+                "as": "casadi"
+              },
+              {
+                "op": "median",
+                "field": "ratio",
+                "as": "speedup"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "calculate": "min(datum.scaly, datum.casadi)",
+            "as": "left"
+          },
+          {
+            "calculate": "max(datum.scaly, datum.casadi)",
+            "as": "right"
+          },
+          {
+            "calculate": "format(datum.speedup, '.2f') + '×'",
+            "as": "label"
+          },
+          {
+            "calculate": "'speedup'",
+            "as": "slot"
+          }
+        ],
+        "mark": {
+          "type": "text",
+          "align": "left",
+          "baseline": "middle",
+          "dx": 8,
+          "fontSize": 12,
+          "color": "#0b0b0b"
+        },
+        "encoding": {
+          "x": {
+            "field": "right",
+            "type": "quantitative"
+          },
+          "y": {
+            "field": "slot",
+            "type": "nominal",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "speedup",
+                "CasADi"
+              ]
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 6,
+              "labelExpr": "datum.value === 'speedup' ? '' : datum.value"
+            }
+          },
+          "text": {
+            "field": "label"
+          }
+        }
+      }
+    ]
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent"
+    },
+    "axis": {
+      "x": "independent"
+    }
+  }
+}
