@@ -1209,6 +1209,9 @@ tests/passes/test_widen_ranges.py::test_invalid_lane_option_rejected
 tests/passes/test_widen_ranges.py::test_lane_cap_does_not_exceed_rounded_trip_count[2-2]
 tests/passes/test_widen_ranges.py::test_lane_cap_does_not_exceed_rounded_trip_count[3-4]
 tests/passes/test_widen_ranges.py::test_lane_cap_does_not_exceed_rounded_trip_count[5-8]
+tests/passes/test_widen_ranges.py::test_lane_layout_of_a_table_indexed_read_follows_its_values[table0-contiguous-1]
+tests/passes/test_widen_ranges.py::test_lane_layout_of_a_table_indexed_read_follows_its_values[table1-strided-3]
+tests/passes/test_widen_ranges.py::test_lane_layout_of_a_table_indexed_read_follows_its_values[table2-gather-None]
 tests/passes/test_widen_ranges.py::test_local_alias_of_external_buffer_stays_scalar
 tests/passes/test_widen_ranges.py::test_overlapping_contiguous_stores_are_not_independent
 tests/passes/test_widen_ranges.py::test_peak_liveness_uses_last_use_not_total_definitions
