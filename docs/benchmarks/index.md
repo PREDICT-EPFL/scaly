@@ -33,7 +33,7 @@ line ends where its implementation reached the 180-second compile limit.
 <div class="vega-chart" data-spec="../assets/benchmarks/sweep_runtime.vl.json"></div>
 
 Scaly is faster at every size but one, and the gap grows with the problem. On the race car it goes
-from 1.1× at `N = 1` to between 5.6 and 6.7× from `N = 40` on. On neural-process MPC, Scaly stays
+from 2.3× at `N = 5` to between 5.8 and 6.7× from `N = 50` on. On neural-process MPC, Scaly stays
 1.6 to 2.3× ahead of CasADi's MX implementation up to `N = 50`. At the two longest horizons MX no
 longer compiles, and the gap to the slower implementations that still do reaches 4.9 and 17×.
 Unbumpercars goes from 4.2× at `C = 2` to 17× at `C = 8`, and at `C = 16` and `C = 32` only Scaly
@@ -45,9 +45,9 @@ The second figure shows the size of the object file each Hessian compiles to.
 
 <div class="vega-chart" data-spec="../assets/benchmarks/sweep_size.vl.json"></div>
 
-Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 500`, while CasADi's SX
+Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 400`, while CasADi's SX
 one grows with the horizon to 4.5 MB. Scaly's is smaller than every CasADi implementation at every
-size except the race car at `N = 1`, where SX is 1.5 kB smaller.
+size.
 
 The [scalability page](scalability.md) adds which implementations compile at each size, the time to
 build each one and what its object file contains.

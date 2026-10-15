@@ -260,7 +260,7 @@ def check_casadi_ipopt_is_compiled() -> None:
 
 
 def check_harvested_sqp_globalizations() -> None:
-  """Both oracle providers solve the harvested hard-QP race failure with both globalizations."""
+  """Both oracle providers solve the harvested N=40 hard-QP race failure with both globalizations."""
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
@@ -271,7 +271,7 @@ def check_harvested_sqp_globalizations() -> None:
   for oracle in ("scaly", "casadi"):
     cache_key = None
     for name, options, expected_iter in globalizations:
-      solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
+      solver = build_solver(EpisodeConfig(horizon=40), "sqp", oracle, sqp_options=options)
       out = solve_problem(solver, inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
       compiled = get_compiled(solver.function)
       if cache_key is None:
@@ -381,7 +381,7 @@ def check_sqp_matches_ipopt() -> None:
   """SQP and IPOPT drive the same episode to per-step solutions that differ only mildly.
 
   The N=3 smoke point checks the independent solver trajectories without conflating the
-  canonical column's fixed N=40 nominal seed. Measured healthy-step differences are control
+  canonical column's fixed N=50 nominal seed. Measured healthy-step differences are control
   <= 7.5e-7, plan <= 5.5e-8, objective <= 9.4e-5 absolute, and violation <= 1.7e-10; the
   tolerances retain the wider envelope established for nonlinear solver agreement. On
   divergence the message carries the first diverging step with both solvers' status and

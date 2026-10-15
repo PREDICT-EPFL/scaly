@@ -15,14 +15,14 @@
   },
   "transform": [
     {
-      "calculate": "indexof(['race_cars:40', 'npmpc:12', 'unbumpercars:8', 'chain:5'], datum.workload + ':' + datum.size)",
+      "calculate": "indexof(['race_cars:50', 'npmpc:12', 'unbumpercars:8', 'chain:5'], datum.workload + ':' + datum.size)",
       "as": "order"
     },
     {
       "filter": "datum.order >= 0 && isValid(datum.source_bytes)"
     },
     {
-      "calculate": "['Race-car MPC, N = 40', 'Neural-process MPC, N = 12', 'Unbumpercars, C = 8', 'Chain of masses, M = 5'][datum.order]",
+      "calculate": "['Race-car MPC, N = 50', 'Neural-process MPC, N = 12', 'Unbumpercars, C = 8', 'Chain of masses, M = 5'][datum.order]",
       "as": "problem"
     },
     {
@@ -256,7 +256,7 @@
           "type": "nominal",
           "title": null,
           "sort": [
-            "Race-car MPC, N = 40",
+            "Race-car MPC, N = 50",
             "Neural-process MPC, N = 12",
             "Unbumpercars, C = 8",
             "Chain of masses, M = 5"
@@ -461,7 +461,7 @@
           "type": "nominal",
           "title": null,
           "sort": [
-            "Race-car MPC, N = 40",
+            "Race-car MPC, N = 50",
             "Neural-process MPC, N = 12",
             "Unbumpercars, C = 8",
             "Chain of masses, M = 5"

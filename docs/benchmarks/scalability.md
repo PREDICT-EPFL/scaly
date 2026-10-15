@@ -45,7 +45,7 @@ is a size where Scaly is faster and a red one a size where CasADi is. A gray cel
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_ratio.vl.json"></div>
 
-Of the 93 CasADi Hessians in the study, 64 compiled and were timed, 11 reached the limit and 18 were
+Of the 85 CasADi Hessians in the study, 56 compiled and were timed, 11 reached the limit and 18 were
 skipped after it. Only one CasADi Hessian is faster than Scaly's, SX on the chain at `M = 5`. No
 implementation is best everywhere. SX is the fastest on the race car and the chain, and MX on the
 two problems with a neural network. MX with calls and mapped SX are the slowest at run time, up to
@@ -69,8 +69,8 @@ stopped at the limit.
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build.vl.json"></div>
 
 Scaly keeps the repeated stage of the race car as a loop over one compiled body, so its C source
-stays at 78 kB from `N = 5` to `N = 500`, and it takes 0.8 seconds at `N = 1` and 2.1 at
-`N = 500`. CasADi's SX implementation writes 10 MB of C at `N = 500`, and takes 56 seconds. On
+stays at 78 kB from `N = 5` to `N = 400`, and it takes 1.0 seconds at `N = 5` and 2.1 at
+`N = 400`. CasADi's SX implementation writes 10 MB of C at `N = 400`, and takes 56 seconds. On
 neural-process MPC and unbumpercars, Scaly takes 2 to 7 seconds at every size. The chain is the
 exception. Scaly's time grows from 4 seconds at `M = 3` to 58 at `M = 9`, close to the mapped SX
 implementation, which is faster at `M = 5`.
@@ -82,7 +82,7 @@ its true total follows the ellipsis.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build_stages.vl.json"></div>
 
-CasADi generates C in under a second and spends 77 to 99% of its time in Clang. Scaly spends 23
+CasADi generates C in under a second and spends 79 to 99% of its time in Clang. Scaly spends 23
 to 73% of its time generating C, since that step includes its optimization passes, and usually
 hands Clang a smaller file. On the chain, generating C takes 12 of Scaly's 17 seconds.
 
@@ -95,9 +95,9 @@ seconds.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build_race_cars.vl.json"></div>
 
-As the horizon grows, CasADi's time moves into Clang. The SX implementation spends 26% of its time
-compiling at `N = 1` and 89% at `N = 500`. Scaly's time grows in generating C, which takes 59% of
-its 0.8 seconds at `N = 1` and 71% of its 2.1 seconds at `N = 500`, while compiling stays at about
+As the horizon grows, CasADi's time moves into Clang. The SX implementation spends 49% of its time
+compiling at `N = 5` and 89% at `N = 400`. Scaly's time grows in generating C, which takes 55% of
+its 1.0 seconds at `N = 5` and 71% of its 2.1 seconds at `N = 400`, while compiling stays at about
 a third of the total or less.
 
 ## Code size
@@ -107,10 +107,10 @@ constant tables and static data, without the benchmark wrapper.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_size.vl.json"></div>
 
-Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 500`, while CasADi's SX
+Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 400`, while CasADi's SX
 one grows with the horizon to 4.5 MB. Scaly's is smaller than every CasADi implementation at every
-size except the race car at `N = 1`, where SX is 1.5 kB smaller. On neural-process MPC, Scaly's
-grows from 83 kB to 695 kB, and almost all of that growth is constant tables.
+size. On neural-process MPC, Scaly's grows from 83 kB to 695 kB, and almost all of that growth is
+constant tables.
 
 The next figure compares the generated C file and the object file at each problem's closed-loop
 size, and splits each into constant tables, such as sparsity patterns and numeric constants, and

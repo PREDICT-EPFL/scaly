@@ -1,6 +1,6 @@
 """Model-in-the-loop race-car NMPC over Scaly's generated IPOPT path or CasADi's.
 
-The canonical episode drives one lap of ``fsds_competition_1`` with a 40-step
+The canonical episode drives one lap of ``fsds_competition_1`` with a 50-step
 horizon and the 50 ms sample time from :class:`RaceCarParams`, following the
 center-line reference produced by :class:`MotionPlanner`.
 ``run_episode(smoke=True)`` uses a 3-step horizon and 2 plant steps so
@@ -52,7 +52,7 @@ from benchmarks.problems.race_cars.tracks import Track, load_track
 @dataclass(frozen=True)
 class EpisodeConfig:
   track: str = "fsds_competition_1"
-  horizon: int = 40
+  horizon: int = 50
   max_steps: int = 1500
   params: RaceCarParams = RaceCarParams()
   v_ref: float = 5.0
@@ -305,7 +305,7 @@ def _canonical_nominal(config: EpisodeConfig) -> np.ndarray | None:
   comparable = EpisodeConfig(max_steps=config.max_steps, ipopt_tol=config.ipopt_tol, ipopt_max_iter=config.ipopt_max_iter)
   if config != comparable:
     return None
-  encoded = (Path(__file__).parent / "data" / "nominal_N40.npz.b64").read_text()
+  encoded = (Path(__file__).parent / "data" / f"nominal_N{config.horizon}.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     nominal = np.asarray(stored["z"], dtype=np.float64)
   expected = (NZ * (config.horizon + 1),)

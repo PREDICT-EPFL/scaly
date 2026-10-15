@@ -117,7 +117,7 @@ generated C application binary interface. Only the oracle provider changes. CasA
 generated oracle and supplies the same upper Hessian triangle as Scaly.
 
 Each closed loop uses the fastest validated CasADi Hessian encoding at its canonical size in the
-sweep: SX for race cars N=40 and chain M=5, MX for neural-process MPC N=12 and unbumpercars C=8.
+sweep: SX for race cars N=50 and chain M=5, MX for neural-process MPC N=12 and unbumpercars C=8.
 Every oracle uses that encoding, not only the Hessian. `check_fastest_casadi_encoding` checks the
 controller construction against the published sweep. The October 14 sweep confirms those choices.
 

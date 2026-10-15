@@ -133,7 +133,7 @@ boost state, and CPU affinity. Run boost-on and boost-off comparisons into separ
 directories with the same grid and seed. Keep compilation and other benchmark jobs out of timed
 runs. The runner validates machine settings but does not change them.
 
-Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/repeat_<n>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/repeat_<n>/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
+Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/repeat_<n>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/repeat_<n>/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=50, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples. A harvested file left from an earlier canonical size no longer matches its cell and fails it, so rerun that closed loop or delete its directory after a canonical size changes.
 
 Synthetic unbumpercars kernel inputs use seeded states inside the arena without rejecting
 collisions. Large car counts therefore remain measurable even when collision-free closed-loop
@@ -305,13 +305,13 @@ the same warm start through l1/watchdog-five;
 both oracle providers use the identical two-solver policy. This completes all
 200 canonical solves without braking fallback or collisions.
 
-The canonical N=40 race episode starts both SQP oracle columns from the same
-problem-owned nominal primal in `problems/race_cars/data/nominal_N40.npz.b64`.
+The canonical N=50 race episode starts both SQP oracle columns from the same
+problem-owned nominal primal in `problems/race_cars/data/nominal_N50.npz.b64`.
 It is the deterministic IPOPT solution of the canonical initial NLP and is used
 only as the first NMPC guess; every online call, including that first call, is
 solved and timed by `scaly-sqp`, and subsequent calls use the shifted SQP
 primal/dual warm start. The independent SQP-versus-IPOPT smoke gate does not use
-this N=40 nominal.
+this N=50 nominal.
 
 Each run prints the exact artifact directory. It contains `episode.mcap`,
 `rollout.npz`, configuration/summary/provenance JSON, and
@@ -399,7 +399,7 @@ Canonical operating points are deterministic and intentionally modest:
 | problem | canonical point | scene |
 |---|---|---|
 | chain of masses | `M=5`, controller `N=12`, 90 plant steps at 0.2 s (long enough to settle) | 3D chain, end-mass control arrow and trail, open-loop plan, end-mass reference marker |
-| race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m at 0.05 s), IPOPT and SQP with two oracle providers | track, cones, planar vehicle, reference and predicted horizons |
+| race cars | controller `N=50`, one lap of `fsds_competition_1` (340 m at 0.05 s), IPOPT and SQP with two oracle providers | track, cones, planar vehicle, reference and predicted horizons |
 | unbumpercars HCBF | 8 cars, 200 plant steps at 0.1 s, seed 42, IPOPT and SQP with two oracle providers | planar cars with body and keep-out rings |
 | neural process MPC | controller `N=12`, 100 plant steps at 0.02 s from hanging, IPOPT and SQP with two oracle providers | 3D Furuta pendulum on a `scene → arm → pendulum` transform chain, tip trail, predicted tip path, arm-angle bound |
 

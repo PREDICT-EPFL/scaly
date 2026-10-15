@@ -29,8 +29,8 @@ from benchmarks.problems import chain, npmpc, race_cars
 DEFAULT_SIZES = {
   "chain": [3, 5, 9, 17, 33, 65],
   "chain_jac": [3, 5, 9, 17, 33, 65],
-  "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
-  "race_cars_jac": [1, 5, 10, 25, 40, 50, 100, 200, 500],
+  "race_cars": [5, 10, 25, 50, 100, 200, 400],
+  "race_cars_jac": [5, 10, 25, 50, 100, 200, 400],
   "unbumpercars": [2, 4, 8],
   "npmpc": [6, 12, 25, 50, 100, 200],
   "npmpc_jac": [6, 12, 25, 50, 100, 200],
@@ -728,8 +728,8 @@ def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
     ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+scaly",
     ("chain_jac", 5): RESULTS / "closed-loop" / "chain" / "ipopt+scaly",
-    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
-    ("race_cars_jac", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
+    ("race_cars", 50): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
+    ("race_cars_jac", 50): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
     ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+scaly",
     ("npmpc", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+scaly",
     ("npmpc_jac", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+scaly",
