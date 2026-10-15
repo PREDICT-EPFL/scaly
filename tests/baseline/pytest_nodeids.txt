@@ -360,10 +360,12 @@ tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[inpu
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[input-float32]
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[input-int32]
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[input-int64]
+tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[input-uint8]
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[output-bool]
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[output-float32]
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[output-int32]
 tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[output-int64]
+tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[output-uint8]
 tests/codegen/test_jit.py::test_math_library_does_not_use_solver_namespace
 tests/codegen/test_jit.py::test_native_compiler_probe_has_jit_diagnostic
 tests/codegen/test_jit.py::test_native_recipe_render_policies_separate_cache_entries
@@ -692,6 +694,8 @@ tests/function/test_tree.py::test_lagrangian_hessians_accept_constant_output_lea
 tests/function/test_tree.py::test_leaf_shapes_and_group_widths
 tests/function/test_tree.py::test_seeded_derivatives_accept_nondifferentiable_leaves
 tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
+tests/integration/test_overlapping_stage_hessian.py::test_overlapping_stage_hessian_matches_numpy_through_packed_masks[30]
+tests/integration/test_overlapping_stage_hessian.py::test_overlapping_stage_hessian_matches_numpy_through_packed_masks[8]
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[1]
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[2]
 tests/integration/test_stage_transcription.py::test_dense_jacobian_matches_casadi[1]
@@ -758,6 +762,7 @@ tests/ir/test_match.py::test_revisit_rejects_a_replacement_that_contains_the_rep
 tests/ir/test_match.py::test_revisit_walks_into_replacements_in_the_program_dialect
 tests/ir/test_match.py::test_shared_subgraph_is_rewritten_once_and_stays_shared
 tests/ir/test_program.py::test_a_constant_table_is_copied_all_the_way_down
+tests/ir/test_program.py::test_bit_select_builds_verifies_and_prints
 tests/ir/test_program.py::test_buffer_address_space_validated
 tests/ir/test_program.py::test_buffer_dtype_and_device_recorded
 tests/ir/test_program.py::test_elementwise_proc_verifies_and_prints
@@ -798,6 +803,7 @@ tests/ir/test_types.py::test_dtype_registry_and_string_compat
 tests/ir/test_types.py::test_float32_construction_keeps_dtype_metadata
 tests/ir/test_types.py::test_function_rejects_a_dtype_the_host_cannot_lower
 tests/ir/test_types.py::test_type_shapes_reject_negative_dimensions_and_mismatched_sparsity
+tests/ir/test_types.py::test_unsigned_constants_fold_within_their_own_range
 tests/ir/test_verifier.py::test_binary_helper_round_trip_verifies
 tests/ir/test_verifier.py::test_binary_shape_mismatch_caught
 tests/ir/test_verifier.py::test_call_arg_shape_mismatch_caught
@@ -1106,6 +1112,20 @@ tests/passes/test_hoist_reciprocals.py::test_reassignment_anywhere_in_loop_block
 tests/passes/test_hoist_reciprocals.py::test_shared_reciprocal_precedes_loop
 tests/passes/test_hoist_reciprocals.py::test_transitive_definitions_and_index_offsets_are_resolved
 tests/passes/test_hoist_reciprocals.py::test_transitive_loop_varying_definition_is_not_invariant
+tests/passes/test_pack_masks.py::test_ineligible_tables_and_loops_are_left_alone[index_not_periodic]
+tests/passes/test_pack_masks.py::test_ineligible_tables_and_loops_are_left_alone[not_zero_one]
+tests/passes/test_pack_masks.py::test_ineligible_tables_and_loops_are_left_alone[read_elsewhere]
+tests/passes/test_pack_masks.py::test_masks_become_bytes_and_the_loop_splits_into_directions_and_lane_blocks
+tests/passes/test_pack_masks.py::test_masks_with_the_same_lane_bits_share_one_bit_vector
+tests/passes/test_pack_masks.py::test_scalar_rendering_matches_numpy
+tests/passes/test_pack_masks.py::test_small_tables_are_packed_and_match_numpy[1-no_tail]
+tests/passes/test_pack_masks.py::test_small_tables_are_packed_and_match_numpy[1-tail_only]
+tests/passes/test_pack_masks.py::test_small_tables_are_packed_and_match_numpy[4-no_tail]
+tests/passes/test_pack_masks.py::test_small_tables_are_packed_and_match_numpy[4-tail_only]
+tests/passes/test_pack_masks.py::test_split_loop_matches_numpy_at_every_lane_width[1]
+tests/passes/test_pack_masks.py::test_split_loop_matches_numpy_at_every_lane_width[2]
+tests/passes/test_pack_masks.py::test_split_loop_matches_numpy_at_every_lane_width[4]
+tests/passes/test_pack_masks.py::test_split_loop_matches_numpy_at_every_lane_width[8]
 tests/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes
 tests/passes/test_program.py::test_call_output_does_not_reuse_slot_that_produced_input
 tests/passes/test_program.py::test_contiguous_slice_aliases_source
@@ -1404,6 +1424,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.progr
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.fuse_ranges]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.hoist_invariant]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.hoist_reciprocals]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.pack_masks]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.pack_workspace]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.prepare_scalar]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.scalarize]
