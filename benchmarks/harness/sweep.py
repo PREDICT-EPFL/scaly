@@ -9,7 +9,6 @@ import statistics
 import os
 from dataclasses import replace
 from pathlib import Path
-import re
 import shutil
 import signal
 import time
@@ -22,7 +21,7 @@ from scaly.codegen.abi import c_ident
 from scaly.codegen.aot import render_c_module
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import walk_program, ProgramNode, ProgramOp
-from benchmarks.harness import ROOT, RESULTS, gbench, vector_libm
+from benchmarks.harness import ROOT, RESULTS, constant_tables, gbench, object_bytes, object_constant_symbols, vector_libm
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write, require_headline_settings
 from benchmarks.problems import chain, npmpc, race_cars
@@ -30,8 +29,8 @@ from benchmarks.problems import chain, npmpc, race_cars
 DEFAULT_SIZES = {
   "chain": [3, 5, 9, 17, 33, 65],
   "chain_jac": [3, 5, 9, 17, 33, 65],
-  "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
-  "race_cars_jac": [1, 5, 10, 25, 40, 50, 100, 200, 500],
+  "race_cars": [5, 10, 25, 50, 100, 200, 400],
+  "race_cars_jac": [5, 10, 25, 50, 100, 200, 400],
   "unbumpercars": [2, 4, 8],
   "npmpc": [6, 12, 25, 50, 100, 200],
   "npmpc_jac": [6, 12, 25, 50, 100, 200],
@@ -41,7 +40,7 @@ DEFAULT_SIZES = {
 STAGE_BACKENDS = ("scaly", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
 # The gemm encodings batch every repetition's dense network layer into one matrix-matrix product,
 # so they exist only for the two problems with a network in the stage.
-GEMM_BACKENDS = ("casadi_mx_gemm", "casadi_mx_gemm_classic", "casadi_mx_gemm_blasfeo")
+GEMM_BACKENDS = ("casadi_mx_gemm",)
 BACKENDS = (*STAGE_BACKENDS, *GEMM_BACKENDS)
 NPMPC_WORKLOADS = ("npmpc", "npmpc_jac", "npmpc_decoder", "npmpc_decoder_jac")
 DEFAULT_BACKENDS = {
@@ -81,9 +80,9 @@ FIELDS = [
   "layout",
   "codegen_ms",
   "source_bytes",
-  "artifact_bytes",
+  "source_constant_bytes",
   "executable_bytes",
-  "static_metadata_bytes",
+  "executable_constant_bytes",
   "source_lines",
   "workspace",
   "integer_workspace",
@@ -106,7 +105,6 @@ FIELDS = [
   "render_ms",
 ]
 
-_STATIC_CONST = re.compile(rb"(?ms)^[ \t]*static const\b.*?;\n")
 _ARITHMETIC_OPS = frozenset(
   {
     ProgramOp.ADD,
@@ -164,17 +162,6 @@ def row(**values) -> dict[str, object]:
   out: dict[str, object] = {field: "" for field in FIELDS}
   out.update({"size": 0, "compile_status": "", "runtime_status": "", **values})
   return out
-
-
-def _artifact_sizes(source: str, header: str) -> tuple[int, int, int]:
-  """Return total artifact, executable source, and static metadata bytes.
-
-  The executable part is the translation unit with ``static const`` declarations removed. The
-  metadata part is those declarations plus the public header, which contains Scaly's sparse tables.
-  """
-  source_bytes, header_bytes = source.encode(), header.encode()
-  static_source = sum(len(match.group()) for match in _STATIC_CONST.finditer(source_bytes))
-  return len(source_bytes) + len(header_bytes), len(source_bytes) - static_source, static_source + len(header_bytes)
 
 
 def _static_trip_count(rng: ProgramNode) -> int | None:
@@ -324,7 +311,6 @@ def _module_info(
   **extra,
 ) -> dict:
   source_path = Path(module.source_name)
-  artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(module.source, module.header)
   dispatch_trip_count, dispatch_workspace, dispatch_arithmetic = _dispatch_metrics(module.fun, module.program)
   return {
     "name": name,
@@ -341,9 +327,6 @@ def _module_info(
     "w_size": extra.pop("w_size"),
     "iw_size": extra.pop("iw_size", 0),
     "source_bytes": len(module.source.encode()),
-    "artifact_bytes": artifact_bytes,
-    "executable_bytes": executable_bytes,
-    "static_metadata_bytes": static_metadata_bytes,
     "source_lines": module.source.count("\n") + 1,
     "arg_size": len(module.fun.inputs),
     "res_size": len(module.fun.outputs),
@@ -618,13 +601,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
   repeated = kind in {"call_mx", "map_sx"}
   mapped = kind == "map_sx"
   gemm = backend in GEMM_BACKENDS
-  mtimes = (kind.removeprefix("mx_gemm").removeprefix("_") or None) if gemm else None
   sym_t = ca.SX if kind in {"sx", "map_sx"} else ca.MX
-  label = {"sx": "Sx", "mx": "Mx", "call_mx": "CallMx", "map_sx": "MapSx"}.get(kind, "MxGemm" + (mtimes or "").capitalize())
-  extra_libs: list[str] = []
-  if mtimes in ("classic", "blasfeo"):
-    casadi_dir = Path(ca.__file__).parent
-    extra_libs = [str(casadi_dir / ("libcasadi-tp-openblas.so.0" if mtimes == "classic" else "libblasfeo.so.0")), f"-Wl,-rpath,{casadi_dir}"]
+  label = {"sx": "Sx", "mx": "Mx", "call_mx": "CallMx", "map_sx": "MapSx"}.get(kind, "MxGemm")
   stem = {
     "chain": "chain_lag",
     "chain_jac": "chain_eq",
@@ -665,7 +643,7 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
     pieces = (
       _npmpc_repeated_pieces(horizon, decoder, sym_t, mapped=mapped)
       if repeated
-      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, batched=gemm, mtimes=mtimes)
+      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, batched=gemm)
     )
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
     fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel, expand=expand)
@@ -681,7 +659,6 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
       _build_solver=False,
       _sym_t=sym_t,
       _mlp="batched" if gemm else "percar",
-      _mtimes=mtimes,
     )
     fn = _casadi_descriptor_kernel(
       ca,
@@ -709,8 +686,6 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
     os.chdir(cwd)
   render_ms = (time.perf_counter() - started) * 1000
   source = (out_dir / f"{name}.c").read_text()
-  header = (out_dir / f"{name}.h").read_text()
-  artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(source, header)
   details = _casadi_output_metadata(fn, kernel)
   return {
     "name": name,
@@ -722,9 +697,6 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
     "w_size": fn.sz_w(),
     "iw_size": fn.sz_iw(),
     "source_bytes": len(source.encode()),
-    "artifact_bytes": artifact_bytes,
-    "executable_bytes": executable_bytes,
-    "static_metadata_bytes": static_metadata_bytes,
     "source_lines": source.count("\n") + 1,
     "dispatch_trip_count": "",
     "dispatch_workspace": "",
@@ -736,7 +708,6 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
     "render_ms": render_ms,
     "benchmark": benchmark,
     "callable": fn,
-    "extra_libs": extra_libs,
     **details,
   }
 
@@ -757,8 +728,8 @@ def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
     ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+scaly",
     ("chain_jac", 5): RESULTS / "closed-loop" / "chain" / "ipopt+scaly",
-    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
-    ("race_cars_jac", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
+    ("race_cars", 50): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
+    ("race_cars_jac", 50): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
     ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+scaly",
     ("npmpc", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+scaly",
     ("npmpc_jac", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+scaly",
@@ -911,20 +882,13 @@ def _samples(
   # CasADi's nlpsol oracle names are the ABI: x, p, lam_f, lam_g. Scaly keeps its own named
   # parameter inputs, so the x/z alias is resolved only at this boundary.
   sample_values = {name: sample_value(name) for name, _ in info["inputs"]}
-  args = list(sample_values.values())
-  kernel = info["callable"]
-  # CasADi takes flat positional leaves; an scaly Function takes its declared tree, so rebuild it.
-  result = kernel(*args) if info["backend"].startswith("casadi") else kernel(*kernel.input_tree.unflatten(tuple(args)))
-  if info["backend"].startswith("casadi"):
-    outputs = result if isinstance(result, (tuple, list)) else (result,)
-    selected = outputs[int(info["output_index"])]
-    compact = np.asarray(selected.nonzeros(), dtype=np.float64).reshape(-1)
-  else:
-    compact = np.asarray(result, dtype=np.float64).reshape(-1)
+  # The benchmark binary compares the timed kernel's values with the reference. Before compiling,
+  # check only the declared pattern against the reference, which needs no kernel evaluation.
+  rows, cols = np.asarray(info["rows"], dtype=np.int64), np.asarray(info["cols"], dtype=np.int64)
   check_dense_reference(
-    compact,
-    info["rows"],
-    info["cols"],
+    np.asarray(expected, dtype=np.float64).reshape(info["n_rows"], info["n_cols"])[rows, cols],
+    rows,
+    cols,
     expected,
     (info["n_rows"], info["n_cols"]),
     label=info["backend"],
@@ -959,6 +923,7 @@ def run_cell(
       workload=workload, size=size, backend=backend, compile_status="codegen_error", runtime_status="skipped", note=f"{type(e).__name__}: {e}"
     ), None
   codegen_ms = info["build_ms"] + info["render_ms"]
+  tables = constant_tables((out_dir / info["source"]).read_bytes())
   base = dict(
     workload=workload,
     size=size,
@@ -968,9 +933,7 @@ def run_cell(
     build_ms=f"{info['build_ms']:.1f}",
     render_ms=f"{info['render_ms']:.1f}",
     source_bytes=info["source_bytes"],
-    artifact_bytes=info["artifact_bytes"],
-    executable_bytes=info["executable_bytes"],
-    static_metadata_bytes=info["static_metadata_bytes"],
+    source_constant_bytes=sum(tables),
     source_lines=info["source_lines"],
     workspace=info["w_size"],
     integer_workspace=info["iw_size"],
@@ -1000,8 +963,13 @@ def run_cell(
       note=note,
     ), info
   runtime_status, runtime_ns, note = gbench.run_kernel(info, out_dir, benchmark_min_time)
+  executable_bytes, executable_constant_bytes = object_bytes(out_dir / "kernel.o")
+  if object_constant_symbols(out_dir / "kernel.o") > len(tables):
+    raise RuntimeError(f"{out_dir.name}: kernel.o holds more constant tables than constant_tables found in the source")
   return row(
     **base,
+    executable_bytes=executable_bytes,
+    executable_constant_bytes=executable_constant_bytes,
     compile_ms=f"{compile_ms:.1f}",
     compile_status="ok",
     **{key: f"{value:.1f}" for key, value in info["compile_timings"].items()},
@@ -1022,7 +990,18 @@ def summarize_runs(rows: list[dict], out: Path) -> None:
   groups = {}
   for result in rows:
     groups.setdefault((result["workload"], result["size"], result["backend"]), []).append(result)
-  metrics = ("runtime_ns", "build_ms", "render_ms", "kernel_compile_ms", "wrapper_compile_ms", "link_ms", "executable_bytes")
+  metrics = (
+    "runtime_ns",
+    "build_ms",
+    "render_ms",
+    "kernel_compile_ms",
+    "wrapper_compile_ms",
+    "link_ms",
+    "source_bytes",
+    "source_constant_bytes",
+    "executable_bytes",
+    "executable_constant_bytes",
+  )
   fields = [
     "workload",
     "size",

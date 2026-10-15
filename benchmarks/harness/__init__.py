@@ -8,7 +8,9 @@ from scaly.function.model import as_concrete
 from pathlib import Path
 from functools import lru_cache
 import os
+import re
 import subprocess
+import sys
 from weakref import WeakKeyDictionary
 from scaly.codegen.jit import HOST_CFLAGS
 from scaly.codegen.toolchain import find_c_compiler, native_recipe
@@ -62,6 +64,70 @@ def vector_symbols(path: Path) -> list[str]:
   """Read actual vector-math references from a compiled object or shared library."""
   result = subprocess.run(["nm", "-u", str(path)], check=True, text=True, capture_output=True)
   return sorted({line.split()[-1] for line in result.stdout.splitlines() if "_ZGV" in line})
+
+
+# Mach-O keeps read-only data in these __TEXT sections, and Apple's `size` and `nm` lack `-A` and `-S`.
+_MACHO_RODATA = re.compile(r"Section \(__TEXT, __(?:const|literal\d+|cstring)\): (\d+)")
+_MACHO_RODATA_SYMBOL = re.compile(r"\(__TEXT,__(?:const|literal\d+|cstring)\) .* _\w+$")
+
+
+def object_bytes(path: Path) -> tuple[int, int]:
+  """The total `size` reports for a compiled object, which counts machine code, constants and static
+  data, and the part of it in read-only data sections."""
+  header, values = subprocess.run(["size", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()[:2]
+  total = int(values.split()[header.split().index("dec")])
+  if sys.platform == "darwin":
+    sections = subprocess.run(["size", "-m", str(path)], check=True, text=True, capture_output=True).stdout
+    return total, sum(int(n) for n in _MACHO_RODATA.findall(sections))
+  sections = subprocess.run(["size", "-A", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
+  return total, sum(int(line.split()[1]) for line in sections if line.startswith(".rodata"))
+
+
+_STATIC = re.compile(rb'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|#(?:\\\n|[^\n])*|\bstatic\b', re.S)
+_TOKEN = re.compile(rb'\s+|/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"|\w+|.', re.S)
+_BRACE = re.compile(rb'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|[{};]', re.S)
+
+
+def constant_tables(source: bytes) -> list[int]:
+  """The length of every `static const` array definition with an initializer, at file or function scope,
+  from `static` through the closing `;`. Comments, literals and preprocessor lines are skipped, so line
+  breaks and spacing inside a definition do not matter."""
+  lengths, pos = [], 0
+  while m := _STATIC.search(source, pos):
+    pos = m.end()
+    if m[0] != b"static":
+      continue
+    words, depth = set(), 0
+    for t in _TOKEN.finditer(source, pos):
+      if depth == 0 and t[0] in (b"=", b";", b"{"):
+        break
+      depth += (t[0] in (b"(", b"[")) - (t[0] in (b")", b"]"))
+      words.add(t[0])
+    else:
+      raise ValueError(f"unterminated declaration at byte {m.start()}")
+    pos = t.end()
+    if t[0] != b"=" or b"[" not in words or b"const" not in words:
+      continue
+    depth = 0
+    for t in _BRACE.finditer(source, pos):
+      if depth == 0 and t[0] == b";":
+        break
+      depth += (t[0] == b"{") - (t[0] == b"}")
+    else:
+      raise ValueError(f"unterminated initializer at byte {m.start()}")
+    lengths.append(t.end() - m.start())
+    pos = t.end()
+  return lengths
+
+
+def object_constant_symbols(path: Path) -> int:
+  """The named read-only data objects in a compiled object. Each is a source table the compiler kept, so
+  the count can never exceed the number of tables `constant_tables` finds in the source."""
+  if sys.platform == "darwin":
+    lines = subprocess.run(["nm", "-m", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
+    return sum(1 for line in lines if _MACHO_RODATA_SYMBOL.search(line))
+  lines = subprocess.run(["nm", "-S", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
+  return sum(1 for p in map(str.split, lines) if len(p) == 4 and p[2] in "rR" and not p[3].startswith(".L"))
 
 
 CLOSED_LOOP_PAIRS: dict[str, tuple[tuple[str, str | None], ...]] = {

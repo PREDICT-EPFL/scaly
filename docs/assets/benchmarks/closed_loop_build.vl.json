@@ -1,0 +1,170 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.summary.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "build_ms_mean": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "!(datum.problem === 'chain' && datum.solver === 'ipopt')"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.problem) * 2 + (datum.solver === 'sqp' ? 0 : 1)",
+      "as": "order"
+    },
+    {
+      "calculate": "{'race_cars': 'Race-car MPC', 'npmpc': 'Neural-process MPC', 'chain': 'Chain of masses', 'unbumpercars': 'Unbumpercars'}[datum.problem] + ', ' + upper(datum.solver)",
+      "as": "controller"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "calculate": "datum.build_ms_mean / 1000",
+      "as": "seconds"
+    },
+    {
+      "calculate": "datum.oracle === 'casadi' ? datum.seconds : null",
+      "as": "casadi_s"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? datum.seconds : null",
+      "as": "scaly_s"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "casadi_s",
+          "as": "casadi_s"
+        },
+        {
+          "op": "max",
+          "field": "scaly_s",
+          "as": "scaly_s"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "solver"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.casadi_s) ? (datum.casadi_s >= datum.scaly_s ? format(datum.casadi_s / datum.scaly_s, '.1f') + '× faster' : format(datum.scaly_s / datum.casadi_s, '.1f') + '× slower') : 'no CasADi controller'",
+      "as": "label"
+    }
+  ],
+  "width": 420,
+  "height": {
+    "step": 15
+  },
+  "encoding": {
+    "y": {
+      "field": "controller",
+      "type": "nominal",
+      "title": null,
+      "sort": {
+        "field": "order",
+        "op": "min"
+      },
+      "axis": {
+        "ticks": false,
+        "domain": false,
+        "labelPadding": 8
+      },
+      "scale": {
+        "paddingInner": 0.3,
+        "paddingOuter": 0.15
+      }
+    },
+    "yOffset": {
+      "field": "provider",
+      "type": "nominal",
+      "sort": [
+        "Scaly",
+        "CasADi"
+      ]
+    }
+  },
+  "layer": [
+    {
+      "mark": {
+        "type": "bar",
+        "height": {
+          "band": 1
+        },
+        "stroke": "#ffffff",
+        "strokeWidth": 1
+      },
+      "encoding": {
+        "x": {
+          "field": "seconds",
+          "type": "quantitative",
+          "title": "Time to build the controller, s",
+          "axis": {
+            "format": "~r",
+            "tickCount": 6
+          }
+        },
+        "color": {
+          "field": "provider",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Scaly",
+              "CasADi"
+            ],
+            "range": [
+              "#1baf7a",
+              "#e34948"
+            ]
+          }
+        },
+        "tooltip": [
+          {
+            "field": "controller",
+            "title": "Controller"
+          },
+          {
+            "field": "provider",
+            "title": "Provider"
+          },
+          {
+            "field": "seconds",
+            "title": "Build, s",
+            "format": ".1f"
+          }
+        ]
+      }
+    },
+    {
+      "transform": [
+        {
+          "filter": "datum.oracle === 'scaly'"
+        }
+      ],
+      "mark": {
+        "type": "text",
+        "align": "left",
+        "baseline": "middle",
+        "dx": 6,
+        "color": "#52514e"
+      },
+      "encoding": {
+        "x": {
+          "field": "seconds",
+          "type": "quantitative"
+        },
+        "text": {
+          "field": "label"
+        }
+      }
+    }
+  ]
+}

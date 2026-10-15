@@ -1,0 +1,255 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.summary.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "solver_time_ms_mean": "number",
+        "fe_time_ms_mean": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "!(datum.problem === 'chain' && datum.solver === 'ipopt')"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.problem)",
+      "as": "order"
+    },
+    {
+      "calculate": "{'race_cars': 'Race-car MPC', 'npmpc': 'Neural-process MPC', 'chain': 'Chain of masses', 'unbumpercars': 'Unbumpercars'}[datum.problem]",
+      "as": "problem_label"
+    },
+    {
+      "calculate": "upper(datum.solver)",
+      "as": "method"
+    },
+    {
+      "calculate": "datum.oracle === 'casadi' ? datum.solver_time_ms_mean : null",
+      "as": "casadi_ms"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "casadi_ms",
+          "as": "reference_ms"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "solver"
+      ]
+    },
+    {
+      "filter": "isValid(datum.reference_ms)"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "calculate": "datum.fe_time_ms_mean",
+      "as": "evaluation"
+    },
+    {
+      "calculate": "datum.solver_time_ms_mean - datum.fe_time_ms_mean",
+      "as": "solver"
+    },
+    {
+      "calculate": "datum.oracle !== 'scaly' ? '' : datum.reference_ms >= datum.solver_time_ms_mean ? format(datum.reference_ms / datum.solver_time_ms_mean, '.2f') + '× faster' : format(datum.solver_time_ms_mean / datum.reference_ms, '.2f') + '× slower'",
+      "as": "speedup"
+    },
+    {
+      "fold": [
+        "evaluation",
+        "solver"
+      ],
+      "as": [
+        "part",
+        "ms"
+      ]
+    },
+    {
+      "calculate": "datum.part === 'evaluation' ? datum.provider + ' function evaluation' : 'Rest of the solver'",
+      "as": "segment"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "problem_label",
+      "type": "nominal",
+      "sort": {
+        "field": "order",
+        "op": "min"
+      },
+      "title": null,
+      "header": {
+        "labelAngle": 0,
+        "labelOrient": "top",
+        "labelAnchor": "start",
+        "labelAlign": "left",
+        "labelPadding": 0,
+        "labelFontSize": 13
+      }
+    }
+  },
+  "spacing": {
+    "row": 10
+  },
+  "spec": {
+    "width": 380,
+    "height": {
+      "step": 15
+    },
+    "encoding": {
+      "y": {
+        "field": "method",
+        "type": "nominal",
+        "title": null,
+        "sort": [
+          "SQP",
+          "IPOPT"
+        ],
+        "scale": {
+          "paddingInner": 0.25,
+          "paddingOuter": 0.1
+        },
+        "axis": {
+          "ticks": false,
+          "domain": false,
+          "labelPadding": 60
+        }
+      },
+      "yOffset": {
+        "field": "provider",
+        "type": "nominal",
+        "sort": [
+          "CasADi",
+          "Scaly"
+        ]
+      }
+    },
+    "layer": [
+      {
+        "mark": {
+          "type": "bar",
+          "stroke": "#ffffff",
+          "strokeWidth": 1,
+          "cornerRadiusEnd": 0
+        },
+        "encoding": {
+          "x": {
+            "field": "ms",
+            "type": "quantitative",
+            "stack": "zero",
+            "title": null,
+            "axis": {
+              "tickCount": 4,
+              "labelExpr": "datum.label + ' ms'",
+              "grid": true,
+              "format": "~r"
+            }
+          },
+          "color": {
+            "field": "segment",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly function evaluation",
+                "CasADi function evaluation",
+                "Rest of the solver"
+              ],
+              "range": [
+                "#1baf7a",
+                "#e34948",
+                "#c3c2b7"
+              ]
+            }
+          },
+          "order": {
+            "field": "part",
+            "sort": "ascending"
+          },
+          "tooltip": [
+            {
+              "field": "method",
+              "title": "Solver"
+            },
+            {
+              "field": "provider",
+              "title": "Provider"
+            },
+            {
+              "field": "segment",
+              "title": "Part"
+            },
+            {
+              "field": "ms",
+              "title": "Mean per step, ms",
+              "format": ".3f"
+            },
+            {
+              "field": "solver_time_ms_mean",
+              "title": "Whole step, ms",
+              "format": ".3f"
+            }
+          ]
+        }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.part === 'evaluation' && datum.oracle === 'scaly'"
+          }
+        ],
+        "mark": {
+          "type": "text",
+          "align": "left",
+          "baseline": "middle",
+          "dx": 6,
+          "color": "#0b0b0b"
+        },
+        "encoding": {
+          "x": {
+            "field": "solver_time_ms_mean",
+            "type": "quantitative"
+          },
+          "text": {
+            "field": "speedup"
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.part === 'evaluation'"
+          }
+        ],
+        "mark": {
+          "type": "text",
+          "align": "right",
+          "baseline": "middle",
+          "dx": -6,
+          "color": "#52514e"
+        },
+        "encoding": {
+          "x": {
+            "value": 0
+          },
+          "text": {
+            "field": "provider"
+          }
+        }
+      }
+    ]
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  }
+}

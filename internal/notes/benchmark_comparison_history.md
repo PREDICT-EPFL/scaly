@@ -8,6 +8,103 @@ The retained studies are `benchmarks/results/study-2026-09-23-c77-c79-final` for
 `benchmarks/results/study-2026-09-23-c77-c79-libmvec` for vector libm. The September 10 study is the
 comparison baseline used below. Actionable follow-up remains in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
+## Race-car horizons and controller refresh, October 15 study
+
+`benchmarks/results/study-2026-10-15` measured the clean pushed branch for pull request #181
+after "Sweep the race car from N = 5 to 400 and close its loop at N = 50". It took 76.7 minutes
+on la015 with October 14's toolchain, solver libraries, CPU and numerical policies. Every
+provenance file names the same measured revision. The later figure/prose-only commit was pulled
+after measurement, before publishing the results.
+
+The race-car grid is N=5,10,25,50,100,200,400 and the controller horizon is N=50. The other
+grids are unchanged. Of 106 attempts, 77 were timed, 11 reached the compile limit and 18 were
+skipped after a timeout. All 21 Scaly cells completed. All timed kernels passed their symbolic
+and compiled-C gates, and all 6,938 solver steps in 15 episodes succeeded. October 14's raw
+rows contain 87 timings, 11 timeouts and 18 skipped cells across 116 attempts. The ten fewer
+timings are the removed N=1 and N=40 race-car cells. Replacing N=500 with N=400 changes no outcome
+count. The earlier prose's 12 timeouts and 17 skipped cells miscounted those raw rows.
+
+The new N=400 race-car Hessian takes 22.926 µs with Scaly and 165.883 µs with the fastest
+CasADi encoding, SX, a measured ratio of 7.24×. Scaly's C source is 78,071 bytes and its
+object 43,399 bytes, against SX's 8,242,871 and 3,581,303 bytes. The old N=500 data had been
+relabelled N=400 as a temporary figure input. Those placeholders are replaced by actual N=400
+measurements, and they are not a baseline for a performance change.
+
+The N=50 race-car provider pairs agree in every step's iterations and oracle-call counts.
+The SQP total and function-evaluation paired medians are 1.038× and 3.122×, with 10th/90th
+percentiles of 1.012/1.055× and 2.889/3.256×. IPOPT's are 1.083× and 2.720×, with percentiles
+of 1.073/1.093× and 2.627/2.788×. Each episode still takes 1,367 steps. These are different
+NLPs from the N=40 controllers, so their timings cannot establish a compiler speedup.
+
+Every unchanged cell keeps the same generated-source and object sizes. Across matching timed
+cells, the October 15/October 14 runtime ratio has a median of 1.0001 and 10th/90th percentiles
+of 0.9840/1.0102. The two largest changes are NPMPC MX at N=25, up 17.8%, and Scaly at N=200,
+down 7.9%. A separate diagnostic reran each day's retained binary in three fresh processes.
+Both MX binaries alternate between about 85 and 99 µs, with coefficients of variation of
+9.4% and 9.3%. Their means differ by 0.2%. Both Scaly binaries now take about 254 to 263 µs,
+with coefficients of variation of 0.9% and 1.4%. These checks establish measurement variation,
+not a compiler change. Their data remain outside the published study.
+
+All unchanged closed-loop native means stay within 0.7% except NPMPC IPOPT/Scaly, up 3.7% in
+total while function evaluation stays within 0.2%. Its iteration and oracle-call counts still
+match, and the paired total speedup's 10th percentile is 10.5% below its median. The page
+therefore gives an 11% bound for the middle 80% of paired step ratios, rather than retaining
+the earlier 7% claim. The unbumpercars SQP pair retains three iteration mismatches and identical
+oracle-call counts. Fifty CasADi SQP steps exceed the sampling time, against 48 previously.
+All Scaly controllers still meet their sampling times. A single process per controller gives no
+estimate of between-process noise.
+
+The [audit and complete comparison tables](perf_2026_10_15/analysis.md) come from the tracked
+publication script. [Its README](perf_2026_10_15/README.md) gives reproduction commands, diagnostic
+limits and artifact locations.
+
+## Compact code and fastest CasADi encodings, October 13 study
+
+`benchmarks/results/study-2026-10-13-post-179` measured clean pushed main at `38bd5896`,
+including the removal of inlined callees, compact lane helpers and the fastest-encoding
+closed-loop changes. The machine, native compilers, solver libraries, CPU policy and glibc
+vector-math policy match October 12. The protocol changed from five processes to one.
+The run took 103 minutes, with 138 sweep attempts and 15 episodes. All 103 timed cells passed
+their gates; 15 compilation attempts timed out and 20 cells were skipped after a timeout.
+There were no correctness or execution failures. Every Scaly cell completed, and every solver
+step succeeded.
+
+The previous study had 515 timings, 17 timeouts and 158 skipped cells across 690 attempts.
+These counts cannot be compared directly across five processes and one. CasADi's mapped SX
+at neural-process MPC N=25 and N=50 completed in only some October 12 processes and did not
+complete in this study. The compile limit still determines which encodings count.
+
+The complete tables, step statistics, paired ratios and episode agreement are retained in
+[the reproducible audit](perf_2026_10_13/analysis.md). Its script compares against the October 12
+summary files at main's `d9755969` and writes the three current published CSV assets from this
+study only.
+
+Measured executable-source reductions are about 23% for the race car beyond N=1, 64 to 65%
+for neural-process MPC, 58 to 64% for unbumpercars, and 22 to 40% for chain. These byte counts
+are deterministic artifacts. Kernel compile times change by less than 6%. Runtime does not
+improve uniformly: unbumpercars Hessians are 7 to 32% slower, neural-process MPC ranges from
+16% faster to 28% slower, and chain stays within 0.4% of its previous means. Several slowdowns
+are far outside the October 12 dispersion: neural-process MPC N=12 rises 12.4% against a 0.46%
+coefficient of variation, and unbumpercars C=4 rises 32.4% against 0.12%. These are likely runtime
+regressions and warrant targeted follow-up. One process gives no new noise estimate, and this
+study measures the combined changes without isolating either code-size pass. The smaller
+source alone does not establish a runtime improvement.
+
+CasADi's SQP function evaluation changes most: chain falls from 8.121 to 0.160 ms per step,
+race cars from 0.220 to 0.122 ms, and unbumpercars from 105.636 to 86.024 ms. Neural-process MPC
+already used the selected encoding and stays at 1.026 ms. Scaly closed-loop totals stay within
+1.7% of the previous means. Chain's median paired total ratio is 0.991×, with CasADi faster in
+function evaluation. Race-car SQP's median total ratio is 1.038×, its 10th/90th percentiles are
+1.019/1.047×, and its median function-evaluation ratio is 2.956×. Unbumpercars SQP's total ratio
+is 8.103×, with 10th/90th percentiles 7.554/8.385×.
+
+All seven provider pairs have matching step numbers and identical oracle-call counts. Six have
+identical iteration counts too. Unbumpercars SQP has three iteration mismatches across 200 steps,
+against 15 across 1,000 previously. Its maximum state/control differences are 6.09e-9/4.91e-9.
+That pair remains a closed-loop comparison with slightly different work. The spread along an
+episode is not a noise estimate or confidence interval, and the median per-step ratio is not
+the ratio of provider means.
+
 ## Change since 0.1.0a1, October 12 study
 
 `benchmarks/results/study-2026-10-12-post-0.1.0a1` reran the frozen grid at `1c955a07` with the

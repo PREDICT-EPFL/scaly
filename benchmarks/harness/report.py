@@ -17,14 +17,12 @@ BACKEND_ORDER = (
   "casadi_call_mx",
   "casadi_map_sx",
   "casadi_mx_gemm",
-  "casadi_mx_gemm_classic",
-  "casadi_mx_gemm_blasfeo",
 )
 COUNTS = ("n_eval_f", "n_eval_g", "n_eval_grad_f", "n_eval_jac_g", "n_eval_h")
 METRICS = ("solver_time_ms", "fe_time_ms", "qp_time_ms", "globalization_time_ms", "glue_time_ms", "iterations")
 SWEEP_HEADER = (
-  "| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |\n"
-  "|---:|---|---:|---:|---:|---:|---:|---:|"
+  "| Size | Backend | Successful processes | Mean, µs | CV, % | Source bytes | Executable bytes | Workspace, doubles | Kernel compile mean, ms |\n"
+  "|---:|---|---:|---:|---:|---:|---:|---:|---:|"
 )
 
 
@@ -40,7 +38,7 @@ def sweep_table(raw_csv: Path) -> str:
     group = cells[(int(s["size"]), s["backend"])]
     successful = int(s["successful"])
     sizes = []
-    for field in ("executable_bytes", "workspace"):
+    for field in ("source_bytes", "executable_bytes", "workspace"):
       values = sorted({int(r[field]) for r in group if r[field]})
       sizes.append("" if not values else str(values[0]) if len(values) == 1 else f"{values[0]}–{values[-1]}")
     if successful:
@@ -50,7 +48,9 @@ def sweep_table(raw_csv: Path) -> str:
       runtime = "; ".join(a if b == "skipped" else f"{a}/{b}" for a, b in statuses)
     cv = f"{float(s['runtime_ns_cv']) * 100:.2f}" if s["runtime_ns_cv"] else ""
     compile_time = f"{float(s['kernel_compile_ms_mean']):.1f}" if s["kernel_compile_ms_mean"] else ""
-    lines.append(f"| {s['size']} | `{s['backend']}` | {successful}/{s['attempts']} | {runtime} | {cv} | {sizes[0]} | {sizes[1]} | {compile_time} |")
+    lines.append(
+      f"| {s['size']} | `{s['backend']}` | {successful}/{s['attempts']} | {runtime} | {cv} | {sizes[0]} | {sizes[1]} | {sizes[2]} | {compile_time} |"
+    )
   return "\n".join(lines) + "\n"
 
 

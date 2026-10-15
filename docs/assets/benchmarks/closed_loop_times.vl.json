@@ -1,0 +1,345 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.steps.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "step": "number",
+        "solver_time_ms": "number",
+        "fe_time_ms": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.problem)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0 && !(datum.problem === 'chain' && datum.solver === 'ipopt')"
+    },
+    {
+      "calculate": "{'race_cars': 50, 'npmpc': 20, 'unbumpercars': 100, 'chain': 200}[datum.problem]",
+      "as": "sampling_ms"
+    },
+    {
+      "calculate": "['Race-car MPC', 'Neural-process MPC', 'Unbumpercars', 'Chain of masses'][datum.order] + ', ' + datum.sampling_ms + ' ms sampling time'",
+      "as": "row"
+    },
+    {
+      "calculate": "upper(datum.solver)",
+      "as": "method"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "fold": [
+        "fe_time_ms",
+        "solver_time_ms"
+      ],
+      "as": [
+        "metric_field",
+        "ms"
+      ]
+    },
+    {
+      "calculate": "datum.metric_field === 'fe_time_ms' ? 'Function evaluation' : 'Whole solve'",
+      "as": "metric"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "row",
+      "type": "nominal",
+      "title": null,
+      "sort": {
+        "field": "order",
+        "op": "min"
+      },
+      "header": {
+        "labelAngle": 0,
+        "labelOrient": "top",
+        "labelAnchor": "start",
+        "labelAlign": "left",
+        "labelPadding": 2,
+        "labelFontSize": 13
+      }
+    },
+    "column": {
+      "field": "metric",
+      "type": "nominal",
+      "title": null,
+      "sort": [
+        "Function evaluation",
+        "Whole solve"
+      ],
+      "header": {
+        "labelFontSize": 14,
+        "labelPadding": 8
+      }
+    }
+  },
+  "spacing": {
+    "row": 10,
+    "column": 36
+  },
+  "spec": {
+    "width": 300,
+    "height": {
+      "step": 12
+    },
+    "layer": [
+      {
+        "transform": [
+          {
+            "joinaggregate": [
+              {
+                "op": "max",
+                "field": "ms",
+                "as": "slowest"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          },
+          {
+            "filter": "datum.metric === 'Whole solve' && datum.sampling_ms <= 3 * datum.slowest"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "max",
+                "field": "sampling_ms",
+                "as": "sampling_ms"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric"
+            ]
+          }
+        ],
+        "mark": {
+          "type": "rule",
+          "color": "#898781",
+          "strokeWidth": 2.5
+        },
+        "encoding": {
+          "x": {
+            "field": "sampling_ms",
+            "type": "quantitative"
+          }
+        }
+      },
+      {
+        "transform": [
+          {
+            "aggregate": [
+              {
+                "op": "min",
+                "field": "ms",
+                "as": "low"
+              },
+              {
+                "op": "q1",
+                "field": "ms",
+                "as": "q1"
+              },
+              {
+                "op": "median",
+                "field": "ms",
+                "as": "median"
+              },
+              {
+                "op": "q3",
+                "field": "ms",
+                "as": "q3"
+              },
+              {
+                "op": "max",
+                "field": "ms",
+                "as": "high"
+              }
+            ],
+            "groupby": [
+              "row",
+              "metric",
+              "method",
+              "provider"
+            ]
+          }
+        ],
+        "encoding": {
+          "y": {
+            "field": "method",
+            "type": "nominal",
+            "title": null,
+            "sort": [
+              "SQP",
+              "IPOPT"
+            ],
+            "scale": {
+              "paddingInner": 0.25,
+              "paddingOuter": 0.1
+            },
+            "axis": {
+              "ticks": false,
+              "domain": false,
+              "labelPadding": 60
+            }
+          },
+          "yOffset": {
+            "field": "provider",
+            "type": "nominal",
+            "sort": [
+              "Scaly",
+              "CasADi"
+            ]
+          },
+          "color": {
+            "field": "provider",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi"
+              ],
+              "range": [
+                "#1baf7a",
+                "#e34948"
+              ]
+            },
+            "legend": null
+          }
+        },
+        "layer": [
+          {
+            "mark": {
+              "type": "rule",
+              "strokeWidth": 1.5
+            },
+            "encoding": {
+              "x": {
+                "field": "low",
+                "type": "quantitative",
+                "title": null,
+                "scale": {
+                  "zero": true,
+                  "nice": true
+                },
+                "axis": {
+                  "tickCount": 4,
+                  "format": "~r",
+                  "labelExpr": "datum.label + ' ms'"
+                }
+              },
+              "x2": {
+                "field": "high"
+              }
+            }
+          },
+          {
+            "mark": {
+              "type": "bar",
+              "height": 10,
+              "cornerRadius": 2
+            },
+            "encoding": {
+              "x": {
+                "field": "q1",
+                "type": "quantitative"
+              },
+              "x2": {
+                "field": "q3"
+              },
+              "tooltip": [
+                {
+                  "field": "method",
+                  "title": "Solver"
+                },
+                {
+                  "field": "provider",
+                  "title": "Provider"
+                },
+                {
+                  "field": "median",
+                  "title": "Median, ms",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "q1",
+                  "title": "25th percentile, ms",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "q3",
+                  "title": "75th percentile, ms",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "low",
+                  "title": "Fastest step, ms",
+                  "format": ".3~r"
+                },
+                {
+                  "field": "high",
+                  "title": "Slowest step, ms",
+                  "format": ".3~r"
+                }
+              ]
+            }
+          },
+          {
+            "mark": {
+              "type": "tick",
+              "thickness": 2,
+              "size": 12
+            },
+            "encoding": {
+              "x": {
+                "field": "median",
+                "type": "quantitative"
+              },
+              "color": {
+                "value": "#0b0b0b"
+              }
+            }
+          },
+          {
+            "mark": {
+              "type": "text",
+              "align": "right",
+              "baseline": "middle",
+              "dx": -6
+            },
+            "encoding": {
+              "x": {
+                "value": 0
+              },
+              "text": {
+                "field": "provider"
+              },
+              "color": {
+                "value": "#52514e"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    },
+    "axis": {
+      "x": "independent"
+    }
+  }
+}

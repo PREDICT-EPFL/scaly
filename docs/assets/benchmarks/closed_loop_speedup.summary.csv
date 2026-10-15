@@ -1,0 +1,15 @@
+problem,solver,metric,key,steps,median,p10,p90,iteration_mismatches
+chain,sqp,solver_time_ms,chain:sqp:solver_time_ms,90,1.0030199539654796,1.001177467896603,1.0052456468726012,0
+chain,sqp,fe_time_ms,chain:sqp:fe_time_ms,90,0.8602166229607057,0.8433135699595108,0.892176056189583,0
+npmpc,ipopt,solver_time_ms,npmpc:ipopt:solver_time_ms,100,1.245107394820533,1.1147696108690206,1.264206242043682,0
+npmpc,ipopt,fe_time_ms,npmpc:ipopt:fe_time_ms,100,1.7792595304566934,1.742354740441006,1.8048094588883035,0
+npmpc,sqp,solver_time_ms,npmpc:sqp:solver_time_ms,100,1.4591407960271074,1.4393791569782055,1.473459443490274,0
+npmpc,sqp,fe_time_ms,npmpc:sqp:fe_time_ms,100,2.2166219163206082,2.16713508725952,2.25536362513349,0
+race_cars,ipopt,solver_time_ms,race_cars:ipopt:solver_time_ms,1367,1.082957432951375,1.0734164256595864,1.092801391972961,0
+race_cars,ipopt,fe_time_ms,race_cars:ipopt:fe_time_ms,1367,2.7203069166503786,2.626836772860689,2.7883693014952176,0
+race_cars,sqp,solver_time_ms,race_cars:sqp:solver_time_ms,1367,1.0377710126213167,1.0121710806757251,1.05529024141599,0
+race_cars,sqp,fe_time_ms,race_cars:sqp:fe_time_ms,1367,3.1215314972873975,2.888558119162697,3.2561987448026795,0
+unbumpercars,ipopt,solver_time_ms,unbumpercars:ipopt:solver_time_ms,200,7.282553477408913,7.130287203021184,7.4394492913612424,0
+unbumpercars,ipopt,fe_time_ms,unbumpercars:ipopt:fe_time_ms,200,8.757940291930579,8.588580874938385,8.902422408871837,0
+unbumpercars,sqp,solver_time_ms,unbumpercars:sqp:solver_time_ms,200,8.099732759345038,7.677502279898138,8.392320547158779,3
+unbumpercars,sqp,fe_time_ms,unbumpercars:sqp:fe_time_ms,200,9.105665004881178,8.659047895428518,9.40294028976215,3

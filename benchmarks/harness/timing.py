@@ -13,12 +13,20 @@ import numpy as np
 
 
 def prepare_solver(controller) -> None:
-  """Compile the solver and standalone oracles used by benchmark result checks."""
+  """Compile the solver so that its first solve call does not."""
+  import scaly as sc
+
+  if isinstance(controller, sc.Solver):
+    controller.function.compile()
+
+
+def prepare_checks(controller) -> None:
+  """Compile the standalone oracles used by benchmark result checks, which no controller needs."""
   import scaly as sc
 
   if isinstance(controller, sc.Solver):
     plain = controller.function
-    for function in (plain, as_concrete(plain).descriptor.base, registered_base(plain)):
+    for function in (as_concrete(plain).descriptor.base, registered_base(plain)):
       if isinstance(function, sc.Function | ConcreteFunction):
         function.compile()
 
@@ -34,6 +42,7 @@ class SolveTiming:
   def prepared(self, controller=None) -> None:
     prepare_solver(controller)
     self.build_ms = (perf_counter() - self.started) * 1000.0
+    prepare_checks(controller)
 
   def start_step(self) -> None:
     self.started = perf_counter()
@@ -58,7 +67,7 @@ def mode_rows(summary: dict, *, interpreted: bool = False) -> list[dict]:
     "oracle": summary["oracle"],
     "per_step_ms": summary.get("steady_step_ms"),
     "build_ms": summary.get("build_ms"),
-    "timing_scope": "wall solve call; build includes result-check oracles; steady excludes first step; prebuilt excludes construction and loading",
+    "timing_scope": "wall solve call; build excludes result-check oracles; steady excludes first step; prebuilt excludes construction and loading",
     "ipopt_provider": ("CasADi wheel" if interpreted else "configured Scaly solver plugin") if summary["solver"] == "ipopt" else "not applicable",
     "cache_policy": "process cache as configured; jit startup includes observed build or cache load",
   }
