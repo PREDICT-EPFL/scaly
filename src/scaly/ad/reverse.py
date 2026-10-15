@@ -10,6 +10,7 @@ from ..function.concrete import ConcreteFunction
 from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
+from .helpers import HelperKey, helper_name
 from .sparsity import _depends_on
 
 
@@ -29,8 +30,8 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
 
 
 def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
-  key = (output_index, active_formals)
-  cache = callee._memo.vmap_adjoints
+  key = HelperKey("adjoint", (output_index,), active_formals, callee._effective_lowering)
+  cache = callee._memo.helpers
   if key not in cache:
     out = callee.outputs[output_index]
     lam_name = f"lam:{callee.output_names[output_index]}"
@@ -41,10 +42,9 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
-    # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
-    # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
-    name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
-    fn = ConcreteFunction._from_exprs(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"], role="adjoint")
+    fn = ConcreteFunction._from_exprs(
+      helper_name(callee, key), inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"], role="adjoint"
+    )
     cache[key] = (fn, arg_indices)
   return cache[key]
 

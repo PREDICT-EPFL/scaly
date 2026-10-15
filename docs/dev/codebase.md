@@ -66,6 +66,7 @@ src/scaly/
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
     reverse.py           vjp and the per-op local adjoint rules
+    helpers.py           the key and the name of every forward and adjoint helper AD derives for a call
     derivatives.py       jacobian, gradient, hessian, finite_difference
     sparsity.py          structural sparsity patterns and greedy coloring; no AD in it
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
@@ -118,7 +119,7 @@ one, never a higher one.
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
 | 3 | `function/{model,concrete,tree}` | Function declarations, concrete graph instances, and typed trees over import layer 1. |
-| 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
+| 4 | `ad/{forward,reverse,helpers,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
 | 6 | `passes/lowering/*`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
