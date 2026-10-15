@@ -63,7 +63,7 @@ def _wide() -> sc.Function:
     x, y = inputs
     h = sc.const(WEIGHTS) @ x
     a = sc.maximum(h, 0.0) - sc.minimum(h, 0.0) * 0.5
-    b = sc.atan2(a, y) + (a**3.0) / (1.0 + y.abs())
+    b = sc.atan2(a, y) + (a**2.5) / (1.0 + y.abs())
     trig = a.sin() * b.cos() + a.tan() + (a * 0.1).asin() + (b * 0.1).acos() + b.atan()
     hyp = a.sinh() + b.cosh() + b.tanh() + a.erf()
     c = (a.exp() + b.sqrt().log()) * (trig + hyp) + (a.floor() + b.ceil())

@@ -104,6 +104,8 @@ def simplify_arith[Node: _HasArgs](d: Arith[Node], node: Node) -> Node | None:
       return x
     if cy == 2 and d.fits(x, node):
       return d.build("mul", (x, x), node)
+    if cy == 3 and d.fits(x, node):
+      return d.build("mul", (d.build("mul", (x, x), node), x), node)
   return None
 
 

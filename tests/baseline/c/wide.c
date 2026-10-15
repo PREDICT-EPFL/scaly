@@ -184,7 +184,7 @@ static inline __attribute__((always_inline)) void wide_lanes_3(long long i_t17_c
   else for (long long i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) l_2[i_t17_lane] = y[(0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + i_t17_lane) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + i_t17_lane) : 39))];
   lanes_8_8_8_8_vec v6 = l_2;
   lanes_8_8_8_8_vec b;
-  for (int i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) b[i_t17_lane] = 3.0;
+  for (int i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) b[i_t17_lane] = 2.5;
   lanes_8_8_8_8_vec b_2;
   for (int i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) b_2[i_t17_lane] = 1.0;
   lanes_8_8_8_8_vec_st(&s0[((0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))) + 0], (lanes_8_8_8_8_vec_atan2(v5, v6) + (lanes_8_8_8_8_vec_pow(v5, b) / (b_2 + lanes_8_8_8_8_vec_fabs(v6)))), n);
