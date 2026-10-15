@@ -16,20 +16,18 @@ benchmark has no CasADi version of the chain controller with IPOPT.
 
 ## Where the time goes
 
-Each pair of bars divides the mean time per control step into function evaluation, every
-objective, constraint and derivative value the solver asks for, and the rest of the solver's work.
-Each problem has its own time axis, shared by its SQP and IPOPT controllers, and the number next
-to each Scaly bar says how many times faster its step is on average.
+Each bar divides the mean time per control step into function evaluation, every objective,
+constraint and derivative value the solver asks for, and the rest of the solver's work. Each
+problem has its own time axis.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_share.vl.json"></div>
 
 The same solver does the same work on both sides, so the gray part stays about the same and the
 step gains roughly what function evaluation loses. Function evaluation takes 97 to 98% of
-CasADi's step on unbumpercars, which evaluates a neural network for every pair of cars, and the
-step is 7.3 to 8.2× faster there. It takes 39 to 56% on neural-process MPC, where the step is 1.25
-to 1.46× faster, and 5 to 8% on the race car, where the step gains 4 to 8% although function
-evaluation is 2.6 to 3.1× faster. On the chain, CasADi's function evaluation takes 14% less time
-than Scaly's, but it is under 3% of the step and the two steps take the same time to within 1%.
+CasADi's step on unbumpercars, which evaluates a neural network for every pair of cars, and 39 to
+56% on neural-process MPC. On the race car it takes only 5 to 8%, so Scaly's 2.6 to 3.1× faster
+function evaluation barely changes the step. On the chain, CasADi's function evaluation takes 14%
+less time than Scaly's, but it is under 3% of the step.
 
 ## Step times against the sampling time
 
@@ -53,25 +51,14 @@ lie within 7% of the median speedup, for function evaluation and for the whole s
 describes the episode, not measurement noise, as the
 [fairness page](fairness.md#what-the-results-do-not-show) explains.
 
-| Problem | Solver | Median step, ms | Slowest step, ms | Steps over the sampling time | Iterations per step |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Race-car MPC | SQP | 2.23 / 2.32 | 6.87 / 7.03 | 0 / 0 | 2.7 |
-| Race-car MPC | IPOPT | 4.51 / 4.88 | 9.84 / 14.12 | 0 / 0 | 10.4 |
-| Neural-process MPC | SQP | 1.02 / 1.48 | 7.61 / 11.06 | 0 / 0 | 4.7 |
-| Neural-process MPC | IPOPT | 3.48 / 4.34 | 6.75 / 10.53 | 0 / 0 | 10.1 |
-| Unbumpercars | SQP | 6.73 / 55.33 | 79.0 / 669.1 | 0 / 48 | 7.9 |
-| Unbumpercars | IPOPT | 19.04 / 139.46 | 41.4 / 297.5 | 0 / 186 | 13.7 |
-| Chain of masses | SQP | 6.24 / 6.25 | 8.11 / 8.11 | 0 / 0 | 3.0 |
-
-Each cell gives Scaly's value, then CasADi's. Iterations are the mean over the episode's steps.
-
 ## Do both sides do the same work?
 
 Both sides should take the same solver iterations and ask for the same function evaluations at
 every step, since only the source of the generated functions changes. They do for every
 controller except unbumpercars with SQP, where three of the 200 steps take a different number of
 iterations. The two trajectories still agree to within 7×10⁻⁹, but that controller's speedup
-compares slightly different amounts of work.
+compares slightly different amounts of work. On average, the SQP controllers take 2.7 to 7.9
+iterations per step and the IPOPT ones 10.1 to 13.7.
 
 ## Building a controller
 
@@ -80,8 +67,5 @@ compiles it, starting from an empty cache.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_build.vl.json"></div>
 
-Scaly builds the race-car controllers in under 3 seconds, 3.3 and 6.2 times sooner than CasADi,
-and the unbumpercars controllers 4.9 and 8.6 times sooner. The controllers compile with GCC at
-`-O2`, so these times differ from the compile times on the
-[scalability page](scalability.md#from-model-to-object-file), which use Clang at `-O3`. On the
-chain, CasADi builds its SQP controller 2.6 seconds sooner than Scaly.
+The controllers compile with GCC at `-O2`, so these times differ from the compile times on the
+[scalability page](scalability.md#from-model-to-object-file), which use Clang at `-O3`.

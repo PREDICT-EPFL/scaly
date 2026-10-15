@@ -73,6 +73,53 @@
     {
       "calculate": "datum.source_bytes / 1000",
       "as": "source_kb"
+    },
+    {
+      "calculate": "datum.encoding === 'Scaly' && true ? datum.kb : null",
+      "as": "scaly_v"
+    },
+    {
+      "calculate": "datum.encoding !== 'Scaly' && true ? datum.kb : null",
+      "as": "casadi_v"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "scaly_v",
+          "as": "scaly_v"
+        },
+        {
+          "op": "min",
+          "field": "casadi_v",
+          "as": "casadi_v"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "size"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.scaly_v) && isValid(datum.casadi_v) ? datum.casadi_v / datum.scaly_v : null",
+      "as": "ratio"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "ratio",
+          "as": "largest"
+        },
+        {
+          "op": "min",
+          "field": "size",
+          "as": "first_size"
+        }
+      ],
+      "groupby": [
+        "problem"
+      ]
     }
   ],
   "facet": {
@@ -256,6 +303,280 @@
             }
           ]
         }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.ratio === datum.largest"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "max",
+                "field": "scaly_v",
+                "as": "scaly_v"
+              },
+              {
+                "op": "max",
+                "field": "casadi_v",
+                "as": "casadi_v"
+              },
+              {
+                "op": "max",
+                "field": "ratio",
+                "as": "ratio"
+              }
+            ],
+            "groupby": [
+              "problem",
+              "order",
+              "size",
+              "first_size"
+            ]
+          },
+          {
+            "calculate": "sqrt(datum.scaly_v * datum.casadi_v)",
+            "as": "middle"
+          },
+          {
+            "calculate": "format(datum.ratio, datum.ratio < 10 ? '.1f' : '.0f') + '× smaller'",
+            "as": "label"
+          }
+        ],
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative"
+          }
+        },
+        "layer": [
+          {
+            "transform": [
+              {
+                "filter": "datum.size === datum.first_size"
+              }
+            ],
+            "layer": [
+              {
+                "mark": {
+                  "type": "rule",
+                  "strokeWidth": 1.5,
+                  "xOffset": 9
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "y2": {
+                    "field": "scaly_v"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-up",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": 9,
+                  "yOffset": 3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-down",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": 9,
+                  "yOffset": -3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "scaly_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "left",
+                  "baseline": "middle",
+                  "dx": 16,
+                  "fontWeight": "bold",
+                  "stroke": "#ffffff",
+                  "strokeWidth": 4,
+                  "strokeJoin": "round"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#ffffff"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "left",
+                  "baseline": "middle",
+                  "dx": 16,
+                  "fontWeight": "bold"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "transform": [
+              {
+                "filter": "datum.size !== datum.first_size"
+              }
+            ],
+            "layer": [
+              {
+                "mark": {
+                  "type": "rule",
+                  "strokeWidth": 1.5,
+                  "xOffset": -9
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "y2": {
+                    "field": "scaly_v"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-up",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": -9,
+                  "yOffset": 3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-down",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": -9,
+                  "yOffset": -3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "scaly_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "right",
+                  "baseline": "middle",
+                  "dx": -16,
+                  "fontWeight": "bold",
+                  "stroke": "#ffffff",
+                  "strokeWidth": 4,
+                  "strokeJoin": "round"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#ffffff"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "right",
+                  "baseline": "middle",
+                  "dx": -16,
+                  "fontWeight": "bold"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              }
+            ]
+          }
+        ]
       }
     ]
   }

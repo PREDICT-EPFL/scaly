@@ -56,7 +56,7 @@
       ]
     },
     {
-      "calculate": "isValid(datum.casadi_s) ? (datum.casadi_s >= datum.scaly_s ? format(datum.casadi_s / datum.scaly_s, '.1f') + '× sooner' : format(datum.scaly_s / datum.casadi_s, '.1f') + '× later') : 'no CasADi controller'",
+      "calculate": "isValid(datum.casadi_s) ? (datum.casadi_s >= datum.scaly_s ? format(datum.casadi_s / datum.scaly_s, '.1f') + '× faster' : format(datum.scaly_s / datum.casadi_s, '.1f') + '× slower') : 'no CasADi controller'",
       "as": "label"
     }
   ],

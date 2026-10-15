@@ -59,7 +59,7 @@
       "as": "solver"
     },
     {
-      "calculate": "datum.oracle === 'scaly' ? format(datum.reference_ms / datum.solver_time_ms_mean, '.2f') + '×' : ''",
+      "calculate": "datum.oracle !== 'scaly' ? '' : datum.reference_ms >= datum.solver_time_ms_mean ? format(datum.reference_ms / datum.solver_time_ms_mean, '.2f') + '× faster' : format(datum.solver_time_ms_mean / datum.reference_ms, '.2f') + '× slower'",
       "as": "speedup"
     },
     {

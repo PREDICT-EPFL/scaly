@@ -217,15 +217,11 @@
       "as": "start"
     },
     {
-      "calculate": "datum.cut ? datum.cap / datum.total : 1",
-      "as": "shrink"
-    },
-    {
-      "calculate": "datum.start * datum.shrink",
+      "calculate": "min(datum.start, datum.cap)",
       "as": "x"
     },
     {
-      "calculate": "datum.end * datum.shrink",
+      "calculate": "min(datum.end, datum.cap)",
       "as": "x2"
     }
   ],

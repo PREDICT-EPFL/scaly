@@ -52,5 +52,5 @@ nothing about others, such as Apple silicon.
   ranges describe the changing workload along an episode. The paired per-step speedup compares
   matching steps, with the iteration mismatch above still part of the unbumpercars SQP result.
   `--repetitions N` retains the option to measure variation between processes.
-- **Code size is not normalized.** The two generators store constants and sparsity patterns in
-  different forms, so code size compares the files each one ships, not the information in them.
+- **Binary size is not normalized.** The two generators store constants and sparsity patterns in
+  different forms, so binary size compares the files each one ships, not the information in them.
