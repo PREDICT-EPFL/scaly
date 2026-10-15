@@ -10,9 +10,9 @@ generated functions and once with CasADi's. Everything else stays the same:
 
 Each provider runs one episode in a fresh process with an empty compilation cache. The step timers
 measure native solver time and leave out Python, the plant simulation and building the controller.
-CasADi uses SX for race cars and chain and MX for the two neural-network problems, the fastest
-validated Hessian implementation at each problem's size in the [sweep](scalability.md). The
-benchmark has no CasADi version of the chain controller with IPOPT.
+CasADi uses SX for race cars at a 50-step horizon and for chain, and MX for the two neural-network
+problems. These are the fastest validated Hessian implementations at each problem's size in the
+[sweep](scalability.md). The benchmark has no CasADi version of the chain controller with IPOPT.
 
 ## Where the time goes
 
@@ -25,8 +25,8 @@ problem has its own time axis.
 The same solver does the same work on both sides, so the gray part stays about the same and the
 step gains roughly what function evaluation loses. Function evaluation takes 97 to 98% of
 CasADi's step on unbumpercars, which evaluates a neural network for every pair of cars, and 39 to
-56% on neural-process MPC. On the race car it takes only 5 to 8%, so Scaly's 2.6 to 3.1× faster
-function evaluation barely changes the step. On the chain, CasADi's function evaluation takes 14%
+56% on neural-process MPC. On the race car it takes only 5 to 8%, so Scaly's 2.7 to 3.1× faster
+function evaluation barely changes the step. On the chain, CasADi's function evaluation takes 13%
 less time than Scaly's, but it is under 3% of the step.
 
 ## Step times against the sampling time
@@ -41,13 +41,13 @@ the measured times to fit on the axis.
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_times.vl.json"></div>
 
 Every Scaly controller finishes all of its steps within the sampling time. CasADi's unbumpercars
-controllers do not. With SQP, 48 of the 200 steps take longer than the 100 ms sampling time, and
-with IPOPT, 186 of them do. On the other problems, no step on either side takes more than 55% of
+controllers do not. With SQP, 50 of the 200 steps take longer than the 100 ms sampling time, and
+with IPOPT, 186 of them do. On the other problems, no step on either side takes more than 56% of
 the sampling time.
 
 Both sides solve the same problem at every step, so the per-step speedup, CasADi's time divided by
 Scaly's at the same step, hardly changes along an episode. For every controller, 80% of the steps
-lie within 7% of the median speedup, for function evaluation and for the whole solve. This spread
+lie within 11% of the median speedup, for function evaluation and for the whole solve. This spread
 describes the episode, not measurement noise, as the
 [fairness page](fairness.md#what-the-results-do-not-show) explains.
 

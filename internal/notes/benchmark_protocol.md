@@ -15,8 +15,8 @@ written by `benchmarks/run.py report`, supplies the mean step split and the cont
 Two more files feed no figure: `sweep.summary.csv`, the four `sweep/<problem>/<problem>.summary.csv`
 files concatenated, is what `check_fastest_casadi_encoding` reads, and
 `closed_loop_speedup.summary.csv` holds percentiles of the report's paired per-step ratios.
-`internal/notes/perf_2026_10_14/publish.py` audits a study and writes all five. They come from the
-October 14, 2026 study, `benchmarks/results/study-2026-10-14`.
+`internal/notes/perf_2026_10_15/publish.py` audits the study and writes all five. They come from the
+October 15, 2026 study, `benchmarks/results/study-2026-10-15`.
 
 ## Reference machine
 
@@ -52,9 +52,9 @@ The study uses the following controls:
 - It reports each closed loop's spread over steps and the paired per-step speedup, and retains
   every failed attempt.
 
-The study completed 138 sweep attempts. Of these, 103 produced timings, 15 reached the compilation
-limit, and 20 were skipped after an earlier failure. All timed kernels passed both their symbolic
-and compiled-C correctness gates. All 23 Scaly cells and all 15 closed-loop episodes completed.
+The study completed 106 sweep attempts. Of these, 77 produced timings, 11 reached the compilation
+limit, and 18 were skipped after an earlier failure. All timed kernels passed both their symbolic
+and compiled-C correctness gates. All 21 Scaly cells and all 15 closed-loop episodes completed.
 
 ## Numerical policy
 
@@ -119,7 +119,7 @@ generated oracle and supplies the same upper Hessian triangle as Scaly.
 Each closed loop uses the fastest validated CasADi Hessian encoding at its canonical size in the
 sweep: SX for race cars N=50 and chain M=5, MX for neural-process MPC N=12 and unbumpercars C=8.
 Every oracle uses that encoding, not only the Hessian. `check_fastest_casadi_encoding` checks the
-controller construction against the published sweep. The October 14 sweep confirms those choices.
+controller construction against the published sweep. The October 15 sweep confirms those choices.
 
 The IPOPT pairs use the same IPOPT 3.14.19 library, nonlinear program, variable and parameter layout,
 bounds, options, warm starts, and compiled C boundary. Chain has no IPOPT/CasADi runner,
@@ -147,7 +147,7 @@ oracle-cost comparison.
 Kernel timings isolate derivative evaluation. Closed-loop totals include the shared solver work, so
 a faster oracle may have little effect when the quadratic program or nonlinear solver dominates.
 Race-car demonstrates this distinction: Scaly's SQP median per-step function-evaluation speedup is
-2.96×, while the median total ratio is 1.04×. The IPOPT median total ratio is 1.08×. Chain SQP is
+3.12×, while the median total ratio is 1.04×. The IPOPT median total ratio is 1.08×. Chain SQP is
 nearly equal in total time, with CasADi's function evaluation faster.
 
 Compilation timeouts bound the claims. At unbumpercars C=16 and C=32, the study establishes that
@@ -259,11 +259,16 @@ the summary tables from the retained comma-separated value files and telemetry.
 
 ## Study coverage and reproduction
 
-The October 14 study completed 116 planned sweep attempts and 15 closed-loop episodes. Of the
-sweep attempts, 87 produced timings, 12 reached the 180-second compilation limit, and 17 were
+The October 15 study completed 106 planned sweep attempts and 15 closed-loop episodes. Of the
+sweep attempts, 77 produced timings, 11 reached the 180-second compilation limit, and 18 were
 skipped after that encoding failed at a smaller size. Every timed kernel passed its correctness
 check, and every Scaly size completed its process. The sweep uses Clang 20.1.8, and the
 closed-loop builds use GCC 13.3.0.
+
+The race-car grid is N=5,10,25,50,100,200,400 and its canonical controller horizon is N=50.
+The nominal N=50 seed initializes both SQP providers. All four race-car episodes completed one
+lap in 1,367 steps. Earlier N=40 controller timings and N=500 sweep results are different workloads
+and do not enter these figures.
 
 The study command runs the frozen grids with one fresh process, order seed 0, the `performance`
 CPU governor, boost disabled, a 180-second compile limit, and a 50 MiB source limit. `--only sweep`
@@ -283,7 +288,7 @@ internal solver time for the IPOPT cases that report it there. Globalization inc
 work. Glue is the wrapper's remaining work. Not every backend exposes the same breakdown, so the
 parts do not always sum to the total.
 
-### Episode agreement in the October 14 study
+### Episode agreement in the October 15 study
 
 Every solver step succeeded. Mismatch counts cover the single episode pair for each controller.
 
@@ -292,7 +297,7 @@ Every solver step succeeded. Mismatch counts cover the single episode pair for e
 | chain | sqp | 1 | 0 | 0 | 3.53e-09 | 1.24e-08 |
 | npmpc | ipopt | 1 | 0 | 0 | 1.21e-12 | 6.09e-15 |
 | npmpc | sqp | 1 | 0 | 0 | 3.02e-09 | 1.46e-11 |
-| race_cars | ipopt | 1 | 0 | 0 | 5.68e-14 | 5.19e-12 |
-| race_cars | sqp | 1 | 0 | 0 | 4.83e-12 | 4.17e-09 |
+| race_cars | ipopt | 1 | 0 | 0 | 4.97e-14 | 2.80e-12 |
+| race_cars | sqp | 1 | 0 | 0 | 2.43e-12 | 2.24e-09 |
 | unbumpercars | ipopt | 1 | 0 | 0 | 9.08e-12 | 6.62e-12 |
 | unbumpercars | sqp | 1 | 3 | 0 | 6.09e-09 | 4.91e-09 |

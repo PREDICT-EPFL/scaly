@@ -32,7 +32,7 @@ fixed, the machine they ran on, and what the results do not show.
 | CPU | AMD Ryzen 9 7940HS, 8 cores, boost disabled, `performance` governor |
 | System | Ubuntu 24.04, glibc 2.39 |
 | Compilers | GCC 13.3.0 for controllers, Clang 20.1.8 for the generated Hessians |
-| Versions | Python 3.14.3, Scaly `main` as of October 14, 2026, CasADi 3.8.0, PIQP 0.6.4 |
+| Versions | Python 3.14.3, Scaly measured October 15, 2026, CasADi 3.8.0, PIQP 0.6.4 |
 
 Absolute times depend on the machine. The results come from this one machine only and say
 nothing about others, such as Apple silicon.
