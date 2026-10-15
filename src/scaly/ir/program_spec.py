@@ -166,6 +166,17 @@ def _print_pieces(n: ProgramNode) -> str | None:
   return None
 
 
+def _bit_select_operands(n: ProgramNode) -> str | None:
+  if len(n.args) != 3:
+    return f"BIT_SELECT takes word, bit and value, got {len(n.args)} args"
+  word, bit, value = n.args
+  if not word.dtype.is_integer or not bit.dtype.is_integer:
+    return f"BIT_SELECT word and bit must be integer, got {word.dtype} and {bit.dtype}"
+  if not value.dtype.is_floating or n.dtype != value.dtype:
+    return f"BIT_SELECT value must be floating and match the node dtype, got {value.dtype} for {n.dtype}"
+  return None
+
+
 def _proc_params(n: ProgramNode) -> str | None:
   pc = n.attrs.get("param_count")
   if pc is None:
@@ -196,5 +207,6 @@ spec_program_full = Spec(
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),
     Rule(ProgramOp.PRINT, "print-pieces", _print_pieces),
     Rule(ProgramOp.PROC, "proc-params", _proc_params),
+    Rule(ProgramOp.BIT_SELECT, "bit-select-operands", _bit_select_operands),
   ]
 )

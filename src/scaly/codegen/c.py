@@ -448,6 +448,9 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = f"({args[0]} {comparison} {args[1]} ? {args[0]} : {args[1]})"
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
+    elif op == ProgramOp.BIT_SELECT:
+      zero = "0.0f" if node.dtype.bits == 32 else "0.0"
+      s = f"(((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {args[2]} : {zero})"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
     text[id(node)] = s
@@ -513,6 +516,9 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
       helpers = [
         n for n in walk_program(prog) if n.op == ProgramOp.FOR and "vector_helper" in n.attrs and n.args[1].args[0].attrs["lane_vector"] == vec
       ]
+      if any(n.op == ProgramOp.BIT_SELECT for h in helpers for n in walk_program(h.args[1])):
+        # The lane mask of BIT_SELECT: one 64-bit integer per double lane, all ones where the bit is set.
+        lines.append(f"typedef int64_t {vec}_i64 __attribute__((vector_size(8 * {width})));")
       operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
       math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm)]
       if math and vector_libm == "glibc":
@@ -627,23 +633,49 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
   vector_vars: set[str] = set()
   lane_vars: dict[str, str] = {}
 
+  def first_lane() -> dict[str, str]:
+    return {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"}
+
   def expression(root: ProgramNode) -> str:
     text: dict[ProgramNode, str] = {}
+    lane_bits: dict[str, str] = {}
+    lane_hits: dict[tuple[str, str], str] = {}
     stack = [(root, False)]
     while stack:
       node, ready = stack.pop()
       if node in text:
         continue
+      if not ready and node.op == ProgramOp.BIT_SELECT:
+        # Only the value is a vector; the word is the same in every lane and the bit is a lane index.
+        stack.append((node, True))
+        stack.append((node.args[2], False))
+        continue
       if not ready and node.op not in (ProgramOp.LOAD, ProgramOp.VAR, ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
         stack.append((node, True))
         stack.extend((a, False) for a in reversed(node.args))
+        continue
+      if node.op == ProgramOp.BIT_SELECT:
+        word_node, bit_node, value_node = node.args
+        # pack_masks indexes the word by direction and block only, so lane 0's word is every lane's.
+        word_text = _emit_scalar(word_node, {}, first_lane())
+        bit_text = _emit_scalar(bit_node, {}, lane_vars)
+        if bit_text not in lane_bits:
+          lane_bits[bit_text] = scope.allocate("kb")
+          lines.append(f"  {vec}_i64 {lane_bits[bit_text]};")
+          lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {lane_bits[bit_text]}[{lane}] = {bit_text};")
+        if (word_text, bit_text) not in lane_hits:
+          word, hit = scope.allocate("kw"), scope.allocate("kh")
+          lane_hits[word_text, bit_text] = hit
+          lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int64_t)({word_text});")
+          lines.append(f"  {vec}_i64 {hit} = (({word} >> {lane_bits[bit_text]}) & 1) == 1;")
+        text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {lane_hits[word_text, bit_text]}))"
         continue
       args = [text[a] for a in node.args] if ready else []
       if node.op == ProgramOp.LOAD:
         name = scope.allocate("l", suffixes=("s",))
         view = node.args[0]
         if view.attrs.get("lane_stride") == 1:
-          first = _emit_view(view, {}, {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"})
+          first = _emit_view(view, {}, first_lane())
           lines.append(f"  {vec} {name};")
           lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
           lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
@@ -710,7 +742,7 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           view = stmt.args[0]
           pointer = c_ident(view.attrs["buffer"])
           if view.attrs.get("lane_stride") == 1:
-            first = _emit_scalar(view.args[0], {}, {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"})
+            first = _emit_scalar(view.args[0], {}, first_lane())
             if view.attrs.get("lane_local"):
               lines.append(f"  *({vec}_mem*)(&{pointer}[({first}) + {offset}]) = {value};")
             else:
