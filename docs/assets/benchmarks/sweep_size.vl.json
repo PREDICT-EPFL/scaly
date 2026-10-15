@@ -18,14 +18,14 @@
       "filter": "isValid(datum.executable_bytes)"
     },
     {
-      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.workload)",
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.workload)",
       "as": "order"
     },
     {
       "filter": "datum.order >= 0"
     },
     {
-      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Chain of masses, M masses', 'Unbumpercars, C cars'][datum.order]",
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Unbumpercars, C cars', 'Chain of masses, M masses'][datum.order]",
       "as": "problem"
     },
     {
@@ -137,7 +137,8 @@
             "CasADi MX",
             "CasADi MX with calls",
             "CasADi mapped SX",
-            "CasADi MX with GEMM"
+            "CasADi MX with GEMM",
+            "Best CasADi implementation"
           ],
           "range": [
             "#1baf7a",
@@ -145,12 +146,46 @@
             "#2a78d6",
             "#eda100",
             "#e87ba4",
-            "#4a3aa7"
+            "#4a3aa7",
+            "#c3c2b7"
           ]
         }
       }
     },
     "layer": [
+      {
+        "transform": [
+          {
+            "filter": "datum.encoding !== 'Scaly'"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "argmin",
+                "field": "kb",
+                "as": "best"
+              }
+            ],
+            "groupby": [
+              "problem",
+              "order",
+              "size"
+            ]
+          },
+          {
+            "calculate": "datum.best.kb",
+            "as": "kb"
+          },
+          {
+            "calculate": "'Best CasADi implementation'",
+            "as": "encoding"
+          }
+        ],
+        "mark": {
+          "type": "line",
+          "strokeWidth": 9
+        }
+      },
       {
         "mark": {
           "type": "line",
@@ -176,7 +211,8 @@
                 "CasADi MX",
                 "CasADi MX with calls",
                 "CasADi mapped SX",
-                "CasADi MX with GEMM"
+                "CasADi MX with GEMM",
+                "Best CasADi implementation"
               ],
               "range": [
                 "circle",
@@ -184,14 +220,15 @@
                 "triangle-up",
                 "diamond",
                 "triangle-down",
-                "cross"
+                "cross",
+                "M-1,-0.4H1V0.4H-1Z"
               ]
             }
           },
           "tooltip": [
             {
               "field": "encoding",
-              "title": "Encoding"
+              "title": "Implementation"
             },
             {
               "field": "size",

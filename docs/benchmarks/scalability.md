@@ -1,17 +1,17 @@
 # Scalability
 
 This page follows the Hessian of the Lagrangian as each [benchmark problem](index.md#the-problems)
-grows: how long the generated code takes to run, which CasADi encodings still compile, how long
-it takes to get from the model to compiled code, and how large that code is.
+grows: how long the generated code takes to run, which CasADi implementations still compile, how
+long it takes to get from the model to compiled code, and how large that code is.
 
-Each measurement is the C function that one encoding generates for the Hessian at one size,
+Each measurement is the C function that one implementation generates for the Hessian at one size,
 compiled on its own and timed with [Google Benchmark](https://github.com/google/benchmark) in a
-fresh process. Before timing, the harness checks its result against an independent reference, and
-a function that fails the check gets no timing. Compilation stops after 180 seconds, and an encoding
-that runs out of time at one size is not tried at larger sizes.
+fresh process. Before timing, the harness checks its result against an independent reference, and a
+function that fails the check gets no timing. Compilation stops after 180 seconds, and an
+implementation that runs out of time at one size is not tried at larger sizes.
 
 CasADi can build the same model from scalar operations or from matrix operations and function
-calls, and the choice changes both speed and compile time. The study measures five encodings:
+calls, and the choice changes both speed and compile time. The study measures five implementations:
 
 - **CasADi SX**: every operation unrolled into scalars.
 - **CasADi MX**: matrix operations kept whole.
@@ -21,37 +21,37 @@ calls, and the choice changes both speed and compile time. The study measures fi
   as one general matrix multiplication (GEMM). Only the two problems with a neural network have
   it.
 
-Unbumpercars has no single repeated stage, so it has no calls or mapped encoding.
+Unbumpercars has no single repeated stage, so it has no calls or mapped implementation.
 
 ## Evaluation time
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_runtime.vl.json"></div>
 
-On the race car, Scaly's evaluation time grows linearly with the horizon, at 60 to 70 ns per
-stage from `N = 100` on. CasADi's fastest encoding there, SX, takes about 400 ns per stage. On the
+On the race car, Scaly's evaluation time grows linearly with the horizon, at 60 to 70 ns per stage
+from `N = 100` on. CasADi's fastest implementation there, SX, takes about 400 ns per stage. On the
 problems that contain neural networks, SX compiles only at the shortest neural-process horizon and
-not at all on unbumpercars. The encodings that do compile keep the network's matrix products and
-calls, and pay for them at every evaluation.
+not at all on unbumpercars. The implementations that do compile keep the network's matrix products
+and calls, and pay for them at every evaluation.
 
 Each point comes from one process. Google Benchmark repeats the C call inside that process for at
 least half a second, but the study has no estimate of variation between processes, as the
 [fairness page](fairness.md#what-the-results-do-not-show) explains.
 
-## Which encodings compile
+## Which implementations compile
 
-Each cell divides an encoding's evaluation time by Scaly's at the same size, so a green cell is a
-size where Scaly is faster and a red one a size where CasADi is. A gray cell reached the
+Each cell divides an implementation's evaluation time by Scaly's at the same size, so a green cell
+is a size where Scaly is faster and a red one a size where CasADi is. A gray cell reached the
 180-second compile limit, and "not run" marks the larger sizes skipped after it.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_ratio.vl.json"></div>
 
-Of the 93 CasADi Hessians in the study, 64 compiled and were timed, 11 reached the limit and 18
-were skipped after it. Only one CasADi Hessian is faster than Scaly's, SX on the chain at `M = 5`.
-No encoding is best everywhere. SX is the fastest on the race car and the chain, and MX on the two
-problems with a neural network. MX with calls and mapped SX are the slowest at run time, up to 18×
-slower than Scaly on the race car, but at the largest sizes they are sometimes the only ones left.
-MX with calls is the only one at the longest neural-process horizon, and mapped SX the only one at
-`M = 9`.
+Of the 93 CasADi Hessians in the study, 64 compiled and were timed, 11 reached the limit and 18 were
+skipped after it. Only one CasADi Hessian is faster than Scaly's, SX on the chain at `M = 5`. No
+implementation is best everywhere. SX is the fastest on the race car and the chain, and MX on the
+two problems with a neural network. MX with calls and mapped SX are the slowest at run time, up to
+18× slower than Scaly on the race car, but at the largest sizes they are sometimes the only ones
+left. MX with calls is the only one at the longest neural-process horizon, and mapped SX the only
+one at `M = 9`.
 
 ## From model to object file
 
@@ -70,10 +70,10 @@ stopped at the limit.
 
 Scaly keeps the repeated stage of the race car as a loop over one compiled body, so its C source
 stays at 78 kB from `N = 5` to `N = 500`, and it takes 0.8 seconds at `N = 1` and 2.1 at
-`N = 500`. CasADi's SX encoding writes 10 MB of C at `N = 500`, and takes 56 seconds. On
+`N = 500`. CasADi's SX implementation writes 10 MB of C at `N = 500`, and takes 56 seconds. On
 neural-process MPC and unbumpercars, Scaly takes 2 to 7 seconds at every size. The chain is the
 exception. Scaly's time grows from 4 seconds at `M = 3` to 58 at `M = 9`, close to the mapped SX
-encoding, which is faster at `M = 5`.
+implementation, which is faster at `M = 5`.
 
 The next figure splits that time into its three steps, at each problem's size in the
 [closed-loop benchmarks](closed_loop.md). Each problem has its own time axis. A bar too long to
@@ -95,7 +95,7 @@ seconds.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_build_race_cars.vl.json"></div>
 
-As the horizon grows, CasADi's time moves into Clang. The SX encoding spends 26% of its time
+As the horizon grows, CasADi's time moves into Clang. The SX implementation spends 26% of its time
 compiling at `N = 1` and 89% at `N = 500`. Scaly's time grows in generating C, which takes 59% of
 its 0.8 seconds at `N = 1` and 71% of its 2.1 seconds at `N = 500`, while compiling stays at about
 a third of the total or less.
@@ -107,8 +107,8 @@ constant tables and static data, without the benchmark wrapper.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_size.vl.json"></div>
 
-Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 500`, while CasADi's
-SX one grows with the horizon to 4.5 MB. Scaly's is smaller than every CasADi encoding at every
+Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 500`, while CasADi's SX
+one grows with the horizon to 4.5 MB. Scaly's is smaller than every CasADi implementation at every
 size except the race car at `N = 1`, where SX is 1.5 kB smaller. On neural-process MPC, Scaly's
 grows from 83 kB to 695 kB, and almost all of that growth is constant tables.
 
@@ -118,8 +118,8 @@ everything else. Long bars are cut as in the time figure above.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/sweep_size_contents.vl.json"></div>
 
-The same tables weigh very differently in the two files. CasADi's mapped SX encoding stores a
+The same tables weigh very differently in the two files. CasADi's mapped SX implementation stores a
 large part of its object file as tables, and so does Scaly on neural-process MPC. CasADi's MX
-encoding of unbumpercars keeps 286 kB of tables in an object file whose C source holds under 3 kB
-of them, because a zero-filled buffer takes one line of C. The two generators store constants
+implementation of unbumpercars keeps 286 kB of tables in an object file whose C source holds under 3
+kB of them, because a zero-filled buffer takes one line of C. The two generators store constants
 differently, so these sizes compare what each one ships, not the information in it.

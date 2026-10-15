@@ -20,37 +20,46 @@ share and where the comparison has limits.
 | --- | --- | --- |
 | Race-car MPC | Model predictive control (MPC) of a Formula Student car following a race track | horizon `N` |
 | Neural-process MPC | MPC of a Furuta pendulum whose dynamics are a learned neural network | horizon `N` |
-| Chain of masses | MPC of a chain of point masses connected by nonlinear springs | number of masses `M` |
 | Unbumpercars | A safety filter that keeps `C` cars apart, with a neural model inside pairwise constraints | number of cars `C` |
+| Chain of masses | MPC of a chain of point masses connected by nonlinear springs | number of masses `M` |
 
 ## Derivatives as the problem grows
 
-Each point divides the time CasADi takes to evaluate the Hessian by the time Scaly takes, at one
-size. CasADi can express the same model in several ways, called encodings, and the fastest one
-depends on the problem and its size. Each point compares with the fastest encoding at that size,
-and its color and shape say which one it was. A cross marks a size where CasADi did not compile,
-because every encoding reached the 180-second compile limit there or at a smaller size.
+The first figure shows the time the generated code takes to evaluate the Hessian at each size.
+CasADi can express the same model in several ways, called implementations, and the fastest one
+depends on the problem and its size. The wide gray line follows the best of them at each size. A
+line ends where its implementation reached the 180-second compile limit.
 
-<div class="vega-chart" data-spec="../assets/benchmarks/hessian_speedup.vl.json"></div>
+<div class="vega-chart" data-spec="../assets/benchmarks/sweep_runtime.vl.json"></div>
 
-Scaly is faster at every size but one, and the gap grows with the problem. On the race car it
-goes from 1.1× at `N = 1` to between 5.6 and 6.7× from `N = 40` on. Unbumpercars goes from 4.2×
-at `C = 2` to 17× at `C = 8`, and at `C = 16` and `C = 32` only Scaly compiles. On neural-process
-MPC, Scaly stays 1.6 to 2.3× ahead of CasADi's MX encoding up to `N = 50`. At the two longest
-horizons MX no longer compiles, and the gap to the slower encodings that still do reaches 4.9 and
-17×. The exception is the chain at `M = 5`, where CasADi's SX encoding takes 18% less time than
-Scaly. At `M = 9`, SX no longer compiles and Scaly is 8.7× faster than the fastest encoding left.
+Scaly is faster at every size but one, and the gap grows with the problem. On the race car it goes
+from 1.1× at `N = 1` to between 5.6 and 6.7× from `N = 40` on. On neural-process MPC, Scaly stays
+1.6 to 2.3× ahead of CasADi's MX implementation up to `N = 50`. At the two longest horizons MX no
+longer compiles, and the gap to the slower implementations that still do reaches 4.9 and 17×.
+Unbumpercars goes from 4.2× at `C = 2` to 17× at `C = 8`, and at `C = 16` and `C = 32` only Scaly
+compiles. The exception is the chain at `M = 5`, where CasADi's SX implementation takes 18% less
+time than Scaly. At `M = 9`, SX no longer compiles and Scaly is 8.7× faster than the fastest
+implementation left.
 
-The [scalability page](scalability.md) shows every encoding separately, with the time to build
-each one and the size of its code.
+The second figure shows the size of the object file each Hessian compiles to.
+
+<div class="vega-chart" data-spec="../assets/benchmarks/sweep_size.vl.json"></div>
+
+Scaly's race-car object file stays between 29 and 46 kB from `N = 5` to `N = 500`, while CasADi's SX
+one grows with the horizon to 4.5 MB. Scaly's is smaller than every CasADi implementation at every
+size except the race car at `N = 1`, where SX is 1.5 kB smaller.
+
+The [scalability page](scalability.md) adds which implementations compile at each size, the time to
+build each one and what its object file contains.
 
 ## Controllers
 
 Each controller runs a full simulated episode twice, once with Scaly's generated functions and
 once with CasADi's, with the same solver, settings and warm starts. Each pair of bars divides the
 mean time per control step into function evaluation, every objective, constraint and derivative
-the solver asks for, and the rest of the solver's work. Each controller has its own time axis, and
-the number next to Scaly's bar says how many times faster its step is on average.
+the solver asks for, and the rest of the solver's work. Each problem has its own time axis,
+shared by its SQP and IPOPT controllers, and the number next to each Scaly bar says how many times
+faster its step is on average.
 
 <div class="vega-chart" data-spec="../assets/benchmarks/closed_loop_share.vl.json"></div>
 

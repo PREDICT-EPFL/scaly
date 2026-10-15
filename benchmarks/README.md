@@ -30,7 +30,7 @@ uv run python benchmarks/run.py smoke --select problems
 ```
 
 Smoke runs three groups, all on by default. Without `--full`, as on pull requests, each problem runs
-one gate and the `benchmarks` group runs Scaly and one CasADi encoding per problem; the nightly
+one gate and the `benchmarks` group runs Scaly and one CasADi implementation per problem; the nightly
 workflow passes `--full`, which runs everything below.
 
 - `problems` — each problem's own formulation gates, owned by the problem
@@ -140,7 +140,7 @@ collisions. Large car counts therefore remain measurable even when collision-fre
 placement cannot fit them. The closed-loop runner still requires collision-free initial states.
 The provenance records this input policy for every affected cell.
 
-The stage-based workloads default to Scaly and four CasADi encodings of the repeated dynamics
+The stage-based workloads default to Scaly and four CasADi implementations of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
 of an elemental `SX` `Function` in an `MX` outer graph. The objective and inequality expressions
 remain in the problem's canonical outer graph. The chain smoke tier uses literal `casadi_sx` at M=3 and mapped SX at M=5;

@@ -12,12 +12,19 @@
   },
   "transform": [
     {
-      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.problem) * 2 + (datum.solver === 'sqp' ? 0 : 1)",
+      "filter": "!(datum.problem === 'chain' && datum.solver === 'ipopt')"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.problem)",
       "as": "order"
     },
     {
-      "calculate": "{'race_cars': 'Race-car MPC', 'npmpc': 'Neural-process MPC', 'chain': 'Chain of masses', 'unbumpercars': 'Unbumpercars'}[datum.problem] + ', ' + upper(datum.solver)",
-      "as": "controller"
+      "calculate": "{'race_cars': 'Race-car MPC', 'npmpc': 'Neural-process MPC', 'chain': 'Chain of masses', 'unbumpercars': 'Unbumpercars'}[datum.problem]",
+      "as": "problem_label"
+    },
+    {
+      "calculate": "upper(datum.solver)",
+      "as": "method"
     },
     {
       "calculate": "datum.oracle === 'casadi' ? datum.solver_time_ms_mean : null",
@@ -72,7 +79,7 @@
   ],
   "facet": {
     "row": {
-      "field": "controller",
+      "field": "problem_label",
       "type": "nominal",
       "sort": {
         "field": "order",
@@ -99,22 +106,30 @@
     },
     "encoding": {
       "y": {
-        "field": "provider",
+        "field": "method",
         "type": "nominal",
         "title": null,
         "sort": [
-          "CasADi",
-          "Scaly"
+          "SQP",
+          "IPOPT"
         ],
         "scale": {
-          "paddingInner": 0.2,
+          "paddingInner": 0.25,
           "paddingOuter": 0.1
         },
         "axis": {
           "ticks": false,
           "domain": false,
-          "labelPadding": 6
+          "labelPadding": 60
         }
+      },
+      "yOffset": {
+        "field": "provider",
+        "type": "nominal",
+        "sort": [
+          "CasADi",
+          "Scaly"
+        ]
       }
     },
     "layer": [
@@ -160,8 +175,12 @@
           },
           "tooltip": [
             {
-              "field": "controller",
-              "title": "Controller"
+              "field": "method",
+              "title": "Solver"
+            },
+            {
+              "field": "provider",
+              "title": "Provider"
             },
             {
               "field": "segment",
@@ -202,12 +221,35 @@
             "field": "speedup"
           }
         }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.part === 'evaluation'"
+          }
+        ],
+        "mark": {
+          "type": "text",
+          "align": "right",
+          "baseline": "middle",
+          "dx": -6,
+          "color": "#52514e"
+        },
+        "encoding": {
+          "x": {
+            "value": 0
+          },
+          "text": {
+            "field": "provider"
+          }
+        }
       }
     ]
   },
   "resolve": {
     "scale": {
-      "x": "independent"
+      "x": "independent",
+      "y": "independent"
     }
   }
 }

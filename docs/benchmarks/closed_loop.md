@@ -11,15 +11,15 @@ generated functions and once with CasADi's. Everything else stays the same:
 Each provider runs one episode in a fresh process with an empty compilation cache. The step timers
 measure native solver time and leave out Python, the plant simulation and building the controller.
 CasADi uses SX for race cars and chain and MX for the two neural-network problems, the fastest
-validated Hessian encoding at each problem's size in the [sweep](scalability.md). The benchmark has
-no CasADi version of the chain controller with IPOPT.
+validated Hessian implementation at each problem's size in the [sweep](scalability.md). The
+benchmark has no CasADi version of the chain controller with IPOPT.
 
 ## Where the time goes
 
 Each pair of bars divides the mean time per control step into function evaluation, every
 objective, constraint and derivative value the solver asks for, and the rest of the solver's work.
-Each controller has its own time axis, and the number next to Scaly's bar says how many times
-faster its step is on average.
+Each problem has its own time axis, shared by its SQP and IPOPT controllers, and the number next
+to each Scaly bar says how many times faster its step is on average.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_share.vl.json"></div>
 
@@ -37,9 +37,8 @@ A controller has to finish each step within its sampling time, the interval betw
 updates, given in each panel's title. The figure shows how the time per step is spread over the
 episode, for function evaluation and for the whole solve, each on its own time axis. Each box
 spans the middle half of the steps, with the median marked inside, and the whiskers reach the
-fastest and the slowest step. A gray mark shows the sampling time where it is close enough to
-the measured times to fit on the axis. The arrow joins the two medians, and its label is the median
-of the per-step speedups, CasADi's time divided by Scaly's at the same step.
+fastest and the slowest step. A gray line shows the sampling time where it is close enough to
+the measured times to fit on the axis.
 
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_times.vl.json"></div>
 
@@ -48,10 +47,11 @@ controllers do not. With SQP, 48 of the 200 steps take longer than the 100 ms sa
 with IPOPT, 186 of them do. On the other problems, no step on either side takes more than 55% of
 the sampling time.
 
-Both sides solve the same problem at every step, so the per-step speedup hardly changes along an
-episode. For every controller, 80% of the steps lie within 7% of the median speedup, for function
-evaluation and for the whole solve. This spread describes the episode, not measurement noise, as
-the [fairness page](fairness.md#what-the-results-do-not-show) explains.
+Both sides solve the same problem at every step, so the per-step speedup, CasADi's time divided by
+Scaly's at the same step, hardly changes along an episode. For every controller, 80% of the steps
+lie within 7% of the median speedup, for function evaluation and for the whole solve. This spread
+describes the episode, not measurement noise, as the
+[fairness page](fairness.md#what-the-results-do-not-show) explains.
 
 | Problem | Solver | Median step, ms | Slowest step, ms | Steps over the sampling time | Iterations per step |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -59,13 +59,11 @@ the [fairness page](fairness.md#what-the-results-do-not-show) explains.
 | Race-car MPC | IPOPT | 4.51 / 4.88 | 9.84 / 14.12 | 0 / 0 | 10.4 |
 | Neural-process MPC | SQP | 1.02 / 1.48 | 7.61 / 11.06 | 0 / 0 | 4.7 |
 | Neural-process MPC | IPOPT | 3.48 / 4.34 | 6.75 / 10.53 | 0 / 0 | 10.1 |
-| Chain of masses | SQP | 6.24 / 6.25 | 8.11 / 8.11 | 0 / 0 | 3.0 |
-| Chain of masses | IPOPT | 6.56 | 10.90 | 0 | 7.4 |
 | Unbumpercars | SQP | 6.73 / 55.33 | 79.0 / 669.1 | 0 / 48 | 7.9 |
 | Unbumpercars | IPOPT | 19.04 / 139.46 | 41.4 / 297.5 | 0 / 186 | 13.7 |
+| Chain of masses | SQP | 6.24 / 6.25 | 8.11 / 8.11 | 0 / 0 | 3.0 |
 
-Each cell gives Scaly's value, then CasADi's, except for the chain with IPOPT, which has only
-Scaly. Iterations are the mean over the episode's steps.
+Each cell gives Scaly's value, then CasADi's. Iterations are the mean over the episode's steps.
 
 ## Do both sides do the same work?
 

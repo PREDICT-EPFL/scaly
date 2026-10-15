@@ -15,10 +15,11 @@ fixed, the machine they ran on, and what the results do not show.
   and tolerances. Only the provider of the model functions changes.
 - **The same timing boundary.** The timers cover native code only. Python, plant simulation and
   controller construction are never inside them.
-- **CasADi's best encoding.** CasADi is measured with several encodings, and each comparison uses
-  the fastest one that compiled at that size, including where CasADi wins. Closed loops use the
-  fastest validated Hessian encoding at their canonical size, SX for race cars and chain and MX
-  for neural-process MPC and unbumpercars. The same encoding supplies every oracle.
+- **CasADi's best implementation.** CasADi is measured with several implementations, and each
+  comparison uses the fastest one that compiled at that size, including where CasADi wins. Closed
+  loops use the fastest validated Hessian implementation at their canonical size, SX for race cars
+  and chain and MX for neural-process MPC and unbumpercars. The same implementation supplies every
+  oracle.
 - **Fresh processes and fixed CPU policy.** Each cell or provider runs once with an empty cache,
   one benchmark at a time. Order seed 0 fixes the backend order. The runner checks the
   `performance` governor and disabled boost state before and after each headline run.
@@ -38,9 +39,9 @@ nothing about others, such as Apple silicon.
 
 ## What the results do not show
 
-- **A missing CasADi time is not a speedup.** When no tested encoding compiles within 180
-  seconds, the result is that Scaly compiled and those encodings did not. Another formulation of
-  the same model might still compile.
+- **A missing CasADi time is not a speedup.** When no tested implementation compiles within 180
+  seconds, the result is that Scaly compiled and those implementations did not. Another formulation
+  of the same model might still compile.
 - **Function-evaluation timers differ slightly in scope.** Scaly's includes a bounds function with
   no CasADi counterpart, and Scaly evaluates the objective and constraints together where CasADi
   evaluates them separately. These differences are part of what is measured.

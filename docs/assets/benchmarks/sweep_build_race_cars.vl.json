@@ -268,7 +268,7 @@
         "tooltip": [
           {
             "field": "encoding",
-            "title": "Encoding"
+            "title": "Implementation"
           },
           {
             "field": "size",
@@ -388,7 +388,7 @@
         "tooltip": [
           {
             "field": "encoding",
-            "title": "Encoding"
+            "title": "Implementation"
           },
           {
             "field": "size",

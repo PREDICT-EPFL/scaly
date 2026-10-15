@@ -12,14 +12,14 @@
   },
   "transform": [
     {
-      "calculate": "indexof(['race_cars', 'npmpc', 'chain', 'unbumpercars'], datum.workload)",
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.workload)",
       "as": "order"
     },
     {
       "filter": "datum.order >= 0"
     },
     {
-      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Chain of masses, M masses', 'Unbumpercars, C cars'][datum.order]",
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Unbumpercars, C cars', 'Chain of masses, M masses'][datum.order]",
       "as": "problem"
     },
     {
@@ -221,7 +221,7 @@
           "tooltip": [
             {
               "field": "encoding",
-              "title": "Encoding"
+              "title": "Implementation"
             },
             {
               "field": "size",
