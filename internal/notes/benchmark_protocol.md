@@ -62,8 +62,9 @@ for both providers, and both link `-lmvec`. GCC closed-loop builds use
 `-O2 -march=native -fno-math-errno` and link `-lmvec` for both providers. GCC has no equivalent
 vector-library selection option. Scaly emits explicit vector calls where legal.
 
-The benchmark rejects Clang for measured just-in-time builds under this policy because Scaly JIT
-does not pass its vector-library selection flag. Clang remains supported for sweep builds.
+The benchmark rejects Clang, `zig cc` included, for measured just-in-time builds under this policy
+because Scaly JIT does not pass its vector-library selection flag. A closed-loop command without a
+CasADi oracle has no second provider to hold equal, so it accepts any compiler. Clang remains supported for sweep builds.
 Compile logs and provenance record the commands. `vector-symbols.json` records actual sweep
 object references. Both providers' race-car N=5 objects reference vector sine and cosine;
 Scaly also references vector tanh. A link flag alone would not establish vector use.

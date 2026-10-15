@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -90,6 +91,62 @@ def test_env_registry_mentions_native_build_controls() -> None:
   assert "SCALY_CACHE_DIR" in names
   assert "SCALY_CC" in names
   assert "SCALY_BUILD_SOLVERS" in names
+
+
+def test_compiler_order_prefers_ziglang_after_scaly_cc(tmp_path, monkeypatch, capsys) -> None:
+  from scaly.codegen import toolchain
+
+  def fake_cc(name: str) -> str:
+    path = tmp_path / "bin" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return str(path)
+
+  monkeypatch.delenv("SCALY_CC", raising=False)
+  monkeypatch.delenv("CC", raising=False)
+  monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+  real_find_spec = importlib.util.find_spec
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", lambda name: None)
+  assert toolchain.find_c_compiler() is None
+  cc = fake_cc("cc")
+  assert toolchain.find_c_compiler() == toolchain.Compiler((cc,), "PATH")
+  monkeypatch.setenv("CC", fake_cc("from-cc"))
+  assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["CC"],), "CC")
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", real_find_spec)
+  monkeypatch.setattr(sys, "path", [str(tmp_path / "site"), *sys.path])
+  zig = tmp_path / "site" / "ziglang" / "zig"
+  zig.parent.mkdir(parents=True)
+  (zig.parent / "__init__.py").write_text("")
+  zig.write_text("#!/bin/sh\n")
+  zig.chmod(0o755)
+  importlib.invalidate_caches()
+  assert toolchain.find_c_compiler() == toolchain.Compiler((str(zig), "cc"), "ziglang")
+  monkeypatch.setattr(toolchain, "native_recipe", lambda command: toolchain.BuildRecipe())
+  toolchain.main()
+  assert f"cc: {zig} cc (ziglang)" in capsys.readouterr().out
+  monkeypatch.setenv("SCALY_CC", fake_cc("from-scaly-cc"))
+  assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["SCALY_CC"],), "SCALY_CC")
+
+
+def test_ziglang_compiles_a_jit_function(tmp_path, monkeypatch) -> None:
+  ziglang = pytest.importorskip("ziglang")
+  import numpy as np
+  import scaly as sc
+  from scaly.codegen import toolchain
+
+  monkeypatch.delenv("SCALY_CC", raising=False)
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+  assert toolchain.find_c_compiler() == toolchain.Compiler(
+    (str(toolchain.shutil.which("zig", path=os.path.dirname(ziglang.__file__))), "cc"), "ziglang"
+  )
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="zig_jit")
+  def fn(x):
+    return x.sin() * x
+
+  xv = np.array([0.1, -0.7, 2.5])
+  np.testing.assert_allclose(fn(xv), np.sin(xv) * xv)
 
 
 def test_build_recipe_validates_render_controls() -> None:

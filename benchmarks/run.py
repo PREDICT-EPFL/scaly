@@ -339,7 +339,11 @@ def main() -> None:
   closed_loop_parser.add_argument("--boost", choices=("on", "off"), help="required CPU boost state")
   args = parser.parse_args()
   if args.command in {"sweep", "study", "closed-loop", "smoke"}:
-    configure_math_policy(measured_jit=args.command != "sweep" and (args.command != "study" or "closed-loop" in args.only))
+    configure_math_policy(
+      measured_jit=args.command != "sweep"
+      and (args.command != "study" or "closed-loop" in args.only)
+      and (args.command != "closed-loop" or "casadi" in (args.oracle or []))
+    )
   if args.command == "sweep":
     if args.repetitions < 1:
       parser.error("--repetitions must be positive")

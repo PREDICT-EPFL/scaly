@@ -40,6 +40,7 @@ piqp = ["scaly-piqp>=0.1.0a1,<0.2"]
 ipopt = ["scaly-ipopt>=0.1.0a1,<0.2"]
 sqp = ["scaly-sqp>=0.1.0a1,<0.2"]
 solvers = ["scaly[piqp,ipopt,sqp]"]
+toolchain = ["ziglang==0.16.*"]
 
 [build-system]
 requires = ["hatchling"]
