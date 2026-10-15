@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
@@ -129,3 +130,50 @@ def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   np.testing.assert_allclose(adj["vmap"], jac.T @ w, rtol=1e-10, atol=1e-10)
   # Forward/reverse duality: <J v, w> == <v, J^T w>.
   np.testing.assert_allclose(w @ fwd["vmap"], v @ adj["vmap"], rtol=1e-12)
+
+
+@pytest.mark.parametrize("length", [0, 1, 4])
+@pytest.mark.parametrize("stride", [0, 1, 2])
+@pytest.mark.parametrize(("seed_kind", "nseed"), [("runtime", 4), ("runtime", 1), ("periodic", 3)], ids=["local", "generic", "periodic"])
+def test_mapped_windows_and_broadcast_formals_against_numpy(length, stride, seed_kind, nseed, monkeypatch):
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+
+  @sc.function(sc.group(sc.arg("window", 3), sc.arg("bias", 2)), outputs=sc.arg("out"), name="window_stage")
+  def stage(inputs):
+    x, p = inputs
+    return sc.stack([x[0] * x[1] + p[0].sin(), x[1] * x[2] + p[1] * x[0]])
+
+  size = 4 + max(0, length - 1) * stride
+
+  rng = np.random.default_rng(12)
+  z, seed_values, cot = rng.normal(size=size), rng.normal(size=(nseed, size)), rng.normal(size=2 * length)
+  if seed_kind == "periodic":
+    seed_values = np.tile([1.0, -0.4], (nseed, (size + 1) // 2))[:, :size] * np.arange(1, nseed + 1)[:, None]
+  if nseed > 1:
+    seed_values[1] = 0
+
+  @sc.function(
+    sc.group(sc.arg("windows_z", size), sc.arg("windows_seeds", (nseed, size)), sc.arg("windows_cot", 2 * length)),
+    outputs=sc.group(sc.arg("value"), sc.arg("many"), sc.arg("single"), sc.arg("adj")),
+    name="window_products",
+  )
+  def products(inputs):
+    z, seeds, cot = inputs
+    seeds = sc.const(seed_values) if seed_kind == "periodic" else seeds
+    mapped = _mapped_call(stage, length, [(z, 1, stride), (z, 0, 0)])
+    return mapped, sc.jvp_many(mapped, z, seeds), sc.stack([sc.jvp(mapped, z, seeds[i]) for i in range(nseed)]), sc.vjp((mapped,), (z,), (cot,))[0]
+
+  def reference(z):
+    blocks = []
+    for it in range(length):
+      x = z[1 + it * stride : 4 + it * stride]
+      p = z[:2]
+      blocks.extend([x[0] * x[1] + np.sin(p[0]), x[1] * x[2] + p[1] * x[0]])
+    return np.asarray(blocks)
+
+  value, many, single, adj = products((z, seed_values, cot))
+  expected = np.stack([(reference(z + 1e-5 * seed) - reference(z - 1e-5 * seed)) / 2e-5 for seed in seed_values])
+  np.testing.assert_allclose(value, reference(z), atol=1e-12, rtol=1e-12)
+  np.testing.assert_allclose(many, expected, atol=1e-9, rtol=1e-8)
+  np.testing.assert_allclose(single, expected, atol=1e-9, rtol=1e-8)
+  np.testing.assert_allclose(many @ cot, seed_values @ adj, atol=1e-11, rtol=1e-11)
