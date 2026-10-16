@@ -4,12 +4,16 @@ import importlib.util
 import re
 import shutil
 import subprocess
+import sys
 from functools import cache
 from pathlib import Path
 
 THIRD_PARTY = Path(__file__).parent / "build" / "third_party"
-# The flags Scaly's own benchmark cells compile with, used for everything the harness compiles.
-FLAGS = ("-O3", "-march=native", "-fno-math-errno", "-fveclib=libmvec")
+# The flags Scaly's own benchmark cells compile with, used for everything the harness compiles, and
+# the vector math library they link. macOS has no libmvec.
+DARWIN = sys.platform == "darwin"
+FLAGS = ("-O3", "-mcpu=native", "-fno-math-errno") if DARWIN else ("-O3", "-march=native", "-fno-math-errno", "-fveclib=libmvec")
+VECTOR_LIBM = () if DARWIN else ("-lmvec",)
 # The release of the iree-base-compiler wheel that compiles the modules; the runtime must match it.
 IREE_TAG = "v3.12.0"
 

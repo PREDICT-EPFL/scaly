@@ -137,6 +137,15 @@ best of three processes, with the ratio to Scaly:
 Scaly's N = 50 cell varies most between processes, from 84.8 to 92.3 µs; every other cell stays
 within 3%.
 
+Apple M4 Max laptop, macOS, no XLA column since TensorFlow has no macOS wheel. The harness compiles
+with `-mcpu=native` and links no vector math library, as Scaly's own builds do on arm64:
+
+| N | Scaly | IREE |
+|---:|---:|---:|
+| 12 | 14.8 | 30.6 (2.07×) |
+| 50 | 61.4 | 93.4 (1.52×) |
+| 200 | 246.7 | 317.4 (1.29×) |
+
 ## What each needs at run time
 
 No generated object contains a runtime: each only references one, and the final link pulls it in

@@ -73,7 +73,7 @@ def build(kernel: Kernel, N: int, inputs: Path) -> Path:
     objects.append(obj)
   binary = out / "benchmark"
   toolchain.run(
-    ["clang++", "-pthread", *objects, *kernel.objects, "-o", binary, *kernel.libs, gbench / "lib" / "libbenchmark.a", "-lmvec", "-lm", "-ldl"]
+    ["clang++", "-pthread", *objects, *kernel.objects, "-o", binary, *kernel.libs, gbench / "lib" / "libbenchmark.a", *toolchain.VECTOR_LIBM, "-lm", "-ldl"]
   )
   return binary
 
