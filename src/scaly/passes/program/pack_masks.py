@@ -239,19 +239,22 @@ def _pack_proc(proc: ProgramNode) -> ProgramNode:
   if not masks:
     return proc
   candidates = {i: found for i, stmt in enumerate(body) if (found := _layout(stmt, masks)) is not None}
-  # A mask is packed only when every read of it is a mask read in a loop that gets split, all with the same layout.
+  # A mask is packed only when no other statement or alias reads it and its loops share one layout.
+  # Statements are compared as a whole: interned views make per-view counts merge identical reads.
+  aliased = {b.attrs["alias_of"] for b in walk_program(proc) if b.op == ProgramOp.BUFFER and "alias_of" in b.attrs}
   while True:
-    reads: dict[str, int] = {}
-    for node in walk_program(proc):
-      if node.op == ProgramOp.VIEW and node.attrs["buffer"] in masks:
-        reads[node.attrs["buffer"]] = reads.get(node.attrs["buffer"], 0) + 1
-    covered: dict[str, int] = {}
+    elsewhere = {
+      n.attrs["buffer"]
+      for i, stmt in enumerate(body)
+      if i not in candidates and stmt.op != ProgramOp.BUFFER
+      for n in walk_program(stmt)
+      if n.op == ProgramOp.VIEW
+    }
     layouts: dict[str, set[tuple[int, int]]] = {}
-    for i, (layout, used) in candidates.items():
+    for layout, used in candidates.values():
       for mask in used:
-        covered[mask] = covered.get(mask, 0) + sum(1 for n in walk_program(body[i]) if n.op == ProgramOp.VIEW and n.attrs["buffer"] == mask)
         layouts.setdefault(mask, set()).add((layout.directions, layout.positions))
-    packable = {m for m in covered if covered[m] == reads.get(m, 0) and len(layouts[m]) == 1}
+    packable = {m for m in layouts if m not in elsewhere and m not in aliased and len(layouts[m]) == 1}
     dropped = [i for i, (_, used) in candidates.items() if not used <= packable]
     if not dropped:
       break

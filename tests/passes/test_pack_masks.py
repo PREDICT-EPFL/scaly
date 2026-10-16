@@ -25,7 +25,7 @@ def _masks(seed: int, count: int = 2, stages: int = STAGES) -> list[np.ndarray]:
   return [(np.arange(DIRECTIONS)[:, None] == owner[c][None, :]).astype(np.float64) for c in range(count)]
 
 
-def _program(masks: list[np.ndarray], *, index=None, extra_read=False, bare_use=False):
+def _program(masks: list[np.ndarray], *, index=None, extra_read=False, bare_use=False, second_loop=False):
   """``y[i] = sum_c mask_c[i] * x[c * positions + f(i)]`` with the selector's own ``((i / E) % S) * E + i % E`` index."""
   stages = masks[0].shape[1] // ENTRIES
   positions = stages * ENTRIES
@@ -47,6 +47,11 @@ def _program(masks: list[np.ndarray], *, index=None, extra_read=False, bare_use=
   body = [*tables, p.for_(p.range_("i", 0, length), [p.store(p.view(y, [i]), total)])]
   if extra_read:
     body.append(p.store(p.view(y, [p.const_int(length)]), p.load(p.view(tables[0], [p.const_int(3)]))))
+  if second_loop:
+    # The same interned mask[i] view, read by another loop over the same variable name.
+    z = p.buffer("z", dtypes.float64, (length,))
+    body.append(p.for_(p.range_("i", 0, length), [p.store(p.view(z, [i]), p.load(p.view(tables[0], [i])))]))
+    return p.program([p.proc("kernel", [x, y, z], body)])
   return p.program([p.proc("kernel", [x, y], body)])
 
 
@@ -123,7 +128,9 @@ def test_masks_with_the_same_lane_bits_share_one_bit_vector():
   assert source.count("_vec_i64 kb;") == 2 and "kb_2" not in source
 
 
-@pytest.mark.parametrize("case", ["not_zero_one", "read_elsewhere", "used_outside_product", "index_not_periodic", "negative_dividend"])
+@pytest.mark.parametrize(
+  "case", ["not_zero_one", "read_elsewhere", "read_by_another_loop", "used_outside_product", "index_not_periodic", "negative_dividend"]
+)
 def test_ineligible_tables_and_loops_are_left_alone(case):
   masks = _masks(3)
   if case == "not_zero_one":
@@ -132,6 +139,8 @@ def test_ineligible_tables_and_loops_are_left_alone(case):
     prog = _program(masks)
   elif case == "read_elsewhere":
     prog = _program(masks, extra_read=True)
+  elif case == "read_by_another_loop":
+    prog = _program(masks, second_loop=True)
   elif case == "used_outside_product":
     prog = _program(masks, bare_use=True)
   elif case == "negative_dividend":
