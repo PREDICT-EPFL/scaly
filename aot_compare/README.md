@@ -9,7 +9,8 @@ at horizon N, with respect to the decision vector.
   wrapped by `jax2tf` and compiled by TensorFlow's XLA ahead-of-time compiler
   (`saved_model_cli aot_compile_cpu`) into a C++ class.
 - **IREE**: the same asdex Hessian, exported as StableHLO and compiled by `iree-compile` into a
-  static library of dispatches plus a VM module emitted as C, which IREE's runtime runs.
+  static library of dispatches plus a virtual machine (VM) module emitted as C, which IREE's
+  runtime runs.
 
 Nothing is tuned by hand: each tool gets the flags it needs to build correct f64 code for this CPU
 and nothing else. The harness follows Scaly's benchmark cells: the same inputs for every backend,
@@ -38,6 +39,72 @@ builds the runtime TensorFlow ships for its AOT classes, all into `build/third_p
 | `toolchain.py` | the third-party pieces and the flags everything is compiled with |
 | `harness.py`, `cpp/` | `main.cpp` and one adapter per backend behind `kernel.h`; builds and runs the binaries |
 | `bench.py` | runs it all and prints the table |
+
+## How the two ahead-of-time paths work
+
+Both start from the same JAX function, `hessian.asdex_lower(N)`, and end with machine code plus C or
+C++ that a program links directly, with no Python or just-in-time compiler at run time.
+
+### XLA, through TensorFlow
+
+`jax.jit` compiles the same function with XLA, but its executable is not usable ahead of time.
+Serialized, it does contain the kernels' machine code (35 objects at N = 12, 19 KiB in total,
+needing only libm and libc), but not a program around them:
+
+- the order in which the kernels run and where their buffers sit are data for XLA's runtime, and
+  that runtime lives inside jaxlib (`libjax_common.so`, 353 MB);
+- every matrix product is a YNNPACK fusion that jaxlib runs itself, so the executable has no
+  machine code for them;
+- jaxlib exports nothing a C or C++ program can call, only its Python modules, and no published
+  library of XLA's CPU runtime (a PJRT plugin) was found to load the executable with.
+
+What remains is building that runtime from XLA's sources or writing a driver for the schedule, both
+of which mean building infrastructure rather than using a tool. TensorFlow packages one:
+`saved_model_cli aot_compile_cpu` runs XLA:CPU on a SavedModel and writes a standalone C++ class.
+Getting the JAX function there, and the class into a program, took:
+
+- `jax2tf.convert`, which wraps the function's StableHLO in an `XlaCallModule` operation of a
+  TensorFlow graph, saved as a SavedModel;
+- the target CPU spelled out with `--target_cpu`, taken from what clang resolves `-march=native` to;
+- the runtime TensorFlow ships as source for these classes (`xla_aot_runtime_src`), built with its
+  own CMake file at `-O3` because some of its Eigen convolution sources do not compile with AVX-512;
+  the generated schedule calls only its f64 matrix product, which is rebuilt with the harness flags;
+- Abseil, whose mutexes, counters and logging the generated header uses: TensorFlow ships its
+  headers but not its libraries, so the matching release, 20250814.1, is built from source;
+- inputs aligned to 64 bytes and set by name, since the class requires the alignment and orders its
+  arguments its own way.
+
+TensorFlow, 1.3 GiB installed, is needed only to compile; the program needs libc, libm and
+libstdc++. The XLA it uses is TensorFlow's snapshot rather than jaxlib's, and it computes matrix
+products with Eigen rather than YNNPACK.
+
+### IREE
+
+`jax.export` writes the function's StableHLO, and the PyPI compiler, `iree-base-compiler`, takes it
+unchanged. Besides the flags that select the CPU target, three choices matter, none of them tuning:
+
+- `--iree-input-demote-f64-to-f32=false`, or IREE silently computes in f32;
+- `--iree-llvmcpu-link-embedded=false` with `--iree-llvmcpu-link-static`: IREE's default
+  self-contained ELF has no f64 `sin`, `cos` or `exp`, so the dispatches become a plain object
+  whose calls resolve against libm;
+- `--output-format=vm-c`, so the program that drives the dispatches comes out as C rather than as
+  bytecode (a `.vmfb` file) for the runtime to load and interpret.
+
+The runtime is the harder part. The PyPI runtime wheel has it compiled into its Python extension,
+with no headers or libraries a C program can use, so the C runtime comes from the release's
+prebuilt tarball, `iree-dist-3.12.0rc20260917`, the same build as the compiler wheel; three of its
+static libraries and its headers are kept. The host, `cpp/iree.c`, is C because the tarball lacks
+the headers of the runtime's C++ wrappers. It defines the system allocator IREE's CMake package
+would otherwise set, and creates the single-threaded `local-sync` device with the loader for
+dispatches linked into the binary, plus the asynchronous I/O pool that 3.12 requires every device
+to have. Each call then allocates buffers, records the dispatches and barriers into a command
+buffer, submits it and waits; `local-sync` runs the dispatches on the calling thread.
+
+IREE's `--iree-execution-model=inline-dynamic` would remove the device, its command buffers and
+the asynchronous machinery: the module then calls the dispatches directly and imports only buffer
+allocation and dispatch from the runtime. In 3.12 it runs a small function correctly but fails on
+this Hessian with a null reference inside `hal_loader.executable.dispatch`, in IREE's own
+`iree-run-module` as well as in a host written for it, so the IREE column uses the default model.
 
 ## The artifacts
 
@@ -70,25 +137,27 @@ within 3%.
 
 ## What each needs at run time
 
-Code and constants the linker keeps for a minimal program at N = 12 (setup and one evaluation,
-`-O3`, `--gc-sections`):
+No generated object contains a runtime: each only references one, and the final link pulls it in
+from the archives in `build/third_party/`. The benchmark binary adds gbench and the harness on top,
+so sizes come from a minimal program instead, one that sets up and makes one call, at N = 12 and
+linked like the benchmarks with `--gc-sections`. The table counts the code, constants and data the
+binary keeps, attributed to each input with the link map:
 
-| backend | generated | runtime | total | shared libraries |
-|---|---:|---:|---:|---|
-| Scaly | 145 KiB | none | 145 KiB | libc, libm |
-| XLA AOT | 66 KiB of kernels and constants, 1.9 MiB of schedule and its inlined C++ | 2.9 MiB of Eigen matrix product, 0.3 MiB of Abseil | 5.1 MiB | libc, libm, libstdc++ |
-| IREE | 191 KiB of VM module, 57 KiB of dispatches | 1.07 MiB | 1.3 MiB | libc, libm |
+| backend | generated | runtime | total | stripped file | shared libraries |
+|---|---:|---:|---:|---:|---|
+| Scaly | 144 KiB: `npmpc_hess.o` | none | 145 KiB | 154 KiB | libc, libm |
+| IREE | 136 KiB: `iree.o` 80 KiB (the VM module, compiled in with the adapter), `library.o` 55 KiB | about 1,050 KiB | 1,202 KiB | 1,421 KiB | libc, libm |
+| XLA AOT | 83 KiB: kernels 47 KiB, constants 17 KiB, `xla.o` 20 KiB (the schedule, compiled in with the adapter) | Eigen matrix product 1,054 KiB, Abseil and the AOT runtime about 280 KiB | 1,447 KiB | 1,655 KiB | libc, libm, libstdc++ |
 
-Most of IREE's runtime is the local device and its executable loaders (414 KiB), the VM (218 KiB),
-HAL buffers and allocators (104 KiB), asynchronous I/O (100 KiB), base utilities (84 KiB) and the
-HAL module the program calls (30 KiB). This is the prebuilt x86-64 Linux build, which links in
-support for every driver and loader it was built with. An embedded target would use a runtime built from
-IREE's runtime sources for that target, with one driver and one loader (IREE's bare-metal guide);
-the prebuilt one cannot be used there.
+The XLA row has assertions compiled out with `-DNDEBUG`, as TensorFlow's own Release build of its
+runtime does. `toolchain.py` currently rebuilds the matrix product without that define, which keeps
+Eigen's assertions and 1.8 MiB of their messages: 3,316 KiB in total, 3,531 KiB stripped. Timing is
+the same either way, within 0.2%.
 
-IREE's `--iree-execution-model=inline-dynamic` would remove the device, its command buffers and
-the asynchronous machinery: the module then calls the dispatches directly and imports only buffer
-allocation and dispatch from the runtime. In 3.12 it runs a small function correctly but fails on
-this Hessian with a null reference inside `hal_loader.executable.dispatch`, in IREE's own
-`iree-run-module` as well as in this harness, so the IREE column uses the default model on the
-single-threaded `local-sync` device.
+IREE's runtime is 950 KiB of code from its archives (the VM, the module of the hardware
+abstraction layer (HAL) that the program calls, HAL buffers and allocators, the `local-sync` device
+and its loaders, asynchronous I/O and base utilities), plus most of the 116 KiB of strings, small
+constants and padding the linker merges across inputs. This is the prebuilt x86-64 Linux build,
+which links in support for every driver and loader it was built with. An embedded target would use
+a runtime built from IREE's runtime sources for that target, with one driver and one loader (IREE's
+bare-metal guide); the prebuilt one cannot be used there.
