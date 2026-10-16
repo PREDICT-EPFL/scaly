@@ -1,7 +1,6 @@
 // IREE's compiled module behind kernel.h. The module is two generated pieces: module.h, the VM
 // program emitted as C, which allocates buffers and records the dispatches; and library.o, the
-// dispatches' machine code. The runtime runs them on the single-threaded local-sync device. This
-// file is C because the runtime distribution ships no headers for its C++ wrappers.
+// dispatches' machine code. The runtime runs them on the single-threaded local-sync device.
 #include <stdlib.h>
 
 #include "iree/async/util/proactor_pool.h"

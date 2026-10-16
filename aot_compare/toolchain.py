@@ -4,25 +4,21 @@ import importlib.util
 import re
 import shutil
 import subprocess
-import tarfile
-import urllib.request
 from functools import cache
 from pathlib import Path
 
 THIRD_PARTY = Path(__file__).parent / "build" / "third_party"
 # The flags Scaly's own benchmark cells compile with, used for everything the harness compiles.
 FLAGS = ("-O3", "-march=native", "-fno-math-errno", "-fveclib=libmvec")
-# IREE publishes its runtime headers and libraries only in this prebuilt tarball; the PyPI runtime
-# wheel holds the same code sealed in its Python extension. Its build stamp, 3.12.0rc20260917,
-# matches the iree-base-compiler 3.12.0 wheel that compiles the modules.
-IREE_DIST = "https://github.com/iree-org/iree/releases/download/v3.12.0/iree-dist-3.12.0rc20260917-linux-x86_64.tar.xz"
+# The release of the iree-base-compiler wheel that compiles the modules; the runtime must match it.
+IREE_TAG = "v3.12.0"
 
 
 def run(cmd: list, cwd: Path | None = None) -> None:
   subprocess.run([str(c) for c in cmd], cwd=cwd, check=True)
 
 
-def _cmake_install(src: Path, prefix: Path, *options: str, cxx_flags: str = "-O3") -> None:
+def _cmake_install(src: Path, prefix: Path, *options: str, cxx_flags: str = "-O3", components: tuple[str, ...] = ()) -> None:
   build = THIRD_PARTY / f"{prefix.name}-build"
   run(
     [
@@ -31,6 +27,8 @@ def _cmake_install(src: Path, prefix: Path, *options: str, cxx_flags: str = "-O3
       src,
       "-B",
       build,
+      "-G",
+      "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
       "-DCMAKE_C_COMPILER=clang",
       "-DCMAKE_CXX_COMPILER=clang++",
@@ -40,8 +38,9 @@ def _cmake_install(src: Path, prefix: Path, *options: str, cxx_flags: str = "-O3
       *options,
     ]
   )
-  run(["cmake", "--build", build, "--parallel"])
-  run(["cmake", "--install", build])
+  run(["cmake", "--build", build])
+  for component in components or (None,):
+    run(["cmake", "--install", build, *(("--component", component) if component else ())])
   shutil.rmtree(build)
 
 
@@ -70,17 +69,28 @@ IREE_LIBRARIES = ("iree_hal_local_loaders_static_library_loader", "iree_runtime_
 
 @cache
 def iree_runtime() -> Path:
-  """IREE's runtime headers and static libraries, extracted from the release's prebuilt distribution."""
+  """IREE's runtime headers and static libraries, built from source with only the local-sync driver.
+
+  The compiler, and with it LLVM, is left out, so only the runtime's own submodules are fetched. The
+  PyPI runtime wheel holds the same code sealed in its Python extension.
+  """
   prefix = THIRD_PARTY / "iree-runtime"
   if not (prefix / "lib" / "libiree_runtime_unified.a").exists():
-    THIRD_PARTY.mkdir(parents=True, exist_ok=True)
-    archive = THIRD_PARTY / Path(IREE_DIST).name
-    urllib.request.urlretrieve(IREE_DIST, archive)
-    with tarfile.open(archive) as tar:
-      keep = [f"lib/lib{name}.a" for name in IREE_LIBRARIES]
-      members = [m for m in tar if m.name in keep or (m.name.startswith("include/iree/") and not m.name.startswith("include/iree/compiler/"))]
-      tar.extractall(prefix, members=members, filter="data")
-    archive.unlink()
+    src = _clone("https://github.com/iree-org/iree.git", IREE_TAG)
+    submodules = (src / "build_tools" / "scripts" / "git" / "runtime_submodules.txt").read_text().split()
+    run(["git", "submodule", "update", "--init", "--depth=1", "--quiet", *submodules], cwd=src)
+    _cmake_install(
+      src,
+      prefix,
+      "-DIREE_BUILD_COMPILER=OFF",
+      "-DIREE_BUILD_TESTS=OFF",
+      "-DIREE_BUILD_SAMPLES=OFF",
+      "-DIREE_HAL_DRIVER_DEFAULTS=OFF",
+      "-DIREE_HAL_DRIVER_LOCAL_SYNC=ON",
+      # The runtime's libraries and headers, and the flatcc it bundles.
+      components=("IREEDevLibraries-Runtime", "IREEBundledLibraries"),
+    )
+    shutil.rmtree(src)
   return prefix
 
 
@@ -111,13 +121,15 @@ def xla_aot_runtime() -> tuple[Path, Path]:
         src,
         "-B",
         build,
+        "-G",
+        "Ninja",
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_CXX_COMPILER=clang++",
         "-DCMAKE_CXX_STANDARD=17",
         "-DCMAKE_CXX_FLAGS=-O3 -D_GLIBCXX_USE_CXX11_ABI=1",
       ]
     )
-    run(["cmake", "--build", build, "--parallel"])
+    run(["cmake", "--build", build])
     prefix.mkdir(parents=True, exist_ok=True)
     shutil.copy(build / archive.name, archive)
     shutil.rmtree(build)

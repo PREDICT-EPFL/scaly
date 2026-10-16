@@ -23,11 +23,15 @@ the problem is copied into `problem.py` and its trained checkpoint into `data/`.
 ```bash
 uv run bench.py                        # N = 12, 50, 200, three fresh processes per binary
 uv run bench.py --sizes 12 --reps 1
+uv run bench.py --backends scaly,iree  # without TensorFlow, which has Linux wheels only
 ```
 
-It needs clang, cmake and git. The first run fetches and builds Google Benchmark and Abseil,
-downloads IREE's runtime (an 80 MB tarball, of which three libraries and the headers are kept) and
-builds the runtime TensorFlow ships for its AOT classes, all into `build/third_party/`.
+The xla backend needs TensorFlow, in the `xla` dependency group: `uv run --group xla bench.py`.
+
+It needs clang and git; CMake and Ninja come from PyPI. The first run fetches and builds Google
+Benchmark, IREE's runtime and, for xla, Abseil and the runtime TensorFlow ships for its AOT classes,
+all into `build/third_party/`. IREE's runtime takes about a minute, since the compiler, and with it
+LLVM, is left out.
 
 ## The code
 
@@ -91,10 +95,8 @@ unchanged. Besides the flags that select the CPU target, three choices matter, n
   bytecode (a `.vmfb` file) for the runtime to load and interpret.
 
 The runtime is the harder part. The PyPI runtime wheel has it compiled into its Python extension,
-with no headers or libraries a C program can use, so the C runtime comes from the release's
-prebuilt tarball, `iree-dist-3.12.0rc20260917`, the same build as the compiler wheel; three of its
-static libraries and its headers are kept. The host, `cpp/iree.c`, is C because the tarball lacks
-the headers of the runtime's C++ wrappers. It defines the system allocator IREE's CMake package
+with no headers or libraries a C program can use, so the C runtime is built from source at the
+compiler wheel's release, with only the `local-sync` driver. The host, `cpp/iree.c`, defines the system allocator IREE's CMake package
 would otherwise set, and creates the single-threaded `local-sync` device with the loader for
 dispatches linked into the binary, plus the asynchronous I/O pool that 3.12 requires every device
 to have. Each call then allocates buffers, records the dispatches and barriers into a command
@@ -146,7 +148,7 @@ binary keeps, attributed to each input with the link map:
 | backend | generated | runtime | total | stripped file | shared libraries |
 |---|---:|---:|---:|---:|---|
 | Scaly | 144 KiB: `npmpc_hess.o` | none | 145 KiB | 154 KiB | libc, libm |
-| IREE | 136 KiB: `iree.o` 80 KiB (the VM module, compiled in with the adapter), `library.o` 55 KiB | about 1,050 KiB | 1,202 KiB | 1,421 KiB | libc, libm |
+| IREE | 133 KiB: `iree.o` 80 KiB (the VM module, compiled in with the adapter), `library.o` 52 KiB | about 680 KiB | 815 KiB | 986 KiB | libc, libm |
 | XLA AOT | 83 KiB: kernels 47 KiB, constants 17 KiB, `xla.o` 20 KiB (the schedule, compiled in with the adapter) | Eigen matrix product 1,054 KiB, Abseil and the AOT runtime about 280 KiB | 1,447 KiB | 1,655 KiB | libc, libm, libstdc++ |
 
 The XLA row has assertions compiled out with `-DNDEBUG`, as TensorFlow's own Release build of its
@@ -154,10 +156,10 @@ runtime does. `toolchain.py` currently rebuilds the matrix product without that 
 Eigen's assertions and 1.8 MiB of their messages: 3,316 KiB in total, 3,531 KiB stripped. Timing is
 the same either way, within 0.2%.
 
-IREE's runtime is 950 KiB of code from its archives (the VM, the module of the hardware
+IREE's runtime is 618 KiB of code from its archives (the VM, the module of the hardware
 abstraction layer (HAL) that the program calls, HAL buffers and allocators, the `local-sync` device
-and its loaders, asynchronous I/O and base utilities), plus most of the 116 KiB of strings, small
-constants and padding the linker merges across inputs. This is the prebuilt x86-64 Linux build,
-which links in support for every driver and loader it was built with. An embedded target would use
-a runtime built from IREE's runtime sources for that target, with one driver and one loader (IREE's
-bare-metal guide); the prebuilt one cannot be used there.
+and its loaders, asynchronous I/O, base utilities and flatcc), plus most of the 64 KiB of strings,
+small constants and padding the linker merges across inputs. Creating the runtime instance registers
+every driver the runtime was built with, so only `local-sync` is built. IREE's prebuilt x86-64 Linux
+runtime also has the multithreaded `local-task` driver and the Vulkan driver, and with it the same
+program is 1,199 KiB, 1,418 KiB stripped.

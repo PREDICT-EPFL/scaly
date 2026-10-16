@@ -8,9 +8,14 @@ dependencies = [
   "jax==0.11.2",
   "asdex==0.5.2",
   "flatbuffers",
-  "tensorflow-cpu==2.21.0",
   "iree-base-compiler==3.12.0",
+  "cmake",
+  "ninja",
 ]
+
+[dependency-groups]
+# TensorFlow's AOT compiler, which the xla backend needs; it has Linux wheels only.
+xla = ["tensorflow-cpu==2.21.0"]
 
 [tool.uv]
 package = false

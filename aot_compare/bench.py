@@ -7,16 +7,14 @@ binary is built from, with the harness build in bin/.
 
 import argparse
 import csv
+import importlib
 import shutil
 from pathlib import Path
 
 import harness
-import lower_iree
-import lower_scaly
-import lower_xla
 
 BUILD = Path(__file__).parent / "build"
-BACKENDS = {"scaly": lower_scaly.lower, "xla": lower_xla.lower, "iree": lower_iree.lower}
+BACKENDS = ("scaly", "xla", "iree")
 
 
 def main() -> None:
@@ -24,12 +22,15 @@ def main() -> None:
   parser.add_argument("--sizes", type=lambda s: [int(n) for n in s.split(",")], default=[12, 50, 200], help="horizons, comma-separated")
   parser.add_argument("--reps", type=int, default=3, help="fresh processes per binary; the best is reported")
   parser.add_argument("--min-time", default="0.5s", help="Google Benchmark's minimum time per process")
+  parser.add_argument("--backends", type=lambda s: s.split(","), default=list(BACKENDS), help="backends, comma-separated; xla needs `--group xla`")
   args = parser.parse_args()
+  # Imported only when selected, so that the others run without TensorFlow installed.
+  lowerings = {name: importlib.import_module(f"lower_{name}").lower for name in args.backends}
 
   binaries: dict[tuple[int, str], Path] = {}
   for N in args.sizes:
     inputs = harness.write_inputs(BUILD / f"N{N}" / "inputs", N)
-    for name, lower in BACKENDS.items():
+    for name, lower in lowerings.items():
       out = BUILD / f"N{N}" / name
       shutil.rmtree(out, ignore_errors=True)
       out.mkdir(parents=True)
@@ -48,10 +49,10 @@ def main() -> None:
     for (N, name), values in times.items():
       writer.writerow([N, name, f"{min(values):.2f}", *(f"{v:.2f}" for v in values)])
   print(f"\nLower-triangle Lagrangian Hessian, gbench CPU time in us, best of {args.reps} processes (ratio to Scaly)")
-  print(f"{'N':>5}" + "".join(f"{name:>18}" for name in BACKENDS))
+  print(f"{'N':>5}" + "".join(f"{name:>18}" for name in args.backends))
   for N in args.sizes:
     scaly = min(times[N, "scaly"])
-    cells = [f"{min(times[N, name]):9.1f}" + ("" if name == "scaly" else f" ({min(times[N, name]) / scaly:.2f}x)") for name in BACKENDS]
+    cells = [f"{min(times[N, name]):9.1f}" + ("" if name == "scaly" else f" ({min(times[N, name]) / scaly:.2f}x)") for name in args.backends]
     print(f"{N:>5}" + "".join(f"{cell:>18}" for cell in cells))
 
 
