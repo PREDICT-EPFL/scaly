@@ -39,7 +39,7 @@ def pack_masks(prog: ProgramNode) -> ProgramNode:
   flat index ``f(i) = i % (stages * entries)`` keeps the loop from vectorizing. This stores each
   mask as one bit per entry, a direction's row padded to whole bytes, and splits the loop into
   directions, blocks of eight positions and the eight lanes of a block, so the reads of ``x_l`` are
-  contiguous and each lane multiplies its value by one or zero from one bit of the block's byte.
+  contiguous and each lane keeps or zeroes its value by testing one bit of the block's byte.
   """
   return _map_procs(prog, _pack_proc)
 

@@ -45,6 +45,6 @@ def test_lane_varying_word_matches_numpy(tmp_path, lanes):
   xs = np.random.default_rng(10 + lanes).normal(size=COUNT)
   out = np.full(COUNT, 8765.0)
   run(xs.ctypes.data_as(ctypes.POINTER(ctypes.c_double)), out.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
-  expected = ((words >> (np.arange(COUNT) % 5)) & 1) * xs
+  expected = np.where((words >> (np.arange(COUNT) % 5)) & 1, xs, 0.0)
   np.testing.assert_array_equal(out, expected)
   np.testing.assert_array_equal(np.signbit(out), np.signbit(expected))

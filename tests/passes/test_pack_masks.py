@@ -56,7 +56,7 @@ def _program(masks: list[np.ndarray], *, index=None, extra_read=False, bare_use=
 
 
 def _assert_identical(result: np.ndarray, expected: np.ndarray) -> None:
-  """Equal as IEEE values, signed zeros and NaNs included, as the multiply by the table gave them.
+  """Equal as IEEE values, signed zeros and NaNs included.
 
   A NaN's sign is left out: it depends on which operand of an addition the CPU propagates.
   """
@@ -67,7 +67,8 @@ def _assert_identical(result: np.ndarray, expected: np.ndarray) -> None:
 
 def _reference(masks: list[np.ndarray], x: np.ndarray) -> np.ndarray:
   positions = masks[0].shape[1]
-  terms = [mask * x[c * positions : (c + 1) * positions][None, :] for c, mask in enumerate(masks)]
+  # A cleared bit is a structural zero: +0.0, whatever the value it would have multiplied.
+  terms = [np.where(mask != 0, x[c * positions : (c + 1) * positions][None, :], 0.0) for c, mask in enumerate(masks)]
   return sum(terms[1:], terms[0]).reshape(-1)  # starting from 0 would turn -0.0 into +0.0
 
 
@@ -175,14 +176,16 @@ def test_small_tables_are_packed_and_match_numpy(tmp_path, stages, lanes):
 
 
 @pytest.mark.parametrize("lanes", ["scalar", 1, 2, 4, 8])
-def test_cleared_bits_keep_ieee_products_of_nonfinite_and_negative_values(tmp_path, lanes):
+def test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values(tmp_path, lanes):
   masks = _masks(50)
   prog = optimize_program(_program(masks), lanes=1 if lanes == "scalar" else "auto")
   lanes = 1 if lanes == "scalar" else lanes
   assert any(n.op == ProgramOp.BIT_SELECT for n in walk_program(prog))
-  x = -np.abs(np.random.default_rng(51).normal(size=2 * STAGES * ENTRIES))  # 0 * -x is -0.0
+  x = -np.abs(np.random.default_rng(51).normal(size=2 * STAGES * ENTRIES))  # 0 * -x would be -0.0
   x[::7], x[3::11] = np.inf, np.nan
+  expected = _reference(masks, x)
   with np.errstate(invalid="ignore"):
-    expected = _reference(masks, x)
-  assert np.isnan(expected).any() and np.signbit(expected[expected == 0]).any()
+    product = sum(mask * x[c * STAGES * ENTRIES : (c + 1) * STAGES * ENTRIES][None, :] for c, mask in enumerate(masks)).reshape(-1)
+  # A NaN reaches the entries whose bit is set and no others, where 0 * NaN would have spread it.
+  assert np.isnan(expected).any() and np.isnan(product).sum() > np.isnan(expected).sum()
   _assert_identical(_run(prog, tmp_path, lanes, x, expected.size), expected)

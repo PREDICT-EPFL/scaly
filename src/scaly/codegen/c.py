@@ -449,8 +449,8 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
     elif op == ProgramOp.BIT_SELECT:
-      one, zero = ("1.0f", "0.0f") if node.dtype.bits == 32 else ("1.0", "0.0")
-      s = f"((((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {one} : {zero}) * ({args[2]}))"
+      zero = "0.0f" if node.dtype.bits == 32 else "0.0"
+      s = f"(((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {args[2]} : {zero})"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
     text[id(node)] = s
@@ -643,7 +643,7 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
   def expression(root: ProgramNode) -> str:
     text: dict[ProgramNode, str] = {}
     lane_bits: dict[str, str] = {}
-    lane_ones: dict[tuple[str, str], str] = {}
+    lane_hits: dict[tuple[str, str], str] = {}
     stack = [(root, False)]
     while stack:
       node, ready = stack.pop()
@@ -670,17 +670,16 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           lane_bits[bit_text] = scope.allocate("kb")
           lines.append(f"  {vec}_i64 {lane_bits[bit_text]};")
           lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {lane_bits[bit_text]}[{lane}] = {bit_text};")
-        if (word_text, bit_text) not in lane_ones:
-          word, one = scope.allocate("kw"), scope.allocate("km")
-          lane_ones[word_text, bit_text] = one
+        if (word_text, bit_text) not in lane_hits:
+          word, hit = scope.allocate("kw"), scope.allocate("kh")
+          lane_hits[word_text, bit_text] = hit
           if uniform:
             lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int64_t)({word_text});")
           else:
             lines.append(f"  {vec}_i64 {word};")
             lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {word}[{lane}] = (int64_t)({word_text});")
-          # 1.0 where the bit is set and 0.0 elsewhere, so the product keeps 0 * inf and 0 * -x as IEEE has them.
-          lines.append(f"  {vec} {one} = ({vec})(((({word} >> {lane_bits[bit_text]}) & 1) == 1) & ({vec}_i64)(({vec}){{}} + 1.0));")
-        text[node] = f"({lane_ones[word_text, bit_text]} * {text[value_node]})"
+          lines.append(f"  {vec}_i64 {hit} = (({word} >> {lane_bits[bit_text]}) & 1) == 1;")
+        text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {lane_hits[word_text, bit_text]}))"
         continue
       args = [text[a] for a in node.args] if ready else []
       if node.op == ProgramOp.LOAD:

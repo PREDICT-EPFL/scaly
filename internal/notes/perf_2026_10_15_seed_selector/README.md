@@ -87,36 +87,38 @@ read nowhere else, shaped `(directions, ...)`, and whose other reads depend on t
 `i % positions` only, contiguously or with a constant stride (checked for every `i`). It stores each
 mask as `uint8` bits, a direction's row padded to whole bytes, and splits the loop into directions,
 blocks of eight positions and the eight lanes of a block, plus a tail. Each `mask * x` becomes
-`BIT_SELECT(byte, lane, x)`, which renders as `(((byte >> lane) & 1) ? 1.0 : 0.0) * x` in scalar
-code and in lane code as broadcast, shift, compare, AND with 1.0 and a multiply. It multiplies rather
-than selects so that a cleared bit keeps `0 * inf = NaN` and `0 * -x = -0.0` exactly as the table
-did; the select (`AND` of `x` with the lane mask) is one instruction shorter but returns `+0.0` for
-both. A word that differs from lane to lane, which `pack_masks` never emits, is read per lane. The rewritten reads go to the owner of an aliased
+`BIT_SELECT(byte, lane, x)`, which renders as `((byte >> lane) & 1) ? x : 0.0` in scalar code and as
+broadcast, shift, compare and AND in lane code. A cleared bit is a structural zero: it gives `+0.0`
+even where `0 * x` would give NaN or `-0.0`, as `x * 0` folds to `0` in simplification
+(`docs/how_it_works/lowering.md`). Multiplying by 1.0 or 0.0 instead was tried and kept IEEE's
+`0 * x`, at one more operation per term, but it spreads a NaN of one local color into entries of
+directions that color does not feed. A word that differs from lane to lane, which `pack_masks` never
+emits, is read per lane. The rewritten reads go to the owner of an aliased
 buffer, because `widen_ranges` does not widen a loop that reads through an alias; that is also why
 the flat selector loop never vectorized. `uint8` was added to the public dtypes for the tables.
 
 ## Result
 
 Scaly Hessian kernels, `main` (`edb3cbb`) against the branch. Size is `kernel.o` from Clang 18 at
-`-O3 -march=native -fno-math-errno`; time is the median of six fresh processes in two interleaved
-rounds (three for unbumpercars), every cell correct:
+`-O3 -march=native -fno-math-errno`; time is the median of three fresh processes (six, in two
+interleaved rounds, at N=200), every cell correct:
 
 | workload | size | `kernel.o` (`.rodata`) kB | eval µs |
 |---|---|---|---|
-| npmpc | 6 | 120 (19) -> 104 (1) | 10.3 -> 10.8 |
-| npmpc | 50 | 257 (157) -> 109 (9) | 49.6 -> 47.5 |
-| npmpc | 200 | 686 (629) -> 91 (34) | 219.8 -> 211.1 |
+| npmpc | 6 | 120 (19) -> 104 (1) | 10.1 -> 10.6 |
+| npmpc | 50 | 257 (157) -> 109 (9) | 49.7 -> 47.5 |
+| npmpc | 200 | 686 (629) -> 91 (34) | 220.6 -> 200.5 |
 | unbumpercars | 16 | 227 (117) -> 171 (61) | 999.9 -> 999.8 |
 
-N=6 came out about 0.5 µs slower in two separate sessions, inside the spread of single runs
-(10.0-10.9 against 10.3-11.3 µs); the standalone driver executes the same instruction count for
-both. race_cars (N = 5, 50, 200) and chain (M = 3) have no such tables and are unchanged.
-unbumpercars keeps some tables the pass does not match.
+N=6 came out about 0.5 µs slower in two separate sessions, inside the spread of single runs; the
+standalone driver executes the same instruction count for both. race_cars (N = 5, 50, 200) and
+chain (M = 3) have no such tables and are unchanged. unbumpercars keeps some tables the pass does
+not match.
 
 Packing has no size threshold. A 0/1 `double` table does not fold away: with `-fno-math-errno` and
-no fast-math the compiler must keep `x * 0.0`, so packing only removes data. On the test loop the
-packed kernel was smaller at every size from 35 entries (text and data 525 -> 384 bytes; 280
-entries: 4,644 -> 903).
+no fast-math the compiler must keep `x * 0.0`, while a known-zero bit selects `0.0` and folds. On
+the test loop the packed kernel was smaller at every size from 35 entries (text and data
+525 -> 176 bytes, the packed loop folded entirely into code; 280 entries: 4,644 -> 829).
 
 Lane helpers keep an index that is the same in every lane as a lane array. Emitting it as one
 scalar instead compiled the test loop to the same instructions, but made npmpc at N=6 take 16-17 µs
