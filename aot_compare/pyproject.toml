@@ -1,0 +1,19 @@
+[project]
+name = "aot-compare"
+version = "0"
+description = "The npmpc Lagrangian Hessian from Scaly, and from JAX with asdex lowered ahead of time through XLA and IREE, in one gbench harness."
+requires-python = "==3.12.*"
+dependencies = [
+  "scaly",
+  "jax==0.11.2",
+  "asdex==0.5.2",
+  "flatbuffers",
+  "tensorflow-cpu==2.21.0",
+  "iree-base-compiler==3.12.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+scaly = { path = "..", editable = true }

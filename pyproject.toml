@@ -115,6 +115,7 @@ exclude = [
   ".venv/**",
   "benchmarks/**",
   "internal/**",
+  "aot_compare/**",
 ]
 
 [tool.pytest.ini_options]
