@@ -28,6 +28,7 @@ class DType:
   is_floating: bool = False
   is_integer: bool = False
   is_bool: bool = False
+  is_unsigned: bool = False
 
   @property
   def itemsize(self) -> int:
@@ -54,6 +55,7 @@ class dtypes:
   """Canonical interned dtype instances. Mirrors the small tinygrad-style registry."""
 
   bool_ = DType("bool", 8, "uint8_t", is_bool=True)
+  uint8 = DType("uint8", 8, "uint8_t", is_integer=True, is_unsigned=True)
   int32 = DType("int32", 32, "int32_t", is_integer=True)
   int64 = DType("int64", 64, "int64_t", is_integer=True)
   float32 = DType("float32", 32, "float", is_floating=True)
@@ -64,7 +66,7 @@ class dtypes:
   @classmethod
   def from_name(cls, name: str) -> DType:
     if not cls._BY_NAME:
-      cls._BY_NAME.update({d.name: d for d in (cls.bool_, cls.int32, cls.int64, cls.float32, cls.float64)})
+      cls._BY_NAME.update({d.name: d for d in cls.all()})
     try:
       return cls._BY_NAME[name]
     except KeyError as e:
@@ -72,7 +74,7 @@ class dtypes:
 
   @classmethod
   def all(cls) -> tuple[DType, ...]:
-    return (cls.bool_, cls.int32, cls.int64, cls.float32, cls.float64)
+    return (cls.bool_, cls.uint8, cls.int32, cls.int64, cls.float32, cls.float64)
 
 
 def as_dtype(value: DType | str | None) -> DType:

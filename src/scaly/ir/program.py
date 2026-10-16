@@ -88,6 +88,7 @@ class ProgramOp(StrEnum):
   ATAN2 = "atan2"
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
+  BIT_SELECT = "bit_select"
 
 
 class RangeKind(StrEnum):
@@ -139,6 +140,7 @@ SCALAR_OPS: frozenset[ProgramOp] = frozenset(
     ProgramOp.ATAN2,
     ProgramOp.MINIMUM,
     ProgramOp.MAXIMUM,
+    ProgramOp.BIT_SELECT,
   }
 )
 
@@ -420,6 +422,19 @@ def div(x: ProgramNode, y: ProgramNode) -> ProgramNode:
 
 def mod(x: ProgramNode, y: ProgramNode) -> ProgramNode:
   return _scalar_binop(ProgramOp.MOD, x, y)
+
+
+def bit_select(word: ProgramNode, bit: ProgramNode, value: ProgramNode) -> ProgramNode:
+  """``value`` where bit ``bit`` of ``word`` is set, else zero of ``value``'s dtype.
+
+  A 0/1 multiplier stored as bits. A cleared bit is a structural zero: like ``x * 0`` in
+  simplification it gives ``+0.0`` even for an infinite, NaN or negative ``value``.
+  """
+  if any(n.op not in SCALAR_OPS for n in (word, bit, value)):
+    raise TypeError("bit_select requires scalar ProgramNode operands")
+  if not word.dtype.is_integer or not bit.dtype.is_integer or not value.dtype.is_floating:
+    raise TypeError(f"bit_select takes an integer word and bit and a floating value, got {word.dtype}, {bit.dtype}, {value.dtype}")
+  return ProgramNode(ProgramOp.BIT_SELECT, (word, bit, value), dtype=value.dtype)
 
 
 def neg(x: ProgramNode) -> ProgramNode:

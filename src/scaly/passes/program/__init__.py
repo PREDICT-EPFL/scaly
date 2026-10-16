@@ -13,6 +13,7 @@ from .coalesce_stores import coalesce_stores
 from .combine_scatter_sums import combine_scatter_sums
 from .fold_arith import fold_arith
 from .fold_tiles import fold_tiles
+from .pack_masks import pack_masks
 from .fuse_elementwise import fuse_elementwise
 from .fuse_ranges import fuse_ranges
 from .hoist_invariant import hoist_invariant
@@ -34,6 +35,7 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
   ("combine_scatter_sums", combine_scatter_sums),
   ("fuse_elementwise", fuse_elementwise),
   ("fold_arith", fold_arith),
+  ("pack_masks", pack_masks),
   ("unroll_unit_loops", unroll_unit_loops),
   ("fold_arith_after_unroll", fold_arith),
   ("pack_workspace", pack_workspace),

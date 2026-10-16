@@ -28,8 +28,22 @@ def test_dtype_registry_and_string_compat() -> None:
   assert dtypes.float32.c_type == "float"
   assert dtypes.int32.c_type == "int32_t"
   assert dtypes.bool_.is_bool
+  assert dtypes.uint8.c_type == "uint8_t" and dtypes.uint8.is_integer and dtypes.uint8.is_unsigned
+  assert not dtypes.int32.is_unsigned
+  assert sc.as_dtype("uint8") is dtypes.uint8 and dtypes.uint8 in dtypes.all()
+  assert dtypes.uint8.numpy() == np.uint8
   with pytest.raises(ValueError):
     sc.as_dtype("complex64")
+
+
+def test_unsigned_constants_fold_within_their_own_range() -> None:
+  from scaly.ir.program import ProgramOp
+  from scaly.passes.arith import evaluate
+
+  assert evaluate(ProgramOp.ADD, [200, 55], dtypes.uint8) == 255
+  assert evaluate(ProgramOp.ADD, [200, 56], dtypes.uint8) is None
+  assert evaluate(ProgramOp.SUB, [1, 2], dtypes.uint8) is None
+  assert evaluate(ProgramOp.ADD, [100, 27], dtypes.int64) == 127
 
 
 def test_dtype_propagation_through_unary_and_binary() -> None:
