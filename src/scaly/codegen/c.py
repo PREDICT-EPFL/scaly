@@ -449,8 +449,8 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
     elif op == ProgramOp.BIT_SELECT:
-      zero = "0.0f" if node.dtype.bits == 32 else "0.0"
-      s = f"(((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {args[2]} : {zero})"
+      one, zero = ("1.0f", "0.0f") if node.dtype.bits == 32 else ("1.0", "0.0")
+      s = f"((((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {one} : {zero}) * ({args[2]}))"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
     text[id(node)] = s
@@ -632,6 +632,10 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
   lane_name, lane = lane, c_ident(lane)
   vector_vars: set[str] = set()
   lane_vars: dict[str, str] = {}
+  per_lane = {lane_name}
+
+  def varies(node: ProgramNode) -> bool:
+    return any(n.op == ProgramOp.VAR and n.attrs["name"] in per_lane for n in walk_program(node))
 
   def first_lane() -> dict[str, str]:
     return {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"}
@@ -639,14 +643,14 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
   def expression(root: ProgramNode) -> str:
     text: dict[ProgramNode, str] = {}
     lane_bits: dict[str, str] = {}
-    lane_hits: dict[tuple[str, str], str] = {}
+    lane_ones: dict[tuple[str, str], str] = {}
     stack = [(root, False)]
     while stack:
       node, ready = stack.pop()
       if node in text:
         continue
       if not ready and node.op == ProgramOp.BIT_SELECT:
-        # Only the value is a vector; the word is the same in every lane and the bit is a lane index.
+        # Only the value is a vector; the word and the bit are integer lane arrays or scalars.
         stack.append((node, True))
         stack.append((node.args[2], False))
         continue
@@ -656,19 +660,27 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
         continue
       if node.op == ProgramOp.BIT_SELECT:
         word_node, bit_node, value_node = node.args
-        # pack_masks indexes the word by direction and block only, so lane 0's word is every lane's.
-        word_text = _emit_scalar(word_node, {}, first_lane())
+        if not node.dtype.is_floating or node.dtype.bits != 64:
+          raise LoweringError(f"lane BIT_SELECT needs float64 lanes, got {node.dtype}")
+        # A word that is the same in every lane, as pack_masks emits it, is read once and broadcast.
+        uniform = not varies(word_node)
+        word_text = _emit_scalar(word_node, {}, first_lane() if uniform else lane_vars)
         bit_text = _emit_scalar(bit_node, {}, lane_vars)
         if bit_text not in lane_bits:
           lane_bits[bit_text] = scope.allocate("kb")
           lines.append(f"  {vec}_i64 {lane_bits[bit_text]};")
           lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {lane_bits[bit_text]}[{lane}] = {bit_text};")
-        if (word_text, bit_text) not in lane_hits:
-          word, hit = scope.allocate("kw"), scope.allocate("kh")
-          lane_hits[word_text, bit_text] = hit
-          lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int64_t)({word_text});")
-          lines.append(f"  {vec}_i64 {hit} = (({word} >> {lane_bits[bit_text]}) & 1) == 1;")
-        text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {lane_hits[word_text, bit_text]}))"
+        if (word_text, bit_text) not in lane_ones:
+          word, one = scope.allocate("kw"), scope.allocate("km")
+          lane_ones[word_text, bit_text] = one
+          if uniform:
+            lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int64_t)({word_text});")
+          else:
+            lines.append(f"  {vec}_i64 {word};")
+            lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {word}[{lane}] = (int64_t)({word_text});")
+          # 1.0 where the bit is set and 0.0 elsewhere, so the product keeps 0 * inf and 0 * -x as IEEE has them.
+          lines.append(f"  {vec} {one} = ({vec})(((({word} >> {lane_bits[bit_text]}) & 1) == 1) & ({vec}_i64)(({vec}){{}} + 1.0));")
+        text[node] = f"({lane_ones[word_text, bit_text]} * {text[value_node]})"
         continue
       args = [text[a] for a in node.args] if ready else []
       if node.op == ProgramOp.LOAD:
@@ -726,6 +738,8 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           value = _emit_scalar(stmt.args[0], {}, lane_vars)
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {value};")
           lane_vars[stmt.attrs["target"]] = f"{name}[{lane}]"
+          if varies(stmt.args[0]):
+            per_lane.add(stmt.attrs["target"])
       elif stmt.op == ProgramOp.STORE and stmt.attrs.get("ordered_reduction"):
         target, value = stmt.args
         staged = dict(lane_vars)

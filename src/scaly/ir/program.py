@@ -425,10 +425,10 @@ def mod(x: ProgramNode, y: ProgramNode) -> ProgramNode:
 
 
 def bit_select(word: ProgramNode, bit: ProgramNode, value: ProgramNode) -> ProgramNode:
-  """``value`` where bit ``bit`` of ``word`` is set, else zero of ``value``'s dtype.
+  """``value`` times one where bit ``bit`` of ``word`` is set, else times zero.
 
-  A 0/1 multiplier stored as bits. Inside a widened loop the word must be the same in every lane;
-  only the bit and the value may vary.
+  A 0/1 multiplier stored as bits. It multiplies, so a cleared bit keeps IEEE's ``0 * inf`` and
+  ``0 * -x``, exactly as the multiplier table did.
   """
   if any(n.op not in SCALAR_OPS for n in (word, bit, value)):
     raise TypeError("bit_select requires scalar ProgramNode operands")
