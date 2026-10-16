@@ -39,7 +39,7 @@ def pack_masks(prog: ProgramNode) -> ProgramNode:
   flat index ``f(i) = i % (stages * entries)`` keeps the loop from vectorizing. This stores each
   mask as one bit per entry, a direction's row padded to whole bytes, and splits the loop into
   directions, blocks of eight positions and the eight lanes of a block, so the reads of ``x_l`` are
-  contiguous and each lane keeps or zeroes its value by testing one bit of the block's byte.
+  contiguous and each lane multiplies its value by one or zero from one bit of the block's byte.
   """
   return _map_procs(prog, _pack_proc)
 
@@ -57,8 +57,9 @@ def _int_value(node: ProgramNode, name: str, i: int) -> int | None:
     ProgramOp.ADD: lambda a, b: a + b,
     ProgramOp.SUB: lambda a, b: a - b,
     ProgramOp.MUL: lambda a, b: a * b,
-    ProgramOp.DIV: lambda a, b: a // b if b else None,
-    ProgramOp.MOD: lambda a, b: a % b if b else None,
+    # C truncates toward zero where Python floors; they agree for a nonnegative dividend and positive divisor.
+    ProgramOp.DIV: lambda a, b: a // b if a >= 0 and b > 0 else None,
+    ProgramOp.MOD: lambda a, b: a % b if a >= 0 and b > 0 else None,
     ProgramOp.MINIMUM: lambda a, b: min(a, b),
     ProgramOp.MAXIMUM: lambda a, b: max(a, b),
   }
@@ -100,6 +101,12 @@ def _layout(stmt: ProgramNode, masks: dict[str, ProgramNode]) -> tuple[_Layout, 
   products = _mask_products(value, name, masks)
   if not products:
     return None
+  # Each use of a mask must be one the rewrite replaces: a mask[i] operand of one of those products.
+  product_ids = {id(n) for n in products}
+  for parent in [store, *walk_program(value)]:
+    for arg in parent.args:
+      if arg.op == ProgramOp.LOAD and arg.args[0].attrs["buffer"] in masks and not (id(parent) in product_ids and _is_mask(arg, name, masks)):
+        return None
   used = {a.args[0].attrs["buffer"] for prod in products for a in prod.args if _is_mask(a, name, masks)}
   shapes = {tuple(masks[m].attrs["shape"]) for m in used}
   if len(shapes) != 1:

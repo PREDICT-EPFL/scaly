@@ -25,7 +25,7 @@ def _masks(seed: int, count: int = 2, stages: int = STAGES) -> list[np.ndarray]:
   return [(np.arange(DIRECTIONS)[:, None] == owner[c][None, :]).astype(np.float64) for c in range(count)]
 
 
-def _program(masks: list[np.ndarray], *, index=None, extra_read=False):
+def _program(masks: list[np.ndarray], *, index=None, extra_read=False, bare_use=False):
   """``y[i] = sum_c mask_c[i] * x[c * positions + f(i)]`` with the selector's own ``((i / E) % S) * E + i % E`` index."""
   stages = masks[0].shape[1] // ENTRIES
   positions = stages * ENTRIES
@@ -42,15 +42,28 @@ def _program(masks: list[np.ndarray], *, index=None, extra_read=False):
     term = p.mul(p.load(p.view(table, [i])), p.load(p.view(x, [p.add(p.const_int(c * positions), index)])))
     total = term if total is None else p.add(total, term)
   assert total is not None
+  if bare_use:
+    total = p.add(total, p.load(p.view(tables[0], [i])))  # the same mask[i] once more, outside a product
   body = [*tables, p.for_(p.range_("i", 0, length), [p.store(p.view(y, [i]), total)])]
   if extra_read:
     body.append(p.store(p.view(y, [p.const_int(length)]), p.load(p.view(tables[0], [p.const_int(3)]))))
   return p.program([p.proc("kernel", [x, y], body)])
 
 
+def _assert_identical(result: np.ndarray, expected: np.ndarray) -> None:
+  """Equal as IEEE values, signed zeros and NaNs included, as the multiply by the table gave them.
+
+  A NaN's sign is left out: it depends on which operand of an addition the CPU propagates.
+  """
+  np.testing.assert_array_equal(result, expected)
+  number = ~np.isnan(expected)
+  np.testing.assert_array_equal(np.signbit(result[number]), np.signbit(expected[number]))
+
+
 def _reference(masks: list[np.ndarray], x: np.ndarray) -> np.ndarray:
   positions = masks[0].shape[1]
-  return sum(mask * x[c * positions : (c + 1) * positions][None, :] for c, mask in enumerate(masks)).reshape(-1)
+  terms = [mask * x[c * positions : (c + 1) * positions][None, :] for c, mask in enumerate(masks)]
+  return sum(terms[1:], terms[0]).reshape(-1)  # starting from 0 would turn -0.0 into +0.0
 
 
 def _run(prog, tmp_path, lanes: int, x: np.ndarray, out_size: int) -> np.ndarray:
@@ -100,7 +113,7 @@ def test_split_loop_matches_numpy_at_every_lane_width(tmp_path, lanes):
   x = np.random.default_rng(10 + lanes).normal(size=2 * STAGES * ENTRIES)
   expected = _reference(masks, x)
   result = _run(prog, tmp_path, lanes, x, expected.size)
-  np.testing.assert_array_equal(result, expected + 0.0)  # a cleared bit gives +0.0 where 0 * negative gave -0.0
+  _assert_identical(result, expected)
 
 
 def test_masks_with_the_same_lane_bits_share_one_bit_vector():
@@ -110,7 +123,7 @@ def test_masks_with_the_same_lane_bits_share_one_bit_vector():
   assert source.count("_vec_i64 kb;") == 2 and "kb_2" not in source
 
 
-@pytest.mark.parametrize("case", ["not_zero_one", "read_elsewhere", "index_not_periodic"])
+@pytest.mark.parametrize("case", ["not_zero_one", "read_elsewhere", "used_outside_product", "index_not_periodic", "negative_dividend"])
 def test_ineligible_tables_and_loops_are_left_alone(case):
   masks = _masks(3)
   if case == "not_zero_one":
@@ -119,6 +132,12 @@ def test_ineligible_tables_and_loops_are_left_alone(case):
     prog = _program(masks)
   elif case == "read_elsewhere":
     prog = _program(masks, extra_read=True)
+  elif case == "used_outside_product":
+    prog = _program(masks, bare_use=True)
+  elif case == "negative_dividend":
+    # (i - 45) % 45 repeats every 45 entries under Python's floor, but C reads x[i - 45] for i < 45.
+    i = p.var("i")
+    prog = _program(masks, index=p.mod(p.sub(i, p.const_int(STAGES * ENTRIES)), p.const_int(STAGES * ENTRIES)))
   else:
     prog = _program(masks, index=p.var("i"))
   assert pack_masks(prog) is prog
@@ -131,7 +150,7 @@ def test_scalar_rendering_matches_numpy(tmp_path):
   assert not any(n.op == ProgramOp.FOR and "vector_helper" in n.attrs for n in walk_program(prog))
   x = np.random.default_rng(22).normal(size=2 * STAGES * ENTRIES)
   expected = _reference(masks, x)
-  np.testing.assert_array_equal(_run(prog, tmp_path, 1, x, expected.size), expected + 0.0)
+  _assert_identical(_run(prog, tmp_path, 1, x, expected.size), expected)
 
 
 @pytest.mark.parametrize("stages", [1, 8], ids=["tail_only", "no_tail"])
@@ -143,4 +162,18 @@ def test_small_tables_are_packed_and_match_numpy(tmp_path, stages, lanes):
   assert any(n.op == ProgramOp.BIT_SELECT for n in walk_program(prog))
   x = np.random.default_rng(40 + stages).normal(size=2 * stages * ENTRIES)
   expected = _reference(masks, x)
-  np.testing.assert_array_equal(_run(prog, tmp_path, lanes, x, expected.size), expected + 0.0)
+  _assert_identical(_run(prog, tmp_path, lanes, x, expected.size), expected)
+
+
+@pytest.mark.parametrize("lanes", ["scalar", 1, 2, 4, 8])
+def test_cleared_bits_keep_ieee_products_of_nonfinite_and_negative_values(tmp_path, lanes):
+  masks = _masks(50)
+  prog = optimize_program(_program(masks), lanes=1 if lanes == "scalar" else "auto")
+  lanes = 1 if lanes == "scalar" else lanes
+  assert any(n.op == ProgramOp.BIT_SELECT for n in walk_program(prog))
+  x = -np.abs(np.random.default_rng(51).normal(size=2 * STAGES * ENTRIES))  # 0 * -x is -0.0
+  x[::7], x[3::11] = np.inf, np.nan
+  with np.errstate(invalid="ignore"):
+    expected = _reference(masks, x)
+  assert np.isnan(expected).any() and np.signbit(expected[expected == 0]).any()
+  _assert_identical(_run(prog, tmp_path, lanes, x, expected.size), expected)
