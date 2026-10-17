@@ -1400,6 +1400,8 @@ tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_t
 tests/codegen/test_print.py::test_source_defines_scaly_printf_only_when_it_prints
 tests/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/codegen/test_toolchain.py::test_build_recipe_validates_render_controls
+tests/codegen/test_toolchain.py::test_compiler_command_accepts_zig_subcommand[CC]
+tests/codegen/test_toolchain.py::test_compiler_command_accepts_zig_subcommand[SCALY_CC]
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[command]
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[executable]
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[macros]
@@ -1425,6 +1427,8 @@ tests/codegen/test_toolchain.py::test_plain_c_module_header_compiles_as_c99
 tests/codegen/test_toolchain.py::test_solver_dir_override_discovery_and_flags
 tests/codegen/test_toolchain.py::test_solver_paths_required_needs_both_libraries
 tests/codegen/test_toolchain.py::test_toolchain_extra_compiles_a_jit_function
+tests/codegen/test_toolchain.py::test_windows_solver_link_flags_omit_rpath[libpiqpc.dll]
+tests/codegen/test_toolchain.py::test_windows_solver_link_flags_omit_rpath[piqpc.dll]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[1]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[2]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[4]

@@ -16,6 +16,7 @@ import os
 import platform
 import shlex
 import subprocess
+import sys
 from functools import lru_cache
 import shutil
 from dataclasses import dataclass
@@ -183,25 +184,32 @@ def _zig_bin_executable() -> str | None:
   return None
 
 
+def _command(value: str) -> tuple[str, ...] | None:
+  """Resolve a compiler setting: an executable name or path, or a command with arguments such as ``zig cc``."""
+  if (found := shutil.which(value)) is not None:
+    return (found,)
+  command = [part.strip('"') for part in shlex.split(value, posix=sys.platform != "win32")]
+  found = shutil.which(command[0]) if command else None
+  return (found, *command[1:]) if found is not None else None
+
+
 def find_c_compiler() -> Compiler | None:
   """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``zig-bin`` or ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
 
   ``zig-bin`` installs ``zig`` into its environment's scripts directory, ``ziglang`` inside its package.
   Returns the compiler command and which of those settings supplied it, or ``None`` if nothing is found.
   """
-  override = os.environ.get("SCALY_CC")
-  if override:
-    found = shutil.which(override)
-    return Compiler((found,), "SCALY_CC") if found is not None else None
+  if override := os.environ.get("SCALY_CC"):
+    command = _command(override)
+    return Compiler(command, "SCALY_CC") if command is not None else None
   if (zig := _zig_bin_executable()) is not None:
     return Compiler((zig, "cc"), "zig-bin")
   spec = importlib.util.find_spec("ziglang")
   if spec is not None and spec.origin is not None and (zig := shutil.which("zig", path=str(Path(spec.origin).parent))) is not None:
     return Compiler((zig, "cc"), "ziglang")
-  override = os.environ.get("CC")
-  if override:
-    found = shutil.which(override)
-    return Compiler((found,), "CC") if found is not None else None
+  if override := os.environ.get("CC"):
+    command = _command(override)
+    return Compiler(command, "CC") if command is not None else None
   found = shutil.which("cc")
   return Compiler((found,), "PATH") if found is not None else None
 

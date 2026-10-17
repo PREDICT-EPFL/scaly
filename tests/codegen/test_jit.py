@@ -80,10 +80,13 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache: Path) -> None:
   cache_dir = lib_path.parent
   fn.recompile()
   assert as_concrete(fn)._memo.compiled is None
-  assert not cache_dir.exists()
+  if sys.platform != "win32":
+    assert not cache_dir.exists()
   xv = np.array([0.5, 0.0, -1.0])
   out = fn(xv)
   np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
+  if sys.platform == "win32":
+    assert as_concrete(fn)._memo.compiled.lib_path != lib_path
 
 
 def test_jit_handles_multi_output(isolated_cache: Path) -> None:
@@ -265,7 +268,10 @@ def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_
   assert artifact.key in jit._artifact_cache
   jit.invalidate_cache(fun)
   assert artifact.key not in jit._artifact_cache
-  assert not artifact.lib_path.parent.exists()
+  if sys.platform == "win32":
+    assert jit._build_artifact(fun).key != artifact.key
+  else:
+    assert not artifact.lib_path.parent.exists()
 
 
 def test_vector_math_environment_variable_is_registered():

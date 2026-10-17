@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import sys
 
@@ -12,8 +10,9 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_module, render_c_source
+from scaly.codegen.toolchain import find_c_compiler
 
-pytestmark = pytest.mark.skipif(shutil.which(os.environ.get("SCALY_CC", "cc")) is None, reason="cc is required to run generated C")
+pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is required to run generated C")
 
 
 @sc.function(sc.group(sc.arg("x", 2), sc.arg("k", ())), outputs=sc.arg("y"))
@@ -175,8 +174,13 @@ int main(void) {
 """
   )
   exe = tmp_path / "main"
-  cc = os.environ.get("SCALY_CC", "cc")
-  subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", *define, str(main), str(source), "-lm", "-o", str(exe)], check=True, cwd=tmp_path)
+  compiler = find_c_compiler()
+  assert compiler is not None
+  subprocess.run(
+    [*compiler.command, "-std=c11", "-Wall", "-Wextra", "-Werror", *define, str(main), str(source), "-lm", "-o", str(exe)],
+    check=True,
+    cwd=tmp_path,
+  )
   assert subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout == expected
 
 
