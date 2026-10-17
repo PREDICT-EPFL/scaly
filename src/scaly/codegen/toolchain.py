@@ -13,6 +13,7 @@ import os
 import platform
 import shlex
 import subprocess
+import sys
 from functools import lru_cache
 import shutil
 from dataclasses import dataclass
@@ -152,7 +153,7 @@ def cache_root() -> Path:
 
 
 def find_c_compiler() -> Compiler | None:
-  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``CC``, else ``cc`` on ``PATH``.
+  """Find the C compiler command: ``SCALY_CC``, else ``CC``, else ``cc`` on ``PATH``.
 
   Returns the compiler command and which of those three supplied it, or ``None`` if nothing is found.
   """
@@ -160,7 +161,12 @@ def find_c_compiler() -> Compiler | None:
     override = os.environ.get(key)
     if override:
       found = shutil.which(override)
-      return Compiler((found,), key) if found is not None else None
+      if found is not None:
+        return Compiler((found,), key)
+      command = shlex.split(override, posix=sys.platform != "win32")
+      command = [part.strip('"') for part in command]
+      found = shutil.which(command[0]) if command else None
+      return Compiler((found, *command[1:]), key) if found is not None else None
   found = shutil.which("cc")
   return Compiler((found,), "PATH") if found is not None else None
 

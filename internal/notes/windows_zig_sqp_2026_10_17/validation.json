@@ -1,0 +1,59 @@
+{
+  "chain": {
+    "configurations_equal": true,
+    "steps_per_oracle": 90,
+    "all_steps_successful": true,
+    "iteration_mismatches": 0,
+    "oracle_count_mismatches": 0,
+    "rollout_max_abs_differences": {
+      "state": 3.6381810897267997e-09,
+      "control": 1.1647768381750634e-08,
+      "points": 2.031704915417265e-09,
+      "plan": 1.4079356680518629e-08
+    }
+  },
+  "npmpc": {
+    "configurations_equal": true,
+    "steps_per_oracle": 100,
+    "all_steps_successful": true,
+    "iteration_mismatches": 0,
+    "oracle_count_mismatches": 0,
+    "rollout_max_abs_differences": {
+      "state": 1.2575673835613088e-09,
+      "control": 5.468656777418701e-12,
+      "prediction": 1.7961720999437603e-09,
+      "plan": 1.2104967852741289e-11,
+      "slack": 7.41990966750087e-16,
+      "terminal_weight": 0.0
+    }
+  },
+  "race_cars": {
+    "configurations_equal": true,
+    "steps_per_oracle": 1367,
+    "all_steps_successful": true,
+    "iteration_mismatches": 0,
+    "oracle_count_mismatches": 0,
+    "rollout_max_abs_differences": {
+      "state": 6.197709012667474e-12,
+      "reference": 1.6413537196058314e-12,
+      "control": 4.879908033217362e-09,
+      "arc_length": 1.6484591469634324e-12,
+      "laps": 0.0,
+      "prediction": 1.5051959678658022e-11,
+      "reference_horizon": 1.652011860642233e-12,
+      "center_line": 0.0
+    }
+  },
+  "unbumpercars": {
+    "configurations_equal": true,
+    "steps_per_oracle": 200,
+    "all_steps_successful": true,
+    "iteration_mismatches": 2,
+    "oracle_count_mismatches": null,
+    "rollout_max_abs_differences": {
+      "state": 2.610396682145577e-07,
+      "desired": 1.4962350688985104e-07,
+      "applied": 2.0102297990098883e-07
+    }
+  }
+}

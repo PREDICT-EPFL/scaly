@@ -9,7 +9,7 @@ license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
 
 [build-system]
-requires = ["hatchling", "cmake>=3.5"]
+requires = ["hatchling", "cmake>=3.21", "ninja>=1.11; sys_platform == 'win32'"]
 build-backend = "hatchling.build"
 
 [project.entry-points."scaly.solvers"]

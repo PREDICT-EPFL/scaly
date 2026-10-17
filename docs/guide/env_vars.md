@@ -21,13 +21,14 @@ system compiles exported C.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SCALY_CC` | `CC`, then `cc` from `PATH` | Compiler executable for numerical evaluation |
+| `SCALY_CC` | `CC`, then `cc` from `PATH` | Compiler command for numerical evaluation |
 | `SCALY_CC_OPT` | `-O2` | One optimization flag passed to that compiler |
 | `SCALY_VECTOR_LIBM` | Native host detection | `none` for scalar math calls or `glibc` for supported vector math functions |
 
 An explicit `SCALY_CC` takes precedence over `CC`. Its value is an executable
-name or path, such as `clang` or `/usr/bin/clang`, rather than a shell command
-with additional flags. If the selected executable cannot be found, Scaly does
+name or path, such as `clang` or `/usr/bin/clang`, or a command with arguments,
+such as `zig cc`. Quote an executable path containing spaces. Arguments are passed
+directly to the compiler without a shell. If the selected executable cannot be found, Scaly does
 not silently try another compiler.
 
 `SCALY_CC_OPT=-O3` selects a different optimization level. It is a single
