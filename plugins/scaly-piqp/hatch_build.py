@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -31,6 +33,8 @@ def _shared_lib_name(system: str, base: str) -> str:
     return f"lib{base}.dylib"
   if system == "Linux":
     return f"lib{base}.so"
+  if system == "Windows":
+    return f"{base}.dll"
   raise RuntimeError(f"Unsupported platform: {system}")
 
 
@@ -62,16 +66,23 @@ def _solver_build_mode() -> str:
   raise RuntimeError("SCALY_BUILD_SOLVERS must be one of auto, required/1/true, or skip/0/false")
 
 
-def _has_cxx_compiler() -> bool:
-  return any(shutil.which(cmd) for cmd in ("c++", "g++", "clang++"))
+def _compiler_command(value: str) -> list[str]:
+  if path := shutil.which(value):
+    return [path]
+  command = [part.strip('"') for part in shlex.split(value, posix=os.name != "nt")]
+  if command and (path := shutil.which(command[0])):
+    return [path, *command[1:]]
+  return []
 
 
 def _missing_piqp_tools() -> list[str]:
   missing = [cmd for cmd in ("git", "cmake") if shutil.which(cmd) is None]
-  if shutil.which("cc") is None:
+  if not _compiler_command(os.environ.get("CC", "cc")):
     missing.append("cc")
-  if not _has_cxx_compiler():
+  if not any(_compiler_command(cmd) for cmd in ([os.environ["CXX"]] if "CXX" in os.environ else ("c++", "g++", "clang++"))):
     missing.append("c++")
+  if platform.system() == "Windows" and shutil.which("ninja") is None:
+    missing.append("ninja")
   return missing
 
 
@@ -133,9 +144,21 @@ def _write_third_party_notices(
 
 
 # Everything else that decides the built files, beside this hook, the pins and the license texts.
-_KEY_ENV = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET")
+_KEY_ENV = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET", "CMAKE_GENERATOR", "AR")
 _OUTPUTS = ("lib", "include", "licenses")
 _CACHE_MAX_AGE = 30 * 24 * 3600
+
+
+def _remove_tree(path: Path) -> None:
+  def remove_readonly(function, filename, error):
+    if not isinstance(error, PermissionError):
+      raise error
+    # Git marks pack files read-only on Windows, including in our disposable clones.
+    os.chmod(filename, stat.S_IWRITE)
+    function(filename)
+
+  if path.exists():
+    shutil.rmtree(path, onexc=remove_readonly)
 
 
 def _cache_root() -> Path:
@@ -145,11 +168,11 @@ def _cache_root() -> Path:
 
 
 def _tool_identity(cmd: str) -> str:
-  path = shutil.which(cmd)
-  if path is None:
+  command = _compiler_command(cmd)
+  if not command:
     return f"{cmd}: none"
-  out = subprocess.run([path, "--version"], capture_output=True, text=True).stdout.strip()
-  return f"{path}: {out.splitlines()[0] if out else ''}"
+  out = subprocess.run([*command, "--version"], capture_output=True, text=True).stdout.strip()
+  return f"{command}: {out.splitlines()[0] if out else ''}"
 
 
 def _cache_key(root: Path) -> str:
@@ -168,9 +191,32 @@ def _cache_key(root: Path) -> str:
 @contextmanager
 def _locked(path: Path, *, wait: bool = True):
   """Hold an exclusive lock on `path`, yielding whether it was taken. Lock files are never deleted."""
+  path.parent.mkdir(parents=True, exist_ok=True)
+  if os.name == "nt":
+    import msvcrt
+
+    with path.open("a+b") as f:
+      if f.seek(0, os.SEEK_END) == 0:
+        f.write(b"\0")
+        f.flush()
+      while True:
+        f.seek(0)
+        try:
+          msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+          break
+        except OSError:
+          if not wait:
+            yield False
+            return
+          time.sleep(0.1)
+      try:
+        yield True
+      finally:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    return
   import fcntl
 
-  path.parent.mkdir(parents=True, exist_ok=True)
   with path.open("w") as f:
     try:
       fcntl.flock(f, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -190,7 +236,7 @@ def _prune_cache(cache: Path) -> None:
       with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
         # a build may have replaced or published the path since it was listed
         if held and path.exists() and path.stat().st_mtime <= cutoff:
-          shutil.rmtree(path)
+          _remove_tree(path)
 
 
 def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build) -> list[str]:
@@ -205,7 +251,7 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
       if missing := missing_tools():
         return missing
       scratch = cache / f"build-{entry.name}"
-      shutil.rmtree(scratch, ignore_errors=True)
+      _remove_tree(scratch)
       (scratch / "src").mkdir(parents=True)
       try:
         build(scratch / "src", scratch / "out")
@@ -213,7 +259,7 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
         hook.app.display_error(f"The build failed; its sources and build trees are kept in {scratch}")
         raise
       (scratch / "out").rename(entry)
-      shutil.rmtree(scratch)
+      _remove_tree(scratch)
     os.utime(entry)
     stamp = root / ".build_key"
     stamp.unlink(missing_ok=True)
@@ -233,6 +279,31 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   system = platform.system()
   machine = platform.machine().lower()
   lib_name = _shared_lib_name(system, "piqpc")
+  configure = ["-G", os.environ.get("CMAKE_GENERATOR", "Ninja")] if system == "Windows" else []
+  command = _compiler_command(os.environ.get("CC", "cc"))
+  if len(command) >= 2 and Path(command[0]).stem == "zig" and command[1] == "cc":
+    # CMake discovers only zig.exe for ASM and cannot discover its ar/ranlib subcommands.
+    # A toolchain file also propagates these commands into BLASFEO's nested ISA probes.
+    toolchain = third_party_dir / "zig.cmake"
+    cxx = _compiler_command(os.environ.get("CXX", "")) or [command[0], "c++", *command[2:]]
+    lines = [
+      f"set(CMAKE_{language}_COMPILER {' '.join(json.dumps(part.replace(chr(92), '/')) for part in args)})"
+      for language, args in (("C", command), ("CXX", cxx), ("ASM", command))
+    ]
+    zig = json.dumps(command[0].replace("\\", "/"))
+    lines += [f"set(CMAKE_AR {zig})", f"set(CMAKE_RANLIB {zig})", "set(CMAKE_ASM_COMPILER_ID Clang)"]
+    rules = third_party_dir / "zig-rules.cmake"
+    lines.append(f"set(CMAKE_USER_MAKE_RULES_OVERRIDE {json.dumps(rules.as_posix())})")
+    archive_rules = []
+    for language in ("C", "CXX", "ASM"):
+      archive_rules += [
+        f'set(CMAKE_{language}_ARCHIVE_CREATE "<CMAKE_AR> ar qc <TARGET> <LINK_FLAGS> <OBJECTS>")',
+        f'set(CMAKE_{language}_ARCHIVE_APPEND "<CMAKE_AR> ar q <TARGET> <LINK_FLAGS> <OBJECTS>")',
+        f'set(CMAKE_{language}_ARCHIVE_FINISH "<CMAKE_RANLIB> ranlib <TARGET>")',
+      ]
+    rules.write_text("\n".join(archive_rules) + "\n")
+    toolchain.write_text("\n".join(lines) + "\n")
+    configure.append(f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}")
 
   hook.app.display_info("Building PIQP C interface...")
 
@@ -243,12 +314,13 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   eigen_build_dir = eigen_dir / "build"
   eigen_build_dir.mkdir()
   eigen_install_dir.mkdir()
-  eigen_install_path = str(eigen_install_dir.resolve())
+  eigen_install_path = eigen_install_dir.resolve().as_posix()
   hook.app.display_info(f"Configuring Eigen (install to {eigen_install_path})...")
   subprocess.run(
     [
       "cmake",
       "..",
+      *configure,
       f"-DCMAKE_INSTALL_PREFIX={eigen_install_path}",
       "-DBUILD_TESTING=OFF",
       "-DEIGEN_BUILD_DOC=OFF",
@@ -273,12 +345,13 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
     [
       "cmake",
       "..",
+      *configure,
       "-DCMAKE_BUILD_TYPE=Release",
       "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
       f"-DTARGET={blasfeo_target}",
       "-DBLAS_API=OFF",
       "-DBLASFEO_EXAMPLES=OFF",
-      f"-DCMAKE_INSTALL_PREFIX={blasfeo_install_dir}",
+      f"-DCMAKE_INSTALL_PREFIX={blasfeo_install_dir.as_posix()}",
     ],
     cwd=blasfeo_build_dir,
     check=True,
@@ -290,6 +363,11 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
 
   piqp_dir = third_party_dir / f"piqp-{PIQP_TAG}"
   _clone(hook, "https://github.com/PREDICT-EPFL/piqp.git", PIQP_TAG, piqp_dir)
+  if system == "Windows":
+    # Zig's -lpiqpc searches piqpc.dll, whereas CMake's MinGW default adds lib.
+    # Set the target prefix before linking so the import library names the same DLL.
+    c_cmake = piqp_dir / "interfaces" / "c" / "CMakeLists.txt"
+    c_cmake.write_text(c_cmake.read_text() + '\nset_target_properties(piqp_c PROPERTIES PREFIX "")\n')
 
   build_dir = piqp_dir / "build"
   build_dir.mkdir()
@@ -297,6 +375,7 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   cmake_args = [
     "cmake",
     "..",
+    *configure,
     "-DCMAKE_BUILD_TYPE=Release",
     "-DBUILD_C_INTERFACE=ON",
     "-DBUILD_TESTS=OFF",
@@ -306,10 +385,10 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
     # Eigen refuses to compile any file that is not MPL-2.0 under this define, so the build itself
     # proves the shipped library carries no LGPL Eigen code; THIRD_PARTY_NOTICES.md relies on that.
     "-DCMAKE_CXX_FLAGS=-DEIGEN_MPL2_ONLY",
-    f"-DEigen3_DIR={eigen_cmake_dir}",
+    f"-DEigen3_DIR={eigen_cmake_dir.as_posix()}",
     "-DFETCHCONTENT_FULLY_DISCONNECTED=ON",
     "-DBUILD_WITH_BLASFEO=ON",
-    f"-Dblasfeo_DIR={blasfeo_install_dir}",
+    f"-Dblasfeo_DIR={blasfeo_install_dir.as_posix()}",
   ]
   subprocess.run(cmake_args, cwd=build_dir, check=True)
   hook.app.display_info("Building PIQP...")
@@ -323,15 +402,21 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
       built_lib = loc
       break
   if built_lib is None:
-    for f in build_dir.rglob(lib_name):
-      built_lib = f
-      break
+    for name in (lib_name, f"lib{lib_name}") if system == "Windows" else (lib_name,):
+      built_lib = next(build_dir.rglob(name), None)
+      if built_lib is not None:
+        break
   if built_lib is None:
     raise RuntimeError(f"Could not find built library {lib_name} in {build_dir}")
 
-  dst_path = lib_dir / lib_name
+  dst_path = lib_dir / (built_lib.name if system == "Windows" else lib_name)
   hook.app.display_info(f"Copying {built_lib} to {dst_path}")
   shutil.copy2(built_lib, dst_path)
+  if system == "Windows":
+    # Consumers link through the import library while ctypes loads the DLL.
+    for pattern in ("*piqpc*.dll.a", "*piqpc*.lib"):
+      for import_lib in build_dir.rglob(pattern):
+        shutil.copy2(import_lib, lib_dir / import_lib.name)
   if system == "Darwin":
     _run(["install_name_tool", "-id", "@rpath/libpiqpc.dylib", str(dst_path)], cwd=lib_dir)
 
@@ -382,21 +467,12 @@ class BuildHook(BuildHookInterface):
     lib_dir = package_dir / "lib"
     mode = _solver_build_mode()
     strict = mode == "require" or (mode == "auto" and version != "editable")
-    system = platform.system()
-
-    if mode != "skip" or any(lib_dir.glob("lib*")):
+    if mode != "skip" or any(lib_dir.iterdir() if lib_dir.exists() else ()):
       build_data["pure_python"] = False
       build_data["tag"] = _wheel_tag()
     if mode == "skip":
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
       return
-    if system == "Windows":
-      msg = "Windows PIQP build not yet supported — track in https://github.com/PREDICT-EPFL/scaly/issues/1"
-      if strict:
-        raise RuntimeError(msg)
-      self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
-      return
-
     key = _cache_key(root)
     stamp = root / ".build_key"
     if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):

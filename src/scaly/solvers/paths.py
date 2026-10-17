@@ -74,9 +74,10 @@ def _existing_dir(path: Path | None) -> Path | None:
 def _library_from_dirs(stem: str, dirs: tuple[Path, ...]) -> Path | None:
   name = _lib_filename(stem)
   for d in dirs:
-    p = d / name
-    if p.exists():
-      return p
+    for filename in (name, f"lib{name}") if sys.platform == "win32" else (name,):
+      p = d / filename
+      if p.exists():
+        return p
   if shared_lib_ext() == ".so":
     for d in dirs:
       matches = sorted(d.glob(f"lib{stem}.so*"))
@@ -175,7 +176,7 @@ def solver_header_include(name: str) -> str:
   if rel is not None:
     for inc in paths.include_dirs:
       if (inc / rel).exists():
-        return str(rel)
+        return rel.as_posix()
   raise SolverLibraryError(solver_diagnostic(name))
 
 
@@ -252,7 +253,7 @@ def backend_compile_flags(names: Sequence[str], *, rpath: bool = True) -> list[s
   flags.extend(f"-I{p}" for p in paths.include_dirs)
   flags.extend(pkg_cflags)
   flags.extend(f"-L{p}" for p in paths.lib_dirs)
-  if rpath:
+  if rpath and sys.platform != "win32":
     flags.extend(f"-Wl,-rpath,{p}" for p in paths.lib_dirs)
   flags.extend(_pkg_config_flags(tuple(b.name for b in backends), "--libs"))
   for backend in backends:

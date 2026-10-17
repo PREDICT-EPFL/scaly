@@ -19,7 +19,7 @@ import scaly.codegen.jit as jit
 
 
 def _cc_available() -> bool:
-  return shutil.which(os.environ.get("SCALY_CC", "cc")) is not None
+  return jit.find_c_compiler() is not None
 
 
 pytestmark = pytest.mark.skipif(not _cc_available(), reason="cc is required for JIT smoke tests")
@@ -87,10 +87,13 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
   cache_dir = lib_path.parent
   fn.recompile()
   assert as_concrete(fn)._memo.compiled is None
-  assert not cache_dir.exists()
+  if sys.platform != "win32":
+    assert not cache_dir.exists()
   xv = np.array([0.5, 0.0, -1.0])
   out = fn(xv)
   np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
+  if sys.platform == "win32":
+    assert as_concrete(fn)._memo.compiled.lib_path != lib_path
 
 
 def test_jit_handles_multi_output(isolated_cache) -> None:
@@ -145,7 +148,9 @@ def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   # the compiler fingerprint probes `-dM` and `--version` once per process, so skip those
   (cmd,) = [command for command in commands if "-dM" not in command and "--version" not in command]
   flags = list(jit.compile_flags())
-  assert cmd[1 : 1 + len(flags)] == flags
+  compiler = jit.find_c_compiler()
+  assert compiler is not None
+  assert cmd[len(compiler.command) : len(compiler.command) + len(flags)] == flags
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
 
 
@@ -269,7 +274,10 @@ def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_
   assert artifact.key in jit._artifact_cache
   jit.invalidate_cache(fun)
   assert artifact.key not in jit._artifact_cache
-  assert not artifact.lib_path.parent.exists()
+  if sys.platform == "win32":
+    assert jit._build_artifact(fun).key != artifact.key
+  else:
+    assert not artifact.lib_path.parent.exists()
 
 
 def test_vector_math_environment_variable_is_registered():

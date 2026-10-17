@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,16 +13,60 @@ from scaly.solvers import paths as solver_paths_module
 from scaly.utils import env
 
 
-def test_solver_dir_override_discovery_and_flags(tmp_path, monkeypatch) -> None:
+@pytest.fixture
+def two_solver_backends(monkeypatch):
+  from scaly.solvers import registry
+
+  backends = {
+    name: SimpleNamespace(name=name, lib_stem=stem, header=f"{name}/solver.h", link_flags=(f"-l{stem}",))
+    for name, stem in (("piqp", "piqpc"), ("second", "second"))
+  }
+  monkeypatch.setattr(solver_paths_module, "_backends", lambda: backends)
+  monkeypatch.setattr(solver_paths_module, "_plugin_solver_paths", lambda: [])
+  monkeypatch.setattr(registry, "get_backend", backends.__getitem__)
+
+
+@pytest.mark.parametrize("setting", ["SCALY_CC", "CC"])
+def test_compiler_command_accepts_zig_subcommand(tmp_path, monkeypatch, setting) -> None:
+  from scaly.codegen.toolchain import find_c_compiler
+
+  executable = tmp_path / "compiler tools" / ("zig.exe" if sys.platform == "win32" else "zig")
+  executable.parent.mkdir()
+  executable.write_text("")
+  executable.chmod(0o755)
+  monkeypatch.delenv("SCALY_CC", raising=False)
+  monkeypatch.setenv(setting, f'"{executable}" cc')
+  compiler = find_c_compiler()
+  assert compiler is not None
+  assert compiler.command == (str(executable), "cc")
+  assert compiler.source == setting
+
+
+@pytest.mark.parametrize("filename", ["piqpc.dll", "libpiqpc.dll"])
+def test_windows_solver_link_flags_omit_rpath(tmp_path, monkeypatch, filename) -> None:
+  include, lib = tmp_path / "include", tmp_path / "lib"
+  (include / "piqp").mkdir(parents=True)
+  lib.mkdir()
+  (include / "piqp" / "piqp.h").write_text("// piqp")
+  (lib / filename).write_text("")
+  monkeypatch.setattr(solver_paths_module.sys, "platform", "win32")
+  monkeypatch.setenv("SCALY_SOLVER_INCLUDE_DIR", str(include))
+  monkeypatch.setenv("SCALY_SOLVER_LIB_DIR", str(lib))
+  flags = solver_paths_module.backend_compile_flags(("piqp",))
+  assert "-lpiqpc" in flags
+  assert not any("rpath" in flag for flag in flags)
+
+
+def test_solver_dir_override_discovery_and_flags(tmp_path, monkeypatch, two_solver_backends) -> None:
   include = tmp_path / "include"
   lib = tmp_path / "lib"
   (include / "piqp").mkdir(parents=True)
-  (include / "coin-or").mkdir(parents=True)
+  (include / "second").mkdir(parents=True)
   lib.mkdir(parents=True)
-  (include / "piqp" / "piqp.h").write_text("// piqp")
-  (include / "coin-or" / "IpStdCInterface.h").write_text("// ipopt")
-  (lib / f"libpiqpc{env.shared_lib_ext()}").write_text("")
-  (lib / f"libipopt{env.shared_lib_ext()}").write_text("")
+  (include / "piqp" / "solver.h").write_text("// piqp")
+  (include / "second" / "solver.h").write_text("// second")
+  (lib / solver_paths_module._lib_filename("piqpc")).write_text("")
+  (lib / solver_paths_module._lib_filename("second")).write_text("")
 
   monkeypatch.setenv("SCALY_SOLVER_INCLUDE_DIR", str(include))
   monkeypatch.setenv("SCALY_SOLVER_LIB_DIR", str(lib))
@@ -29,29 +74,29 @@ def test_solver_dir_override_discovery_and_flags(tmp_path, monkeypatch) -> None:
   assert paths.include_dirs[0] == include
   assert paths.lib_dirs[0] == lib
   assert solver_paths_module.solver_discoverable("piqp")
-  assert solver_paths_module.solver_discoverable("ipopt")
+  assert solver_paths_module.solver_discoverable("second")
   assert not solver_paths_module.solver_loadable("piqp")
-  assert not solver_paths_module.solver_loadable("ipopt")
-  assert solver_paths_module.solver_header_include("piqp") == "piqp/piqp.h"
-  assert solver_paths_module.solver_header_include("ipopt") == "coin-or/IpStdCInterface.h"
+  assert not solver_paths_module.solver_loadable("second")
+  assert solver_paths_module.solver_header_include("piqp") == "piqp/solver.h"
+  assert solver_paths_module.solver_header_include("second") == "second/solver.h"
 
-  flags = solver_paths_module.backend_compile_flags(("piqp", "ipopt"))
+  flags = solver_paths_module.backend_compile_flags(("piqp", "second"))
   assert f"-I{include}" in flags
   assert f"-L{lib}" in flags
-  assert f"-Wl,-rpath,{lib}" in flags
+  assert (f"-Wl,-rpath,{lib}" in flags) == (sys.platform != "win32")
   assert "-lpiqpc" in flags
-  assert "-lipopt" in flags
+  assert "-lsecond" in flags
 
 
-def test_solver_paths_required_needs_both_libraries(tmp_path, monkeypatch) -> None:
+def test_solver_paths_required_needs_both_libraries(tmp_path, monkeypatch, two_solver_backends) -> None:
   include = tmp_path / "include"
   lib = tmp_path / "lib"
   empty_pkg = tmp_path / "empty_pkg"
   (include / "piqp").mkdir(parents=True)
   lib.mkdir(parents=True)
   empty_pkg.mkdir(parents=True)
-  (include / "piqp" / "piqp.h").write_text("// piqp")
-  (lib / f"libpiqpc{env.shared_lib_ext()}").write_text("")
+  (include / "piqp" / "solver.h").write_text("// piqp")
+  (lib / solver_paths_module._lib_filename("piqpc")).write_text("")
 
   monkeypatch.setattr(solver_paths_module, "_package_root", lambda: empty_pkg)
   monkeypatch.setattr(solver_paths_module, "_plugin_solver_paths", lambda: [])
@@ -173,8 +218,9 @@ def test_compiler_fingerprint_changes_with_the_compiler_and_host(tmp_path, monke
   first.write_text("compiler")
   second.write_text("compiler")
   os.utime(second, ns=(first.stat().st_atime_ns, first.stat().st_mtime_ns))
-  cc = tmp_path / "cc"
-  cc.symlink_to(first)
+  cc = first if sys.platform == "win32" else tmp_path / "cc"
+  if sys.platform != "win32":
+    cc.symlink_to(first)
   command = (str(cc),)
 
   before = toolchain.compiler_fingerprint(command)
@@ -186,8 +232,11 @@ def test_compiler_fingerprint_changes_with_the_compiler_and_host(tmp_path, monke
     outputs[change] += "patched\n"
     toolchain._executable_fingerprint.cache_clear()
   elif change == "real path":
-    cc.unlink()
-    cc.symlink_to(second)
+    if sys.platform == "win32":
+      monkeypatch.setattr(toolchain.shutil, "which", lambda command: str(second))
+    else:
+      cc.unlink()
+      cc.symlink_to(second)
   else:
     first.write_text("patched compiler")
   assert toolchain.compiler_fingerprint(command) != before

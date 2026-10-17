@@ -70,7 +70,7 @@ def private_uses(source: str) -> list[tuple[int, str]]:
   return sorted(set(violations))
 
 
-@pytest.mark.parametrize("path", FORMULATIONS, ids=lambda path: str(path.relative_to(ROOT / "benchmarks/problems")))
+@pytest.mark.parametrize("path", FORMULATIONS, ids=lambda path: path.relative_to(ROOT / "benchmarks/problems").as_posix())
 def test_formulations_use_public_api(path: Path) -> None:
   relative = path.relative_to(ROOT).as_posix()
   violations = [
