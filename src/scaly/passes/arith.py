@@ -164,7 +164,8 @@ def evaluate(op: ProgramOp, values: list[int | float], dtype: DType) -> int | fl
   """Evaluate a scalar operation on constants with ``dtype`` semantics, or None when the result is not
   faithfully representable (division by zero, domain errors, overflow): those stay runtime operations."""
   value = _evaluate_scalar(op, values, dtype)
-  if value is not None and dtype.is_integer and not -(1 << (dtype.bits - 1)) <= value < (1 << (dtype.bits - 1)):
+  lowest, highest = (0, 1 << dtype.bits) if dtype.is_unsigned else (-(1 << (dtype.bits - 1)), 1 << (dtype.bits - 1))
+  if value is not None and dtype.is_integer and not lowest <= value < highest:
     return None
   return value
 
