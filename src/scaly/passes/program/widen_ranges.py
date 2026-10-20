@@ -6,6 +6,8 @@ from typing import Literal
 
 from collections import Counter
 
+import numpy as np
+
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp, RangeKind
@@ -160,7 +162,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         expanded = _expand_index(view.args[0], index_definitions) if len(view.args) == 1 else None
         values = _index_values(expanded, rng, declarations) if expanded is not None else None
         stride = _axis_stride(expanded, rng.attrs["name"], varying_indices) if expanded is not None else None
-        if values is not None and len(values) > 1 and all(values[j] - values[j - 1] == values[1] - values[0] for j in range(2, len(values))):
+        if values is not None and len(values) > 1 and (np.diff(values) == values[1] - values[0]).all():
           stride = int(values[1] - values[0])
         attrs = {**view.attrs, "lane_layout": "contiguous" if stride == 1 else "strided" if stride is not None else "gather", "lane_storage": 8}
         if stride is not None:
