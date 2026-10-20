@@ -25,8 +25,8 @@ problem has its own time axis.
 The same solver does the same work on both sides, so the gray part stays about the same and the
 step gains roughly what function evaluation loses. Function evaluation takes 97 to 98% of
 CasADi's step on unbumpercars, which evaluates a neural network for every pair of cars, and 39 to
-56% on neural-process MPC. On the race car it takes only 5 to 8%, so Scaly's 2.7 to 3.1× faster
-function evaluation barely changes the step. On the chain, CasADi's function evaluation takes 13%
+56% on neural-process MPC. On the race car it takes only 5 to 8%, so Scaly's 2.7 to 2.8× faster
+function evaluation barely changes the step. On the chain, CasADi's function evaluation takes 11%
 less time than Scaly's, but it is under 3% of the step.
 
 ## Step times against the sampling time
@@ -41,13 +41,13 @@ the measured times to fit on the axis.
 <div class="vega-chart" data-spec="../../assets/benchmarks/closed_loop_times.vl.json"></div>
 
 Every Scaly controller finishes all of its steps within the sampling time. CasADi's unbumpercars
-controllers do not. With SQP, 50 of the 200 steps take longer than the 100 ms sampling time, and
+controllers do not. With SQP, 48 of the 200 steps take longer than the 100 ms sampling time, and
 with IPOPT, 186 of them do. On the other problems, no step on either side takes more than 56% of
 the sampling time.
 
 Both sides solve the same problem at every step, so the per-step speedup, CasADi's time divided by
 Scaly's at the same step, hardly changes along an episode. For every controller, 80% of the steps
-lie within 11% of the median speedup, for function evaluation and for the whole solve. This spread
+lie within 7% of the median speedup, for function evaluation and for the whole solve. This spread
 describes the episode, not measurement noise, as the
 [fairness page](fairness.md#what-the-results-do-not-show) explains.
 
@@ -55,8 +55,8 @@ describes the episode, not measurement noise, as the
 
 Both sides should take the same solver iterations and ask for the same function evaluations at
 every step, since only the source of the generated functions changes. They do for every
-controller except unbumpercars with SQP, where three of the 200 steps take a different number of
-iterations. The two trajectories still agree to within 7×10⁻⁹, but that controller's speedup
+controller except unbumpercars with SQP, where two of the 200 steps take a different number of
+iterations. The two trajectories still agree to within 6×10⁻⁹, but that controller's speedup
 compares slightly different amounts of work. On average, the SQP controllers take 2.7 to 7.9
 iterations per step and the IPOPT ones 10.1 to 13.7.
 

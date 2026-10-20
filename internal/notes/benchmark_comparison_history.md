@@ -8,6 +8,51 @@ The retained studies are `benchmarks/results/study-2026-09-23-c77-c79-final` for
 `benchmarks/results/study-2026-09-23-c77-c79-libmvec` for vector libm. The September 10 study is the
 comparison baseline used below. Actionable follow-up remains in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
+## Seed-selector bit tables, October 20 study
+
+`benchmarks/results/study-2026-10-20` measured the clean pushed merge of main into pull request
+#181's branch, after "Store 0/1 seed selector tables as bits" (#184) and "Fold a constant cube and
+check lane strides with NumPy" (#182). It took 82.9 minutes on la015 with October 15's grid,
+toolchain, solver libraries and CPU and numerical policies. Of 106 attempts, 79 were timed, 11
+reached the compile limit and 16 were skipped after a timeout. CasADi mapped SX on npmpc compiled
+at N=25 and N=50 in 179.2 and 179.4 seconds, where October 15 stopped it at N=25 and skipped
+N=50, and then timed out at N=100. All 21 Scaly cells completed, all timed kernels passed both
+gates, and all 6,938 solver steps succeeded.
+
+#184 changes only the npmpc and unbumpercars Scaly kernels. Every race-car and chain cell, and
+every CasADi cell, keeps identical source and object sizes. Scaly's npmpc object file shrinks at
+every horizon, and the shrinkage grows with it, as the per-entry `double` tables become bits:
+
+| npmpc N | Object, kB, Oct 15 → Oct 20 | Hessian, µs, Oct 15 → Oct 20 |
+|---:|---:|---:|
+| 6 | 83 → 64 | 11.15 → 10.53 |
+| 12 | 148 → 113 | 25.22 → 23.34 |
+| 25 | 175 → 116 | 53.00 → 48.64 |
+| 50 | 271 → 123 | 77.83 → 77.68 |
+| 100 | 428 → 131 | 177.31 → 162.53 |
+| 200 | 695 → 97 | 256.84 → 253.47 |
+
+No npmpc size is slower. The pull request's 5% slowdown at N=6 on a Core Ultra 9 285K does not
+appear on la015, where N=6 is 5.6% faster. Unbumpercars objects shrink by 1 to 38% except at C=4,
+which grows from 133 to 143 kB. Its Hessian is 6% faster at C=8 and 19% faster at C=16, and
+within 1% elsewhere. Across all matching timed cells the October 20/October 15 runtime ratio has a
+median of 0.9997 and 10th/90th percentiles of 0.9619/1.0100. The unchanged cell with the largest
+move is again NPMPC MX at N=25, 15% faster, inside the 85 to 99 µs spread October 15's
+retained-binary diagnostic found.
+
+The npmpc and unbumpercars Scaly controllers generate different C, while the race-car and chain
+controllers produce byte-identical C and shared libraries. The unbumpercars SQP pair now differs
+in iterations on two of 200 steps instead of three, with oracle-call counts still identical and
+trajectories within 6×10⁻⁹. Paired medians move by at most 2.4%, on chain function evaluation,
+except race-car SQP function evaluation, 3.122× to 2.813×. Scaly's identical library there took
+59 rather than 54 µs per step, which is variation between processes. The largest 10th/90th percentile distance from a
+paired median is 6.7%, so the page's bound for the middle 80% of step ratios returns from 11% to
+7%. Forty-eight CasADi unbumpercars SQP steps exceed the sampling time, against 50 on October 15.
+
+The [audit and complete comparison tables](perf_2026_10_20/analysis.md) come from the tracked
+publication script. [Its README](perf_2026_10_20/README.md) gives the reproduction commands and
+artifact locations.
+
 ## Race-car horizons and controller refresh, October 15 study
 
 `benchmarks/results/study-2026-10-15` measured the clean pushed branch for pull request #181

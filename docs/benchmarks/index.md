@@ -10,7 +10,7 @@ four optimal-control problems, and answer three questions:
 - **What does it cost to build?** The time from the model to compiled code, and the size of that
   code.
 
-All numbers come from one study run on October 15, 2026, against CasADi 3.8.0, on an AMD
+All numbers come from one study run on October 20, 2026, against CasADi 3.8.0, on an AMD
 Ryzen 9 7940HS desktop. [Are the comparisons fair?](fairness.md) explains what the two sides
 share and where the comparison has limits.
 
@@ -61,9 +61,9 @@ asks for, and the rest of the solver's work. Each problem has its own time axis.
 
 How much of a faster function evaluation reaches the whole step depends on its share of the
 step. Unbumpercars evaluates a neural network for every pair of cars, which takes 97 to 98% of
-CasADi's step, so most of Scaly's 8.8 to 9.1× faster function evaluation reaches the step. The
-race car spends most of its step inside the solver: function evaluation is 2.7 to 3.1× faster with
-Scaly but only 5 to 8% of CasADi's step. On the chain, CasADi's function evaluation takes 13% less
+CasADi's step, so most of Scaly's 8.8 to 8.9× faster function evaluation reaches the step. The
+race car spends most of its step inside the solver: function evaluation is 2.7 to 2.8× faster with
+Scaly but only 5 to 8% of CasADi's step. On the chain, CasADi's function evaluation takes 11% less
 time than Scaly's, too small a part of the step to change it.
 
 Before the first step, each side builds its controller: it constructs the problem, generates C
@@ -73,7 +73,7 @@ for its functions and compiles it, starting from an empty cache.
 
 The [closed-loop page](closed_loop.md) compares the time of every step with the controller's
 sampling time. Scaly's controllers always finish within it. With CasADi, the unbumpercars
-controllers take longer than their 100 ms sampling time on 50 of 200 steps with SQP and on 186 with
+controllers take longer than their 100 ms sampling time on 48 of 200 steps with SQP and on 186 with
 IPOPT.
 
 ## Reproduce the study
