@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from pathlib import Path
 import shutil
+import subprocess
 from typing import cast
 
 from scaly.function.model import as_concrete
@@ -11,12 +12,12 @@ import scaly as sc
 import numpy as np
 import pytest
 from scaly.codegen import render_c_module
+from scaly.codegen.toolchain import find_c_compiler
 
-from benchmarks.harness import gbench
+from benchmarks.harness import constant_tables, gbench, object_bytes, object_constant_symbols
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.sweep import (
   FIELDS,
-  _artifact_sizes,
   _casadi_descriptor_kernel,
   _casadi_output_metadata,
   _descriptor_kernel,
@@ -25,17 +26,43 @@ from benchmarks.harness.sweep import (
 )
 
 
-def test_artifact_sizes_split_static_data_from_executable_source() -> None:
-  executable = "int kernel(void) { return table[0]; }\n"
-  static = "static const int table[2] =\n  {1, 2};\n"
-  header = "#pragma once\nint kernel(void);\n"
+def test_object_bytes_counts_compiled_constant_tables(tmp_path: Path) -> None:
+  compiler = find_c_compiler()
+  if compiler is None:
+    pytest.skip("no C compiler")
+  sizes = []
+  for n in (1000, 2000):
+    source = tmp_path / f"table_{n}.c"
+    source.write_text(f"const double table[{n}] = {{1.0}};\nint first(void) {{ return (int)table[0]; }}\n")
+    subprocess.run([*compiler.command, "-c", str(source), "-o", str(source.with_suffix(".o"))], check=True)
+    sizes.append(object_bytes(source.with_suffix(".o")))
 
-  artifact_bytes, executable_bytes, metadata_bytes = _artifact_sizes(executable + static, header)
+  (total_1000, constants_1000), (total_2000, constants_2000) = sizes
+  assert constants_1000 >= 8 * 1000 and total_1000 > constants_1000
+  assert total_2000 - total_1000 == constants_2000 - constants_1000 == 8 * 1000
 
-  assert artifact_bytes == len((executable + static + header).encode())
-  assert executable_bytes == len(executable.encode())
-  assert metadata_bytes == len((static + header).encode())
-  assert artifact_bytes == executable_bytes + metadata_bytes
+
+def test_constant_tables_measure_both_generators_layouts() -> None:
+  casadi = b"static const casadi_int casadi_s1[3] =\n  {0, 1,\n  2};\n"
+  scaly = b"void f(double* p) {\n  static const double k0[2] = {1, 0};\n  p[0] = k0[0];\n}\n"
+  ignored = b'/* static const int a[1] = {1}; */\nstatic const double x = 1.0;\nstatic const char* s = "static const int b[1] = {1};";\n'
+  nested = b"static const int a[2][2] = {{1, 2}, /* }; */ {3, 4}};\n"
+
+  assert constant_tables(casadi + scaly + ignored + nested) == [len(casadi) - 1, len("static const double k0[2] = {1, 0};"), len(nested) - 1]
+  with pytest.raises(ValueError, match="unterminated initializer"):
+    constant_tables(b"static const int a[2] = {1, 2")
+
+
+def test_object_check_catches_a_table_the_source_scan_misses(tmp_path: Path) -> None:
+  compiler = find_c_compiler()
+  if compiler is None:
+    pytest.skip("no C compiler")
+  source = tmp_path / "missed.c"
+  source.write_text("const static double t[3] = {1.0, 2.0, 3.0};\ndouble at(int i) { return t[i]; }\n")
+  subprocess.run([*compiler.command, "-O2", "-c", str(source), "-o", str(tmp_path / "missed.o")], check=True)
+
+  assert constant_tables(source.read_bytes()) == []
+  assert object_constant_symbols(tmp_path / "missed.o") == 1
 
 
 def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
@@ -211,7 +238,7 @@ def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
 def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
   assert "layout" in FIELDS
   assert {"dispatch_trip_count", "dispatch_workspace", "dispatch_arithmetic", "coloring_width"} <= set(FIELDS)
-  assert {"artifact_bytes", "executable_bytes", "static_metadata_bytes"} <= set(FIELDS)
+  assert {"source_bytes", "source_constant_bytes", "executable_bytes", "executable_constant_bytes"} <= set(FIELDS)
   assert {"integer_workspace", "argument_pointers", "result_pointers"} <= set(FIELDS)
 
 

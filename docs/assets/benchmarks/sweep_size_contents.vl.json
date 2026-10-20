@@ -1,0 +1,648 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "executable_bytes": "number",
+        "executable_constant_bytes": "number",
+        "source_bytes": "number",
+        "source_constant_bytes": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "calculate": "indexof(['race_cars:50', 'npmpc:12', 'unbumpercars:8', 'chain:5'], datum.workload + ':' + datum.size)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0 && isValid(datum.source_bytes)"
+    },
+    {
+      "calculate": "['Race-car MPC, N = 50', 'Neural-process MPC, N = 12', 'Unbumpercars, C = 8', 'Chain of masses, M = 5'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "calculate": "indexof(['scaly', 'casadi_sx', 'casadi_mx', 'casadi_call_mx', 'casadi_map_sx', 'casadi_mx_gemm'], datum.backend)",
+      "as": "encoding_order"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "max",
+          "field": "source_bytes",
+          "as": "source_total"
+        },
+        {
+          "op": "max",
+          "field": "source_constant_bytes",
+          "as": "source_constant"
+        },
+        {
+          "op": "max",
+          "field": "executable_bytes",
+          "as": "object_total"
+        },
+        {
+          "op": "max",
+          "field": "executable_constant_bytes",
+          "as": "object_constant"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "encoding",
+        "encoding_order"
+      ]
+    },
+    {
+      "fold": [
+        "source",
+        "object"
+      ],
+      "as": [
+        "artifact",
+        "unused"
+      ]
+    },
+    {
+      "calculate": "datum.artifact === 'source' ? datum.source_total : datum.object_total",
+      "as": "bytes"
+    },
+    {
+      "calculate": "datum.artifact === 'source' ? datum.source_constant : datum.object_constant",
+      "as": "constant_bytes"
+    },
+    {
+      "calculate": "isValid(datum.bytes)",
+      "as": "compiled"
+    },
+    {
+      "calculate": "datum.compiled ? datum.bytes / 1000 : 0",
+      "as": "total"
+    },
+    {
+      "window": [
+        {
+          "op": "row_number",
+          "as": "rank"
+        },
+        {
+          "op": "lead",
+          "field": "total",
+          "as": "next"
+        }
+      ],
+      "sort": [
+        {
+          "field": "total",
+          "order": "descending"
+        }
+      ],
+      "groupby": [
+        "artifact",
+        "problem"
+      ]
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "count",
+          "as": "rows"
+        }
+      ],
+      "groupby": [
+        "artifact",
+        "problem"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.next) && datum.next > 0 ? datum.total / datum.next : 0",
+      "as": "gap"
+    },
+    {
+      "calculate": "datum.rank <= floor((datum.rows - 1) / 2) && datum.gap > 3 ? datum.rank : 0",
+      "as": "cut_at"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "cut_at",
+          "as": "cut_rank"
+        }
+      ],
+      "groupby": [
+        "artifact",
+        "problem"
+      ]
+    },
+    {
+      "calculate": "datum.rank <= datum.cut_rank",
+      "as": "cut"
+    },
+    {
+      "calculate": "datum.cut ? null : datum.total",
+      "as": "kept"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "kept",
+          "as": "kept_max"
+        }
+      ],
+      "groupby": [
+        "artifact",
+        "problem"
+      ]
+    },
+    {
+      "calculate": "datum.cut_rank > 0 ? 1.15 * datum.kept_max : datum.kept_max",
+      "as": "cap"
+    },
+    {
+      "calculate": "!datum.compiled ? 'did not compile' : (datum.cut ? '… ' : '') + (datum.total >= 1000 ? format(datum.total / 1000, '.1f') + ' MB' : format(datum.total, '.0f') + ' kB')",
+      "as": "label"
+    },
+    {
+      "calculate": "min(datum.total, datum.cap)",
+      "as": "label_at"
+    },
+    {
+      "calculate": "0.93 * datum.cap",
+      "as": "break_at"
+    },
+    {
+      "calculate": "datum.compiled ? datum.constant_bytes / 1000 : 0",
+      "as": "constant"
+    },
+    {
+      "calculate": "datum.total - datum.constant",
+      "as": "rest"
+    },
+    {
+      "fold": [
+        "constant",
+        "rest"
+      ],
+      "as": [
+        "part",
+        "value"
+      ]
+    },
+    {
+      "calculate": "indexof(['constant', 'rest'], datum.part)",
+      "as": "part_order"
+    },
+    {
+      "calculate": "datum.part === 'constant' ? 'Constant tables' : 'Everything else'",
+      "as": "part_label"
+    },
+    {
+      "window": [
+        {
+          "op": "sum",
+          "field": "value",
+          "as": "end"
+        }
+      ],
+      "sort": [
+        {
+          "field": "part_order"
+        }
+      ],
+      "groupby": [
+        "artifact",
+        "problem",
+        "encoding"
+      ],
+      "frame": [
+        null,
+        0
+      ]
+    },
+    {
+      "calculate": "datum.end - datum.value",
+      "as": "start"
+    },
+    {
+      "calculate": "min(datum.start, datum.cap)",
+      "as": "x"
+    },
+    {
+      "calculate": "min(datum.end, datum.cap)",
+      "as": "x2"
+    }
+  ],
+  "hconcat": [
+    {
+      "facet": {
+        "row": {
+          "field": "problem",
+          "type": "nominal",
+          "title": null,
+          "sort": [
+            "Race-car MPC, N = 50",
+            "Neural-process MPC, N = 12",
+            "Unbumpercars, C = 8",
+            "Chain of masses, M = 5"
+          ],
+          "header": {
+            "labelAngle": 0,
+            "labelOrient": "top",
+            "labelAnchor": "start",
+            "labelAlign": "left",
+            "labelPadding": 2,
+            "labelFontSize": 14
+          }
+        }
+      },
+      "spacing": {
+        "row": 14
+      },
+      "resolve": {
+        "scale": {
+          "x": "independent",
+          "y": "independent"
+        },
+        "axis": {
+          "x": "independent"
+        }
+      },
+      "spec": {
+        "width": 230,
+        "height": {
+          "step": 22
+        },
+        "layer": [
+          {
+            "transform": [
+              {
+                "filter": "isValid(datum.total)"
+              }
+            ],
+            "mark": {
+              "type": "bar",
+              "stroke": "#ffffff",
+              "strokeWidth": 1,
+              "cornerRadiusEnd": 0
+            },
+            "encoding": {
+              "y": {
+                "field": "encoding",
+                "type": "nominal",
+                "title": null,
+                "sort": {
+                  "field": "encoding_order",
+                  "op": "min"
+                },
+                "axis": {
+                  "ticks": false,
+                  "domain": false,
+                  "labelPadding": 8
+                }
+              },
+              "x": {
+                "field": "x",
+                "type": "quantitative",
+                "title": "Generated C",
+                "scale": {
+                  "nice": false,
+                  "zero": true
+                },
+                "axis": {
+                  "tickCount": 3,
+                  "format": "~r",
+                  "labelExpr": "datum.value >= 1000 ? format(datum.value / 1000, '~r') + ' MB' : datum.label + ' kB'"
+                }
+              },
+              "x2": {
+                "field": "x2"
+              },
+              "color": {
+                "field": "part_label",
+                "title": null,
+                "sort": [
+                  "Constant tables",
+                  "Everything else"
+                ],
+                "scale": {
+                  "domain": [
+                    "Constant tables",
+                    "Everything else"
+                  ],
+                  "range": [
+                    "#c3c2b7",
+                    "#52514e"
+                  ]
+                }
+              },
+              "tooltip": [
+                {
+                  "field": "encoding",
+                  "title": "Implementation"
+                },
+                {
+                  "field": "part_label",
+                  "title": "Part"
+                },
+                {
+                  "field": "value",
+                  "title": "kB",
+                  "format": ",.3~r"
+                },
+                {
+                  "field": "label",
+                  "title": "Total"
+                }
+              ]
+            }
+          },
+          {
+            "transform": [
+              {
+                "filter": "datum.part_order === 0 && datum.cut"
+              }
+            ],
+            "mark": {
+              "type": "point",
+              "shape": "M-0.6,1L-0.1,-1M0.1,1L0.6,-1",
+              "size": 300,
+              "filled": false,
+              "stroke": "#ffffff",
+              "strokeWidth": 2.5,
+              "opacity": 1
+            },
+            "encoding": {
+              "y": {
+                "field": "encoding",
+                "type": "nominal",
+                "title": null,
+                "sort": {
+                  "field": "encoding_order",
+                  "op": "min"
+                },
+                "axis": {
+                  "ticks": false,
+                  "domain": false,
+                  "labelPadding": 8
+                }
+              },
+              "x": {
+                "field": "break_at",
+                "type": "quantitative"
+              }
+            }
+          },
+          {
+            "transform": [
+              {
+                "filter": "datum.part_order === 0"
+              }
+            ],
+            "mark": {
+              "type": "text",
+              "align": "left",
+              "baseline": "middle",
+              "dx": 6,
+              "color": "#52514e",
+              "fontSize": 12
+            },
+            "encoding": {
+              "y": {
+                "field": "encoding",
+                "type": "nominal",
+                "title": null,
+                "sort": {
+                  "field": "encoding_order",
+                  "op": "min"
+                },
+                "axis": {
+                  "ticks": false,
+                  "domain": false,
+                  "labelPadding": 8
+                }
+              },
+              "x": {
+                "field": "label_at",
+                "type": "quantitative"
+              },
+              "text": {
+                "field": "label"
+              }
+            }
+          }
+        ]
+      },
+      "transform": [
+        {
+          "filter": "datum.artifact === 'source'"
+        }
+      ]
+    },
+    {
+      "facet": {
+        "row": {
+          "field": "problem",
+          "type": "nominal",
+          "title": null,
+          "sort": [
+            "Race-car MPC, N = 50",
+            "Neural-process MPC, N = 12",
+            "Unbumpercars, C = 8",
+            "Chain of masses, M = 5"
+          ],
+          "header": {
+            "labelAngle": 0,
+            "labelOrient": "top",
+            "labelAnchor": "start",
+            "labelAlign": "left",
+            "labelPadding": 2,
+            "labelFontSize": 14
+          }
+        }
+      },
+      "spacing": {
+        "row": 14
+      },
+      "resolve": {
+        "scale": {
+          "x": "independent",
+          "y": "independent"
+        },
+        "axis": {
+          "x": "independent"
+        }
+      },
+      "spec": {
+        "width": 230,
+        "height": {
+          "step": 22
+        },
+        "layer": [
+          {
+            "transform": [
+              {
+                "filter": "isValid(datum.total)"
+              }
+            ],
+            "mark": {
+              "type": "bar",
+              "stroke": "#ffffff",
+              "strokeWidth": 1,
+              "cornerRadiusEnd": 0
+            },
+            "encoding": {
+              "y": {
+                "field": "encoding",
+                "type": "nominal",
+                "title": null,
+                "sort": {
+                  "field": "encoding_order",
+                  "op": "min"
+                },
+                "axis": null
+              },
+              "x": {
+                "field": "x",
+                "type": "quantitative",
+                "title": "Object file",
+                "scale": {
+                  "nice": false,
+                  "zero": true
+                },
+                "axis": {
+                  "tickCount": 3,
+                  "format": "~r",
+                  "labelExpr": "datum.value >= 1000 ? format(datum.value / 1000, '~r') + ' MB' : datum.label + ' kB'"
+                }
+              },
+              "x2": {
+                "field": "x2"
+              },
+              "color": {
+                "field": "part_label",
+                "title": null,
+                "sort": [
+                  "Constant tables",
+                  "Everything else"
+                ],
+                "scale": {
+                  "domain": [
+                    "Constant tables",
+                    "Everything else"
+                  ],
+                  "range": [
+                    "#c3c2b7",
+                    "#52514e"
+                  ]
+                }
+              },
+              "tooltip": [
+                {
+                  "field": "encoding",
+                  "title": "Implementation"
+                },
+                {
+                  "field": "part_label",
+                  "title": "Part"
+                },
+                {
+                  "field": "value",
+                  "title": "kB",
+                  "format": ",.3~r"
+                },
+                {
+                  "field": "label",
+                  "title": "Total"
+                }
+              ]
+            }
+          },
+          {
+            "transform": [
+              {
+                "filter": "datum.part_order === 0 && datum.cut"
+              }
+            ],
+            "mark": {
+              "type": "point",
+              "shape": "M-0.6,1L-0.1,-1M0.1,1L0.6,-1",
+              "size": 300,
+              "filled": false,
+              "stroke": "#ffffff",
+              "strokeWidth": 2.5,
+              "opacity": 1
+            },
+            "encoding": {
+              "y": {
+                "field": "encoding",
+                "type": "nominal",
+                "title": null,
+                "sort": {
+                  "field": "encoding_order",
+                  "op": "min"
+                },
+                "axis": null
+              },
+              "x": {
+                "field": "break_at",
+                "type": "quantitative"
+              }
+            }
+          },
+          {
+            "transform": [
+              {
+                "filter": "datum.part_order === 0"
+              }
+            ],
+            "mark": {
+              "type": "text",
+              "align": "left",
+              "baseline": "middle",
+              "dx": 6,
+              "color": "#52514e",
+              "fontSize": 12
+            },
+            "encoding": {
+              "y": {
+                "field": "encoding",
+                "type": "nominal",
+                "title": null,
+                "sort": {
+                  "field": "encoding_order",
+                  "op": "min"
+                },
+                "axis": null
+              },
+              "x": {
+                "field": "label_at",
+                "type": "quantitative"
+              },
+              "text": {
+                "field": "label"
+              }
+            }
+          }
+        ]
+      },
+      "transform": [
+        {
+          "filter": "datum.artifact === 'object'"
+        }
+      ]
+    }
+  ],
+  "spacing": 70
+}

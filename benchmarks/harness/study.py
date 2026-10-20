@@ -16,7 +16,7 @@ from benchmarks.harness.report import report
 
 # The exact sparse Lagrangian Hessian grids the results pages quote. Chain is internal validation.
 SWEEP_GRID = {
-  "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
+  "race_cars": [5, 10, 25, 50, 100, 200, 400],
   "npmpc": [6, 12, 25, 50, 100, 200],
   "unbumpercars": [2, 4, 8, 16, 32],
   "chain": [3, 5, 9],

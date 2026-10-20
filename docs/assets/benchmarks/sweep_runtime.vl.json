@@ -1,0 +1,554 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "runtime_ns": "number",
+        "nnz": "number"
+      }
+    }
+  },
+  "transform": [
+    {
+      "filter": "datum.runtime_status === 'ok'"
+    },
+    {
+      "calculate": "indexof(['race_cars', 'npmpc', 'unbumpercars', 'chain'], datum.workload)",
+      "as": "order"
+    },
+    {
+      "filter": "datum.order >= 0"
+    },
+    {
+      "calculate": "['Race-car MPC, horizon N', 'Neural-process MPC, horizon N', 'Unbumpercars, C cars', 'Chain of masses, M masses'][datum.order]",
+      "as": "problem"
+    },
+    {
+      "calculate": "{'scaly': 'Scaly', 'casadi_sx': 'CasADi SX', 'casadi_mx': 'CasADi MX', 'casadi_call_mx': 'CasADi MX with calls', 'casadi_map_sx': 'CasADi mapped SX', 'casadi_mx_gemm': 'CasADi MX with GEMM'}[datum.backend]",
+      "as": "encoding"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "mean",
+          "field": "runtime_ns",
+          "as": "runtime_ns"
+        },
+        {
+          "op": "max",
+          "field": "nnz",
+          "as": "nnz"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "size",
+        "encoding"
+      ]
+    },
+    {
+      "calculate": "datum.runtime_ns / 1000",
+      "as": "us"
+    },
+    {
+      "calculate": "datum.encoding === 'Scaly' && true ? datum.us : null",
+      "as": "scaly_v"
+    },
+    {
+      "calculate": "datum.encoding !== 'Scaly' && true ? datum.us : null",
+      "as": "casadi_v"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "scaly_v",
+          "as": "scaly_v"
+        },
+        {
+          "op": "min",
+          "field": "casadi_v",
+          "as": "casadi_v"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "size"
+      ]
+    },
+    {
+      "calculate": "isValid(datum.scaly_v) && isValid(datum.casadi_v) ? datum.casadi_v / datum.scaly_v : null",
+      "as": "ratio"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "max",
+          "field": "ratio",
+          "as": "largest"
+        },
+        {
+          "op": "min",
+          "field": "size",
+          "as": "first_size"
+        }
+      ],
+      "groupby": [
+        "problem"
+      ]
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "type": "nominal",
+    "title": null,
+    "sort": {
+      "field": "order",
+      "op": "min"
+    }
+  },
+  "columns": 2,
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "spec": {
+    "width": 300,
+    "height": 190,
+    "encoding": {
+      "x": {
+        "field": "size",
+        "type": "quantitative",
+        "title": "Size",
+        "scale": {
+          "type": "log",
+          "nice": false
+        },
+        "axis": {
+          "format": "~g",
+          "grid": false,
+          "tickCount": 6
+        }
+      },
+      "y": {
+        "field": "us",
+        "type": "quantitative",
+        "title": "Hessian evaluation, µs",
+        "scale": {
+          "type": "log"
+        },
+        "axis": {
+          "format": ",~g",
+          "labelExpr": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6 ? datum.label : ''",
+          "gridOpacity": {
+            "condition": {
+              "test": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6",
+              "value": 1
+            },
+            "value": 0
+          }
+        }
+      },
+      "color": {
+        "field": "encoding",
+        "title": null,
+        "scale": {
+          "domain": [
+            "Scaly",
+            "CasADi SX",
+            "CasADi MX",
+            "CasADi MX with calls",
+            "CasADi mapped SX",
+            "CasADi MX with GEMM",
+            "Best CasADi implementation"
+          ],
+          "range": [
+            "#1baf7a",
+            "#eb6834",
+            "#2a78d6",
+            "#eda100",
+            "#e87ba4",
+            "#4a3aa7",
+            "#c3c2b7"
+          ]
+        }
+      }
+    },
+    "layer": [
+      {
+        "transform": [
+          {
+            "filter": "datum.encoding !== 'Scaly'"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "argmin",
+                "field": "us",
+                "as": "best"
+              }
+            ],
+            "groupby": [
+              "problem",
+              "order",
+              "size"
+            ]
+          },
+          {
+            "calculate": "datum.best.us",
+            "as": "us"
+          },
+          {
+            "calculate": "'Best CasADi implementation'",
+            "as": "encoding"
+          }
+        ],
+        "mark": {
+          "type": "line",
+          "strokeWidth": 9
+        }
+      },
+      {
+        "mark": {
+          "type": "line",
+          "strokeWidth": 1.75
+        }
+      },
+      {
+        "mark": {
+          "type": "point",
+          "stroke": "#ffffff",
+          "strokeWidth": 1.25,
+          "size": 60,
+          "opacity": 1
+        },
+        "encoding": {
+          "shape": {
+            "field": "encoding",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi SX",
+                "CasADi MX",
+                "CasADi MX with calls",
+                "CasADi mapped SX",
+                "CasADi MX with GEMM",
+                "Best CasADi implementation"
+              ],
+              "range": [
+                "circle",
+                "square",
+                "triangle-up",
+                "diamond",
+                "triangle-down",
+                "cross",
+                "M-1,-0.4H1V0.4H-1Z"
+              ]
+            }
+          },
+          "tooltip": [
+            {
+              "field": "encoding",
+              "title": "Implementation"
+            },
+            {
+              "field": "size",
+              "title": "Size"
+            },
+            {
+              "field": "nnz",
+              "title": "Hessian nonzeros",
+              "format": ","
+            },
+            {
+              "field": "us",
+              "title": "Hessian evaluation, µs",
+              "format": ",.4~r"
+            }
+          ]
+        }
+      },
+      {
+        "transform": [
+          {
+            "filter": "datum.ratio === datum.largest"
+          },
+          {
+            "aggregate": [
+              {
+                "op": "max",
+                "field": "scaly_v",
+                "as": "scaly_v"
+              },
+              {
+                "op": "max",
+                "field": "casadi_v",
+                "as": "casadi_v"
+              },
+              {
+                "op": "max",
+                "field": "ratio",
+                "as": "ratio"
+              }
+            ],
+            "groupby": [
+              "problem",
+              "order",
+              "size",
+              "first_size"
+            ]
+          },
+          {
+            "calculate": "sqrt(datum.scaly_v * datum.casadi_v)",
+            "as": "middle"
+          },
+          {
+            "calculate": "format(datum.ratio, datum.ratio < 10 ? '.1f' : '.0f') + '× faster'",
+            "as": "label"
+          }
+        ],
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative"
+          }
+        },
+        "layer": [
+          {
+            "transform": [
+              {
+                "filter": "datum.size === datum.first_size"
+              }
+            ],
+            "layer": [
+              {
+                "mark": {
+                  "type": "rule",
+                  "strokeWidth": 1.5,
+                  "xOffset": 9
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "y2": {
+                    "field": "scaly_v"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-up",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": 9,
+                  "yOffset": 3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-down",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": 9,
+                  "yOffset": -3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "scaly_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "left",
+                  "baseline": "middle",
+                  "dx": 16,
+                  "fontWeight": "bold",
+                  "stroke": "#ffffff",
+                  "strokeWidth": 4,
+                  "strokeJoin": "round"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#ffffff"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "left",
+                  "baseline": "middle",
+                  "dx": 16,
+                  "fontWeight": "bold"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "transform": [
+              {
+                "filter": "datum.size !== datum.first_size"
+              }
+            ],
+            "layer": [
+              {
+                "mark": {
+                  "type": "rule",
+                  "strokeWidth": 1.5,
+                  "xOffset": -9
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "y2": {
+                    "field": "scaly_v"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-up",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": -9,
+                  "yOffset": 3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "casadi_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "point",
+                  "shape": "triangle-down",
+                  "filled": true,
+                  "size": 30,
+                  "opacity": 1,
+                  "xOffset": -9,
+                  "yOffset": -3
+                },
+                "encoding": {
+                  "y": {
+                    "field": "scaly_v",
+                    "type": "quantitative"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "right",
+                  "baseline": "middle",
+                  "dx": -16,
+                  "fontWeight": "bold",
+                  "stroke": "#ffffff",
+                  "strokeWidth": 4,
+                  "strokeJoin": "round"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#ffffff"
+                  }
+                }
+              },
+              {
+                "mark": {
+                  "type": "text",
+                  "align": "right",
+                  "baseline": "middle",
+                  "dx": -16,
+                  "fontWeight": "bold"
+                },
+                "encoding": {
+                  "y": {
+                    "field": "middle",
+                    "type": "quantitative"
+                  },
+                  "text": {
+                    "field": "label"
+                  },
+                  "color": {
+                    "value": "#0b0b0b"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
