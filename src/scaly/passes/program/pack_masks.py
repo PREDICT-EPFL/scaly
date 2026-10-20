@@ -44,26 +44,32 @@ def pack_masks(prog: ProgramNode) -> ProgramNode:
   return _map_procs(prog, _pack_proc)
 
 
-def _int_value(node: ProgramNode, name: str, i: int) -> int | None:
-  """Evaluate an integer index expression at ``name = i``, or None when it reads memory or another variable."""
+_INDEX_OPS = {
+  ProgramOp.ADD: np.add,
+  ProgramOp.SUB: np.subtract,
+  ProgramOp.MUL: np.multiply,
+  ProgramOp.DIV: np.floor_divide,
+  ProgramOp.MOD: np.remainder,
+  ProgramOp.MINIMUM: np.minimum,
+  ProgramOp.MAXIMUM: np.maximum,
+}
+
+
+def _int_values(node: ProgramNode, name: str, i: np.ndarray) -> np.ndarray | None:
+  """Evaluate an integer index expression at every ``name = i``, or None when it reads memory or another variable."""
   if node.op == ProgramOp.CONST_INT:
-    return int(node.attrs["value"])
+    return np.full_like(i, int(node.attrs["value"]))
   if node.op == ProgramOp.VAR:
     return i if node.attrs["name"] == name else None
-  args = [_int_value(a, name, i) for a in node.args]
-  if any(a is None for a in args):
+  if node.op not in _INDEX_OPS:
     return None
-  ops = {
-    ProgramOp.ADD: lambda a, b: a + b,
-    ProgramOp.SUB: lambda a, b: a - b,
-    ProgramOp.MUL: lambda a, b: a * b,
-    # C truncates toward zero where Python floors; they agree for a nonnegative dividend and positive divisor.
-    ProgramOp.DIV: lambda a, b: a // b if a >= 0 and b > 0 else None,
-    ProgramOp.MOD: lambda a, b: a % b if a >= 0 and b > 0 else None,
-    ProgramOp.MINIMUM: lambda a, b: min(a, b),
-    ProgramOp.MAXIMUM: lambda a, b: max(a, b),
-  }
-  return ops[node.op](*args) if node.op in ops else None
+  a, b = (_int_values(arg, name, i) for arg in node.args)
+  if a is None or b is None:
+    return None
+  # C truncates toward zero where NumPy floors; they agree for a nonnegative dividend and positive divisor.
+  if node.op in (ProgramOp.DIV, ProgramOp.MOD) and ((a < 0).any() or (b <= 0).any()):
+    return None
+  return _INDEX_OPS[node.op](a, b)
 
 
 def _uses_var(node: ProgramNode, name: str) -> bool:
@@ -123,10 +129,9 @@ def _layout(stmt: ProgramNode, masks: dict[str, ProgramNode]) -> tuple[_Layout, 
   for node in walk_program(value):
     if node.op == ProgramOp.LOAD and id(node) not in mask_loads and _uses_var(node.args[0], name):
       index = node.args[0].args[0]
-      values = [_int_value(index, name, i) for i in range(stop)]
-      if any(v is None for v in values):
+      values = _int_values(index, name, np.arange(stop, dtype=np.int64))
+      if values is None:
         return None
-      values = np.asarray(values, dtype=np.int64)
       per_position = values[:positions]
       stride = int(per_position[1] - per_position[0]) if positions > 1 else 0
       if not (values == np.tile(per_position, directions)).all() or not (np.diff(per_position) == stride).all():
