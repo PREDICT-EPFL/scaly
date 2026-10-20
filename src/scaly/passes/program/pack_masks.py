@@ -129,9 +129,11 @@ def _layout(stmt: ProgramNode, masks: dict[str, ProgramNode]) -> tuple[_Layout, 
   for node in walk_program(value):
     if node.op == ProgramOp.LOAD and id(node) not in mask_loads and _uses_var(node.args[0], name):
       index = node.args[0].args[0]
-      values = _int_values(index, name, np.arange(stop, dtype=np.int64))
+      # Python integers, as object arrays: int64 would wrap where the index arithmetic overflows.
+      values = _int_values(index, name, np.arange(stop, dtype=object))
       if values is None:
         return None
+      values = values.astype(np.int64)
       per_position = values[:positions]
       stride = int(per_position[1] - per_position[0]) if positions > 1 else 0
       if not (values == np.tile(per_position, directions)).all() or not (np.diff(per_position) == stride).all():
