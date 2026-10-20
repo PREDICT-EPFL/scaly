@@ -58,7 +58,7 @@ every step, since only the source of the generated functions changes. They do fo
 controller except unbumpercars with SQP, where two of the 200 steps take a different number of
 iterations. The two trajectories still agree to within 6×10⁻⁹, but that controller's speedup
 compares slightly different amounts of work. On average, the SQP controllers take 2.7 to 7.9
-iterations per step and the IPOPT ones 10.1 to 13.7.
+iterations per step and the IPOPT ones 7.4 to 13.7.
 
 ## Building a controller
 

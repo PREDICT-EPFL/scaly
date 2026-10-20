@@ -28,7 +28,7 @@ differs in iterations on two steps instead of three. It writes the five CSV asse
 #184 changes only the npmpc and unbumpercars kernels and controllers. The race-car and chain sweep
 cells keep identical source and object sizes, and their Scaly controllers generate byte-identical
 C and shared libraries. Race-car SQP's paired function-evaluation median nevertheless moved from
-3.12× to 2.81×, because Scaly's identical library took 59 rather than 54 µs per step. That is
+3.12× to 2.81×, because Scaly's identical library took a median of 59 rather than 54 µs per step. That is
 variation between processes, which one process per provider cannot estimate.
 
 With the site built and served on port 8781, `verify_figures.py` renders all fourteen figures on

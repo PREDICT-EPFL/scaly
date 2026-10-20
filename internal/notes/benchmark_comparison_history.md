@@ -45,7 +45,7 @@ controllers produce byte-identical C and shared libraries. The unbumpercars SQP 
 in iterations on two of 200 steps instead of three, with oracle-call counts still identical and
 trajectories within 6×10⁻⁹. Paired medians move by at most 2.4%, on chain function evaluation,
 except race-car SQP function evaluation, 3.122× to 2.813×. Scaly's identical library there took
-59 rather than 54 µs per step, which is variation between processes. The largest 10th/90th percentile distance from a
+a median of 59 rather than 54 µs per step, which is variation between processes. The largest 10th/90th percentile distance from a
 paired median is 6.7%, so the page's bound for the middle 80% of step ratios returns from 11% to
 7%. Forty-eight CasADi unbumpercars SQP steps exceed the sampling time, against 50 on October 15.
 
