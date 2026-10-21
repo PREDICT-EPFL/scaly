@@ -4,6 +4,7 @@ import os
 import platform
 import shlex
 import shutil
+import subprocess
 import sys
 from typing import cast
 from pathlib import Path
@@ -138,7 +139,8 @@ def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   real_run = jit.subprocess.run
   monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: commands.append(cmd) or real_run(cmd, **kwargs))
   _simple_fn()(np.zeros(3))
-  (cmd,) = [command for command in commands if "-dM" not in command]
+  # the compiler fingerprint probes `-dM` and `--version` once per process, so skip those
+  (cmd,) = [command for command in commands if "-dM" not in command and "--version" not in command]
   flags = list(jit.compile_flags())
   compiler = find_c_compiler()
   assert compiler is not None and cmd[: len(compiler.command) + len(flags)] == [*compiler.command, *flags]
@@ -173,7 +175,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
 
   else:
     fun = cast(sc.Function, solver.function)
-  module = render_c_module(fun)
+  module = render_c_module(fun, lanes=1)
   procs = module.program.args[: module.program.attrs["proc_count"]]
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in procs)
   names = {proc.attrs["name"] for proc in procs}
@@ -294,8 +296,33 @@ def test_math_library_does_not_use_solver_namespace(isolated_cache, monkeypatch)
   assert loaded == [False]
 
 
+_ENVIRONMENT_CHANGE_SCRIPT = """
+import os
+import numpy as np
+import scaly as sc
+
+def build(k, backend):
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", ()), name=f"q{k}")
+  def q(x, p):
+    return sc.ProblemSpec(minimize=((x - p) * (x - p)).sum() + k, lb=sc.const(-5.0), ub=sc.const(5.0))
+  return sc.solver(q, backend)
+
+build(0, "piqp")(np.array(1.0))
+for i in range(200):
+  os.environ[f"SCALY_REPRO_{i}"] = "x" * 50
+build(1, "ipopt")(np.array(1.0))
+"""
+
+
+@pytest.mark.solver("piqp")
+@pytest.mark.solver("ipopt")
+def test_environment_change_before_next_isolated_load(tmp_path):
+  env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path)}
+  result = subprocess.run([sys.executable, "-c", _ENVIRONMENT_CHANGE_SCRIPT], env=env, capture_output=True, text=True, timeout=300)
+  assert result.returncode == 0, result.stderr
+
+
 def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
-  import subprocess
 
   def fail(_compiler):
     raise subprocess.CalledProcessError(1, ["cc", "-dM"])
@@ -305,7 +332,7 @@ def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
     jit._render_native(_simple_fn(), ("cc",))
 
 
-@pytest.mark.parametrize("dtype", ["bool", "int32", "int64", "float32"])
+@pytest.mark.parametrize("dtype", ["bool", "uint8", "int32", "int64", "float32"])
 @pytest.mark.parametrize("side", ["input", "output"])
 def test_jit_refuses_non_float64_leaves_before_cache(dtype, side, monkeypatch) -> None:
   from scaly.function.concrete import ConcreteFunction

@@ -6,10 +6,12 @@ from typing import Literal
 
 from collections import Counter
 
+import numpy as np
+
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp, RangeKind
-from ...utils.names import c_ident, NameScope
+from ...utils.names import C_MATH, c_ident, NameScope
 from ._common import (
   _map_procs,
   _proc_parts,
@@ -18,6 +20,7 @@ from ._common import (
   _index_values,
   name_scope,
   buffer_refs,
+  prune_procedures,
   rebuild_program,
   substitute_var,
   trip_count,
@@ -83,7 +86,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         inner = _inline_calls(inner, procedures, spellings)
       nodes = list(walk_program(p.block(*inner)))
       if any(
-        n.op == ProgramOp.CALL
+        n.op in (ProgramOp.CALL, ProgramOp.PRINT)
         or (n.op == ProgramOp.FOR and any(a.op != ProgramOp.CONST_INT for a in n.args[0].args))
         or (n.dtype.is_floating and n.dtype.bits != 64)
         or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64))
@@ -133,14 +136,11 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       cap = caps[-1]
       ordinal += 1
       helper = global_spellings.allocate(f"{c_ident(proc.attrs['name'])}_lanes_{ordinal}")
-      prefix = helper
-      while any(name.startswith(prefix + "_") for name in spellings.occupied | global_spellings.occupied):
-        prefix += "_local"
       if caps not in widths:
         key = "_".join(map(str, caps))
         widths[caps] = (
           global_spellings.allocate(f"SCALY_WIDTH_{key}", generated=True),
-          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem",)),
+          global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_st", *(f"_{name}" for name in sorted(C_MATH)))),
         )
       width_macro, vector = widths[caps]
       width = p.var(width_macro)
@@ -162,7 +162,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         expanded = _expand_index(view.args[0], index_definitions) if len(view.args) == 1 else None
         values = _index_values(expanded, rng, declarations) if expanded is not None else None
         stride = _axis_stride(expanded, rng.attrs["name"], varying_indices) if expanded is not None else None
-        if values is not None and len(values) > 1 and all(values[j] - values[j - 1] == values[1] - values[0] for j in range(2, len(values))):
+        if values is not None and len(values) > 1 and (np.diff(values) == values[1] - values[0]).all():
           stride = int(values[1] - values[0])
         attrs = {**view.attrs, "lane_layout": "contiguous" if stride == 1 else "strided" if stride is not None else "gather", "lane_storage": 8}
         if stride is not None:
@@ -211,14 +211,14 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       return ProgramNode(
         result.op,
         result.args,
-        {**result.attrs, "vector_helper": helper, "vector_prefix": prefix, "vector_count": count, "vector_mapped": bool(rng.attrs.get("mapped"))},
+        {**result.attrs, "vector_helper": helper, "vector_count": count, "vector_mapped": bool(rng.attrs.get("mapped"))},
         result.dtype,
       )
 
     transformed = [transform(stmt) for stmt in body]
     return _rebuild_proc(proc, params, [*promoted, *transformed])
 
-  return _map_procs(prog, widen_proc)
+  return prune_procedures(_map_procs(prog, widen_proc))
 
 
 def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], spellings: NameScope) -> list[ProgramNode]:

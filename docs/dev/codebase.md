@@ -36,6 +36,7 @@ src/scaly/
       contraction.py    vector and matrix products
       calls.py          Function calls, mapped calls, solver oracle dependencies
       gather.py         gathers and scatters
+      effects.py        prints
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE and optimize_program
       _common.py         shared buffer references, loop helpers, names, and reachability

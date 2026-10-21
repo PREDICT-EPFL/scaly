@@ -23,6 +23,14 @@ def test_modes_derive_startup_and_exclude_first_step(monkeypatch):
   assert interpreted[0]["time_to_first_solve_ms"] == pytest.approx(130.0)
 
 
+def test_result_check_oracles_compile_after_the_build_timer(monkeypatch):
+  timing = SolveTiming()
+  seen = []
+  monkeypatch.setattr("benchmarks.harness.timing.prepare_checks", lambda controller: seen.append(timing.build_ms))
+  timing.prepared()
+  assert seen == [timing.build_ms] and timing.build_ms > 0
+
+
 def test_one_step_has_no_steady_state_sample():
   timing = SolveTiming()
   timing.prepared()

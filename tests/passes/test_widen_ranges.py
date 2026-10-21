@@ -37,6 +37,23 @@ def test_lane_cap_does_not_exceed_rounded_trip_count(count, cap):
   assert vector.attrs["lane_cap"] == cap
 
 
+@pytest.mark.parametrize(
+  ("table", "layout", "stride"),
+  [(list(range(5, 14)), "contiguous", 1), (list(range(0, 27, 3)), "strided", 3), ([0, 3, 6, 9, 12, 15, 18, 21, 25], "gather", None)],
+)
+def test_lane_layout_of_a_table_indexed_read_follows_its_values(table, layout, stride):
+  x, y = p.buffer("x", dtypes.float64, (30,)), p.buffer("y", dtypes.float64, (9,))
+  indices = p.const_buffer("indices", dtypes.int64, (9,), table)
+  i = p.var("stage")
+  rng = p.range_("stage", 0, 9)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  read = p.load(p.view(x, [p.load(p.view(indices, [i]))]))
+  prog = p.program([p.proc("table_read", [x, y], [indices, p.for_(rng, [p.store(p.view(y, [i]), read)])])])
+  view = next(n for n in walk_program(widen_ranges(prog, lanes=2)) if n.op == ProgramOp.VIEW and n.attrs["buffer"] == "x")
+  assert view.attrs["lane_layout"] == layout
+  assert view.attrs.get("lane_stride") == stride
+
+
 def test_empty_and_unit_ranges_stay_scalar():
   for count in (0, 1):
     prog = _program(count)
@@ -142,3 +159,18 @@ def test_local_alias_of_external_buffer_stays_scalar():
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
   prog = p.program([p.proc("external_alias", [x, y], [p.for_(rng, [alias, p.store(p.view(y, [i]), p.load(p.view(alias, [i])))])])])
   assert widen_ranges(prog, lanes=4) is prog
+
+
+def test_callee_inlined_into_its_map_is_not_emitted():
+  a, b = (p.buffer(name, dtypes.float64, (1,)) for name in ("a", "b"))
+  zero = p.const_int(0)
+  square = p.proc("square", [a, b], [p.store(p.view(b, [zero]), p.mul(p.load(p.view(a, [zero])), p.load(p.view(a, [zero]))))])
+  x, y = (p.buffer(name, dtypes.float64, (9,)) for name in ("x", "y"))
+  i = p.var("stage")
+  rng = p.range_("stage", 0, 9)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  mapped = p.proc("mapped", [x, y], [p.for_(rng, [p.call("square", [p.view(x, [i]), p.view(y, [i])])])])
+  result = widen_ranges(p.program([square, mapped]), lanes=2)
+  verify_program(result)
+  assert not any(n.op == ProgramOp.CALL for n in walk_program(result))
+  assert [proc.attrs["name"] for proc in result.args] == ["mapped"]

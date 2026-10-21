@@ -22,7 +22,7 @@ from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.passes.lowering import lower_function
-from benchmarks.harness import problem_stats, solve_problem
+from benchmarks.harness import check_fastest_casadi_encoding, problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,
   HORIZON,
@@ -32,6 +32,7 @@ from benchmarks.problems.chain import (
   ChainParams,
   ca_chain_eq_jac,
   ca_chain_nlpsol,
+  ca_chain_sqp,
   chain_eq_function,
   chain_eq_jac_dense_reference,
   chain_nlp,
@@ -336,12 +337,18 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   selected = [
     proc
     for proc in procs
-    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
+    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj_eq_z")
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (
     selected[0].attrs
   )
+
+
+def check_closed_loop_uses_fastest_casadi_encoding() -> None:
+  """The CasADi SQP controller uses the sweep's fastest encoding for the canonical mass count."""
+  config = ClosedLoopConfig.canonical()
+  check_fastest_casadi_encoding("chain", config.n_masses, lambda: ca_chain_sqp(config.n_masses, config.horizon))
 
 
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
@@ -358,4 +365,5 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "recorded_scene": (check_recorded_scene, True, False),
   "hinted_stage_hessian": (check_hinted_stage_selects_hessian_procedure, False, False),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
 }

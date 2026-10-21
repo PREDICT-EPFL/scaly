@@ -50,6 +50,7 @@ CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.n
   "minus_one_mul": (lambda x: -1.0 * x, lambda v: -v, {"mul"}),
   "pow_zero": (lambda x: x**0.0, lambda v: np.ones_like(v), {"pow"}),
   "pow_two": (lambda x: x**2.0, lambda v: v * v, {"pow"}),
+  "pow_three": (lambda x: x**3.0, lambda v: v * v * v, {"pow"}),
   "constants": (lambda x: x + sc.const(3.0) / sc.const(2.0), lambda v: v + 1.5, {"div"}),
   "uniform_tensor": (lambda x: x * sc.const([1.0, 1.0, 1.0]) + sc.const([0.0, 0.0, 0.0]), lambda v: v, {"mul", "add"}),
 }

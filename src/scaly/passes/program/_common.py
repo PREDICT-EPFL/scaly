@@ -71,6 +71,11 @@ def trip_count(rng: ProgramNode) -> int | None:
   return max(0, -(-span // stride)) if stride > 0 else None
 
 
+def prints(node: ProgramNode) -> bool:
+  """Whether ``node`` holds a print, which has to run each time its statement does."""
+  return any(n.op == ProgramOp.PRINT for n in walk_program(node))
+
+
 def _proc_parts(proc: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
   """Split a PROC into (params, body statements)."""
   pc = int(proc.attrs["param_count"])
@@ -227,7 +232,7 @@ def name_scope(prog: ProgramNode) -> NameScope:
   names = {
     c_ident(n.attrs[key])
     for n in walk_program(prog)
-    for key in ("name", "target", "callee", "vector_helper", "vector_prefix", "lane_width", "lane_vector")
+    for key in ("name", "target", "callee", "vector_helper", "lane_width", "lane_vector")
     if key in n.attrs
   }
   names.update(f"{c_ident(n.attrs['name'])}_raw" for n in walk_program(prog) if n.op == ProgramOp.PROC)

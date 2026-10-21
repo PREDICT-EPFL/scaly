@@ -55,6 +55,7 @@ class ProgramOp(StrEnum):
   STORE = "store"
   STORE_PAIR = "store_pair"
   CALL = "call"
+  PRINT = "print"
 
   # Scalar/index-level
   CONST_INT = "const_int"
@@ -87,6 +88,7 @@ class ProgramOp(StrEnum):
   ATAN2 = "atan2"
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
+  BIT_SELECT = "bit_select"
 
 
 class RangeKind(StrEnum):
@@ -138,6 +140,7 @@ SCALAR_OPS: frozenset[ProgramOp] = frozenset(
     ProgramOp.ATAN2,
     ProgramOp.MINIMUM,
     ProgramOp.MAXIMUM,
+    ProgramOp.BIT_SELECT,
   }
 )
 
@@ -367,6 +370,15 @@ def call(callee: str, args: Sequence[ProgramNode], *, returns: Sequence[str] = (
   return ProgramNode(ProgramOp.CALL, tuple(args), attrs={"callee": callee, "returns": tuple(returns)})
 
 
+def print_(pieces: Sequence[str], values: Sequence[ProgramNode]) -> ProgramNode:
+  """Print scalar ``values`` between the literal text ``pieces``, which has one more entry than ``values``."""
+  if len(pieces) != len(values) + 1:
+    raise ValueError(f"print needs {len(values) + 1} pieces of text for {len(values)} values, got {len(pieces)}")
+  if any(v.op not in SCALAR_OPS for v in values):
+    raise TypeError("print values must be scalar ProgramNodes")
+  return ProgramNode(ProgramOp.PRINT, tuple(values), attrs={"pieces": tuple(pieces)})
+
+
 def proc(name: str, params: Sequence[ProgramNode], body: Sequence[ProgramNode], *, device: DeviceSpec | str | None = None) -> ProgramNode:
   for p in params:
     if p.op != ProgramOp.BUFFER:
@@ -410,6 +422,19 @@ def div(x: ProgramNode, y: ProgramNode) -> ProgramNode:
 
 def mod(x: ProgramNode, y: ProgramNode) -> ProgramNode:
   return _scalar_binop(ProgramOp.MOD, x, y)
+
+
+def bit_select(word: ProgramNode, bit: ProgramNode, value: ProgramNode) -> ProgramNode:
+  """``value`` where bit ``bit`` of ``word`` is set, else zero of ``value``'s dtype.
+
+  A 0/1 multiplier stored as bits. A cleared bit is a structural zero: like ``x * 0`` in
+  simplification it gives ``+0.0`` even for an infinite, NaN or negative ``value``.
+  """
+  if any(n.op not in SCALAR_OPS for n in (word, bit, value)):
+    raise TypeError("bit_select requires scalar ProgramNode operands")
+  if not word.dtype.is_integer or not bit.dtype.is_integer or not value.dtype.is_floating:
+    raise TypeError(f"bit_select takes an integer word and bit and a floating value, got {word.dtype}, {bit.dtype}, {value.dtype}")
+  return ProgramNode(ProgramOp.BIT_SELECT, (word, bit, value), dtype=value.dtype)
 
 
 def neg(x: ProgramNode) -> ProgramNode:

@@ -30,7 +30,7 @@ uv run python benchmarks/run.py smoke --select problems
 ```
 
 Smoke runs three groups, all on by default. Without `--full`, as on pull requests, each problem runs
-one gate and the `benchmarks` group runs Scaly and one CasADi encoding per problem; the nightly
+one gate and the `benchmarks` group runs Scaly and one CasADi implementation per problem; the nightly
 workflow passes `--full`, which runs everything below.
 
 - `problems` — each problem's own formulation gates, owned by the problem
@@ -112,9 +112,9 @@ generating code. `--casadi-transform` is enabled by default; use `--no-casadi-tr
 descriptor. Add `_jac` to `chain`, `race_cars`, `npmpc`, or `npmpc_decoder` to run the constraint
 Jacobian row retained for the long paper. The default sweep runs only the Hessian workloads.
 
-The sweep defaults to three repetitions. Each cell starts in a fresh Python process, with backend
-order varied using `--order-seed`. `--repetitions 1` is useful for a toolchain check. The raw CSV
-records repetition and backend order. A sibling `.summary.csv` reports mean, median, sample
+The sweep runs each cell once by default, in a fresh Python process, with backend order varied
+using `--order-seed`. `--repetitions N` repeats every cell in N fresh processes, for checking how
+much a timing moves between processes. The raw CSV records repetition and backend order. A sibling `.summary.csv` reports mean, median, sample
 standard deviation, coefficient of variation, minimum, and maximum across successful processes.
 Failed attempts remain in the raw CSV and the summary counts. A single sample has no dispersion
 estimate. `kernel_compile_ms`, `wrapper_compile_ms`, and `link_ms` separate generated code from the
@@ -128,19 +128,19 @@ unsupported hosts explicitly. It does not try to change macOS power settings.
 
 For headline runs on Linux, set every CPU policy to `performance` and choose the boost state first. Then use
 `--headline --boost on` or `--headline --boost off`. The runner checks those settings before and
-after each cell and requires at least three repetitions. Provenance records the frequency policies,
+after each cell. Provenance records the frequency policies,
 boost state, and CPU affinity. Run boost-on and boost-off comparisons into separate output
 directories with the same grid and seed. Keep compilation and other benchmark jobs out of timed
 runs. The runner validates machine settings but does not change them.
 
-Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/repeat_<n>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/repeat_<n>/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
+Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/repeat_<n>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/repeat_<n>/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=50, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples. A harvested file left from an earlier canonical size no longer matches its cell and fails it, so rerun that closed loop or delete its directory after a canonical size changes.
 
 Synthetic unbumpercars kernel inputs use seeded states inside the arena without rejecting
 collisions. Large car counts therefore remain measurable even when collision-free closed-loop
 placement cannot fit them. The closed-loop runner still requires collision-free initial states.
 The provenance records this input policy for every affected cell.
 
-The stage-based workloads default to Scaly and four CasADi encodings of the repeated dynamics
+The stage-based workloads default to Scaly and four CasADi implementations of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
 of an elemental `SX` `Function` in an `MX` outer graph. The objective and inequality expressions
 remain in the problem's canonical outer graph. The chain smoke tier uses literal `casadi_sx` at M=3 and mapped SX at M=5;
@@ -148,13 +148,15 @@ full sweeps record compilation outcomes at each requested mass count. Unbumperca
 formulation has no single repeated stage. If an explicit backend does not apply to a workload, the
 sweep records `not_applicable` and continues.
 
-The CSV separates generated artifact bytes into `executable_bytes` and `static_metadata_bytes`.
-The executable count is the C translation unit without `static const` declarations. The metadata
-count includes those declarations and the generated header. It therefore includes sparse index
-tables, automatic-differentiation seed tables, and numeric constants that the generator emits as
-arrays. A generator that writes a constant inline counts it as executable source. Their sum is
-`artifact_bytes`; `source_bytes` remains the complete C translation unit for compatibility with
-earlier runs.
+The CSV records two sizes, each with the part spent on constant data. `source_bytes` is the
+generated C translation unit, and `source_lines` its line count. `source_constant_bytes` is the text
+of its `static const` array definitions, found by a scan that skips comments, literals and
+preprocessor lines. `executable_bytes` is the compiled kernel: the total `size` reports for
+`kernel.o`, which counts machine code, constant tables and static data, built by the same command as
+the timed kernel and without the Google Benchmark wrapper. `executable_constant_bytes` is the part in
+its read-only data sections. A cell whose object holds more named constant tables than the scan
+found stops with an error, so a change in a generator's output cannot quietly zero the source
+column. A cell that fails to compile has source sizes but no executable sizes.
 
 The CSV records floating-point and integer ABI workspace and the required lengths of the argument
 and result pointer arrays. `coloring_width` is specific to each backend and must not be compared across
@@ -197,22 +199,26 @@ The split runs both ways: a check that is about *a problem* rather than about Sc
 ```bash
 uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
 uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only sweep --problems race_cars,unbumpercars
-uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only closed-loop --no-headline --repetitions 1
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only closed-loop --no-headline
 uv run benchmarks/run.py report benchmarks/results/<study-name>
 ```
 
 `study` runs the frozen headline grids in `harness/study.py`: the exact-Hessian sweep of every
 problem over its published sizes, and each supported canonical IPOPT and SQP closed loop,
-each as its own `run.py` invocation with five fresh processes, seed 0, and the headline CPU checks
-with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
+each as its own `run.py` invocation with one fresh process per cell and per provider, seed 0, and
+the headline CPU checks with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
 `closed-loop/<problem>/` under the output directory, refuses a directory that already has content,
 and records every command and its exit status with the usual provenance in `study.json`. It ends
 by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/closed_loop.summary.json`,
 `closed-loop/closed_loop.summary.csv` and a combined `report.md`. The figures on the benchmark pages
-read `docs/assets/benchmarks/closed_loop.summary.csv` and `sweep.summary.csv`, the four
-`sweep/<problem>/<problem>.summary.csv` files concatenated. `report` can
+read `docs/assets/benchmarks/sweep.csv` (the four `sweep/<problem>/<problem>.csv` files
+concatenated), `closed_loop.steps.csv` (every episode's `telemetry.csv`, with its problem, solver
+and oracle) and `closed_loop.summary.csv`. `report` can
 be rerun on any study directory, including one whose runs were launched by hand. Every episode
-writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads.
+writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads. Its closed-loop
+tables give each provider's mean, median and standard deviation over steps, and, since the two
+providers solve the same problems step for step, the median and 10th to 90th percentile of the
+per-step speedup.
 
 ## Closed-loop episodes and Foxglove
 
@@ -257,8 +263,9 @@ For CasADi's third mode, add `--casadi-interpreted` to an `ipopt+casadi` run. It
 an `interpreted/` directory, and its mode row names the CasADi wheel's IPOPT provider. That row is a
 deployment comparison and does not isolate oracle cost against the compiled columns' shared IPOPT.
 
-`closed-loop --repetitions 3` runs sequential fresh processes with separate empty compilation caches
-under `repeat_<n>/cache/<oracle>/`. Reusing one of those output directories fails. The parent writes
+`closed-loop --repetitions N`, including `--repetitions 1`, runs each episode in N sequential fresh
+processes with separate empty compilation caches under `repeat_<n>/cache/<oracle>/`; `study` always
+passes it, so `report` finds every episode. Reusing one of those output directories fails. The parent writes
 `modes.summary.csv` with startup and per-step dispersion. A single episode uses the configured cache,
 so its `jit` row may measure a cache load. Add `--headline --boost on` or `--headline --boost off` to
 check frequency settings around every repeated episode. `--oracle both` compares the compiled
@@ -298,13 +305,13 @@ the same warm start through l1/watchdog-five;
 both oracle providers use the identical two-solver policy. This completes all
 200 canonical solves without braking fallback or collisions.
 
-The canonical N=40 race episode starts both SQP oracle columns from the same
-problem-owned nominal primal in `problems/race_cars/data/nominal_N40.npz.b64`.
+The canonical N=50 race episode starts both SQP oracle columns from the same
+problem-owned nominal primal in `problems/race_cars/data/nominal_N50.npz.b64`.
 It is the deterministic IPOPT solution of the canonical initial NLP and is used
 only as the first NMPC guess; every online call, including that first call, is
 solved and timed by `scaly-sqp`, and subsequent calls use the shifted SQP
 primal/dual warm start. The independent SQP-versus-IPOPT smoke gate does not use
-this N=40 nominal.
+this N=50 nominal.
 
 Each run prints the exact artifact directory. It contains `episode.mcap`,
 `rollout.npz`, configuration/summary/provenance JSON, and
@@ -392,7 +399,7 @@ Canonical operating points are deterministic and intentionally modest:
 | problem | canonical point | scene |
 |---|---|---|
 | chain of masses | `M=5`, controller `N=12`, 90 plant steps at 0.2 s (long enough to settle) | 3D chain, end-mass control arrow and trail, open-loop plan, end-mass reference marker |
-| race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m at 0.05 s), IPOPT and SQP with two oracle providers | track, cones, planar vehicle, reference and predicted horizons |
+| race cars | controller `N=50`, one lap of `fsds_competition_1` (340 m at 0.05 s), IPOPT and SQP with two oracle providers | track, cones, planar vehicle, reference and predicted horizons |
 | unbumpercars HCBF | 8 cars, 200 plant steps at 0.1 s, seed 42, IPOPT and SQP with two oracle providers | planar cars with body and keep-out rings |
 | neural process MPC | controller `N=12`, 100 plant steps at 0.02 s from hanging, IPOPT and SQP with two oracle providers | 3D Furuta pendulum on a `scene → arm → pendulum` transform chain, tip trail, predicted tip path, arm-angle bound |
 

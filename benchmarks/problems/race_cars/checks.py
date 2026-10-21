@@ -26,7 +26,7 @@ from scaly.codegen.jit import get_compiled
 from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 from scaly.solvers.paths import solver_paths
-from benchmarks.harness import problem_stats, solve_problem
+from benchmarks.harness import check_fastest_casadi_encoding, problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
@@ -260,7 +260,7 @@ def check_casadi_ipopt_is_compiled() -> None:
 
 
 def check_harvested_sqp_globalizations() -> None:
-  """Both oracle providers solve the harvested hard-QP race failure with both globalizations."""
+  """Both oracle providers solve the harvested N=40 hard-QP race failure with both globalizations."""
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
@@ -271,7 +271,7 @@ def check_harvested_sqp_globalizations() -> None:
   for oracle in ("scaly", "casadi"):
     cache_key = None
     for name, options, expected_iter in globalizations:
-      solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
+      solver = build_solver(EpisodeConfig(horizon=40), "sqp", oracle, sqp_options=options)
       out = solve_problem(solver, inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
       compiled = get_compiled(solver.function)
       if cache_key is None:
@@ -381,7 +381,7 @@ def check_sqp_matches_ipopt() -> None:
   """SQP and IPOPT drive the same episode to per-step solutions that differ only mildly.
 
   The N=3 smoke point checks the independent solver trajectories without conflating the
-  canonical column's fixed N=40 nominal seed. Measured healthy-step differences are control
+  canonical column's fixed N=50 nominal seed. Measured healthy-step differences are control
   <= 7.5e-7, plan <= 5.5e-8, objective <= 9.4e-5 absolute, and violation <= 1.7e-10; the
   tolerances retain the wider envelope established for nonlinear solver agreement. On
   divergence the message carries the first diverging step with both solvers' status and
@@ -478,6 +478,14 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
     assert summary["failed_step"] == 1 and summary["status"] == "MAX_ITER" and summary["native_status"] == -1
 
 
+def check_closed_loop_uses_fastest_casadi_encoding() -> None:
+  """Both CasADi controllers use the sweep's fastest encoding at the canonical horizon."""
+  from benchmarks.problems.race_cars.casadi_nlp import CasadiRaceCarSolver, build_casadi_race_car_sqp
+
+  config = EpisodeConfig()
+  check_fastest_casadi_encoding("race_cars", config.horizon, lambda: CasadiRaceCarSolver(config), lambda: build_casadi_race_car_sqp(config))
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "failure_artifacts": (check_failure_closes_incremental_mcap_and_writes_partial_artifacts, False, False),
@@ -497,4 +505,5 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, True, True),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
 }

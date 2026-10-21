@@ -277,3 +277,29 @@ def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() ->
   rewritten_vmap = substitute(mapped, {xs: zs})
   assert rewritten_vmap is _mapped_call(callee, 2, [(zs, 0, 2)])
   assert rewritten_vmap.attrs["callee"] is callee.instantiate()
+
+
+def test_print_is_an_identity_node_carrying_its_format() -> None:
+  x, k = sc.sym("x", 2), sc.sym("k")
+  y = sc.print("x={} k={}", x, k)
+  assert y.op == ExprOp.PRINT and y.args == (x, k) and y.attrs["format"] == "x={} k={}"
+  assert y.type == x.type
+  assert sc.print("x={} k={}", x, k) is y
+  assert sc.print("{{x}}={}", x).attrs["format"] == "{{x}}={}"
+  sc.verify_expr(y)
+
+
+@pytest.mark.parametrize(
+  ("fmt", "values", "error", "message"),
+  [
+    ("x", (), ValueError, "at least one value"),
+    ("x={} y={}", (sc.sym("x"),), ValueError, "2 placeholders for 1 value"),
+    ("x={0}", (sc.sym("x"),), ValueError, "only empty '{}' placeholders"),
+    ("x={:.3f}", (sc.sym("x"),), ValueError, "only empty '{}' placeholders"),
+    ("x={}", (sc.sym("i", dtype="int64"),), TypeError, "float64"),
+    ("x=\0{}", (sc.sym("x"),), ValueError, "NUL"),
+  ],
+)
+def test_print_rejects_a_format_it_cannot_render(fmt, values, error, message) -> None:
+  with pytest.raises(error, match=message):
+    sc.print(fmt, *values)

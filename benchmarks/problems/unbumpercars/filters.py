@@ -11,7 +11,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_module
 from benchmarks.harness import register_base, registered_base
-from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
+from benchmarks.harness import casadi_ipopt
 from .common import (
   ClosedLoopConfig,
   CTFullWeights,
@@ -99,7 +99,6 @@ class CasadiDTCBFSafetyFilter:
     _build_solver: bool = True,
     _sym_t=None,
     _mlp: str = "percar",
-    _mtimes: str | None = None,
   ):
     import casadi as ca
 
@@ -119,14 +118,9 @@ class CasadiDTCBFSafetyFilter:
     self.last_lam_g: np.ndarray | None = None
     self._build_ms = 0.0
     self._sym_t = ca.MX if _sym_t is None else _sym_t
-    # _mlp="batched" evaluates every car's MLP layer as one matrix-matrix product; _mtimes picks
-    # CasADi 3.8's kernel ("reference", "classic" BLAS or "blasfeo") for the dense products.
+    # _mlp="batched" evaluates every car's MLP layer as one matrix-matrix product.
     self._mlp = _mlp
-    self._mtimes = _mtimes
     self._build(_build_solver)
-
-  def _mm(self, a, b):
-    return self.ca.mtimes(a, b) if self._mtimes is None else self.ca.mtimes(a, b, self._mtimes)
 
   def _unpack_pw(self, pw):
     ca = self.ca
@@ -216,9 +210,9 @@ class CasadiDTCBFSafetyFilter:
     x_scale, w0, b0, w1, b1, w2, b2 = self._unpack_pw_dt(pw)
     phi = ca.vertcat(ca.vertcat(x[3], x[4] - delta, x[5], delta) / x_scale, u[1], u[0])
     smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
-    h = smooth_relu(self._mm(w0, phi) + b0)
-    h = smooth_relu(self._mm(w1, h) + b1)
-    learned = self._mm(w2, h) + b2
+    h = smooth_relu(ca.mtimes(w0, phi) + b0)
+    h = smooth_relu(ca.mtimes(w1, h) + b1)
+    learned = ca.mtimes(w2, h) + b2
     delta_next = delta + dt * (u[1] * max_delta - delta) / steering_time_constant
     return ca.vertcat(self._pose_rk4(x, physics, dt), learned[0], learned[1] + delta_next, learned[2], delta_next)
 
@@ -230,9 +224,9 @@ class CasadiDTCBFSafetyFilter:
     n = len(states)
     phis = [ca.vertcat(ca.vertcat(x[3], x[4] - x[6], x[5], x[6]) / x_scale, u[1], u[0]) for x, u in zip(states, us, strict=True)]
     smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
-    h = smooth_relu(self._mm(w0, ca.horzcat(*phis)) + ca.repmat(b0, 1, n))
-    h = smooth_relu(self._mm(w1, h) + ca.repmat(b1, 1, n))
-    learned = self._mm(w2, h) + ca.repmat(b2, 1, n)
+    h = smooth_relu(ca.mtimes(w0, ca.horzcat(*phis)) + ca.repmat(b0, 1, n))
+    h = smooth_relu(ca.mtimes(w1, h) + ca.repmat(b1, 1, n))
+    learned = ca.mtimes(w2, h) + ca.repmat(b2, 1, n)
     out = []
     for i, (x, u) in enumerate(zip(states, us, strict=True)):
       delta = x[6]
@@ -343,7 +337,7 @@ class CasadiDTCBFSafetyFilter:
     }
     if self.filt_cfg.limited_memory_hessian:
       opts["ipopt.hessian_approximation"] = "limited-memory"
-    self.solver = make_casadi_ipopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
+    self.solver = casadi_ipopt.make_casadi_ipopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
     self._build_ms = (time.perf_counter() - t0) * 1000.0
 
   def _pack_p(self, states: np.ndarray, desired: np.ndarray) -> np.ndarray:
@@ -446,16 +440,16 @@ def build_casadi_sqp(
 
   controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
   assert controller.hess_fn is not None
-  z, p = ca.MX.sym("z", controller.n_z), ca.MX.sym("p", controller.n_p)
+  z, p, cost, g = controller.z_expr, controller.p_expr, controller.cost_expr, controller.g_expr
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", controller.n_s)
   stem = f"ca_unbumpercars_sqp_C{loop_cfg.ncars}"
-  base = ca.Function(f"{stem}_base", [z, p], [controller.cost_fn(z, p), controller.g_fn(z, p)])
+  base = ca.Function(f"{stem}_base", [z, p], [cost, g])
   solver = build_casadi_external_sqp(
     name=stem,
     base=base,
-    grad=ca.Function(f"{stem}_grad", [z, p], [controller.grad_fn(z, p)]),
-    jac=ca.Function(f"{stem}_jac", [z, p], [controller.jac_fn(z, p)]),
-    hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [controller.hess_fn(z, p, lam_f, lam_g)]),
+    grad=ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)]),
+    jac=ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(g, z)]),
+    hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [ca.hessian(lam_f * cost + ca.dot(lam_g, g), z)[0]]),
     n_eq=0,
     n_ineq=controller.n_s,
     x_lb=np.concatenate([-np.ones(controller.n_u), np.zeros(controller.n_s)]),

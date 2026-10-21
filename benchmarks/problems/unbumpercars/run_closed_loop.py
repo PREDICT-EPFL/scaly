@@ -109,11 +109,14 @@ def run_one(
   dump_scaly_c: bool,
 ):
   name = solver_oracle_name(solver, oracle)
-  from benchmarks.harness.timing import SolveTiming
+  from benchmarks.harness.timing import SolveTiming, prepare_checks
 
   timing = SolveTiming()
   safety_filter: SafetyFilter = make_filter(solver, oracle, loop_cfg, filt_cfg, weights)
   timing.prepared()
+  if isinstance(safety_filter, ScalyDTCBFSafetyFilter):
+    prepare_checks(safety_filter.nlp)
+    prepare_checks(safety_filter.fallback_nlp)
   sim = Simulator(initial_state, loop_cfg)
   impl_dir = out_dir / name
   impl_dir.mkdir(parents=True, exist_ok=True)

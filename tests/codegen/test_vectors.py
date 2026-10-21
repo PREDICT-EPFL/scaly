@@ -25,7 +25,9 @@ _GLIBC_X86 = platform.libc_ver()[0] == "glibc" and platform.machine().lower() in
 
 
 def _compile(prog, tmp_path, *, dialect="gnu", compiler="cc", vector_libm="none", defines=()):
-  source = "\n".join([*_includes(dialect=dialect, prog=prog), *_render_raw_callee(prog.args[0], dialect=dialect, vector_libm=vector_libm)])
+  source = "\n".join(
+    [*_includes(dialect=dialect, prog=prog, vector_libm=vector_libm), *_render_raw_callee(prog.args[0], dialect=dialect, vector_libm=vector_libm)]
+  )
   workspace = int(prog.args[0].attrs.get("sz_w", 0))
   source += f"\nvoid run(double *x, double *y) {{ double w[{max(workspace, 1)}]; kernel_raw(x, y, w); }}\n"
   return _compile_source(source, tmp_path, dialect=dialect, compiler=compiler, defines=defines)
@@ -227,14 +229,14 @@ def test_by_value_vector_types_are_not_under_aligned_aliases(lanes):
 
 
 def test_helper_names_do_not_capture_user_names(tmp_path):
-  x = p.buffer("scaly_valid", dtypes.float64, (9,))
-  y = p.buffer("scaly_load_1", dtypes.float64, (9,))
+  x = p.buffer("n", dtypes.float64, (9,))
+  y = p.buffer("l", dtypes.float64, (9,))
   i = p.var("i")
   rng = p.range_("i", 0, 9)
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
-  scalar = p.var("kernel_lanes_1_valid", dtypes.float64)
+  scalar = p.var("l_2", dtypes.float64)
   body = [
-    p.assign("kernel_lanes_1_valid", p.const_float(2), declare=True),
+    p.assign("l_2", p.const_float(2), declare=True),
     p.for_(rng, [p.store(p.view(y, [i]), p.mul(p.load(p.view(x, [i])), scalar))]),
   ]
   prog = p.program([p.proc("kernel", [x, y], body)])
@@ -266,8 +268,9 @@ def test_minimum_maximum_and_negative_zero_broadcast(tmp_path, dialect):
 def test_glibc_wrong_instruction_set_fails_at_compile_time(tmp_path):
   if not _GLIBC_X86:
     pytest.skip("requires x86-64 glibc")
+  # A fixed baseline, because on AVX10 hosts GCC ignores -mno-avx512f on top of -march=native.
   with pytest.raises(subprocess.CalledProcessError) as error:
-    _compile(widen_ranges(_program(17), lanes=8), tmp_path, vector_libm="glibc", defines=["-mno-avx512f"])
+    _compile(widen_ranges(_program(17), lanes=8), tmp_path, vector_libm="glibc", defines=["-march=x86-64-v3"])
   assert b"requires __AVX512F__ and -lmvec" in error.value.stderr
 
 
@@ -545,3 +548,42 @@ def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect
   actual = _evaluate(function, values, 6)
   assert actual[:6].tobytes() == np.concatenate([values[:2] * 2, values * 3]).tobytes()
   np.testing.assert_array_equal(actual[6:], 8765.0)
+
+
+def test_glibc_vector_declarations_have_c_linkage():
+  lines = _includes(prog=widen_ranges(_program(17), lanes=4), vector_libm="glibc")
+  depth, declared = 0, 0
+  for previous, line in zip(["", *lines], lines):
+    depth += (line == 'extern "C" {') - (line == "}" and previous == "#ifdef __cplusplus")
+    if "extern" in line and "_ZGV" in line:
+      declared += 1
+      assert depth == 1, line
+  assert declared
+
+
+@pytest.mark.parametrize("value", [p.const_int(2), p.const_int(2**53 + 1), p.var("count", dtypes.int64)])
+def test_integer_broadcasts_convert_to_double(tmp_path, value):
+  x, y = (p.buffer(name, dtypes.float64, (17,)) for name in ("x", "y"))
+  i = p.var("i")
+  body = [
+    p.for_(p.range_("i", 0, 17), [p.assign("v", value, dtype=dtypes.float64, declare=True), p.store(p.view(y, [i]), p.var("v", dtypes.float64))])
+  ]
+  if value.op == ProgramOp.VAR:
+    body.insert(0, p.assign("count", p.const_int(3), declare=True))
+  function, _ = _compile(widen_ranges(p.program([p.proc("kernel", [x, y], body)]), lanes=4), tmp_path)
+  expected = 3.0 if value.op == ProgramOp.VAR else float(value.attrs["value"])
+  np.testing.assert_array_equal(_evaluate(function, np.zeros(34), 17)[:17], np.full(17, expected))
+
+
+@pytest.mark.parametrize("names", [("lanes_4_4_4_4_vec_sin", "x"), ("kernel", "lanes_4_4_4_4_vec_sin")])
+def test_vector_math_wrappers_do_not_capture_user_names(tmp_path, names):
+  import scaly as sc
+  from scaly.codegen.aot import render_c_module
+
+  @sc.function(sc.arg(names[1], 17), outputs=sc.arg("y", 17), name=names[0])
+  def fun(x):
+    return x.sin()
+
+  path = tmp_path / "kernel.c"
+  path.write_text(render_c_module(fun, lanes=4).body)
+  subprocess.run(["cc", "-O1", "-std=c99", "-c", str(path), "-o", str(tmp_path / "kernel.o")], check=True, capture_output=True)

@@ -432,8 +432,10 @@ def ca_chain_sqp(n_masses: int, horizon: int):
   from benchmarks.harness import register_base
 
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  z, p, cost, eq = _ca_nlp_pieces(n_masses, horizon, ca.MX, map_stages=True)
-  lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(eq.shape[0]))
+  # The sweep's fastest chain encoding: plain SX with common-subexpression elimination.
+  z, p, cost, eq = _ca_nlp_pieces(n_masses, horizon, ca.SX, call_stages=False)
+  cost, eq = ca.cse([cost, eq])
+  lam_f, lam_g = ca.SX.sym("lam_f"), ca.SX.sym("lam_g", int(eq.shape[0]))
   stem = f"ca_chain_sqp_M{n_masses}_N{horizon}"
   base = ca.Function(f"{stem}_base", [z, p], [cost, eq])
   grad = ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)])

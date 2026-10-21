@@ -255,3 +255,20 @@ def test_interning_shares_numpy_scalars_with_their_python_kind() -> None:
   flag = ProgramNode(ProgramOp.CONST_INT, (), {"value": True}, dtypes.bool_)
   assert ProgramNode(ProgramOp.CONST_INT, (), {"value": np.True_}, dtypes.bool_) is flag
   assert p.const_float(np.float64(1.5)) is p.const_float(1.5)
+
+
+def test_bit_select_builds_verifies_and_prints():
+  from scaly.ir.text import render_program_assembly
+
+  mask = p.const_buffer("mask", dtypes.uint8, (2,), [5, 0])
+  x = p.buffer("x", dtypes.float64, (16,))
+  y = p.buffer("y", dtypes.float64, (16,))
+  i = p.var("i")
+  word = p.load(p.view(mask, [p.div(i, p.const_int(8))]))
+  value = p.bit_select(word, p.mod(i, p.const_int(8)), p.load(p.view(x, [i])))
+  prog = p.program([p.proc("kernel", [x, y], [mask, p.for_(p.range_("i", 0, 16), [p.store(p.view(y, [i]), value)])])])
+  verify_program(prog)
+  assert "y[i] <- bit_select(mask[(i / 8)], (i % 8), x[i])" in format_program(prog)
+  assert "prog.bit_select(prog.load %mask[prog.div(%i, 8)], prog.mod(%i, 8), prog.load %x[%i])" in render_program_assembly(prog)
+  with pytest.raises(TypeError, match="integer word and bit"):
+    p.bit_select(p.load(p.view(x, [i])), i, p.load(p.view(x, [i])))

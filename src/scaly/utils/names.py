@@ -18,7 +18,8 @@ _KEYWORDS = set(
   or_eq typeof typeof_unqual xor xor_eq
 """.split()
 )
-_MATH = set(
+# C math functions: reserved as identifiers, and as suffixes of generated vector math wrappers.
+C_MATH = set(
   """
   acos acosh asin asinh atan atanh atan2 cbrt ceil copysign cos cosh erf erfc exp exp2 expm1 fabs fdim
   floor fma fmax fmin fmod frexp hypot ilogb ldexp lgamma llrint llround log log10 log1p log2 logb lrint
@@ -29,8 +30,8 @@ _MATH = set(
 )
 _RESERVED = (
   _KEYWORDS
-  | _MATH
-  | {n + suffix for n in _MATH for suffix in ("f", "l")}
+  | C_MATH
+  | {n + suffix for n in C_MATH for suffix in ("f", "l")}
   | set(
     """
   arg res iw w mem solver_options double2 NULL NAN INFINITY HUGE_VAL HUGE_VALF HUGE_VALL

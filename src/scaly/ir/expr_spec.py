@@ -22,9 +22,9 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, topo
+from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, print_pieces, topo
 from .spec import Rule, Spec, VerifyError
-from .types import DType, broadcast_shape
+from .types import DType, broadcast_shape, dtypes
 
 
 def verify_expr(root: Expr | Iterable[Expr], spec: "Spec | None" = None) -> None:
@@ -319,6 +319,23 @@ def _concat_shapes(expr: Expr) -> str | None:
   return None
 
 
+def _print_format(expr: Expr) -> str | None:
+  fmt = expr.attrs.get("format")
+  if not isinstance(fmt, str):
+    return "PRINT missing string 'format' attr"
+  try:
+    placeholders = len(print_pieces(fmt)) - 1
+  except ValueError as exc:
+    return str(exc)
+  if not expr.args or placeholders != len(expr.args):
+    return f"PRINT format has {placeholders} placeholders for {len(expr.args)} values"
+  if expr.type != expr.args[0].type:
+    return f"PRINT type {expr.type} differs from its first value's {expr.args[0].type}"
+  if any(a.type.dtype != dtypes.float64 for a in expr.args):
+    return "PRINT values must be float64"
+  return None
+
+
 # Build rule lists for elementwise op classes.
 _unary_rules = [Rule(op, "unary-shape-dtype-match", _unary_shape_dtype) for op in COMMON_ELEMENTWISE_UNARY]
 _binary_rules = [Rule(op, "binary-shape-dtype-match", _binary_shape_dtype) for op in COMMON_ELEMENTWISE_BINARY]
@@ -343,5 +360,6 @@ spec_expr = Spec(
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
     Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
+    Rule(ExprOp.PRINT, "print-format", _print_format),
   ]
 )

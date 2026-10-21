@@ -188,6 +188,8 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     return (cot * _ones_like(args[0]),)
   if expr.op == ExprOp.RESHAPE:
     return (cot.reshape(args[0].shape),)
+  if expr.op == ExprOp.PRINT:
+    return (cot, *(zeros_like(arg) for arg in args[1:]))
   if expr.op == ExprOp.TRANSPOSE:
     axes = expr.attrs["axes"]
     inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))

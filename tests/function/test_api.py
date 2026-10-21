@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 import inspect
+import threading
 from typing import Any, cast
 
 import numpy as np
@@ -183,3 +185,66 @@ def test_lagrangian_hessian_convenience_api() -> None:
   lam_f = np.array(1.2)
   lam_g = np.array([0.3, -0.7])
   np.testing.assert_allclose(h_api(*(xv, (lam_f, lam_g))), h_factory(*(xv, lam_f, lam_g)))
+
+
+def test_print_unreachable_from_the_outputs_raises_at_trace_time() -> None:
+  with pytest.raises(ValueError, match=r"print 'x=\{\}' in function 'f' does not reach its outputs"):
+
+    @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+    def f(x: sc.Expr) -> sc.Expr:
+      sc.print("x={}", x)
+      return x * 2.0
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+  def g(x: sc.Expr) -> sc.Expr:
+    return sc.print("g={}", x) * 2.0
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
+  def h(x: sc.Expr) -> sc.Expr:
+    return g.symbolic_call(x) + 1.0
+
+
+@pytest.mark.parametrize("transform", ["scalar", "block", "simplify", "substitute"])
+def test_print_rebuilt_by_a_transform_still_reaches_the_outputs(transform) -> None:
+  from scaly.ir.expr import substitute
+
+  def body(x: sc.Expr) -> sc.Expr:
+    if transform == "scalar":
+      return sc.print("x={}", x).scalar()
+    if transform == "block":
+      return sc.print("x={}", x).block()
+    if transform == "simplify":
+      return sc.simplify(sc.print("x={}", x + 0.0))
+    return substitute(sc.print("x={}", x), {x: x + 1.0})
+
+  sc.function(sc.arg("x", ()), outputs=sc.arg("y"), name=transform)(body)
+
+
+def test_prints_are_recorded_per_thread() -> None:
+  """While one thread traces, a print built by another belongs to the other's trace."""
+  started, built, finished = threading.Event(), threading.Event(), threading.Event()
+
+  def a(x: sc.Expr) -> sc.Expr:
+    started.set()
+    assert built.wait(5)
+    return sc.print("a={}", x)
+
+  def build_b() -> None:
+    def b(x: sc.Expr) -> sc.Expr:
+      assert started.wait(5)
+      y = sc.print("b={}", x)
+      built.set()
+      assert finished.wait(5)
+      return y
+
+    sc.function(sc.arg("x", ()), outputs=sc.arg("y"), name="b")(b)
+
+  def build_a() -> None:
+    try:
+      sc.function(sc.arg("x", ()), outputs=sc.arg("y"), name="a")(a)
+    finally:
+      finished.set()
+
+  with concurrent.futures.ThreadPoolExecutor(2) as pool:
+    for future in [pool.submit(build_b), pool.submit(build_a)]:
+      future.result()

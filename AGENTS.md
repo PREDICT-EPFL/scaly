@@ -13,7 +13,7 @@ Read before changing anything:
   rules bind agents exactly as they bind human contributors; follow them, do not work around them.
 - [Conventions](docs/dev/conventions.md) — naming, code style, which side of the
   tests-versus-benchmarks line a check belongs on
-- [Contributing](docs/dev/contributing.md) — the checks, where tests live, known flakes
+- [Contributing](docs/dev/contributing.md) — the checks and where tests live
 
 Everything under `docs/` is published to the documentation site, all of it, because Zensical has no
 exclusion mechanism. Anything unpublished lives in `internal/`:

@@ -23,6 +23,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 import numpy as np
 
+from benchmarks.harness import check_fastest_casadi_encoding
 from benchmarks.problems.unbumpercars.common import (
   DT_VF_DEADZONE,
   CarPhysics,
@@ -623,6 +624,19 @@ def check_typed_problem_keeps_hessian_in_place() -> None:
   assert module.workspace_size < 100_000
 
 
+def check_closed_loop_uses_fastest_casadi_encoding() -> None:
+  """Both CasADi controllers use the sweep's fastest encoding at the default car count."""
+  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter, build_casadi_sqp
+
+  loop_cfg, filt_cfg, weights = ClosedLoopConfig(), FilterConfig(), load_dt_mlp_weights()
+  check_fastest_casadi_encoding(
+    "unbumpercars",
+    loop_cfg.ncars,
+    lambda: CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights),
+    lambda: build_casadi_sqp(loop_cfg, filt_cfg, weights),
+  )
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "typed_hessian_in_place": (check_typed_problem_keeps_hessian_in_place, False, False),
@@ -642,4 +656,5 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, True, False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
 }

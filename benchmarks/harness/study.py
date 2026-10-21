@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from benchmarks.harness.report import report
 
 # The exact sparse Lagrangian Hessian grids the results pages quote. Chain is internal validation.
 SWEEP_GRID = {
-  "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
+  "race_cars": [5, 10, 25, 50, 100, 200, 400],
   "npmpc": [6, 12, 25, 50, 100, 200],
   "unbumpercars": [2, 4, 8, 16, 32],
   "chain": [3, 5, 9],
@@ -26,9 +27,19 @@ PARTS = ("sweep", "closed-loop")
 
 def run_study(args, cli_args: list[str]) -> bool:
   measuring = Path.home() / ".scaly-measuring"
-  if measuring.exists():
-    raise SystemExit(f"measurement already owns this machine ({measuring}):\n{measuring.read_text()}")
   out = args.out_dir.resolve()
+  try:
+    with measuring.open("x") as f:
+      f.write(f"{out.name} pid:{os.getpid()} out:{out}\n")
+  except FileExistsError:
+    raise SystemExit(f"measurement already owns this machine ({measuring}):\n{measuring.read_text()}") from None
+  try:
+    return _run_study(args, cli_args, out)
+  finally:
+    measuring.unlink()
+
+
+def _run_study(args, cli_args: list[str], out: Path) -> bool:
   if out.exists() and any(out.iterdir()) and not args.overwrite:
     raise SystemExit(f"study requires an unused output directory: {out} (or pass --overwrite)")
   out.mkdir(parents=True, exist_ok=True)

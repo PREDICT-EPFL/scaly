@@ -7,6 +7,7 @@ from ...utils.names import NameScope
 from ._common import (
   name_scope,
   buffer_refs,
+  prints,
   prune_dead_buffers,
   prune_procedures,
   _alias_sources,
@@ -36,7 +37,9 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   for pr in procs:  # callees precede callers, so a split always sees the callee's rewritten body
     table[pr.attrs["name"]] = _hoist_proc(pr, table, splits, used_names, pure)
     rewritten.append(table[pr.attrs["name"]])
-    if all(n.attrs["callee"] in pure for n in walk_program(table[pr.attrs["name"]]) if n.op == ProgramOp.CALL):
+    if not prints(table[pr.attrs["name"]]) and all(
+      n.attrs["callee"] in pure for n in walk_program(table[pr.attrs["name"]]) if n.op == ProgramOp.CALL
+    ):
       pure.add(pr.attrs["name"])
   if all(a is b for a, b in zip(procs, rewritten, strict=True)):
     return prog
@@ -96,6 +99,8 @@ def _call(callee: ProgramNode, args: list[ProgramNode]) -> ProgramNode:
 
 
 def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope, pure: set[str]) -> _Split | None:
+  if prints(proc):
+    return None
   params, body = _proc_parts(proc)
   n_in = int(proc.attrs["input_count"])
   aliases = _alias_sources(body)
