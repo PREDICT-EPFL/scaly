@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 
 from scaly.codegen.jit import load_library, opt_flag
-from scaly.codegen.toolchain import cache_root, find_c_compiler
+from scaly.codegen.toolchain import cache_root, find_c_compiler, no_gather_flags
 from scaly.solvers.paths import backend_compile_flags, solver_paths
 from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
 from scaly.utils.env import shared_lib_ext, shared_lib_flag
@@ -212,6 +212,7 @@ def _build(spec_path: Path) -> None:
     spec["opt"],
     *NATIVE_CFLAGS,
     *math_cflags,
+    *no_gather_flags(tuple(spec["compiler"])),
     "-fPIC",
     shared_lib_flag(),
     str(source_path),
@@ -290,6 +291,7 @@ class CompiledCasadiIpopt:
       + opt
       + " ".join(NATIVE_CFLAGS)
       + repr(math_flags(*compiler))
+      + " ".join(no_gather_flags(tuple(compiler)))
       + " ".join(backend_compile_flags(("ipopt",)))  # the rpath baked into the library must match this checkout
     )
     key = hashlib.sha256(cache_inputs.encode()).hexdigest()[:20]

@@ -106,7 +106,8 @@ def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys
   monkeypatch.delenv("SCALY_CC", raising=False)
   monkeypatch.delenv("CC", raising=False)
   monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-  monkeypatch.setattr(toolchain.sysconfig, "get_path", lambda name: str(tmp_path / "scripts"))
+  real_zig_bin = toolchain._zig_bin_executable
+  monkeypatch.setattr(toolchain, "_zig_bin_executable", lambda: None)
   real_find_spec = importlib.util.find_spec
   monkeypatch.setattr(toolchain.importlib.util, "find_spec", lambda name: None)
   assert toolchain.find_c_compiler() is None
@@ -126,11 +127,21 @@ def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys
   monkeypatch.setattr(toolchain, "native_recipe", lambda command: toolchain.BuildRecipe())
   toolchain.main()
   assert f"cc: {zig} cc (ziglang)" in capsys.readouterr().out
-  scripts_zig = tmp_path / "scripts" / "zig"
-  scripts_zig.parent.mkdir()
-  scripts_zig.write_text("#!/bin/sh\n")
-  scripts_zig.chmod(0o755)
-  assert toolchain.find_c_compiler() == toolchain.Compiler((str(scripts_zig), "cc"), "zig-bin")
+  monkeypatch.setattr(toolchain, "_zig_bin_executable", real_zig_bin)
+  stray = tmp_path / "scripts" / "zig"
+  stray.parent.mkdir()
+  stray.write_text("#!/bin/sh\n")
+  stray.chmod(0o755)
+  info = tmp_path / "site" / "zig_bin-0.17.0.dist-info"
+  info.mkdir()
+  (info / "METADATA").write_text("Metadata-Version: 2.1\nName: zig-bin\nVersion: 0.17.0\n")
+  bin_zig = tmp_path / "env" / "bin" / "zig"
+  bin_zig.parent.mkdir(parents=True)
+  bin_zig.write_text("#!/bin/sh\n")
+  bin_zig.chmod(0o755)
+  (info / "RECORD").write_text("zig_bin-0.17.0.dist-info/METADATA,,\n../env/bin/zig,,\n")
+  importlib.invalidate_caches()
+  assert toolchain.find_c_compiler() == toolchain.Compiler((str(bin_zig), "cc"), "zig-bin")
   monkeypatch.setenv("SCALY_CC", fake_cc("from-scaly-cc"))
   assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["SCALY_CC"],), "SCALY_CC")
 

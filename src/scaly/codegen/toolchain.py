@@ -8,13 +8,13 @@ module reads it for the report and nothing else depends on that direction.
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import importlib.util
 import json
 import os
 import platform
 import shlex
 import subprocess
-import sysconfig
 from functools import lru_cache
 import shutil
 from dataclasses import dataclass
@@ -170,17 +170,30 @@ def cache_root() -> Path:
   return base / "scaly" / "jit"
 
 
+def _zig_bin_executable() -> str | None:
+  """The ``zig`` executable the ``zig-bin`` distribution installed, read from its ``RECORD``."""
+  try:
+    dist = importlib.metadata.distribution("zig-bin")
+  except importlib.metadata.PackageNotFoundError:
+    return None
+  for line in (dist.read_text("RECORD") or "").splitlines():
+    path = line.split(",", 1)[0]
+    if path.endswith(("bin/zig", "Scripts/zig.exe")):
+      return shutil.which(os.path.normpath(str(dist.locate_file(path))))
+  return None
+
+
 def find_c_compiler() -> Compiler | None:
   """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``zig-bin`` or ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
 
-  ``zig-bin`` installs ``zig`` into the environment's scripts directory, ``ziglang`` inside its package.
+  ``zig-bin`` installs ``zig`` into its environment's scripts directory, ``ziglang`` inside its package.
   Returns the compiler command and which of those settings supplied it, or ``None`` if nothing is found.
   """
   override = os.environ.get("SCALY_CC")
   if override:
     found = shutil.which(override)
     return Compiler((found,), "SCALY_CC") if found is not None else None
-  if (zig := shutil.which("zig", path=sysconfig.get_path("scripts"))) is not None:
+  if (zig := _zig_bin_executable()) is not None:
     return Compiler((zig, "cc"), "zig-bin")
   spec = importlib.util.find_spec("ziglang")
   if spec is not None and spec.origin is not None and (zig := shutil.which("zig", path=str(Path(spec.origin).parent))) is not None:
