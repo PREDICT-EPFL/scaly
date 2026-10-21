@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 import os
 import platform
 import shlex
@@ -21,14 +20,6 @@ from scaly.codegen.toolchain import find_c_compiler, no_gather_flags
 
 
 pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is required for JIT smoke tests")
-
-
-@pytest.fixture
-def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
-  # Drop any process-local artifacts so the cache key derivation runs fresh.
-  jit._artifact_cache.clear()
-  yield tmp_path
 
 
 def _simple_fn() -> sc.Function[tuple[sc.Expr], tuple[np.ndarray], sc.Expr, np.ndarray]:

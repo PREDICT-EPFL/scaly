@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 import os
 import sys
 from pathlib import Path
@@ -83,3 +84,13 @@ def pytest_collection_modifyitems(items) -> None:
           item.add_marker(pytest.mark.skip(reason=solver_diagnostic(name)))
   if require and missing:
     raise pytest.UsageError(f"SCALY_REQUIRE_SOLVERS=1 but not loadable: {', '.join(sorted(missing))}\n\n{solver_diagnostic()}")
+
+
+@pytest.fixture
+def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+  import scaly.codegen.jit as jit
+
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+  # Drop any process-local artifacts so the cache key derivation runs fresh.
+  jit._artifact_cache.clear()
+  yield tmp_path
