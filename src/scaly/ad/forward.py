@@ -6,27 +6,19 @@ to unrolling ``jvp`` per seed unless ``SCALY_STRICT_JVP_MANY`` forbids it.
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
-from ..function.concrete import ConcreteFunction
-from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, substitute, zeros_like
+from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
-from .helpers import HelperKey, helper_name
-from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
+from .calls import _call_jvp, _call_jvp_many, _is_zero_const, _vmap_jvp_many
+from .sparsity import _depends_on
 
 
 class _JVPManyUnsupported(Exception):
   def __init__(self, op: str):
     super().__init__(op)
     self.op = op
-
-
-def _is_zero_const(expr: Expr) -> bool:
-  return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
 
 
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
@@ -51,20 +43,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return ret
   if expr.op in (ExprOp.CALL, ExprOp.VMAP):
     tangents = [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args]
-    active = tuple(i for i, tangent in enumerate(tangents) if not _is_zero_const(tangent))
-    if not active:
-      memo[expr.id] = ret = zeros_like(expr)
-      return ret
-    fn, arg_indices, seed_indices = _call_jvp_function(expr.attrs["callee"], expr.attrs["output"], active)
-    if expr.op == ExprOp.CALL:
-      call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices]
-      memo[expr.id] = ret = fn.symbolic_call(*fn.input_tree.unflatten(tuple(call_args)))
-    elif not seed_indices:
-      memo[expr.id] = ret = zeros_like(expr)
-    else:
-      starts, strides = expr.attrs["starts"], expr.attrs["strides"]
-      specs = [(expr.args[i], starts[i], strides[i]) for i in arg_indices] + [(tangents[i], starts[i], strides[i]) for i in seed_indices]
-      memo[expr.id] = ret = _mapped_call(fn, expr.attrs["length"], specs)
+    memo[expr.id] = ret = _call_jvp(expr, tangents, pushforward=_jvp)
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
     raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
@@ -151,132 +130,6 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       return save(2 * (args[0] @ d[0]))
     return save(d[0] @ args[1] + args[0] @ d[1])
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
-
-
-def _call_jvp_many_function(
-  callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
-) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-  key = HelperKey(
-    "forward",
-    (output_index,),
-    formal_indices,
-    callee._effective_lowering,
-    nseed,
-    tuple(None if value is None else (value.dtype.str, value.tobytes()) for value in constants),
-  )
-  cache = callee._memo.helpers
-  if key not in cache:
-    active = tuple(range(nseed))
-    if all(value is not None for value in constants):
-      active = tuple(row for row in range(nseed) if any(value is not None and np.any(value[row] != 0) for value in constants))
-    seeds = {
-      i: Expr.sym(f"fwd:{callee.input_names[i]}", (nseed, *callee.inputs[i].shape)) if value is None else Expr.const(value[list(active)])
-      for i, value in zip(formal_indices, constants, strict=True)
-    }
-    out = callee.outputs[output_index]
-    single_constant = len(formal_indices) == 1 and constants[0] is not None
-    if single_constant:
-      formal_index = formal_indices[0]
-      deriv = _jvp_many_unrolled(out, callee.inputs[formal_index], seeds[formal_index])
-    else:
-      deriv = stack([_jvp(out, {callee.inputs[i]: seed[row] for i, seed in seeds.items()}, {}, {}) for row in range(len(active))], axis=0)
-    deriv = callee._inherit_lowering(simplify_cse_fixpoint(deriv))
-    dep_memo: dict[tuple[int, int], bool] = {}
-    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
-    seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
-    inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
-    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(f"fwd:{callee.input_names[i]}" for i in seed_indices)
-    output_name = f"fwd:{callee.output_names[output_index]}"
-    if single_constant:
-      output_name += f":{callee.input_names[formal_indices[0]]}"
-    fn = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [deriv], input_names, [output_name], role="forward")
-    cache[key] = (fn, arg_indices, seed_indices, active)
-  return cache[key]
-
-
-def _call_jvp_many_const_function(
-  callee: Any, output_index: int, formal_index: int, seed_value: np.ndarray
-) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  """Specialize the joint JVP helper for one formal with a constant seed."""
-  fn, arg_indices, seed_indices, active = _call_jvp_many_function(callee, output_index, (formal_index,), seed_value.shape[0], (seed_value,))
-  assert not seed_indices
-  return fn, arg_indices, active
-
-
-def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int, ...]) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  key = HelperKey("forward", (output_index,), formal_indices, callee._effective_lowering)
-  cache = callee._memo.helpers
-  if key not in cache:
-    seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
-    deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
-    dep_memo: dict[tuple[int, int], bool] = {}
-    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
-    seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))
-    inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
-    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
-    fn = ConcreteFunction._from_exprs(
-      helper_name(callee, key), inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"], role="forward"
-    )
-    cache[key] = (fn, arg_indices, seed_indices)
-  return cache[key]
-
-
-def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
-  """Share specialized tangent bodies through one mapped result, preserving each seed layout."""
-  groups: list[tuple[int, dict[Expr, tuple[Expr, int, int]], list[Expr]]] = []
-  for mapped in maps:
-    fn = mapped.attrs["callee"]
-    specs = dict(zip(fn.inputs, zip(mapped.args, mapped.attrs["starts"], mapped.attrs["strides"], strict=True), strict=True))
-    for length, bindings, members in groups:
-      if length == mapped.attrs["length"] and all(formal not in bindings or bindings[formal] == spec for formal, spec in specs.items()):
-        bindings.update(specs)
-        members.append(mapped)
-        break
-    else:
-      groups.append((mapped.attrs["length"], specs, [mapped]))
-  replacements = {}
-  cache = callee._memo.helpers
-  for length, bindings, members in groups:
-    if len(members) == 1:
-      continue
-    functions = tuple(mapped.attrs["callee"] for mapped in members)
-    inputs = tuple(bindings)
-    key = HelperKey("forward", (), (), callee._effective_lowering, members=functions)
-    if key not in cache:
-      outputs = [fn.outputs[0].reshape((fn.outputs[0].size,)) for fn in functions]
-      packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
-      names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
-      cache[key] = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [packed], [names[inp] for inp in inputs], ["fwd"], role="forward")
-    fn = cache[key]
-    mapped = _mapped_call(fn, length, list(bindings.values()))
-    width = fn.outputs[0].size
-    offset = 0
-    for member, function in zip(members, functions, strict=True):
-      size = function.outputs[0].size
-      indices = (np.arange(length)[:, None] * width + offset + np.arange(size)).reshape(-1)
-      replacements[member] = gather(mapped, indices)
-      offset += size
-  return substitute(result, replacements) if replacements else result
-
-
-def _periodic_seed_tiles(
-  tangent: Expr, nseed: int, outer_size: int, start: int, stride: int, formal_size: int, length: int
-) -> tuple[np.ndarray, int] | None:
-  if not length or tangent.op != ExprOp.CONST or tangent.value is None:
-    return None
-  flat = np.asarray(tangent.value, dtype=np.float64).reshape(nseed, outer_size)
-  tiles = np.stack([flat[:, start + it * stride : start + it * stride + formal_size] for it in range(length)])
-  period = next(
-    (k for k in range(1, min(8, length // 2) + 1) if length % k == 0 and np.array_equal(tiles, np.tile(tiles[:k], (length // k, 1, 1)))),
-    None,
-  )
-  return None if period is None else (tiles, period)
-
-
-def _local_seed_colors(callee_out: Expr, formal: Expr, nseed: int) -> tuple[Any, tuple[int, ...]] | None:
-  mask = _jac_mask(callee_out, formal, {})
-  colors = column_coloring(_mask_sparsity(mask)) if mask.nnz else ()
-  return (mask, colors) if colors and max(colors) + 1 < nseed else None
 
 
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
@@ -391,139 +244,13 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = d0.reshape((nseed, expr.args[0].size)) @ ones
     return ret
   if expr.op == ExprOp.VMAP:
-    callee = expr.attrs["callee"]
-    output_idx = expr.attrs["output"]
-    length = expr.attrs["length"]
-    starts = expr.attrs["starts"]
-    strides = expr.attrs["strides"]
-    slice_size = expr.attrs["slice_size"]
-    callee_out = callee.outputs[output_idx]
-
-    maps: list[Expr] = []
-
-    def mapped_call(fn: Any, count: int, specs: list[tuple[Expr, int, int]]) -> Expr:
-      mapped = _mapped_call(fn, count, specs)
-      maps.append(mapped)
-      return mapped
-
-    generic_seeds: dict[int, Expr] = {}
-    ret: Expr | None = None
-    for formal_idx, actual_outer in enumerate(expr.args):
-      actual_tan = simplify_cse_fixpoint(_jvp_many_structural(actual_outer, wrt, seeds, memo, dep_memo))
-      if _is_zero_const(actual_tan):
-        continue
-      formal = callee.inputs[formal_idx]
-      formal_size = formal.size
-      outer_size = actual_outer.size
-      start = starts[formal_idx]
-      stride = strides[formal_idx]
-
-      # A constant tangent whose per-iteration tiles repeat with a short period (at most 8, and at
-      # least twice, so a short horizon of distinct tiles is not unrolled) is baked into one
-      # const-seed callee per tile: the 0/1 products fold inside the body and no seed table or
-      # gather is emitted. Iteration ``it`` uses tile ``it % period``; residue class ``r`` is mapped
-      # with start ``start + r * stride`` and stride ``stride * period``.
-      periodic = _periodic_seed_tiles(actual_tan, nseed, outer_size, start, stride, formal_size, length)
-      if periodic is not None:
-        tiles, period = periodic
-        n = length // period
-        zero_rows = Expr.const(np.zeros((n, slice_size), dtype=np.float64))
-        parts: list[Expr] = []
-        for r in range(period):
-          inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(
-            callee, output_idx, formal_idx, tiles[r].reshape((nseed, *formal.shape))
-          )
-          if not active:
-            parts.append(Expr.const(np.zeros((nseed, n, slice_size), dtype=np.float64)))
-            continue
-          primal_specs = [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in primal_arg_indices]
-          mapped_3d = mapped_call(inner_fn, n, primal_specs).reshape((n, len(active), slice_size))
-          if len(active) == nseed:
-            parts.append(mapped_3d.transpose((1, 0, 2)))
-          else:
-            active_pos = {row: i for i, row in enumerate(active)}
-            parts.append(stack([mapped_3d[:, active_pos[row], :] if row in active_pos else zero_rows for row in range(nseed)], axis=0))
-        if all(_is_zero_const(part) for part in parts):
-          continue
-        term = (parts[0] if period == 1 else stack(parts, axis=2)).reshape((nseed, length * slice_size))
-        ret = term if ret is None else ret + term
-        continue
-
-      # Local coloring of the callee's Jacobian tile w.r.t. this formal. When this gives c_f < nseed
-      # local colors, baking those local seeds into the per-iteration JVP callee yields a body of
-      # size O(c_f) instead of O(nseed). The global compressed JVP is then assembled back by, for
-      # each local color `c_local`, gathering the unique nonzero column of `actual_tan` for each
-      # output row and multiplying with the per-iter compressed-JVP slice.
-      local = _local_seed_colors(callee_out, formal, nseed)
-      if local is not None:
-        local_mask, local_colors = local
-        c_f = max(local_colors) + 1
-        seed_f = np.zeros((c_f, formal_size), dtype=np.float64)
-        for j, c in enumerate(local_colors):
-          seed_f[c, j] = 1.0
-        seed_f_shaped = seed_f.reshape((c_f, *formal.shape)) if formal.shape != (formal.size,) else seed_f
-        inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(callee, output_idx, formal_idx, seed_f_shaped)
-        active_count = len(active)
-        if active_count == 0:
-          continue
-        # For each local color, pick a representative formal column j whose Jacobian row k has a
-        # nonzero. By the coloring property, that nonzero j is unique within the color group, so the
-        # column's value in actual_tan is the full contribution at row k. If no j in the color group
-        # has a nonzero at row k, the per-iter JVP entry is zero and the choice of j is irrelevant.
-        local_colors_arr = np.asarray(local_colors, dtype=np.int64)
-        unique_j = np.zeros((c_f, slice_size), dtype=np.int64)
-        for c in range(c_f):
-          cols = np.flatnonzero(local_colors_arr == c)
-          for k in range(slice_size):
-            for j in cols:
-              if local_mask[k, j]:
-                unique_j[c, k] = int(j)
-                break
-        primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
-        mapped_flat = mapped_call(inner_fn, length, primal_specs)
-        mapped_3d = mapped_flat.reshape((length, active_count, slice_size))
-        c_arr = np.arange(nseed, dtype=np.int64).reshape(nseed, 1, 1)
-        it_arr = np.arange(length, dtype=np.int64).reshape(1, length, 1)
-        for pos, c_local in enumerate(active):
-          uj_arr = unique_j[c_local].reshape(1, 1, slice_size)
-          flat_idx = (c_arr * outer_size + start + it_arr * stride + uj_arr).reshape(-1)
-          gathered = gather(actual_tan, flat_idx).reshape((nseed, length, slice_size))
-          mapped_slice = mapped_3d[:, pos, :].reshape((1, length, slice_size))
-          contribution = (gathered * mapped_slice).reshape((nseed, length * slice_size))
-          ret = contribution if ret is None else ret + contribution
-        continue
-
-      it_arr = np.arange(length, dtype=np.int64)[:, None, None]
-      c_arr = np.arange(nseed, dtype=np.int64)[None, :, None]
-      j_arr = np.arange(formal_size, dtype=np.int64)[None, None, :]
-      tile_indices = (c_arr * outer_size + start + it_arr * stride + j_arr).reshape(-1)
-      seed_buffer = gather(actual_tan, tile_indices)
-      generic_seeds[formal_idx] = seed_buffer
-    if generic_seeds:
-      formals = tuple(generic_seeds)
-      inner_fn, primal_arg_indices, seed_indices, _ = _call_jvp_many_function(callee, output_idx, formals, nseed, (None,) * len(formals))
-      primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
-      seed_specs = [(generic_seeds[i], 0, nseed * callee.inputs[i].size) for i in seed_indices]
-      mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
-      term = mapped_flat.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size))
-      ret = term if ret is None else ret + term
-    ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
-    memo[expr.id] = ret = _pack_jvp_maps(callee, ret, maps)
+    memo[expr.id] = ret = _vmap_jvp_many(
+      expr, wrt, seeds, memo, dep_memo, pushforward=_jvp, pushforward_many=_jvp_many_structural, unroll=_jvp_many_unrolled
+    )
     return ret
   if expr.op == ExprOp.CALL:
     tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
-    formals = tuple(i for i, tangent in enumerate(tangents) if not _is_zero_const(tangent))
-    if not formals:
-      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
-      return ret
-    constants = tuple(tangents[i].value if tangents[i].op == ExprOp.CONST else None for i in formals)
-    fn, arg_indices, seed_indices, active = _call_jvp_many_function(expr.attrs["callee"], expr.attrs["output"], formals, nseed, constants)
-    call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices]
-    ret = fn.symbolic_call(*fn.input_tree.unflatten(tuple(call_args)))
-    if len(active) != nseed:
-      active_pos = {row: i for i, row in enumerate(active)}
-      ret = stack([ret[active_pos[row]] if row in active_pos else zeros_like(expr) for row in range(nseed)], axis=0)
-    memo[expr.id] = ret
+    memo[expr.id] = ret = _call_jvp_many(expr, tangents, nseed, pushforward=_jvp, unroll=_jvp_many_unrolled)
     return ret
 
   args = expr.args

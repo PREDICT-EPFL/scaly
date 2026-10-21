@@ -7,9 +7,10 @@ import re
 import numpy as np
 
 import scaly as sc
-from scaly.ad.forward import _call_jvp_function, _call_jvp_many_function
+from scaly.ad.calls import _call_jvp_function, _call_jvp_many_function, _vmap_adj_function
+from scaly.ad.forward import _jvp, _jvp_many_unrolled
 from scaly.ad.helpers import HelperKey, helper_name
-from scaly.ad.reverse import _vmap_adj_function
+from scaly.ad.reverse import vjp
 from scaly.passes.lowering import lower_function
 
 
@@ -25,17 +26,17 @@ def _stage(name: str, scale: float) -> sc.Function:
 def test_helper_names_are_a_stem_and_a_digest_of_the_key() -> None:
   callee = _stage("named_stage", 1.0).instantiate()
   names = [
-    _call_jvp_function(callee, 0, (0,))[0].name,
-    _call_jvp_function(callee, 0, (0, 1))[0].name,
-    _call_jvp_many_function(callee, 0, (0,), 2, (None,))[0].name,
-    _call_jvp_many_function(callee, 0, (0,), 2, (np.eye(2),))[0].name,
-    _call_jvp_many_function(callee, 0, (0,), 2, (np.eye(2).view(np.int64),))[0].name,
-    _vmap_adj_function(callee, 0, (0, 1))[0].name,
+    _call_jvp_function(callee, 0, (0,), pushforward=_jvp)[0].name,
+    _call_jvp_function(callee, 0, (0, 1), pushforward=_jvp)[0].name,
+    _call_jvp_many_function(callee, 0, (0,), 2, (None,), pushforward=_jvp, unroll=_jvp_many_unrolled)[0].name,
+    _call_jvp_many_function(callee, 0, (0,), 2, (np.eye(2),), pushforward=_jvp, unroll=_jvp_many_unrolled)[0].name,
+    _call_jvp_many_function(callee, 0, (0,), 2, (np.eye(2).view(np.int64),), pushforward=_jvp, unroll=_jvp_many_unrolled)[0].name,
+    _vmap_adj_function(callee, 0, (0, 1), pullback=vjp)[0].name,
   ]
   assert len(set(names)) == len(names)
   assert all(re.fullmatch(r"named_stage_(fwd|adj)_[0-9a-f]{10}", name) for name in names)
   fresh = _stage("named_stage", 1.0).instantiate()
-  assert _call_jvp_function(fresh, 0, (0,))[0].name == names[0]
+  assert _call_jvp_function(fresh, 0, (0,), pushforward=_jvp)[0].name == names[0]
   key = HelperKey("forward", (0,), (0,), "auto")
   assert helper_name(callee, key) == names[0]
   assert helper_name(callee, HelperKey("forward", (0,), (0,), "scalar")) != names[0]
