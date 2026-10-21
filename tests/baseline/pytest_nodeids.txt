@@ -101,6 +101,8 @@ tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[period2]
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[period3]
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[period8]
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[period9]
+tests/ad/test_const_seed_bake.py::test_disjoint_constant_colors_select_typed_partials_without_zero_products[float32]
+tests/ad/test_const_seed_bake.py::test_disjoint_constant_colors_select_typed_partials_without_zero_products[float64]
 tests/ad/test_const_seed_bake.py::test_local_coloring_and_packed_contributions_keep_seed_order
 tests/ad/test_derivatives.py::test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt
 tests/ad/test_derivatives.py::test_erf_forward_reverse_jacobian_and_sparse_hessian
@@ -1773,6 +1775,7 @@ tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[output-int32]
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[output-int64]
 tests/passes/lowering/test_ctx.py::test_rule_registration_returns_the_rule
 tests/passes/lowering/test_lowering.py::test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction
+tests/passes/lowering/test_lowering.py::test_concat_seed_mass_component_axes_match_numpy_after_index_folding
 tests/passes/lowering/test_lowering.py::test_covered_function_renders_through_program_ir[_arith]
 tests/passes/lowering/test_lowering.py::test_covered_function_renders_through_program_ir[_broadcast_matrix]
 tests/passes/lowering/test_lowering.py::test_covered_function_renders_through_program_ir[_broadcast_scalar]
@@ -1814,6 +1817,11 @@ tests/passes/lowering/test_lowering.py::test_matmul_lowering_matches_numpy_exact
 tests/passes/lowering/test_lowering.py::test_matmul_lowering_matches_numpy_exactly[transposed_mat_vec]
 tests/passes/lowering/test_lowering.py::test_matmul_lowering_matches_numpy_exactly[vec_transposed_mat]
 tests/passes/lowering/test_lowering.py::test_matmul_lowering_matches_numpy_exactly[vecmat]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape0]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape1]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape2]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape3]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape4]
 tests/passes/lowering/test_lowering.py::test_normalization_keeps_constant_and_conflicting_function_hints
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[compile]
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[none]
@@ -2068,6 +2076,8 @@ tests/passes/test_program.py::test_fusion_counts_expensive_work_through_producer
 tests/passes/test_program.py::test_fusion_does_not_move_a_read_past_a_write
 tests/passes/test_program.py::test_fusion_does_not_move_reads_into_a_consumer_that_overwrites_them
 tests/passes/test_program.py::test_fusion_into_reduction
+tests/passes/test_program.py::test_fusion_reuses_a_strided_load_without_recomputing_arithmetic[False]
+tests/passes/test_program.py::test_fusion_reuses_a_strided_load_without_recomputing_arithmetic[True]
 tests/passes/test_program.py::test_fusion_skips_matmul_operand
 tests/passes/test_program.py::test_generated_name_reserves_raw_and_c_identifier_collisions
 tests/passes/test_program.py::test_generated_names_do_not_rescan_the_namespace
@@ -2083,11 +2093,14 @@ tests/passes/test_program.py::test_hoist_prunes_before_scalarization_and_preserv
 tests/passes/test_program.py::test_hoist_recognizes_generated_pure_callees_in_nested_maps
 tests/passes/test_program.py::test_hoist_refuses_a_buffer_read_between_two_invariant_writes
 tests/passes/test_program.py::test_hoist_reserves_exported_names_across_repeated_loop_variables
+tests/passes/test_program.py::test_joint_mapped_products_reuse_scalar_invariants_against_numpy
 tests/passes/test_program.py::test_no_spill_when_temps_small
 tests/passes/test_program.py::test_optimized_program_still_verifies
 tests/passes/test_program.py::test_packing_reuses_slots_and_spills
 tests/passes/test_program.py::test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order
 tests/passes/test_program.py::test_regular_raw_callees_stay_inline
+tests/passes/test_program.py::test_scalar_invariant_assignments_are_reused_across_mapped_calls
+tests/passes/test_program.py::test_scalar_output_order_releases_shared_seed_partials_against_numpy
 tests/passes/test_program.py::test_scatter_lowering_marks_repeats_as_reductions
 tests/passes/test_program.py::test_scatter_sum_combines_accumulate_loops[False]
 tests/passes/test_program.py::test_scatter_sum_combines_accumulate_loops[True]
@@ -2101,6 +2114,8 @@ tests/passes/test_program.py::test_scatter_sum_preserves_overlaps_and_shared_out
 tests/passes/test_program.py::test_scatter_sum_preserves_repeated_leaf_grouping
 tests/passes/test_program.py::test_scatter_sum_rejects_self_reading_sources[False]
 tests/passes/test_program.py::test_scatter_sum_rejects_self_reading_sources[True]
+tests/passes/test_program.py::test_scoped_index_folding_exposes_seed_mass_component_coordinates
+tests/passes/test_program.py::test_scoped_index_folding_retains_negative_and_out_of_range_remainders
 tests/passes/test_program.py::test_slice_gradient_combines_pads[2]
 tests/passes/test_program.py::test_slice_gradient_combines_pads[8]
 tests/passes/test_program.py::test_spilled_function_matches_numpy

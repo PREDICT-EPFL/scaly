@@ -29,6 +29,7 @@ ProgramObserver = Callable[[str, ProgramNode], None]
 PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
   ("hoist_invariant", hoist_invariant),
   ("scalarize", scalarize_program),
+  ("hoist_scalar_invariant", hoist_invariant),
   ("fold_tiles", fold_tiles),
   ("fuse_ranges", fuse_ranges),
   ("prune_procedures", prune_procedures),

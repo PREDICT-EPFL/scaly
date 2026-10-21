@@ -916,3 +916,115 @@ def test_scatter_sum_preserves_repeated_leaf_grouping() -> None:
     return sc.scatter(x[:1], [1], 4) + sc.scatter(x[1:], [1, 1], 4)
 
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 0, 0, 0])
+
+
+def test_scoped_index_folding_exposes_seed_mass_component_coordinates():
+  seed, mass, component = (p.var(name) for name in ("seed", "mass", "component"))
+  flat = p.add(p.mul(seed, p.const_int(93)), p.add(p.mul(mass, p.const_int(3)), component))
+  values = [p.div(flat, p.const_int(93)), p.div(p.mod(flat, p.const_int(93)), p.const_int(3)), p.mod(flat, p.const_int(3))]
+  output = p.buffer("indices", dtypes.int64, (30 * 31 * 3 * 3,))
+  stores = [p.store(p.view(output, [p.add(p.mul(flat, p.const_int(3)), p.const_int(i))]), value) for i, value in enumerate(values)]
+  loops = p.for_(p.range_("seed", 0, 30), [p.for_(p.range_("mass", 0, 31), [p.for_(p.range_("component", 0, 3), stores)])])
+  result = fold_arith(p.program([p.proc("coordinates", [output], [loops])]))
+  verify_program(result)
+  assert not any(node.op in (ProgramOp.DIV, ProgramOp.MOD) for node in walk_program(result))
+
+
+def test_scoped_index_folding_retains_negative_and_out_of_range_remainders():
+  i = p.var("i")
+  output = p.buffer("indices", dtypes.int64, (8,))
+  loop = p.for_(p.range_("i", -4, 4), [p.store(p.view(output, [p.add(i, p.const_int(4))]), p.mod(i, p.const_int(3)))])
+  result = fold_arith(p.program([p.proc("signed_remainder", [output], [loop])]))
+  assert any(node.op == ProgramOp.MOD for node in walk_program(result))
+
+
+def test_scalar_invariant_assignments_are_reused_across_mapped_calls():
+  x = p.buffer("x", dtypes.float64, (1,))
+  params = p.buffer("params", dtypes.float64, (2,))
+  out = p.buffer("out", dtypes.float64, (1,))
+  coefficient = p.mul(p.load(p.view(params, [p.const_int(0)])), p.load(p.view(params, [p.const_int(1)])))
+  stage = p.proc(
+    "scalar_stage",
+    [x, params, out],
+    [
+      p.assign("coefficient", coefficient, declare=True),
+      p.assign("mixed", p.mul(p.var("coefficient", dtypes.float64), p.load(p.view(x, [p.const_int(0)]))), declare=True),
+      p.store(p.view(out, [p.const_int(0)]), p.var("mixed", dtypes.float64)),
+    ],
+  )
+  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2, "scalarized": True}, stage.dtype)
+  xs, ys = p.buffer("xs", dtypes.float64, (5,)), p.buffer("ys", dtypes.float64, (5,))
+  call = ProgramNode(
+    ProgramOp.CALL, (p.view(xs, [p.var("i")]), params, p.view(ys, [p.var("i")])), {"callee": "scalar_stage", "n_in": 2, "n_out": 1, "returns": ()}
+  )
+  caller = p.proc("scalar_caller", [xs, params, ys], [p.for_(p.range_("i", 0, 5), [call])])
+  caller = ProgramNode(caller.op, caller.args, {**caller.attrs, "input_count": 2}, caller.dtype)
+  result = hoist_invariant(p.program([stage, caller]))
+  verify_program(result)
+  assert len(result.args) == 3
+  prologue = next(proc for proc in result.args if "_hoist_" in proc.attrs["name"])
+  assert any(node.op == ProgramOp.MUL for node in walk_program(prologue))
+  rewritten = next(proc for proc in result.args if "_hoisted_" in proc.attrs["name"])
+  assert not any(node.op == ProgramOp.LOAD and node.args[0].attrs["buffer"] == "params" for node in walk_program(rewritten))
+
+
+def test_joint_mapped_products_reuse_scalar_invariants_against_numpy():
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("p", 2)), outputs=sc.arg("y"), name="invariant_joint_stage")
+  def stage(inputs):
+    x, params = inputs
+    coefficient = params[0].exp() * params[1].sin()
+    return sc.stack([coefficient * x[0].sin() + x[1], coefficient * x[0] * x[1]])
+
+  @sc.function(sc.group(sc.arg("z", 10), sc.arg("p", 2)), outputs=sc.arg("dy"), name="invariant_joint_map")
+  def products(inputs):
+    z, params = inputs
+    return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 2), (params, 0, 0)]), z, sc.const(np.arange(30.0).reshape(3, 10) / 17))
+
+  z, params = np.linspace(-0.6, 0.8, 10), np.array([0.3, 0.7])
+  seeds = np.arange(30.0).reshape(3, 10) / 17
+  coefficient = np.exp(params[0]) * np.sin(params[1])
+  expected = np.empty((3, 10))
+  for it in range(5):
+    x, dx = z[2 * it : 2 * it + 2], seeds[:, 2 * it : 2 * it + 2]
+    expected[:, 2 * it] = coefficient * np.cos(x[0]) * dx[:, 0] + dx[:, 1]
+    expected[:, 2 * it + 1] = coefficient * (x[1] * dx[:, 0] + x[0] * dx[:, 1])
+  np.testing.assert_allclose(products((z, params)), expected, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize("computed", [False, True])
+def test_fusion_reuses_a_strided_load_without_recomputing_arithmetic(computed):
+  x, y = buffer("x", dtypes.float64, (9,)), buffer("y", dtypes.float64, (12,))
+  copied = buffer("copied", dtypes.float64, (3,), address_space="private")
+  i, j = var("i"), var("j")
+  calculated = buffer("calculated", dtypes.float64, (9,), address_space="private")
+  prefix = (
+    [calculated, for_(range_("i", 0, 9), [store(view(calculated, [i]), ProgramNode(ProgramOp.SIN, (load(view(x, [i])),), dtype=dtypes.float64))])]
+    if computed
+    else []
+  )
+  source = calculated if computed else x
+  copy = for_(range_("i", 0, 3), [store(view(copied, [i]), load(view(source, [p.add(p.mul(i, const_int(3)), const_int(1))])))])
+  reuse = for_(range_("j", 0, 12), [store(view(y, [j]), p.mul(load(view(copied, [p.mod(j, const_int(3))])), const_float(2.0)))])
+  result = fuse_elementwise(program([proc_("copy_reuse", [x, y], [*prefix, copied, copy, reuse])]))
+  verify_program(result)
+  assert any(node.op == ProgramOp.BUFFER and node.attrs["name"] == "copied" for node in walk_program(result)) is computed
+
+
+def test_scalar_output_order_releases_shared_seed_partials_against_numpy():
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="ordered_seed_values")
+  def stage(x):
+    a, b, c = x.sin(), x.cos(), x.exp()
+    return sc.stack([a * b + c, a + b * c])
+
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="ordered_seed_wrapper")
+  def wrapper(x):
+    return stage(x)
+
+  observed = {}
+  lower_function(wrapper, observe=lambda phase, prog: observed.__setitem__(phase, prog))
+  proc = next(proc for proc in observed["pass:scalarize"].args if proc.attrs["name"] == "ordered_seed_values")
+  offsets = [stmt.args[0].args[0].attrs["value"] for stmt in proc.args[proc.attrs["param_count"] :] if stmt.op == ProgramOp.STORE]
+  assert offsets == [0, 4, 1, 5, 2, 6, 3, 7]
+  values = np.linspace(-0.5, 0.8, 4)
+  expected = np.stack([np.sin(values) * np.cos(values) + np.exp(values), np.sin(values) + np.cos(values) * np.exp(values)])
+  np.testing.assert_allclose(wrapper(values), expected, rtol=1e-14, atol=1e-14)

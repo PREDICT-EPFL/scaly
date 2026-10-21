@@ -71,6 +71,8 @@ class _Frame:
       elif stmt.op == ProgramOp.STORE:
         ptr = self.pointer(stmt.args[0])
         ptr.values[ptr.offset] = self.scalar(stmt.args[1], {})
+      elif stmt.op == ProgramOp.ASSIGN:
+        self.variables[stmt.attrs["target"]] = self.scalar(stmt.args[0], {})
       elif stmt.op == ProgramOp.FOR:
         rng = stmt.args[0]
         start, stop, step = (self.scalar(a, {}).attrs["value"] for a in rng.args)
@@ -99,9 +101,30 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
     for i, value in enumerate(ptr.values):
       assert value is not None, "scalarization left an output element uninitialized"
       outputs.append((p.view(param, [p.const_int(i)]), value))
-  names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
-  declarations, values = schedule_values([value for _, value in outputs], names)
-  body = [*declarations, *(p.store(target, value) for (target, _), value in zip(outputs, values, strict=True))]
+
+  def schedule(ordered: list[tuple[ProgramNode, ProgramNode]]) -> list[ProgramNode]:
+    names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
+    declarations, values = schedule_values([value for _, value in ordered], names)
+    return [*declarations, *(p.store(target, value) for (target, _), value in zip(ordered, values, strict=True))]
+
+  body = schedule(outputs)
+  alternate = []
+  offset = 0
+  for param in params[n_in:]:
+    shape = param.attrs["shape"]
+    size = math.prod(shape)
+    rows = shape[0] if len(shape) > 1 else 1
+    if rows:
+      columns = size // rows
+      alternate.extend(outputs[offset + row * columns + col] for col in range(columns) for row in range(rows))
+    offset += size
+  if alternate != outputs:
+    # Use the same alias-safe store schedule and live-value budget as mapped widening.
+    from .widen_ranges import _interleave_stores, _peak_live
+
+    candidate = schedule(alternate)
+    if _peak_live(_interleave_stores(candidate, {})) < _peak_live(_interleave_stores(body, {})):
+      body = candidate
   return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, proc.dtype)
 
 
@@ -130,7 +153,7 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
         stack.extend((s, factor * len(range(start, stop, step))) for s in node.args[1:])
       elif node.op == ProgramOp.BUFFER:
         total += factor * math.prod(node.attrs["shape"])
-      elif node.op == ProgramOp.STORE:
+      elif node.op in (ProgramOp.STORE, ProgramOp.ASSIGN):
         total += factor
       else:
         return None

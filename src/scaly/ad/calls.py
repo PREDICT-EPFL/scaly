@@ -243,18 +243,31 @@ def _vmap_jvp_many(
       # has a nonzero at row k, the per-iter JVP entry is zero and the choice of j is irrelevant.
       local_colors_arr = np.asarray(local_colors, dtype=np.int64)
       unique_j = np.zeros((c_f, slice_size), dtype=np.int64)
+      local_support = np.zeros((c_f, slice_size), dtype=bool)
       for c in range(c_f):
         cols = np.flatnonzero(local_colors_arr == c)
         for k in range(slice_size):
           for j in cols:
             if local_mask[k, j]:
               unique_j[c, k] = int(j)
+              local_support[c, k] = True
               break
       primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
       mapped_flat = mapped_call(inner_fn, length, primal_specs)
       mapped_3d = mapped_flat.reshape((length, active_count, slice_size))
       c_arr = np.arange(nseed, dtype=np.int64).reshape(nseed, 1, 1)
       it_arr = np.arange(length, dtype=np.int64).reshape(1, length, 1)
+      if actual_tan.op == ExprOp.CONST and actual_tan.value is not None:
+        indices = c_arr[..., None] * outer_size + start + it_arr[..., None] * stride + unique_j[list(active)][None, None, :, :]
+        coefficients = actual_tan.value.reshape(-1)[indices]
+        coefficients = np.where(local_support[list(active)][None, None, :, :], coefficients, 0)
+        if np.isin(coefficients, (0, 1)).all() and (np.count_nonzero(coefficients, axis=2) <= 1).all():
+          chosen = coefficients != 0
+          sources = np.broadcast_to(np.arange(length * active_count * slice_size).reshape(1, length, active_count, slice_size), chosen.shape)
+          targets = np.broadcast_to(np.arange(nseed * length * slice_size).reshape(nseed, length, 1, slice_size), chosen.shape)
+          term = scatter(gather(mapped_flat, sources[chosen]), targets[chosen], (nseed, length * slice_size))
+          ret = term if ret is None else ret + term
+          continue
       for pos, c_local in enumerate(active):
         uj_arr = unique_j[c_local].reshape(1, 1, slice_size)
         flat_idx = (c_arr * outer_size + start + it_arr * stride + uj_arr).reshape(-1)
