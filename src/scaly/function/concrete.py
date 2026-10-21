@@ -66,10 +66,7 @@ class _Memo:
   compiled: Any = None
   derivatives: dict[Any, ConcreteFunction] = field(default_factory=dict)
   maps: dict[int, ConcreteFunction] = field(default_factory=dict)
-  jvp: dict[Any, Any] = field(default_factory=dict)
-  jvp_many: dict[Any, Any] = field(default_factory=dict)
-  jvp_packs: dict[Any, Any] = field(default_factory=dict)
-  vmap_adjoints: dict[Any, Any] = field(default_factory=dict)
+  helpers: dict[Any, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, eq=False, repr=False)

@@ -128,6 +128,6 @@ def test_local_coloring_and_packed_contributions_keep_seed_order(monkeypatch):
   np.testing.assert_allclose(products((z, seeds[::-1])), expected[::-1], atol=1e-12, rtol=1e-12)
   maps = [node for node in topo(as_concrete(products).outputs) if node.op == ExprOp.VMAP]
   assert len(maps) == 1 and "_fwd_pack_" in maps[0].attrs["callee"].name
-  helpers = [entry[0] for entry in stage.instantiate()._memo.jvp_many.values()]
+  helpers = [entry[0] for key, entry in stage.instantiate()._memo.helpers.items() if key.nseed]
   assert {helper.outputs[0].shape for helper in helpers} == {(1, 2), (2, 2)}
   assert sum(name.startswith("fwd:") for name in maps[0].attrs["callee"].input_names) == 1
