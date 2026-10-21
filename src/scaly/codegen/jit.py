@@ -5,7 +5,8 @@ rendering decisions of its own.
 
 - ``SCALY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/scaly/jit``
   or ``~/.cache/scaly/jit``).
-- ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
+- ``SCALY_CC`` overrides the C compiler binary (default: ``zig cc`` from the ``zig-bin`` or ``ziglang`` package,
+  then ``CC``, then ``cc`` from ``$PATH``).
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
 - ``SCALY_VECTOR_LIBM`` selects ``none`` or ``glibc``; unset uses the native recipe.
@@ -37,7 +38,7 @@ from .solver import solver_stats_symbols, solver_functions
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe
+from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -140,7 +141,18 @@ def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, ou
   # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
   # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
-  return [*compiler, *compile_flags(module.recipe), "-fPIC", shared_lib_flag(), source, *module.link_flags, "-lm", "-o", output]
+  return [
+    *compiler,
+    *compile_flags(module.recipe),
+    *no_gather_flags(compiler),
+    "-fPIC",
+    shared_lib_flag(),
+    source,
+    *module.link_flags,
+    "-lm",
+    "-o",
+    output,
+  ]
 
 
 def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str) -> str:

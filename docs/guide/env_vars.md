@@ -21,18 +21,21 @@ system compiles exported C.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SCALY_CC` | `CC`, then `cc` from `PATH` | Compiler executable for numerical evaluation |
+| `SCALY_CC` | `zig cc` from the `toolchain` extra, then `CC`, then `cc` from `PATH` | Compiler executable for numerical evaluation |
 | `SCALY_CC_OPT` | `-O2` | One optimization flag passed to that compiler |
 | `SCALY_VECTOR_LIBM` | Native host detection | `none` for scalar math calls or `glibc` for supported vector math functions |
 
-An explicit `SCALY_CC` takes precedence over `CC`. Its value is an executable
+An explicit `SCALY_CC` takes precedence over the `toolchain` extra and `CC`. Its value is an executable
 name or path, such as `clang` or `/usr/bin/clang`, rather than a shell command
 with additional flags. If the selected executable cannot be found, Scaly does
 not silently try another compiler.
 
 `SCALY_CC_OPT=-O3` selects a different optimization level. It is a single
 compiler argument, not a space-separated list of flags. Scaly also adds
-`-march=native`, or `-mcpu=native` on AArch64, and `-fno-math-errno`.
+`-march=native`, or `-mcpu=native` on AArch64, and `-fno-math-errno`. With
+Clang on x86-64 it adds `-mno-gather -mno-scatter` when that Clang accepts
+them, and with `zig cc` the same setting as CPU features, because vector
+gather loads made the generated matrix-vector loops slower than scalar code.
 
 The Python compiler detects a fixed lane width for the native CPU. On supported x86-64 hosts
 with glibc 2.35 or newer, it also selects the libmvec vector math library. `SCALY_VECTOR_LIBM=none`

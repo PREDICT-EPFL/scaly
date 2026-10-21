@@ -7,7 +7,10 @@ module reads it for the report and nothing else depends on that direction.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
 import os
 import platform
@@ -122,6 +125,23 @@ def native_recipe(command: tuple[str, ...]) -> BuildRecipe:
   return BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
 
 
+@lru_cache(maxsize=8)
+def no_gather_flags(command: tuple[str, ...]) -> tuple[str, ...]:
+  """Flags that stop a Clang-family compiler from vectorizing strided loads into x86 gathers.
+
+  LLVM turns the generated matrix-vector loops into AVX-512 gathers, which made closed-loop function
+  evaluation up to 1.5x slower than gcc's scalar loops on Zen 4. ``zig cc`` ignores ``-mno-gather``
+  and takes the tuning as CPU features instead; a clang too old for the flags gets none.
+  """
+  macros = _native_macros(command)
+  if "__clang__" not in macros or "__x86_64__" not in macros:
+    return ()
+  if Path(command[0]).stem == "zig":
+    return ("-mcpu=native+prefer_no_gather+prefer_no_scatter",)
+  flags = ("-mno-gather", "-mno-scatter")
+  return flags if subprocess.run([*command, *flags, "-E", "-x", "c", "-"], input="", capture_output=True).returncode == 0 else ()
+
+
 def compiler_fingerprint(command: tuple[str, ...]) -> str:
   """Hash what decides the machine code ``command`` emits on this host, for the JIT cache key.
 
@@ -151,16 +171,37 @@ def cache_root() -> Path:
   return base / "scaly" / "jit"
 
 
-def find_c_compiler() -> Compiler | None:
-  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``CC``, else ``cc`` on ``PATH``.
+def _zig_bin_executable() -> str | None:
+  """The ``zig`` executable the ``zig-bin`` distribution installed, read from its ``RECORD``."""
+  try:
+    dist = importlib.metadata.distribution("zig-bin")
+  except importlib.metadata.PackageNotFoundError:
+    return None
+  for path, *_ in csv.reader((dist.read_text("RECORD") or "").splitlines()):
+    if path.endswith(("bin/zig", "Scripts/zig.exe")):
+      return shutil.which(os.path.normpath(str(dist.locate_file(path))))
+  return None
 
-  Returns the compiler command and which of those three supplied it, or ``None`` if nothing is found.
+
+def find_c_compiler() -> Compiler | None:
+  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``zig-bin`` or ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
+
+  ``zig-bin`` installs ``zig`` into its environment's scripts directory, ``ziglang`` inside its package.
+  Returns the compiler command and which of those settings supplied it, or ``None`` if nothing is found.
   """
-  for key in ("SCALY_CC", "CC"):
-    override = os.environ.get(key)
-    if override:
-      found = shutil.which(override)
-      return Compiler((found,), key) if found is not None else None
+  override = os.environ.get("SCALY_CC")
+  if override:
+    found = shutil.which(override)
+    return Compiler((found,), "SCALY_CC") if found is not None else None
+  if (zig := _zig_bin_executable()) is not None:
+    return Compiler((zig, "cc"), "zig-bin")
+  spec = importlib.util.find_spec("ziglang")
+  if spec is not None and spec.origin is not None and (zig := shutil.which("zig", path=str(Path(spec.origin).parent))) is not None:
+    return Compiler((zig, "cc"), "ziglang")
+  override = os.environ.get("CC")
+  if override:
+    found = shutil.which(override)
+    return Compiler((found,), "CC") if found is not None else None
   found = shutil.which("cc")
   return Compiler((found,), "PATH") if found is not None else None
 

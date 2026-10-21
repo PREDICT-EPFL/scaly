@@ -11,7 +11,7 @@ import subprocess
 
 from benchmarks.harness import NATIVE_CFLAGS, compiler_version, math_flags, vector_libm, vector_symbols
 from scaly.codegen.jit import opt_flag
-from scaly.codegen.toolchain import find_c_compiler
+from scaly.codegen.toolchain import find_c_compiler, no_gather_flags
 
 
 def _run(args: list[str], root: Path) -> str:
@@ -99,7 +99,7 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
       "closed_loop": {
         "compiler": list(c_compiler.command) if c_compiler else None,
         "version": compiler_version(*c_compiler.command) if c_compiler else None,
-        "cflags": [opt_flag(), *NATIVE_CFLAGS, *c_math[0]],
+        "cflags": [opt_flag(), *NATIVE_CFLAGS, *c_math[0], *(no_gather_flags(c_compiler.command) if c_compiler else ())],
         "math_libs": [*c_math[1], "-lm"],
       },
     },

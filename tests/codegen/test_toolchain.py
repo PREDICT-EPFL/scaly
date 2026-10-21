@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -90,6 +91,100 @@ def test_env_registry_mentions_native_build_controls() -> None:
   assert "SCALY_CACHE_DIR" in names
   assert "SCALY_CC" in names
   assert "SCALY_BUILD_SOLVERS" in names
+
+
+def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys) -> None:
+  from scaly.codegen import toolchain
+
+  def fake_cc(name: str) -> str:
+    path = tmp_path / "bin" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return str(path)
+
+  monkeypatch.delenv("SCALY_CC", raising=False)
+  monkeypatch.delenv("CC", raising=False)
+  monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+  real_zig_bin = toolchain._zig_bin_executable
+  monkeypatch.setattr(toolchain, "_zig_bin_executable", lambda: None)
+  real_find_spec = importlib.util.find_spec
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", lambda name: None)
+  assert toolchain.find_c_compiler() is None
+  cc = fake_cc("cc")
+  assert toolchain.find_c_compiler() == toolchain.Compiler((cc,), "PATH")
+  monkeypatch.setenv("CC", fake_cc("from-cc"))
+  assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["CC"],), "CC")
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", real_find_spec)
+  monkeypatch.setattr(sys, "path", [str(tmp_path / "site"), *sys.path])
+  zig = tmp_path / "site" / "ziglang" / "zig"
+  zig.parent.mkdir(parents=True)
+  (zig.parent / "__init__.py").write_text("")
+  zig.write_text("#!/bin/sh\n")
+  zig.chmod(0o755)
+  importlib.invalidate_caches()
+  assert toolchain.find_c_compiler() == toolchain.Compiler((str(zig), "cc"), "ziglang")
+  monkeypatch.setattr(toolchain, "native_recipe", lambda command: toolchain.BuildRecipe())
+  toolchain.main()
+  assert f"cc: {zig} cc (ziglang)" in capsys.readouterr().out
+  monkeypatch.setattr(toolchain, "_zig_bin_executable", real_zig_bin)
+  stray = tmp_path / "scripts" / "zig"
+  stray.parent.mkdir()
+  stray.write_text("#!/bin/sh\n")
+  stray.chmod(0o755)
+  info = tmp_path / "site" / "zig_bin-0.17.0.dist-info"
+  info.mkdir()
+  (info / "METADATA").write_text("Metadata-Version: 2.1\nName: zig-bin\nVersion: 0.17.0\n")
+  bin_zig = tmp_path / "my,env" / "bin" / "zig"
+  bin_zig.parent.mkdir(parents=True)
+  bin_zig.write_text("#!/bin/sh\n")
+  bin_zig.chmod(0o755)
+  (info / "RECORD").write_text('zig_bin-0.17.0.dist-info/METADATA,,\n"../my,env/bin/zig",,\n')
+  importlib.invalidate_caches()
+  assert toolchain.find_c_compiler() == toolchain.Compiler((str(bin_zig), "cc"), "zig-bin")
+  monkeypatch.setenv("SCALY_CC", fake_cc("from-scaly-cc"))
+  assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["SCALY_CC"],), "SCALY_CC")
+
+
+def test_toolchain_extra_compiles_a_jit_function(tmp_path, monkeypatch) -> None:
+  import numpy as np
+  import scaly as sc
+  from scaly.codegen import toolchain
+
+  monkeypatch.delenv("SCALY_CC", raising=False)
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+  compiler = toolchain.find_c_compiler()
+  if compiler is None or compiler.source not in ("zig-bin", "ziglang"):
+    pytest.skip("the toolchain extra is not installed")
+  assert compiler.command[1:] == ("cc",)
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="zig_jit")
+  def fn(x):
+    return x.sin() * x
+
+  xv = np.array([0.1, -0.7, 2.5])
+  np.testing.assert_allclose(fn(xv), np.sin(xv) * xv)
+
+
+@pytest.mark.parametrize(
+  "command,macros,accepts,expected",
+  [
+    (("/usr/bin/gcc",), "#define __x86_64__ 1\n", True, ()),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", True, ("-mno-gather", "-mno-scatter")),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", False, ()),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __aarch64__ 1\n", True, ()),
+    (("/env/bin/zig", "cc"), "#define __clang__ 1\n#define __x86_64__ 1\n", True, ("-mcpu=native+prefer_no_gather+prefer_no_scatter",)),
+  ],
+  ids=["gcc", "clang", "old-clang", "clang-aarch64", "zig"],
+)
+def test_no_gather_flags_target_clang_on_x86(monkeypatch, command, macros: str, accepts: bool, expected) -> None:
+  from scaly.codegen import toolchain
+
+  toolchain.no_gather_flags.cache_clear()
+  monkeypatch.setattr(toolchain, "_native_macros", lambda command: macros)
+  monkeypatch.setattr(toolchain.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 0 if accepts else 1, "", ""))
+  assert toolchain.no_gather_flags(command) == expected
+  toolchain.no_gather_flags.cache_clear()
 
 
 def test_build_recipe_validates_render_controls() -> None:

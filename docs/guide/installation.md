@@ -35,8 +35,25 @@ solver options.
 
 Scaly normally uses `cc` from `PATH`. Apple's command-line developer tools
 provide it on macOS, and `build-essential` provides it on Debian and Ubuntu.
-`SCALY_CC` selects a different compiler. If it is unset, Scaly also respects
-`CC` before falling back to `cc`.
+
+The `toolchain` extra installs a C compiler as a Python package instead:
+
+```bash
+uv add "scaly[toolchain]"
+# or
+pip install "scaly[toolchain]"
+```
+
+It brings `zig cc` 0.17 from the `zig-bin` package, or from `ziglang` on
+Intel macOS, where `zig-bin` has no wheel. `zig cc` is a Clang driver that
+ships with its own C runtime support, so the same Clang compiles numerical
+functions on every system. When either package is installed, Scaly prefers it
+to `CC` and `cc`. The first compilation on a machine takes a few seconds longer while zig
+builds that runtime support into its own cache.
+
+`SCALY_CC` selects a different compiler and takes precedence over all of
+these. If it is unset and neither package is installed, Scaly respects `CC`
+before falling back to `cc`.
 
 For example, this selects Clang for one process:
 
@@ -52,9 +69,9 @@ Other compilers and systems may work, but they are not tested.
 | System | Architectures | C compilers |
 | --- | --- | --- |
 | Ubuntu 22.04 | x86-64, arm64 | GCC 11, and Clang 14 on x86-64 |
-| Ubuntu 24.04 | x86-64, arm64 | GCC 13, and Clang 18 on x86-64 |
+| Ubuntu 24.04 | x86-64, arm64 | GCC 13, and Clang 18 and `zig cc` 0.17 on x86-64 |
 | Ubuntu 26.04 | x86-64, arm64 | GCC 15, and Clang 22 on x86-64 |
-| macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4) |
+| macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4), and `zig cc` 0.17 on arm64 |
 | macOS 26 | arm64, x86-64 | Apple Clang 21 (Xcode 26) |
 
 The selected executable must exist. An invalid override does not fall back to

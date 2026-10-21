@@ -16,13 +16,10 @@ from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 import scaly.codegen.jit as jit
+from scaly.codegen.toolchain import find_c_compiler, no_gather_flags
 
 
-def _cc_available() -> bool:
-  return shutil.which(os.environ.get("SCALY_CC", "cc")) is not None
-
-
-pytestmark = pytest.mark.skipif(not _cc_available(), reason="cc is required for JIT smoke tests")
+pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is required for JIT smoke tests")
 
 
 @pytest.fixture
@@ -143,9 +140,12 @@ def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: commands.append(cmd) or real_run(cmd, **kwargs))
   _simple_fn()(np.zeros(3))
   # the compiler fingerprint probes `-dM` and `--version` once per process, so skip those
-  (cmd,) = [command for command in commands if "-dM" not in command and "--version" not in command]
+  (cmd,) = [command for command in commands if "-fPIC" in command]
   flags = list(jit.compile_flags())
-  assert cmd[1 : 1 + len(flags)] == flags
+  compiler = find_c_compiler()
+  assert compiler is not None
+  tuning = list(no_gather_flags(compiler.command))
+  assert cmd[: len(compiler.command) + len(flags) + len(tuning)] == [*compiler.command, *flags, *tuning]
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
 
 

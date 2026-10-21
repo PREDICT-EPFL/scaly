@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [manifest]
@@ -974,6 +974,7 @@ wheels = [
 name = "scaly"
 version = "0.1.0a1"
 source = { editable = "." }
+default-groups = ["dev", "docs"]
 dependencies = [
     { name = "numpy" },
     { name = "scipy" },
@@ -993,6 +994,10 @@ solvers = [
 ]
 sqp = [
     { name = "scaly-sqp" },
+]
+toolchain = [
+    { name = "zig-bin", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "ziglang", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
 ]
 
 [package.dev-dependencies]
@@ -1023,8 +1028,10 @@ requires-dist = [
     { name = "scaly-piqp", marker = "extra == 'piqp'", editable = "plugins/scaly-piqp" },
     { name = "scaly-sqp", marker = "extra == 'sqp'", editable = "plugins/scaly-sqp" },
     { name = "scipy", specifier = ">=1.18.0" },
+    { name = "zig-bin", marker = "(platform_machine != 'x86_64' and extra == 'toolchain') or (sys_platform != 'darwin' and extra == 'toolchain')", specifier = "==0.17.*" },
+    { name = "ziglang", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'toolchain'", specifier = "==0.17.*" },
 ]
-provides-extras = ["piqp", "ipopt", "sqp", "solvers"]
+provides-extras = ["piqp", "ipopt", "sqp", "solvers", "toolchain"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1288,4 +1295,26 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/57/9b0e4f131a7ad15cf1aca081748ea7336c084fb8e16be202a6bed32f595c/zensical-0.0.42-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:47cd99583738a8ab03fac4080741275c56e741a06dc8edfb541f4c1649a5ae69", size = 13270817, upload-time = "2026-05-15T10:22:35.388Z" },
     { url = "https://files.pythonhosted.org/packages/bb/fd/bdb85cc444e4146e8970a22e48a903bfed5bf83276ad7d755caa415dda64/zensical-0.0.42-cp310-abi3-win32.whl", hash = "sha256:83090e53fba061967ecb3dff81500b1900f288bae108bf54084a2aeb6648ebd0", size = 12256227, upload-time = "2026-05-15T10:22:38.869Z" },
     { url = "https://files.pythonhosted.org/packages/e0/b9/09d1f735c8e6d3eb61d176ed5ebcf658b65b126d7d4bbc03a7d366a1e17d/zensical-0.0.42-cp310-abi3-win_amd64.whl", hash = "sha256:2e4304e103f9cd5c637045bbae1ff29de3009ab01b16e99c2fd6d4bbceb7a3ee", size = 12486598, upload-time = "2026-05-15T10:22:42.158Z" },
+]
+
+[[package]]
+name = "zig-bin"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/f2/d20c7254880cec25a5898dc58556ad7050d2b8c0747f336ebfeceb72a551/zig_bin-0.17.0.tar.gz", hash = "sha256:44b2546639ca00c52ce4f982d8cf63892d7543d18a221627f5777da3bcddd65d", size = 3311, upload-time = "2026-10-04T16:51:44.441Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/8c/4b74c649a3f31cf89587f4b1f19264ebaeb94a30e0bd40f6516688684196/zig_bin-0.17.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:8c206ec087ffdfddce94fc41262819bdac18e6e35b556a07bda5433e13ec93f9", size = 101188727, upload-time = "2026-10-04T16:50:44.586Z" },
+    { url = "https://files.pythonhosted.org/packages/30/8b/ad21f3450773f16ed74926c4b257adfc511280ef98ee7d1d8df0a26c3e34/zig_bin-0.17.0-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:acf2b44703acd5aa08d36964c2d02af9e1369f66a9f97db7f9cd538254173f49", size = 101774059, upload-time = "2026-10-04T16:50:58.41Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/85/ab10952e2de2cfb54635aa764d96b8814b7380f471b2f1a0414d576d5cdb/zig_bin-0.17.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:dd756a76446e5f9d0a3ab7bd51374c9cb0eb84c556e43626202e7c9e747dda67", size = 98755484, upload-time = "2026-10-04T16:51:08.398Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/85/ea4e6c4aebc6fc367ffc821dc9367e5b44bd737ee74e286ea2c802dfd62b/zig_bin-0.17.0-py3-none-manylinux_2_31_riscv64.musllinux_1_2_riscv64.whl", hash = "sha256:e239c9d9ddd7e0c9f20ed4435b3002a8b70a2b14f1036ecf42cb4f382ca63d1e", size = 102153047, upload-time = "2026-10-04T16:51:18.828Z" },
+    { url = "https://files.pythonhosted.org/packages/57/4e/6e6dac8467a6e020f69699fb4d81463f7dddb76bda2095ac9f1eb2a90973/zig_bin-0.17.0-py3-none-win_amd64.whl", hash = "sha256:08321521a39c5b739b8fa4203bc7f8e37688376834ca7bcd0e2d5e3fc13081a8", size = 102616346, upload-time = "2026-10-04T16:51:30.397Z" },
+    { url = "https://files.pythonhosted.org/packages/92/80/209b4d3025356dfaf580bac380f479bafa32f5ddae5a0b5e5e7faed45005/zig_bin-0.17.0-py3-none-win_arm64.whl", hash = "sha256:b16229b85c5bef073fd193611e97801b18757665487d4973d175a94636d308e5", size = 98106467, upload-time = "2026-10-04T16:51:40.94Z" },
+]
+
+[[package]]
+name = "ziglang"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/52/4f8a8f157d994482e501bb37e01f4883990b9848b9d8b809fe95e97aac6d/ziglang-0.17.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:4d910f0e363ddb60a6b8ddb55235617797a8ccbcb6c5c7132a949d9f833eea42", size = 104418550, upload-time = "2026-10-08T01:00:25.486Z" },
 ]
