@@ -1,0 +1,2 @@
+process_id,repetition,backend_order,workload,size,backend,layout,codegen_ms,source_bytes,source_constant_bytes,executable_bytes,executable_constant_bytes,source_lines,workspace,integer_workspace,argument_pointers,result_pointers,dispatch_trip_count,dispatch_workspace,dispatch_arithmetic,coloring_width,nnz,compile_ms,kernel_compile_ms,wrapper_compile_ms,link_ms,compile_status,runtime_ns,runtime_status,note,build_ms,render_ms
+2505127,1,1,chain,3,scaly,lower,1777.1,245630,18750,87142,26224,2539,26028,0,4,1,40,0,4001,12,3123,2387.2,1778.6,542.4,66.1,ok,21965.0,ok,,347.1,1430.1

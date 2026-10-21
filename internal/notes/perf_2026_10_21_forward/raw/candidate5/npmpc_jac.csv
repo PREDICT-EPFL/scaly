@@ -1,0 +1,2 @@
+process_id,repetition,backend_order,workload,size,backend,layout,codegen_ms,source_bytes,source_constant_bytes,executable_bytes,executable_constant_bytes,source_lines,workspace,integer_workspace,argument_pointers,result_pointers,dispatch_trip_count,dispatch_workspace,dispatch_arithmetic,coloring_width,nnz,compile_ms,kernel_compile_ms,wrapper_compile_ms,link_ms,compile_status,runtime_ns,runtime_status,note,build_ms,render_ms
+2484583,1,1,npmpc_jac,100,scaly,full,994.2,86138,439,66394,4136,1137,7744,0,2,1,100,9656,20014,11,2508,1284.8,692.3,526.1,66.2,ok,87855.7,ok,,124.3,870.0

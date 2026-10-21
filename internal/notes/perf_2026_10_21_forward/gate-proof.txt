@@ -1,0 +1,4 @@
+normal [(33, 592, 1973), (65, 592, 3061)]
+The unchanged chain gate FAILED on forced scalar expansion as intended.
+scalar-expansion [(33, 10452, 11808), (65, 21044, 22929)]
+Evidence directory: /tmp/scaly19-chain-gate-36_yk_kl
