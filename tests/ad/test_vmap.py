@@ -135,9 +135,7 @@ def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
 @pytest.mark.parametrize("length", [0, 1, 4])
 @pytest.mark.parametrize("stride", [0, 1, 2])
 @pytest.mark.parametrize(("seed_kind", "nseed"), [("runtime", 4), ("runtime", 1), ("periodic", 3)], ids=["local", "generic", "periodic"])
-def test_mapped_windows_and_broadcast_formals_against_numpy(length, stride, seed_kind, nseed, monkeypatch, request):
-  if length == 0 and seed_kind == "periodic":
-    request.applymarker(pytest.mark.xfail(strict=True, raises=IndexError, reason="#188: mask packing indexes an empty position array"))
+def test_mapped_windows_and_broadcast_formals_against_numpy(length, stride, seed_kind, nseed, monkeypatch):
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
   @sc.function(sc.group(sc.arg("window", 3), sc.arg("bias", 2)), outputs=sc.arg("out"), name="window_stage")

@@ -213,22 +213,7 @@ class Evaluation:
   baked: tuple[np.ndarray, np.ndarray]
 
 
-EMPTY_MASK_FAILURES = {
-  f"{op}-empty"
-  for op in (ExprOp.SIN, ExprOp.COS, ExprOp.SINH, ExprOp.COSH, ExprOp.TANH, ExprOp.ERF, ExprOp.EXP, ExprOp.ABS, ExprOp.MUL, ExprOp.POW, ExprOp.ATAN2)
-}
-
-
-@pytest.fixture(
-  scope="module",
-  params=[
-    pytest.param(case, marks=pytest.mark.xfail(strict=True, raises=IndexError, reason="#188: mask packing indexes an empty position array"))
-    if case.name in EMPTY_MASK_FAILURES
-    else case
-    for case in CASES
-  ],
-  ids=lambda case: case.name,
-)
+@pytest.fixture(scope="module", params=CASES, ids=lambda case: case.name)
 def evaluated(request):
   case = request.param
   rng = np.random.default_rng(153)
