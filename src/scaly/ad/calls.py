@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence, cast
 
 import numpy as np
+from scipy.sparse import csr_array
 
-from ..function.concrete import ConcreteFunction
+from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
 from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, substitute, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
@@ -34,7 +35,7 @@ def _is_zero_const(expr: Expr) -> bool:
 
 
 def _call_jvp_many_function(
-  callee: Any,
+  callee: ConcreteFunction[Any, Any, Any, Any],
   output_index: int,
   formal_indices: tuple[int, ...],
   nseed: int,
@@ -42,7 +43,7 @@ def _call_jvp_many_function(
   *,
   pushforward: _Pushforward,
   unroll: _Unroll,
-) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+) -> _JVPMany:
   key = HelperKey(
     "forward",
     (output_index,),
@@ -80,18 +81,18 @@ def _call_jvp_many_function(
       output_name += f":{callee.input_names[formal_indices[0]]}"
     fn = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [deriv], input_names, [output_name], role="forward")
     cache[key] = (fn, arg_indices, seed_indices, active)
-  return cache[key]
+  return cast(_JVPMany, cache[key])
 
 
 def _call_jvp_many_const_function(
-  callee: Any,
+  callee: ConcreteFunction[Any, Any, Any, Any],
   output_index: int,
   formal_index: int,
   seed_value: np.ndarray,
   *,
   pushforward: _Pushforward,
   unroll: _Unroll,
-) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
+) -> _JVP:
   """Specialize the joint JVP helper for one formal with a constant seed."""
   fn, arg_indices, seed_indices, active = _call_jvp_many_function(
     callee, output_index, (formal_index,), seed_value.shape[0], (seed_value,), pushforward=pushforward, unroll=unroll
@@ -101,8 +102,8 @@ def _call_jvp_many_const_function(
 
 
 def _call_jvp_function(
-  callee: Any, output_index: int, formal_indices: tuple[int, ...], *, pushforward: _Pushforward
-) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
+  callee: ConcreteFunction[Any, Any, Any, Any], output_index: int, formal_indices: tuple[int, ...], *, pushforward: _Pushforward
+) -> _JVP:
   key = HelperKey("forward", (output_index,), formal_indices, callee._effective_lowering)
   cache = callee._memo.helpers
   if key not in cache:
@@ -112,15 +113,15 @@ def _call_jvp_function(
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
-    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
+    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(f"fwd:{callee.input_names[i]}" for i in seed_indices)
     fn = ConcreteFunction._from_exprs(
       helper_name(callee, key), inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"], role="forward"
     )
     cache[key] = (fn, arg_indices, seed_indices)
-  return cache[key]
+  return cast(_JVP, cache[key])
 
 
-def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
+def _pack_jvp_maps(callee: ConcreteFunction[Any, Any, Any, Any], result: Expr, maps: list[Expr]) -> Expr:
   """Share specialized tangent bodies through one mapped result, preserving each seed layout."""
   groups: list[tuple[int, dict[Expr, tuple[Expr, int, int]], list[Expr]]] = []
   for mapped in maps:
@@ -146,7 +147,7 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
       cache[key] = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [packed], [names[inp] for inp in inputs], ["fwd"], role="forward")
-    fn = cache[key]
+    fn = cast(ConcreteFunction[Any, Any, Any, Any], cache[key])
     mapped = _mapped_call(fn, length, list(bindings.values()))
     width = fn.outputs[0].size
     offset = 0
@@ -172,7 +173,7 @@ def _periodic_seed_tiles(
   return None if period is None else (tiles, period)
 
 
-def _local_seed_colors(callee_out: Expr, formal: Expr, nseed: int) -> tuple[Any, tuple[int, ...]] | None:
+def _local_seed_colors(callee_out: Expr, formal: Expr, nseed: int) -> tuple[csr_array, tuple[int, ...]] | None:
   mask = _jac_mask(callee_out, formal, {})
   colors = column_coloring(_mask_sparsity(mask)) if mask.nnz else ()
   return (mask, colors) if colors and max(colors) + 1 < nseed else None
@@ -218,7 +219,7 @@ def _vmap_jvp_many(
 
   maps: list[Expr] = []
 
-  def mapped_call(fn: Any, count: int, specs: list[tuple[Expr, int, int]]) -> Expr:
+  def mapped_call(fn: ConcreteFunction[Any, Any, Any, Any], count: int, specs: list[tuple[Expr, int, int]]) -> Expr:
     mapped = _mapped_call(fn, count, specs)
     maps.append(mapped)
     return mapped
@@ -370,7 +371,9 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
   return memo[expr.id]
 
 
-def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...], *, pullback: _Pullback) -> tuple[Any, tuple[int, ...]]:
+def _vmap_adj_function(
+  callee: ConcreteFunction[Any, Any, Any, Any], output_index: int, active_formals: tuple[int, ...], *, pullback: _Pullback
+) -> _VmapAdjoint:
   key = HelperKey("adjoint", (output_index,), active_formals, callee._effective_lowering)
   cache = callee._memo.helpers
   if key not in cache:
@@ -387,7 +390,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
       helper_name(callee, key), inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"], role="adjoint"
     )
     cache[key] = (fn, arg_indices)
-  return cache[key]
+  return cast(_VmapAdjoint, cache[key])
 
 
 def _vmap_vjp(

@@ -302,6 +302,10 @@ def group[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](
 ) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH]]: ...
 
 
+@overload
+def group[S, N](a: Tree[S, N], /, *parts: Tree[S, N]) -> Tree[tuple[S, ...], tuple[N, ...]]: ...
+
+
 def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
   """Group one to eight trees side by side. Nest groups for greater widths."""
   return _G(parts)

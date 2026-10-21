@@ -187,7 +187,9 @@ def test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values(tmp
   x[::7], x[3::11] = np.inf, np.nan
   expected = _reference(masks, x)
   with np.errstate(invalid="ignore"):
-    product = sum(mask * x[c * STAGES * ENTRIES : (c + 1) * STAGES * ENTRIES][None, :] for c, mask in enumerate(masks)).reshape(-1)
+    product = sum(
+      (mask * x[c * STAGES * ENTRIES : (c + 1) * STAGES * ENTRIES][None, :] for c, mask in enumerate(masks)), np.zeros_like(masks[0])
+    ).reshape(-1)
   # A NaN reaches the entries whose bit is set and no others, where 0 * NaN would have spread it.
   assert np.isnan(expected).any() and np.isnan(product).sum() > np.isnan(expected).sum()
   _assert_identical(_run(prog, tmp_path, lanes, x, expected.size), expected)

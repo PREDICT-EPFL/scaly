@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 import hashlib
-from typing import Any, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
 
@@ -13,6 +13,9 @@ from ..ir.expr import Expr
 from ..ir.types import SparsityPattern, TensorType, as_shape
 from .concrete import ConcreteFunction, DerivSpec
 from .tree import Tree, _G, _Leaf, _leaves, flat_tree, parameter_list
+
+if TYPE_CHECKING:
+  from ..solvers.stats import SolverStats
 
 
 def _structure(value: Any) -> Any:
@@ -255,7 +258,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     """Return a fully specified function with the requested device placement."""
     return Function._from_instance(self.instantiate().with_device(device))
 
-  def solver_stats(self, name: str | None = None) -> Any:
+  def solver_stats(self, name: str | None = None) -> SolverStats:
     """Return the latest statistics for a solver in the fully specified graph."""
     return self.instantiate().solver_stats(name)
 

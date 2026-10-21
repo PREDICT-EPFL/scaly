@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Protocol
 
 import numpy as np
 import pytest
@@ -122,8 +123,18 @@ def test_duplicate_generated_identifiers_keep_distinct_calls() -> None:
   np.testing.assert_array_equal(host(np.array([2.0, 3.0])), [8.0, 14.0])
 
 
-@pytest.mark.parametrize("operation", [sc.gradient, sc.jacobian, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian])
-def test_unseeded_derivatives_bind_and_keep_declared_output_names(operation) -> None:
+type _ScalarFunction = sc.Function[tuple[sc.Expr], tuple[np.ndarray], sc.Expr, np.ndarray]
+
+
+class _Derivative(Protocol):
+  def __call__(self, fn: _ScalarFunction, /, *, name: str | None = None) -> _ScalarFunction: ...
+
+
+_DERIVATIVES: tuple[_Derivative, ...] = (sc.gradient, sc.jacobian, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian)
+
+
+@pytest.mark.parametrize("operation", _DERIVATIVES)
+def test_unseeded_derivatives_bind_and_keep_declared_output_names(operation: _Derivative) -> None:
   @sc.function(sc.arg("x"), outputs=sc.arg("f", ()))
   def cost(x: sc.Expr) -> sc.Expr:
     return (x * x).sum()
@@ -132,6 +143,7 @@ def test_unseeded_derivatives_bind_and_keep_declared_output_names(operation) -> 
   two = derivative.instantiate((2,))
   three = derivative.instantiate((3,))
   assert two.name != three.name
+  assert derivative.outputs is not None
   assert two.output_names == derivative.outputs.names
   assert operation(cost, name="derived").instantiate((2,)) is two
   assert operation(cost).instantiate((2,)).input_tree.types == cost.instantiate((2,)).input_tree.types

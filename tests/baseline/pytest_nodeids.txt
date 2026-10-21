@@ -2461,6 +2461,7 @@ tests/test_import_layering.py::test_no_upward_imports
 tests/test_import_layering.py::test_recorded_exceptions_still_exist
 tests/test_import_layering.py::test_tolerated_violations_are_still_violations
 tests/test_op_coverage.py::test_every_expr_op_is_classified_in_every_pass
+tests/typing/test_distribution.py::test_package_includes_type_marker
 tests/utils/test_names.py::test_c_identifier_spelling[1value-_1value]
 tests/utils/test_names.py::test_c_identifier_spelling[_h0-_h0]
 tests/utils/test_names.py::test_c_identifier_spelling[arg-arg]

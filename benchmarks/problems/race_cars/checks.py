@@ -264,7 +264,7 @@ def check_harvested_sqp_globalizations() -> None:
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
-  globalizations = (
+  globalizations: tuple[tuple[str, dict[str, str | int | float], int], ...] = (
     ("filter", {}, 3),
     ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
   )

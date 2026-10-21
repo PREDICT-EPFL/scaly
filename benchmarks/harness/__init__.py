@@ -13,7 +13,7 @@ import subprocess
 import sys
 from weakref import WeakKeyDictionary
 from scaly.codegen.jit import HOST_CFLAGS
-from scaly.codegen.toolchain import find_c_compiler, native_recipe
+from scaly.codegen.toolchain import VectorLibm, find_c_compiler, native_recipe
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
@@ -25,7 +25,7 @@ SWEEP_RESULTS = RESULTS / "sweep"
 NATIVE_CFLAGS = HOST_CFLAGS
 
 
-def vector_libm() -> str:
+def vector_libm() -> VectorLibm:
   """Resolve the benchmark math policy, retaining an explicit scalar override."""
   policy = os.environ.get("SCALY_VECTOR_LIBM")
   if policy is None:

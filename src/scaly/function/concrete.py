@@ -15,6 +15,8 @@ from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
 from .tree import Tree, flat_tree, flat_parameters, inferred_outputs
 
 if TYPE_CHECKING:
+  from ..ad.helpers import HelperKey
+  from ..codegen.jit import CompiledFunction
   from ..solvers.stats import SolverStats
 
 
@@ -58,15 +60,19 @@ class DerivSpec:
 Role = Literal["forward", "adjoint"]
 """What built a derived helper Function: a forward-mode or an adjoint call rule."""
 
+type _JVP = tuple[ConcreteFunction[Any, Any, Any, Any], tuple[int, ...], tuple[int, ...]]
+type _JVPMany = tuple[ConcreteFunction[Any, Any, Any, Any], tuple[int, ...], tuple[int, ...], tuple[int, ...]]
+type _VmapAdjoint = tuple[ConcreteFunction[Any, Any, Any, Any], tuple[int, ...]]
+
 
 @dataclass
 class _Memo:
   """State computed from a ConcreteFunction and cached beside it, never part of its definition."""
 
-  compiled: Any = None
-  derivatives: dict[Any, ConcreteFunction] = field(default_factory=dict)
-  maps: dict[int, ConcreteFunction] = field(default_factory=dict)
-  helpers: dict[Any, Any] = field(default_factory=dict)
+  compiled: CompiledFunction | None = None
+  derivatives: dict[tuple[str, DerivSpec], ConcreteFunction[Any, Any, Any, Any]] = field(default_factory=dict)
+  maps: dict[int, ConcreteFunction[Any, Any, Any, Any]] = field(default_factory=dict)
+  helpers: dict[HelperKey, ConcreteFunction[Any, Any, Any, Any] | _JVP | _JVPMany | _VmapAdjoint] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -308,7 +314,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     """Compile ahead of the first numerical call, or reuse the cached library."""
     self._compile()
 
-  def _compile(self) -> Any:
+  def _compile(self) -> CompiledFunction:
     """Lazily JIT-compile this function and cache the handle."""
     if self._memo.compiled is None:
       self._memo.compiled = _jit().CompiledFunction(self)

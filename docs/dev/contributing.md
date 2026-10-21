@@ -69,6 +69,10 @@ Run all four before you consider a change done. `pytest` collects `tests/`, `plu
 `typing_playground/`. Strict type checking covers the assertions in `tests/typing/` and the
 playground. An expected error that disappears leaves an unused ignore, which fails the check.
 
+Type checking also covers the benchmarks. Their CasADi imports are treated as `Any`
+because CasADi does not supply complete type information. This exception applies only
+to benchmark files, so Scaly calls and the benchmark code's own annotations remain checked.
+
 The root `conftest.py` checks the full-collection node-ID baseline. After adding, removing, or
 renaming a test, regenerate it from the complete collection:
 

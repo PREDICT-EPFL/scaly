@@ -10,7 +10,7 @@ from benchmarks.harness import provenance
 from benchmarks.harness.sweep import summarize_runs
 
 
-def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch):
+def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch: pytest.MonkeyPatch) -> None:
   from benchmarks import harness
   from scaly.codegen.toolchain import BuildRecipe, Compiler
 
@@ -31,7 +31,7 @@ def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch):
     harness.configure_math_policy()
 
 
-def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch):
+def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch: pytest.MonkeyPatch) -> None:
   from benchmarks import harness
   from scaly.codegen.toolchain import BuildRecipe, Compiler
 
@@ -48,7 +48,7 @@ def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch):
   assert harness.vector_libm() == "none"
 
 
-def test_sweep_render_uses_the_selected_math_policy(tmp_path, monkeypatch):
+def test_sweep_render_uses_the_selected_math_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   import scaly as sc
   from benchmarks.harness.sweep import _render_scaly
 
@@ -63,7 +63,7 @@ def test_sweep_render_uses_the_selected_math_policy(tmp_path, monkeypatch):
     assert ("-lmvec" in module.link_flags) == (policy == "glibc")
 
 
-def test_headline_settings_reject_powersave_and_wrong_boost(monkeypatch):
+def test_headline_settings_reject_powersave_and_wrong_boost(monkeypatch: pytest.MonkeyPatch) -> None:
   settings = {"policies": {"policy0": {"scaling_governor": "powersave"}}, "boost_enabled": True}
   monkeypatch.setattr(provenance, "cpu_settings", lambda: settings)
   with pytest.raises(RuntimeError, match="performance governor"):
@@ -77,7 +77,7 @@ def test_headline_settings_reject_powersave_and_wrong_boost(monkeypatch):
     provenance.require_headline_settings(True)
 
 
-def test_cpu_settings_reads_linux_policies_and_boost(tmp_path):
+def test_cpu_settings_reads_linux_policies_and_boost(tmp_path: Path) -> None:
   policy = tmp_path / "cpufreq/policy0"
   policy.mkdir(parents=True)
   (policy / "scaling_governor").write_text("performance\n")
@@ -87,7 +87,7 @@ def test_cpu_settings_reads_linux_policies_and_boost(tmp_path):
   assert settings["boost_enabled"] is False
 
 
-def test_dispersion_uses_successful_processes_and_keeps_failure_counts(tmp_path: Path):
+def test_dispersion_uses_successful_processes_and_keeps_failure_counts(tmp_path: Path) -> None:
   rows = [
     dict(workload="fixture", size=2, backend="scaly", runtime_status=status, runtime_ns=runtime)
     for status, runtime in [("ok", "10"), ("ok", "20"), ("correctness_fail", "1000")]
@@ -105,7 +105,7 @@ def test_dispersion_uses_successful_processes_and_keeps_failure_counts(tmp_path:
     assert next(csv.DictReader(fp))["runtime_ns_stdev"] == ""
 
 
-def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, monkeypatch):
+def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   import sys
 
   from benchmarks import run
@@ -150,7 +150,7 @@ def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, mon
   assert len(calls) == 24
 
 
-def test_closed_loop_cli_runs_one_explicit_repetition_in_a_fresh_process(tmp_path, monkeypatch):
+def test_closed_loop_cli_runs_one_explicit_repetition_in_a_fresh_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   import sys
 
   from benchmarks import run
@@ -179,7 +179,7 @@ def test_closed_loop_cli_runs_one_explicit_repetition_in_a_fresh_process(tmp_pat
   assert command[command.index("--out-dir") + 1] == str(interpreted / "repeat_1")
 
 
-def test_cpu_provenance_without_linux_interfaces(tmp_path, monkeypatch):
+def test_cpu_provenance_without_linux_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.delattr(provenance.os, "sched_getaffinity", raising=False)
   settings = provenance.cpu_settings(tmp_path)
   assert settings == {"policies": {}, "boost_enabled": None, "affinity": None}
@@ -188,7 +188,7 @@ def test_cpu_provenance_without_linux_interfaces(tmp_path, monkeypatch):
     provenance.require_headline_settings(False)
 
 
-def test_intel_boost_uses_the_inverse_no_turbo_flag(tmp_path):
+def test_intel_boost_uses_the_inverse_no_turbo_flag(tmp_path: Path) -> None:
   turbo = tmp_path / "intel_pstate/no_turbo"
   turbo.parent.mkdir()
   for disabled in (0, 1):
@@ -196,7 +196,7 @@ def test_intel_boost_uses_the_inverse_no_turbo_flag(tmp_path):
     assert provenance.cpu_settings(tmp_path)["boost_enabled"] is (not bool(disabled))
 
 
-def test_smoke_skips_a_comparison_backend_over_the_compile_budget(monkeypatch, capsys):
+def test_smoke_skips_a_comparison_backend_over_the_compile_budget(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
   from benchmarks import run
 
   timeout = {"compile_status": "timeout", "runtime_status": "skipped", "runtime_ns": "", "note": "compile > 180s (kernel_compile_ms)"}
@@ -211,7 +211,7 @@ def test_smoke_skips_a_comparison_backend_over_the_compile_budget(monkeypatch, c
     run._benchmark_smoke(full=True)
 
 
-def test_problem_checks_compile_at_O0(monkeypatch):
+def test_problem_checks_compile_at_O0(monkeypatch: pytest.MonkeyPatch) -> None:
   from types import SimpleNamespace
 
   from benchmarks import run

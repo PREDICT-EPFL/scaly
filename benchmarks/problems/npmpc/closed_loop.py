@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from benchmarks.harness.timing import SolveTiming
+from benchmarks.harness.timing import SolveTiming, SolveTimingSummary
 
 from scaly import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
@@ -107,7 +107,7 @@ class EpisodeResult:
   telemetry: tuple[SolverStats, ...]
   oracle_inputs: tuple[dict[str, np.ndarray], ...]
   terminal_weight: np.ndarray = field(repr=False)
-  timing: dict[str, object]
+  timing: SolveTimingSummary
 
 
 def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "scaly"):

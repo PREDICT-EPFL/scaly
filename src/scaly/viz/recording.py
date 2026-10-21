@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator
 from weakref import WeakKeyDictionary
 
 from scaly.ir.text import format_program, render_expr_assembly, render_program_assembly
@@ -69,7 +69,7 @@ def unvisualize_function(fun: Function | ConcreteFunction) -> None:
 
 
 @contextmanager
-def capture[F: Function | ConcreteFunction](fun: F, *, label: str | None = None) -> Iterator[F]:
+def capture[F: Function | ConcreteFunction](fun: F, *, label: str | None = None) -> Generator[F]:
   """Record renders of ``fun`` only inside a ``with`` block, which yields ``fun``."""
   visualize_function(fun, label=label)
   try:

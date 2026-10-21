@@ -87,8 +87,10 @@ def _qp_filter() -> sc.Function:
         ineq=(sc.bounded(sc.stack(rows, axis=0) @ u, lo=-sc.stack(bias, axis=0), name="obstacles"),),
       )
 
-    solve = sc.solver(problem, "piqp", name="smoke_safety_filter_qp_solver")
-    params = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
+    solve: sc.Solver[sc.Expr, np.ndarray, tuple[sc.Expr, ...], tuple[np.ndarray, ...]] = sc.solver(
+      problem, "piqp", name="smoke_safety_filter_qp_solver"
+    )
+    params: tuple[sc.Expr, ...] = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
     return solve(params)[0]
 
   return safety_filter_qp
@@ -121,8 +123,11 @@ def _nlp_filter() -> sc.Function:
         ),
       )
 
-    nlp = sc.solver(problem, "ipopt", name="smoke_safety_filter_nlp_solver")
-    return nlp(problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names)))[0]
+    nlp: sc.Solver[sc.Expr, np.ndarray, tuple[sc.Expr, ...], tuple[np.ndarray, ...]] = sc.solver(
+      problem, "ipopt", name="smoke_safety_filter_nlp_solver"
+    )
+    params: tuple[sc.Expr, ...] = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
+    return nlp(params)[0]
 
   return safety_filter_nlp
 

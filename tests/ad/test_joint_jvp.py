@@ -113,7 +113,10 @@ def test_call_helpers_are_cached_on_their_callee() -> None:
     _call_jvp_many_function(callee, 0, (0,), 2, (None,), pushforward=_jvp, unroll=_jvp_many_unrolled)[0],
     _vmap_adj_function(callee, 0, (0, 1), pullback=vjp)[0],
   }
-  cached = {entry[0] for entry in callee._memo.helpers.values()}
+  cached = set()
+  for entry in callee._memo.helpers.values():
+    assert isinstance(entry, tuple)
+    cached.add(entry[0])
   assert cached == helpers
   assert not [name for name in (*vars(calls), *vars(forward), *vars(reverse)) if name.endswith("_CACHE")]
   copy = callee._replace(name="memo_stage_copy")

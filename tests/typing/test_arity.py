@@ -9,6 +9,7 @@ import numpy as np
 import scaly as sc
 from scaly.function import Tree
 from scaly.function.concrete import ConcreteFunction
+from scaly.solvers.stats import SolverStats
 
 
 @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first"), sc.arg("second", 3)))
@@ -81,11 +82,26 @@ hess_l = sc.lagrangian_hessian(duplicate, "x")
 
 
 if TYPE_CHECKING:
+  parts = [sc.arg(f"part{i}", 1) for i in range(3)]
+  assert_type(sc.group(*parts), Tree[tuple[sc.Expr, ...], tuple[np.ndarray, ...]])
+  assert_type(sc.group(*(sc.arg(f"part{i}", 1) for i in range(8))), Tree[tuple[sc.Expr, ...], tuple[np.ndarray, ...]])
+  assert_type(sc.group(*(sc.arg("a", 1), sc.arg("b", 1))), Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]])
+  sc.group()  # ty: ignore[no-matching-overload]
+
+  @sc.function(sc.group(*parts), outputs=sc.arg("out"))
+  def dynamic_group(values: tuple[sc.Expr, ...]) -> sc.Expr:
+    return sc.concat(values)
+
+  assert_type(dynamic_group((np.ones(1), np.ones(1), np.ones(1))), np.ndarray)
+  assert_type(dynamic_group((sc.sym("a", 1), sc.sym("b", 1))), sc.Expr)
+  dynamic_group((sc.sym("a", 1), np.ones(1)))  # ty: ignore[no-matching-overload]
+  assert_type(square.solver_stats(), SolverStats)
+  square.solver_stats().not_a_statistic  # ty: ignore[unresolved-attribute]
   assert_type(sc.NO_LB, sc.Expr)
   assert_type(sc.NO_UB, sc.Expr)
   sc.arg("x", "3")  # ty: ignore[invalid-argument-type]
   sc.group(sc.arg("x", 3))
-  sc.group(sc.arg("x", 3), sc.arg("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
+  sc.group(sc.arg("x", 3), sc.arg("y", 3), ("z", 3))  # ty: ignore[no-matching-overload]
   assert_type(sc.group(sc.arg("x", 3), sc.arg("p", ())), Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]])
   assert_type(
     sc.group(sc.group(sc.arg("a", 1), sc.arg("b", 1)), sc.arg("c", 1)),

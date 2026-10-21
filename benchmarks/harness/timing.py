@@ -10,6 +10,46 @@ from benchmarks.harness import registered_base
 from time import perf_counter
 
 import numpy as np
+from typing import NotRequired, TypedDict
+
+
+class SolveTimingSummary(TypedDict):
+  """Construction and solve times measured for one episode."""
+
+  build_ms: float
+  first_solve_ms: float | None
+  steady_step_ms: float | None
+  solve_wall_ms: list[float]
+
+
+class ModeSummary(TypedDict):
+  """Episode identity and the timing measurements available for its mode table."""
+
+  problem: str
+  solver: str
+  oracle: str | None
+  build_ms: NotRequired[float]
+  first_solve_ms: NotRequired[float | None]
+  steady_step_ms: NotRequired[float | None]
+  solve_wall_ms: NotRequired[list[float]]
+
+
+class _ModeCommon(TypedDict):
+  problem: str
+  solver: str
+  oracle: str | None
+  per_step_ms: float | None
+  build_ms: float | None
+  timing_scope: str
+  ipopt_provider: str
+  cache_policy: str
+
+
+class ModeRow(_ModeCommon):
+  """Startup and steady solve costs for one deployment mode."""
+
+  mode: str
+  time_to_first_solve_ms: float | None
 
 
 def prepare_solver(controller) -> None:
@@ -50,7 +90,7 @@ class SolveTiming:
   def end_step(self) -> None:
     self.solve_ms.append((perf_counter() - self.started) * 1000.0)
 
-  def summary(self) -> dict[str, object]:
+  def summary(self) -> SolveTimingSummary:
     return {
       "build_ms": self.build_ms,
       "first_solve_ms": self.solve_ms[0] if self.solve_ms else None,
@@ -59,9 +99,9 @@ class SolveTiming:
     }
 
 
-def mode_rows(summary: dict, *, interpreted: bool = False) -> list[dict]:
+def mode_rows(summary: ModeSummary, *, interpreted: bool = False) -> list[ModeRow]:
   """Derive startup and steady costs from a completed episode, without rerunning it."""
-  common = {
+  common: _ModeCommon = {
     "problem": summary["problem"],
     "solver": summary["solver"],
     "oracle": summary["oracle"],
@@ -75,9 +115,9 @@ def mode_rows(summary: dict, *, interpreted: bool = False) -> list[dict]:
   if first is None:
     return [{**common, "mode": mode, "time_to_first_solve_ms": None} for mode in (["interpreted"] if interpreted else ["jit", "prebuilt"])]
   if interpreted:
-    return [{**common, "mode": "interpreted", "time_to_first_solve_ms": summary.get("build_ms") + first}]
+    return [{**common, "mode": "interpreted", "time_to_first_solve_ms": summary["build_ms"] + first}]
   return [
-    {**common, "mode": "jit", "time_to_first_solve_ms": summary.get("build_ms") + first},
+    {**common, "mode": "jit", "time_to_first_solve_ms": summary["build_ms"] + first},
     {**common, "mode": "prebuilt", "time_to_first_solve_ms": first},
   ]
 

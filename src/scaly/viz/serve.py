@@ -10,6 +10,7 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, urlparse
 
 from .recording import load_recordings, recording_path
@@ -346,8 +347,6 @@ class VizServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-  server: VizServer
-
   def log_message(self, format: str, *args: object) -> None:  # keep output tinygrad-quiet
     return
 
@@ -367,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
     if url.path == "/assets/app.js":
       return self._send(_JS.encode(), "application/javascript; charset=utf-8")
     if url.path == "/recordings":
-      data = load_recordings(self.server.recording_file)
+      data = load_recordings(cast(VizServer, self.server).recording_file)
       qs = parse_qs(url.query)
       if qs.get("summary", [""])[0] in {"1", "true"}:
         data = [

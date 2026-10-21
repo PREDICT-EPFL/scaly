@@ -17,6 +17,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_source
 from scaly.codegen.toolchain import LaneCount
+from scaly.function import Tree
 
 # Two positions, two velocities and one input, so the stage closes its position rows by trapezoidal
 # integration exactly as a second-order mechanical system does.
@@ -42,7 +43,9 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
   return x + np.concatenate([DT * (x[NY:] + y / 2.0), y])
 
 
-def stage_function() -> sc.Function:
+def stage_function() -> sc.Function[
+  tuple[tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]], sc.Expr, np.ndarray
+]:
   scale, w0, w1, bias = _slices()
 
   @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU), sc.arg("pw", N_PW)), outputs=sc.arg("eq"), name="vmap_mlp_stage")
@@ -60,11 +63,11 @@ def n_dec(stages: int) -> int:
   return NX * (stages + 1) + NU * stages
 
 
-def _inputs_tree(stages: int):
+def _inputs_tree(stages: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
   return sc.group(sc.arg("z", n_dec(stages)), sc.arg("p", sc.TensorType((N_PW,), diff=False)))
 
 
-def _cost_stage() -> sc.Function:
+def _cost_stage() -> sc.Function[tuple[tuple[sc.Expr, sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
   @sc.function(sc.group(sc.arg("x", NX), sc.arg("xnext", NX), sc.arg("u", NU)), outputs=sc.arg("cost"), name="vmap_mlp_stage_cost")
   def cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u = inputs
@@ -74,7 +77,9 @@ def _cost_stage() -> sc.Function:
   return cost
 
 
-def vmapped(stages: int) -> sc.Function:
+def vmapped(
+  stages: int,
+) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
   """Objective and equalities together, both using VMAP, which is what a Lagrangian Hessian needs."""
 
   @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost"), sc.arg("eq")), name=f"vmap_mlp_N{stages}")
@@ -87,7 +92,9 @@ def vmapped(stages: int) -> sc.Function:
   return fn
 
 
-def unrolled(stages: int) -> sc.Function:
+def unrolled(
+  stages: int,
+) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
   """The same formulation stage by stage, so the VMAP version can be tested against it."""
   stage, cost_stage = stage_function(), _cost_stage()
   offset = NX * (stages + 1)
