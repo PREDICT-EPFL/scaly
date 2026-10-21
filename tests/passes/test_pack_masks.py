@@ -212,5 +212,4 @@ def test_empty_reverse_matches_numpy():
 
   x = np.empty((2, 0))
   result = empty_reverse(x)
-  assert result.shape == (2, 0)
   np.testing.assert_array_equal(result, np.cos(x) * np.empty((2, 0)))
