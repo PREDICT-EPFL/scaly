@@ -991,40 +991,25 @@ def test_joint_mapped_products_reuse_scalar_invariants_against_numpy():
   np.testing.assert_allclose(products((z, params)), expected, rtol=1e-13, atol=1e-13)
 
 
-@pytest.mark.parametrize("computed", [False, True])
-def test_fusion_reuses_a_strided_load_without_recomputing_arithmetic(computed):
-  x, y = buffer("x", dtypes.float64, (9,)), buffer("y", dtypes.float64, (12,))
-  copied = buffer("copied", dtypes.float64, (3,), address_space="private")
-  i, j = var("i"), var("j")
-  calculated = buffer("calculated", dtypes.float64, (9,), address_space="private")
-  prefix = (
-    [calculated, for_(range_("i", 0, 9), [store(view(calculated, [i]), ProgramNode(ProgramOp.SIN, (load(view(x, [i])),), dtype=dtypes.float64))])]
-    if computed
-    else []
-  )
-  source = calculated if computed else x
-  copy = for_(range_("i", 0, 3), [store(view(copied, [i]), load(view(source, [p.add(p.mul(i, const_int(3)), const_int(1))])))])
-  reuse = for_(range_("j", 0, 12), [store(view(y, [j]), p.mul(load(view(copied, [p.mod(j, const_int(3))])), const_float(2.0)))])
-  result = fuse_elementwise(program([proc_("copy_reuse", [x, y], [*prefix, copied, copy, reuse])]))
-  verify_program(result)
-  assert any(node.op == ProgramOp.BUFFER and node.attrs["name"] == "copied" for node in walk_program(result)) is computed
+def test_scalar_schedule_keeps_cheap_products_local_without_duplicating_loads():
+  from scaly.passes.program.scheduling import ScalarNameAllocator, schedule_values
+
+  a, b = p.var("a", dtypes.float64), p.var("b", dtypes.float64)
+  product = p.mul(a, b)
+  declarations, _ = schedule_values([p.add(product, a), p.sub(product, b)], ScalarNameAllocator({"a", "b"}))
+  assert not declarations
+  source = p.buffer("source", dtypes.float64, (2,))
+  loaded_product = p.mul(p.load(p.view(source, [p.const_int(0)])), b)
+  declarations, _ = schedule_values([p.add(loaded_product, a), p.sub(loaded_product, b)], ScalarNameAllocator({"a", "b", "source"}))
+  assert declarations
 
 
-def test_scalar_output_order_releases_shared_seed_partials_against_numpy():
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="ordered_seed_values")
-  def stage(x):
-    a, b, c = x.sin(), x.cos(), x.exp()
-    return sc.stack([a * b + c, a + b * c])
+def test_auto_lanes_leave_tiny_structural_rows_to_the_c_compiler():
+  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y"), name="tiny_rows")
+  def fn(x):
+    return sc.concat([x.sin(), x[:, :1]], axis=1)
 
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="ordered_seed_wrapper")
-  def wrapper(x):
-    return stage(x)
-
-  observed = {}
-  lower_function(wrapper, observe=lambda phase, prog: observed.__setitem__(phase, prog))
-  proc = next(proc for proc in observed["pass:scalarize"].args if proc.attrs["name"] == "ordered_seed_values")
-  offsets = [stmt.args[0].args[0].attrs["value"] for stmt in proc.args[proc.attrs["param_count"] :] if stmt.op == ProgramOp.STORE]
-  assert offsets == [0, 4, 1, 5, 2, 6, 3, 7]
-  values = np.linspace(-0.5, 0.8, 4)
-  expected = np.stack([np.sin(values) * np.cos(values) + np.exp(values), np.sin(values) + np.cos(values) * np.exp(values)])
-  np.testing.assert_allclose(wrapper(values), expected, rtol=1e-14, atol=1e-14)
+  result = lower_function(fn, lanes="auto")
+  assert not any(node.op == ProgramOp.RANGE and node.attrs["kind"] == p.RangeKind.VECTOR for node in walk_program(result))
+  x = np.linspace(-0.4, 0.7, 6).reshape(2, 3)
+  np.testing.assert_allclose(fn(x), np.concatenate([np.sin(x), x[:, :1]], axis=1), rtol=1e-14, atol=1e-14)

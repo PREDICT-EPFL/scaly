@@ -126,8 +126,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   # there, never passed to a CALL, read by exactly one consumer statement, and that consumer
   # re-reads it at most ``producer_size`` times (no compute blow-up — this is what keeps the
   # producer out of a matmul/contraction operand position, where each element is read m*n*k
-  # times). A load-only view of materialized storage can be read directly without repeating its
-  # source computation. Expensive (libm) producers must also appear exactly once textually so the
+  # times). Expensive (libm) producers additionally must appear exactly once textually so the
   # call isn't duplicated (``buf*buf``).
   inlinable: dict[str, tuple[str, ProgramNode]] = {}
   expanded_expensive: dict[str, bool] = {}
@@ -145,12 +144,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
     (ci,) = consumers
     producer_size = _size_of(private[buf].attrs["shape"])
     execs = _max_load_executions(body[ci], buf, 1)
-    view_only = (
-      rhs.op == ProgramOp.LOAD
-      and rhs.args[0].attrs["buffer"] not in inlinable
-      and not any(node.op == ProgramOp.LOAD for node in walk_program(rhs.args[0]))
-    )
-    if execs is None or (execs > producer_size and not view_only):
+    if execs is None or execs > producer_size:
       continue
     rhs_loads = buffer_refs(rhs).loads
     is_expensive = _has_expensive(rhs) or any(expanded_expensive.get(name, False) for name in rhs_loads)

@@ -211,7 +211,9 @@ def _split_scalars(proc: ProgramNode, invariant: tuple[int, ...], names: NameSco
   if any(value.dtype != shared.dtype for value in values):
     return None
   replacements = {value: p.load(p.view(shared, [p.const_int(i)])) for i, value in enumerate(values)}
-  pattern = Pattern[ProgramNode](None, lambda node: node in replacements, lambda node: replacements[node])
+  fixed_loads = {value.attrs["name"]: replacements[value] for value in values if value.op == ProgramOp.VAR}
+  expressions = {value: replacement for value, replacement in replacements.items() if value.op != ProgramOp.VAR}
+  pattern = Pattern[ProgramNode](None, lambda node: node in expressions, lambda node: expressions[node])
   stores = [p.store(p.view(shared, [p.const_int(i)]), value) for i, value in enumerate(values)]
   prologue_body = [*hoisted, *stores]
   reads = buffer_refs(p.block(*prologue_body)).reads
@@ -219,7 +221,13 @@ def _split_scalars(proc: ProgramNode, invariant: tuple[int, ...], names: NameSco
   n_in = int(proc.attrs["input_count"])
   tag = "_".join(map(str, invariant))
   prologue = _proc(proc, names.procedure(f"{proc.attrs['name']}_hoist_{tag}"), [params[i] for i in used], [shared], prologue_body)
-  rewritten = [rewrite(stmt, [pattern], rebuild=rebuild_program) for stmt in body if stmt not in hoisted]
+  rewritten = []
+  for stmt in body:
+    if stmt in hoisted:
+      if stmt.attrs["target"] in fixed_loads:
+        rewritten.append(ProgramNode(stmt.op, (fixed_loads[stmt.attrs["target"]],), stmt.attrs, stmt.dtype))
+    else:
+      rewritten.append(rewrite(stmt, [pattern], rebuild=rebuild_program))
   variant = _proc(proc, names.procedure(f"{proc.attrs['name']}_hoisted_{tag}"), [*params[:n_in], shared], params[n_in:], rewritten)
   return prologue, variant, used, [shared]
 

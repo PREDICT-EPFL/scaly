@@ -101,30 +101,9 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
     for i, value in enumerate(ptr.values):
       assert value is not None, "scalarization left an output element uninitialized"
       outputs.append((p.view(param, [p.const_int(i)]), value))
-
-  def schedule(ordered: list[tuple[ProgramNode, ProgramNode]]) -> list[ProgramNode]:
-    names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
-    declarations, values = schedule_values([value for _, value in ordered], names)
-    return [*declarations, *(p.store(target, value) for (target, _), value in zip(ordered, values, strict=True))]
-
-  body = schedule(outputs)
-  alternate = []
-  offset = 0
-  for param in params[n_in:]:
-    shape = param.attrs["shape"]
-    size = math.prod(shape)
-    rows = shape[0] if len(shape) > 1 else 1
-    if rows:
-      columns = size // rows
-      alternate.extend(outputs[offset + row * columns + col] for col in range(columns) for row in range(rows))
-    offset += size
-  if alternate != outputs:
-    # Use the same alias-safe store schedule and live-value budget as mapped widening.
-    from .widen_ranges import _interleave_stores, _peak_live
-
-    candidate = schedule(alternate)
-    if _peak_live(_interleave_stores(candidate, {})) < _peak_live(_interleave_stores(body, {})):
-      body = candidate
+  names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
+  declarations, values = schedule_values([value for _, value in outputs], names)
+  body = [*declarations, *(p.store(target, value) for (target, _), value in zip(outputs, values, strict=True))]
   return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, proc.dtype)
 
 
@@ -160,16 +139,14 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     return total
 
   def scalar_cost(proc: ProgramNode) -> tuple[int, int]:
-    seen: set[ProgramNode] = set()
+    # Count emitted occurrences, including products repeated at their uses.
+    ops = statements = 0
     stack = list(proc.args[proc.attrs["param_count"] :])
     while stack:
       node = stack.pop()
-      if node in seen:
-        continue
-      seen.add(node)
+      ops += node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD}
+      statements += node.op in {ProgramOp.ASSIGN, ProgramOp.STORE}
       stack.extend(node.args)
-    ops = sum(node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD} for node in seen)
-    statements = sum(node.op in {ProgramOp.ASSIGN, ProgramOp.STORE} for node in seen)
     return ops, ops + statements
 
   scalar_growth = 0

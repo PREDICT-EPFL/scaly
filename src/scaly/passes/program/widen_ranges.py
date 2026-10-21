@@ -128,6 +128,8 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         inner = [reduction]
       if not rng.attrs.get("mapped") and reduction is None and not independent:
         return recurse()
+      if lanes == "auto" and count < 4 and not rng.attrs.get("mapped") and reduction is None:
+        return recurse()
       inner = _interleave_stores(_split_pairs(inner), aliases)
       peak = _peak_live(inner)
       trip_cap = 1 << (count - 1).bit_length()
