@@ -166,3 +166,19 @@ def test_disjoint_constant_colors_select_typed_partials_without_zero_products(dt
   actual = products(z)
   assert actual.dtype == dtype
   np.testing.assert_allclose(actual, expected, rtol=1e-6 if dtype == np.float32 else 1e-14, atol=1e-7 if dtype == np.float32 else 1e-14)
+
+
+def test_empty_constant_color_selection_drops_the_mapped_derivative():
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
+  def stage(x):
+    return sc.stack([x[0].sin() + x[1].cos(), x[2].sin()])
+
+  seeds = np.zeros((3, 20))
+  seeds[:, 3::4] = np.arange(1, 6)
+
+  @sc.function(sc.arg("z", 20), outputs=sc.arg("dy"))
+  def products(z):
+    return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 4)]), z, sc.const(seeds))
+
+  assert not any(node.op == ExprOp.VMAP for node in topo(as_concrete(products).outputs))
+  np.testing.assert_array_equal(products(np.linspace(-0.4, 0.7, 20)), np.zeros((3, 10)))

@@ -263,6 +263,8 @@ def _vmap_jvp_many(
         coefficients = np.where(local_support[list(active)][None, None, :, :], coefficients, 0)
         if np.isin(coefficients, (0, 1)).all() and (np.count_nonzero(coefficients, axis=2) <= 1).all():
           chosen = coefficients != 0
+          if not chosen.any():
+            continue
           sources = np.broadcast_to(np.arange(length * active_count * slice_size).reshape(1, length, active_count, slice_size), chosen.shape)
           targets = np.broadcast_to(np.arange(nseed * length * slice_size).reshape(nseed, length, 1, slice_size), chosen.shape)
           term = scatter(gather(mapped_flat, sources[chosen]), targets[chosen], (nseed, length * slice_size))

@@ -17,6 +17,7 @@ from ._common import (
   _rebuild_proc,
   _size_of,
   buffer_refs,
+  name_scope,
   inline_producer as _as_inline_producer,
   prune_dead_buffers,
   rebuild_program,
@@ -37,7 +38,7 @@ def fold_arith(prog: ProgramNode) -> ProgramNode:
 
 def _fold_proc(proc: ProgramNode) -> ProgramNode:
   params, body = _proc_parts(proc)
-  names = NameScope({str(n.attrs[key]) for n in walk_program(proc) for key in ("name", "target", "buffer") if key in n.attrs})
+  names = name_scope(proc)
   changed = False
   while True:
     new_body = _constant_fills(_fold_body(body, names))
@@ -150,7 +151,7 @@ def _fold_body(body: list[ProgramNode], names: NameScope) -> list[ProgramNode]:
               and any(v.op == ProgramOp.VAR and v.attrs["name"] == rng.attrs["name"] for v in walk_program(node.args[0]))
             }
             if divisors:
-              divisor = max(divisors)
+              divisor = min(divisors)
               block = names.allocate(f"{rng.attrs['name']}_block")
               index = p.add(p.mul(p.var(block), p.const_int(divisor)), p.var(rng.attrs["name"]))
               body = [substitute_var(child, rng.attrs["name"], index) for child in nested]

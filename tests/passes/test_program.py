@@ -918,13 +918,15 @@ def test_scatter_sum_preserves_repeated_leaf_grouping() -> None:
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 0, 0, 0])
 
 
-def test_scoped_index_folding_exposes_seed_mass_component_coordinates():
+@pytest.mark.parametrize("flattened", [False, True])
+def test_scoped_index_folding_exposes_seed_mass_component_coordinates(flattened):
   seed, mass, component = (p.var(name) for name in ("seed", "mass", "component"))
-  flat = p.add(p.mul(seed, p.const_int(93)), p.add(p.mul(mass, p.const_int(3)), component))
-  values = [p.div(flat, p.const_int(93)), p.div(p.mod(flat, p.const_int(93)), p.const_int(3)), p.mod(flat, p.const_int(3))]
+  flat = p.add(p.mul(seed, p.const_int(93)), p.var("element") if flattened else p.add(p.mul(mass, p.const_int(3)), component))
+  values = [p.div(flat, p.const_int(93)), p.mod(p.div(flat, p.const_int(3)), p.const_int(31)), p.mod(flat, p.const_int(3))]
   output = p.buffer("indices", dtypes.int64, (30 * 31 * 3 * 3,))
   stores = [p.store(p.view(output, [p.add(p.mul(flat, p.const_int(3)), p.const_int(i))]), value) for i, value in enumerate(values)]
-  loops = p.for_(p.range_("seed", 0, 30), [p.for_(p.range_("mass", 0, 31), [p.for_(p.range_("component", 0, 3), stores)])])
+  inner = p.for_(p.range_("element", 0, 93), stores) if flattened else p.for_(p.range_("mass", 0, 31), [p.for_(p.range_("component", 0, 3), stores)])
+  loops = p.for_(p.range_("seed", 0, 30), [inner])
   result = fold_arith(p.program([p.proc("coordinates", [output], [loops])]))
   verify_program(result)
   assert not any(node.op in (ProgramOp.DIV, ProgramOp.MOD) for node in walk_program(result))

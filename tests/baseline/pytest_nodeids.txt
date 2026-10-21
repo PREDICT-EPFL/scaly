@@ -103,6 +103,7 @@ tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[period8]
 tests/ad/test_const_seed_bake.py::test_constant_seed_tiles[period9]
 tests/ad/test_const_seed_bake.py::test_disjoint_constant_colors_select_typed_partials_without_zero_products[float32]
 tests/ad/test_const_seed_bake.py::test_disjoint_constant_colors_select_typed_partials_without_zero_products[float64]
+tests/ad/test_const_seed_bake.py::test_empty_constant_color_selection_drops_the_mapped_derivative
 tests/ad/test_const_seed_bake.py::test_local_coloring_and_packed_contributions_keep_seed_order
 tests/ad/test_derivatives.py::test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt
 tests/ad/test_derivatives.py::test_erf_forward_reverse_jacobian_and_sparse_hessian
@@ -2113,7 +2114,8 @@ tests/passes/test_program.py::test_scatter_sum_preserves_overlaps_and_shared_out
 tests/passes/test_program.py::test_scatter_sum_preserves_repeated_leaf_grouping
 tests/passes/test_program.py::test_scatter_sum_rejects_self_reading_sources[False]
 tests/passes/test_program.py::test_scatter_sum_rejects_self_reading_sources[True]
-tests/passes/test_program.py::test_scoped_index_folding_exposes_seed_mass_component_coordinates
+tests/passes/test_program.py::test_scoped_index_folding_exposes_seed_mass_component_coordinates[False]
+tests/passes/test_program.py::test_scoped_index_folding_exposes_seed_mass_component_coordinates[True]
 tests/passes/test_program.py::test_scoped_index_folding_retains_negative_and_out_of_range_remainders
 tests/passes/test_program.py::test_slice_gradient_combines_pads[2]
 tests/passes/test_program.py::test_slice_gradient_combines_pads[8]
