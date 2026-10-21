@@ -37,7 +37,8 @@ class HyperDual:
     return HyperDual(-self.v, -self.e1, -self.e2, -self.e12)
 
   def __sub__(self, other):
-    return NotImplemented if isinstance(other, np.ndarray) else self + (-self._lift(other))
+    o = self._lift(other)
+    return NotImplemented if o is None else self + (-o)
 
   def __rsub__(self, other):
     return NotImplemented if isinstance(other, np.ndarray) else self._lift(other) + (-self)

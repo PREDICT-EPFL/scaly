@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.harness.timing import SolveTiming
+from benchmarks.harness.timing import SolveTiming, SolveTimingSummary
 
 import scaly as sc
 from benchmarks.harness import problem_stats, solve_problem
@@ -143,7 +143,7 @@ class EpisodeResult:
   center_path: np.ndarray
   lap_length: float
 
-  timing: dict[str, object]
+  timing: SolveTimingSummary
 
 
 def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:

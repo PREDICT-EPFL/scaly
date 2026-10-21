@@ -81,6 +81,7 @@ def check_oracle_matches_casadi() -> None:
     np.testing.assert_allclose(np.asarray(g_al).reshape(-1), np.asarray(ca_filt.g_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
     assert np.asarray(g_al).size == loop_cfg.n_slack
     if loop_cfg.n_pairs:
+      assert ca_filt.hess_fn is not None
       args = (z, bar_x, u_des, weights.packed, physics, dt)
       for spec, reference in (
         (sc.factory.SpJac("g", "z"), np.asarray(ca_filt.jac_fn(z, p))),

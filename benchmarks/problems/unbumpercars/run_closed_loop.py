@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from benchmarks.harness.recording import (
 from .common import (
   ClosedLoopConfig,
   FilterConfig,
+  CarPhysics,
   dt_mlp_step_np,
   load_ct_full_weights,
   load_dt_mlp_weights,
@@ -52,8 +54,18 @@ def result_dir(out_dir: Path) -> Path:
   return out_dir / PROBLEM
 
 
-# Plant models, keyed by ClosedLoopConfig.plant. Both take (state, u, dt, weights, physics).
-PLANT_MODELS = {"dt": (load_dt_mlp_weights, dt_mlp_step_np), "ct": (load_ct_full_weights, rk4_step_np)}
+def _plant_model[W](
+  load_weights: Callable[[], W], step: Callable[[np.ndarray, np.ndarray, float, W, CarPhysics], np.ndarray]
+) -> tuple[W, Callable[[np.ndarray, np.ndarray, float, CarPhysics], np.ndarray]]:
+  weights = load_weights()
+
+  def advance(state: np.ndarray, u: np.ndarray, dt: float, physics: CarPhysics) -> np.ndarray:
+    return step(state, u, dt, weights, physics)
+
+  return weights, advance
+
+
+PLANT_MODELS = {"dt": lambda: _plant_model(load_dt_mlp_weights, dt_mlp_step_np), "ct": lambda: _plant_model(load_ct_full_weights, rk4_step_np)}
 
 
 class Simulator:
@@ -62,8 +74,7 @@ class Simulator:
     self.ncars = cfg.ncars
     self.dt = cfg.dt
     self.physics = cfg.physics
-    load_weights, self.plant_step = PLANT_MODELS[cfg.plant]
-    self.plant_weights = load_weights()
+    self.plant_weights, self.plant_step = PLANT_MODELS[cfg.plant]()
     self.target_center = cfg.target_center
     self.nominal_speed = cfg.nominal_speed
 
@@ -78,9 +89,7 @@ class Simulator:
     return np.clip(out, -1.0, 1.0)
 
   def step(self, safe_inputs: np.ndarray) -> np.ndarray:
-    self.states = np.stack(
-      [self.plant_step(state, u, self.dt, self.plant_weights, self.physics) for state, u in zip(self.states, safe_inputs, strict=True)]
-    )
+    self.states = np.stack([self.plant_step(state, u, self.dt, self.physics) for state, u in zip(self.states, safe_inputs, strict=True)])
     return self.states.copy()
 
 

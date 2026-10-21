@@ -9,7 +9,7 @@ import numpy as np
 
 from benchmarks.harness import ROOT, gbench, solver_oracle_name
 from benchmarks.harness.provenance import collect
-from benchmarks.harness.timing import mode_rows
+from benchmarks.harness.timing import ModeSummary, mode_rows
 from benchmarks.harness.recording import (
   CarShape,
   ChainPlan,
@@ -277,7 +277,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
     )
     failed_stats = terminal.stats
     if terminal.oracle_input is not None:
-      np.savez_compressed(output / "failing_solver_inputs.npz", **terminal.oracle_input)
+      np.savez_compressed(output / "failing_solver_inputs.npz", allow_pickle=False, **terminal.oracle_input)
     summary = {
       "problem": "race_cars",
       "solver": solver,
@@ -491,7 +491,7 @@ def run(problem: str, *, smoke: bool, solver: str, oracle: str | None, out_dir: 
   return output
 
 
-def _write_modes(output: Path, summary: dict, *, interpreted: bool) -> None:
+def _write_modes(output: Path, summary: ModeSummary, *, interpreted: bool) -> None:
   rows = mode_rows(summary, interpreted=interpreted)
   with (output / "modes.csv").open("w", newline="") as stream:
     writer = csv.DictWriter(stream, fieldnames=list(rows[0]))

@@ -21,7 +21,7 @@ import pytest
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from typing import Any, cast
+from scaly.function import Tree
 from scaly.ir.expr import topo
 
 NX, NU, NZ = 4, 2, 6
@@ -71,11 +71,15 @@ def stage_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
-def bicycle_eq_function(horizon: int) -> sc.Function:
+def _inputs_tree(horizon: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
+  return sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False)))
+
+
+def bicycle_eq_function(horizon: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
   """Per-stage unrolled transcription, built from `Function.call` on the stage functions."""
 
   @sc.function(
-    sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
+    _inputs_tree(horizon),
     outputs=sc.arg("eq"),
     name=f"bicycle_eq_N{horizon}",
   )
@@ -90,11 +94,11 @@ def bicycle_eq_function(horizon: int) -> sc.Function:
   return fn
 
 
-def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
+def bicycle_eq_function_vmap(horizon: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
   """Same semantics through `sc.vmap`, so the loop survives into the rendered C."""
 
   @sc.function(
-    sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False))),
+    _inputs_tree(horizon),
     outputs=sc.arg("eq"),
     name=f"bicycle_eq_vmap_N{horizon}",
   )
@@ -216,16 +220,16 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
   def rebound(expr: sc.Expr, inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return substitute(expr, dict(zip(as_concrete(fn).inputs, inputs, strict=True)))
 
-  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("colored"), name="bicycle_spjac_colored")
-  def colored_fn(inputs):
+  @sc.function(_inputs_tree(horizon), outputs=sc.arg("colored"), name="bicycle_spjac_colored")
+  def colored_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return rebound(colored.values, inputs)
 
-  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("reference"), name="bicycle_spjac_reference")
-  def reference_fn(inputs):
+  @sc.function(_inputs_tree(horizon), outputs=sc.arg("reference"), name="bicycle_spjac_reference")
+  def reference_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return rebound(reference.values, inputs)
 
-  @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="bicycle_spjac_compare")
-  def compare(inputs):
+  @sc.function(_inputs_tree(horizon), outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="bicycle_spjac_compare")
+  def compare(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     return rebound(colored.values, inputs), rebound(reference.values, inputs)
 
   zv, pv = _sample(horizon, 2)

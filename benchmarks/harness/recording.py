@@ -275,7 +275,8 @@ def _drive_color(rgb: tuple[float, float, float], throttle: float) -> Color:
   """The car's own colour, shaded toward green under drive and red under braking."""
   target = ACCEL_COLOR if throttle >= 0.0 else BRAKE_COLOR
   weight = abs(throttle)
-  return _color(tuple(base * (1.0 - weight) + tip * weight for base, tip in zip(rgb, target, strict=True)), 0.55)  # type: ignore[arg-type]
+  r, g, b = (base * (1.0 - weight) + tip * weight for base, tip in zip(rgb, target, strict=True))
+  return _color((r, g, b), 0.55)
 
 
 def _steered_wheels(shape: CarShape, steer: float) -> list[CubePrimitive]:
@@ -865,18 +866,18 @@ class Recorder:
     return channel
 
   @staticmethod
-  def _log(channel: Channel, model: type[BaseModel], payload: BaseModel | Mapping[str, Any], log_time: int) -> BaseModel:
+  def _log[M: BaseModel](channel: Channel, model: type[M], payload: BaseModel | Mapping[str, Any], log_time: int) -> M:
     validated = model.model_validate(payload)
     channel.log(validated.model_dump(mode="json"), log_time=log_time)
     return validated
 
   def record_metadata(self, metadata: RunMetadata | Mapping[str, Any], *, log_time: int = 0) -> RunMetadata:
-    return self._log(self._metadata, RunMetadata, metadata, log_time)  # type: ignore[return-value]
+    return self._log(self._metadata, RunMetadata, metadata, log_time)
 
   def record_telemetry(self, telemetry: ScalarTelemetry | Mapping[str, Any]) -> ScalarTelemetry:
     validated = ScalarTelemetry.model_validate(telemetry)
     self._telemetry_rows.append(validated)
-    return self._log(self._telemetry, ScalarTelemetry, validated, _log_time(validated.time_s))  # type: ignore[return-value]
+    return self._log(self._telemetry, ScalarTelemetry, validated, _log_time(validated.time_s))
 
   def record_control(self, controls: Sequence[ControlState | Mapping[str, Any]]) -> list[ControlState]:
     validated = [ControlState.model_validate(control) for control in controls]

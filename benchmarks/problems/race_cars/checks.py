@@ -264,7 +264,7 @@ def check_harvested_sqp_globalizations() -> None:
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
-  globalizations = (
+  globalizations: tuple[tuple[str, dict[str, str | int | float], int], ...] = (
     ("filter", {}, 3),
     ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
   )
@@ -434,6 +434,8 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
   from benchmarks.problems.race_cars import closed_loop
   from benchmarks.problems.race_cars.closed_loop import StepRecord, StepTelemetry
 
+  full_inputs = {name: np.full(1, i + 1.0) for i, name in enumerate(("z", "lam_eq", "lam_ineq", "lam_box", "p"))}
+
   def stats(status: ScalySolveStatus, native: int) -> SolverStats:
     return SolverStats(SCALY_SOLVER_STATS_VERSION, status, native, 2, 1.0, 0.01, 0.002, 0.0, 0.006, 0.001, 0.001, 2, 2, 2, 2, 2)
 
@@ -456,26 +458,31 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
       )
     )
     failed_stats = stats(ScalySolveStatus.MAX_ITER, -1)
-    record_step(StepRecord(1, np.ones(NX), np.ones(NX), None, None, reference, {"z": np.ones(1), "p": np.ones(1)}, failed_stats, None))
+    record_step(StepRecord(1, np.ones(NX), np.ones(NX), None, None, reference, failed_inputs, failed_stats, None))
     raise RuntimeError(f"synthetic {solver}+{oracle} failure")
 
-  with tempfile.TemporaryDirectory() as directory, patch.object(closed_loop, "run_episode", fail):
-    tmp_path = Path(directory)
-    try:
-      run_race_cars(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", "race_cars", "--smoke"])
-    except RuntimeError as error:
-      assert "synthetic ipopt+scaly failure" in str(error), str(error)
-    else:
-      raise AssertionError("the failed episode did not raise")
+  for failed_inputs in (full_inputs, {name: full_inputs[name] for name in ("z", "p")}):
+    with tempfile.TemporaryDirectory() as directory, patch.object(closed_loop, "run_episode", fail):
+      tmp_path = Path(directory)
+      try:
+        run_race_cars(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", "race_cars", "--smoke"])
+      except RuntimeError as error:
+        assert "synthetic ipopt+scaly failure" in str(error), str(error)
+      else:
+        raise AssertionError("the failed episode did not raise")
 
-    output = tmp_path / "race_cars" / "ipopt+scaly"
-    data = (output / "episode.mcap").read_bytes()
-    assert data.startswith(b"\x89MCAP0\r\n") and data.endswith(b"\x89MCAP0\r\n")
-    with np.load(output / "rollout.npz") as rollout:
-      assert rollout["state"].shape == (2, NX)
-      assert rollout["control"].shape == (1, NU)
-    summary = json.loads((output / "summary.json").read_text())
-    assert summary["failed_step"] == 1 and summary["status"] == "MAX_ITER" and summary["native_status"] == -1
+      output = tmp_path / "race_cars" / "ipopt+scaly"
+      data = (output / "episode.mcap").read_bytes()
+      assert data.startswith(b"\x89MCAP0\r\n") and data.endswith(b"\x89MCAP0\r\n")
+      with np.load(output / "rollout.npz") as rollout:
+        assert rollout["state"].shape == (2, NX)
+        assert rollout["control"].shape == (1, NU)
+      with np.load(output / "failing_solver_inputs.npz") as saved:
+        assert set(saved.files) == set(failed_inputs)
+        for name, values in failed_inputs.items():
+          np.testing.assert_array_equal(saved[name], values)
+      summary = json.loads((output / "summary.json").read_text())
+      assert summary["failed_step"] == 1 and summary["status"] == "MAX_ITER" and summary["native_status"] == -1
 
 
 def check_closed_loop_uses_fastest_casadi_encoding() -> None:

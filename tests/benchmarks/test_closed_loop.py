@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 import pytest
@@ -11,8 +12,18 @@ from benchmarks.harness.closed_loop import run_chain, run_race_cars
 pytestmark = pytest.mark.solver("ipopt")
 
 
+class SmokeRunner(Protocol):
+  def __call__(self, *, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path: ...
+
+
+if TYPE_CHECKING:
+  runner: SmokeRunner = run_chain
+  runner(smkoe=True, out_dir=Path("."), cli_args=[])  # ty: ignore[unknown-argument, missing-argument]
+  runner = run_race_cars
+
+
 @pytest.mark.parametrize("runner,problem", [(run_chain, "chain"), (run_race_cars, "race_cars")])
-def test_solver_backed_smoke_episode_writes_replay_and_harvest_artifacts(tmp_path: Path, runner, problem: str) -> None:
+def test_solver_backed_smoke_episode_writes_replay_and_harvest_artifacts(tmp_path: Path, runner: SmokeRunner, problem: str) -> None:
   output = runner(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", problem, "--smoke"])
   assert output.name == "ipopt+scaly"
 

@@ -8,6 +8,7 @@ import os
 import platform
 from pathlib import Path
 import subprocess
+from typing import TypedDict
 
 from benchmarks.harness import NATIVE_CFLAGS, compiler_version, math_flags, vector_libm, vector_symbols
 from scaly.codegen.jit import opt_flag
@@ -26,7 +27,15 @@ def _runtime_library(link_library: Path) -> Path:
   return min(matches, key=lambda path: len(path.name)) if matches else link_library
 
 
-def cpu_settings(root: Path = Path("/sys/devices/system/cpu")) -> dict[str, object]:
+class CpuSettings(TypedDict):
+  """Frequency policies, boost state and the process's CPU affinity."""
+
+  policies: dict[str, dict[str, str]]
+  boost_enabled: bool | None
+  affinity: list[int] | None
+
+
+def cpu_settings(root: Path = Path("/sys/devices/system/cpu")) -> CpuSettings:
   """Read frequency policy and boost settings for reproducible timings."""
   policies = {}
   for policy in sorted((root / "cpufreq").glob("policy*")):
@@ -41,7 +50,7 @@ def cpu_settings(root: Path = Path("/sys/devices/system/cpu")) -> dict[str, obje
   return {"policies": policies, "boost_enabled": enabled, "affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None}
 
 
-def require_headline_settings(expected_boost: bool) -> dict[str, object]:
+def require_headline_settings(expected_boost: bool) -> CpuSettings:
   """Reject headline timings without the requested frequency policy."""
   settings = cpu_settings()
   policies = settings["policies"]

@@ -185,7 +185,10 @@ class LeafKey:
   shape: Shape
 
 
-def skeleton(value: object, /) -> Any:
+type Skeleton = LeafKey | tuple[Skeleton, ...]
+
+
+def skeleton(value: object, /) -> Skeleton:
   """Nested ``LeafKey``s: the structure and shapes of a call, which is what binds an instance when
   the declaration does not fix the structure."""
   if isinstance(value, tuple):
@@ -193,20 +196,20 @@ def skeleton(value: object, /) -> Any:
   return LeafKey(leaves(value)[0].shape)
 
 
-def skeleton_of(tree: Tree[Any, Any], shapes: tuple[Shape, ...], /) -> Any:
-  return unflatten(tree, tuple(LeafKey(s) for s in shapes))
+def skeleton_of(tree: Tree[Any, Any], shapes: tuple[Shape, ...], /) -> Skeleton:
+  return cast(Skeleton, unflatten(tree, tuple(LeafKey(s) for s in shapes)))
 
 
-def skeleton_shapes(skel: Any, /) -> tuple[Shape, ...]:
+def skeleton_shapes(skel: Skeleton, /) -> tuple[Shape, ...]:
   if isinstance(skel, tuple):
     return tuple(s for part in skel for s in skeleton_shapes(part))
-  return (cast(LeafKey, skel).shape,)
+  return (skel.shape,)
 
 
-def map_skeleton(skel: Any, f: Callable[[Shape], Shape], /) -> Any:
+def map_skeleton(skel: Skeleton, f: Callable[[Shape], Shape], /) -> Skeleton:
   if isinstance(skel, tuple):
     return tuple(map_skeleton(part, f) for part in skel)
-  return LeafKey(f(cast(LeafKey, skel).shape))
+  return LeafKey(f(skel.shape))
 
 
 def unflatten[S, N](tree: Tree[S, N], values: tuple[Any, ...]) -> Any:
@@ -237,12 +240,12 @@ def check_structure(tree: Tree[Any, Any], value: object, what: str) -> None:
     raise ValueError(f"{what}: expected shapes {tree.shapes} for {tree.names}, got {shapes_of(value)}")
 
 
-def inferred_tree(skel: Any, names: Iterator[str], /) -> Tree[Any, Any]:
+def inferred_tree(skel: Skeleton, names: Iterator[str], /) -> Tree[Any, Any]:
   """A declaration read off a skeleton, with the given leaf names. This is how the bare mode reads its
   inputs; ``flat_tree`` is the real library's analogue."""
   if isinstance(skel, tuple):
     return _Group(tuple(inferred_tree(v, names) for v in skel), public=False)
-  return arg(next(names), cast(LeafKey, skel).shape)
+  return arg(next(names), skel.shape)
 
 
 def inferred_outputs(value: object, name: str, /) -> Tree[Any, Any]:

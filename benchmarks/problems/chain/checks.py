@@ -14,7 +14,7 @@ so this problem can be retired without dropping compiler coverage.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -249,16 +249,16 @@ def check_recorded_scene() -> None:
   record_chain, record_references = recording.ChainRecorder.record_chain, recording.ChainRecorder.record_chain_references
   record_plan = recording.ChainRecorder.record_chain_plan
   controls: list[list[float] | None] = []
-  references: list[dict[str, tuple[float, ...]]] = []
+  recorded_references: list[dict[str, tuple[float, ...]]] = []
   plans: list[tuple[int, int]] = []
 
   def spy_chain(self, points, *, control=None, _seen=controls):  # type: ignore[no-untyped-def]
     _seen.append(None if control is None else list(control.applied))
     return record_chain(self, points, control=control)
 
-  def spy_references(self, refs, _seen=references):  # type: ignore[no-untyped-def]
-    _seen.append({name: tuple(position) for name, position in refs.items()})
-    return record_references(self, refs)
+  def spy_references(self: recording.ChainRecorder, references: Mapping[str, Sequence[float]]) -> None:
+    recorded_references.append({name: tuple(position) for name, position in references.items()})
+    return record_references(self, references)
 
   def spy_plan(self, plan, _seen=plans):  # type: ignore[no-untyped-def]
     logged = record_plan(self, plan)
@@ -275,7 +275,7 @@ def check_recorded_scene() -> None:
     recording.ChainRecorder.record_chain, recording.ChainRecorder.record_chain_references = record_chain, record_references
     recording.ChainRecorder.record_chain_plan = record_plan
 
-  assert references == [{"end-mass reference": END_REF}], references
+  assert recorded_references == [{"end-mass reference": END_REF}], recorded_references
   config = ClosedLoopConfig.smoke()
   assert len(controls) == config.steps + 1, len(controls)
   assert controls[-1] is None, "the final state has no control to draw"

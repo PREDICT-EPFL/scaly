@@ -4,7 +4,7 @@ import numpy as np
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from typing import Any, cast
+from scaly.function import Tree
 from scaly.ad import finite_difference
 
 
@@ -64,9 +64,12 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
-  def build(N: int) -> sc.Function:
+  def inputs_tree(N: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
+    return sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
+
+  def build(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
     @sc.function(
-      sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False))),
+      inputs_tree(N),
       outputs=sc.arg("eq"),
       name=f"race_car_eq_vmap_N{N}",
     )
@@ -88,7 +91,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     pv = rng.normal(size=NX * (N + 1))
 
     # Sanity: the primal numerically matches the unrolled concat-of-call equivalent.
-    @sc.function(cast(Any, as_concrete(fn).input_tree).parts[0], outputs=sc.arg("eq"), name=f"race_car_eq_ref_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"race_car_eq_ref_N{N}")
     def ref(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -145,10 +148,10 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
-  def inputs_tree(N: int):
+  def inputs_tree(N: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
     return sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
 
-  def build_vmap(N: int) -> sc.Function:
+  def build_vmap(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
     @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_vmap_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
@@ -158,7 +161,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
 
     return fn
 
-  def build_unroll(N: int) -> sc.Function:
+  def build_unroll(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
     @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_unroll_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
@@ -234,7 +237,7 @@ def _pair_index_table(bodies: list[int]) -> np.ndarray:
   return np.concatenate([np.arange(NS, dtype=np.int64) + k * NS for k in bodies])
 
 
-def _build_pairs_fn(mapped: bool) -> sc.Function:
+def _build_pairs_fn(mapped: bool) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
   @sc.function(
     sc.group(sc.arg("u", NU * NB + 1), sc.arg("p", sc.TensorType((NS * NB,), diff=False))),
     outputs=sc.arg("h"),
@@ -258,7 +261,10 @@ def _build_pairs_fn(mapped: bool) -> sc.Function:
       body_rows = sc.vmap(pairs_wall, NB)((sc.window(p, 0, NS), sc.window(nxt, 0, NS), sc.window(slack, 0, 0))).vec()
       return sc.concat([pair_rows, body_rows])
     nxt = sc.concat([pairs_step((p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)])) for k in range(NB)])
-    sl = lambda e, k: e[NS * k : NS * (k + 1)]  # noqa: E731
+
+    def sl(e: sc.Expr, k: int) -> sc.Expr:
+      return e[NS * k : NS * (k + 1)]
+
     rows = [pairs_barrier((sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack)) for i, j in PAIRS]
     rows += [pairs_wall((sl(p, k), sl(nxt, k), slack)) for k in range(NB)]
     return sc.concat(rows)

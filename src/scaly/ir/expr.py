@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Iterable, Iterator, Mapping
+from typing import Any, Callable, Generator, Iterable, Mapping
 
 import numpy as np
 
@@ -618,7 +618,7 @@ _PRINT_TRACE: ContextVar[list[Expr] | None] = ContextVar("print_trace", default=
 
 
 @contextmanager
-def recording_prints() -> Iterator[list[Expr]]:
+def recording_prints() -> Generator[list[Expr]]:
   """Collect the prints this thread builds inside the block, for ``check_prints_reach``."""
   prints: list[Expr] = []
   token = _PRINT_TRACE.set(prints)

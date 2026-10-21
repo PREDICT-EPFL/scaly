@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from benchmarks.harness.timing import SolveTiming
+from benchmarks.harness.timing import SolveTiming, SolveTimingSummary
 
 from scaly import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
@@ -69,7 +69,7 @@ class ClosedLoopEpisode:
   oracle_z: np.ndarray
   oracle_p: np.ndarray
   oracle_inputs: tuple[dict[str, np.ndarray], ...]
-  timing: dict[str, object]
+  timing: SolveTimingSummary
 
 
 def extract_positions(state: np.ndarray, n_masses: int) -> np.ndarray:

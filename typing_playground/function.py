@@ -22,7 +22,19 @@ from typing import Any, Protocol, cast, overload
 from . import concrete
 from .concrete import ConcreteFunction, Instance
 from .expr import Buffer, Expr, Shape, ShapeDecl, as_shape
-from .trees import Tree, append_parameter, arg, inferred_tree, map_skeleton, parameter_list, same_structure, skeleton, skeleton_of, skeleton_shapes
+from .trees import (
+  Skeleton,
+  Tree,
+  append_parameter,
+  arg,
+  inferred_tree,
+  map_skeleton,
+  parameter_list,
+  same_structure,
+  skeleton,
+  skeleton_of,
+  skeleton_shapes,
+)
 
 
 def _mangle(name: str, shapes: tuple[Shape, ...]) -> str:
@@ -56,7 +68,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     name = _mangle(self.name, resolved) if self.inputs.has_holes else self.name
     return ConcreteFunction(name, self._fn, self.inputs.with_shapes(resolved), self.outputs, self.name)
 
-  def _build_bare(self, skel: Any) -> Instance:
+  def _build_bare(self, skel: Skeleton) -> Instance:
     shapes = skeleton_shapes(skel)
     inputs = inferred_tree(skel, (f"in{i}" for i in range(len(shapes))))
     return ConcreteFunction(_mangle(self.name, shapes), self._fn, inputs, None, self.name)
@@ -79,7 +91,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       self.instances[resolved] = got
     return got
 
-  def _bind(self, skel: Any, what: str) -> Instance:
+  def _bind(self, skel: Skeleton, what: str) -> Instance:
     """The instance for a call skeleton: checked against the declared inputs, or, in the bare mode,
     cached under the skeleton and read off it."""
     if self.inputs is None:
@@ -206,7 +218,7 @@ class _Derived(Function[Any, Any, Any, Any]):
     inputs: Tree[Any, Any] | None,
     outputs: Tree[Any, Any] | None,
     transform: Callable[[Instance], Instance],
-    source_skeleton: Callable[[Any], Any],
+    source_skeleton: Callable[[Skeleton], Skeleton],
     *,
     name: str,
   ) -> None:
@@ -215,7 +227,7 @@ class _Derived(Function[Any, Any, Any, Any]):
     self._source_skeleton = source_skeleton
     super().__init__(name, source._fn, inputs, outputs)
 
-  def _derive(self, skel: Any) -> Instance:
+  def _derive(self, skel: Skeleton) -> Instance:
     fn = self._transform(self._source._bind(self._source_skeleton(skel), self.name))
     if skeleton_of(fn.inputs, fn.input_shapes) != skel:
       raise ValueError(f"{self.name}: bound with shapes {skeleton_shapes(skel)}, but the transform's inputs are {fn.input_shapes}")
@@ -225,7 +237,7 @@ class _Derived(Function[Any, Any, Any, Any]):
     assert self.inputs is not None
     return self._derive(skeleton_of(self.inputs, resolved))
 
-  def _build_bare(self, skel: Any) -> Instance:
+  def _build_bare(self, skel: Skeleton) -> Instance:
     return self._derive(skel)
 
 
@@ -236,7 +248,7 @@ def lift[SI, NI, SO, NO](
   transform: Callable[[Instance], Instance],
   *,
   name: str,
-  source_skeleton: Callable[[Any], Any] = lambda skel: skel,
+  source_skeleton: Callable[[Skeleton], Skeleton] = lambda skel: skel,
 ) -> Function[SI, NI, SO, NO]:
   """The one mechanism every transform uses: the declared trees give the static types, with holes
   where the source has them and ``None`` where its structure is only known at binding, and
@@ -244,8 +256,8 @@ def lift[SI, NI, SO, NO](
   return cast(Function[SI, NI, SO, NO], _Derived(source, inputs, outputs, transform, source_skeleton, name=name))
 
 
-def _without_seed(skel: Any) -> Any:
-  return skel[:-1]
+def _without_seed(skel: Skeleton) -> Skeleton:
+  return cast(tuple[Skeleton, ...], skel)[:-1]
 
 
 def _declared(fn: Function[Any, Any, Any, Any], of: str | None, wrt: str | None) -> tuple[Tree[Any, Any] | None, Tree[Any, Any] | None]:

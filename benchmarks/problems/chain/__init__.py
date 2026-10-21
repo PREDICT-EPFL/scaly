@@ -375,6 +375,7 @@ def _ca_eq(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False, call
   step = _ca_dynamics(n_masses, sym_t) if map_stages or call_stages else None
   parts = [z[:nx] - p[:nx]]
   if map_stages:
+    assert step is not None
     stages = ca.reshape(z[: horizon * nz], nz, horizon)
     xnext = ca.horzcat(*[z[(i + 1) * nz : (i + 1) * nz + nx] for i in range(horizon)])
     mapped = step.map(horizon, "serial")(stages[:nx, :], stages[nx:, :], ca.repmat(p[nx:], 1, horizon))
