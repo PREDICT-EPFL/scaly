@@ -1,6 +1,6 @@
 # Typing audit, 2026-10-21
 
-This note records the audit before the follow-up implementation. The maintainer approved the improvements in sections 1 through 6, which are implemented on this branch. Section 7 is a separate change to be kept uncommitted after the main improvements are pushed. The larger GitHub issues remain out of scope.
+This note records the audit that led to the Ruff/ty update and the typing improvements in sections 1 through 6. Section 7 remains a separate API decision. The larger GitHub issues remain out of scope.
 
 The follow-up adds a variadic group overload, so the temporary explicit declarations in the nested-group test are no longer needed. That test uses its original generated declarations and tuple slices again.
 
@@ -14,11 +14,11 @@ The old strict type check passed before the upgrade. The new version reported si
 - The print and visualization context managers return `Generator` in their annotations.
 - The HTTP handler casts its server at the point that needs `VizServer`, instead of narrowing an inherited mutable attribute.
 - The mask test gives `sum` an array start value.
-- The nested-group test spells out its fixed declarations because ty resolves a star-unpacked iterable against `group`'s one-argument overload and infers one-element groups. It also spells out the numerical argument structure so the tuple lengths are known.
+- Variadic `group` overloads avoid the false one-element inference for star-unpacked iterables. The nested-group test retains its original generated declarations and tuple slices.
 
 Ruff's newer defaults reported 385 findings across the repository. The configuration now explicitly selects the previous `E4`, `E7`, `E9`, `F` rules and retains the existing `E731` exclusion. Formatting required no repository-wide changes.
 
-Validation passed: Ruff lint and format, `ty check --error-on-warning`, the same type check targeting Python 3.12 and 3.13, and `uv lock --check`. The full suite completed with 1,557 passed and 13 skipped on macOS with Python 3.14.6. The focused pass, visualization, and differentiation tests also passed.
+Validation passed: Ruff lint and format, `ty check --error-on-warning`, the same type check targeting Python 3.12 and 3.13, and `uv lock --check`. The full suite completed with 1,558 passed and 13 skipped on macOS with Python 3.14.6. The benchmark smoke and documentation build passed. The focused pass, visualization, and differentiation tests also passed.
 
 ## Recommended order
 
@@ -73,7 +73,9 @@ The playground has a smaller version of the same problem. `typing_playground/tre
 
 The independent reviewer checked the original nested-group test and reproduced a public typing problem in `src/scaly/function/tree.py::group`. Ty infers `Tree[tuple[Expr], tuple[Array]]` for `sc.group(*(sc.arg(f"x{i}", 1) for i in range(8)))`. The runtime group contains eight leaves, so the inferred one-element structure is wrong and rejects correct calls. The original test's only diagnostic was at its numerical call; declaration construction itself passed.
 
-Investigate an overload for dynamically sized groups that preserves the known leaf types without asserting a false tuple length. Keep exact inference for explicit fixed groups and keep the runtime width limit. Add a static reproduction for `sc.group(*parts)` alongside the existing exact-width assertions. Until that is resolved, spelling fixed declarations explicitly is preferable to casting away errors at their call sites. This is a separate library improvement, not a reason to weaken the updated test.
+The implemented overloads retain the element types of homogeneous dynamic groups. A broader fallback handles dynamic mixtures of leaves and nested groups without claiming a false fixed length. Accepting dynamically sized iterables also means that nine or more explicit arguments now pass the static check. The runtime limit of one to eight children remains enforced. Valid explicit groups retain their exact tuple types.
+
+The benchmark smoke also exposed a separate public typing limitation: a solver built inside a symbolic body with captured parameters has `Any` parameter types and can select the numerical call overload statically. Explicit solver and symbolic-parameter annotations keep those benchmark callers checked. Improving inference for captured parameters remains separate work.
 
 ### 7. Align numerical input annotations with accepted values
 

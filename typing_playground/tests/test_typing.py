@@ -40,9 +40,13 @@ from typing_playground.tests.definitions import (
   step,
   step_flat,
 )
-from typing_playground.trees import Tree, arg, group
+from typing_playground.trees import LeafKey, Skeleton, Tree, arg, group, map_skeleton, skeleton_shapes
 
 if TYPE_CHECKING:
+  assert_type(skeleton_shapes((LeafKey((2,)), LeafKey(()))), tuple[tuple[int, ...], ...])
+  assert_type(map_skeleton(LeafKey((2,)), lambda shape: (3, *shape)), Skeleton)
+  skeleton_shapes("not a skeleton")  # ty: ignore[invalid-argument-type]
+
   # declarations: the count of a group is static, and only trees may be grouped
   arg("x", "3")  # ty: ignore[invalid-argument-type]
   group()  # ty: ignore[no-matching-overload]

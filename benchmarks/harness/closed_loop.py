@@ -277,7 +277,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
     )
     failed_stats = terminal.stats
     if terminal.oracle_input is not None:
-      np.savez_compressed(output / "failing_solver_inputs.npz", z=terminal.oracle_input["z"], p=terminal.oracle_input["p"])
+      np.savez_compressed(output / "failing_solver_inputs.npz", allow_pickle=False, **terminal.oracle_input)
     summary = {
       "problem": "race_cars",
       "solver": solver,

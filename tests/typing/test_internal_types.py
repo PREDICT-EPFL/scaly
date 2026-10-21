@@ -7,7 +7,6 @@ from scaly.ad.forward import _jvp
 from scaly.ad.helpers import HelperKey
 from scaly.codegen.jit import CompiledFunction
 from scaly.function.concrete import ConcreteFunction, _Memo
-from typing_playground.trees import LeafKey, Skeleton, map_skeleton, skeleton_shapes
 
 
 if TYPE_CHECKING:
@@ -24,6 +23,3 @@ if TYPE_CHECKING:
     memo.helpers[key] = (function, (0,), (0,))
     memo.helpers[key] = (function, "not indices", (0,))  # ty: ignore[invalid-assignment]
     memo.helpers["not a key"] = (function, (0,), (0,))  # ty: ignore[invalid-assignment]
-    assert_type(skeleton_shapes((LeafKey((2,)), LeafKey(()))), tuple[tuple[int, ...], ...])
-    assert_type(map_skeleton(LeafKey((2,)), lambda shape: (3, *shape)), Skeleton)
-    skeleton_shapes("not a skeleton")  # ty: ignore[invalid-argument-type]

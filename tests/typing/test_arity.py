@@ -86,6 +86,7 @@ if TYPE_CHECKING:
   assert_type(sc.group(*parts), Tree[tuple[sc.Expr, ...], tuple[np.ndarray, ...]])
   assert_type(sc.group(*(sc.arg(f"part{i}", 1) for i in range(8))), Tree[tuple[sc.Expr, ...], tuple[np.ndarray, ...]])
   assert_type(sc.group(*(sc.arg("a", 1), sc.arg("b", 1))), Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]])
+  assert_type(sc.group(sc.group(sc.arg("nested", 1)), *parts), Tree[tuple[Any, ...], tuple[Any, ...]])
   sc.group()  # ty: ignore[no-matching-overload]
 
   @sc.function(sc.group(*parts), outputs=sc.arg("out"))

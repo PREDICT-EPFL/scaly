@@ -49,9 +49,10 @@ The annotations describe the symbolic body and let an IDE's type checker compare
 its parameter and return types with the declarations. They are optional and do
 not change evaluation. Array shapes remain runtime checks.
 
-Explicit arguments to `sc.group` preserve the exact tuple type. With declarations
-generated in a list or generator and passed as `sc.group(*parts)`, the tuple's
-length is not known statically, but its leaf types are still checked.
+Explicit arguments to `sc.group` preserve the exact tuple type. For a list or
+generator of leaf declarations, `sc.group(*parts)` retains the leaf type but not
+a fixed tuple length. Dynamically mixing leaves and nested groups loses the
+element types as well.
 
 The shape after a name describes the array:
 
