@@ -14,6 +14,7 @@ import os
 import platform
 import shlex
 import subprocess
+import sysconfig
 from functools import lru_cache
 import shutil
 from dataclasses import dataclass
@@ -153,14 +154,17 @@ def cache_root() -> Path:
 
 
 def find_c_compiler() -> Compiler | None:
-  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
+  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``zig-bin`` or ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
 
-  Returns the compiler command and which of those four supplied it, or ``None`` if nothing is found.
+  ``zig-bin`` installs ``zig`` into the environment's scripts directory, ``ziglang`` inside its package.
+  Returns the compiler command and which of those settings supplied it, or ``None`` if nothing is found.
   """
   override = os.environ.get("SCALY_CC")
   if override:
     found = shutil.which(override)
     return Compiler((found,), "SCALY_CC") if found is not None else None
+  if (zig := shutil.which("zig", path=sysconfig.get_path("scripts"))) is not None:
+    return Compiler((zig, "cc"), "zig-bin")
   spec = importlib.util.find_spec("ziglang")
   if spec is not None and spec.origin is not None and (zig := shutil.which("zig", path=str(Path(spec.origin).parent))) is not None:
     return Compiler((zig, "cc"), "ziglang")

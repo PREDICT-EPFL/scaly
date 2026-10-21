@@ -28,12 +28,16 @@ Python wheel does not by itself require Microsoft Visual C++ (MSVC) or a separat
 
 ## Decisions
 
-Keep #82 and use `ziglang==0.16.0` as the initial shared compiler version across supported
-platforms. Pin the toolchain extra, and use the same version for the Windows dependency when its
-package metadata ships.
-Upgrade after package availability and the compiler and solver checks pass. An unpinned Windows
-install can currently select 0.16.0 itself, but a deliberate pin also fixes the compiler used for
-validation and avoids depending on installer behavior across platforms.
+Keep #82 and use Zig 0.17 as the shared compiler version across supported platforms, from the
+[`zig-bin`](https://pypi.org/project/zig-bin/) package, which has Windows x86-64 and ARM64 wheels
+for 0.17.0 but no Intel macOS wheel. Intel macOS takes `ziglang==0.17.*` instead, which has that
+wheel. The toolchain extra pins both with platform markers, Scaly discovers either, and the Windows
+dependency uses the same `zig-bin` pin when its package metadata ships. A deliberate pin fixes the
+compiler used for validation and avoids depending on installer behavior across platforms. Upgrade
+after package availability and the compiler and solver checks pass.
+
+Revised on 2026-10-21: this replaced `ziglang==0.16.0` everywhere, so the compiler is the current
+Zig release on every platform rather than one held back by `ziglang`'s missing Windows wheels.
 
 Keep #84 as the shared parent for #82 and the Windows work. Its initial Windows scope is the
 core, `scaly-piqp` and `scaly-sqp` on native Windows x86-64. ARM64 and 32-bit Windows wait for
@@ -65,7 +69,7 @@ also requires an initialized build environment. Prefer one tested Windows toolch
 
 ## What the Windows machine should settle
 
-Start with a small standalone C dynamic-link library (DLL) compiled with the 0.16 wheel and
+Start with a small standalone C dynamic-link library (DLL) compiled with the `zig-bin` 0.17 wheel and
 loaded through `ctypes`. Exercise Scaly's pointer entry signature, explicit exports and math calls
 from an ordinary Python process without a Visual Studio developer environment. Measure a fresh
 Zig cache separately from later compiles. Cross-compilation cannot establish this result.

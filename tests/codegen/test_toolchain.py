@@ -93,7 +93,7 @@ def test_env_registry_mentions_native_build_controls() -> None:
   assert "SCALY_BUILD_SOLVERS" in names
 
 
-def test_compiler_order_prefers_ziglang_after_scaly_cc(tmp_path, monkeypatch, capsys) -> None:
+def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys) -> None:
   from scaly.codegen import toolchain
 
   def fake_cc(name: str) -> str:
@@ -106,6 +106,7 @@ def test_compiler_order_prefers_ziglang_after_scaly_cc(tmp_path, monkeypatch, ca
   monkeypatch.delenv("SCALY_CC", raising=False)
   monkeypatch.delenv("CC", raising=False)
   monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+  monkeypatch.setattr(toolchain.sysconfig, "get_path", lambda name: str(tmp_path / "scripts"))
   real_find_spec = importlib.util.find_spec
   monkeypatch.setattr(toolchain.importlib.util, "find_spec", lambda name: None)
   assert toolchain.find_c_compiler() is None
@@ -125,21 +126,26 @@ def test_compiler_order_prefers_ziglang_after_scaly_cc(tmp_path, monkeypatch, ca
   monkeypatch.setattr(toolchain, "native_recipe", lambda command: toolchain.BuildRecipe())
   toolchain.main()
   assert f"cc: {zig} cc (ziglang)" in capsys.readouterr().out
+  scripts_zig = tmp_path / "scripts" / "zig"
+  scripts_zig.parent.mkdir()
+  scripts_zig.write_text("#!/bin/sh\n")
+  scripts_zig.chmod(0o755)
+  assert toolchain.find_c_compiler() == toolchain.Compiler((str(scripts_zig), "cc"), "zig-bin")
   monkeypatch.setenv("SCALY_CC", fake_cc("from-scaly-cc"))
   assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["SCALY_CC"],), "SCALY_CC")
 
 
-def test_ziglang_compiles_a_jit_function(tmp_path, monkeypatch) -> None:
-  ziglang = pytest.importorskip("ziglang")
+def test_toolchain_extra_compiles_a_jit_function(tmp_path, monkeypatch) -> None:
   import numpy as np
   import scaly as sc
   from scaly.codegen import toolchain
 
   monkeypatch.delenv("SCALY_CC", raising=False)
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
-  assert toolchain.find_c_compiler() == toolchain.Compiler(
-    (str(toolchain.shutil.which("zig", path=os.path.dirname(ziglang.__file__))), "cc"), "ziglang"
-  )
+  compiler = toolchain.find_c_compiler()
+  if compiler is None or compiler.source not in ("zig-bin", "ziglang"):
+    pytest.skip("the toolchain extra is not installed")
+  assert compiler.command[1:] == ("cc",)
 
   @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="zig_jit")
   def fn(x):
