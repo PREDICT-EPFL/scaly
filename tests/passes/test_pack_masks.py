@@ -8,6 +8,8 @@ import subprocess
 import numpy as np
 import pytest
 
+import scaly as sc
+
 from scaly.ir import program as p
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import dtypes
@@ -189,3 +191,25 @@ def test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values(tmp
   # A NaN reaches the entries whose bit is set and no others, where 0 * NaN would have spread it.
   assert np.isnan(expected).any() and np.isnan(product).sum() > np.isnan(expected).sum()
   _assert_identical(_run(prog, tmp_path, lanes, x, expected.size), expected)
+
+
+@pytest.mark.parametrize("shape", [(2, 0), (0, 2), (0, 0)])
+def test_empty_mask_loops_are_unchanged(shape):
+  mask = p.const_buffer("mask", dtypes.float64, shape, [])
+  x = p.buffer("x", dtypes.float64, (0,))
+  y = p.buffer("y", dtypes.float64, (0,))
+  i = p.var("i")
+  value = p.mul(p.load(p.view(mask, [i])), p.load(p.view(x, [i])))
+  loop = p.for_(p.range_("i", 0, 0), [p.store(p.view(y, [i]), value)])
+  prog = p.program([p.proc("empty_mask", [x, y], [mask, loop])])
+  assert pack_masks(prog) is prog
+
+
+def test_empty_reverse_matches_numpy():
+  @sc.function(sc.arg("x", (2, 0)), outputs=sc.arg("dx"))
+  def empty_reverse(x):
+    return sc.vjp((x.sin(),), (x,), (sc.const(np.empty((2, 0))),))[0]
+
+  x = np.empty((2, 0))
+  result = empty_reverse(x)
+  np.testing.assert_array_equal(result, np.cos(x) * np.empty((2, 0)))
