@@ -333,7 +333,7 @@ def test_covered_function_renders_through_program_ir(builder, inputs) -> None:
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("builder, inputs", _CORPUS, ids=[b.__name__ for b, _ in _CORPUS])
-def test_program_ir_jit_executes(builder, inputs) -> None:
+def test_program_ir_jit_executes(builder, inputs, isolated_cache) -> None:
   fn = builder()
   # Gate first so a coverage gap errors here loudly (there is no fallback).
   render_program_c_source(fn)
@@ -359,7 +359,7 @@ _MATMUL_CASES = {
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("name", _MATMUL_CASES)
-def test_matmul_lowering_matches_numpy_exactly(name) -> None:
+def test_matmul_lowering_matches_numpy_exactly(name, isolated_cache) -> None:
   """Integer-valued inputs keep every product and partial sum exact, so the check is exact in any summation order."""
   sa, sb, product = _MATMUL_CASES[name]
 
@@ -376,7 +376,7 @@ def test_matmul_lowering_matches_numpy_exactly(name) -> None:
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
-def test_transpose_fold_is_bit_identical_to_the_transposed_product() -> None:
+def test_transpose_fold_is_bit_identical_to_the_transposed_product(isolated_cache) -> None:
   """Both forms sum each output's terms in the same k order, so folding the transpose changes no bit."""
   rng = np.random.default_rng(1)
   av, vv, wv = rng.standard_normal((32, 12)), rng.standard_normal(32), rng.standard_normal(12)
@@ -419,7 +419,7 @@ def _import_sibling(name):
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("kind", ["forward", "jacobian", "sparse_jacobian"])
-def test_stage_transcription_renders_and_matches(kind) -> None:
+def test_stage_transcription_renders_and_matches(kind, isolated_cache) -> None:
   tw = _import_sibling("test_stage_transcription")
   base = tw.bicycle_eq_function(3)
   fn = {

@@ -485,7 +485,7 @@ def test_user_callee_named_like_a_forward_helper_stays_inline() -> None:
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric spill check")
-def test_spilled_function_matches_numpy() -> None:
+def test_spilled_function_matches_numpy(isolated_cache) -> None:
   """End-to-end: a function whose temporaries spill to w[] still computes correctly (the JIT
   allocates w from the rendered sz_w and passes it through)."""
 
