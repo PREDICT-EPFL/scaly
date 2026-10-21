@@ -99,7 +99,7 @@ def _layout(stmt: ProgramNode, masks: dict[str, ProgramNode]) -> tuple[_Layout, 
   rng, store = stmt.args
   start, stop, step = (a.attrs.get("value") if a.op == ProgramOp.CONST_INT else None for a in rng.args)
   name = rng.attrs["name"]
-  if start != 0 or step != 1 or stop is None or store.op != ProgramOp.STORE:
+  if start != 0 or step != 1 or stop is None or stop <= 0 or store.op != ProgramOp.STORE:
     return None
   target, value = store.args
   if not (target.args[0].op == ProgramOp.VAR and target.args[0].attrs["name"] == name) or not value.dtype.is_floating:

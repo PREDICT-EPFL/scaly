@@ -1124,6 +1124,10 @@ tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonf
 tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values[4]
 tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values[8]
 tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values[scalar]
+tests/passes/test_pack_masks.py::test_empty_mask_loops_are_unchanged[shape0]
+tests/passes/test_pack_masks.py::test_empty_mask_loops_are_unchanged[shape1]
+tests/passes/test_pack_masks.py::test_empty_mask_loops_are_unchanged[shape2]
+tests/passes/test_pack_masks.py::test_empty_reverse_matches_numpy
 tests/passes/test_pack_masks.py::test_ineligible_tables_and_loops_are_left_alone[index_not_periodic]
 tests/passes/test_pack_masks.py::test_ineligible_tables_and_loops_are_left_alone[negative_dividend]
 tests/passes/test_pack_masks.py::test_ineligible_tables_and_loops_are_left_alone[not_zero_one]
