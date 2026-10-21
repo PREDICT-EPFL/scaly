@@ -7,6 +7,7 @@ module reads it for the report and nothing else depends on that direction.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -176,8 +177,7 @@ def _zig_bin_executable() -> str | None:
     dist = importlib.metadata.distribution("zig-bin")
   except importlib.metadata.PackageNotFoundError:
     return None
-  for line in (dist.read_text("RECORD") or "").splitlines():
-    path = line.split(",", 1)[0]
+  for path, *_ in csv.reader((dist.read_text("RECORD") or "").splitlines()):
     if path.endswith(("bin/zig", "Scripts/zig.exe")):
       return shutil.which(os.path.normpath(str(dist.locate_file(path))))
   return None

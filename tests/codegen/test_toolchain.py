@@ -135,11 +135,11 @@ def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys
   info = tmp_path / "site" / "zig_bin-0.17.0.dist-info"
   info.mkdir()
   (info / "METADATA").write_text("Metadata-Version: 2.1\nName: zig-bin\nVersion: 0.17.0\n")
-  bin_zig = tmp_path / "env" / "bin" / "zig"
+  bin_zig = tmp_path / "my,env" / "bin" / "zig"
   bin_zig.parent.mkdir(parents=True)
   bin_zig.write_text("#!/bin/sh\n")
   bin_zig.chmod(0o755)
-  (info / "RECORD").write_text("zig_bin-0.17.0.dist-info/METADATA,,\n../env/bin/zig,,\n")
+  (info / "RECORD").write_text('zig_bin-0.17.0.dist-info/METADATA,,\n"../my,env/bin/zig",,\n')
   importlib.invalidate_caches()
   assert toolchain.find_c_compiler() == toolchain.Compiler((str(bin_zig), "cc"), "zig-bin")
   monkeypatch.setenv("SCALY_CC", fake_cc("from-scaly-cc"))
