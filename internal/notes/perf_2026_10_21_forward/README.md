@@ -1,5 +1,9 @@
 # Forward traversal refresh, October 21
 
+After the prerequisite squash merges and #189/#158, #166 now targets main in stack #192. The normal hook passes with the preferred zig JIT compiler: 2446 tests pass and only the two existing power cases remain expected failures. No #188 expected-failure markers remain. Correctness smoke accepts the new compiler while measured closed-loop runs retain their compiler guard; a short independent review approved that integration fix.
+
+The measurements below are retained Clang 20.1.8 C sweep results, not zig JIT timings. The current protocol still uses Clang for sweeps and GCC for measured vector-math closed loops. No new timing study was run for the rebase. The later section about #188 records the historical pre-fix validation limit; the complete-pipeline hook result above supersedes that blocker.
+
 This refresh measures #166 after main's compact lane helpers and bit-packed seed selectors. The control is main `fd427d2811935f6cb1478304b53990db21621031`. The stack base is the refreshed #18 pull request, #165. [comparison.md](comparison.md) contains generated-source bytes, generation time, native runtime and workspace for current main, the rebased traversal and the retained fixes, plus all rejected candidates. Run `uv run internal/notes/perf_2026_10_21_forward/compare.py` to reproduce that table from the raw rows.
 
 ## Method and retained attempts
