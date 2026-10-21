@@ -124,6 +124,23 @@ def native_recipe(command: tuple[str, ...]) -> BuildRecipe:
   return BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
 
 
+@lru_cache(maxsize=8)
+def no_gather_flags(command: tuple[str, ...]) -> tuple[str, ...]:
+  """Flags that stop a Clang-family compiler from vectorizing strided loads into x86 gathers.
+
+  LLVM turns the generated matrix-vector loops into AVX-512 gathers, which made closed-loop function
+  evaluation up to 1.5x slower than gcc's scalar loops on Zen 4. ``zig cc`` ignores ``-mno-gather``
+  and takes the tuning as CPU features instead; a clang too old for the flags gets none.
+  """
+  macros = _native_macros(command)
+  if "__clang__" not in macros or "__x86_64__" not in macros:
+    return ()
+  if Path(command[0]).stem == "zig":
+    return ("-mcpu=native+prefer_no_gather+prefer_no_scatter",)
+  flags = ("-mno-gather", "-mno-scatter")
+  return flags if subprocess.run([*command, *flags, "-E", "-x", "c", "-"], input="", capture_output=True).returncode == 0 else ()
+
+
 def compiler_fingerprint(command: tuple[str, ...]) -> str:
   """Hash what decides the machine code ``command`` emits on this host, for the JIT cache key.
 

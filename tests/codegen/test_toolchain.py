@@ -155,6 +155,27 @@ def test_toolchain_extra_compiles_a_jit_function(tmp_path, monkeypatch) -> None:
   np.testing.assert_allclose(fn(xv), np.sin(xv) * xv)
 
 
+@pytest.mark.parametrize(
+  "command,macros,accepts,expected",
+  [
+    (("/usr/bin/gcc",), "#define __x86_64__ 1\n", True, ()),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", True, ("-mno-gather", "-mno-scatter")),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", False, ()),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __aarch64__ 1\n", True, ()),
+    (("/env/bin/zig", "cc"), "#define __clang__ 1\n#define __x86_64__ 1\n", True, ("-mcpu=native+prefer_no_gather+prefer_no_scatter",)),
+  ],
+  ids=["gcc", "clang", "old-clang", "clang-aarch64", "zig"],
+)
+def test_no_gather_flags_target_clang_on_x86(monkeypatch, command, macros: str, accepts: bool, expected) -> None:
+  from scaly.codegen import toolchain
+
+  toolchain.no_gather_flags.cache_clear()
+  monkeypatch.setattr(toolchain, "_native_macros", lambda command: macros)
+  monkeypatch.setattr(toolchain.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 0 if accepts else 1, "", ""))
+  assert toolchain.no_gather_flags(command) == expected
+  toolchain.no_gather_flags.cache_clear()
+
+
 def test_build_recipe_validates_render_controls() -> None:
   from scaly.codegen.toolchain import BuildRecipe
 

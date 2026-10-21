@@ -32,7 +32,10 @@ not silently try another compiler.
 
 `SCALY_CC_OPT=-O3` selects a different optimization level. It is a single
 compiler argument, not a space-separated list of flags. Scaly also adds
-`-march=native`, or `-mcpu=native` on AArch64, and `-fno-math-errno`.
+`-march=native`, or `-mcpu=native` on AArch64, and `-fno-math-errno`. With
+Clang on x86-64 it adds `-mno-gather -mno-scatter`, and with `zig cc` the same
+setting as CPU features, because vector gather loads made the generated
+matrix-vector loops slower than scalar code.
 
 The Python compiler detects a fixed lane width for the native CPU. On supported x86-64 hosts
 with glibc 2.35 or newer, it also selects the libmvec vector math library. `SCALY_VECTOR_LIBM=none`

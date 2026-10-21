@@ -352,7 +352,8 @@ with glibc 2.35 or newer. On such a machine the rendered recipe reads:
 
 The compiler commands in the recipe are for building an exported module
 ahead of time. The JIT itself compiles with `-O2 -march=native -fno-math-errno`, or with
-`SCALY_CC_OPT` in place of `-O2`, followed by `-fPIC -shared`, the solver
+`SCALY_CC_OPT` in place of `-O2`, then, with Clang or `zig cc` on x86-64, the flags that turn off
+vector gather loads, followed by `-fPIC -shared`, the solver
 include, library and `rpath` flags, `-lmvec` when selected, and `-lm`.
 
 ### The cache key
