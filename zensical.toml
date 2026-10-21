@@ -1,6 +1,6 @@
 [project]
 site_name = "scaly"
-site_description = "A symbolic compiler for optimal control: write models in Python, ship them as C"
+site_description = "Make your optimal control problems scale"
 repo_url = "https://github.com/PREDICT-EPFL/scaly"
 repo_name = "PREDICT-EPFL/scaly"
 extra_css = ["stylesheets/extra.css"]
