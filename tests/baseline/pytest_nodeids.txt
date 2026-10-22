@@ -2525,6 +2525,10 @@ tests/test_import_layering.py::test_no_upward_imports
 tests/test_import_layering.py::test_recorded_exceptions_still_exist
 tests/test_import_layering.py::test_tolerated_violations_are_still_violations
 tests/test_op_coverage.py::test_every_expr_op_is_classified_in_every_pass
+tests/test_solver_requirements.py::test_required_solver_collection[1-ipopt-True]
+tests/test_solver_requirements.py::test_required_solver_collection[piqp,sqp-ipopt-False]
+tests/test_solver_requirements.py::test_required_solver_collection[piqp,sqp-piqp-True]
+tests/test_solver_requirements.py::test_required_solver_collection[piqp,sqp-sqp-True]
 tests/typing/test_distribution.py::test_package_includes_type_marker
 tests/utils/test_names.py::test_c_identifier_spelling[1value-_1value]
 tests/utils/test_names.py::test_c_identifier_spelling[_h0-_h0]
