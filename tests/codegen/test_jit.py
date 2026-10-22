@@ -80,13 +80,14 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache: Path) -> None:
   cache_dir = lib_path.parent
   fn.recompile()
   assert as_concrete(fn)._memo.compiled is None
-  if sys.platform != "win32":
-    assert not cache_dir.exists()
+  # Windows cannot delete the loaded DLL, so recompilation keeps it and compiles to another path.
+  assert cache_dir.exists() == (sys.platform == "win32")
   xv = np.array([0.5, 0.0, -1.0])
   out = fn(xv)
   np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
-  if sys.platform == "win32":
-    assert as_concrete(fn)._memo.compiled.lib_path != lib_path
+  recompiled = as_concrete(fn)._memo.compiled
+  assert recompiled is not None
+  assert (recompiled.lib_path != lib_path) == (sys.platform == "win32")
 
 
 def test_jit_handles_multi_output(isolated_cache: Path) -> None:
@@ -243,6 +244,7 @@ def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
   from scaly.codegen.toolchain import BuildRecipe
 
   monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  monkeypatch.setattr(jit, "no_gather_flags", lambda _compiler: ())
   fun = as_concrete(_simple_fn())
   keys = []
   for lanes, vector_libm in ((1, "none"), (4, "none"), (4, "glibc")):

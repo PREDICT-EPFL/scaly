@@ -5,7 +5,7 @@ rendering decisions of its own.
 
 - ``SCALY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/scaly/jit``
   or ``~/.cache/scaly/jit``).
-- ``SCALY_CC`` overrides the C compiler binary (default: ``zig cc`` from the ``zig-bin`` or ``ziglang`` package,
+- ``SCALY_CC`` overrides the C compiler command (default: ``zig cc`` from the ``zig-bin`` or ``ziglang`` package,
   then ``CC``, then ``cc`` from ``$PATH``).
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.

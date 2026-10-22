@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -29,15 +30,17 @@ def two_solver_backends(monkeypatch):
 
 @pytest.mark.parametrize("setting", ["SCALY_CC", "CC"])
 def test_compiler_command_accepts_zig_subcommand(tmp_path, monkeypatch, setting) -> None:
-  from scaly.codegen.toolchain import find_c_compiler
+  from scaly.codegen import toolchain
 
   executable = tmp_path / "compiler tools" / ("zig.exe" if sys.platform == "win32" else "zig")
   executable.parent.mkdir()
   executable.write_text("")
   executable.chmod(0o755)
   monkeypatch.delenv("SCALY_CC", raising=False)
+  monkeypatch.setattr(toolchain, "_zig_bin_executable", lambda: None)
+  monkeypatch.setattr(toolchain.importlib.util, "find_spec", lambda name: None)
   monkeypatch.setenv(setting, f'"{executable}" cc')
-  compiler = find_c_compiler()
+  compiler = toolchain.find_c_compiler()
   assert compiler is not None
   assert compiler.command == (str(executable), "cc")
   assert compiler.source == setting
@@ -141,8 +144,10 @@ def test_env_registry_mentions_native_build_controls() -> None:
 def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys) -> None:
   from scaly.codegen import toolchain
 
+  exe = ".exe" if sys.platform == "win32" else ""
+
   def fake_cc(name: str) -> str:
-    path = tmp_path / "bin" / name
+    path = tmp_path / "bin" / f"{name}{exe}"
     path.parent.mkdir(exist_ok=True)
     path.write_text("#!/bin/sh\n")
     path.chmod(0o755)
@@ -151,6 +156,7 @@ def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys
   monkeypatch.delenv("SCALY_CC", raising=False)
   monkeypatch.delenv("CC", raising=False)
   monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+  monkeypatch.setenv("PATHEXT", exe)
   real_zig_bin = toolchain._zig_bin_executable
   monkeypatch.setattr(toolchain, "_zig_bin_executable", lambda: None)
   real_find_spec = importlib.util.find_spec
@@ -162,7 +168,7 @@ def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys
   assert toolchain.find_c_compiler() == toolchain.Compiler((os.environ["CC"],), "CC")
   monkeypatch.setattr(toolchain.importlib.util, "find_spec", real_find_spec)
   monkeypatch.setattr(sys, "path", [str(tmp_path / "site"), *sys.path])
-  zig = tmp_path / "site" / "ziglang" / "zig"
+  zig = tmp_path / "site" / "ziglang" / f"zig{exe}"
   zig.parent.mkdir(parents=True)
   (zig.parent / "__init__.py").write_text("")
   zig.write_text("#!/bin/sh\n")
@@ -171,20 +177,21 @@ def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys
   assert toolchain.find_c_compiler() == toolchain.Compiler((str(zig), "cc"), "ziglang")
   monkeypatch.setattr(toolchain, "native_recipe", lambda command: toolchain.BuildRecipe())
   toolchain.main()
-  assert f"cc: {zig} cc (ziglang)" in capsys.readouterr().out
+  assert f"cc: {shlex.join((str(zig), 'cc'))} (ziglang)" in capsys.readouterr().out
   monkeypatch.setattr(toolchain, "_zig_bin_executable", real_zig_bin)
-  stray = tmp_path / "scripts" / "zig"
+  stray = tmp_path / "scripts" / f"zig{exe}"
   stray.parent.mkdir()
   stray.write_text("#!/bin/sh\n")
   stray.chmod(0o755)
   info = tmp_path / "site" / "zig_bin-0.17.0.dist-info"
   info.mkdir()
   (info / "METADATA").write_text("Metadata-Version: 2.1\nName: zig-bin\nVersion: 0.17.0\n")
-  bin_zig = tmp_path / "my,env" / "bin" / "zig"
+  script = "Scripts/zig.exe" if sys.platform == "win32" else "bin/zig"
+  bin_zig = tmp_path / "my,env" / script
   bin_zig.parent.mkdir(parents=True)
   bin_zig.write_text("#!/bin/sh\n")
   bin_zig.chmod(0o755)
-  (info / "RECORD").write_text('zig_bin-0.17.0.dist-info/METADATA,,\n"../my,env/bin/zig",,\n')
+  (info / "RECORD").write_text(f'zig_bin-0.17.0.dist-info/METADATA,,\n"../my,env/{script}",,\n')
   importlib.invalidate_caches()
   assert toolchain.find_c_compiler() == toolchain.Compiler((str(bin_zig), "cc"), "zig-bin")
   monkeypatch.setenv("SCALY_CC", fake_cc("from-scaly-cc"))
