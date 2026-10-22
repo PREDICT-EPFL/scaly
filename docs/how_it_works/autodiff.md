@@ -79,10 +79,9 @@ A batched forward pass carries all its directions through the graph together,
 as an extra leading axis on every tangent. Work that does not depend on the
 direction is then shared. The sine rule computes one cosine for every
 direction, and chain-rule steps repeated per direction become small matrix
-products. An operation without a batched rule falls back to one pass per
-direction, which
-[`SCALY_STRICT_JVP_MANY`](../dev/contributing.md#run-the-checks)
-turns into an error.
+products. Single-direction products use the same pass with an axis of length
+one. An operation without a derivative rule raises an error naming the
+operation and the function whose body contains it.
 
 ## Finding the pattern
 

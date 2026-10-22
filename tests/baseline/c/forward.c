@@ -39,12 +39,12 @@ int dynamics(const double** arg, double** res, int* iw, double* w, int mem) {
     s0[0] = (s0[0] + (v0 * v0));
   }
   s1[0] = (0.10000000000000001 * s0[0]);
-  for (long long j_znext_0 = 0; j_znext_0 < 2; ++j_znext_0) {
-    res[0][j_znext_0] = (t0[j_znext_0] + (0.050000000000000003 * t2[j_znext_0]));
+  for (long long j_znext_0_0 = 0; j_znext_0_0 < 2; ++j_znext_0_0) {
+    res[0][j_znext_0_0] = (t0[j_znext_0_0] + (0.050000000000000003 * t2[j_znext_0_0]));
   }
-  for (long long j_znext_1 = 0; j_znext_1 < 2; ++j_znext_1) {
-    double v1 = t2[j_znext_1];
-    res[0][(2 + j_znext_1)] = (v1 + (0.050000000000000003 * (arg[1][j_znext_1] - (s1[0] * v1))));
+  for (long long j_znext_1_0 = 0; j_znext_1_0 < 2; ++j_znext_1_0) {
+    double v1 = t2[j_znext_1_0];
+    res[0][(2 + j_znext_1_0)] = (v1 + (0.050000000000000003 * (arg[1][j_znext_1_0] - (s1[0] * v1))));
   }
   return SCALY_SUCCESS;
 }

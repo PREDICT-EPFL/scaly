@@ -453,7 +453,7 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   match = re.search(re.escape(declaration.group(1)) + r"\(([^)]*)\);", source)
   assert match is not None
   args = [a.strip() for a in match.group(1).split(",")]
-  assert args[:3] == ["s0", "s3", "s4"]
+  assert args[:3] == ["s0", "s2", "s3"]
 
 
 def test_regular_raw_callees_stay_inline() -> None:
@@ -916,3 +916,102 @@ def test_scatter_sum_preserves_repeated_leaf_grouping() -> None:
     return sc.scatter(x[:1], [1], 4) + sc.scatter(x[1:], [1, 1], 4)
 
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 0, 0, 0])
+
+
+@pytest.mark.parametrize("flattened", [False, True])
+def test_scoped_index_folding_exposes_seed_mass_component_coordinates(flattened):
+  seed, mass, component = (p.var(name) for name in ("seed", "mass", "component"))
+  flat = p.add(p.mul(seed, p.const_int(93)), p.var("element") if flattened else p.add(p.mul(mass, p.const_int(3)), component))
+  values = [p.div(flat, p.const_int(93)), p.mod(p.div(flat, p.const_int(3)), p.const_int(31)), p.mod(flat, p.const_int(3))]
+  output = p.buffer("indices", dtypes.int64, (30 * 31 * 3 * 3,))
+  stores = [p.store(p.view(output, [p.add(p.mul(flat, p.const_int(3)), p.const_int(i))]), value) for i, value in enumerate(values)]
+  inner = p.for_(p.range_("element", 0, 93), stores) if flattened else p.for_(p.range_("mass", 0, 31), [p.for_(p.range_("component", 0, 3), stores)])
+  loops = p.for_(p.range_("seed", 0, 30), [inner])
+  result = fold_arith(p.program([p.proc("coordinates", [output], [loops])]))
+  verify_program(result)
+  assert not any(node.op in (ProgramOp.DIV, ProgramOp.MOD) for node in walk_program(result))
+
+
+def test_scoped_index_folding_retains_negative_and_out_of_range_remainders():
+  i = p.var("i")
+  output = p.buffer("indices", dtypes.int64, (8,))
+  loop = p.for_(p.range_("i", -4, 4), [p.store(p.view(output, [p.add(i, p.const_int(4))]), p.mod(i, p.const_int(3)))])
+  result = fold_arith(p.program([p.proc("signed_remainder", [output], [loop])]))
+  assert any(node.op == ProgramOp.MOD for node in walk_program(result))
+
+
+def test_scalar_invariant_assignments_are_reused_across_mapped_calls():
+  x = p.buffer("x", dtypes.float64, (1,))
+  params = p.buffer("params", dtypes.float64, (2,))
+  out = p.buffer("out", dtypes.float64, (1,))
+  coefficient = p.mul(p.load(p.view(params, [p.const_int(0)])), p.load(p.view(params, [p.const_int(1)])))
+  stage = p.proc(
+    "scalar_stage",
+    [x, params, out],
+    [
+      p.assign("coefficient", coefficient, declare=True),
+      p.assign("mixed", p.mul(p.var("coefficient", dtypes.float64), p.load(p.view(x, [p.const_int(0)]))), declare=True),
+      p.store(p.view(out, [p.const_int(0)]), p.var("mixed", dtypes.float64)),
+    ],
+  )
+  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2, "scalarized": True}, stage.dtype)
+  xs, ys = p.buffer("xs", dtypes.float64, (5,)), p.buffer("ys", dtypes.float64, (5,))
+  call = ProgramNode(
+    ProgramOp.CALL, (p.view(xs, [p.var("i")]), params, p.view(ys, [p.var("i")])), {"callee": "scalar_stage", "n_in": 2, "n_out": 1, "returns": ()}
+  )
+  caller = p.proc("scalar_caller", [xs, params, ys], [p.for_(p.range_("i", 0, 5), [call])])
+  caller = ProgramNode(caller.op, caller.args, {**caller.attrs, "input_count": 2}, caller.dtype)
+  result = hoist_invariant(p.program([stage, caller]))
+  verify_program(result)
+  assert len(result.args) == 3
+  prologue = next(proc for proc in result.args if "_hoist_" in proc.attrs["name"])
+  assert any(node.op == ProgramOp.MUL for node in walk_program(prologue))
+  rewritten = next(proc for proc in result.args if "_hoisted_" in proc.attrs["name"])
+  assert not any(node.op == ProgramOp.LOAD and node.args[0].attrs["buffer"] == "params" for node in walk_program(rewritten))
+
+
+def test_joint_mapped_products_reuse_scalar_invariants_against_numpy():
+  @sc.function(sc.group(sc.arg("x", 2), sc.arg("p", 2)), outputs=sc.arg("y"), name="invariant_joint_stage")
+  def stage(inputs):
+    x, params = inputs
+    coefficient = params[0].exp() * params[1].sin()
+    return sc.stack([coefficient * x[0].sin() + x[1], coefficient * x[0] * x[1]])
+
+  @sc.function(sc.group(sc.arg("z", 10), sc.arg("p", 2)), outputs=sc.arg("dy"), name="invariant_joint_map")
+  def products(inputs):
+    z, params = inputs
+    return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 2), (params, 0, 0)]), z, sc.const(np.arange(30.0).reshape(3, 10) / 17))
+
+  z, params = np.linspace(-0.6, 0.8, 10), np.array([0.3, 0.7])
+  seeds = np.arange(30.0).reshape(3, 10) / 17
+  coefficient = np.exp(params[0]) * np.sin(params[1])
+  expected = np.empty((3, 10))
+  for it in range(5):
+    x, dx = z[2 * it : 2 * it + 2], seeds[:, 2 * it : 2 * it + 2]
+    expected[:, 2 * it] = coefficient * np.cos(x[0]) * dx[:, 0] + dx[:, 1]
+    expected[:, 2 * it + 1] = coefficient * (x[1] * dx[:, 0] + x[0] * dx[:, 1])
+  np.testing.assert_allclose(products((z, params)), expected, rtol=1e-13, atol=1e-13)
+
+
+def test_scalar_schedule_keeps_cheap_products_local_without_duplicating_loads():
+  from scaly.passes.program.scheduling import ScalarNameAllocator, schedule_values
+
+  a, b = p.var("a", dtypes.float64), p.var("b", dtypes.float64)
+  product = p.mul(a, b)
+  declarations, _ = schedule_values([p.add(product, a), p.sub(product, b)], ScalarNameAllocator({"a", "b"}))
+  assert not declarations
+  source = p.buffer("source", dtypes.float64, (2,))
+  loaded_product = p.mul(p.load(p.view(source, [p.const_int(0)])), b)
+  declarations, _ = schedule_values([p.add(loaded_product, a), p.sub(loaded_product, b)], ScalarNameAllocator({"a", "b", "source"}))
+  assert declarations
+
+
+def test_auto_lanes_leave_tiny_structural_rows_to_the_c_compiler():
+  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y"), name="tiny_rows")
+  def fn(x):
+    return sc.concat([x.sin(), x[:, :1]], axis=1)
+
+  result = lower_function(fn, lanes="auto")
+  assert not any(node.op == ProgramOp.RANGE and node.attrs["kind"] == p.RangeKind.VECTOR for node in walk_program(result))
+  x = np.linspace(-0.4, 0.7, 6).reshape(2, 3)
+  np.testing.assert_allclose(fn(x), np.concatenate([np.sin(x), x[:, :1]], axis=1), rtol=1e-14, atol=1e-14)

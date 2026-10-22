@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, RangeKind
-from .ctx import LowerCtx, lowers, LoweringError, _shape_or_scalar, _size_of, _stride, _coord_p, _flat_index_p, _row_major_strides, _affine_sum
+from .ctx import LowerCtx, lowers, _shape_or_scalar, _size_of, _stride, _coord_p, _flat_index_p, _row_major_strides, _affine_sum
 
 
 @lowers(ExprOp.RESHAPE)
@@ -104,8 +104,6 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   src = node.args[0]
   axes = tuple(int(a) for a in node.attrs["axes"])
   src_shape, out_shape = src.shape, node.shape
-  if len(src_shape) > 4:
-    raise LoweringError(f"TRANSPOSE lowering handles rank <= 4; got {src_shape}")
   out = ctx.alloc_tmp(node)
   src_strides = _row_major_strides(src_shape)
   out_strides = _row_major_strides(out_shape)
@@ -143,20 +141,24 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
 
 @lowers(ExprOp.CONCAT)
 def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
-  """Concatenate inputs along ``axis``: each input keeps its shape but its ``axis`` coordinate is
-  shifted by the running offset. Per element, decompose / shift / recombine against the output."""
+  """Copy each input with explicit axes, shifting only the concatenated coordinate."""
   axis = int(node.attrs.get("axis", 0))
   out_shape = node.shape
   out = ctx.alloc_tmp(node)
   offset = 0
   for i, src in enumerate(node.args):
-    src_shape = src.shape
-    name = ctx.names.allocate(f"j_{out.attrs['name']}_{i}")
-    rng = p.range_(name, 0, _size_of(src_shape), kind=RangeKind.GLOBAL)
-    j = p.var(name)
-    coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]
+    coords, ranges = [], []
+    for dim, size in enumerate(src.shape):
+      name = ctx.names.allocate(f"j_{out.attrs['name']}_{i}_{dim}")
+      coords.append(p.var(name))
+      ranges.append(p.range_(name, 0, size, kind=RangeKind.GLOBAL))
+    source = _affine_sum(coords, _row_major_strides(src.shape))
+    shifted = list(coords)
     if offset:
-      coords[axis] = p.add(p.const_int(offset), coords[axis])
-    dst = _flat_index_p(coords, out_shape)
-    ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
-    offset += int(src_shape[axis])
+      shifted[axis] = p.add(p.const_int(offset), shifted[axis])
+    target = _affine_sum(shifted, _row_major_strides(out_shape))
+    stmt = p.store(p.view(out, [target]), p.load(p.view(ctx.buf_of(src), [source])))
+    for rng in reversed(ranges):
+      stmt = p.for_(rng, [stmt])
+    ctx.statements.append(stmt)
+    offset += int(src.shape[axis])

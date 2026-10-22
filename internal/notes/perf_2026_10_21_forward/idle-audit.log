@@ -1,0 +1,119 @@
+{"time": "2026-10-21T09:36:34Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2336592, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2336596, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2348589, "program": "zig", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2348701, "program": "zig", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2348766, "program": "zig", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2348980, "program": "zig", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T09:36:44Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2336592, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2336596, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:36:54Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2336592, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2336596, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2368413, "program": "python", "cwd": "/tmp/pytest-of-ted/pytest-1174/popen-gw7/test_example_triangular_hess_p0"}]}
+{"time": "2026-10-21T09:37:04Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2336592, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2336596, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:37:14Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2336592, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2336596, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:37:24Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:37:34Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:37:44Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:37:54Z", "heavy_runs": [{"pid": 2317193, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347585, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2347605, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:38:04Z", "heavy_runs": []}
+{"time": "2026-10-21T09:39:57Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2401578, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2401584, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:40:07Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T09:40:17Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T09:40:27Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T09:40:37Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2404594, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2404599, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:40:47Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2404594, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2404599, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2418657, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2418828, "program": "gcc", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2418849, "program": "clang", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2418856, "program": "gcc", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2418859, "program": "collect2", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2418860, "program": "ld", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:40:57Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2404594, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2404599, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:41:07Z", "heavy_runs": [{"pid": 2377809, "program": "wt", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395719, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2395722, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2404594, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2404599, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:41:17Z", "heavy_runs": [{"pid": 2404594, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}, {"pid": 2404599, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-188-empty-pack-masks"}]}
+{"time": "2026-10-21T09:41:27Z", "heavy_runs": []}
+{"time": "2026-10-21T09:41:34Z", "heavy_runs": []}
+{"time": "2026-10-21T09:42:52Z", "heavy_runs": []}
+{"time": "2026-10-21T09:42:57Z", "heavy_runs": []}
+{"time": "2026-10-21T09:43:37Z", "heavy_runs": []}
+{"time": "2026-10-21T09:43:53Z", "heavy_runs": []}
+{"time": "2026-10-21T09:43:57Z", "heavy_runs": []}
+{"time": "2026-10-21T09:44:00Z", "heavy_runs": []}
+{"time": "2026-10-21T09:44:07Z", "heavy_runs": []}
+{"time": "2026-10-21T09:44:12Z", "heavy_runs": []}
+{"time": "2026-10-21T09:44:17Z", "heavy_runs": []}
+{"time": "2026-10-21T09:49:09Z", "heavy_runs": []}
+{"time": "2026-10-21T09:50:26Z", "heavy_runs": []}
+{"time": "2026-10-21T09:50:31Z", "heavy_runs": []}
+{"time": "2026-10-21T09:50:48Z", "heavy_runs": []}
+{"time": "2026-10-21T09:50:50Z", "heavy_runs": []}
+{"time": "2026-10-21T09:50:56Z", "heavy_runs": []}
+{"time": "2026-10-21T09:56:47Z", "heavy_runs": []}
+{"time": "2026-10-21T09:58:02Z", "heavy_runs": []}
+{"time": "2026-10-21T09:58:08Z", "heavy_runs": []}
+{"time": "2026-10-21T09:58:23Z", "heavy_runs": []}
+{"time": "2026-10-21T09:58:26Z", "heavy_runs": []}
+{"time": "2026-10-21T09:58:31Z", "heavy_runs": []}
+{"time": "2026-10-21T10:01:10Z", "heavy_runs": []}
+{"time": "2026-10-21T10:02:26Z", "heavy_runs": []}
+{"time": "2026-10-21T10:02:31Z", "heavy_runs": []}
+{"time": "2026-10-21T10:02:46Z", "heavy_runs": []}
+{"time": "2026-10-21T10:02:49Z", "heavy_runs": []}
+{"time": "2026-10-21T10:02:54Z", "heavy_runs": []}
+{"time": "2026-10-21T10:09:15Z", "heavy_runs": []}
+{"time": "2026-10-21T10:10:31Z", "heavy_runs": []}
+{"time": "2026-10-21T10:10:36Z", "heavy_runs": []}
+{"time": "2026-10-21T10:10:52Z", "heavy_runs": []}
+{"time": "2026-10-21T10:10:55Z", "heavy_runs": []}
+{"time": "2026-10-21T10:11:00Z", "heavy_runs": []}
+{"time": "2026-10-21T10:31:20Z", "heavy_runs": []}
+{"time": "2026-10-21T10:32:36Z", "heavy_runs": []}
+{"time": "2026-10-21T10:32:44Z", "heavy_runs": []}
+{"time": "2026-10-21T10:33:00Z", "heavy_runs": []}
+{"time": "2026-10-21T10:33:03Z", "heavy_runs": []}
+{"time": "2026-10-21T10:33:10Z", "heavy_runs": []}
+{"time": "2026-10-21T10:44:50Z", "heavy_runs": []}
+{"time": "2026-10-21T10:46:07Z", "heavy_runs": []}
+{"time": "2026-10-21T10:46:14Z", "heavy_runs": []}
+{"time": "2026-10-21T10:46:30Z", "heavy_runs": []}
+{"time": "2026-10-21T10:46:34Z", "heavy_runs": []}
+{"time": "2026-10-21T10:46:41Z", "heavy_runs": []}
+{"time": "2026-10-21T11:05:26Z", "heavy_runs": [{"pid": 2500401, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2500404, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:05:36Z", "heavy_runs": [{"pid": 2500598, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2500601, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:05:46Z", "heavy_runs": []}
+{"time": "2026-10-21T11:07:04Z", "heavy_runs": []}
+{"time": "2026-10-21T11:07:10Z", "heavy_runs": []}
+{"time": "2026-10-21T11:07:26Z", "heavy_runs": []}
+{"time": "2026-10-21T11:07:29Z", "heavy_runs": []}
+{"time": "2026-10-21T11:07:35Z", "heavy_runs": []}
+{"time": "2026-10-21T11:08:24Z", "heavy_runs": []}
+{"time": "2026-10-21T11:08:42Z", "heavy_runs": []}
+{"time": "2026-10-21T11:08:45Z", "heavy_runs": []}
+{"time": "2026-10-21T11:08:52Z", "heavy_runs": []}
+{"time": "2026-10-21T11:08:57Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:12Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:16Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:22Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:26Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:44Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:47Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:54Z", "heavy_runs": []}
+{"time": "2026-10-21T11:09:59Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:14Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:18Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:24Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:28Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:45Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:49Z", "heavy_runs": []}
+{"time": "2026-10-21T11:10:56Z", "heavy_runs": []}
+{"time": "2026-10-21T11:11:01Z", "heavy_runs": []}
+{"time": "2026-10-21T11:11:16Z", "heavy_runs": []}
+{"time": "2026-10-21T11:11:20Z", "heavy_runs": [{"pid": 2505998, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506001, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506052, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:11:30Z", "heavy_runs": [{"pid": 2505998, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506001, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506313, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:11:40Z", "heavy_runs": [{"pid": 2505998, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506001, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506592, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:11:50Z", "heavy_runs": [{"pid": 2505998, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506001, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506592, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:12:00Z", "heavy_runs": [{"pid": 2505998, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506001, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}, {"pid": 2506871, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3-70030c7b"}]}
+{"time": "2026-10-21T11:12:10Z", "heavy_runs": [{"pid": 2507176, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-19-one-forward-traversal"}, {"pid": 2507179, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-19-one-forward-traversal"}]}
+{"time": "2026-10-21T11:12:20Z", "heavy_runs": [{"pid": 2507176, "program": "uv", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-19-one-forward-traversal"}, {"pid": 2507179, "program": "python", "cwd": "/home/ted/.t3/worktrees/scaly/t3code-issue-19-one-forward-traversal"}]}
+{"time": "2026-10-21T11:12:30Z", "heavy_runs": []}
+{"time": "2026-10-21T11:12:36Z", "heavy_runs": []}
+{"time": "2026-10-21T11:18:29Z", "heavy_runs": []}
+{"time": "2026-10-21T11:19:45Z", "heavy_runs": []}
+{"time": "2026-10-21T11:19:51Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:07Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:11Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:16Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:20Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:35Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:39Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:44Z", "heavy_runs": []}
+{"time": "2026-10-21T11:20:48Z", "heavy_runs": []}
+{"time": "2026-10-21T11:21:04Z", "heavy_runs": []}
+{"time": "2026-10-21T11:21:07Z", "heavy_runs": []}
+{"time": "2026-10-21T11:21:13Z", "heavy_runs": []}

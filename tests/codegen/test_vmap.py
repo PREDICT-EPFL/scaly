@@ -45,11 +45,9 @@ def test_vmap_c_source_loop_size_is_independent_of_length(lanes: LaneCount) -> N
 
 
 @pytest.mark.parametrize("lanes", [1, "auto"])
-def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch, lanes: LaneCount) -> None:
+def test_vmap_sparse_hessian_c_source_is_constant_in_length(lanes: LaneCount) -> None:
   from scaly.codegen import render_c_source
   from scaly.ir.expr import topo
-
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
   @sc.function(sc.arg("x", 2), outputs=sc.arg("g"), name="vmap_sphess_codegen_piece")
   def piece(x: sc.Expr) -> sc.Expr:
@@ -83,11 +81,9 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.
   assert len({source.count("for (") for source, _, _, _ in rendered}) == 1
 
 
-def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer() -> None:
   from scaly.codegen import render_c_source
   from scaly.ir.expr import topo
-
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
 
   @sc.function(sc.group(sc.arg("x", 2), sc.arg("shared", 1)), outputs=sc.arg("g"), name="triangle_shared_piece")
   def piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:

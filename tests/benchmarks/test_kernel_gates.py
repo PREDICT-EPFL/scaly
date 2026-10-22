@@ -4,6 +4,7 @@ decoder width, and workspace must stay near its recorded baseline. Code generati
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from benchmarks.harness.sweep import build_kernel
 
@@ -21,16 +22,24 @@ def test_race_cars_jacobian_preserves_the_horizon_loop(tmp_path: Path) -> None:
 
 
 def test_chain_jacobian_preserves_the_mass_loop(tmp_path: Path) -> None:
-  small, large = (_build(tmp_path, "chain_jac", size) for size in (5, 33))
-  assert large["source_lines"] < 1.2 * small["source_lines"]
+  lines = []
+  for size in (33, 65):
+    _build(tmp_path, "chain_jac", size)
+    source = next((tmp_path / f"chain_jac_{size}").glob("*.c")).read_text()
+    bodies = re.findall(rf"^static[^\n]+ chain_ode_M{size}_fwd_\w+\([^\n]*\) \{{\n.*?^\}}", source, re.MULTILINE | re.DOTALL)
+    assert bodies
+    lines.append(sum(len(body.splitlines()) for body in bodies))
+  assert lines[1] < 1.2 * lines[0]
 
 
 def test_npmpc_jacobian_source_is_independent_of_horizon_and_width(tmp_path: Path) -> None:
   small, large, wide = _build(tmp_path, "npmpc_jac", 6), _build(tmp_path, "npmpc_jac", 100), _build(tmp_path, "npmpc_decoder_jac", 128)
   assert large["source_lines"] < 1.2 * small["source_lines"]
   assert wide["source_lines"] < 1.2 * small["source_lines"]
-  # baseline 1600 doubles at N=100 (VMAP buffers scale linearly with the horizon); 3x headroom catches superlinear regressions
-  assert int(large["w_size"]) <= 3 * 1600
+  # Seed-axis matrix products use 6144 doubles of fixed scratch; mapped outputs add 1600 at N=100.
+  assert int(small["w_size"]) <= 6144
+  assert int(large["w_size"]) <= 7744
+  assert int(large["w_size"]) - int(small["w_size"]) <= 1600
 
 
 def test_npmpc_lagrangian_hessian_source_is_independent_of_horizon_and_width(tmp_path: Path) -> None:

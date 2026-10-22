@@ -71,6 +71,8 @@ class _Frame:
       elif stmt.op == ProgramOp.STORE:
         ptr = self.pointer(stmt.args[0])
         ptr.values[ptr.offset] = self.scalar(stmt.args[1], {})
+      elif stmt.op == ProgramOp.ASSIGN:
+        self.variables[stmt.attrs["target"]] = self.scalar(stmt.args[0], {})
       elif stmt.op == ProgramOp.FOR:
         rng = stmt.args[0]
         start, stop, step = (self.scalar(a, {}).attrs["value"] for a in rng.args)
@@ -130,23 +132,21 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
         stack.extend((s, factor * len(range(start, stop, step))) for s in node.args[1:])
       elif node.op == ProgramOp.BUFFER:
         total += factor * math.prod(node.attrs["shape"])
-      elif node.op == ProgramOp.STORE:
+      elif node.op in (ProgramOp.STORE, ProgramOp.ASSIGN):
         total += factor
       else:
         return None
     return total
 
   def scalar_cost(proc: ProgramNode) -> tuple[int, int]:
-    seen: set[ProgramNode] = set()
+    # Count emitted occurrences, including products repeated at their uses.
+    ops = statements = 0
     stack = list(proc.args[proc.attrs["param_count"] :])
     while stack:
       node = stack.pop()
-      if node in seen:
-        continue
-      seen.add(node)
+      ops += node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD}
+      statements += node.op in {ProgramOp.ASSIGN, ProgramOp.STORE}
       stack.extend(node.args)
-    ops = sum(node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD} for node in seen)
-    statements = sum(node.op in {ProgramOp.ASSIGN, ProgramOp.STORE} for node in seen)
     return ops, ops + statements
 
   scalar_growth = 0

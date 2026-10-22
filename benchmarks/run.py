@@ -345,7 +345,7 @@ def main() -> None:
   args = parser.parse_args()
   if args.command in {"sweep", "study", "closed-loop", "smoke"}:
     configure_math_policy(
-      measured_jit=args.command != "sweep"
+      measured_jit=args.command not in {"sweep", "smoke"}
       and (args.command != "study" or "closed-loop" in args.only)
       and (args.command != "closed-loop" or "casadi" in (args.oracle or []))
     )

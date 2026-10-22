@@ -48,6 +48,27 @@ def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch: pytest.
   assert harness.vector_libm() == "none"
 
 
+@pytest.mark.parametrize("command", [("clang",), ("zig", "cc")])
+def test_smoke_accepts_clang_while_measured_closed_loops_keep_the_compiler_guard(monkeypatch: pytest.MonkeyPatch, command: tuple[str, ...]) -> None:
+  import sys
+
+  from benchmarks import harness, run
+  from scaly.codegen.toolchain import BuildRecipe, Compiler
+
+  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler(command, "test"))
+  monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="glibc"))
+  monkeypatch.setattr(harness, "compiler_version", lambda *args: "clang version 20")
+  monkeypatch.setattr(os, "environ", {**os.environ, "SCALY_VECTOR_LIBM": "glibc"})
+  monkeypatch.setattr(run, "smoke", lambda args: True)
+  monkeypatch.setattr(sys, "argv", ["run.py", "smoke"])
+  with pytest.raises(SystemExit) as result:
+    run.main()
+  assert result.value.code == 0
+  monkeypatch.setattr(sys, "argv", ["run.py", "closed-loop", "--oracle", "scaly,casadi"])
+  with pytest.raises(ValueError, match="Scaly JIT does not pass"):
+    run.main()
+
+
 def test_sweep_render_uses_the_selected_math_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   import scaly as sc
   from benchmarks.harness.sweep import _render_scaly

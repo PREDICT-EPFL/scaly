@@ -58,8 +58,7 @@ def _callee_params(prog: ProgramNode) -> list[str]:
   ],
   ids=["equal", "equal_with_zero_row", "period2", "period3", "period8", "period9", "aperiodic", "distinct_short"],
 )
-def test_constant_seed_tiles(pattern: list[int], baked: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   stage = _stage()
   length = len(pattern)
   seeds = _seeds(pattern)
@@ -99,8 +98,7 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool, monkeypatch: pytes
   assert has_gather is (not baked)
 
 
-def test_local_coloring_and_packed_contributions_keep_seed_order(monkeypatch):
-  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+def test_local_coloring_and_packed_contributions_keep_seed_order():
 
   @sc.function(sc.group(sc.arg("local_x", 2), sc.arg("dense_y", 2)), outputs=sc.arg("out"), name="local_dense_stage")
   def stage(inputs):
@@ -135,3 +133,52 @@ def test_local_coloring_and_packed_contributions_keep_seed_order(monkeypatch):
       helpers.append(entry[0])
   assert {helper.outputs[0].shape for helper in helpers} == {(1, 2), (2, 2)}
   assert sum(name.startswith("fwd:") for name in maps[0].attrs["callee"].input_names) == 1
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_disjoint_constant_colors_select_typed_partials_without_zero_products(dtype):
+  @sc.function(
+    sc.arg("x", sc.TensorType((4,), sc.dtypes.float32 if dtype == np.float32 else sc.dtypes.float64)), outputs=sc.arg("y"), name="selected_stage"
+  )
+  def stage(x):
+    return sc.stack([x[0].sin() + x[1].cos(), x[2].sin() + x[3].cos()])
+
+  permutations = [[0, 1, 2, 3], [1, 3, 0, 2], [2, 0, 3, 1], [3, 2, 1, 0], [1, 0, 3, 2]]
+  seeds = np.concatenate([np.eye(4, dtype=dtype)[order] for order in permutations], axis=1)
+
+  @sc.function(
+    sc.arg("z", sc.TensorType((20,), sc.dtypes.float32 if dtype == np.float32 else sc.dtypes.float64)), outputs=sc.arg("dy"), name="selected_colors"
+  )
+  def products(z):
+    return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 4)]), z, sc.const(seeds, dtype=z.type.dtype))
+
+  assert not any(node.op == ExprOp.MUL for node in topo(as_concrete(products).outputs))
+  z = np.linspace(-0.4, 0.7, 20, dtype=dtype)
+  expected = np.empty((4, 10), dtype=dtype)
+  for it in range(5):
+    x = z[4 * it : 4 * it + 4]
+    direction = seeds[:, 4 * it : 4 * it + 4]
+    expected[:, 2 * it] = direction[:, 0] * np.cos(x[0]) - direction[:, 1] * np.sin(x[1])
+    expected[:, 2 * it + 1] = direction[:, 2] * np.cos(x[2]) - direction[:, 3] * np.sin(x[3])
+  assert as_concrete(products).outputs[0].type.dtype.numpy() == np.dtype(dtype)
+  if dtype == np.float32:
+    return
+  actual = products(z)
+  assert actual.dtype == dtype
+  np.testing.assert_allclose(actual, expected, rtol=1e-6 if dtype == np.float32 else 1e-14, atol=1e-7 if dtype == np.float32 else 1e-14)
+
+
+def test_empty_constant_color_selection_drops_the_mapped_derivative():
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
+  def stage(x):
+    return sc.stack([x[0].sin() + x[1].cos(), x[2].sin()])
+
+  seeds = np.zeros((3, 20))
+  seeds[:, 3::4] = np.arange(1, 6)
+
+  @sc.function(sc.arg("z", 20), outputs=sc.arg("dy"))
+  def products(z):
+    return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 4)]), z, sc.const(seeds))
+
+  assert not any(node.op == ExprOp.VMAP for node in topo(as_concrete(products).outputs))
+  np.testing.assert_array_equal(products(np.linspace(-0.4, 0.7, 20)), np.zeros((3, 10)))

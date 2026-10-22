@@ -31,7 +31,7 @@ def schedule_values(
   roots: Sequence[ProgramNode],
   names: ScalarNameAllocator,
 ) -> tuple[list[ProgramNode], tuple[ProgramNode, ...]]:
-  """Return declarations and rewritten roots with shared or deep scalar nodes named."""
+  """Name shared and deep work, leaving cheap two-use products at their uses."""
   order: list[ProgramNode] = []
   seen: set[ProgramNode] = set()
   pending = [(root, False) for root in reversed(roots)]
@@ -56,7 +56,10 @@ def schedule_values(
     value = ProgramNode(node.op, args, node.attrs, node.dtype)
     d = 1 + max((depth[arg] for arg in node.args), default=0)
     can_name = node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR}
-    if can_name and (uses[node] > 1 or d >= MAX_SCALAR_DEPTH):
+    local_product = (
+      node.op == ProgramOp.MUL and node.dtype.is_floating and uses[node] == 2 and all(arg.op in {*CONSTANTS, ProgramOp.VAR} for arg in args)
+    )
+    if can_name and ((uses[node] > 1 and not local_product) or d >= MAX_SCALAR_DEPTH):
       name = names.fresh()
       declarations.append(p.assign(name, value, declare=True))
       value, d = p.var(name, node.dtype), 0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...ir import program as p
+from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, buffer, for_, walk_program
 from ...utils.names import NameScope
 from ._common import (
@@ -14,6 +16,7 @@ from ._common import (
   _proc_parts,
   _rebuild_proc,
   _resolve_alias,
+  rebuild_program,
 )
 
 _Split = tuple[ProgramNode, ProgramNode, tuple[int, ...], list[ProgramNode]]
@@ -99,6 +102,11 @@ def _call(callee: ProgramNode, args: list[ProgramNode]) -> ProgramNode:
 
 
 def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope, pure: set[str]) -> _Split | None:
+  if proc.attrs.get("scalarized"):
+    result = _split_scalars(proc, invariant, used_names)
+    if result is not None:
+      pure.update(generated.attrs["name"] for generated in result[:2])
+    return result
   if prints(proc):
     return None
   params, body = _proc_parts(proc)
@@ -165,6 +173,63 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope,
     if all(n.attrs["callee"] in pure for n in walk_program(generated) if n.op == ProgramOp.CALL):
       pure.add(generated.attrs["name"])
   return prologue, hoisted, used, exported
+
+
+def _split_scalars(proc: ProgramNode, invariant: tuple[int, ...], names: NameScope) -> _Split | None:
+  """Hoist immutable scalar computations while keeping output stores in the mapped body."""
+  params, body = _proc_parts(proc)
+  if any(stmt.op not in (ProgramOp.ASSIGN, ProgramOp.STORE) for stmt in body):
+    return None
+  outputs = {param.attrs["name"] for param in params[int(proc.attrs["input_count"]) :]}
+  if any(stmt.op == ProgramOp.STORE and stmt.args[0].attrs["buffer"] not in outputs for stmt in body):
+    return None
+  assignments = [stmt for stmt in body if stmt.op == ProgramOp.ASSIGN]
+  if any(not stmt.attrs.get("declare") for stmt in assignments) or len({stmt.attrs["target"] for stmt in assignments}) != len(assignments):
+    return None
+  fixed = {params[i].attrs["name"] for i in invariant}
+  variables: set[str] = set()
+
+  def is_fixed(value: ProgramNode) -> bool:
+    return buffer_refs(value).reads <= fixed and all(node.attrs["name"] in variables for node in walk_program(value) if node.op == ProgramOp.VAR)
+
+  hoisted = []
+  for stmt in assignments:
+    if is_fixed(stmt.args[0]):
+      variables.add(stmt.attrs["target"])
+      hoisted.append(stmt)
+  roots = {
+    node for stmt in body if stmt not in hoisted for node in walk_program(stmt) if node.op == ProgramOp.VAR and node.attrs["name"] in variables
+  }
+  roots.update(stmt.args[1] for stmt in body if stmt.op == ProgramOp.STORE and is_fixed(stmt.args[1]) and stmt.args[1].args)
+  computational = {ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT, ProgramOp.VAR, ProgramOp.LOAD}
+  if not roots or not (any(stmt.args[0].op not in computational for stmt in hoisted) or any(value.op not in computational for value in roots)):
+    return None
+  # Use body order, rather than set order, for stable exported storage and C names.
+  values = list(dict.fromkeys(node for stmt in body for node in walk_program(stmt) if node in roots))
+  local = names.child(name_scope(proc).occupied)
+  shared = buffer(local.allocate("invariant_values"), values[0].dtype, (len(values),))
+  if any(value.dtype != shared.dtype for value in values):
+    return None
+  replacements = {value: p.load(p.view(shared, [p.const_int(i)])) for i, value in enumerate(values)}
+  fixed_loads = {value.attrs["name"]: replacements[value] for value in values if value.op == ProgramOp.VAR}
+  expressions = {value: replacement for value, replacement in replacements.items() if value.op != ProgramOp.VAR}
+  pattern = Pattern[ProgramNode](None, lambda node: node in expressions, lambda node: expressions[node])
+  stores = [p.store(p.view(shared, [p.const_int(i)]), value) for i, value in enumerate(values)]
+  prologue_body = [*hoisted, *stores]
+  reads = buffer_refs(p.block(*prologue_body)).reads
+  used = tuple(i for i in invariant if params[i].attrs["name"] in reads)
+  n_in = int(proc.attrs["input_count"])
+  tag = "_".join(map(str, invariant))
+  prologue = _proc(proc, names.procedure(f"{proc.attrs['name']}_hoist_{tag}"), [params[i] for i in used], [shared], prologue_body)
+  rewritten = []
+  for stmt in body:
+    if stmt in hoisted:
+      if stmt.attrs["target"] in fixed_loads:
+        rewritten.append(ProgramNode(stmt.op, (fixed_loads[stmt.attrs["target"]],), stmt.attrs, stmt.dtype))
+    else:
+      rewritten.append(rewrite(stmt, [pattern], rebuild=rebuild_program))
+  variant = _proc(proc, names.procedure(f"{proc.attrs['name']}_hoisted_{tag}"), [*params[:n_in], shared], params[n_in:], rewritten)
+  return prologue, variant, used, [shared]
 
 
 def _proc(

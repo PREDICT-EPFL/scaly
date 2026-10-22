@@ -548,3 +548,49 @@ def test_automatic_transpose_normalization_preserves_cancellation_order_and_empt
     return matrix @ vector
 
   np.testing.assert_array_equal(empty((np.empty((2, 0)), np.empty(0))), np.zeros(2))
+
+
+@pytest.mark.parametrize("shape", [(5, 9, 4), (2, 32, 1), (3, 0, 4), (5, 9, 7), (32, 12, 8)])
+def test_matrix_panels_keep_ordered_reductions_private(shape, monkeypatch):
+  from scaly.ir.program import walk_program
+  from scaly.codegen import jit
+
+  flags = jit.compile_flags
+  monkeypatch.setattr(jit, "compile_flags", lambda recipe=None: (*flags(recipe), "-ffp-contract=off"))
+
+  m, k, n = shape
+
+  @sc.function(sc.group(sc.arg("a", (m, k)), sc.arg("b", (k, n))), outputs=sc.arg("out"), name="private_product")
+  def product(inputs):
+    a, b = inputs
+    return a @ b
+
+  observed = {}
+  lower_function(product, observe=lambda phase, program: observed.__setitem__(phase, program))
+  reductions = [node for node in walk_program(observed["lowered"]) if node.op == ProgramOp.FOR and node.args[0].attrs["kind"].value == "reduce"]
+  assert reductions
+  assert not any(node.op == ProgramOp.STORE for loop in reductions for stmt in loop.args[1:] for node in walk_program(stmt))
+  rng = np.random.default_rng(184)
+  a, b = rng.normal(size=(m, k)), rng.normal(size=(k, n))
+  expected = np.zeros((m, n))
+  for index in range(k):
+    expected += a[:, index, None] * b[index, None, :]
+  np.testing.assert_array_equal(product((a, b)), expected)
+
+
+def test_concat_seed_mass_component_axes_match_numpy_after_index_folding():
+  from scaly.ir.program import walk_program
+
+  @sc.function(sc.group(sc.arg("a", (5, 31, 3)), sc.arg("b", (5, 1, 3))), outputs=sc.arg("out"), name="concat_coordinates")
+  def joined(inputs):
+    a, b = inputs
+    return sc.concat([b.reshape((5, 3)), (a.sin() * b).reshape((5, 93)), (b * b).reshape((5, 3))], axis=1)
+
+  observed = {}
+  lower_function(joined, observe=lambda phase, program: observed.__setitem__(phase, program))
+  assert not any(node.op in (ProgramOp.DIV, ProgramOp.MOD) for node in walk_program(observed["pass:fold_arith"]))
+  rng = np.random.default_rng(19)
+  a, b = rng.normal(size=(5, 31, 3)), rng.normal(size=(5, 1, 3))
+  np.testing.assert_allclose(
+    joined((a, b)), np.concatenate([b.reshape(5, 3), (np.sin(a) * b).reshape(5, 93), (b * b).reshape(5, 3)], axis=1), rtol=1e-14, atol=1e-14
+  )

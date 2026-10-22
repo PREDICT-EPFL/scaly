@@ -90,12 +90,25 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     i = p.var(indices["i"])
     irng = p.range_(indices["i"], 0, m, kind=RangeKind.GLOBAL)
     j = p.var(indices["j"])
-    jrng = p.range_(indices["j"], 0, n, kind=RangeKind.GLOBAL)
     k = p.var(indices["k"])
     krng = p.range_(indices["k"], 0, kk, kind=RangeKind.REDUCE)
-    out_idx = p.add(p.mul(i, p.const_int(n)), j)
     a_idx = p.add(p.mul(i, p.const_int(kk)), k)
-    b_idx = p.add(p.mul(k, p.const_int(n)), j)
-    _mm_accumulate(ctx, out, out_idx, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [b_idx])), dt, [irng, jrng], krng)
+
+    def panel(columns: list[ProgramNode]) -> list[ProgramNode]:
+      names = [ctx.names.allocate(f"acc_{nm}_{c}") for c in range(len(columns))]
+      accumulators = [p.var(name, dt) for name in names]
+      initial = [p.assign(name, p.const_float(0.0, dtype=dt), declare=True) for name in names]
+      products = [p.mul(p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [p.add(p.mul(k, p.const_int(n)), column)]))) for column in columns]
+      updates = [p.assign(name, p.add(acc, product)) for name, acc, product in zip(names, accumulators, products, strict=True)]
+      stores = [p.store(p.view(out, [p.add(p.mul(i, p.const_int(n)), column)]), acc) for column, acc in zip(columns, accumulators, strict=True)]
+      return [*initial, p.for_(krng, updates), *stores]
+
+    blocks, tail = divmod(n, 4)
+    if blocks:
+      panel_range = p.range_(indices["j"], 0, blocks, kind=RangeKind.GLOBAL)
+      columns = [p.add(p.mul(j, p.const_int(4)), p.const_int(c)) for c in range(4)]
+      ctx.statements.extend(_nest([irng, panel_range], panel(columns)))
+    if tail:
+      ctx.statements.extend(_nest([irng], panel([p.const_int(c) for c in range(4 * blocks, n)])))
   else:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
