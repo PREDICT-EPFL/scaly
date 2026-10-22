@@ -187,8 +187,8 @@ def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule,
     toolchain = compiler_fingerprint(compiler.command)
   except (OSError, subprocess.CalledProcessError) as exc:
     raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
-  if sys.platform == "win32" and (epoch := _cache_epochs.get(fun.name, 0)):
-    # Windows keeps loaded DLLs locked. A forced recompilation needs another path.
+  if epoch := _cache_epochs.get(fun.name, 0):
+    # Invalidation could not delete a library this process loaded, so recompilation needs another path.
     toolchain += f":{os.getpid()}:{epoch}"
   command = _compile_command(compiler.command, module, "module.c", "module" + shared_lib_ext())
   return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain)
@@ -209,19 +209,26 @@ _cache_epochs: dict[str, int] = {}
 _artifact_lock = threading.Lock()
 
 
+def _publish(temporary: Path, path: Path) -> None:
+  """Rename a finished file into the cache, where entries are content-addressed.
+
+  Windows refuses to replace a file another process has open. That process published the same
+  content first and is compiling or running it, so its file stays.
+  """
+  try:
+    temporary.replace(path)
+  except PermissionError:
+    if not path.exists():
+      raise
+    temporary.unlink()
+
+
 def _write_cached_text(path: Path, text: str) -> None:
   if path.exists():
     return
   temporary = path.with_suffix(path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
   temporary.write_text(text)
-  try:
-    temporary.replace(path)
-  except PermissionError:
-    if sys.platform != "win32" or not path.exists():
-      raise
-    # A compiler in another process may already have the identical published file open.
-  finally:
-    temporary.unlink(missing_ok=True)
+  _publish(temporary, path)
 
 
 def _build_artifact(fun: ConcreteFunction) -> _Artifact:
@@ -271,13 +278,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     except subprocess.CalledProcessError as exc:
       tmp_lib.unlink(missing_ok=True)
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
-    try:
-      tmp_lib.replace(lib_path)
-    except PermissionError:
-      if sys.platform != "win32" or not lib_path.exists():
-        raise
-      # Another process published and loaded this same content while we compiled it.
-      tmp_lib.unlink(missing_ok=True)
+    _publish(tmp_lib, lib_path)
 
   artifact = _Artifact(
     lib_path=lib_path,
@@ -443,7 +444,8 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
   """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
 
   Safe to call when nothing is cached yet. Codegen failures (``NotImplementedError``) are
-  swallowed, since there cannot be a corresponding cache entry to remove.
+  swallowed, since there cannot be a corresponding cache entry to remove. Windows cannot delete a
+  loaded DLL; the directory then keeps it, and this process compiles ``fun`` into another one.
   """
   compiler = find_c_compiler()
   if compiler is None:
@@ -452,13 +454,9 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
     _, key = _render_and_key(fun, compiler)
   except NotImplementedError:
     return
+  cache_dir = cache_root() / key
   with _artifact_lock:
     _artifact_cache.pop(key, None)
-    if sys.platform == "win32":
-      _cache_epochs[fun.name] = _cache_epochs.get(fun.name, 0) + 1
-      # Other processes may still be compiling or using this entry, even when this
-      # process has not loaded its DLL. Leave the old content in place.
-      return
-  cache_dir = cache_root() / key
-  if cache_dir.exists():
     shutil.rmtree(cache_dir, ignore_errors=True)
+    if cache_dir.exists():
+      _cache_epochs[fun.name] = _cache_epochs.get(fun.name, 0) + 1
