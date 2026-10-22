@@ -347,6 +347,7 @@ spec_expr = Spec(
     Rule(ExprOp.INPUT, "input-has-name", _input_has_name),
     Rule(ExprOp.CONST, "const-value-present", _const_value_present),
     *_unary_rules,
+    Rule(ExprOp.STOP_GRADIENT, "stop-gradient-shape-dtype", _unary_shape_dtype),
     *_binary_rules,
     Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),

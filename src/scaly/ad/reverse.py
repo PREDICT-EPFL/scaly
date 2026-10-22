@@ -9,24 +9,28 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, gather, scatter, topo, zeros_like
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, cotangent
-from .sparsity import _depends_on
+from .sparsity import _check_wrt, _depends_on
 
 
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
   """Reverse-mode derivative: one adjoint per entry of ``wrts``, seeded by ``cotangents``.
 
   Each cotangent is shaped like its output. One sweep computes the derivative of a scalar with
-  respect to every input at once, which is why gradients go through here.
+  respect to every requested input at once, which is why gradients go through here.
+  Every entry of ``wrts`` must be an independent input from ``sc.sym`` or a Function declaration.
+  Results follow ``wrts`` order.
   """
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
+  for wrt in wrts:
+    _check_wrt(wrt)
   adjoints: dict[int, Expr] = {}
   nodes = topo(outputs)
   expr_ids = {e.id for e in nodes}
   dep_memo: dict[tuple[int, int], bool] = {}
 
   def needed(expr: Expr) -> bool:
-    return any(_depends_on(expr, wrt, dep_memo) for wrt in wrts)
+    return any(_depends_on(expr, wrt, dep_memo, through_stops=False) for wrt in wrts)
 
   for out, cot in zip(outputs, cotangents, strict=True):
     if out.shape != cot.shape:
@@ -35,7 +39,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
-    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or not needed(expr):
+    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST, ExprOp.STOP_GRADIENT} or not needed(expr):
       continue
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):

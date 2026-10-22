@@ -4,6 +4,11 @@ These functions construct derivatives directly from symbolic expressions. For th
 interface, including derivatives of a named `Function`, see [Building functions](functions.md).
 The [derivatives guide](../guide/derivatives.md) explains gradients, Jacobians, and Hessians.
 
+The result can be any `Expr`. Each `wrt` must be an independent input created by `sc.sym` or a
+`Function` declaration. Computed expressions, including slices and reshapes, and constants raise
+`ValueError`. See [Differentiation inputs](../guide/derivatives.md#differentiation-inputs) for
+examples and for declaring the inputs of a partial derivative.
+
 ## Modes
 
 A Jacobian-vector product, `jvp`, computes a directional derivative without constructing the full
@@ -15,6 +20,10 @@ Jacobian. A vector-Jacobian product, `vjp`, propagates output weights back to th
 ::: scaly.ad.forward.jvp_many
 
 ::: scaly.ad.reverse.vjp
+
+## Holding a value fixed in derivatives
+
+::: scaly.stop_gradient
 
 ## Whole derivatives
 

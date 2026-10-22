@@ -210,6 +210,101 @@ weights = sc.sym("weights", 2)
 the first axis. Expression forms of sparse derivatives return a
 `SparseJacobian` containing `.values`, `.sparsity`, and `.to_dense()`.
 
+## Differentiation inputs
+
+An expression derivative accepts any calculation as its result. Its `wrt`
+argument must be an independent input created by `sc.sym` or a `Function`
+declaration. Both the result and the input have type `Expr`, but a value
+computed from an input cannot itself be used as `wrt`.
+
+```python
+@sc.function(sc.arg("x", ()), outputs=sc.arg("grad"))
+def total_derivative(x: sc.Expr) -> sc.Expr:
+    y = 2.0 * x
+    loss = y ** 2 + x ** 2
+    return sc.gradient(loss, x)
+
+print(total_derivative(np.array(3.0)))  # 30.0
+
+x = sc.sym("x", ())
+y = 2.0 * x
+try:
+    sc.gradient(y ** 2 + x ** 2, y)
+except ValueError as error:
+    print(error)
+# wrt must be an independent input from sc.sym or a Function declaration
+```
+
+The derivative with respect to `x` includes both terms of the loss. Asking for
+a derivative with respect to `y` leaves a choice: holding the separate use of
+`x` fixed gives `2*y`, while substituting `x = y/2` gives `2.5*y`. Declare
+separate inputs to request the first partial derivative explicitly:
+
+```python
+@sc.function(sc.arg("y", ()), sc.arg("x", ()), outputs=sc.arg("loss"))
+def partial_cost(y: sc.Expr, x: sc.Expr) -> sc.Expr:
+    return y ** 2 + x ** 2
+
+partial_y = sc.gradient(partial_cost, "loss", "y")
+print(partial_y(np.array(6.0), np.array(3.0)))  # 12.0
+```
+
+The function treats its inputs independently, even when the numerical values
+passed to them are related. This rule also applies to Jacobians, Hessians,
+Jacobian products and sparsity analysis. Slices, reshapes, call results and
+constants cannot be used as differentiation inputs. They can appear anywhere
+in the calculation being differentiated. An unused input has a zero derivative.
+
+For a calculation that extracts state and parameters from one vector, define
+the energy with separate inputs and call its derivative from the larger
+calculation:
+
+```python
+@sc.function(sc.arg("x", 2), sc.arg("a", ()), outputs=sc.arg("energy"))
+def energy(x: sc.Expr, a: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x * x - a)
+
+grad_energy = sc.gradient(energy, "energy", "x")
+
+@sc.function(sc.arg("carry", 3), outputs=sc.arg("grad"))
+def state_gradient(carry: sc.Expr) -> sc.Expr:
+    return grad_energy(carry[:2], carry[2])
+
+print(state_gradient(np.array([1.0, 3.0, 2.0])))  # [-4. 84.]
+```
+
+Here `x` is the differentiation input inside `energy`. The slices supply its
+values when the derivative function is called. A Newton step can call its
+Hessian in the same way.
+
+## Holding a value fixed in derivatives
+
+`sc.stop_gradient` returns its argument's value and treats it as a constant in
+all derivatives. Other uses of the same expression still contribute normally:
+
+```python
+@sc.function(sc.arg("x", 2), outputs=sc.arg("cost"))
+def frozen_product(x: sc.Expr) -> sc.Expr:
+    return (x * sc.stop_gradient(x)).sum()
+
+point = np.array([2.0, 3.0])
+print(frozen_product(point))                 # 13.0
+print(sc.gradient(frozen_product)(point))    # [2. 3.]
+print(sc.hessian(frozen_product)(point))     # [[0. 0.]
+                                            #  [0. 0.]]
+```
+
+Only the first factor contributes to the gradient. Differentiating again keeps
+the second factor fixed, so the Hessian is zero. This convention applies in
+forward mode, reverse mode and sparsity analysis, including inside calls and
+maps. It changes the derivative without changing the evaluated value or its
+generated C. Finite-difference checks perturb the input and recompute the
+stopped value, so they need not agree with this derivative.
+
+Quadratic-program extraction rejects problems containing `stop_gradient`,
+including in their bounds or inside called functions. The proof that a problem
+is quadratic requires derivatives of the evaluated cost and constraints.
+
 ## Current limitations
 
 Derivatives work through ordinary function calls and `vmap`. Ordinary calls may
