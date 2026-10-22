@@ -66,6 +66,10 @@ def _solver_build_mode() -> str:
   raise RuntimeError("SCALY_BUILD_SOLVERS must be one of auto, required/1/true, or skip/0/false")
 
 
+# Windows has no system C compiler, so the build requirements bring the zig that the JIT also uses.
+_DEFAULT_CC, _DEFAULT_CXX = ("zig cc", ("zig c++",)) if platform.system() == "Windows" else ("cc", ("c++", "g++", "clang++"))
+
+
 def _compiler_command(value: str) -> list[str]:
   if path := shutil.which(value):
     return [path]
@@ -77,9 +81,9 @@ def _compiler_command(value: str) -> list[str]:
 
 def _missing_piqp_tools() -> list[str]:
   missing = [cmd for cmd in ("git", "cmake") if shutil.which(cmd) is None]
-  if not _compiler_command(os.environ.get("CC", "cc")):
+  if not _compiler_command(os.environ.get("CC", _DEFAULT_CC)):
     missing.append("cc")
-  if not any(_compiler_command(cmd) for cmd in ([os.environ["CXX"]] if "CXX" in os.environ else ("c++", "g++", "clang++"))):
+  if not any(_compiler_command(cmd) for cmd in ([os.environ["CXX"]] if "CXX" in os.environ else _DEFAULT_CXX)):
     missing.append("c++")
   if platform.system() == "Windows" and shutil.which("ninja") is None:
     missing.append("ninja")
@@ -144,7 +148,7 @@ def _write_third_party_notices(
 
 
 # Everything else that decides the built files, beside this hook, the pins and the license texts.
-_KEY_ENV = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET", "CMAKE_GENERATOR", "AR")
+_KEY_ENV = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET", "CMAKE_GENERATOR")
 _OUTPUTS = ("lib", "include", "licenses")
 _CACHE_MAX_AGE = 30 * 24 * 3600
 
@@ -172,7 +176,8 @@ def _tool_identity(cmd: str) -> str:
   if not command:
     return f"{cmd}: none"
   out = subprocess.run([*command, "--version"], capture_output=True, text=True).stdout.strip()
-  return f"{command}: {out.splitlines()[0] if out else ''}"
+  # The name, not the path: an isolated build environment's zig lives in a new temporary directory each time.
+  return f"{[Path(command[0]).name, *command[1:]]}: {out.splitlines()[0] if out else ''}"
 
 
 def _cache_key(root: Path) -> str:
@@ -181,7 +186,7 @@ def _cache_key(root: Path) -> str:
   inputs = [Path(__file__), root / "src" / "scaly_piqp" / "build_config.json", *(root / "licenses").rglob("*")]
   for path in sorted(p for p in inputs if p.is_file()):
     digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
-  tools = [_tool_identity(os.environ.get("CC", "cc")), _tool_identity(os.environ.get("CXX", "c++"))]
+  tools = [_tool_identity(os.environ.get("CC", _DEFAULT_CC)), _tool_identity(os.environ.get("CXX", _DEFAULT_CXX[0]))]
   env = [f"{name}={os.environ.get(name, '')}" for name in _KEY_ENV]
   for part in (platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0], *tools, *env):
     digest.update(part.encode() + b"\0")
@@ -280,7 +285,7 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   machine = platform.machine().lower()
   lib_name = _shared_lib_name(system, "piqpc")
   configure = ["-G", os.environ.get("CMAKE_GENERATOR", "Ninja")] if system == "Windows" else []
-  command = _compiler_command(os.environ.get("CC", "cc"))
+  command = _compiler_command(os.environ.get("CC", _DEFAULT_CC))
   if len(command) >= 2 and Path(command[0]).stem == "zig" and command[1] == "cc":
     # CMake discovers only zig.exe for ASM and cannot discover its ar/ranlib subcommands.
     # A toolchain file also propagates these commands into BLASFEO's nested ISA probes.
@@ -402,14 +407,13 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
       built_lib = loc
       break
   if built_lib is None:
-    for name in (lib_name, f"lib{lib_name}") if system == "Windows" else (lib_name,):
-      built_lib = next(build_dir.rglob(name), None)
-      if built_lib is not None:
-        break
+    for f in build_dir.rglob(lib_name):
+      built_lib = f
+      break
   if built_lib is None:
     raise RuntimeError(f"Could not find built library {lib_name} in {build_dir}")
 
-  dst_path = lib_dir / (built_lib.name if system == "Windows" else lib_name)
+  dst_path = lib_dir / lib_name
   hook.app.display_info(f"Copying {built_lib} to {dst_path}")
   shutil.copy2(built_lib, dst_path)
   if system == "Windows":
