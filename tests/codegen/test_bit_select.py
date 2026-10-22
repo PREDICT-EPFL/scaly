@@ -13,6 +13,7 @@ from scaly.ir import program as p
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import dtypes
 from scaly.passes.program import optimize_program
+from tests.compilers import c_compiler
 
 COUNT = 37  # not a multiple of any lane width, so the last chunk is partial
 
@@ -36,7 +37,20 @@ def test_lane_varying_word_matches_numpy(tmp_path, lanes):
   path, library = tmp_path / "kernel.c", tmp_path / "kernel.so"
   path.write_text(source)
   subprocess.run(
-    ["cc", "-shared", "-fPIC", "-O3", "-march=native", "-fno-math-errno", "-std=c99", f"-DSCALY_LANES={lanes}", str(path), "-lm", "-o", str(library)],
+    [
+      *c_compiler(),
+      "-shared",
+      "-fPIC",
+      "-O3",
+      "-march=native",
+      "-fno-math-errno",
+      "-std=c99",
+      f"-DSCALY_LANES={lanes}",
+      str(path),
+      "-lm",
+      "-o",
+      str(library),
+    ],
     check=True,
     capture_output=True,
   )

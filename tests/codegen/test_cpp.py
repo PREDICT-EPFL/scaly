@@ -4,7 +4,6 @@ workspace, all compiled against the same C kernel the C header declares."""
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 
 import numpy as np
@@ -12,6 +11,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_module
+from tests.compilers import c_compiler, cxx_compiler
 
 
 def _spjac() -> sc.Function:
@@ -54,10 +54,7 @@ def test_cpp_header_declares_namespace_buffers_and_constexpr_tables() -> None:
 
 
 def test_cpp_header_compiles_and_runs(tmp_path) -> None:
-  cc = shutil.which("cc")
-  cxx = shutil.which("c++")
-  if cc is None or cxx is None:
-    pytest.skip("cc and c++ are required for the generated C++ header smoke test")
+  cc, cxx = c_compiler(), cxx_compiler()
 
   roll = render_c_module(_roll(), lang="cpp")
   spjac = render_c_module(_spjac(), lang="cpp")
@@ -109,10 +106,10 @@ int main() {
   objs = []
   for module in (roll, spjac):
     obj = tmp_path / (module.source_name + ".o")
-    subprocess.run([cc, "-c", str(tmp_path / module.source_name), "-o", str(obj)], check=True)
+    subprocess.run([*cc, "-c", str(tmp_path / module.source_name), "-o", str(obj)], check=True)
     objs.append(str(obj))
   exe = tmp_path / "main"
-  subprocess.run([cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", str(main), *objs, "-lm", "-o", str(exe)], check=True)
+  subprocess.run([*cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", str(main), *objs, "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
 
 
@@ -129,10 +126,7 @@ def test_cpp_header_and_c_header_compile_the_same_kernel() -> None:
 
 def test_headers_survive_buffer_names_that_collide_with_the_wrapper(tmp_path) -> None:
   """An input named after the function, the workspace, or an entry parameter must not shadow them."""
-  cc = shutil.which("cc")
-  cxx = shutil.which("c++")
-  if cc is None or cxx is None:
-    pytest.skip("cc and c++ are required for the generated header smoke test")
+  cc, cxx = c_compiler(), cxx_compiler()
 
   @sc.function(sc.group(sc.arg("f", 2), sc.arg("workspace", 2), sc.arg("arg", 2)), outputs=sc.arg("res"), name="f")
   def fun(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -155,18 +149,15 @@ def test_headers_survive_buffer_names_that_collide_with_the_wrapper(tmp_path) ->
   (tmp_path / "use.cpp").write_text(
     '#include "f.hpp"\nint use() { f::f__t a = {{1, 2}}; f::workspace__t b = {{3, 4}}; f::arg__t d = {{5, 6}}; f::res__t r; f::workspace_t w; return f::call(a, b, d, r, w); }\n'
   )
-  subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.c"), "-o", str(tmp_path / "use_c.o")], check=True)
-  subprocess.run([cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.cpp"), "-o", str(tmp_path / "use_cpp.o")], check=True)
-  subprocess.run([cc, "-c", str(tmp_path / c.source_name), "-o", str(tmp_path / "f.o")], check=True)
+  subprocess.run([*cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.c"), "-o", str(tmp_path / "use_c.o")], check=True)
+  subprocess.run([*cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.cpp"), "-o", str(tmp_path / "use_cpp.o")], check=True)
+  subprocess.run([*cc, "-c", str(tmp_path / c.source_name), "-o", str(tmp_path / "f.o")], check=True)
 
 
 def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
   """A solver Function takes a warm start and returns the solution under the same names, and one of
   its buffers may be empty; both headers must still compile."""
-  cc = shutil.which("cc")
-  cxx = shutil.which("c++")
-  if cc is None or cxx is None:
-    pytest.skip("cc and c++ are required for the generated header smoke test")
+  cc, cxx = c_compiler(), cxx_compiler()
 
   @sc.function(sc.group(sc.arg("w", 3), sc.arg("lam", 0), sc.arg("z0", 2)), outputs=sc.group(sc.arg("w"), sc.arg("lam")), name="solve")
   def fun(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
@@ -194,9 +185,9 @@ def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
     '#include "solve.hpp"\nint use() { solve::w_in_t a = {{1, 2, 3}}; solve::lam_in_t l = {}; solve::z0_t z = {{5, 6}}; solve::w_out_t r; solve::lam_out_t lo; solve::workspace_t ws; return solve::call(a, l, z, r, lo, ws); }\n'
   )
   subprocess.run(
-    [cc, "-std=c11", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.c"), "-o", str(tmp_path / "use_c.o")], check=True
+    [*cc, "-std=c11", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.c"), "-o", str(tmp_path / "use_c.o")], check=True
   )
   subprocess.run(
-    [cxx, "-std=c++17", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.cpp"), "-o", str(tmp_path / "use_cpp.o")], check=True
+    [*cxx, "-std=c++17", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.cpp"), "-o", str(tmp_path / "use_cpp.o")], check=True
   )
-  subprocess.run([cc, "-c", str(tmp_path / c.source_name), "-o", str(tmp_path / "solve.o")], check=True)
+  subprocess.run([*cc, "-c", str(tmp_path / c.source_name), "-o", str(tmp_path / "solve.o")], check=True)

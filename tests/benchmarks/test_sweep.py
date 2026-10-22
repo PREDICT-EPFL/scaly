@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from typing import cast
 
 from scaly.function.model import as_concrete
@@ -26,6 +27,7 @@ from benchmarks.harness.sweep import (
 )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the sweep reads ELF and Mach-O objects with binutils size and nm")
 def test_object_bytes_counts_compiled_constant_tables(tmp_path: Path) -> None:
   compiler = find_c_compiler()
   if compiler is None:
@@ -53,6 +55,7 @@ def test_constant_tables_measure_both_generators_layouts() -> None:
     constant_tables(b"static const int a[2] = {1, 2")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the sweep reads ELF and Mach-O objects with binutils size and nm")
 def test_object_check_catches_a_table_the_source_scan_misses(tmp_path: Path) -> None:
   compiler = find_c_compiler()
   if compiler is None:

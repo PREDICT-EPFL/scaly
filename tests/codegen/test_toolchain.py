@@ -346,12 +346,10 @@ def test_compiler_fingerprint_changes_with_the_compiler_and_host(tmp_path, monke
 
 
 def test_plain_c_module_header_compiles_as_c99(tmp_path):
-  import shutil
   import scaly as sc
+  from tests.compilers import c_compiler
 
-  compiler = shutil.which("cc")
-  if compiler is None:
-    pytest.skip("C compiler required")
+  compiler = c_compiler()
 
   @sc.function(sc.arg("x", 5), outputs=sc.arg("y", 5), name="plain_c99")
   def fun(x: sc.Expr) -> sc.Expr:
@@ -359,7 +357,7 @@ def test_plain_c_module_header_compiles_as_c99(tmp_path):
 
   module = aot.write_module(fun, tmp_path, dialect="c")
   result = subprocess.run(
-    [compiler, "-std=c99", "-pedantic-errors", "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")],
+    [*compiler, "-std=c99", "-pedantic-errors", "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")],
     capture_output=True,
     text=True,
   )

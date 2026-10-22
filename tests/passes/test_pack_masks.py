@@ -16,6 +16,7 @@ from scaly.ir.types import dtypes
 from scaly.codegen.c import _includes, _render_raw_callee
 from scaly.passes.program import optimize_program
 from scaly.passes.program.pack_masks import pack_masks
+from tests.compilers import c_compiler
 
 DIRECTIONS, STAGES, ENTRIES = 7, 9, 5  # positions = 45, not a multiple of 8, so the split loop has a tail
 
@@ -81,7 +82,20 @@ def _run(prog, tmp_path, lanes: int, x: np.ndarray, out_size: int) -> np.ndarray
   path, library = tmp_path / f"kernel{lanes}.c", tmp_path / f"kernel{lanes}.so"
   path.write_text(source)
   subprocess.run(
-    ["cc", "-shared", "-fPIC", "-O3", "-march=native", "-fno-math-errno", "-std=c99", f"-DSCALY_LANES={lanes}", str(path), "-lm", "-o", str(library)],
+    [
+      *c_compiler(),
+      "-shared",
+      "-fPIC",
+      "-O3",
+      "-march=native",
+      "-fno-math-errno",
+      "-std=c99",
+      f"-DSCALY_LANES={lanes}",
+      str(path),
+      "-lm",
+      "-o",
+      str(library),
+    ],
     check=True,
     capture_output=True,
   )

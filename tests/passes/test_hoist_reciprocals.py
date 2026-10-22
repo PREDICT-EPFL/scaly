@@ -7,6 +7,7 @@ from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.types import dtypes
 from scaly.ir.program import walk_program
 from scaly.passes.program.hoist_reciprocals import hoist_reciprocals
+from tests.compilers import c_compiler
 
 
 def _program(stop=6, *, mutation=None, dtype=dtypes.float64):
@@ -83,7 +84,6 @@ def test_empty_nested_loop_does_not_escape_outer_loop():
 @pytest.mark.parametrize("mapped", [False, True])
 def test_compiled_reciprocal_policy(tmp_path, reciprocal, mapped):
   import ctypes
-  import shutil
   import subprocess
 
   import numpy as np
@@ -92,9 +92,7 @@ def test_compiled_reciprocal_policy(tmp_path, reciprocal, mapped):
   from scaly.passes.lowering import lower_function
   from scaly.utils.env import shared_lib_ext, shared_lib_flag
 
-  compiler = shutil.which("cc")
-  if compiler is None:
-    pytest.skip("C compiler required")
+  compiler = c_compiler()
 
   @sc.function(sc.arg("x", 2), sc.arg("y", 1), outputs=sc.arg("out", 2), name="reciprocal_stage")
   def stage(x: sc.Expr, y: sc.Expr) -> sc.Expr:
@@ -111,7 +109,7 @@ def test_compiled_reciprocal_policy(tmp_path, reciprocal, mapped):
   source = tmp_path / "policy.c"
   library = tmp_path / ("policy" + shared_lib_ext())
   source.write_text(render_program_c(program, fun.instantiate()))
-  subprocess.run([compiler, "-O3", "-fPIC", shared_lib_flag(), str(source), "-lm", "-o", str(library)], check=True)
+  subprocess.run([*compiler, "-O3", "-fPIC", shared_lib_flag(), str(source), "-lm", "-o", str(library)], check=True)
   entry = ctypes.CDLL(str(library)).reciprocal_policy
   ptr = ctypes.POINTER(ctypes.c_double)
   entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.POINTER(ctypes.c_int), ptr, ctypes.c_int]

@@ -1,6 +1,5 @@
 """Generated symbols and locals stay distinct while preserving Function identity."""
 
-import shutil
 import subprocess
 
 import numpy as np
@@ -9,6 +8,7 @@ import pytest
 import scaly as sc
 from scaly.codegen import render_c_module
 from scaly.codegen.jit import JitUnavailable
+from tests.compilers import c_compiler, cxx_compiler
 
 
 def test_same_named_callees_on_same_arguments() -> None:
@@ -78,14 +78,13 @@ def test_cpp_keyword_inputs_and_self_named_sparse_output(tmp_path) -> None:
   sparse = sc.sparse_jacobian(fun, "y", "new", name="spjac_y_new")
   module = render_c_module(sparse, lang="cpp", lanes=1)
   assert "namespace spjac_y_new_ {" in module.header
-  cc, cxx = shutil.which("cc"), shutil.which("c++")
-  assert cc and cxx
+  cc, cxx = c_compiler(), cxx_compiler()
   (tmp_path / module.header_name).write_text(module.header)
   (tmp_path / module.source_name).write_text(module.source)
   (tmp_path / "use.cpp").write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-  subprocess.run([cc, "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")], check=True)
+  subprocess.run([*cc, "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")], check=True)
   subprocess.run(
-    [cxx, "-std=c++17", "-pedantic-errors", str(tmp_path / "use.cpp"), str(tmp_path / "kernel.o"), "-lm", "-o", str(tmp_path / "use")], check=True
+    [*cxx, "-std=c++17", "-pedantic-errors", str(tmp_path / "use.cpp"), str(tmp_path / "kernel.o"), "-lm", "-o", str(tmp_path / "use")], check=True
   )
   subprocess.run([str(tmp_path / "use")], check=True)
 

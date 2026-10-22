@@ -3,7 +3,6 @@
 import ctypes
 import platform
 import re
-import shutil
 import subprocess
 
 import numpy as np
@@ -18,13 +17,13 @@ from scaly.passes.program.fold_tiles import fold_tiles
 from scaly.passes.program.pack_workspace import pack_workspace
 from scaly.passes.program.coalesce_stores import coalesce_stores
 from scaly.passes.program.widen_ranges import widen_ranges
+from tests.compilers import c_compiler, named_compiler
 
-pytestmark = pytest.mark.skipif(shutil.which("cc") is None, reason="no C compiler")
 _NATIVE = "-mcpu=native" if platform.machine().lower() in ("arm64", "aarch64") else "-march=native"
 _GLIBC_X86 = platform.libc_ver()[0] == "glibc" and platform.machine().lower() in ("x86_64", "amd64")
 
 
-def _compile(prog, tmp_path, *, dialect="gnu", compiler="cc", vector_libm="none", defines=()):
+def _compile(prog, tmp_path, *, dialect="gnu", compiler=None, vector_libm="none", defines=()):
   source = "\n".join(
     [*_includes(dialect=dialect, prog=prog, vector_libm=vector_libm), *_render_raw_callee(prog.args[0], dialect=dialect, vector_libm=vector_libm)]
   )
@@ -33,13 +32,13 @@ def _compile(prog, tmp_path, *, dialect="gnu", compiler="cc", vector_libm="none"
   return _compile_source(source, tmp_path, dialect=dialect, compiler=compiler, defines=defines)
 
 
-def _compile_source(source, tmp_path, *, dialect="gnu", compiler="cc", defines=()):
+def _compile_source(source, tmp_path, *, dialect="gnu", compiler=None, defines=()):
   path = tmp_path / "kernel.c"
   path.write_text(source)
   library = tmp_path / "kernel.so"
   subprocess.run(
     [
-      compiler,
+      *(compiler or c_compiler()),
       "-shared",
       "-fPIC",
       "-O3",
@@ -80,17 +79,16 @@ def _evaluate(function, x, count):
   return y
 
 
-@pytest.mark.parametrize("compiler", ["gcc", "clang"])
+@pytest.mark.parametrize("compiler", ["gcc", "clang", "zig"])
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
 @pytest.mark.parametrize("lanes", [1, 2, 4, 8])
 @pytest.mark.parametrize("count", [2, 3, 5, 11, 17])
 def test_widths_match_scalar_bytes(tmp_path, compiler, dialect, lanes, count):
-  if shutil.which(compiler) is None:
-    pytest.skip(f"{compiler} unavailable")
+  command = named_compiler(compiler)
   baseline = tmp_path / "baseline"
   baseline.mkdir()
-  scalar, _ = _compile(_program(count), baseline, compiler=compiler)
-  vector, source = _compile(widen_ranges(_program(count), lanes=lanes), tmp_path, dialect=dialect, compiler=compiler)
+  scalar, _ = _compile(_program(count), baseline, compiler=command)
+  vector, source = _compile(widen_ranges(_program(count), lanes=lanes), tmp_path, dialect=dialect, compiler=command)
   x = np.linspace(-2, 3, count * 2)
   assert _evaluate(vector, x, count).tobytes() == _evaluate(scalar, x, count).tobytes()
   assert source.count("void kernel_lanes_1(") == (count >= 2 * lanes)
@@ -175,18 +173,19 @@ def test_mapped_nested_reduction_keeps_each_lane_order(tmp_path, dialect, lanes)
   assert "scratch[24]" in source
 
 
-@pytest.mark.parametrize("compiler", ["gcc", "clang"])
+@pytest.mark.parametrize("compiler", ["gcc", "clang", "zig"])
 @pytest.mark.parametrize("lanes", [1, 2, 4, 8])
 def test_glibc_vector_symbols_are_opt_in(tmp_path, lanes, compiler):
-  if not _GLIBC_X86 or shutil.which(compiler) is None:
-    pytest.skip("requires x86-64 glibc and the selected compiler")
-  macros = subprocess.run([compiler, _NATIVE, "-dM", "-E", "-x", "c", "-"], input="", capture_output=True, text=True, check=True).stdout
+  if not _GLIBC_X86:
+    pytest.skip("requires x86-64 glibc")
+  command = named_compiler(compiler)
+  macros = subprocess.run([*command, _NATIVE, "-dM", "-E", "-x", "c", "-"], input="", capture_output=True, text=True, check=True).stdout
   if lanes > 1 and {2: "__SSE2__", 4: "__AVX__", 8: "__AVX512F__"}[lanes] not in macros:
     pytest.skip("host does not support the selected libmvec width")
   off = tmp_path / "off"
   off.mkdir()
-  _, _ = _compile(widen_ranges(_program(17), lanes=lanes), off, compiler=compiler)
-  function, _ = _compile(widen_ranges(_program(17), lanes=lanes), tmp_path, vector_libm="glibc", compiler=compiler)
+  _, _ = _compile(widen_ranges(_program(17), lanes=lanes), off, compiler=command)
+  function, _ = _compile(widen_ranges(_program(17), lanes=lanes), tmp_path, vector_libm="glibc", compiler=command)
   off_symbols = subprocess.run(["nm", "-D", str(off / "kernel.so")], check=True, capture_output=True, text=True).stdout
   on_symbols = subprocess.run(["nm", "-D", str(tmp_path / "kernel.so")], check=True, capture_output=True, text=True).stdout
   assert "_ZGV" not in off_symbols
@@ -195,11 +194,10 @@ def test_glibc_vector_symbols_are_opt_in(tmp_path, lanes, compiler):
   np.testing.assert_allclose(_evaluate(function, x, 17)[:51:3], np.sin(x[::2]) * x[::2] + 0.125, atol=1e-14)
 
 
-@pytest.mark.parametrize("compiler", ["gcc", "clang"])
+@pytest.mark.parametrize("compiler", ["gcc", "clang", "zig"])
 @pytest.mark.parametrize("lanes", [2, 4, 8])
 def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler, lanes):
-  if shutil.which(compiler) is None:
-    pytest.skip(f"{compiler} unavailable")
+  command = named_compiler(compiler)
   x, y = p.buffer("x", dtypes.float64, (19,)), p.buffer("y", dtypes.float64, (1,))
   i = p.var("i")
   target = p.view(y, [p.const_int(0)])
@@ -209,8 +207,8 @@ def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler,
   prog = p.program([p.proc("kernel", [x, y], [p.store(target, p.const_float(0)), loop])])
   baseline = tmp_path / "baseline"
   baseline.mkdir()
-  scalar, _ = _compile(prog, baseline, compiler=compiler)
-  vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, compiler=compiler)
+  scalar, _ = _compile(prog, baseline, compiler=command)
+  vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, compiler=command)
   assert "kernel_lanes_1" in source
   values = np.random.default_rng(17).normal(size=19)
   assert _evaluate(vector, values, 1).tobytes() == _evaluate(scalar, values, 1).tobytes()
@@ -587,4 +585,4 @@ def test_vector_math_wrappers_do_not_capture_user_names(tmp_path, names):
 
   path = tmp_path / "kernel.c"
   path.write_text(render_c_module(fun, lanes=4).body)
-  subprocess.run(["cc", "-O1", "-std=c99", "-c", str(path), "-o", str(tmp_path / "kernel.o")], check=True, capture_output=True)
+  subprocess.run([*c_compiler(), "-O1", "-std=c99", "-c", str(path), "-o", str(tmp_path / "kernel.o")], check=True, capture_output=True)

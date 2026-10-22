@@ -10,6 +10,7 @@ in `plugins/scaly-piqp/tests/`.
 from __future__ import annotations
 
 import ctypes
+import os
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -23,6 +24,8 @@ from scaly.codegen import render_c_api_header, render_c_source
 from scaly.codegen.jit import CompiledFunction, JitError
 from scaly.solvers.registry import available_backends
 from scaly.solvers.stats import CSolverStats
+from scaly.solvers.paths import solver_paths
+from tests.compilers import c_compiler, cxx_compiler
 
 pytestmark = pytest.mark.skipif(
   "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
@@ -263,10 +266,11 @@ int main(void) {{
   executable = tmp_path / "driver"
   obj = source.with_suffix(".o")
   includes = [flag for flag in module.link_flags if flag.startswith("-I")]
-  subprocess.run(["cc", "-O2", "-Wall", "-Werror", "-c", str(source), *includes, "-o", str(obj)], check=True, capture_output=True)
+  cc = c_compiler()
+  subprocess.run([*cc, "-O2", "-Wall", "-Werror", "-c", str(source), *includes, "-o", str(obj)], check=True, capture_output=True)
   subprocess.run(
     [
-      "c++" if lang == "cpp" else "cc",
+      *(cxx_compiler() if lang == "cpp" else cc),
       "-std=c++17" if lang == "cpp" else "-std=c11",
       "-O2",
       "-Wall",
@@ -281,4 +285,6 @@ int main(void) {{
     check=True,
     capture_output=True,
   )
-  subprocess.run([str(executable)], check=True, capture_output=True)
+  # Windows has no rpath, so the executable finds the solver DLLs on PATH.
+  path = os.pathsep.join([*map(str, solver_paths().lib_dirs), os.environ["PATH"]])
+  subprocess.run([str(executable)], check=True, capture_output=True, env={**os.environ, "PATH": path})
