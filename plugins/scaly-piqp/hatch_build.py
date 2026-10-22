@@ -68,6 +68,10 @@ def _solver_build_mode() -> str:
 
 # Windows has no system C compiler, so the build requirements bring the zig that the JIT also uses.
 _DEFAULT_CC, _DEFAULT_CXX = ("zig cc", ("zig c++",)) if platform.system() == "Windows" else ("cc", ("c++", "g++", "clang++"))
+if platform.system() == "Windows" and platform.machine().lower() in {"x86_64", "amd64"}:
+  # Zig defaults to the host CPU. Match BLASFEO's Haswell baseline so a wheel built on an
+  # AVX-512 runner neither requires that CPU nor enters Eigen 3.4.1's broken MinGW AVX-512 path.
+  _DEFAULT_CC, _DEFAULT_CXX = "zig cc -mcpu=haswell", ("zig c++ -mcpu=haswell",)
 
 
 def _compiler_command(value: str) -> list[str]:
