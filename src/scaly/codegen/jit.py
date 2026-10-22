@@ -268,9 +268,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
         for solver_symbol in solver_stats_symbols(fun):
           exports += [f"{solver_symbol}_stats", f"{solver_symbol}_default_options"]
       _write_cached_text(source_path.with_suffix(".def"), "EXPORTS\n" + "\n".join(exports) + "\n")
-    # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
-    # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
-    tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
+    # Compile to a temp lib unique to this process and thread, then atomically rename, so concurrent
+    # builds of the same function (pytest-xdist workers or threads on a cold cache) never observe a half-written .so.
+    tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
     try:
       subprocess.run(
         _compile_command(compiler.command, module, source_path.as_posix(), tmp_lib.as_posix()), check=True, capture_output=True, text=True

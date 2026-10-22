@@ -6,6 +6,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 from pathlib import Path
 
@@ -165,6 +167,20 @@ def test_processes_share_a_cold_cache(tmp_path: Path) -> None:
   assert len({path for _, path in reports}) == 1
   assert all(int(count) <= 1 for count, _ in reports[:2])
   assert reports[2][0] == "0"
+
+
+def test_threads_share_a_cold_cache(isolated_cache: Path) -> None:
+  fun = as_concrete(_simple_fn())
+  start = threading.Barrier(2)
+
+  def build(_: int) -> Path:
+    start.wait()
+    return jit._build_artifact(fun).lib_path
+
+  with ThreadPoolExecutor(2) as pool:
+    assert len(set(pool.map(build, range(2)))) == 1
+  xv = np.array([0.5, 0.0, -1.0])
+  np.testing.assert_allclose(jit.get_compiled(fun).run([xv])[0], (np.sin(xv) + xv * xv).sum())
 
 
 def test_jit_compiles_into_a_cache_path_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

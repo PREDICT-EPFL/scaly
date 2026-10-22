@@ -1360,6 +1360,7 @@ tests/codegen/test_jit.py::test_processes_share_a_cold_cache
 tests/codegen/test_jit.py::test_publication_leaves_a_loaded_library_callable
 tests/codegen/test_jit.py::test_recompile_clears_cache_and_recompiles
 tests/codegen/test_jit.py::test_scalar_math_override_compile_and_invalidation_use_same_recipe
+tests/codegen/test_jit.py::test_threads_share_a_cold_cache
 tests/codegen/test_jit.py::test_unsupported_lowering_still_raises_jit_unavailable
 tests/codegen/test_jit.py::test_vector_math_environment_variable_is_registered
 tests/codegen/test_jit.py::test_vector_math_override_rejects_invalid_values[GLIBC]

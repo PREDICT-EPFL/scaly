@@ -65,7 +65,7 @@ What makes the core work on Windows:
 
 Tests that compile generated C by hand now use the JIT's compiler through `tests/compilers.py`,
 and `test_vectors.py` adds zig to its gcc and clang matrices. The full suite on this machine, with
-the toolchain extra and every plugin installed, gives 2466 passed, 146 skipped and 0 failed. The
+the toolchain extra and every plugin installed, gives 2467 passed, 146 skipped and 0 failed. The
 skips are:
 
 | Count | Reason |
@@ -96,6 +96,7 @@ one. The cache keeps its content-addressed entries and handles that refusal in t
 | Test | What it shows | Fails when |
 | --- | --- | --- |
 | `test_processes_share_a_cold_cache` | two processes released together on an empty cache both evaluate correctly; a third reuses the entry without compiling | publication stops tolerating the refusal, or every call compiles |
+| `test_threads_share_a_cold_cache` | two threads of one process compiling the same cold entry both get the one published library | the temporary library is named per process only, as it was before |
 | `test_publication_leaves_a_loaded_library_callable` | publishing onto a loaded DLL keeps it and its handle | publication stops tolerating the refusal |
 | `test_old_handle_stays_callable_after_recompilation` | both handles evaluate correctly after `recompile()` | recompilation reuses the locked path |
 | `test_recompile_clears_cache_and_recompiles` | only the loaded DLL survives invalidation on Windows, nothing on Linux and macOS | invalidation leaves the entry in place |
