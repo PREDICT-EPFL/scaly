@@ -1,0 +1,43 @@
+{
+  "windows": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "python": "3.14.8",
+  "zig": "0.17.0",
+  "clang": "clang version 22.1.8",
+  "target": "x86_64-unknown-windows-gnu",
+  "flags": [
+    "-O2",
+    "-march=native",
+    "-fno-math-errno",
+    "-fPIC",
+    "-shared"
+  ],
+  "status": 0,
+  "lanes": 4,
+  "max_abs_error": 7.105427357601002e-15,
+  "sum_error": 1.4551915228366852e-11,
+  "imports": [
+    "api-ms-win-crt-math-l1-1-0.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "KERNEL32.dll",
+    "api-ms-win-crt-stdio-l1-1-0.dll",
+    "api-ms-win-crt-heap-l1-1-0.dll",
+    "api-ms-win-crt-string-l1-1-0.dll"
+  ],
+  "cold_s": [
+    10.249,
+    10.581,
+    10.74,
+    10.322,
+    10.811
+  ],
+  "warm_s": [
+    0.091,
+    0.091,
+    0.1,
+    0.086,
+    0.082
+  ],
+  "cold_median_s": 10.581,
+  "warm_median_s": 0.091
+}
