@@ -250,7 +250,7 @@ def _problem_checks(problem: str, full: bool) -> None:
   for name in names:
     check, needs_ipopt, needs_casadi = table[name]
     if needs_ipopt and sys.platform == "win32":
-      outcome = "skipped: IPOPT is not supported on Windows"
+      outcome = "skipped: IPOPT is not yet supported on Windows"
     elif needs_ipopt and not have_ipopt:
       outcome = "skipped: IPOPT plugin not loadable"
     elif needs_casadi and not have_casadi:
@@ -268,7 +268,7 @@ def smoke(args) -> bool:
   if sys.platform == "win32":
     for name, reason in {
       "benchmarks": "the C++ benchmark drivers and binutils size/nm object inspection require Linux or macOS",
-      "solver_call": "the C++ solver driver requires PIQP/IPOPT, and IPOPT is not supported on Windows",
+      "solver_call": "the C++ solver driver requires PIQP/IPOPT, and IPOPT is not yet supported on Windows",
     }.items():
       if name in selected:
         print(f"smoke {name}: skipped: {reason}", flush=True)
