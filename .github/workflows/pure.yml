@@ -1,0 +1,26 @@
+name: Pure distributions
+
+on:
+  workflow_call:
+
+jobs:
+  pure:
+    name: sdists + pure wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Build
+        run: |
+          uv build -o dist .
+          uv build -o dist plugins/scaly-sqp
+          uv build -o dist --sdist plugins/scaly-piqp
+          uv build -o dist --sdist plugins/scaly-ipopt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-pure
+          path: dist/*
+          retention-days: 90

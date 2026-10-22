@@ -24,6 +24,9 @@ jobs:
   tests:
     name: ${{ matrix.os }}${{ matrix.cc && format(' / {0}', matrix.cc) || '' }}${{ matrix.toolchain && ' / zig cc' || '' }}${{ matrix.python && format(' / py{0}', matrix.python) || '' }}
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -31,7 +34,7 @@ jobs:
     env:
       UV_NO_SYNC: "1"
       SCALY_BUILD_SOLVERS: skip
-      SCALY_REQUIRE_SOLVERS: "1"
+      SCALY_REQUIRE_SOLVERS: ${{ matrix.os == 'windows-latest' && 'piqp,sqp' || '1' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -39,6 +42,12 @@ jobs:
         with:
           pattern: dist-scaly-*-${{ matrix.wheels }}
           merge-multiple: true
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        if: runner.os == 'Windows'
+        with:
+          name: dist-pure
           path: dist
 
       - uses: astral-sh/setup-uv@v10.2.0
@@ -57,16 +66,32 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      - name: Install the plugin wheels
+      - name: Fresh Windows installation without the toolchain extra
+        if: runner.os == 'Windows'
+        run: uv run --no-project .github/scripts/windows_install.py dist "${{ matrix.python }}"
+
+      - name: Install test dependencies and wheels
         run: |
-          uv sync --frozen ${{ matrix.toolchain && '--extra toolchain' || '' }} --no-install-package scaly-piqp --no-install-package scaly-ipopt
+          flags=(--no-install-package scaly-ipopt)
+          if [ "$RUNNER_OS" = Windows ]; then flags=(--no-install-package scaly --no-install-package scaly-sqp); fi
+          uv sync --frozen ${{ matrix.toolchain && '--extra toolchain' || '' }} --no-install-package scaly-piqp "${flags[@]}"
           uv pip install --no-deps dist/*.whl
-          uv run python -c "import scaly_piqp, scaly_ipopt; assert all('site-packages' in m.__file__ for m in (scaly_piqp, scaly_ipopt))"
+          uv run python -c "import importlib, sys; names = ('scaly', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
+
+      - name: Windows isolated installed-wheel assertions
+        if: runner.os == 'Windows'
+        run: uv run .github/scripts/windows_install.py --installed
+
+      - name: Strict Windows type check
+        if: runner.os == 'Windows'
+        run: uv run ty check --error-on-warning
 
       - name: Native toolchain report
         run: |
-          ${CC:-cc} --version
-          ${CXX:-c++} --version
+          if [ "$RUNNER_OS" != Windows ]; then
+            ${CC:-cc} --version
+            ${CXX:-c++} --version
+          fi
           if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
           uv run python --version
           uv run scaly_toolchain
@@ -76,18 +101,19 @@ jobs:
 
       # The benchmark harness accepts only GCC for vector-libm JIT builds, so Clang and `zig cc` run
       # the benchmark commands with scalar libm. Pytest compiles vector libm with every compiler.
+      # Windows smoke reports the unsupported C++ drivers, object inspection and IPOPT checks.
       - name: Benchmark math policy
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           TOOLCHAIN: ${{ matrix.toolchain }}
         run: case "${TOOLCHAIN:-}:${CC:-}" in true:*|*:clang*) echo "SCALY_VECTOR_LIBM=none" >> "$GITHUB_ENV" ;; esac
 
       - name: Benchmark smoke
         if: ${{ !cancelled() }}
-        run: uv run benchmarks/run.py smoke ${{ inputs.full && '--full' || '' }}
+        run: uv run benchmarks/run.py smoke ${{ inputs.full && runner.os != 'Windows' && '--full' || '' }}
 
       - name: Closed-loop smoke
-        if: ${{ !cancelled() && !inputs.full }}
+        if: ${{ !cancelled() && runner.os != 'Windows' && !inputs.full }}
         run: |
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
@@ -96,7 +122,7 @@ jobs:
           uv run benchmarks/run.py closed-loop --smoke --problem npmpc --solver ipopt --oracle scaly
 
       - name: Closed-loop smoke, every pair
-        if: ${{ !cancelled() && inputs.full }}
+        if: ${{ !cancelled() && runner.os != 'Windows' && inputs.full }}
         run: |
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver sqp --oracle scaly,casadi
@@ -104,7 +130,7 @@ jobs:
           uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver none
 
       - name: Repeated benchmark commands
-        if: ${{ !cancelled() && inputs.full }}
+        if: ${{ !cancelled() && runner.os != 'Windows' && inputs.full }}
         run: |
           uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
           uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
