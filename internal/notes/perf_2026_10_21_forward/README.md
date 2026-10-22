@@ -24,7 +24,7 @@ Each candidate was pushed, checked out cleanly in `/tmp/scaly19-refresh-fixN`, s
 
 All 72 headline attempts passed native correctness and timing, with no compile failures, timeouts or skipped cells. Four conservatively excluded candidate7 attempts leave 68 rows in the harness [report](report.md). Tracked provenance copies omit unstable task-branch commit hashes; the original provenance files retain them. Phase names identify each code variant, and the final head is recorded on the pull request. [idle-audit.log](idle-audit.log) records the per-invocation checks.
 
-Against current main, the final means are 25.1% faster for chain Jacobian and 1.8% faster for chain, with residual increases of 2.3% for neural MPC Jacobian and 5.7% for unbumpercars. The two residual regressions remain maintainer open points. These measured improvements do not establish that all remaining costs are explained or that the neural network's zero seed column has been packed out.
+Against the recorded main control, the final means are 25.1% faster for chain Jacobian and 1.8% faster for chain, with residual increases of 2.3% for neural MPC Jacobian and 5.7% for unbumpercars. The maintainer accepts these small residual regressions and the disclosed workspace growth pending loop-compiler improvements. These measured improvements do not establish that all remaining costs are explained or that the neural network's zero seed column has been packed out.
 
 ## Measured changes
 
@@ -47,13 +47,31 @@ The conflicted `jac.c` was taken from main during the rebase and regenerated, ne
 - `jac.c`, 206 to 138 lines: broadcast reads share `vel` and `2 * vel` instead of copying them four times. Four copy helpers and an unused two-lane type disappear. Packed buffers shrink from 8+8+16+1 to 4+16+1 doubles. Explicit seed/component concat loops replace flat division/modulo indices. Other edits rename buffers and helpers. The reduction order and final output transpose remain the same.
 - `spjac.c`, 150 to 206 lines: disjoint constant-color selection writes mapped partials, scatters the selected entries into structural zeros, subtracts the residual identity and gathers sparse outputs. This adds two 48-double local arrays, static source/target indices and three movement helpers. Previously these operations fused into the output-writing helper. Scalar temporary names also change with scheduling. The derivative formulas and sparse output order are unchanged. This is an explained source-size increase, not snapshot churn to discard.
 
-Every header and every other C snapshot is byte-identical to current main, including `vmap.c`, `wide.c` and `workspace.c`. Main's compact helpers and packed-mask pass remain in place. The snapshot suite and numerical lowering tests validate the regenerated corpus.
+At the measured revision, every header and every other C snapshot was byte-identical to the recorded main control, including `vmap.c`, `wide.c` and `workspace.c`. Main's compact helpers and packed-mask pass remain in place. The later lane-storage fix below changes scratch declarations in three snapshots.
+
+## Lane storage follow-up
+
+The maintainer requested a bounded allocation fix after the timing study. Widening now reserves the maximum lane capacity already selected for a helper, instead of eight copies unconditionally. Renderer gather and integer-index scratch arrays use the helper's compile-time width. Portable automatic mode still reserves enough storage for every supported target width. Loop order, arithmetic, lane selection and the 1024-double spill threshold are unchanged.
+
+Generation-only probes of the horizon-100 neural MPC Jacobian give the following counts. Local arrays are the root procedure's declared arrays, excluding constants, caller workspace, callee stack and registers. They must be counted alongside caller workspace because the spill threshold can move storage between the two.
+
+| Lane setting | Caller workspace doubles, before → after | Root local array doubles, before → after |
+| --- | ---: | ---: |
+| 1 | 1600 → 1600 | 832 → 832 |
+| 2 | 7744 → 1600 | 3512 → 3028 |
+| 4 | 7744 → 1600 | 3512 → 5228 |
+| 8 | 7744 → 7744 | 3512 → 3512 |
+| auto | 7744 → 7744 | 3512 → 3512 |
+
+The default still permits eight lanes, so its workspace remains 7744 doubles. Leading seed axes do not require those copies. Movement fusion and lifetime packing inside nested loops can eliminate or reuse them. The requirements are now explicit in #27, #69 and #71. Public `vmap` axis options alone would still need copies with today's contiguous-slice representation.
+
+The 194 focused program-pass and generated-C tests pass in both GNU and scalar C, including partial tails, aliases and packed slots shared by helpers with different capacities. Restoring unconditional eight-lane allocation makes seven selected allocation regressions fail. The dispatch-storage metric also passes with its exact two-lane count reduced from 168 to 42. The regenerated snapshot delta changes only gather and integer-index scratch declarations from `[8]` to `[SCALY_WIDTH_…]`. Source bytes grow from 6664 to 6682 in `jac.c`, 13899 to 14007 in `spjac.c`, and 6834 to 7050 in `vmap.c` because the macro name is longer. Every header and all other snapshots are unchanged. The normal hook passes after this fix, including 2446 passed tests, two existing power expected failures, benchmark smoke, documentation, types, formatting and lint. Claude Opus 5.5 at low effort approved the short fix-only check with no findings. The native runtime and generation-time table above predates this allocation fix; it has not been remeasured and supplies no performance claim for the fix.
 
 ## Maintainer open points and validation limits
 
 The rewritten chain gate still guards the original intent: the forward mass helper must retain its mass loop. At 33 and 65 masses its combined helper source is 592 and 592 lines. A real perturbation forces scalar lowering of those derivative helpers; source becomes 10452 and 21044 lines and the unchanged 1.2 ratio gate fails. Whole-kernel source is 1973 and 3061 lines because primal and boundary code also grows; the gate rewrite requires maintainer acceptance. The old 5/33 whole-source comparison crossed the automatic scalarization cutoff. The first scratch gate runners had import-path setup errors, and the first coordinate perturbation omitted the competing divisor; these attempts remain in `/tmp` and are not counted as gate evidence.
 
-Neural MPC workspace is still 6144 doubles at horizon 6 and 7744 at horizon 100, versus main's 0 and 1600. The six fixed 1024-double product/transpose buffers are 32 hidden units times four seeds times eight horizon lanes across three network layers. The tested folds and schedules did not recover this fixed storage. The gate remains tight at 6144 fixed, 7744 total and 1600 horizon growth, as before this refresh. This workspace increase and gate change require maintainer acceptance; it is not claimed to be inherent to the decided design. Removing the nested transpose copies remains lowering work associated with #69.
+Neural MPC workspace is still 6144 doubles at horizon 6 and 7744 at horizon 100, versus the recorded main control's 0 and 1600. The six fixed 1024-double buffers hold 32 hidden units times four seeds times eight horizon lanes. Each of the two 32-wide hidden layers contributes a product buffer, a transpose buffer and an activation-derivative/layout buffer. The tested folds and schedules did not recover this fixed storage. The gate remains tight at 6144 fixed, 7744 total and 1600 horizon growth, as before this refresh. The maintainer accepts this disclosed workspace increase and gate change pending loop-compiler improvements; it is not inherent to the decided design. #69 owns movement fusion, and #71 now explicitly requires nested-loop lifetime packing and bounded lane allocation. Neither changing thresholds nor reducing vectorization counts as recovering the storage.
 
 The normal hook is **blocked by #188**, as requested by the coordinator. The final full suite reports 2365 passed, 57 expected failures, three strict XPASS cases and ten empty-loop errors. The strict XPASS cases are periodic empty maps whose work is now eliminated by constant selection; their upstream markers remain unchanged. The ten errors hit the upstream empty-loop mask-packing crash. None of the affected expected failures counts as an empty-shape pass. The 57 expected failures comprise 55 affected empty cases and the two existing power cases.
 

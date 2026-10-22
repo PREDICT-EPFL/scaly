@@ -65,7 +65,7 @@ static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_2(l
   lanes_4_4_4_4_vec_st(&s0[((0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], (b * l), n);
 }
 static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_3(long long d1_jac_znext_z_chunk, long long n, double* jac_znext_z, const double* s1, int64_t d0_jac_znext_z) {
-  double ls[8];
+  double ls[SCALY_WIDTH_4_4_4_4];
   for (long long d1_jac_znext_z_lane = 0; d1_jac_znext_z_lane < SCALY_WIDTH_4_4_4_4; ++d1_jac_znext_z_lane) ls[d1_jac_znext_z_lane] = s1[(d0_jac_znext_z + ((0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) : 3)) * 4))];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
   lanes_4_4_4_4_vec_st(&jac_znext_z[(((d0_jac_znext_z * 4) + (0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3)))) + 0], l, n);

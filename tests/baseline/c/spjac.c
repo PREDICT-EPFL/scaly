@@ -59,11 +59,11 @@ extern "C" {
 #endif
 
 static inline __attribute__((always_inline)) void shooting_spjac_eq_z_lanes_1(long long it_t0_chunk, long long n, double* s0, const double* z) {
-  double ls[8];
+  double ls[SCALY_WIDTH_4_4_4_4];
   for (long long it_t0_lane = 0; it_t0_lane < SCALY_WIDTH_4_4_4_4; ++it_t0_lane) ls[it_t0_lane] = z[((4 * (0 + (((it_t0_chunk * SCALY_WIDTH_4_4_4_4) + it_t0_lane) < 2 ? ((it_t0_chunk * SCALY_WIDTH_4_4_4_4) + it_t0_lane) : 2))) + 2)];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
   lanes_4_4_4_4_vec lane_v0 = l;
-  double l_2s[8];
+  double l_2s[SCALY_WIDTH_4_4_4_4];
   for (long long it_t0_lane = 0; it_t0_lane < SCALY_WIDTH_4_4_4_4; ++it_t0_lane) l_2s[it_t0_lane] = z[((4 * (0 + (((it_t0_chunk * SCALY_WIDTH_4_4_4_4) + it_t0_lane) < 2 ? ((it_t0_chunk * SCALY_WIDTH_4_4_4_4) + it_t0_lane) : 2))) + 3)];
   lanes_4_4_4_4_vec l_2 = *(const lanes_4_4_4_4_vec_mem*)l_2s;
   lanes_4_4_4_4_vec lane_v2 = l_2;
@@ -139,18 +139,18 @@ static inline __attribute__((always_inline)) void shooting_spjac_eq_z_lanes_2(lo
   lanes_8_8_8_8_vec_st(&s1[((0 + (((z_t3_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 47 ? ((z_t3_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 47))) + 0], b, n);
 }
 static inline __attribute__((always_inline)) void shooting_spjac_eq_z_lanes_3(long long d1_t7_chunk, long long n, const double* k5, double* s0, const double* s1, int64_t d0_t7) {
-  int64_t v0[8];
+  int64_t v0[SCALY_WIDTH_4_4_4_4];
   for (long long d1_t7_lane = 0; d1_t7_lane < SCALY_WIDTH_4_4_4_4; ++d1_t7_lane) v0[d1_t7_lane] = (d0_t7 + ((0 + (((d1_t7_chunk * SCALY_WIDTH_4_4_4_4) + d1_t7_lane) < 3 ? ((d1_t7_chunk * SCALY_WIDTH_4_4_4_4) + d1_t7_lane) : 3)) * 12));
-  double ls[8];
+  double ls[SCALY_WIDTH_4_4_4_4];
   for (long long d1_t7_lane = 0; d1_t7_lane < SCALY_WIDTH_4_4_4_4; ++d1_t7_lane) ls[d1_t7_lane] = s1[v0[d1_t7_lane]];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
-  double l_2s[8];
+  double l_2s[SCALY_WIDTH_4_4_4_4];
   for (long long d1_t7_lane = 0; d1_t7_lane < SCALY_WIDTH_4_4_4_4; ++d1_t7_lane) l_2s[d1_t7_lane] = k5[v0[d1_t7_lane]];
   lanes_4_4_4_4_vec l_2 = *(const lanes_4_4_4_4_vec_mem*)l_2s;
   lanes_4_4_4_4_vec_st(&s0[(((d0_t7 * 4) + (0 + (((d1_t7_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((d1_t7_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3)))) + 0], (l - l_2), n);
 }
 static inline __attribute__((always_inline)) void shooting_spjac_eq_z_lanes_4(long long i_spjac_eq_z_chunk, long long n, const int64_t* k8, const double* s0, double* spjac_eq_z) {
-  double ls[8];
+  double ls[SCALY_WIDTH_8_8_8_8];
   for (long long i_spjac_eq_z_lane = 0; i_spjac_eq_z_lane < SCALY_WIDTH_8_8_8_8; ++i_spjac_eq_z_lane) ls[i_spjac_eq_z_lane] = s0[k8[(0 + (((i_spjac_eq_z_chunk * SCALY_WIDTH_8_8_8_8) + i_spjac_eq_z_lane) < 35 ? ((i_spjac_eq_z_chunk * SCALY_WIDTH_8_8_8_8) + i_spjac_eq_z_lane) : 35))]];
   lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
   lanes_8_8_8_8_vec_st(&spjac_eq_z[((0 + (((i_spjac_eq_z_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 35 ? ((i_spjac_eq_z_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 35))) + 0], l, n);

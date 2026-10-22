@@ -77,8 +77,8 @@ def _view_args_scalar(n: ProgramNode) -> str | None:
     return "VIEW missing 'buffer' name attr"
   if "lane_stride" in n.attrs and not isinstance(n.attrs["lane_stride"], int):
     return "VIEW lane_stride must be an integer"
-  if "lane_storage" in n.attrs and n.attrs["lane_storage"] != 8:
-    return "VIEW lane storage must reserve eight elements"
+  if "lane_storage" in n.attrs and n.attrs["lane_storage"] not in (1, 2, 4, 8):
+    return "VIEW lane storage must reserve one, two, four or eight elements"
   return None
 
 

@@ -166,7 +166,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         stride = _axis_stride(expanded, rng.attrs["name"], varying_indices) if expanded is not None else None
         if values is not None and len(values) > 1 and (np.diff(values) == values[1] - values[0]).all():
           stride = int(values[1] - values[0])
-        attrs = {**view.attrs, "lane_layout": "contiguous" if stride == 1 else "strided" if stride is not None else "gather", "lane_storage": 8}
+        attrs = {**view.attrs, "lane_layout": "contiguous" if stride == 1 else "strided" if stride is not None else "gather", "lane_storage": cap}
         if stride is not None:
           attrs["lane_stride"] = stride
         return ProgramNode(view.op, view.args, attrs, view.dtype)
@@ -175,7 +175,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         size = 1
         for dim in node.attrs["shape"]:
           size *= dim
-        attrs = {**node.attrs, "shape": (size * 8,), "lane_storage": 8}
+        attrs = {**node.attrs, "shape": (size * cap,), "lane_storage": cap}
         return ProgramNode(node.op, node.args, attrs, node.dtype)
 
       def local_view(node: ProgramNode) -> ProgramNode:

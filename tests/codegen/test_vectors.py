@@ -170,7 +170,7 @@ def test_mapped_nested_reduction_keeps_each_lane_order(tmp_path, dialect, lanes)
   actual = _evaluate(function, x, 17)[:17]
   expected = np.asarray([sum(row * 2) for row in x.reshape(17, 3)])
   assert actual.tobytes() == expected.tobytes()
-  assert "scratch[24]" in source
+  assert f"scratch[{3 * lanes}]" in source
 
 
 @pytest.mark.parametrize("compiler", ["gcc", "clang", "zig"])
@@ -291,14 +291,16 @@ def test_contiguous_output_axis_retains_inner_reduction(tmp_path, dialect):
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
 @pytest.mark.parametrize("lanes", [2, 4, 8])
-def test_lane_scratch_is_packed_for_eight_lanes(tmp_path, dialect, lanes):
+def test_lane_scratch_is_packed_for_selected_capacity(tmp_path, dialect, lanes):
   prog = pack_workspace(widen_ranges(_nested_program(count=17, size=1100), lanes=lanes))
   main = prog.args[-1]
-  assert main.attrs["sz_w"] == 1100 * 8
+  assert main.attrs["sz_w"] == 1100 * lanes
   function, source = _compile(p.program([main]), tmp_path, dialect=dialect)
   values = np.arange(17 * 1100, dtype=np.float64)
   np.testing.assert_array_equal(_evaluate(function, values, 17)[:17], values.reshape(17, 1100).sum(axis=1) * 2)
   assert "double* s0 = w + 0" in source
+  if dialect == "gnu":
+    assert re.search(r"double \w+\[SCALY_WIDTH_\w+\];", source)
 
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
@@ -434,7 +436,8 @@ def test_public_mapped_block_matrix_promotes_lane_scratch(tmp_path, dialect):
   module = render_c_module(fn, lanes=4, dialect=dialect)
   main = module.program.args[-1]
   assert any(n.attrs.get("vector_mapped") for n in walk_program(main))
-  assert module.workspace_size >= size * 8
+  assert module.workspace_size == size * stages
+  assert any(n.op == ProgramOp.BUFFER and n.attrs["shape"] == (size * 4,) and "workspace_offset" not in n.attrs for n in walk_program(main))
   function, _ = _compile_module(module, tmp_path, dialect)
   values = np.linspace(-2, 3, size * stages)
   np.testing.assert_allclose(_evaluate(function, values, size * stages)[: size * stages], values * values, rtol=1e-15, atol=1e-15)
@@ -505,7 +508,7 @@ def test_private_aliases_pack_active_lanes_with_tail(tmp_path, dialect, lanes):
   views = [n for n in nodes if n.op == ProgramOp.VIEW and n.attrs.get("lane_local")]
   assert views and all(any(v.op == ProgramOp.VAR and v.attrs["name"] == width for v in walk_program(n.args[0])) for n in views)
   packed = pack_workspace(widened)
-  assert packed.args[0].attrs["sz_w"] == 1100 * 8
+  assert packed.args[0].attrs["sz_w"] == 1100 * (8 if lanes == "auto" else lanes)
   function, _ = _compile(packed, tmp_path, dialect=dialect, defines=("-DSCALY_LANES=8",) if lanes == "auto" else ())
   values = np.linspace(-2, 3, 51)
   expected = np.asarray([row[0] + (row[1] + row[2]) for row in values.reshape(17, 3)])
@@ -541,7 +544,7 @@ def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect
   caps = {n.attrs["lane_width"]: n.attrs["lane_caps"] for n in walk_program(widened) if n.op == ProgramOp.RANGE and "lane_caps" in n.attrs}
   assert sorted(caps.values()) == [(2,) * 4, (4,) * 4]
   packed = pack_workspace(widened)
-  assert packed.args[0].attrs["sz_w"] == 1100 * 8
+  assert packed.args[0].attrs["sz_w"] == 1100 * 4
   function, _ = _compile(packed, tmp_path, dialect=dialect, defines=("-DSCALY_LANES=8",))
   values = np.linspace(-2, 3, 4)
   actual = _evaluate(function, values, 6)

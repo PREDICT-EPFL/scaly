@@ -684,7 +684,7 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
           lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
         else:
-          lines.append(f"  double {name}s[8];")
+          lines.append(f"  double {name}s[{width}];")
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}s[{lane}] = {_emit_view(view, {}, lane_vars)};")
           lines.append(f"  {vec} {name} = *(const {vec}_mem*){name}s;")
         value = name
@@ -726,7 +726,7 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           lines.append(f"  {vec + ' ' if stmt.attrs.get('declare') else ''}{name} = {value};")
           vector_vars.add(stmt.attrs["target"])
         else:
-          lines.append(f"  {stmt.dtype.c_type} {name}[8];")
+          lines.append(f"  {stmt.dtype.c_type} {name}[{width}];")
           value = _emit_scalar(stmt.args[0], {}, lane_vars)
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {value};")
           lane_vars[stmt.attrs["target"]] = f"{name}[{lane}]"
