@@ -57,6 +57,8 @@ def test_codegen_deadline_expires_and_restores_handler() -> None:
 
 @pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
 def test_compile_timeout_cleans_up_and_drains_output(platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  from types import SimpleNamespace
+
   events = []
 
   class Process:
@@ -71,7 +73,7 @@ def test_compile_timeout_cleans_up_and_drains_output(platform: str, tmp_path: Pa
     def kill(self):
       events.append("kill")
 
-  monkeypatch.setattr(gbench.sys, "platform", platform)
+  monkeypatch.setattr(gbench, "sys", SimpleNamespace(platform=platform))
   monkeypatch.setattr(gbench, "gbench_flags", lambda: ([], []))
   monkeypatch.setattr(gbench, "math_flags", lambda compiler: ((), ()))
   monkeypatch.setattr(gbench.subprocess, "Popen", lambda *a, **kw: Process())
