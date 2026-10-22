@@ -18,6 +18,10 @@ jobs:
   wheels:
     uses: ./.github/workflows/wheels.yml
 
+  windows:
+    needs: wheels
+    uses: ./.github/workflows/windows.yml
+
   pure:
     name: sdists + pure wheels
     runs-on: ubuntu-latest

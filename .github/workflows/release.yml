@@ -173,9 +173,41 @@ jobs:
       - name: Solve with every backend
         run: /tmp/env/bin/python .github/scripts/solve_smoke.py
 
+  verify-windows:
+    name: verify / Windows x86-64 / Python ${{ matrix.python }}
+    needs: [plan, testpypi]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Install from TestPyPI without the toolchain extra
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          uv venv --python ${{ matrix.python }} "$env:RUNNER_TEMP/verify"
+          $python = "$env:RUNNER_TEMP/verify/Scripts/python.exe"
+          $pins = @(($env:PACKAGES | ConvertFrom-Json) | Where-Object name -ne 'scaly-ipopt' | ForEach-Object { "$($_.name)==$($_.version)" })
+          if ($pins.Count) {
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+              uv pip install --python $python --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ @pins
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 10) { exit 1 }
+              Start-Sleep -Seconds 30
+            }
+          }
+          uv pip install --python $python --only-binary :all: scaly scaly-piqp scaly-sqp @pins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python .github/scripts/windows_install.py --installed
+
   pypi:
     if: inputs.target == 'pypi'
-    needs: verify
+    needs: [verify, verify-windows]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

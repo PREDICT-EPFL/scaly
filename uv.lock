@@ -978,6 +978,7 @@ default-groups = ["dev", "docs"]
 dependencies = [
     { name = "numpy" },
     { name = "scipy" },
+    { name = "zig-bin", marker = "sys_platform == 'win32'" },
 ]
 
 [package.optional-dependencies]
@@ -1029,6 +1030,7 @@ requires-dist = [
     { name = "scaly-sqp", marker = "extra == 'sqp'", editable = "plugins/scaly-sqp" },
     { name = "scipy", specifier = ">=1.18.0" },
     { name = "zig-bin", marker = "(platform_machine != 'x86_64' and extra == 'toolchain') or (sys_platform != 'darwin' and extra == 'toolchain')", specifier = "==0.17.*" },
+    { name = "zig-bin", marker = "sys_platform == 'win32'", specifier = "==0.17.*" },
     { name = "ziglang", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'toolchain'", specifier = "==0.17.*" },
 ]
 provides-extras = ["piqp", "ipopt", "sqp", "solvers", "toolchain"]
