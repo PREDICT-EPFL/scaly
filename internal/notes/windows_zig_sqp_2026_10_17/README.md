@@ -57,10 +57,13 @@ collision steps. `validation.json` retains the full array comparisons.
 
 ## Reproduction and artifacts
 
-Set `CC` and `SCALY_CC` to the configured Zig executable followed by `cc`, and
-`CXX` to an executable launcher for `zig c++`. The latter lets the benchmark
-harness record its compiler identity. Set `SCALY_VECTOR_LIBM=none`, then sync
-with `uv sync --frozen --no-install-package scaly-ipopt`.
+These runs used a standalone Zig 0.17.0, with `CC` and `SCALY_CC` set to it
+followed by `cc`. Since the `toolchain` extra landed on main, `uv sync --extra
+toolchain` installs `zig-bin` 0.17, which the JIT finds without `SCALY_CC`, and
+the PIQP build requirements bring the same `zig-bin` on Windows, so `CC` and
+`CXX` no longer need to be set. The closed-loop harness still records `CXX` as
+its compiler identity and has no `c++` to fall back on, so set `CXX` to an
+executable launcher for `zig c++`. Set `SCALY_VECTOR_LIBM=none`.
 
 The full runs used the following command once for each problem, replacing
 `<problem>` with `chain`, `npmpc`, `race_cars` and `unbumpercars`:
@@ -88,8 +91,20 @@ The PIQP/SQP plugin tests passed 73 checks. Their two skips were the Unix-only
 malloc preload test and the comparison against IPOPT. Formatting, lint and type
 checks excluding the uninstalled IPOPT sources passed. The broad Windows run
 collected the available modules and finished with 1382 passed, 117 skipped and
-11 failed. Eight failures construct the deliberately excluded IPOPT backend;
-three are pre-existing prose violations on the published benchmark pages.
+11 failed. Eight failures construct the deliberately excluded IPOPT backend.
+The other three were not prose violations: the prose check read the pages in
+the Windows code page, where the UTF-8 bytes of `×` decode to an em dash. It
+now reads them as UTF-8.
+
+## Loaded DLLs and the JIT cache
+
+Windows keeps a loaded DLL locked, so it can be neither replaced nor deleted.
+Publication tolerates losing the rename to another process that already
+published and loaded the same content. `recompile()` gives the function a new
+cache key, salted with the process id and a per-name counter, and leaves the
+previous entry in place for any process still using it. Those entries are never
+removed, so the cache grows with every forced recompilation until it is
+cleared by hand after the processes exit.
 
 The test-ID baseline was refreshed from the available collection while keeping
 the 28 existing IDs in excluded IPOPT modules. Benchmark path parameter IDs

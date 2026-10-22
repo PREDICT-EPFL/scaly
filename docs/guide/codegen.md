@@ -541,10 +541,6 @@ Despite its name, `recompile()` clears the function's compiled handle and disk
 cache entry without immediately compiling. The next numerical call or explicit
 `compile()` prepares the library again.
 
-On Windows, a loaded DLL stays locked. Recompilation uses a new cache path
-and keeps the previous cache entry for processes still using it. Delete old
-entries after those processes exit when clearing the cache.
-
 Scaly does not fall back to Python evaluation when compilation fails.
 `uv run scaly_toolchain` reports the compiler, cache directory, and resolved
 solver libraries when diagnosing such a failure.
