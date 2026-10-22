@@ -96,16 +96,9 @@ The other three were not prose violations: the prose check read the pages in
 the Windows code page, where the UTF-8 bytes of `×` decode to an em dash. It
 now reads them as UTF-8.
 
-## Loaded DLLs and the JIT cache
-
-Windows keeps a loaded DLL locked, so it can be neither replaced nor deleted.
-Publication tolerates losing the rename to another process that already
-published and loaded the same content. `recompile()` gives the function a new
-cache key, salted with the process id and a per-name counter, and leaves the
-previous entry in place for any process still using it. Those entries are never
-removed, so the cache grows with every forced recompilation until it is
-cleared by hand after the processes exit.
-
 The test-ID baseline was refreshed from the available collection while keeping
 the 28 existing IDs in excluded IPOPT modules. Benchmark path parameter IDs
 were normalized to forward slashes so Windows preserves the same baseline.
+
+The core, cache and wheel checks that followed, on October 22, are in
+`../windows_native_2026_10_22/`.
