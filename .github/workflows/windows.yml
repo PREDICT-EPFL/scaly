@@ -34,6 +34,7 @@ jobs:
       - name: Build the pure wheels
         run: |
           uv build --wheel -o dist .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv build --wheel -o dist plugins/scaly-sqp
 
       - name: Fresh installation without the toolchain extra
@@ -42,7 +43,9 @@ jobs:
       - name: Install test dependencies and built wheels
         run: |
           uv sync --frozen --no-install-package scaly --no-install-package scaly-piqp --no-install-package scaly-sqp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv pip install --only-binary :all: (Get-ChildItem dist/*.whl).FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --no-sync .github/scripts/windows_install.py --installed
 
       - name: Strict type check
