@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import ctypes
 import math
-import shutil
 import subprocess
 import sys
 
 import numpy as np
-import pytest
 
 import scaly as sc
+from tests.compilers import c_compiler, cxx_compiler
 
 
 def test_compiled_erf_matches_math_erf() -> None:
@@ -71,9 +70,7 @@ def test_c_api_header_exposes_sparse_output_metadata() -> None:
 
 
 def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None:
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
 
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("y"), sc.arg("s")))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -86,8 +83,7 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   src = tmp_path / "f.c"
   lib_path = tmp_path / ("libf.dylib" if sys.platform == "darwin" else "libf.so")
   src.write_text(render_c_source(f))
-  cmd = [cc, "-fPIC", str(src), "-lm", "-o", str(lib_path)]
-  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-lm", "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))
@@ -119,9 +115,7 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
 
 
 def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
 
   @sc.function(sc.group(sc.arg("x", (5, 7)), sc.arg("y", (5, 1, 7))), outputs=sc.group(sc.arg("col1"), sc.arg("row2"), sc.arg("row2d")), name="g")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
@@ -133,8 +127,7 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
   src = tmp_path / "g.c"
   lib_path = tmp_path / ("libg.dylib" if sys.platform == "darwin" else "libg.so")
   src.write_text(render_c_source(f))
-  cmd = [cc, "-fPIC", str(src), "-lm", "-o", str(lib_path)]
-  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-lm", "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))
@@ -158,9 +151,7 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
 
 
 def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> None:
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
 
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("sq"), sc.arg("sum")))
   def inner(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -178,8 +169,7 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   source = render_c_source(outer)
   assert source.index("void inner_raw(") < source.index("int outer(")
   src.write_text(source)
-  cmd = [cc, "-fPIC", str(src), "-lm", "-o", str(lib_path)]
-  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-lm", "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))
@@ -200,9 +190,7 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
 
 
 def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
 
   @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
   def f(x: sc.Expr) -> sc.Expr:
@@ -217,8 +205,7 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
   source = tmp_path / module.source_name
   source.write_text(module.source)
   lib_path = tmp_path / ("libspjac.dylib" if sys.platform == "darwin" else "libspjac.so")
-  cmd = [cc, "-fPIC", str(source), "-lm", "-o", str(lib_path)]
-  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(source), "-lm", "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))
@@ -239,9 +226,7 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
 
 def test_c_header_typed_buffers_compile_and_run_from_c(tmp_path) -> None:
   """A C11 caller: the workspace is a struct it owns, and every buffer type is 16-byte aligned."""
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
 
   @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("s")))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -283,15 +268,12 @@ int main(void) {
 """
   )
 
-  subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
+  subprocess.run([*cc, "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
 
 
 def test_c_header_typed_buffers_compile_and_run_from_cpp(tmp_path) -> None:
-  cc = shutil.which("cc")
-  cxx = shutil.which("c++")
-  if cc is None or cxx is None:
-    pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
+  cc, cxx = c_compiler(), cxx_compiler()
 
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f"), sc.arg("g")))
   def nlp(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -334,8 +316,8 @@ int main() {
 """
   )
 
-  subprocess.run([cc, "-c", str(source), "-o", str(obj)], check=True)
-  subprocess.run([cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", str(cpp), str(obj), "-lm", "-o", str(exe)], check=True)
+  subprocess.run([*cc, "-c", str(source), "-o", str(obj)], check=True)
+  subprocess.run([*cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", str(cpp), str(obj), "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
 
 
@@ -385,14 +367,11 @@ def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tm
   assert "double2" not in source
   assert "y[0] = x[0];" in source and "y[2] = x[2];" in source and "y[3] = y[2];" in source and "y[4] = a[3];" in source
 
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
   src = tmp_path / "gaps.c"
   lib_path = tmp_path / ("libgaps.dylib" if sys.platform == "darwin" else "libgaps.so")
   src.write_text("#include <stddef.h>\n" + source + "\nvoid gaps_test(double* x, double* y) { gaps_raw(x, y, NULL); }\n")
-  cmd = [cc, "-fPIC", str(src), "-o", str(lib_path)]
-  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
   lib = ctypes.CDLL(str(lib_path))
   c_double_p = ctypes.POINTER(ctypes.c_double)

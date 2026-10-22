@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ctypes
 import re
-import shutil
 import subprocess
 import sys
 
@@ -13,6 +12,7 @@ from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.codegen.toolchain import LaneCount
+from tests.compilers import c_compiler
 
 
 @sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
@@ -147,9 +147,7 @@ def test_callee_formal_named_w_avoids_workspace_collision() -> None:
 
 
 def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for generated C smoke test")
+  cc = c_compiler()
 
   from scaly.codegen import render_c_module
 
@@ -165,8 +163,7 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   source = tmp_path / module.source_name
   source.write_text(module.source)
   lib_path = tmp_path / ("libvmap.dylib" if sys.platform == "darwin" else "libvmap.so")
-  cmd = [cc, "-fPIC", str(source), "-lm", "-o", str(lib_path)]
-  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(source), "-lm", "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))

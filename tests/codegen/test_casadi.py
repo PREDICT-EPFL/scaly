@@ -6,7 +6,6 @@ matrix input or output is rejected at render time."""
 from __future__ import annotations
 
 import ctypes
-import shutil
 import subprocess
 import sys
 
@@ -18,6 +17,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, render_c_source, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
+from tests.compilers import c_compiler
 
 ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out")
 
@@ -32,16 +32,14 @@ def _spjac() -> sc.Function:
 
 
 def _build(tmp_path, fun: sc.Function, **kwargs):
-  cc = shutil.which("cc")
-  if cc is None:
-    pytest.skip("cc is required for the CasADi compatibility smoke test")
+  cc = c_compiler()
   module = render_c_module(fun, casadi=True, **kwargs)
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
   source.write_text(module.source)
   lib_path = tmp_path / f"lib{fun.name}{'.dylib' if sys.platform == 'darwin' else '.so'}"
   cmd = [
-    cc,
+    *cc,
     "-dynamiclib" if sys.platform == "darwin" else "-shared",
     "-fPIC",
     "-Wall",

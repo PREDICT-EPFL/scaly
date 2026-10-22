@@ -6,6 +6,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 from pathlib import Path
 
@@ -80,10 +82,114 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache: Path) -> None:
   cache_dir = lib_path.parent
   fn.recompile()
   assert as_concrete(fn)._memo.compiled is None
-  assert not cache_dir.exists()
+  # Windows cannot delete the loaded DLL, so only it survives and the next compilation goes elsewhere.
+  remaining = sorted(path.name for path in cache_dir.iterdir()) if cache_dir.exists() else []
+  assert remaining == ([lib_path.name] if sys.platform == "win32" else [])
   xv = np.array([0.5, 0.0, -1.0])
   out = fn(xv)
   np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
+  recompiled = as_concrete(fn)._memo.compiled
+  assert recompiled is not None
+  assert (recompiled.lib_path != lib_path) == (sys.platform == "win32")
+
+
+def test_old_handle_stays_callable_after_recompilation(isolated_cache: Path) -> None:
+  fn = _simple_fn()
+  xv = np.array([0.5, 0.0, -1.0])
+  old = jit.get_compiled(fn)
+  fn.recompile()
+  new = jit.get_compiled(fn)
+  for handle in (old, new):
+    np.testing.assert_allclose(handle.run([xv])[0], (np.sin(xv) + xv * xv).sum())
+  assert (new.lib_path != old.lib_path) == (sys.platform == "win32")
+
+
+def test_publication_leaves_a_loaded_library_callable(isolated_cache: Path) -> None:
+  compiled = jit.get_compiled(_simple_fn())
+  published = compiled.lib_path.read_bytes()
+  temporary = compiled.lib_path.with_suffix(".tmp")
+  temporary.write_bytes(b"another build")
+  jit._publish(temporary, compiled.lib_path)
+  assert not temporary.exists()
+  # Windows refuses to replace the loaded DLL and keeps the published one, which has the same content.
+  assert (compiled.lib_path.read_bytes() == published) == (sys.platform == "win32")
+  xv = np.array([0.5, 0.0, -1.0])
+  np.testing.assert_allclose(compiled.run([xv])[0], (np.sin(xv) + xv * xv).sum())
+
+
+_CACHE_CHILD = """
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import scaly as sc
+import scaly.codegen.jit as jit
+
+compiles = []
+run = jit.subprocess.run
+jit.subprocess.run = lambda command, **kwargs: (compiles.append("-fPIC" in command), run(command, **kwargs))[1]
+
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="shared_cache")
+def fn(x):
+  return (x.sin() + x * x).sum()
+
+Path(sys.argv[1]).touch()
+while not Path(sys.argv[2]).exists():
+  time.sleep(0.01)
+xv = np.array([0.5, 0.0, -1.0])
+np.testing.assert_allclose(fn(xv), (np.sin(xv) + xv * xv).sum())
+print(sum(compiles), jit.get_compiled(fn).lib_path)
+"""
+
+
+def test_processes_share_a_cold_cache(tmp_path: Path) -> None:
+  env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")}
+  go = tmp_path / "go"
+  ready = [tmp_path / f"ready{i}" for i in range(3)]
+
+  def child(i: int) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+      [sys.executable, "-c", _CACHE_CHILD, str(ready[i]), str(go)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+  # Both start compiling together, so one may publish while the other still compiles or loads.
+  first = [child(0), child(1)]
+  while not all(path.exists() or process.poll() is not None for path, process in zip(ready, first)):
+    pass
+  go.touch()
+  outputs = [process.communicate(timeout=300) for process in first]
+  assert all(process.returncode == 0 for process in first), outputs
+  (third,) = [child(2)]
+  output, error = third.communicate(timeout=300)
+  assert third.returncode == 0, error
+  reports = [out.split(maxsplit=1) for out, _ in outputs] + [output.split(maxsplit=1)]
+  assert len({path for _, path in reports}) == 1
+  assert all(int(count) <= 1 for count, _ in reports[:2])
+  assert reports[2][0] == "0"
+
+
+def test_threads_share_a_cold_cache(isolated_cache: Path) -> None:
+  fun = as_concrete(_simple_fn())
+  start = threading.Barrier(2)
+
+  def build(_: int) -> Path:
+    start.wait()
+    return jit._build_artifact(fun).lib_path
+
+  with ThreadPoolExecutor(2) as pool:
+    assert len(set(pool.map(build, range(2)))) == 1
+  xv = np.array([0.5, 0.0, -1.0])
+  np.testing.assert_allclose(jit.get_compiled(fun).run([xv])[0], (np.sin(xv) + xv * xv).sum())
+
+
+def test_jit_compiles_into_a_cache_path_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path / "jit cache"))
+  jit._artifact_cache.clear()
+  fn = _simple_fn()
+  xv = np.array([0.5, 0.0, -1.0])
+  np.testing.assert_allclose(fn(xv), (np.sin(xv) + xv * xv).sum())
+  assert " " in str(jit.get_compiled(fn).lib_path)
 
 
 def test_jit_handles_multi_output(isolated_cache: Path) -> None:
@@ -240,6 +346,7 @@ def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
   from scaly.codegen.toolchain import BuildRecipe
 
   monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  monkeypatch.setattr(jit, "no_gather_flags", lambda _compiler: ())
   fun = as_concrete(_simple_fn())
   keys = []
   for lanes, vector_libm in ((1, "none"), (4, "none"), (4, "glibc")):

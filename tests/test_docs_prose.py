@@ -54,5 +54,5 @@ def prose_violations(source: str) -> list[tuple[int, str]]:
 @pytest.mark.parametrize("path", PAGES, ids=lambda path: path.relative_to(ROOT).as_posix())
 def test_published_prose(path: Path) -> None:
   relative = path.relative_to(ROOT).as_posix()
-  violations = [f"{relative}:{line}: {kind}: end the sentence or use a comma" for line, kind in prose_violations(path.read_text())]
+  violations = [f"{relative}:{line}: {kind}: end the sentence or use a comma" for line, kind in prose_violations(path.read_text(encoding="utf-8"))]
   assert not violations, "\n".join(violations)

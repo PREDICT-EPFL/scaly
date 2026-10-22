@@ -5,7 +5,7 @@ rendering decisions of its own.
 
 - ``SCALY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/scaly/jit``
   or ``~/.cache/scaly/jit``).
-- ``SCALY_CC`` overrides the C compiler binary (default: ``zig cc`` from the ``zig-bin`` or ``ziglang`` package,
+- ``SCALY_CC`` overrides the C compiler command (default: ``zig cc`` from the ``zig-bin`` or ``ziglang`` package,
   then ``CC``, then ``cc`` from ``$PATH``).
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,6 +38,7 @@ from .aot import CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
+from ..solvers.paths import solver_paths
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
@@ -63,6 +65,11 @@ _SOLVER_NAMESPACE_LOCK = threading.Lock()
 def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   """Load a shared library. ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
   global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR, _SOLVER_NAMESPACE_ENVIRON
+  if isolated and sys.platform == "win32":
+    with ExitStack() as stack:
+      for directory in solver_paths().lib_dirs:
+        stack.enter_context(os.add_dll_directory(str(directory.resolve())))
+      return ctypes.CDLL(str(path))
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
   libc = ctypes.CDLL(None)
@@ -97,7 +104,7 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
 
 @functools.cache
 def _process_libc() -> ctypes.CDLL:
-  return ctypes.CDLL(None)
+  return ctypes.CDLL("ucrtbase.dll" if sys.platform == "win32" else None)
 
 
 class JitUnavailable(RuntimeError):
@@ -141,6 +148,7 @@ def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, ou
   # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
   # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
+  exports = (Path(source).with_suffix(".def").as_posix(),) if sys.platform == "win32" else ()
   return [
     *compiler,
     *compile_flags(module.recipe),
@@ -148,6 +156,7 @@ def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, ou
     "-fPIC",
     shared_lib_flag(),
     source,
+    *exports,
     *module.link_flags,
     "-lm",
     "-o",
@@ -178,6 +187,9 @@ def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule,
     toolchain = compiler_fingerprint(compiler.command)
   except (OSError, subprocess.CalledProcessError) as exc:
     raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
+  if epoch := _cache_epochs.get(fun.name, 0):
+    # Invalidation could not delete a library this process loaded, so recompilation needs another path.
+    toolchain += f":{os.getpid()}:{epoch}"
   command = _compile_command(compiler.command, module, "module.c", "module" + shared_lib_ext())
   return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain)
 
@@ -193,7 +205,30 @@ class _Artifact:
 
 
 _artifact_cache: dict[str, _Artifact] = {}
+_cache_epochs: dict[str, int] = {}
 _artifact_lock = threading.Lock()
+
+
+def _publish(temporary: Path, path: Path) -> None:
+  """Rename a finished file into the cache, where entries are content-addressed.
+
+  Windows refuses to replace a file another process has open. That process published the same
+  content first and is compiling or running it, so its file stays.
+  """
+  try:
+    temporary.replace(path)
+  except PermissionError:
+    if not path.exists():
+      raise
+    temporary.unlink()
+
+
+def _write_cached_text(path: Path, text: str) -> None:
+  if path.exists():
+    return
+  temporary = path.with_suffix(path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
+  temporary.write_text(text)
+  _publish(temporary, path)
 
 
 def _build_artifact(fun: ConcreteFunction) -> _Artifact:
@@ -223,20 +258,27 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   lib_path = cache_dir / f"lib{symbol}{shared_lib_ext()}"
 
   if not lib_path.exists():
-    # Write to a process-unique temp file then rename, so concurrent builds neither read a
-    # half-written source nor race each other on the rename.
-    tmp_source = source_path.with_suffix(source_path.suffix + f".{os.getpid()}.tmp")
-    tmp_source.write_text(module.body)
-    tmp_source.replace(source_path)
-    # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
-    # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
-    tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
+    _write_cached_text(source_path, module.body)
+    if sys.platform == "win32":
+      # Explicit CasADi oracle exports disable MinGW's automatic exports of our entry points.
+      # A module definition file also works with Zig, which ignores --export-all-symbols.
+      exports = [symbol]
+      if module.backends:
+        exports += [f"{symbol}_with_options"]
+        for solver_symbol in solver_stats_symbols(fun):
+          exports += [f"{solver_symbol}_stats", f"{solver_symbol}_default_options"]
+      _write_cached_text(source_path.with_suffix(".def"), "EXPORTS\n" + "\n".join(exports) + "\n")
+    # Compile to a temp lib unique to this process and thread, then atomically rename, so concurrent
+    # builds of the same function (pytest-xdist workers or threads on a cold cache) never observe a half-written .so.
+    tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-      subprocess.run(_compile_command(compiler.command, module, str(source_path), str(tmp_lib)), check=True, capture_output=True, text=True)
+      subprocess.run(
+        _compile_command(compiler.command, module, source_path.as_posix(), tmp_lib.as_posix()), check=True, capture_output=True, text=True
+      )
     except subprocess.CalledProcessError as exc:
       tmp_lib.unlink(missing_ok=True)
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
-    tmp_lib.replace(lib_path)
+    _publish(tmp_lib, lib_path)
 
   artifact = _Artifact(
     lib_path=lib_path,
@@ -402,7 +444,8 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
   """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
 
   Safe to call when nothing is cached yet. Codegen failures (``NotImplementedError``) are
-  swallowed, since there cannot be a corresponding cache entry to remove.
+  swallowed, since there cannot be a corresponding cache entry to remove. Windows cannot delete a
+  loaded DLL; the directory then keeps it, and this process compiles ``fun`` into another one.
   """
   compiler = find_c_compiler()
   if compiler is None:
@@ -411,8 +454,9 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
     _, key = _render_and_key(fun, compiler)
   except NotImplementedError:
     return
+  cache_dir = cache_root() / key
   with _artifact_lock:
     _artifact_cache.pop(key, None)
-  cache_dir = cache_root() / key
-  if cache_dir.exists():
     shutil.rmtree(cache_dir, ignore_errors=True)
+    if cache_dir.exists():
+      _cache_epochs[fun.name] = _cache_epochs.get(fun.name, 0) + 1
