@@ -1,6 +1,6 @@
 # Forward traversal refresh, October 21
 
-After the prerequisite squash merges and #189/#158, #166 now targets main in stack #192. The normal hook passes with the preferred zig JIT compiler: 2446 tests pass and only the two existing power cases remain expected failures. No #188 expected-failure markers remain. Correctness smoke accepts the new compiler while measured closed-loop runs retain their compiler guard; a short independent review approved that integration fix.
+After the prerequisite squash merges and #189/#158, #166 now targets main in stack #192. The normal hook passes with the preferred zig JIT compiler: 2447 tests pass and only the two existing power cases remain expected failures. No #188 expected-failure markers remain. Correctness smoke accepts the new compiler while measured closed-loop runs retain their compiler guard; a short independent review approved that integration fix. The later rebase includes #190's typing update and #194's isolated compiler-cache tests. Its mechanical adaptations preserve the typed helper-cache checks while pointing them at the single forward traversal. All snapshots remain unchanged by that rebase, and collection contains 2449 node IDs.
 
 The measurements below are retained Clang 20.1.8 C sweep results, not zig JIT timings. The current protocol still uses Clang for sweeps and GCC for measured vector-math closed loops. No new timing study was run for the rebase. The later section about #188 records the historical pre-fix validation limit; the complete-pipeline hook result above supersedes that blocker.
 
@@ -65,7 +65,18 @@ Generation-only probes of the horizon-100 neural MPC Jacobian give the following
 
 The default still permits eight lanes, so its workspace remains 7744 doubles. Leading seed axes do not require those copies. Movement fusion and lifetime packing inside nested loops can eliminate or reuse them. The requirements are now explicit in #27, #69 and #71. Public `vmap` axis options alone would still need copies with today's contiguous-slice representation.
 
-The 194 focused program-pass and generated-C tests pass in both GNU and scalar C, including partial tails, aliases and packed slots shared by helpers with different capacities. Restoring unconditional eight-lane allocation makes seven selected allocation regressions fail. The dispatch-storage metric also passes with its exact two-lane count reduced from 168 to 42. The regenerated snapshot delta changes only gather and integer-index scratch declarations from `[8]` to `[SCALY_WIDTH_…]`. Source bytes grow from 6664 to 6682 in `jac.c`, 13899 to 14007 in `spjac.c`, and 6834 to 7050 in `vmap.c` because the macro name is longer. Every header and all other snapshots are unchanged. The normal hook passes after this fix, including 2446 passed tests, two existing power expected failures, benchmark smoke, documentation, types, formatting and lint. Claude Opus 5.5 at low effort approved the short fix-only check with no findings. The native runtime and generation-time table above predates this allocation fix; it has not been remeasured and supplies no performance claim for the fix.
+The 194 focused program-pass and generated-C tests pass in both GNU and scalar C, including partial tails, aliases and packed slots shared by helpers with different capacities. Restoring unconditional eight-lane allocation makes seven selected allocation regressions fail. The dispatch-storage metric also passes with its exact two-lane count reduced from 168 to 42. The regenerated snapshot delta changes only gather and integer-index scratch declarations from `[8]` to `[SCALY_WIDTH_…]`. Source bytes grow from 6664 to 6682 in `jac.c`, 13899 to 14007 in `spjac.c`, and 6834 to 7050 in `vmap.c` because the macro name is longer. Every header and all other snapshots are unchanged. The normal hook passes after the fix and rebase, including 2447 passed tests, two existing power expected failures, benchmark smoke, documentation, types, formatting and lint. Claude Opus 5.5 at low effort approved the short fix-only check with no findings. The native runtime and generation-time table above predates this allocation fix; it has not been remeasured and supplies no performance claim for the fix.
+
+Rendering the four benchmark kernels again with the same Clang/glibc recipe gives these current artifact sizes. This calls `benchmarks.harness.sweep.build_kernel` without compiling or timing kernels.
+
+| Kernel | C bytes, before → after allocation fix | Caller workspace doubles, before → after |
+| --- | ---: | ---: |
+| chain_jac 33 | 222541 → 223315 | 282690 → 282690 |
+| npmpc_jac 100 | 86138 → 87488 | 7744 → 7744 |
+| chain 3 | 245630 → 246206 | 26028 → 26028 |
+| unbumpercars 2 | 303137 → 306300 | 126976 → 19456 |
+
+The two-car map uses automatically capped helpers, so it benefits even with the default lane setting. Its root local-array storage grows from 1026 to 13080 doubles as some smaller buffers fall below the spill threshold, but combined root arrays and caller workspace fall from 128002 to 32536 doubles. These counts exclude callee stack and compiler-managed registers. The existing benchmark smoke passes; its timings are not used as a new performance measurement.
 
 ## Maintainer open points and validation limits
 
