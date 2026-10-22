@@ -221,5 +221,68 @@ def test_problem_checks_compile_at_O0(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_CC_OPT", "-O2")
   monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "gate"})
   monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"gate": (lambda: flags.append(opt_flag()), False, False)}))
-  run._problem_checks("toy", full=False)
+  run._problem_checks("toy", full=True)
   assert flags == ["-O0"]
+
+
+def test_windows_smoke_reports_unsupported_groups_and_runs_problems(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+  from concurrent.futures import Future
+  from types import SimpleNamespace
+  from benchmarks import run
+
+  submitted = []
+
+  class Pool:
+    def __init__(self, **kwargs):
+      pass
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      pass
+
+    def submit(self, task):
+      submitted.append(task)
+      future = Future()
+      future.set_result(None)
+      return future
+
+  monkeypatch.setattr(run.sys, "platform", "win32")
+  monkeypatch.setattr(run, "ProcessPoolExecutor", Pool)
+  monkeypatch.setattr(run, "_solver_call_smoke", lambda **kw: pytest.fail("unsupported C++ solver driver ran"))
+  assert run.smoke(SimpleNamespace(select=None, skip=None, full=False))
+  assert [task.args[0] for task in submitted] == list(run.QUICK_CHECKS)
+  output = capsys.readouterr().out
+  assert "smoke benchmarks: skipped" in output and "size" in output and "nm" in output and "C++" in output
+  assert "smoke solver_call: skipped" in output and "IPOPT" in output
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
+  full: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  from types import SimpleNamespace
+  from benchmarks import run
+
+  called = []
+  monkeypatch.setattr(run.sys, "platform", "win32")
+  monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "solver"})
+  monkeypatch.setattr(run, "WINDOWS_QUICK_CHECKS", {"toy": "numerical"})
+  monkeypatch.setattr(run, "solver_loadable", lambda name: False)
+  monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
+  monkeypatch.setattr(
+    run.importlib,
+    "import_module",
+    lambda name: SimpleNamespace(
+      CHECKS={
+        "solver": (lambda: pytest.fail("IPOPT ran"), True, False),
+        "numerical": (lambda: called.append("numerical"), False, False),
+      }
+    ),
+  )
+  run._problem_checks("toy", full)
+  assert called == ["numerical"]
+  output = capsys.readouterr().out
+  assert "solver: skipped: IPOPT" in output
+  assert "numerical: ok" in output

@@ -229,6 +229,13 @@ QUICK_CHECKS = {
   "npmpc": "oracles_agree",
 }
 
+WINDOWS_QUICK_CHECKS = {
+  "race_cars": "mapped_cost",
+  "chain": "eq_jacobian",
+  "unbumpercars": "oracle_matches_casadi",
+  "npmpc": "decoder_rollout",
+}
+
 
 def _problem_checks(problem: str, full: bool) -> None:
   # the checks evaluate each module a few times, so optimizing multi-megabyte sources only costs compile time;
@@ -237,9 +244,14 @@ def _problem_checks(problem: str, full: bool) -> None:
   table = importlib.import_module(f"benchmarks.problems.{problem}.checks").CHECKS
   have_ipopt = solver_loadable("ipopt")
   have_casadi = importlib.util.find_spec("casadi") is not None
-  for name in table if full else (QUICK_CHECKS[problem],):
+  names = tuple(table) if full else (QUICK_CHECKS[problem],)
+  if sys.platform == "win32" and not full:
+    names += (WINDOWS_QUICK_CHECKS[problem],)
+  for name in names:
     check, needs_ipopt, needs_casadi = table[name]
-    if needs_ipopt and not have_ipopt:
+    if needs_ipopt and sys.platform == "win32":
+      outcome = "skipped: IPOPT is not supported on Windows"
+    elif needs_ipopt and not have_ipopt:
       outcome = "skipped: IPOPT plugin not loadable"
     elif needs_casadi and not have_casadi:
       outcome = "skipped: casadi not installed"
@@ -253,6 +265,14 @@ def _problem_checks(problem: str, full: bool) -> None:
 
 def smoke(args) -> bool:
   selected = set(args.select or ("benchmarks", "problems", "solver_call")) - set(args.skip or ())
+  if sys.platform == "win32":
+    for name, reason in {
+      "benchmarks": "the C++ benchmark drivers and binutils size/nm object inspection require Linux or macOS",
+      "solver_call": "the C++ solver driver requires PIQP/IPOPT, and IPOPT is not supported on Windows",
+    }.items():
+      if name in selected:
+        print(f"smoke {name}: skipped: {reason}", flush=True)
+        selected.remove(name)
   groups: dict[str, Callable[[], None]] = {
     problem: partial(_problem_checks, problem, args.full) for problem in QUICK_CHECKS if "problems" in selected
   }

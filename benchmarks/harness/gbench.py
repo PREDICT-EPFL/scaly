@@ -7,6 +7,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import time
 
 from scaly.codegen.abi import c_ident
@@ -389,7 +390,10 @@ def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, floa
         stdout, stderr = proc.communicate(timeout=max(0.001, timeout - (phase_started - started)))
       except subprocess.TimeoutExpired:
         try:
-          os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+          if sys.platform == "win32":
+            proc.kill()
+          else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except ProcessLookupError:
           pass
         stdout, stderr = proc.communicate()
