@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,9 @@ def cxx_compiler() -> tuple[str, ...]:
 
 
 def named_compiler(name: str) -> tuple[str, ...]:
-  """``gcc`` or ``clang`` from ``PATH``, or ``zig`` from the toolchain extra, skipping the test when it is missing."""
+  """GCC or Clang from PATH, or packaged Zig; standalone Windows Clang requires the unsupported MSVC toolchain."""
+  if sys.platform == "win32" and name == "clang":
+    pytest.skip("Windows Clang requires the unsupported MSVC toolchain; these codegen cases also run with packaged Zig")
   if name == "zig":
     compiler = find_c_compiler()
     if compiler is None or compiler.source not in ("zig-bin", "ziglang"):
