@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 import shutil
 import signal
+import sys
 import time
 
 import numpy as np
@@ -146,7 +147,7 @@ def codegen_deadline(seconds: float):
   def handler(signum, frame):  # noqa: ARG001
     raise CodegenTimeout(f"codegen exceeded {seconds:.0f}s")
 
-  if seconds <= 0:
+  if seconds <= 0 or sys.platform == "win32":
     yield
     return
   previous = signal.signal(signal.SIGALRM, handler)

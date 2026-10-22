@@ -27,6 +27,65 @@ from benchmarks.harness.sweep import (
 )
 
 
+def test_codegen_deadline_without_posix_alarms(monkeypatch: pytest.MonkeyPatch) -> None:
+  from benchmarks.harness import sweep
+
+  monkeypatch.setattr(sweep.sys, "platform", "win32")
+  monkeypatch.delattr(sweep.signal, "SIGALRM", raising=False)
+  with sweep.codegen_deadline(0.01):
+    pass
+  with pytest.raises(ValueError, match="body failed"):
+    with sweep.codegen_deadline(1):
+      raise ValueError("body failed")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX interval timers are unavailable on Windows")
+def test_codegen_deadline_expires_and_restores_handler() -> None:
+  import signal
+  import time
+  from benchmarks.harness.sweep import CodegenTimeout, codegen_deadline
+
+  if sys.platform == "win32":
+    pytest.skip("POSIX interval timers are unavailable on Windows")
+  previous = signal.getsignal(signal.SIGALRM)
+  with pytest.raises(CodegenTimeout, match="codegen exceeded"):
+    with codegen_deadline(0.01):
+      time.sleep(1)
+  assert signal.getsignal(signal.SIGALRM) == previous
+  assert signal.getitimer(signal.ITIMER_REAL) == (0, 0)
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+def test_compile_timeout_cleans_up_and_drains_output(platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  events = []
+
+  class Process:
+    pid = 123
+
+    def communicate(self, timeout=None):
+      events.append(("communicate", timeout))
+      if timeout is not None:
+        raise subprocess.TimeoutExpired("compiler", timeout)
+      return "compiler stdout\n", "compiler stderr\n"
+
+    def kill(self):
+      events.append("kill")
+
+  monkeypatch.setattr(gbench.sys, "platform", platform)
+  monkeypatch.setattr(gbench, "gbench_flags", lambda: ([], []))
+  monkeypatch.setattr(gbench, "math_flags", lambda compiler: ((), ()))
+  monkeypatch.setattr(gbench.subprocess, "Popen", lambda *a, **kw: Process())
+  monkeypatch.setattr(gbench.os, "getpgid", lambda pid: pid + 1, raising=False)
+  monkeypatch.setattr(gbench.os, "killpg", lambda pid, sig: events.append(("killpg", pid)), raising=False)
+  monkeypatch.setattr(gbench.signal, "SIGKILL", 9, raising=False)
+  info = {"source": "kernel.c"}
+  status, elapsed, note = gbench.compile_kernel(info, tmp_path, 1)
+  assert status == "timeout" and elapsed is None and "kernel_compile_ms" in note
+  assert events[1] == ("kill" if platform == "win32" else ("killpg", 124))
+  assert events[2] == ("communicate", None)
+  assert (tmp_path / "compile.log").read_text().endswith("compiler stdout\ncompiler stderr\n")
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="the sweep reads ELF and Mach-O objects with binutils size and nm")
 def test_object_bytes_counts_compiled_constant_tables(tmp_path: Path) -> None:
   compiler = find_c_compiler()
