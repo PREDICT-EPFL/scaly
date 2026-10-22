@@ -62,7 +62,7 @@ def _reaches_op(exprs: Sequence[Expr], op: ExprOp) -> bool:
         callee = node.attrs["callee"]
         if id(callee) not in seen:
           seen.add(id(callee))
-          if visit(callee.outputs):
+          if visit(callee.results):
             return True
     return False
 
