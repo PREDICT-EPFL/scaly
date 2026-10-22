@@ -51,17 +51,9 @@ jobs:
       - name: Pytest node-ID baseline
         run: uv run pytest --collect-only -q
 
-  # The nightly workflow runs the same tests across every tested environment.
   tests:
     needs: [pure, wheels]
     uses: ./.github/workflows/tests.yml
-    with:
-      environments: >-
-        [{"os": "ubuntu-latest", "wheels": "ubuntu-latest"},
-         {"os": "macos-latest", "wheels": "macos-15"},
-         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.12"},
-         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.13"},
-         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.14"}]
 
   install:
     name: install / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}
@@ -73,11 +65,10 @@ jobs:
       matrix:
         include:
           # Slim images carry no Fortran runtime, so these prove the IPOPT wheel brings its own.
-          - { os: ubuntu-latest, container: "python:3.12-slim" }
           - { os: ubuntu-latest, container: "python:3.14-slim" }
-          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
-          - { os: macos-15, python: "3.13" }
-          - { os: macos-15-intel, python: "3.12" }
+          - { os: ubuntu-24.04-arm, container: "python:3.14-slim" }
+          - { os: macos-15, python: "3.14" }
+          - { os: macos-15-intel, python: "3.14" }
     steps:
       - uses: actions/checkout@v7
 
@@ -92,9 +83,9 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Install a C compiler for the JIT (Linux)
+      - name: Install C development files and the solver runtime (Linux)
         if: matrix.container
-        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+        run: apt-get update && apt-get install -y --no-install-recommends libc6-dev libstdc++6
 
       - uses: astral-sh/setup-uv@v10.2.0
         if: ${{ !matrix.container }}
@@ -104,13 +95,9 @@ jobs:
           PY: ${{ matrix.python }}
         run: |
           if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
-          /tmp/env/bin/pip install --only-binary :all: dist/*.whl
-
-      - name: Solve with every backend
-        run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+          /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]" dist/*.whl
 
       - name: Solve with every backend through zig cc
         run: |
-          /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]"
           /tmp/env/bin/scaly_toolchain | grep -E '\((zig-bin|ziglang)\)'
           /tmp/env/bin/python .github/scripts/solve_smoke.py

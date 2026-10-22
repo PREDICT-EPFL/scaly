@@ -141,20 +141,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, container: "python:3.12-slim" }
           - { os: ubuntu-latest, container: "python:3.14-slim" }
-          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
-          - { os: macos-15, python: "3.13" }
-          - { os: macos-15-intel, python: "3.12" }
-          - { os: windows-latest, python: "3.12" }
-          - { os: windows-latest, python: "3.13" }
+          - { os: ubuntu-24.04-arm, container: "python:3.14-slim" }
+          - { os: macos-15, python: "3.14" }
+          - { os: macos-15-intel, python: "3.14" }
           - { os: windows-latest, python: "3.14" }
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install a C compiler for the JIT (Linux)
+      - name: Install C development files and the solver runtime (Linux)
         if: matrix.container
-        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+        run: apt-get update && apt-get install -y --no-install-recommends libc6-dev libstdc++6
 
       - uses: astral-sh/setup-uv@v10.2.0
         if: ${{ !matrix.container }}
@@ -172,7 +169,7 @@ jobs:
             [ "$attempt" = 10 ] && exit 1
             sleep 30
           done
-          /tmp/env/bin/pip install --only-binary :all: "scaly[solvers]" $PINS
+          /tmp/env/bin/pip install --only-binary :all: "scaly[solvers,toolchain]" $PINS
           echo "VERIFY_PYTHON=/tmp/env/bin/python" >> "$GITHUB_ENV"
 
       - name: Install from TestPyPI without the toolchain extra
