@@ -200,7 +200,7 @@ Milestone 1: differentiable loops in a debuggable core
                #64 JIT index key (after #60, #16)
   print        #77 sc.print, float64 (after #9, #10)
   AD           #15 harness -> #17 helpers and names -> #18 ad/calls.py
-               -> #19 one forward traversal -> #20 partials and reverse -> #21 intermediates
+               -> #19 one forward traversal -> #20 partials and reverse -> #21 input derivatives
                -> #22 custom_derivative with residuals
   templates    #7 declaration surface -> #8 parameter lists -> #11 instances and holes
                -> #12 lifted derivatives -> #13 typed vmap, on today's VMAP
@@ -519,11 +519,20 @@ and transpose rules in their mode modules. The helper that applies a partial to 
 where masked cotangents live once `SELECT` lands ([#30]). `vjp_many` has
 already left the public API in [#57], before 0.1.0.
 
-**[#21]. Derivatives with respect to intermediate expressions.** Devrush's `independent(exprs,
-wrts)` substitutes stand-in inputs for the chosen intermediates and maps the result back. Without
-it, forward mode returns silent zeros for a `wrt` that is a slice of a loop carry, which breaks a
-Newton step inside a while body. Apply it in both modes and in sparsity analysis, and test
-overlapping selections. `sc.stop_gradient` comes with it.
+**[#21]. Independent differentiation inputs and `sc.stop_gradient`.** Expression derivative
+builders accept any result expression, but every `wrt` must be an independent input created by
+`sc.sym` or a Function declaration. Computed expressions, slices and constants raise a clear
+`ValueError` in both modes, dense and sparse derivative builders, and sparsity analysis, including
+empty shapes and zero seeds. An unused independent input still has a zero derivative. Partial
+derivatives state what is held fixed through separate Function inputs. A Newton step in a carry
+body defines its energy as a Function of state and parameters, then calls the state's gradient
+and Hessian Functions with the carry slices. `sc.stop_gradient` explicitly treats its value as
+constant in derivatives and sparsity without changing its evaluated value or generated C.
+
+Revised 2026-10-22 during maintainer review. This replaces the planned devrush stand-in
+substitution for intermediate `wrt`s: its implicit choice of what stays fixed depended on the
+recorded expressions and surprised users. The Newton case works with explicit Function inputs,
+so arbitrary intermediate selections and preserving them through mapped views are not required.
 
 **[#22]. `sc.custom_derivative` with residuals.** `sc.custom_derivative(fn, jvp=, fwd=, bwd=,
 sparsity=)` returns a new Function through [#16]'s constructor; the rules are fields, never set

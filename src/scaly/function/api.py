@@ -207,7 +207,10 @@ def jacobian(
   of: str | None = None,
   name: str | None = None,
 ) -> Expr | Function:
-  """Build a dense Jacobian for an Expr or a named Function output."""
+  """Build a dense Jacobian for an Expr or a named Function output.
+
+  For an expression source, ``wrt`` must be an independent input.
+  """
   if isinstance(source, Expr):
     return _jacobian_expr(source, _expr_wrt("jacobian", args, wrt, of, name))
   if not isinstance(source, Function | ConcreteFunction):
@@ -233,7 +236,10 @@ def gradient(
   of: str | None = None,
   name: str | None = None,
 ) -> Expr | Function:
-  """Build a gradient for an Expr or a named Function output."""
+  """Build a gradient for an Expr or a named Function output.
+
+  For an expression source, ``wrt`` must be an independent input.
+  """
   if isinstance(source, Expr):
     return _gradient_expr(source, _expr_wrt("gradient", args, wrt, of, name))
   if not isinstance(source, Function | ConcreteFunction):
@@ -259,7 +265,10 @@ def hessian(
   of: str | None = None,
   name: str | None = None,
 ) -> Expr | Function:
-  """Build a Hessian for an Expr or a named Function output."""
+  """Build a Hessian for an Expr or a named Function output.
+
+  For an expression source, ``wrt`` must be an independent input.
+  """
   if isinstance(source, Expr):
     return _hessian_expr(source, _expr_wrt("hessian", args, wrt, of, name))
   if not isinstance(source, Function | ConcreteFunction):
@@ -285,7 +294,10 @@ def sparse_jacobian(
   of: str | None = None,
   name: str | None = None,
 ) -> SparseJacobian | Function:
-  """Build compact nonzero Jacobian values for an Expr or a named Function output."""
+  """Build compact nonzero Jacobian values for an Expr or a named Function output.
+
+  For an expression source, ``wrt`` must be an independent input.
+  """
   if isinstance(source, Expr):
     return _expr_sparse_jacobian(source, _expr_wrt("sparse_jacobian", args, wrt, of, name))
   if not isinstance(source, Function | ConcreteFunction):
@@ -319,6 +331,7 @@ def sparse_hessian(
 ) -> SparseJacobian | Function:
   """Build compact nonzero Hessian values for an Expr or a named Function output.
 
+  For an expression source, ``wrt`` must be an independent input.
   ``triangle`` selects the symmetric pattern returned by the sparse Hessian: ``"full"`` keeps
   every entry, while ``"lower"`` and ``"upper"`` keep one triangle in the full pattern's order.
   """

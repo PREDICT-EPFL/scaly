@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, _independent
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp
 from ..ir.types import SparsityPattern, broadcast_shape
 
 
@@ -34,15 +34,20 @@ def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool], *, thr
   return memo[(expr.id, wrt.id)]
 
 
+def _check_wrt(wrt: Expr) -> None:
+  if wrt.op != ExprOp.INPUT:
+    raise ValueError("wrt must be an independent input from sc.sym or a Function declaration")
+
+
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
   """Estimate structural sparsity of ``d vec(expr) / d vec(wrt)``.
 
-  An intermediate ``wrt`` acts as an independent input, holding other paths to its inputs fixed.
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   This is purely symbolic: it tracks element dependencies through the graph without using
   numerical values. It is conservative for nonsmooth elementwise ops and block ops, but exact
   for the structural/arithmetic subset currently implemented here.
   """
-  (expr,), (wrt,), _ = _independent((expr,), (wrt,))
+  _check_wrt(wrt)
   return _mask_sparsity(_jac_mask(expr, wrt, {}))
 
 

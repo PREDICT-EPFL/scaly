@@ -13,12 +13,12 @@ from typing import Literal
 import numpy as np
 
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, _independent, concat, gather, scatter, substitute
+from ..ir.expr import Expr, ExprOp, concat, gather, scatter
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
 from .forward import _pushforward, jvp_many
-from .sparsity import _depends_on, _jac_mask, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
+from .sparsity import _check_wrt, _depends_on, _jac_mask, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
 from ..ir.types import SparsityPattern
 
 
@@ -77,18 +77,11 @@ class SparseJacobian:
     return SparseJacobian(sparsity, values, self.coloring_width, source, recovery)
 
 
-def _restore_derivative(result: SparseJacobian, restore: dict[Expr, Expr]) -> SparseJacobian:
-  return SparseJacobian(
-    result.sparsity,
-    substitute(result.values, restore),
-    result.coloring_width,
-    substitute(result._compressed, restore) if result._compressed is not None else None,
-    result._recovery,
-  )
-
-
 def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
-  """Reference compact Jacobian path: build dense ``J`` and gather nonzeros."""
+  """Reference compact Jacobian path: build dense ``J`` and gather nonzeros.
+
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
+  """
 
   sparsity = jacobian_sparsity(expr, wrt)
   dense = jacobian(expr, wrt)
@@ -97,10 +90,11 @@ def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
 
 
 def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
-  """Compact sparse Jacobian values from graph-colored compressed JVPs."""
-  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
-  if restore:
-    return _restore_derivative(sparse_jacobian_colored(expr, wrt), restore)
+  """Compact sparse Jacobian values from graph-colored compressed JVPs.
+
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
+  """
+  _check_wrt(wrt)
   expr = cse(expr)
   sparsity = jacobian_sparsity(expr, wrt)
   colors = column_coloring(sparsity)
@@ -167,15 +161,14 @@ def _star_recovery_indices(sparsity: SparsityPattern, colors: tuple[int, ...]) -
 def sparse_jacobian(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Compact sparse Jacobian: the structural pattern plus an expression for its nonzeros only.
 
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   Takes the structured path when ``expr`` is a ``VMAP`` (or a concatenation of them) over exactly
   ``wrt``, coloring the callee's small local pattern instead of the whole matrix, so the cost
   tracks the callee rather than the iteration count. Otherwise falls back to coloring the global
   pattern. The value order is the pattern's ``(rows, cols)`` order, which is not necessarily
   sorted.
   """
-  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
-  if restore:
-    return _restore_derivative(sparse_jacobian(expr, wrt), restore)
+  _check_wrt(wrt)
   structured = _sparse_jacobian_structured(expr, wrt)
   if structured is not None:
     return structured
@@ -356,13 +349,14 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
 
 
 def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> SparseJacobian:
-  """Compact sparse Hessian of a scalar expression using one global star-colored JVP batch."""
+  """Compact sparse Hessian of a scalar expression using one global star-colored JVP batch.
+
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
+  """
   triangle = _validate_triangle(triangle)
   if expr.size != 1:
     raise ValueError("sparse_hessian expects a scalar expression")
-  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
-  if restore:
-    return _restore_derivative(sparse_hessian(expr, wrt, triangle=triangle), restore)
+  _check_wrt(wrt)
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)

@@ -923,23 +923,6 @@ def substitute(expr: Expr, replacements: Mapping[Expr, Expr]) -> Expr:
   return rebuilt[expr.id]
 
 
-def _independent(exprs: Iterable[Expr], wrts: Iterable[Expr]) -> tuple[tuple[Expr, ...], tuple[Expr, ...], dict[Expr, Expr]]:
-  """Replace selected intermediates simultaneously with inputs and return the map back."""
-  exprs, wrts = tuple(exprs), tuple(wrts)
-  replacements = {
-    wrt: Expr(ExprOp.INPUT, type=wrt.type, name=f"_wrt{wrt.id}", attrs={"independent": wrt.id}, lowering=wrt.lowering)
-    for wrt in wrts
-    if wrt.op not in {ExprOp.INPUT, ExprOp.CONST}
-  }
-  if not replacements:
-    return exprs, wrts, {}
-  return (
-    tuple(substitute(expr, replacements) for expr in exprs),
-    tuple(replacements.get(wrt, wrt) for wrt in wrts),
-    {v: k for k, v in replacements.items()},
-  )
-
-
 def topo(outputs: Iterable[Expr]) -> list[Expr]:
   seen: set[int] = set()
   ret: list[Expr] = []

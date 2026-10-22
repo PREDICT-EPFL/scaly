@@ -210,79 +210,72 @@ weights = sc.sym("weights", 2)
 the first axis. Expression forms of sparse derivatives return a
 `SparseJacobian` containing `.values`, `.sparsity`, and `.to_dense()`.
 
-## Derivatives with respect to intermediate expressions
+## Differentiation inputs
 
-Expression derivatives can select an intermediate value, such as a slice of a
-state vector or the result of a function call. Scaly treats the selected
-expression as an independent variable. Calculations that use its inputs
-without using the selected expression stay fixed. For example, a calculation
-can differentiate only the state portion of a vector that also contains a
-parameter:
+An expression derivative accepts any calculation as its result. Its `wrt`
+argument must be an independent input created by `sc.sym` or a `Function`
+declaration. Both the result and the input have type `Expr`, but a value
+computed from an input cannot itself be used as `wrt`.
 
 ```python
-@sc.function(sc.arg("carry", 3), outputs=sc.arg("state_grad"))
-def state_derivative(carry: sc.Expr) -> sc.Expr:
-    state = carry[:2]
-    cost = sc.sumsqr(state - carry[2]) + sc.sumsqr(carry[1:])
-    return sc.gradient(cost, state)
+@sc.function(sc.arg("x", ()), outputs=sc.arg("grad"))
+def total_derivative(x: sc.Expr) -> sc.Expr:
+    y = 2.0 * x
+    loss = y ** 2 + x ** 2
+    return sc.gradient(loss, x)
 
-print(state_derivative(np.array([1.0, 3.0, 2.0])))  # [-2.  2.]
+print(total_derivative(np.array(3.0)))  # 30.0
+
+x = sc.sym("x", ())
+y = 2.0 * x
+try:
+    sc.gradient(y ** 2 + x ** 2, y)
+except ValueError as error:
+    print(error)
+# wrt must be an independent input from sc.sym or a Function declaration
 ```
 
-The second term uses `carry[1:]`, which is a different expression from `state`,
-so it contributes nothing to this derivative even though the slices overlap.
-Writing `carry[:2]` again gives the same expression as `state`, so a term using
-that slice would contribute too. Jacobians, Hessians, sparse derivatives and
-Jacobian products follow the same rule.
-
-`sc.vjp` can select several expressions at once. It treats each selection as
-independent, including when one is a slice of another. In the following example,
-the cubic term contributes only to the derivative with respect to `tail`:
+The derivative with respect to `x` includes both terms of the loss. Asking for
+a derivative with respect to `y` leaves a choice: holding the separate use of
+`x` fixed gives `2*y`, while substituting `x = y/2` gives `2.5*y`. Declare
+separate inputs to request the first partial derivative explicitly:
 
 ```python
-@sc.function(
-    sc.arg("carry", 3),
-    outputs=sc.group(sc.arg("segment_grad"), sc.arg("tail_grad")),
-)
-def joint_derivatives(carry: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    segment = carry[1:]
-    tail = segment[1:]
-    cost = sc.sumsqr(segment) + (tail ** 3).sum()
-    segment_grad, tail_grad = sc.vjp((cost,), (segment, tail), (sc.const(1.0),))
-    return segment_grad, tail_grad
+@sc.function(sc.arg("y", ()), sc.arg("x", ()), outputs=sc.arg("loss"))
+def partial_cost(y: sc.Expr, x: sc.Expr) -> sc.Expr:
+    return y ** 2 + x ** 2
 
-print(joint_derivatives(np.array([1.0, 2.0, 3.0])))
-# (array([4., 6.]), array([27.]))
+partial_y = sc.gradient(partial_cost, "loss", "y")
+print(partial_y(np.array(6.0), np.array(3.0)))  # 12.0
 ```
 
-The results follow the order of `wrts`, here `(segment, tail)`.
+The function treats its inputs independently, even when the numerical values
+passed to them are related. This rule also applies to Jacobians, Hessians,
+Jacobian products and sparsity analysis. Slices, reshapes, call results and
+constants cannot be used as differentiation inputs. They can appear anywhere
+in the calculation being differentiated. An unused input has a zero derivative.
 
-!!! warning "Mapped slices must remain in the graph"
-    A map can replace a slice and reshape with direct reads from the original
-    vector. Differentiating with respect to the removed slice then returns
-    zeros without raising an error. An explicit `sc.window` retains the selected
-    slice, as the two forms below show.
+For a calculation that extracts state and parameters from one vector, define
+the energy with separate inputs and call its derivative from the larger
+calculation:
 
 ```python
-@sc.function(sc.arg("pair", 2), outputs=sc.arg("cost"))
-def pair_cost(pair: sc.Expr) -> sc.Expr:
-    return sc.sumsqr(pair)
+@sc.function(sc.arg("x", 2), sc.arg("a", ()), outputs=sc.arg("energy"))
+def energy(x: sc.Expr, a: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x * x - a)
 
-@sc.function(
-    sc.arg("carry", 5), outputs=sc.group(sc.arg("removed"), sc.arg("retained")),
-)
-def mapped_gradients(carry: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    state = carry[:4]
-    removed = sc.vmap(pair_cost, 2)(state.reshape((2, 2))).sum()
-    retained = sc.vmap(pair_cost, 2)(sc.window(state, 0, 2)).sum()
-    return sc.gradient(removed, state), sc.gradient(retained, state)
+grad_energy = sc.gradient(energy, "energy", "x")
 
-print(mapped_gradients(np.arange(1.0, 6.0)))
-# (array([0., 0., 0., 0.]), array([2., 4., 6., 8.]))
+@sc.function(sc.arg("carry", 3), outputs=sc.arg("grad"))
+def state_gradient(carry: sc.Expr) -> sc.Expr:
+    return grad_energy(carry[:2], carry[2])
+
+print(state_gradient(np.array([1.0, 3.0, 2.0])))  # [-4. 84.]
 ```
 
-See [mapped windows](functions.md#regular-repetition-vmap) for the start and
-stride arguments.
+Here `x` is the differentiation input inside `energy`. The slices supply its
+values when the derivative function is called. A Newton step can call its
+Hessian in the same way.
 
 ## Holding a value fixed in derivatives
 

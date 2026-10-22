@@ -6,24 +6,24 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _independent, substitute, gather, scatter, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, gather, scatter, topo, zeros_like
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, cotangent
-from .sparsity import _depends_on
+from .sparsity import _check_wrt, _depends_on
 
 
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
   """Reverse-mode derivative: one adjoint per entry of ``wrts``, seeded by ``cotangents``.
 
   Each cotangent is shaped like its output. One sweep computes the derivative of a scalar with
-  respect to every selected expression at once, which is why gradients go through here.
-  Intermediate selections act as independent inputs. Calculations that use their inputs without
-  using a selected expression stay fixed. When one selection uses another, differentiating a use
-  of the former does not also contribute to the derivative of the latter. Results follow ``wrts`` order.
+  respect to every requested input at once, which is why gradients go through here.
+  Every entry of ``wrts`` must be an independent input from ``sc.sym`` or a Function declaration.
+  Results follow ``wrts`` order.
   """
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
-  outputs, wrts, restore = _independent(outputs, wrts)
+  for wrt in wrts:
+    _check_wrt(wrt)
   adjoints: dict[int, Expr] = {}
   nodes = topo(outputs)
   expr_ids = {e.id for e in nodes}
@@ -51,8 +51,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       if arg_cot is not None and arg.id in expr_ids:
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
-  result = tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
-  return tuple(substitute(expr, restore) for expr in result) if restore else result
+  return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 
 
 def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr | None, ...]:

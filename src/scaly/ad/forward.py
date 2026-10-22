@@ -6,17 +6,17 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _independent, concat, gather, scatter, stack, substitute
+from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
+from .sparsity import _check_wrt
 
 
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
   """Forward-mode derivative: ``J(expr, wrt) @ seed``, with ``seed`` shaped like ``wrt``.
 
-  ``wrt`` may be an intermediate expression. Its uses act as an independent input, holding
-  other paths to its original inputs fixed.
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
   tangent = jvp_many(expr, wrt, seed.reshape((1, *seed.shape)))
   if tangent.op == ExprOp.CONST:
@@ -28,9 +28,10 @@ def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   """Forward mode over seeds shaped ``(nseed, *wrt.shape)``, returning ``(nseed, *expr.shape)``.
 
-  ``wrt`` may be an intermediate expression, treated as an independent input. One traversal
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration. One traversal
   shares primal work across all seeds. A missing derivative rule raises.
   """
+  _check_wrt(wrt)
   if len(seeds.shape) < 1 or seeds.shape[1:] != wrt.shape:
     raise ValueError(f"multi-seed JVP expects seeds shape (nseed, *{wrt.shape}), got {seeds.shape}")
   if not wrt.type.dtype.is_floating or not expr.type.dtype.is_floating:
@@ -38,10 +39,9 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   if seeds.type.dtype != wrt.type.dtype:
     raise TypeError(f"JVP seeds must have primal dtype {wrt.type.dtype}, got {seeds.type.dtype}")
   seeds = simplify_cse_fixpoint(seeds)
-  (expr,), (wrt,), restore = _independent((expr,), (wrt,))
   (ret,) = _pushforward((expr,), {wrt: seeds}, seeds.shape[0])
   assert ret is not None
-  return substitute(ret, restore) if restore else ret
+  return ret
 
 
 def _zero_tangent(expr: Expr, nseed: int) -> Expr:

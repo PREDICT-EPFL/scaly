@@ -14,15 +14,17 @@ from ..ir.expr import Expr
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import jvp_many
 from .reverse import _ones_like, vjp
+from .sparsity import _check_wrt
 
 
 def jacobian(expr: Expr, wrt: Expr) -> Expr:
   """Dense Jacobian ``d expr / d wrt``, shape ``(expr.size, wrt.size)``.
 
-  An intermediate ``wrt`` acts as an independent input. Other paths to its inputs stay fixed.
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   Column ``j`` is the derivative with respect to ``wrt[j]``. Computed by pushing the whole
   identity through forward mode in one batched pass, then simplifying.
   """
+  _check_wrt(wrt)
   if wrt.size == 0:
     return Expr.const(np.zeros((expr.size, 0), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
   seed_arr = np.eye(wrt.size, dtype=wrt.type.dtype.numpy()).reshape((wrt.size, *wrt.shape))
@@ -32,7 +34,7 @@ def jacobian(expr: Expr, wrt: Expr) -> Expr:
 def gradient(expr: Expr, wrt: Expr) -> Expr:
   """Gradient of a scalar ``expr`` with respect to ``wrt``, as one reverse sweep.
 
-  An intermediate ``wrt`` acts as an independent input. Other paths to its inputs stay fixed.
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
   if expr.size != 1:
     raise ValueError("gradient expects a scalar expression")
@@ -42,7 +44,7 @@ def gradient(expr: Expr, wrt: Expr) -> Expr:
 def hessian(expr: Expr, wrt: Expr) -> Expr:
   """Second derivatives of a scalar ``expr``: the Jacobian of its gradient.
 
-  An intermediate ``wrt`` acts as an independent input in both derivative steps.
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
   return jacobian(gradient(expr, wrt).reshape((wrt.size,)), wrt)
 
