@@ -75,7 +75,7 @@ jobs:
   # A failing scheduled run on `main` files one issue and comments on it while it stays open, naming
   # the jobs that started or stopped failing; the first green run closes it.
   report:
-    needs: [changes, wheels, tests]
+    needs: [changes, wheels, tests, windows]
     if: always() && needs.changes.outputs.run == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:

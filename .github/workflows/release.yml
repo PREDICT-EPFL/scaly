@@ -191,6 +191,7 @@ jobs:
           PACKAGES: ${{ needs.plan.outputs.packages }}
         run: |
           uv venv --python ${{ matrix.python }} "$env:RUNNER_TEMP/verify"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $python = "$env:RUNNER_TEMP/verify/Scripts/python.exe"
           $pins = @(($env:PACKAGES | ConvertFrom-Json) | Where-Object name -ne 'scaly-ipopt' | ForEach-Object { "$($_.name)==$($_.version)" })
           if ($pins.Count) {
