@@ -109,9 +109,7 @@ jobs:
       - name: Closed-loop smoke
         if: ${{ !cancelled() && !inputs.full }}
         run: |
-          if [ "$RUNNER_OS" != Windows ]; then
-            uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
-          fi
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
           uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly

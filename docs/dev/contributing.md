@@ -34,7 +34,8 @@ The GCC and winpthreads package versions are pinned in the plugin's
 [`build_config.json`](https://github.com/PREDICT-EPFL/scaly/blob/main/plugins/scaly-ipopt/src/scaly_ipopt/build_config.json).
 The [wheel workflow](https://github.com/PREDICT-EPFL/scaly/blob/main/.github/workflows/wheels.yml)
 shows their installation commands. The environment also needs Git, make, patch, diffutils,
-pkgconf, and the UCRT64 CMake and Ninja packages. Run the build from that environment.
+pkgconf, and the UCRT64 CMake and Ninja packages. Add its `ucrt64/bin` and `usr/bin`
+directories to `PATH`. The hook runs source-build commands through its MSYS2 shell.
 
 Then:
 

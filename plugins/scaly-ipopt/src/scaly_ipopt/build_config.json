@@ -18,11 +18,13 @@
   },
   "gcc-runtime": {
     "version": "16.2.0-6",
+    "packages": ["gcc", "gcc-fortran", "cc-libs", "libatomic", "libgcc", "libgfortran", "libquadmath", "libstdc++"],
     "platforms": ["Windows"],
     "linkage": "shared"
   },
   "winpthreads": {
     "version": "14.0.0.r495.g63ebe6cdb-2",
+    "packages": ["winpthreads", "libwinpthread"],
     "platforms": ["Windows"],
     "linkage": "shared"
   },

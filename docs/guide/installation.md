@@ -77,7 +77,7 @@ Other compilers and systems may work, but they are not tested.
 | Ubuntu 26.04 | x86-64, arm64 | GCC 15, and Clang 22 on x86-64 |
 | macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4), and `zig cc` 0.17 on arm64 |
 | macOS 26 | arm64, x86-64 | Apple Clang 21 (Xcode 26) |
-| Windows | x86-64 | `zig cc` 0.17 |
+| Windows Server 2025 | x86-64 | `zig cc` 0.17 |
 
 The selected executable must exist. An invalid override does not fall back to
 the system compiler. [Environment variables](env_vars.md) describes the

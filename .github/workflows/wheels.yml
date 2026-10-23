@@ -54,15 +54,17 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && matrix.package == 'scaly-ipopt'
         shell: msys2 {0}
         run: |
-          gcc_version=$(python -c 'import json; print(json.load(open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json"))["gcc-runtime"]["version"])')
-          pthread_version=$(python -c 'import json; print(json.load(open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json"))["winpthreads"]["version"])')
-          packages=()
-          for name in gcc gcc-fortran cc-libs libatomic libgcc libgfortran libquadmath libstdc++; do
-            packages+=("https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-${name}-${gcc_version}-any.pkg.tar.zst")
-          done
-          for name in winpthreads libwinpthread; do
-            packages+=("https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-${name}-${pthread_version}-any.pkg.tar.zst")
-          done
+          urls=$(python - <<'PY'
+          import json, sys
+          sys.stdout.reconfigure(newline="\n")
+          with open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json") as f:
+              config = json.load(f)
+          for component in ("gcc-runtime", "winpthreads"):
+              for name in config[component]["packages"]:
+                  print(f"https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-{name}-{config[component]['version']}-any.pkg.tar.zst")
+          PY
+          )
+          mapfile -t packages <<< "$urls"
           pacman -U --needed --noconfirm "${packages[@]}"
           pacman -Q
           cygpath -m /ucrt64/bin >> "$GITHUB_PATH"

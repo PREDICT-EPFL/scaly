@@ -1,6 +1,6 @@
 [project]
 name = "scaly"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Symbolic compiler for optimal control: typed expression graphs, sparse derivatives and standalone generated C."
 readme = "README.md"
 authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
@@ -37,8 +37,8 @@ Repository = "https://github.com/PREDICT-EPFL/scaly"
 Issues = "https://github.com/PREDICT-EPFL/scaly/issues"
 
 [project.optional-dependencies]
-piqp = ["scaly-piqp>=0.1.0a2,<0.2"]
-ipopt = ["scaly-ipopt>=0.1.0a2,<0.2"]
+piqp = ["scaly-piqp>=0.1.0a3,<0.2"]
+ipopt = ["scaly-ipopt>=0.1.0a3,<0.2"]
 sqp = ["scaly-sqp>=0.1.0a2,<0.2"]
 solvers = ["scaly[piqp,ipopt,sqp]"]
 toolchain = [
