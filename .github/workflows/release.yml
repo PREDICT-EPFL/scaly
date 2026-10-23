@@ -133,7 +133,7 @@ jobs:
   # Installs the released packages from TestPyPI and everything else, dependencies and the
   # packages not released this time, from PyPI, the way a user would get them.
   verify:
-    name: verify / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}
+    name: verify / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}${{ matrix.python && format(' / py{0}', matrix.python) || '' }}
     needs: [plan, testpypi]
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
@@ -146,6 +146,9 @@ jobs:
           - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
           - { os: macos-15, python: "3.13" }
           - { os: macos-15-intel, python: "3.12" }
+          - { os: windows-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.14" }
     steps:
       - uses: actions/checkout@v7
 
@@ -157,6 +160,7 @@ jobs:
         if: ${{ !matrix.container }}
 
       - name: Install from TestPyPI
+        if: runner.os != 'Windows'
         env:
           PY: ${{ matrix.python }}
           PINS: ${{ needs.plan.outputs.pins }}
@@ -169,9 +173,46 @@ jobs:
             sleep 30
           done
           /tmp/env/bin/pip install --only-binary :all: "scaly[solvers]" $PINS
+          echo "VERIFY_PYTHON=/tmp/env/bin/python" >> "$GITHUB_ENV"
+
+      - name: Install from TestPyPI without the toolchain extra
+        if: runner.os == 'Windows'
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          uv venv --python ${{ matrix.python }} "$env:RUNNER_TEMP/verify"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = "$env:RUNNER_TEMP/verify/Scripts/python.exe"
+          $pins = @(($env:PACKAGES | ConvertFrom-Json) | Where-Object name -ne 'scaly-ipopt' | ForEach-Object { "$($_.name)==$($_.version)" })
+          if ($pins.Count) {
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+              uv pip install --python $python --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ @pins
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 10) { exit 1 }
+              Start-Sleep -Seconds 30
+            }
+          }
+          uv pip install --python $python --only-binary :all: scaly scaly-piqp scaly-sqp @pins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VERIFY_PYTHON=$python" >> $env:GITHUB_ENV
 
       - name: Solve with every backend
+        if: runner.os != 'Windows'
         run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+      - name: Solve with every backend through zig cc
+        if: runner.os != 'Windows'
+        env:
+          PINS: ${{ needs.plan.outputs.pins }}
+        run: |
+          /tmp/env/bin/pip install --only-binary :all: "scaly[toolchain]" $PINS
+          /tmp/env/bin/scaly_toolchain | grep -E '\((zig-bin|ziglang)\)'
+          /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+      - name: Verify installed Windows solvers
+        if: runner.os == 'Windows'
+        shell: bash
+        run: '"$VERIFY_PYTHON" .github/scripts/windows_install.py --installed'
 
   pypi:
     if: inputs.target == 'pypi'

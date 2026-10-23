@@ -5,7 +5,7 @@ description = "Symbolic compiler for optimal control: typed expression graphs, s
 readme = "README.md"
 authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
 requires-python = ">=3.12"
-dependencies = ["numpy>=2.3.3", "scipy>=1.18.0"]
+dependencies = ["numpy>=2.3.3", "scipy>=1.18.0", "zig-bin==0.17.*; sys_platform == 'win32'"]
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
 keywords = [
@@ -72,6 +72,7 @@ dev = [
   "foxglove-sdk>=0.25.3",
   "pydantic>=2.13.4",
   "scipy>=1.14",
+  "hatchling>=1.32.4",
 ]
 docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 

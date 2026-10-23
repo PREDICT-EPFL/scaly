@@ -19,25 +19,7 @@ jobs:
     uses: ./.github/workflows/wheels.yml
 
   pure:
-    name: sdists + pure wheels
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Build
-        run: |
-          uv build -o dist .
-          uv build -o dist plugins/scaly-sqp
-          uv build -o dist --sdist plugins/scaly-piqp
-          uv build -o dist --sdist plugins/scaly-ipopt
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist-pure
-          path: dist/*
-          retention-days: 90
+    uses: ./.github/workflows/pure.yml
 
   lint-type:
     name: lint + type
@@ -69,14 +51,20 @@ jobs:
       - name: Pytest node-ID baseline
         run: uv run pytest --collect-only -q
 
-  # The nightly workflow runs the same tests across every tested environment.
   tests:
-    needs: [wheels]
+    needs: [pure, wheels]
     uses: ./.github/workflows/tests.yml
     with:
       environments: >-
-        [{"os": "ubuntu-latest", "wheels": "ubuntu-latest"},
-         {"os": "macos-latest", "wheels": "macos-15"}]
+        [{"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.12"},
+         {"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.13"},
+         {"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.14"},
+         {"os": "macos-latest", "wheels": "macos-15", "python": "3.12"},
+         {"os": "macos-latest", "wheels": "macos-15", "python": "3.13"},
+         {"os": "macos-latest", "wheels": "macos-15", "python": "3.14"},
+         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.12", "toolchain": true},
+         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.13", "toolchain": true},
+         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.14", "toolchain": true}]
 
   install:
     name: install / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}

@@ -21,6 +21,8 @@ jobs:
       matrix:
         package: [scaly-piqp, scaly-ipopt]
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        include:
+          - { package: scaly-piqp, os: windows-latest }
     steps:
       - uses: actions/checkout@v7
 
@@ -48,6 +50,8 @@ jobs:
         env:
           CIBW_BUILD: cp312-*
           CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
           CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
           CIBW_ENVIRONMENT_MACOS: >-
             SCALY_BUILD_SOLVERS=required
