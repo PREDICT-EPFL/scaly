@@ -353,38 +353,39 @@ ten elements and `render_c_source(f, lanes=4, dialect="c")`, trimmed to the
 lane helper and its caller:
 
 ```c
-static inline void f_lanes_1(long long i_out_chunk, long long f_lanes_1_valid, double* out, const double* x, const double* y) {
-  for (long long i_out_lane = 0; i_out_lane < f_lanes_1_valid; ++i_out_lane) {
-    double v0 = y[(0 + (((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) < 9 ? ((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) : 9))];
-    out[(0 + (((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) < 9 ? ((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) : 9))] = ((sin(x[(0 + (((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) < 9 ? ((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) : 9))]) + v0) * v0);
+static inline void lanes_1(long long i, long long n, double* out, const double* x, const double* y) {
+  for (long long k = 0; k < n; ++k) {
+    double v0 = y[((i + k) < 9 ? (i + k) : 9)];
+    out[((i + k) < 9 ? (i + k) : 9)] = ((sin(x[((i + k) < 9 ? (i + k) : 9)]) + v0) * v0);
   }
 }
 int f(const double** arg, double** res, int* iw, double* w, int mem) {
   ...
-  for (long long i_out_chunk = 0; i_out_chunk < 10 / SCALY_WIDTH_f_lanes_1; ++i_out_chunk) {
-    f_lanes_1(i_out_chunk, SCALY_WIDTH_f_lanes_1, res[0], arg[0], arg[1]);
+  for (long long i_out_start = 0; i_out_start <= 10 - SCALY_WIDTH_4_4_4_4; i_out_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_1(i_out_start, SCALY_WIDTH_4_4_4_4, res[0], arg[0], arg[1]);
   }
-#if (10 % SCALY_WIDTH_f_lanes_1) != 0
-  f_lanes_1(10 / SCALY_WIDTH_f_lanes_1, 10 % SCALY_WIDTH_f_lanes_1, res[0], arg[0], arg[1]);
+#if (10 % SCALY_WIDTH_4_4_4_4) != 0
+  lanes_1(10 - 10 % SCALY_WIDTH_4_4_4_4, 10 % SCALY_WIDTH_4_4_4_4, res[0], arg[0], arg[1]);
 #endif
   return SCALY_SUCCESS;
 }
 ```
 
-The full groups and the final partial group call the same helper. The partial
-group passes the number of valid lanes, and every index is clamped to the last
-element, 9, so no lane reads past the end of an input. Only valid lanes are
+The full groups and the final partial group call the same helper with the
+index of the group's first element and the number of valid lanes. Every lane's
+index is clamped to the last element, 9, so no lane reads past the end of an
+input. Only valid lanes are
 stored. The arrays therefore need no padding, and their layout does not depend
 on the width.
 
-`SCALY_WIDTH_f_lanes_1` is a preprocessor macro, so the width is fixed when the
+`SCALY_WIDTH_4_4_4_4` is a preprocessor macro, so the width is fixed when the
 C is compiled. It is the requested width, capped for each loop by an estimate
 of how many values the loop body keeps live against the number of vector
 registers on the target, so a large body gets fewer lanes. It is also capped
 at the smallest power of two not below the loop's iteration count. In the default
 `gnu` dialect the helper uses a vector type, loading and storing whole groups
-when all lanes are valid and falling back to a per-lane loop for the partial
-group. A mapped loop is widened after its stage has been inlined. A loop stays
+from the first element when all lanes are valid, and falling back to a per-lane
+loop with the clamped indices for the partial group. A mapped loop is widened after its stage has been inlined. A loop stays
 scalar if it touches integer values, still contains a call, or
 carries a dependency between iterations other than an ordered sum.
 
