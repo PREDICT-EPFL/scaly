@@ -198,7 +198,18 @@ def test_auto_code_growth_counts_output_stores_and_aggregates_across_procs() -> 
   assert scalarized[1] is auto
 
 
-def test_auto_counts_shared_post_fold_computation_once() -> None:
+def test_auto_counts_shared_post_fold_computation_once(monkeypatch) -> None:
+  import scaly.passes.program.scalarize as scalarize
+
+  folds = 0
+  original = scalarize.fold_program
+
+  def counted(node):
+    nonlocal folds
+    folds += 1
+    return original(node)
+
+  monkeypatch.setattr(scalarize, "fold_program", counted)
   count = 5000
   x, y = (p.buffer(name, dtypes.float64, (size,)) for name, size in (("shared_x", 1), ("shared_y", count)))
   i = p.var("shared_i", dtypes.int64)
@@ -211,6 +222,7 @@ def test_auto_counts_shared_post_fold_computation_once() -> None:
   nodes = {node for stmt in _body(scalarized) for node in walk_program(stmt)}
   assert sum(node.op == ProgramOp.SIN for node in nodes) == 1
   assert not any(node.op == ProgramOp.ADD for node in nodes)
+  assert folds == 2
 
 
 def test_auto_preflight_bounds_buffer_materialization() -> None:

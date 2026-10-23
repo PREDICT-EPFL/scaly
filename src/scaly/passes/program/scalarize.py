@@ -24,8 +24,15 @@ class _Pointer:
 
 
 class _Frame:
-  def __init__(self, proc: ProgramNode, pointers: list[_Pointer], procs: dict[str, ProgramNode]) -> None:
+  def __init__(
+    self,
+    proc: ProgramNode,
+    pointers: list[_Pointer],
+    procs: dict[str, ProgramNode],
+    folded: dict[tuple[ProgramNode, tuple[ProgramNode, ...]], ProgramNode],
+  ) -> None:
     self.procs = procs
+    self.folded = folded
     self.buffers = {param.attrs["name"]: ptr for param, ptr in zip(proc.args[: proc.attrs["param_count"]], pointers, strict=True)}
     self.variables: dict[str, ProgramNode] = {}
 
@@ -52,7 +59,12 @@ class _Frame:
         assert value is not None, "scalarization read an uninitialized buffer element"
         memo[n] = value
       elif ready:
-        memo[n] = fold_program(ProgramNode(n.op, tuple(memo[a] for a in n.args), dtype=n.dtype))
+        args = tuple(memo[a] for a in n.args)
+        key = n, args
+        value = self.folded.get(key)
+        if value is None:
+          value = self.folded[key] = fold_program(ProgramNode(n.op, args, dtype=n.dtype))
+        memo[n] = value
       else:
         stack.append((n, True))
         stack.extend((a, False) for a in reversed(n.args) if a not in memo)
@@ -81,7 +93,7 @@ class _Frame:
           self.run(stmt.args[1:])
       elif stmt.op == ProgramOp.CALL:
         callee = self.procs[stmt.attrs["callee"]]
-        frame = _Frame(callee, [self.pointer(a) for a in stmt.args], self.procs)
+        frame = _Frame(callee, [self.pointer(a) for a in stmt.args], self.procs, self.folded)
         frame.run(callee.args[callee.attrs["param_count"] :])
       else:
         raise NotImplementedError(f"scalarization does not support {stmt.op}")
@@ -94,7 +106,7 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
     _Pointer([p.load(p.view(param, [p.const_int(i)])) if k < n_in else None for i in range(math.prod(param.attrs["shape"]))])
     for k, param in enumerate(params)
   ]
-  frame = _Frame(proc, pointers, procs)
+  frame = _Frame(proc, pointers, procs, {})
   frame.run(proc.args[len(params) :])
   outputs: list[tuple[ProgramNode, ProgramNode]] = []
   for param, ptr in zip(params[n_in:], pointers[n_in:], strict=True):

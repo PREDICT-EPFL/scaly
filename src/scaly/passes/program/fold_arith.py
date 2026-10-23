@@ -123,7 +123,7 @@ def _fold_body(body: list[ProgramNode], names: NameScope) -> list[ProgramNode]:
 
   patterns = [Pattern(ProgramOp.LOAD, constant_read, read), Pattern(None, lambda n: bool(n.args), fold_program)]
 
-  def scoped(stmt: ProgramNode, bounds: dict[str, tuple[int, int]]) -> ProgramNode:
+  def scoped(stmt: ProgramNode, bounds: dict[str, tuple[int, int]], memo: dict[ProgramNode, ProgramNode]) -> ProgramNode:
     if stmt.op == ProgramOp.FOR:
       rng, *nested = stmt.args
       rng = rewrite(rng, patterns, rebuild=rebuild_program)
@@ -156,12 +156,14 @@ def _fold_body(body: list[ProgramNode], names: NameScope) -> list[ProgramNode]:
               index = p.add(p.mul(p.var(block), p.const_int(divisor)), p.var(rng.attrs["name"]))
               body = [substitute_var(child, rng.attrs["name"], index) for child in nested]
               inside = p.for_(p.range_(rng.attrs["name"], 0, divisor, kind=rng.attrs["kind"]), body)
-              return scoped(p.for_(p.range_(block, 0, stop // divisor, kind=rng.attrs["kind"]), [inside]), bounds)
-      return rebuild_program(stmt, (rng, *(scoped(child, inner) for child in nested)))
+              return scoped(p.for_(p.range_(block, 0, stop // divisor, kind=rng.attrs["kind"]), [inside]), bounds, memo)
+      inner_memo: dict[ProgramNode, ProgramNode] = {}
+      return rebuild_program(stmt, (rng, *(scoped(child, inner, inner_memo) for child in nested)))
     indices = Pattern[ProgramNode](None, lambda n: n.op in (ProgramOp.DIV, ProgramOp.MOD), lambda n: _fold_index(n, bounds) or fold_program(n))
-    return rewrite(stmt, [indices, *patterns], rebuild=rebuild_program)
+    return rewrite(stmt, [indices, *patterns], rebuild=rebuild_program, memo=memo)
 
-  return [scoped(stmt, {}) for stmt in body]
+  memo: dict[ProgramNode, ProgramNode] = {}
+  return [scoped(stmt, {}, memo) for stmt in body]
 
 
 def _constant_fills(body: list[ProgramNode]) -> list[ProgramNode]:

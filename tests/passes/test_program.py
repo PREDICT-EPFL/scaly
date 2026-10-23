@@ -940,6 +940,37 @@ def test_scoped_index_folding_retains_negative_and_out_of_range_remainders():
   assert any(node.op == ProgramOp.MOD for node in walk_program(result))
 
 
+def test_scoped_index_folding_reuses_work_only_with_identical_bounds(monkeypatch):
+  import importlib
+
+  folding = importlib.import_module("scaly.passes.program.fold_arith")
+  i = p.var("i", dtypes.int64)
+  quotient = p.div(i, p.const_int(4))
+  outputs = [p.buffer(name, dtypes.int64, (2 * size,)) for name, size in (("y", 4), ("z", 8))]
+  loops = [
+    p.for_(
+      p.range_("i", 0, size),
+      [p.store(p.view(output, [i]), quotient), p.store(p.view(output, [p.add(i, p.const_int(size))]), quotient)],
+    )
+    for output, size in zip(outputs, (4, 8), strict=True)
+  ]
+  folds = 0
+  original = folding._fold_index
+
+  def counted(node, bounds):
+    nonlocal folds
+    folds += 1
+    return original(node, bounds)
+
+  monkeypatch.setattr(folding, "_fold_index", counted)
+  result = fold_arith(p.program([p.proc("sibling_bounds", outputs, loops)]))
+  verify_program(result)
+  first, second = result.args[0].args[2:]
+  assert all(stmt.args[1] is p.const_int(0) for stmt in first.args[1:])
+  assert all(stmt.args[1] is quotient for stmt in second.args[1:])
+  assert folds == 3
+
+
 def test_scalar_invariant_assignments_are_reused_across_mapped_calls():
   x = p.buffer("x", dtypes.float64, (1,))
   params = p.buffer("params", dtypes.float64, (2,))

@@ -280,3 +280,40 @@ def test_assembly_rewrite_folds_shared_scalar_graph_once(monkeypatch):
     result = fusion._rewrite(p.add(load, p.const_float(float(index))), {load: shared}, folded)
     assert result is original(p.add(shared, p.const_float(float(index))))
   assert len(visits) <= len(list(walk_program(shared))) + 20
+
+
+def test_shared_seed_outputs_substitute_their_common_graph_once(monkeypatch):
+  import importlib
+
+  fusion = importlib.import_module("scaly.passes.program.fuse_ranges")
+  depth, width, length = 40, 32, 5
+  a, b = (p.buffer(name, dtypes.float64, (size,)) for name, size in (("a", 1), ("b", width)))
+  value = p.load(p.view(a, [p.const_int(0)]))
+  body = []
+  for k in range(depth):
+    body.append(p.assign(f"v{k}", ProgramNode(ProgramOp.SIN, (value,)), declare=True))
+    value = p.var(f"v{k}", dtypes.float64)
+  body.extend(p.store(p.view(b, [p.const_int(k)]), p.add(value, p.const_float(k))) for k in range(width))
+  callee = p.proc("shared_seed", [a, b], body)
+  callee = ProgramNode(callee.op, callee.args, {**callee.attrs, "input_count": 1, "scalarized": True}, callee.dtype)
+  x = p.buffer("x", dtypes.float64, (length,))
+  y = p.buffer("y", dtypes.float64, (length * width,))
+  tmp = p.buffer("tmp", dtypes.float64, (length * width,), address_space="private")
+  i = p.var("i", dtypes.int64)
+  call = ProgramNode(ProgramOp.CALL, (p.view(x, [i]), p.view(tmp, [p.mul(i, p.const_int(width))])), {"callee": "shared_seed", "n_in": 1, "n_out": 1})
+  mapped = p.for_(p.range_("i", 0, length), [call])
+  copied = p.for_(p.range_("i", 0, length * width), [p.store(p.view(y, [i]), p.load(p.view(tmp, [i])))])
+  root = p.proc("root", [x, y], [tmp, mapped, copied])
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, root.dtype)
+  original = fusion.rebuild_program
+  rebuilds = 0
+
+  def counted(node, args):
+    nonlocal rebuilds
+    rebuilds += 1
+    return original(node, args)
+
+  monkeypatch.setattr(fusion, "rebuild_program", counted)
+  result = fusion.fuse_ranges(p.program([callee, root]))
+  assert not any(node.op == ProgramOp.CALL for node in walk_program(result.args[-1]))
+  assert rebuilds < 8 * (depth + width)
