@@ -589,3 +589,30 @@ def test_vector_math_wrappers_do_not_capture_user_names(tmp_path, names):
   path = tmp_path / "kernel.c"
   path.write_text(render_c_module(fun, lanes=4).body)
   subprocess.run([*c_compiler(), "-O1", "-std=c99", "-c", str(path), "-o", str(tmp_path / "kernel.o")], check=True, capture_output=True)
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [1, 2, 4, 8])
+def test_lane_local_loads_are_one_vector_load(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("x", dtypes.float64, (3 * count,)), p.buffer("y", dtypes.float64, (count,))
+  scratch = p.buffer("scratch", dtypes.float64, (3,), address_space="private")
+  i, j = p.var("i"), p.var("j")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  fill = p.for_(p.range_("j", 0, 3), [p.store(p.view(scratch, [j]), p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), j)])))])
+  loads = [p.load(p.view(scratch, [p.const_int(k)])) for k in range(3)]
+  value = p.add(p.mul(ProgramNode(ProgramOp.SIN, (loads[0],)), loads[1]), loads[2])
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [scratch, fill, p.store(p.view(y, [i]), value)])])])
+  function, source = _compile(pack_workspace(widen_ranges(prog, lanes=lanes)), tmp_path, dialect=dialect)
+  values = np.linspace(-2, 3, 3 * count)
+  rows = values.reshape(count, 3)
+  expected = np.sin(rows[:, 0]) * rows[:, 1] + rows[:, 2]
+  actual = _evaluate(function, values, count)
+  np.testing.assert_allclose(actual[:count], expected, rtol=1e-15, atol=1e-15)
+  np.testing.assert_array_equal(actual[count:], 8765.0)
+  if dialect == "gnu" and lanes > 1:
+    helper = source[source.index("void kernel_lanes_1(") :]
+    helper = helper[: helper.index("\n}")]
+    assert len(re.findall(r"= \*\(const \w+_mem\*\)\(&", helper)) == 3
+    assert "if (n == " not in helper

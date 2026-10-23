@@ -665,9 +665,12 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
         view = node.args[0]
         if view.attrs.get("lane_stride") == 1:
           first = _emit_view(view, {}, first_lane())
-          lines.append(f"  {vec} {name};")
-          lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
-          lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
+          if view.attrs.get("lane_local"):
+            lines.append(f"  {vec} {name} = *(const {vec}_mem*)(&{first});")
+          else:
+            lines.append(f"  {vec} {name};")
+            lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
+            lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
         else:
           lines.append(f"  double {name}s[{width}];")
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}s[{lane}] = {_emit_view(view, {}, lane_vars)};")
