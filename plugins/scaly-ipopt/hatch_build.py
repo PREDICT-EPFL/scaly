@@ -105,8 +105,21 @@ def _missing_ipopt_tools() -> list[str]:
     missing.append("cc")
   if not _has_cxx_compiler():
     missing.append("c++")
-  if _find_fortran_compiler(required=False) is None:
+  fc = _find_fortran_compiler(required=False)
+  if fc is None:
     missing.append("gfortran")
+  elif os.name == "nt":
+    try:
+      versions = dict(line.split(" ", 1) for line in _windows_packages(fc).splitlines())
+    except (OSError, subprocess.CalledProcessError):
+      missing.append("MSYS2 UCRT64 with pacman")
+    else:
+      for component in ("gcc-runtime", "winpthreads"):
+        expected = _BUILD_CONFIG[component]["version"]
+        for name in _BUILD_CONFIG[component]["packages"]:
+          package = f"mingw-w64-ucrt-x86_64-{name}"
+          if versions.get(package) != expected:
+            missing.append(f"{package} {expected} (found {versions.get(package, 'missing')})")
   return missing
 
 
@@ -454,11 +467,11 @@ def _bundle_windows_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str, run
       continue
     seen.add(current.name.lower())
     for name in _windows_deps(current):
-      if name.lower().startswith(("api-ms-win-", "ext-ms-win-")) or (system / name).is_file():
+      src = runtime_dir / name
+      if name.lower().startswith(("api-ms-win-", "ext-ms-win-")) or (not src.is_file() and (system / name).is_file()):
         continue
       dst = lib_dir / name
       if not dst.exists():
-        src = runtime_dir / name
         if not src.is_file():
           raise RuntimeError(f"cannot vendor {name!r} needed by {current}: not found in the toolchain")
         hook.app.display_info(f"Bundling {src} -> {dst}")
@@ -506,6 +519,11 @@ def _tool_identity(cmd: str) -> str:
   return f"{path}: {out.splitlines()[0] if out else ''}"
 
 
+def _windows_packages(fc: str) -> str:
+  bash = Path(fc).parents[2] / "usr" / "bin" / "bash.exe"
+  return subprocess.run([str(bash), "-lc", "pacman -Q"], check=True, capture_output=True, text=True).stdout
+
+
 def _remove_tree(path: Path) -> None:
   def remove_readonly(function, filename, error):
     if not isinstance(error, PermissionError):
@@ -528,20 +546,10 @@ def _cache_key(root: Path) -> str:
   if os.name == "nt" and Path(fc).is_file():
     from importlib.metadata import version
 
-    bash = Path(fc).parents[2] / "usr" / "bin" / "bash.exe"
-    packages = subprocess.run([str(bash), "-lc", "pacman -Q"], check=True, capture_output=True, text=True).stdout
-    versions = dict(line.split(" ", 1) for line in packages.splitlines())
-    groups = {
-      "gcc-runtime": ("gcc", "gcc-fortran", "libgcc", "libgfortran", "libquadmath", "libstdc++"),
-      "winpthreads": ("winpthreads", "libwinpthread"),
-    }
-    for component, names in groups.items():
-      expected = _BUILD_CONFIG[component]["version"]
-      for name in names:
-        package = f"mingw-w64-ucrt-x86_64-{name}"
-        if versions.get(package) != expected:
-          raise RuntimeError(f"Windows IPOPT requires {package} {expected}, found {versions.get(package, 'missing')}")
-    tools.append(packages)
+    try:
+      tools.append(_windows_packages(fc))
+    except (OSError, subprocess.CalledProcessError) as error:
+      tools.append(f"pacman: {error}")
     tools += [version("delvewheel"), version("pefile")]
   env = [f"{name}={os.environ.get(name, '')}" for name in _KEY_ENV]
   for part in (platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0], *tools, *env):

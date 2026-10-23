@@ -1,4 +1,8 @@
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_runtime_bundles_transitive_dependencies
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-standalone]
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-wrong-version]
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-standalone]
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-wrong-version]
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[diagonal]
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[empty]

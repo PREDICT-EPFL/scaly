@@ -150,11 +150,11 @@ Ipopt. Runtime collection reads the compiler's directory directly because Python
 The existing notices are retained, with a winpthreads notice copied from its pinned package.
 
 `SCALY_BUILD_SOLVERS=required uv build plugins/scaly-ipopt --wheel` produced
-`scaly_ipopt-0.1.0a2-py3-none-win_amd64.whl`, 10,621,192 bytes. The local artifact's SHA-256 is
-`6bfcc9ef55d68a48eace01b5175f7ad4799752692679dcfacbf68c5cd85a7e68`.
+`scaly_ipopt-0.1.0a3-py3-none-win_amd64.whl`, 10,621,256 bytes. The local artifact's SHA-256 is
+`feb7dbb04f37470ed47621dacb666f5b11edee2c38ddbccd7e240a994b4ef0c3`.
 The compiler executables and `SCALY_SOLVER_CACHE` pointed into this worktree's `build/` tree.
 
-The 21 plugin tests passed, including numerical references, status/statistics, warm starts,
+All 25 plugin tests passed, including numerical references, status/statistics, warm starts,
 nested calls and both CasADi load orders in fresh processes. Fresh installations of the core,
 Ipopt, PIQP and SQP wheels passed `.github/scripts/windows_install.py` on Python 3.12.11,
 3.13.1 and 3.14.8 with Zig 0.17.0. The child processes had only their environment's `Scripts/`,
@@ -166,6 +166,11 @@ A separate extraction of the wheel loaded all six Ipopt DLLs with only Windows d
 on `PATH`. `GetIpoptVersion` returned 3.14.19. Removing its private libgfortran made a fresh
 process fail to load the solver. The missing runtime could not be supplied by another toolchain
 or CasADi. The DLL was restored after the check.
+
+Editable installs skip an unsuitable Windows toolchain in automatic mode and fail in required
+mode. Regression tests cover both standalone Fortran compilers and mismatched MSYS2 package
+versions. Runtime collection prefers the pinned toolchain even if another installer put a
+DLL with the same name in `System32`.
 
 Enabling all solver tests also exposed Unix assumptions in the benchmark helpers. The Windows
 path now reads DLL import symbols, exports the benchmark shim, resolves the actual Ipopt
@@ -204,12 +209,20 @@ import library, and bundles the runtime dependency chain and notices. The plugin
 Compiler and runtime package versions are pinned. Other build-tool versions are recorded in
 the cache identity. This establishes a repeatable source-build recipe and runtime bundle,
 not byte-for-byte reproducibility across different Windows images and build directories.
+MSYS2 can prune superseded package archives from its repository, so the package pins need
+maintenance when their downloads stop being available. The hook and workflow read the same
+package list from `build_config.json`.
 
-`wt hook pre-merge --yes` passed on native Windows: 2,705 tests passed and 102 skipped,
+`wt hook pre-merge --yes` passed on native Windows: 2,709 tests passed and 102 skipped,
 with both solvers required. Type checking, formatting, lint, benchmark smoke, the documentation
 build and the private-name check passed. The smoke includes the Ipopt oracle comparisons and
 standalone C++ solver consumer. The newly enabled race-cars closed-loop checks also passed
 for both compiled and interpreted CasADi oracles alongside Scaly.
+
+The first Windows release needs new versions of core, PIQP and Ipopt together. Their published
+`0.1.0a2` distributions predate Windows support. All three are bumped to `0.1.0a3`, with matching
+minimum dependencies. SQP's published source is unchanged and its existing pure-Python wheel
+works with the new versions.
 
 The pull request's continuous-integration run remains the final platform check. Build and
 release workflows include the Windows Ipopt wheel, require the backend in Windows tests and
