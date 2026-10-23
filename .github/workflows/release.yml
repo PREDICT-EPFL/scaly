@@ -141,17 +141,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { os: ubuntu-latest, container: "python:3.12-slim" }
           - { os: ubuntu-latest, container: "python:3.14-slim" }
-          - { os: ubuntu-24.04-arm, container: "python:3.14-slim" }
-          - { os: macos-15, python: "3.14" }
-          - { os: macos-15-intel, python: "3.14" }
+          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
+          - { os: macos-15, python: "3.13" }
+          - { os: macos-15-intel, python: "3.12" }
+          - { os: windows-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.13" }
           - { os: windows-latest, python: "3.14" }
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install C development files and the solver runtime (Linux)
+      - name: Install a C compiler for the JIT (Linux)
         if: matrix.container
-        run: apt-get update && apt-get install -y --no-install-recommends libc6-dev libstdc++6
+        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
 
       - uses: astral-sh/setup-uv@v10.2.0
         if: ${{ !matrix.container }}
@@ -169,7 +172,7 @@ jobs:
             [ "$attempt" = 10 ] && exit 1
             sleep 30
           done
-          /tmp/env/bin/pip install --only-binary :all: "scaly[solvers,toolchain]" $PINS
+          /tmp/env/bin/pip install --only-binary :all: "scaly[solvers]" $PINS
           echo "VERIFY_PYTHON=/tmp/env/bin/python" >> "$GITHUB_ENV"
 
       - name: Install from TestPyPI without the toolchain extra
@@ -193,10 +196,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "VERIFY_PYTHON=$python" >> $env:GITHUB_ENV
 
-      - name: Verify installed solvers
-        shell: bash
+      - name: Solve with every backend
+        if: runner.os != 'Windows'
+        run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+      - name: Solve with every backend through zig cc
+        if: runner.os != 'Windows'
+        env:
+          PINS: ${{ needs.plan.outputs.pins }}
         run: |
-          "$VERIFY_PYTHON" .github/scripts/${{ runner.os == 'Windows' && 'windows_install.py --installed' || 'solve_smoke.py' }}
+          /tmp/env/bin/pip install --only-binary :all: "scaly[toolchain]" $PINS
+          /tmp/env/bin/scaly_toolchain | grep -E '\((zig-bin|ziglang)\)'
+          /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+      - name: Verify installed Windows solvers
+        if: runner.os == 'Windows'
+        shell: bash
+        run: '"$VERIFY_PYTHON" .github/scripts/windows_install.py --installed'
 
   pypi:
     if: inputs.target == 'pypi'

@@ -54,6 +54,17 @@ jobs:
   tests:
     needs: [pure, wheels]
     uses: ./.github/workflows/tests.yml
+    with:
+      environments: >-
+        [{"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.12"},
+         {"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.13"},
+         {"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.14"},
+         {"os": "macos-latest", "wheels": "macos-15", "python": "3.12"},
+         {"os": "macos-latest", "wheels": "macos-15", "python": "3.13"},
+         {"os": "macos-latest", "wheels": "macos-15", "python": "3.14"},
+         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.12", "toolchain": true},
+         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.13", "toolchain": true},
+         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.14", "toolchain": true}]
 
   install:
     name: install / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}
@@ -65,10 +76,11 @@ jobs:
       matrix:
         include:
           # Slim images carry no Fortran runtime, so these prove the IPOPT wheel brings its own.
+          - { os: ubuntu-latest, container: "python:3.12-slim" }
           - { os: ubuntu-latest, container: "python:3.14-slim" }
-          - { os: ubuntu-24.04-arm, container: "python:3.14-slim" }
-          - { os: macos-15, python: "3.14" }
-          - { os: macos-15-intel, python: "3.14" }
+          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
+          - { os: macos-15, python: "3.13" }
+          - { os: macos-15-intel, python: "3.12" }
     steps:
       - uses: actions/checkout@v7
 
@@ -83,9 +95,9 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Install C development files and the solver runtime (Linux)
+      - name: Install a C compiler for the JIT (Linux)
         if: matrix.container
-        run: apt-get update && apt-get install -y --no-install-recommends libc6-dev libstdc++6
+        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
 
       - uses: astral-sh/setup-uv@v10.2.0
         if: ${{ !matrix.container }}
@@ -95,9 +107,13 @@ jobs:
           PY: ${{ matrix.python }}
         run: |
           if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
-          /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]" dist/*.whl
+          /tmp/env/bin/pip install --only-binary :all: dist/*.whl
+
+      - name: Solve with every backend
+        run: /tmp/env/bin/python .github/scripts/solve_smoke.py
 
       - name: Solve with every backend through zig cc
         run: |
+          /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]"
           /tmp/env/bin/scaly_toolchain | grep -E '\((zig-bin|ziglang)\)'
           /tmp/env/bin/python .github/scripts/solve_smoke.py
