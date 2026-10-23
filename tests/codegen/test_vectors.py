@@ -638,3 +638,43 @@ def test_only_tail_lanes_clamp_their_index(tmp_path, dialect, lanes):
   if dialect == "gnu":
     helper = source[source.index("void lanes_1(") :]
     assert helper[: helper.index("\n}")].count("?") == 1
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_lane_uniform_integer_index_is_one_scalar(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("x", dtypes.float64, (3 * count,)), p.buffer("y", dtypes.float64, (count,))
+  i, offset = p.var("i"), p.var("offset")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  value = p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), offset)]))
+  body = [p.assign("offset", p.const_int(2), dtypes.int64, declare=True), p.store(p.view(y, [i]), p.mul(value, value))]
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, body)])])
+  function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, dialect=dialect)
+  values = np.linspace(-2, 3, 3 * count)
+  actual = _evaluate(function, values, count)
+  np.testing.assert_array_equal(actual[:count], values[2::3] ** 2)
+  np.testing.assert_array_equal(actual[count:], 8765.0)
+  if dialect == "gnu":
+    assert "int64_t offset = 2;" in source
+    assert "offset[" not in source
+
+
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_lane_uniform_bit_select_word_reads_a_scalar_index(tmp_path, lanes):
+  count = 2 * lanes + 3
+  words = [0b10110, 0b01101]
+  x, y = p.buffer("x", dtypes.float64, (count,)), p.buffer("y", dtypes.float64, (count,))
+  table = p.const_buffer("words", dtypes.uint8, (2,), words)
+  i, word_index = p.var("i"), p.var("word_index")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  value = p.bit_select(p.load(p.view(table, [word_index])), p.mod(i, p.const_int(5)), p.load(p.view(x, [i])))
+  body = [p.assign("word_index", p.const_int(1), dtypes.int64, declare=True), p.store(p.view(y, [i]), value)]
+  prog = p.program([p.proc("kernel", [x, y], [table, p.for_(rng, body)])])
+  function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path)
+  values = np.linspace(-2, 3, count)
+  actual = _evaluate(function, values, count)
+  np.testing.assert_array_equal(actual[:count], np.where((words[1] >> (np.arange(count) % 5)) & 1, values, 0.0))
+  assert "words[word_index]" in source

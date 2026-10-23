@@ -720,13 +720,14 @@ def _emit_vector_body(
           value = expression(stmt.args[0])
           lines.append(f"  {vec + ' ' if stmt.attrs.get('declare') else ''}{name} = {value};")
           vector_vars.add(stmt.attrs["target"])
-        else:
+        elif varies(stmt.args[0]):
           lines.append(f"  {stmt.dtype.c_type} {name}[{width}];")
           value = _emit_scalar(stmt.args[0], {}, lane_vars)
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {value};")
           lane_vars[stmt.attrs["target"]] = f"{name}[{lane}]"
-          if varies(stmt.args[0]):
-            per_lane.add(stmt.attrs["target"])
+          per_lane.add(stmt.attrs["target"])
+        else:
+          lines.append(f"  {stmt.dtype.c_type} {name} = {_emit_scalar(stmt.args[0], {}, lane_vars)};")
       elif stmt.op == ProgramOp.STORE and stmt.attrs.get("ordered_reduction"):
         target, value = stmt.args
         staged = dict(lane_vars)
