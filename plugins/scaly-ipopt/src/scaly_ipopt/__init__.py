@@ -11,7 +11,9 @@ if TYPE_CHECKING:
   from scaly.function.concrete import ConcreteFunction
 
 _RAW_BUILD_CONFIG = json.loads((Path(__file__).resolve().parent / "build_config.json").read_text())
-BUILD_CONFIG = {name: config for name, config in _RAW_BUILD_CONFIG.items() if name != "blas"}
+BUILD_CONFIG = {
+  name: config for name, config in _RAW_BUILD_CONFIG.items() if name != "blas" and platform.system() in config.get("platforms", [platform.system()])
+}
 BUILD_CONFIG["blas"] = _RAW_BUILD_CONFIG["blas"]["darwin" if platform.system() == "Darwin" else "linux"]
 
 
@@ -31,7 +33,7 @@ class _Backend:
   kind = "nlp"
   hess_triangle = "lower"
   protocol_version = 8
-  lib_stem = "ipopt"
+  lib_stem = "scaly_ipopt-3" if platform.system() == "Windows" else "ipopt"
   link_flags = ("-lipopt",)
   header = "coin-or/IpStdCInterface.h"
   build_config = BUILD_CONFIG

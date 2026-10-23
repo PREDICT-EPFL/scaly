@@ -77,22 +77,26 @@ _MACHO_RODATA_SYMBOL = re.compile(r"\(__TEXT,__(?:const|literal\d+|cstring)\) .*
 
 def _coff_object(path: Path) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]]:
   data = path.read_bytes()
-  machine, count, _, symbol_offset, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data)
-  if machine != 0x8664 or optional_size:
-    raise ValueError(f"expected an x86-64 COFF object: {path}")
+  header = struct.unpack_from("<I", data, 0x3C)[0] + 4 if data[:2] == b"MZ" else 0
+  machine, count, _, symbol_offset, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data, header)
+  if machine != 0x8664 or (not header and optional_size):
+    raise ValueError(f"expected an x86-64 COFF object or DLL: {path}")
   strings = data[symbol_offset + 18 * symbol_count :]
 
   def string(offset: int) -> str:
     return strings[offset : strings.index(b"\0", offset)].decode()
 
   sections = []
+  addresses = []
   for index in range(count):
-    offset = 20 + index * 40
+    offset = header + 20 + optional_size + index * 40
     raw = data[offset : offset + 8].rstrip(b"\0")
     name = string(int(raw[1:])) if raw.startswith(b"/") else raw.decode()
     size = struct.unpack_from("<I", data, offset + 16)[0]
     flags = struct.unpack_from("<I", data, offset + 36)[0]
     sections.append((name, size, flags))
+    virtual_size, virtual, raw_size, raw = struct.unpack_from("<IIII", data, offset + 8)
+    addresses.append((virtual, max(virtual_size, raw_size), raw))
   symbols = []
   index = 0
   while index < symbol_count:
@@ -103,6 +107,22 @@ def _coff_object(path: Path) -> tuple[list[tuple[str, int, int]], list[tuple[str
     if not (storage == 3 and auxiliaries and name.startswith(".")):
       symbols.append((name, section, storage))
     index += 1 + auxiliaries
+  if header:
+
+    def file_offset(rva: int) -> int:
+      return next(raw + rva - start for start, size, raw in addresses if start <= rva < start + size)
+
+    imports = struct.unpack_from("<I", data, header + 20 + 120)[0]
+    descriptor = file_offset(imports) if imports else 0
+    while descriptor and any(data[descriptor : descriptor + 20]):
+      lookup, _, _, _, first = struct.unpack_from("<IIIII", data, descriptor)
+      thunk = file_offset(lookup or first)
+      while (entry := struct.unpack_from("<Q", data, thunk)[0]) != 0:
+        if not entry & (1 << 63):
+          start = file_offset(entry) + 2
+          symbols.append((data[start : data.index(b"\0", start)].decode(), 0, 2))
+        thunk += 8
+      descriptor += 20
   return sections, symbols
 
 

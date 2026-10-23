@@ -147,6 +147,21 @@ def test_object_inspection_reads_undefined_vector_symbols(tmp_path: Path) -> Non
   assert vector_symbols(obj) == (["__ZGVfixture"] if sys.platform == "darwin" else ["_ZGVfixture"])
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DLL import tables")
+def test_dll_inspection_reads_imported_vector_symbols(tmp_path: Path) -> None:
+  compiler = find_c_compiler()
+  assert compiler is not None
+  provider = tmp_path / "provider.c"
+  provider.write_text("__declspec(dllexport) double _ZGVfixture(double x) { return x; }\n")
+  library = tmp_path / "provider.lib"
+  subprocess.run([*compiler.command, "-shared", str(provider), f"-Wl,--out-implib,{library}", "-o", str(tmp_path / "provider.dll")], check=True)
+  consumer = tmp_path / "consumer.c"
+  consumer.write_text("__declspec(dllimport) double _ZGVfixture(double);\n__declspec(dllexport) double call(double x) { return _ZGVfixture(x); }\n")
+  dll = tmp_path / "consumer.dll.pending"
+  subprocess.run([*compiler.command, "-shared", str(consumer), str(library), "-o", str(dll)], check=True)
+  assert vector_symbols(dll) == ["_ZGVfixture"]
+
+
 def test_benchmark_compiler_commands_preserve_packaged_zig_and_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from scaly.codegen.toolchain import Compiler
 

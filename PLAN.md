@@ -14,32 +14,33 @@ is unavailable because the token lacks `read:project`.
 
 - [x] Trace the released CasADi recipe and prove Zig can call its MinGW-built Ipopt.
 - [x] Agree on native MSYS2 UCRT64 as the first route.
-- [ ] Provision a workspace-local MSYS2 environment and record its package versions.
-- [ ] Build current numerical sources and solve through Zig with only bundled DLLs available.
-- [ ] Record required source/build adjustments and evidence in the investigation note.
+- [x] Provision a workspace-local MSYS2 environment and record its package versions.
+- [x] Build current numerical sources and solve through Zig with only bundled DLLs available.
+- [x] Record required source/build adjustments and evidence in the investigation note.
 
 ## 2. Package and test
 
 Depends on the native build. Keep changes in `plugins/scaly-ipopt/` unless discovery requires
 a focused core adjustment.
 
-- [ ] Extend the hook for native GNU builds, Windows cache locks and DLL dependencies.
-- [ ] Package matching headers, import library, DLLs and notices.
-- [ ] Add meaningful regression checks and demonstrate failure before the fix.
-- [ ] Build and install the wheel into a clean environment, run all Ipopt numerical references,
+- [x] Extend the hook for native GNU builds, Windows cache locks and DLL dependencies.
+- [x] Package matching headers, import library, DLLs and notices.
+- [x] Add meaningful regression checks and demonstrate failure before the fix.
+- [x] Build and install the wheel into a clean environment, run all Ipopt numerical references,
       status/statistics checks and a missing-runtime negative control.
 
 ## 3. Integrate the installed wheel
 
 Depends on a passing wheel. Workflow and documentation edits can be checked independently.
 
-- [ ] Add the Windows Ipopt wheel to build/release matrices and require the backend in CI.
-- [ ] Extend the isolated Windows installation checks to direct and generated Ipopt solves.
-- [ ] Update platform documentation through `write-docs`.
+- [x] Add the Windows Ipopt wheel to build/release matrices and require the backend in CI.
+- [x] Extend the isolated Windows installation checks to direct and generated Ipopt solves.
+- [x] Update platform documentation through `write-docs`.
+- [x] Fix newly activated Windows benchmark paths and prove DLL import inspection detects references.
 
 ## 4. Validate and review
 
-- [ ] Run narrow checks, then `wt hook pre-merge --yes` and report platform limitations.
+- [x] Run narrow checks, then `wt hook pre-merge --yes` and report platform limitations.
 - [ ] Commit the task, push and open/link a draft PR.
 - [ ] Run one cross-family review, fix findings and run the delta check.
 - [ ] Verify PR CI, remove this temporary plan, mark ready, update the issue and watch the PR.

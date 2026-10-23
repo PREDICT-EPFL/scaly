@@ -67,8 +67,9 @@ uv run scaly_codegen mymodule:solve -o generated/
 
 ## Installation
 
-Scaly requires Python 3.12 or newer, on Linux and macOS, and only requires
-a C compiler to be pre-installed. Using [uv](https://docs.astral.sh/uv/):
+Scaly requires Python 3.12 or newer, on Linux, macOS or Windows x86-64.
+Windows installations include the Zig C compiler. Linux and macOS need a C
+compiler or the `toolchain` extra. Using [uv](https://docs.astral.sh/uv/):
 ```bash
 # install just the core library
 uv add scaly    

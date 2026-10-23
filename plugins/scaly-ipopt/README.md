@@ -32,6 +32,7 @@ under the direction and review of the authors, who are responsible for the resul
 BSD-2-Clause. See
 [LICENSE.md](https://github.com/PREDICT-EPFL/scaly/blob/main/plugins/scaly-ipopt/LICENSE.md).
 
-The wheels bundle IPOPT (EPL-2.0), MUMPS (CeCILL-C), METIS and GKlib (Apache-2.0), the GCC Fortran
-runtime (GPL-3.0-or-later with the GCC runtime library exception) and, on Linux, OpenBLAS
-(BSD-3-Clause). Their license texts ship in the wheel under `scaly_ipopt/licenses/`.
+The wheels bundle IPOPT (EPL-2.0), MUMPS (CeCILL-C), METIS and GKlib (Apache-2.0), the GCC
+runtime libraries (GPL-3.0-or-later with the GCC runtime library exception) and, on Linux and
+Windows, OpenBLAS (BSD-3-Clause). Windows also bundles winpthreads (MIT and BSD-3-Clause).
+Their license texts ship in the wheel under `scaly_ipopt/licenses/`.

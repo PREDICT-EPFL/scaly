@@ -16,6 +16,16 @@
     "gklib_commit": "3b7d61b9f885063c89901f3901fb4426f9cfb58f",
     "linkage": "static"
   },
+  "gcc-runtime": {
+    "version": "16.2.0-6",
+    "platforms": ["Windows"],
+    "linkage": "shared"
+  },
+  "winpthreads": {
+    "version": "14.0.0.r495.g63ebe6cdb-2",
+    "platforms": ["Windows"],
+    "linkage": "shared"
+  },
   "blas": {
     "darwin": {
       "implementation": "Accelerate",
