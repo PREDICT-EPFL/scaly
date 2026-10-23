@@ -183,7 +183,12 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         owner, offset = local_owners[node.attrs["buffer"]]
         scalar_index = p.add(node.args[0], p.const_int(offset)) if offset else node.args[0]
         inner_index = p.add(p.mul(scalar_index, width), lane)
-        return ProgramNode(node.op, (inner_index,), {**node.attrs, "buffer": owner, "lane_stride": 1, "lane_local": True}, node.dtype)
+        attrs = {key: value for key, value in node.attrs.items() if key != "lane_stride"} | {"buffer": owner, "lane_local": True}
+        # Each lane owns one element of a slot, so the lanes are contiguous only when they share the slot.
+        expanded = _expand_index(scalar_index, index_definitions)
+        if not any(n.op == ProgramOp.VAR and n.attrs["name"] == rng.attrs["name"] for n in walk_program(expanded)):
+          attrs["lane_stride"] = 1
+        return ProgramNode(node.op, (inner_index,), attrs, node.dtype)
 
       accesses = Pattern(ProgramOp.VIEW, lambda _n: True, access)
       inner = [rewrite(n, [accesses], rebuild=rebuild_program, fixpoint=False) for n in inner]

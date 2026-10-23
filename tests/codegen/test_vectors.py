@@ -678,3 +678,24 @@ def test_lane_uniform_bit_select_word_reads_a_scalar_index(tmp_path, lanes):
   actual = _evaluate(function, values, count)
   np.testing.assert_array_equal(actual[:count], np.where((words[1] >> (np.arange(count) % 5)) & 1, values, 0.0))
   assert "words[word_index]" in source
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_lane_varying_local_slots_are_read_per_lane(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("x", dtypes.float64, (count,)), p.buffer("y", dtypes.float64, (count,))
+  table = p.buffer("table", dtypes.float64, (count,), address_space="private")
+  doubled = p.buffer("doubled", dtypes.float64, (count,), address_space="private")
+  i, j = p.var("i"), p.var("j")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  fill = p.for_(p.range_("j", 0, count), [p.store(p.view(table, [j]), p.load(p.view(x, [j])))])
+  double = p.store(p.view(doubled, [i]), p.mul(p.load(p.view(x, [i])), p.const_float(2)))
+  value = p.add(p.load(p.view(table, [i])), p.load(p.view(doubled, [i])))
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [table, doubled, fill, double, p.store(p.view(y, [i]), value)])])])
+  function, _ = _compile(coalesce_stores(pack_workspace(widen_ranges(prog, lanes=lanes))), tmp_path, dialect=dialect)
+  values = np.arange(1, count + 1, dtype=np.float64)
+  actual = _evaluate(function, values, count)
+  np.testing.assert_array_equal(actual[:count], 3 * values)
+  np.testing.assert_array_equal(actual[count:], 8765.0)
