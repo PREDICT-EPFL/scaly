@@ -1,3 +1,4 @@
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_runtime_bundles_transitive_dependencies
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[diagonal]
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[empty]
@@ -16,7 +17,8 @@ plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_mapped_constraints_exact_h
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_rosenbrock_equality_constrained
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_two_sided_inequality_and_lagrangian_hessian
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_with_symbolic_parameter
-plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_vendored_ipopt_can_coexist_with_casadi_ipopt
+plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_vendored_ipopt_can_coexist_with_casadi_ipopt[False]
+plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_vendored_ipopt_can_coexist_with_casadi_ipopt[True]
 plugins/scaly-piqp/tests/test_build_cpu.py::test_windows_wheel_keeps_haswell_target_on_avx512_host[CXX]
 plugins/scaly-piqp/tests/test_build_cpu.py::test_windows_wheel_keeps_haswell_target_on_avx512_host[C]
 plugins/scaly-piqp/tests/test_piqp_dual_recovery.py::test_rows_without_a_lower_bound_ignore_the_heap_past_the_index
@@ -1322,14 +1324,15 @@ tests/benchmarks/test_protocol.py::test_problem_checks_compile_at_O0
 tests/benchmarks/test_protocol.py::test_required_problem_checks_do_not_skip_missing_casadi[1]
 tests/benchmarks/test_protocol.py::test_required_problem_checks_do_not_skip_missing_casadi[piqp,sqp]
 tests/benchmarks/test_protocol.py::test_smoke_skips_a_comparison_backend_over_the_compile_budget
-tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp-1]
-tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp-piqp,sqp]
-tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[sqp-1]
-tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[sqp-piqp,sqp]
+tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[1-ipopt]
+tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[1-piqp]
+tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[1-sqp]
+tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp,sqp-piqp]
+tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp,sqp-sqp]
 tests/benchmarks/test_protocol.py::test_sweep_render_uses_the_selected_math_policy
 tests/benchmarks/test_protocol.py::test_vector_math_policy_matches_supported_compiler_flags
-tests/benchmarks/test_protocol.py::test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt[False]
-tests/benchmarks/test_protocol.py::test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt[True]
+tests/benchmarks/test_protocol.py::test_windows_problem_smoke_runs_ipopt[False]
+tests/benchmarks/test_protocol.py::test_windows_problem_smoke_runs_ipopt[True]
 tests/benchmarks/test_protocol.py::test_windows_smoke_runs_supported_groups
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[chain/__init__.py]
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[npmpc/__init__.py]
@@ -1374,6 +1377,7 @@ tests/benchmarks/test_sweep.py::test_dispatch_metrics_handle_unit_and_mixed_trip
 tests/benchmarks/test_sweep.py::test_dispatch_metrics_include_spilled_nested_call_output
 tests/benchmarks/test_sweep.py::test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic
 tests/benchmarks/test_sweep.py::test_dispatch_workspace_counts_promoted_lane_scratch
+tests/benchmarks/test_sweep.py::test_dll_inspection_reads_imported_vector_symbols
 tests/benchmarks/test_sweep.py::test_gbench_driver_sizes_selected_hessian_output
 tests/benchmarks/test_sweep.py::test_gbench_driver_uses_selected_nlpsol_result_and_input_contract
 tests/benchmarks/test_sweep.py::test_module_info_records_constructed_local_coloring_width

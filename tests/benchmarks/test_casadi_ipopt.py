@@ -11,7 +11,7 @@ import pytest
 
 from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt, _transformed_nlpsol
 from benchmarks.harness.provenance import collect
-from scaly_ipopt import BUILD_CONFIG
+from scaly_ipopt import BACKEND, BUILD_CONFIG
 
 pytestmark = pytest.mark.solver("ipopt")
 
@@ -45,9 +45,12 @@ def test_compiled_nlpsol_uses_scaly_ipopt_and_refreshes_outputs() -> None:
   assert min(solver.last_stats.n_eval_f, solver.last_stats.n_eval_grad_f, solver.last_stats.n_eval_g, solver.last_stats.n_eval_jac_g) > 0
   generated = (solver.library.parent / "compiled_nlpsol_test_solver.c").read_text()
   assert "/* compiled_nlpsol_test:" not in generated
-  dependency_command = ["otool", "-L", str(solver.library)] if sys.platform == "darwin" else ["ldd", str(solver.library)]
-  dependencies = subprocess.run(dependency_command, check=True, text=True, capture_output=True).stdout
-  assert solver.ipopt_library.name in dependencies
+  if sys.platform == "win32":
+    assert solver.resolved_ipopt_library == solver.configured_ipopt_library
+  else:
+    dependency_command = ["otool", "-L", str(solver.library)] if sys.platform == "darwin" else ["ldd", str(solver.library)]
+    dependencies = subprocess.run(dependency_command, check=True, text=True, capture_output=True).stdout
+    assert solver.ipopt_library.name in dependencies
 
   with pytest.raises(ValueError, match="input 0 has 1 values, expected 2"):
     solver(np.zeros(1), np.array([2.0]), lower, upper, np.array([1.0]), np.array([1.0]), zeros_x, zeros_g)
@@ -72,8 +75,8 @@ def test_provenance_records_the_ipopt_stack() -> None:
   provenance = collect(Path(__file__).resolve().parents[2], "cc", [])
   native_solvers = cast(dict[str, Any], provenance["native_solvers"])
   ipopt = cast(dict[str, Any], native_solvers["ipopt"])
-  assert Path(ipopt["library"]).resolve().name.startswith("libipopt")
-  assert Path(ipopt["link_library"]).resolve().name.startswith("libipopt")
+  assert Path(ipopt["library"]).resolve().name.startswith(f"lib{BACKEND.lib_stem}")
+  assert Path(ipopt["link_library"]).resolve().name.startswith(f"lib{BACKEND.lib_stem}")
   assert ipopt["build"] == BUILD_CONFIG
 
 

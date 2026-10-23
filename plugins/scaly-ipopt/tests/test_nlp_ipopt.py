@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -118,18 +123,39 @@ def test_nlp_generated_stats_and_timing_split() -> None:
 
 
 @pytest.mark.solver("ipopt")
-def test_vendored_ipopt_can_coexist_with_casadi_ipopt() -> None:
+@pytest.mark.parametrize("casadi_first", [False, True])
+def test_vendored_ipopt_can_coexist_with_casadi_ipopt(casadi_first: bool, tmp_path: Path) -> None:
+  script = """
+import sys
+import numpy as np
+import scaly as sc
+from tests.solvers.problem_helpers import build_nlp, solve_nlp
+
+def scaly_solve():
   x = sc.sym("x", 1)
   solver = build_nlp(x=x, f=(x[0] - 1.0) ** 2, solver="ipopt", name="ipopt_namespace")
   out = solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))
-  assert out["x"][0] == pytest.approx(1.0)
+  np.testing.assert_allclose(out["x"], [1.0], atol=1e-7)
 
+def casadi_solve():
   import casadi as ca
-
   cx = ca.MX.sym("x")
   casadi_solver = ca.nlpsol("casadi_namespace", "ipopt", {"x": cx, "f": (cx - 2.0) ** 2}, {"ipopt.print_level": 0, "print_time": False})
   casadi_out = casadi_solver(x0=0.0)
-  assert float(casadi_out["x"]) == pytest.approx(2.0)
+  np.testing.assert_allclose(float(casadi_out["x"]), 2.0, atol=1e-7)
+
+first, second = (casadi_solve, scaly_solve) if sys.argv[1] == "casadi" else (scaly_solve, casadi_solve)
+first()
+second()
+first()
+"""
+  result = subprocess.run(
+    [sys.executable, "-c", script, "casadi" if casadi_first else "scaly"],
+    env={**os.environ, "SCALY_CACHE_DIR": str(tmp_path)},
+    capture_output=True,
+    text=True,
+  )
+  assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.solver("ipopt")

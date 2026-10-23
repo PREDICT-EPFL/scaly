@@ -3,25 +3,23 @@
 Investigation for [#196](https://github.com/PREDICT-EPFL/scaly/issues/196), dated 2026-10-23.
 Ted chose native Windows through MSYS2 UCRT64 as the first source-build route on 2026-10-23.
 Keep the current solver sources and use MinGW/GFortran on the builder, with Zig for generated
-callers. A complete source build and installed-wheel checks must establish the final recipe.
+callers. The native source build and installed-wheel results below establish the recipe.
 
 ## Chosen first route
 
 Use MinGW-w64 GCC and GFortran for the native dependencies. Keep Scaly's existing Ipopt 3.14.19,
 sequential MUMPS 5.8.2, METIS 5.2.1, GKlib and OpenBLAS 0.3.28 sources. MUMPS is the
 Multifrontal Massively Parallel Sparse Solver. Keep Zig for the generated
-C callers. The native probe below establishes that a Zig caller can use a MinGW-built Ipopt
+C callers. The native probes below establish that a Zig caller can use a MinGW-built Ipopt
 library through its C application binary interface, or ABI.
 
 Prefer building on native Windows with an MSYS2 UCRT64 build environment. UCRT64 uses the
 Universal C Runtime. MSYS2 is a build dependency only. End users receive a wheel containing the
 solver and its runtime dynamic-link libraries, or DLLs.
 
-This keeps Windows in the existing native wheel matrix and lets us validate a source build on
-the target machine. CasADi's Linux cross-build is a credible alternative if native shell and
-path handling becomes the larger maintenance burden. Neither source-build route has been
-tested here yet. The recommendation is based on the existing packaging structure and the
-binary compatibility evidence, not a completed Scaly Windows build.
+This keeps Windows in the existing native wheel matrix. The numerical stack builds on native
+Windows, and the installed wheel passes direct and nested solves on Python 3.12, 3.13 and 3.14.
+The Linux cross-build alternative was not needed.
 
 ## What CasADi does
 
@@ -56,10 +54,9 @@ need for them. Copying the entire fork or reverting our METIS version is not par
 recommendation. The current fork branches and the container's `production` tag are mutable,
 so copying those references would not establish a reproducible Scaly build.
 
-CasADi packages separate shared libraries for Ipopt, MUMPS, METIS and OpenBLAS. Scaly currently
-links the numerical dependencies statically into its shared Ipopt library on Linux. We can
-try to retain that arrangement on Windows while bundling the compiler runtimes dynamically.
-The final runtime list must come from the built binaries.
+CasADi packages separate shared libraries for Ipopt, MUMPS, METIS and OpenBLAS. Scaly links the
+numerical dependencies statically into its shared Ipopt library on Linux and Windows, while
+bundling the compiler runtimes dynamically.
 
 ## Native Windows evidence
 
@@ -117,14 +114,66 @@ uv run --no-sync build/ipopt-196/run_probe.py
 missing-runtime failure. These scratch scripts read CasADi and Zig from the main checkout's
 existing virtual environment at `C:/Users/tudor/Desktop/scaly/.venv`. They do not modify it.
 
-This proves the tested C ABI and DLL-loading path. It does not prove a Scaly source build,
-a Scaly wheel installation, the complete Ipopt numerical references, or reproducibility.
+This first probe established the C ABI and DLL-loading path before choosing the source build.
+
+## Native source build and wheel evidence
+
+The native stack built under MSYS2 UCRT64 with GCC/GFortran 16.2.0-6 and the
+winpthreads packages 14.0.0.r495.g63ebe6cdb-2. These package versions are pinned in
+`plugins/scaly-ipopt/src/scaly_ipopt/build_config.json`. The wheel workflow installs those
+signed package archives. The build cache also includes the full `pacman -Q` manifest and
+the versions of the DLL editing tools. Source versions remain unchanged.
+
+GKlib needs an explicit C11 setting because GCC 16 defaults to C23, where its definitions of
+`bool`, `true` and `false` are invalid. METIS builds only its library on Windows. Its optional
+command-line programs use Unix resource APIs that MinGW does not supply. Neither adjustment
+changes the numerical algorithms. OpenBLAS retains `DYNAMIC_ARCH=1` with the common-code
+`TARGET=PRESCOTT` baseline. MUMPS uses `--without-openmp`.
+
+The first Scaly solve succeeded, but loading CasADi afterward failed with
+`ImportError: DLL load failed while importing _casadi: The specified procedure could not be found.`
+The two distributions' GCC DLLs had the same names. The hook now gives Scaly's Ipopt a private
+name, rewrites runtime imports with the build-only `delvewheel` tool, and gives the five runtime
+DLLs a prefix containing a hash of the bundle. `dlltool` generates `ipopt.lib` from the actual
+exports, pointing at the private solver DLL. Zig's `-lipopt` search finds `ipopt.lib`, while it
+does not find GNU's original `libipopt.dll.a` filename.
+
+The resulting six DLLs are the private Ipopt library plus private copies of libgcc, libstdc++,
+libgfortran, libquadmath and libwinpthread. MUMPS, METIS, GKlib and OpenBLAS are static within
+Ipopt. Runtime collection reads the compiler's directory directly because Python's
+`shutil.which()` does not find DLL files. Missing transitive dependencies fail the build.
+The existing notices are retained, with a winpthreads notice copied from its pinned package.
+
+`SCALY_BUILD_SOLVERS=required uv build plugins/scaly-ipopt --wheel` produced
+`scaly_ipopt-0.1.0a2-py3-none-win_amd64.whl`, 10,621,192 bytes. The local artifact's SHA-256 is
+`6bfcc9ef55d68a48eace01b5175f7ad4799752692679dcfacbf68c5cd85a7e68`.
+The compiler executables and `SCALY_SOLVER_CACHE` pointed into this worktree's `build/` tree.
+
+The 21 plugin tests passed, including numerical references, status/statistics, warm starts,
+nested calls and both CasADi load orders in fresh processes. Fresh installations of the core,
+Ipopt, PIQP and SQP wheels passed `.github/scripts/windows_install.py` on Python 3.12.11,
+3.13.1 and 3.14.8 with Zig 0.17.0. The child processes had only their environment's `Scripts/`,
+the Windows system directory and Windows itself on `PATH`. Direct and nested Ipopt solves
+matched the analytic disk projection and reported successful status and nonzero iterations.
+Module-path checks located every solver DLL under the installed wheel directories.
+
+A separate extraction of the wheel loaded all six Ipopt DLLs with only Windows directories
+on `PATH`. `GetIpoptVersion` returned 3.14.19. Removing its private libgfortran made a fresh
+process fail to load the solver. The missing runtime could not be supplied by another toolchain
+or CasADi. The DLL was restored after the check.
+
+Enabling all solver tests also exposed Unix assumptions in the benchmark helpers. The Windows
+path now reads DLL import symbols, exports the benchmark shim, resolves the actual Ipopt
+function address with the Windows module API, and records CasADi's versioned DLL filename.
+The related benchmark regression checks passed, 53 tests with 4 platform skips. The new import
+inspection check fails when its symbol extraction is disabled. The runtime graph check fails
+when transitive traversal is disabled.
 
 ## Alternatives
 
 | Route | Evidence and cost | Position |
 | --- | --- | --- |
-| Native MinGW/GFortran through MSYS2 UCRT64 | Ipopt documents the GNU/MSYS2 route. Fits our native Windows wheel job. Requires explicit shell invocation, path conversion and a pinned build environment. | Recommended first source-build experiment. |
+| Native MinGW/GFortran through MSYS2 UCRT64 | Native source build and installed-wheel checks pass. Fits our native Windows wheel job. | Chosen. |
 | Linux MinGW/GFortran cross-build | CasADi ships working Windows wheels this way. Reuses Unix build tools. Requires a target-aware hook, Windows wheel tagging and a build-artifact handoff to native Windows tests. | Strong alternative if we prefer a cross-build pipeline. |
 | LLVM Flang with MUMPS | Keeps MUMPS but changes the Fortran compiler, runtime and build-system integration. No native source-build evidence collected here. | Defer unless GNU builds reveal a concrete obstacle. |
 | Ipopt with Intel MKL PARDISO | Ipopt supports this solver and MKL supplies the numerical libraries, which can avoid compiling MUMPS. Changes the linear solver and binary dependencies. | Defer because it expands the scope beyond Windows packaging of the current solver. |
@@ -140,22 +189,26 @@ our own source build should still use one consistent toolchain and C runtime.
 separate runtime and mixed C++/Fortran linking requirements. This investigation does not
 establish that Flang cannot build this stack.
 
-## What the agreed recipe must establish
+## Acceptance and limits
 
-The source build should retain the existing numerical versions and CPU baseline, produce a
-matching DLL and import library, bundle every non-system dependency found recursively, and
-include the existing third-party notices plus any new runtime notices. CasADi's versioned
-`libipopt-3.dll` name is not recognized by Scaly's current Windows library discovery. The
-DLL name, its import-library reference and discovery must agree. Renaming a DLL alone is
-insufficient.
+The source build retains the numerical versions and CPU baseline, produces a matching DLL and
+import library, and bundles the runtime dependency chain and notices. The plugin declares
+`scaly_ipopt-3` as its Windows library stem, which lets existing core discovery find
+`libscaly_ipopt-3.dll`. Renaming the DLL alone would leave callers importing the old name.
 
-Build-tool and source identities must participate in the build cache key. Installing the
-latest packages from MSYS2's rolling repositories alone does not pin the build environment.
-The implementation needs an explicit versioned, verified toolchain source.
+Compiler and runtime package versions are pinned. Other build-tool versions are recorded in
+the cache identity. This establishes a repeatable source-build recipe and runtime bundle,
+not byte-for-byte reproducibility across different Windows images and build directories.
 
-Acceptance remains #196's full installed-wheel numerical, status and statistics checks on
-native Windows, without build paths, followed by Windows continuous-integration and release
-matrix coverage. The source-build experiment comes before committing to the final recipe.
+`wt hook pre-merge --yes` passed on native Windows: 2,705 tests passed and 102 skipped,
+with both solvers required. Type checking, formatting, lint, benchmark smoke, the documentation
+build and the private-name check passed. The smoke includes the Ipopt oracle comparisons and
+standalone C++ solver consumer. The newly enabled race-cars closed-loop checks also passed
+for both compiled and interpreted CasADi oracles alongside Scaly.
+
+The pull request's continuous-integration run remains the final platform check. Build and
+release workflows include the Windows Ipopt wheel, require the backend in Windows tests and
+run the isolated installation assertions on all three Python versions.
 
 ## Repository and tracking context
 

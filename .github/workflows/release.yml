@@ -183,7 +183,7 @@ jobs:
           uv venv --python ${{ matrix.python }} "$env:RUNNER_TEMP/verify"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $python = "$env:RUNNER_TEMP/verify/Scripts/python.exe"
-          $pins = @(($env:PACKAGES | ConvertFrom-Json) | Where-Object name -ne 'scaly-ipopt' | ForEach-Object { "$($_.name)==$($_.version)" })
+          $pins = @(($env:PACKAGES | ConvertFrom-Json) | ForEach-Object { "$($_.name)==$($_.version)" })
           if ($pins.Count) {
             for ($attempt = 1; $attempt -le 10; $attempt++) {
               uv pip install --python $python --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ @pins
@@ -192,7 +192,7 @@ jobs:
               Start-Sleep -Seconds 30
             }
           }
-          uv pip install --python $python --only-binary :all: scaly scaly-piqp scaly-sqp @pins
+          uv pip install --python $python --only-binary :all: scaly scaly-ipopt scaly-piqp scaly-sqp @pins
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "VERIFY_PYTHON=$python" >> $env:GITHUB_ENV
 
