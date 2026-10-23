@@ -57,7 +57,7 @@ jobs:
           gcc_version=$(python -c 'import json; print(json.load(open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json"))["gcc-runtime"]["version"])')
           pthread_version=$(python -c 'import json; print(json.load(open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json"))["winpthreads"]["version"])')
           packages=()
-          for name in gcc gcc-fortran libgcc libgfortran libquadmath libstdc++; do
+          for name in gcc gcc-fortran cc-libs libatomic libgcc libgfortran libquadmath libstdc++; do
             packages+=("https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-${name}-${gcc_version}-any.pkg.tar.zst")
           done
           for name in winpthreads libwinpthread; do

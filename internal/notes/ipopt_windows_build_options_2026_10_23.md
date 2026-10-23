@@ -124,6 +124,11 @@ winpthreads packages 14.0.0.r495.g63ebe6cdb-2. These package versions are pinned
 signed package archives. The build cache also includes the full `pacman -Q` manifest and
 the versions of the DLL editing tools. Source versions remain unchanged.
 
+The package transaction includes the matching `cc-libs` metapackage and `libatomic`.
+Older MSYS2 snapshots carry `cc-libs` with exact dependencies on an earlier GCC runtime;
+upgrading only the compiler and numerical runtimes fails dependency resolution. This was
+reproduced in an isolated package database, where the complete transaction passed.
+
 GKlib needs an explicit C11 setting because GCC 16 defaults to C23, where its definitions of
 `bool`, `true` and `false` are invalid. METIS builds only its library on Windows. Its optional
 command-line programs use Unix resource APIs that MinGW does not supply. Neither adjustment
