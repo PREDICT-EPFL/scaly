@@ -81,6 +81,11 @@ squash-merged on its own, let `gh stack` rebase the rest and tell each thread to
 unrelated pull request merges into main, tell in-flight threads whose files it touched to rebase
 and rerun.
 
+`watch_pull_request` wakes on the pull request's own checks, comments and conflicts. It does not
+wake on merge-queue runs or on the merge itself; a merge ends the watch without a wake. To act
+when a pull request lands, also start a background command that exits once
+`gh pr view N --json mergedAt` is set.
+
 ## Finish
 
 The batch is done when every pull request is open with a verdict and green checks, or merged.
