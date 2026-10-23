@@ -520,7 +520,7 @@ def _tool_identity(cmd: str) -> str:
 
 
 def _windows_packages(fc: str) -> str:
-  bash = Path(fc).parents[2] / "usr" / "bin" / "bash.exe"
+  bash = Path(fc).resolve().parent.parent.parent / "usr" / "bin" / "bash.exe"
   return subprocess.run([str(bash), "-lc", "pacman -Q"], check=True, capture_output=True, text=True).stdout
 
 

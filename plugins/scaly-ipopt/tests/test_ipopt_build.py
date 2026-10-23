@@ -50,7 +50,7 @@ def test_windows_runtime_bundles_transitive_dependencies(build_hook, tmp_path, m
     build_hook._bundle_windows_runtime(hook, lib, "ipopt.dll", tools)
 
 
-@pytest.mark.parametrize("toolchain", ["standalone", "wrong-version"])
+@pytest.mark.parametrize("toolchain", ["standalone", "wrong-version", "relative"])
 @pytest.mark.parametrize("mode", ["auto", "required"])
 def test_windows_unsuitable_toolchain_skips_only_editable_auto(build_hook, tmp_path, monkeypatch, toolchain, mode):
   compiler = tmp_path / "standalone" / "bin" / "gfortran.exe"
@@ -75,6 +75,9 @@ def test_windows_unsuitable_toolchain_skips_only_editable_auto(build_hook, tmp_p
     yield True
 
   monkeypatch.setattr(build_hook, "_locked", unlocked)
+  if toolchain == "relative":
+    monkeypatch.chdir(compiler.parent)
+    monkeypatch.setattr(build_hook, "_find_fortran_compiler", lambda required=True: compiler.name)
   if toolchain == "wrong-version":
     bash = compiler.parents[2] / "usr" / "bin" / "bash.exe"
     bash.parent.mkdir(parents=True)

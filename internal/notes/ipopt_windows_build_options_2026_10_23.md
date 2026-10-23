@@ -154,7 +154,7 @@ The existing notices are retained, with a winpthreads notice copied from its pin
 `feb7dbb04f37470ed47621dacb666f5b11edee2c38ddbccd7e240a994b4ef0c3`.
 The compiler executables and `SCALY_SOLVER_CACHE` pointed into this worktree's `build/` tree.
 
-All 25 plugin tests passed, including numerical references, status/statistics, warm starts,
+All 27 plugin tests passed, including numerical references, status/statistics, warm starts,
 nested calls and both CasADi load orders in fresh processes. Fresh installations of the core,
 Ipopt, PIQP and SQP wheels passed `.github/scripts/windows_install.py` on Python 3.12.11,
 3.13.1 and 3.14.8 with Zig 0.17.0. The child processes had only their environment's `Scripts/`,
@@ -169,7 +169,7 @@ or CasADi. The DLL was restored after the check.
 
 Editable installs skip an unsuitable Windows toolchain in automatic mode and fail in required
 mode. Regression tests cover both standalone Fortran compilers and mismatched MSYS2 package
-versions. Runtime collection prefers the pinned toolchain even if another installer put a
+versions, including relative compiler paths. Runtime collection prefers the pinned toolchain even if another installer put a
 DLL with the same name in `System32`.
 
 Enabling all solver tests also exposed Unix assumptions in the benchmark helpers. The Windows
@@ -213,7 +213,7 @@ MSYS2 can prune superseded package archives from its repository, so the package 
 maintenance when their downloads stop being available. The hook and workflow read the same
 package list from `build_config.json`.
 
-`wt hook pre-merge --yes` passed on native Windows: 2,709 tests passed and 102 skipped,
+`wt hook pre-merge --yes` passed on native Windows: 2,711 tests passed and 102 skipped,
 with both solvers required. Type checking, formatting, lint, benchmark smoke, the documentation
 build and the private-name check passed. The smoke includes the Ipopt oracle comparisons and
 standalone C++ solver consumer. The newly enabled race-cars closed-loop checks also passed
