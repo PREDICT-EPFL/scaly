@@ -335,9 +335,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   procs = observed["pass:scalarize"].args[:-1]
   # Inspect the per-stage procedure before range fusion inlines it into the caller.
   selected = [
-    proc
-    for proc in procs
-    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj_eq_z")
+    proc for proc in procs if str(proc.attrs.get("hoisted_from", "")).startswith(f"{hinted.name}_adj_") and "_fwd_" in str(proc.attrs["hoisted_from"])
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (
