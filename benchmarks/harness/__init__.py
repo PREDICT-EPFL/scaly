@@ -9,6 +9,7 @@ from pathlib import Path
 from functools import lru_cache
 import os
 import re
+import struct
 import subprocess
 import sys
 from weakref import WeakKeyDictionary
@@ -62,6 +63,9 @@ def configure_math_policy(*, measured_jit: bool = True) -> None:
 
 def vector_symbols(path: Path) -> list[str]:
   """Read actual vector-math references from a compiled object or shared library."""
+  if sys.platform == "win32":
+    _, symbols = _coff_object(path)
+    return sorted({name for name, section, _ in symbols if section == 0 and "_ZGV" in name})
   result = subprocess.run(["nm", "-u", str(path)], check=True, text=True, capture_output=True)
   return sorted({line.split()[-1] for line in result.stdout.splitlines() if "_ZGV" in line})
 
@@ -71,9 +75,46 @@ _MACHO_RODATA = re.compile(r"Section \(__TEXT, __(?:const|literal\d+|cstring)\):
 _MACHO_RODATA_SYMBOL = re.compile(r"\(__TEXT,__(?:const|literal\d+|cstring)\) .* _\w+$")
 
 
+def _coff_object(path: Path) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]]:
+  data = path.read_bytes()
+  machine, count, _, symbol_offset, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data)
+  if machine != 0x8664 or optional_size:
+    raise ValueError(f"expected an x86-64 COFF object: {path}")
+  strings = data[symbol_offset + 18 * symbol_count :]
+
+  def string(offset: int) -> str:
+    return strings[offset : strings.index(b"\0", offset)].decode()
+
+  sections = []
+  for index in range(count):
+    offset = 20 + index * 40
+    raw = data[offset : offset + 8].rstrip(b"\0")
+    name = string(int(raw[1:])) if raw.startswith(b"/") else raw.decode()
+    size = struct.unpack_from("<I", data, offset + 16)[0]
+    flags = struct.unpack_from("<I", data, offset + 36)[0]
+    sections.append((name, size, flags))
+  symbols = []
+  index = 0
+  while index < symbol_count:
+    offset = symbol_offset + index * 18
+    raw, _, section, _, storage, auxiliaries = struct.unpack_from("<8sIhHBB", data, offset)
+    name = string(struct.unpack_from("<I", raw, 4)[0]) if raw[:4] == b"\0" * 4 else raw.rstrip(b"\0").decode()
+    # Section-definition symbols describe storage, not the source objects it contains.
+    if not (storage == 3 and auxiliaries and name.startswith(".")):
+      symbols.append((name, section, storage))
+    index += 1 + auxiliaries
+  return sections, symbols
+
+
 def object_bytes(path: Path) -> tuple[int, int]:
   """The total `size` reports for a compiled object, which counts machine code, constants and static
   data, and the part of it in read-only data sections."""
+  if sys.platform == "win32":
+    sections, _ = _coff_object(path)
+    return (
+      sum(size for _, size, flags in sections if flags & 0xE0 and not flags & 0x02000000),
+      sum(size for name, size, _ in sections if name.startswith(".rdata")),
+    )
   header, values = subprocess.run(["size", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()[:2]
   total = int(values.split()[header.split().index("dec")])
   if sys.platform == "darwin":
@@ -123,6 +164,13 @@ def constant_tables(source: bytes) -> list[int]:
 def object_constant_symbols(path: Path) -> int:
   """The named read-only data objects in a compiled object. Each is a source table the compiler kept, so
   the count can never exceed the number of tables `constant_tables` finds in the source."""
+  if sys.platform == "win32":
+    sections, symbols = _coff_object(path)
+    return sum(
+      1
+      for name, section, storage in symbols
+      if section > 0 and sections[section - 1][0].startswith(".rdata") and storage in (2, 3) and not name.startswith((".L", "__real@", "__xmm@"))
+    )
   if sys.platform == "darwin":
     lines = subprocess.run(["nm", "-m", str(path)], check=True, text=True, capture_output=True).stdout.splitlines()
     return sum(1 for line in lines if _MACHO_RODATA_SYMBOL.search(line))

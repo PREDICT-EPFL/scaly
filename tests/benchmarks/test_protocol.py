@@ -241,12 +241,12 @@ def test_problem_checks_compile_at_O0(monkeypatch: pytest.MonkeyPatch) -> None:
   flags = []
   monkeypatch.setenv("SCALY_CC_OPT", "-O2")
   monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "gate"})
-  monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"gate": (lambda: flags.append(opt_flag()), False, False)}))
+  monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"gate": (lambda: flags.append(opt_flag()), None, False)}))
   run._problem_checks("toy", full=True)
   assert flags == ["-O0"]
 
 
-def test_windows_smoke_reports_unsupported_groups_and_runs_problems(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_windows_smoke_runs_supported_groups(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
   from concurrent.futures import Future
   from types import SimpleNamespace
   from benchmarks import run
@@ -271,12 +271,39 @@ def test_windows_smoke_reports_unsupported_groups_and_runs_problems(monkeypatch:
 
   monkeypatch.setattr(run.sys, "platform", "win32")
   monkeypatch.setattr(run, "ProcessPoolExecutor", Pool)
-  monkeypatch.setattr(run, "_solver_call_smoke", lambda **kw: pytest.fail("unsupported C++ solver driver ran"))
+  solver_calls = []
+  monkeypatch.setattr(run, "_solver_call_smoke", lambda **kw: solver_calls.append(kw))
+  monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
   assert run.smoke(SimpleNamespace(select=None, skip=None, full=False))
-  assert [task.args[0] for task in submitted] == list(run.QUICK_CHECKS)
+  assert [task.args[0] for task in submitted[:-1]] == list(run.QUICK_CHECKS)
+  assert submitted[-1].func == run._benchmark_smoke
+  assert solver_calls == [{"required": False}]
   output = capsys.readouterr().out
-  assert "smoke benchmarks: skipped" in output and "size" in output and "nm" in output and "C++" in output
-  assert "smoke solver_call: skipped" in output and "IPOPT" in output
+  assert "smoke benchmarks: skipped" not in output and "smoke solver_call: skipped" not in output
+
+
+@pytest.mark.parametrize("required", ["1", "piqp,sqp"])
+@pytest.mark.parametrize("missing", ["piqp", "sqp"])
+def test_solver_driver_enforces_required_backend_list(required: str, missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
+  from benchmarks import run
+
+  monkeypatch.setenv("SCALY_REQUIRE_SOLVERS", required)
+  monkeypatch.setattr(run, "solver_loadable", lambda name: name != missing)
+  with pytest.raises(RuntimeError, match=f"required.*{missing}"):
+    run._solver_call_smoke(required=False)
+
+
+@pytest.mark.parametrize("required", ["1", "piqp,sqp"])
+def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monkeypatch: pytest.MonkeyPatch) -> None:
+  from types import SimpleNamespace
+  from benchmarks import run
+
+  monkeypatch.setenv("SCALY_REQUIRE_SOLVERS", required)
+  monkeypatch.setattr(run, "solver_loadable", lambda name: True)
+  monkeypatch.setattr(run.importlib.util, "find_spec", lambda name: None)
+  monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"sqp": (lambda: None, "sqp", True)}))
+  with pytest.raises(RuntimeError, match="unexpectedly skipped: casadi"):
+    run._problem_checks("toy", full=True)
 
 
 @pytest.mark.parametrize("full", [False, True])
@@ -289,7 +316,7 @@ def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
   called = []
   monkeypatch.setattr(run.sys, "platform", "win32")
   monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "solver"})
-  monkeypatch.setattr(run, "WINDOWS_QUICK_CHECKS", {"toy": "numerical"})
+  monkeypatch.setattr(run, "WINDOWS_QUICK_CHECKS", {"toy": ("numerical",)})
   monkeypatch.setattr(run, "solver_loadable", lambda name: False)
   monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
   monkeypatch.setattr(
@@ -297,8 +324,8 @@ def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
     "import_module",
     lambda name: SimpleNamespace(
       CHECKS={
-        "solver": (lambda: pytest.fail("IPOPT ran"), True, False),
-        "numerical": (lambda: called.append("numerical"), False, False),
+        "solver": (lambda: pytest.fail("IPOPT ran"), "ipopt", False),
+        "numerical": (lambda: called.append("numerical"), None, False),
       }
     ),
   )
@@ -307,3 +334,19 @@ def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
   output = capsys.readouterr().out
   assert "solver: skipped: IPOPT" in output
   assert "numerical: ok" in output
+
+
+@pytest.mark.parametrize("required", ["", "1", "piqp,sqp"])
+def test_optional_sqp_can_skip_but_required_sqp_fails(required: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+  from types import SimpleNamespace
+  from benchmarks import run
+
+  monkeypatch.setenv("SCALY_REQUIRE_SOLVERS", required)
+  monkeypatch.setattr(run, "solver_loadable", lambda name: name != "sqp")
+  monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"gate": (lambda: pytest.fail("SQP ran"), "sqp", False)}))
+  if required:
+    with pytest.raises(RuntimeError, match="required.*sqp"):
+      run._problem_checks("toy", full=True)
+  else:
+    run._problem_checks("toy", full=True)
+    assert "skipped: SQP plugin not loadable" in capsys.readouterr().out

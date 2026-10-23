@@ -11,16 +11,25 @@ import sys
 import time
 
 from scaly.codegen.abi import c_ident
+from scaly.codegen.toolchain import compiler_fingerprint, find_c_compiler
 from benchmarks.harness import NATIVE_CFLAGS, ROOT, math_flags, vector_symbols
 
 
-def compiler() -> str:
-  return os.environ.get("CXX") or shutil.which("clang++") or shutil.which("c++") or "c++"
+def compiler() -> tuple[str, ...]:
+  command = c_compiler()
+  if Path(command[0]).stem == "zig":
+    return (command[0], "c++", *command[2:])
+  if value := os.environ.get("CXX"):
+    return (found,) if (found := shutil.which(value)) else tuple(part.strip('"') for part in shlex.split(value, posix=sys.platform != "win32"))
+  return (shutil.which("clang++") or shutil.which("c++") or "c++",)
 
 
-def c_compiler() -> str:
+def c_compiler() -> tuple[str, ...]:
   """The compiler for the generated C kernel, which the C++ wrapper links against."""
-  return shutil.which("clang") or shutil.which("cc") or "cc"
+  selected = find_c_compiler()
+  if selected is not None and Path(selected.command[0]).stem == "zig":
+    return (selected.command[0], "cc", *selected.command[2:])
+  return (shutil.which("clang") or shutil.which("cc") or "cc",)
 
 
 GBENCH_TAG = "v1.9.5"
@@ -47,6 +56,34 @@ def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
   if not (src / "CMakeLists.txt").exists():
     shutil.rmtree(src, ignore_errors=True)  # a half-finished clone would otherwise poison every later run
     _cmake_run(["git", "clone", "--depth=1", "--branch", GBENCH_TAG, GBENCH_REPO, str(src)], log)
+  configure = []
+  if Path(c_compiler()[0]).stem == "zig":
+    toolchain = prefix / "zig.cmake"
+    rules = prefix / "zig-rules.cmake"
+    zig = json.dumps(c_compiler()[0].replace("\\", "/"))
+    toolchain.write_text(
+      "\n".join(
+        [
+          f"set(CMAKE_{language}_COMPILER {' '.join(json.dumps(part.replace(chr(92), '/')) for part in command)})"
+          for language, command in (("C", c_compiler()), ("CXX", compiler()))
+        ]
+        + [f"set(CMAKE_AR {zig})", f"set(CMAKE_RANLIB {zig})", f"set(CMAKE_USER_MAKE_RULES_OVERRIDE {json.dumps(rules.as_posix())})"]
+      )
+      + "\n"
+    )
+    rules.write_text(
+      "\n".join(
+        f'set(CMAKE_{language}_ARCHIVE_{phase} "{command}")'
+        for language in ("C", "CXX")
+        for phase, command in (
+          ("CREATE", "<CMAKE_AR> ar qc <TARGET> <LINK_FLAGS> <OBJECTS>"),
+          ("APPEND", "<CMAKE_AR> ar q <TARGET> <LINK_FLAGS> <OBJECTS>"),
+          ("FINISH", "<CMAKE_RANLIB> ranlib <TARGET>"),
+        )
+      )
+      + "\n"
+    )
+    configure = ["-G", "Ninja", f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}"]
   _cmake_run(
     [
       "cmake",
@@ -55,6 +92,7 @@ def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
       "-B",
       str(build),
       "-DCMAKE_BUILD_TYPE=Release",
+      *configure,
       f"-DCMAKE_INSTALL_PREFIX={prefix}",
       "-DCMAKE_INSTALL_LIBDIR=lib",  # GNUInstallDirs would pick lib64 on some distributions
       "-DBUILD_SHARED_LIBS=OFF",
@@ -70,13 +108,21 @@ def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
     raise RuntimeError(f"Google Benchmark build left no {header.name}/{lib.name} under {prefix}, see {log}")
 
 
+def gbench_prefix() -> Path:
+  """Keep Google Benchmark's static library in the selected C++ compiler's ABI."""
+  return ROOT / "benchmarks" / "third_party" / "gbench" / GBENCH_TAG / compiler_fingerprint(compiler())[:12]
+
+
 def gbench_flags() -> tuple[list[str], list[str]]:
   """Compile and link flags for the pinned Google Benchmark, building it inside this checkout on first use."""
-  prefix = ROOT / "benchmarks" / "third_party" / "gbench" / GBENCH_TAG
+  prefix = gbench_prefix()
   header, lib = prefix / "include" / "benchmark" / "benchmark.h", prefix / "lib" / "libbenchmark.a"
   if not (header.exists() and lib.exists()):
     _build_gbench(prefix, header, lib)
-  return ["-I", str(prefix / "include"), "-pthread"], [str(lib)]
+  return ["-I", str(prefix / "include"), "-pthread", *(["-DBENCHMARK_STATIC_DEFINE"] if sys.platform == "win32" else [])], [
+    str(lib),
+    *(["-lshlwapi"] if sys.platform == "win32" else []),
+  ]
 
 
 def parse_runtime_ns(stdout: str, prefix: str) -> float | None:
@@ -345,12 +391,12 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
   cflags, libs = gbench_flags()
-  math_cflags, math_libs = math_flags(compiler())
-  kernel_math_cflags, _ = math_flags(c_compiler())
+  math_cflags, math_libs = math_flags(*compiler())
+  kernel_math_cflags, _ = math_flags(*c_compiler())
   commands = {
-    "kernel_compile_ms": [c_compiler(), "-O3", *NATIVE_CFLAGS, *kernel_math_cflags, "-I", str(out_dir), "-c", str(info["source"]), "-o", "kernel.o"],
+    "kernel_compile_ms": [*c_compiler(), "-O3", *NATIVE_CFLAGS, *kernel_math_cflags, "-I", str(out_dir), "-c", str(info["source"]), "-o", "kernel.o"],
     "wrapper_compile_ms": [
-      compiler(),
+      *compiler(),
       "-O3",
       *NATIVE_CFLAGS,
       *math_cflags,
@@ -364,12 +410,12 @@ def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, floa
       "wrapper.o",
     ],
     "link_ms": [
-      compiler(),
+      *compiler(),
       *cflags,
       "kernel.o",
       "wrapper.o",
       "-o",
-      str(out_dir / "benchmark"),
+      str(out_dir / ("benchmark.exe" if sys.platform == "win32" else "benchmark")),
       *libs,
       *math_libs,
       "-lm",
@@ -391,6 +437,7 @@ def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, floa
       except subprocess.TimeoutExpired:
         try:
           if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
             proc.kill()
           else:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -414,7 +461,7 @@ def _text(value) -> str:
 
 def run_kernel(info: dict, out_dir: Path, benchmark_min_time: str, timeout: float = 120) -> tuple[str, float | None, str]:
   cmd = [
-    str(out_dir / "benchmark"),
+    str(out_dir / ("benchmark.exe" if sys.platform == "win32" else "benchmark")),
     f"--benchmark_min_time={benchmark_min_time}",
     "--benchmark_format=json",
     f"--benchmark_filter={info['benchmark']}",

@@ -638,24 +638,24 @@ def check_closed_loop_uses_fastest_casadi_encoding() -> None:
   )
 
 
-# name -> (check, requires an IPOPT-backed solve, requires CasADi)
-CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
-  "typed_hessian_in_place": (check_typed_problem_keeps_hessian_in_place, False, False),
-  "default_output_dir": (check_default_output_dir, False, False),
-  "oracle_matches_casadi": (check_oracle_matches_casadi, False, True),
-  "pair_jac_codegen_growth": (check_pair_jac_codegen_growth, False, False),
-  "parameter_tail_order": (check_parameter_tail_order, False, False),
-  "pair_barrier_is_order_one": (check_pair_barrier_is_order_one, False, False),
-  "velocity_wall_barrier_has_control_authority": (check_velocity_wall_barrier_has_control_authority, True, True),
-  "dt_plant_pieces": (check_dt_plant_pieces, False, False),
-  "dt_plant_control_order": (check_dt_plant_control_order, False, False),
-  "dt_filter_model_matches_numpy": (check_dt_filter_model_matches_numpy, False, True),
-  "oracles_solve_alike": (check_oracles_solve_alike_per_step, True, True),
-  "exact_hess": (check_exact_hess_matches_casadi_on_closed_loop_samples, True, True),
-  "synthetic_hessian_inputs_at_range": (check_synthetic_hessian_inputs_at_range, False, True),
-  "canonical_hessian_handoff": (check_canonical_hessian_handoff, False, True),
-  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
-  "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, True, False),
-  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
-  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
+# name -> (check, required solver backend, requires CasADi)
+CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
+  "typed_hessian_in_place": (check_typed_problem_keeps_hessian_in_place, None, False),
+  "default_output_dir": (check_default_output_dir, None, False),
+  "oracle_matches_casadi": (check_oracle_matches_casadi, None, True),
+  "pair_jac_codegen_growth": (check_pair_jac_codegen_growth, None, False),
+  "parameter_tail_order": (check_parameter_tail_order, None, False),
+  "pair_barrier_is_order_one": (check_pair_barrier_is_order_one, None, False),
+  "velocity_wall_barrier_has_control_authority": (check_velocity_wall_barrier_has_control_authority, "ipopt", True),
+  "dt_plant_pieces": (check_dt_plant_pieces, None, False),
+  "dt_plant_control_order": (check_dt_plant_control_order, None, False),
+  "dt_filter_model_matches_numpy": (check_dt_filter_model_matches_numpy, None, True),
+  "oracles_solve_alike": (check_oracles_solve_alike_per_step, "ipopt", True),
+  "exact_hess": (check_exact_hess_matches_casadi_on_closed_loop_samples, "ipopt", True),
+  "synthetic_hessian_inputs_at_range": (check_synthetic_hessian_inputs_at_range, None, True),
+  "canonical_hessian_handoff": (check_canonical_hessian_handoff, None, True),
+  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, "ipopt", True),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, "ipopt", False),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, "sqp", True),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, None, True),
 }

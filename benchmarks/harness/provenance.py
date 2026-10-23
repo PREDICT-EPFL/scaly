@@ -63,14 +63,15 @@ def require_headline_settings(expected_boost: bool) -> CpuSettings:
   return settings
 
 
-def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]:
+def collect(root: Path, compiler: str | tuple[str, ...], cli_args: list[str]) -> dict[str, object]:
+  command = (compiler,) if isinstance(compiler, str) else compiler
   try:
     commit = _run(["git", "rev-parse", "HEAD"], root)
     dirty = bool(_run(["git", "status", "--porcelain"], root))
   except (FileNotFoundError, subprocess.CalledProcessError):
     commit, dirty = "unknown", None
   try:
-    cxx_version = compiler_version(compiler)
+    cxx_version = compiler_version(*command)
   except (FileNotFoundError, subprocess.CalledProcessError, IndexError):
     cxx_version = "unknown"
   try:
@@ -83,7 +84,7 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
   paths = solver_paths()
   c_compiler = find_c_compiler()
   c_math = math_flags(*c_compiler.command) if c_compiler is not None else ((), ())
-  cxx_math = math_flags(compiler)
+  cxx_math = math_flags(*command)
   cache = os.environ.get("SCALY_CACHE_DIR")
   jit_symbols = {str(path.relative_to(cache)): vector_symbols(path) for path in Path(cache).rglob("*.so")} if cache else {}
   ipopt = loaded_backends().get("ipopt")

@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import random
 import statistics
+import subprocess
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -157,6 +158,40 @@ def codegen_deadline(seconds: float):
   finally:
     signal.setitimer(signal.ITIMER_REAL, 0)
     signal.signal(signal.SIGALRM, previous)
+
+
+def _send_codegen(connection, function, args, kwargs):
+  try:
+    connection.send((True, function(*args, **kwargs)))
+  except Exception as error:
+    connection.send((False, error))
+  finally:
+    connection.close()
+
+
+def generate_with_deadline(function, args, kwargs, seconds: float):
+  if sys.platform != "win32" or seconds <= 0:
+    with codegen_deadline(seconds):
+      return function(*args, **kwargs)
+  context = multiprocessing.get_context("spawn")
+  receiver, sender = context.Pipe(duplex=False)
+  process = context.Process(target=_send_codegen, args=(sender, function, args, kwargs))
+  process.start()
+  sender.close()
+  try:
+    if not receiver.poll(seconds):
+      raise CodegenTimeout(f"codegen exceeded {seconds:.0f}s")
+    ok, result = receiver.recv()
+    if not ok:
+      raise result
+    return result
+  finally:
+    receiver.close()
+    process.join(timeout=1)
+    if process.is_alive():
+      subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
+      process.terminate()
+    process.join()
 
 
 def row(**values) -> dict[str, object]:
@@ -898,6 +933,21 @@ def _samples(
   return write_samples(out_dir, sample_values, expected)
 
 
+def _prepare_windows_cell(workload, size, backend, out_dir, casadi_transform, max_source_mb, load_harvested):
+  info = build_kernel(workload, size, backend, out_dir, casadi_transform=casadi_transform)
+  input_paths, expected_path, error = None, None, None
+  if info["source_bytes"] <= max_source_mb * 1024 * 1024:
+    try:
+      input_paths, expected_path = _samples(workload, size, info, out_dir, load_harvested=load_harvested)
+    except Exception as exc:
+      error = str(exc)
+  # The numerical gate runs beside the unpicklable symbolic function, before crossing the process boundary.
+  info["inputs"] = [(name, size) for name, _, size in gbench._ordered_inputs(info)]
+  info["symbol"] = gbench._kernel_symbol(info)
+  info.pop("callable", None)
+  return info, input_paths, expected_path, error
+
+
 def run_cell(
   workload: str,
   size: int,
@@ -914,9 +964,15 @@ def run_cell(
   if out_dir.exists():
     shutil.rmtree(out_dir)
   out_dir.mkdir(parents=True)
+  sample_error = None
   try:
-    with codegen_deadline(codegen_timeout):
-      info = build_kernel(workload, size, backend, out_dir, casadi_transform=casadi_transform)
+    if sys.platform == "win32":
+      info, input_paths, expected_path, sample_error = generate_with_deadline(
+        _prepare_windows_cell, (workload, size, backend, out_dir, casadi_transform, max_source_mb, load_harvested), {}, codegen_timeout
+      )
+    else:
+      with codegen_deadline(codegen_timeout):
+        info = build_kernel(workload, size, backend, out_dir, casadi_transform=casadi_transform)
   except CodegenTimeout as e:
     return row(workload=workload, size=size, backend=backend, compile_status="codegen_timeout", runtime_status="skipped", note=str(e)), None
   except Exception as e:
@@ -950,7 +1006,10 @@ def run_cell(
   if source_mb > max_source_mb:
     return row(**base, compile_status="skipped_size", runtime_status="skipped", note=f"source {source_mb:.1f} MB > {max_source_mb:.1f} MB"), info
   try:
-    input_paths, expected_path = _samples(workload, size, info, out_dir, load_harvested=load_harvested)
+    if sample_error is not None:
+      raise RuntimeError(sample_error)
+    if sys.platform != "win32":
+      input_paths, expected_path = _samples(workload, size, info, out_dir, load_harvested=load_harvested)
   except Exception as e:
     return row(**base, compile_status="not_run", runtime_status="correctness_fail", note=str(e)), info
   gbench.write_cpp(info, out_dir, input_paths, expected_path)

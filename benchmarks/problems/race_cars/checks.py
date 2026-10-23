@@ -493,24 +493,24 @@ def check_closed_loop_uses_fastest_casadi_encoding() -> None:
   check_fastest_casadi_encoding("race_cars", config.horizon, lambda: CasadiRaceCarSolver(config), lambda: build_casadi_race_car_sqp(config))
 
 
-# name -> (check, requires an IPOPT-backed solve, requires CasADi)
-CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
-  "failure_artifacts": (check_failure_closes_incremental_mcap_and_writes_partial_artifacts, False, False),
-  "track_data": (check_track_data, False, False),
-  "spline_fit": (check_spline_fit_is_periodic, False, False),
-  "planner": (check_planner, False, False),
-  "plant_and_geometry": (check_plant_and_geometry, False, False),
-  "parameter_layout": (check_transcription_parameter_layout, False, False),
-  "default_constants": (check_default_constants, False, False),
-  "casadi_mirror": (check_casadi_mirror_dimensions, False, True),
-  "mapped_cost": (check_mapped_cost_matches_casadi, False, True),
-  "exact_hessian_default": (check_exact_hessian_default, False, False),
-  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
-  "episode_artifacts": (check_episode_artifacts, True, False),
-  "recorded_scene": (check_recorded_scene_and_artifacts, True, True),
-  "oracles_agree": (check_oracles_agree, True, True),
-  "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
-  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
-  "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, True, True),
-  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
+# name -> (check, required solver backend, requires CasADi)
+CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
+  "failure_artifacts": (check_failure_closes_incremental_mcap_and_writes_partial_artifacts, None, False),
+  "track_data": (check_track_data, None, False),
+  "spline_fit": (check_spline_fit_is_periodic, None, False),
+  "planner": (check_planner, None, False),
+  "plant_and_geometry": (check_plant_and_geometry, None, False),
+  "parameter_layout": (check_transcription_parameter_layout, None, False),
+  "default_constants": (check_default_constants, None, False),
+  "casadi_mirror": (check_casadi_mirror_dimensions, None, True),
+  "mapped_cost": (check_mapped_cost_matches_casadi, None, True),
+  "exact_hessian_default": (check_exact_hessian_default, None, False),
+  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, "ipopt", True),
+  "episode_artifacts": (check_episode_artifacts, "ipopt", False),
+  "recorded_scene": (check_recorded_scene_and_artifacts, "ipopt", True),
+  "oracles_agree": (check_oracles_agree, "ipopt", True),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt, "ipopt", False),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, "sqp", True),
+  "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, "sqp", True),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, None, True),
 }

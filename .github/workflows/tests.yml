@@ -96,6 +96,9 @@ jobs:
             uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
           fi
 
+      - name: Prepare the benchmark driver
+        run: uv run python -c "from benchmarks.harness.gbench import gbench_flags; gbench_flags()"
+
       - name: Pytest
         run: uv run pytest -n=auto
 
@@ -109,7 +112,7 @@ jobs:
 
       - name: Benchmark smoke
         if: ${{ !cancelled() }}
-        run: uv run benchmarks/run.py smoke ${{ inputs.full && runner.os != 'Windows' && '--full' || '' }}
+        run: uv run benchmarks/run.py smoke ${{ inputs.full && '--full' || '' }}
 
       - name: Closed-loop smoke
         if: ${{ !cancelled() && !inputs.full }}
@@ -125,17 +128,25 @@ jobs:
           fi
 
       - name: Closed-loop smoke, every pair
-        if: ${{ !cancelled() && inputs.full && runner.os != 'Windows' }}
+        if: ${{ !cancelled() && inputs.full }}
         run: |
-          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+          if [ "$RUNNER_OS" = Windows ]; then
+            echo "Windows IPOPT closed loops remain excluded until #196"
+          else
+            uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+          fi
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver sqp --oracle scaly,casadi
-          uv run benchmarks/run.py closed-loop --smoke --problem race_cars,unbumpercars,npmpc --solver ipopt,sqp --oracle scaly,casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars,unbumpercars,npmpc --solver ${{ runner.os == 'Windows' && 'sqp' || 'ipopt,sqp' }} --oracle scaly,casadi
           uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver none
 
       - name: Repeated benchmark commands
-        if: ${{ !cancelled() && inputs.full && runner.os != 'Windows' }}
+        if: ${{ !cancelled() && inputs.full }}
         run: |
           uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          if [ "$RUNNER_OS" = Windows ]; then
+            uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          else
+            uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+            uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          fi
           uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv

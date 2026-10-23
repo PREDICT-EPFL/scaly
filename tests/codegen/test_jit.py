@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
 import platform
 import shlex
-import shutil
 import subprocess
 import sys
 import threading
@@ -53,18 +53,43 @@ def test_jit_cache_key_stable_across_function_instances(isolated_cache: Path) ->
   assert compiled_a.cache_key == compiled_b.cache_key
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the wrapper is a shell script")
+def test_jit_cache_in_deep_directory_matches_numpy(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  root = isolated_cache / ("benchmark cache " * 5).rstrip() / ("repeated episode " * 5).rstrip()
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(root))
+  values = np.array([0.1, -0.7, 2.5])
+  fn = _simple_fn()
+  np.testing.assert_allclose(fn(values), (np.sin(values) + values * values).sum())
+  compiled = jit.get_compiled(fn)
+  assert compiled.lib_path.exists()
+  assert len(str(compiled.lib_path)) > 260
+
+
 def test_compiler_wrapper_change_misses_the_cache(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  real = shutil.which(os.environ.get("SCALY_CC", "cc"))
-  assert real is not None
-  wrapper = isolated_cache / "bin" / "cc"
+  compiler = find_c_compiler()
+  assert compiler is not None
+  wrapper = isolated_cache / "bin" / ("cc.exe" if sys.platform == "win32" else "cc")
   wrapper.parent.mkdir()
   monkeypatch.setenv("SCALY_CC", str(wrapper))
 
   def build(script: str | None = None) -> str:
     if script is not None:
-      wrapper.write_text(f'#!/bin/sh\n{script}exec {shlex.quote(real)} "$@"\n')
-      wrapper.chmod(0o755)
+      if sys.platform == "win32":
+        source = wrapper.with_suffix(".c")
+        command = ", ".join(json.dumps(part) for part in compiler.command)
+        source.write_text(
+          "#include <process.h>\n#include <stdlib.h>\n"
+          f"/* {script} */\nint main(int argc, char** argv) {{\n"
+          f"  const char* prefix[] = {{{command}}};\n"
+          f"  const int n = {len(compiler.command)};\n"
+          "  const char** args = calloc(n + argc, sizeof(char*));\n"
+          "  for (int i = 0; i < n; ++i) args[i] = prefix[i];\n"
+          "  for (int i = 1; i < argc; ++i) args[n + i - 1] = argv[i];\n"
+          "  return (int)_spawnv(_P_WAIT, prefix[0], args);\n}\n"
+        )
+        subprocess.run([*compiler.command, str(source), "-o", str(wrapper)], check=True)
+      else:
+        wrapper.write_text(f'#!/bin/sh\n{script}exec {shlex.join(compiler.command)} "$@"\n')
+        wrapper.chmod(0o755)
     return jit._build_artifact(as_concrete(_simple_fn())).key
 
   first = build("")

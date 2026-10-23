@@ -15,7 +15,7 @@ import pytest
 from scaly.codegen import render_c_module
 from scaly.codegen.toolchain import find_c_compiler
 
-from benchmarks.harness import constant_tables, gbench, object_bytes, object_constant_symbols
+from benchmarks.harness import constant_tables, gbench, object_bytes, object_constant_symbols, vector_symbols
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.sweep import (
   FIELDS,
@@ -28,15 +28,20 @@ from benchmarks.harness.sweep import (
 
 
 def test_codegen_deadline_without_posix_alarms(monkeypatch: pytest.MonkeyPatch) -> None:
+  import multiprocessing
+  import time
   from benchmarks.harness import sweep
 
-  monkeypatch.setattr(sweep.sys, "platform", "win32")
+  monkeypatch.setattr(sweep, "sys", SimpleNamespace(platform="win32"))
+  monkeypatch.setattr(sweep.subprocess, "run", lambda *args, **kwargs: None)
   monkeypatch.delattr(sweep.signal, "SIGALRM", raising=False)
-  with sweep.codegen_deadline(0.01):
-    pass
-  with pytest.raises(ValueError, match="body failed"):
-    with sweep.codegen_deadline(1):
-      raise ValueError("body failed")
+  before = multiprocessing.active_children()
+  with pytest.raises(sweep.CodegenTimeout, match="codegen exceeded"):
+    sweep.generate_with_deadline(time.sleep, (60,), {}, 0.05)
+  assert multiprocessing.active_children() == before
+  assert sweep.generate_with_deadline(int, ("12",), {}, 20) == 12
+  with pytest.raises(ValueError, match="invalid literal"):
+    sweep.generate_with_deadline(int, ("invalid",), {}, 20)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX interval timers are unavailable on Windows")
@@ -75,20 +80,23 @@ def test_compile_timeout_cleans_up_and_drains_output(platform: str, tmp_path: Pa
 
   monkeypatch.setattr(gbench, "sys", SimpleNamespace(platform=platform))
   monkeypatch.setattr(gbench, "gbench_flags", lambda: ([], []))
-  monkeypatch.setattr(gbench, "math_flags", lambda compiler: ((), ()))
+  monkeypatch.setattr(gbench, "math_flags", lambda *compiler: ((), ()))
   monkeypatch.setattr(gbench.subprocess, "Popen", lambda *a, **kw: Process())
+  monkeypatch.setattr(gbench.subprocess, "run", lambda command, **kw: events.append(("taskkill", command[2], command[3:])))
   monkeypatch.setattr(gbench.os, "getpgid", lambda pid: pid + 1, raising=False)
   monkeypatch.setattr(gbench.os, "killpg", lambda pid, sig: events.append(("killpg", pid)), raising=False)
   monkeypatch.setattr(gbench.signal, "SIGKILL", 9, raising=False)
   info = {"source": "kernel.c"}
   status, elapsed, note = gbench.compile_kernel(info, tmp_path, 1)
   assert status == "timeout" and elapsed is None and "kernel_compile_ms" in note
-  assert events[1] == ("kill" if platform == "win32" else ("killpg", 124))
-  assert events[2] == ("communicate", None)
+  if platform == "win32":
+    assert events[1:3] == [("taskkill", "123", ["/T", "/F"]), "kill"]
+  else:
+    assert events[1] == ("killpg", 124)
+  assert events[-1] == ("communicate", None)
   assert (tmp_path / "compile.log").read_text().endswith("compiler stdout\ncompiler stderr\n")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the sweep reads ELF and Mach-O objects with binutils size and nm")
 def test_object_bytes_counts_compiled_constant_tables(tmp_path: Path) -> None:
   compiler = find_c_compiler()
   if compiler is None:
@@ -116,7 +124,6 @@ def test_constant_tables_measure_both_generators_layouts() -> None:
     constant_tables(b"static const int a[2] = {1, 2")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the sweep reads ELF and Mach-O objects with binutils size and nm")
 def test_object_check_catches_a_table_the_source_scan_misses(tmp_path: Path) -> None:
   compiler = find_c_compiler()
   if compiler is None:
@@ -127,6 +134,33 @@ def test_object_check_catches_a_table_the_source_scan_misses(tmp_path: Path) -> 
 
   assert constant_tables(source.read_bytes()) == []
   assert object_constant_symbols(tmp_path / "missed.o") == 1
+
+
+def test_object_inspection_reads_undefined_vector_symbols(tmp_path: Path) -> None:
+  compiler = find_c_compiler()
+  if compiler is None:
+    pytest.skip("no C compiler")
+  source = tmp_path / "vector.c"
+  source.write_text("extern double _ZGVfixture(double);\ndouble call(double x) { return _ZGVfixture(x); }\n")
+  obj = source.with_suffix(".o")
+  subprocess.run([*compiler.command, "-c", str(source), "-o", str(obj)], check=True)
+  assert vector_symbols(obj) == (["__ZGVfixture"] if sys.platform == "darwin" else ["_ZGVfixture"])
+
+
+def test_benchmark_compiler_commands_preserve_packaged_zig_and_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  from scaly.codegen.toolchain import Compiler
+
+  zig = str(tmp_path / "compiler tools" / "zig.exe")
+  monkeypatch.setattr(gbench, "find_c_compiler", lambda: Compiler((zig, "cc"), "zig-bin"))
+  monkeypatch.delenv("CXX", raising=False)
+  assert gbench.c_compiler() == (zig, "cc")
+  assert gbench.compiler() == (zig, "c++")
+  monkeypatch.setenv("CXX", "unrelated-clang++")
+  assert gbench.compiler() == (zig, "c++")
+  monkeypatch.setattr(gbench, "find_c_compiler", lambda: Compiler((zig, "cc"), "SCALY_CC"))
+  assert gbench.compiler() == (zig, "c++")
+  monkeypatch.setattr(gbench, "find_c_compiler", lambda: Compiler(("cc",), "PATH"))
+  assert gbench.compiler() == ("unrelated-clang++",)
 
 
 def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
@@ -588,9 +622,9 @@ def _run_compiled_driver(
   tmp_path: Path, info: dict, source: str, header: str, inputs: dict[str, np.ndarray], expected: np.ndarray
 ) -> tuple[str, float | None, str]:
   compiler = gbench.compiler()
-  if shutil.which(compiler) is None:
+  if shutil.which(compiler[0]) is None:
     pytest.skip("a C++ compiler is required for the driver smoke test")
-  prefix = gbench.ROOT / "benchmarks" / "third_party" / "gbench" / gbench.GBENCH_TAG
+  prefix = gbench.gbench_prefix()
   if not (prefix / "include" / "benchmark" / "benchmark.h").exists() or not (prefix / "lib" / "libbenchmark.a").exists():
     pytest.skip("the pinned Google Benchmark build is not available")
 
