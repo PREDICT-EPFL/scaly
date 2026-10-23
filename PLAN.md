@@ -41,6 +41,6 @@ Depends on a passing wheel. Workflow and documentation edits can be checked inde
 ## 4. Validate and review
 
 - [x] Run narrow checks, then `wt hook pre-merge --yes` and report platform limitations.
-- [ ] Commit the task, push and open/link a draft PR.
+- [x] Commit the task, push and open/link a draft PR (#218).
 - [ ] Run one cross-family review, fix findings and run the delta check.
 - [ ] Verify PR CI, remove this temporary plan, mark ready, update the issue and watch the PR.
