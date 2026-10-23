@@ -73,6 +73,8 @@ dev = [
   "pydantic>=2.13.4",
   "scipy>=1.14",
   "hatchling>=1.32.4",
+  "cmake>=4.4.4",
+  "ninja>=1.13.2",
 ]
 docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 

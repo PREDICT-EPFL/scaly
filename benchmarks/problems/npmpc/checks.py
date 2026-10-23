@@ -736,26 +736,26 @@ def check_closed_loop_uses_fastest_casadi_encoding() -> None:
   )
 
 
-# name -> (check, requires an IPOPT-backed solve, requires CasADi)
-CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
-  "dims_and_checkpoint": (check_dims_and_checkpoint, False, False),
-  "reference_config": (check_matches_reference_config, False, False),
-  "parameter_tail_order": (check_parameter_tail_order, False, False),
-  "decoder_rollout": (check_decoder_matches_reference_rollout, False, False),
-  "plant_rollout": (check_plant_matches_reference_oracle, False, False),
-  "terminal_riccati": (check_terminal_riccati_weight, False, False),
-  "constraint_rows": (check_constraint_rows_and_bounds, False, False),
-  "runtime_tuning_parameters": (check_runtime_tuning_parameters, False, False),
-  "casadi_runtime_parameters": (check_casadi_runtime_parameters_match, False, True),
-  "initial_guess": (check_initial_guess_reaches_upright, False, False),
-  "exact_hessian": (check_nlp_uses_an_exact_hessian, True, False),
-  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
-  "episode_artifacts": (check_episode_artifacts, True, False),
-  "episode_swings_up": (check_episode_swings_up, True, False),
-  "reference_episode": (check_matches_reference_episode, True, False),
-  "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
-  "oracles_agree": (check_oracles_agree, True, True),
-  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
-  "recorded_scene": (check_recorded_scene, True, False),
-  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
+# name -> (check, required solver backend, requires CasADi)
+CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
+  "dims_and_checkpoint": (check_dims_and_checkpoint, None, False),
+  "reference_config": (check_matches_reference_config, None, False),
+  "parameter_tail_order": (check_parameter_tail_order, None, False),
+  "decoder_rollout": (check_decoder_matches_reference_rollout, None, False),
+  "plant_rollout": (check_plant_matches_reference_oracle, None, False),
+  "terminal_riccati": (check_terminal_riccati_weight, None, False),
+  "constraint_rows": (check_constraint_rows_and_bounds, None, False),
+  "runtime_tuning_parameters": (check_runtime_tuning_parameters, None, False),
+  "casadi_runtime_parameters": (check_casadi_runtime_parameters_match, None, True),
+  "initial_guess": (check_initial_guess_reaches_upright, None, False),
+  "exact_hessian": (check_nlp_uses_an_exact_hessian, "ipopt", False),
+  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, "ipopt", True),
+  "episode_artifacts": (check_episode_artifacts, "ipopt", False),
+  "episode_swings_up": (check_episode_swings_up, "ipopt", False),
+  "reference_episode": (check_matches_reference_episode, "ipopt", False),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt, "ipopt", False),
+  "oracles_agree": (check_oracles_agree, "ipopt", True),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, "sqp", True),
+  "recorded_scene": (check_recorded_scene, "ipopt", False),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, None, True),
 }

@@ -163,13 +163,21 @@ def _executable_fingerprint(command: tuple[str, ...], executable: str, size: int
 
 
 def cache_root() -> Path:
-  """Return the JIT cache directory: ``SCALY_CACHE_DIR``, else ``$XDG_CACHE_HOME/scaly/jit``, else ``~/.cache/scaly/jit``."""
+  """Return ``SCALY_CACHE_DIR``, else ``$XDG_CACHE_HOME/scaly/jit``, else ``~/.cache/scaly/jit``.
+
+  Windows returns an absolute extended path so deeply nested caches work beyond the legacy path limit.
+  """
   override = env_path("SCALY_CACHE_DIR")
-  if override is not None:
-    return override
   xdg = env_path("XDG_CACHE_HOME")
   base = xdg if xdg is not None else Path.home() / ".cache"
-  return base / "scaly" / "jit"
+  root = override if override is not None else base / "scaly" / "jit"
+  if sys.platform == "win32":
+    # Repeated benchmark runs nest the cache deeply enough to exceed legacy MAX_PATH.
+    path = str(root.resolve())
+    if not path.startswith("\\\\?\\"):
+      path = "\\\\?\\UNC\\" + path[2:] if path.startswith("\\\\") else "\\\\?\\" + path
+    return Path(path)
+  return root
 
 
 def _zig_bin_executable() -> str | None:

@@ -77,10 +77,11 @@ all of them report even when one fails. Any failure produces a nonzero exit stat
 ### Adding a problem gate
 
 A problem's `checks.py` holds one function per gate and a `CHECKS` table mapping a
-short name to `(check, needs_ipopt, needs_casadi)`. The smoke reports each gate as `ok` or
-`skipped: ...` when a required dependency is missing — a gate never reports success without having
-run. Pull requests run only the gate `QUICK_CHECKS` in `run.py` names for each problem; `smoke
---full` runs them all. The gates compile their generated code at `-O0`, since they evaluate it
+short name to `(check, solver_backend, needs_casadi)`, with `None` for checks needing no solver.
+The smoke reports each gate as `ok` or `skipped: ...` when an optional dependency is missing.
+Required solvers fail the run when unavailable. Pull requests and nightlies run `smoke --full`,
+which runs every gate. Plain `smoke` selects the quick gates in `run.py`.
+The gates compile their generated code at `-O0`, since they evaluate it
 only a few times.
 Checks raise (bare `assert` or `numpy.testing`) instead of returning a bool, so the
 failure message carries the offending values.

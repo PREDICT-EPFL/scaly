@@ -349,19 +349,19 @@ def check_closed_loop_uses_fastest_casadi_encoding() -> None:
   check_fastest_casadi_encoding("chain", config.n_masses, lambda: ca_chain_sqp(config.n_masses, config.horizon))
 
 
-# name -> (check, requires an IPOPT-backed solve, requires CasADi)
-CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
-  "casadi_sweep_transform": (check_casadi_sweep_transforms_by_default, True, True),
-  "dims_and_rk4": (check_dims_and_rk4, False, False),
-  "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, False, True),
-  "nlp_objective": (check_nlp_objective_matches_casadi, True, True),
-  "one_reference": (check_one_reference_for_every_end_mass_term, False, False),
-  "extract_positions": (check_extract_positions, False, False),
-  "plant_step": (check_plant_step_is_parameterized_rk4, False, False),
-  "episode_artifacts": (check_episode_artifacts, True, False),
-  "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
-  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
-  "recorded_scene": (check_recorded_scene, True, False),
-  "hinted_stage_hessian": (check_hinted_stage_selects_hessian_procedure, False, False),
-  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, False, True),
+# name -> (check, required solver backend, requires CasADi)
+CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
+  "casadi_sweep_transform": (check_casadi_sweep_transforms_by_default, None, True),
+  "dims_and_rk4": (check_dims_and_rk4, None, False),
+  "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, None, True),
+  "nlp_objective": (check_nlp_objective_matches_casadi, "ipopt", True),
+  "one_reference": (check_one_reference_for_every_end_mass_term, None, False),
+  "extract_positions": (check_extract_positions, None, False),
+  "plant_step": (check_plant_step_is_parameterized_rk4, None, False),
+  "episode_artifacts": (check_episode_artifacts, "ipopt", False),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt, "ipopt", False),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, "sqp", True),
+  "recorded_scene": (check_recorded_scene, "ipopt", False),
+  "hinted_stage_hessian": (check_hinted_stage_selects_hessian_procedure, None, False),
+  "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, None, True),
 }

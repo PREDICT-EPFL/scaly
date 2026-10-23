@@ -26,7 +26,7 @@ import numpy as np
 import scaly as sc
 from scaly.codegen.aot import render_c_module
 from scaly.solvers.graph import solver_compile_flags
-from scaly.solvers.paths import solver_loadable
+from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import (
   CLOSED_LOOP_PAIRS,
   SMOKE_RESULTS,
@@ -132,14 +132,33 @@ def _nlp_filter() -> sc.Function:
   return safety_filter_nlp
 
 
+def _required_solvers() -> set[str]:
+  value = os.environ.get("SCALY_REQUIRE_SOLVERS", "")
+  return {"piqp", "ipopt", "sqp"} if value == "1" else set(filter(None, value.split(",")))
+
+
+def _check_required_solvers() -> None:
+  missing = sorted(name for name in _required_solvers() if not solver_loadable(name))
+  if missing:
+    raise RuntimeError(f"required solvers not loadable: {', '.join(missing)}")
+
+
 def _solver_call_smoke(required: bool) -> str | None:
-  if not solver_loadable("piqp") or not solver_loadable("ipopt"):
-    if required:
-      raise RuntimeError("PIQP/IPOPT solver plugins are not loadable but solver_call was explicitly selected")
-    return "solver_call skipped: PIQP/IPOPT solver plugins are not loadable"
+  _check_required_solvers()
+  functions = []
+  for backend, build in (("piqp", _qp_filter), ("ipopt", _nlp_filter)):
+    if solver_loadable(backend):
+      functions.append(build())
+    elif backend == "ipopt" and sys.platform == "win32":
+      print("smoke solver_call/ipopt: skipped: Windows IPOPT is unsupported until #196", flush=True)
+    elif required:
+      raise RuntimeError(f"{backend} solver plugin is not loadable but solver_call was explicitly selected")
+    else:
+      print(f"smoke solver_call/{backend}: skipped: solver plugin not loadable", flush=True)
+  if not functions:
+    return "solver_call skipped: no loadable solver plugins"
   out_dir = SMOKE_RESULTS / "solver_call"
   out_dir.mkdir(parents=True, exist_ok=True)
-  functions = [_qp_filter(), _nlp_filter()]
   sources, flags = [], []
   for fun in functions:
     module = render_c_module(fun)
@@ -155,31 +174,42 @@ def _solver_call_smoke(required: bool) -> str | None:
       [
         "#include <array>",
         "#include <cmath>",
-        f'#include "{functions[0].name}.h"',
-        f'#include "{functions[1].name}.h"',
+        *(f'#include "{fun.name}.h"' for fun in functions),
         "int main() {",
         "  std::array<double, 4> x{0.0, 0.0, 2.0, 0.0}, ref{0.1, -0.1, 0.2, 0.0}, out{};",
         "  const double* arg[] = {x.data(), ref.data()};",
         "  double* res[] = {out.data()};",
-        f"  std::array<double, ({functions[0].name}_SZ_W > 0 ? {functions[0].name}_SZ_W : 1)> w_qp{{}};",
-        f"  if ({functions[0].name}(arg, res, nullptr, w_qp.data(), 0) != 0) return 1;",
-        "  for (double value : out) if (!std::isfinite(value)) return 2;",
-        f"  std::array<double, ({functions[1].name}_SZ_W > 0 ? {functions[1].name}_SZ_W : 1)> w_nlp{{}};",
-        f"  if ({functions[1].name}(arg, res, nullptr, w_nlp.data(), 0) != 0) return 3;",
-        "  for (double value : out) if (!std::isfinite(value)) return 4;",
+        *(
+          line
+          for index, fun in enumerate(functions)
+          for line in (
+            f"  std::array<double, ({fun.name}_SZ_W > 0 ? {fun.name}_SZ_W : 1)> w_{index}{{}};",
+            '  out.fill(std::nan(""));',
+            f"  if ({fun.name}(arg, res, nullptr, w_{index}.data(), 0) != 0) return 1;",
+            "  for (int i = 0; i < 4; ++i) if (!std::isfinite(out[i]) || std::abs(out[i] - ref[i]) > 1e-6) return 2;",
+          )
+        ),
         "  return 0;",
         "}",
       ]
     )
     + "\n"
   )
-  exe = out_dir / "solver_smoke"
-  cmd = [gbench.compiler(), "-O2", "-std=c++17", "-I", str(out_dir), cpp.name, *sources, "-o", str(exe), *flags, "-lm"]
+  objects = []
+  for source in sources:
+    obj = str(Path(source).with_suffix(".o"))
+    subprocess.run([*gbench.c_compiler(), "-O2", "-I", str(out_dir), "-c", source, "-o", obj, *flags], cwd=out_dir, check=True)
+    objects.append(obj)
+  exe = out_dir / ("solver_smoke.exe" if sys.platform == "win32" else "solver_smoke")
+  cmd = [*gbench.compiler(), "-O2", "-std=c++17", "-I", str(out_dir), cpp.name, *objects, "-o", str(exe), *flags, "-lm"]
   proc = subprocess.run(cmd, cwd=out_dir, text=True, capture_output=True)
   (out_dir / "compile.log").write_text(f"$ {shlex.join(cmd)}\n{proc.stdout}{proc.stderr}")
   if proc.returncode:
     raise RuntimeError(f"solver_call compile failed: {proc.stderr[-500:].strip()}")
-  run = subprocess.run([str(exe)], cwd=out_dir, text=True, capture_output=True, timeout=120)
+  env = os.environ.copy()
+  if sys.platform == "win32":
+    env["PATH"] = os.pathsep.join([*(str(path) for path in solver_paths().lib_dirs), env.get("PATH", "")])
+  run = subprocess.run([str(exe)], cwd=out_dir, env=env, text=True, capture_output=True, timeout=120)
   if run.returncode:
     raise RuntimeError(f"solver_call binary exited {run.returncode}: {(run.stderr + run.stdout)[-500:].strip()}")
   return None
@@ -230,49 +260,43 @@ QUICK_CHECKS = {
 }
 
 WINDOWS_QUICK_CHECKS = {
-  "race_cars": "mapped_cost",
-  "chain": "eq_jacobian",
-  "unbumpercars": "oracle_matches_casadi",
-  "npmpc": "decoder_rollout",
+  "race_cars": ("mapped_cost", "sqp_oracles_agree"),
+  "chain": ("eq_jacobian", "sqp_oracles_agree"),
+  "unbumpercars": ("oracle_matches_casadi", "sqp_oracles_agree"),
+  "npmpc": ("decoder_rollout", "sqp_oracles_agree"),
 }
 
 
 def _problem_checks(problem: str, full: bool) -> None:
+  _check_required_solvers()
   # the checks evaluate each module a few times, so optimizing multi-megabyte sources only costs compile time;
   # this runs in its own spawned process, and the flag is part of the cache keys, so timed builds are unaffected
   os.environ["SCALY_CC_OPT"] = "-O0"
   table = importlib.import_module(f"benchmarks.problems.{problem}.checks").CHECKS
-  have_ipopt = solver_loadable("ipopt")
+  available = {backend: solver_loadable(backend) for _, backend, _ in table.values() if backend is not None}
   have_casadi = importlib.util.find_spec("casadi") is not None
   names = tuple(table) if full else (QUICK_CHECKS[problem],)
   if sys.platform == "win32" and not full:
-    names += (WINDOWS_QUICK_CHECKS[problem],)
+    names = tuple(dict.fromkeys((*names, *WINDOWS_QUICK_CHECKS[problem])))
   for name in names:
-    check, needs_ipopt, needs_casadi = table[name]
-    if needs_ipopt and sys.platform == "win32":
+    check, backend, needs_casadi = table[name]
+    if backend == "ipopt" and sys.platform == "win32":
       outcome = "skipped: IPOPT is not yet supported on Windows"
-    elif needs_ipopt and not have_ipopt:
-      outcome = "skipped: IPOPT plugin not loadable"
+    elif backend is not None and not available[backend]:
+      outcome = f"skipped: {backend.upper()} plugin not loadable"
     elif needs_casadi and not have_casadi:
       outcome = "skipped: casadi not installed"
     else:
       check()
       outcome = "ok"
     print(f"smoke {problem}/{name}: {outcome}", flush=True)
-    if os.environ.get("SCALY_REQUIRE_SOLVERS") == "1" and outcome != "ok":
+    if _required_solvers() and outcome != "ok" and (backend is None or backend in _required_solvers()):
       raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
 
 
 def smoke(args) -> bool:
+  _check_required_solvers()
   selected = set(args.select or ("benchmarks", "problems", "solver_call")) - set(args.skip or ())
-  if sys.platform == "win32":
-    for name, reason in {
-      "benchmarks": "the C++ benchmark drivers and binutils size/nm object inspection require Linux or macOS",
-      "solver_call": "the C++ solver driver requires PIQP/IPOPT, and IPOPT is not yet supported on Windows",
-    }.items():
-      if name in selected:
-        print(f"smoke {name}: skipped: {reason}", flush=True)
-        selected.remove(name)
   groups: dict[str, Callable[[], None]] = {
     problem: partial(_problem_checks, problem, args.full) for problem in QUICK_CHECKS if "problems" in selected
   }
