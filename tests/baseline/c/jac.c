@@ -51,24 +51,24 @@ static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(d
 extern "C" {
 #endif
 
-static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_1(long long i_t9_chunk, long long n, double* s1) {
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s1) {
   lanes_4_4_4_4_vec b;
-  for (int i_t9_lane = 0; i_t9_lane < SCALY_WIDTH_4_4_4_4; ++i_t9_lane) b[i_t9_lane] = 0.0;
-  lanes_4_4_4_4_vec_st(&s1[((0 + (((i_t9_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t9_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], b, n);
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b[k] = 0.0;
+  lanes_4_4_4_4_vec_st(&s1[(i) + 0], b, n);
 }
-static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_2(long long i_t10_chunk, long long n, double* s0, const double* s1) {
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* s0, const double* s1) {
   lanes_4_4_4_4_vec b;
-  for (int i_t10_lane = 0; i_t10_lane < SCALY_WIDTH_4_4_4_4; ++i_t10_lane) b[i_t10_lane] = 0.10000000000000001;
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b[k] = 0.10000000000000001;
   lanes_4_4_4_4_vec l;
-  if (n == SCALY_WIDTH_4_4_4_4) l = *(const lanes_4_4_4_4_vec_mem*)(&s1[(0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))]);
-  else for (long long i_t10_lane = 0; i_t10_lane < SCALY_WIDTH_4_4_4_4; ++i_t10_lane) l[i_t10_lane] = s1[(0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + i_t10_lane) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + i_t10_lane) : 3))];
-  lanes_4_4_4_4_vec_st(&s0[((0 + (((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((i_t10_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], (b * l), n);
+  if (n == SCALY_WIDTH_4_4_4_4) l = *(const lanes_4_4_4_4_vec_mem*)(&s1[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l[k] = s1[((i + k) < 3 ? (i + k) : 3)];
+  lanes_4_4_4_4_vec_st(&s0[(i) + 0], (b * l), n);
 }
-static inline __attribute__((always_inline)) void dynamics_jac_znext_z_lanes_3(long long d1_jac_znext_z_chunk, long long n, double* jac_znext_z, const double* s1, int64_t d0_jac_znext_z) {
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, double* jac_znext_z, const double* s1, int64_t d0_jac_znext_z) {
   double ls[SCALY_WIDTH_4_4_4_4];
-  for (long long d1_jac_znext_z_lane = 0; d1_jac_znext_z_lane < SCALY_WIDTH_4_4_4_4; ++d1_jac_znext_z_lane) ls[d1_jac_znext_z_lane] = s1[(d0_jac_znext_z + ((0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + d1_jac_znext_z_lane) : 3)) * 4))];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) ls[k] = s1[(d0_jac_znext_z + (((i + k) < 3 ? (i + k) : 3) * 4))];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
-  lanes_4_4_4_4_vec_st(&jac_znext_z[(((d0_jac_znext_z * 4) + (0 + (((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((d1_jac_znext_z_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3)))) + 0], l, n);
+  lanes_4_4_4_4_vec_st(&jac_znext_z[(((d0_jac_znext_z * 4) + i)) + 0], l, n);
 }
 int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -87,11 +87,11 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   for (long long i_t6 = 0; i_t6 < 2; ++i_t6) {
     s0[i_t6] = (2.0 * t5[i_t6]);
   }
-  for (long long i_t9_chunk = 0; i_t9_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++i_t9_chunk) {
-    dynamics_jac_znext_z_lanes_1(i_t9_chunk, SCALY_WIDTH_4_4_4_4, s1);
+  for (long long i_t9_start = 0; i_t9_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t9_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_1(i_t9_start, SCALY_WIDTH_4_4_4_4, s1);
   }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-  dynamics_jac_znext_z_lanes_1(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s1);
+  lanes_1(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s1);
 #endif
   for (long long k_t9 = 0; k_t9 < 2; ++k_t9) {
     s1[0] = (s1[0] + (s0[k_t9] * k1[k_t9]));
@@ -99,11 +99,11 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     s1[2] = (s1[2] + (s0[k_t9] * k1[(4 + k_t9)]));
     s1[3] = (s1[3] + (s0[k_t9] * k1[(6 + k_t9)]));
   }
-  for (long long i_t10_chunk = 0; i_t10_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++i_t10_chunk) {
-    dynamics_jac_znext_z_lanes_2(i_t10_chunk, SCALY_WIDTH_4_4_4_4, s0, s1);
+  for (long long i_t10_start = 0; i_t10_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t10_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_2(i_t10_start, SCALY_WIDTH_4_4_4_4, s0, s1);
   }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-  dynamics_jac_znext_z_lanes_2(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s0, s1);
+  lanes_2(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s0, s1);
 #endif
   s1[0] = 0.0;
   for (long long i_t14 = 0; i_t14 < 2; ++i_t14) {
@@ -123,11 +123,11 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     }
   }
   for (long long d0_jac_znext_z = 0; d0_jac_znext_z < 4; ++d0_jac_znext_z) {
-    for (long long d1_jac_znext_z_chunk = 0; d1_jac_znext_z_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++d1_jac_znext_z_chunk) {
-      dynamics_jac_znext_z_lanes_3(d1_jac_znext_z_chunk, SCALY_WIDTH_4_4_4_4, res[0], s1, d0_jac_znext_z);
+    for (long long d1_jac_znext_z_start = 0; d1_jac_znext_z_start <= 4 - SCALY_WIDTH_4_4_4_4; d1_jac_znext_z_start += SCALY_WIDTH_4_4_4_4) {
+      lanes_3(d1_jac_znext_z_start, SCALY_WIDTH_4_4_4_4, res[0], s1, d0_jac_znext_z);
     }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-    dynamics_jac_znext_z_lanes_3(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[0], s1, d0_jac_znext_z);
+    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[0], s1, d0_jac_znext_z);
 #endif
   }
   return SCALY_SUCCESS;

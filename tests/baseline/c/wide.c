@@ -158,65 +158,65 @@ static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec
 extern "C" {
 #endif
 
-static inline __attribute__((always_inline)) void wide_lanes_1(long long i_t2_chunk, long long n, double* s0) {
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s0) {
   lanes_8_8_8_8_vec b;
-  for (int i_t2_lane = 0; i_t2_lane < SCALY_WIDTH_8_8_8_8; ++i_t2_lane) b[i_t2_lane] = 0.0;
-  lanes_8_8_8_8_vec_st(&s0[((0 + (((i_t2_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t2_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))) + 0], b, n);
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], b, n);
 }
-static inline __attribute__((always_inline)) void wide_lanes_2(long long i_t8_chunk, long long n, const double* s0, double* s1) {
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const double* s0, double* s1) {
   lanes_8_8_8_8_vec l;
-  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[(0 + (((i_t8_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t8_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))]);
-  else for (long long i_t8_lane = 0; i_t8_lane < SCALY_WIDTH_8_8_8_8; ++i_t8_lane) l[i_t8_lane] = s0[(0 + (((i_t8_chunk * SCALY_WIDTH_8_8_8_8) + i_t8_lane) < 39 ? ((i_t8_chunk * SCALY_WIDTH_8_8_8_8) + i_t8_lane) : 39))];
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 39 ? (i + k) : 39)];
   lanes_8_8_8_8_vec v4 = l;
   lanes_8_8_8_8_vec b;
-  for (int i_t8_lane = 0; i_t8_lane < SCALY_WIDTH_8_8_8_8; ++i_t8_lane) b[i_t8_lane] = 0.0;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
   lanes_8_8_8_8_vec b_2;
-  for (int i_t8_lane = 0; i_t8_lane < SCALY_WIDTH_8_8_8_8; ++i_t8_lane) b_2[i_t8_lane] = 0.5;
-  lanes_8_8_8_8_vec_st(&s1[((0 + (((i_t8_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t8_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))) + 0], (lanes_8_8_8_8_vec_fmax(v4, b) - (lanes_8_8_8_8_vec_fmin(v4, b) * b_2)), n);
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b_2[k] = 0.5;
+  lanes_8_8_8_8_vec_st(&s1[(i) + 0], (lanes_8_8_8_8_vec_fmax(v4, b) - (lanes_8_8_8_8_vec_fmin(v4, b) * b_2)), n);
 }
-static inline __attribute__((always_inline)) void wide_lanes_3(long long i_t17_chunk, long long n, double* s0, const double* s1, const double* y) {
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, double* s0, const double* s1, const double* y) {
   lanes_8_8_8_8_vec l;
-  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s1[(0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))]);
-  else for (long long i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) l[i_t17_lane] = s1[(0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + i_t17_lane) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + i_t17_lane) : 39))];
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s1[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s1[((i + k) < 39 ? (i + k) : 39)];
   lanes_8_8_8_8_vec v5 = l;
   lanes_8_8_8_8_vec l_2;
-  if (n == SCALY_WIDTH_8_8_8_8) l_2 = *(const lanes_8_8_8_8_vec_mem*)(&y[(0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))]);
-  else for (long long i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) l_2[i_t17_lane] = y[(0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + i_t17_lane) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + i_t17_lane) : 39))];
+  if (n == SCALY_WIDTH_8_8_8_8) l_2 = *(const lanes_8_8_8_8_vec_mem*)(&y[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2[k] = y[((i + k) < 39 ? (i + k) : 39)];
   lanes_8_8_8_8_vec v6 = l_2;
   lanes_8_8_8_8_vec b;
-  for (int i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) b[i_t17_lane] = 2.5;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 2.5;
   lanes_8_8_8_8_vec b_2;
-  for (int i_t17_lane = 0; i_t17_lane < SCALY_WIDTH_8_8_8_8; ++i_t17_lane) b_2[i_t17_lane] = 1.0;
-  lanes_8_8_8_8_vec_st(&s0[((0 + (((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t17_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))) + 0], (lanes_8_8_8_8_vec_atan2(v5, v6) + (lanes_8_8_8_8_vec_pow(v5, b) / (b_2 + lanes_8_8_8_8_vec_fabs(v6)))), n);
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b_2[k] = 1.0;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], (lanes_8_8_8_8_vec_atan2(v5, v6) + (lanes_8_8_8_8_vec_pow(v5, b) / (b_2 + lanes_8_8_8_8_vec_fabs(v6)))), n);
 }
-static inline __attribute__((always_inline)) void wide_lanes_4(long long i_t50_chunk, long long n, const double* s0, const double* s1, double* s2, const double* y) {
+static inline __attribute__((always_inline)) void lanes_4(long long i, long long n, const double* s0, const double* s1, double* s2, const double* y) {
   lanes_8_8_8_8_vec l;
-  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s1[(0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))]);
-  else for (long long i_t50_lane = 0; i_t50_lane < SCALY_WIDTH_8_8_8_8; ++i_t50_lane) l[i_t50_lane] = s1[(0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + i_t50_lane) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + i_t50_lane) : 39))];
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s1[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s1[((i + k) < 39 ? (i + k) : 39)];
   lanes_8_8_8_8_vec v7 = l;
   lanes_8_8_8_8_vec l_2;
-  if (n == SCALY_WIDTH_8_8_8_8) l_2 = *(const lanes_8_8_8_8_vec_mem*)(&s0[(0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))]);
-  else for (long long i_t50_lane = 0; i_t50_lane < SCALY_WIDTH_8_8_8_8; ++i_t50_lane) l_2[i_t50_lane] = s0[(0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + i_t50_lane) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + i_t50_lane) : 39))];
+  if (n == SCALY_WIDTH_8_8_8_8) l_2 = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2[k] = s0[((i + k) < 39 ? (i + k) : 39)];
   lanes_8_8_8_8_vec v8 = l_2;
   lanes_8_8_8_8_vec l_3;
-  if (n == SCALY_WIDTH_8_8_8_8) l_3 = *(const lanes_8_8_8_8_vec_mem*)(&y[(0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))]);
-  else for (long long i_t50_lane = 0; i_t50_lane < SCALY_WIDTH_8_8_8_8; ++i_t50_lane) l_3[i_t50_lane] = y[(0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + i_t50_lane) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + i_t50_lane) : 39))];
+  if (n == SCALY_WIDTH_8_8_8_8) l_3 = *(const lanes_8_8_8_8_vec_mem*)(&y[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_3[k] = y[((i + k) < 39 ? (i + k) : 39)];
   lanes_8_8_8_8_vec v9 = l_3;
   lanes_8_8_8_8_vec b;
-  for (int i_t50_lane = 0; i_t50_lane < SCALY_WIDTH_8_8_8_8; ++i_t50_lane) b[i_t50_lane] = 0.10000000000000001;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.10000000000000001;
   lanes_8_8_8_8_vec b_2;
-  for (int i_t50_lane = 0; i_t50_lane < SCALY_WIDTH_8_8_8_8; ++i_t50_lane) b_2[i_t50_lane] = 1.0;
-  lanes_8_8_8_8_vec_st(&s2[((0 + (((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_t50_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))) + 0], ((((lanes_8_8_8_8_vec_exp(v7) + lanes_8_8_8_8_vec_log(lanes_8_8_8_8_vec_sqrt(v8))) * ((((((lanes_8_8_8_8_vec_sin(v7) * lanes_8_8_8_8_vec_cos(v8)) + lanes_8_8_8_8_vec_tan(v7)) + lanes_8_8_8_8_vec_asin((v7 * b))) + lanes_8_8_8_8_vec_acos((v8 * b))) + lanes_8_8_8_8_vec_atan(v8)) + (((lanes_8_8_8_8_vec_sinh(v7) + lanes_8_8_8_8_vec_cosh(v8)) + lanes_8_8_8_8_vec_tanh(v8)) + lanes_8_8_8_8_vec_erf(v7)))) + (lanes_8_8_8_8_vec_floor(v7) + lanes_8_8_8_8_vec_ceil(v8))) / (b_2 + (v9 * v9))), n);
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b_2[k] = 1.0;
+  lanes_8_8_8_8_vec_st(&s2[(i) + 0], ((((lanes_8_8_8_8_vec_exp(v7) + lanes_8_8_8_8_vec_log(lanes_8_8_8_8_vec_sqrt(v8))) * ((((((lanes_8_8_8_8_vec_sin(v7) * lanes_8_8_8_8_vec_cos(v8)) + lanes_8_8_8_8_vec_tan(v7)) + lanes_8_8_8_8_vec_asin((v7 * b))) + lanes_8_8_8_8_vec_acos((v8 * b))) + lanes_8_8_8_8_vec_atan(v8)) + (((lanes_8_8_8_8_vec_sinh(v7) + lanes_8_8_8_8_vec_cosh(v8)) + lanes_8_8_8_8_vec_tanh(v8)) + lanes_8_8_8_8_vec_erf(v7)))) + (lanes_8_8_8_8_vec_floor(v7) + lanes_8_8_8_8_vec_ceil(v8))) / (b_2 + (v9 * v9))), n);
 }
-static inline __attribute__((always_inline)) void wide_lanes_5(long long i_z_chunk, long long n, double* z) {
+static inline __attribute__((always_inline)) void lanes_5(long long i, long long n, double* z) {
   lanes_8_8_8_8_vec b;
-  for (int i_z_lane = 0; i_z_lane < SCALY_WIDTH_8_8_8_8; ++i_z_lane) b[i_z_lane] = 0.0;
-  lanes_8_8_8_8_vec_st(&z[((0 + (((i_z_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 39 ? ((i_z_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 39))) + 0], b, n);
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&z[(i) + 0], b, n);
 }
-static inline __attribute__((always_inline)) void wide_lanes_6(long long z_tail_chunk, long long n, double* tail) {
+static inline __attribute__((always_inline)) void lanes_6(long long i, long long n, double* tail) {
   lanes_4_4_4_4_vec b;
-  for (int z_tail_lane = 0; z_tail_lane < SCALY_WIDTH_4_4_4_4; ++z_tail_lane) b[z_tail_lane] = 0.0;
-  lanes_4_4_4_4_vec_st(&tail[((0 + (((z_tail_chunk * SCALY_WIDTH_4_4_4_4) + 0) < 3 ? ((z_tail_chunk * SCALY_WIDTH_4_4_4_4) + 0) : 3))) + 0], b, n);
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b[k] = 0.0;
+  lanes_4_4_4_4_vec_st(&tail[(i) + 0], b, n);
 }
 int wide(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -233,11 +233,11 @@ int wide(const double** arg, double** res, int* iw, double* w, int mem) {
   double s1[40];
   double s2[40];
   const double* t51 = res[0];
-  for (long long i_t2_chunk = 0; i_t2_chunk < 40 / SCALY_WIDTH_8_8_8_8; ++i_t2_chunk) {
-    wide_lanes_1(i_t2_chunk, SCALY_WIDTH_8_8_8_8, s0);
+  for (long long i_t2_start = 0; i_t2_start <= 40 - SCALY_WIDTH_8_8_8_8; i_t2_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_1(i_t2_start, SCALY_WIDTH_8_8_8_8, s0);
   }
 #if (40 % SCALY_WIDTH_8_8_8_8) != 0
-  wide_lanes_1(40 / SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0);
+  lanes_1(40 - 40 % SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0);
 #endif
   for (long long ib_t2 = 0; ib_t2 < 10; ++ib_t2) {
     for (long long k_t2 = 0; k_t2 < 40; ++k_t2) {
@@ -251,29 +251,29 @@ int wide(const double** arg, double** res, int* iw, double* w, int mem) {
       s0[v3] = (s0[v3] + (k1[((v3 * 40) + k_t2)] * arg[0][k_t2]));
     }
   }
-  for (long long i_t8_chunk = 0; i_t8_chunk < 40 / SCALY_WIDTH_8_8_8_8; ++i_t8_chunk) {
-    wide_lanes_2(i_t8_chunk, SCALY_WIDTH_8_8_8_8, s0, s1);
+  for (long long i_t8_start = 0; i_t8_start <= 40 - SCALY_WIDTH_8_8_8_8; i_t8_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(i_t8_start, SCALY_WIDTH_8_8_8_8, s0, s1);
   }
 #if (40 % SCALY_WIDTH_8_8_8_8) != 0
-  wide_lanes_2(40 / SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0, s1);
+  lanes_2(40 - 40 % SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0, s1);
 #endif
-  for (long long i_t17_chunk = 0; i_t17_chunk < 40 / SCALY_WIDTH_8_8_8_8; ++i_t17_chunk) {
-    wide_lanes_3(i_t17_chunk, SCALY_WIDTH_8_8_8_8, s0, s1, arg[1]);
+  for (long long i_t17_start = 0; i_t17_start <= 40 - SCALY_WIDTH_8_8_8_8; i_t17_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_3(i_t17_start, SCALY_WIDTH_8_8_8_8, s0, s1, arg[1]);
   }
 #if (40 % SCALY_WIDTH_8_8_8_8) != 0
-  wide_lanes_3(40 / SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0, s1, arg[1]);
+  lanes_3(40 - 40 % SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0, s1, arg[1]);
 #endif
-  for (long long i_t50_chunk = 0; i_t50_chunk < 40 / SCALY_WIDTH_8_8_8_8; ++i_t50_chunk) {
-    wide_lanes_4(i_t50_chunk, SCALY_WIDTH_8_8_8_8, s0, s1, s2, arg[1]);
+  for (long long i_t50_start = 0; i_t50_start <= 40 - SCALY_WIDTH_8_8_8_8; i_t50_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_4(i_t50_start, SCALY_WIDTH_8_8_8_8, s0, s1, s2, arg[1]);
   }
 #if (40 % SCALY_WIDTH_8_8_8_8) != 0
-  wide_lanes_4(40 / SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0, s1, s2, arg[1]);
+  lanes_4(40 - 40 % SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, s0, s1, s2, arg[1]);
 #endif
-  for (long long i_z_chunk = 0; i_z_chunk < 40 / SCALY_WIDTH_8_8_8_8; ++i_z_chunk) {
-    wide_lanes_5(i_z_chunk, SCALY_WIDTH_8_8_8_8, res[0]);
+  for (long long i_z_start = 0; i_z_start <= 40 - SCALY_WIDTH_8_8_8_8; i_z_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_5(i_z_start, SCALY_WIDTH_8_8_8_8, res[0]);
   }
 #if (40 % SCALY_WIDTH_8_8_8_8) != 0
-  wide_lanes_5(40 / SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, res[0]);
+  lanes_5(40 - 40 % SCALY_WIDTH_8_8_8_8, 40 % SCALY_WIDTH_8_8_8_8, res[0]);
 #endif
   for (long long ib_z = 0; ib_z < 10; ++ib_z) {
     for (long long k_z = 0; k_z < 40; ++k_z) {
@@ -287,11 +287,11 @@ int wide(const double** arg, double** res, int* iw, double* w, int mem) {
       res[0][v13] = (res[0][v13] + (k0[((v13 * 40) + k_z)] * s2[k_z]));
     }
   }
-  for (long long z_tail_chunk = 0; z_tail_chunk < 4 / SCALY_WIDTH_4_4_4_4; ++z_tail_chunk) {
-    wide_lanes_6(z_tail_chunk, SCALY_WIDTH_4_4_4_4, res[1]);
+  for (long long z_tail_start = 0; z_tail_start <= 4 - SCALY_WIDTH_4_4_4_4; z_tail_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_6(z_tail_start, SCALY_WIDTH_4_4_4_4, res[1]);
   }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-  wide_lanes_6(4 / SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[1]);
+  lanes_6(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[1]);
 #endif
   for (long long i_tail = 0; i_tail < 4; ++i_tail) {
     res[1][((3 + ((i_tail / 2) * 3)) + (i_tail * -2))] = t51[i_tail];

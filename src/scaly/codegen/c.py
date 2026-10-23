@@ -26,9 +26,11 @@ from ..function.concrete import ConcreteFunction
 from ..function.model import Function, as_concrete
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
+from ..ir import program as p
 from ..ir.expr import OP_INFO
+from ..ir.match import Pattern, rewrite
 from ..ir.program import walk_program, ProgramNode, ProgramOp
-from ..passes.program._common import name_scope, buffer_refs, prints
+from ..passes.program._common import name_scope, buffer_refs, prints, rebuild_program, substitute_var
 from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
 
@@ -532,11 +534,11 @@ def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[
   captures += [c_ident(n.attrs["name"]) for n in variables]
   suffix = ", " + ", ".join(captures) if captures else ""
   lines += [
-    f"{pad}for (long long {outer} = 0; {outer} < {count} / {width}; ++{outer}) {{",
+    f"{pad}for (long long {outer} = 0; {outer} <= {count} - {width}; {outer} += {width}) {{",
     f"{pad}  {helper}({outer}, {width}{suffix});",
     f"{pad}}}",
     f"#if ({count} % {width}) != 0",
-    f"{pad}{helper}({count} / {width}, {count} % {width}{suffix});",
+    f"{pad}{helper}({count} - {count} % {width}, {count} % {width}{suffix});",
     "#endif",
   ]
 
@@ -548,14 +550,15 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
       continue
     helper = stmt.attrs["vector_helper"]
     vector = stmt.args[1]
-    lane = c_ident(vector.args[0].attrs["name"])
-    outer = c_ident(stmt.args[0].attrs["name"])
     scope = NameScope(c_ident(n.attrs[key]) for n in walk_program(stmt) for key in ("name", "buffer", "target") if key in n.attrs)
-    valid = scope.allocate("n")
+    valid, start, lane = scope.allocate("n"), scope.allocate("i"), scope.allocate("k")
+    body = list(vector.args[1:])
+    for name, short in ((stmt.args[0].attrs["name"], start), (vector.args[0].attrs["name"], lane)):
+      body = [substitute_var(n, name, p.var(short)) for n in body]
     width, vec = _vector_width(stmt), vector.args[0].attrs["lane_vector"]
     buffers, variables = _vector_captures(stmt)
     writes = buffer_refs(stmt).writes
-    params = [f"long long {outer}", f"long long {valid}"]
+    params = [f"long long {start}", f"long long {valid}"]
     params += [f"{'const ' if n.attrs['buffer'] not in writes else ''}{n.dtype.c_type}* {c_ident(n.attrs['buffer'])}" for n in buffers]
     params += [f"{n.dtype.c_type} {c_ident(n.attrs['name'])}" for n in variables]
     qualifier = "static inline __attribute__((always_inline))" if dialect == "gnu" else "static inline"
@@ -564,10 +567,10 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
     _emit_local_buffers(local_buffers, lines, {}, 2)
     if dialect == "c":
       lines.append(f"  for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {{")
-      _emit_body(list(vector.args[1:]), {}, lines, 4, dialect="c")
+      _emit_body(body, {}, lines, 4, dialect="c")
       lines.append("  }")
     else:
-      _emit_vector_body(list(vector.args[1:]), vec, vector.args[0].attrs["name"], width, lines, scope, valid)
+      _emit_vector_body(body, vec, start, lane, width, lines, scope, valid)
     lines.append("}")
   return lines
 
@@ -606,17 +609,21 @@ def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: 
   return lines
 
 
-def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, lines: list[str], scope: NameScope, valid_count: str) -> None:
-  lane_name, lane = lane, c_ident(lane)
+def _emit_vector_body(
+  body: list[ProgramNode], vec: str, start: str, lane: str, width: str, lines: list[str], scope: NameScope, valid_count: str
+) -> None:
   vector_vars: set[str] = set()
   lane_vars: dict[str, str] = {}
-  per_lane = {lane_name}
+  per_lane = {lane}
+  clamp = p.add(p.var(start), p.var(lane))
+  # The first lane is always valid, so the vector access starts at the chunk's start, unclamped.
+  unclamped = [Pattern(ProgramOp.MINIMUM, lambda n: n.args[0] is clamp, lambda _n: p.var(start))]
 
   def varies(node: ProgramNode) -> bool:
     return any(n.op == ProgramOp.VAR and n.attrs["name"] in per_lane for n in walk_program(node))
 
   def first_lane() -> dict[str, str]:
-    return {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"}
+    return {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane: "0"}
 
   def expression(root: ProgramNode) -> str:
     text: dict[ProgramNode, str] = {}
@@ -664,10 +671,13 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
         name = scope.allocate("l", suffixes=("s",))
         view = node.args[0]
         if view.attrs.get("lane_stride") == 1:
-          first = _emit_view(view, {}, first_lane())
-          lines.append(f"  {vec} {name};")
-          lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
-          lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
+          first = _emit_view(rewrite(view, unclamped, rebuild=rebuild_program, fixpoint=False), {}, first_lane())
+          if view.attrs.get("lane_local"):
+            lines.append(f"  {vec} {name} = *(const {vec}_mem*)(&{first});")
+          else:
+            lines.append(f"  {vec} {name};")
+            lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
+            lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
         else:
           lines.append(f"  double {name}s[{width}];")
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}s[{lane}] = {_emit_view(view, {}, lane_vars)};")
@@ -710,13 +720,14 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           value = expression(stmt.args[0])
           lines.append(f"  {vec + ' ' if stmt.attrs.get('declare') else ''}{name} = {value};")
           vector_vars.add(stmt.attrs["target"])
-        else:
+        elif varies(stmt.args[0]):
           lines.append(f"  {stmt.dtype.c_type} {name}[{width}];")
           value = _emit_scalar(stmt.args[0], {}, lane_vars)
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {value};")
           lane_vars[stmt.attrs["target"]] = f"{name}[{lane}]"
-          if varies(stmt.args[0]):
-            per_lane.add(stmt.attrs["target"])
+          per_lane.add(stmt.attrs["target"])
+        else:
+          lines.append(f"  {stmt.dtype.c_type} {name} = {_emit_scalar(stmt.args[0], {}, lane_vars)};")
       elif stmt.op == ProgramOp.STORE and stmt.attrs.get("ordered_reduction"):
         target, value = stmt.args
         staged = dict(lane_vars)
@@ -733,7 +744,7 @@ def _emit_vector_body(body: list[ProgramNode], vec: str, lane: str, width: str, 
           view = stmt.args[0]
           pointer = c_ident(view.attrs["buffer"])
           if view.attrs.get("lane_stride") == 1:
-            first = _emit_scalar(view.args[0], {}, first_lane())
+            first = _emit_scalar(rewrite(view.args[0], unclamped, rebuild=rebuild_program, fixpoint=False), {}, first_lane())
             if view.attrs.get("lane_local"):
               lines.append(f"  *({vec}_mem*)(&{pointer}[({first}) + {offset}]) = {value};")
             else:

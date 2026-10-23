@@ -332,8 +332,8 @@ into `serial` chunks of `vector` lanes. With
 the loop headers):
 
 ```
-prog.for %i_y_chunk = 0 to prog.div(prog.add(64, prog.sub(%SCALY_WIDTH_f_lanes_1, 1)), %SCALY_WIDTH_f_lanes_1) step 1 {kind=serial} {
-  prog.for %i_y_lane = 0 to prog.minimum(%SCALY_WIDTH_f_lanes_1, prog.sub(64, prog.mul(%i_y_chunk, %SCALY_WIDTH_f_lanes_1))) step 1 {kind=vector} {
+prog.for %i_y_start = 0 to 64 step %SCALY_WIDTH_4_4_4_4 {kind=serial} {
+  prog.for %i_y_lane = 0 to prog.minimum(%SCALY_WIDTH_4_4_4_4, prog.sub(64, %i_y_start)) step 1 {kind=vector} {
 ```
 
 The width is a C macro rather than a number. It is the smaller of the requested

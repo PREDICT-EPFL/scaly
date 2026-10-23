@@ -91,7 +91,7 @@ def test_widths_match_scalar_bytes(tmp_path, compiler, dialect, lanes, count):
   vector, source = _compile(widen_ranges(_program(count), lanes=lanes), tmp_path, dialect=dialect, compiler=command)
   x = np.linspace(-2, 3, count * 2)
   assert _evaluate(vector, x, count).tobytes() == _evaluate(scalar, x, count).tobytes()
-  assert source.count("void kernel_lanes_1(") == (count >= 2 * lanes)
+  assert source.count("void lanes_1(") == (count >= 2 * lanes)
   if dialect == "c":
     assert "__attribute__" not in source
 
@@ -114,7 +114,7 @@ def test_fixed_lanes_keep_short_loops_scalar_and_share_one_vector_type(tmp_path,
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline)
   vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, dialect=dialect)
-  assert len(re.findall(r"void kernel_lanes_\d+\(", source)) == sum(count >= 2 * lanes for count in counts)
+  assert len(re.findall(r"void lanes_\d+\(", source)) == sum(count >= 2 * lanes for count in counts)
   assert source.count("#define SCALY_WIDTH_") == 1
   assert len(re.findall(r"^typedef double \w+ __attribute__\(\(vector_size\(8 \*", source, re.M)) == (dialect == "gnu")
   values = np.linspace(-2, 3, sum(counts))
@@ -209,7 +209,7 @@ def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler,
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline, compiler=command)
   vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, compiler=command)
-  assert "kernel_lanes_1" in source
+  assert "lanes_1(" in source
   values = np.random.default_rng(17).normal(size=19)
   assert _evaluate(vector, values, 1).tobytes() == _evaluate(scalar, values, 1).tobytes()
 
@@ -352,7 +352,7 @@ def test_store_schedule_preserves_compiled_values(tmp_path, dialect):
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline)
   vector, source = _compile(widen_ranges(prog, lanes=8), tmp_path, dialect=dialect)
-  assert "void kernel_lanes_1(" in source
+  assert "void lanes_1(" in source
   values = np.random.default_rng(194).normal(size=17)
   assert _evaluate(vector, values, 114).tobytes() == _evaluate(scalar, values, 114).tobytes()
 
@@ -366,7 +366,7 @@ def test_scheduled_nonaffine_index_uses_gather(tmp_path, lanes):
   store = p.store(p.view(y, [i]), p.load(p.view(x, [index])))
   prog = p.program([p.proc("kernel", [x, y], [p.for_(p.range_("i", 0, 17), [offset, store])])])
   function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path)
-  assert "void kernel_lanes_1(" in source
+  assert "void lanes_1(" in source
   values = np.arange(41, dtype=np.float64)
   expected = values[(np.arange(17) // 2) * 3 + np.arange(17)]
   np.testing.assert_array_equal(_evaluate(function, values, 17)[:17], expected)
@@ -589,3 +589,113 @@ def test_vector_math_wrappers_do_not_capture_user_names(tmp_path, names):
   path = tmp_path / "kernel.c"
   path.write_text(render_c_module(fun, lanes=4).body)
   subprocess.run([*c_compiler(), "-O1", "-std=c99", "-c", str(path), "-o", str(tmp_path / "kernel.o")], check=True, capture_output=True)
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [1, 2, 4, 8])
+def test_lane_local_loads_are_one_vector_load(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("x", dtypes.float64, (3 * count,)), p.buffer("y", dtypes.float64, (count,))
+  scratch = p.buffer("scratch", dtypes.float64, (3,), address_space="private")
+  i, j = p.var("i"), p.var("j")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  fill = p.for_(p.range_("j", 0, 3), [p.store(p.view(scratch, [j]), p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), j)])))])
+  loads = [p.load(p.view(scratch, [p.const_int(k)])) for k in range(3)]
+  value = p.add(p.mul(ProgramNode(ProgramOp.SIN, (loads[0],)), loads[1]), loads[2])
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [scratch, fill, p.store(p.view(y, [i]), value)])])])
+  function, source = _compile(pack_workspace(widen_ranges(prog, lanes=lanes)), tmp_path, dialect=dialect)
+  values = np.linspace(-2, 3, 3 * count)
+  rows = values.reshape(count, 3)
+  expected = np.sin(rows[:, 0]) * rows[:, 1] + rows[:, 2]
+  actual = _evaluate(function, values, count)
+  np.testing.assert_allclose(actual[:count], expected, rtol=1e-15, atol=1e-15)
+  np.testing.assert_array_equal(actual[count:], 8765.0)
+  if dialect == "gnu" and lanes > 1:
+    helper = source[source.index("void lanes_1(") :]
+    helper = helper[: helper.index("\n}")]
+    assert len(re.findall(r"= \*\(const \w+_mem\*\)\(&", helper)) == 3
+    assert "if (n == " not in helper
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_only_tail_lanes_clamp_their_index(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("i", dtypes.float64, (count + 5,)), p.buffer("k", dtypes.float64, (count + 5,))
+  j = p.var("j")
+  rng = p.range_("j", 5, count + 5)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  value = p.load(p.view(x, [j]))
+  rhs = p.add(p.mul(ProgramNode(ProgramOp.SIN, (value,)), value), p.const_float(0.125))
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [p.store(p.view(y, [j]), rhs)])])])
+  baseline = tmp_path / "baseline"
+  baseline.mkdir()
+  scalar, _ = _compile(prog, baseline)
+  vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, dialect=dialect)
+  values = np.linspace(-2, 3, count + 5)
+  assert _evaluate(vector, values, count).tobytes() == _evaluate(scalar, values, count).tobytes()
+  if dialect == "gnu":
+    helper = source[source.index("void lanes_1(") :]
+    assert helper[: helper.index("\n}")].count("?") == 1
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_lane_uniform_integer_index_is_one_scalar(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("x", dtypes.float64, (3 * count,)), p.buffer("y", dtypes.float64, (count,))
+  i, offset = p.var("i"), p.var("offset")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  value = p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), offset)]))
+  body = [p.assign("offset", p.const_int(2), dtypes.int64, declare=True), p.store(p.view(y, [i]), p.mul(value, value))]
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, body)])])
+  function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, dialect=dialect)
+  values = np.linspace(-2, 3, 3 * count)
+  actual = _evaluate(function, values, count)
+  np.testing.assert_array_equal(actual[:count], values[2::3] ** 2)
+  np.testing.assert_array_equal(actual[count:], 8765.0)
+  if dialect == "gnu":
+    assert "int64_t offset = 2;" in source
+    assert "offset[" not in source
+
+
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_lane_uniform_bit_select_word_reads_a_scalar_index(tmp_path, lanes):
+  count = 2 * lanes + 3
+  words = [0b10110, 0b01101]
+  x, y = p.buffer("x", dtypes.float64, (count,)), p.buffer("y", dtypes.float64, (count,))
+  table = p.const_buffer("words", dtypes.uint8, (2,), words)
+  i, word_index = p.var("i"), p.var("word_index")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  value = p.bit_select(p.load(p.view(table, [word_index])), p.mod(i, p.const_int(5)), p.load(p.view(x, [i])))
+  body = [p.assign("word_index", p.const_int(1), dtypes.int64, declare=True), p.store(p.view(y, [i]), value)]
+  prog = p.program([p.proc("kernel", [x, y], [table, p.for_(rng, body)])])
+  function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path)
+  values = np.linspace(-2, 3, count)
+  actual = _evaluate(function, values, count)
+  np.testing.assert_array_equal(actual[:count], np.where((words[1] >> (np.arange(count) % 5)) & 1, values, 0.0))
+  assert "words[word_index]" in source
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_lane_varying_local_slots_are_read_per_lane(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("x", dtypes.float64, (count,)), p.buffer("y", dtypes.float64, (count,))
+  table = p.buffer("table", dtypes.float64, (count,), address_space="private")
+  doubled = p.buffer("doubled", dtypes.float64, (count,), address_space="private")
+  i, j = p.var("i"), p.var("j")
+  rng = p.range_("i", 0, count)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  fill = p.for_(p.range_("j", 0, count), [p.store(p.view(table, [j]), p.load(p.view(x, [j])))])
+  double = p.store(p.view(doubled, [i]), p.mul(p.load(p.view(x, [i])), p.const_float(2)))
+  value = p.add(p.load(p.view(table, [i])), p.load(p.view(doubled, [i])))
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [table, doubled, fill, double, p.store(p.view(y, [i]), value)])])])
+  function, _ = _compile(coalesce_stores(pack_workspace(widen_ranges(prog, lanes=lanes))), tmp_path, dialect=dialect)
+  values = np.arange(1, count + 1, dtype=np.float64)
+  actual = _evaluate(function, values, count)
+  np.testing.assert_array_equal(actual[:count], 3 * values)
+  np.testing.assert_array_equal(actual[count:], 8765.0)

@@ -56,17 +56,17 @@ static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec
 extern "C" {
 #endif
 
-static inline __attribute__((always_inline)) void workspace_lanes_1(long long i_t0_chunk, long long n, double* s0, const double* x) {
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s0, const double* x) {
   lanes_8_8_8_8_vec l;
-  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&x[(0 + (((i_t0_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 2047 ? ((i_t0_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 2047))]);
-  else for (long long i_t0_lane = 0; i_t0_lane < SCALY_WIDTH_8_8_8_8; ++i_t0_lane) l[i_t0_lane] = x[(0 + (((i_t0_chunk * SCALY_WIDTH_8_8_8_8) + i_t0_lane) < 2047 ? ((i_t0_chunk * SCALY_WIDTH_8_8_8_8) + i_t0_lane) : 2047))];
-  lanes_8_8_8_8_vec_st(&s0[((0 + (((i_t0_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 2047 ? ((i_t0_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 2047))) + 0], lanes_8_8_8_8_vec_sin(l), n);
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&x[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = x[((i + k) < 2047 ? (i + k) : 2047)];
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], lanes_8_8_8_8_vec_sin(l), n);
 }
-static inline __attribute__((always_inline)) void workspace_lanes_2(long long i_sum_chunk, long long n, const double* s0, double* sum) {
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const double* s0, double* sum) {
   lanes_8_8_8_8_vec l;
-  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[(0 + (((i_sum_chunk * SCALY_WIDTH_8_8_8_8) + 0) < 2047 ? ((i_sum_chunk * SCALY_WIDTH_8_8_8_8) + 0) : 2047))]);
-  else for (long long i_sum_lane = 0; i_sum_lane < SCALY_WIDTH_8_8_8_8; ++i_sum_lane) l[i_sum_lane] = s0[(0 + (((i_sum_chunk * SCALY_WIDTH_8_8_8_8) + i_sum_lane) < 2047 ? ((i_sum_chunk * SCALY_WIDTH_8_8_8_8) + i_sum_lane) : 2047))];
-  for (long long i_sum_lane = 0; i_sum_lane < n; ++i_sum_lane) sum[0] = (sum[0] + l[i_sum_lane]);
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 2047 ? (i + k) : 2047)];
+  for (long long k = 0; k < n; ++k) sum[0] = (sum[0] + l[k]);
 }
 int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -77,18 +77,18 @@ int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   if (!res[1]) return SCALY_ERR_NULL_RESULT;
   double* s0 = w + 0;
-  for (long long i_t0_chunk = 0; i_t0_chunk < 2048 / SCALY_WIDTH_8_8_8_8; ++i_t0_chunk) {
-    workspace_lanes_1(i_t0_chunk, SCALY_WIDTH_8_8_8_8, s0, arg[0]);
+  for (long long i_t0_start = 0; i_t0_start <= 2048 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_1(i_t0_start, SCALY_WIDTH_8_8_8_8, s0, arg[0]);
   }
 #if (2048 % SCALY_WIDTH_8_8_8_8) != 0
-  workspace_lanes_1(2048 / SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, arg[0]);
+  lanes_1(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, arg[0]);
 #endif
   res[0][0] = 0.0;
-  for (long long i_sum_chunk = 0; i_sum_chunk < 2048 / SCALY_WIDTH_8_8_8_8; ++i_sum_chunk) {
-    workspace_lanes_2(i_sum_chunk, SCALY_WIDTH_8_8_8_8, s0, res[0]);
+  for (long long i_sum_start = 0; i_sum_start <= 2048 - SCALY_WIDTH_8_8_8_8; i_sum_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(i_sum_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);
   }
 #if (2048 % SCALY_WIDTH_8_8_8_8) != 0
-  workspace_lanes_2(2048 / SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, res[0]);
+  lanes_2(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, res[0]);
 #endif
   res[1][0] = 0.0;
   for (long long i_sumsqr = 0; i_sumsqr < 2048; ++i_sumsqr) {
