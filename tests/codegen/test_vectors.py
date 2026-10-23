@@ -91,7 +91,7 @@ def test_widths_match_scalar_bytes(tmp_path, compiler, dialect, lanes, count):
   vector, source = _compile(widen_ranges(_program(count), lanes=lanes), tmp_path, dialect=dialect, compiler=command)
   x = np.linspace(-2, 3, count * 2)
   assert _evaluate(vector, x, count).tobytes() == _evaluate(scalar, x, count).tobytes()
-  assert source.count("void kernel_lanes_1(") == (count >= 2 * lanes)
+  assert source.count("void lanes_1(") == (count >= 2 * lanes)
   if dialect == "c":
     assert "__attribute__" not in source
 
@@ -114,7 +114,7 @@ def test_fixed_lanes_keep_short_loops_scalar_and_share_one_vector_type(tmp_path,
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline)
   vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, dialect=dialect)
-  assert len(re.findall(r"void kernel_lanes_\d+\(", source)) == sum(count >= 2 * lanes for count in counts)
+  assert len(re.findall(r"void lanes_\d+\(", source)) == sum(count >= 2 * lanes for count in counts)
   assert source.count("#define SCALY_WIDTH_") == 1
   assert len(re.findall(r"^typedef double \w+ __attribute__\(\(vector_size\(8 \*", source, re.M)) == (dialect == "gnu")
   values = np.linspace(-2, 3, sum(counts))
@@ -209,7 +209,7 @@ def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler,
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline, compiler=command)
   vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, compiler=command)
-  assert "kernel_lanes_1" in source
+  assert "lanes_1(" in source
   values = np.random.default_rng(17).normal(size=19)
   assert _evaluate(vector, values, 1).tobytes() == _evaluate(scalar, values, 1).tobytes()
 
@@ -352,7 +352,7 @@ def test_store_schedule_preserves_compiled_values(tmp_path, dialect):
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline)
   vector, source = _compile(widen_ranges(prog, lanes=8), tmp_path, dialect=dialect)
-  assert "void kernel_lanes_1(" in source
+  assert "void lanes_1(" in source
   values = np.random.default_rng(194).normal(size=17)
   assert _evaluate(vector, values, 114).tobytes() == _evaluate(scalar, values, 114).tobytes()
 
@@ -366,7 +366,7 @@ def test_scheduled_nonaffine_index_uses_gather(tmp_path, lanes):
   store = p.store(p.view(y, [i]), p.load(p.view(x, [index])))
   prog = p.program([p.proc("kernel", [x, y], [p.for_(p.range_("i", 0, 17), [offset, store])])])
   function, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path)
-  assert "void kernel_lanes_1(" in source
+  assert "void lanes_1(" in source
   values = np.arange(41, dtype=np.float64)
   expected = values[(np.arange(17) // 2) * 3 + np.arange(17)]
   np.testing.assert_array_equal(_evaluate(function, values, 17)[:17], expected)
@@ -612,7 +612,29 @@ def test_lane_local_loads_are_one_vector_load(tmp_path, dialect, lanes):
   np.testing.assert_allclose(actual[:count], expected, rtol=1e-15, atol=1e-15)
   np.testing.assert_array_equal(actual[count:], 8765.0)
   if dialect == "gnu" and lanes > 1:
-    helper = source[source.index("void kernel_lanes_1(") :]
+    helper = source[source.index("void lanes_1(") :]
     helper = helper[: helper.index("\n}")]
     assert len(re.findall(r"= \*\(const \w+_mem\*\)\(&", helper)) == 3
     assert "if (n == " not in helper
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+@pytest.mark.parametrize("lanes", [2, 4, 8])
+def test_only_tail_lanes_clamp_their_index(tmp_path, dialect, lanes):
+  count = 2 * lanes + 3
+  x, y = p.buffer("i", dtypes.float64, (count + 5,)), p.buffer("k", dtypes.float64, (count + 5,))
+  j = p.var("j")
+  rng = p.range_("j", 5, count + 5)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  value = p.load(p.view(x, [j]))
+  rhs = p.add(p.mul(ProgramNode(ProgramOp.SIN, (value,)), value), p.const_float(0.125))
+  prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [p.store(p.view(y, [j]), rhs)])])])
+  baseline = tmp_path / "baseline"
+  baseline.mkdir()
+  scalar, _ = _compile(prog, baseline)
+  vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, dialect=dialect)
+  values = np.linspace(-2, 3, count + 5)
+  assert _evaluate(vector, values, count).tobytes() == _evaluate(scalar, values, count).tobytes()
+  if dialect == "gnu":
+    helper = source[source.index("void lanes_1(") :]
+    assert helper[: helper.index("\n}")].count("?") == 1

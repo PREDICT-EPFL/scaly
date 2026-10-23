@@ -51,62 +51,62 @@ static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(d
 extern "C" {
 #endif
 
-static inline __attribute__((always_inline)) void shooting_lanes_1(long long v0_chunk, long long n, double* eq, const double* u, const double* z) {
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* eq, const double* u, const double* z) {
   int64_t v1[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) v1[v0_lane] = (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2)));
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) v1[k] = (4 * ((i + k) < 2 ? (i + k) : 2));
   double ls[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) ls[v0_lane] = z[(v1[v0_lane] + 2)];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) ls[k] = z[(v1[k] + 2)];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
   lanes_4_4_4_4_vec v2 = l;
   double l_2s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_2s[v0_lane] = z[(v1[v0_lane] + 3)];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_2s[k] = z[(v1[k] + 3)];
   lanes_4_4_4_4_vec l_2 = *(const lanes_4_4_4_4_vec_mem*)l_2s;
   lanes_4_4_4_4_vec v3 = l_2;
   double l_3s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_3s[v0_lane] = z[v1[v0_lane]];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_3s[k] = z[v1[k]];
   lanes_4_4_4_4_vec l_3 = *(const lanes_4_4_4_4_vec_mem*)l_3s;
   lanes_4_4_4_4_vec b;
-  for (int v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) b[v0_lane] = 0.050000000000000003;
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b[k] = 0.050000000000000003;
   double l_4s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_4s[v0_lane] = z[(4 + v1[v0_lane])];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_4s[k] = z[(4 + v1[k])];
   lanes_4_4_4_4_vec l_4 = *(const lanes_4_4_4_4_vec_mem*)l_4s;
   lanes_4_4_4_4_vec r = ((l_3 + (b * v2)) - l_4);
-  for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2)))) + 0] = r[v0_lane];
+  for (long long k = 0; k < n; ++k) eq[((4 * ((i + k) < 2 ? (i + k) : 2))) + 0] = r[k];
   double l_5s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_5s[v0_lane] = z[(v1[v0_lane] + 1)];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_5s[k] = z[(v1[k] + 1)];
   lanes_4_4_4_4_vec l_5 = *(const lanes_4_4_4_4_vec_mem*)l_5s;
   lanes_4_4_4_4_vec b_2;
-  for (int v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) b_2[v0_lane] = 0.050000000000000003;
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b_2[k] = 0.050000000000000003;
   double l_6s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_6s[v0_lane] = z[(5 + v1[v0_lane])];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_6s[k] = z[(5 + v1[k])];
   lanes_4_4_4_4_vec l_6 = *(const lanes_4_4_4_4_vec_mem*)l_6s;
   lanes_4_4_4_4_vec r_2 = ((l_5 + (b_2 * v3)) - l_6);
-  for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((1 + (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2))))) + 0] = r_2[v0_lane];
+  for (long long k = 0; k < n; ++k) eq[((1 + (4 * ((i + k) < 2 ? (i + k) : 2)))) + 0] = r_2[k];
   int64_t v4[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) v4[v0_lane] = (2 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2)));
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) v4[k] = (2 * ((i + k) < 2 ? (i + k) : 2));
   lanes_4_4_4_4_vec b_3;
-  for (int v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) b_3[v0_lane] = 0.10000000000000001;
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b_3[k] = 0.10000000000000001;
   lanes_4_4_4_4_vec v5 = (b_3 * ((v2 * v2) + (v3 * v3)));
   lanes_4_4_4_4_vec b_4;
-  for (int v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) b_4[v0_lane] = 0.050000000000000003;
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b_4[k] = 0.050000000000000003;
   double l_7s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_7s[v0_lane] = u[v4[v0_lane]];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_7s[k] = u[v4[k]];
   lanes_4_4_4_4_vec l_7 = *(const lanes_4_4_4_4_vec_mem*)l_7s;
   double l_8s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_8s[v0_lane] = z[(6 + v1[v0_lane])];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_8s[k] = z[(6 + v1[k])];
   lanes_4_4_4_4_vec l_8 = *(const lanes_4_4_4_4_vec_mem*)l_8s;
   lanes_4_4_4_4_vec r_3 = ((v2 + (b_4 * (l_7 - (v5 * v2)))) - l_8);
-  for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((2 + (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2))))) + 0] = r_3[v0_lane];
+  for (long long k = 0; k < n; ++k) eq[((2 + (4 * ((i + k) < 2 ? (i + k) : 2)))) + 0] = r_3[k];
   lanes_4_4_4_4_vec b_5;
-  for (int v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) b_5[v0_lane] = 0.050000000000000003;
+  for (int k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) b_5[k] = 0.050000000000000003;
   double l_9s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_9s[v0_lane] = u[(v4[v0_lane] + 1)];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_9s[k] = u[(v4[k] + 1)];
   lanes_4_4_4_4_vec l_9 = *(const lanes_4_4_4_4_vec_mem*)l_9s;
   double l_10s[SCALY_WIDTH_4_4_4_4];
-  for (long long v0_lane = 0; v0_lane < SCALY_WIDTH_4_4_4_4; ++v0_lane) l_10s[v0_lane] = z[(7 + v1[v0_lane])];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_10s[k] = z[(7 + v1[k])];
   lanes_4_4_4_4_vec l_10 = *(const lanes_4_4_4_4_vec_mem*)l_10s;
   lanes_4_4_4_4_vec r_4 = ((v3 + (b_5 * (l_9 - (v5 * v3)))) - l_10);
-  for (long long v0_lane = 0; v0_lane < n; ++v0_lane) eq[((3 + (4 * (0 + (((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) < 2 ? ((v0_chunk * SCALY_WIDTH_4_4_4_4) + v0_lane) : 2))))) + 0] = r_4[v0_lane];
+  for (long long k = 0; k < n; ++k) eq[((3 + (4 * ((i + k) < 2 ? (i + k) : 2)))) + 0] = r_4[k];
 }
 int shooting(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -116,11 +116,11 @@ int shooting(const double** arg, double** res, int* iw, double* w, int mem) {
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  for (long long v0_chunk = 0; v0_chunk < 3 / SCALY_WIDTH_4_4_4_4; ++v0_chunk) {
-    shooting_lanes_1(v0_chunk, SCALY_WIDTH_4_4_4_4, res[0], arg[1], arg[0]);
+  for (long long v0_start = 0; v0_start <= 3 - SCALY_WIDTH_4_4_4_4; v0_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_1(v0_start, SCALY_WIDTH_4_4_4_4, res[0], arg[1], arg[0]);
   }
 #if (3 % SCALY_WIDTH_4_4_4_4) != 0
-  shooting_lanes_1(3 / SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, res[0], arg[1], arg[0]);
+  lanes_1(3 - 3 % SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, res[0], arg[1], arg[0]);
 #endif
   return SCALY_SUCCESS;
 }

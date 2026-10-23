@@ -11,7 +11,7 @@ import numpy as np
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp, RangeKind
-from ...utils.names import C_MATH, c_ident, NameScope
+from ...utils.names import C_MATH, NameScope
 from ._common import (
   _map_procs,
   _proc_parts,
@@ -61,17 +61,17 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
   procedures = {n.attrs["name"]: n for n in prog.args if n.op == ProgramOp.PROC}
   global_spellings = name_scope(prog)
   widths: dict[tuple[int, ...], tuple[str, str]] = {}
+  helpers = 0
 
   def widen_proc(proc: ProgramNode) -> ProgramNode:
     params, body = _proc_parts(proc)
     spellings = global_spellings.child(name_scope(proc).occupied)
-    ordinal = 0
     promoted: list[ProgramNode] = []
     declarations = {n.attrs["name"]: n for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
     proc_aliases = {name: n.attrs["alias_of"] for name, n in declarations.items() if "alias_of" in n.attrs}
 
     def transform(stmt: ProgramNode) -> ProgramNode:
-      nonlocal ordinal
+      nonlocal helpers
       if stmt.op != ProgramOp.FOR:
         return stmt
       rng, *inner = stmt.args
@@ -136,8 +136,8 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       fits = [w for w in (1, 2, 4, 8) if w <= trip_cap and (lanes == "auto" or w <= lanes)]
       caps = tuple(max(w for w in fits if peak * w <= 4 * slots or w == 1) for slots in (16, 32, 64, 256))
       cap = caps[-1]
-      ordinal += 1
-      helper = global_spellings.allocate(f"{c_ident(proc.attrs['name'])}_lanes_{ordinal}")
+      helpers += 1
+      helper = global_spellings.allocate(f"lanes_{helpers}")
       if caps not in widths:
         key = "_".join(map(str, caps))
         widths[caps] = (
@@ -146,12 +146,13 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         )
       width_macro, vector = widths[caps]
       width = p.var(width_macro)
-      outer_name = spellings.allocate(f"{rng.attrs['name']}_chunk")
+      outer_name = spellings.allocate(f"{rng.attrs['name']}_start")
       lane_name = spellings.allocate(f"{rng.attrs['name']}_lane")
       outer, lane = p.var(outer_name), p.var(lane_name)
-      offset = p.mul(outer, width)
-      index = p.add(rng.args[0], _minimum(p.add(offset, lane), p.const_int(count - 1)))
-      valid = _minimum(width, p.sub(p.const_int(count), offset))
+      index = _minimum(p.add(outer, lane), p.const_int(count - 1))
+      if rng.args[0].attrs.get("value") != 0:
+        index = p.add(rng.args[0], index)
+      valid = _minimum(width, p.sub(p.const_int(count), outer))
       lane_range = p.range_(lane_name, 0, valid, kind=RangeKind.VECTOR)
       lane_range = ProgramNode(
         lane_range.op,
@@ -207,8 +208,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
 
       inner = promote(inner)
       vector = p.for_(lane_range, [substitute_var(n, rng.attrs["name"], index) for n in inner])
-      chunks = p.div(p.add(p.const_int(count), p.sub(width, p.const_int(1))), width)
-      outer_range = p.range_(outer_name, 0, chunks, kind=RangeKind.SERIAL)
+      outer_range = p.range_(outer_name, 0, count, step=width, kind=RangeKind.SERIAL)
       result = p.for_(outer_range, [vector])
       return ProgramNode(
         result.op,
