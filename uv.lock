@@ -1044,7 +1044,7 @@ wheels = [
 
 [[package]]
 name = "scaly"
-version = "0.1.0a2"
+version = "0.1.0a3"
 source = { editable = "." }
 default-groups = ["dev", "docs"]
 dependencies = [
@@ -1114,12 +1114,10 @@ provides-extras = ["piqp", "ipopt", "sqp", "solvers", "toolchain"]
 dev = [
     { name = "casadi", specifier = ">=3.8.0" },
     { name = "cmake", specifier = ">=4.4.4" },
-    { name = "cmake", marker = "sys_platform == 'win32'", specifier = ">=4.4.4" },
     { name = "foxglove-sdk", specifier = ">=0.25.3" },
     { name = "hatchling", specifier = ">=1.32.4" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "ninja", specifier = ">=1.13.2" },
-    { name = "ninja", marker = "sys_platform == 'win32'", specifier = ">=1.13.2" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
@@ -1137,7 +1135,7 @@ docs = [
 
 [[package]]
 name = "scaly-ipopt"
-version = "0.1.0a2"
+version = "0.1.0a3"
 source = { editable = "plugins/scaly-ipopt" }
 dependencies = [
     { name = "scaly" },
@@ -1148,7 +1146,7 @@ requires-dist = [{ name = "scaly", editable = "." }]
 
 [[package]]
 name = "scaly-piqp"
-version = "0.1.0a2"
+version = "0.1.0a3"
 source = { editable = "plugins/scaly-piqp" }
 dependencies = [
     { name = "scaly" },

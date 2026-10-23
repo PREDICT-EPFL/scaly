@@ -65,7 +65,8 @@ static bool scaly_bench_intermediate(
 
 _SHIM = r"""
 static double scaly_bench_total_s = 0.0;
-int scaly_bench_solve(const double** arg, double** res, long long* iw, double* w, int mem) {
+CASADI_SYMBOL_EXPORT void* scaly_bench_ipopt_address(void) {{ return (void*)CreateIpoptProblem; }}
+CASADI_SYMBOL_EXPORT int scaly_bench_solve(const double** arg, double** res, long long* iw, double* w, int mem) {
   scaly_bench_fe_s = 0.0;
   scaly_bench_ipopt_s = 0.0;
   scaly_bench_iter = 0;
@@ -76,10 +77,10 @@ int scaly_bench_solve(const double** arg, double** res, long long* iw, double* w
   scaly_bench_total_s = scaly_clock_s() - t0;
   return rc;
 }
-int scaly_bench_checkout(void) {{ return {name}_checkout(); }}
-void scaly_bench_release(int mem) {{ {name}_release(mem); }}
-int scaly_bench_native_status(int mem) {{ return (int)casadi_f0_mem[mem].status; }}
-int scaly_bench_status(int mem) {{
+CASADI_SYMBOL_EXPORT int scaly_bench_checkout(void) {{ return {name}_checkout(); }}
+CASADI_SYMBOL_EXPORT void scaly_bench_release(int mem) {{ {name}_release(mem); }}
+CASADI_SYMBOL_EXPORT int scaly_bench_native_status(int mem) {{ return (int)casadi_f0_mem[mem].status; }}
+CASADI_SYMBOL_EXPORT int scaly_bench_status(int mem) {{
   switch (casadi_f0_mem[mem].status) {{
     case Solve_Succeeded: return 0;
     case Solved_To_Acceptable_Level: return 1;
@@ -97,17 +98,17 @@ int scaly_bench_status(int mem) {{
     default: return 7;
   }}
 }}
-long long scaly_bench_sizes(long long* out) {{
+CASADI_SYMBOL_EXPORT long long scaly_bench_sizes(long long* out) {{
   casadi_int sz_arg, sz_res, sz_iw, sz_w;
   {name}_work(&sz_arg, &sz_res, &sz_iw, &sz_w);
   out[0] = sz_arg; out[1] = sz_res; out[2] = sz_iw; out[3] = sz_w;
   return 0;
 }}
-double scaly_bench_total(void) {{ return scaly_bench_total_s; }}
-double scaly_bench_fe(void) {{ return scaly_bench_fe_s; }}
-double scaly_bench_ipopt(void) {{ return scaly_bench_ipopt_s; }}
-long long scaly_bench_iter_count(void) {{ return scaly_bench_iter; }}
-long long scaly_bench_eval_count(int which) {{
+CASADI_SYMBOL_EXPORT double scaly_bench_total(void) {{ return scaly_bench_total_s; }}
+CASADI_SYMBOL_EXPORT double scaly_bench_fe(void) {{ return scaly_bench_fe_s; }}
+CASADI_SYMBOL_EXPORT double scaly_bench_ipopt(void) {{ return scaly_bench_ipopt_s; }}
+CASADI_SYMBOL_EXPORT long long scaly_bench_iter_count(void) {{ return scaly_bench_iter; }}
+CASADI_SYMBOL_EXPORT long long scaly_bench_eval_count(int which) {{
   switch (which) {{
     case 0: return scaly_bench_n_f;
     case 1: return scaly_bench_n_g;
@@ -251,14 +252,26 @@ def _build(spec_path: Path) -> None:
   tmp_library.replace(library)
 
 
-def _symbol_library(library: ctypes.CDLL, name: str) -> Path:
-  symbol = getattr(library, name)
+def _symbol_library(library: ctypes.CDLL) -> Path:
+  library.scaly_bench_ipopt_address.restype = ctypes.c_void_p
+  address = library.scaly_bench_ipopt_address()
+  if sys.platform == "win32":
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetModuleHandleExW.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    kernel.GetModuleHandleExW.restype = ctypes.c_int
+    kernel.GetModuleFileNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint]
+    kernel.GetModuleFileNameW.restype = ctypes.c_uint
+    handle = ctypes.c_void_p()
+    path = ctypes.create_unicode_buffer(32768)
+    if not kernel.GetModuleHandleExW(0x6, address, ctypes.byref(handle)) or not kernel.GetModuleFileNameW(handle, path, len(path)):
+      raise RuntimeError("could not resolve the library that provides CreateIpoptProblem")
+    return Path(path.value).resolve()
   info = _DlInfo()
   process = ctypes.CDLL(None)
   process.dladdr.argtypes = [ctypes.c_void_p, ctypes.POINTER(_DlInfo)]
   process.dladdr.restype = ctypes.c_int
-  if not process.dladdr(ctypes.cast(symbol, ctypes.c_void_p), ctypes.byref(info)) or info.dli_fname is None:
-    raise RuntimeError(f"could not resolve the library that provides {name}")
+  if not process.dladdr(address, ctypes.byref(info)) or info.dli_fname is None:
+    raise RuntimeError("could not resolve the library that provides CreateIpoptProblem")
   return Path(os.fsdecode(info.dli_fname)).resolve()
 
 
@@ -313,7 +326,7 @@ class CompiledCasadiIpopt:
     self.metadata = json.loads(metadata_path.read_text())
     self.library = library
     self._dll = load_library(library, isolated=True)
-    self.resolved_ipopt_library = _symbol_library(self._dll, "CreateIpoptProblem")
+    self.resolved_ipopt_library = _symbol_library(self._dll)
     if _library_digest(self.resolved_ipopt_library) != _library_digest(self.configured_ipopt_library):
       raise RuntimeError(
         f"generated CasADi solver resolved {self.resolved_ipopt_library}, expected {self.configured_ipopt_library}; "
@@ -415,7 +428,8 @@ class InterpretedCasadiIpopt:
     f, g = nlp.call([x, p], True, False)
     self.solver = _transformed_nlpsol(name, {"x": x, "p": p, "f": f, "g": g}, {**options, "record_time": True})
     self.build_ms = (time.perf_counter() - started) * 1000.0
-    self.ipopt_library = str(Path(ca.__file__).parent / f"libipopt{shared_lib_ext()}")
+    filename = "libipopt-3.dll" if sys.platform == "win32" else f"libipopt{shared_lib_ext()}"
+    self.ipopt_library = str(Path(ca.__file__).parent / filename)
     self.configured_ipopt_library = self.resolved_ipopt_library = self.ipopt_library
     self.last_stats = None
     self.last_status = None

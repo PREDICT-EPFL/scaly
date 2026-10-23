@@ -34,7 +34,7 @@ jobs:
     env:
       UV_NO_SYNC: "1"
       SCALY_BUILD_SOLVERS: skip
-      SCALY_REQUIRE_SOLVERS: ${{ matrix.os == 'windows-latest' && 'piqp,sqp' || '1' }}
+      SCALY_REQUIRE_SOLVERS: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -73,10 +73,10 @@ jobs:
       - name: Install test dependencies and wheels
         run: |
           flags=(--no-install-package scaly-ipopt)
-          if [ "$RUNNER_OS" = Windows ]; then flags=(--no-install-package scaly --no-install-package scaly-sqp); fi
+          if [ "$RUNNER_OS" = Windows ]; then flags+=(--no-install-package scaly --no-install-package scaly-sqp); fi
           uv sync --frozen ${{ matrix.toolchain && runner.os != 'Windows' && '--extra toolchain' || '' }} --no-install-package scaly-piqp "${flags[@]}"
           uv pip install --no-deps dist/*.whl
-          uv run python -c "import importlib, sys; names = ('scaly', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
+          uv run python -c "import importlib, sys; names = ('scaly', 'scaly_ipopt', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
 
       - name: Windows isolated installed-wheel assertions
         if: runner.os == 'Windows'
@@ -117,36 +117,24 @@ jobs:
       - name: Closed-loop smoke
         if: ${{ !cancelled() && !inputs.full }}
         run: |
-          if [ "$RUNNER_OS" != Windows ]; then
-            uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
-          fi
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
-          if [ "$RUNNER_OS" != Windows ]; then
-            uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
-            uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
-            uv run benchmarks/run.py closed-loop --smoke --problem npmpc --solver ipopt --oracle scaly
-          fi
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem npmpc --solver ipopt --oracle scaly
 
       - name: Closed-loop smoke, every pair
         if: ${{ !cancelled() && inputs.full }}
         run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            echo "Windows IPOPT closed loops remain excluded until #196"
-          else
-            uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
-          fi
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver sqp --oracle scaly,casadi
-          uv run benchmarks/run.py closed-loop --smoke --problem race_cars,unbumpercars,npmpc --solver ${{ runner.os == 'Windows' && 'sqp' || 'ipopt,sqp' }} --oracle scaly,casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars,unbumpercars,npmpc --solver ipopt,sqp --oracle scaly,casadi
           uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver none
 
       - name: Repeated benchmark commands
         if: ${{ !cancelled() && inputs.full }}
         run: |
           uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
-          if [ "$RUNNER_OS" = Windows ]; then
-            uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          else
-            uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-            uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
-          fi
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
           uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv

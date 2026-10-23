@@ -149,8 +149,6 @@ def _solver_call_smoke(required: bool) -> str | None:
   for backend, build in (("piqp", _qp_filter), ("ipopt", _nlp_filter)):
     if solver_loadable(backend):
       functions.append(build())
-    elif backend == "ipopt" and sys.platform == "win32":
-      print("smoke solver_call/ipopt: skipped: Windows IPOPT is unsupported until #196", flush=True)
     elif required:
       raise RuntimeError(f"{backend} solver plugin is not loadable but solver_call was explicitly selected")
     else:
@@ -196,9 +194,10 @@ def _solver_call_smoke(required: bool) -> str | None:
     + "\n"
   )
   objects = []
+  compile_flags = [flag for flag in flags if not flag.startswith(("-L", "-l", "-Wl,"))]
   for source in sources:
     obj = str(Path(source).with_suffix(".o"))
-    subprocess.run([*gbench.c_compiler(), "-O2", "-I", str(out_dir), "-c", source, "-o", obj, *flags], cwd=out_dir, check=True)
+    subprocess.run([*gbench.c_compiler(), "-O2", "-I", str(out_dir), "-c", source, "-o", obj, *compile_flags], cwd=out_dir, check=True)
     objects.append(obj)
   exe = out_dir / ("solver_smoke.exe" if sys.platform == "win32" else "solver_smoke")
   cmd = [*gbench.compiler(), "-O2", "-std=c++17", "-I", str(out_dir), cpp.name, *objects, "-o", str(exe), *flags, "-lm"]
@@ -259,13 +258,6 @@ QUICK_CHECKS = {
   "npmpc": "oracles_agree",
 }
 
-WINDOWS_QUICK_CHECKS = {
-  "race_cars": ("mapped_cost", "sqp_oracles_agree"),
-  "chain": ("eq_jacobian", "sqp_oracles_agree"),
-  "unbumpercars": ("oracle_matches_casadi", "sqp_oracles_agree"),
-  "npmpc": ("decoder_rollout", "sqp_oracles_agree"),
-}
-
 
 def _problem_checks(problem: str, full: bool) -> None:
   _check_required_solvers()
@@ -276,13 +268,9 @@ def _problem_checks(problem: str, full: bool) -> None:
   available = {backend: solver_loadable(backend) for _, backend, _ in table.values() if backend is not None}
   have_casadi = importlib.util.find_spec("casadi") is not None
   names = tuple(table) if full else (QUICK_CHECKS[problem],)
-  if sys.platform == "win32" and not full:
-    names = tuple(dict.fromkeys((*names, *WINDOWS_QUICK_CHECKS[problem])))
   for name in names:
     check, backend, needs_casadi = table[name]
-    if backend == "ipopt" and sys.platform == "win32":
-      outcome = "skipped: IPOPT is not yet supported on Windows"
-    elif backend is not None and not available[backend]:
+    if backend is not None and not available[backend]:
       outcome = f"skipped: {backend.upper()} plugin not loadable"
     elif needs_casadi and not have_casadi:
       outcome = "skipped: casadi not installed"

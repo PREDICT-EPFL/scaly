@@ -1,6 +1,6 @@
 # Installation
 
-Scaly supports Python 3.12 or newer on Linux and macOS. Numerical function calls
+Scaly supports Python 3.12 or newer on Linux, macOS and Windows x86-64. Numerical function calls
 compile generated C, so the Python package needs access to a C compiler even
 when the application itself is entirely Python.
 
@@ -33,7 +33,10 @@ solver options.
 
 ## Compiler selection
 
-Scaly normally uses `cc` from `PATH`. Apple's command-line developer tools
+Windows installations include `zig cc` automatically. The solver wheels include
+their runtime libraries, so using PIQP, IPOPT or SQP needs no separate native toolchain.
+
+On Linux and macOS, Scaly normally uses `cc` from `PATH`. Apple's command-line developer tools
 provide it on macOS, and `build-essential` provides it on Debian and Ubuntu.
 
 The `toolchain` extra installs a C compiler as a Python package instead:
@@ -64,6 +67,7 @@ SCALY_CC=clang uv run scaly_toolchain
 ## Tested environments
 
 Scaly is tested every night in these environments, with Python 3.14 and, on Ubuntu 24.04, also 3.12.
+Windows also runs Python 3.12 and 3.13.
 Other compilers and systems may work, but they are not tested.
 
 | System | Architectures | C compilers |
@@ -73,6 +77,7 @@ Other compilers and systems may work, but they are not tested.
 | Ubuntu 26.04 | x86-64, arm64 | GCC 15, and Clang 22 on x86-64 |
 | macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4), and `zig cc` 0.17 on arm64 |
 | macOS 26 | arm64, x86-64 | Apple Clang 21 (Xcode 26) |
+| Windows Server 2025 | x86-64 | `zig cc` 0.17 |
 
 The selected executable must exist. An invalid override does not fall back to
 the system compiler. [Environment variables](env_vars.md) describes the
