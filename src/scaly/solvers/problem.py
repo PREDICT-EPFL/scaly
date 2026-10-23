@@ -193,20 +193,19 @@ class _NlpForm:
     tree = self.base.output_tree.relabel("lam:")
     return tree, tuple(tree.flatten_symbolic(tree.symbols(), f"{self.problem.name} multipliers"))
 
-  @cached_property
-  def hess_full(self) -> SparseJacobian:
-    """The full sparse Hessian of the Lagrangian ``lam:f * f + lam:g . g``."""
+  def hess_triangle(self, triangle: Triangle) -> SparseJacobian:
+    """One triangle of the sparse Hessian of the Lagrangian ``lam:f * f + lam:g . g``."""
     multipliers = self._multipliers[1]
     lagrangian = multipliers[0] * self.f
     if self.g is not None:
       lagrangian = lagrangian + (multipliers[1] * self.g).sum()
-    return sparse_hessian(lagrangian, self.x)
+    return sparse_hessian(lagrangian, self.x, triangle=triangle)
 
   def hess(self, triangle: Triangle) -> ConcreteFunction:
     """The Lagrangian Hessian oracle that stores ``triangle`` of the matrix."""
     if triangle not in self._hessians:
       tree, multipliers = self._multipliers
-      hess = self.hess_full.triangle(triangle)
+      hess = self.hess_triangle(triangle)
       self._hessians[triangle] = ConcreteFunction.build(
         f"{self.problem.name}_hess_{triangle}",
         append_parameter(self.base.input_tree, tree),

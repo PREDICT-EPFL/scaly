@@ -8,6 +8,7 @@ the structured VMAP decomposition that keeps a multistage Jacobian from material
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from typing import Literal
 
 import numpy as np
@@ -356,8 +357,214 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
   if expr.size != 1:
     raise ValueError("sparse_hessian expects a scalar expression")
   _check_wrt(wrt)
+  if os.environ.get("SCALY_LOCAL_HESSIAN") == "1":
+    local = _separable_hessian(expr, wrt, triangle)
+    if local is not None:
+      return local
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)
   recovery = _star_recovery_indices(sparsity, colors)
   return _sparse_jacobian_colored(gradient_expr, wrt, sparsity, colors, recovery).triangle(triangle)
+
+
+def _keep(rows: np.ndarray, cols: np.ndarray, triangle: Triangle) -> np.ndarray:
+  return np.ones(rows.shape, dtype=bool) if triangle == "full" else (rows >= cols if triangle == "lower" else rows <= cols)
+
+
+def _separable_hessian(expr: Expr, wrt: Expr, triangle: Triangle = "full") -> SparseJacobian | None:
+  """Hessian of a sum of mapped terms and a remainder: one local Hessian per stage, scattered into the nonzeros."""
+  memo: dict[tuple[int, int], bool] = {}
+  mapped: list[tuple[Expr, Expr | None]] = []
+  rest: list[Expr] = []
+  _split_scalar(expr, wrt, None, mapped, rest, memo)
+  if not mapped:
+    return None
+  terms: list[tuple[np.ndarray, np.ndarray, Expr]] = []
+  width = 0
+  for vmap, weights in mapped:
+    term = _mapped_hessian(vmap, weights, wrt, memo, triangle)
+    if term is None:
+      rest.append(_weighted_sum(vmap, weights))
+      continue
+    rows, cols, values, w = term
+    width = max(width, w)
+    if rows.size:
+      terms.append((rows, cols, values))
+  if not terms:
+    return None
+  if rest:
+    remainder = rest[0]
+    for r in rest[1:]:
+      remainder = remainder + r
+    support = np.asarray(sorted(set(jacobian_sparsity(remainder.reshape((1,)), wrt).cols)), dtype=np.int64)
+    if support.size:
+      v = Expr.sym("remainder_v", (support.size,))
+      mask = np.ones(wrt.size)
+      mask[support] = 0.0
+      flat_wrt = wrt.reshape((wrt.size,))
+      embedded = (flat_wrt * Expr.const(mask) + scatter(v, support, (wrt.size,))).reshape(wrt.shape)
+      from ..ir.expr import substitute
+      local = sparse_hessian(substitute(remainder, {wrt: embedded}), v)
+      if local.sparsity.nnz:
+        rows = support[np.asarray(local.sparsity.rows, dtype=np.int64)]
+        cols = support[np.asarray(local.sparsity.cols, dtype=np.int64)]
+        keep = _keep(rows, cols, triangle)
+        values = substitute(gather(local.values, np.flatnonzero(keep)), {v: gather(flat_wrt, support)})
+        width = max(width, local.coloring_width or 0)
+        terms.append((rows[keep], cols[keep], values))
+  n = wrt.size
+  flat = np.unique(np.concatenate([rows * n + cols for rows, cols, _ in terms]))
+  sparsity = SparsityPattern((n, n), tuple(int(v) for v in flat // n), tuple(int(v) for v in flat % n))
+  values: Expr | None = None
+  for rows, cols, term_values in terms:
+    positions = np.searchsorted(flat, rows * n + cols)
+    if positions.size == flat.size and np.array_equal(positions, np.arange(flat.size)):
+      part = term_values
+    else:
+      part = scatter(term_values, positions, (flat.size,))
+    values = part if values is None else values + part
+  assert values is not None
+  sj = SparseJacobian(sparsity, simplify_cse_fixpoint(values), width)
+  return sj if bool(_keep(flat // n, flat % n, triangle).all()) else sj.triangle(triangle)
+
+
+def _weighted_sum(y: Expr, weights: Expr | None) -> Expr:
+  return y.sum() if weights is None else (weights * y).sum()
+
+
+def _split_scalar(expr: Expr, wrt: Expr, scale: Expr | None, mapped: list, rest: list, memo: dict) -> None:
+  if not _depends_on(expr, wrt, memo):
+    return
+  op = expr.op
+  if op == ExprOp.ADD and all(a.shape == () for a in expr.args):
+    for arg in expr.args:
+      _split_scalar(arg, wrt, scale, mapped, rest, memo)
+    return
+  if op == ExprOp.SUB and all(a.shape == () for a in expr.args):
+    _split_scalar(expr.args[0], wrt, scale, mapped, rest, memo)
+    _split_scalar(expr.args[1], wrt, -1.0 if scale is None else -scale, mapped, rest, memo)
+    return
+  if op == ExprOp.NEG:
+    _split_scalar(expr.args[0], wrt, -1.0 if scale is None else -scale, mapped, rest, memo)
+    return
+  if op == ExprOp.MUL and all(a.shape == () for a in expr.args):
+    a, b = expr.args
+    if not _depends_on(a, wrt, memo):
+      _split_scalar(b, wrt, a if scale is None else scale * a, mapped, rest, memo)
+      return
+    if not _depends_on(b, wrt, memo):
+      _split_scalar(a, wrt, b if scale is None else scale * b, mapped, rest, memo)
+      return
+  if op == ExprOp.SUM:
+    y = expr.args[0]
+    weights = None if scale is None else scale * Expr.const(np.ones(y.shape))
+    _split_weighted(y, wrt, weights, mapped, rest, memo)
+    return
+  rest.append(expr if scale is None else scale * expr)
+
+
+def _split_weighted(y: Expr, wrt: Expr, weights: Expr | None, mapped: list, rest: list, memo: dict) -> None:
+  """Split ``sum(weights * y)`` with ``weights`` independent of ``wrt``."""
+  if not _depends_on(y, wrt, memo):
+    return
+  op = y.op
+  if op == ExprOp.RESHAPE:
+    inner = y.args[0]
+    _split_weighted(inner, wrt, None if weights is None else weights.reshape(inner.shape), mapped, rest, memo)
+    return
+  if op == ExprOp.CONCAT and len(y.shape) == 1:
+    offset = 0
+    for arg in y.args:
+      _split_weighted(arg, wrt, None if weights is None else weights[offset : offset + arg.size], mapped, rest, memo)
+      offset += arg.size
+    return
+  if op in (ExprOp.ADD, ExprOp.SUB) and all(a.shape == y.shape for a in y.args):
+    _split_weighted(y.args[0], wrt, weights, mapped, rest, memo)
+    neg = -1.0 * (Expr.const(np.ones(y.shape)) if weights is None else weights)
+    _split_weighted(y.args[1], wrt, weights if op == ExprOp.ADD else neg, mapped, rest, memo)
+    return
+  if op == ExprOp.MUL and all(a.shape == y.shape for a in y.args):
+    a, b = y.args
+    for c, other in ((a, b), (b, a)):
+      if not _depends_on(c, wrt, memo):
+        _split_weighted(other, wrt, c if weights is None else weights * c, mapped, rest, memo)
+        return
+  if op == ExprOp.VMAP and y.attrs["callee"].rules is None:
+    mapped.append((y, weights))
+    return
+  rest.append(_weighted_sum(y, weights))
+
+
+def _mapped_hessian(vmap: Expr, weights: Expr | None, wrt: Expr, memo: dict, triangle: Triangle = "full"):
+  callee = vmap.attrs["callee"]
+  output = vmap.attrs["output"]
+  length = vmap.attrs["length"]
+  starts = vmap.attrs["starts"]
+  strides = vmap.attrs["strides"]
+  slice_size = vmap.attrs["slice_size"]
+  active: list[int] = []
+  for i, actual in enumerate(vmap.args):
+    while actual.op == ExprOp.RESHAPE:
+      actual = actual.args[0]
+    if actual.id == wrt.id:
+      active.append(i)
+    elif _depends_on(actual, wrt, memo):
+      return None
+  if not active or length == 0:
+    return None
+  _, _, local, _ = _local_hessian_function(callee, output, tuple(active), None)
+  local_global: list[int] = []
+  local_stride: list[int] = []
+  for a in active:
+    size = callee.inputs[a].size
+    local_global.extend(starts[a] + j for j in range(size))
+    local_stride.extend([strides[a]] * size)
+  base = np.asarray(local_global, dtype=np.int64)
+  step = np.asarray(local_stride, dtype=np.int64)
+  lr = np.asarray(local.rows, dtype=np.int64)
+  lc = np.asarray(local.cols, dtype=np.int64)
+  it = np.arange(length, dtype=np.int64)[:, None]
+  rows = base[lr][None, :] + it * step[lr][None, :]
+  cols = base[lc][None, :] + it * step[lc][None, :]
+  keep = _keep(rows, cols, triangle).any(axis=0)
+  kept = tuple(int(k) for k in np.flatnonzero(keep))
+  if not kept:
+    return (np.zeros(0, np.int64), np.zeros(0, np.int64), Expr.const(np.zeros(0)), 0)
+  fn, arg_indices, _, local_width = _local_hessian_function(callee, output, tuple(active), kept)
+  lam = Expr.const(np.ones(slice_size)) if weights is None else weights.reshape((weights.size,))
+  specs = [(vmap.args[i], starts[i], strides[i]) for i in arg_indices]
+  specs.append((lam, 0, 0 if weights is None else slice_size))
+  values = _mapped_call(fn, length, specs)
+  return rows[:, keep].reshape(-1), cols[:, keep].reshape(-1), values, local_width
+
+
+def _local_hessian_function(callee, output: int, active: tuple[int, ...], kept: tuple[int, ...] | None):
+  from ..function.concrete import ConcreteFunction
+  key = ("local_hessian", output, active, kept)
+  cache = callee._memo.helpers
+  if key not in cache:
+    sizes = [callee.inputs[a].size for a in active]
+    v = Expr.sym("v", (sum(sizes),))
+    parts = {}
+    offset = 0
+    for a, size in zip(active, sizes, strict=True):
+      parts[callee.inputs[a]] = v[offset : offset + size].reshape(callee.inputs[a].shape)
+      offset += size
+    lam_name = f"lam:{callee.result_names[output]}"
+    lam = Expr.sym(lam_name, callee.outputs[output].shape)
+    from ..ir.expr import substitute
+    body = substitute(callee.results[output], parts)
+    local = sparse_hessian((lam * body).sum(), v)
+    flat_formals = concat([callee.inputs[a].reshape((callee.inputs[a].size,)) for a in active])
+    local_values = local.values if kept is None else gather(local.values, np.asarray(kept, dtype=np.int64))
+    values = callee._inherit_lowering(simplify_cse_fixpoint(substitute(local_values, {v: flat_formals})))
+    dep: dict[tuple[int, int], bool] = {}
+    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(values, inp, dep))
+    inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
+    names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
+    import hashlib
+    digest = hashlib.sha1(repr((output, active, kept, callee._effective_lowering)).encode()).hexdigest()[:10]
+    fn = ConcreteFunction._from_exprs(f"{callee.name}_hess_{digest}", inputs, [values], names, ["hess"], role="forward")
+    cache[key] = (fn, arg_indices, local.sparsity, local.coloring_width or 0)
+  return cache[key]
