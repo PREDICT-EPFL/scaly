@@ -1,6 +1,8 @@
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_runtime_bundles_transitive_dependencies
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-relative]
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-standalone]
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-wrong-version]
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-relative]
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-standalone]
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-wrong-version]
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
