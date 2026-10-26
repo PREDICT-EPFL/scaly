@@ -4,6 +4,7 @@ import os
 import json
 import platform
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -424,6 +425,29 @@ def test_math_library_does_not_use_solver_namespace(isolated_cache: Path, monkey
   compiled = jit.CompiledFunction(_simple_fn())
   assert "-lmvec" in compiled._artifact.flags
   assert loaded == [False]
+
+
+@pytest.mark.skipif(platform.libc_ver()[0] != "glibc" or platform.machine().lower() not in ("x86_64", "amd64"), reason="links libmvec")
+@pytest.mark.parametrize("compiler", ["clang", "zig cc"])
+def test_clang_vectorizes_scalar_math_loops_with_libmvec(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch, compiler: str) -> None:
+  from scaly.codegen.toolchain import BuildRecipe
+
+  if shutil.which(compiler.split()[0]) is None:
+    pytest.skip(f"{compiler} is not installed")
+  monkeypatch.setenv("SCALY_CC", compiler)
+  monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  monkeypatch.setattr(jit, "native_recipe", lambda _compiler: BuildRecipe(cpu="native", lanes=1, vector_libm="glibc"))
+
+  @sc.function(sc.arg("x", 64), outputs=sc.arg("y", 64), name="scalar_sin_loop")
+  def fn(x: sc.Expr) -> sc.Expr:
+    return x.sin()
+
+  xv = np.linspace(-3.0, 3.0, 64)
+  np.testing.assert_allclose(fn(xv), np.sin(xv), rtol=0, atol=1e-15)
+  compiled = as_concrete(fn)._memo.compiled
+  assert compiled is not None
+  undefined = subprocess.run(["nm", "-u", str(compiled.lib_path)], check=True, text=True, capture_output=True).stdout
+  assert "_ZGV" in undefined
 
 
 _ENVIRONMENT_CHANGE_SCRIPT = """

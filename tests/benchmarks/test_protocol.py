@@ -1,7 +1,6 @@
 """Frequency-policy gates and aggregation of independent timing processes."""
 
 import csv
-import os
 from pathlib import Path
 
 import pytest
@@ -29,44 +28,6 @@ def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch: pytest
   monkeypatch.setenv("SCALY_VECTOR_LIBM", "glibc")
   with pytest.raises(ValueError, match="glibc x86-64 host"):
     harness.configure_math_policy()
-
-
-def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch: pytest.MonkeyPatch) -> None:
-  from benchmarks import harness
-  from scaly.codegen.toolchain import BuildRecipe, Compiler
-
-  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler(("clang",), "SCALY_CC"))
-  monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="glibc"))
-  monkeypatch.setattr(harness, "compiler_version", lambda *command: "clang version 20")
-  # configure_math_policy writes os.environ directly, which monkeypatch would not undo
-  monkeypatch.setattr(os, "environ", {k: v for k, v in os.environ.items() if k != "SCALY_VECTOR_LIBM"})
-  with pytest.raises(ValueError, match="Scaly JIT does not pass"):
-    harness.configure_math_policy()
-  harness.configure_math_policy(measured_jit=False)
-  monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
-  harness.configure_math_policy()
-  assert harness.vector_libm() == "none"
-
-
-@pytest.mark.parametrize("command", [("clang",), ("zig", "cc")])
-def test_smoke_accepts_clang_while_measured_closed_loops_keep_the_compiler_guard(monkeypatch: pytest.MonkeyPatch, command: tuple[str, ...]) -> None:
-  import sys
-
-  from benchmarks import harness, run
-  from scaly.codegen.toolchain import BuildRecipe, Compiler
-
-  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler(command, "test"))
-  monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="glibc"))
-  monkeypatch.setattr(harness, "compiler_version", lambda *args: "clang version 20")
-  monkeypatch.setattr(os, "environ", {**os.environ, "SCALY_VECTOR_LIBM": "glibc"})
-  monkeypatch.setattr(run, "smoke", lambda args: True)
-  monkeypatch.setattr(sys, "argv", ["run.py", "smoke"])
-  with pytest.raises(SystemExit) as result:
-    run.main()
-  assert result.value.code == 0
-  monkeypatch.setattr(sys, "argv", ["run.py", "closed-loop", "--oracle", "scaly,casadi"])
-  with pytest.raises(ValueError, match="Scaly JIT does not pass"):
-    run.main()
 
 
 def test_sweep_render_uses_the_selected_math_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

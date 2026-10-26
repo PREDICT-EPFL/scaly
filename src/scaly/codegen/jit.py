@@ -40,7 +40,7 @@ from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.paths import solver_paths
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags
+from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags, vector_libm_flags
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -153,6 +153,7 @@ def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, ou
     *compiler,
     *compile_flags(module.recipe),
     *no_gather_flags(compiler),
+    *vector_libm_flags(compiler, module.recipe.vector_libm),
     "-fPIC",
     shared_lib_flag(),
     source,
