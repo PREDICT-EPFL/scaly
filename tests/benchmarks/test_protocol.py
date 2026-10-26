@@ -260,6 +260,7 @@ def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monke
   from benchmarks import run
 
   monkeypatch.setenv("SCALY_REQUIRE_SOLVERS", required)
+  monkeypatch.setenv("SCALY_CC_OPT", "-O2")  # _problem_checks sets -O0 in os.environ, which monkeypatch then undoes
   monkeypatch.setattr(run, "solver_loadable", lambda name: True)
   monkeypatch.setattr(run.importlib.util, "find_spec", lambda name: None)
   monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"sqp": (lambda: None, "sqp", True)}))
@@ -279,6 +280,7 @@ def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
   monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "solver"})
   monkeypatch.setattr(run, "WINDOWS_QUICK_CHECKS", {"toy": ("numerical",)})
   monkeypatch.setattr(run, "solver_loadable", lambda name: False)
+  monkeypatch.setenv("SCALY_CC_OPT", "-O2")  # _problem_checks sets -O0 in os.environ, which monkeypatch then undoes
   monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
   monkeypatch.setattr(
     run.importlib,
@@ -303,6 +305,7 @@ def test_optional_sqp_can_skip_but_required_sqp_fails(required: str, monkeypatch
   from benchmarks import run
 
   monkeypatch.setenv("SCALY_REQUIRE_SOLVERS", required)
+  monkeypatch.setenv("SCALY_CC_OPT", "-O2")  # _problem_checks sets -O0 in os.environ, which monkeypatch then undoes
   monkeypatch.setattr(run, "solver_loadable", lambda name: name != "sqp")
   monkeypatch.setattr(run.importlib, "import_module", lambda name: SimpleNamespace(CHECKS={"gate": (lambda: pytest.fail("SQP ran"), "sqp", False)}))
   if required:

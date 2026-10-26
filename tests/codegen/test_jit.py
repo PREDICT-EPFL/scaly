@@ -436,6 +436,7 @@ def test_clang_vectorizes_scalar_math_loops_with_libmvec(isolated_cache: Path, m
     pytest.skip(f"{compiler} is not installed")
   monkeypatch.setenv("SCALY_CC", compiler)
   monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  monkeypatch.setenv("SCALY_CC_OPT", "-O2")
   monkeypatch.setattr(jit, "native_recipe", lambda _compiler: BuildRecipe(cpu="native", lanes=1, vector_libm="glibc"))
 
   @sc.function(sc.arg("x", 64), outputs=sc.arg("y", 64), name="scalar_sin_loop")
