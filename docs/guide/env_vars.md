@@ -41,7 +41,9 @@ gather loads made the generated matrix-vector loops slower than scalar code.
 The Python compiler detects a fixed lane width for the native CPU. On supported x86-64 hosts
 with glibc 2.35 or newer, it also selects the libmvec vector math library. `SCALY_VECTOR_LIBM=none`
 forces scalar math calls. `SCALY_VECTOR_LIBM=glibc` requests libmvec explicitly and requires a
-compatible target. Vector and scalar math implementations can produce different rounded results.
+compatible target. With libmvec selected, Clang and `zig cc` also get `-fveclib=libmvec`, so
+loops that they vectorize call libmvec too. Vector and scalar math implementations can produce
+different rounded results.
 `scaly_toolchain` reports the detected native build recipe.
 
 The build recipe, the compiler and its flags, and the CPU that `-march=native` resolves to

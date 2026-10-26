@@ -51,14 +51,12 @@ def math_flags(*command: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
   return flags, ("-lmvec",)
 
 
-def configure_math_policy(*, measured_jit: bool = True) -> None:
-  """Apply the benchmark math policy to JIT children and reject unequal compiler flags."""
+def configure_math_policy() -> None:
+  """Apply the benchmark math policy to JIT children and check that the host supports it."""
   os.environ.setdefault("SCALY_VECTOR_LIBM", vector_libm())
   compiler = find_c_compiler()
   if compiler is not None and vector_libm() == "glibc" and native_recipe(compiler.command).vector_libm != "glibc":
     raise ValueError("SCALY_VECTOR_LIBM=glibc requires a glibc x86-64 host with vector math support")
-  if measured_jit and compiler is not None and math_flags(*compiler.command)[0]:
-    raise ValueError("vector-libm closed-loop builds require GCC: Scaly JIT does not pass Clang's -fveclib=libmvec; set SCALY_CC=gcc")
 
 
 def vector_symbols(path: Path) -> list[str]:

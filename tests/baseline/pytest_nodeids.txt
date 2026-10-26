@@ -1321,8 +1321,6 @@ tests/benchmarks/test_protocol.py::test_optional_sqp_can_skip_but_required_sqp_f
 tests/benchmarks/test_protocol.py::test_problem_checks_compile_at_O0
 tests/benchmarks/test_protocol.py::test_required_problem_checks_do_not_skip_missing_casadi[1]
 tests/benchmarks/test_protocol.py::test_required_problem_checks_do_not_skip_missing_casadi[piqp,sqp]
-tests/benchmarks/test_protocol.py::test_smoke_accepts_clang_while_measured_closed_loops_keep_the_compiler_guard[command0]
-tests/benchmarks/test_protocol.py::test_smoke_accepts_clang_while_measured_closed_loops_keep_the_compiler_guard[command1]
 tests/benchmarks/test_protocol.py::test_smoke_skips_a_comparison_backend_over_the_compile_budget
 tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp-1]
 tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp-piqp,sqp]
@@ -1330,7 +1328,6 @@ tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_
 tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[sqp-piqp,sqp]
 tests/benchmarks/test_protocol.py::test_sweep_render_uses_the_selected_math_policy
 tests/benchmarks/test_protocol.py::test_vector_math_policy_matches_supported_compiler_flags
-tests/benchmarks/test_protocol.py::test_vector_math_policy_rejects_unequal_clang_jit_flags
 tests/benchmarks/test_protocol.py::test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt[False]
 tests/benchmarks/test_protocol.py::test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt[True]
 tests/benchmarks/test_protocol.py::test_windows_smoke_runs_supported_groups
@@ -1427,6 +1424,8 @@ tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_ou
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
 tests/codegen/test_input_validation.py::test_jit_reports_input_errors
 tests/codegen/test_jit.py::test_call_uses_jit_and_matches_numpy
+tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[clang]
+tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[zig cc]
 tests/codegen/test_jit.py::test_compiler_wrapper_change_misses_the_cache
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[_h0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
@@ -1540,6 +1539,10 @@ tests/codegen/test_toolchain.py::test_plain_c_module_header_compiles_as_c99
 tests/codegen/test_toolchain.py::test_solver_dir_override_discovery_and_flags
 tests/codegen/test_toolchain.py::test_solver_paths_required_needs_both_libraries
 tests/codegen/test_toolchain.py::test_toolchain_extra_compiles_a_jit_function
+tests/codegen/test_toolchain.py::test_vector_libm_flags_select_libmvec_for_clang[clang-scalar]
+tests/codegen/test_toolchain.py::test_vector_libm_flags_select_libmvec_for_clang[clang]
+tests/codegen/test_toolchain.py::test_vector_libm_flags_select_libmvec_for_clang[gcc]
+tests/codegen/test_toolchain.py::test_vector_libm_flags_select_libmvec_for_clang[zig]
 tests/codegen/test_toolchain.py::test_windows_solver_link_flags_omit_rpath[libpiqpc.dll]
 tests/codegen/test_toolchain.py::test_windows_solver_link_flags_omit_rpath[piqpc.dll]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[1]

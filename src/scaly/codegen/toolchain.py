@@ -85,8 +85,9 @@ class BuildRecipe:
     """Describe the CPU contract and exact object-build commands for generated source."""
     baseline = "host-local native CPU" if self.cpu == "native" else self.cpu
     libc = "glibc x86-64; tanh requires glibc >= 2.35" if self.vector_libm == "glibc" else "scalar libm"
-    flags = ("-O3", *self.cpu_flags, "-fno-math-errno", "-c", source_name)
-    commands = [shlex.join((cc, *flags)) for cc in ("gcc", "clang")]
+    flags = ("-O3", *self.cpu_flags, "-fno-math-errno")
+    veclib = ("-fveclib=libmvec",) if self.vector_libm == "glibc" else ()
+    commands = [shlex.join(("gcc", *flags, "-c", source_name)), shlex.join(("clang", *flags, *veclib, "-c", source_name))]
     return "\n".join(
       (
         "/* Scaly build recipe",
@@ -141,6 +142,15 @@ def no_gather_flags(command: tuple[str, ...]) -> tuple[str, ...]:
     return ("-mcpu=native+prefer_no_gather+prefer_no_scatter",)
   flags = ("-mno-gather", "-mno-scatter")
   return flags if subprocess.run([*command, *flags, "-E", "-x", "c", "-"], input="", capture_output=True).returncode == 0 else ()
+
+
+@lru_cache(maxsize=8)
+def vector_libm_flags(command: tuple[str, ...], vector_libm: VectorLibm) -> tuple[str, ...]:
+  """Clang's ``-fveclib=libmvec`` under glibc vector math, so LLVM vectorizes scalar math loops into libmvec calls.
+
+  GCC has no such flag; it reaches libmvec only through the explicit vector calls Scaly emits.
+  """
+  return ("-fveclib=libmvec",) if vector_libm == "glibc" and "__clang__" in _native_macros(command) else ()
 
 
 def compiler_fingerprint(command: tuple[str, ...]) -> str:

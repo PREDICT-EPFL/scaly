@@ -491,7 +491,9 @@ Export defaults to `vector_libm="none"`, so each lane uses scalar math calls.
 `cos`, `tan`, `exp`, `log`, `pow`, and `tanh`. It requires the GNU dialect,
 x86-64 with compatible target features, and glibc. `tanh` additionally
 requires glibc 2.35 or newer. Generated guards reject incompatible builds.
-The recipe adds `-lmvec`, in addition to the usual `-lm` math-library link.
+The recipe adds `-lmvec`, in addition to the usual `-lm` math-library link,
+and its Clang command adds `-fveclib=libmvec`, so math calls in loops that
+Clang vectorizes on its own also use libmvec. GCC has no such option.
 
 Vector math can produce different rounded results from scalar math. Likewise,
 `reciprocal=True` allows invariant division `x / y` to become multiplication

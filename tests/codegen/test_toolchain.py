@@ -239,6 +239,25 @@ def test_no_gather_flags_target_clang_on_x86(monkeypatch, command, macros: str, 
   toolchain.no_gather_flags.cache_clear()
 
 
+@pytest.mark.parametrize(
+  "command,macros,vector_libm,expected",
+  [
+    (("/usr/bin/gcc",), "#define __x86_64__ 1\n", "glibc", ()),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", "glibc", ("-fveclib=libmvec",)),
+    (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", "none", ()),
+    (("/env/bin/zig", "cc"), "#define __clang__ 1\n#define __x86_64__ 1\n", "glibc", ("-fveclib=libmvec",)),
+  ],
+  ids=["gcc", "clang", "clang-scalar", "zig"],
+)
+def test_vector_libm_flags_select_libmvec_for_clang(monkeypatch, command, macros: str, vector_libm: str, expected) -> None:
+  from scaly.codegen import toolchain
+
+  toolchain.vector_libm_flags.cache_clear()
+  monkeypatch.setattr(toolchain, "_native_macros", lambda command: macros)
+  assert toolchain.vector_libm_flags(command, vector_libm) == expected
+  toolchain.vector_libm_flags.cache_clear()
+
+
 def test_build_recipe_validates_render_controls() -> None:
   from scaly.codegen.toolchain import BuildRecipe
 
@@ -256,6 +275,8 @@ def test_build_recipe_validates_render_controls() -> None:
   assert recipe.cpu_flags == ("-march=x86-64-v3",)
   assert recipe.link_flags == ("-lmvec",)
   assert "gcc -O3 -march=x86-64-v3 -fno-math-errno -c kernel.c" in recipe.comment("kernel.c")
+  assert "clang -O3 -march=x86-64-v3 -fno-math-errno -fveclib=libmvec -c kernel.c" in recipe.comment("kernel.c")
+  assert "clang -O3 -fno-math-errno -c kernel.c" in BuildRecipe().comment("kernel.c")
   assert "glibc >= 2.35" in recipe.comment("kernel.c")
 
 

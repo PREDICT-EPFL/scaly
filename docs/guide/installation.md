@@ -101,7 +101,7 @@ Scaly native toolchain
  * lanes=8, dialect=gnu, vector_libm=glibc, reciprocal=False
  * Math library: glibc x86-64; tanh requires glibc >= 2.35
  * gcc -O3 -march=native -fno-math-errno -c module.c
- * clang -O3 -march=native -fno-math-errno -c module.c
+ * clang -O3 -march=native -fno-math-errno -fveclib=libmvec -c module.c
  * Link with: -lmvec -lm
  */
   solver source: plugin
