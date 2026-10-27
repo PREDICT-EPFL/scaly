@@ -23,6 +23,7 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
         include:
           - { package: scaly-piqp, os: windows-latest }
+          - { package: scaly-ipopt, os: windows-latest }
     steps:
       - uses: actions/checkout@v7
 
@@ -37,6 +38,37 @@ jobs:
       - name: Install gfortran (macOS)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS' && matrix.package == 'scaly-ipopt'
         run: brew install gcc
+
+      - uses: msys2/setup-msys2@v2
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && matrix.package == 'scaly-ipopt'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            make git patch diffutils pkgconf
+
+      - name: Install the Windows Fortran toolchain
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && matrix.package == 'scaly-ipopt'
+        shell: msys2 {0}
+        run: |
+          urls=$(python - <<'PY'
+          import json, sys
+          sys.stdout.reconfigure(newline="\n")
+          with open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json") as f:
+              config = json.load(f)
+          for component in ("gcc-runtime", "winpthreads"):
+              for name in config[component]["packages"]:
+                  print(f"https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-{name}-{config[component]['version']}-any.pkg.tar.zst")
+          PY
+          )
+          mapfile -t packages <<< "$urls"
+          pacman -U --needed --noconfirm "${packages[@]}"
+          pacman -Q
+          cygpath -m /ucrt64/bin >> "$GITHUB_PATH"
+          cygpath -m /usr/bin >> "$GITHUB_PATH"
 
       # The plugins load their solvers through ctypes, so the hooks tag every wheel
       # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The

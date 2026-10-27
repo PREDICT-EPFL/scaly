@@ -243,8 +243,7 @@ def test_windows_smoke_runs_supported_groups(monkeypatch: pytest.MonkeyPatch, ca
   assert "smoke benchmarks: skipped" not in output and "smoke solver_call: skipped" not in output
 
 
-@pytest.mark.parametrize("required", ["1", "piqp,sqp"])
-@pytest.mark.parametrize("missing", ["piqp", "sqp"])
+@pytest.mark.parametrize("required,missing", [("1", "piqp"), ("1", "ipopt"), ("1", "sqp"), ("piqp,sqp", "piqp"), ("piqp,sqp", "sqp")])
 def test_solver_driver_enforces_required_backend_list(required: str, missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
   from benchmarks import run
 
@@ -269,17 +268,14 @@ def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monke
 
 
 @pytest.mark.parametrize("full", [False, True])
-def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
-  full: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_windows_problem_smoke_runs_ipopt(full: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
   from types import SimpleNamespace
   from benchmarks import run
 
   called = []
   monkeypatch.setattr(run.sys, "platform", "win32")
   monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "solver"})
-  monkeypatch.setattr(run, "WINDOWS_QUICK_CHECKS", {"toy": ("numerical",)})
-  monkeypatch.setattr(run, "solver_loadable", lambda name: False)
+  monkeypatch.setattr(run, "solver_loadable", lambda name: True)
   monkeypatch.setenv("SCALY_CC_OPT", "-O2")  # _problem_checks sets -O0 in os.environ, which monkeypatch then undoes
   monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
   monkeypatch.setattr(
@@ -287,16 +283,15 @@ def test_windows_problem_smoke_keeps_numerical_checks_and_reports_ipopt(
     "import_module",
     lambda name: SimpleNamespace(
       CHECKS={
-        "solver": (lambda: pytest.fail("IPOPT ran"), "ipopt", False),
+        "solver": (lambda: called.append("ipopt"), "ipopt", False),
         "numerical": (lambda: called.append("numerical"), None, False),
       }
     ),
   )
   run._problem_checks("toy", full)
-  assert called == ["numerical"]
+  assert called == (["ipopt", "numerical"] if full else ["ipopt"])
   output = capsys.readouterr().out
-  assert "solver: skipped: IPOPT" in output
-  assert "numerical: ok" in output
+  assert "solver: ok" in output and "skipped" not in output
 
 
 @pytest.mark.parametrize("required", ["", "1", "piqp,sqp"])

@@ -1,6 +1,7 @@
 """Deployment modes use measured build and solve costs without inventing samples."""
 
 from pathlib import Path
+import sys
 from typing import TYPE_CHECKING, assert_type
 
 import pytest
@@ -86,7 +87,8 @@ def test_interpreted_casadi_mode_solves_and_records_stats() -> None:
 
   from pathlib import Path
 
-  assert solver.ipopt_library.endswith(f"libipopt{shared_lib_ext()}")
+  filename = "libipopt-3.dll" if sys.platform == "win32" else f"libipopt{shared_lib_ext()}"
+  assert solver.ipopt_library.endswith(filename)
   assert Path(solver.ipopt_library).is_file()
 
 
