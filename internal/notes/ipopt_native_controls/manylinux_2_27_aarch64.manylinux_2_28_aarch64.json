@@ -1,0 +1,268 @@
+{
+  "source_run": "https://github.com/PREDICT-EPFL/scaly/actions/runs/39988283717",
+  "refreshed_run": "https://github.com/PREDICT-EPFL/scaly/actions/runs/40588152775",
+  "artifact": "dist-scaly-ipopt-ubuntu-24.04-arm",
+  "job_id": 120533454267,
+  "wheel": "scaly_ipopt-0.1.0a3-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
+  "wheel_sha256": "2a386443d077ec4532ba767c4032de42eb5d5343786879da26af8ee9cd27b59c",
+  "wheel_size": 11294863,
+  "inspection_tools": {
+    "lief": "1.0.0-d05b3499b",
+    "pyelftools": "0.33"
+  },
+  "files": {
+    "scaly_ipopt/include/coin-or/IpLinearSolvers.h": {
+      "size": 1476,
+      "sha256": "db504551e937522494fc18864897382393f99f0dc1dcfe4f0d592a4a1024977b"
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes.h": {
+      "size": 434,
+      "sha256": "fe95f249aa3abb47f4fafca7f3287ee759b3ec44835d99adb0d59ece8f44b587"
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes_inc.h": {
+      "size": 1604,
+      "sha256": "b610c490709800e2b8565ab060f37a1d4c556ab61a3736c09c1488507ab6b941"
+    },
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h": {
+      "size": 19605,
+      "sha256": "9e8660f32f825b2132539d4404b1835002b263265d9feff57926801c777b4744"
+    },
+    "scaly_ipopt/include/coin-or/IpTypes.h": {
+      "size": 1653,
+      "sha256": "814eca1603edd056fef2f0c92ceb7eb4aeae331815b1b19160213b7e6bd8e204"
+    },
+    "scaly_ipopt/include/coin-or/IpoptConfig.h": {
+      "size": 1121,
+      "sha256": "3f4533c2e842a26c5c0a94fe98a56a290c3f67bc237e1360f4347b66d602a6bd"
+    },
+    "scaly_ipopt/lib/libgfortran.so.5": {
+      "size": 1388008,
+      "sha256": "e1b7dfc8afd407cea6c8abfd8f3d990b9ff924b08e632667ce72b1c290b912b0",
+      "format": "ELF",
+      "machine": "ARCH.AARCH64",
+      "imports": [
+        "libz.so.1",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-aarch64.so.1"
+      ],
+      "loader_paths": [],
+      "symbol_version_requirements": {
+        "ld-linux-aarch64.so.1": [
+          "GLIBC_2.17"
+        ],
+        "libgcc_s.so.1": [
+          "GCC_3.0",
+          "GCC_3.3",
+          "GCC_4.2.0",
+          "GCC_4.5.0"
+        ],
+        "libc.so.6": [
+          "GLIBC_2.17"
+        ],
+        "libm.so.6": [
+          "GLIBC_2.17",
+          "GLIBC_2.27"
+        ]
+      }
+    },
+    "scaly_ipopt/lib/libipopt.so": {
+      "size": 16890872,
+      "sha256": "42088e8dbb4c768d8731cd0f64a7ac6eced65d87252d6af39c95bc59b8f4a185",
+      "format": "ELF",
+      "machine": "ARCH.AARCH64",
+      "imports": [
+        "libpthread.so.0",
+        "libgfortran.so.5",
+        "libdl.so.2",
+        "libstdc++.so.6",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-aarch64.so.1",
+        "libgcc_s.so.1"
+      ],
+      "loader_paths": [
+        "RUNPATH             : 0x05dc9d $ORIGIN   "
+      ],
+      "symbol_version_requirements": {
+        "libgcc_s.so.1": [
+          "GCC_3.0"
+        ],
+        "libdl.so.2": [
+          "GLIBC_2.17"
+        ],
+        "ld-linux-aarch64.so.1": [
+          "GLIBC_2.17"
+        ],
+        "libpthread.so.0": [
+          "GLIBC_2.17"
+        ],
+        "libm.so.6": [
+          "GLIBC_2.17",
+          "GLIBC_2.27"
+        ],
+        "libc.so.6": [
+          "GLIBC_2.17"
+        ],
+        "libgfortran.so.5": [
+          "GFORTRAN_8"
+        ],
+        "libstdc++.so.6": [
+          "CXXABI_1.3",
+          "CXXABI_1.3.8",
+          "CXXABI_1.3.9",
+          "GLIBCXX_3.4",
+          "GLIBCXX_3.4.11",
+          "GLIBCXX_3.4.15",
+          "GLIBCXX_3.4.20",
+          "GLIBCXX_3.4.21",
+          "GLIBCXX_3.4.9"
+        ]
+      }
+    },
+    "scaly_ipopt/lib/libipopt.so.3": {
+      "size": 16890872,
+      "sha256": "42088e8dbb4c768d8731cd0f64a7ac6eced65d87252d6af39c95bc59b8f4a185",
+      "format": "ELF",
+      "machine": "ARCH.AARCH64",
+      "imports": [
+        "libpthread.so.0",
+        "libgfortran.so.5",
+        "libdl.so.2",
+        "libstdc++.so.6",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-aarch64.so.1",
+        "libgcc_s.so.1"
+      ],
+      "loader_paths": [
+        "RUNPATH             : 0x05dc9d $ORIGIN   "
+      ],
+      "symbol_version_requirements": {
+        "libgcc_s.so.1": [
+          "GCC_3.0"
+        ],
+        "libdl.so.2": [
+          "GLIBC_2.17"
+        ],
+        "ld-linux-aarch64.so.1": [
+          "GLIBC_2.17"
+        ],
+        "libpthread.so.0": [
+          "GLIBC_2.17"
+        ],
+        "libm.so.6": [
+          "GLIBC_2.17",
+          "GLIBC_2.27"
+        ],
+        "libc.so.6": [
+          "GLIBC_2.17"
+        ],
+        "libgfortran.so.5": [
+          "GFORTRAN_8"
+        ],
+        "libstdc++.so.6": [
+          "CXXABI_1.3",
+          "CXXABI_1.3.8",
+          "CXXABI_1.3.9",
+          "GLIBCXX_3.4",
+          "GLIBCXX_3.4.11",
+          "GLIBCXX_3.4.15",
+          "GLIBCXX_3.4.20",
+          "GLIBCXX_3.4.21",
+          "GLIBCXX_3.4.9"
+        ]
+      }
+    },
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md": {
+      "size": 1038,
+      "sha256": "8a239c5e31c0ee2651172531c3aae3b5aba046cb8ee35b71ae7a706740f35a50"
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING.RUNTIME": {
+      "size": 3324,
+      "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING3": {
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    "scaly_ipopt/licenses/gklib/BSD-3-Clause-MT.txt": {
+      "size": 1558,
+      "sha256": "bdcd4ca0bf11881a25e53c59256844e840b74974fe2245f2ce91cb4f9561a9fb"
+    },
+    "scaly_ipopt/licenses/gklib/LGPL-2.1.txt": {
+      "size": 26419,
+      "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95"
+    },
+    "scaly_ipopt/licenses/gklib/LICENSE.txt": {
+      "size": 1049,
+      "sha256": "b276d6ed5ce46439ab1f9708d24726763c1c245049579ba7aef96f0b8f952444"
+    },
+    "scaly_ipopt/licenses/gklib/LICENSES.md": {
+      "size": 2353,
+      "sha256": "b49c169750b29055e690db1bbd69808ae11f5c9cad26984861d40ee8b427753d"
+    },
+    "scaly_ipopt/licenses/ipopt/LICENSE": {
+      "size": 14198,
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303"
+    },
+    "scaly_ipopt/licenses/metis/LICENSE": {
+      "size": 641,
+      "sha256": "64ab947d7b289ad76e935adff51b31e4ac160df7dfad24480dbaa452e39bbe79"
+    },
+    "scaly_ipopt/licenses/mumps/LICENSE": {
+      "size": 2579,
+      "sha256": "5813fefd30a36fd7550cd2b62274be6586a0db51c11c3f2d4b852283e22ccc42"
+    },
+    "scaly_ipopt/licenses/openblas/GotoBLAS_00License.txt": {
+      "size": 1608,
+      "sha256": "38d9eb2e3d49d73fa12b18729a112fa949f7887c3ff12be23a02c0c97d9fb5b8"
+    },
+    "scaly_ipopt/licenses/openblas/LICENSE": {
+      "size": 1548,
+      "sha256": "190b5a9c8d9723fe958ad33916bd7346d96fab3c5ea90832bb02d854f620fcff"
+    },
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE": {
+      "size": 14198,
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303"
+    }
+  },
+  "build_log_evidence": [
+    {
+      "line": 22480,
+      "text": "wheels / scaly-ipopt / ubuntu-24.04-arm\tUNKNOWN STEP\t2026-10-23T16:45:38.3783631Z   Library Name     ... libopenblasp-r0.3.28.a (Multi-threading; Max num-threads is 4)"
+    },
+    {
+      "line": 594,
+      "text": "wheels / scaly-ipopt / ubuntu-24.04-arm\tUNKNOWN STEP\t2026-10-23T16:38:55.4863060Z cc -O2 -DSMALL_MATRIX_OPT -DGEMM_GEMV_FORWARD -DMAX_STACK_ALLOC=2048 -Wall -DF_INTERFACE_GFORT -fPIC -DDYNAMIC_ARCH -DSMP_SERVER -DNO_WARMUP -DMAX_CPU_NUMBER=4 -DMAX_PARALLEL_NUMBER=1 -DBUILD_SINGLE=1 -DBUILD_DOUBLE=1 -DBUILD_COMPLEX=1 -DBUILD_COMPLEX16=1 -DVERSION=\\\"0.3.28\\\" -march=armv8.5-a+sve+sve2+bf16 -mtune=neoverse-n2 -UASMNAME -UASMFNAME -UNAME -UCNAME -UCHAR_NAME -UCHAR_CNAME -DASMNAME=saxpy -DASMFNAME=saxpy_ -DNAME=saxpy_ -DCNAME=saxpy -DCHAR_NAME=\\\"saxpy_\\\" -DCHAR_CNAME=\\\"saxpy\\\" -DNO_AFFINITY -I.. -I. -UDOUBLE  -UCOMPLEX -c axpy.c -o saxpy.o"
+    },
+    {
+      "line": 22481,
+      "text": "wheels / scaly-ipopt / ubuntu-24.04-arm\tUNKNOWN STEP\t2026-10-23T16:45:38.3795089Z   Supporting multiple arm64 cpu models with minimum requirement for the common code being NEOVERSEN2"
+    },
+    {
+      "line": 22478,
+      "text": "wheels / scaly-ipopt / ubuntu-24.04-arm\tUNKNOWN STEP\t2026-10-23T16:45:38.3723428Z   C compiler       ... GCC  (cmd & version : cc (GCC) 14.2.1 20250110 (Red Hat 14.2.1-11))"
+    },
+    {
+      "line": 22479,
+      "text": "wheels / scaly-ipopt / ubuntu-24.04-arm\tUNKNOWN STEP\t2026-10-23T16:45:38.3762599Z   Fortran compiler ... GFORTRAN  (cmd & version : GNU Fortran (GCC) 14.2.1 20250110 (Red Hat 14.2.1-11))"
+    },
+    {
+      "line": 401,
+      "text": "wheels / scaly-ipopt / ubuntu-24.04-arm\tUNKNOWN STEP\t2026-10-23T16:38:17.7491101Z   ^[[38;5;244mrepair_command: auditwheel repair -w {dest_dir} {wheel}^[[0m"
+    }
+  ],
+  "blas": {
+    "implementation": "OpenBLAS 0.3.28",
+    "dynamic_arch": true,
+    "openmp": false,
+    "thread_model": "pthreads",
+    "compiled_max_threads": 4,
+    "compiled_max_parallel": 1,
+    "thread_default": "not established by these artifacts",
+    "common_code_target": "NEOVERSEN2"
+  },
+  "max_required_glibc": "GLIBC_2.27"
+}

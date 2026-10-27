@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "target": {
+    "system": "Darwin",
+    "arch": "x86_64",
+    "platform_tag": "macosx_15_0_x86_64",
+    "floor": "macOS 15.0"
+  },
+  "recipe_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "inputs": {
+    "sources": {
+      "ipopt": {
+        "commit": "1111111111111111111111111111111111111111"
+      }
+    },
+    "toolchain": {
+      "cc": "fixture"
+    },
+    "environment": {},
+    "build_config": {},
+    "diagnostics": {}
+  },
+  "configuration": {
+    "precision": "double",
+    "integer_bits": 32,
+    "blas": {
+      "implementation": "Accelerate",
+      "effective": "fixture"
+    },
+    "cpu": {
+      "baseline": "fixture"
+    },
+    "threading": {
+      "effective": "fixture"
+    }
+  },
+  "components": [
+    "ipopt",
+    "mumps",
+    "thirdparty-mumps",
+    "metis",
+    "gklib",
+    "gcc-runtime"
+  ],
+  "dependencies": {
+    "scaly_ipopt/lib/libipopt.dylib": {
+      "bundled": [
+        "scaly_ipopt/lib/libgfortran.5.dylib",
+        "scaly_ipopt/lib/libquadmath.0.dylib",
+        "scaly_ipopt/lib/libgcc_s.1.1.dylib"
+      ],
+      "system": []
+    },
+    "scaly_ipopt/lib/libgfortran.5.dylib": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/libquadmath.0.dylib": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/libgcc_s.1.1.dylib": {
+      "bundled": [],
+      "system": []
+    }
+  },
+  "fixture_files": [
+    "scaly_ipopt/lib/libipopt.dylib",
+    "scaly_ipopt/lib/libgfortran.5.dylib",
+    "scaly_ipopt/lib/libquadmath.0.dylib",
+    "scaly_ipopt/lib/libgcc_s.1.1.dylib",
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h",
+    "scaly_ipopt/include/coin-or/IpoptConfig.h",
+    "scaly_ipopt/licenses/ipopt/LICENSE",
+    "scaly_ipopt/licenses/mumps/LICENSE",
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE",
+    "scaly_ipopt/licenses/metis/LICENSE",
+    "scaly_ipopt/licenses/gklib/LICENSE",
+    "scaly_ipopt/licenses/gcc-runtime/LICENSE",
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md"
+  ]
+}
