@@ -70,6 +70,7 @@ def test_archive_writers_share_one_lock(build_hook, tmp_path):
 @pytest.mark.parametrize("toolchain", ["standalone", "wrong-version", "relative"])
 @pytest.mark.parametrize("mode", ["auto", "required"])
 def test_windows_unsuitable_toolchain_skips_only_editable_auto(build_hook, tmp_path, monkeypatch, toolchain, mode):
+  monkeypatch.delenv("SCALY_IPOPT_BUNDLE", raising=False)
   compiler = tmp_path / "standalone" / "bin" / "gfortran.exe"
   compiler.parent.mkdir(parents=True)
   compiler.touch()
