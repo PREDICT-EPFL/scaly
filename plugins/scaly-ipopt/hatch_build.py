@@ -211,6 +211,11 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
   build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
+  # Recursive BLAS/LAPACK builds update one archive. Lock writers without reducing compiler
+  # parallelism or OpenBLAS's independently detected runtime thread capacity.
+  for variable, tool in (("AR", "ar"), ("RANLIB", "ranlib")):
+    command = [sys.executable, str(Path(__file__).resolve()), "_archive", str(third_party_dir / "openblas-archive.lock"), shutil.which(tool) or tool]
+    build_flags.append(f"{variable}={shlex.join(command)}")
   # Fix the common-code baseline instead of detecting a potentially unsupported build CPU.
   # DYNAMIC_ARCH still selects optimized kernels at runtime.
   if platform.machine().lower() in {"x86_64", "amd64"}:
@@ -219,6 +224,11 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   install_dir.mkdir(parents=True, exist_ok=True)
   _run(["make", f"PREFIX={install_dir.resolve()}", *build_flags, "install"], cwd=src_dir)
   return install_dir
+
+
+def _archive_native(lock: Path, command: list[str]) -> None:
+  with _locked(lock):
+    subprocess.run(command, check=True)
 
 
 def _clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
@@ -243,7 +253,7 @@ def _clone_commit(hook: "BuildHook", url: str, commit: str, dest: Path) -> None:
 
 def _check_checkout(dest: Path, revision: str) -> None:
   def rev(name):
-    return subprocess.check_output(["git", "-C", str(dest), "rev-parse", name + "^{commit}"], text=True).strip()
+    return subprocess.check_output(["git", "-C", str(dest), "rev-parse", name + "^0"], text=True).strip()
 
   if rev("HEAD") != rev(revision):
     raise RuntimeError(f"Retained checkout {dest} does not match {revision}; use a new work directory")
@@ -1056,7 +1066,7 @@ def _recipe_hash(root: Path, source: str | None = None) -> str:
     node
     for node in tree.body
     if isinstance(node, ast.FunctionDef)
-    and node.name in {"_shared_lib_name", "_find_fortran_compiler", "_build_ipopt_stack", "_windows_packages", "_repair_linux_payload"}
+    and node.name in {"_shared_lib_name", "_find_fortran_compiler", "_build_ipopt_stack", "_windows_packages", "_repair_linux_payload", "_locked"}
   ]
   digest = hashlib.sha256(ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False).encode())
   config = json.loads((root / "src/scaly_ipopt/build_config.json").read_text())
@@ -1174,7 +1184,7 @@ def _bundle_manifest(root: Path, work: Path, payload: Path, target: dict) -> dic
       entry["link"] = os.readlink(path)
     files[path.relative_to(payload).as_posix()] = entry
   toolchain = {cmd: _tool_identity(os.environ.get(env, cmd)) for env, cmd in (("CC", "cc"), ("CXX", "c++"), ("FC", "gfortran"))}
-  for cmd in ("git", "make", "cmake", "ninja", "objdump", "readelf", "patchelf", "codesign"):
+  for cmd in ("git", "make", "cmake", "ninja", "ar", "ranlib", "objdump", "readelf", "patchelf", "codesign"):
     if shutil.which(cmd):
       toolchain[cmd] = _tool_identity(cmd)
   from importlib.metadata import version
@@ -1384,6 +1394,9 @@ class BuildHook(BuildHookInterface):
 
 
 if __name__ == "__main__":
+  if sys.argv[1:2] == ["_archive"]:
+    _archive_native(Path(sys.argv[2]), sys.argv[3:])
+    raise SystemExit(0)
   import argparse
 
   parser = argparse.ArgumentParser(description="Build a complete host-native Ipopt tar.gz bundle without publishing it.")

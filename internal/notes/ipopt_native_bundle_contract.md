@@ -116,6 +116,13 @@ sources/build trees/logs on success and failure, reconstructs the payload, finis
 freezes its manifest/archive/checksum. `recipe.json` prevents reusing the work directory after a
 recipe, target or compiler-environment change.
 
+OpenBLAS's recursive BLAS and LAPACK builds update one static archive. The shared recipe wraps
+`ar` and `ranlib` with the existing cross-process lock, using one lock per OpenBLAS source tree.
+Compilation retains its ordinary parallelism. This changes archive scheduling, without setting
+OpenBLAS's compiled thread count, changing its CPU dispatch or changing numerical compiler flags.
+The internal `_archive` command is the subprocess entry for that lock, in the same hook file
+already included in source distributions.
+
 #229 should invoke the same command on native runners, pass the explicit manylinux tag in the
 compatibility containers, retain manifests/checksums and run its five-target gates. It owns
 workflow trigger selection, candidate validation, container-image provenance and authorized

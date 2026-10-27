@@ -1,3 +1,4 @@
+plugins/scaly-ipopt/tests/test_ipopt_build.py::test_archive_writers_share_one_lock
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_runtime_bundles_transitive_dependencies
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-relative]
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-standalone]
