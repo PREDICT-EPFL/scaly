@@ -146,6 +146,14 @@ def test_override_content_identity_and_install(bundle_hook, tmp_path, monkeypatc
       assert hashlib.sha256((root / "src" / name).read_bytes()).hexdigest() == entry["sha256"]
   assert keys[0] != keys[1]
   assert len(list((tmp_path / "cache").glob("ipopt-*"))) == 2
+  entry = tmp_path / "cache" / f"ipopt-{keys[1]}"
+  (entry / "scaly_ipopt/lib/libipopt.so").write_bytes(b"corrupt cache")
+  with pytest.raises(RuntimeError, match="Invalid native cache entry") as error:
+    bundle_hook.BuildHook.initialize(hook, "editable", {})
+  assert str(entry) in str(error.value)
+  archive.unlink()
+  with pytest.raises(RuntimeError, match="Cannot read SCALY_IPOPT_BUNDLE"):
+    bundle_hook.BuildHook.initialize(hook, "editable", {})
 
 
 def test_sdist_ignores_bundle_and_toolchain(bundle_hook, tmp_path, monkeypatch):
@@ -227,11 +235,16 @@ def test_safe_relative_symlink(bundle_hook, tmp_path, monkeypatch):
     bundle_hook._verify_payload(tmp_path / "out", manifest)
 
 
-def test_hatch_wheel_and_sdist_preserve_native_boundary(bundle_hook, tmp_path):
+@pytest.mark.parametrize("repaired_sibling", [False, True])
+def test_hatch_wheel_and_sdist_preserve_native_boundary(bundle_hook, tmp_path, repaired_sibling):
   system = platform.system()
   arch = bundle_hook._host_target()["arch"]
   name = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[system] + "-" + arch
   layout = json.loads((Path(__file__).parent / f"fixtures/bundles/{name}.json").read_text())
+  if repaired_sibling:
+    sibling = "scaly_ipopt.libs/extra.dll"
+    layout["fixture_files"].append(sibling)
+    layout["dependencies"][sibling] = {"bundled": [], "system": []}
   archive = tmp_path / "native.tar.gz"
   manifest = archive_fixture(archive, layout)
   plugin = tmp_path / "plugin"

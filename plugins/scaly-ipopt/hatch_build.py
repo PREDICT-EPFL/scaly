@@ -243,7 +243,7 @@ def _clone_commit(hook: "BuildHook", url: str, commit: str, dest: Path) -> None:
 
 def _check_checkout(dest: Path, revision: str) -> None:
   def rev(name):
-    return subprocess.check_output(["git", "-C", str(dest), "rev-parse", name], text=True).strip()
+    return subprocess.check_output(["git", "-C", str(dest), "rev-parse", name + "^{commit}"], text=True).strip()
 
   if rev("HEAD") != rev(revision):
     raise RuntimeError(f"Retained checkout {dest} does not match {revision}; use a new work directory")
@@ -662,7 +662,7 @@ def _install_build(
 
   Source cache entries retain lib/include/licenses. Archive entries use the relocatable archive
   root, including scaly_ipopt.libs. With `manifest`, validate cached and installed bytes and
-  install them without native repair. #230 can use this same path for pinned downloads.
+  install them without native repair.
   """
   cache = entry.parent
   with _locked(cache / "locks" / f"{entry.name}.lock"):
@@ -680,7 +680,10 @@ def _install_build(
       (scratch / "out").rename(entry)
       _remove_tree(scratch)
     if manifest is not None:
-      _verify_payload(entry, manifest)
+      try:
+        _verify_payload(entry, manifest)
+      except (RuntimeError, OSError) as error:
+        raise RuntimeError(f"Invalid native cache entry {entry}; remove it and reinstall: {error}") from error
     os.utime(entry)
     stamp = root / ".build_key"
     stamp.unlink(missing_ok=True)
@@ -952,7 +955,7 @@ def _read_bundle(bundle: bytes, out: Path | None = None) -> dict:
   Version 1 has manifest.json plus scaly_ipopt/{lib,include,licenses} and optional
   scaly_ipopt.libs. Relative symlinks may name a regular payload file. Directory links,
   hardlinks, devices, duplicate/case-colliding names and unlisted files are forbidden.
-  This is also the input boundary for future pinned downloads; no native tool is needed.
+  No native tool is needed to validate or extract an archive.
   """
   try:
     with tarfile.open(fileobj=io.BytesIO(gzip.decompress(bundle)), mode="r:") as archive:
@@ -1246,7 +1249,10 @@ def _produce_bundle(work: Path, output: Path, platform_tag: str | None = None) -
     ("Darwin", "arm64"),
   }:
     raise RuntimeError(f"Unsupported native target: {target}")
-  if missing := _missing_ipopt_tools():
+  missing = _missing_ipopt_tools()
+  if target["system"] == "Linux" and shutil.which("readelf") is None:
+    missing.append("readelf")
+  if missing:
     raise RuntimeError(f"Missing native tools: {', '.join(missing)}")
   if platform_tag and not (target["system"] == "Linux" and re.fullmatch(r"manylinux_2_\d+_" + target["arch"], platform_tag)):
     raise RuntimeError("--platform-tag accepts only a host-architecture manylinux tag, audited by auditwheel")
@@ -1316,14 +1322,20 @@ class BuildHook(BuildHookInterface):
       build_data["tag"] = _wheel_tag()
     if mode == "skip":
       if (package_dir / "native_manifest.json").is_file():
-        manifest = json.loads((package_dir / "native_manifest.json").read_text())
-        _validate_manifest(manifest)
-        _verify_payload(package_dir.parent, manifest)
+        try:
+          manifest = json.loads((package_dir / "native_manifest.json").read_text())
+          _validate_manifest(manifest)
+          _verify_payload(package_dir.parent, manifest)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as error:
+          raise RuntimeError(f"Invalid installed Ipopt manifest in {package_dir}; reinstall scaly-ipopt: {error}") from error
         build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
       return
     if archive := os.environ.get("SCALY_IPOPT_BUNDLE"):
-      bundle = Path(archive).expanduser().read_bytes()
+      try:
+        bundle = Path(archive).expanduser().read_bytes()
+      except OSError as error:
+        raise RuntimeError(f"Cannot read SCALY_IPOPT_BUNDLE={archive!r}: {error}") from error
       manifest = _read_bundle(bundle)
       build_data["pure_python"] = False
       build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]

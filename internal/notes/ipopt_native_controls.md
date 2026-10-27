@@ -113,9 +113,8 @@ uses MSYS2 GCC and GFortran 16.2.0. The source hook pins the Windows runtime pac
 the wheel notices record GCC runtime 16.2.0-6 and winpthreads 14.0.0.r495.g63ebe6cdb-2.
 The control JSON records hashes of those notices and actual runtime files.
 
-The prior local Windows evidence lives at
-`C:/Users/tudor/.t3/worktrees/scaly/t3-25400f46/build/ipopt-196/`.
-Its retained `native/openblas/Makefile.conf` records `CORE=PRESCOTT` and `NUM_CORES=20`.
+The retained local Windows build's `openblas/Makefile.conf` records
+`CORE=PRESCOTT` and `NUM_CORES=20`.
 This is a different host build from the four-thread CI controls. Do not assign the CI's compiled
 thread capacity to a new workstation build without inspecting that build's generated settings.
 

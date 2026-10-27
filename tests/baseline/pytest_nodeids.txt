@@ -12,7 +12,8 @@ plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_archive_roundtrip_all_targe
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_archive_roundtrip_all_targets[windows-x86_64]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_cached_bundle_corruption_is_rejected
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_corrupt_gzip_trailer_is_rejected
-plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_hatch_wheel_and_sdist_preserve_native_boundary
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_hatch_wheel_and_sdist_preserve_native_boundary[False]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_hatch_wheel_and_sdist_preserve_native_boundary[True]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[closure]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[extra]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[hash]

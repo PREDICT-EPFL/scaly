@@ -21,7 +21,8 @@ build-backend = "hatchling.build"
 ipopt = "scaly_ipopt:BACKEND"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scaly_ipopt"]
+only-include = ["src/scaly_ipopt", "src/scaly_ipopt.libs"]
+sources = ["src"]
 artifacts = [
   "src/scaly_ipopt/lib/*",
   "src/scaly_ipopt/include/**/*",
