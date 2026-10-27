@@ -212,6 +212,8 @@ Milestone 1, 0.2.0: dtypes, sparse matrices into generated C, and the lowering f
   sparse       #39 pattern in TensorType -> #40 support on every node -> #41 no full-size work
                -> #42 sparse boundary -> #43 interfaces
                #46 sparse kernels and the sampled adjoint (after #42, #45) -> #47 sparse-sparse products
+               #221 call support from argument support (after #40)
+               -> #225 seed-axis tangents over their nonzero pairs (after #46)
                if they fit: #44 pattern holes (after #43), #48 sparse derivative outputs (after #43, #47)
 
 Milestone 2, 0.3.0: the loop compiler
@@ -219,6 +221,7 @@ Milestone 2, 0.3.0: the loop compiler
   fusion       #69 lowering-time fusion, sparse-aware (after #29, #45, #46, #68)
                -> #71 lanes and block callees (after #55)
                then #73 reverse keeps the call boundary -> #90 the primal shared with its derivative
+               #75 demanded entries (after #40), designed with #69
 
 Milestone 3, 0.4.0: control flow, dense linear algebra and generated solvers
   loops        #35 GATHER and SCATTER with index operands (after #30)
@@ -233,7 +236,7 @@ Milestone 3, 0.4.0: control flow, dense linear algebra and generated solvers
 Not yet scheduled
   #54 sparse LDL^T (after #46, #52, #53) -> #70 generated sparse IPM
   #83 extern and CLibrary (after #28, #82); #65 nonsmooth, extremum reductions (after #30, #45)
-  #58 Function-level jvp/vjp -> #59 npmpc example and guide; #75 demanded entries;
+  #58 Function-level jvp/vjp -> #59 npmpc example and guide;
   #78 checked builds (after #35, #77)
 
 Then #109, the GPU milestone definition.
@@ -257,6 +260,12 @@ Why this order:
   generated solvers test a finished compiler instead of being its first user. [#31] adds the loop
   rules to [#40]'s support, [#69]'s fusion and [#71]'s lanes; those analyses are written against
   [#27]'s plans and [#29]'s carried ranges, so this is an addition, not a redesign.
+- [#221] and [#225] joined the sparse lane on 2026-10-27, from the chain study in [#220]. Array
+  lowering computes every (seed, entry) pair of a tangent. At chain M=9 that is 270,299 operations
+  per stage, about 95% of them structural zeros, where a hand-built loop over the nonzero pairs
+  needs 56,773 and keeps array-sized code. They close milestone 1 so that the regression in [#214]
+  is fixed before the loop compiler. [#75] moved into milestone 2 because the remaining cost in that
+  measurement is the dense Hessian assembly, which [#69] and [#75] remove together.
 - [#54], the test of decision 2, needs loops, `COND` and dense LDL^T, so it comes after
   milestone 3. The maintainer accepted testing decision 2 last.
 - [#82] (`zig cc` as the JIT's compiler) landed in 0.1.0, before every later milestone's gates,
@@ -904,8 +913,8 @@ never part of the intern key; `None` means any entry may be nonzero. One rule pe
 movement ops, `GATHER`, `SCATTER` and `CONCAT`; union for `ADD`, `SUB`, `MAXIMUM`, `MINIMUM` and
 `SELECT` (per entry when the condition is constant); intersection for `MUL`; the numerator for
 `DIV`; unchanged for zero-preserving unary ops; the projection for `REDUCE`; the Boolean product for
-`MATMUL`, computed with SciPy; the callee's support for `CALL`, tiled over stages for maps; a fixed
-point over carries for `LOOP`. Constants give their nonzero entries and a sparse type bounds the
+`MATMUL`, computed with SciPy; for `CALL` the callee's support under its arguments' support
+([#221]), tiled over stages for maps; a fixed point over carries for `LOOP`. Constants give their nonzero entries and a sparse type bounds the
 support by its pattern. Uses: `passes/expr.py::_is_zero` becomes "support is empty" and disjoint
 products fold; `ad/sparsity.py` consults support in `MUL`, `DIV`, `SELECT` and `MATMUL`, so a dense
 constant with zero blocks no longer gets a dense Jacobian, and keeps its relations only over each
@@ -976,6 +985,17 @@ as the sum of squared row degrees, which no table can remove; tests pin bounded 
 growth on `G.T @ diag(w) @ G`. Block assembly, `diagonal`, Kronecker products and repatterning are
 compositions of existing ops and need no item.
 
+**[#221]. Support through calls.** A call's support comes from its callee's rules evaluated under
+its arguments' support, with one specialisation per distinct argument support, cached and bounded.
+Beyond the bound, it falls back to the callee's own support. On the chain Hessian the zeros come
+from the caller: a forward helper sees a symbolic `[42, 45]` tangent, of which 249 and 567 pairs
+can be nonzero at its two call sites.
+
+**[#225]. Seed-axis tangents over their nonzero pairs.** Array lowering iterates a seed-axis value
+over its nonzero (seed, entry) pairs, with one seed list per entry (constant tables, or affine bands
+for windowed maps) and primal work outside the seed loops. [#46]'s single `(nseed, nnz)` pattern
+shared by all seeds does not cover this case: its union over the seeds is nearly dense.
+
 **[#48]. Sparse derivative outputs become sparse leaves.** `sparse_jacobian` and `sparse_hessian`
 return sparse-typed outputs with a declared layout and triangle
 (`sc.sparse_hessian(f, of, wrt, layout="csr", triangle="upper")`), and `Function.output_sparsities`
@@ -986,8 +1006,8 @@ The mapped path (`ad/sparse.py::_sparse_jacobian_vmap`) keeps its local coloring
 batched pattern for a map of independent stages.
 
 Deferred, beside this track: different patterns per batch entry, dense-block and supernode
-detection inside a pattern ([#91]), automatic compaction of dense-typed values. [#95] and [#96]
-(coloring width, row coloring) stay deferred.
+detection inside a pattern ([#91]), automatic compaction of dense-typed values. [#96] (row coloring)
+stays deferred; [#95] closed into [#220], the study of problem structure.
 
 ## Loops, conditionals and printing
 
@@ -1468,3 +1488,7 @@ writing the guide).
 [#208]: https://github.com/PREDICT-EPFL/scaly/issues/208
 [#23]: https://github.com/PREDICT-EPFL/scaly/issues/23
 [#24]: https://github.com/PREDICT-EPFL/scaly/issues/24
+[#214]: https://github.com/PREDICT-EPFL/scaly/issues/214
+[#220]: https://github.com/PREDICT-EPFL/scaly/issues/220
+[#221]: https://github.com/PREDICT-EPFL/scaly/issues/221
+[#225]: https://github.com/PREDICT-EPFL/scaly/issues/225
