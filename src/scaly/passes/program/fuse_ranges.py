@@ -23,7 +23,6 @@ from ._common import (
   buffer_refs,
   prune_dead_buffers,
   rebuild_program,
-  substitute_var,
   trip_count,
 )
 from .scheduling import ScalarNameAllocator, schedule_values
@@ -235,6 +234,14 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   cells: dict[str, dict[int, _Cell]] = {}
   new_constants: list[ProgramNode] = []
   folded: dict[ProgramNode, ProgramNode] = {}
+  rewritten: dict[tuple[ProgramNode, tuple[tuple[ProgramNode, ProgramNode], ...]], ProgramNode] = {}
+
+  def rewrite_value(rhs: ProgramNode, replacements: dict[ProgramNode, ProgramNode]) -> ProgramNode:
+    key = rhs, tuple(replacements.items())
+    value = rewritten.get(key)
+    if value is None:
+      value = rewritten[key] = _rewrite(rhs, replacements, folded)
+    return value
 
   def index_expr(indices: list[int], trips: list[int]) -> ProgramNode:
     base = indices[0]
@@ -268,13 +275,25 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
     if parsed is None:
       return proc
     ranges, stores = parsed
-    written = set().union(*(buffer_refs(store).writes for store in stores))
-    if any(buffer_refs(store).reads & (written - buffer_refs(store).writes) for store in stores):
+    store_refs = [buffer_refs(store) for store in stores]
+    written = set().union(*(ref.writes for ref in store_refs))
+    if any(ref.reads & (written - ref.writes) for ref in store_refs):
       return proc
     axes = [np.arange(*(int(a.attrs["value"]) for a in rng.args), dtype=np.int64) for rng in ranges]
     grids = np.meshgrid(*axes, indexing="ij")
     variables = {rng.attrs["name"]: grid.reshape(-1) for rng, grid in zip(ranges, grids, strict=True)}
     count = grids[0].size
+    assigned_later = {
+      node.attrs["target"]
+      for j, stmt in enumerate(body)
+      if i < j <= last and j not in region
+      for node in walk_program(stmt)
+      if node.op == ProgramOp.ASSIGN
+    }
+    substituted: dict[ProgramNode, ProgramNode] = {}
+    if i in seeds:
+      shifted_stage = fold_program(p.sub(stage, p.const_int(seed_offsets[i])))
+      pattern = Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] == ranges[0].attrs["name"], lambda _n: shifted_stage)
     for store in stores:
       target, rhs = store.args
       pending = [rhs]
@@ -291,13 +310,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
           pending.extend(node.args)
       if scalar_vars & {rng.attrs["name"] for rng in ranges}:
         return proc
-      read_vars = {node.attrs["name"] for node in walk_program(rhs) if node.op == ProgramOp.VAR}
-      if any(
-        node.op == ProgramOp.ASSIGN and node.attrs["target"] in read_vars
-        for j, stmt in enumerate(body)
-        if i < j <= last and j not in region
-        for node in walk_program(stmt)
-      ):
+      if assigned_later and any(node.op == ProgramOp.VAR and node.attrs["name"] in assigned_later for node in walk_program(rhs)):
         return proc
       dest = target.attrs["buffer"]
       if i in seeds and dest not in {param.attrs["name"] for param in params} and not any(dest in ref.reads for ref in refs):
@@ -315,7 +328,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       if i in seeds and not any(load.args[0].attrs["buffer"] in cells for load in _loads(rhs)):
         if len(ranges) != 1:
           return proc
-        value = substitute_var(rhs, ranges[0].attrs["name"], fold_program(p.sub(stage, p.const_int(seed_offsets[i]))))
+        value = rewrite(rhs, [pattern], rebuild=rebuild_program, fixpoint=False, memo=substituted)
         for trip, idx in zip(axes[0], output_indices, strict=True):
           if int(idx) in output:
             return proc
@@ -354,7 +367,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
             if j not in mapped:
               view = ProgramNode(ProgramOp.VIEW, (p.const_int(int(indexed[j][position])),), load.args[0].attrs, load.args[0].dtype)
               replacements[load] = p.load(view)
-          value = _rewrite(rhs, replacements, folded)
+          value = rewrite_value(rhs, replacements)
           output[int(output_indices[position])] = _Cell(None, value)
           continue
         trip = next(iter(trips))
@@ -369,7 +382,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
               idx = index_expr([int(indexed[j][pos]) for pos in ps], trips)
               view = ProgramNode(ProgramOp.VIEW, (idx,), load.args[0].attrs, load.args[0].dtype)
               replacements[load] = p.load(view)
-          value = _rewrite(rhs, replacements, folded)
+          value = rewrite_value(rhs, replacements)
           for trip, pos in zip(trips, ps, strict=True):
             idx = int(output_indices[pos])
             output[idx] = _Cell(trip, value)
