@@ -116,3 +116,9 @@ exhaustion seen with 20 workers earlier in the task.
 The benchmark smoke passed against the installed archive, including native consumers and solver
 calls. A clean Zensical documentation build exited 0 with no issues. The clean build cleared
 stale incremental link warnings from the workstation's documentation cache.
+
+The ordinary source wheel jobs passed for Windows x86-64, Linux x86-64/aarch64 and macOS
+x86-64/arm64 in [CI run 40594239676](https://github.com/PREDICT-EPFL/scaly/actions/runs/40594239676).
+The Windows job performed a source build and took 1 hour 18 minutes. The other four targets'
+source wheel jobs and the five completed Linux/macOS installed-wheel probes also passed.
+The workflow files and their source-based build selection are unchanged.
