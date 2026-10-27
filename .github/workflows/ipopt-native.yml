@@ -1,0 +1,225 @@
+name: Ipopt native candidates
+
+on:
+  pull_request:
+    paths:
+      - plugins/scaly-ipopt/hatch_build.py
+      - plugins/scaly-ipopt/src/scaly_ipopt/build_config.json
+      - plugins/scaly-ipopt/licenses/**
+      - .github/scripts/**
+      - .github/workflows/ipopt-native*.yml
+  push:
+    branches: [main]
+    paths:
+      - plugins/scaly-ipopt/hatch_build.py
+      - plugins/scaly-ipopt/src/scaly_ipopt/build_config.json
+      - plugins/scaly-ipopt/licenses/**
+      - .github/scripts/**
+      - .github/workflows/ipopt-native*.yml
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch or reviewed commit to build
+        type: string
+        required: true
+        default: main
+      target:
+        description: Candidate targets, never publishes
+        type: choice
+        options: [all, windows-x86_64, linux-x86_64, linux-aarch64, macos-x86_64, macos-arm64]
+        default: all
+  schedule:
+    - cron: '23 5 1 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipopt-native-${{ github.event_name }}-${{ github.ref }}-${{ inputs.branch }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.select.outputs.build }}
+      matrix: ${{ steps.select.outputs.matrix }}
+      commit: ${{ steps.select.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch || github.sha }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Select native inputs and targets
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TARGET: ${{ inputs.target || 'all' }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          args=()
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = push ]; then args+=(--base "$BASE"); fi
+          uv run --no-project --with hatchling --with packaging .github/scripts/ipopt_native.py select --target "$TARGET" "${args[@]}"
+      - name: Test admission and rejection controls
+        run: uv run --no-project --with pytest --with hatchling --with packaging pytest .github/scripts/test_ipopt_native.py --confcutdir=.github/scripts -q
+
+  build:
+    needs: select
+    if: needs.select.outputs.build == 'true'
+    name: build / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select.outputs.commit }}
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install gfortran on macOS
+        if: runner.os == 'macOS'
+        run: brew install gcc
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: false
+          install: mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja make git patch diffutils pkgconf
+      - name: Install the pinned Windows Fortran toolchain
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          urls=$(python - <<'PY'
+          import json, sys
+          sys.stdout.reconfigure(newline="\n")
+          config = json.load(open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json"))
+          for component in ("gcc-runtime", "winpthreads"):
+              for name in config[component]["packages"]:
+                  print(f"https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-{name}-{config[component]['version']}-any.pkg.tar.zst")
+          PY
+          )
+          mapfile -t packages <<< "$urls"
+          pacman -U --needed --noconfirm "${packages[@]}"
+          cygpath -m /ucrt64/bin >> "$GITHUB_PATH"
+          cygpath -m /usr/bin >> "$GITHUB_PATH"
+      - name: Build and freeze the shared recipe
+        env:
+          TARGET: ${{ matrix.target }}
+          MSYSTEM: UCRT64
+          CHERE_INVOKING: '1'
+          MSYS2_PATH_TYPE: inherit
+        run: uv run --no-project --with hatchling --with packaging .github/scripts/ipopt_native.py build --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipopt-candidate-${{ matrix.target }}
+          path: candidate/*
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain failed build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ipopt-build-diagnostics-${{ matrix.target }}
+          path: |
+            build/native/build.log
+            build/native/commands.jsonl
+            build/native/recipe.json
+            build/native/src/**/config.log
+            build/native/src/**/Makefile.conf
+
+  validate:
+    needs: [select, build]
+    name: validate / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    env:
+      SCALY_BUILD_SOLVERS: skip
+      SCALY_REQUIRE_SOLVERS: ipopt,piqp
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select.outputs.commit }}
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: ipopt-candidate-${{ matrix.target }}
+          path: candidate
+      - name: Retrieve the retained source controls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh run download 39988283717 -R "$GITHUB_REPOSITORY" --name "dist-scaly-ipopt-${{ matrix.os }}" --dir baseline
+          gh run download 39988283717 -R "$GITHUB_REPOSITORY" --name "dist-scaly-piqp-${{ matrix.os }}" --dir wheels
+      - name: Install validation dependencies without native compilation
+        shell: bash
+        run: |
+          uv sync --frozen --python 3.12 --no-install-package scaly-ipopt --no-install-package scaly-piqp
+          uv pip install psutil pefile pyelftools
+          if [ "$RUNNER_OS" = Linux ]; then uv pip install auditwheel; fi
+      - name: Validate frozen bytes in fresh processes
+        env:
+          UV_NO_SYNC: '1'
+          TARGET: ${{ matrix.target }}
+        run: uv run --no-sync .github/scripts/ipopt_native_validate.py --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ipopt-validation-${{ matrix.target }}
+          path: validation/**
+          if-no-files-found: error
+          retention-days: 90
+
+  accepted:
+    needs: [select, validate]
+    if: needs.select.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select.outputs.commit }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ipopt-validation-*
+          path: validation
+          merge-multiple: true
+      - name: Record the accepted target set
+        env:
+          TARGET: ${{ inputs.target || 'all' }}
+        run: python .github/scripts/ipopt_native_publish.py summarize --directory validation --target "$TARGET" --output accepted.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipopt-accepted
+          path: accepted.json
+          retention-days: 90
+
+  attest:
+    needs: [select, accepted]
+    if: >-
+      github.ref == 'refs/heads/main' && github.event_name != 'schedule' &&
+      (github.event_name != 'workflow_dispatch' || (inputs.branch == 'main' && inputs.target == 'all'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ipopt-candidate-*
+          merge-multiple: true
+          path: candidate
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: candidate/*.tar.gz
