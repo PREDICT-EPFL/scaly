@@ -3,7 +3,6 @@
 import importlib.util
 import json
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -68,23 +67,6 @@ def test_delay_imports_are_audited():
       audit.resolve_import("Windows", name, "scaly_ipopt/lib/ipopt.dll", {}, [])
 
 
-def test_builder_reads_repaired_pe_and_delay_tables(monkeypatch):
-  native = load("ipopt_native")
-
-  class PE:
-    DIRECTORY_ENTRY_IMPORT = [SimpleNamespace(dll=b"private-fortran.dll")]
-    DIRECTORY_ENTRY_DELAY_IMPORT = [SimpleNamespace(dll=b"private-delayed.dll")]
-
-    def __enter__(self):
-      return self
-
-    def __exit__(self, *args):
-      pass
-
-  monkeypatch.setitem(sys.modules, "pefile", SimpleNamespace(PE=lambda path: PE()))
-  assert native.hook()._windows_deps(Path("repaired.dll")) == ["private-fortran.dll", "private-delayed.dll"]
-
-
 def test_publication_rejects_pr_partial_health_unreviewed_and_wrong_workflow():
   publish = load("ipopt_native_publish")
   good = dict(
@@ -122,11 +104,74 @@ def test_publication_detects_changed_bytes(tmp_path):
     publish.verify_assets(tmp_path, report)
 
 
+@pytest.mark.parametrize("corrupt_download", [False, True])
+def test_publication_uploads_and_verifies_every_asset_before_publishing(tmp_path, monkeypatch, corrupt_download):
+  publish = load("ipopt_native_publish")
+  reviewed = "a" * 40
+  files = {"candidate.tar.gz": b"validated native bytes", "candidate.manifest.json": b"validated manifest"}
+  for name, data in files.items():
+    (tmp_path / name).write_bytes(data)
+  plan = {
+    "revision": "scaly-ipopt-native-v1",
+    "candidate_run": 1,
+    "run_attempt": 1,
+    "reviewed_sha": reviewed,
+    "assets": {name: publish.sha256(tmp_path / name) for name in files},
+  }
+  (tmp_path / "publication-plan.json").write_text(json.dumps(plan))
+  monkeypatch.setattr(publish, "require_maintainer", lambda: "PREDICT-EPFL/scaly")
+
+  def api(path):
+    if "/actions/runs/" in path:
+      return dict(
+        status="completed",
+        conclusion="success",
+        head_branch="main",
+        event="push",
+        path=".github/workflows/ipopt-native.yml",
+        head_sha=reviewed,
+        run_attempt=1,
+      )
+    if path.endswith("commits/main"):
+      return {"sha": reviewed}
+    return {"protection_rules": [{"type": "required_reviewers", "reviewers": [{"id": 1}], "prevent_self_review": True}]}
+
+  monkeypatch.setattr(publish, "api", api)
+  monkeypatch.setattr(publish.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr=b"HTTP 404"))
+  events, uploaded = [], {}
+
+  def gh(*command):
+    action = command[2]
+    events.append(action)
+    if action == "create":
+      assert "--draft" in command and "--latest=false" in command
+    elif action == "upload":
+      for path in command[4 : command.index("-R")]:
+        uploaded[Path(path).name] = Path(path).read_bytes()
+    elif action == "download":
+      directory = Path(command[command.index("--dir") + 1])
+      for name, data in uploaded.items():
+        (directory / name).write_bytes(b"changed" if corrupt_download else data)
+    elif action == "edit":
+      assert "--draft=false" in command and "--latest=false" in command
+      assert uploaded == files | {"publication-plan.json": (tmp_path / "publication-plan.json").read_bytes()}
+
+  monkeypatch.setattr(publish, "run", gh)
+  if corrupt_download:
+    with pytest.raises(RuntimeError, match="Draft download differs"):
+      publish.publish(SimpleNamespace(directory=tmp_path))
+    assert events == ["create", "upload", "download"]
+  else:
+    publish.publish(SimpleNamespace(directory=tmp_path))
+    assert events == ["create", "upload", "download", "edit"]
+
+
 def test_recipe_identity_ignores_wrapper_and_pin_edits(tmp_path):
   native = load("ipopt_native")
   root = Path(__file__).resolve().parents[2]
   source = (root / "plugins/scaly-ipopt/hatch_build.py").read_text(encoding="utf-8")
   assert native.recipe(root) == native.recipe(root, source + "\n# wrapper-only edit\n")
+  assert native.recipe(root) == native.recipe(root, source.replace("class BuildHook(BuildHookInterface)", "class WrapperHook(BuildHookInterface)"))
   assert native.recipe(root) != native.recipe(root, source.replace("DYNAMIC_ARCH=1", "DYNAMIC_ARCH=0"))
 
 
@@ -137,3 +182,13 @@ def test_numerical_comparison_detects_changed_iteration_and_solution():
   for changed in ({"iter": 8}, {"x": [6.0, 4.0]}, {"status": 1}):
     with pytest.raises(RuntimeError):
       native.compare(base, {"solve": base["solve"] | changed})
+
+
+def test_host_thread_capacity_is_reported_without_changing_policy():
+  native = load("ipopt_native")
+  manifest = {"configuration": {"threading": {"effective": {"Makefile.conf": "CORE=PRESCOTT\nNUM_CORES=20\n"}}}}
+  control = {"blas": {"common_code_target": "PRESCOTT", "compiled_max_threads": 4}}
+  result = native.configuration_comparison(manifest, control)
+  assert result["compiled_maximum_differs"] and result["candidate_compiled_max_threads"] == 20
+  assert result["control_compiled_max_threads"] == 4 and result["thread_policy"] == "unchanged"
+  assert manifest["configuration"]["threading"]["effective"]["Makefile.conf"].endswith("NUM_CORES=20\n")

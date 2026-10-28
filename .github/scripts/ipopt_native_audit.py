@@ -150,7 +150,8 @@ def audit(root, manifest):
         raise RuntimeError(f"Stale or external loader path: {name}: {entry}")
     resolved = [resolve_import(system, dependency, name, manifest["files"], data["loader_paths"]) for dependency in data["imports"]]
     bundled = sorted({value for value in resolved if value is not None})
-    if bundled != sorted(manifest["dependencies"][name]["bundled"]):
+    external = sorted({dependency for dependency, value in zip(data["imports"], resolved, strict=True) if value is None})
+    if bundled != sorted(set(manifest["dependencies"][name]["bundled"])) or external != sorted(set(manifest["dependencies"][name]["system"])):
       raise RuntimeError(f"Manifest dependency graph disagrees with binary imports, including delay imports: {name}")
     data["resolved_bundled"] = bundled
     results[name] = data

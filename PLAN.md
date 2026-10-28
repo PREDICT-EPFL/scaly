@@ -25,7 +25,7 @@ Dependencies: validation follows candidate generation; publication consumes only
 main-branch run. Target builds are independent. Monthly health never publishes. No publication,
 tag, merge, default-branch push or repository setting change is authorized here.
 
-Local evidence: 12 admission/rejection tests pass. A mutation disabling the glibc floor rejection
+Local evidence: 14 admission/rejection tests pass. A mutation disabling the glibc floor rejection
 makes its test fail. Both workflows pass actionlint. All new Python scripts pass pinned Ruff and ty.
 The complete Windows validator passes with a diagnostic metadata repack of the retained #228
 archive. It includes 125 existing solver tests and both closed-loop probes. This is validation
@@ -33,10 +33,15 @@ script evidence, not a successful new candidate build. The native bytes remain t
 
 The real audit found #228's `objdump` import inventory is empty for the repaired Windows Ipopt
 DLL. A minimal builder fix reads ordinary/delay imports through its already-required `pefile`.
-The coordinator was told before committing. It is isolated in the commit titled
-`Read repaired Windows imports from PE tables` and needs to move into layer 1 before final handoff.
-The regression is in #229's script tests. No schema or fixture changed.
+The coordinator was told before committing, then asked to keep the fix out of #229's history.
+The fix and regression will land in #228. Locally it remains only as an uncommitted diagnostic
+patch. Await the coordinator's new #231 head, then rebase onto
+`origin/t3code/issue-228-native-bundle-builder` and push with `--force-with-lease`.
+No schema or fixture changed.
 
 Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/233. Initial producer run 40605435231 uses
-the incomplete Windows inventory and is superseded by the next push. A full pre-merge hook is
-running in `build/pre-merge.log`. The baseline cold Windows source build still takes about an hour.
+the incomplete Windows inventory and was cancelled. The next run is on the pushed draft.
+Full pre-merge type, format and lint passed. The suite has 2743 passed, 107 skipped and the known
+workstation `test_native_recipe_render_policies_separate_cache_entries` failure from missing `cc`.
+The benchmark smoke is running separately. The docs build reports no issues. The cold Windows
+source build still takes about an hour.
