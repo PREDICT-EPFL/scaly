@@ -26,6 +26,7 @@ def test_ipopt_provenance_hashes_selected_library_and_bundle(tmp_path: Path) -> 
   result = provenance._ipopt_provenance(other, {})
   assert result["sha256"] == hashlib.sha256(other.read_bytes()).hexdigest()
   assert result["bundle"] is None
+  assert provenance._ipopt_provenance(tmp_path / "system/libipopt.so.3", {})["sha256"] is None
 
 
 def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -32,7 +32,7 @@ def _ipopt_provenance(link_library: Path, build: object) -> dict[str, object]:
   identity = library.parent.parent / "native_bundle.json"
   return {
     "library": str(library),
-    "sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+    "sha256": hashlib.sha256(library.read_bytes()).hexdigest() if library.is_file() else None,
     "link_library": str(link_library.resolve()),
     "build": build,
     "bundle": json.loads(identity.read_text()) if identity.is_file() else None,
