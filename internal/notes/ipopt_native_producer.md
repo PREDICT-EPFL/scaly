@@ -48,7 +48,7 @@ states whether native bytes match and records configuration differences. These c
 hosted-CI performance claim.
 
 The existing solver-required tests, `solve_smoke.py`, `windows_install.py` on Windows, and the
-chain closed-loop smoke supply the remaining acceptance checks. Linux also runs a standalone
+chain and compiled CasADi race-cars closed-loop smokes supply the remaining acceptance checks. Linux also runs a standalone
 consumer in glibc 2.27 with only allowed system libraries. Hiding the bundled Fortran runtime must
 break a fresh load. Its positive control must pass first. No build or host search path is mounted
 in that container. Each target produces a validation report and detailed audit/probe evidence.
@@ -82,7 +82,8 @@ merged main PR, current main identity, five complete reports from the same attem
 hashes and GitHub attestations signed by the producer on that main commit. PR, trial and monthly
 output is rejected. It downloads the tested bytes and emits a reviewable publication plan and
 `consumer-pins.json`. A successful trusted full main run attests the archive bytes after all
-targets pass. PR jobs have no attestation or release-write permissions.
+targets pass. Publication also attaches the verified attestation bundles for offline checks.
+PR jobs have no attestation or release-write permissions.
 
 After reviewing the plan, the maintainer authorizes the explicit publication dispatch:
 

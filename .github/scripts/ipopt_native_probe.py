@@ -83,7 +83,7 @@ def python_solves():
   from scaly.solvers.paths import solver_paths
 
   assert "site-packages" in sc.__file__ and "site-packages" in scaly_ipopt.__file__
-  library = Path(solver_paths(required=True).loads["ipopt"]).resolve()
+  library = Path(solver_paths(required=True).loads["ipopt"] or "").resolve()
 
   @sc.problem(vars=sc.arg("x", 2), params=sc.arg("r", ()), name="candidate_disk")
   def disk(x, r):
@@ -129,6 +129,9 @@ def main():
   handles = []
   if sys.platform == "win32":
     handles.append(os.add_dll_directory(str(args.root / "scaly_ipopt/lib")))
+  if args.order == "scaly":
+    solver = next(name for name in manifest["files"] if Path(name).name in {"libscaly_ipopt-3.dll", "libipopt.so", "libipopt.dylib"})
+    handles.append(ctypes.CDLL(str(args.root / solver)))
   if args.consumer:
     import numpy as np
 

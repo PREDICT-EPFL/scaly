@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -47,6 +48,7 @@ def write(path, value):
 
 def hook(root=ROOT):
   spec = importlib.util.spec_from_file_location("native_hook", root / "plugins/scaly-ipopt/hatch_build.py")
+  assert spec is not None and spec.loader is not None
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
   return module
@@ -92,6 +94,29 @@ def compare(baseline, candidate):
         raise RuntimeError(f"Investigate {name}: numerical {key} differs")
 
 
+def configuration_comparison(manifest, control):
+  effective = manifest["configuration"]["threading"]["effective"]
+  if not isinstance(effective, dict):
+    return {"blas": "Accelerate", "active_threads": "unmeasured"}
+  settings = "\n".join(effective.values())
+  cores = re.search(r"^NUM_CORES\s*=\s*(\d+)", settings, re.MULTILINE)
+  core = re.search(r"^CORE\s*=\s*(\S+)", settings, re.MULTILINE)
+  if not cores or not core or core[1] != control["blas"]["common_code_target"]:
+    raise RuntimeError("Missing effective OpenBLAS configuration or changed common-code CPU baseline")
+  if re.search(r"(?:INTERFACE64\s*=\s*1|#define\s+(?:OPENBLAS_)?USE64BITINT\b)", settings):
+    raise RuntimeError("OpenBLAS changed its 32-bit integer interface")
+  maximum = int(cores[1])
+  return {
+    "blas": "OpenBLAS",
+    "candidate_compiled_max_threads": maximum,
+    "control_compiled_max_threads": control["blas"]["compiled_max_threads"],
+    "compiled_maximum_differs": maximum != control["blas"]["compiled_max_threads"],
+    "common_code_target": core[1],
+    "active_threads": "unmeasured",
+    "thread_policy": "unchanged",
+  }
+
+
 def build(target):
   archive = ROOT / "candidate" / f"scaly-ipopt-native-{target}.tar.gz"
   work = ROOT / "build/native"
@@ -126,6 +151,7 @@ def build(target):
   else:
     run(command)
   manifest = json.loads(archive.with_name(archive.name + ".manifest.json").read_text())
+  control = json.loads((ROOT / "internal/notes/ipopt_native_controls" / (TARGETS[target]["control"] + ".json")).read_text())
   provenance = {
     "schema_version": 1,
     "target": target,
@@ -140,10 +166,8 @@ def build(target):
     "manifest_sha256": sha256(archive.with_name(archive.name + ".manifest.json")),
     "recipe_sha256": manifest["recipe_sha256"],
     "configuration": manifest["configuration"],
-    "source_control": json.loads((ROOT / "internal/notes/ipopt_native_controls" / (TARGETS[target]["control"] + ".json")).read_text()),
-    "control_openblas_max_threads": None if target.startswith("macos") else 4,
-    "candidate_openblas_settings": manifest["configuration"]["threading"]["effective"],
-    "thread_comparison": "Inspect candidate NUM_CORES/MAX_CPU_NUMBER against the control maximum of 4; host-dependent values are reported without a policy change.",
+    "source_control": control,
+    "configuration_comparison": configuration_comparison(manifest, control),
   }
   write(archive.with_name(archive.name + ".provenance.json"), provenance)
 

@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 
-from ipopt_native import ROOT, TARGETS, compare, hook, run, sha256, write
+from ipopt_native import ROOT, TARGETS, compare, configuration_comparison, hook, run, sha256, write
 from ipopt_native_audit import audit
 from ipopt_native_publish import GATES
 
@@ -96,6 +96,9 @@ def negative(root, manifest, work, target, report):
     )
     image = "scaly-ipopt-floor"
     run(["docker", "build", "-t", image, context])
+    runtime_identity = subprocess.check_output(["docker", "run", "--rm", "--network=none", image, "getconf", "GNU_LIBC_VERSION"], text=True).strip()
+    if runtime_identity != "glibc 2.27":
+      raise RuntimeError(f"Wrong compatibility-floor runtime: {runtime_identity}")
     executable = ROOT / "candidate" / (target + ".floor-probe")
     shutil.copy2(executable, isolated / "floor-probe")
     (isolated / "floor-probe").chmod(0o755)
@@ -104,6 +107,7 @@ def negative(root, manifest, work, target, report):
     runtime.rename(runtime.with_name(runtime.name + ".hidden"))
     failed = subprocess.run(command, text=True, capture_output=True)
     report["floor_runtime"] = {
+      "glibc": runtime_identity,
       "image": json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]["Id"],
       "positive": positive.stdout,
       "probe_sha256": sha256(executable),
@@ -211,6 +215,7 @@ def validate(target):
     "identical_native_bytes": all(manifest["files"].get(name, {}).get("sha256") == entry["sha256"] for name, entry in control["files"].items()),
     "control_blas": control["blas"],
     "candidate_configuration": manifest["configuration"],
+    "effective_configuration_comparison": configuration_comparison(manifest, control),
   }
   for gate in ("c", "cxx", "direct_nested_stats", "sparse_mumps", "coexistence_both_orders", "source_comparison"):
     report["gates"][gate] = True
@@ -236,23 +241,24 @@ def validate(target):
   if sys.platform == "win32":
     run(["uv", "run", "--no-project", SCRIPTS / "windows_install.py", wheels, "3.12"])
   report["gates"]["installed_smoke"] = True
-  run(
-    [
-      sys.executable,
-      "benchmarks/run.py",
-      "closed-loop",
-      "--smoke",
-      "--problem",
-      "chain",
-      "--solver",
-      "ipopt",
-      "--oracle",
-      "scaly,casadi",
-      "--out-dir",
-      work / "closed-loop",
-    ],
-    env=clean,
-  )
+  for problem, oracle in (("chain", "scaly"), ("race_cars", "casadi")):
+    run(
+      [
+        sys.executable,
+        "benchmarks/run.py",
+        "closed-loop",
+        "--smoke",
+        "--problem",
+        problem,
+        "--solver",
+        "ipopt",
+        "--oracle",
+        oracle,
+        "--out-dir",
+        work / f"closed-loop-{problem}",
+      ],
+      env=clean,
+    )
   report["gates"]["closed_loop"] = True
   assert report["gates"].keys() == GATES and all(report["gates"].values())
   report["assets"] = {path.name: sha256(path) for path in archive.parent.glob(archive.name + "*")}

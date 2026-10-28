@@ -3,6 +3,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +12,7 @@ import pytest
 def load(name):
   path = Path(__file__).with_name(name + ".py")
   spec = importlib.util.spec_from_file_location(name, path)
+  assert spec is not None and spec.loader is not None
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
   return module
@@ -63,6 +66,23 @@ def test_delay_imports_are_audited():
   with pytest.raises(RuntimeError):
     for name in audit.pe_imports(PE()):
       audit.resolve_import("Windows", name, "scaly_ipopt/lib/ipopt.dll", {}, [])
+
+
+def test_builder_reads_repaired_pe_and_delay_tables(monkeypatch):
+  native = load("ipopt_native")
+
+  class PE:
+    DIRECTORY_ENTRY_IMPORT = [SimpleNamespace(dll=b"private-fortran.dll")]
+    DIRECTORY_ENTRY_DELAY_IMPORT = [SimpleNamespace(dll=b"private-delayed.dll")]
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      pass
+
+  monkeypatch.setitem(sys.modules, "pefile", SimpleNamespace(PE=lambda path: PE()))
+  assert native.hook()._windows_deps(Path("repaired.dll")) == ["private-fortran.dll", "private-delayed.dll"]
 
 
 def test_publication_rejects_pr_partial_health_unreviewed_and_wrong_workflow():

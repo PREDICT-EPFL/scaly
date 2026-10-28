@@ -53,6 +53,9 @@ def check_versions(versions, ceilings):
 
 def elf(path, arch):
   from elftools.elf.elffile import ELFFile
+  from elftools.elf.dynamic import DynamicSection
+  from elftools.elf.gnuversions import GNUVerNeedSection
+  from elftools.elf.sections import SymbolTableSection
 
   with path.open("rb") as stream:
     binary = ELFFile(stream)
@@ -60,17 +63,19 @@ def elf(path, arch):
     if binary["e_machine"] != expected or binary.elfclass != 64:
       raise RuntimeError(f"Wrong ELF machine: {path}")
     dynamic = binary.get_section_by_name(".dynamic")
+    assert isinstance(dynamic, DynamicSection)
     imports, paths = [], []
     for tag in dynamic.iter_tags():
       if tag.entry.d_tag == "DT_NEEDED":
-        imports.append(tag.needed)
+        imports.append(getattr(tag, "needed"))
       if tag.entry.d_tag in ("DT_RPATH", "DT_RUNPATH"):
         paths.extend(getattr(tag, "rpath", getattr(tag, "runpath", "")).split(":"))
     versions = {}
     section = binary.get_section_by_name(".gnu.version_r")
-    if section:
+    if isinstance(section, GNUVerNeedSection):
       versions = {version.name: [entry.name for entry in entries] for version, entries in section.iter_versions()}
     symbols = binary.get_section_by_name(".dynsym")
+    assert isinstance(symbols, SymbolTableSection)
     undefined = [symbol.name for symbol in symbols.iter_symbols() if symbol.entry.st_shndx == "SHN_UNDEF"]
     return {"imports": imports, "loader_paths": paths, "versions": versions, "undefined": undefined}
 
@@ -83,11 +88,12 @@ def macho(path, arch):
   imports, paths, minima = [], [], []
   for command in commands.split("Load command")[1:]:
     if re.search(r"cmd LC_(?:LOAD|LOAD_WEAK|REEXPORT|LOAD_UPWARD)_DYLIB\b", command):
-      imports.append(re.search(r"\n\s+name (.*?) \(offset", command)[1])
+      imports.append(re.findall(r"\n\s+name (.*?) \(offset", command)[0])
     if "cmd LC_RPATH\n" in command:
-      paths.append(re.search(r"\n\s+path (.*?) \(offset", command)[1])
+      paths.append(re.findall(r"\n\s+path (.*?) \(offset", command)[0])
     if "cmd LC_BUILD_VERSION" in command or "cmd LC_VERSION_MIN_MACOSX" in command:
       version = re.search(r"\n\s+(?:minos|version) (\d+)\.(\d+)", command)
+      assert version is not None
       minima.append(tuple(map(int, version.groups())))
   if not minima or max(minima) > (15, 0):
     raise RuntimeError(f"macOS 15.0 floor exceeded: {path}: {minima}")
@@ -122,6 +128,7 @@ def audit(root, manifest):
     elif system == "Darwin":
       data = macho(path, arch)
     else:
+      assert policy is not None
       data = elf(path, arch)
       for dependency, versions in data["versions"].items():
         if system_import(system, dependency):

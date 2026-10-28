@@ -79,8 +79,9 @@ EXPORT int probe(double *out) {
   IpoptProblem p = CreateIpoptProblem(N, lower, upper, N/2, target, target, N, 2*N-1, 0,
                                      objective, constraints, gradient, jacobian, hessian);
   if (!p) return -999;
-  if (!AddIpoptStrOption(p, "linear_solver", "mumps") || !AddIpoptStrOption(p, "sb", "yes") ||
-      !AddIpoptIntOption(p, "print_level", 0) || !AddIpoptNumOption(p, "tol", 1e-10) ||
+  char linear[] = "linear_solver", mumps[] = "mumps", sb[] = "sb", yes[] = "yes", print[] = "print_level", tol[] = "tol";
+  if (!AddIpoptStrOption(p, linear, mumps) || !AddIpoptStrOption(p, sb, yes) ||
+      !AddIpoptIntOption(p, print, 0) || !AddIpoptNumOption(p, tol, 1e-10) ||
       !SetIntermediateCallback(p, intermediate)) { FreeIpoptProblem(p); return -998; }
   int status = IpoptSolve(p, x, 0, &out[N], 0, 0, 0, out);
   for (int i = 0; i < N; ++i) out[i] = x[i];

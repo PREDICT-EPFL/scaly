@@ -89,13 +89,19 @@ def summarize(directory, target, output):
   output.write_text(json.dumps(result, indent=2) + "\n")
 
 
-def preflight(args):
+def require_maintainer():
   repo = os.environ["GITHUB_REPOSITORY"]
   if repo != "PREDICT-EPFL/scaly" or os.environ["GITHUB_REF"] != "refs/heads/main":
     raise RuntimeError("Publication workflow must run on this repository's main branch")
   for actor in {os.environ["GITHUB_ACTOR"], os.environ.get("GITHUB_TRIGGERING_ACTOR", os.environ["GITHUB_ACTOR"])}:
-    if api(f"repos/{repo}/collaborators/{actor}/permission")["permission"] not in {"admin", "maintain"}:
+    permission = api(f"repos/{repo}/collaborators/{actor}/permission")
+    if permission.get("role_name", permission["permission"]) not in {"admin", "maintain"}:
       raise RuntimeError("Only a repository maintainer can admit an official native revision")
+  return repo
+
+
+def preflight(args):
+  repo = require_maintainer()
   if not re.fullmatch(r"scaly-ipopt-native-v[1-9][0-9]*", args.revision):
     raise RuntimeError("Use a new separate native release revision")
   if not re.fullmatch(r"[0-9a-f]{40}", args.reviewed_sha):
@@ -112,7 +118,11 @@ def preflight(args):
   for pull in pulls:
     if pull["merged_at"] and pull["base"]["ref"] == "main":
       reviews = api(f"repos/{repo}/pulls/{pull['number']}/reviews?per_page=100")
-      latest = {review["user"]["login"]: review["state"] for review in reviews if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}}
+      latest = {
+        review["user"]["login"]: review["state"]
+        for review in reviews
+        if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"} and review["commit_id"] == pull["head"]["sha"]
+      }
       approved |= "APPROVED" in latest.values() and "CHANGES_REQUESTED" not in latest.values()
   if not approved:
     raise RuntimeError("The candidate main commit needs a merged, approved main-branch pull request")
@@ -156,7 +166,16 @@ def preflight(args):
       "refs/heads/main",
       "--source-digest",
       args.reviewed_sha,
+      "--deny-self-hosted-runners",
     )
+    with tempfile.TemporaryDirectory() as temporary:
+      subprocess.run(["gh", "attestation", "download", str((directory / name).resolve()), "--repo", repo], cwd=temporary, check=True)
+      bundles = list(Path(temporary).glob("*.jsonl"))
+      if len(bundles) != 1:
+        raise RuntimeError("Missing archive attestation bundle")
+      attestation = directory / (name + ".attestation.jsonl")
+      attestation.write_bytes(bundles[0].read_bytes())
+      assets[attestation.name] = sha256(attestation)
     pins["targets"][target] = {"asset": name, "sha256": report["assets"][name], "platform_tag": report["platform_tag"]}
   (directory / "consumer-pins.json").write_text(json.dumps(pins, indent=2) + "\n")
   assets.update(accepted["report_hashes"])
@@ -175,9 +194,13 @@ def preflight(args):
 
 
 def publish(args):
-  repo = os.environ["GITHUB_REPOSITORY"]
+  repo = require_maintainer()
   plan = json.loads((args.directory / "publication-plan.json").read_text())
   verify_assets(args.directory, plan)
+  source = api(f"repos/{repo}/actions/runs/{plan['candidate_run']}")
+  admit_run(source, plan["reviewed_sha"])
+  if source["run_attempt"] != plan["run_attempt"] or api(f"repos/{repo}/commits/main")["sha"] != plan["reviewed_sha"]:
+    raise RuntimeError("Main or the candidate attempt changed after preflight")
   rules = api(f"repos/{repo}/environments/ipopt-native-publication")["protection_rules"]
   if not any(rule["type"] == "required_reviewers" and rule.get("reviewers") and rule.get("prevent_self_review") for rule in rules):
     raise RuntimeError("The publication environment must require an independent reviewer")
