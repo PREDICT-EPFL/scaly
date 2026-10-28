@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "target": {
+    "system": "Linux",
+    "arch": "x86_64",
+    "platform_tag": "manylinux_2_27_x86_64",
+    "floor": "glibc 2.27"
+  },
+  "recipe_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "inputs": {
+    "sources": {
+      "ipopt": {
+        "commit": "1111111111111111111111111111111111111111"
+      }
+    },
+    "toolchain": {
+      "cc": "fixture"
+    },
+    "environment": {},
+    "build_config": {},
+    "diagnostics": {}
+  },
+  "configuration": {
+    "precision": "double",
+    "integer_bits": 32,
+    "blas": {
+      "implementation": "OpenBLAS",
+      "effective": "fixture"
+    },
+    "cpu": {
+      "baseline": "fixture"
+    },
+    "threading": {
+      "effective": "fixture"
+    }
+  },
+  "components": [
+    "ipopt",
+    "mumps",
+    "thirdparty-mumps",
+    "metis",
+    "gklib",
+    "gcc-runtime",
+    "openblas"
+  ],
+  "dependencies": {
+    "scaly_ipopt/lib/libipopt.so": {
+      "bundled": [
+        "scaly_ipopt/lib/libipopt.so.3",
+        "scaly_ipopt/lib/libgfortran.so.5",
+        "scaly_ipopt/lib/libquadmath.so.0",
+        "scaly_ipopt.libs/libquadmath-fixture.so.0.0.0"
+      ],
+      "system": []
+    },
+    "scaly_ipopt/lib/libipopt.so.3": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/libgfortran.so.5": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/libquadmath.so.0": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt.libs/libquadmath-fixture.so.0.0.0": {
+      "bundled": [],
+      "system": []
+    }
+  },
+  "fixture_files": [
+    "scaly_ipopt/lib/libipopt.so",
+    "scaly_ipopt/lib/libipopt.so.3",
+    "scaly_ipopt/lib/libgfortran.so.5",
+    "scaly_ipopt/lib/libquadmath.so.0",
+    "scaly_ipopt.libs/libquadmath-fixture.so.0.0.0",
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h",
+    "scaly_ipopt/include/coin-or/IpoptConfig.h",
+    "scaly_ipopt/licenses/ipopt/LICENSE",
+    "scaly_ipopt/licenses/mumps/LICENSE",
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE",
+    "scaly_ipopt/licenses/metis/LICENSE",
+    "scaly_ipopt/licenses/gklib/LICENSE",
+    "scaly_ipopt/licenses/gcc-runtime/LICENSE",
+    "scaly_ipopt/licenses/openblas/LICENSE",
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md"
+  ]
+}

@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "target": {
+    "system": "Windows",
+    "arch": "x86_64",
+    "platform_tag": "win_amd64",
+    "floor": "Windows 10 UCRT"
+  },
+  "recipe_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "inputs": {
+    "sources": {
+      "ipopt": {
+        "commit": "1111111111111111111111111111111111111111"
+      }
+    },
+    "toolchain": {
+      "cc": "fixture"
+    },
+    "environment": {},
+    "build_config": {},
+    "diagnostics": {}
+  },
+  "configuration": {
+    "precision": "double",
+    "integer_bits": 32,
+    "blas": {
+      "implementation": "OpenBLAS",
+      "effective": "fixture"
+    },
+    "cpu": {
+      "baseline": "fixture"
+    },
+    "threading": {
+      "effective": "fixture"
+    }
+  },
+  "components": [
+    "ipopt",
+    "mumps",
+    "thirdparty-mumps",
+    "metis",
+    "gklib",
+    "gcc-runtime",
+    "openblas",
+    "winpthreads"
+  ],
+  "dependencies": {
+    "scaly_ipopt/lib/libscaly_ipopt-3.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_fixture_libgfortran-5.dll",
+        "scaly_ipopt/lib/scaly_ipopt_fixture_libquadmath-0.dll",
+        "scaly_ipopt/lib/scaly_ipopt_fixture_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_fixture_libstdc++-6.dll",
+        "scaly_ipopt/lib/scaly_ipopt_fixture_libwinpthread-1.dll"
+      ],
+      "system": []
+    },
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libgfortran-5.dll": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libquadmath-0.dll": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libgcc_s_seh-1.dll": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libstdc++-6.dll": {
+      "bundled": [],
+      "system": []
+    },
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libwinpthread-1.dll": {
+      "bundled": [],
+      "system": []
+    }
+  },
+  "fixture_files": [
+    "scaly_ipopt/lib/libscaly_ipopt-3.dll",
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libgfortran-5.dll",
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libquadmath-0.dll",
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libgcc_s_seh-1.dll",
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libstdc++-6.dll",
+    "scaly_ipopt/lib/scaly_ipopt_fixture_libwinpthread-1.dll",
+    "scaly_ipopt/lib/ipopt.lib",
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h",
+    "scaly_ipopt/include/coin-or/IpoptConfig.h",
+    "scaly_ipopt/licenses/ipopt/LICENSE",
+    "scaly_ipopt/licenses/mumps/LICENSE",
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE",
+    "scaly_ipopt/licenses/metis/LICENSE",
+    "scaly_ipopt/licenses/gklib/LICENSE",
+    "scaly_ipopt/licenses/gcc-runtime/LICENSE",
+    "scaly_ipopt/licenses/openblas/LICENSE",
+    "scaly_ipopt/licenses/winpthreads/LICENSE",
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md"
+  ]
+}

@@ -1,0 +1,309 @@
+{
+  "source_run": "https://github.com/PREDICT-EPFL/scaly/actions/runs/39988283717",
+  "refreshed_run": "https://github.com/PREDICT-EPFL/scaly/actions/runs/40588152775",
+  "artifact": "dist-scaly-ipopt-windows-latest",
+  "job_id": 120533454608,
+  "wheel": "scaly_ipopt-0.1.0a3-py3-none-win_amd64.whl",
+  "wheel_sha256": "06b05a83a26d914e52fe5f31e84ebc819e1d05b860cdd87317fc192141a6f200",
+  "wheel_size": 10381222,
+  "inspection_tools": {
+    "lief": "1.0.0-d05b3499b",
+    "pyelftools": "0.33"
+  },
+  "files": {
+    "scaly_ipopt/include/coin-or/IpLinearSolvers.h": {
+      "size": 1476,
+      "sha256": "db504551e937522494fc18864897382393f99f0dc1dcfe4f0d592a4a1024977b"
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes.h": {
+      "size": 434,
+      "sha256": "fe95f249aa3abb47f4fafca7f3287ee759b3ec44835d99adb0d59ece8f44b587"
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes_inc.h": {
+      "size": 1604,
+      "sha256": "b610c490709800e2b8565ab060f37a1d4c556ab61a3736c09c1488507ab6b941"
+    },
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h": {
+      "size": 19605,
+      "sha256": "9e8660f32f825b2132539d4404b1835002b263265d9feff57926801c777b4744"
+    },
+    "scaly_ipopt/include/coin-or/IpTypes.h": {
+      "size": 1653,
+      "sha256": "814eca1603edd056fef2f0c92ceb7eb4aeae331815b1b19160213b7e6bd8e204"
+    },
+    "scaly_ipopt/include/coin-or/IpoptConfig.h": {
+      "size": 1184,
+      "sha256": "d37c65a2eefea9b9da04a789b725769dc2b37c541ee967cc0cd531987e2958d9"
+    },
+    "scaly_ipopt/lib/ipopt.lib": {
+      "size": 1331862,
+      "sha256": "c7964de94ac6d98f855eb7b851cedcf9f6f8f8fc219e60ebe27c2f193ea4a430"
+    },
+    "scaly_ipopt/lib/libscaly_ipopt-3.dll": {
+      "size": 28832144,
+      "sha256": "e655ec45def5f489541e65791422f9c256cbfc772370105d1f71cabc848dff67",
+      "format": "PE",
+      "machine": "MACHINE_TYPES.AMD64",
+      "imports": [
+        "scaly_ipopt_dc059d083519_libgcc_s_seh-1.dll",
+        "scaly_ipopt_dc059d083519_libgfortran-5.dll",
+        "KERNEL32.dll",
+        "api-ms-win-crt-conio-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "scaly_ipopt_dc059d083519_libwinpthread-1.dll",
+        "scaly_ipopt_dc059d083519_libstdc++-6.dll"
+      ],
+      "delay_imports": [],
+      "optional_header_os_version": [
+        4,
+        0
+      ],
+      "optional_header_subsystem_version": [
+        5,
+        2
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_dc059d083519_libgcc_s_seh-1.dll": {
+      "size": 150537,
+      "sha256": "3ed70ceb1a4a0c8ccc1916d6386e45444af375b2706a720f1292c4ac76478ba5",
+      "format": "PE",
+      "machine": "MACHINE_TYPES.AMD64",
+      "imports": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "scaly_ipopt_dc059d083519_libwinpthread-1.dll"
+      ],
+      "delay_imports": [],
+      "optional_header_os_version": [
+        4,
+        0
+      ],
+      "optional_header_subsystem_version": [
+        5,
+        2
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_dc059d083519_libgfortran-5.dll": {
+      "size": 3774018,
+      "sha256": "357709bb3f1d690adb488312466f32e13bfa898072bd2926d40638d682f1332e",
+      "format": "PE",
+      "machine": "MACHINE_TYPES.AMD64",
+      "imports": [
+        "scaly_ipopt_dc059d083519_libquadmath-0.dll",
+        "ADVAPI32.dll",
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "scaly_ipopt_dc059d083519_libwinpthread-1.dll",
+        "scaly_ipopt_dc059d083519_libgcc_s_seh-1.dll"
+      ],
+      "delay_imports": [],
+      "optional_header_os_version": [
+        4,
+        0
+      ],
+      "optional_header_subsystem_version": [
+        5,
+        2
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_dc059d083519_libquadmath-0.dll": {
+      "size": 414421,
+      "sha256": "f32bb28ee763914a2e820030d222a8e89f4599f2716fe99ed9c904376f528d0d",
+      "format": "PE",
+      "machine": "MACHINE_TYPES.AMD64",
+      "imports": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "scaly_ipopt_dc059d083519_libgcc_s_seh-1.dll"
+      ],
+      "delay_imports": [],
+      "optional_header_os_version": [
+        4,
+        0
+      ],
+      "optional_header_subsystem_version": [
+        5,
+        2
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_dc059d083519_libstdc++-6.dll": {
+      "size": 2659194,
+      "sha256": "29ab1b0806b4db1804182ca35d298aa86288c1cbe801eef8dedf8eea05f7a34c",
+      "format": "PE",
+      "machine": "MACHINE_TYPES.AMD64",
+      "imports": [
+        "scaly_ipopt_dc059d083519_libgcc_s_seh-1.dll",
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "scaly_ipopt_dc059d083519_libwinpthread-1.dll"
+      ],
+      "delay_imports": [],
+      "optional_header_os_version": [
+        4,
+        0
+      ],
+      "optional_header_subsystem_version": [
+        5,
+        2
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_dc059d083519_libwinpthread-1.dll": {
+      "size": 68731,
+      "sha256": "817e5b2636f532666e8f255e225af75e9d0c41b141512fde45264070a65b1c92",
+      "format": "PE",
+      "machine": "MACHINE_TYPES.AMD64",
+      "imports": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ],
+      "delay_imports": [],
+      "optional_header_os_version": [
+        4,
+        0
+      ],
+      "optional_header_subsystem_version": [
+        5,
+        2
+      ]
+    },
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md": {
+      "size": 1157,
+      "sha256": "eec5d33fde2d6aeb987fa1b2b3a702907e60ccc3889dd278540ff81c7b6780ff"
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING.RUNTIME": {
+      "size": 3397,
+      "sha256": "90077ba306ee9d8ed966cab1b4abd69b6e728acf08777283cc50283cd9503fa6"
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING3": {
+      "size": 35821,
+      "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b"
+    },
+    "scaly_ipopt/licenses/gklib/BSD-3-Clause-MT.txt": {
+      "size": 1558,
+      "sha256": "bdcd4ca0bf11881a25e53c59256844e840b74974fe2245f2ce91cb4f9561a9fb"
+    },
+    "scaly_ipopt/licenses/gklib/LGPL-2.1.txt": {
+      "size": 26419,
+      "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95"
+    },
+    "scaly_ipopt/licenses/gklib/LICENSE.txt": {
+      "size": 1049,
+      "sha256": "b276d6ed5ce46439ab1f9708d24726763c1c245049579ba7aef96f0b8f952444"
+    },
+    "scaly_ipopt/licenses/gklib/LICENSES.md": {
+      "size": 2353,
+      "sha256": "b49c169750b29055e690db1bbd69808ae11f5c9cad26984861d40ee8b427753d"
+    },
+    "scaly_ipopt/licenses/ipopt/LICENSE": {
+      "size": 14198,
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303"
+    },
+    "scaly_ipopt/licenses/metis/LICENSE": {
+      "size": 641,
+      "sha256": "64ab947d7b289ad76e935adff51b31e4ac160df7dfad24480dbaa452e39bbe79"
+    },
+    "scaly_ipopt/licenses/mumps/LICENSE": {
+      "size": 2579,
+      "sha256": "5813fefd30a36fd7550cd2b62274be6586a0db51c11c3f2d4b852283e22ccc42"
+    },
+    "scaly_ipopt/licenses/openblas/GotoBLAS_00License.txt": {
+      "size": 1608,
+      "sha256": "38d9eb2e3d49d73fa12b18729a112fa949f7887c3ff12be23a02c0c97d9fb5b8"
+    },
+    "scaly_ipopt/licenses/openblas/LICENSE": {
+      "size": 1548,
+      "sha256": "190b5a9c8d9723fe958ad33916bd7346d96fab3c5ea90832bb02d854f620fcff"
+    },
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE": {
+      "size": 14198,
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303"
+    },
+    "scaly_ipopt/licenses/winpthreads/COPYING": {
+      "size": 2883,
+      "sha256": "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177"
+    }
+  },
+  "build_log_evidence": [
+    {
+      "line": 21507,
+      "text": "wheels / scaly-ipopt / windows-latest\tUNKNOWN STEP\t2026-10-23T17:33:46.8381961Z   Library Name     ... libopenblasp-r0.3.28.a (Multi-threading; Max num-threads is 4)"
+    },
+    {
+      "line": 1182,
+      "text": "wheels / scaly-ipopt / windows-latest\tUNKNOWN STEP\t2026-10-23T16:41:20.3581961Z cc -O2 -DSMALL_MATRIX_OPT -DMS_ABI -DMAX_STACK_ALLOC=2048 -Wall -m64 -DF_INTERFACE_GFORT -DDYNAMIC_ARCH -DSMP_SERVER -DNO_WARMUP -DMAX_CPU_NUMBER=4 -DMAX_PARALLEL_NUMBER=1 -DBUILD_SINGLE=1 -DBUILD_DOUBLE=1 -DBUILD_COMPLEX=1 -DBUILD_COMPLEX16=1 -DVERSION=\\\"0.3.28\\\" -UASMNAME -UASMFNAME -UNAME -UCNAME -UCHAR_NAME -UCHAR_CNAME -DASMNAME=saxpy -DASMFNAME=saxpy_ -DNAME=saxpy_ -DCNAME=saxpy -DCHAR_NAME=\\\"saxpy_\\\" -DCHAR_CNAME=\\\"saxpy\\\" -DNO_AFFINITY -I.. -I. -UDOUBLE  -UCOMPLEX -c axpy.c -o saxpy.obj"
+    },
+    {
+      "line": 21508,
+      "text": "wheels / scaly-ipopt / windows-latest\tUNKNOWN STEP\t2026-10-23T17:33:46.8625754Z   Supporting multiple x86_64 cpu models with minimum requirement for the common code being PRESCOTT"
+    },
+    {
+      "line": 21505,
+      "text": "wheels / scaly-ipopt / windows-latest\tUNKNOWN STEP\t2026-10-23T17:33:46.6843447Z   C compiler       ... GCC  (cmd & version : cc.exe (Rev6, Built by MSYS2 project) 16.2.0)"
+    },
+    {
+      "line": 21506,
+      "text": "wheels / scaly-ipopt / windows-latest\tUNKNOWN STEP\t2026-10-23T17:33:46.7795245Z   Fortran compiler ... GFORTRAN  (cmd & version : GNU Fortran (Rev6, Built by MSYS2 project) 16.2.0)"
+    }
+  ],
+  "blas": {
+    "implementation": "OpenBLAS 0.3.28",
+    "dynamic_arch": true,
+    "openmp": false,
+    "thread_model": "pthreads",
+    "compiled_max_threads": 4,
+    "compiled_max_parallel": 1,
+    "thread_default": "not established by these artifacts",
+    "common_code_target": "PRESCOTT"
+  }
+}

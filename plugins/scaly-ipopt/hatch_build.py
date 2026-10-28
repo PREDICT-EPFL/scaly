@@ -1,8 +1,19 @@
-"""Custom build hook that vendors IPOPT as a shared library inside the scaly-ipopt wheel."""
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "hatchling", "packaging", "cmake",
+#   "auditwheel; sys_platform == 'linux'", "patchelf; sys_platform == 'linux'",
+#   "delvewheel==1.13.2; sys_platform == 'win32'", "pefile==2024.8.26; sys_platform == 'win32'",
+# ]
+# ///
+"""Build the Ipopt native stack for the hook or a complete host-native archive."""
 
 from __future__ import annotations
 
 import hashlib
+import ast
+import io
+import gzip
 import json
 import os
 import platform
@@ -13,8 +24,10 @@ import stat
 import subprocess
 import sys
 import time
+import tarfile
+import zlib
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
@@ -129,10 +142,15 @@ MUMPS_BRANCH = _BUILD_CONFIG["mumps"]["coinor_branch"]
 METIS_TAG = _BUILD_CONFIG["metis"]["tag"]
 GKLIB_COMMIT = _BUILD_CONFIG["metis"]["gklib_commit"]
 OPENBLAS_BRANCH = _BUILD_CONFIG["blas"]["linux"]["branch"]
+_BUILD_LOG: Path | None = None
+_COMMAND_LOG: Path | None = None
 
 
 def _run(cmd: list[str], cwd: Path, env: dict | None = None, attempts: int = 1) -> None:
   """Run `cmd`, retrying a failure `attempts - 1` times; downloads use 3 to ride out a busy host."""
+  if _COMMAND_LOG is not None:
+    with _COMMAND_LOG.open("a", encoding="utf-8") as log:
+      log.write(json.dumps({"cwd": str(cwd), "args": cmd}) + "\n")
   if os.name == "nt":
     fc = _find_fortran_compiler()
     bash = Path(fc).parents[2] / "usr" / "bin" / "bash.exe"
@@ -141,7 +159,11 @@ def _run(cmd: list[str], cwd: Path, env: dict | None = None, attempts: int = 1) 
     env = dict(os.environ if env is None else env, MSYSTEM="UCRT64", CHERE_INVOKING="1")
   for attempt in range(1, attempts + 1):
     try:
-      subprocess.run(cmd, cwd=cwd, env=env, check=True)
+      if _BUILD_LOG is None:
+        subprocess.run(cmd, cwd=cwd, env=env, check=True)
+      else:
+        with _BUILD_LOG.open("a", encoding="utf-8") as log:
+          subprocess.run(cmd, cwd=cwd, env=env, check=True, stdout=log, stderr=subprocess.STDOUT)
       return
     except subprocess.CalledProcessError:
       if attempt == attempts:
@@ -189,6 +211,11 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
   build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
+  # Recursive BLAS/LAPACK builds update one archive. Lock writers without reducing compiler
+  # parallelism or OpenBLAS's independently detected runtime thread capacity.
+  for variable, tool in (("AR", "ar"), ("RANLIB", "ranlib")):
+    command = [sys.executable, str(Path(__file__).resolve()), "_archive", str(third_party_dir / "openblas-archive.lock"), shutil.which(tool) or tool]
+    build_flags.append(f"{variable}={shlex.join(command)}")
   # Fix the common-code baseline instead of detecting a potentially unsupported build CPU.
   # DYNAMIC_ARCH still selects optimized kernels at runtime.
   if platform.machine().lower() in {"x86_64", "amd64"}:
@@ -199,18 +226,37 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   return install_dir
 
 
+def _archive_native(lock: Path, command: list[str]) -> None:
+  with _locked(lock):
+    subprocess.run(command, check=True)
+
+
 def _clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
+  if dest.exists():
+    _check_checkout(dest, branch)
+    return
   hook.app.display_info(f"Cloning {url}@{branch} to {dest}")
   _run(["git", "clone", "--depth=1", "--branch", branch, url, str(dest)], cwd=dest.parent, attempts=3)
 
 
 def _clone_commit(hook: "BuildHook", url: str, commit: str, dest: Path) -> None:
   """Shallow-fetch one commit; `git clone --depth=1 --branch` only accepts branches and tags."""
+  if dest.exists():
+    _check_checkout(dest, commit)
+    return
   hook.app.display_info(f"Fetching {url}@{commit} to {dest}")
   dest.mkdir(parents=True)
   _run(["git", "init", "-q"], cwd=dest)
   _run(["git", "fetch", "-q", "--depth=1", url, commit], cwd=dest, attempts=3)
   _run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
+
+
+def _check_checkout(dest: Path, revision: str) -> None:
+  def rev(name):
+    return subprocess.check_output(["git", "-C", str(dest), "rev-parse", name + "^0"], text=True).strip()
+
+  if rev("HEAD") != rev(revision):
+    raise RuntimeError(f"Retained checkout {dest} does not match {revision}; use a new work directory")
 
 
 def _cmake_build(hook: "BuildHook", src_dir: Path, build_dir: Path, install_dir: Path, defines: list[str]) -> None:
@@ -269,7 +315,8 @@ def _build_mumps(
   src_dir = third_party_dir / "ThirdParty-Mumps"
   _clone(hook, "https://github.com/coin-or-tools/ThirdParty-Mumps.git", MUMPS_BRANCH, src_dir)
   hook.app.display_info("Fetching MUMPS sources via get.Mumps...")
-  _run(["./get.Mumps"], cwd=src_dir, attempts=3)
+  if not (src_dir / "MUMPS").exists():
+    _run(["./get.Mumps"], cwd=src_dir, attempts=3)
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   metis_cflags = f"-I{(metis_install / 'include').resolve()}"
@@ -454,8 +501,12 @@ def _linux_major_so_name(path: Path) -> str:
 
 
 def _windows_deps(path: Path) -> list[str]:
-  out = subprocess.run(["objdump", "-p", str(path)], check=True, capture_output=True, text=True).stdout
-  return re.findall(r"^\s*DLL Name:\s*(\S+)", out, re.MULTILINE)
+  import pefile
+
+  with pefile.PE(str(path)) as pe:
+    return [
+      entry.dll.decode("ascii") for directory in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT") for entry in getattr(pe, directory, ())
+    ]
 
 
 def _bundle_windows_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str, runtime_dir: Path) -> None:
@@ -535,8 +586,14 @@ def _remove_tree(path: Path) -> None:
     shutil.rmtree(path, onexc=remove_readonly)
 
 
-def _cache_key(root: Path) -> str:
-  """Hash every input of the build, so two checkouts share a build exactly when it would come out the same."""
+def _cache_key(root: Path, bundle: bytes | None = None) -> str:
+  """Identify a source build as before, or an explicit archive by its full content SHA-256.
+
+  Archive identity needs no compiler and never uses the archive's path or modification time.
+  Recipe identity for producers is separate, see `_recipe_hash`.
+  """
+  if bundle is not None:
+    return "bundle-" + hashlib.sha256(bundle).hexdigest()
   digest = hashlib.sha256()
   inputs = [Path(__file__), root / "src" / "scaly_ipopt" / "build_config.json", *(root / "licenses").rglob("*")]
   for path in sorted(p for p in inputs if p.is_file()):
@@ -608,12 +665,19 @@ def _prune_cache(cache: Path) -> None:
           _remove_tree(path)
 
 
-def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build) -> list[str]:
+def _install_build(
+  hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build, *, manifest: dict | None = None
+) -> list[str]:
   """Copy the cached build `entry` into `package_dir`, first running `build(src_dir, out_dir)` if no checkout made it yet.
 
   Returns the native tools that are missing when a build is needed and cannot run. A build runs in a fresh scratch directory and is renamed into the cache only once complete, so a
   cache entry is never partial. A failed build keeps its scratch directory for inspection until the
-  next attempt at the same key replaces it."""
+  next attempt at the same key replaces it.
+
+  Source cache entries retain lib/include/licenses. Archive entries use the relocatable archive
+  root, including scaly_ipopt.libs. With `manifest`, validate cached and installed bytes and
+  install them without native repair.
+  """
   cache = entry.parent
   with _locked(cache / "locks" / f"{entry.name}.lock"):
     if not entry.exists():
@@ -629,12 +693,25 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
         raise
       (scratch / "out").rename(entry)
       _remove_tree(scratch)
+    if manifest is not None:
+      try:
+        _verify_payload(entry, manifest)
+      except (RuntimeError, OSError) as error:
+        raise RuntimeError(f"Invalid native cache entry {entry}; remove it and reinstall: {error}") from error
     os.utime(entry)
     stamp = root / ".build_key"
     stamp.unlink(missing_ok=True)
+    sibling = package_dir.parent / "scaly_ipopt.libs"
+    shutil.rmtree(sibling, ignore_errors=True)
+    (package_dir / "native_manifest.json").unlink(missing_ok=True)
     for name in _OUTPUTS:
       shutil.rmtree(package_dir / name, ignore_errors=True)
-      shutil.copytree(entry / name, package_dir / name, symlinks=True)
+      shutil.copytree((entry / "scaly_ipopt" if manifest is not None else entry) / name, package_dir / name, symlinks=True)
+    if manifest is not None:
+      if (entry / "scaly_ipopt.libs").exists():
+        shutil.copytree(entry / "scaly_ipopt.libs", sibling, symlinks=True)
+      shutil.copy2(entry / "manifest.json", package_dir / "native_manifest.json")
+      _verify_payload(package_dir.parent, manifest)
     stamp.write_text(key)
   hook.app.display_info(f"Installed the build {entry} into {package_dir}")
   _prune_cache(cache)
@@ -642,9 +719,13 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
 
 
 def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path, vendored: Path) -> None:
-  """Build into `lib_dir`, `include_dir` and `licenses_dir` from sources cloned into the empty `third_party_dir`.
+  """The single native recipe, shared by the ordinary source hook and bundle producer.
 
-  `vendored` holds the license texts checked into the plugin."""
+  Build lib/include/licenses from pinned sources in `third_party_dir`. Retained checkouts must
+  match their pinned revisions. Native build tools can incrementally rebuild those directories.
+  `vendored` holds checked-in license texts. The producer additionally freezes the complete
+  repaired layout and its manifest; the default hook's wheel repair remains with cibuildwheel.
+  """
   system = platform.system()
   lib_name = _shared_lib_name(system, "ipopt")
   hook.app.display_info("Building IPOPT stack (METIS -> MUMPS -> IPOPT)...")
@@ -754,10 +835,506 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   hook.app.display_info("IPOPT build complete.")
 
 
+def _host_target() -> dict:
+  system, arch = platform.system(), platform.machine().lower()
+  arch = {"amd64": "x86_64", "arm64": "aarch64" if system == "Linux" else "arm64"}.get(arch, arch)
+  floor = {"Windows": "Windows 10 UCRT", "Linux": "glibc " + platform.libc_ver()[1], "Darwin": "macOS " + platform.mac_ver()[0]}[system]
+  return {"system": system, "arch": arch, "platform_tag": _wheel_tag().removeprefix("py3-none-"), "floor": floor}
+
+
+def _safe_name(name: str) -> PurePosixPath:
+  path = PurePosixPath(name)
+  reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+  if (
+    not name
+    or path.is_absolute()
+    or "\\" in name
+    or ":" in name
+    or re.search(r'[<>"|?*\x00-\x1f]', name)
+    or str(path) != name
+    or any(p in {".", ".."} or p.endswith((".", " ")) or p.split(".")[0].upper() in reserved for p in path.parts)
+  ):
+    raise RuntimeError(f"Unsafe archive path: {name!r}")
+  return path
+
+
+def _payload_name(name: str) -> bool:
+  parts = _safe_name(name).parts
+  return (len(parts) >= 3 and parts[0] == "scaly_ipopt" and parts[1] in _OUTPUTS) or (len(parts) == 2 and parts[0] == "scaly_ipopt.libs")
+
+
+def _system_import(system: str, name: str) -> bool:
+  if system == "Windows":
+    return name == Path(name).name and (
+      name.lower().startswith(("api-ms-win-", "ext-ms-win-")) or (Path(os.environ["SystemRoot"]) / "System32" / name).is_file()
+    )
+  if system == "Darwin":
+    return name.startswith(("/usr/lib/", "/System/"))
+  return re.fullmatch(r"(?:ld-linux[^/]*|lib(?:c|m|pthread|dl|rt|util|resolv|z|gcc_s|stdc\+\+)\.so[^/]*)", name) is not None
+
+
+def _validate_manifest(manifest: dict) -> None:
+  if manifest["schema_version"] != 1:
+    raise RuntimeError("Unsupported native bundle schema")
+  target = manifest["target"]
+  host = _host_target()
+  system, arch, tag = target["system"], target["arch"], target["platform_tag"]
+  if (system, arch) != (host["system"], host["arch"]):
+    raise RuntimeError(f"Wrong bundle target {system}/{arch}; host is {host['system']}/{host['arch']}")
+  patterns = {
+    ("Windows", "x86_64"): r"win_amd64",
+    ("Linux", "x86_64"): r"(?:linux|manylinux_2_\d+)_x86_64",
+    ("Linux", "aarch64"): r"(?:linux|manylinux_2_\d+)_aarch64",
+    ("Darwin", "x86_64"): r"macosx_\d+_\d+_x86_64",
+    ("Darwin", "arm64"): r"macosx_\d+_\d+_arm64",
+  }
+  if not re.fullmatch(patterns.get((system, arch), r"(?!)"), tag) or not target["floor"]:
+    raise RuntimeError("Invalid bundle platform tag or floor")
+  if system == "Windows":
+    if target["floor"] != "Windows 10 UCRT":
+      raise RuntimeError("Invalid Windows bundle floor")
+  else:
+    prefix = "glibc " if system == "Linux" else "macOS "
+
+    def floor_version(value):
+      if not value.startswith(prefix) or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", value[len(prefix) :]):
+        raise RuntimeError("Invalid bundle compatibility floor")
+      return tuple(map(int, value[len(prefix) :].split(".")[:2]))
+
+    floor = floor_version(target["floor"])
+    if floor > floor_version(host["floor"]) or floor < ((2, 27) if system == "Linux" else (15, 0)):
+      raise RuntimeError("Unsupported bundle compatibility floor")
+    described = tuple(map(int, tag.split("_")[1:3])) if tag.startswith(("manylinux_", "macosx_")) else floor
+    if described != floor:
+      raise RuntimeError("Bundle platform tag does not describe its compatibility floor")
+  if not re.fullmatch(r"[0-9a-f]{64}", manifest["recipe_sha256"]):
+    raise RuntimeError("Invalid native recipe hash")
+  for field in ("inputs", "configuration", "dependencies", "files"):
+    if not isinstance(manifest[field], dict) or not manifest[field]:
+      raise RuntimeError(f"Incomplete bundle manifest: {field}")
+  for field in ("sources", "toolchain", "environment", "build_config", "diagnostics"):
+    if field not in manifest["inputs"]:
+      raise RuntimeError(f"Incomplete native inputs: {field}")
+  if manifest["configuration"]["precision"] != "double" or manifest["configuration"]["integer_bits"] != 32:
+    raise RuntimeError("Unsupported native numerical configuration")
+  for field in ("blas", "cpu", "threading"):
+    if not manifest["configuration"][field]:
+      raise RuntimeError(f"Incomplete native configuration: {field}")
+  files = manifest["files"]
+  required = {
+    "scaly_ipopt/lib/" + _shared_lib_name(system, "ipopt"),
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h",
+    "scaly_ipopt/include/coin-or/IpoptConfig.h",
+    "scaly_ipopt/licenses/" + NOTICES,
+  }
+  if system == "Windows":
+    required.add("scaly_ipopt/lib/ipopt.lib")
+  components = {"ipopt", "mumps", "thirdparty-mumps", "metis", "gklib", "gcc-runtime"}
+  if system != "Darwin":
+    components.add("openblas")
+  if system == "Windows":
+    components.add("winpthreads")
+  if not components.issubset(manifest["components"]) or not required.issubset(files):
+    raise RuntimeError("Incomplete bundle: missing native library, matching headers/import library or components")
+  for component in components:
+    if not any(name.startswith(f"scaly_ipopt/licenses/{component}/") for name in files):
+      raise RuntimeError(f"Incomplete bundle: missing {component} license")
+  for name, entry in files.items():
+    if not _payload_name(name) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) or entry["size"] < 0:
+      raise RuntimeError(f"Invalid native file entry: {name}")
+    if entry["mode"] & ~0o777:
+      raise RuntimeError(f"Unsafe native file mode: {name}")
+  native = {name for name in files if ".so" in name or name.endswith((".dylib", ".dll"))}
+  runtimes = {
+    "Windows": ("libgfortran-5.dll", "libquadmath-0.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"),
+    "Linux": ("libgfortran.so.5",),
+    "Darwin": ("libgfortran.5.dylib", "libquadmath.0.dylib"),
+  }[system]
+  if any(not any(name.endswith(runtime) for name in native) for runtime in runtimes):
+    raise RuntimeError("Incomplete bundle: missing native language/thread runtime")
+  if set(manifest["dependencies"]) != native:
+    raise RuntimeError("Incomplete native dependency inventory")
+  for name, deps in manifest["dependencies"].items():
+    if (
+      not isinstance(deps["system"], list)
+      or not set(deps["bundled"]).issubset(native)
+      or not all(_system_import(system, dep) for dep in deps["system"])
+    ):
+      raise RuntimeError(f"Incomplete bundled dependency closure: {name}")
+
+
+def _read_bundle(bundle: bytes, out: Path | None = None) -> dict:
+  """Validate the full archive before extraction. The caller supplies immutable, content-keyed bytes.
+
+  Version 1 has manifest.json plus scaly_ipopt/{lib,include,licenses} and optional
+  scaly_ipopt.libs. Relative symlinks may name a regular payload file. Directory links,
+  hardlinks, devices, duplicate/case-colliding names and unlisted files are forbidden.
+  No native tool is needed to validate or extract an archive.
+  """
+  try:
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(bundle)), mode="r:") as archive:
+      members = {}
+      folded = set()
+      for member in archive.getmembers():
+        name = member.name.rstrip("/") if member.isdir() else member.name
+        _safe_name(name)
+        if name.casefold() in folded or not (member.isfile() or member.isdir() or member.issym()):
+          raise RuntimeError(f"Unsafe or duplicate archive member: {name}")
+        folded.add(name.casefold())
+        members[name] = member
+      meta = members["manifest.json"]
+      if not meta.isfile():
+        raise RuntimeError("Invalid bundle manifest member")
+      manifest = json.loads(archive.extractfile(meta).read())
+      _validate_manifest(manifest)
+      files = manifest["files"]
+      if set(name for name, member in members.items() if not member.isdir()) != {"manifest.json", *files}:
+        raise RuntimeError("Incomplete archive or unlisted native files")
+      directories = {str(parent) for name in files for parent in PurePosixPath(name).parents if str(parent) != "."}
+      if any(member.isdir() and name not in directories for name, member in members.items()):
+        raise RuntimeError("Invalid native archive directory")
+      if any(name in members and not members[name].isdir() for name in directories):
+        raise RuntimeError("Unsafe archive parent: files and links cannot be directories")
+      contents = {}
+      for name, entry in files.items():
+        member = members[name]
+        if member.issym():
+          link = member.linkname
+          if "\\" in link or ":" in link or PurePosixPath(link).is_absolute():
+            raise RuntimeError(f"Unsafe archive link: {name}")
+          import posixpath
+
+          destination = posixpath.normpath(str(PurePosixPath(name).parent / link))
+          if destination not in files or not members[destination].isfile() or entry.get("link") != link:
+            raise RuntimeError(f"Unsafe archive link: {name}")
+          data = link.encode()
+        else:
+          if "link" in entry:
+            raise RuntimeError(f"Invalid archive link metadata: {name}")
+          data = archive.extractfile(member).read()
+        if hashlib.sha256(data).hexdigest() != entry["sha256"] or len(data) != entry["size"] or member.mode != entry["mode"]:
+          raise RuntimeError(f"Corrupt native payload: {name}")
+        contents[name] = data
+      if out is not None:
+        out.mkdir(parents=True)
+        for name, data in contents.items():
+          path = out / name
+          path.parent.mkdir(parents=True, exist_ok=True)
+          if "link" not in files[name]:
+            path.write_bytes(data)
+            path.chmod(files[name]["mode"])
+        for name, entry in files.items():
+          if "link" in entry:
+            (out / name).symlink_to(entry["link"])
+        (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+      return manifest
+  except (KeyError, TypeError, ValueError, AttributeError, tarfile.TarError, EOFError, gzip.BadGzipFile, zlib.error) as error:
+    raise RuntimeError(f"Invalid native bundle: {error}") from error
+
+
+def _verify_payload(root: Path, manifest: dict) -> None:
+  actual = set()
+  for directory in (*(root / "scaly_ipopt" / name for name in _OUTPUTS), root / "scaly_ipopt.libs"):
+    if directory.is_symlink():
+      raise RuntimeError(f"Unsafe cached native directory: {directory}")
+    for path in directory.rglob("*"):
+      if path.is_file() or path.is_symlink():
+        actual.add(path.relative_to(root).as_posix())
+  if actual != set(manifest["files"]):
+    raise RuntimeError("Incomplete cached native payload or unlisted files")
+  for name, entry in manifest["files"].items():
+    path = root / name
+    if path.is_symlink() != ("link" in entry):
+      raise RuntimeError(f"Corrupt cached native payload: {name}")
+    data = os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != entry["sha256"] or len(data) != entry["size"]:
+      raise RuntimeError(f"Corrupt cached native payload: {name}")
+
+
+def _recipe_hash(root: Path, source: str | None = None) -> str:
+  """Native recipe identity excludes wrapper code, consumer pins and archive bytes.
+
+  Hash the native recipe definitions, native configuration and checked-in license texts.
+  Resolved source revisions, toolchains and effective flags also live in each manifest.
+  Equal recipes do not promise equal outputs; each archive has its own full SHA-256.
+  """
+  source = source if source is not None else (root / "hatch_build.py").read_text(encoding="utf-8")
+  tree = ast.parse(source)
+  first = next(i for i, node in enumerate(tree.body) if isinstance(node, ast.FunctionDef) and node.name == "_run")
+  last = next(
+    i
+    for i, node in enumerate(tree.body)
+    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_KEY_ENV" for t in node.targets)
+  )
+  nodes = tree.body[first:last] + [
+    node
+    for node in tree.body
+    if isinstance(node, ast.FunctionDef)
+    and node.name in {"_shared_lib_name", "_find_fortran_compiler", "_build_ipopt_stack", "_windows_packages", "_repair_linux_payload", "_locked"}
+  ]
+  digest = hashlib.sha256(ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False).encode())
+  config = json.loads((root / "src/scaly_ipopt/build_config.json").read_text())
+  native_config = {key: config[key] for key in ("ipopt", "mumps", "metis", "gcc-runtime", "winpthreads", "blas")}
+  digest.update(json.dumps(native_config, sort_keys=True).encode())
+  for path in sorted(p for p in (root / "licenses").rglob("*") if p.is_file()):
+    digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
+  return digest.hexdigest()
+
+
+def _native_dependencies(payload: Path) -> dict:
+  """Inventory every shared object's direct bundled and system imports after final repair."""
+  system = platform.system()
+  native = {p.name.lower(): p for p in payload.rglob("*") if p.is_file() and (".so" in p.name or p.suffix in {".dll", ".dylib"})}
+  graph = {}
+  for path in native.values():
+    if system == "Windows":
+      imports = _windows_deps(path)
+    elif system == "Darwin":
+      output = subprocess.check_output(["otool", "-L", str(path)], text=True)
+      imports = [line.strip().split(" (")[0] for line in output.splitlines()[1:]]
+      imports = [name for name in imports if Path(name).name != path.name]
+    else:
+      output = subprocess.check_output(["readelf", "-d", str(path)], text=True)
+      imports = re.findall(r"\(NEEDED\).*\[(.*?)\]", output)
+    bundled, external = [], []
+    for name in imports:
+      dependency = native.get(Path(name).name.lower())
+      if dependency is not None:
+        bundled.append(dependency.relative_to(payload).as_posix())
+      elif _system_import(system, name):
+        external.append(name)
+      else:
+        raise RuntimeError(f"Incomplete native dependency closure: {path} imports {name}")
+    graph[path.relative_to(payload).as_posix()] = {"bundled": sorted(bundled), "system": sorted(external)}
+  return graph
+
+
+def _repair_linux_payload(work: Path, payload: Path, tag: str) -> None:
+  """Apply the existing auditwheel repair before freezing a requested manylinux payload."""
+  import zipfile
+
+  wheel = work / f"scaly_ipopt-0.0.0-py3-none-linux_{_host_target()['arch']}.whl"
+  metadata = "scaly_ipopt-0.0.0.dist-info"
+  with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    names = []
+    for path in sorted(p for p in payload.rglob("*") if p.is_file()):
+      name = path.relative_to(payload).as_posix()
+      archive.write(path, name)
+      names.append(name)
+    entries = {
+      f"{metadata}/METADATA": "Metadata-Version: 2.1\nName: scaly-ipopt\nVersion: 0.0.0\n",
+      f"{metadata}/WHEEL": f"Wheel-Version: 1.0\nGenerator: scaly-native\nRoot-Is-Purelib: false\nTag: py3-none-linux_{_host_target()['arch']}\n",
+    }
+    for name, value in entries.items():
+      archive.writestr(name, value)
+      names.append(name)
+    archive.writestr(f"{metadata}/RECORD", "".join(f"{name},,\n" for name in [*names, f"{metadata}/RECORD"]))
+  repaired = work / "repaired"
+  _remove_tree(repaired)
+  _run([sys.executable, "-m", "auditwheel", "repair", "--plat", tag, "--only-plat", "--wheel-dir", str(repaired), str(wheel)], cwd=work)
+  with zipfile.ZipFile(next(repaired.glob("*.whl"))) as archive:
+    _remove_tree(payload)
+    for name in archive.namelist():
+      if not name.startswith(metadata + "/") and not name.endswith("/") and _payload_name(name):
+        destination = payload / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(archive.read(name))
+        destination.chmod((archive.getinfo(name).external_attr >> 16) & 0o777 or 0o644)
+
+
+def _bundle_manifest(root: Path, work: Path, payload: Path, target: dict) -> dict:
+  sources = {}
+  for name in ("Ipopt", "ThirdParty-Mumps", "METIS", "GKlib", "openblas"):
+    path = work / "src" / name
+    if not path.exists():
+      continue
+    git = ["git", "-C", str(path)]
+    patch = subprocess.check_output([*git, "diff", "--binary", "HEAD"], text=True)
+    sources[name] = {
+      "url": subprocess.check_output([*git, "remote", "get-url", "origin"], text=True).strip()
+      if name != "GKlib"
+      else "https://github.com/KarypisLab/GKlib.git",
+      "commit": subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip(),
+      "patch": patch,
+      "patch_sha256": hashlib.sha256(patch.encode()).hexdigest(),
+    }
+  diagnostics = {}
+  for pattern in ("**/config.log", "**/config.status", "**/Makefile.conf", "**/CMakeCache.txt", "openblas/config.h"):
+    for path in (work / "src").glob(pattern):
+      diagnostics[path.relative_to(work).as_posix()] = {
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "text": path.read_text(errors="replace"),
+      }
+  # MUMPS is downloaded by the pinned wrapper rather than stored in its Git tree.
+  mumps = work / "src/ThirdParty-Mumps/MUMPS"
+  sources["MUMPS"] = {
+    "version": _BUILD_CONFIG["mumps"]["version"],
+    "files": {
+      path.relative_to(mumps).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+      for path in sorted(mumps.rglob("*"))
+      if path.is_file() and path.suffix.lower() in {".f", ".f90", ".c", ".h"}
+    },
+  }
+  blas = {}
+  for name in ("Makefile.conf", "config.h"):
+    path = work / "src/openblas" / name
+    if path.exists():
+      blas[name] = path.read_text(errors="replace")
+  files = {}
+  for path in sorted(p for p in payload.rglob("*") if p.is_file() or p.is_symlink()):
+    data = os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
+    entry = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "mode": stat.S_IMODE(path.lstat().st_mode)}
+    if path.is_symlink():
+      entry["link"] = os.readlink(path)
+    files[path.relative_to(payload).as_posix()] = entry
+  toolchain = {cmd: _tool_identity(os.environ.get(env, cmd)) for env, cmd in (("CC", "cc"), ("CXX", "c++"), ("FC", "gfortran"))}
+  for cmd in ("git", "make", "cmake", "ninja", "ar", "ranlib", "objdump", "readelf", "patchelf", "codesign"):
+    if shutil.which(cmd):
+      toolchain[cmd] = _tool_identity(cmd)
+  from importlib.metadata import version
+
+  for name in ("delvewheel", "pefile") if target["system"] == "Windows" else ("auditwheel", "patchelf") if target["system"] == "Linux" else ():
+    toolchain[name] = version(name)
+  if target["system"] == "Windows":
+    fc = _find_fortran_compiler()
+    toolchain["pacman"] = _windows_packages(fc)
+    bash = Path(fc).resolve().parents[2] / "usr/bin/bash.exe"
+    command = 'for tool in gcc g++ gfortran make cmake ninja objdump dlltool; do command -v "$tool"; "$tool" --version | head -n 1; done'
+    toolchain["native_shell_tools"] = subprocess.check_output(
+      [str(bash), "-lc", command], text=True, env=dict(os.environ, MSYSTEM="UCRT64", CHERE_INVOKING="1")
+    )
+  components = sorted(
+    {PurePosixPath(name).parts[2] for name in files if name.startswith("scaly_ipopt/licenses/") and len(PurePosixPath(name).parts) > 3}
+  )
+  return {
+    "schema_version": 1,
+    "target": target,
+    "recipe_sha256": _recipe_hash(root),
+    "inputs": {
+      "sources": sources,
+      "build_config": {k: _BUILD_CONFIG[k] for k in ("ipopt", "mumps", "metis", "gcc-runtime", "winpthreads", "blas")},
+      "toolchain": toolchain,
+      "environment": {
+        name: os.environ.get(name, "")
+        for name in (
+          *_KEY_ENV,
+          "MAKE_NB_JOBS",
+          "PYTHON_CPU_COUNT",
+          "NUM_THREADS",
+          "USE_THREAD",
+          "OPENBLAS_NUM_THREADS",
+          "OMP_NUM_THREADS",
+          "VECLIB_MAXIMUM_THREADS",
+        )
+      },
+      "diagnostics": diagnostics,
+      "commands": (work / "commands.jsonl").read_text() if (work / "commands.jsonl").exists() else "",
+    },
+    "configuration": {
+      "precision": "double",
+      "integer_bits": 32,
+      "blas": {"implementation": "Accelerate" if target["system"] == "Darwin" else "OpenBLAS", "effective": blas or "OS-provided Accelerate"},
+      "cpu": {
+        "baseline": "PRESCOTT" if target["arch"] == "x86_64" and blas else "see effective native flags",
+        "dispatch": "DYNAMIC_ARCH=1" if blas else "OS-provided Accelerate",
+      },
+      "threading": {"effective": blas or "OS-provided Accelerate; runtime thread count not measured"},
+    },
+    "components": components,
+    "dependencies": _native_dependencies(payload),
+    "files": files,
+  }
+
+
+def _macos_minimum(commands: str) -> tuple[int, int]:
+  """Read deployment versions from otool load commands, excluding SDK and tool versions."""
+  minimum, command = (0, 0), ""
+  for line in commands.splitlines():
+    fields = line.split()
+    if len(fields) != 2:
+      continue
+    key, value = fields
+    if key == "cmd":
+      command = value
+    elif (command, key) in {("LC_BUILD_VERSION", "minos"), ("LC_VERSION_MIN_MACOSX", "version")}:
+      major, minor, *_ = map(int, value.split("."))
+      minimum = max(minimum, (major, minor))
+  return minimum
+
+
+def _produce_bundle(work: Path, output: Path, platform_tag: str | None = None) -> dict:
+  """Build only the host target, retain native work/logs, repair and freeze a complete archive."""
+  from types import SimpleNamespace
+
+  global _BUILD_LOG, _COMMAND_LOG
+  root = Path(__file__).resolve().parent
+  work, output = work.resolve(), output.resolve()
+  work.mkdir(parents=True, exist_ok=True)
+  target = _host_target()
+  if (target["system"], target["arch"]) not in {
+    ("Windows", "x86_64"),
+    ("Linux", "x86_64"),
+    ("Linux", "aarch64"),
+    ("Darwin", "x86_64"),
+    ("Darwin", "arm64"),
+  }:
+    raise RuntimeError(f"Unsupported native target: {target}")
+  missing = _missing_ipopt_tools()
+  if target["system"] == "Linux" and shutil.which("readelf") is None:
+    missing.append("readelf")
+  if missing:
+    raise RuntimeError(f"Missing native tools: {', '.join(missing)}")
+  if platform_tag and not (target["system"] == "Linux" and re.fullmatch(r"manylinux_2_\d+_" + target["arch"], platform_tag)):
+    raise RuntimeError("--platform-tag accepts only a host-architecture manylinux tag, audited by auditwheel")
+  state = {"recipe_sha256": _recipe_hash(root), "target": target, "environment": {key: os.environ.get(key, "") for key in _KEY_ENV}}
+  stamp = work / "recipe.json"
+  if stamp.exists() and json.loads(stamp.read_text()) != state:
+    raise RuntimeError(f"Native inputs changed; use a new --work-dir instead of {work}")
+  stamp.write_text(json.dumps(state, indent=2) + "\n")
+  _BUILD_LOG, _COMMAND_LOG = work / "build.log", work / "commands.jsonl"
+  payload = work / "payload"
+  with _locked(work / "producer.lock"):
+    _remove_tree(payload)
+    (work / "src").mkdir(exist_ok=True)
+    package = payload / "scaly_ipopt"
+    hook = SimpleNamespace(app=SimpleNamespace(display_info=lambda message: print(message, flush=True)))
+    print(f"Retaining native sources, build trees and diagnostics in {work}", flush=True)
+    _build_ipopt_stack(hook, work / "src", package / "lib", package / "include", package / "licenses", root / "licenses")
+    if platform_tag:
+      _repair_linux_payload(work, payload, platform_tag)
+      target |= {"platform_tag": platform_tag, "floor": "glibc 2." + platform_tag.split("_")[2]}
+    elif target["system"] == "Darwin":
+      minimum = (15, 0)
+      for path in (package / "lib").glob("*.dylib"):
+        commands = subprocess.check_output(["otool", "-l", str(path)], text=True)
+        minimum = max(minimum, _macos_minimum(commands))
+      target |= {"platform_tag": f"macosx_{minimum[0]}_{minimum[1]}_{target['arch']}", "floor": f"macOS {minimum[0]}.{minimum[1]}"}
+    manifest = _bundle_manifest(root, work, payload, target)
+    _validate_manifest(manifest)
+    (payload / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
+    with tarfile.open(temporary, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+      for path in sorted(payload.iterdir()):
+        archive.add(path, arcname=path.name)
+    _read_bundle(temporary.read_bytes())
+    temporary.replace(output)
+    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    output.with_name(output.name + ".sha256").write_text(f"{digest}  {output.name}\n")
+    output.with_name(output.name + ".manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"{output}\nSHA-256 {digest}", flush=True)
+    return manifest
+
+
 class BuildHook(BuildHookInterface):
   PLUGIN_NAME = "scaly"
 
   def initialize(self, version: str, build_data: dict) -> None:
+    """Select explicit verified archive bytes, otherwise retain the ordinary source-build path.
+
+    Sdists do no native work. The manifest supplies archive wheel tags and the content key;
+    archive selection is strict even for editable auto mode. Skip mode keeps its precedence.
+    """
     if self.target_name == "sdist":
       self.app.display_info("Skipping vendored solver build for sdist target")
       return
@@ -773,7 +1350,35 @@ class BuildHook(BuildHookInterface):
       build_data["pure_python"] = False
       build_data["tag"] = _wheel_tag()
     if mode == "skip":
+      if (package_dir / "native_manifest.json").is_file():
+        try:
+          manifest = json.loads((package_dir / "native_manifest.json").read_text())
+          _validate_manifest(manifest)
+          _verify_payload(package_dir.parent, manifest)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as error:
+          raise RuntimeError(f"Invalid installed Ipopt manifest in {package_dir}; reinstall scaly-ipopt: {error}") from error
+        build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
+      return
+    if archive := os.environ.get("SCALY_IPOPT_BUNDLE"):
+      try:
+        bundle = Path(archive).expanduser().read_bytes()
+      except OSError as error:
+        raise RuntimeError(f"Cannot read SCALY_IPOPT_BUNDLE={archive!r}: {error}") from error
+      manifest = _read_bundle(bundle)
+      build_data["pure_python"] = False
+      build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]
+      key = _cache_key(root, bundle)
+      _install_build(
+        self,
+        root,
+        package_dir,
+        _cache_root() / f"ipopt-{key}",
+        key,
+        lambda: [],
+        lambda src, out: _read_bundle(bundle, out),
+        manifest=manifest,
+      )
       return
     key = _cache_key(root)
     stamp = root / ".build_key"
@@ -803,3 +1408,20 @@ class BuildHook(BuildHookInterface):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)
+    shutil.rmtree(root / "src" / "scaly_ipopt.libs", ignore_errors=True)
+    (root / "src" / "scaly_ipopt" / "native_manifest.json").unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+  if sys.argv[1:2] == ["_archive"]:
+    _archive_native(Path(sys.argv[2]), sys.argv[3:])
+    raise SystemExit(0)
+  import argparse
+
+  parser = argparse.ArgumentParser(description="Build a complete host-native Ipopt tar.gz bundle without publishing it.")
+  parser.add_argument("command", choices=["bundle"])
+  parser.add_argument("--work-dir", type=Path, required=True, help="Retained sources, incremental native build trees and logs")
+  parser.add_argument("--output", type=Path, required=True, help="Output tar.gz archive; SHA-256 and manifest are also written beside it")
+  parser.add_argument("--platform-tag", help="Linux only: auditwheel repair to this manylinux tag in a suitable compatibility environment")
+  arguments = parser.parse_args()
+  _produce_bundle(arguments.work_dir, arguments.output, arguments.platform_tag)

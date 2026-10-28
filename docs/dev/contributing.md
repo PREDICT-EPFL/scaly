@@ -64,6 +64,63 @@ in `src/scaly_*/build_config.json`, which pins its version, and a row in the
 into the wheel. The `test_*_notices.py` test in each of those plugins fails when a pinned dependency
 has no license directory.
 
+### Local Ipopt archives
+
+The Ipopt producer builds a native archive for the current host using the same source recipe as
+the build hook. It needs the native toolchain described above. Run it from the repository root:
+
+```bash
+uv run plugins/scaly-ipopt/hatch_build.py bundle --work-dir build/ipopt-native --output build/ipopt-native.tar.gz
+```
+
+The command writes the archive, `ipopt-native.tar.gz.manifest.json` and
+`ipopt-native.tar.gz.sha256`. It retains source checkouts, component build trees, `build.log`
+and `commands.jsonl` under the work directory, including after failure. Rerunning the command
+reuses those sources and incremental native builds, then recreates the payload. You can inspect
+or rebuild a component there with its native build tools. The manifest records tracked source
+patches, downloaded MUMPS source hashes, compiler identities and generated build settings.
+Use a new work directory after changing the recipe, target or compiler environment.
+
+A local Linux archive records its host's glibc floor and uses a `linux_*` tag. Producing a
+manylinux archive requires a suitable compatibility environment and an explicit
+`--platform-tag`, for example `manylinux_2_27_x86_64`. The command runs `auditwheel repair`
+before archiving and includes any repaired `scaly_ipopt.libs` sibling. macOS archives record
+the highest minimum OS version in their native libraries, with a minimum of macOS 15.
+
+Select an archive explicitly for an editable install or wheel build. The path should be absolute.
+In Bash:
+
+```bash
+export SCALY_IPOPT_BUNDLE="$PWD/build/ipopt-native.tar.gz"
+uv sync --reinstall-package scaly-ipopt
+uv build plugins/scaly-ipopt --wheel
+```
+
+In PowerShell:
+
+```powershell
+$env:SCALY_IPOPT_BUNDLE = (Resolve-Path build/ipopt-native.tar.gz).Path
+uv sync --reinstall-package scaly-ipopt
+uv build plugins/scaly-ipopt --wheel
+```
+
+The hook checks the archive's target, manifest, complete file inventory and SHA-256 hashes before
+installing. It rejects unsafe paths and links. It copies the finished native bytes without repair
+and uses the payload's platform tag for the wheel. The archive contains the matching headers,
+Windows `ipopt.lib`, native dependencies and licenses. It contains no Python wrappers or wheel
+metadata. Archive selection needs no native compiler and does not change checked-in source pins.
+
+After replacing an archive at the same path, rerun
+`uv sync --reinstall-package scaly-ipopt`. The hook keys its cache and checkout stamp by the full
+archive SHA-256, so it cannot reuse the previous archive's cache entry. `uv` does not track the
+contents of a file named by an environment variable, which is why the reinstall flag is required.
+
+To return to the default source build, unset `SCALY_IPOPT_BUNDLE` with
+`unset SCALY_IPOPT_BUNDLE` in Bash or `Remove-Item Env:SCALY_IPOPT_BUNDLE` in PowerShell, then
+run `uv sync --reinstall-package scaly-ipopt`. The hook replaces the archive payload with the
+source build selected by its usual cache key. `SCALY_BUILD_SOLVERS=skip` skips archive installation
+as well as source builds. An sdist build neither reads the selected archive nor builds a solver.
+
 ## Run the checks
 
 ```bash

@@ -5,6 +5,9 @@ from __future__ import annotations
 import importlib.util
 import importlib.metadata
 import os
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +22,28 @@ def build_hook():
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
   return module
+
+
+@pytest.mark.parametrize("ordinary,delayed", [(True, False), (False, True), (True, True), (False, False)])
+def test_windows_dependencies_include_ordinary_and_delay_imports(build_hook, tmp_path, monkeypatch, ordinary, delayed):
+  directories = {}
+  expected = []
+  for present, directory, name in (
+    (ordinary, "DIRECTORY_ENTRY_IMPORT", "scaly_ipopt_private_libgfortran-5.dll"),
+    (delayed, "DIRECTORY_ENTRY_DELAY_IMPORT", "scaly_ipopt_private_libgcc_s_seh-1.dll"),
+  ):
+    if present:
+      directories[directory] = [SimpleNamespace(dll=name.encode("ascii"))]
+      expected.append(name)
+
+  @contextmanager
+  def read_pe(path):
+    yield SimpleNamespace(**directories)
+
+  monkeypatch.setitem(sys.modules, "pefile", SimpleNamespace(PE=read_pe))
+  # GNU objdump can report no imports after DLL repair even though the loader still sees them.
+  monkeypatch.setattr(build_hook.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=""))
+  assert build_hook._windows_deps(tmp_path / "repaired.dll") == expected
 
 
 def test_windows_runtime_bundles_transitive_dependencies(build_hook, tmp_path, monkeypatch):
@@ -50,9 +75,24 @@ def test_windows_runtime_bundles_transitive_dependencies(build_hook, tmp_path, m
     build_hook._bundle_windows_runtime(hook, lib, "ipopt.dll", tools)
 
 
+def test_archive_writers_share_one_lock(build_hook, tmp_path):
+  writer = tmp_path / "writer.py"
+  writer.write_text(
+    "from pathlib import Path\nimport sys,time\nroot=Path(sys.argv[1])\n"
+    "guard=root/'writing'\nwith guard.open('x'):\n time.sleep(0.05)\n"
+    " with (root/'calls').open('a') as out: out.write('done\\n')\nguard.unlink()\n"
+  )
+  command = [sys.executable, str(Path(build_hook.__file__)), "_archive", str(tmp_path / "archive.lock"), sys.executable, str(writer), str(tmp_path)]
+  with ThreadPoolExecutor(max_workers=6) as pool:
+    results = list(pool.map(lambda _: subprocess.run(command, capture_output=True, text=True), range(6)))
+  assert all(result.returncode == 0 for result in results), [result.stderr for result in results]
+  assert (tmp_path / "calls").read_text().splitlines() == ["done"] * 6
+
+
 @pytest.mark.parametrize("toolchain", ["standalone", "wrong-version", "relative"])
 @pytest.mark.parametrize("mode", ["auto", "required"])
 def test_windows_unsuitable_toolchain_skips_only_editable_auto(build_hook, tmp_path, monkeypatch, toolchain, mode):
+  monkeypatch.delenv("SCALY_IPOPT_BUNDLE", raising=False)
   compiler = tmp_path / "standalone" / "bin" / "gfortran.exe"
   compiler.parent.mkdir(parents=True)
   compiler.touch()

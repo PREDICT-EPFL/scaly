@@ -1,0 +1,199 @@
+{
+  "source_run": "https://github.com/PREDICT-EPFL/scaly/actions/runs/39988283717",
+  "refreshed_run": "https://github.com/PREDICT-EPFL/scaly/actions/runs/40588152775",
+  "artifact": "dist-scaly-ipopt-macos-15-intel",
+  "job_id": 120533454506,
+  "wheel": "scaly_ipopt-0.1.0a3-py3-none-macosx_15_0_x86_64.whl",
+  "wheel_sha256": "492d5087c93dd7ef56459fcb040048743b37f80cf02ec5457847bb0d702ca1e2",
+  "wheel_size": 3648696,
+  "inspection_tools": {
+    "lief": "1.0.0-d05b3499b",
+    "pyelftools": "0.33"
+  },
+  "files": {
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md": {
+      "size": 989,
+      "sha256": "5c4104c8106dda8a9ddc31d5634e5c26d51da5b6c02a61422cac20a0aab762fa"
+    },
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE": {
+      "size": 14198,
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303"
+    },
+    "scaly_ipopt/licenses/metis/LICENSE": {
+      "size": 641,
+      "sha256": "64ab947d7b289ad76e935adff51b31e4ac160df7dfad24480dbaa452e39bbe79"
+    },
+    "scaly_ipopt/licenses/ipopt/LICENSE": {
+      "size": 14198,
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303"
+    },
+    "scaly_ipopt/licenses/gklib/LGPL-2.1.txt": {
+      "size": 26419,
+      "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95"
+    },
+    "scaly_ipopt/licenses/gklib/LICENSES.md": {
+      "size": 2353,
+      "sha256": "b49c169750b29055e690db1bbd69808ae11f5c9cad26984861d40ee8b427753d"
+    },
+    "scaly_ipopt/licenses/gklib/BSD-3-Clause-MT.txt": {
+      "size": 1558,
+      "sha256": "bdcd4ca0bf11881a25e53c59256844e840b74974fe2245f2ce91cb4f9561a9fb"
+    },
+    "scaly_ipopt/licenses/gklib/LICENSE.txt": {
+      "size": 1049,
+      "sha256": "b276d6ed5ce46439ab1f9708d24726763c1c245049579ba7aef96f0b8f952444"
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING3": {
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING.RUNTIME": {
+      "size": 3324,
+      "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
+    },
+    "scaly_ipopt/licenses/mumps/LICENSE": {
+      "size": 2579,
+      "sha256": "5813fefd30a36fd7550cd2b62274be6586a0db51c11c3f2d4b852283e22ccc42"
+    },
+    "scaly_ipopt/include/coin-or/IpLinearSolvers.h": {
+      "size": 1476,
+      "sha256": "db504551e937522494fc18864897382393f99f0dc1dcfe4f0d592a4a1024977b"
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes_inc.h": {
+      "size": 1604,
+      "sha256": "b610c490709800e2b8565ab060f37a1d4c556ab61a3736c09c1488507ab6b941"
+    },
+    "scaly_ipopt/include/coin-or/IpoptConfig.h": {
+      "size": 1121,
+      "sha256": "3f4533c2e842a26c5c0a94fe98a56a290c3f67bc237e1360f4347b66d602a6bd"
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes.h": {
+      "size": 434,
+      "sha256": "fe95f249aa3abb47f4fafca7f3287ee759b3ec44835d99adb0d59ece8f44b587"
+    },
+    "scaly_ipopt/include/coin-or/IpTypes.h": {
+      "size": 1653,
+      "sha256": "814eca1603edd056fef2f0c92ceb7eb4aeae331815b1b19160213b7e6bd8e204"
+    },
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h": {
+      "size": 19605,
+      "sha256": "9e8660f32f825b2132539d4404b1835002b263265d9feff57926801c777b4744"
+    },
+    "scaly_ipopt/lib/libipopt.dylib": {
+      "size": 5346592,
+      "sha256": "6ba09d19e14cd9054ccdcc284b1907422c3a630e87330469c2c4d858cf63fe8e",
+      "format": "Mach-O",
+      "machine": "CPU_TYPE.X86_64",
+      "imports": [
+        "@loader_path/libgfortran.5.dylib",
+        "@loader_path/libquadmath.0.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "loader_paths": [],
+      "minimum_os": [
+        [
+          15,
+          0,
+          0
+        ]
+      ],
+      "sdk": [
+        [
+          15,
+          5,
+          0
+        ]
+      ]
+    },
+    "scaly_ipopt/lib/libgfortran.5.dylib": {
+      "size": 4038208,
+      "sha256": "1a0fd0bbf89891e8ba56a7c60fca96ad6ce70240bff6170d093e7e43842c5e0c",
+      "format": "Mach-O",
+      "machine": "CPU_TYPE.X86_64",
+      "imports": [
+        "@loader_path/libquadmath.0.dylib",
+        "@loader_path/libgcc_s.1.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "loader_paths": [],
+      "minimum_os": [
+        [
+          15,
+          0,
+          0
+        ]
+      ],
+      "sdk": [
+        [
+          15,
+          0,
+          0
+        ]
+      ]
+    },
+    "scaly_ipopt/lib/libquadmath.0.dylib": {
+      "size": 370944,
+      "sha256": "28dc1a7ef560269d26654d7aae60b425bb417d987c91f0456f58e1bbb3e8e178",
+      "format": "Mach-O",
+      "machine": "CPU_TYPE.X86_64",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "loader_paths": [
+        "@loader_path"
+      ],
+      "minimum_os": [
+        [
+          15,
+          0,
+          0
+        ]
+      ],
+      "sdk": [
+        [
+          15,
+          0,
+          0
+        ]
+      ]
+    },
+    "scaly_ipopt/lib/libgcc_s.1.1.dylib": {
+      "size": 246384,
+      "sha256": "4406d2c24d867ff07ba6840b8182db6f6830826143c3d27942088e39992ed6b1",
+      "format": "Mach-O",
+      "machine": "CPU_TYPE.X86_64",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "loader_paths": [
+        "@loader_path"
+      ],
+      "minimum_os": [
+        [
+          11,
+          0,
+          0
+        ]
+      ],
+      "sdk": [
+        [
+          11,
+          0,
+          0
+        ]
+      ]
+    }
+  },
+  "build_log_evidence": [
+    {
+      "line": 907,
+      "text": "wheels / scaly-ipopt / macos-15-intel\tUNKNOWN STEP\t2026-10-23T16:41:30.1279940Z checking for LAPACK... yes: user-specified (-framework Accelerate)"
+    }
+  ],
+  "blas": {
+    "implementation": "Accelerate",
+    "thread_default": "not established by these artifacts"
+  }
+}

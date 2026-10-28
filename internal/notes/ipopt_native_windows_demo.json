@@ -1,0 +1,455 @@
+{
+  "date": "2026-10-28",
+  "target": {
+    "system": "Windows",
+    "arch": "x86_64",
+    "platform_tag": "win_amd64",
+    "floor": "Windows 10 UCRT"
+  },
+  "acceptance": "Documented producer command, incremental retained OpenBLAS input, no manual native repair",
+  "producer_command": [
+    "uv",
+    "run",
+    "plugins/scaly-ipopt/hatch_build.py",
+    "bundle",
+    "--work-dir",
+    "build/native-pefile",
+    "--output",
+    "build/scaly-ipopt-native-windows-x86_64.tar.gz"
+  ],
+  "recipe_sha256": "f7736915129b03eb655266e23c2c1a1ed686c7a2d7f37af5c759bd62c618e576",
+  "manifest_sha256": "ba7d21abc8cab97a1edbaa6f9bb8cd80c45a20df740d1d29d6aa93332e27c7c7",
+  "sources": {
+    "Ipopt": {
+      "url": "https://github.com/coin-or/Ipopt.git",
+      "commit": "2695946fa79d2e84f3034e065e788933a81466eb",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "ThirdParty-Mumps": {
+      "url": "https://github.com/coin-or-tools/ThirdParty-Mumps.git",
+      "commit": "63714c7df4444de65d8140ebeca3952a8538dee7",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "METIS": {
+      "url": "https://github.com/KarypisLab/METIS.git",
+      "commit": "f5ae915a84d3bbf1508b529af90292dd7085b9ec",
+      "patch_sha256": "cb09a7a614ee3db4bce70121b2af4e21ff0062ff7f47340106e817b321ce1ea4"
+    },
+    "GKlib": {
+      "url": "https://github.com/KarypisLab/GKlib.git",
+      "commit": "3b7d61b9f885063c89901f3901fb4426f9cfb58f",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "openblas": {
+      "url": "https://github.com/OpenMathLib/OpenBLAS.git",
+      "commit": "5ef8b1964658f9cb6a6324a06f6a1a022609b0c5",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "MUMPS": {}
+  },
+  "toolchain": {
+    "cc": "$MSYS2/ucrt64/bin/gcc.EXE: gcc.EXE (Rev6, Built by MSYS2 project) 16.2.0",
+    "c++": "$MSYS2/ucrt64/bin/g++.EXE: g++.EXE (Rev6, Built by MSYS2 project) 16.2.0",
+    "gfortran": "$MSYS2/ucrt64/bin/gfortran.EXE: GNU Fortran (Rev6, Built by MSYS2 project) 16.2.0",
+    "git": "$MSYS2/usr/bin/git.EXE: git version 2.56.0",
+    "make": "$MSYS2/usr/bin/make.EXE: GNU Make 4.4.1",
+    "cmake": "C:/Users/tudor/AppData/Local/uv/cache/environments-v2/hatch-build-791eae90fbed8ae7/Scripts/cmake.EXE: cmake version 4.4.4",
+    "ninja": "$MSYS2/ucrt64/bin/ninja.EXE: 1.13.2",
+    "ar": "$MSYS2/ucrt64/bin/ar.EXE: GNU ar (GNU Binutils) 2.47.20260726",
+    "ranlib": "$MSYS2/ucrt64/bin/ranlib.EXE: GNU ranlib (GNU Binutils) 2.47.20260726",
+    "objdump": "$MSYS2/ucrt64/bin/objdump.EXE: GNU objdump (GNU Binutils) 2.47.20260726",
+    "readelf": "$MSYS2/ucrt64/bin/readelf.EXE: GNU readelf (GNU Binutils) 2.47.20260726",
+    "delvewheel": "1.13.2",
+    "pefile": "2024.8.26",
+    "pacman": "base 2022.06-1\nbash 5.3.020-1\nbash-completion 2.18.0-1\nbrotli 1.2.0-1\nbsdtar 3.8.9-1\nbzip2 1.0.8-4\nca-certificates 20260816-1\ncoreutils 8.32-5\ncurl 8.22.0-1\ndash 0.5.13.4-1\ndb 6.2.32-6\ndiffutils 3.12-1\nfile 5.48-1\nfilesystem 2026.03.06-1\nfindutils 4.11.0-2\ngawk 5.4.1-1\ngcc-libs 15.3.0-1\ngdbm 1.26-1\ngetent 2.18.90-6\ngettext 0.22.5-1\ngit 2.56.0-1\ngmp 6.3.0-2\ngnupg 2.4.9-3\ngrep 1~3.0-7\ngzip 1.15-1\nheimdal 7.8.0-7\nheimdal-libs 7.8.0-7\ninetutils 2.8-1\ninfo 7.2-3\nless 710-1\nlibargp 20260115-1\nlibasprintf 0.22.5-1\nlibassuan 3.0.2-1\nlibbz2 1.0.8-4\nlibcbor 0.14.0-2\nlibcurl 8.22.0-1\nlibdb 6.2.32-6\nlibedit 20240808_3.1-1\nlibexpat 2.8.5-1\nlibffi 3.8.0-1\nlibfido2 1.17.0-1\nlibgcrypt 1.12.4-1\nlibgdbm 1.26-1\nlibgettextpo 0.22.5-1\nlibgnutls 3.8.13-2\nlibgpg-error 1.61-1\nlibhogweed 4.0-1\nlibiconv 1.19-1\nlibidn2 2.3.8-1\nlibintl 0.22.5-1\nlibksba 1.8.1-1\nliblz4 1.10.0-1\nliblzma 5.8.4-1\nlibnettle 4.0-1\nlibnghttp2 1.70.0-1\nlibnghttp3 1.18.0-1\nlibngtcp2 1.25.0-1\nlibnpth 1.8-1\nlibopenssl 3.6.4-1\nlibp11-kit 0.26.5-1\nlibpcre 8.45-5\nlibpcre2_8 10.48-1\nlibpsl 0.23.2-1\nlibreadline 8.3.006-1\nlibsqlite 3.53.4-1\nlibssh2 1.11.1-1\nlibtasn1 4.21.0-1\nlibunistring 1.4.2-1\nlibutil-linux 2.40.2-2\nlibxcrypt 4.5.2-1\nlibzstd 1.5.7-1\nmake 4.4.1-3\nmingw-w64-ucrt-x86_64-binutils 2.47-4\nmingw-w64-ucrt-x86_64-brotli 1.2.0-1\nmingw-w64-ucrt-x86_64-bzip2 1.0.8-4\nmingw-w64-ucrt-x86_64-c-ares 1.34.9-1\nmingw-w64-ucrt-x86_64-ca-certificates 20260816-3\nmingw-w64-ucrt-x86_64-cc-libs 16.2.0-6\nmingw-w64-ucrt-x86_64-cmake 4.4.4-3\nmingw-w64-ucrt-x86_64-cppdap 1.65.r11.g6464cd7-1\nmingw-w64-ucrt-x86_64-crt 14.0.0.r495.g63ebe6cdb-1\nmingw-w64-ucrt-x86_64-curl 8.23.0-1\nmingw-w64-ucrt-x86_64-expat 2.9.0-1\nmingw-w64-ucrt-x86_64-gcc 16.2.0-6\nmingw-w64-ucrt-x86_64-gcc-fortran 16.2.0-6\nmingw-w64-ucrt-x86_64-gettext-runtime 1.0-1\nmingw-w64-ucrt-x86_64-gmp 6.3.0-2\nmingw-w64-ucrt-x86_64-gnutls 3.8.13-3\nmingw-w64-ucrt-x86_64-headers 14.0.0.r495.g63ebe6cdb-1\nmingw-w64-ucrt-x86_64-isl 0.28-1\nmingw-w64-ucrt-x86_64-jsoncpp 1.9.8-1\nmingw-w64-ucrt-x86_64-libarchive 3.8.10-1\nmingw-w64-ucrt-x86_64-libatomic 16.2.0-6\nmingw-w64-ucrt-x86_64-libb2 0.98.1-3\nmingw-w64-ucrt-x86_64-libffi 3.8.0-1\nmingw-w64-ucrt-x86_64-libgcc 16.2.0-6\nmingw-w64-ucrt-x86_64-libgfortran 16.2.0-6\nmingw-w64-ucrt-x86_64-libiconv 1.19-1\nmingw-w64-ucrt-x86_64-libidn2 2.3.8-4\nmingw-w64-ucrt-x86_64-libpsl 0.21.5-3\nmingw-w64-ucrt-x86_64-libquadmath 16.2.0-6\nmingw-w64-ucrt-x86_64-libssh2 1.11.1-2\nmingw-w64-ucrt-x86_64-libstdc++ 16.2.0-6\nmingw-w64-ucrt-x86_64-libtasn1 4.21.0-1\nmingw-w64-ucrt-x86_64-libunistring 1.4.2-1\nmingw-w64-ucrt-x86_64-libuv 1.53.0-1\nmingw-w64-ucrt-x86_64-libwinpthread 14.0.0.r495.g63ebe6cdb-2\nmingw-w64-ucrt-x86_64-lz4 1.10.0-1\nmingw-w64-ucrt-x86_64-mpc 1.4.1-1\nmingw-w64-ucrt-x86_64-mpfr 4.2.2-3\nmingw-w64-ucrt-x86_64-nettle 4.0-1\nmingw-w64-ucrt-x86_64-nghttp2 1.70.0-1\nmingw-w64-ucrt-x86_64-nghttp3 1.18.0-1\nmingw-w64-ucrt-x86_64-ngtcp2 1.25.0-1\nmingw-w64-ucrt-x86_64-ninja 1.13.2-1\nmingw-w64-ucrt-x86_64-openssl 3.6.5-1\nmingw-w64-ucrt-x86_64-p11-kit 0.26.5-1\nmingw-w64-ucrt-x86_64-pcre2 10.49-1\nmingw-w64-ucrt-x86_64-pkgconf 1~3.0.10-1\nmingw-w64-ucrt-x86_64-rhash 1.4.6-1\nmingw-w64-ucrt-x86_64-tzdata 2026e-1\nmingw-w64-ucrt-x86_64-windows-default-manifest 20260815-1\nmingw-w64-ucrt-x86_64-wineditline 2.208-1\nmingw-w64-ucrt-x86_64-winpthreads 14.0.0.r495.g63ebe6cdb-2\nmingw-w64-ucrt-x86_64-xz 5.8.4-1\nmingw-w64-ucrt-x86_64-zlib 1.3.2-2\nmingw-w64-ucrt-x86_64-zstd 1.5.7-2\nmintty 1~3.8.3-1\nmpfr 4.2.2-1\nmsys2-keyring 1~20260814-1\nmsys2-launcher 1.5-3\nmsys2-runtime 3.6.10-5\nnano 9.2-1\nncurses 6.6-2\nnettle 4.0-1\nopenssh 10.6p1-1\nopenssl 3.6.4-1\np11-kit 0.26.5-1\npacman 6.1.0-25\npacman-contrib 1.10.6-2\npacman-mirrors 20260129-1\npatch 2.8-2\nperl 5.42.3-3\nperl-authen-sasl 2.2100-2\nperl-clone 0.51-1\nperl-convert-binhex 1.125-3\nperl-encode-locale 1.05-3\nperl-error 0.17030-3\nperl-file-listing 6.16-2\nperl-html-parser 3.86-2\nperl-html-tagset 3.24-2\nperl-http-cookiejar 0.014-2\nperl-http-cookies 6.12-2\nperl-http-daemon 6.17-2\nperl-http-date 6.08-2\nperl-http-message 7.04-2\nperl-http-negotiate 6.01-4\nperl-io-html 1.004-3\nperl-io-socket-ssl 2.099-2\nperl-io-stringy 2.113-4\nperl-libwww 6.83-3\nperl-lwp-mediatypes 6.05-2\nperl-mailtools 2.22-2\nperl-mime-tools 5.518-2\nperl-net-http 6.24-2\nperl-net-smtp-ssl 1.04-3\nperl-net-ssleay 1.96-2\nperl-termreadkey 2.38-9\nperl-timedate 2.35-2\nperl-try-tiny 0.32-2\nperl-uri 5.40-1\nperl-www-robotrules 6.03-2\npinentry 1.3.3-1\npkgconf 3.0.10-1\nrebase 4.5.0-5\nsed 4.9-1\ntar 1.35-3\ntime 1.10-1\ntzcode 2026d-1\nutil-linux 2.40.2-2\nwget 1.25.0-4\nwhich 2.25-1\nxz 5.8.4-1\nzlib 1.3.2-1\nzstd 1.5.7-1\n",
+    "native_shell_tools": "/ucrt64/bin/gcc\ngcc.exe (Rev6, Built by MSYS2 project) 16.2.0\n/ucrt64/bin/g++\ng++.exe (Rev6, Built by MSYS2 project) 16.2.0\n/ucrt64/bin/gfortran\nGNU Fortran (Rev6, Built by MSYS2 project) 16.2.0\n/usr/bin/make\nGNU Make 4.4.1\n/ucrt64/bin/cmake\ncmake version 4.4.4\n/ucrt64/bin/ninja\n1.13.2\n/ucrt64/bin/objdump\nGNU objdump (GNU Binutils) 2.47.20260726\n/ucrt64/bin/dlltool\nGNU $MSYS2/ucrt64/bin/dlltool.exe (GNU Binutils) 2.47.20260726\n"
+  },
+  "environment": {
+    "CC": "gcc",
+    "CXX": "g++",
+    "FC": "gfortran",
+    "CFLAGS": "",
+    "CXXFLAGS": "",
+    "FFLAGS": "",
+    "FCFLAGS": "",
+    "CPPFLAGS": "",
+    "LDFLAGS": "",
+    "MACOSX_DEPLOYMENT_TARGET": "",
+    "MAKE_NB_JOBS": "",
+    "PYTHON_CPU_COUNT": "",
+    "NUM_THREADS": "",
+    "USE_THREAD": "",
+    "OPENBLAS_NUM_THREADS": "",
+    "OMP_NUM_THREADS": "",
+    "VECLIB_MAXIMUM_THREADS": ""
+  },
+  "openblas_makefile_conf": "OSNAME=WINNT\nARCH=x86_64\nC_COMPILER=GCC\nBINARY32=\nBINARY64=1\nCROSS=1\nCEXTRALIB= -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0 -L$MSYS2/ucrt64/bin/../lib/gcc -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/../lib -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib -L$MSYS2/ucrt64/bin/../../ucrt64/lib/../lib -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../.. -L$MSYS2/ucrt64/bin/../../ucrt64/lib  -lmingwex -lmsvcrt -lpthread -lmingwex -lmsvcrt \nF_COMPILER=GFORTRAN\nFC=gfortran\nBU=_\nFEXTRALIB= -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0 -L$MSYS2/ucrt64/bin/../lib/gcc -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/../lib -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib -L$MSYS2/ucrt64/bin/../../ucrt64/lib/../lib -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib -L$MSYS2/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../.. -L$MSYS2/ucrt64/bin/../../ucrt64/lib  -lgfortran -lmingwex -lmsvcrt -lquadmath -lm -lpthread -lmingwex -lmsvcrt \nCORE=PRESCOTT\nLIBCORE=prescott\nNUM_CORES=20\nPENTIUM4=1\nL1_DATA_SIZE=16384\nL1_DATA_LINESIZE=64\nL2_SIZE=1048576\nL2_LINESIZE=64\nDTB_DEFAULT_ENTRIES=64\nDTB_SIZE=4096\nL2_ASSOCIATIVE=8\nHAVE_CMOV=1\nHAVE_MMX=1\nHAVE_SSE=1\nHAVE_SSE2=1\nHAVE_SSE3=1\nMAKEFLAGS += -j 20\nSBGEMM_UNROLL_M=8\nSBGEMM_UNROLL_N=4\nSGEMM_UNROLL_M=8\nSGEMM_UNROLL_N=4\nDGEMM_UNROLL_M=4\nDGEMM_UNROLL_N=4\nQGEMM_UNROLL_M=2\nQGEMM_UNROLL_N=2\nCGEMM_UNROLL_M=4\nCGEMM_UNROLL_N=2\nZGEMM_UNROLL_M=2\nZGEMM_UNROLL_N=2\nXGEMM_UNROLL_M=1\nXGEMM_UNROLL_N=1\nCGEMM3M_UNROLL_M=8\nCGEMM3M_UNROLL_N=4\nZGEMM3M_UNROLL_M=4\nZGEMM3M_UNROLL_N=4\nXGEMM3M_UNROLL_M=2\nXGEMM3M_UNROLL_N=2\n",
+  "openblas_config_h": "#define OS_WINNT\t1\n#define ARCH_X86_64\t1\n#define C_GCC\t1\n#define __64BIT__\t1\n#define HAVE_C11\t1\n#define PTHREAD_CREATE_FUNC\tpthread_create\n#define BUNDERSCORE\t_\n#define NEEDBUNDERSCORE\t1\n#define PENTIUM4\n#define L1_DATA_SIZE 16384\n#define L1_DATA_LINESIZE 64\n#define L2_SIZE 1048576\n#define L2_LINESIZE 64\n#define DTB_DEFAULT_ENTRIES 64\n#define DTB_SIZE 4096\n#define L2_ASSOCIATIVE 8\n#define HAVE_CMOV\n#define HAVE_MMX\n#define HAVE_SSE\n#define HAVE_SSE2\n#define HAVE_SSE3\n#define CORE_PRESCOTT\n#define CHAR_CORENAME \"PRESCOTT\"\n#define SLOCAL_BUFFER_SIZE\t8192\n#define DLOCAL_BUFFER_SIZE\t8192\n#define CLOCAL_BUFFER_SIZE\t8192\n#define ZLOCAL_BUFFER_SIZE\t8192\n#define GEMM_MULTITHREAD_THRESHOLD\t4\n",
+  "files": {
+    "scaly_ipopt/include/coin-or/IpLinearSolvers.h": {
+      "sha256": "db504551e937522494fc18864897382393f99f0dc1dcfe4f0d592a4a1024977b",
+      "size": 1476,
+      "mode": 438
+    },
+    "scaly_ipopt/include/coin-or/IpoptConfig.h": {
+      "sha256": "d37c65a2eefea9b9da04a789b725769dc2b37c541ee967cc0cd531987e2958d9",
+      "size": 1184,
+      "mode": 438
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes.h": {
+      "sha256": "fe95f249aa3abb47f4fafca7f3287ee759b3ec44835d99adb0d59ece8f44b587",
+      "size": 434,
+      "mode": 438
+    },
+    "scaly_ipopt/include/coin-or/IpReturnCodes_inc.h": {
+      "sha256": "b610c490709800e2b8565ab060f37a1d4c556ab61a3736c09c1488507ab6b941",
+      "size": 1604,
+      "mode": 438
+    },
+    "scaly_ipopt/include/coin-or/IpStdCInterface.h": {
+      "sha256": "9e8660f32f825b2132539d4404b1835002b263265d9feff57926801c777b4744",
+      "size": 19605,
+      "mode": 438
+    },
+    "scaly_ipopt/include/coin-or/IpTypes.h": {
+      "sha256": "814eca1603edd056fef2f0c92ceb7eb4aeae331815b1b19160213b7e6bd8e204",
+      "size": 1653,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/ipopt.lib": {
+      "sha256": "42e5554b450ef6e8b297312cdc235262fd00b4294a9083675fe949134907e096",
+      "size": 1423766,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/libscaly_ipopt-3.dll": {
+      "sha256": "bef67d074b7cea8a55b5675057d401a4298ed16d58ba97b276ea2219fa3d1fff",
+      "size": 28831866,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll": {
+      "sha256": "70c5c887e68ebf8de03a3a61f1db1561a1ef845490e79fab1cbc678c57227b5f",
+      "size": 150537,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll": {
+      "sha256": "33087c1d50f5ad16cdd0f57e7bb0fb0478336dd3af1566286a891316ca98d254",
+      "size": 3774018,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll": {
+      "sha256": "ae94ee5831d6ce9e13e2b5cccd5830f214bbbe5a306913d88ca04202ae27f822",
+      "size": 414421,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll": {
+      "sha256": "7b936f5da3dfb36a3e4b023472e7f9b8cdd303f4d6f6acbc0b93072985a5be13",
+      "size": 2659194,
+      "mode": 438
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll": {
+      "sha256": "817e5b2636f532666e8f255e225af75e9d0c41b141512fde45264070a65b1c92",
+      "size": 68731,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING.RUNTIME": {
+      "sha256": "90077ba306ee9d8ed966cab1b4abd69b6e728acf08777283cc50283cd9503fa6",
+      "size": 3397,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/gcc-runtime/COPYING3": {
+      "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b",
+      "size": 35821,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/gklib/BSD-3-Clause-MT.txt": {
+      "sha256": "bdcd4ca0bf11881a25e53c59256844e840b74974fe2245f2ce91cb4f9561a9fb",
+      "size": 1558,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/gklib/LGPL-2.1.txt": {
+      "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+      "size": 26419,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/gklib/LICENSE.txt": {
+      "sha256": "b276d6ed5ce46439ab1f9708d24726763c1c245049579ba7aef96f0b8f952444",
+      "size": 1049,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/gklib/LICENSES.md": {
+      "sha256": "b49c169750b29055e690db1bbd69808ae11f5c9cad26984861d40ee8b427753d",
+      "size": 2353,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/ipopt/LICENSE": {
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303",
+      "size": 14198,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/metis/LICENSE": {
+      "sha256": "64ab947d7b289ad76e935adff51b31e4ac160df7dfad24480dbaa452e39bbe79",
+      "size": 641,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/mumps/LICENSE": {
+      "sha256": "5813fefd30a36fd7550cd2b62274be6586a0db51c11c3f2d4b852283e22ccc42",
+      "size": 2579,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/openblas/GotoBLAS_00License.txt": {
+      "sha256": "38d9eb2e3d49d73fa12b18729a112fa949f7887c3ff12be23a02c0c97d9fb5b8",
+      "size": 1608,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/openblas/LICENSE": {
+      "sha256": "190b5a9c8d9723fe958ad33916bd7346d96fab3c5ea90832bb02d854f620fcff",
+      "size": 1548,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/THIRD_PARTY_NOTICES.md": {
+      "sha256": "eec5d33fde2d6aeb987fa1b2b3a702907e60ccc3889dd278540ff81c7b6780ff",
+      "size": 1157,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/thirdparty-mumps/LICENSE": {
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303",
+      "size": 14198,
+      "mode": 438
+    },
+    "scaly_ipopt/licenses/winpthreads/COPYING": {
+      "sha256": "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177",
+      "size": 2883,
+      "mode": 438
+    }
+  },
+  "dependencies": {
+    "scaly_ipopt/lib/libscaly_ipopt-3.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-conio-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll"
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "ADVAPI32.dll",
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll"
+      ],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
+    },
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll": {
+      "bundled": [],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
+    }
+  },
+  "demo": {
+    "status": 0,
+    "x": [
+      5.0,
+      5.0
+    ],
+    "objective": 50.0,
+    "iterations": 7.0,
+    "PATH": "C:/WINDOWS/System32;C:/WINDOWS",
+    "loaded": {
+      "libscaly_ipopt-3.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/libscaly_ipopt-3.dll",
+        "sha256": "bef67d074b7cea8a55b5675057d401a4298ed16d58ba97b276ea2219fa3d1fff"
+      },
+      "probe.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/probe.dll",
+        "sha256": "49b242f910483a56ae3e8591ce27fa2992dea4dc2432a98c708eabb1c608ceaf"
+      },
+      "scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "sha256": "70c5c887e68ebf8de03a3a61f1db1561a1ef845490e79fab1cbc678c57227b5f"
+      },
+      "scaly_ipopt_6cb120790a57_libgfortran-5.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll",
+        "sha256": "33087c1d50f5ad16cdd0f57e7bb0fb0478336dd3af1566286a891316ca98d254"
+      },
+      "scaly_ipopt_6cb120790a57_libquadmath-0.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll",
+        "sha256": "ae94ee5831d6ce9e13e2b5cccd5830f214bbbe5a306913d88ca04202ae27f822"
+      },
+      "scaly_ipopt_6cb120790a57_libstdc++-6.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll",
+        "sha256": "7b936f5da3dfb36a3e4b023472e7f9b8cdd303f4d6f6acbc0b93072985a5be13"
+      },
+      "scaly_ipopt_6cb120790a57_libwinpthread-1.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll",
+        "sha256": "817e5b2636f532666e8f255e225af75e9d0c41b141512fde45264070a65b1c92"
+      }
+    },
+    "archive": {
+      "name": "scaly-ipopt-native-windows-x86_64.tar.gz",
+      "sha256": "312e69b5c3020491f114fcaea6d7a56bc61a8753a2c64f3bd106a9fe94a35fc6"
+    },
+    "wheel": {
+      "name": "scaly_ipopt-0.1.0a3-py3-none-win_amd64.whl",
+      "sha256": "87af9ab4a0fd0ba448a829dfbf138829331bdf3a78ef07410f97a84de1a9573a"
+    },
+    "recipe_sha256": "f7736915129b03eb655266e23c2c1a1ed686c7a2d7f37af5c759bd62c618e576",
+    "editable_native_hashes_verified": true,
+    "wheel_native_hashes_verified": true,
+    "zig_link_command": [
+      "$WORKTREE/.venv/Scripts/zig.exe",
+      "cc",
+      "-shared",
+      "-O2",
+      "-I$WORKTREE/build/zig-consumer/scaly_ipopt/include/coin-or",
+      "$WORKTREE/build/zig-consumer/probe.c",
+      "-L$WORKTREE/build/zig-consumer/scaly_ipopt/lib",
+      "-lipopt",
+      "-o",
+      "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/probe.dll"
+    ],
+    "missing_runtime_rejected": true
+  },
+  "consumer_source": "#include <IpStdCInterface.h>\n\nstatic bool objective(ipindex n, ipnumber *x, bool fresh, ipnumber *f, void *data) {\n  *f = x[0] * x[0] + x[1] * x[1];\n  return true;\n}\n\nstatic bool gradient(ipindex n, ipnumber *x, bool fresh, ipnumber *grad, void *data) {\n  grad[0] = 2 * x[0];\n  grad[1] = 2 * x[1];\n  return true;\n}\n\nstatic bool constraints(ipindex n, ipnumber *x, bool fresh, ipindex m, ipnumber *g, void *data) {\n  g[0] = x[0] + x[1];\n  return true;\n}\n\nstatic bool jacobian(ipindex n, ipnumber *x, bool fresh, ipindex m, ipindex count,\n                     ipindex *rows, ipindex *cols, ipnumber *values, void *data) {\n  if (values) values[0] = values[1] = 1;\n  else {\n    rows[0] = rows[1] = 0;\n    cols[0] = 0;\n    cols[1] = 1;\n  }\n  return true;\n}\n\nstatic bool hessian(ipindex n, ipnumber *x, bool fresh, ipnumber factor, ipindex m,\n                    ipnumber *lambda, bool fresh_lambda, ipindex count,\n                    ipindex *rows, ipindex *cols, ipnumber *values, void *data) {\n  if (values) values[0] = values[1] = 2 * factor;\n  else {\n    rows[0] = cols[0] = 0;\n    rows[1] = cols[1] = 1;\n  }\n  return true;\n}\n\nstatic bool intermediate(ipindex mode, ipindex iter, ipnumber f, ipnumber inf_pr,\n                         ipnumber inf_du, ipnumber mu, ipnumber norm, ipnumber regularization,\n                         ipnumber alpha_du, ipnumber alpha_pr, ipindex trials, void *data) {\n  ((double *)data)[3] = iter;\n  return true;\n}\n\n__declspec(dllexport) int probe(double *out) {\n  ipnumber lower[] = {-100, -100}, upper[] = {100, 100}, target[] = {10};\n  ipnumber x[] = {0, 0};\n  IpoptProblem p = CreateIpoptProblem(2, lower, upper, 1, target, target, 2, 2, 0,\n                                     objective, constraints, gradient, jacobian, hessian);\n  if (!p) return -999;\n  if (!AddIpoptStrOption(p, \"linear_solver\", \"mumps\") ||\n      !AddIpoptStrOption(p, \"sb\", \"yes\") ||\n      !AddIpoptIntOption(p, \"print_level\", 0) ||\n      !AddIpoptNumOption(p, \"tol\", 1e-10) ||\n      !SetIntermediateCallback(p, intermediate)) {\n    FreeIpoptProblem(p);\n    return -998;\n  }\n  int status = IpoptSolve(p, x, 0, &out[2], 0, 0, 0, out);\n  out[0] = x[0];\n  out[1] = x[1];\n  FreeIpoptProblem(p);\n  return status;\n}\n",
+  "isolated_wheel_probe": {
+    "script": ".github/scripts/windows_install.py",
+    "sha256": "d3b4ebbb8d27df6805ae5f34091e6762c36498dcc0fad2586456dfd14228f830",
+    "python": "3.14.8",
+    "result": "python 3.14.8: direct and nested PIQP/IPOPT and SQP solves passed; all solver DLLs from installed wheels"
+  },
+  "plugin_tests": {
+    "command": "SCALY_REQUIRE_SOLVERS=ipopt,piqp uv run --no-sync pytest plugins/scaly-ipopt/tests -q",
+    "result": "64 passed in 6.22s"
+  },
+  "import_reader_control": {
+    "objdump_imports": [],
+    "pefile_imports": [
+      "scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll",
+      "scaly_ipopt_6448d2711415_libgfortran-5.dll",
+      "KERNEL32.dll",
+      "api-ms-win-crt-conio-l1-1-0.dll",
+      "api-ms-win-crt-convert-l1-1-0.dll",
+      "api-ms-win-crt-environment-l1-1-0.dll",
+      "api-ms-win-crt-filesystem-l1-1-0.dll",
+      "api-ms-win-crt-heap-l1-1-0.dll",
+      "api-ms-win-crt-locale-l1-1-0.dll",
+      "api-ms-win-crt-math-l1-1-0.dll",
+      "api-ms-win-crt-private-l1-1-0.dll",
+      "api-ms-win-crt-runtime-l1-1-0.dll",
+      "api-ms-win-crt-stdio-l1-1-0.dll",
+      "api-ms-win-crt-string-l1-1-0.dll",
+      "api-ms-win-crt-time-l1-1-0.dll",
+      "api-ms-win-crt-utility-l1-1-0.dll",
+      "scaly_ipopt_6448d2711415_libwinpthread-1.dll",
+      "scaly_ipopt_6448d2711415_libstdc++-6.dll"
+    ],
+    "reachable_private_runtimes": [
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgfortran-5.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libquadmath-0.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libstdc++-6.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libwinpthread-1.dll"
+    ],
+    "dll_sha256": "ca55d0c15f6ea8ddc2f440c667863c4c5d321cfa1416a1a03cbf9b93c8ff2189",
+    "pefile_version": "2024.8.26"
+  },
+  "retained_log_sha256": {
+    "native-pefile/build.log": "d77b4e08650a6e108b5ceac43e8d94f4fb3880c6480a75c441fea24cbc11744d",
+    "native-pefile/commands.jsonl": "b876400f35953a20eb6e1e3f602fb62f9669d6fd4b4266060c17ba0cfecf2f2d",
+    "editable-reinstall.log": "9ec18931a674d81e9b9bd855ce7052dbae1adfc5382486f8fa1e25bcc34c7e70",
+    "bundle-tests.log": "28130c1e30573a178d8770b6c9bc2d46c59079824e6edc29c39f2426e129ce57",
+    "bundle-wheel.log": "8a1da3882f5276bc9295920e50947ae9f66766db0a19c72f86dc062c70c8fd3b",
+    "installed-wheels.log": "4ae6676615df20596152e879444b42c66e0225268a90f14d30a8b7bdca662d55",
+    "zig-link.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "negative-runtime.log": "454169942f024a474341bf06a7e302fd01b115587ee4450905fdfcc1b2e224cf"
+  }
+}
