@@ -208,6 +208,28 @@ jobs:
           path: accepted.json
           retention-days: 90
 
+  notify:
+    needs: [select, build, validate, accepted]
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.branch != 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Report dispatched candidate completion to its pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          TARGET: ${{ inputs.target }}
+          BUILD: ${{ needs.build.result }}
+          VALIDATE: ${{ needs.validate.result }}
+          ACCEPTED: ${{ needs.accepted.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number="$(gh pr view "$BRANCH" --json number --jq .number 2>/dev/null)" || exit 0
+          printf 'Native candidate %s finished. Build %s, validation %s, summary %s.\n\n%s\n' "$TARGET" "$BUILD" "$VALIDATE" "$ACCEPTED" "$RUN_URL" > notice.md
+          gh pr comment "$number" --body-file notice.md
+
   attest:
     needs: [select, accepted]
     if: >-

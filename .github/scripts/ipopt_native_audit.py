@@ -49,6 +49,12 @@ def resolve_import(system, name, origin, files, loader_paths):
     candidates = [f"{parent}/{name}"] if "/" not in name and "\\" not in name else []
   elif system == "Darwin":
     candidates = [name.replace("@loader_path", parent)] if name.startswith("@loader_path/") else []
+    if name.startswith("@rpath/"):
+      candidates = [
+        path.replace("@loader_path", parent) + name.removeprefix("@rpath")
+        for path in loader_paths
+        if path == "@loader_path" or path.startswith("@loader_path/")
+      ]
   else:
     candidates = [path.replace("${ORIGIN}", parent).replace("$ORIGIN", parent) + "/" + name for path in loader_paths] if "/" not in name else []
   indexed = {key.lower(): key for key in files} if system == "Windows" else files

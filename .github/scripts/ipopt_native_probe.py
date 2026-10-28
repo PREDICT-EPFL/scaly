@@ -80,6 +80,13 @@ def loaded(root, manifest, address):
   return {"symbol_library": str(solver), "loaded_payload": actual}
 
 
+def casadi_identity(address, expected):
+  actual = module_path(address)
+  assert actual in {path.resolve() for path in expected.parent.glob("libipopt*")}, (actual, expected)
+  assert digest(actual) == digest(expected), (actual, expected)
+  return {"symbol_library": str(actual), "sha256": digest(actual)}
+
+
 def other_libraries():
   import casadi as ca
   import numpy as np
@@ -97,9 +104,7 @@ def other_libraries():
   expected = package / ("libipopt-3.dll" if sys.platform == "win32" else "libipopt" + extension)
   native = ctypes.CDLL(str(plugin))
   address = bound_address(native, plugin, None if sys.platform == "win32" else "CreateIpoptProblem")
-  actual = module_path(address)
-  assert actual == expected.resolve() and digest(actual) == digest(expected), (actual, expected)
-  return {"symbol_library": str(actual), "sha256": digest(actual)}
+  return casadi_identity(address, expected)
 
 
 def python_solves():

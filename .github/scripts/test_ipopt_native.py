@@ -47,6 +47,33 @@ def test_linux_origin_sidecar_resolution():
     audit.resolve_import("Linux", "libquadmath-private.so", "scaly_ipopt/lib/libgfortran.so.5", files, ["/original/build"])
 
 
+def test_macos_rpath_resolves_only_through_bundled_loader_paths():
+  audit = load("ipopt_native_audit")
+  files = {"scaly_ipopt/lib/libgfortran.5.dylib": {}}
+  name, origin = "@rpath/libgfortran.5.dylib", "scaly_ipopt/lib/libipopt.dylib"
+  assert audit.resolve_import("Darwin", name, origin, files, ["@loader_path"]) == next(iter(files))
+  for paths, payload in (([], files), (["/opt/homebrew/lib"], files), (["@loader_path"], {})):
+    with pytest.raises(RuntimeError):
+      audit.resolve_import("Darwin", name, origin, payload, paths)
+
+
+@pytest.mark.parametrize("case", ["alias", "foreign", "changed"])
+def test_casadi_identity_accepts_versioned_alias_but_rejects_foreign_or_changed_bytes(tmp_path, monkeypatch, case):
+  probe = load("ipopt_native_probe")
+  package = tmp_path / "casadi"
+  package.mkdir()
+  expected = package / "libipopt.so"
+  expected.write_bytes(b"CasADi's Ipopt")
+  actual = (package if case != "foreign" else tmp_path) / "libipopt.so.3"
+  actual.write_bytes(b"CasADi's Ipopt" if case != "changed" else b"different Ipopt")
+  monkeypatch.setattr(probe, "module_path", lambda address: actual.resolve())
+  if case == "alias":
+    assert probe.casadi_identity(1, expected)["symbol_library"] == str(actual.resolve())
+  else:
+    with pytest.raises(AssertionError):
+      probe.casadi_identity(1, expected)
+
+
 def test_floor_gate_rejects_a_newer_glibc():
   audit = load("ipopt_native_audit")
   allowed = {"GLIBC": ["2.27"], "GLIBCXX": ["3.4.19"]}

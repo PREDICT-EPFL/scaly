@@ -71,3 +71,21 @@ manylinux version error and a redundant always() in the cancellation condition.
 After the macOS rebase, 68 producer/builder tests pass. The full candidate run is queued behind
 the preserved earlier Windows build. Dispatch both macOS targets separately to exercise the
 fixed packaging path and acceptance without waiting for another Windows compilation.
+
+The four single-target builds succeeded but validation found two validator defects. Both macOS
+archives contain all repaired runtimes, correct @rpath imports with @loader_path rpaths, matching
+manifest hashes and code-signature commands. The audit now resolves those imports through
+bundled loader paths, with positive and missing/external-runtime rejection tests.
+
+Both Linux failures were the check of CasADi's own versioned library against its unversioned
+copy. Scaly's binding checks had passed before that assertion. A Linux reproduction using the
+exact x86-64 candidate archive confirms both load orders: dlinfo reports Scaly direct/nested
+handles in namespace 1 and CasADi in namespace 0, while dladdr and /proc/self/maps independently
+agree on each address's actual library. The original alias assertion reproduces. The fixed
+probe accepts the versioned CasADi copy only inside its package with identical bytes, and tests
+reject foreign paths or changed bytes. No builder or shipped-runtime change is needed.
+
+All 72 focused tests, Ruff, types, actionlint and four fresh Windows probes pass. Dispatches
+now post their completion to an open branch PR so the existing watch wakes for those outcomes.
+Push these validator fixes, dispatch macOS/Linux single targets again, and retain the running
+Windows candidate. Finish five-target acceptance before readiness and the maintainer handoff.

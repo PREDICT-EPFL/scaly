@@ -26,6 +26,9 @@ The independent monthly schedule runs all five targets from main. It records hea
 without attestations for publication and cannot supply an official revision. Neither candidate
 generation nor the monthly run delays ordinary package tests.
 
+Branch dispatches with an open PR post a completion comment there, including failed acceptance.
+The PR watch can then wake the implementation thread for single-target results too.
+
 Each target artifact contains `scaly-ipopt-native-TARGET.tar.gz`, the builder's `.manifest.json`
 and `.sha256` siblings, and `.provenance.json`. Provenance records the actual source commit,
 run and attempt, runner image, Linux image reference/digest and Docker identity. The manifest
