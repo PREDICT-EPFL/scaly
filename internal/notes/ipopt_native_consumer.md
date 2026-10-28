@@ -162,6 +162,14 @@ not native compilation. No lower-layer change is needed for this review note. Ed
 still treats an HTTP 404 as unavailable, while wheel/required mode fails. Empty macOS version
 detection remains the archive boundary's existing assumption.
 
+Ordinary CI built all five source-default Ipopt wheels and passed the clean-install jobs.
+Its Linux and macOS suites then exposed a test-fixture error: the pinned-install test supplied
+a Windows archive and validator target while the selector still saw the actual runner OS.
+The test now sets those inputs consistently and runs installation/override verification on
+all five layouts. A Linux fixture on the Windows workstation reproduces the mismatch before
+the fix. All 97 focused tests and full collection pass locally. Production code and the
+publication gate are unchanged. CI must rerun with this fix.
+
 Project updates are unavailable because the GitHub token lacks `read:project`. Publication,
 final all-target consumer gates and timing acceptance remain open in #230. No new follow-up
 issue has been identified yet.

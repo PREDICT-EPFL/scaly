@@ -69,3 +69,10 @@ unchanged by the rebase. After checkout exposed CRLF conversion of the activatio
 a file-scoped Git attribute preserves LF. A Windows checkout test and patch-application
 check pass. All 93 consumer/provenance checks and 24 producer checks pass after the rebase,
 as do type, lint and format checks.
+
+Ordinary CI built all five Ipopt wheels and passed clean installs, then exposed a test-only
+host mismatch in the new pinned-install test on Linux/macOS. The fixture now sets the selector
+OS/libc and validator target consistently and exercises installation/override on all five
+layouts. The mismatch reproduces locally before the fixture fix. No production code changes.
+The collection baseline includes the four added cases. All 97 focused tests, type/lint/format
+and full collection checks pass locally. Own CI reruns after the test-only fix.

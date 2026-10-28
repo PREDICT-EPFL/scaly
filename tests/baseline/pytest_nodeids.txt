@@ -46,7 +46,11 @@ plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_download_cache_offli
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_download_cache_offline_all_targets[macos-arm64]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_download_cache_offline_all_targets[macos-x86_64]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_download_cache_offline_all_targets[windows-x86_64]
-plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_install_and_override_precedence
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_install_and_override_precedence[linux-aarch64]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_install_and_override_precedence[linux-x86_64]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_install_and_override_precedence[macos-arm64]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_install_and_override_precedence[macos-x86_64]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_install_and_override_precedence[windows-x86_64]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_modes_never_compile[editable-auto]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_modes_never_compile[editable-required]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_pinned_modes_never_compile[editable-skip]

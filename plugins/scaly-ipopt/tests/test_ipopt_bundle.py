@@ -178,14 +178,16 @@ def test_pinned_modes_never_compile(bundle_hook, tmp_path, monkeypatch, version,
     assert messages and "Skipping" in messages[-1]
 
 
-def test_pinned_install_and_override_precedence(bundle_hook, tmp_path, monkeypatch):
-  layout = json.loads((Path(__file__).parent / "fixtures/bundles/windows-x86_64.json").read_text())
+def test_pinned_install_and_override_precedence(bundle_hook, native_layout, tmp_path, monkeypatch):
   archive = tmp_path / "native.tar.gz"
-  manifest = archive_fixture(archive, layout)
+  manifest = archive_fixture(archive, native_layout)
   content = archive.read_bytes()
   pins = fixture_pins(content)
   monkeypatch.setitem(bundle_hook._BUILD_CONFIG, "native_bundle", pins)
   monkeypatch.setattr(bundle_hook, "_host_target", lambda: manifest["target"])
+  monkeypatch.setattr(bundle_hook.platform, "system", lambda: manifest["target"]["system"])
+  monkeypatch.setattr(bundle_hook.platform, "libc_ver", lambda: ("glibc", "2.35"))
+  monkeypatch.setattr(bundle_hook, "_wheel_tag", lambda: "py3-none-" + manifest["target"]["platform_tag"])
   monkeypatch.setattr(bundle_hook, "_missing_ipopt_tools", lambda: pytest.fail("consumer requested tools"))
   monkeypatch.setattr(bundle_hook, "_cache_root", lambda: tmp_path / "cache")
   monkeypatch.setenv("SCALY_BUILD_SOLVERS", "required")
@@ -197,7 +199,7 @@ def test_pinned_install_and_override_precedence(bundle_hook, tmp_path, monkeypat
     bundle_hook.BuildHook.initialize(hook, "editable", data)
     assert len(requests) == 1
   package = tmp_path / "src/scaly_ipopt"
-  assert data["tag"] == "py3-none-win_amd64"
+  assert data["tag"] == "py3-none-" + manifest["target"]["platform_tag"]
   assert json.loads((package / "native_bundle.json").read_text())["release"] == "test-only"
   bundle_hook._verify_payload(package.parent, manifest)
   (package / "build_config.json").write_text(json.dumps({"native_bundle": pins}))
@@ -207,7 +209,7 @@ def test_pinned_install_and_override_precedence(bundle_hook, tmp_path, monkeypat
   verifier = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(verifier)
   assert verifier.verify(package)["release"] == "test-only"
-  library = package / "lib/libscaly_ipopt-3.dll"
+  library = package / "lib" / bundle_hook._shared_lib_name(manifest["target"]["system"], "ipopt")
   original = library.read_bytes()
   library.write_bytes(b"changed after packaging")
   with pytest.raises(RuntimeError, match="native bytes differ"):
