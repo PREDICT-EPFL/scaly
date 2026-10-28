@@ -1,0 +1,5 @@
+# Captured otool -l excerpt: https://github.com/orgs/pyinstaller/discussions/6316
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 10.9
+      sdk 11.0

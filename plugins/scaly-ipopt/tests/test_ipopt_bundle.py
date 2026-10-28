@@ -273,12 +273,23 @@ def test_hatch_wheel_and_sdist_preserve_native_boundary(bundle_hook, tmp_path, r
     )
 
 
-def test_producer_retains_work_and_freezes_complete_payload(bundle_hook, tmp_path, monkeypatch):
-  layout = json.loads((Path(__file__).parent / "fixtures/bundles/windows-x86_64.json").read_text())
-  monkeypatch.setattr(bundle_hook, "_host_target", lambda: layout["target"])
+@pytest.mark.parametrize("fixture,expected", [("otool-build-version.txt", (10, 14)), ("otool-version-min-macosx.txt", (10, 9))])
+def test_macos_minimum_reads_only_deployment_versions(bundle_hook, fixture, expected):
+  commands = (Path(__file__).parent / "fixtures" / fixture).read_text()
+  assert bundle_hook._macos_minimum(commands) == expected
+
+
+@pytest.mark.parametrize("layout_name", ["windows-x86_64", "macos-x86_64", "macos-arm64"])
+def test_producer_retains_work_and_freezes_complete_payload(bundle_hook, tmp_path, monkeypatch, layout_name):
+  fixtures = Path(__file__).parent / "fixtures"
+  layout = json.loads((fixtures / f"bundles/{layout_name}.json").read_text())
+  monkeypatch.setattr(bundle_hook, "_host_target", lambda: dict(layout["target"]))
   monkeypatch.setattr(bundle_hook, "_missing_ipopt_tools", lambda: [])
   monkeypatch.setattr(bundle_hook, "_recipe_hash", lambda root: "0" * 64)
   expected = archive_fixture(tmp_path / "fixture.tar.gz", layout)
+  if layout_name.startswith("macos"):
+    commands = (fixtures / "otool-build-version.txt").read_text() + (fixtures / "otool-version-min-macosx.txt").read_text()
+    monkeypatch.setattr(bundle_hook.subprocess, "check_output", lambda *args, **kwargs: commands)
 
   def build(hook, src, lib, include, licenses, vendored):
     (src / "retained-source").write_text("native tools can rebuild here")
@@ -289,7 +300,12 @@ def test_producer_retains_work_and_freezes_complete_payload(bundle_hook, tmp_pat
       expected["files"][name]["mode"] = path.stat().st_mode & 0o777
 
   monkeypatch.setattr(bundle_hook, "_build_ipopt_stack", build)
-  monkeypatch.setattr(bundle_hook, "_bundle_manifest", lambda *args: expected)
+
+  def manifest(root, work, payload, target):
+    assert target == layout["target"]
+    return expected
+
+  monkeypatch.setattr(bundle_hook, "_bundle_manifest", manifest)
   work = tmp_path / "work"
   output = tmp_path / "native.tar.gz"
   bundle_hook._produce_bundle(work, output)

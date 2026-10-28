@@ -1246,6 +1246,22 @@ def _bundle_manifest(root: Path, work: Path, payload: Path, target: dict) -> dic
   }
 
 
+def _macos_minimum(commands: str) -> tuple[int, int]:
+  """Read deployment versions from otool load commands, excluding SDK and tool versions."""
+  minimum, command = (0, 0), ""
+  for line in commands.splitlines():
+    fields = line.split()
+    if len(fields) != 2:
+      continue
+    key, value = fields
+    if key == "cmd":
+      command = value
+    elif (command, key) in {("LC_BUILD_VERSION", "minos"), ("LC_VERSION_MIN_MACOSX", "version")}:
+      major, minor, *_ = map(int, value.split("."))
+      minimum = max(minimum, (major, minor))
+  return minimum
+
+
 def _produce_bundle(work: Path, output: Path, platform_tag: str | None = None) -> dict:
   """Build only the host target, retain native work/logs, repair and freeze a complete archive."""
   from types import SimpleNamespace
@@ -1291,8 +1307,7 @@ def _produce_bundle(work: Path, output: Path, platform_tag: str | None = None) -
       minimum = (15, 0)
       for path in (package / "lib").glob("*.dylib"):
         commands = subprocess.check_output(["otool", "-l", str(path)], text=True)
-        versions = re.findall(r"^\s+(?:minos|version)\s+(\d+)\.(\d+)", commands, re.MULTILINE)
-        minimum = max([minimum, *(tuple(map(int, value)) for value in versions)])
+        minimum = max(minimum, _macos_minimum(commands))
       target |= {"platform_tag": f"macosx_{minimum[0]}_{minimum[1]}_{target['arch']}", "floor": f"macOS {minimum[0]}.{minimum[1]}"}
     manifest = _bundle_manifest(root, work, payload, target)
     _validate_manifest(manifest)

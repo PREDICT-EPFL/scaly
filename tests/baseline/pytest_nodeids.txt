@@ -28,8 +28,12 @@ plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[lic
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[missing]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[tag]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_invalid_bundle_rejected[target]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_macos_minimum_reads_only_deployment_versions[otool-build-version.txt-expected0]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_macos_minimum_reads_only_deployment_versions[otool-version-min-macosx.txt-expected1]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_override_content_identity_and_install
-plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_producer_retains_work_and_freezes_complete_payload
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_producer_retains_work_and_freezes_complete_payload[macos-arm64]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_producer_retains_work_and_freezes_complete_payload[macos-x86_64]
+plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_producer_retains_work_and_freezes_complete_payload[windows-x86_64]
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_recipe_identity_excludes_wrapper_and_consumer_pins
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_safe_relative_symlink
 plugins/scaly-ipopt/tests/test_ipopt_bundle.py::test_sdist_ignores_bundle_and_toolchain

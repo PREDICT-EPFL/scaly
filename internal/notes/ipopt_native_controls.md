@@ -5,6 +5,31 @@ It supplies the observed payload boundary for #228 and the comparison inputs for
 The [fixed design](https://github.com/PREDICT-EPFL/scaly/issues/228#issuecomment-6440493339)
 keeps the supplier, numerical versions, threading policy and platform floors unchanged.
 
+## Producer parser recheck
+
+On 2026-10-28 the #229 candidates exposed a producer floor bug. The parser treated linker tool
+versions inside `LC_BUILD_VERSION` as deployment versions. It now reads only that command's
+`minos` and `LC_VERSION_MIN_MACOSX`'s `version`. Captured `otool -l` excerpts from the linked
+sources in the two plugin fixtures exercise both forms and a tool version of 650.9. The old
+producer claimed macOS 650.9 in both architecture tests. The corrected producer retains 15.0.
+
+The two macOS inventories below are unaffected. A separate recheck decoded the load commands
+directly from the retained wheel bytes, selecting the matching slice of universal binaries and
+verifying every dylib hash against its inventory. Both targets still require 15.0 for Ipopt,
+Fortran and quadmath, and 11.0 for the GCC runtime. Their recorded linker tool versions are
+1167.5 and 1230.1, not OS requirements. No control JSON or recorded floor was changed.
+
+The adjacent parser audit found no further failure in the observed layouts. `readelf` inventory
+matches `NEEDED` entries, while `ldd` follows the Fortran/quadmath closure and handles unresolved
+entries. The `otool -L` and `LC_RPATH` readers match the recorded install names and rpaths. Both
+macOS control wheels have their four dylibs under `scaly_ipopt/lib`, with no delocate sidecars.
+The producer's existing macOS recipe repairs the runtime closure there before archiving. Linux
+x86-64's actual auditwheel sibling remains in the recorded inventory and complete archive path.
+
+A separate #229 Linux candidate log shows its producer successfully wrote the archive before
+the host provenance writer failed with `PermissionError`. That container/host ownership failure
+is outside this parser fix and is reported to the coordinator without changing #229's files.
+
 ## Inputs and inspection
 
 Downloaded every `dist-scaly-ipopt-*` artifact from
