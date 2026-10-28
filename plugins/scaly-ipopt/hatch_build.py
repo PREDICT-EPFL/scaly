@@ -501,8 +501,12 @@ def _linux_major_so_name(path: Path) -> str:
 
 
 def _windows_deps(path: Path) -> list[str]:
-  out = subprocess.run(["objdump", "-p", str(path)], check=True, capture_output=True, text=True).stdout
-  return re.findall(r"^\s*DLL Name:\s*(\S+)", out, re.MULTILINE)
+  import pefile
+
+  with pefile.PE(str(path)) as pe:
+    return [
+      entry.dll.decode("ascii") for directory in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT") for entry in getattr(pe, directory, ())
+    ]
 
 
 def _bundle_windows_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str, runtime_dir: Path) -> None:

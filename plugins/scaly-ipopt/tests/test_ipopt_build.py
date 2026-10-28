@@ -24,6 +24,28 @@ def build_hook():
   return module
 
 
+@pytest.mark.parametrize("ordinary,delayed", [(True, False), (False, True), (True, True), (False, False)])
+def test_windows_dependencies_include_ordinary_and_delay_imports(build_hook, tmp_path, monkeypatch, ordinary, delayed):
+  directories = {}
+  expected = []
+  for present, directory, name in (
+    (ordinary, "DIRECTORY_ENTRY_IMPORT", "scaly_ipopt_private_libgfortran-5.dll"),
+    (delayed, "DIRECTORY_ENTRY_DELAY_IMPORT", "scaly_ipopt_private_libgcc_s_seh-1.dll"),
+  ):
+    if present:
+      directories[directory] = [SimpleNamespace(dll=name.encode("ascii"))]
+      expected.append(name)
+
+  @contextmanager
+  def read_pe(path):
+    yield SimpleNamespace(**directories)
+
+  monkeypatch.setitem(sys.modules, "pefile", SimpleNamespace(PE=read_pe))
+  # GNU objdump can report no imports after DLL repair even though the loader still sees them.
+  monkeypatch.setattr(build_hook.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=""))
+  assert build_hook._windows_deps(tmp_path / "repaired.dll") == expected
+
+
 def test_windows_runtime_bundles_transitive_dependencies(build_hook, tmp_path, monkeypatch):
   lib = tmp_path / "wheel"
   tools = tmp_path / "compiler"

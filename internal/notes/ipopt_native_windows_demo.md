@@ -6,6 +6,36 @@ with the toolchain and numerical configuration recorded in the
 [five-target controls](ipopt_native_controls.md). The archive/install interfaces are in the
 [native archive contract](ipopt_native_bundle_contract.md).
 
+## Windows import-inventory correction
+
+The producer audit for #229 found that GNU objdump reported no imports for the repaired
+Ipopt DLL. The first archive's dependency graph therefore omitted private runtime edges even
+though its payload and clean loader probes worked. `_windows_deps` now reads both ordinary and
+delay imports with the already pinned pefile library. Four regression cases cover either table,
+both tables and neither table. Three fail against the old objdump implementation.
+
+On 2026-10-28 the documented producer command completed again with `--work-dir build/native-pefile`.
+This fresh work directory reused only a copy of the earlier successful OpenBLAS source tree and
+compiled outputs. All other components started from pinned sources, without a manual native
+repair. The new archive SHA-256 is
+`312e69b5c3020491f114fcaea6d7a56bc61a8753a2c64f3bd106a9fe94a35fc6`.
+The current JSON evidence describes this regenerated archive. Its dependency graph matches a
+fresh pefile scan of every DLL. Ipopt directly imports the private GCC, Fortran, C++ and pthread
+runtimes, and the Fortran runtime imports private quadmath. All five private runtimes are
+reachable from Ipopt. The JSON also retains the original DLL's objdump/pefile comparison and
+hash, so the missing-import reproduction is tied to the bytes that exposed it.
+
+All 44 focused hook/contract tests pass. The requested focused cross-family check approved the
+fix and regression. The full suite after this code change reports 2750 passed, 104 skipped and
+only the known hard-coded `cc` failure described below.
+
+The regenerated archive passed editable reinstall and all 64 solver-required plugin tests.
+Every native file in the editable installation and wheel matched its manifest hash. Fresh
+installed wheels passed the direct/nested solve probe without build directories on `PATH`.
+The standalone Zig/import-library consumer again reached `[5, 5]`, objective 50, in seven
+iterations with only Windows system directories on `PATH`. Hiding its private Fortran runtime
+again made a fresh load fail.
+
 ## OpenBLAS archive corruption
 
 The first producer attempts failed while updating OpenBLAS's shared static archive. GNU ar

@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-27",
+  "date": "2026-10-28",
   "target": {
     "system": "Windows",
     "arch": "x86_64",
@@ -13,12 +13,12 @@
     "plugins/scaly-ipopt/hatch_build.py",
     "bundle",
     "--work-dir",
-    "build/native-locked",
+    "build/native-pefile",
     "--output",
     "build/scaly-ipopt-native-windows-x86_64.tar.gz"
   ],
-  "recipe_sha256": "80d56564653b6a7859688edeefe4fdd1d623effac7efa2e734e5714f15697789",
-  "manifest_sha256": "49a18a5702b2591dba3bf41717e109037fbc6d140c35b56d1ab1b79b6f22ceea",
+  "recipe_sha256": "f7736915129b03eb655266e23c2c1a1ed686c7a2d7f37af5c759bd62c618e576",
+  "manifest_sha256": "ba7d21abc8cab97a1edbaa6f9bb8cd80c45a20df740d1d29d6aa93332e27c7c7",
   "sources": {
     "Ipopt": {
       "url": "https://github.com/coin-or/Ipopt.git",
@@ -117,36 +117,36 @@
       "mode": 438
     },
     "scaly_ipopt/lib/ipopt.lib": {
-      "sha256": "a9ab5e0c5b7dd1d696ee2d8ef91d05d02a58b36db5264dc6f466cde36c139844",
+      "sha256": "42e5554b450ef6e8b297312cdc235262fd00b4294a9083675fe949134907e096",
       "size": 1423766,
       "mode": 438
     },
     "scaly_ipopt/lib/libscaly_ipopt-3.dll": {
-      "sha256": "ca55d0c15f6ea8ddc2f440c667863c4c5d321cfa1416a1a03cbf9b93c8ff2189",
+      "sha256": "bef67d074b7cea8a55b5675057d401a4298ed16d58ba97b276ea2219fa3d1fff",
       "size": 28831866,
       "mode": 438
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll": {
-      "sha256": "8146c796bc254739416f6db70e69b36e898bd036ae89d6467686e6df40ed2569",
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll": {
+      "sha256": "70c5c887e68ebf8de03a3a61f1db1561a1ef845490e79fab1cbc678c57227b5f",
       "size": 150537,
       "mode": 438
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgfortran-5.dll": {
-      "sha256": "d25b42222e3dfdf13535f4727a9fc852ef7d80b8211723ec0c3b6a0de8c40e51",
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll": {
+      "sha256": "33087c1d50f5ad16cdd0f57e7bb0fb0478336dd3af1566286a891316ca98d254",
       "size": 3774018,
       "mode": 438
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libquadmath-0.dll": {
-      "sha256": "f7f42affda9dffc359330a5f4c2e0a9ecee86c05bbda1c1e55fd1111b8241554",
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll": {
+      "sha256": "ae94ee5831d6ce9e13e2b5cccd5830f214bbbe5a306913d88ca04202ae27f822",
       "size": 414421,
       "mode": 438
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libstdc++-6.dll": {
-      "sha256": "73fb061975a508542e021a24ec1082f3f50a6b3e22850a0a2765526b054bb4a9",
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll": {
+      "sha256": "7b936f5da3dfb36a3e4b023472e7f9b8cdd303f4d6f6acbc0b93072985a5be13",
       "size": 2659194,
       "mode": 438
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libwinpthread-1.dll": {
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll": {
       "sha256": "817e5b2636f532666e8f255e225af75e9d0c41b141512fde45264070a65b1c92",
       "size": 68731,
       "mode": 438
@@ -224,11 +224,33 @@
   },
   "dependencies": {
     "scaly_ipopt/lib/libscaly_ipopt-3.dll": {
-      "bundled": [],
-      "system": []
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-conio-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll": {
-      "bundled": [],
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
       "system": [
         "KERNEL32.dll",
         "api-ms-win-crt-heap-l1-1-0.dll",
@@ -238,12 +260,33 @@
         "api-ms-win-crt-string-l1-1-0.dll"
       ]
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgfortran-5.dll": {
-      "bundled": [],
-      "system": []
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "ADVAPI32.dll",
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libquadmath-0.dll": {
-      "bundled": [],
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll"
+      ],
       "system": [
         "KERNEL32.dll",
         "api-ms-win-crt-convert-l1-1-0.dll",
@@ -257,11 +300,28 @@
         "api-ms-win-crt-utility-l1-1-0.dll"
       ]
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libstdc++-6.dll": {
-      "bundled": [],
-      "system": []
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll": {
+      "bundled": [
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll"
+      ],
+      "system": [
+        "KERNEL32.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll"
+      ]
     },
-    "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libwinpthread-1.dll": {
+    "scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll": {
       "bundled": [],
       "system": [
         "KERNEL32.dll",
@@ -287,42 +347,42 @@
     "loaded": {
       "libscaly_ipopt-3.dll": {
         "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/libscaly_ipopt-3.dll",
-        "sha256": "ca55d0c15f6ea8ddc2f440c667863c4c5d321cfa1416a1a03cbf9b93c8ff2189"
+        "sha256": "bef67d074b7cea8a55b5675057d401a4298ed16d58ba97b276ea2219fa3d1fff"
       },
       "probe.dll": {
         "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/probe.dll",
-        "sha256": "183e95981d5572728f8aa26284bf39751a5b6961faed2f7719c450bbc47274b8"
+        "sha256": "49b242f910483a56ae3e8591ce27fa2992dea4dc2432a98c708eabb1c608ceaf"
       },
-      "scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll": {
-        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll",
-        "sha256": "8146c796bc254739416f6db70e69b36e898bd036ae89d6467686e6df40ed2569"
+      "scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgcc_s_seh-1.dll",
+        "sha256": "70c5c887e68ebf8de03a3a61f1db1561a1ef845490e79fab1cbc678c57227b5f"
       },
-      "scaly_ipopt_6448d2711415_libgfortran-5.dll": {
-        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgfortran-5.dll",
-        "sha256": "d25b42222e3dfdf13535f4727a9fc852ef7d80b8211723ec0c3b6a0de8c40e51"
+      "scaly_ipopt_6cb120790a57_libgfortran-5.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libgfortran-5.dll",
+        "sha256": "33087c1d50f5ad16cdd0f57e7bb0fb0478336dd3af1566286a891316ca98d254"
       },
-      "scaly_ipopt_6448d2711415_libquadmath-0.dll": {
-        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6448d2711415_libquadmath-0.dll",
-        "sha256": "f7f42affda9dffc359330a5f4c2e0a9ecee86c05bbda1c1e55fd1111b8241554"
+      "scaly_ipopt_6cb120790a57_libquadmath-0.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libquadmath-0.dll",
+        "sha256": "ae94ee5831d6ce9e13e2b5cccd5830f214bbbe5a306913d88ca04202ae27f822"
       },
-      "scaly_ipopt_6448d2711415_libstdc++-6.dll": {
-        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6448d2711415_libstdc++-6.dll",
-        "sha256": "73fb061975a508542e021a24ec1082f3f50a6b3e22850a0a2765526b054bb4a9"
+      "scaly_ipopt_6cb120790a57_libstdc++-6.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libstdc++-6.dll",
+        "sha256": "7b936f5da3dfb36a3e4b023472e7f9b8cdd303f4d6f6acbc0b93072985a5be13"
       },
-      "scaly_ipopt_6448d2711415_libwinpthread-1.dll": {
-        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6448d2711415_libwinpthread-1.dll",
+      "scaly_ipopt_6cb120790a57_libwinpthread-1.dll": {
+        "path": "$WORKTREE/build/zig-consumer/scaly_ipopt/lib/scaly_ipopt_6cb120790a57_libwinpthread-1.dll",
         "sha256": "817e5b2636f532666e8f255e225af75e9d0c41b141512fde45264070a65b1c92"
       }
     },
     "archive": {
       "name": "scaly-ipopt-native-windows-x86_64.tar.gz",
-      "sha256": "2304c2ecfad7078813d4d4a68d4c90c4f94f18799e8ada654d98a5d778d0893d"
+      "sha256": "312e69b5c3020491f114fcaea6d7a56bc61a8753a2c64f3bd106a9fe94a35fc6"
     },
     "wheel": {
       "name": "scaly_ipopt-0.1.0a3-py3-none-win_amd64.whl",
-      "sha256": "6d693a5e87c57ce0bcb9f7cf0354cc746f23412b9865098f254634639e3d2218"
+      "sha256": "87af9ab4a0fd0ba448a829dfbf138829331bdf3a78ef07410f97a84de1a9573a"
     },
-    "recipe_sha256": "80d56564653b6a7859688edeefe4fdd1d623effac7efa2e734e5714f15697789",
+    "recipe_sha256": "f7736915129b03eb655266e23c2c1a1ed686c7a2d7f37af5c759bd62c618e576",
     "editable_native_hashes_verified": true,
     "wheel_native_hashes_verified": true,
     "zig_link_command": [
@@ -348,15 +408,47 @@
   },
   "plugin_tests": {
     "command": "SCALY_REQUIRE_SOLVERS=ipopt,piqp uv run --no-sync pytest plugins/scaly-ipopt/tests -q",
-    "result": "60 passed in 6.15s"
+    "result": "64 passed in 6.22s"
+  },
+  "import_reader_control": {
+    "objdump_imports": [],
+    "pefile_imports": [
+      "scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll",
+      "scaly_ipopt_6448d2711415_libgfortran-5.dll",
+      "KERNEL32.dll",
+      "api-ms-win-crt-conio-l1-1-0.dll",
+      "api-ms-win-crt-convert-l1-1-0.dll",
+      "api-ms-win-crt-environment-l1-1-0.dll",
+      "api-ms-win-crt-filesystem-l1-1-0.dll",
+      "api-ms-win-crt-heap-l1-1-0.dll",
+      "api-ms-win-crt-locale-l1-1-0.dll",
+      "api-ms-win-crt-math-l1-1-0.dll",
+      "api-ms-win-crt-private-l1-1-0.dll",
+      "api-ms-win-crt-runtime-l1-1-0.dll",
+      "api-ms-win-crt-stdio-l1-1-0.dll",
+      "api-ms-win-crt-string-l1-1-0.dll",
+      "api-ms-win-crt-time-l1-1-0.dll",
+      "api-ms-win-crt-utility-l1-1-0.dll",
+      "scaly_ipopt_6448d2711415_libwinpthread-1.dll",
+      "scaly_ipopt_6448d2711415_libstdc++-6.dll"
+    ],
+    "reachable_private_runtimes": [
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgcc_s_seh-1.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libgfortran-5.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libquadmath-0.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libstdc++-6.dll",
+      "scaly_ipopt/lib/scaly_ipopt_6448d2711415_libwinpthread-1.dll"
+    ],
+    "dll_sha256": "ca55d0c15f6ea8ddc2f440c667863c4c5d321cfa1416a1a03cbf9b93c8ff2189",
+    "pefile_version": "2024.8.26"
   },
   "retained_log_sha256": {
-    "native-locked/build.log": "cdf6aac3b69d53cafab685f768367ea701bce22347c80b7de55f9bf4e405e3c4",
-    "native-locked/commands.jsonl": "883a54438ee607a154720f3808c8c51f55d9756b0cf96b2576b8b2a488f793bd",
-    "editable-reinstall.log": "363307b5f72a3cd9ced9204750a5d3686bb86b737c2955d66e3527abf62493dd",
-    "bundle-tests.log": "ce2a0e26f1789cf4999aaa70479be2c46b82a1e128481fc4af106f082740dfc4",
-    "bundle-wheel.log": "39f02ced1b2e176c031fa7e0c702a7f836b396da055d510c28b9eafd274acab5",
-    "installed-wheels.log": "09316dc2a676198287800d78ff1574dfaf8105502b3167c5d6dada0b26e894a7",
+    "native-pefile/build.log": "d77b4e08650a6e108b5ceac43e8d94f4fb3880c6480a75c441fea24cbc11744d",
+    "native-pefile/commands.jsonl": "b876400f35953a20eb6e1e3f602fb62f9669d6fd4b4266060c17ba0cfecf2f2d",
+    "editable-reinstall.log": "9ec18931a674d81e9b9bd855ce7052dbae1adfc5382486f8fa1e25bcc34c7e70",
+    "bundle-tests.log": "28130c1e30573a178d8770b6c9bc2d46c59079824e6edc29c39f2426e129ce57",
+    "bundle-wheel.log": "8a1da3882f5276bc9295920e50947ae9f66766db0a19c72f86dc062c70c8fd3b",
+    "installed-wheels.log": "4ae6676615df20596152e879444b42c66e0225268a90f14d30a8b7bdca662d55",
     "zig-link.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "negative-runtime.log": "454169942f024a474341bf06a7e302fd01b115587ee4450905fdfcc1b2e224cf"
   }
