@@ -15,6 +15,22 @@ def pe_imports(pe):
   return [entry.dll.decode() for table in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT") for entry in getattr(pe, table, [])]
 
 
+def pe_system_requirements(pe):
+  requirements = {}
+  for table in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT"):
+    for entry in getattr(pe, table, []):
+      name = entry.dll.decode().lower()
+      if system_import("Windows", name):
+        requirements.setdefault(name, set()).update(symbol.name.decode() if symbol.name else f"ordinal:{symbol.ordinal}" for symbol in entry.imports)
+  return {name: sorted(symbols) for name, symbols in requirements.items()}
+
+
+def check_windows_requirements(actual, reference):
+  for library, symbols in actual.items():
+    if not set(symbols).issubset(reference.get(library, [])):
+      raise RuntimeError(f"Windows system API requirements changed from the retained Windows 10/UCRT control: {library}")
+
+
 def system_import(system, name):
   if system == "Windows":
     return name == PurePosixPath(name).name and (
@@ -101,7 +117,7 @@ def macho(path, arch):
   return {"imports": imports, "loader_paths": paths, "minima": minima, "signature": "verified"}
 
 
-def audit(root, manifest):
+def audit(root, manifest, windows_reference=None):
   system, arch = manifest["target"]["system"], manifest["target"]["arch"]
   expected_tag = {"Windows": "win_amd64", "Linux": f"manylinux_2_27_{arch}", "Darwin": f"macosx_15_0_{arch}"}[system]
   if manifest["target"]["platform_tag"] != expected_tag:
@@ -111,6 +127,16 @@ def audit(root, manifest):
     policies = json.loads(importlib.resources.files("auditwheel").joinpath("policy/manylinux-policy.json").read_text())
     policy = next(value for value in policies if value["name"] == "manylinux_2_27")
   results = {}
+  windows_system = {}
+  if system == "Windows":
+    import pefile
+
+    if not windows_reference:
+      raise RuntimeError("Windows floor audit requires the hash-verified source control")
+    for data in windows_reference.values():
+      with pefile.PE(data=data) as reference:
+        for library, symbols in pe_system_requirements(reference).items():
+          windows_system.setdefault(library, set()).update(symbols)
   for name in manifest["dependencies"]:
     path = root / name
     if system == "Windows":
@@ -124,6 +150,10 @@ def audit(root, manifest):
         "loader_paths": [],
         "delay_imports": [entry.dll.decode() for entry in getattr(pe, "DIRECTORY_ENTRY_DELAY_IMPORT", [])],
       }
+      data["system_api_requirements"] = pe_system_requirements(pe)
+      data["optional_header_os_version"] = [pe.OPTIONAL_HEADER.MajorOperatingSystemVersion, pe.OPTIONAL_HEADER.MinorOperatingSystemVersion]
+      data["optional_header_subsystem_version"] = [pe.OPTIONAL_HEADER.MajorSubsystemVersion, pe.OPTIONAL_HEADER.MinorSubsystemVersion]
+      check_windows_requirements(data["system_api_requirements"], windows_system)
       pe.close()
     elif system == "Darwin":
       data = macho(path, arch)

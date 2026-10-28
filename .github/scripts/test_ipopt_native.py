@@ -1,9 +1,12 @@
 """Exercise native producer admission, binary audits and publication rejection controls."""
 
 import importlib.util
+import hashlib
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import zipfile
 
 import pytest
 
@@ -65,6 +68,15 @@ def test_delay_imports_are_audited():
   with pytest.raises(RuntimeError):
     for name in audit.pe_imports(PE()):
       audit.resolve_import("Windows", name, "scaly_ipopt/lib/ipopt.dll", {}, [])
+
+
+def test_windows_floor_includes_system_function_requirements():
+  audit = load("ipopt_native_audit")
+  library = "api-ms-win-crt-runtime-l1-1-0.dll"
+  reference = {library: ["memcpy"]}
+  audit.check_windows_requirements(reference, reference)
+  with pytest.raises(RuntimeError, match="system API requirements changed"):
+    audit.check_windows_requirements({library: ["new_os_function"]}, reference)
 
 
 def test_publication_rejects_pr_partial_health_unreviewed_and_wrong_workflow():
@@ -192,3 +204,21 @@ def test_host_thread_capacity_is_reported_without_changing_policy():
   assert result["compiled_maximum_differs"] and result["candidate_compiled_max_threads"] == 20
   assert result["control_compiled_max_threads"] == 4 and result["thread_policy"] == "unchanged"
   assert manifest["configuration"]["threading"]["effective"]["Makefile.conf"].endswith("NUM_CORES=20\n")
+
+
+@pytest.mark.parametrize("corruption", ["none", "hash", "path"])
+def test_retained_controls_remain_hash_bound_and_extract_safely(tmp_path, corruption):
+  native = load("ipopt_native")
+  output = io.BytesIO()
+  with zipfile.ZipFile(output, "w") as archive:
+    archive.writestr("scaly_ipopt-control.whl", b"source bytes" if corruption != "hash" else b"changed")
+    archive.writestr(("../" if corruption == "path" else "") + "scaly_piqp-control.whl", b"qp bytes")
+  control = {"wheel": "scaly_ipopt-control.whl", "wheel_sha256": hashlib.sha256(b"source bytes").hexdigest()}
+  baseline, wheels = tmp_path / "baseline", tmp_path / "wheels"
+  if corruption == "none":
+    native.extract_controls(output.getvalue(), control, baseline, wheels)
+    assert (baseline / control["wheel"]).read_bytes() == b"source bytes"
+  else:
+    with pytest.raises(RuntimeError):
+      native.extract_controls(output.getvalue(), control, baseline, wheels)
+    assert not baseline.exists() and not wheels.exists()

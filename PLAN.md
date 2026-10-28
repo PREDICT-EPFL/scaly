@@ -25,7 +25,7 @@ Dependencies: validation follows candidate generation; publication consumes only
 main-branch run. Target builds are independent. Monthly health never publishes. No publication,
 tag, merge, default-branch push or repository setting change is authorized here.
 
-Local evidence: 14 admission/rejection tests pass. A mutation disabling the glibc floor rejection
+Local evidence: 18 admission/rejection tests pass. A mutation disabling the glibc floor rejection
 makes its test fail. Both workflows pass actionlint. All new Python scripts pass pinned Ruff and ty.
 The complete Windows validator passes with a diagnostic metadata repack of the retained #228
 archive. It includes 125 existing solver tests and both closed-loop probes. This is validation
@@ -43,5 +43,10 @@ Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/233. Initial producer run 4
 the incomplete Windows inventory and was cancelled. The next run is on the pushed draft.
 Full pre-merge type, format and lint passed. The suite has 2743 passed, 107 skipped and the known
 workstation `test_native_recipe_render_policies_separate_cache_entries` failure from missing `cc`.
-The benchmark smoke is running separately. The docs build reports no issues. The cold Windows
+The benchmark smoke passes separately. The docs build exits 0 with no issues. The cold Windows
 source build still takes about an hour.
+
+Windows system function imports are checked against the retained source-control API requirements,
+along with ordinary/delay DLL imports. Publication also retains the exact source-control wheels,
+so monthly validation survives Actions artifact expiration. Before the initial native revision,
+the producer bootstraps those wheels from the recorded #218 run. Consumer pins remain untouched.

@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zipfile
 
 from ipopt_native import ROOT, TARGETS, compare, configuration_comparison, hook, run, sha256, write
 from ipopt_native_audit import audit
@@ -151,6 +152,11 @@ def validate(target):
   baseline = next((ROOT / "baseline").glob("*.whl"))
   if sha256(baseline) != control["wheel_sha256"]:
     raise RuntimeError("Retained baseline wheel hash differs from the recorded source control")
+  retained_controls = output / f"ipopt-source-control-{target}.zip"
+  piqp_control = next((ROOT / "wheels").glob("scaly_piqp-*.whl"))
+  with zipfile.ZipFile(retained_controls, "w", compression=zipfile.ZIP_STORED) as archive_controls:
+    archive_controls.write(baseline, baseline.name)
+    archive_controls.write(piqp_control, piqp_control.name)
   report = {
     "target": target,
     "commit": provenance["commit"],
@@ -162,7 +168,11 @@ def validate(target):
     "source_control": {"run": control["source_run"], "wheel_sha256": control["wheel_sha256"]},
   }
   report["gates"]["archive"] = True
-  write(output / f"{target}.audit.json", audit(payload, manifest))
+  windows_reference = None
+  if sys.platform == "win32":
+    with zipfile.ZipFile(baseline) as wheel:
+      windows_reference = {name: wheel.read(name) for name in wheel.namelist() if name.endswith(".dll")}
+  write(output / f"{target}.audit.json", audit(payload, manifest, windows_reference))
   report["gates"]["static_audit"] = True
   # Keep extraction and environments out of retained evidence. Only the report and logs ship.
   work = ROOT / "build/acceptance"
@@ -262,6 +272,7 @@ def validate(target):
   report["gates"]["closed_loop"] = True
   assert report["gates"].keys() == GATES and all(report["gates"].values())
   report["assets"] = {path.name: sha256(path) for path in archive.parent.glob(archive.name + "*")}
+  report["assets"][retained_controls.name] = sha256(retained_controls)
   # All detailed acceptance evidence is hash-bound to the target report and published with it.
   for path in output.glob(f"{target}.*.json"):
     report["assets"][path.name] = sha256(path)

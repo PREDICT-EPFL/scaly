@@ -159,9 +159,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: |
-          gh run download 39988283717 -R "$GITHUB_REPOSITORY" --name "dist-scaly-ipopt-${{ matrix.os }}" --dir baseline
-          gh run download 39988283717 -R "$GITHUB_REPOSITORY" --name "dist-scaly-piqp-${{ matrix.os }}" --dir wheels
+        run: uv run --no-project --with hatchling --with packaging .github/scripts/ipopt_native.py controls --target ${{ matrix.target }}
       - name: Install validation dependencies without native compilation
         shell: bash
         run: |

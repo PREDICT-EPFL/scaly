@@ -12,6 +12,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import zipfile
+import io
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS = {
@@ -30,6 +32,7 @@ TARGETS = {
   "macos-arm64": {"os": "macos-15", "control": "macosx_15_0_arm64"},
 }
 BASELINE_RUN = 39988283717
+BASELINE_RELEASE = "scaly-ipopt-native-v1"
 
 
 def run(command, **kwargs):
@@ -117,6 +120,41 @@ def configuration_comparison(manifest, control):
   }
 
 
+def extract_controls(data, control, baseline, wheels):
+  with zipfile.ZipFile(io.BytesIO(data)) as archive:
+    names = archive.namelist()
+    if len(names) != 2 or any(Path(name).name != name or "\\" in name for name in names):
+      raise RuntimeError("Unsafe or incomplete source-control archive")
+    ipopt = control["wheel"]
+    piqp = [name for name in names if name.startswith("scaly_piqp-") and name.endswith(".whl")]
+    if ipopt not in names or len(piqp) != 1 or hashlib.sha256(archive.read(ipopt)).hexdigest() != control["wheel_sha256"]:
+      raise RuntimeError("Source-control archive differs from the retained baseline")
+    for directory, name in ((baseline, ipopt), (wheels, piqp[0])):
+      directory.mkdir(parents=True, exist_ok=True)
+      (directory / name).write_bytes(archive.read(name))
+
+
+def controls(target):
+  repo = os.environ["GITHUB_REPOSITORY"]
+  control = json.loads((ROOT / "internal/notes/ipopt_native_controls" / (TARGETS[target]["control"] + ".json")).read_text())
+  baseline, wheels = ROOT / "baseline", ROOT / "wheels"
+  response = subprocess.run(["gh", "api", f"repos/{repo}/releases/tags/{BASELINE_RELEASE}"], capture_output=True, text=True)
+  if response.returncode == 0:
+    release = json.loads(response.stdout)
+    if release["draft"]:
+      raise RuntimeError("The retained source-control release is still a draft")
+    with tempfile.TemporaryDirectory() as temporary:
+      asset = f"ipopt-source-control-{target}.zip"
+      run(["gh", "release", "download", BASELINE_RELEASE, "-R", repo, "--pattern", asset, "--dir", temporary])
+      extract_controls((Path(temporary) / asset).read_bytes(), control, baseline, wheels)
+  elif "404" in response.stderr:
+    # Publication retains these wheels so health runs outlive Actions artifact retention.
+    run(["gh", "run", "download", BASELINE_RUN, "-R", repo, "--name", f"dist-scaly-ipopt-{TARGETS[target]['os']}", "--dir", baseline])
+    run(["gh", "run", "download", BASELINE_RUN, "-R", repo, "--name", f"dist-scaly-piqp-{TARGETS[target]['os']}", "--dir", wheels])
+  else:
+    raise RuntimeError(f"Cannot retrieve the retained source control: {response.stderr}")
+
+
 def build(target):
   archive = ROOT / "candidate" / f"scaly-ipopt-native-{target}.tar.gz"
   work = ROOT / "build/native"
@@ -180,9 +218,13 @@ def main():
   select.add_argument("--base")
   produce = sub.add_parser("build")
   produce.add_argument("--target", choices=TARGETS, required=True)
+  retained = sub.add_parser("controls")
+  retained.add_argument("--target", choices=TARGETS, required=True)
   args = parser.parse_args()
   if args.command == "build":
     build(args.target)
+  elif args.command == "controls":
+    controls(args.target)
   else:
     selected = not args.base or changed(args.base)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:

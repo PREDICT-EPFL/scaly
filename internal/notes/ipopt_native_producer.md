@@ -47,6 +47,12 @@ investigation. Equal source versions alone never establish native equivalence. T
 states whether native bytes match and records configuration differences. These checks make no
 hosted-CI performance claim.
 
+Before the first official revision, the controls come from the recorded Actions run. Publication
+attaches an `ipopt-source-control-TARGET.zip` containing the original Ipopt and PIQP wheels for
+each target. Later health runs read those retained controls from `scaly-ipopt-native-v1`, with
+the Ipopt wheel still required to match the checked-in control hash. This preserves the source
+baseline after Actions artifacts expire. It does not select a native bundle for ordinary consumers.
+
 The existing solver-required tests, `solve_smoke.py`, `windows_install.py` on Windows, and the
 chain and compiled CasADi race-cars closed-loop smokes supply the remaining acceptance checks. Linux also runs a standalone
 consumer in glibc 2.27 with only allowed system libraries. Hiding the bundled Fortran runtime must
