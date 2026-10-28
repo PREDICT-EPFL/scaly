@@ -22,7 +22,7 @@ and existing benchmark native-solver provenance before implementation.
   checkout and sdist-to-wheel builds and editable installation.
 - [x] Prepare the ordinary workflow switch and tool removal as an unapplied patch.
   Keep unfinished official-default documentation in internal notes until activation.
-- [ ] Run focused checks, full pre-merge checks and one cross-family review.
+- [x] Run focused checks, full pre-merge checks and one cross-family review.
 - [x] Push a draft PR based on #233 and report achievable criteria and remaining inputs.
 
 Tests precede consumer implementation. Packaging/provenance checks follow it. Workflow
@@ -59,5 +59,6 @@ the documentation build pass separately. No builder/producer defect has been fou
 Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/234. Fable 5.1 at medium effort
 approved part 1. Both actionable notes and cheap diagnostic/prose notes are fixed.
 Fourteen focused checks pass for those fixes. The producer selection run confirms that
-consumer-only changes skip native compilation. Delta review and own CI are pending.
+consumer-only changes skip native compilation. Fable 5.1 at low effort confirms both
+findings resolved with no adjacent regression. Own CI remains pending.
 Keep the PR draft and source default active at the publication gate.

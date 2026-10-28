@@ -151,7 +151,8 @@ Its two actionable notes are fixed. Fresh-download checksum errors point to the 
 while cache corruption names the entry to remove. The activation documentation retains PIQP
 compiler setup, required sync and clean-rebuild instructions. Small diagnostic/prose notes
 are also fixed. Fourteen focused checks covering the diagnostic changes pass, and the patch
-still applies cleanly and passes actionlint. The delta check is pending.
+still applies cleanly and passes actionlint. Fable 5.1 at low effort confirms both findings
+resolved with no adjacent regression. Own PR CI remains pending.
 
 The producer selector already short-circuits consumer-only edits. The PR's
 [candidate selection run](https://github.com/PREDICT-EPFL/scaly/actions/runs/40612556132)
