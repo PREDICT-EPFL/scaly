@@ -1,6 +1,7 @@
 """Exercise native producer admission, binary audits and publication rejection controls."""
 
 import importlib.util
+import base64
 import hashlib
 import io
 import json
@@ -58,20 +59,23 @@ def test_macos_rpath_resolves_only_through_bundled_loader_paths():
 
 
 @pytest.mark.parametrize("case", ["alias", "foreign", "changed"])
-def test_casadi_identity_accepts_versioned_alias_but_rejects_foreign_or_changed_bytes(tmp_path, monkeypatch, case):
+@pytest.mark.parametrize("unversioned,versioned", [("libipopt.so", "libipopt.so.3"), ("libipopt.dylib", "libipopt.3.dylib")])
+def test_casadi_identity_checks_the_loaded_files_own_record(tmp_path, monkeypatch, case, unversioned, versioned):
   probe = load("ipopt_native_probe")
   package = tmp_path / "casadi"
   package.mkdir()
-  expected = package / "libipopt.so"
-  expected.write_bytes(b"CasADi's Ipopt")
-  actual = (package if case != "foreign" else tmp_path) / "libipopt.so.3"
+  (package / unversioned).write_bytes(b"A separately signed or rewritten unversioned library")
+  actual = (package if case != "foreign" else tmp_path) / versioned
   actual.write_bytes(b"CasADi's Ipopt" if case != "changed" else b"different Ipopt")
+  value = base64.urlsafe_b64encode(hashlib.sha256(b"CasADi's Ipopt").digest()).decode().rstrip("=")
+  record = SimpleNamespace(as_posix=lambda: f"casadi/{versioned}", hash=SimpleNamespace(mode="sha256", value=value))
+  monkeypatch.setattr(probe.metadata, "distribution", lambda name: SimpleNamespace(files=[record], locate_file=lambda entry: package / versioned))
   monkeypatch.setattr(probe, "module_path", lambda address: actual.resolve())
   if case == "alias":
-    assert probe.casadi_identity(1, expected)["symbol_library"] == str(actual.resolve())
+    assert probe.casadi_identity(1, package)["symbol_library"] == str(actual.resolve())
   else:
     with pytest.raises(AssertionError):
-      probe.casadi_identity(1, expected)
+      probe.casadi_identity(1, package)
 
 
 def test_floor_gate_rejects_a_newer_glibc():

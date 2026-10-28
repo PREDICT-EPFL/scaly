@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import hashlib
+from importlib import metadata
 import json
 import os
 from pathlib import Path
@@ -80,11 +82,16 @@ def loaded(root, manifest, address):
   return {"symbol_library": str(solver), "loaded_payload": actual}
 
 
-def casadi_identity(address, expected):
+def casadi_identity(address, package):
   actual = module_path(address)
-  assert actual in {path.resolve() for path in expected.parent.glob("libipopt*")}, (actual, expected)
-  assert digest(actual) == digest(expected), (actual, expected)
-  return {"symbol_library": str(actual), "sha256": digest(actual)}
+  assert actual.parent == package.resolve() and actual.name.startswith("libipopt"), (actual, package)
+  distribution = metadata.distribution("casadi")
+  record = next(entry for entry in distribution.files or [] if entry.as_posix() == f"casadi/{actual.name}")
+  expected = record.hash
+  assert Path(str(distribution.locate_file(record))).resolve() == actual and expected and expected.mode == "sha256", actual
+  sha = digest(actual)
+  assert base64.urlsafe_b64encode(bytes.fromhex(sha)).decode().rstrip("=") == expected.value, actual
+  return {"symbol_library": str(actual), "sha256": sha}
 
 
 def other_libraries():
@@ -101,10 +108,9 @@ def other_libraries():
   extension = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
   package = Path(ca.__file__).parent
   plugin = package / ("libcasadi_nlpsol_ipopt" + extension)
-  expected = package / ("libipopt-3.dll" if sys.platform == "win32" else "libipopt" + extension)
   native = ctypes.CDLL(str(plugin))
   address = bound_address(native, plugin, None if sys.platform == "win32" else "CreateIpoptProblem")
-  return casadi_identity(address, expected)
+  return casadi_identity(address, package)
 
 
 def python_solves():

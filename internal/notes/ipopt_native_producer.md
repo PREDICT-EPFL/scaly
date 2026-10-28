@@ -45,7 +45,9 @@ actually load. Windows uses the packaged Zig compiler. The sparse consumer reque
 512-variable problem with a tridiagonal Hessian and 256 equality constraints.
 
 Fresh Python processes exercise direct and nested solves, statistics and both load orders with
-CasADi, NumPy and SciPy. The same probes run against the recorded source-built wheel, whose hash
+CasADi, NumPy and SciPy. They check generated-module bindings against the native manifest and
+CasADi's bound Ipopt against its installed wheel's `RECORD`. The same probes run against the
+recorded source-built wheel, whose hash
 must match the control inventory. Status, iteration and solution differences fail acceptance for
 investigation. Equal source versions alone never establish native equivalence. The report also
 states whether native bytes match and records configuration differences. These checks make no

@@ -89,3 +89,11 @@ All 72 focused tests, Ruff, types, actionlint and four fresh Windows probes pass
 now post their completion to an open branch PR so the existing watch wakes for those outcomes.
 Push these validator fixes, dispatch macOS/Linux single targets again, and retain the running
 Windows candidate. Finish five-target acceptance before readiness and the maintainer handoff.
+
+The next macOS arm64 trial passed the audit and Scaly bindings, then showed that CasADi's
+versioned/unversioned dylibs legitimately have different bytes. Its actual plugin imports the
+versioned dylib. Both files match distinct hashes in the published wheel RECORD. The CasADi
+identity check now verifies the actual bound file against its own distribution RECORD, with
+package ownership and SHA-256 checks. Real macOS wheel bytes pass and a mutation fails. All
+75 focused tests, types, Ruff, four Windows probes and a Linux CasADi-first namespace probe
+pass. Push and rerun both macOS trials. The remaining Linux trials are still building.
