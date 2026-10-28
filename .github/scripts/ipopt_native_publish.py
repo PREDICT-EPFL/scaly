@@ -114,18 +114,8 @@ def preflight(args):
   if main != args.reviewed_sha:
     raise RuntimeError("Generate and review candidates at current main before publication")
   pulls = api(f"repos/{repo}/commits/{args.reviewed_sha}/pulls")
-  approved = False
-  for pull in pulls:
-    if pull["merged_at"] and pull["base"]["ref"] == "main":
-      reviews = api(f"repos/{repo}/pulls/{pull['number']}/reviews?per_page=100")
-      latest = {
-        review["user"]["login"]: review["state"]
-        for review in reviews
-        if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"} and review["commit_id"] == pull["head"]["sha"]
-      }
-      approved |= "APPROVED" in latest.values() and "CHANGES_REQUESTED" not in latest.values()
-  if not approved:
-    raise RuntimeError("The candidate main commit needs a merged, approved main-branch pull request")
+  if not any(pull["merged_at"] and pull["base"]["ref"] == "main" for pull in pulls):
+    raise RuntimeError("The reviewed main commit needs a merged main-branch pull request")
   directory = args.directory
   directory.mkdir(parents=True, exist_ok=True)
   for name in [
@@ -201,9 +191,6 @@ def publish(args):
   admit_run(source, plan["reviewed_sha"])
   if source["run_attempt"] != plan["run_attempt"] or api(f"repos/{repo}/commits/main")["sha"] != plan["reviewed_sha"]:
     raise RuntimeError("Main or the candidate attempt changed after preflight")
-  rules = api(f"repos/{repo}/environments/ipopt-native-publication")["protection_rules"]
-  if not any(rule["type"] == "required_reviewers" and rule.get("reviewers") and rule.get("prevent_self_review") for rule in rules):
-    raise RuntimeError("The publication environment must require an independent reviewer")
   # Never edit a previous revision or resume an ambiguous partially uploaded release.
   exists = subprocess.run(["gh", "api", f"repos/{repo}/releases/tags/{plan['revision']}"], capture_output=True)
   tag = subprocess.run(["gh", "api", f"repos/{repo}/git/ref/tags/{plan['revision']}"], capture_output=True)

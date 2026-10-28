@@ -29,7 +29,9 @@ def clean_env(python, cache):
 def environment(path, wheels, constraints=None):
   run(["uv", "venv", "--python", "3.12", path])
   python = path / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-  command = ["uv", "pip", "install", "--python", python, "--only-binary", ":all:", *wheels, "casadi", "psutil"]
+  command = ["uv", "pip", "install", "--python", python, "--only-binary", ":all:", *wheels, "casadi"]
+  if sys.platform == "win32":
+    command += ["pefile==2024.8.26"]
   if constraints:
     command += ["--constraint", constraints]
   run(command)

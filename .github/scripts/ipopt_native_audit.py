@@ -60,11 +60,11 @@ def resolve_import(system, name, origin, files, loader_paths):
   raise RuntimeError(f"Unresolved or non-relocatable import: {origin} imports {name} via {loader_paths}")
 
 
-def check_versions(versions, ceilings):
+def check_versions(versions, allowed):
   for version in versions:
     prefix, _, value = version.partition("_")
-    if prefix in ceilings and (not re.fullmatch(r"\d+(?:\.\d+)*", value) or tuple(map(int, value.split("."))) > ceilings[prefix]):
-      raise RuntimeError(f"Compatibility floor exceeded: {version}")
+    if value not in allowed.get(prefix, []):
+      raise RuntimeError(f"{version} is outside manylinux_2_27")
 
 
 def elf(path, arch):
@@ -162,15 +162,10 @@ def audit(root, manifest, windows_reference=None):
       data = elf(path, arch)
       for dependency, versions in data["versions"].items():
         if system_import(system, dependency):
-          allowed = policy["symbol_versions"][arch]
-          for version in versions:
-            prefix, _, number = version.partition("_")
-            if number not in allowed.get(prefix, []):
-              raise RuntimeError(f"{name}: {version} is outside manylinux_2_27")
+          check_versions(versions, policy["symbol_versions"][arch])
       for library, symbols in policy["blacklist"].items():
         if library in data["imports"] and set(symbols) & set(data["undefined"]):
           raise RuntimeError(f"{name}: blacklisted manylinux symbol")
-      check_versions([v for versions in data["versions"].values() for v in versions], {"GLIBC": (2, 27)})
       notes = subprocess.check_output(["readelf", "-n", str(path)], text=True)
       if re.search(r"x86 ISA needed:.*x86-64-v[234]", notes):
         raise RuntimeError(f"{name}: ELF requires a newer x86 CPU baseline")

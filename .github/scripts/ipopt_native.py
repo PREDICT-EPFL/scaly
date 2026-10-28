@@ -69,7 +69,14 @@ def matrix(target):
 
 def changed(base):
   names = subprocess.check_output(["git", "diff", "--name-only", base, "HEAD"], text=True).splitlines()
-  if any(name.startswith((".github/scripts/", ".github/workflows/ipopt-native")) for name in names):
+  inputs = (
+    ".github/scripts/ipopt_native",
+    ".github/scripts/test_ipopt_native.py",
+    ".github/scripts/windows_install.py",
+    ".github/scripts/solve_smoke.py",
+    ".github/workflows/ipopt-native",
+  )
+  if any(name.startswith(inputs) for name in names):
     return True
   with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
@@ -157,6 +164,7 @@ def controls(target):
 
 def build(target):
   archive = ROOT / "candidate" / f"scaly-ipopt-native-{target}.tar.gz"
+  archive.parent.mkdir(parents=True, exist_ok=True)
   work = ROOT / "build/native"
   command = ["uv", "run", "plugins/scaly-ipopt/hatch_build.py", "bundle", "--work-dir", work, "--output", archive]
   image = TARGETS[target].get("image")

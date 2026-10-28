@@ -18,7 +18,8 @@ switch or release permission. Dispatch uses the workflow on main once it has lan
 
 ```bash
 gh workflow run ipopt-native.yml -R PREDICT-EPFL/scaly --ref main -f branch=main -f target=all
-gh workflow run ipopt-native.yml -R PREDICT-EPFL/scaly --ref main -f branch=BRANCH -f target=windows-x86_64
+gh workflow run ipopt-native.yml -R PREDICT-EPFL/scaly --ref main \
+  -f branch=BRANCH -f target=windows-x86_64
 ```
 
 The independent monthly schedule runs all five targets from main. It records health evidence
@@ -29,7 +30,7 @@ Each target artifact contains `scaly-ipopt-native-TARGET.tar.gz`, the builder's 
 and `.sha256` siblings, and `.provenance.json`. Provenance records the actual source commit,
 run and attempt, runner image, Linux image reference/digest and Docker identity. The manifest
 records source revisions and patches, flags, compiler and runtime identities, effective OpenBLAS
-settings and the dependency closure. Compare generated `NUM_CORES` and `MAX_CPU_NUMBER` with
+settings and the dependency closure. Compare generated `NUM_CORES` with
 the controls' compiled maximum of four. A different host maximum is reported without setting
 a different thread policy. Accelerate's active thread count remains unmeasured.
 
@@ -54,8 +55,9 @@ the Ipopt wheel still required to match the checked-in control hash. This preser
 baseline after Actions artifacts expire. It does not select a native bundle for ordinary consumers.
 
 The existing solver-required tests, `solve_smoke.py`, `windows_install.py` on Windows, and the
-chain and compiled CasADi race-cars closed-loop smokes supply the remaining acceptance checks. Linux also runs a standalone
-consumer in glibc 2.27 with only allowed system libraries. Hiding the bundled Fortran runtime must
+chain and compiled CasADi race-cars closed-loop smokes supply the remaining acceptance checks.
+Linux also runs a standalone consumer in glibc 2.27 with only allowed system libraries.
+Hiding the bundled Fortran runtime must
 break a fresh load. Its positive control must pass first. No build or host search path is mounted
 in that container. Each target produces a validation report and detailed audit/probe evidence.
 The final `ipopt-accepted` artifact binds the full set to one commit, run and attempt. Trial
@@ -71,10 +73,11 @@ by this implementation task.
    run URL, attempt, reviewed main commit, five archive hashes and all acceptance evidence.
 2. Check every target report, including effective threading and CPU flags against the controls.
    Investigate changed numerical results or native configuration before admitting the run.
-3. The `ipopt-native-publication` environment must require an independent reviewer with
-   self-review disabled. Its setup is a maintainer repository-setting decision. This work neither
-   creates that setting nor enables repository-wide release immutability. The existing Python
-   `release.yml` attaches assets to its releases and must be examined before immutability changes.
+3. Confirm the merged PR's review record, including agent reviews recorded in its text. Supplying
+   `reviewed_sha` acknowledges that review. A GitHub approval from a second account is not required.
+   The publication job uses the `ipopt-native-publication` environment and honors any protections
+   the maintainer configures there. This work changes no repository settings. Examine the existing
+   Python `release.yml` before enabling repository-wide release immutability.
 4. Dispatch a read-only preflight with the full reviewed commit and exact candidate run:
 
 ```bash
@@ -83,8 +86,8 @@ gh workflow run ipopt-native-publish.yml -R PREDICT-EPFL/scaly --ref main \
   -f revision=scaly-ipopt-native-v1 -F publish=false
 ```
 
-The preflight requires a repository maintainer, a successful full main producer run, an approved
-merged main PR, current main identity, five complete reports from the same attempt, exact asset
+The preflight requires a repository maintainer, a successful full main producer run, a merged
+main PR, current main identity, five complete reports from the same attempt, exact asset
 hashes and GitHub attestations signed by the producer on that main commit. PR, trial and monthly
 output is rejected. It downloads the tested bytes and emits a reviewable publication plan and
 `consumer-pins.json`. A successful trusted full main run attests the archive bytes after all
@@ -99,7 +102,8 @@ gh workflow run ipopt-native-publish.yml -R PREDICT-EPFL/scaly --ref main \
   -f revision=scaly-ipopt-native-v1 -F publish=true
 ```
 
-The environment approval is the final gate. Publication downloads the preflight's exact assets
+The explicit dispatch and any configured environment approval are the final gates.
+Publication downloads the preflight's exact assets
 without rebuilding, creates a draft with `--latest=false`, attaches every asset, downloads them
 again and compares every byte hash before publishing. An existing tag or release is rejected.
 An interrupted upload leaves an unpublished draft for maintainer inspection. Do not overwrite

@@ -49,9 +49,26 @@ def test_linux_origin_sidecar_resolution():
 
 def test_floor_gate_rejects_a_newer_glibc():
   audit = load("ipopt_native_audit")
-  audit.check_versions(["GLIBC_2.27", "GLIBCXX_3.4.19"], {"GLIBC": (2, 27), "GLIBCXX": (3, 4, 19)})
+  allowed = {"GLIBC": ["2.27"], "GLIBCXX": ["3.4.19"]}
+  audit.check_versions(["GLIBC_2.27", "GLIBCXX_3.4.19"], allowed)
   with pytest.raises(RuntimeError, match="GLIBC_2.28"):
-    audit.check_versions(["GLIBC_2.28"], {"GLIBC": (2, 27)})
+    audit.check_versions(["GLIBC_2.28"], allowed)
+
+
+@pytest.mark.parametrize("minimum", ["15.0", "15.1"])
+def test_macos_floor_ignores_linker_tool_version_and_rejects_newer_os(tmp_path, monkeypatch, minimum):
+  audit = load("ipopt_native_audit")
+  commands = f"Load command 1\n      cmd LC_BUILD_VERSION\n    minos {minimum}\n      sdk 26.0\n   ntools 1\n     tool 3\n  version 1231.3\n"
+  monkeypatch.setattr(audit.subprocess, "check_output", lambda command, **kwargs: "arm64\n" if command[0] == "lipo" else commands)
+  signatures = []
+  monkeypatch.setattr(audit.subprocess, "run", lambda command, **kwargs: signatures.append(command))
+  if minimum == "15.0":
+    assert audit.macho(tmp_path / "libipopt.dylib", "arm64")["minima"] == [(15, 0)]
+    assert signatures[0][:3] == ["codesign", "--verify", "--strict"]
+  else:
+    with pytest.raises(RuntimeError, match="floor exceeded"):
+      audit.macho(tmp_path / "libipopt.dylib", "arm64")
+    assert not signatures
 
 
 def test_delay_imports_are_audited():
@@ -146,7 +163,7 @@ def test_publication_uploads_and_verifies_every_asset_before_publishing(tmp_path
       )
     if path.endswith("commits/main"):
       return {"sha": reviewed}
-    return {"protection_rules": [{"type": "required_reviewers", "reviewers": [{"id": 1}], "prevent_self_review": True}]}
+    raise AssertionError(path)
 
   monkeypatch.setattr(publish, "api", api)
   monkeypatch.setattr(publish.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr=b"HTTP 404"))

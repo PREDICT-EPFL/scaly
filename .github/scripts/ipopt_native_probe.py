@@ -33,6 +33,18 @@ def module_path(address):
   return Path(os.fsdecode(info.name)).resolve()
 
 
+def bound_address(library, path, symbol="CreateIpoptProblem"):
+  if sys.platform != "win32":
+    return ctypes.cast(getattr(library, symbol), ctypes.c_void_p).value
+  import pefile
+
+  with pefile.PE(str(path)) as pe:
+    imports = [entry for table in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT") for entry in getattr(pe, table, [])]
+    matches = [item for entry in imports if b"ipopt" in entry.dll.lower() for item in entry.imports if symbol is None or item.name == symbol.encode()]
+    assert matches, (path, symbol)
+    return ctypes.c_void_p.from_address(library._handle + matches[0].address - pe.OPTIONAL_HEADER.ImageBase).value
+
+
 def loaded(root, manifest, address):
   solver = module_path(address)
   expected = {
@@ -44,10 +56,15 @@ def loaded(root, manifest, address):
     dyld = ctypes.CDLL(None)
     dyld._dyld_get_image_name.restype = ctypes.c_char_p
     paths = [os.fsdecode(dyld._dyld_get_image_name(i)) for i in range(dyld._dyld_image_count())]
+  elif sys.platform == "win32":
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    modules = (ctypes.c_void_p * 4096)()
+    required = ctypes.c_ulong()
+    assert kernel.K32EnumProcessModules(ctypes.c_void_p(-1), modules, ctypes.sizeof(modules), ctypes.byref(required))
+    assert required.value <= ctypes.sizeof(modules)
+    paths = [str(module_path(address)) for address in modules[: required.value // ctypes.sizeof(ctypes.c_void_p)]]
   else:
-    import psutil
-
-    paths = [mapping.path for mapping in psutil.Process().memory_maps()]
+    paths = [parts[5] for line in Path("/proc/self/maps").read_text().splitlines() if len(parts := line.split(maxsplit=5)) == 6]
   for name in paths:
     path = Path(name)
     if path.is_file():
@@ -74,16 +91,24 @@ def other_libraries():
   solver = ca.nlpsol("coexistence", "ipopt", {"x": x, "f": (x - 2) ** 2}, {"ipopt.print_level": 0, "print_time": False})
   np.testing.assert_allclose(float(solver(x0=0)["x"]), 2, atol=1e-7)
   assert solver.stats()["success"]
+  extension = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
+  package = Path(ca.__file__).parent
+  plugin = package / ("libcasadi_nlpsol_ipopt" + extension)
+  expected = package / ("libipopt-3.dll" if sys.platform == "win32" else "libipopt" + extension)
+  native = ctypes.CDLL(str(plugin))
+  address = bound_address(native, plugin, None if sys.platform == "win32" else "CreateIpoptProblem")
+  actual = module_path(address)
+  assert actual == expected.resolve() and digest(actual) == digest(expected), (actual, expected)
+  return {"symbol_library": str(actual), "sha256": digest(actual)}
 
 
 def python_solves():
   import numpy as np
   import scaly as sc
   import scaly_ipopt
-  from scaly.solvers.paths import solver_paths
+  from scaly.function.model import as_concrete
 
   assert "site-packages" in sc.__file__ and "site-packages" in scaly_ipopt.__file__
-  library = Path(solver_paths(required=True).loads["ipopt"] or "").resolve()
 
   @sc.problem(vars=sc.arg("x", 2), params=sc.arg("r", ()), name="candidate_disk")
   def disk(x, r):
@@ -113,8 +138,8 @@ def python_solves():
     "x": np.asarray(value).reshape(-1).tolist(),
     "obj": float(stats.obj),
   }
-  native = ctypes.CDLL(str(library))
-  return cases, ctypes.cast(native.CreateIpoptProblem, ctypes.c_void_p).value
+  compiled = {"direct": as_concrete(solve.function)._compile(), "nested": as_concrete(nested)._compile()}
+  return cases, {name: bound_address(function._lib, function._artifact.lib_path) for name, function in compiled.items()}
 
 
 def main():
@@ -129,9 +154,6 @@ def main():
   handles = []
   if sys.platform == "win32":
     handles.append(os.add_dll_directory(str(args.root / "scaly_ipopt/lib")))
-  if args.order == "scaly":
-    solver = next(name for name in manifest["files"] if Path(name).name in {"libscaly_ipopt-3.dll", "libipopt.so", "libipopt.dylib"})
-    handles.append(ctypes.CDLL(str(args.root / solver)))
   if args.consumer:
     import numpy as np
 
@@ -149,12 +171,13 @@ def main():
   else:
     if args.order == "others":
       other_libraries()
-    cases, address = python_solves()
-    identity = loaded(args.root, manifest, address)
-    other_libraries()
-    again, address = python_solves()
+    cases, addresses = python_solves()
+    identity = {name: loaded(args.root, manifest, address) for name, address in addresses.items()}
+    casadi_identity = other_libraries()
+    again, addresses = python_solves()
     assert cases == again, "Coexistence changed numerical solves"
-    identity = loaded(args.root, manifest, address)
+    identity = {name: loaded(args.root, manifest, address) for name, address in addresses.items()}
+    identity["interpreted_casadi"] = casadi_identity
   args.output.write_text(json.dumps({"cases": cases, "identities": identity, "order": args.order}, indent=2) + "\n")
 
 

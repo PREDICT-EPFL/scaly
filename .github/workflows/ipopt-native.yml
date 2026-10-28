@@ -6,7 +6,10 @@ on:
       - plugins/scaly-ipopt/hatch_build.py
       - plugins/scaly-ipopt/src/scaly_ipopt/build_config.json
       - plugins/scaly-ipopt/licenses/**
-      - .github/scripts/**
+      - .github/scripts/ipopt_native*
+      - .github/scripts/test_ipopt_native.py
+      - .github/scripts/windows_install.py
+      - .github/scripts/solve_smoke.py
       - .github/workflows/ipopt-native*.yml
   push:
     branches: [main]
@@ -14,7 +17,10 @@ on:
       - plugins/scaly-ipopt/hatch_build.py
       - plugins/scaly-ipopt/src/scaly_ipopt/build_config.json
       - plugins/scaly-ipopt/licenses/**
-      - .github/scripts/**
+      - .github/scripts/ipopt_native*
+      - .github/scripts/test_ipopt_native.py
+      - .github/scripts/windows_install.py
+      - .github/scripts/solve_smoke.py
       - .github/workflows/ipopt-native*.yml
   workflow_dispatch:
     inputs:
@@ -134,6 +140,7 @@ jobs:
 
   validate:
     needs: [select, build]
+    if: always() && !cancelled() && needs.select.outputs.build == 'true'
     name: validate / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -164,7 +171,6 @@ jobs:
         shell: bash
         run: |
           uv sync --frozen --python 3.12 --no-install-package scaly-ipopt --no-install-package scaly-piqp
-          uv pip install psutil pefile pyelftools
           if [ "$RUNNER_OS" = Linux ]; then uv pip install auditwheel; fi
       - name: Validate frozen bytes in fresh processes
         env:
