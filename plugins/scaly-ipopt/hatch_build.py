@@ -26,6 +26,9 @@ import sys
 import time
 import tarfile
 import zlib
+from http.client import HTTPException
+from urllib.error import URLError
+from urllib.request import urlopen
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -1326,11 +1329,90 @@ def _produce_bundle(work: Path, output: Path, platform_tag: str | None = None) -
     return manifest
 
 
+_BUNDLE_RELEASE_URL = "https://github.com/{repository}/releases/download/{release}/{asset}"
+_BUNDLE_TARGETS = {"windows-x86_64", "linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"}
+
+
+class _BundleUnavailable(RuntimeError):
+  pass
+
+
+def _official_bundle(pins: dict | None) -> tuple[bytes, dict, dict]:
+  """Select published bytes, verify the pin and manifest, and retain them for offline installs."""
+  if pins is None:
+    raise RuntimeError("No official Ipopt bundle pins configured")
+  try:
+    if (
+      pins["repository"] != "PREDICT-EPFL/scaly"
+      or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", pins["release"])
+      or set(pins["targets"]) != _BUNDLE_TARGETS
+    ):
+      raise ValueError("expected a first-party release and five targets")
+    for name, pin in pins["targets"].items():
+      if (
+        set(pin) != {"asset", "sha256", "platform_tag"}
+        or pin["asset"] != f"scaly-ipopt-native-{name}.tar.gz"
+        or not re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])
+      ):
+        raise ValueError(f"invalid asset or SHA-256 for {name}")
+      if not isinstance(pin["platform_tag"], str):
+        raise ValueError(f"invalid platform tag for {name}")
+  except (KeyError, TypeError, AttributeError, ValueError) as error:
+    raise RuntimeError(f"Invalid official Ipopt bundle pins: {error}") from error
+  system = platform.system()
+  if system not in {"Windows", "Linux", "Darwin"} or (system == "Linux" and platform.libc_ver()[0] != "glibc"):
+    raise _BundleUnavailable(f"No compatible official Ipopt bundle for {system}/{platform.machine()}/{platform.libc_ver()}")
+  host = _host_target()
+  name = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[system] + "-" + host["arch"]
+  if name not in pins["targets"]:
+    raise _BundleUnavailable(f"No compatible official Ipopt bundle for {name}")
+  pin = pins["targets"][name]
+  tag = pin["platform_tag"]
+  pattern = {"Windows": r"win_amd64", "Linux": rf"manylinux_2_\d+_{host['arch']}", "Darwin": rf"macosx_\d+_\d+_{host['arch']}"}[system]
+  if not re.fullmatch(pattern, tag):
+    raise RuntimeError(f"Invalid official Ipopt bundle platform tag for {name}: {tag}")
+  if system != "Windows":
+    floor = tuple(map(int, tag.split("_")[1:3]))
+    host_floor = tuple(map(int, host["floor"].split()[1].split(".")[:2]))
+    if floor > host_floor:
+      raise _BundleUnavailable(f"Official Ipopt bundle {tag} requires a newer platform than {host['floor']}")
+  identity = {"source": "official", "repository": pins["repository"], "release": pins["release"], **pin}
+  url = _BUNDLE_RELEASE_URL.format(**identity)
+  entry = _cache_root() / f"ipopt-download-{pin['sha256']}"
+  archive = entry / "bundle.tar.gz"
+  with _locked(entry.parent / "locks" / f"{entry.name}.lock"):
+    cached = archive.is_file()
+    try:
+      if cached:
+        bundle = archive.read_bytes()
+      else:
+        with urlopen(url, timeout=60) as response:
+          bundle = response.read()
+    except (OSError, URLError, HTTPException) as error:
+      raise _BundleUnavailable(f"Cannot read official Ipopt bundle {url}: {error}") from error
+    if hashlib.sha256(bundle).hexdigest() != pin["sha256"]:
+      hint = f"remove corrupt cache {entry} and reinstall" if cached else "check the release asset and checked-in SHA-256 pin"
+      raise RuntimeError(f"Official Ipopt bundle SHA-256 mismatch for {url}; {hint}")
+    manifest = _read_bundle(bundle)
+    if manifest["target"]["platform_tag"] != tag:
+      raise RuntimeError(f"Official Ipopt bundle manifest disagrees with pinned platform tag {tag}")
+    if not cached:
+      entry.mkdir(parents=True, exist_ok=True)
+      temporary = entry / "bundle.tmp"
+      try:
+        temporary.write_bytes(bundle)
+        temporary.replace(archive)
+      finally:
+        temporary.unlink(missing_ok=True)
+    os.utime(entry)
+  return bundle, manifest, identity
+
+
 class BuildHook(BuildHookInterface):
   PLUGIN_NAME = "scaly"
 
   def initialize(self, version: str, build_data: dict) -> None:
-    """Select explicit verified archive bytes, otherwise retain the ordinary source-build path.
+    """Select an explicit archive or published pins, otherwise retain the source default until publication.
 
     Sdists do no native work. The manifest supplies archive wheel tags and the content key;
     archive selection is strict even for editable auto mode. Skip mode keeps its precedence.
@@ -1366,6 +1448,19 @@ class BuildHook(BuildHookInterface):
       except OSError as error:
         raise RuntimeError(f"Cannot read SCALY_IPOPT_BUNDLE={archive!r}: {error}") from error
       manifest = _read_bundle(bundle)
+      identity = {"source": "override", "sha256": hashlib.sha256(bundle).hexdigest()}
+    elif "native_bundle" in _BUILD_CONFIG:
+      try:
+        bundle, manifest, identity = _official_bundle(_BUILD_CONFIG["native_bundle"])
+      except _BundleUnavailable as error:
+        if strict:
+          raise
+        BuildHook.clean(self, [])
+        self.app.display_info(f"Skipping Ipopt bundle for editable install ({error}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
+        return
+    else:
+      bundle = None
+    if bundle is not None:
       build_data["pure_python"] = False
       build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]
       key = _cache_key(root, bundle)
@@ -1379,6 +1474,7 @@ class BuildHook(BuildHookInterface):
         lambda src, out: _read_bundle(bundle, out),
         manifest=manifest,
       )
+      (package_dir / "native_bundle.json").write_text(json.dumps(identity, indent=2) + "\n")
       return
     key = _cache_key(root)
     stamp = root / ".build_key"
@@ -1400,6 +1496,8 @@ class BuildHook(BuildHookInterface):
         )
         raise RuntimeError(f"{msg}. {hint}")
       self.app.display_info(f"Skipping IPOPT build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
+    else:
+      (package_dir / "native_bundle.json").unlink(missing_ok=True)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)
@@ -1410,6 +1508,7 @@ class BuildHook(BuildHookInterface):
         shutil.rmtree(path)
     shutil.rmtree(root / "src" / "scaly_ipopt.libs", ignore_errors=True)
     (root / "src" / "scaly_ipopt" / "native_manifest.json").unlink(missing_ok=True)
+    (root / "src" / "scaly_ipopt" / "native_bundle.json").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

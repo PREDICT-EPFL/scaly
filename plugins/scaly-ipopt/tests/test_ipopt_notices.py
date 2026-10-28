@@ -18,7 +18,9 @@ def test_license_directory_per_pinned_dependency():
   pinned = json.loads((PACKAGE / "build_config.json").read_text())
   licenses = PACKAGE / "licenses"
   notices = (licenses / "THIRD_PARTY_NOTICES.md").read_text()
-  names = [n for n, config in pinned.items() if n != "blas" and platform.system() in config.get("platforms", [platform.system()])]
+  names = [
+    n for n, config in pinned.items() if n not in {"blas", "native_bundle"} and platform.system() in config.get("platforms", [platform.system()])
+  ]
   names += ["openblas"] if platform.system() != "Darwin" else []
   for name in names:
     assert (licenses / name).is_dir() and any((licenses / name).iterdir()), f"no license text for {name}"

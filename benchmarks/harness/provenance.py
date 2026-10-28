@@ -27,6 +27,18 @@ def _runtime_library(link_library: Path) -> Path:
   return min(matches, key=lambda path: len(path.name)) if matches else link_library
 
 
+def _ipopt_provenance(link_library: Path, build: object) -> dict[str, object]:
+  library = _runtime_library(link_library.resolve())
+  identity = library.parent.parent / "native_bundle.json"
+  return {
+    "library": str(library),
+    "sha256": hashlib.sha256(library.read_bytes()).hexdigest() if library.is_file() else None,
+    "link_library": str(link_library.resolve()),
+    "build": build,
+    "bundle": json.loads(identity.read_text()) if identity.is_file() else None,
+  }
+
+
 class CpuSettings(TypedDict):
   """Frequency policies, boost state and the process's CPU affinity."""
 
@@ -91,12 +103,7 @@ def collect(root: Path, compiler: str | tuple[str, ...], cli_args: list[str]) ->
   ipopt_library = paths.loads.get("ipopt")
   native_solvers = {}
   if ipopt is not None and ipopt_library is not None:
-    link_library = Path(ipopt_library).resolve()
-    native_solvers["ipopt"] = {
-      "library": str(_runtime_library(link_library)),
-      "link_library": str(link_library),
-      "build": getattr(ipopt, "build_config", {}),
-    }
+    native_solvers["ipopt"] = _ipopt_provenance(Path(ipopt_library), getattr(ipopt, "build_config", {}))
   return {
     "git_commit": commit,
     "git_dirty": dirty,

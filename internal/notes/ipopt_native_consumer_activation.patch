@@ -1,0 +1,391 @@
+--- a/.github/workflows/wheels.yml
++++ b/.github/workflows/wheels.yml
+@@ -1,8 +1,7 @@
+ name: Wheels
+
+-# A plugin wheel depends only on its own directory, the cibuildwheel release (which pins the
+-# manylinux image) and the platform, so a cached wheel stays valid across runner images: it bundles
+-# its runtime. Artifacts are kept for the longest period the organization allows, since
++# Ipopt wheels depend on their plugin sources and pinned native payload. PIQP wheels also depend
++# on cibuildwheel, which pins its manylinux image. Each wheel bundles its runtime. Artifacts are kept for the longest period the organization allows, since
+ # `release.yml` publishes the files a successful CI run on `main` built.
+ on:
+   workflow_call:
+@@ -33,49 +32,25 @@
+         uses: actions/cache@v6
+         with:
+           path: wheelhouse
+-          key: wheel-${{ matrix.package }}-${{ matrix.os }}-cibuildwheel-4.2.1-${{ hashFiles(format('plugins/{0}/**', matrix.package), format('!plugins/{0}/tests/**', matrix.package)) }}
++          key: wheel-${{ matrix.package }}-${{ matrix.os }}-${{ matrix.package == 'scaly-ipopt' && 'native-bundle-v1' || 'cibuildwheel-4.2.1' }}-${{ hashFiles(format('plugins/{0}/**', matrix.package), format('!plugins/{0}/tests/**', matrix.package)) }}
+
+-      - name: Install gfortran (macOS)
+-        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS' && matrix.package == 'scaly-ipopt'
+-        run: brew install gcc
++      - uses: astral-sh/setup-uv@v10.2.0
++        if: steps.cache.outputs.cache-hit != 'true' && matrix.package == 'scaly-ipopt'
+
+-      - uses: msys2/setup-msys2@v2
+-        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && matrix.package == 'scaly-ipopt'
+-        with:
+-          msystem: UCRT64
+-          path-type: inherit
+-          update: false
+-          install: >-
+-            mingw-w64-ucrt-x86_64-cmake
+-            mingw-w64-ucrt-x86_64-ninja
+-            make git patch diffutils pkgconf
++      - name: Build Ipopt wheel from the pinned native bundle
++        if: steps.cache.outputs.cache-hit != 'true' && matrix.package == 'scaly-ipopt'
++        shell: bash
++        env:
++          SCALY_BUILD_SOLVERS: required
++          SCALY_SOLVER_CACHE: ${{ runner.temp }}/ipopt-native-${{ github.run_attempt }}
++        run: |
++          start=$SECONDS
++          uv build plugins/scaly-ipopt --wheel --out-dir wheelhouse
++          echo "Ipopt consumer build: $((SECONDS - start)) seconds" >> "$GITHUB_STEP_SUMMARY"
+
+-      - name: Install the Windows Fortran toolchain
+-        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && matrix.package == 'scaly-ipopt'
+-        shell: msys2 {0}
+-        run: |
+-          urls=$(python - <<'PY'
+-          import json, sys
+-          sys.stdout.reconfigure(newline="\n")
+-          with open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json") as f:
+-              config = json.load(f)
+-          for component in ("gcc-runtime", "winpthreads"):
+-              for name in config[component]["packages"]:
+-                  print(f"https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-{name}-{config[component]['version']}-any.pkg.tar.zst")
+-          PY
+-          )
+-          mapfile -t packages <<< "$urls"
+-          pacman -U --needed --noconfirm "${packages[@]}"
+-          pacman -Q
+-          cygpath -m /ucrt64/bin >> "$GITHUB_PATH"
+-          cygpath -m /usr/bin >> "$GITHUB_PATH"
+-
+-      # The plugins load their solvers through ctypes, so the hooks tag every wheel
+-      # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The
+-      # IPOPT wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS,
+-      # so its wheel cannot claim an older deployment target than that.
++      # PIQP retains its existing source build and wheel repair.
+       - uses: pypa/cibuildwheel@v4.2.1
+-        if: steps.cache.outputs.cache-hit != 'true'
++        if: steps.cache.outputs.cache-hit != 'true' && matrix.package == 'scaly-piqp'
+         with:
+           package-dir: plugins/${{ matrix.package }}
+           output-dir: wheelhouse
+@@ -85,9 +60,6 @@
+           CIBW_ARCHS_WINDOWS: AMD64
+           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
+           CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
+-          CIBW_ENVIRONMENT_MACOS: >-
+-            SCALY_BUILD_SOLVERS=required
+-            ${{ matrix.package == 'scaly-ipopt' && 'MACOSX_DEPLOYMENT_TARGET=15.0' || '' }}
+
+       - uses: actions/upload-artifact@v7
+         with:
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -78,6 +78,9 @@
+           uv pip install --no-deps dist/*.whl
+           uv run python -c "import importlib, sys; names = ('scaly', 'scaly_ipopt', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
+
++      - name: Verify the installed pinned Ipopt payload
++        run: uv run .github/scripts/ipopt_bundle_verify.py
++
+       - name: Windows isolated installed-wheel assertions
+         if: runner.os == 'Windows'
+         run: uv run .github/scripts/windows_install.py --installed
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -109,6 +109,9 @@
+           if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
+           /tmp/env/bin/pip install --only-binary :all: dist/*.whl
+
++      - name: Verify the installed pinned Ipopt payload
++        run: /tmp/env/bin/python .github/scripts/ipopt_bundle_verify.py
++
+       - name: Solve with every backend
+         run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -196,6 +196,10 @@
+           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+           "VERIFY_PYTHON=$python" >> $env:GITHUB_ENV
+
++      - name: Verify the installed pinned Ipopt payload
++        shell: bash
++        run: '"$VERIFY_PYTHON" .github/scripts/ipopt_bundle_verify.py'
++
+       - name: Solve with every backend
+         if: runner.os != 'Windows'
+         run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+--- a/.github/workflows/nightly.yml
++++ b/.github/workflows/nightly.yml
+@@ -1,6 +1,6 @@
+ name: Nightly
+
+-# Rebuild solver wheels and exercise AOT compilers and full benchmark workloads at the project Python version.
++# Repackage pinned Ipopt bundles, rebuild PIQP wheels and exercise AOT compilers and full benchmark workloads at the project Python version.
+ on:
+   schedule:
+     - cron: "17 1 * * *"
+--- a/plugins/scaly-ipopt/pyproject.toml
++++ b/plugins/scaly-ipopt/pyproject.toml
+@@ -9,12 +9,7 @@
+ license-files = ["LICENSE.md"]
+
+ [build-system]
+-requires = [
+-  "hatchling",
+-  "cmake>=3.5",
+-  "delvewheel==1.13.2; sys_platform == 'win32'",
+-  "pefile==2024.8.26; sys_platform == 'win32'",
+-]
++requires = ["hatchling"]
+ build-backend = "hatchling.build"
+
+ [project.entry-points."scaly.solvers"]
+--- a/plugins/scaly-ipopt/hatch_build.py
++++ b/plugins/scaly-ipopt/hatch_build.py
+@@ -1412,7 +1412,7 @@
+   PLUGIN_NAME = "scaly"
+
+   def initialize(self, version: str, build_data: dict) -> None:
+-    """Select an explicit archive or published pins, otherwise retain the source default until publication.
++    """Install an explicit archive or a compatible pinned official bundle.
+
+     Sdists do no native work. The manifest supplies archive wheel tags and the content key;
+     archive selection is strict even for editable auto mode. Skip mode keeps its precedence.
+@@ -1426,7 +1426,6 @@
+     lib_dir = package_dir / "lib"
+     mode = _solver_build_mode()
+     strict = mode == "require" or (mode == "auto" and version != "editable")
+-    system = platform.system()
+
+     if mode != "skip" or any(lib_dir.glob("lib*")):
+       build_data["pure_python"] = False
+@@ -1449,55 +1448,29 @@
+         raise RuntimeError(f"Cannot read SCALY_IPOPT_BUNDLE={archive!r}: {error}") from error
+       manifest = _read_bundle(bundle)
+       identity = {"source": "override", "sha256": hashlib.sha256(bundle).hexdigest()}
+-    elif "native_bundle" in _BUILD_CONFIG:
++    else:
+       try:
+-        bundle, manifest, identity = _official_bundle(_BUILD_CONFIG["native_bundle"])
++        bundle, manifest, identity = _official_bundle(_BUILD_CONFIG.get("native_bundle"))
+       except _BundleUnavailable as error:
+         if strict:
+           raise
+         BuildHook.clean(self, [])
+         self.app.display_info(f"Skipping Ipopt bundle for editable install ({error}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
+         return
+-    else:
+-      bundle = None
+-    if bundle is not None:
+-      build_data["pure_python"] = False
+-      build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]
+-      key = _cache_key(root, bundle)
+-      _install_build(
+-        self,
+-        root,
+-        package_dir,
+-        _cache_root() / f"ipopt-{key}",
+-        key,
+-        lambda: [],
+-        lambda src, out: _read_bundle(bundle, out),
+-        manifest=manifest,
+-      )
+-      (package_dir / "native_bundle.json").write_text(json.dumps(identity, indent=2) + "\n")
+-      return
+-    key = _cache_key(root)
+-    stamp = root / ".build_key"
+-    if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
+-      self.app.display_info(f"IPOPT already built at {lib_dir}")
+-      return
+-
+-    def build(src: Path, out: Path) -> None:
+-      _build_ipopt_stack(self, src, out / "lib", out / "include", out / "licenses", root / "licenses")
+-
+-    missing = _install_build(self, root, package_dir, _cache_root() / f"ipopt-{key}", key, _missing_ipopt_tools, build)
+-    if missing:
+-      msg = f"missing native toolchain for IPOPT build: {', '.join(missing)}"
+-      if strict:
+-        hint = (
+-          "Run the build in MSYS2 UCRT64 with GCC, GFortran, CMake, Ninja, make and git installed."
+-          if system == "Windows"
+-          else "Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux)."
+-        )
+-        raise RuntimeError(f"{msg}. {hint}")
+-      self.app.display_info(f"Skipping IPOPT build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
+-    else:
+-      (package_dir / "native_bundle.json").unlink(missing_ok=True)
++    build_data["pure_python"] = False
++    build_data["tag"] = "py3-none-" + manifest["target"]["platform_tag"]
++    key = _cache_key(root, bundle)
++    _install_build(
++      self,
++      root,
++      package_dir,
++      _cache_root() / f"ipopt-{key}",
++      key,
++      lambda: [],
++      lambda src, out: _read_bundle(bundle, out),
++      manifest=manifest,
++    )
++    (package_dir / "native_bundle.json").write_text(json.dumps(identity, indent=2) + "\n")
+
+   def clean(self, versions: list[str]) -> None:
+     root = Path(self.root)
+--- a/docs/guide/installation.md
++++ b/docs/guide/installation.md
+@@ -26,8 +26,12 @@
+
+ A solver plugin connects the symbolic problem to a native optimization library.
+ The solver wheels include those native libraries. If no wheel matches the
+-platform, a source build needs additional tools, described in
+-[Contributing](../dev/contributing.md#setup). The
++platform, an Ipopt sdist installation downloads the pinned first-party native bundle.
++It supports Windows x86-64, glibc Linux x86-64/aarch64 and macOS x86-64/arm64 at the
++bundle's recorded platform floor. It needs no Fortran compiler. Unsupported platforms
++require an explicit local archive, described in
++[Contributing](../dev/contributing.md#local-ipopt-archives). PIQP source builds need a C++
++compiler. The
+ [backend guide](solver_backends.md) compares the supported problems and
+ solver options.
+
+--- a/docs/guide/env_vars.md
++++ b/docs/guide/env_vars.md
+@@ -72,13 +72,24 @@
+
+ | Value | Behavior |
+ | --- | --- |
+-| `auto` | Default. Build native libraries. Editable installs may skip unavailable toolchains, while wheel builds require them. |
++| `auto` | Default. Install the pinned Ipopt bundle and build PIQP. Editable installs may skip unavailable bundles or toolchains, while wheel builds require them. |
+ | `skip`, `0`, or `false` | Skip native solver builds |
+-| `required`, `1`, or `true` | Require the native build even for an editable install |
++| `required`, `1`, or `true` | Require native installation even for an editable install |
+
+ `SCALY_SOLVER_CACHE` sets the directory where the build hooks keep finished
+ builds, shared by every source checkout on the machine. It defaults to
+ `$XDG_CACHE_HOME/scaly/solvers`, otherwise `~/.cache/scaly/solvers`.
++
++`SCALY_IPOPT_BUNDLE` selects an explicit local tar.gz archive instead of the official Ipopt
++pins. This input is strict even in editable auto mode. Skip mode takes precedence.
++Reinstall after replacing an archive at the same path. Unset the variable and reinstall
++to return to the official bundle. [Contributing](../dev/contributing.md#local-ipopt-archives)
++describes producing and selecting an archive.
++
++The Ipopt cache holds the verified compressed archive and extracted payload under their
++full archive SHA-256. Reinstalling can reuse it offline. Missing or corrupt required input
++fails without source compilation. A corrupt archive or payload fails even in editable auto
++mode. Runtime imports never download bundles.
+
+ Skipping a build does not provide a Python solver alternative. Solver calls
+ still need the native libraries. This setting is mainly relevant to source
+--- a/docs/dev/contributing.md
++++ b/docs/dev/contributing.md
+@@ -17,46 +17,35 @@
+ Run commands through `uv run` so they use the project's pinned environment. For example, use
+ `uv run pytest` for tests and `uv run benchmarks/run.py` for the benchmark script.
+
+-Scaly itself is pure Python, but the `scaly-piqp` and `scaly-ipopt` plugins vendor their solvers
+-and build them from source on the first sync. CMake comes from PyPI as a build requirement, but a
+-C++ compiler and a Fortran compiler have to be installed system-wide:
+-
+-```bash
+-# macOS
+-brew install gcc
+-
+-# Debian / Ubuntu
+-sudo apt-get install gfortran build-essential
+-```
+-
+-On Windows, IPOPT source builds use MSYS2 UCRT64, which targets the Universal C Runtime.
+-The GCC and winpthreads package versions are pinned in the plugin's
+-[`build_config.json`](https://github.com/PREDICT-EPFL/scaly/blob/main/plugins/scaly-ipopt/src/scaly_ipopt/build_config.json).
+-The [wheel workflow](https://github.com/PREDICT-EPFL/scaly/blob/main/.github/workflows/wheels.yml)
+-shows their installation commands. The environment also needs Git, make, patch, diffutils,
+-pkgconf, and the UCRT64 CMake and Ninja packages. Add its `ucrt64/bin` and `usr/bin`
+-directories to `PATH`. The hook runs source-build commands through its MSYS2 shell.
+-
+-Then:
++Scaly itself is pure Python. The `scaly-ipopt` hook downloads the native release pinned in
++`plugins/scaly-ipopt/src/scaly_ipopt/build_config.json`, verifies its SHA-256 and manifest,
++and copies the complete payload without binary repair. Wheel and editable builds use the same
++pins, including when building a wheel from an sdist. Creating an sdist fetches no solver.
++The hook needs no Fortran compiler, MSYS2 or repair tool. Scaly's generated C still needs a C
++compiler. The `scaly-piqp` plugin builds from source and needs a C++ compiler and CMake.
++CMake comes from PyPI as a build requirement. Install the system compiler with Apple's
++command-line developer tools on macOS or `build-essential` on Debian/Ubuntu. On Windows,
++PIQP's build requirements supply Zig and Ninja.
++
++Require both plugins for a solver development checkout:
+
+ ```bash
+ SCALY_BUILD_SOLVERS=required uv sync
+ ```
+
+-Each build lands in a cache shared by every checkout on the
+-machine, `~/.cache/scaly/solvers` by default, under a hash of everything that decides its result:
+-the plugin's `hatch_build.py`, its pins, its license texts, the platform and the compilers. A new
+-worktree therefore copies the build its branch needs from the cache, and builds only when no
+-checkout has built that version yet. Builds unused for 30 days are deleted. A failed build keeps its
+-sources and build trees in the cache directory, at the path it prints.
+-
+-Without `SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
+-libraries instead of failing. The solver tests then skip, and everything else works. See
+-[Environment variables](../guide/env_vars.md).
+-
+-To force a clean rebuild, delete the plugin's entry in the cache (`piqp-*` or `ipopt-*`) and the
+-checkout's `plugins/scaly-*/.build_key`, then run `uv sync --reinstall-package scaly-piqp` or
+-`scaly-ipopt`.
++The solver cache is shared by checkouts, at `~/.cache/scaly/solvers` by default or
++`SCALY_SOLVER_CACHE`. Ipopt keeps both the verified archive and extracted native payload under
++the archive's full SHA-256. A warm cache works offline and the hook verifies it on reuse.
++Entries unused for 30 days are pruned. To recover from corruption, remove the named corrupt
++entry and reinstall `scaly-ipopt`.
++
++`SCALY_BUILD_SOLVERS=required` makes unavailable native inputs fatal for editable installs.
++The default auto mode permits core-only work when the bundle or PIQP toolchain is unavailable.
++Checksum, manifest and payload corruption remain fatal. Skip mode performs no native installation.
++See [Environment variables](../guide/env_vars.md).
++
++To force a clean PIQP rebuild, remove its `piqp-*` entry from the solver cache and
++`plugins/scaly-piqp/.build_key`, then run `uv sync --reinstall-package scaly-piqp`.
+
+ In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
+ in `src/scaly_*/build_config.json`, which pins its version, and a row in the
+@@ -66,8 +55,12 @@
+
+ ### Local Ipopt archives
+
+-The Ipopt producer builds a native archive for the current host using the same source recipe as
+-the build hook. It needs the native toolchain described above. Run it from the repository root:
++The explicit Ipopt producer builds a native archive for the current host. It needs Git, make,
++CMake, C++ and Fortran compilers and the platform's repair tools. `uv run` supplies its declared
++Python tools. On macOS, install GCC with Homebrew. Linux needs gfortran and the usual native
++build tools. Windows needs MSYS2 UCRT64 with the GCC and winpthreads versions pinned in
++`build_config.json`, plus Ninja, patch, diffutils and pkgconf. Its `ucrt64/bin` and `usr/bin`
++must be on `PATH`. These tools are only needed to produce an archive. Run it from the repository root:
+
+ ```bash
+ uv run plugins/scaly-ipopt/hatch_build.py bundle --work-dir build/ipopt-native --output build/ipopt-native.tar.gz
+@@ -119,11 +112,11 @@
+ archive SHA-256, so it cannot reuse the previous archive's cache entry. `uv` does not track the
+ contents of a file named by an environment variable, which is why the reinstall flag is required.
+
+-To return to the default source build, unset `SCALY_IPOPT_BUNDLE` with
++To return to the official pinned bundle, unset `SCALY_IPOPT_BUNDLE` with
+ `unset SCALY_IPOPT_BUNDLE` in Bash or `Remove-Item Env:SCALY_IPOPT_BUNDLE` in PowerShell, then
+ run `uv sync --reinstall-package scaly-ipopt`. The hook replaces the archive payload with the
+-source build selected by its usual cache key. `SCALY_BUILD_SOLVERS=skip` skips archive installation
+-as well as source builds. An sdist build neither reads the selected archive nor builds a solver.
++official payload selected by its archive SHA-256. `SCALY_BUILD_SOLVERS=skip` skips archive installation
++as well as official installation. An sdist build neither reads the selected archive nor builds a solver.
+
+ ## Run the checks
+

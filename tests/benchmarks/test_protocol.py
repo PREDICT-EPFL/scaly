@@ -1,12 +1,32 @@
 """Frequency-policy gates and aggregation of independent timing processes."""
 
 import csv
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
 from benchmarks.harness import provenance
 from benchmarks.harness.sweep import summarize_runs
+
+
+def test_ipopt_provenance_hashes_selected_library_and_bundle(tmp_path: Path) -> None:
+  library = tmp_path / "scaly_ipopt/lib/libipopt.so"
+  library.parent.mkdir(parents=True)
+  library.write_bytes(b"native library")
+  identity = {"source": "official", "release": "test-only", "sha256": "a" * 64}
+  (library.parent.parent / "native_bundle.json").write_text(json.dumps(identity))
+  result = provenance._ipopt_provenance(library, {"ipopt": {"version": "3.14.19"}})
+  assert result["sha256"] == hashlib.sha256(b"native library").hexdigest()
+  assert result["bundle"] == identity
+  other = tmp_path / "override/libipopt.so"
+  other.parent.mkdir()
+  other.write_bytes(b"explicit host override")
+  result = provenance._ipopt_provenance(other, {})
+  assert result["sha256"] == hashlib.sha256(other.read_bytes()).hexdigest()
+  assert result["bundle"] is None
+  assert provenance._ipopt_provenance(tmp_path / "system/libipopt.so.3", {})["sha256"] is None
 
 
 def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch: pytest.MonkeyPatch) -> None:
