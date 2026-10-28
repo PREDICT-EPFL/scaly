@@ -62,3 +62,10 @@ Fourteen focused checks pass for those fixes. The producer selection run confirm
 consumer-only changes skip native compilation. Fable 5.1 at low effort confirms both
 findings resolved with no adjacent regression. Own CI remains pending.
 Keep the PR draft and source default active at the publication gate.
+
+Rebased onto the producer's macOS import-resolution and versioned CasADi identity fixes.
+The only conflict was the two appended plan sections, both preserved. Consumer files are
+unchanged by the rebase. After checkout exposed CRLF conversion of the activation patch,
+a file-scoped Git attribute preserves LF. A Windows checkout test and patch-application
+check pass. All 93 consumer/provenance checks and 24 producer checks pass after the rebase,
+as do type, lint and format checks.

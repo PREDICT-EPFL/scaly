@@ -63,6 +63,7 @@ Apply the patch only after receiving all official inputs, then regenerate `uv.lo
 removed ordinary build requirements. Recheck the patch after every code change or lower-layer
 rebase. `git apply --check internal/notes/ipopt_native_consumer_activation.patch` checks its
 context without activating it. The patch is a preparation artifact, not finished acceptance.
+Its scoped Git attribute preserves LF line endings so it also applies after a Windows checkout.
 
 ## Inputs and work required for part 2
 
