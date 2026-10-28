@@ -28,6 +28,7 @@ artifacts = [
   "src/scaly_ipopt/include/**/*",
   "src/scaly_ipopt/licenses/**/*",
   "src/scaly_ipopt/native_manifest.json",
+  "src/scaly_ipopt/native_bundle.json",
   "src/scaly_ipopt.libs/*",
 ]
 
@@ -35,7 +36,7 @@ artifacts = [
 # Anchored, and the build outputs excluded by name: hatchling matches `src/` at any depth and
 # reads the repository `.gitignore` relative to this directory, where its plugin rules never match.
 include = ["/src/", "/hatch_build.py", "/licenses/"]
-exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/scaly_ipopt/native_manifest.json", "/src/scaly_ipopt.libs/"]
+exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/scaly_ipopt/native_manifest.json", "/src/scaly_ipopt/native_bundle.json", "/src/scaly_ipopt.libs/"]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build.py"

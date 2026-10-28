@@ -110,6 +110,10 @@ and uses the payload's platform tag for the wheel. The archive contains the matc
 Windows `ipopt.lib`, native dependencies and licenses. It contains no Python wrappers or wheel
 metadata. Archive selection needs no native compiler and does not change checked-in source pins.
 
+Archive installs record their SHA-256 and input selection in `scaly_ipopt/native_bundle.json`.
+The benchmark provenance includes that identity and a SHA-256 of the selected Ipopt library,
+alongside the existing native source configuration. Reading provenance downloads no native input.
+
 After replacing an archive at the same path, rerun
 `uv sync --reinstall-package scaly-ipopt`. The hook keys its cache and checkout stamp by the full
 archive SHA-256, so it cannot reuse the previous archive's cache entry. `uv` does not track the

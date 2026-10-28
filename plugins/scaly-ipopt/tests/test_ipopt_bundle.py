@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import importlib.util
 import io
 import json
@@ -13,7 +14,11 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 
 import pytest
@@ -48,6 +53,221 @@ def archive_fixture(path, layout, *, change=None, extra=None):
     if extra:
       archive.addfile(extra)
   return manifest
+
+
+@contextmanager
+def bundle_mirror(content):
+  requests = []
+
+  class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+      requests.append(self.path)
+      self.send_response(200)
+      self.end_headers()
+      self.wfile.write(content)
+
+    def log_message(self, format, *args):
+      pass
+
+  server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  thread = Thread(target=server.serve_forever, daemon=True)
+  thread.start()
+  try:
+    yield f"http://127.0.0.1:{server.server_port}", requests
+  finally:
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def fixture_pins(content):
+  targets = {}
+  for path in (Path(__file__).parent / "fixtures/bundles").glob("*.json"):
+    layout = json.loads(path.read_text())
+    targets[path.stem] = {
+      "asset": f"scaly-ipopt-native-{path.stem}.tar.gz",
+      "sha256": hashlib.sha256(content).hexdigest(),
+      "platform_tag": layout["target"]["platform_tag"],
+    }
+  return {"repository": "PREDICT-EPFL/scaly", "release": "test-only", "targets": targets}
+
+
+def test_pinned_download_cache_offline_all_targets(bundle_hook, native_layout, tmp_path, monkeypatch):
+  archive = tmp_path / "native.tar.gz"
+  expected = archive_fixture(archive, native_layout)
+  content = archive.read_bytes()
+  monkeypatch.setattr(bundle_hook, "_host_target", lambda: expected["target"])
+  monkeypatch.setattr(bundle_hook.platform, "system", lambda: expected["target"]["system"])
+  monkeypatch.setattr(bundle_hook.platform, "libc_ver", lambda: ("glibc", "2.35"))
+  monkeypatch.setattr(bundle_hook, "_cache_root", lambda: tmp_path / "cache")
+  pins = fixture_pins(content)
+  with bundle_mirror(content) as (mirror, requests):
+    monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", mirror + "/{repository}/releases/download/{release}/{asset}")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+      results = list(pool.map(lambda _: bundle_hook._official_bundle(pins), range(4)))
+    assert len(requests) == 1
+  bundle, manifest, identity = bundle_hook._official_bundle(pins)
+  assert bundle == content and manifest == expected
+  assert all(result == (bundle, manifest, identity) for result in results)
+  target = next(name for name, pin in pins["targets"].items() if pin["platform_tag"] == expected["target"]["platform_tag"])
+  assert identity == {"source": "official", "repository": pins["repository"], "release": pins["release"], **pins["targets"][target]}
+  cached = next((tmp_path / "cache").glob("ipopt-download-*/bundle.tar.gz"))
+  cached.write_bytes(content + b"corrupt")
+  with pytest.raises(RuntimeError, match="SHA-256"):
+    bundle_hook._official_bundle(pins)
+
+
+@pytest.mark.parametrize("failure", ["checksum", "manifest", "tag", "pins", "musl", "floor", "missing-target", "unavailable"])
+def test_official_input_failures(bundle_hook, tmp_path, monkeypatch, failure):
+  layout = json.loads((Path(__file__).parent / "fixtures/bundles/linux-x86_64.json").read_text())
+  archive = tmp_path / "native.tar.gz"
+  archive_fixture(archive, layout)
+  content = archive.read_bytes()
+  pins = fixture_pins(content)
+  monkeypatch.setattr(bundle_hook, "_host_target", lambda: layout["target"])
+  monkeypatch.setattr(bundle_hook.platform, "system", lambda: "Linux")
+  monkeypatch.setattr(bundle_hook.platform, "libc_ver", lambda: ("glibc", "2.35"))
+  monkeypatch.setattr(bundle_hook, "_cache_root", lambda: tmp_path / "cache")
+  if failure == "checksum":
+    content += gzip.compress(b"")
+  elif failure == "manifest":
+    content = b"not an archive"
+    pins = fixture_pins(content)
+  elif failure == "tag":
+    pins["targets"]["linux-x86_64"]["platform_tag"] = "manylinux_2_28_x86_64"
+  elif failure == "pins":
+    pins["targets"]["linux-x86_64"]["sha256"] = "not-a-hash"
+  elif failure == "musl":
+    monkeypatch.setattr(bundle_hook.platform, "libc_ver", lambda: ("musl", "1.2.5"))
+  elif failure == "floor":
+    layout["target"]["floor"] = "glibc 2.26"
+  elif failure == "missing-target":
+    layout["target"]["arch"] = "riscv64"
+  with bundle_mirror(content) as (mirror, requests):
+    monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", mirror + "/{repository}/{release}/{asset}")
+    if failure == "unavailable":
+      monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", "http://127.0.0.1:1/{asset}")
+    with pytest.raises(RuntimeError):
+      bundle_hook._official_bundle(pins)
+    if failure in {"pins", "musl", "missing-target"}:
+      assert not requests
+  assert not list((tmp_path / "cache").glob("ipopt-download-*/bundle.tar.gz"))
+
+
+@pytest.mark.parametrize("version,mode", [("standard", "auto"), ("editable", "required"), ("editable", "auto"), ("editable", "skip")])
+def test_pinned_modes_never_compile(bundle_hook, tmp_path, monkeypatch, version, mode):
+  monkeypatch.delenv("SCALY_IPOPT_BUNDLE", raising=False)
+  monkeypatch.setenv("SCALY_BUILD_SOLVERS", mode)
+  monkeypatch.setitem(bundle_hook._BUILD_CONFIG, "native_bundle", fixture_pins(b"missing"))
+  monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", "http://127.0.0.1:1/{asset}")
+  monkeypatch.setattr(bundle_hook, "_cache_root", lambda: tmp_path / "cache")
+  monkeypatch.setattr(bundle_hook, "_missing_ipopt_tools", lambda: pytest.fail("consumer requested a compiler"))
+  monkeypatch.setattr(bundle_hook, "_build_ipopt_stack", lambda *args: pytest.fail("consumer invoked producer"))
+  messages = []
+  hook = SimpleNamespace(root=str(tmp_path), target_name="wheel", app=SimpleNamespace(display_info=messages.append))
+  if mode == "required" or version == "standard":
+    with pytest.raises(RuntimeError, match="[Bb]undle"):
+      bundle_hook.BuildHook.initialize(hook, version, {})
+  else:
+    bundle_hook.BuildHook.initialize(hook, version, {})
+    assert messages and "Skipping" in messages[-1]
+
+
+def test_pinned_install_and_override_precedence(bundle_hook, tmp_path, monkeypatch):
+  layout = json.loads((Path(__file__).parent / "fixtures/bundles/windows-x86_64.json").read_text())
+  archive = tmp_path / "native.tar.gz"
+  manifest = archive_fixture(archive, layout)
+  content = archive.read_bytes()
+  pins = fixture_pins(content)
+  monkeypatch.setitem(bundle_hook._BUILD_CONFIG, "native_bundle", pins)
+  monkeypatch.setattr(bundle_hook, "_host_target", lambda: manifest["target"])
+  monkeypatch.setattr(bundle_hook, "_missing_ipopt_tools", lambda: pytest.fail("consumer requested tools"))
+  monkeypatch.setattr(bundle_hook, "_cache_root", lambda: tmp_path / "cache")
+  monkeypatch.setenv("SCALY_BUILD_SOLVERS", "required")
+  monkeypatch.delenv("SCALY_IPOPT_BUNDLE", raising=False)
+  hook = SimpleNamespace(root=str(tmp_path), target_name="wheel", app=SimpleNamespace(display_info=lambda message: None))
+  with bundle_mirror(content) as (mirror, requests):
+    monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", mirror + "/{asset}")
+    data = {}
+    bundle_hook.BuildHook.initialize(hook, "editable", data)
+    assert len(requests) == 1
+  package = tmp_path / "src/scaly_ipopt"
+  assert data["tag"] == "py3-none-win_amd64"
+  assert json.loads((package / "native_bundle.json").read_text())["release"] == "test-only"
+  bundle_hook._verify_payload(package.parent, manifest)
+  (package / "build_config.json").write_text(json.dumps({"native_bundle": pins}))
+  script = Path(__file__).parents[3] / ".github/scripts/ipopt_bundle_verify.py"
+  spec = importlib.util.spec_from_file_location("consumer_verify", script)
+  assert spec is not None and spec.loader is not None
+  verifier = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(verifier)
+  assert verifier.verify(package)["release"] == "test-only"
+  library = package / "lib/libscaly_ipopt-3.dll"
+  original = library.read_bytes()
+  library.write_bytes(b"changed after packaging")
+  with pytest.raises(RuntimeError, match="native bytes differ"):
+    verifier.verify(package)
+  library.write_bytes(original)
+  monkeypatch.setenv("SCALY_IPOPT_BUNDLE", str(archive))
+  bundle_hook.BuildHook.initialize(hook, "editable", {})
+  assert json.loads((package / "native_bundle.json").read_text()) == {"source": "override", "sha256": hashlib.sha256(content).hexdigest()}
+  with pytest.raises((RuntimeError, KeyError)):
+    verifier.verify(package)
+
+
+def test_hatch_pins_checkout_and_sdist_use_same_offline_payload(bundle_hook, tmp_path):
+  root = Path(__file__).parents[1]
+  target = bundle_hook._host_target()
+  name = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[target["system"]] + "-" + target["arch"]
+  layout = json.loads((Path(__file__).parent / f"fixtures/bundles/{name}.json").read_text())
+  archive = tmp_path / "native.tar.gz"
+  manifest = archive_fixture(archive, layout)
+  content = archive.read_bytes()
+  plugin = tmp_path / "checkout"
+  shutil.copytree(
+    root,
+    plugin,
+    ignore=shutil.ignore_patterns("lib", "include", "licenses", "native_manifest.json", "native_bundle.json", ".build_key", "__pycache__", "dist"),
+  )
+  shutil.copytree(root / "licenses", plugin / "licenses")
+  config = plugin / "src/scaly_ipopt/build_config.json"
+  pins = fixture_pins(content)
+  config.write_text(json.dumps({**json.loads(config.read_text()), "native_bundle": pins}))
+  env = dict(os.environ, SCALY_BUILD_SOLVERS="required", SCALY_SOLVER_CACHE=str(tmp_path / "cache"))
+  env.pop("SCALY_IPOPT_BUNDLE", None)
+  with bundle_mirror(content) as (mirror, requests):
+    hook_path = plugin / "hatch_build.py"
+    hook_path.write_text(hook_path.read_text().replace("https://github.com/{repository}/releases/download/{release}/{asset}", mirror + "/{asset}"))
+    subprocess.run([sys.executable, "-m", "hatchling", "build", "-t", "sdist"], cwd=plugin, env=env, check=True, capture_output=True)
+    assert not requests
+    with tarfile.open(next((plugin / "dist").glob("*.tar.gz"))) as sdist:
+      assert not any(name.endswith(("native_manifest.json", "native_bundle.json")) for name in sdist.getnames())
+      sdist.extractall(tmp_path / "sdist", filter="data")
+    subprocess.run([sys.executable, "-m", "hatchling", "build", "-t", "wheel"], cwd=plugin, env=env, check=True, capture_output=True)
+    assert len(requests) == 1
+  unpacked = next((tmp_path / "sdist").iterdir())
+  subprocess.run([sys.executable, "-m", "hatchling", "build", "-t", "wheel"], cwd=unpacked, env=env, check=True, capture_output=True)
+  assert json.loads((unpacked / "src/scaly_ipopt/build_config.json").read_text())["native_bundle"] == pins
+  for directory in (plugin, unpacked):
+    with zipfile.ZipFile(next((directory / "dist").glob("*.whl"))) as wheel:
+      for name, entry in manifest["files"].items():
+        assert hashlib.sha256(wheel.read(name)).hexdigest() == entry["sha256"]
+      identity = json.loads(wheel.read("scaly_ipopt/native_bundle.json"))
+      assert identity["source"] == "official" and identity["sha256"] == hashlib.sha256(content).hexdigest()
+
+
+def test_editable_auto_failure_removes_stale_payload(bundle_hook, tmp_path, monkeypatch):
+  monkeypatch.setenv("SCALY_BUILD_SOLVERS", "auto")
+  monkeypatch.delenv("SCALY_IPOPT_BUNDLE", raising=False)
+  monkeypatch.setitem(bundle_hook._BUILD_CONFIG, "native_bundle", fixture_pins(b"missing"))
+  monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", "http://127.0.0.1:1/{asset}")
+  monkeypatch.setattr(bundle_hook, "_cache_root", lambda: tmp_path / "cache")
+  package = tmp_path / "src/scaly_ipopt"
+  (package / "lib").mkdir(parents=True)
+  (package / "lib/stale.dll").write_bytes(b"previous selection")
+  hook = SimpleNamespace(root=str(tmp_path), target_name="wheel", app=SimpleNamespace(display_info=lambda message: None))
+  bundle_hook.BuildHook.initialize(hook, "editable", {})
+  assert not (package / "lib").exists()
 
 
 def test_archive_roundtrip_all_targets(bundle_hook, native_layout, tmp_path, monkeypatch):
@@ -171,7 +391,7 @@ def test_recipe_identity_excludes_wrapper_and_consumer_pins(bundle_hook, tmp_pat
   source = (root / "hatch_build.py").read_text()
   original = bundle_hook._recipe_hash(tmp_path, source)
   config = json.loads(config_path.read_text())
-  config["bundles"] = {"release": "fixture", "sha256": "a" * 64}
+  config["native_bundle"] = fixture_pins(b"test-only")
   config_path.write_text(json.dumps(config))
   assert bundle_hook._recipe_hash(tmp_path, source + "\n# wrapper-only change\n") == original
   assert bundle_hook._recipe_hash(tmp_path, source.replace('if self.target_name == "sdist":', 'if self.target_name == "another-target":')) == original

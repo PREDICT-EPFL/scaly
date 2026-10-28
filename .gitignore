@@ -28,6 +28,7 @@ plugins/*/src/*/_piqp_ext.pyi
 plugins/*/src/*/licenses/
 plugins/scaly-ipopt/src/scaly_ipopt.libs/
 plugins/scaly-ipopt/src/scaly_ipopt/native_manifest.json
+plugins/scaly-ipopt/src/scaly_ipopt/native_bundle.json
 
 # Local benchmark outputs
 benchmarks/results/
