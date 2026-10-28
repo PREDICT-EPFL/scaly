@@ -73,6 +73,12 @@ tags. Also retain the trusted producer run URL/attempt, reviewed main commit, fi
 reports and source controls. The producer must land on main and the maintainer must publish
 before these are used for final consumer acceptance. A candidate artifact does not satisfy this.
 
+The final #229 handoff uses the same document fields, target keys, archive names and platform
+tags as this parser. Its five listed PR candidate hashes are acceptance evidence only. Official
+pins must come from the new reviewed main run and its maintainer-published release, with trusted
+main attestations. Check the published `consumer-pins.json` against that main run, even if a PR
+candidate has the same source recipe. No producer-side format change is needed.
+
 1. Download the published pin document and all five assets. Check their hashes and provenance
    against the supplied acceptance record. Insert the exact object as `native_bundle` in
    `build_config.json`. Do not copy candidate or fixture pins.

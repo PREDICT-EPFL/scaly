@@ -76,3 +76,11 @@ OS/libc and validator target consistently and exercises installation/override on
 layouts. The mismatch reproduces locally before the fixture fix. No production code changes.
 The collection baseline includes the four added cases. All 97 focused tests, type/lint/format
 and full collection checks pass locally. Own CI reruns after the test-only fix.
+
+Coordinator update: rebase onto the final producer branch and retain only this issue's plan.
+The completed producer plan remains removed. The final PR #233 pin-document example has been
+parsed through the actual consumer on all five fixture targets, including exact asset names
+and platform tags. Its PR candidate hashes cannot become official pins. Part 2 needs a new
+reviewed main producer run, trusted attestations and the maintainer-published pin document.
+No parser or producer change is needed. All 97 consumer/provenance and 27 producer tests pass,
+along with type, lint, format and activation-patch checks. The rebased PR's CI remains to run.
