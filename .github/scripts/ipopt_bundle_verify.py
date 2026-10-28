@@ -10,7 +10,9 @@ from pathlib import Path
 def verify(package: Path) -> dict:
   config = json.loads((package / "build_config.json").read_text())["native_bundle"]
   identity = json.loads((package / "native_bundle.json").read_text())
-  pin = next(pin for pin in config["targets"].values() if pin["asset"] == identity["asset"])
+  pin = next((pin for pin in config["targets"].values() if pin["asset"] == identity.get("asset")), None)
+  if pin is None:
+    raise RuntimeError("Installed Ipopt bundle asset is not an official release pin")
   expected = {"source": "official", "release": config["release"], "repository": config["repository"], **pin}
   if identity != expected:
     raise RuntimeError("Installed Ipopt bundle identity differs from release pins")

@@ -23,7 +23,8 @@ The hook selects by operating system, normalized architecture and glibc availabi
 checks the pinned platform floor before downloading, checks the full archive hash, and passes
 the same immutable bytes to #228's manifest validator and locked installer. Download entries
 use `ipopt-download-SHA256/bundle.tar.gz` in the existing solver cache. Their exclusive locks
-also protect them from the existing cache pruner. Extraction uses the existing
+prevent the cache pruner from deleting an entry during download or reuse. Unused entries
+remain subject to the existing 30-day pruning policy. Extraction uses the existing
 `ipopt-bundle-SHA256` entry. The hook rechecks the compressed hash and full native inventory
 on offline reuse. Corruption fails with the affected cache path and never triggers compilation.
 
@@ -144,6 +145,20 @@ The remaining hook commands were run separately after that failure stopped the h
 Benchmark smoke passes and a documentation build exits 0 with no issues. The final focused
 hook/provenance run reports 93 passed. A mutation removing the archive checksum comparison
 makes the checksum test fail while the archive remains structurally valid.
+
+The independent Fable 5.1 review at medium effort approved part 1 without blocking findings.
+Its two actionable notes are fixed. Fresh-download checksum errors point to the asset/pin,
+while cache corruption names the entry to remove. The activation documentation retains PIQP
+compiler setup, required sync and clean-rebuild instructions. Small diagnostic/prose notes
+are also fixed. Fourteen focused checks covering the diagnostic changes pass, and the patch
+still applies cleanly and passes actionlint. The delta check is pending.
+
+The producer selector already short-circuits consumer-only edits. The PR's
+[candidate selection run](https://github.com/PREDICT-EPFL/scaly/actions/runs/40612556132)
+succeeds and skips build, validation and attestation. The path filter starts only selection,
+not native compilation. No lower-layer change is needed for this review note. Editable auto
+still treats an HTTP 404 as unavailable, while wheel/required mode fails. Empty macOS version
+detection remains the archive boundary's existing assumption.
 
 Project updates are unavailable because the GitHub token lacks `read:project`. Publication,
 final all-target consumer gates and timing acceptance remain open in #230. No new follow-up

@@ -56,5 +56,8 @@ prepared activation also builds with only Hatchling and refuses absent pins. Foc
 report 93 passed. Type/Ruff pass. Full pre-merge reports 2772 passed, 107 skipped and the
 known missing-bare-cc failure also recorded by both prerequisite PRs. Benchmark smoke and
 the documentation build pass separately. No builder/producer defect has been found.
-Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/234. Cross-family review and own CI
-are pending. Keep the PR draft and source default active at the publication gate.
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/234. Fable 5.1 at medium effort
+approved part 1. Both actionable notes and cheap diagnostic/prose notes are fixed.
+Fourteen focused checks pass for those fixes. The producer selection run confirms that
+consumer-only changes skip native compilation. Delta review and own CI are pending.
+Keep the PR draft and source default active at the publication gate.

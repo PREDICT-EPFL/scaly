@@ -1337,8 +1337,10 @@ class _BundleUnavailable(RuntimeError):
   pass
 
 
-def _official_bundle(pins: dict) -> tuple[bytes, dict, dict]:
+def _official_bundle(pins: dict | None) -> tuple[bytes, dict, dict]:
   """Select published bytes, verify the pin and manifest, and retain them for offline installs."""
+  if pins is None:
+    raise RuntimeError("No official Ipopt bundle pins configured")
   try:
     if (
       pins["repository"] != "PREDICT-EPFL/scaly"
@@ -1389,7 +1391,8 @@ def _official_bundle(pins: dict) -> tuple[bytes, dict, dict]:
     except (OSError, URLError, HTTPException) as error:
       raise _BundleUnavailable(f"Cannot read official Ipopt bundle {url}: {error}") from error
     if hashlib.sha256(bundle).hexdigest() != pin["sha256"]:
-      raise RuntimeError(f"Official Ipopt bundle SHA-256 mismatch for {url}; remove corrupt cache {entry} and reinstall")
+      hint = f"remove corrupt cache {entry} and reinstall" if cached else "check the release asset and checked-in SHA-256 pin"
+      raise RuntimeError(f"Official Ipopt bundle SHA-256 mismatch for {url}; {hint}")
     manifest = _read_bundle(bundle)
     if manifest["target"]["platform_tag"] != tag:
       raise RuntimeError(f"Official Ipopt bundle manifest disagrees with pinned platform tag {tag}")

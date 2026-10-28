@@ -113,7 +113,7 @@ def test_pinned_download_cache_offline_all_targets(bundle_hook, native_layout, t
   assert identity == {"source": "official", "repository": pins["repository"], "release": pins["release"], **pins["targets"][target]}
   cached = next((tmp_path / "cache").glob("ipopt-download-*/bundle.tar.gz"))
   cached.write_bytes(content + b"corrupt")
-  with pytest.raises(RuntimeError, match="SHA-256"):
+  with pytest.raises(RuntimeError, match="SHA-256.*remove corrupt cache"):
     bundle_hook._official_bundle(pins)
 
 
@@ -136,6 +136,8 @@ def test_official_input_failures(bundle_hook, tmp_path, monkeypatch, failure):
   elif failure == "tag":
     pins["targets"]["linux-x86_64"]["platform_tag"] = "manylinux_2_28_x86_64"
   elif failure == "pins":
+    with pytest.raises(RuntimeError, match="No official Ipopt bundle pins configured"):
+      bundle_hook._official_bundle(None)
     pins["targets"]["linux-x86_64"]["sha256"] = "not-a-hash"
   elif failure == "musl":
     monkeypatch.setattr(bundle_hook.platform, "libc_ver", lambda: ("musl", "1.2.5"))
@@ -147,8 +149,11 @@ def test_official_input_failures(bundle_hook, tmp_path, monkeypatch, failure):
     monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", mirror + "/{repository}/{release}/{asset}")
     if failure == "unavailable":
       monkeypatch.setattr(bundle_hook, "_BUNDLE_RELEASE_URL", "http://127.0.0.1:1/{asset}")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as error:
       bundle_hook._official_bundle(pins)
+    if failure == "checksum":
+      assert "check the release asset and checked-in SHA-256 pin" in str(error.value)
+      assert "remove corrupt cache" not in str(error.value)
     if failure in {"pins", "musl", "missing-target"}:
       assert not requests
   assert not list((tmp_path / "cache").glob("ipopt-download-*/bundle.tar.gz"))
@@ -208,10 +213,15 @@ def test_pinned_install_and_override_precedence(bundle_hook, tmp_path, monkeypat
   with pytest.raises(RuntimeError, match="native bytes differ"):
     verifier.verify(package)
   library.write_bytes(original)
+  identity_path = package / "native_bundle.json"
+  identity = json.loads(identity_path.read_text())
+  identity_path.write_text(json.dumps({**identity, "asset": "not-a-pinned-asset.tar.gz"}))
+  with pytest.raises(RuntimeError, match="not an official release pin"):
+    verifier.verify(package)
   monkeypatch.setenv("SCALY_IPOPT_BUNDLE", str(archive))
   bundle_hook.BuildHook.initialize(hook, "editable", {})
   assert json.loads((package / "native_bundle.json").read_text()) == {"source": "override", "sha256": hashlib.sha256(content).hexdigest()}
-  with pytest.raises((RuntimeError, KeyError)):
+  with pytest.raises(RuntimeError, match="not an official release pin"):
     verifier.verify(package)
 
 
