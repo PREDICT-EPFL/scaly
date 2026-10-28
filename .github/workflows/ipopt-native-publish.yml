@@ -1,0 +1,70 @@
+name: Publish reviewed Ipopt native candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful full five-target producer run on main
+        type: string
+        required: true
+      reviewed_sha:
+        description: Full reviewed main commit of the candidate run
+        type: string
+        required: true
+      revision:
+        description: New native release revision, never a Python package version
+        type: string
+        default: scaly-ipopt-native-v1
+        required: true
+      publish:
+        description: Create and publish a release after the preflight and environment review
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+concurrency:
+  group: ipopt-native-publication
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Admit reviewed output and verify every tested byte
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+          REVISION: ${{ inputs.revision }}
+        run: python .github/scripts/ipopt_native_publish.py preflight --candidate-run "$CANDIDATE_RUN" --reviewed-sha "$REVIEWED_SHA" --revision "$REVISION" --directory publication
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipopt-native-publication-plan
+          path: publication/*
+          retention-days: 30
+
+  publish:
+    needs: preflight
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ipopt-native-publication
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ipopt-native-publication-plan
+          path: publication
+      - name: Attach all validated assets to a draft before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/scripts/ipopt_native_publish.py publish --directory publication

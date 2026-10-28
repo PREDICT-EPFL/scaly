@@ -76,6 +76,8 @@ dev = [
   "hatchling>=1.32.4",
   "cmake>=4.4.4",
   "ninja>=1.13.2",
+  "pefile==2024.8.26",
+  "pyelftools==0.33",
 ]
 docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 
