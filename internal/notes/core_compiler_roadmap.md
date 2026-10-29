@@ -308,14 +308,18 @@ as it goes.
   the unit is complete the new names stay out of the user guide and are filtered from the API page.
   [#44] and [#48] may follow in a later release; [#48] changes the derivative-output interface
   whenever it lands.
+- Alongside it, settled 2026-10-29: a public discrete-time multistage OCP builder ([#88]), a Fatrop
+  plugin ([#236]) and acados examples ([#241]). They touch `src/scaly/solvers/` and `plugins/`, not
+  lowering. The builder lowers to an ordinary `sc.problem` and to a stage form for stage-structured
+  solvers; global variables stay global in the first and become constant states in the second.
 - Sparse work outside that unit, and anything else not in a release, may be picked up when it does
   not edit `passes/lowering/` or workspace allocation while a release item there is open, and does
   not regenerate snapshots while a release item's snapshot change is open.
 - 0.3.0 is the loop compiler, measured on the existing benchmark problems.
 - 0.4.0 is control flow with its derivatives, the dense library solves, and the generated solvers
   ([#72], [#205], [#206]) with the microcontroller benchmarks of [#208] on a Crazyflie 2.1's
-  STM32F405. The solvers stay in `examples/`: there is no public optimal-control or stage API in
-  0.4.0, and only [#51] and [#52]'s solves join `scaly.linalg`.
+  STM32F405. The solvers stay in `examples/`, and only [#51] and [#52]'s solves join
+  `scaly.linalg`.
 - Parent issues keep their place; a release milestone goes on the leaves, and on a parent only when
   all its children are in that release ([#23] in 0.4.0, [#24] in 0.2.0).
 
@@ -1169,8 +1173,8 @@ are differentiable through the contract above.
 **Block-structured solvers.** Multistage solvers ([#72], [#205], [#206]) work on dense blocks over a
 leading stage axis, the batch axes of decision 4, with stage derivatives from a mapped stage
 Function; they need neither a sparse type nor a global sparse Jacobian. The sparse route, [#54] and
-then [#70], waits. The solvers themselves are examples under `examples/`, not library code, until a
-public optimal-control or stage API is designed.
+then [#70], waits. The solvers themselves are examples under `examples/`, not library code. Whether
+they later solve problems from the OCP builder of [#88] is open.
 
 **[#54]. Sparse LDL^T.** A symbolic analysis module below `Function` (natural, RCM and
 minimum-degree orderings, the elimination tree, the pattern of L, column chunks), immutable and named
@@ -1486,6 +1490,9 @@ writing the guide).
 [#206]: https://github.com/PREDICT-EPFL/scaly/issues/206
 [#207]: https://github.com/PREDICT-EPFL/scaly/issues/207
 [#208]: https://github.com/PREDICT-EPFL/scaly/issues/208
+[#88]: https://github.com/PREDICT-EPFL/scaly/issues/88
+[#236]: https://github.com/PREDICT-EPFL/scaly/issues/236
+[#241]: https://github.com/PREDICT-EPFL/scaly/issues/241
 [#23]: https://github.com/PREDICT-EPFL/scaly/issues/23
 [#24]: https://github.com/PREDICT-EPFL/scaly/issues/24
 [#214]: https://github.com/PREDICT-EPFL/scaly/issues/214

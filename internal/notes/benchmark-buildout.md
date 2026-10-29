@@ -456,6 +456,11 @@ algorithmic reference. The
 findings below motivated the decision and are kept for the record; laopt
 returns later as an external baseline for MPFC (§2.3, backlog).
 
+Rechecked 2026-10-29 and unchanged: laopt is public and its derivative overrides
+(`jacobian_impl`, `gradient_impl`, `hessian_impl`) would accept Scaly oracles, but
+compile-time sizes and header-only templates still mean a C++ build per problem
+outside Scaly's C codegen path.
+
 laopt (Waibel, Schwan, Jones — EPFL LA; header-only C++17; private at the time of this
 investigation, public since) solves NLPs of exactly the form `min φ(ξ) s.t. c(ξ)=0, ξ_lb≤ξ≤ξ_ub,
 h_lb≤h(ξ)≤h_ub`. Verified against the laopt source:
