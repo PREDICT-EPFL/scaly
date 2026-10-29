@@ -21,7 +21,7 @@ system compiles exported C.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SCALY_CC` | `zig cc` from the `toolchain` extra, then `CC`, then `cc` from `PATH` | Compiler command for numerical evaluation |
+| `SCALY_CC` | `zig cc` from the `toolchain` extra or, on Windows, the core package, then `CC`, then `cc` from `PATH` | Compiler command for numerical evaluation |
 | `SCALY_CC_OPT` | `-O2` | One optimization flag passed to that compiler |
 | `SCALY_VECTOR_LIBM` | Native host detection | `none` for scalar math calls or `glibc` for supported vector math functions |
 
