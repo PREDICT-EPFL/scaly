@@ -1,8 +1,9 @@
 # Installation
 
-Scaly supports Python 3.12 or newer on Linux and macOS. Numerical function calls
-compile generated C, so the Python package needs access to a C compiler even
-when the application itself is entirely Python.
+Scaly supports Python 3.12 or newer on Linux and macOS, and on Windows for
+x86-64 processors only. Numerical function calls compile generated C, so the
+Python package needs access to a C compiler even when the application itself
+is entirely Python.
 
 ## The core package and solver plugins
 
@@ -24,6 +25,10 @@ Optimization solvers are optional packages:
 | Scaly SQP, for nonlinear problems | `uv add "scaly[sqp]"` | `pip install "scaly[sqp]"` |
 | All three | `uv add "scaly[solvers]"` | `pip install "scaly[solvers]"` |
 
+`scaly-ipopt` is not available on Windows, so `scaly[ipopt]` and
+`scaly[solvers]` cannot be installed there. `scaly[piqp,sqp]` installs the
+other two solvers.
+
 A solver plugin connects the symbolic problem to a native optimization library.
 The solver wheels include those native libraries. If no wheel matches the
 platform, a source build needs additional tools, described in
@@ -33,10 +38,14 @@ solver options.
 
 ## Compiler selection
 
-Scaly normally uses `cc` from `PATH`. Apple's command-line developer tools
-provide it on macOS, and `build-essential` provides it on Debian and Ubuntu.
+On Linux and macOS, Scaly normally uses `cc` from `PATH`. Apple's command-line
+developer tools provide it on macOS, and `build-essential` provides it on Debian
+and Ubuntu. On Windows, the core package depends on `zig-bin`, which installs
+`zig cc` into the Python environment. Scaly uses it without Visual Studio, MSYS2
+or a separate MinGW installation.
 
-The `toolchain` extra installs a C compiler as a Python package instead:
+On Linux and macOS, the `toolchain` extra installs the same compiler as a Python
+package:
 
 ```bash
 uv add "scaly[toolchain]"
@@ -48,8 +57,13 @@ It brings `zig cc` 0.17 from the `zig-bin` package, or from `ziglang` on
 Intel macOS, where `zig-bin` has no wheel. `zig cc` is a Clang driver that
 ships with its own C runtime support, so the same Clang compiles numerical
 functions on every system. When either package is installed, Scaly prefers it
-to `CC` and `cc`. The first compilation on a machine takes a few seconds longer while zig
-builds that runtime support into its own cache.
+to `CC` and `cc`.
+
+The first compilation on a machine takes longer while zig builds that runtime
+support into its own cache, once per machine and zig version. It takes 2 to 3
+seconds on Linux and macOS. On Windows, where zig also builds a MinGW-w64 C
+runtime, the first compilation of a small function took about 13 seconds on a
+recent desktop processor, and about 0.4 seconds in later processes.
 
 `SCALY_CC` selects a different compiler and takes precedence over all of
 these. If it is unset and neither package is installed, Scaly respects `CC`
@@ -73,6 +87,7 @@ Other compilers and systems may work, but they are not tested.
 | Ubuntu 26.04 | x86-64, arm64 | GCC 15, and Clang 22 on x86-64 |
 | macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4), and `zig cc` 0.17 on arm64 |
 | macOS 26 | arm64, x86-64 | Apple Clang 21 (Xcode 26) |
+| Windows Server 2025 | x86-64 | `zig cc` 0.17 |
 
 The selected executable must exist. An invalid override does not fall back to
 the system compiler. [Environment variables](env_vars.md) describes the

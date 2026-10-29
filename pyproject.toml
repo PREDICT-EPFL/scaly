@@ -28,6 +28,7 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Topic :: Software Development :: Compilers",
   "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
 ]
 

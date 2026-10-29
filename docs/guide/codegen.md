@@ -406,7 +406,9 @@ libraries. The `CModule.link_flags` property reports the flags discovered for
 those dependencies and the selected math library in the current environment. Reading it requires the
 libraries to be available, even though rendering their wrapper source does not.
 For deployment on another machine, provide libraries and paths appropriate to
-that target. See [Solver backends](solver_backends.md#native-libraries-and-deployment).
+that target. On Windows these flags contain no rpath, so an executable finds the
+solver DLLs at run time as described in
+[Solver backends](solver_backends.md#native-libraries-and-deployment).
 
 ## Prints in exported C
 
@@ -531,7 +533,8 @@ library when available. For a solver, `solve.function.compile()` prepares the
 compiled wrapper without running an optimization.
 
 The default cache directory is `$XDG_CACHE_HOME/scaly/jit`, or
-`~/.cache/scaly/jit` when `XDG_CACHE_HOME` is unset. `SCALY_CACHE_DIR` overrides
+`~/.cache/scaly/jit` when `XDG_CACHE_HOME` is unset, which on Windows is
+`.cache\scaly\jit` in the user's profile directory. `SCALY_CACHE_DIR` overrides
 it. Deleting cached files does not invalidate an already loaded function, but
 future compilations rebuild missing artifacts.
 
@@ -542,6 +545,14 @@ energy.recompile()
 Despite its name, `recompile()` clears the function's compiled handle and disk
 cache entry without immediately compiling. The next numerical call or explicit
 `compile()` prepares the library again.
+
+Windows refuses to replace or delete a DLL that a process has loaded, and Python
+never unloads one. `recompile()` therefore leaves a loaded DLL in the cache,
+and the next compilation in this process writes the function to a separate
+cache entry. The previous and the new handle both stay callable. Scaly
+does not prune the cache on any platform, so both DLLs remain after the process
+exits. Deleting the cache directory once no process has them loaded removes
+them.
 
 Scaly does not fall back to Python evaluation when compilation fails.
 `uv run scaly_toolchain` reports the compiler, cache directory, and resolved
