@@ -7,7 +7,9 @@ fixed, the machine they ran on, and what the results do not show.
 ## What both sides share
 
 - **The same model.** Scaly and CasADi build the same formulation of each problem, and each
-  timed Hessian is checked against an independent reference before it counts.
+  timed Hessian is checked against a separately constructed reference before it counts. Chain,
+  race cars and neural-process MPC use NumPy references. Unbumpercars uses a separate CasADi MX
+  formulation, which cannot rule out an error shared by both formulations.
 - **The same compiler and flags.** Both use the same optimization level and `-march=native`,
   because Scaly compiles on the machine it runs on. Both use glibc's vector math library, with
   no fast-math options that could reorder floating-point arithmetic.
@@ -31,8 +33,8 @@ fixed, the machine they ran on, and what the results do not show.
 | Machine | Minisforum F7BSC desktop |
 | CPU | AMD Ryzen 9 7940HS, 8 cores, boost disabled, `performance` governor |
 | System | Ubuntu 24.04, glibc 2.39 |
-| Compilers | GCC 13.3.0 for controllers, Clang 20.1.8 for the generated Hessians |
-| Versions | Python 3.14.3, Scaly measured October 20, 2026, CasADi 3.8.0, PIQP 0.6.4 |
+| Compilers | System Clang 20.1.8 for both providers' controllers and generated Hessians |
+| Versions | Python 3.14.3, Scaly at `06e10c16` measured October 29, 2026, CasADi 3.8.0, PIQP 0.6.4 |
 
 Absolute times depend on the machine. The results come from this one machine only and say
 nothing about others, such as Apple silicon.
@@ -46,7 +48,8 @@ nothing about others, such as Apple silicon.
   no CasADi counterpart, and Scaly evaluates the objective and constraints together where CasADi
   evaluates them separately. These differences are part of what is measured.
 - **One controller does not do identical work.** Unbumpercars with SQP takes a different number of
-  iterations on two of 200 steps, as described on the [closed-loop page](closed_loop.md).
+  iterations on one of 200 steps and different oracle-call counts on three steps, as described
+  on the [closed-loop page](closed_loop.md).
 - **Step spread is not measurement noise.** One fresh process per cell shortens the study but
   provides no estimate of variation between runs. Closed-loop standard deviations and percentile
   ranges describe the changing workload along an episode. The paired per-step speedup compares

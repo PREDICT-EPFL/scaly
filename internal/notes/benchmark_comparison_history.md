@@ -8,6 +8,112 @@ The retained studies are `benchmarks/results/study-2026-09-23-c77-c79-final` for
 `benchmarks/results/study-2026-09-23-c77-c79-libmvec` for vector libm. The September 10 study is the
 comparison baseline used below. Actionable follow-up remains in [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues).
 
+## Final 0.1.0 study, October 29
+
+`benchmarks/results/study-2026-10-29-final/` in the `ted-study-0.1.0-final` worktree measured
+clean main at `06e10c16`, after #245, on la015. All 28 provenance records name that revision.
+The study took 81.4 minutes. Both providers' controllers and the sweep used system Clang 20.1.8,
+with `SCALY_VECTOR_LIBM=glibc SCALY_CC=clang CC=clang CXX=clang++`. The study options were
+`--repetitions 1 --order-seed 0 --headline --boost off`. Controllers used `-O2`, sweep kernels
+used `-O3`, and both used `-march=native`, glibc vector math and the `performance` governor.
+The grids, 180-second compile limit, solver builds and timing boundaries follow the
+[benchmark protocol](benchmark_protocol.md). This study's controller compiler supersedes the
+GCC configuration described in that note's older studies.
+
+All 106 sweep cells have outcomes, with 79 timed, 11 compilation timeouts and 16 larger cells
+skipped after a timeout. There are no correctness or execution failures. All 21 Scaly cells
+completed. All exclusions belong to CasADi. These counts match October 20. The earlier October
+29 study had 77 timings and 18 skips because CasADi mapped SX did not compile neural-process
+MPC at N=25 and N=50. In the final study those compiles take 173.7 and 177.1 seconds, near the
+limit. That change in coverage does not establish a runtime improvement.
+
+All 79 timed cells retain their compiled-C correctness success marker. All 15 closed-loop
+episodes and 6,938 solver steps succeeded. The seven provider pairs have matching step numbers
+and state/control differences below 4e-8. Six pairs match every iteration and oracle-call
+count. Unbumpercars SQP differs in iterations at step 198 and in oracle-call counts at steps
+30, 148 and 198, counting from zero. Its maximum state/control differences are 3.70e-8 and
+2.82e-8. Those counts come from `stats.csv`, because unbumpercars `telemetry.csv` omits the
+oracle-count columns and the standard report treats missing counts as equal. The published
+step CSV includes those retained counts, and the pages qualify the SQP comparison.
+
+The headline Hessian ratios divide the fastest completed CasADi time by Scaly's. Race cars
+N=400 is 5.73×, neural-process MPC N=200 is 21.6× and unbumpercars C=8 is 25.5×. Chain is
+1.20× at M=3, 0.85× at M=5 and 0.55× at M=9. No tested CasADi encoding compiles at
+unbumpercars C=16 or C=32, so those sizes have no runtime ratio.
+
+Scaly Hessian times against the previously published October 20 study:
+
+| Problem | Size | October 20, µs | Final October 29, µs | Change, % |
+|---|---:|---:|---:|---:|
+| race_cars | 5 | 0.851 | 0.999 | +17.3 |
+| race_cars | 10 | 1.108 | 1.180 | +6.5 |
+| race_cars | 25 | 1.984 | 2.359 | +18.9 |
+| race_cars | 50 | 3.281 | 4.107 | +25.2 |
+| race_cars | 100 | 6.380 | 7.725 | +21.1 |
+| race_cars | 200 | 11.797 | 16.136 | +36.8 |
+| race_cars | 400 | 22.951 | 28.531 | +24.3 |
+| npmpc | 6 | 10.532 | 7.790 | -26.0 |
+| npmpc | 12 | 23.340 | 16.796 | -28.0 |
+| npmpc | 25 | 48.643 | 32.230 | -33.7 |
+| npmpc | 50 | 77.684 | 59.497 | -23.4 |
+| npmpc | 100 | 162.526 | 107.083 | -34.1 |
+| npmpc | 200 | 253.473 | 215.235 | -15.1 |
+| unbumpercars | 2 | 227.132 | 113.667 | -50.0 |
+| unbumpercars | 4 | 280.510 | 167.151 | -40.4 |
+| unbumpercars | 8 | 575.297 | 415.742 | -27.7 |
+| unbumpercars | 16 | 1462.377 | 1454.337 | -0.5 |
+| unbumpercars | 32 | 5533.094 | 7644.897 | +38.2 |
+| chain | 3 | 22.025 | 21.525 | -2.3 |
+| chain | 5 | 100.177 | 96.314 | -3.9 |
+| chain | 9 | 282.288 | 4317.256 | +1429.4 |
+
+The maintainer accepted the chain losses for 0.1.0. At M=5, Scaly's mean function evaluation
+rises from October 20's 0.396 to 0.518 ms with IPOPT and from 0.180 to 0.223 ms with SQP.
+The native total means move from 6.848 to 6.977 ms and from 6.345 to 6.379 ms. Its Hessian
+is slightly faster, so the controller loss is not a Hessian slowdown. The M=9 Hessian is
+15.29× slower than October 20 and close to earlier October 29's 4,305.881 µs. The race-car
+N=400 Hessian remains 24.3% slower than October 20. Its source and object are identical to
+earlier October 29's, so the movement from 30.291 to 28.531 µs does not isolate a #245 gain.
+
+The maintainer also accepted unbumpercars C=32 for 0.1.0. Its Hessian rose from 5,267.123 to
+7,644.897 µs between the two October 29 studies, 45.1% slower with identical saved inputs.
+It is outside the headline size and no tested CasADi encoding compiles there. The pages retain
+the measured point without making the cross-study loss a talking point. At C=8, final Scaly
+native solver means are 20.782 ms with IPOPT and 10.885 ms with SQP, against 30.365 and
+17.297 ms earlier that day and 20.120 and 10.944 ms on October 20. October 20 used GCC
+13.3.0 for controllers, so that historical comparison combines code and compiler changes.
+Some harvested sweep inputs also differ across studies, including C=8 between the two October
+29 runs. October 20 and the final C=8 inputs agree. The final study contains Hessians only,
+with no Jacobian timings. Prototype derivative measurements do not enter the published data.
+
+Final paired per-step ratios, as the median with tenth and ninetieth percentiles:
+
+| Controller | Solver | Total-time ratio | Function-evaluation ratio |
+|---|---|---:|---:|
+| Race cars N=50 | IPOPT | 1.09×, 1.07 to 1.10 | 2.79×, 2.67 to 2.87 |
+| Race cars N=50 | SQP | 1.04×, 1.01 to 1.05 | 3.04×, 2.79 to 3.16 |
+| Neural-process MPC N=12 | IPOPT | 1.19×, 1.18 to 1.20 | 1.75×, 1.72 to 1.77 |
+| Neural-process MPC N=12 | SQP | 1.26×, 1.25 to 1.29 | 1.80×, 1.76 to 1.85 |
+| Unbumpercars C=8 | IPOPT | 8.10×, 7.94 to 8.22 | 9.70×, 9.50 to 9.80 |
+| Unbumpercars C=8 | SQP | 9.01×, 8.61 to 9.25 | 10.09×, 9.62 to 10.36 |
+| Chain M=5 | SQP | 0.99×, 0.98 to 0.99 | 0.59×, 0.55 to 0.60 |
+
+Scaly misses no sampling deadline across its 3,514 steps. CasADi unbumpercars misses 195 of
+200 steps with IPOPT and 55 with SQP, against October 20's 186 and 48. The final Scaly
+unbumpercars maxima are 43.137 ms and 80.900 ms, below the 100 ms interval. Both providers
+meet every deadline on the other problems. The largest distance of a paired tenth or ninetieth
+percentile from its median is 7.99%. These ranges describe changing work over one episode,
+not measurement noise or confidence intervals. One process per sweep cell gives no estimate
+of variation between processes.
+
+The five published CSV assets in `docs/assets/benchmarks/` come only from this final study.
+The four raw sweep CSVs and their summaries are concatenated. The closed-loop summary is the
+report's output, paired ratios use `numpy.percentile` at 10, 50 and 90, and step rows use the
+report's telemetry normalization with six significant digits, supplemented by unbumpercars
+`stats.csv` oracle counts. Regenerating the report on a temporary copy of the saved inputs
+reproduces the retained report and summary exactly. The source study worktree stays unchanged.
+The four benchmark pages and all nine data-driven figures use these assets.
+
 ## Seed-selector bit tables, October 20 study
 
 `benchmarks/results/study-2026-10-20` measured the clean pushed merge of main into pull request
