@@ -2088,6 +2088,10 @@ tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductio
 tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape2]
 tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape3]
 tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape4]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape5]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape6]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape7]
+tests/passes/lowering/test_lowering.py::test_matrix_panels_keep_ordered_reductions_private[shape8]
 tests/passes/lowering/test_lowering.py::test_normalization_keeps_constant_and_conflicting_function_hints
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[compile]
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[none]

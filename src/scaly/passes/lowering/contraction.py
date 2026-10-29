@@ -92,23 +92,39 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     j = p.var(indices["j"])
     k = p.var(indices["k"])
     krng = p.range_(indices["k"], 0, kk, kind=RangeKind.REDUCE)
-    a_idx = p.add(p.mul(i, p.const_int(kk)), k)
 
-    def panel(columns: list[ProgramNode]) -> list[ProgramNode]:
-      names = [ctx.names.allocate(f"acc_{nm}_{c}") for c in range(len(columns))]
+    def panel(rows: list[ProgramNode], columns: list[ProgramNode]) -> list[ProgramNode]:
+      coordinates = [(row, column) for row in rows for column in columns]
+      names = [ctx.names.allocate(f"acc_{nm}_{c}") for c in range(len(coordinates))]
       accumulators = [p.var(name, dt) for name in names]
       initial = [p.assign(name, p.const_float(0.0, dtype=dt), declare=True) for name in names]
-      products = [p.mul(p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [p.add(p.mul(k, p.const_int(n)), column)]))) for column in columns]
+      products = [
+        p.mul(p.load(p.view(a_buf, [p.add(p.mul(row, p.const_int(kk)), k)])), p.load(p.view(b_buf, [p.add(p.mul(k, p.const_int(n)), column)])))
+        for row, column in coordinates
+      ]
       updates = [p.assign(name, p.add(acc, product)) for name, acc, product in zip(names, accumulators, products, strict=True)]
-      stores = [p.store(p.view(out, [p.add(p.mul(i, p.const_int(n)), column)]), acc) for column, acc in zip(columns, accumulators, strict=True)]
+      stores = [
+        p.store(p.view(out, [p.add(p.mul(row, p.const_int(n)), column)]), acc) for (row, column), acc in zip(coordinates, accumulators, strict=True)
+      ]
       return [*initial, p.for_(krng, updates), *stores]
 
-    blocks, tail = divmod(n, 4)
+    if n <= 4:
+      blocks, tail = divmod(m, 4)
+      if blocks:
+        ibrng = p.range_(indices["ib"], 0, blocks, kind=RangeKind.GLOBAL)
+        rows = [p.add(p.mul(p.var(indices["ib"]), p.const_int(4)), p.const_int(r)) for r in range(4)]
+        ctx.statements.extend(_nest([ibrng], panel(rows, [p.const_int(c) for c in range(n)])))
+      if tail:
+        tail_range = p.range_(indices["i"], 4 * blocks, m, kind=RangeKind.GLOBAL)
+        ctx.statements.extend(_nest([tail_range], panel([i], [p.const_int(c) for c in range(n)])))
+      return
+
+    blocks, tail = divmod(n, 8)
     if blocks:
       panel_range = p.range_(indices["j"], 0, blocks, kind=RangeKind.GLOBAL)
-      columns = [p.add(p.mul(j, p.const_int(4)), p.const_int(c)) for c in range(4)]
-      ctx.statements.extend(_nest([irng, panel_range], panel(columns)))
+      columns = [p.add(p.mul(j, p.const_int(8)), p.const_int(c)) for c in range(8)]
+      ctx.statements.extend(_nest([irng, panel_range], panel([i], columns)))
     if tail:
-      ctx.statements.extend(_nest([irng], panel([p.const_int(c) for c in range(4 * blocks, n)])))
+      ctx.statements.extend(_nest([irng], panel([i], [p.const_int(c) for c in range(8 * blocks, n)])))
   else:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
