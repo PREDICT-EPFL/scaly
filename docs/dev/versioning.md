@@ -6,9 +6,7 @@ official solver plugins.
 
 ## Initial versions
 
-The first non-prerelease version is planned as `0.1.0`. Installable wheels published before then are Python
-pre-releases of that version: `0.1.0a1`, `0.1.0a2`, and so on, with a release candidate such as
-`0.1.0rc1` while that release is being prepared. There is no separate `0.0.x` series to signal
+The first non-prerelease version is `0.1.0`. There is no separate `0.0.x` series to signal
 that the project is young.
 
 The project stays in the `0.x.y` range while its public interfaces are still expected to change
@@ -27,9 +25,8 @@ same commit, but equality has no compatibility meaning.
 
 Compatibility is enforced in two places:
 
-- Each plugin declares the supported core range in its package dependencies, `scaly>=0.1.0a1,<0.2`
-  for the `0.1.x` compatibility line. Naming a pre-release on the lower bound lets installers pick
-  `0.1.0b1` or `0.1.0rc1` without `--pre`. The exclusive upper bound also excludes every `0.2`
+- Each plugin declares the supported core range in its package dependencies, `scaly>=0.1.0,<0.2`
+  for the `0.1.x` compatibility line. The exclusive upper bound also excludes every `0.2`
   pre-release.
 - The solver registry checks the plugin protocol version at runtime. A breaking change to the plugin
   contract bumps that protocol version and requires coordinated releases of the affected official
@@ -81,8 +78,7 @@ release never bumps either constant.
 
 ## Git tags
 
-The repository has no tags yet. From the first release on, every published package version gets
-exactly one package-qualified Git tag, for example:
+Every published package version gets exactly one package-qualified Git tag, for example:
 
 ```text
 scaly-v0.1.0
