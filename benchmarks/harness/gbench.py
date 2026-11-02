@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,7 @@ import sys
 import time
 
 from scaly.codegen.abi import c_ident
-from scaly.codegen.toolchain import compiler_fingerprint, find_c_compiler
+from scaly.codegen.toolchain import find_c_compiler
 from benchmarks.harness import NATIVE_CFLAGS, math_flags, vector_symbols
 
 
@@ -108,10 +110,19 @@ def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
     raise RuntimeError(f"Google Benchmark build left no {header.name}/{lib.name} under {prefix}, see {log}")
 
 
+@lru_cache(maxsize=8)
+def compiler_abi(command: tuple[str, ...]) -> str:
+  """Hash the compiler's name, flags and predefined macros, which carry its version and default target.
+
+  Not its path or modification time, which differ between checkouts and between fresh installs."""
+  macros = subprocess.run([*command, "-dM", "-E", "-x", "c++", "-"], input="", text=True, capture_output=True, check=True).stdout
+  return hashlib.sha256(json.dumps([Path(command[0]).name, *command[1:], macros]).encode()).hexdigest()
+
+
 def gbench_prefix() -> Path:
   """Keep Google Benchmark's static library in the selected C++ compiler's ABI, shared by every checkout on the machine."""
   cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-  return cache / "scaly" / "gbench" / GBENCH_TAG / compiler_fingerprint(compiler())[:12]
+  return cache / "scaly" / "gbench" / GBENCH_TAG / compiler_abi(compiler())[:12]
 
 
 def gbench_flags() -> tuple[list[str], list[str]]:

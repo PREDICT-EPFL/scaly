@@ -151,7 +151,7 @@ def test_object_inspection_reads_undefined_vector_symbols(tmp_path: Path) -> Non
 def test_gbench_builds_once_per_machine_in_the_scaly_cache(lost_race: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
   monkeypatch.setattr(gbench, "compiler", lambda: ("c++",))
-  monkeypatch.setattr(gbench, "compiler_fingerprint", lambda command: "f" * 64)
+  monkeypatch.setattr(gbench, "compiler_abi", lambda command: "f" * 64)
   prefix = tmp_path / "scaly" / "gbench" / gbench.GBENCH_TAG / ("f" * 12)
   builds = []
 
@@ -173,7 +173,7 @@ def test_gbench_builds_once_per_machine_in_the_scaly_cache(lost_race: bool, tmp_
 def test_gbench_keeps_a_rename_error_when_the_prefix_is_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
   monkeypatch.setattr(gbench, "compiler", lambda: ("c++",))
-  monkeypatch.setattr(gbench, "compiler_fingerprint", lambda command: "f" * 64)
+  monkeypatch.setattr(gbench, "compiler_abi", lambda command: "f" * 64)
   prefix = tmp_path / "scaly" / "gbench" / gbench.GBENCH_TAG / ("f" * 12)
 
   def build(target: Path, header: Path, lib: Path) -> None:
@@ -184,6 +184,17 @@ def test_gbench_keeps_a_rename_error_when_the_prefix_is_incomplete(tmp_path: Pat
   monkeypatch.setattr(gbench, "_build_gbench", build)
   with pytest.raises(OSError):
     gbench.gbench_flags()
+
+
+def test_gbench_compiler_abi_ignores_where_the_compiler_lives(monkeypatch: pytest.MonkeyPatch) -> None:
+  macros = {"stdout": "#define __VERSION__ 1"}
+  monkeypatch.setattr(gbench.subprocess, "run", lambda *a, **kw: SimpleNamespace(**macros))
+  gbench.compiler_abi.cache_clear()
+  checkout = gbench.compiler_abi(("/checkout/.venv/bin/zig", "c++"))
+  assert gbench.compiler_abi(("/other/.venv/bin/zig", "c++")) == checkout
+  macros["stdout"] = "#define __VERSION__ 2"
+  assert gbench.compiler_abi(("/third/.venv/bin/zig", "c++")) != checkout
+  gbench.compiler_abi.cache_clear()
 
 
 def test_benchmark_compiler_commands_preserve_packaged_zig_and_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
