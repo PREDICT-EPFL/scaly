@@ -100,7 +100,7 @@ def _has_cxx_compiler() -> bool:
 def _missing_ipopt_tools() -> list[str]:
   missing = [cmd for cmd in ("git", "make", "cmake") if shutil.which(cmd) is None]
   if os.name == "nt":
-    missing += [cmd for cmd in ("ninja", "objdump") if shutil.which(cmd) is None]
+    missing += [cmd for cmd in ("ninja", "dlltool") if shutil.which(cmd) is None]
   if shutil.which("cc") is None:
     missing.append("cc")
   if not _has_cxx_compiler():
@@ -189,6 +189,11 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
   build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
+  # The BLAS and LAPACK sub-makes add members to one static archive concurrently, which corrupts it
+  # on many-core machines. Serialise only the archive writes, so compilation stays parallel.
+  for variable, tool in (("AR", "ar"), ("RANLIB", "ranlib")):
+    command = [sys.executable, str(Path(__file__).resolve()), str(third_party_dir / "openblas-archive.lock"), shutil.which(tool) or tool]
+    build_flags.append(f"{variable}={shlex.join(command)}")
   # Fix the common-code baseline instead of detecting a potentially unsupported build CPU.
   # DYNAMIC_ARCH still selects optimized kernels at runtime.
   if platform.machine().lower() in {"x86_64", "amd64"}:
@@ -197,6 +202,11 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   install_dir.mkdir(parents=True, exist_ok=True)
   _run(["make", f"PREFIX={install_dir.resolve()}", *build_flags, "install"], cwd=src_dir)
   return install_dir
+
+
+def _archive(lock: Path, command: list[str]) -> None:
+  with _locked(lock):
+    subprocess.run(command, check=True)
 
 
 def _clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
@@ -454,8 +464,13 @@ def _linux_major_so_name(path: Path) -> str:
 
 
 def _windows_deps(path: Path) -> list[str]:
-  out = subprocess.run(["objdump", "-p", str(path)], check=True, capture_output=True, text=True).stdout
-  return re.findall(r"^\s*DLL Name:\s*(\S+)", out, re.MULTILINE)
+  # GNU objdump can list no imports for a DLL that delvewheel rewrote, though the loader still sees them.
+  import pefile
+
+  with pefile.PE(str(path)) as pe:
+    return [
+      entry.dll.decode("ascii") for directory in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT") for entry in getattr(pe, directory, ())
+    ]
 
 
 def _bundle_windows_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str, runtime_dir: Path) -> None:
@@ -803,3 +818,8 @@ class BuildHook(BuildHookInterface):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)
+
+
+# `_build_openblas` runs this file as its locked `ar` and `ranlib`.
+if __name__ == "__main__":
+  _archive(Path(sys.argv[1]), sys.argv[2:])
