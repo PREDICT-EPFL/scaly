@@ -24,6 +24,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 from contextlib import ExitStack
@@ -272,12 +273,14 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # Compile to a temp lib unique to this process and thread, then atomically rename, so concurrent
     # builds of the same function (pytest-xdist workers or threads on a cold cache) never observe a half-written .so.
     tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
-    # Compile from the function's own directory: zig keeps a separate build of its C runtime for
-    # every working directory that contains its installation, such as a checkout holding the venv.
+    # zig keeps a separate build of parts of its C runtime for every working directory that contains
+    # its installation, such as a checkout holding the venv, so compile from the temporary directory.
+    # It is also short, which the function's own directory may not be: Windows refuses a working
+    # directory longer than 260 characters.
     try:
       subprocess.run(
         _compile_command(compiler.command, module, source_path.as_posix(), tmp_lib.as_posix()),
-        cwd=cache_dir,
+        cwd=tempfile.gettempdir(),
         check=True,
         capture_output=True,
         text=True,
