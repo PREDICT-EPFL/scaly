@@ -29,13 +29,21 @@ brew install gcc
 sudo apt-get install gfortran build-essential
 ```
 
+On Windows, IPOPT source builds use MSYS2 UCRT64, which targets the Universal C Runtime.
+The GCC and winpthreads package versions are pinned in the plugin's
+[`build_config.json`](https://github.com/PREDICT-EPFL/scaly/blob/main/plugins/scaly-ipopt/src/scaly_ipopt/build_config.json).
+The [wheel workflow](https://github.com/PREDICT-EPFL/scaly/blob/main/.github/workflows/wheels.yml)
+shows their installation commands. The environment also needs Git, make, patch, diffutils,
+pkgconf, and the UCRT64 CMake and Ninja packages. Add its `ucrt64/bin` and `usr/bin`
+directories to `PATH`. The hook runs source-build commands through its MSYS2 shell.
+
 Then:
 
 ```bash
 SCALY_BUILD_SOLVERS=required uv sync
 ```
 
-A cold build takes 5 to 8 minutes. Each build lands in a cache shared by every checkout on the
+Each build lands in a cache shared by every checkout on the
 machine, `~/.cache/scaly/solvers` by default, under a hash of everything that decides its result:
 the plugin's `hatch_build.py`, its pins, its license texts, the platform and the compilers. A new
 worktree therefore copies the build its branch needs from the cache, and builds only when no
