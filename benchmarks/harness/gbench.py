@@ -124,8 +124,10 @@ def gbench_flags() -> tuple[list[str], list[str]]:
     _build_gbench(scratch, scratch / header.relative_to(prefix), scratch / lib.relative_to(prefix))
     try:
       scratch.rename(prefix)
-    except OSError:  # another checkout finished first
-      shutil.rmtree(scratch)
+    except OSError:
+      if not (header.exists() and lib.exists()):
+        raise
+      shutil.rmtree(scratch)  # another checkout finished first
   return ["-I", str(prefix / "include"), "-pthread", *(["-DBENCHMARK_STATIC_DEFINE"] if sys.platform == "win32" else [])], [
     str(lib),
     *(["-lshlwapi"] if sys.platform == "win32" else []),

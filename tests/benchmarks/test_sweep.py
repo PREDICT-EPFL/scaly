@@ -170,6 +170,22 @@ def test_gbench_builds_once_per_machine_in_the_scaly_cache(lost_race: bool, tmp_
   assert (prefix / "include" / "benchmark" / "benchmark.h").exists()
 
 
+def test_gbench_keeps_a_rename_error_when_the_prefix_is_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+  monkeypatch.setattr(gbench, "compiler", lambda: ("c++",))
+  monkeypatch.setattr(gbench, "compiler_fingerprint", lambda command: "f" * 64)
+  prefix = tmp_path / "scaly" / "gbench" / gbench.GBENCH_TAG / ("f" * 12)
+
+  def build(target: Path, header: Path, lib: Path) -> None:
+    for path in (header, lib, prefix / "build.log"):
+      path.parent.mkdir(parents=True, exist_ok=True)
+      path.write_text("")
+
+  monkeypatch.setattr(gbench, "_build_gbench", build)
+  with pytest.raises(OSError):
+    gbench.gbench_flags()
+
+
 def test_benchmark_compiler_commands_preserve_packaged_zig_and_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from scaly.codegen.toolchain import Compiler
 
