@@ -105,6 +105,29 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent; CI installs both solver wheels and
 runs everything. Never hand-roll a "is the solver loadable" skip condition.
 
+## What CI runs
+
+Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Python version in
+`.python-version`:
+
+- `lint` runs Ruff, the format check, the node-ID baseline and ty three times: at the oldest
+  supported Python, at 3.14 and for Windows. On a pull request it also rejects a title with a
+  conventional-commit prefix, since the title becomes the commit title on main. Ruff forbids
+  `sys.version_info`, because CI runs a single Python version and would never test the other branch.
+- `docs` builds the site and fails on any warning, such as a broken link.
+- `test / <platform>` and `install / <platform>` run on linux-x86_64, linux-arm64, macos-arm64,
+  macos-x86_64 and windows-x86_64. Each builds its platform's wheels. The test job runs the whole
+  suite against them, and on linux-x86_64 also the benchmark and closed-loop smoke runs. The install
+  job installs them into a clean environment, a slim container on Linux, and solves with every
+  backend.
+- `ci` passes only when every other job passed. It is the one required check, and its summary
+  has a row per platform saying whether the native libraries were built or came from the cache.
+
+The native libraries are rebuilt only when a plugin's `hatch_build.py`, `build_config.json` or
+`licenses/` changes, so an edit to a plugin's Python code reuses them. Google Benchmark is built once
+per compiler and restored from the cache too. A push to main runs CI again unless it only touches
+`internal/`, and stops after its first job when the merge queue already tested the same commit.
+
 ## Where things live
 
 `tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering/`

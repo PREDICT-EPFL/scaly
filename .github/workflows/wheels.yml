@@ -2,8 +2,7 @@ name: Wheels
 
 # A plugin wheel depends only on its own directory, the cibuildwheel release (which pins the
 # manylinux image) and the platform, so a cached wheel stays valid across runner images: it bundles
-# its runtime. Artifacts are kept for the longest period the organization allows, since
-# `release.yml` publishes the files a successful CI run on `main` built.
+# its runtime. Only `nightly.yml` calls it now; `ci.yml` builds through `.github/actions/dists`.
 on:
   workflow_call:
     inputs:

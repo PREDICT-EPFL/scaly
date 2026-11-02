@@ -1,8 +1,10 @@
 name: CI
 
+# Pull requests and the merge queue run the same jobs. `ci` is the one required check.
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
+    paths-ignore: ["internal/**"]
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -10,19 +12,90 @@ on:
 permissions:
   contents: read
 
+# Runs on main each get their own group, so none cancels another.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  wheels:
-    uses: ./.github/workflows/wheels.yml
+  # A push to main of the commit the merge queue already tested ends here.
+  queue:
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+    outputs:
+      tested: ${{ steps.check.outputs.tested }}
+    steps:
+      - id: check
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=ci" --jq '[.check_runs[] | select(.conclusion == "success")] | length')
+          if [ "$passed" -gt 0 ]; then
+            echo "The merge queue already tested $GITHUB_SHA"
+            echo "tested=true" >> "$GITHUB_OUTPUT"
+          fi
 
-  pure:
-    uses: ./.github/workflows/pure.yml
+  lint:
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # The title is read when the step runs, so re-running the job checks a corrected title.
+      - name: Reject conventional-commit prefixes in the title
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          TITLE=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .title)
+          if printf '%s' "$TITLE" | grep -Eq '^[a-z]+(\([^)]*\))?!?: '; then
+            echo "::error::The title becomes the squash commit title on main. Drop the prefix and write a plain imperative title, such as 'Merge CI test jobs'."
+            exit 1
+          fi
 
-  lint-type:
-    name: lint + type
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: uv sync (Python/core only)
+        env:
+          SCALY_BUILD_SOLVERS: skip
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        if: ${{ !cancelled() }}
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        if: ${{ !cancelled() }}
+        run: uv run ruff format --check .
+
+      - name: ty at the oldest supported Python
+        if: ${{ !cancelled() }}
+        run: uv run ty check --error-on-warning .
+
+      - name: ty at Python 3.14
+        if: ${{ !cancelled() }}
+        run: uv run ty check --error-on-warning --python-version 3.14 .
+
+      - name: ty for Windows
+        if: ${{ !cancelled() }}
+        run: uv run ty check --error-on-warning --python-platform win32 .
+
+      - name: Pytest node-ID baseline
+        if: ${{ !cancelled() }}
+        run: uv run pytest --collect-only -q
+
+  docs:
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -31,89 +104,63 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install
+      - name: Install docs dependencies
+        run: uv sync --frozen --only-group docs
 
-      - name: uv sync (Python/core only)
-        env:
-          SCALY_BUILD_SOLVERS: skip
-        run: uv sync --frozen
+      # The build emits a warning per broken internal link and per page missing from the nav.
+      # Those are the failures worth catching, so the run is failed on any warning rather than
+      # left green with a wall of them.
+      - name: Build the documentation site
+        run: |
+          set -o pipefail
+          uv run --frozen --only-group docs zensical build 2>&1 | tee build.log
+          if grep -qE "^(Warning|Error):" build.log; then
+            echo "::error::the docs build reported warnings or errors (broken links, missing pages)"
+            grep -E "^(Warning|Error):" build.log | sort | uniq -c
+            exit 1
+          fi
 
-      - name: Ruff lint
-        run: uv run ruff check .
-
-      - name: Ruff format check
-        run: uv run ruff format --check .
-
-      - name: ty type-check
-        run: uv run ty check --error-on-warning .
-
-      - name: Pytest node-ID baseline
-        run: uv run pytest --collect-only -q
-
-  tests:
-    needs: [pure, wheels]
-    uses: ./.github/workflows/tests.yml
-    with:
-      environments: >-
-        [{"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.12"},
-         {"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.13"},
-         {"os": "ubuntu-latest", "wheels": "ubuntu-latest", "python": "3.14"},
-         {"os": "macos-latest", "wheels": "macos-15", "python": "3.12"},
-         {"os": "macos-latest", "wheels": "macos-15", "python": "3.13"},
-         {"os": "macos-latest", "wheels": "macos-15", "python": "3.14"},
-         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.12", "toolchain": true},
-         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.13", "toolchain": true},
-         {"os": "windows-latest", "wheels": "windows-latest", "python": "3.14", "toolchain": true}]
+  test:
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
+    uses: ./.github/workflows/ci-test.yml
 
   install:
-    name: install / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}
-    needs: [pure, wheels]
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Slim images carry no Fortran runtime, so these prove the IPOPT wheel brings its own.
-          - { os: ubuntu-latest, container: "python:3.12-slim" }
-          - { os: ubuntu-latest, container: "python:3.14-slim" }
-          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
-          - { os: macos-15, python: "3.13" }
-          - { os: macos-15-intel, python: "3.12" }
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
+    uses: ./.github/workflows/ci-install.yml
+
+  # A skipped required check counts as passed, so this runs whatever happened before it.
+  ci:
+    needs: [queue, lint, docs, test, install]
+    if: always() && needs.queue.outputs.tested != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist-pure
-          path: dist
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: dist-*-${{ matrix.os }}
-          merge-multiple: true
-          path: dist
-
-      - name: Install a C compiler for the JIT (Linux)
-        if: matrix.container
-        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
-
-      - uses: astral-sh/setup-uv@v10.2.0
-        if: ${{ !matrix.container }}
-
-      - name: Install the wheels
+      - name: Summarize the run
         env:
-          PY: ${{ matrix.python }}
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
-          /tmp/env/bin/pip install --only-binary :all: dist/*.whl
-
-      - name: Solve with every backend
-        run: /tmp/env/bin/python .github/scripts/solve_smoke.py
-
-      - name: Solve with every backend through zig cc
-        run: |
-          /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]"
-          /tmp/env/bin/scaly_toolchain | grep -E '\((zig-bin|ziglang)\)'
-          /tmp/env/bin/python .github/scripts/solve_smoke.py
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq '.jobs[]' | jq -s .)
+          built=$(gh cache list -R "$GITHUB_REPOSITORY" --key native- --limit 100 --json key --jq ".[].key | select(endswith(\"-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\"))")
+          result() { r=$(jq -r --arg name "$1" '.[] | select(.name == $name) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
+          {
+            echo "| Platform | Native code | Install | Tests |"
+            echo "| --- | --- | --- | --- |"
+            for platform in $(jq -r '.[].name | select(test("^(test|install) / ")) | sub("^[a-z]+ / "; "")' <<<"$jobs" | sort -u); do
+              native=$(jq -r --arg name "test / $platform" '.[] | select(.name == $name) | .steps[] | select(.name == "Build the distributions") | .conclusion' <<<"$jobs")
+              if [ "$native" = success ]; then
+                if grep -q "^native-$platform-" <<<"$built"; then native=built; else native=cached; fi
+              fi
+              echo "| $platform | ${native:-not run} | $(result "install / $platform") | $(result "test / $platform") |"
+            done
+            echo
+            echo "lint: $(result lint), docs: $(result docs)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then
+            echo "::error::Not every job succeeded: $(echo $failed)"
+            exit 1
+          fi

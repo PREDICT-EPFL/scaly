@@ -1,0 +1,123 @@
+name: CI tests
+
+# The tests run against the plugin wheels, not an editable build, so they check the binaries users
+# install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the editable plugins;
+# if something syncs anyway, the plugins return without their libraries and `SCALY_REQUIRE_SOLVERS`
+# fails the run instead of skipping. Every check step runs even when an earlier one failed, so one
+# failure never hides another. The wheels are kept for the longest period the organization allows,
+# since `release.yml` publishes the files a successful CI run built.
+on:
+  workflow_call:
+
+jobs:
+  test:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-latest }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
+          - { platform: macos-arm64, runner: macos-15 }
+          - { platform: macos-x86_64, runner: macos-15-intel }
+          - { platform: windows-x86_64, runner: windows-latest }
+    env:
+      UV_NO_SYNC: "1"
+      SCALY_BUILD_SOLVERS: skip
+      SCALY_REQUIRE_SOLVERS: ${{ matrix.platform == 'windows-x86_64' && 'piqp,sqp' || '1' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Build the distributions
+        uses: ./.github/actions/dists
+        with:
+          platform: ${{ matrix.platform }}
+          save: true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.platform }}
+          path: |
+            dist/*.whl
+            !dist/*-none-any.whl
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.platform == 'linux-x86_64'
+        with:
+          name: dist-pure
+          path: |
+            dist/*-none-any.whl
+            dist/*.tar.gz
+          retention-days: 90
+
+      - name: Install test dependencies and wheels
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            flags=(--no-install-package scaly --no-install-package scaly-sqp)
+            wheels=(dist/scaly-[0-9]*.whl dist/scaly_sqp-*.whl dist/scaly_piqp-*.whl)
+          else
+            flags=(--no-install-package scaly-ipopt)
+            wheels=(dist/scaly_piqp-*.whl dist/scaly_ipopt-*.whl)
+          fi
+          uv sync --frozen --no-install-package scaly-piqp "${flags[@]}"
+          uv pip install --no-deps "${wheels[@]}"
+          uv run python -c "import importlib, sys; names = ('scaly', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
+
+      - name: Native toolchain report
+        run: |
+          if [ "$RUNNER_OS" != Windows ]; then ${CC:-cc} --version; ${CXX:-c++} --version; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
+          uv run python --version
+          uv run scaly_toolchain
+          if [ "$RUNNER_OS" = Windows ]; then
+            uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
+          fi
+
+      # The directory is named after the compiler, so a new compiler misses the cache and is saved
+      # under its own key.
+      - name: Locate Google Benchmark
+        id: gbench
+        run: |
+          uv run python -c "from benchmarks.harness.gbench import GBENCH_TAG, gbench_prefix; prefix = gbench_prefix(); print(f'path={prefix.as_posix()}'); print(f'key=gbench-${{ matrix.platform }}-{GBENCH_TAG}-{prefix.name}')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Google Benchmark
+        id: gbench-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.gbench.outputs.path }}
+          key: ${{ steps.gbench.outputs.key }}
+
+      - name: Prepare the benchmark driver
+        run: uv run python -c "from benchmarks.harness.gbench import gbench_flags; gbench_flags()"
+
+      - name: Save Google Benchmark
+        if: steps.gbench-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.gbench.outputs.path }}
+          key: ${{ steps.gbench.outputs.key }}
+
+      - name: Pytest
+        run: uv run pytest -n=auto
+
+      - name: Benchmark smoke
+        if: ${{ !cancelled() && matrix.platform == 'linux-x86_64' }}
+        run: uv run benchmarks/run.py smoke
+
+      - name: Closed-loop smoke
+        if: ${{ !cancelled() && matrix.platform == 'linux-x86_64' }}
+        run: |
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
+          uv run benchmarks/run.py closed-loop --smoke --problem npmpc --solver ipopt --oracle scaly

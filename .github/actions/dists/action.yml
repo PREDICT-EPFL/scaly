@@ -1,0 +1,75 @@
+name: Build the distributions
+description: >-
+  Build the sdists, the pure wheels and this platform's solver wheels into dist/, with the native
+  libraries restored from the cache, and save them back when this run built any.
+inputs:
+  platform:
+    description: the platform, which keys the cache
+    required: true
+  save:
+    description: save newly built native libraries to the cache
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # A native build depends on its recipe, pins and license texts and on the platform, so Python
+    # sources, READMEs and the version stay out of the key. The hook also checks each restored build
+    # against its own key, which adds the compilers, and builds again when they changed. Every save
+    # gets a new key, so the newest cache for the same inputs is the one restored.
+    - name: Restore the native libraries
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/scaly/solvers
+        key: native-${{ inputs.platform }}-${{ hashFiles('plugins/*/hatch_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          native-${{ inputs.platform }}-${{ hashFiles('plugins/*/hatch_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-
+          native-${{ inputs.platform }}-
+
+    # The hook's key names the Fortran compiler, so every run installs the same one.
+    - name: Install gfortran
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+      run: brew install gcc
+
+    # The plugins load their solvers through ctypes, so the hooks tag every wheel
+    # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The IPOPT
+    # wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS, so its wheel
+    # cannot claim an older deployment target than that. cibuildwheel runs without
+    # `GITHUB_STEP_SUMMARY`, so its summaries stay off the run page.
+    - name: Build
+      id: build
+      shell: bash
+      env:
+        CIBW_BUILD: cp312-*
+        CIBW_SKIP: "*-musllinux_*"
+        CIBW_ARCHS_WINDOWS: AMD64
+        CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
+        CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
+      run: |
+        cache=~/.cache/scaly/solvers
+        mkdir -p "$cache"
+        before=$(ls "$cache")
+        uv build -o dist .
+        uv build -o dist plugins/scaly-sqp
+        uv build -o dist --sdist plugins/scaly-piqp
+        uv build -o dist --sdist plugins/scaly-ipopt
+        packages=(scaly-piqp)
+        if [ "$RUNNER_OS" != Windows ]; then packages+=(scaly-ipopt); fi
+        for package in "${packages[@]}"; do
+          macos="SCALY_BUILD_SOLVERS=required"
+          if [ "$package" = scaly-ipopt ]; then macos+=" MACOSX_DEPLOYMENT_TARGET=15.0"; fi
+          # cibuildwheel mounts the host's root at /host inside the manylinux container
+          CIBW_ENVIRONMENT_LINUX="SCALY_BUILD_SOLVERS=required SCALY_SOLVER_CACHE=/host$cache" CIBW_ENVIRONMENT_MACOS="$macos" \
+            env -u GITHUB_STEP_SUMMARY uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
+        done
+        if [ "$(ls "$cache")" != "$before" ]; then echo "built=true" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Save the native libraries
+      if: inputs.save == 'true' && steps.build.outputs.built == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/scaly/solvers
+        key: ${{ steps.restore.outputs.cache-primary-key }}

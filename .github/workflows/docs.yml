@@ -1,9 +1,9 @@
 name: Docs
 
+# Deploys the development docs. `ci.yml` builds them on every pull request.
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -32,21 +32,10 @@ jobs:
       - name: Mark the build as development docs
         run: printf '\n[project.extra.preview]\nbranch = "%s"\ncommit = "%s"\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" >> zensical.toml
 
-      # The build emits a warning per broken internal link and per page missing from the nav.
-      # Those are the failures worth catching, so the run is failed on any warning rather than
-      # left green with a wall of them.
       - name: Build the documentation site
-        run: |
-          set -o pipefail
-          uv run --frozen --only-group docs zensical build 2>&1 | tee build.log
-          if grep -qE "^(Warning|Error):" build.log; then
-            echo "::error::the docs build reported warnings or errors (broken links, missing pages)"
-            grep -E "^(Warning|Error):" build.log | sort | uniq -c
-            exit 1
-          fi
+        run: uv run --frozen --only-group docs zensical build
 
       - name: Deploy to Cloudflare Pages
-        if: github.event_name != 'pull_request'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
