@@ -112,10 +112,11 @@ def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
 
 @lru_cache(maxsize=8)
 def compiler_abi(command: tuple[str, ...]) -> str:
-  """Hash the compiler's name, flags and predefined macros, which carry its version and default target.
+  """Hash the compiler's name, flags and predefined macros, which carry its version, default target and C++ standard library.
 
   Not its path or modification time, which differ between checkouts and between fresh installs."""
-  macros = subprocess.run([*command, "-dM", "-E", "-x", "c++", "-"], input="", text=True, capture_output=True, check=True).stdout
+  probe = "#include <cstddef>\n"  # brings in the standard library's version and ABI macros
+  macros = subprocess.run([*command, "-dM", "-E", "-x", "c++", "-"], input=probe, text=True, capture_output=True, check=True).stdout
   return hashlib.sha256(json.dumps([Path(command[0]).name, *command[1:], macros]).encode()).hexdigest()
 
 

@@ -188,12 +188,14 @@ def test_gbench_keeps_a_rename_error_when_the_prefix_is_incomplete(tmp_path: Pat
 
 def test_gbench_compiler_abi_ignores_where_the_compiler_lives(monkeypatch: pytest.MonkeyPatch) -> None:
   macros = {"stdout": "#define __VERSION__ 1"}
-  monkeypatch.setattr(gbench.subprocess, "run", lambda *a, **kw: SimpleNamespace(**macros))
+  probes = []
+  monkeypatch.setattr(gbench.subprocess, "run", lambda *a, **kw: probes.append(kw["input"]) or SimpleNamespace(**macros))
   gbench.compiler_abi.cache_clear()
   checkout = gbench.compiler_abi(("/checkout/.venv/bin/zig", "c++"))
   assert gbench.compiler_abi(("/other/.venv/bin/zig", "c++")) == checkout
   macros["stdout"] = "#define __VERSION__ 2"
   assert gbench.compiler_abi(("/third/.venv/bin/zig", "c++")) != checkout
+  assert all("#include" in probe for probe in probes)  # the standard library's macros, not only the compiler's
   gbench.compiler_abi.cache_clear()
 
 
