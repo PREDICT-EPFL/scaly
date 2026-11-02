@@ -67,7 +67,10 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 ## 5. Build constraints
 
-- **CI cache key.** Keyed on the package, runner OS and architecture, cibuildwheel version, and that plugin
+- **CI cache key.** Planned on 2026-11-02 (#248, #250): key native builds on `hatch_build.py`,
+  `build_config.json` and `licenses/` only, and reuse released libraries when they match; see
+  [CI, nightly and native builds](ci_and_native_builds_2026_11_02.md#native-code). Today it is
+  keyed on the package, runner OS and architecture, cibuildwheel version, and that plugin
   directory excluding tests, as defined in `wheels.yml`. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot;
   the nightly workflow builds every wheel without the cache for that reason.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built. On x86-64, `TARGET=PRESCOTT` fixes the common code to a Prescott baseline instead of relying on build-host CPU detection. `DYNAMIC_ARCH=1` still includes optimized kernels selected at runtime.

@@ -17,6 +17,10 @@ tests install those wheels rather than an editable build, so they test the binar
 
 ## Releasing
 
+Planned on 2026-11-02 (#249): a release will run the full nightly suite on its commit and publish
+the wheels it built there, replacing step 1 below. See
+[CI, nightly and native builds](ci_and_native_builds_2026_11_02.md#nightly-and-release).
+
 A release is started by hand on `main`, with the target `testpypi` or `pypi`. It never rebuilds:
 
 1. It requires a successful `push` run of `ci.yml` and of `docs.yml` for the exact commit. The Docs
