@@ -6,6 +6,7 @@ import platform
 import shlex
 import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -275,6 +276,17 @@ def test_jit_compile_command_targets_host(isolated_cache: Path, monkeypatch: pyt
   tuning = list(no_gather_flags(compiler.command))
   assert cmd[: len(compiler.command) + len(flags) + len(tuning)] == [*compiler.command, *flags, *tuning]
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
+
+
+def test_jit_compiles_from_the_temporary_directory(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  # zig keeps one runtime build per spelling of its lib directory, so the caller's directory must not matter
+  calls: list[tuple[list[str], dict]] = []
+  real_run = jit.subprocess.run
+  monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: calls.append((cmd, kwargs)) or real_run(cmd, **kwargs))
+  monkeypatch.chdir(isolated_cache.parent)
+  _simple_fn()(np.zeros(3))
+  ((cmd, kwargs),) = [(cmd, kwargs) for cmd, kwargs in calls if "-fPIC" in cmd]
+  assert kwargs["cwd"] == tempfile.gettempdir()
 
 
 def test_jit_input_shape_mismatch_raises(isolated_cache: Path) -> None:

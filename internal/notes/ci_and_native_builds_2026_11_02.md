@@ -72,11 +72,19 @@ Measured on 2026-11-02:
    `sys.version_info`, and ty runs at its default (the 3.12 floor from `requires-python`), at 3.14
    and for Windows. Rejected: several Python versions per PR, and install checks per Python
    version. Raising the floor under SPEC 0 is parked for a later discussion, without an issue.
-9. **All five platforms run tests and an install check, as separate jobs**: `test / <platform>`
-   and `install / <platform>` for linux-x86_64, linux-arm64, macos-arm64, macos-x86_64 and
-   windows-x86_64. Separate jobs keep the fresh Windows install off the slowest path, about 2.5 to
-   3 minutes per run. The whole test suite runs; the benchmark and closed-loop smoke run only on
-   linux-x86_64, the reference platform.
+9. **All five platforms build their wheels once, then run tests and an install check, as
+   separate jobs**: `build / <platform>`, `test / <platform>` and `install / <platform>` for
+   linux-x86_64, linux-arm64, macos-arm64, macos-x86_64 and windows-x86_64. The build job restores
+   the native libraries from the cache, makes the platform's wheels and hands them on as artifacts,
+   so the install check tests the files a release publishes. Separate test and install jobs keep
+   the fresh Windows install off the slowest path, 2.6 to 3.1 minutes per run. The whole test suite
+   runs; the benchmark and closed-loop smoke run only on linux-x86_64, the reference platform.
+   Revised on 2026-11-02 during #248: at first each test and install job built its own wheels,
+   which doubled the build's runner minutes, about 42 extra with a cold cache and 4.5 warm in runs
+   41456863572 and 41460383908. Rejected: the install check as steps of the test job, which puts
+   it on the slowest path. The build job costs a job start and an artifact round trip per
+   platform, and every test job waits for the slowest build. Cutting cibuildwheel's own overhead
+   of 0.5 to 1.6 minutes per warm build is left for a later discussion.
 10. **One required check, `ci`**, which depends on every other job and fails unless all of them
     succeeded. The ruleset requires only it, and the merge queue and the maintainer's bypass stay.
     Rejected: required checks named after matrix entries, which never report, or report "skipped",

@@ -1,0 +1,57 @@
+name: CI install checks
+
+# Installs the wheels the build job made into a clean environment, the way a user gets them, and
+# solves with every backend.
+on:
+  workflow_call:
+
+jobs:
+  install:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-latest }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
+          - { platform: macos-arm64, runner: macos-15 }
+          - { platform: macos-x86_64, runner: macos-15-intel }
+          - { platform: windows-x86_64, runner: windows-latest }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-pure
+          path: dist
+
+      # A slim image carries no Fortran runtime, so this proves the IPOPT wheel brings its own.
+      - name: Solve with every backend, plain and through zig cc
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            docker run --rm -v "$PWD:/work" -w /work "python:$(cat .python-version)-slim" sh -c \
+              'apt-get update -q && apt-get install -yq --no-install-recommends gcc libc6-dev && .github/scripts/install_check.sh python'
+          else
+            .github/scripts/install_check.sh "$(uv python find)"
+          fi
+
+      - name: Fresh install without the toolchain extra
+        if: runner.os == 'Windows'
+        run: uv run --no-project .github/scripts/windows_install.py dist "$(cat .python-version)"

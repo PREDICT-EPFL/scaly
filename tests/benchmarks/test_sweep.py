@@ -147,6 +147,58 @@ def test_object_inspection_reads_undefined_vector_symbols(tmp_path: Path) -> Non
   assert vector_symbols(obj) == (["__ZGVfixture"] if sys.platform == "darwin" else ["_ZGVfixture"])
 
 
+@pytest.mark.parametrize("lost_race", [False, True])
+def test_gbench_builds_once_per_machine_in_the_scaly_cache(lost_race: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+  monkeypatch.setattr(gbench, "compiler", lambda: ("c++",))
+  monkeypatch.setattr(gbench, "compiler_abi", lambda command: "f" * 64)
+  prefix = tmp_path / "scaly" / "gbench" / gbench.GBENCH_TAG / ("f" * 12)
+  builds = []
+
+  def build(target: Path, header: Path, lib: Path) -> None:
+    builds.append(target)
+    # a checkout that loses the race finds the prefix another one installed meanwhile
+    for root in (target, prefix) if lost_race else (target,):
+      for path in (root / header.relative_to(target), root / lib.relative_to(target)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+
+  monkeypatch.setattr(gbench, "_build_gbench", build)
+  assert gbench.gbench_flags()[1][0] == str(prefix / "lib" / "libbenchmark.a")
+  gbench.gbench_flags()
+  assert len(builds) == 1 and builds[0].parent == prefix.parent and not builds[0].exists()
+  assert (prefix / "include" / "benchmark" / "benchmark.h").exists()
+
+
+def test_gbench_keeps_a_rename_error_when_the_prefix_is_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+  monkeypatch.setattr(gbench, "compiler", lambda: ("c++",))
+  monkeypatch.setattr(gbench, "compiler_abi", lambda command: "f" * 64)
+  prefix = tmp_path / "scaly" / "gbench" / gbench.GBENCH_TAG / ("f" * 12)
+
+  def build(target: Path, header: Path, lib: Path) -> None:
+    for path in (header, lib, prefix / "build.log"):
+      path.parent.mkdir(parents=True, exist_ok=True)
+      path.write_text("")
+
+  monkeypatch.setattr(gbench, "_build_gbench", build)
+  with pytest.raises(OSError):
+    gbench.gbench_flags()
+
+
+def test_gbench_compiler_abi_ignores_where_the_compiler_lives(monkeypatch: pytest.MonkeyPatch) -> None:
+  macros = {"stdout": "#define __VERSION__ 1"}
+  probes = []
+  monkeypatch.setattr(gbench.subprocess, "run", lambda *a, **kw: probes.append(kw["input"]) or SimpleNamespace(**macros))
+  gbench.compiler_abi.cache_clear()
+  checkout = gbench.compiler_abi(("/checkout/.venv/bin/zig", "c++"))
+  assert gbench.compiler_abi(("/other/.venv/bin/zig", "c++")) == checkout
+  macros["stdout"] = "#define __VERSION__ 2"
+  assert gbench.compiler_abi(("/third/.venv/bin/zig", "c++")) != checkout
+  assert all("#include" in probe for probe in probes)  # the standard library's macros, not only the compiler's
+  gbench.compiler_abi.cache_clear()
+
+
 def test_benchmark_compiler_commands_preserve_packaged_zig_and_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from scaly.codegen.toolchain import Compiler
 

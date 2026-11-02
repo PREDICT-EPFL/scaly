@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,8 +13,8 @@ import sys
 import time
 
 from scaly.codegen.abi import c_ident
-from scaly.codegen.toolchain import compiler_fingerprint, find_c_compiler
-from benchmarks.harness import NATIVE_CFLAGS, ROOT, math_flags, vector_symbols
+from scaly.codegen.toolchain import find_c_compiler
+from benchmarks.harness import NATIVE_CFLAGS, math_flags, vector_symbols
 
 
 def compiler() -> tuple[str, ...]:
@@ -108,17 +110,36 @@ def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
     raise RuntimeError(f"Google Benchmark build left no {header.name}/{lib.name} under {prefix}, see {log}")
 
 
+@lru_cache(maxsize=8)
+def compiler_abi(command: tuple[str, ...]) -> str:
+  """Hash the compiler's name, flags and predefined macros, which carry its version, default target and C++ standard library.
+
+  Not its path or modification time, which differ between checkouts and between fresh installs."""
+  probe = "#include <cstddef>\n"  # brings in the standard library's version and ABI macros
+  macros = subprocess.run([*command, "-dM", "-E", "-x", "c++", "-"], input=probe, text=True, capture_output=True, check=True).stdout
+  return hashlib.sha256(json.dumps([Path(command[0]).name, *command[1:], macros]).encode()).hexdigest()
+
+
 def gbench_prefix() -> Path:
-  """Keep Google Benchmark's static library in the selected C++ compiler's ABI."""
-  return ROOT / "benchmarks" / "third_party" / "gbench" / GBENCH_TAG / compiler_fingerprint(compiler())[:12]
+  """Keep Google Benchmark's static library in the selected C++ compiler's ABI, shared by every checkout on the machine."""
+  cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+  return cache / "scaly" / "gbench" / GBENCH_TAG / compiler_abi(compiler())[:12]
 
 
 def gbench_flags() -> tuple[list[str], list[str]]:
-  """Compile and link flags for the pinned Google Benchmark, building it inside this checkout on first use."""
+  """Compile and link flags for the pinned Google Benchmark, building it on first use on this machine."""
   prefix = gbench_prefix()
   header, lib = prefix / "include" / "benchmark" / "benchmark.h", prefix / "lib" / "libbenchmark.a"
   if not (header.exists() and lib.exists()):
-    _build_gbench(prefix, header, lib)
+    # Built aside and renamed into place, so another checkout never reads a half-installed prefix.
+    scratch = prefix.with_name(f"{prefix.name}.build-{os.getpid()}")
+    _build_gbench(scratch, scratch / header.relative_to(prefix), scratch / lib.relative_to(prefix))
+    try:
+      scratch.rename(prefix)
+    except OSError:
+      if not (header.exists() and lib.exists()):
+        raise
+      shutil.rmtree(scratch)  # another checkout finished first
   return ["-I", str(prefix / "include"), "-pthread", *(["-DBENCHMARK_STATIC_DEFINE"] if sys.platform == "win32" else [])], [
     str(lib),
     *(["-lshlwapi"] if sys.platform == "win32" else []),

@@ -43,11 +43,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A push run of a commit the merge queue tested builds nothing, so the queue's run is the one
+          # with the files.
           for workflow in ci.yml docs.yml; do
-            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$GITHUB_SHA" --event push \
-              --json databaseId,status,conclusion --jq '.[0] // empty')
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$GITHUB_SHA" \
+              --json databaseId,event,status,conclusion --jq '(map(select(.event != "push" and .conclusion == "success")) + map(select(.event == "push"))) | .[0] // empty')
             if [ -z "$run" ] || [ "$(jq -r '.status + "/" + .conclusion' <<<"$run")" != "completed/success" ]; then
-              echo "::error::$workflow has no successful push run for $GITHUB_SHA: ${run:-none}"
+              echo "::error::$workflow has no successful run for $GITHUB_SHA: ${run:-none}"
               exit 1
             fi
             if [ "$workflow" = ci.yml ]; then echo "ci-run=$(jq -r .databaseId <<<"$run")" >> "$GITHUB_OUTPUT"; fi
