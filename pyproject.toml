@@ -106,8 +106,11 @@ include = [
   "typing_playground/**/*.py",
 ]
 exclude = [".venv"]
-lint.select = ["E4", "E7", "E9", "F"]
+lint.select = ["E4", "E7", "E9", "F", "TID251"]
 lint.ignore = ["E731"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sys.version_info".msg = "CI runs one Python version, so a branch on it goes untested. Write code that works on every supported version."
 
 [tool.pyright]
 venv = ".venv"
