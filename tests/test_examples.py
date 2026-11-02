@@ -26,5 +26,8 @@ def test_example(path: Path, tmp_path: Path) -> None:
   script = tmp_path / (path.stem + ".py")
   script.write_text(source)
   env = {**os.environ, "SCALY_VIZ_DIR": str(tmp_path / "viz")}
-  result = subprocess.run([sys.executable, str(script)], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+  try:
+    result = subprocess.run([sys.executable, str(script)], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+  except subprocess.TimeoutExpired as exc:
+    pytest.fail(f"{path.name} timed out:\n{exc.stdout}\n{exc.stderr}")
   assert result.returncode == 0, f"{path.name}:\n{result.stdout}\n{result.stderr}"
