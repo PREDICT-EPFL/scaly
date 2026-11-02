@@ -272,9 +272,15 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # Compile to a temp lib unique to this process and thread, then atomically rename, so concurrent
     # builds of the same function (pytest-xdist workers or threads on a cold cache) never observe a half-written .so.
     tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
+    # Compile from the function's own directory: zig keeps a separate build of its C runtime for
+    # every working directory that contains its installation, such as a checkout holding the venv.
     try:
       subprocess.run(
-        _compile_command(compiler.command, module, source_path.as_posix(), tmp_lib.as_posix()), check=True, capture_output=True, text=True
+        _compile_command(compiler.command, module, source_path.as_posix(), tmp_lib.as_posix()),
+        cwd=cache_dir,
+        check=True,
+        capture_output=True,
+        text=True,
       )
     except subprocess.CalledProcessError as exc:
       tmp_lib.unlink(missing_ok=True)

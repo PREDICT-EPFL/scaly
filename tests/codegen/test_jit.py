@@ -277,6 +277,17 @@ def test_jit_compile_command_targets_host(isolated_cache: Path, monkeypatch: pyt
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
 
 
+def test_jit_compiles_from_the_function_cache_directory(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  # zig keeps one runtime build per kind of working directory, so the caller's directory must not matter
+  calls: list[tuple[list[str], dict]] = []
+  real_run = jit.subprocess.run
+  monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: calls.append((cmd, kwargs)) or real_run(cmd, **kwargs))
+  monkeypatch.chdir(isolated_cache.parent)
+  _simple_fn()(np.zeros(3))
+  ((cmd, kwargs),) = [(cmd, kwargs) for cmd, kwargs in calls if "-fPIC" in cmd]
+  assert Path(kwargs["cwd"]) == Path(cmd[cmd.index("-o") + 1]).parent
+
+
 def test_jit_input_shape_mismatch_raises(isolated_cache: Path) -> None:
   fn = _simple_fn()
   with pytest.raises(ValueError, match="shape"):
