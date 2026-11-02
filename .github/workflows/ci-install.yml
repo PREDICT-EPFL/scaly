@@ -28,6 +28,9 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Set up Python
+        run: uv python install
+
       - name: Build the distributions
         uses: ./.github/actions/dists
         with:
