@@ -119,7 +119,6 @@ jobs:
 
       # The compiler fingerprint gives each Google Benchmark build its own key.
       - name: Locate Google Benchmark
-        if: inputs.suite != 'python'
         id: gbench
         run: |
           uv run python -c "from benchmarks.harness.gbench import GBENCH_TAG, gbench_prefix; prefix = gbench_prefix(); print(f'path={prefix.as_posix()}'); print(f'key=gbench-${{ matrix.platform }}-{GBENCH_TAG}-{prefix.name}')" >> "$GITHUB_OUTPUT"
@@ -133,11 +132,10 @@ jobs:
           key: ${{ steps.gbench.outputs.key }}
 
       - name: Prepare the benchmark driver
-        if: inputs.suite != 'python'
         run: uv run python -c "from benchmarks.harness.gbench import gbench_flags; gbench_flags()"
 
       - name: Save Google Benchmark
-        if: inputs.suite != 'python' && steps.gbench-cache.outputs.cache-hit != 'true'
+        if: (inputs.suite == 'ci' || matrix.save-cache) && steps.gbench-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ steps.gbench.outputs.path }}

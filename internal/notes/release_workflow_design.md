@@ -27,7 +27,8 @@ A release is started by hand on `main`, with the target `testpypi` or `pypi`:
 
 1. It chooses the packages, then calls `nightly.yml` on the release commit. This runs every
    toolchain, Python and benchmark entry and builds the distributions in the release run itself.
-   No previous CI or Docs run is required.
+   No previous CI or Docs run is required. A Monday release rebuilds the native plugins from source
+   under the same rule as the scheduled nightly.
 2. A package is released when its version has no `<name>-v<version>` tag yet, so bumping a version
    is how a release is requested and unchanged packages get no new tag. A package that changed
    since its last tag without a version bump produces a warning.

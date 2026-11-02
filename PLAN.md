@@ -28,3 +28,13 @@ needs the maintainer's authorization once the change is concrete and reviewable.
 Validation passed: actionlint 1.7.12, five regression cases and both deliberate
 perturbations, and the complete pre-merge hook. Pytest reported 2,772 passed and
 50 skipped. Benchmark smoke, documentation build and private-name check passed.
+
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/253.
+Manual source-build nightly: https://github.com/PREDICT-EPFL/scaly/actions/runs/41540645778.
+All five native restores were skipped as intended; builds remain in progress.
+The independent review requested a maintained-note correction and prose fixes.
+Those are fixed, Monday release rebuilds are documented, nightly Google Benchmark
+saves are limited to baseline platforms, and Python entries prepare the benchmark
+driver needed by their compiled-driver unit tests. Revalidating before the one
+focused delta check. Remaining review notes concern the existing post-publication
+docs build, partial JIT warming, cache quota, and the required issues permission.
