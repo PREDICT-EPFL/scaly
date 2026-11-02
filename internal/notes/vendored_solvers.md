@@ -61,13 +61,13 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolc
 - **Linux:** cibuildwheel's `auditwheel repair` produces `manylinux_2_24` (PIQP) and `manylinux_2_27` (IPOPT) wheels and leaves the `$ORIGIN` siblings under `lib/` alone. It still grafts a second `libquadmath` into `scaly_ipopt.libs/`, and `libipopt.so` ships twice (also as `libipopt.so.3`): about 28 MB of duplicates in the wheel measured during the September packaging review.
   This is a historical size observation, not a measurement of the latest artifact.
 - **macOS:** `delocate-wheel` finds nothing left to move after `_bundle_macos_runtime`, and the installed wheels load and solve on arm64 and x86_64. The IPOPT wheel requires macOS 15, the minimum of the bundled Homebrew runtime.
-- **Matrix:** every `test / <platform>` and `install / <platform>` job of `ci.yml` builds its platform's wheels on its native runner with cibuildwheel, through `.github/actions/dists`. `nightly.yml` still builds them with `wheels.yml`, until #249.
+- **Matrix:** the `build / <platform>` jobs of `ci.yml`, defined in `ci-build.yml`, build each platform's wheels once on its native runner with cibuildwheel, for the test and install jobs and for `release.yml`. `nightly.yml` still builds them with `wheels.yml`, until #249.
 
 **Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
 
 ## 5. Build constraints
 
-- **CI cache key.** `.github/actions/dists` restores `~/.cache/scaly/solvers`, the hooks' own
+- **CI cache key.** `ci-build.yml` restores `~/.cache/scaly/solvers`, the hooks' own
   cache, keyed on the platform and a hash of every plugin's `hatch_build.py`,
   `src/*/build_config.json` and `licenses/`
   ([decision 2](ci_and_native_builds_2026_11_02.md#native-code)). Python sources, READMEs and

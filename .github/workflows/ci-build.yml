@@ -1,0 +1,111 @@
+name: CI builds
+
+# Builds every distribution once per platform for the test and install jobs. The files are kept
+# for the longest period the organization allows, since `release.yml` publishes the files a
+# successful CI run built.
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-latest }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
+          - { platform: macos-arm64, runner: macos-15 }
+          - { platform: macos-x86_64, runner: macos-15-intel }
+          - { platform: windows-x86_64, runner: windows-latest }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      # A native build depends on its recipe, pins and license texts and on the platform, so Python
+      # sources, READMEs and the version stay out of the key. The hook also checks each restored
+      # build against its own key, which adds the compilers, and builds again when they changed.
+      # Every save gets a new key, so the newest cache for the same inputs is the one restored.
+      - name: Restore the native libraries
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/scaly/solvers
+          key: native-${{ matrix.platform }}-${{ hashFiles('plugins/*/hatch_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            native-${{ matrix.platform }}-${{ hashFiles('plugins/*/hatch_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-
+            native-${{ matrix.platform }}-
+
+      # The hook's key names the Fortran compiler, so every run installs the same one.
+      - name: Install gfortran
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew install gcc
+
+      # The plugins load their solvers through ctypes, so the hooks tag every wheel
+      # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The IPOPT
+      # wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS, so its wheel
+      # cannot claim an older deployment target than that. cibuildwheel runs without
+      # `GITHUB_STEP_SUMMARY`, so its summaries stay off the run page.
+      - name: Build the distributions
+        id: build
+        env:
+          CIBW_BUILD: cp312-*
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
+          CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
+        run: |
+          cache=~/.cache/scaly/solvers
+          mkdir -p "$cache"
+          before=$(ls "$cache")
+          uv build -o dist .
+          uv build -o dist plugins/scaly-sqp
+          uv build -o dist --sdist plugins/scaly-piqp
+          uv build -o dist --sdist plugins/scaly-ipopt
+          packages=(scaly-piqp)
+          if [ "$RUNNER_OS" != Windows ]; then packages+=(scaly-ipopt); fi
+          for package in "${packages[@]}"; do
+            macos="SCALY_BUILD_SOLVERS=required"
+            if [ "$package" = scaly-ipopt ]; then macos+=" MACOSX_DEPLOYMENT_TARGET=15.0"; fi
+            # cibuildwheel mounts the host's root at /host inside the manylinux container
+            CIBW_ENVIRONMENT_LINUX="SCALY_BUILD_SOLVERS=required SCALY_SOLVER_CACHE=/host$cache" CIBW_ENVIRONMENT_MACOS="$macos" \
+              env -u GITHUB_STEP_SUMMARY uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
+          done
+          if [ "$(ls "$cache")" != "$before" ]; then echo "built=true" >> "$GITHUB_OUTPUT"; fi
+
+      # `ci.yml` reads whether this step ran to report whether the native libraries were built.
+      - name: Save the native libraries
+        if: steps.build.outputs.built == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/scaly/solvers
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.platform }}
+          path: |
+            dist/*.whl
+            !dist/*-none-any.whl
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.platform == 'linux-x86_64'
+        with:
+          name: dist-pure
+          path: |
+            dist/*-none-any.whl
+            dist/*.tar.gz
+          retention-days: 90

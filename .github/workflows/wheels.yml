@@ -2,7 +2,7 @@ name: Wheels
 
 # A plugin wheel depends only on its own directory, the cibuildwheel release (which pins the
 # manylinux image) and the platform, so a cached wheel stays valid across runner images: it bundles
-# its runtime. Only `nightly.yml` calls it now; `ci.yml` builds through `.github/actions/dists`.
+# its runtime. Only `nightly.yml` calls it now; `ci.yml` builds through `ci-build.yml`.
 on:
   workflow_call:
     inputs:

@@ -1,6 +1,6 @@
 name: CI install checks
 
-# Installs the wheels this job builds into a clean environment, the way a user gets them, and
+# Installs the wheels the build job made into a clean environment, the way a user gets them, and
 # solves with every backend.
 on:
   workflow_call:
@@ -31,10 +31,15 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      - name: Build the distributions
-        uses: ./.github/actions/dists
+      - uses: actions/download-artifact@v8
         with:
-          platform: ${{ matrix.platform }}
+          name: dist-${{ matrix.platform }}
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-pure
+          path: dist
 
       # A slim image carries no Fortran runtime, so this proves the IPOPT wheel brings its own.
       - name: Solve with every backend, plain and through zig cc

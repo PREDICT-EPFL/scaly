@@ -120,19 +120,25 @@ jobs:
             exit 1
           fi
 
-  test:
+  build:
     needs: queue
     if: needs.queue.outputs.tested != 'true'
+    uses: ./.github/workflows/ci-build.yml
+
+  # One platform's failed build leaves the other platforms' checks running.
+  test:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     uses: ./.github/workflows/ci-test.yml
 
   install:
-    needs: queue
-    if: needs.queue.outputs.tested != 'true'
+    needs: build
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     uses: ./.github/workflows/ci-install.yml
 
   # A skipped required check counts as passed, so this runs whatever happened before it.
   ci:
-    needs: [queue, lint, docs, test, install]
+    needs: [queue, lint, docs, build, test, install]
     if: always() && needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -144,17 +150,17 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq '.jobs[]' | jq -s .)
-          built=$(gh cache list -R "$GITHUB_REPOSITORY" --key native- --limit 100 --json key --jq ".[].key | select(endswith(\"-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\"))")
           result() { r=$(jq -r --arg name "$1" '.[] | select(.name == $name) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
           {
             echo "| Platform | Native code | Install | Tests |"
             echo "| --- | --- | --- | --- |"
-            for platform in $(jq -r '.[].name | select(test("^(test|install) / ")) | sub("^[a-z]+ / "; "")' <<<"$jobs" | sort -u); do
-              native=$(jq -r --arg name "test / $platform" '.[] | select(.name == $name) | .steps[] | select(.name == "Build the distributions") | .conclusion' <<<"$jobs")
+            for platform in $(jq -r '.[].name | select(test("^(build|test|install) / ")) | sub("^[a-z]+ / "; "")' <<<"$jobs" | sort -u); do
+              native=$(result "build / $platform")
               if [ "$native" = success ]; then
-                if grep -q "^native-$platform-" <<<"$built"; then native=built; else native=cached; fi
+                saved=$(jq -r --arg name "build / $platform" '.[] | select(.name == $name) | .steps[] | select(.name == "Save the native libraries") | .conclusion' <<<"$jobs")
+                if [ "$saved" = success ]; then native=built; else native=cached; fi
               fi
-              echo "| $platform | ${native:-not run} | $(result "install / $platform") | $(result "test / $platform") |"
+              echo "| $platform | $native | $(result "install / $platform") | $(result "test / $platform") |"
             done
             echo
             echo "lint: $(result lint), docs: $(result docs)"

@@ -115,11 +115,11 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
   conventional-commit prefix, since the title becomes the commit title on main. Ruff forbids
   `sys.version_info`, because CI runs a single Python version and would never test the other branch.
 - `docs` builds the site and fails on any warning, such as a broken link.
-- `test / <platform>` and `install / <platform>` run on linux-x86_64, linux-arm64, macos-arm64,
-  macos-x86_64 and windows-x86_64. Each builds its platform's wheels. The test job runs the whole
-  suite against them, and on linux-x86_64 also the benchmark and closed-loop smoke runs. The install
-  job installs them into a clean environment, a slim container on Linux, and solves with every
-  backend.
+- `build / <platform>`, `test / <platform>` and `install / <platform>` run on linux-x86_64,
+  linux-arm64, macos-arm64, macos-x86_64 and windows-x86_64. The build job makes the platform's
+  wheels once, and those are the files a release publishes. The test job runs the whole suite
+  against them, and on linux-x86_64 also the benchmark and closed-loop smoke runs. The install job
+  installs them into a clean environment, a slim container on Linux, and solves with every backend.
 - `ci` passes only when every other job passed. It is the one required check, and its summary
   has a row per platform saying whether the native libraries were built or came from the cache.
 

@@ -4,8 +4,7 @@ name: CI tests
 # install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the editable plugins;
 # if something syncs anyway, the plugins return without their libraries and `SCALY_REQUIRE_SOLVERS`
 # fails the run instead of skipping. Every check step runs even when an earlier one failed, so one
-# failure never hides another. The wheels are kept for the longest period the organization allows,
-# since `release.yml` publishes the files a successful CI run built.
+# failure never hides another.
 on:
   workflow_call:
 
@@ -39,28 +38,15 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      - name: Build the distributions
-        uses: ./.github/actions/dists
-        with:
-          platform: ${{ matrix.platform }}
-          save: true
-
-      - uses: actions/upload-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dist-${{ matrix.platform }}
-          path: |
-            dist/*.whl
-            !dist/*-none-any.whl
-          retention-days: 90
+          path: dist
 
-      - uses: actions/upload-artifact@v7
-        if: matrix.platform == 'linux-x86_64'
+      - uses: actions/download-artifact@v8
         with:
           name: dist-pure
-          path: |
-            dist/*-none-any.whl
-            dist/*.tar.gz
-          retention-days: 90
+          path: dist
 
       - name: Install test dependencies and wheels
         run: |
