@@ -125,7 +125,8 @@ jobs:
     if: needs.queue.outputs.tested != 'true'
     uses: ./.github/workflows/ci-build.yml
 
-  # One platform's failed build leaves the other platforms' checks running.
+  # A failed build leaves the other platforms' checks running, unless it is linux-x86_64's, which
+  # builds the pure distributions every platform installs.
   test:
     needs: build
     if: ${{ !cancelled() && needs.build.result != 'skipped' }}
