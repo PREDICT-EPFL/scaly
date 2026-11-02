@@ -12,13 +12,11 @@ This package owns Scaly's reproducible benchmark workloads and correctness-gated
 
 A C++ compiler, `git`, and `cmake`. Google Benchmark does not have to be installed:
 the harness clones the pinned tag in `harness/gbench.py` and builds it into
-`benchmarks/third_party/gbench/<tag>` (gitignored) the first time a cell is compiled,
-then links that static library by absolute path. The build takes a few seconds and is
-skipped once the header and library are in place. It stays inside the checkout, so
-parallel worktrees never read a prefix another one is still installing, and the
-scaly JIT cache under `~/.cache/scaly` keeps holding only what scaly itself compiles.
-Delete the directory to force a rebuild, and read `build.log` inside it if the build
-fails.
+`~/.cache/scaly/gbench/<tag>/<compiler>` the first time a cell is compiled on the machine,
+then links that static library by absolute path. Every checkout on the machine shares
+that build. It is built in a sibling directory and renamed into place, so parallel
+worktrees never read a prefix another one is still installing. Delete the directory to
+force a rebuild. A failed build leaves its sibling directory with a `build.log` to read.
 
 ## Smoke gates
 

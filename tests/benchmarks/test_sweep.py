@@ -147,6 +147,29 @@ def test_object_inspection_reads_undefined_vector_symbols(tmp_path: Path) -> Non
   assert vector_symbols(obj) == (["__ZGVfixture"] if sys.platform == "darwin" else ["_ZGVfixture"])
 
 
+@pytest.mark.parametrize("lost_race", [False, True])
+def test_gbench_builds_once_per_machine_in_the_scaly_cache(lost_race: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+  monkeypatch.setattr(gbench, "compiler", lambda: ("c++",))
+  monkeypatch.setattr(gbench, "compiler_fingerprint", lambda command: "f" * 64)
+  prefix = tmp_path / "scaly" / "gbench" / gbench.GBENCH_TAG / ("f" * 12)
+  builds = []
+
+  def build(target: Path, header: Path, lib: Path) -> None:
+    builds.append(target)
+    # a checkout that loses the race finds the prefix another one installed meanwhile
+    for root in (target, prefix) if lost_race else (target,):
+      for path in (root / header.relative_to(target), root / lib.relative_to(target)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+
+  monkeypatch.setattr(gbench, "_build_gbench", build)
+  assert gbench.gbench_flags()[1][0] == str(prefix / "lib" / "libbenchmark.a")
+  gbench.gbench_flags()
+  assert len(builds) == 1 and builds[0].parent == prefix.parent and not builds[0].exists()
+  assert (prefix / "include" / "benchmark" / "benchmark.h").exists()
+
+
 def test_benchmark_compiler_commands_preserve_packaged_zig_and_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from scaly.codegen.toolchain import Compiler
 
