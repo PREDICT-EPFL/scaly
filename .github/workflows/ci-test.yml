@@ -71,6 +71,13 @@ jobs:
             uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
           fi
 
+      # zig builds its C runtime for the host CPU on its first compile, which on Windows outlasts an
+      # example's 120-second limit while the other test workers wait for it.
+      - name: Warm zig's cache
+        if: runner.os == 'Windows'
+        run: |
+          uv run python -c "import numpy as np, scaly as sc; f = sc.function(sc.arg('x', 2), outputs=sc.arg('y'), name='warm')(lambda x: x.sum()); print(f(np.ones(2)))"
+
       # The directory is named after the compiler, so a new compiler misses the cache and is saved
       # under its own key.
       - name: Locate Google Benchmark
