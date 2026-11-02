@@ -110,4 +110,3 @@ class _Backend:
 
 
 BACKEND = _Backend()
-# temporary edit for PR #251: the native cache must survive a plugin Python change
