@@ -71,12 +71,23 @@ jobs:
             uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
           fi
 
-      # zig builds its C runtime for the host CPU on its first compile, which on Windows outlasts an
-      # example's 120-second limit while the other test workers wait for it.
+      # zig builds its C and C++ runtimes for the host CPU on first use, which on a fresh runner takes
+      # longer than the time limits of the examples and the benchmark driver tests. This builds both
+      # once: the JIT compiles from its cache, the driver links from a temporary directory.
       - name: Warm zig's cache
         if: runner.os == 'Windows'
         run: |
-          uv run python -c "import numpy as np, scaly as sc; f = sc.function(sc.arg('x', 2), outputs=sc.arg('y'), name='warm')(lambda x: x.sum()); print(f(np.ones(2)))"
+          uv run python - <<'EOF'
+          import subprocess, tempfile
+          from pathlib import Path
+          import numpy as np
+          import scaly as sc
+          from benchmarks.harness.gbench import compiler
+          print(sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="warm")(lambda x: x.sum())(np.ones(2)))
+          with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "warm.cpp").write_text("#include <string>\nint main() { return std::string(\"warm\").size() == 4 ? 0 : 1; }\n")
+            subprocess.run([*compiler(), "warm.cpp", "-o", "warm.exe", "-lshlwapi"], cwd=tmp, check=True)
+          EOF
 
       # The directory is named after the compiler, so a new compiler misses the cache and is saved
       # under its own key.
