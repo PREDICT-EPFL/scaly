@@ -125,16 +125,15 @@ jobs:
     if: needs.queue.outputs.tested != 'true'
     uses: ./.github/workflows/ci-build.yml
 
-  # A failed build leaves the other platforms' checks running, unless it is linux-x86_64's, which
-  # builds the pure distributions every platform installs.
+  # A failed build on any platform skips every platform's tests and install checks, since a job
+  # cannot wait for one matrix entry of another. A failing build is a bug to fix before anything
+  # else, and its fix starts a new run anyway.
   test:
     needs: build
-    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     uses: ./.github/workflows/ci-test.yml
 
   install:
     needs: build
-    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     uses: ./.github/workflows/ci-install.yml
 
   # A skipped required check counts as passed, so this runs whatever happened before it.
