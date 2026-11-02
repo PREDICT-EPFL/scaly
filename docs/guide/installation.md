@@ -74,7 +74,6 @@ SCALY_CC=clang uv run scaly_toolchain
 ## Tested environments
 
 Scaly is tested every night in these environments, with Python 3.14 and, on Ubuntu 24.04, also 3.12.
-Windows also runs Python 3.12 and 3.13.
 Other compilers and systems may work, but they are not tested.
 
 | System | Architectures | C compilers |

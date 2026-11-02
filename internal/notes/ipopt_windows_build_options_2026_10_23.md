@@ -220,9 +220,11 @@ standalone C++ solver consumer. The newly enabled race-cars closed-loop checks a
 for both compiled and interpreted CasADi oracles alongside Scaly.
 
 The first Windows release needs new versions of core, PIQP and Ipopt together. Their published
-`0.1.0a2` distributions predate Windows support. All three are bumped to `0.1.0a3`, with matching
+`0.1.0a2` distributions predate Windows support. All three were bumped to `0.1.0a3`, with matching
 minimum dependencies. SQP's published source is unchanged and its existing pure-Python wheel
-works with the new versions.
+works with the new versions. Superseded on 2026-11-02: 0.1.0 shipped first, and the rebase onto
+#248 dropped these bumps. Native plugins are not released automatically, see
+[CI, nightly and native builds](ci_and_native_builds_2026_11_02.md).
 
 The pull request's continuous-integration run remains the final platform check. Build and
 release workflows include the Windows Ipopt wheel, require the backend in Windows tests and
