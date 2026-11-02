@@ -105,6 +105,7 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
           CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
         run: |
+          unset GITHUB_STEP_SUMMARY
           cache=~/.cache/scaly/solvers
           mkdir -p "$cache"
           before=$(ls "$cache")
@@ -122,9 +123,10 @@ jobs:
                 path="$msys2/ucrt64/bin:$msys2/usr/bin:$PATH"
               fi
             fi
-            # cibuildwheel mounts the host's root at /host inside the manylinux container
+            # cibuildwheel mounts the host's root at /host inside the manylinux container. Only native
+            # programs may start with MSYS2 on PATH: MSYS2's `env` under Git Bash drops the environment.
             PATH=$path CIBW_ENVIRONMENT_LINUX="SCALY_BUILD_SOLVERS=required SCALY_SOLVER_CACHE=/host$cache" CIBW_ENVIRONMENT_MACOS="$macos" \
-              env -u GITHUB_STEP_SUMMARY uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
+              uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
           done
           if [ "$(ls "$cache")" != "$before" ]; then echo "built=true" >> "$GITHUB_OUTPUT"; fi
 
