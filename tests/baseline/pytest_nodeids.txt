@@ -2714,6 +2714,11 @@ tests/test_import_layering.py::test_no_import_cycles
 tests/test_import_layering.py::test_no_upward_imports
 tests/test_import_layering.py::test_recorded_exceptions_still_exist
 tests/test_import_layering.py::test_tolerated_violations_are_still_violations
+tests/test_nightly.py::test_failure_labels_follow_the_benchmark_group[-False]
+tests/test_nightly.py::test_failure_labels_follow_the_benchmark_group[benchmarks / linux-arm64\npython / 3.12\n-True]
+tests/test_nightly.py::test_failure_labels_follow_the_benchmark_group[toolchain / ubuntu-24.04 clang-18\npython / 3.14\n-False]
+tests/test_nightly.py::test_failure_labels_follow_the_benchmark_group[toolchain / ubuntu-latest cc\n-False]
+tests/test_nightly.py::test_python_matrix_follows_classifiers
 tests/test_op_coverage.py::test_every_expr_op_is_classified_in_every_pass
 tests/test_solver_requirements.py::test_required_solver_collection[1-ipopt-True]
 tests/test_solver_requirements.py::test_required_solver_collection[piqp,sqp-ipopt-False]

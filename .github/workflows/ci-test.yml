@@ -7,10 +7,24 @@ name: CI tests
 # failure never hides another.
 on:
   workflow_call:
+    inputs:
+      suite:
+        description: ci, toolchain, python or benchmarks
+        type: string
+        default: ci
+      environments:
+        description: JSON matrix with platform, runner and optional label, python, cc, cxx, toolchain and save-cache
+        type: string
+        default: >-
+          [{"platform":"linux-x86_64","runner":"ubuntu-latest"},
+           {"platform":"linux-arm64","runner":"ubuntu-24.04-arm"},
+           {"platform":"macos-arm64","runner":"macos-15"},
+           {"platform":"macos-x86_64","runner":"macos-15-intel"},
+           {"platform":"windows-x86_64","runner":"windows-latest"}]
 
 jobs:
   test:
-    name: ${{ matrix.platform }}
+    name: ${{ matrix.label || matrix.platform }}
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -18,12 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { platform: linux-x86_64, runner: ubuntu-latest }
-          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
-          - { platform: macos-arm64, runner: macos-15 }
-          - { platform: macos-x86_64, runner: macos-15-intel }
-          - { platform: windows-x86_64, runner: windows-latest }
+        include: ${{ fromJSON(inputs.environments) }}
     env:
       UV_NO_SYNC: "1"
       SCALY_BUILD_SOLVERS: skip
@@ -34,6 +43,17 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
+
+      - name: Select Python and compilers
+        env:
+          CACHE_DIR: ${{ runner.temp }}/scaly-jit
+          PY: ${{ matrix.python }}
+          MATRIX_CC: ${{ matrix.cc }}
+          MATRIX_CXX: ${{ matrix.cxx }}
+        run: |
+          echo "SCALY_CACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
+          if [ -n "$PY" ]; then echo "UV_PYTHON=$PY" >> "$GITHUB_ENV"; fi
+          if [ -n "$MATRIX_CC" ]; then printf 'CC=%s\nCXX=%s\n' "$MATRIX_CC" "$MATRIX_CXX" >> "$GITHUB_ENV"; fi
 
       - name: Set up Python
         run: uv python install
@@ -57,7 +77,7 @@ jobs:
             flags=(--no-install-package scaly-ipopt)
             wheels=(dist/scaly_piqp-*.whl dist/scaly_ipopt-*.whl)
           fi
-          uv sync --frozen --no-install-package scaly-piqp "${flags[@]}"
+          uv sync --frozen ${{ matrix.toolchain && runner.os != 'Windows' && '--extra toolchain' || '' }} --no-install-package scaly-piqp "${flags[@]}"
           uv pip install --no-deps "${wheels[@]}"
           uv run python -c "import importlib, sys; names = ('scaly', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
 
@@ -67,7 +87,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
           uv run python --version
           uv run scaly_toolchain
-          if [ "$RUNNER_OS" = Windows ]; then
+          if [ "$RUNNER_OS" = Windows ] || [ "${{ matrix.toolchain }}" = true ]; then
             uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
           fi
 
@@ -75,7 +95,7 @@ jobs:
       # longer than the time limits of the examples and the benchmark driver tests. This builds both
       # once: the JIT compiles from its cache, the driver links from a temporary directory.
       - name: Warm zig's cache
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && inputs.suite != 'python'
         run: |
           uv run python - <<'EOF'
           import subprocess, tempfile
@@ -89,14 +109,23 @@ jobs:
             subprocess.run([*compiler(), "warm.cpp", "-o", "warm.exe", "-lshlwapi"], cwd=tmp, check=True)
           EOF
 
-      # The directory is named after the compiler, so a new compiler misses the cache and is saved
-      # under its own key.
+      - name: Restore the nightly compile cache
+        if: inputs.suite == 'ci'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.SCALY_CACHE_DIR }}
+          key: jit-${{ matrix.platform }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: jit-${{ matrix.platform }}-
+
+      # The compiler fingerprint gives each Google Benchmark build its own key.
       - name: Locate Google Benchmark
+        if: inputs.suite != 'python'
         id: gbench
         run: |
           uv run python -c "from benchmarks.harness.gbench import GBENCH_TAG, gbench_prefix; prefix = gbench_prefix(); print(f'path={prefix.as_posix()}'); print(f'key=gbench-${{ matrix.platform }}-{GBENCH_TAG}-{prefix.name}')" >> "$GITHUB_OUTPUT"
 
       - name: Restore Google Benchmark
+        if: inputs.suite == 'ci'
         id: gbench-cache
         uses: actions/cache/restore@v6
         with:
@@ -104,27 +133,60 @@ jobs:
           key: ${{ steps.gbench.outputs.key }}
 
       - name: Prepare the benchmark driver
+        if: inputs.suite != 'python'
         run: uv run python -c "from benchmarks.harness.gbench import gbench_flags; gbench_flags()"
 
       - name: Save Google Benchmark
-        if: steps.gbench-cache.outputs.cache-hit != 'true'
+        if: inputs.suite != 'python' && steps.gbench-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ steps.gbench.outputs.path }}
           key: ${{ steps.gbench.outputs.key }}
 
       - name: Pytest
+        if: inputs.suite != 'benchmarks'
         run: uv run pytest -n=auto
 
       - name: Benchmark smoke
-        if: ${{ !cancelled() && matrix.platform == 'linux-x86_64' }}
-        run: uv run benchmarks/run.py smoke
+        if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || (inputs.suite == 'ci' && matrix.platform == 'linux-x86_64')) }}
+        run: uv run benchmarks/run.py smoke ${{ inputs.suite == 'benchmarks' && '--full' || '' }}
 
       - name: Closed-loop smoke
-        if: ${{ !cancelled() && matrix.platform == 'linux-x86_64' }}
+        if: ${{ !cancelled() && inputs.suite == 'ci' && matrix.platform == 'linux-x86_64' }}
         run: |
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
           uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem npmpc --solver ipopt --oracle scaly
+
+      - name: Closed-loop smoke, every pair
+        if: ${{ !cancelled() && inputs.suite == 'benchmarks' }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            echo "Windows IPOPT closed loops remain excluded until #196"
+          else
+            uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+          fi
+          uv run benchmarks/run.py closed-loop --smoke --problem chain --solver sqp --oracle scaly,casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem race_cars,unbumpercars,npmpc --solver ${{ runner.os == 'Windows' && 'sqp' || 'ipopt,sqp' }} --oracle scaly,casadi
+          uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver none
+
+      - name: Repeated benchmark commands
+        if: ${{ !cancelled() && inputs.suite == 'benchmarks' }}
+        run: |
+          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
+          if [ "$RUNNER_OS" = Windows ]; then
+            uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          else
+            uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+            uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          fi
+          uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv
+
+      - name: Save the nightly compile cache
+        if: success() && matrix.save-cache
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.SCALY_CACHE_DIR }}
+          key: jit-${{ matrix.platform }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

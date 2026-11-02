@@ -1,10 +1,8 @@
 name: Release
 
-# Publishes what a successful CI run on `main` built, without rebuilding. A package is released
-# when its version has no `<name>-v<version>` tag yet, so bumping the version is how a release is
-# requested and unchanged packages are left alone. `testpypi` stops after installing from
-# TestPyPI; `pypi` continues to PyPI, then tags each released package, creates its GitHub Release
-# and, when scaly itself is released, publishes the docs to GitHub Pages. Every step skips what an earlier attempt already did, so a failed run can be rerun.
+# Runs the nightly suite on this commit and publishes the files that run built and tested.
+# A version without its package tag selects a release. TestPyPI verification precedes PyPI,
+# package tags, GitHub Releases and documentation publication.
 on:
   workflow_dispatch:
     inputs:
@@ -29,7 +27,6 @@ jobs:
       contents: read
       actions: read
     outputs:
-      ci-run: ${{ steps.checks.outputs.ci-run }}
       packages: ${{ steps.packages.outputs.packages }}
       pins: ${{ steps.packages.outputs.pins }}
     steps:
@@ -37,23 +34,6 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-
-      - name: Require green CI and Docs runs for this commit
-        id: checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # A push run of a commit the merge queue tested builds nothing, so the queue's run is the one
-          # with the files.
-          for workflow in ci.yml docs.yml; do
-            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$GITHUB_SHA" \
-              --json databaseId,event,status,conclusion --jq '(map(select(.event != "push" and .conclusion == "success")) + map(select(.event == "push"))) | .[0] // empty')
-            if [ -z "$run" ] || [ "$(jq -r '.status + "/" + .conclusion' <<<"$run")" != "completed/success" ]; then
-              echo "::error::$workflow has no successful run for $GITHUB_SHA: ${run:-none}"
-              exit 1
-            fi
-            if [ "$workflow" = ci.yml ]; then echo "ci-run=$(jq -r .databaseId <<<"$run")" >> "$GITHUB_OUTPUT"; fi
-          done
 
       - name: Choose the packages to release
         id: packages
@@ -85,16 +65,22 @@ jobs:
             out.write(f"pins={' '.join(p['name'] + '==' + p['version'] for p in packages)}\n")
           EOF
 
-  collect:
+  validate:
     needs: plan
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    uses: ./.github/workflows/nightly.yml
+
+  collect:
+    needs: [plan, validate]
     runs-on: ubuntu-latest
     permissions:
       actions: read
     steps:
       - uses: actions/download-artifact@v8
         with:
-          run-id: ${{ needs.plan.outputs.ci-run }}
-          github-token: ${{ github.token }}
           pattern: dist-*
           merge-multiple: true
           path: dist
