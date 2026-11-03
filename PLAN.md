@@ -29,3 +29,10 @@ files with the same version. Branch and expiry perturbations fail their tests.
 The full pre-merge hook passed with 2,809 tests passing and 50 skipped, plus
 benchmark smoke, docs, types, Ruff and private-name checks. Actionlint passes.
 The published-file hash perturbation also fails the intended negative cases.
+
+The release-reuse review approved with no blocking findings. Two contributor-page
+notes are corrected: completed full nightly wording and the Monday fallback rebuild.
+GitHub API failures remain explicit release failures, and completed verification
+records may safely chain through immutable artifact IDs. The manual nightly record
+job is still pending. Scratch files were removed from the checkout after the
+maintainer pointed out that T3 checkpoints captured the untracked directory.
