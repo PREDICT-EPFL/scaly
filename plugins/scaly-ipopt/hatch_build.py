@@ -619,6 +619,8 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   hook.app.display_info("Building IPOPT stack (METIS -> MUMPS -> IPOPT)...")
   if system not in {"Darwin", "Linux", "Windows"}:
     raise RuntimeError(f"Unsupported platform: {system}")
+  if system == "Windows" and platform.machine().lower() != "amd64":
+    raise RuntimeError("Windows IPOPT builds require x86-64 Python.")
   ldflags = LINUX_RPATH_LDFLAGS if system == "Linux" else ""
   fc = _find_fortran_compiler()
   hook.app.display_info(f"Using Fortran compiler: {fc}")
