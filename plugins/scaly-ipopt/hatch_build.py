@@ -108,18 +108,8 @@ def _missing_ipopt_tools() -> list[str]:
   fc = _find_fortran_compiler(required=False)
   if fc is None:
     missing.append("gfortran")
-  elif os.name == "nt":
-    try:
-      versions = dict(line.split(" ", 1) for line in _windows_packages(fc).splitlines())
-    except (OSError, subprocess.CalledProcessError):
-      missing.append("MSYS2 UCRT64 with pacman")
-    else:
-      for component in ("gcc-runtime", "winpthreads"):
-        expected = _BUILD_CONFIG[component]["version"]
-        for name in _BUILD_CONFIG[component]["packages"]:
-          package = f"mingw-w64-ucrt-x86_64-{name}"
-          if versions.get(package) != expected:
-            missing.append(f"{package} {expected} (found {versions.get(package, 'missing')})")
+  elif os.name == "nt" and not _msys2_bash(fc).is_file():
+    missing.append("MSYS2 UCRT64 GFortran")
   return missing
 
 
@@ -131,11 +121,14 @@ GKLIB_COMMIT = _BUILD_CONFIG["metis"]["gklib_commit"]
 OPENBLAS_BRANCH = _BUILD_CONFIG["blas"]["linux"]["branch"]
 
 
+def _msys2_bash(fc: str) -> Path:
+  return Path(fc).resolve().parents[2] / "usr" / "bin" / "bash.exe"
+
+
 def _run(cmd: list[str], cwd: Path, env: dict | None = None, attempts: int = 1) -> None:
   """Run `cmd`, retrying a failure `attempts - 1` times; downloads use 3 to ride out a busy host."""
   if os.name == "nt":
-    fc = _find_fortran_compiler()
-    bash = Path(fc).parents[2] / "usr" / "bin" / "bash.exe"
+    bash = _msys2_bash(_find_fortran_compiler())
     args = [re.sub(r"([A-Za-z]):/(?!/)", lambda m: f"/{m[1].lower()}/", arg.replace("\\", "/")) for arg in cmd]
     cmd = [str(bash), "-lc", shlex.join(args)]
     env = dict(os.environ if env is None else env, MSYSTEM="UCRT64", CHERE_INVOKING="1")
@@ -463,45 +456,19 @@ def _linux_major_so_name(path: Path) -> str:
   return ".".join(parts[:3]) if len(parts) >= 3 else path.name
 
 
-def _windows_deps(path: Path) -> list[str]:
-  # GNU objdump can list no imports for a DLL that delvewheel rewrote, though the loader still sees them.
-  import pefile
-
-  with pefile.PE(str(path)) as pe:
-    return [
-      entry.dll.decode("ascii") for directory in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT") for entry in getattr(pe, directory, ())
-    ]
-
-
-def _bundle_windows_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str, runtime_dir: Path) -> None:
-  system = Path(os.environ["SystemRoot"]) / "System32"
-  pending, seen = [lib_dir / lib_name], set()
-  while pending:
-    current = pending.pop()
-    if current.name.lower() in seen:
-      continue
-    seen.add(current.name.lower())
-    for name in _windows_deps(current):
-      src = runtime_dir / name
-      if name.lower().startswith(("api-ms-win-", "ext-ms-win-")) or (not src.is_file() and (system / name).is_file()):
-        continue
-      dst = lib_dir / name
-      if not dst.exists():
-        if not src.is_file():
-          raise RuntimeError(f"cannot vendor {name!r} needed by {current}: not found in the toolchain")
-        hook.app.display_info(f"Bundling {src} -> {dst}")
-        shutil.copy2(src, dst)
-      pending.append(dst)
+# The GCC runtime that the MinGW-built Ipopt and MUMPS DLLs import, all from the toolchain's `bin`.
+_WINDOWS_VENDORED = ("libgcc_s_seh-1.dll", "libgfortran-5.dll", "libquadmath-0.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
 
 
 def _namespace_windows_runtime(lib_dir: Path, lib_name: str) -> None:
   import pefile
 
   dlls = sorted(lib_dir.glob("*.dll"))
-  digest = hashlib.sha256(b"".join(path.read_bytes() for path in dlls)).hexdigest()[:12]
-  names = {path.name.lower(): f"scaly_ipopt_{digest}_{path.name}" for path in dlls if path.name != lib_name}
+  names = {path.name.lower(): f"scaly_ipopt_{path.name}" for path in dlls if path.name != lib_name}
   for path in dlls:
-    changes = [arg for dep in _windows_deps(path) if dep.lower() in names for arg in ("-change", dep, names[dep.lower()])]
+    with pefile.PE(str(path)) as pe:
+      deps = [entry.dll.decode("ascii") for entry in pe.DIRECTORY_ENTRY_IMPORT]
+    changes = [arg for dep in deps if dep.lower() in names for arg in ("-change", dep, names[dep.lower()])]
     if changes:
       subprocess.run([sys.executable, "-m", "delvewheel", "replace-needed", str(path), "--strip", *changes], check=True)
   for old, new in names.items():
@@ -510,7 +477,7 @@ def _namespace_windows_runtime(lib_dir: Path, lib_name: str) -> None:
     exports = sorted(symbol.name.decode("ascii") for symbol in pe.DIRECTORY_ENTRY_EXPORT.symbols if symbol.name is not None)
   definition = lib_dir / "ipopt.def"
   definition.write_text("EXPORTS\n" + "\n".join(exports) + "\n", encoding="ascii")
-  subprocess.run(["dlltool", "-m", "i386:x86-64", "-D", lib_name, "-d", str(definition), "-l", str(lib_dir / "ipopt.lib")], check=True)
+  subprocess.run(["dlltool", "-D", lib_name, "-d", str(definition), "-l", str(lib_dir / "ipopt.lib")], check=True)
   definition.unlink()
 
 
@@ -534,11 +501,6 @@ def _tool_identity(cmd: str) -> str:
   return f"{path}: {out.splitlines()[0] if out else ''}"
 
 
-def _windows_packages(fc: str) -> str:
-  bash = Path(fc).resolve().parent.parent.parent / "usr" / "bin" / "bash.exe"
-  return subprocess.run([str(bash), "-lc", "pacman -Q"], check=True, capture_output=True, text=True).stdout
-
-
 def _remove_tree(path: Path) -> None:
   def remove_readonly(function, filename, error):
     if not isinstance(error, PermissionError):
@@ -558,14 +520,6 @@ def _cache_key(root: Path) -> str:
     digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
   fc = _find_fortran_compiler(required=False) or "gfortran"
   tools = [_tool_identity(os.environ.get("CC", "cc")), _tool_identity(os.environ.get("CXX", "c++")), _tool_identity(fc)]
-  if os.name == "nt" and Path(fc).is_file():
-    from importlib.metadata import version
-
-    try:
-      tools.append(_windows_packages(fc))
-    except (OSError, subprocess.CalledProcessError) as error:
-      tools.append(f"pacman: {error}")
-    tools += [version("delvewheel"), version("pefile")]
   env = [f"{name}={os.environ.get(name, '')}" for name in _KEY_ENV]
   for part in (platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0], *tools, *env):
     digest.update(part.encode() + b"\0")
@@ -665,8 +619,6 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   hook.app.display_info("Building IPOPT stack (METIS -> MUMPS -> IPOPT)...")
   if system not in {"Darwin", "Linux", "Windows"}:
     raise RuntimeError(f"Unsupported platform: {system}")
-  if system == "Windows" and platform.machine().lower() not in {"x86_64", "amd64"}:
-    raise RuntimeError("Windows IPOPT builds require x86-64 Python.")
   ldflags = LINUX_RPATH_LDFLAGS if system == "Linux" else ""
   fc = _find_fortran_compiler()
   hook.app.display_info(f"Using Fortran compiler: {fc}")
@@ -704,7 +656,10 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     _run(["install_name_tool", "-id", f"@rpath/{lib_name}", str(dst_path)], cwd=lib_dir)
     _bundle_macos_runtime(hook, lib_dir, lib_name)
   elif system == "Windows":
-    _bundle_windows_runtime(hook, lib_dir, lib_name, Path(fc).parent)
+    for name in _WINDOWS_VENDORED:
+      src, dst = Path(fc).resolve().parent / name, lib_dir / name
+      hook.app.display_info(f"Bundling {src} -> {dst}")
+      shutil.copy2(src, dst)
     _namespace_windows_runtime(lib_dir, lib_name)
   else:
     _bundle_linux_runtime(hook, lib_dir, lib_name)
@@ -717,7 +672,8 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
 
   mumps_src = third_party_dir / "ThirdParty-Mumps"
   gklib_src = third_party_dir / "GKlib"
-  runtime = sorted(p.name for p in lib_dir.iterdir() if p.name.startswith(("libgfortran", "libquadmath", "libgcc_s", "libstdc++")))
+  names = (p.name.removeprefix("scaly_ipopt_") for p in lib_dir.iterdir())
+  runtime = sorted(name for name in names if name.startswith(("libgfortran", "libquadmath", "libgcc_s", "libstdc++")))
   entries = [
     ("ipopt", _BUILD_CONFIG["ipopt"]["version"], "EPL-2.0", "https://github.com/coin-or/Ipopt", [third_party_dir / "Ipopt" / "LICENSE"]),
     ("mumps", _BUILD_CONFIG["mumps"]["version"], "CeCILL-C", "https://mumps-solver.org", [mumps_src / "MUMPS" / "LICENSE"]),
@@ -738,7 +694,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     ),
     (
       "gcc-runtime",
-      _BUILD_CONFIG["gcc-runtime"]["version"] if system == "Windows" else ", ".join(runtime),
+      ", ".join(runtime),
       "GPL-3.0-or-later WITH GCC-exception-3.1",
       "https://gcc.gnu.org",
       [vendored / "gcc-runtime" / name for name in ("COPYING3", "COPYING.RUNTIME")],
@@ -759,10 +715,10 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     entries.append(
       (
         "winpthreads",
-        _BUILD_CONFIG["winpthreads"]["version"],
+        "libwinpthread-1.dll",
         "MIT and BSD-3-Clause",
         "https://www.mingw-w64.org",
-        [Path(fc).parents[1] / "share" / "licenses" / "libwinpthread" / "COPYING"],
+        [Path(fc).resolve().parents[1] / "share" / "licenses" / "libwinpthread" / "COPYING"],
       )
     )
   _write_third_party_notices(hook, licenses_dir, "scaly-ipopt", entries)

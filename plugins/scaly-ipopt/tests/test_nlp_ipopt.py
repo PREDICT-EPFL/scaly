@@ -151,6 +151,7 @@ first()
 """
   result = subprocess.run(
     [sys.executable, "-c", script, "casadi" if casadi_first else "scaly"],
+    cwd=Path(__file__).parents[3],
     env={**os.environ, "SCALY_CACHE_DIR": str(tmp_path)},
     capture_output=True,
     text=True,

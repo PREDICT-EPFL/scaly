@@ -241,7 +241,8 @@ def _build(spec_path: Path) -> None:
         "compile_s": compile_s,
         "source_bytes": len(source.encode()),
         "source_lines": len(source.splitlines()),
-        "vector_symbols": vector_symbols(tmp_library),
+        # Windows has no libmvec, and there `vector_symbols` reads objects, not DLLs.
+        "vector_symbols": [] if sys.platform == "win32" else vector_symbols(tmp_library),
         "compile_command": command,
       },
       indent=2,

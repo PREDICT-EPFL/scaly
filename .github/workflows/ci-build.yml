@@ -58,9 +58,8 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: brew install gcc
 
-      # The IPOPT hook builds through MSYS2 UCRT64 with the GCC packages pinned in its
-      # `build_config.json`, and its key names every installed MSYS2 package, so every run installs
-      # the same set. Only the IPOPT build sees these tools on `PATH`.
+      # The IPOPT hook builds through MSYS2 UCRT64, whose `bin` directory also provides the runtime
+      # DLLs the wheel bundles. Only the IPOPT build sees these tools on `PATH`.
       - uses: msys2/setup-msys2@v2
         id: msys2
         if: runner.os == 'Windows'
@@ -69,27 +68,10 @@ jobs:
           path-type: inherit
           update: false
           install: >-
+            mingw-w64-ucrt-x86_64-gcc-fortran
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             make git patch diffutils pkgconf
-
-      - name: Install the Windows Fortran toolchain
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          urls=$(python - <<'PY'
-          import json, sys
-          sys.stdout.reconfigure(newline="\n")
-          with open("plugins/scaly-ipopt/src/scaly_ipopt/build_config.json") as f:
-              config = json.load(f)
-          for component in ("gcc-runtime", "winpthreads"):
-              for name in config[component]["packages"]:
-                  print(f"https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-{name}-{config[component]['version']}-any.pkg.tar.zst")
-          PY
-          )
-          mapfile -t packages <<< "$urls"
-          pacman -U --needed --noconfirm "${packages[@]}"
-          pacman -Q
 
       # The plugins load their solvers through ctypes, so the hooks tag every wheel
       # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The IPOPT

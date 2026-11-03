@@ -267,33 +267,6 @@ def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monke
     run._problem_checks("toy", full=True)
 
 
-@pytest.mark.parametrize("full", [False, True])
-def test_windows_problem_smoke_runs_ipopt(full: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-  from types import SimpleNamespace
-  from benchmarks import run
-
-  called = []
-  monkeypatch.setattr(run.sys, "platform", "win32")
-  monkeypatch.setattr(run, "QUICK_CHECKS", {"toy": "solver"})
-  monkeypatch.setattr(run, "solver_loadable", lambda name: True)
-  monkeypatch.setenv("SCALY_CC_OPT", "-O2")  # _problem_checks sets -O0 in os.environ, which monkeypatch then undoes
-  monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
-  monkeypatch.setattr(
-    run.importlib,
-    "import_module",
-    lambda name: SimpleNamespace(
-      CHECKS={
-        "solver": (lambda: called.append("ipopt"), "ipopt", False),
-        "numerical": (lambda: called.append("numerical"), None, False),
-      }
-    ),
-  )
-  run._problem_checks("toy", full)
-  assert called == (["ipopt", "numerical"] if full else ["ipopt"])
-  output = capsys.readouterr().out
-  assert "solver: ok" in output and "skipped" not in output
-
-
 @pytest.mark.parametrize("required", ["", "1", "piqp,sqp"])
 def test_optional_sqp_can_skip_but_required_sqp_fails(required: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
   from types import SimpleNamespace

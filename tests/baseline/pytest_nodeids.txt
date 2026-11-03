@@ -1,15 +1,4 @@
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_archive_writers_share_one_lock
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_dependencies_include_ordinary_and_delay_imports[False-False]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_dependencies_include_ordinary_and_delay_imports[False-True]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_dependencies_include_ordinary_and_delay_imports[True-False]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_dependencies_include_ordinary_and_delay_imports[True-True]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_runtime_bundles_transitive_dependencies
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-relative]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-standalone]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[auto-wrong-version]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-relative]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-standalone]
-plugins/scaly-ipopt/tests/test_ipopt_build.py::test_windows_unsuitable_toolchain_skips_only_editable_auto[required-wrong-version]
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[diagonal]
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[empty]
@@ -1342,8 +1331,6 @@ tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_
 tests/benchmarks/test_protocol.py::test_solver_driver_enforces_required_backend_list[piqp,sqp-sqp]
 tests/benchmarks/test_protocol.py::test_sweep_render_uses_the_selected_math_policy
 tests/benchmarks/test_protocol.py::test_vector_math_policy_matches_supported_compiler_flags
-tests/benchmarks/test_protocol.py::test_windows_problem_smoke_runs_ipopt[False]
-tests/benchmarks/test_protocol.py::test_windows_problem_smoke_runs_ipopt[True]
 tests/benchmarks/test_protocol.py::test_windows_smoke_runs_supported_groups
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[chain/__init__.py]
 tests/benchmarks/test_public_api.py::test_formulations_use_public_api[npmpc/__init__.py]
@@ -1388,7 +1375,6 @@ tests/benchmarks/test_sweep.py::test_dispatch_metrics_handle_unit_and_mixed_trip
 tests/benchmarks/test_sweep.py::test_dispatch_metrics_include_spilled_nested_call_output
 tests/benchmarks/test_sweep.py::test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic
 tests/benchmarks/test_sweep.py::test_dispatch_workspace_counts_promoted_lane_scratch
-tests/benchmarks/test_sweep.py::test_dll_inspection_reads_imported_vector_symbols
 tests/benchmarks/test_sweep.py::test_gbench_builds_once_per_machine_in_the_scaly_cache[False]
 tests/benchmarks/test_sweep.py::test_gbench_builds_once_per_machine_in_the_scaly_cache[True]
 tests/benchmarks/test_sweep.py::test_gbench_compiler_abi_ignores_where_the_compiler_lives

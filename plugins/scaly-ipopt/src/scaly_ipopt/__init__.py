@@ -11,9 +11,7 @@ if TYPE_CHECKING:
   from scaly.function.concrete import ConcreteFunction
 
 _RAW_BUILD_CONFIG = json.loads((Path(__file__).resolve().parent / "build_config.json").read_text())
-BUILD_CONFIG = {
-  name: config for name, config in _RAW_BUILD_CONFIG.items() if name != "blas" and platform.system() in config.get("platforms", [platform.system()])
-}
+BUILD_CONFIG = {name: config for name, config in _RAW_BUILD_CONFIG.items() if name != "blas"}
 BUILD_CONFIG["blas"] = _RAW_BUILD_CONFIG["blas"]["darwin" if platform.system() == "Darwin" else "linux"]
 
 
