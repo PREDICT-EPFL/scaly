@@ -1,10 +1,14 @@
 name: CI builds
 
 # Builds every distribution once per platform for the test and install jobs. The files are kept
-# for the longest period the organization allows, since `release.yml` publishes the files a
-# successful CI run built.
+# for the longest period the organization allows. CI, nightly and release runs use this build.
 on:
   workflow_call:
+    inputs:
+      rebuild-native:
+        description: ignore the native cache and rebuild the solver libraries from source
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -37,6 +41,7 @@ jobs:
       # build against its own key, which adds the compilers, and builds again when they changed.
       # Every save gets a new key, so the newest cache for the same inputs is the one restored.
       - name: Restore the native libraries
+        if: ${{ !inputs.rebuild-native }}
         id: restore
         uses: actions/cache/restore@v6
         with:
@@ -91,7 +96,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/scaly/solvers
-          key: ${{ steps.restore.outputs.cache-primary-key }}
+          key: native-${{ matrix.platform }}-${{ hashFiles('plugins/*/hatch_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - uses: actions/upload-artifact@v7
         with:

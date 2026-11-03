@@ -1,81 +1,133 @@
 name: Nightly
 
-# Rebuild solver wheels and exercise AOT compilers and full benchmark workloads at the project Python version.
 on:
   schedule:
     - cron: "17 1 * * *"
   workflow_dispatch:
+    inputs:
+      rebuild-native:
+        description: rebuild both native plugins from source, as on Mondays
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      rebuild-native:
+        description: rebuild both native plugins from source
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  # A scheduled run is skipped when `main` has not moved since the last one, except on Mondays,
-  # since breakage can also come from outside: new runner hardware, images or dependency releases.
   changes:
     name: changes since the last nightly
     runs-on: ubuntu-latest
     permissions:
       actions: read
+      contents: read
     outputs:
       run: ${{ steps.check.outputs.run }}
+      rebuild-native: ${{ steps.check.outputs.rebuild-native }}
+      python: ${{ steps.check.outputs.python }}
     steps:
+      - uses: actions/checkout@v7
+
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          REBUILD_NATIVE: ${{ inputs.rebuild-native }}
         run: |
           last=$(gh run list -R "$GITHUB_REPOSITORY" --workflow nightly.yml --event schedule --status completed -L 1 --json headSha -q '.[0].headSha')
-          if [ "$GITHUB_EVENT_NAME" != schedule ] || [ "$last" != "$GITHUB_SHA" ] || [ "$(date -u +%u)" = 1 ]; then
+          monday=false
+          if [ "$(date -u +%u)" = 1 ]; then monday=true; fi
+          if [ "$GITHUB_EVENT_NAME" != schedule ] || [ "$last" != "$GITHUB_SHA" ] || [ "$monday" = true ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "main is still at $GITHUB_SHA, which the last nightly tested"
           fi
+          if [ "$REBUILD_NATIVE" = true ] || [ "$monday" = true ]; then
+            echo "rebuild-native=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild-native=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "python=$(python3 .github/scripts/nightly.py python)" >> "$GITHUB_OUTPUT"
 
-  wheels:
-    needs: [changes]
+  build:
+    needs: changes
     if: needs.changes.outputs.run == 'true'
-    uses: ./.github/workflows/wheels.yml
+    uses: ./.github/workflows/ci-build.yml
     with:
-      cache: false
+      rebuild-native: ${{ needs.changes.outputs.rebuild-native == 'true' }}
 
-  pure:
-    needs: [changes]
-    if: needs.changes.outputs.run == 'true'
-    uses: ./.github/workflows/pure.yml
-
-  tests:
-    needs: [pure, wheels]
-    uses: ./.github/workflows/tests.yml
+  toolchain:
+    needs: build
+    uses: ./.github/workflows/ci-test.yml
     with:
-      full: true
+      suite: toolchain
       environments: >-
-        [{"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "gcc-11", "cxx": "g++-11"},
-         {"os": "ubuntu-22.04", "wheels": "ubuntu-latest", "cc": "clang-14", "cxx": "clang++-14"},
-         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "gcc-13", "cxx": "g++-13"},
-         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "cc": "clang-18", "cxx": "clang++-18"},
-         {"os": "ubuntu-24.04", "wheels": "ubuntu-latest", "toolchain": true},
-         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "gcc-15", "cxx": "g++-15"},
-         {"os": "ubuntu-26.04", "wheels": "ubuntu-latest", "cc": "clang-22", "cxx": "clang++-22"},
-         {"os": "ubuntu-24.04-arm", "wheels": "ubuntu-24.04-arm"},
-         {"os": "ubuntu-26.04-arm", "wheels": "ubuntu-24.04-arm"},
-         {"os": "macos-15", "wheels": "macos-15"},
-         {"os": "macos-15", "wheels": "macos-15", "toolchain": true},
-         {"os": "macos-15-intel", "wheels": "macos-15-intel"},
-         {"os": "macos-26", "wheels": "macos-15"},
-         {"os": "macos-26-intel", "wheels": "macos-15-intel"},
-         {"os": "windows-latest", "wheels": "windows-latest", "toolchain": true}]
+        [{"platform":"linux-x86_64","runner":"ubuntu-latest","label":"ubuntu-latest cc","save-cache":true},
+         {"platform":"linux-x86_64","runner":"ubuntu-22.04","label":"ubuntu-22.04 gcc-11","cc":"gcc-11","cxx":"g++-11"},
+         {"platform":"linux-x86_64","runner":"ubuntu-22.04","label":"ubuntu-22.04 clang-14","cc":"clang-14","cxx":"clang++-14"},
+         {"platform":"linux-x86_64","runner":"ubuntu-24.04","label":"ubuntu-24.04 gcc-13","cc":"gcc-13","cxx":"g++-13"},
+         {"platform":"linux-x86_64","runner":"ubuntu-24.04","label":"ubuntu-24.04 clang-18","cc":"clang-18","cxx":"clang++-18"},
+         {"platform":"linux-x86_64","runner":"ubuntu-24.04","label":"ubuntu-24.04 zig cc","toolchain":true},
+         {"platform":"linux-x86_64","runner":"ubuntu-26.04","label":"ubuntu-26.04 gcc-15","cc":"gcc-15","cxx":"g++-15"},
+         {"platform":"linux-x86_64","runner":"ubuntu-26.04","label":"ubuntu-26.04 clang-22","cc":"clang-22","cxx":"clang++-22"},
+         {"platform":"linux-arm64","runner":"ubuntu-24.04-arm","label":"ubuntu-24.04-arm cc","save-cache":true},
+         {"platform":"linux-arm64","runner":"ubuntu-26.04-arm","label":"ubuntu-26.04-arm cc"},
+         {"platform":"macos-arm64","runner":"macos-15","label":"macos-15 cc","save-cache":true},
+         {"platform":"macos-arm64","runner":"macos-15","label":"macos-15 zig cc","toolchain":true},
+         {"platform":"macos-x86_64","runner":"macos-15-intel","label":"macos-15-intel cc","save-cache":true},
+         {"platform":"macos-arm64","runner":"macos-26","label":"macos-26 cc"},
+         {"platform":"macos-x86_64","runner":"macos-26-intel","label":"macos-26-intel cc"},
+         {"platform":"windows-x86_64","runner":"windows-latest","label":"windows-latest zig cc","toolchain":true,"save-cache":true}]
+
+  python:
+    needs: [changes, build]
+    uses: ./.github/workflows/ci-test.yml
+    with:
+      suite: python
+      environments: ${{ needs.changes.outputs.python }}
+
+  benchmarks:
+    needs: build
+    uses: ./.github/workflows/ci-test.yml
+    with:
+      suite: benchmarks
+
+  validated:
+    needs: [build, toolchain, python, benchmarks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Record completed nightly validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release.py record nightly
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nightly-validated
+          path: validation.json
+          retention-days: 90
 
   # A failing scheduled run on `main` files one issue and comments on it while it stays open, naming
   # the jobs that started or stopped failing; the first green run closes it.
   report:
-    needs: [changes, pure, wheels, tests]
+    needs: [changes, build, toolchain, python, benchmarks, validated]
     if: always() && needs.changes.outputs.run == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       actions: read
       issues: write
     env:
@@ -84,6 +136,8 @@ jobs:
       TITLE: Nightly CI is failing
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - uses: actions/checkout@v7
+
       - run: |
           failed=$(gh run view "$GITHUB_RUN_ID" --json jobs -q '.jobs[] | select(.conclusion == "failure") | .name' | sort)
           issue=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" | head -1)
@@ -91,9 +145,14 @@ jobs:
             if [ -n "$issue" ]; then gh issue close "$issue" -c "Passing again at $GITHUB_SHA: $RUN_URL"; fi
             exit 0
           fi
+          labels=$(printf '%s\n' "$failed" | python3 .github/scripts/nightly.py labels)
+          if [ -n "$issue" ]; then
+            gh issue edit "$issue" --add-label "$labels"
+            if [[ ",$labels," != *,area:benchmarks,* ]]; then gh issue edit "$issue" --remove-label area:benchmarks; fi
+          fi
           list() { if [ -n "$1" ]; then printf -- '- `%s`\n' $1; else echo "- none"; fi; }
           if [ -z "$issue" ]; then
-            gh issue create --title "$TITLE" --label source:maintainer,kind:bug,area:tooling \
+            gh issue create --title "$TITLE" --label "$labels" \
               --body "$(printf 'The nightly run at %s failed: %s\n\nFailing jobs:\n%s\n\n<!-- failing\n%s\n-->\n' "$GITHUB_SHA" "$RUN_URL" "$(IFS=$'\n'; list "$failed")" "$failed")"
             exit 0
           fi

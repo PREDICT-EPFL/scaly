@@ -109,10 +109,15 @@ Measured on 2026-11-02:
 14. **The failure issue's labels follow what failed**: `source:maintainer`, `kind:bug` and
     `area:tooling`, plus `area:benchmarks` when a benchmark entry fails. Putting the issue on the
     Project as Ready needs a credential the default Actions token lacks, and is dropped for now.
-15. **A release runs the full nightly suite on the release commit** and publishes the wheels it
-    built and tested in that run. This replaces the rule in
-    [the release workflow design](release_workflow_design.md#releasing) that a release requires a
-    push run of `ci.yml` and never rebuilds.
+15. **A release reuses completed validation and the exact files it tested for the release commit.**
+    It first looks for completed TestPyPI verification on main, then a completed full nightly on
+    main, and runs a fresh build and full suite when neither has usable artifacts. Reuse requires
+    a validation record, the same commit and all referenced artifacts still available. An unchanged
+    nightly that skipped its tests does not qualify. A PyPI release proceeds automatically through
+    every remaining stage, without an approval pause. Revised on 2026-11-03 to avoid repeating the
+    full suite for TestPyPI-to-PyPI publication or a release after that commit's overnight nightly.
+    This replaces the original decision to rebuild and validate within every release dispatch, and
+    the earlier requirement for a push run of `ci.yml`.
 
 ## Work
 

@@ -117,9 +117,9 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
 - `docs` builds the site and fails on any warning, such as a broken link.
 - `build / <platform>`, `test / <platform>` and `install / <platform>` run on linux-x86_64,
   linux-arm64, macos-arm64, macos-x86_64 and windows-x86_64. The build job makes the platform's
-  wheels once, and those are the files a release publishes. The test job runs the whole suite
-  against them, and on linux-x86_64 also the benchmark and closed-loop smoke runs. The install job
-  installs them into a clean environment, a slim container on Linux, and solves with every backend.
+  wheels once. The test job runs the whole suite against them, and on linux-x86_64 also the
+  benchmark and closed-loop smoke runs. The install job installs them into a clean environment,
+  a slim container on Linux, and solves with every backend.
 - `ci` passes only when every other job passed. It is the one required check, and its summary
   has a row per platform saying whether the native libraries were built or came from the cache.
 
@@ -127,6 +127,39 @@ The native libraries are rebuilt only when a plugin's `hatch_build.py`, `build_c
 `licenses/` changes, so an edit to a plugin's Python code reuses them. Google Benchmark is built once
 per compiler and restored from the cache too. A push to main runs CI again unless it only touches
 `internal/`, and stops after its first job when the merge queue already tested the same commit.
+
+## Nightly and release checks
+
+The nightly builds the same wheels as CI, then checks three independent groups:
+
+- `toolchain / <image> <compiler>` runs the unit tests and benchmark smoke with each compiler
+  and runner image.
+- `python / <version>` runs only the unit tests on linux-x86_64 for every Python version in the
+  package classifiers.
+- `benchmarks / <platform>` runs the full benchmark smoke and every supported closed-loop pair
+  once on each of the five platforms.
+
+Nightly compile caches and Google Benchmark builds start cold. The baseline toolchain entries
+save their compile caches for CI to restore through `SCALY_CACHE_DIR`. The nightly also saves
+native libraries and Google Benchmark builds on main so pull requests can reuse them. On Mondays
+the native builds also start without a cache and compile both solver plugins from source. A
+manual nightly run accepts `rebuild-native` to exercise this source build on another day.
+Scheduled runs skip an unchanged main except on Mondays.
+
+A failing scheduled run opens or updates one issue with the labels `source:maintainer`, `kind:bug`
+and `area:tooling`. It adds `area:benchmarks` while a benchmark entry fails and removes that label
+when only other entries fail. The first passing run closes the issue.
+
+A release reuses completed checks and their built files for the exact release commit on main.
+It first looks for completed TestPyPI verification, then a completed full nightly. With neither
+available, it builds and runs the full nightly suite. An unchanged nightly that skipped its tests does not
+qualify, and missing or expired files force fresh validation. A fresh run on Monday also rebuilds
+the native plugins from source.
+
+A `pypi` release automatically uploads to TestPyPI, checks clean installations, then publishes the
+same files to PyPI. It skips the TestPyPI checks when those files already passed them for this
+commit. A `testpypi` release stops after those checks. Neither target pauses for manual approval,
+and the run summary links to any earlier validation it reused.
 
 ## Where things live
 

@@ -1,10 +1,8 @@
 name: Release
 
-# Publishes what a successful CI run on `main` built, without rebuilding. A package is released
-# when its version has no `<name>-v<version>` tag yet, so bumping the version is how a release is
-# requested and unchanged packages are left alone. `testpypi` stops after installing from
-# TestPyPI; `pypi` continues to PyPI, then tags each released package, creates its GitHub Release
-# and, when scaly itself is released, publishes the docs to GitHub Pages. Every step skips what an earlier attempt already did, so a failed run can be rerun.
+# Reuses completed checks and their exact files for this commit, or runs the full nightly suite.
+# A version without its package tag selects a release. TestPyPI verification precedes PyPI,
+# package tags, GitHub Releases and documentation publication.
 on:
   workflow_dispatch:
     inputs:
@@ -29,31 +27,17 @@ jobs:
       contents: read
       actions: read
     outputs:
-      ci-run: ${{ steps.checks.outputs.ci-run }}
       packages: ${{ steps.packages.outputs.packages }}
       pins: ${{ steps.packages.outputs.pins }}
+      artifact-run: ${{ steps.source.outputs.artifact-run }}
+      artifact-ids: ${{ steps.source.outputs.artifact-ids }}
+      reused: ${{ steps.source.outputs.reused }}
+      testpypi-verified: ${{ steps.source.outputs.testpypi-verified }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
-
-      - name: Require green CI and Docs runs for this commit
-        id: checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # A push run of a commit the merge queue tested builds nothing, so the queue's run is the one
-          # with the files.
-          for workflow in ci.yml docs.yml; do
-            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$GITHUB_SHA" \
-              --json databaseId,event,status,conclusion --jq '(map(select(.event != "push" and .conclusion == "success")) + map(select(.event == "push"))) | .[0] // empty')
-            if [ -z "$run" ] || [ "$(jq -r '.status + "/" + .conclusion' <<<"$run")" != "completed/success" ]; then
-              echo "::error::$workflow has no successful run for $GITHUB_SHA: ${run:-none}"
-              exit 1
-            fi
-            if [ "$workflow" = ci.yml ]; then echo "ci-run=$(jq -r .databaseId <<<"$run")" >> "$GITHUB_OUTPUT"; fi
-          done
 
       - name: Choose the packages to release
         id: packages
@@ -85,16 +69,41 @@ jobs:
             out.write(f"pins={' '.join(p['name'] + '==' + p['version'] for p in packages)}\n")
           EOF
 
-  collect:
+      - name: Find completed validation for this commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ steps.packages.outputs.packages }}
+        run: python3 .github/scripts/release.py select
+
+  validate:
     needs: plan
+    if: needs.plan.outputs.reused != 'true'
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    uses: ./.github/workflows/nightly.yml
+
+  collect:
+    needs: [plan, validate]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.plan.outputs.reused == 'true' || needs.validate.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
     steps:
       - uses: actions/download-artifact@v8
+        if: needs.plan.outputs.reused == 'true'
         with:
-          run-id: ${{ needs.plan.outputs.ci-run }}
           github-token: ${{ github.token }}
+          run-id: ${{ needs.plan.outputs.artifact-run }}
+          artifact-ids: ${{ needs.plan.outputs.artifact-ids }}
+          merge-multiple: true
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        if: needs.plan.outputs.reused != 'true'
+        with:
           pattern: dist-*
           merge-multiple: true
           path: dist
@@ -113,9 +122,11 @@ jobs:
         with:
           name: release-dist
           path: release/*
+          retention-days: 90
 
   testpypi:
-    needs: collect
+    needs: [plan, collect]
+    if: ${{ !cancelled() && needs.collect.result == 'success' && needs.plan.outputs.testpypi-verified != 'true' }}
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -137,6 +148,7 @@ jobs:
   verify:
     name: verify / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}${{ matrix.python && format(' / py{0}', matrix.python) || '' }}
     needs: [plan, testpypi]
+    if: ${{ !cancelled() && needs.testpypi.result == 'success' }}
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     strategy:
@@ -216,9 +228,43 @@ jobs:
         shell: bash
         run: '"$VERIFY_PYTHON" .github/scripts/windows_install.py --installed'
 
+  verified:
+    needs: [plan, collect, verify]
+    if: ${{ !cancelled() && needs.collect.result == 'success' && (needs.plan.outputs.testpypi-verified == 'true' || needs.verify.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        if: needs.plan.outputs.testpypi-verified != 'true'
+        with:
+          name: release-dist
+          path: release
+
+      - name: Check the published TestPyPI files match
+        if: needs.plan.outputs.testpypi-verified != 'true'
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: python3 .github/scripts/release.py check-testpypi
+
+      - name: Record completed TestPyPI verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: python3 .github/scripts/release.py record testpypi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: testpypi-validated
+          path: validation.json
+          retention-days: 90
+
   pypi:
-    if: inputs.target == 'pypi'
-    needs: verify
+    if: ${{ !cancelled() && inputs.target == 'pypi' && needs.verified.result == 'success' }}
+    needs: verified
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -238,6 +284,7 @@ jobs:
   # release belongs in this workflow rather than behind a tag trigger.
   github-release:
     needs: [plan, pypi]
+    if: ${{ !cancelled() && needs.pypi.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -270,7 +317,7 @@ jobs:
 
   pages:
     needs: [plan, github-release]
-    if: contains(fromJSON(needs.plan.outputs.packages).*.name, 'scaly')
+    if: ${{ !cancelled() && needs.github-release.result == 'success' && contains(fromJSON(needs.plan.outputs.packages).*.name, 'scaly') }}
     permissions:
       contents: read
       pages: write
