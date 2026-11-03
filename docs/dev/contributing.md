@@ -150,9 +150,15 @@ A failing scheduled run opens or updates one issue with the labels `source:maint
 and `area:tooling`. It adds `area:benchmarks` while a benchmark entry fails and removes that label
 when only other entries fail. The first passing run closes the issue.
 
-A release runs the full nightly suite on its commit, then verifies its built distributions through
-TestPyPI before publishing those same files to PyPI. A release started on a Monday also rebuilds
-the native plugins from source.
+A release reuses completed checks and their built files for the exact release commit on main.
+It first looks for completed TestPyPI verification, then a full nightly. With neither available,
+it builds and runs the full nightly suite. An unchanged nightly that skipped its tests does not
+qualify, and missing or expired files force fresh validation.
+
+A `pypi` release automatically uploads to TestPyPI, checks clean installations, then publishes the
+same files to PyPI. It skips the TestPyPI checks when those files already passed them for this
+commit. A `testpypi` release stops after those checks. Neither target pauses for manual approval,
+and the run summary links to any earlier validation it reused.
 
 ## Where things live
 

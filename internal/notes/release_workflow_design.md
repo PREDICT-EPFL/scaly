@@ -25,21 +25,32 @@ The nightly saves native libraries and Google Benchmark on main so pull requests
 
 A release is started by hand on `main`, with the target `testpypi` or `pypi`:
 
-1. It chooses the packages, then calls `nightly.yml` on the release commit. This runs every
-   toolchain, Python and benchmark entry and builds the distributions in the release run itself.
-   No previous CI or Docs run is required. A Monday release rebuilds the native plugins from source
-   under the same rule as the scheduled nightly.
-2. A package is released when its version has no `<name>-v<version>` tag yet, so bumping a version
-   is how a release is requested and unchanged packages get no new tag. A package that changed
-   since its last tag without a version bump produces a warning.
-3. After the full suite passes, it collects this run's artifacts and keeps the released packages'
-   files. These files pass unchanged through TestPyPI and PyPI publication.
-4. It publishes them to TestPyPI, then installs them from TestPyPI (everything else from PyPI) in
-   clean environments and solves with every backend. A `testpypi` run stops here.
-5. It publishes to PyPI, then creates each package's tag at the commit together with its GitHub
-   Release, with that package's files attached.
-6. When `scaly` itself is released, it publishes that commit's documentation to GitHub Pages
-   through `pages.yml`. A plugin-only release leaves the site alone.
+1. It chooses packages whose versions have no `<name>-v<version>` tag. A changed package with
+   an existing version tag produces a warning and is left out.
+2. It looks for completed validation on main for the exact release commit. Completed TestPyPI
+   verification takes priority, followed by full nightly validation. It reuses the recorded files
+   and skips the checks they already passed. With no usable record, it builds and runs the full
+   nightly suite in the release run. A fresh run on Monday also rebuilds the native plugins.
+3. A full nightly records its commit, run attempt and immutable artifact IDs only after every
+   toolchain, Python and benchmark entry passes. An unchanged nightly that skips the suite writes
+   no record. Missing or expired artifacts disqualify a record.
+4. It collects the selected packages' files without rebuilding. Unless those files already passed
+   TestPyPI verification for this commit, it uploads them to TestPyPI, installs them in clean
+   environments and solves with every backend. It records the verified artifact IDs and package
+   versions after every installation check passes and TestPyPI's file hashes match the selected
+   files. A later publication failure preserves this completed verification for the next attempt.
+   A `testpypi` run stops here.
+5. A `pypi` run automatically publishes those same files to PyPI, then creates each package's tag
+   at the commit together with its GitHub Release and attached files. There is no approval pause.
+6. When `scaly` itself is released, it publishes that commit's documentation through `pages.yml`.
+   A plugin-only release leaves the site alone.
+
+A release after the overnight nightly therefore skips the full build and suite. A `pypi` dispatch
+after a successful `testpypi` dispatch also skips the TestPyPI upload and installation checks.
+The run summary links to the earlier validation it reused. Selection reads only this repository's
+main runs of `nightly.yml` and `release.yml`; it checks the commit, run attempt, artifact IDs and,
+for TestPyPI, the package versions covered by the record. Failed standalone nightlies do not
+qualify. A failed release can supply a record from a validation stage it completed successfully.
 
 Tags are created by the release workflow only, after the PyPI upload succeeded, and are never moved
 or reused. Every step skips what an earlier attempt already did, so a partly failed release is
