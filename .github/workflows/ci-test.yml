@@ -90,10 +90,6 @@ jobs:
             uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
           fi
 
-      - name: Measure the first compile (temporary, #252)
-        if: runner.os == 'Windows' && inputs.suite != 'python'
-        run: uv run .github/scripts/measure_first_compile.py
-
       # zig builds its C and C++ runtimes for the host CPU on first use, which on a fresh runner takes
       # minutes, longer than the time limits of the examples and the benchmark driver tests. Its cache
       # is kept between runs, keyed on zig's version and its model and features of this CPU, since
