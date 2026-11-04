@@ -34,8 +34,8 @@ jobs:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
           prune-cache: true
-          cache-dependency-glob: ""
-          cache-suffix: build
+          cache-dependency-glob: uv.lock
+          cache-suffix: ${{ matrix.platform }}
 
       - name: Set up Python
         run: uv python install

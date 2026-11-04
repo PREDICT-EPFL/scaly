@@ -45,8 +45,8 @@ jobs:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (inputs.suite == 'ci' || matrix.save-cache) }}
           prune-cache: true
-          cache-dependency-glob: ""
-          cache-suffix: test
+          cache-dependency-glob: uv.lock
+          cache-suffix: ${{ matrix.platform }}
 
       - name: Select Python and compilers
         env:
