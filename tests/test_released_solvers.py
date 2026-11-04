@@ -166,7 +166,13 @@ def test_restored_local_build_without_compiler(tmp_path, monkeypatch, solver):
   context = {**saved, "tools": {"FC": "gfortran: none"}}
   assert helper["find_local"](tmp_path, solver, "digest", context) == entry
   context["tools"]["FC"] = "gfortran: GCC 17"
+  assert helper["find_local"](tmp_path, solver, "digest", context) == entry
+  saved["env"] = {"FC": "gfortran"}
+  (entry / "native-build.json").write_text(json.dumps(saved))
+  context["env"] = {"FC": "gfortran"}
   assert helper["find_local"](tmp_path, solver, "digest", context) is None
+  context["tools"]["FC"] = "gfortran: GCC 16"
+  assert helper["find_local"](tmp_path, solver, "digest", context) == entry
 
 
 @pytest.mark.parametrize("solver", ["ipopt", "piqp"])

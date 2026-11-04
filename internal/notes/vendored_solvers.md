@@ -79,7 +79,8 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default. The hook first trie
   as the source of both the URL and digest. PyPI entries use the native hash and platform. Source
   entries retain compiler identity and build environment. `SCALY_BUILD_SOLVERS=source` bypasses reuse, including on Monday nightlies.
   Releases take the ordinary path. CI probes native availability before installing Fortran tools,
-  retaining recorded compiler identities for restored builds when those tools are absent.
+  retaining recorded compiler identities for restored builds when default compilers differ or
+  are absent. Explicit compiler selections still require matching metadata.
   Linux builds reach the host cache through cibuildwheel's `/host` mount. CI cache keys use the same recipe files, pins and licenses.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built. On x86-64, `TARGET=PRESCOTT` fixes the common code to a Prescott baseline instead of relying on build-host CPU detection. `DYNAMIC_ARCH=1` still includes optimized kernels selected at runtime.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.

@@ -50,7 +50,9 @@ for OpenBLAS. Builds are shared by checkouts through `~/.cache/scaly/solvers`. T
 hash covers the plugin's `native_build.py` recipe, `build_config.json` and license texts.
 The hook and shared lookup helper stay outside it, so lookup fixes reuse existing native libraries. Released
 libraries are cached by this hash and platform alone. Source builds also include compiler
-identity and build environment in their key. Builds unused for 30 days are deleted. A failed
+identity and build environment in their key. Without an explicit compiler selection, lookup can
+reuse the recorded compiler build even when the machine's default compiler differs. Explicit
+`CC`, `CXX` and `FC` selections must match the cached build. Builds unused for 30 days are deleted. A failed
 build keeps its sources and build trees in the cache directory, at the path it prints.
 
 `SCALY_BUILD_SOLVERS=required` makes a missing toolchain fatal when neither cache nor PyPI can

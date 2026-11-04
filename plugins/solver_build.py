@@ -90,13 +90,13 @@ def download_release(package: str, digest: str, destination: Path) -> bool:
 
 
 def find_local(cache: Path, package: str, digest: str, context: dict) -> Path | None:
-  """Find a completed build with matching inputs, checking the compilers available on this machine."""
+  """Find matching native inputs, checking available compilers only when explicitly selected."""
   for entry in sorted(cache.glob(f"{package}-*"), key=lambda p: p.stat().st_mtime, reverse=True):
     try:
       saved = json.loads((entry / "native-build.json").read_text())
       if saved["hash"] != digest or saved["platform"] != context["platform"] or saved["env"] != context["env"]:
         continue
-      if any(not value.endswith(": none") and value != saved["tools"][name] for name, value in context["tools"].items()):
+      if any(context["env"].get(name) and not value.endswith(": none") and value != saved["tools"][name] for name, value in context["tools"].items()):
         continue
       if all((entry / name).is_dir() for name in OUTPUTS):
         return entry
