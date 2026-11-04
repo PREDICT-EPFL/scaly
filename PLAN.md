@@ -12,4 +12,6 @@ Inputs: issue #250, native-code decisions 2–4 in
 
 No changes to uv cache settings, smoke layouts, zig or JIT. No merge, tags or main push.
 
-Focused tests: 11 pass, SHA-256 perturbation fails as expected. Full suite: 2821 pass, 50 skip. Type, format and lint pass; smoke/docs pending. Tests were run after implementation, a deviation from test-first procedure. Baseline was corrected after an interleaved stderr line corrupted initial generation.
+Focused tests: 11 pass, SHA-256 perturbation fails as expected. Full suite: 2821 pass, 50 skip. All pre-merge checks pass, including smoke/docs. Tests were run after implementation, a deviation from test-first procedure. Baseline was corrected after an interleaved stderr line corrupted initial generation.
+
+Review by Fable 5.1 found workspace-glob warning and uncaught HTTPException. Both fixed; added two tests that failed before fix and pass afterwards. Environment-variable table updated. Full checks rerunning before delta check. First CI run 41810845064: cold macOS arm64 setup 14s, x86_64 36s, Windows setup 48s; remaining builds running. Warm timings pending. Linux re-repair with a real released native payload remains to verify once an artifact is available.

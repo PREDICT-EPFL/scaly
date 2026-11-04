@@ -73,8 +73,9 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default. The hook first trie
   its local cache, then the newest PyPI release's compatible wheel, then source. It verifies
   the wheel against PyPI's SHA-256 and requires the recorded native hash to match before taking
   libraries, headers and licenses. Missing metadata, network failures and mismatches build from
-  source. PyPI entries use the native hash and platform; source entries retain compiler identity
-  and build environment. `SCALY_BUILD_SOLVERS=source` bypasses reuse, including on Monday nightlies.
+  source. The checksum verifies transport integrity against the index metadata. It trusts PyPI
+  as the source of both the URL and digest. PyPI entries use the native hash and platform. Source
+  entries retain compiler identity and build environment. `SCALY_BUILD_SOLVERS=source` bypasses reuse, including on Monday nightlies.
   Releases take the ordinary path. CI probes native availability before installing Fortran tools,
   retaining recorded compiler identities for restored builds when those tools are absent.
   Linux builds reach the host cache through cibuildwheel's `/host` mount. Cache keys include

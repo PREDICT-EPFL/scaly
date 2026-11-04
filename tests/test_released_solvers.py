@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -35,7 +36,7 @@ def _wheel(package, digest):
   return buffer.getvalue()
 
 
-@pytest.mark.parametrize("failure", [None, "hash", "platform", "offline", "sha256"])
+@pytest.mark.parametrize("failure", [None, "hash", "platform", "offline", "sha256", "truncated", "http"])
 def test_release_lookup(tmp_path, monkeypatch, failure):
   helper = runpy.run_path(str(ROOT / "plugins/solver_build.py"))
   digest = "a" * 64
@@ -55,6 +56,15 @@ def test_release_lookup(tmp_path, monkeypatch, failure):
   def fetch(url, **kwargs):
     if failure == "offline":
       raise urllib.error.URLError("offline")
+
+    class TruncatedResponse(io.BytesIO):
+      def read(self, *args):
+        if failure == "truncated":
+          raise http.client.IncompleteRead(b"")
+        raise http.client.HTTPException("invalid HTTP response")
+
+    if not url.endswith("/json") and failure in {"truncated", "http"}:
+      return TruncatedResponse()
     return io.BytesIO(json.dumps(metadata).encode() if url.endswith("/json") else payload)
 
   monkeypatch.setattr("urllib.request.urlopen", fetch)

@@ -89,6 +89,7 @@ default-groups = ["dev", "docs"]
 
 [tool.uv.workspace]
 members = ["plugins/*"]
+exclude = ["plugins/solver_build.py"]
 
 [tool.uv.sources]
 scaly-ipopt = { workspace = true }

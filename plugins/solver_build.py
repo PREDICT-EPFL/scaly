@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -84,7 +85,7 @@ def download_release(package: str, digest: str, destination: Path) -> bool:
               target.chmod((wheel.getinfo(name).external_attr >> 16) & 0o777 or 0o644)
           out.rename(destination)
         return True
-  except (OSError, ValueError, KeyError, zipfile.BadZipFile, urllib.error.URLError):
+  except (OSError, ValueError, KeyError, zipfile.BadZipFile, urllib.error.URLError, http.client.HTTPException):
     return False
   return False
 
