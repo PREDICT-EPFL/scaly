@@ -63,7 +63,7 @@ def timed(command: list[str], cwd: Path, env: dict[str, str]) -> float:
   return time.perf_counter() - start
 
 
-def scaly_call(name: str, env: dict[str, str], cwd: Path) -> float:
+def scaly_call(name: str, env: dict[str, str], cwd: Path) -> tuple[float, float]:
   start = time.perf_counter()
   out = subprocess.run([sys.executable, "-c", PROGRAM.replace("NAME", repr(name))], cwd=cwd, env=env, check=True, capture_output=True, text=True)
   wall = time.perf_counter() - start
