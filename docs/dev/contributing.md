@@ -18,8 +18,12 @@ Run commands through `uv run` so they use the project's pinned environment. For 
 `uv run pytest` for tests and `uv run benchmarks/run.py` for the benchmark script.
 
 Scaly itself is pure Python, but the `scaly-piqp` and `scaly-ipopt` plugins vendor their solvers
-and build them from source on the first sync. CMake comes from PyPI as a build requirement, but a
-C++ compiler and a Fortran compiler have to be installed system-wide:
+and look first in the local solver cache, then in the newest PyPI release. A compatible release
+wheel supplies its libraries, headers and licenses when its recorded native-input hash matches
+the checkout. The hook verifies the download against PyPI's SHA-256 before copying any files.
+An offline machine, a missing platform wheel or a different hash falls back to a source build.
+Only source builds need a system C++ compiler and, for IPOPT, a Fortran compiler. CMake comes
+from PyPI as a build requirement:
 
 ```bash
 # macOS
@@ -41,25 +45,28 @@ Then:
 SCALY_BUILD_SOLVERS=required uv sync
 ```
 
-A cold build takes 5 to 8 minutes on Linux and macOS, and about an hour on Windows, most of it
-for OpenBLAS. Each build lands in a cache shared by every checkout on the machine,
-`~/.cache/scaly/solvers` by default, under a hash of everything that decides its result: the
-plugin's `hatch_build.py`, its pins, its license texts, the platform and the compilers. A new
-worktree therefore copies the build its branch needs from the cache, and builds only when no
-checkout has built that version yet. Builds unused for 30 days are deleted. A failed build keeps its
-sources and build trees in the cache directory, at the path it prints.
+A source build takes 5 to 8 minutes on Linux and macOS, and about an hour on Windows, most of it
+for OpenBLAS. Builds are shared by checkouts through `~/.cache/scaly/solvers`. The native-input
+hash covers the plugin's `native_build.py` recipe, `build_config.json` and license texts.
+The hook and shared lookup helper stay outside it, so lookup fixes reuse existing native libraries. Released
+libraries are cached by this hash and platform alone. Source builds also include compiler
+identity and build environment in their key. Without an explicit compiler selection, lookup can
+reuse the recorded compiler build even when the machine's default compiler differs. Explicit
+`CC`, `CXX` and `FC` selections must match the cached build. Builds unused for 30 days are deleted. A failed
+build keeps its sources and build trees in the cache directory, at the path it prints.
 
-Without `SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
-libraries instead of failing. The solver tests then skip, and everything else works. See
-[Environment variables](../guide/env_vars.md).
+`SCALY_BUILD_SOLVERS=required` makes a missing toolchain fatal when neither cache nor PyPI can
+supply the libraries. The default `auto` lets an editable install skip them instead, and the
+solver tests then skip. `SCALY_BUILD_SOLVERS=skip` skips native preparation entirely.
 
-To force a clean rebuild, delete the plugin's entry in the cache (`piqp-*` or `ipopt-*`) and the
-checkout's `plugins/scaly-*/.build_key`, then run `uv sync --reinstall-package scaly-piqp` or
-`scaly-ipopt`.
+To force compilation even when cached or released libraries match, use
+`SCALY_BUILD_SOLVERS=source uv sync --reinstall-package scaly-piqp --reinstall-package scaly-ipopt`.
+The Monday nightly uses the same forcing value. Releases use the ordinary lookup order, so their
+native libraries remain byte-identical until the recipe changes.
 
 In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
 in `src/scaly_*/build_config.json`, which pins its version, and a row in the
-`_write_third_party_notices` call of that plugin's `hatch_build.py`, which copies its license texts
+`_write_third_party_notices` call of that plugin's `native_build.py`, which copies its license texts
 into the wheel. The `test_*_notices.py` test in each of those plugins fails when a pinned dependency
 has no license directory.
 
@@ -132,9 +139,9 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
   has a row per platform saying whether the native libraries were built or came from the cache,
   and the smoke result.
 
-The native libraries are rebuilt only when a plugin's `hatch_build.py`, `build_config.json` or
-`licenses/` changes, so an edit to a plugin's Python code reuses them. Google Benchmark is built once
-per compiler and restored from the cache too. A push to main runs CI again unless it only touches
+The native cache tracks each plugin's `native_build.py`, `build_config.json` and `licenses/`, so
+edits to Python wrappers or lookup code reuse the libraries. Source builds also retain compiler
+identities in their keys. Google Benchmark is built once per compiler and restored from the cache too. A push to main runs CI again unless it only touches
 `internal/`, and stops after its first job when the merge queue already tested the same commit.
 
 ## Nightly and release checks

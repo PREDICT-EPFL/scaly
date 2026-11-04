@@ -72,9 +72,10 @@ installing from source. It does not rebuild libraries in an installed wheel.
 
 | Value | Behavior |
 | --- | --- |
-| `auto` | Default. Build native libraries. Editable installs may skip unavailable toolchains, while wheel builds require them. |
+| `auto` | Default. Try cached and released native libraries, then build from source. Editable installs may skip unavailable toolchains. |
 | `skip`, `0`, or `false` | Skip native solver builds |
-| `required`, `1`, or `true` | Require the native build even for an editable install |
+| `required`, `1`, or `true` | Require native libraries even for an editable install, using the cache and releases first |
+| `source` or `force` | Compile from source even when cached or released libraries match |
 
 `SCALY_SOLVER_CACHE` sets the directory where the build hooks keep finished
 builds, shared by every source checkout on the machine. It defaults to

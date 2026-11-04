@@ -89,6 +89,7 @@ default-groups = ["dev", "docs"]
 
 [tool.uv.workspace]
 members = ["plugins/*"]
+exclude = ["plugins/solver_build.py"]
 
 [tool.uv.sources]
 scaly-ipopt = { workspace = true }
@@ -123,6 +124,7 @@ exclude = [
   "hatch_build.py",
   "third_party/**",
   "plugins/*/hatch_build.py",
+  "plugins/*/native_build.py",
   "plugins/*/third_party/**",
   ".venv/**",
   "internal/**",
