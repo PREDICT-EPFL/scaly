@@ -83,6 +83,25 @@ uv run scaly_codegen mymodule:solve -o generated/
 
 </div>
 
+## Citing Scaly
+
+Scaly is described in the preprint [Scaly: an Optimizing Compiler for Optimal
+Control](https://arxiv.org/abs/2610.41762). If you use Scaly in your work,
+please cite it:
+
+```bibtex
+@misc{oancea2026scaly,
+  title         = {Scaly: an Optimizing Compiler for Optimal Control},
+  author        = {Oancea, Tudor A. and Jones, Colin N.},
+  year          = {2026},
+  eprint        = {2610.41762},
+  archivePrefix = {arXiv},
+  primaryClass  = {eess.SY},
+  doi           = {10.48550/arXiv.2610.41762},
+  url           = {https://arxiv.org/abs/2610.41762},
+}
+```
+
 ## Acknowledgements
 
 Scaly is developed by:
