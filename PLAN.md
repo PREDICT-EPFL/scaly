@@ -10,3 +10,5 @@ Scope: setup-uv policy across workflows and a separate Linux smoke job, followin
 All phases are sequential. Preserve toolchain installs, build hooks and Windows warming.
 
 Local pre-merge hook passed with SCALY_BUILD_SOLVERS=skip: 2810 tests passed, 50 skipped; type, lint, format, benchmark smoke, docs and private-name checks passed. Review found stale contributor prose, now fixed. Kept gbench saves because restore-only request applies to uv, and documented immutable uv cache tradeoff. Probe run 41809991799 remains running. Review delta check, probe removal, final run and timing evidence remain.
+
+Delta review approved. Verdict posted on PR. Contributor prose wraps corrected locally; do not push until probe completes because pushing cancels its CI run. Latest main runs skip all checks after merge-queue validation; latest full main push run is 41453451599, 27m06s wall time, 102.07 runner minutes across 25 jobs (older layout, so disclose this limit). Data: /tmp/scaly-main-baseline-jobs.json. A more comparable queue run on current main would be useful alongside that required main baseline. Full probe logs are unavailable through gh until run completion.
