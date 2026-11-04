@@ -7,7 +7,9 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -22,6 +24,8 @@ def _shared_lib_name(system: str, base: str) -> str:
     return f"lib{base}.dylib"
   if system == "Linux":
     return f"lib{base}.so"
+  if system == "Windows":
+    return f"libscaly_{base}-3.dll"
   raise RuntimeError(f"Unsupported platform: {system}")
 
 
@@ -95,12 +99,17 @@ def _has_cxx_compiler() -> bool:
 
 def _missing_ipopt_tools() -> list[str]:
   missing = [cmd for cmd in ("git", "make", "cmake") if shutil.which(cmd) is None]
+  if os.name == "nt":
+    missing += [cmd for cmd in ("ninja", "dlltool") if shutil.which(cmd) is None]
   if shutil.which("cc") is None:
     missing.append("cc")
   if not _has_cxx_compiler():
     missing.append("c++")
-  if _find_fortran_compiler(required=False) is None:
+  fc = _find_fortran_compiler(required=False)
+  if fc is None:
     missing.append("gfortran")
+  elif os.name == "nt" and not _msys2_bash(fc).is_file():
+    missing.append("MSYS2 UCRT64 GFortran")
   return missing
 
 
@@ -112,8 +121,17 @@ GKLIB_COMMIT = _BUILD_CONFIG["metis"]["gklib_commit"]
 OPENBLAS_BRANCH = _BUILD_CONFIG["blas"]["linux"]["branch"]
 
 
+def _msys2_bash(fc: str) -> Path:
+  return Path(fc).resolve().parents[2] / "usr" / "bin" / "bash.exe"
+
+
 def _run(cmd: list[str], cwd: Path, env: dict | None = None, attempts: int = 1) -> None:
   """Run `cmd`, retrying a failure `attempts - 1` times; downloads use 3 to ride out a busy host."""
+  if os.name == "nt":
+    bash = _msys2_bash(_find_fortran_compiler())
+    args = [re.sub(r"([A-Za-z]):/(?!/)", lambda m: f"/{m[1].lower()}/", arg.replace("\\", "/")) for arg in cmd]
+    cmd = [str(bash), "-lc", shlex.join(args)]
+    env = dict(os.environ if env is None else env, MSYSTEM="UCRT64", CHERE_INVOKING="1")
   for attempt in range(1, attempts + 1):
     try:
       subprocess.run(cmd, cwd=cwd, env=env, check=True)
@@ -164,14 +182,24 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
   build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
+  # The BLAS and LAPACK sub-makes add members to one static archive concurrently, which corrupts it
+  # on many-core machines. Serialise only the archive writes, so compilation stays parallel.
+  for variable, tool in (("AR", "ar"), ("RANLIB", "ranlib")):
+    command = [sys.executable, str(Path(__file__).resolve()), str(third_party_dir / "openblas-archive.lock"), shutil.which(tool) or tool]
+    build_flags.append(f"{variable}={shlex.join(command)}")
   # Fix the common-code baseline instead of detecting a potentially unsupported build CPU.
   # DYNAMIC_ARCH still selects optimized kernels at runtime.
-  if platform.machine() == "x86_64":
+  if platform.machine().lower() in {"x86_64", "amd64"}:
     build_flags.append("TARGET=PRESCOTT")
   _run(["make", f"-j{jobs}", *build_flags], cwd=src_dir)
   install_dir.mkdir(parents=True, exist_ok=True)
   _run(["make", f"PREFIX={install_dir.resolve()}", *build_flags, "install"], cwd=src_dir)
   return install_dir
+
+
+def _archive(lock: Path, command: list[str]) -> None:
+  with _locked(lock):
+    subprocess.run(command, check=True)
 
 
 def _clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
@@ -197,6 +225,8 @@ def _cmake_build(hook: "BuildHook", src_dir: Path, build_dir: Path, install_dir:
     "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
     "-DBUILD_SHARED_LIBS=OFF",
   ]
+  if os.name == "nt":
+    common += ["-G", "Ninja", "-DCMAKE_C_STANDARD=11"]
   _run(["cmake", str(src_dir.resolve()), *common, *defines], cwd=build_dir)
   _run(["cmake", "--build", ".", f"-j{os.cpu_count() or 2}"], cwd=build_dir)
   _run(["cmake", "--install", "."], cwd=build_dir)
@@ -218,6 +248,9 @@ def _build_metis(hook: "BuildHook", third_party_dir: Path, install_dir: Path) ->
   # METIS' GCC flags hardcode -march=native, which would tie the wheel to the build host.
   gkbuild = metis_src / "conf" / "gkbuild.cmake"
   gkbuild.write_text(gkbuild.read_text().replace(" -march=native", ""))
+  if os.name == "nt":
+    cmake = metis_src / "CMakeLists.txt"
+    cmake.write_text(cmake.read_text().replace('add_subdirectory("programs")', ""))
   xinclude = metis_src / "build" / "xinclude"
   xinclude.mkdir(parents=True, exist_ok=True)
   (xinclude / "metis.h").write_text("#define IDXTYPEWIDTH 32\n#define REALTYPEWIDTH 32\n" + (metis_src / "include" / "metis.h").read_text())
@@ -255,6 +288,8 @@ def _build_mumps(
     f"--with-lapack-lflags={lapack_lflags}",
     f"FC={fc}",
   ]
+  if os.name == "nt":
+    configure_args.append("--without-openmp")
   _run(configure_args, cwd=src_dir)
   hook.app.display_info("Building MUMPS (this can take a couple of minutes)...")
   _run(["make", f"-j{jobs}"], cwd=src_dir)
@@ -421,6 +456,31 @@ def _linux_major_so_name(path: Path) -> str:
   return ".".join(parts[:3]) if len(parts) >= 3 else path.name
 
 
+# The GCC runtime that the MinGW-built Ipopt and MUMPS DLLs import, all from the toolchain's `bin`.
+_WINDOWS_VENDORED = ("libgcc_s_seh-1.dll", "libgfortran-5.dll", "libquadmath-0.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
+
+
+def _namespace_windows_runtime(lib_dir: Path, lib_name: str) -> None:
+  import pefile
+
+  dlls = sorted(lib_dir.glob("*.dll"))
+  names = {path.name.lower(): f"scaly_ipopt_{path.name}" for path in dlls if path.name != lib_name}
+  for path in dlls:
+    with pefile.PE(str(path)) as pe:
+      deps = [entry.dll.decode("ascii") for entry in pe.DIRECTORY_ENTRY_IMPORT]
+    changes = [arg for dep in deps if dep.lower() in names for arg in ("-change", dep, names[dep.lower()])]
+    if changes:
+      subprocess.run([sys.executable, "-m", "delvewheel", "replace-needed", str(path), "--strip", *changes], check=True)
+  for old, new in names.items():
+    (lib_dir / old).rename(lib_dir / new)
+  with pefile.PE(str(lib_dir / lib_name)) as pe:
+    exports = sorted(symbol.name.decode("ascii") for symbol in pe.DIRECTORY_ENTRY_EXPORT.symbols if symbol.name is not None)
+  definition = lib_dir / "ipopt.def"
+  definition.write_text("EXPORTS\n" + "\n".join(exports) + "\n", encoding="ascii")
+  subprocess.run(["dlltool", "-D", lib_name, "-d", str(definition), "-l", str(lib_dir / "ipopt.lib")], check=True)
+  definition.unlink()
+
+
 # Everything else that decides the built files, beside this hook, the pins and the license texts.
 _KEY_ENV = ("CC", "CXX", "FC", "CFLAGS", "CXXFLAGS", "FFLAGS", "FCFLAGS", "CPPFLAGS", "LDFLAGS", "MACOSX_DEPLOYMENT_TARGET")
 _OUTPUTS = ("lib", "include", "licenses")
@@ -441,6 +501,17 @@ def _tool_identity(cmd: str) -> str:
   return f"{path}: {out.splitlines()[0] if out else ''}"
 
 
+def _remove_tree(path: Path) -> None:
+  def remove_readonly(function, filename, error):
+    if not isinstance(error, PermissionError):
+      raise error
+    os.chmod(filename, stat.S_IWRITE)
+    function(filename)
+
+  if path.exists():
+    shutil.rmtree(path, onexc=remove_readonly)
+
+
 def _cache_key(root: Path) -> str:
   """Hash every input of the build, so two checkouts share a build exactly when it would come out the same."""
   digest = hashlib.sha256()
@@ -458,9 +529,32 @@ def _cache_key(root: Path) -> str:
 @contextmanager
 def _locked(path: Path, *, wait: bool = True):
   """Hold an exclusive lock on `path`, yielding whether it was taken. Lock files are never deleted."""
+  path.parent.mkdir(parents=True, exist_ok=True)
+  if os.name == "nt":
+    import msvcrt
+
+    with path.open("a+b") as f:
+      if f.seek(0, os.SEEK_END) == 0:
+        f.write(b"\0")
+        f.flush()
+      while True:
+        f.seek(0)
+        try:
+          msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+          break
+        except OSError:
+          if not wait:
+            yield False
+            return
+          time.sleep(0.1)
+      try:
+        yield True
+      finally:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    return
   import fcntl
 
-  path.parent.mkdir(parents=True, exist_ok=True)
   with path.open("w") as f:
     try:
       fcntl.flock(f, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -480,7 +574,7 @@ def _prune_cache(cache: Path) -> None:
       with _locked(cache / "locks" / f"{path.name.removeprefix('build-')}.lock", wait=False) as held:
         # a build may have replaced or published the path since it was listed
         if held and path.exists() and path.stat().st_mtime <= cutoff:
-          shutil.rmtree(path)
+          _remove_tree(path)
 
 
 def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path, key: str, missing_tools, build) -> list[str]:
@@ -495,7 +589,7 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
       if missing := missing_tools():
         return missing
       scratch = cache / f"build-{entry.name}"
-      shutil.rmtree(scratch, ignore_errors=True)
+      _remove_tree(scratch)
       (scratch / "src").mkdir(parents=True)
       try:
         build(scratch / "src", scratch / "out")
@@ -503,7 +597,7 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
         hook.app.display_error(f"The build failed; its sources and build trees are kept in {scratch}")
         raise
       (scratch / "out").rename(entry)
-      shutil.rmtree(scratch)
+      _remove_tree(scratch)
     os.utime(entry)
     stamp = root / ".build_key"
     stamp.unlink(missing_ok=True)
@@ -523,9 +617,11 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   system = platform.system()
   lib_name = _shared_lib_name(system, "ipopt")
   hook.app.display_info("Building IPOPT stack (METIS -> MUMPS -> IPOPT)...")
-  if system not in {"Darwin", "Linux"}:
+  if system not in {"Darwin", "Linux", "Windows"}:
     raise RuntimeError(f"Unsupported platform: {system}")
-  ldflags = "" if system == "Darwin" else LINUX_RPATH_LDFLAGS
+  if system == "Windows" and platform.machine().lower() != "amd64":
+    raise RuntimeError("Windows IPOPT builds require x86-64 Python.")
+  ldflags = LINUX_RPATH_LDFLAGS if system == "Linux" else ""
   fc = _find_fortran_compiler()
   hook.app.display_info(f"Using Fortran compiler: {fc}")
   if system == "Darwin":
@@ -545,6 +641,8 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     if not versioned:
       raise RuntimeError(f"Could not find versioned libipopt under {ipopt_install / 'lib'}")
     built_lib = versioned[-1]
+  elif system == "Windows":
+    built_lib = ipopt_install / "bin" / "libipopt-3.dll"
   else:
     versioned = sorted((ipopt_install / "lib").glob("libipopt.so.*"))
     built_lib = versioned[-1] if versioned else ipopt_install / "lib" / lib_name
@@ -559,6 +657,12 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   if system == "Darwin":
     _run(["install_name_tool", "-id", f"@rpath/{lib_name}", str(dst_path)], cwd=lib_dir)
     _bundle_macos_runtime(hook, lib_dir, lib_name)
+  elif system == "Windows":
+    for name in _WINDOWS_VENDORED:
+      src, dst = Path(fc).resolve().parent / name, lib_dir / name
+      hook.app.display_info(f"Bundling {src} -> {dst}")
+      shutil.copy2(src, dst)
+    _namespace_windows_runtime(lib_dir, lib_name)
   else:
     _bundle_linux_runtime(hook, lib_dir, lib_name)
     if not _linux_self_contained(lib_dir, lib_name):
@@ -570,7 +674,8 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
 
   mumps_src = third_party_dir / "ThirdParty-Mumps"
   gklib_src = third_party_dir / "GKlib"
-  runtime = sorted(p.name for p in lib_dir.iterdir() if p.name.startswith(("libgfortran", "libquadmath", "libgcc_s")))
+  names = (p.name.removeprefix("scaly_ipopt_") for p in lib_dir.iterdir())
+  runtime = sorted(name for name in names if name.startswith(("libgfortran", "libquadmath", "libgcc_s", "libstdc++")))
   entries = [
     ("ipopt", _BUILD_CONFIG["ipopt"]["version"], "EPL-2.0", "https://github.com/coin-or/Ipopt", [third_party_dir / "Ipopt" / "LICENSE"]),
     ("mumps", _BUILD_CONFIG["mumps"]["version"], "CeCILL-C", "https://mumps-solver.org", [mumps_src / "MUMPS" / "LICENSE"]),
@@ -597,7 +702,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
       [vendored / "gcc-runtime" / name for name in ("COPYING3", "COPYING.RUNTIME")],
     ),
   ]
-  if system == "Linux":
+  if system != "Darwin":
     openblas_src = third_party_dir / "openblas"
     entries.append(
       (
@@ -606,6 +711,16 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
         "BSD-3-Clause",
         "https://github.com/OpenMathLib/OpenBLAS",
         [openblas_src / "LICENSE", openblas_src / "GotoBLAS_00License.txt"],
+      )
+    )
+  if system == "Windows":
+    entries.append(
+      (
+        "winpthreads",
+        "libwinpthread-1.dll",
+        "MIT and BSD-3-Clause",
+        "https://www.mingw-w64.org",
+        [Path(fc).resolve().parents[1] / "share" / "licenses" / "libwinpthread" / "COPYING"],
       )
     )
   _write_third_party_notices(hook, licenses_dir, "scaly-ipopt", entries)
@@ -633,13 +748,6 @@ class BuildHook(BuildHookInterface):
     if mode == "skip":
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
       return
-    if system == "Windows":
-      msg = "Windows IPOPT build not yet supported — track in https://github.com/PREDICT-EPFL/scaly/issues/1"
-      if strict:
-        raise RuntimeError(msg)
-      self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
-      return
-
     key = _cache_key(root)
     stamp = root / ".build_key"
     if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
@@ -653,7 +761,12 @@ class BuildHook(BuildHookInterface):
     if missing:
       msg = f"missing native toolchain for IPOPT build: {', '.join(missing)}"
       if strict:
-        raise RuntimeError(f"{msg}. Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux).")
+        hint = (
+          "Run the build in MSYS2 UCRT64 with GCC, GFortran, CMake, Ninja, make and git installed."
+          if system == "Windows"
+          else "Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux)."
+        )
+        raise RuntimeError(f"{msg}. {hint}")
       self.app.display_info(f"Skipping IPOPT build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
 
   def clean(self, versions: list[str]) -> None:
@@ -663,3 +776,8 @@ class BuildHook(BuildHookInterface):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)
+
+
+# `_build_openblas` runs this file as its locked `ar` and `ranlib`.
+if __name__ == "__main__":
+  _archive(Path(sys.argv[1]), sys.argv[2:])

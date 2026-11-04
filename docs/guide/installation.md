@@ -25,10 +25,6 @@ Optimization solvers are optional packages:
 | Scaly SQP, for nonlinear problems | `uv add "scaly[sqp]"` | `pip install "scaly[sqp]"` |
 | All three | `uv add "scaly[solvers]"` | `pip install "scaly[solvers]"` |
 
-`scaly-ipopt` is not available on Windows, so `scaly[ipopt]` and
-`scaly[solvers]` cannot be installed there. `scaly[piqp,sqp]` installs the
-other two solvers.
-
 A solver plugin connects the symbolic problem to a native optimization library.
 The solver wheels include those native libraries. If no wheel matches the
 platform, a source build needs additional tools, described in

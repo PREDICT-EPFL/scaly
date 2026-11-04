@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import scaly as sc
+import scaly_ipopt
 import scaly_piqp
 import scaly_sqp
 
@@ -36,7 +37,7 @@ values = np.array([0.25, -0.5])
 np.testing.assert_allclose(core(values), np.sin(values) + values * values, atol=1e-12)
 
 site = Path(sysconfig.get_path("purelib")).resolve()
-for module in (sc, scaly_piqp, scaly_sqp):
+for module in (sc, scaly_ipopt, scaly_piqp, scaly_sqp):
   assert site in Path(module.__file__).resolve().parents, module.__file__
 
 # Direct: a solver Function called from Python. min 0.5 |x - (1, 2)|^2  s.t.  x0 + x1 = 3 - p, x >= 0.
@@ -76,6 +77,24 @@ for r in (1.0, 0.5):
   np.testing.assert_allclose(stats.obj, (np.sqrt(5.0) - r) ** 2, atol=1e-6)
   assert stats.primal_viol < 1e-6 and stats.n_eval_f > 0, stats
 
+ipopt = sc.solver(disk, "ipopt")
+for r in (1.0, 0.5):
+  x = ipopt(np.array(r), x0=np.array([0.1, 0.1]))[0]
+  np.testing.assert_allclose(x, np.array([2.0, 1.0]) * r / np.sqrt(5.0), atol=1e-6)
+  stats = ipopt.stats()
+  assert stats.to_solver_status().ok and stats.iter > 0, stats
+  np.testing.assert_allclose(stats.obj, (np.sqrt(5.0) - r) ** 2, atol=1e-6)
+  assert stats.primal_viol < 1e-6 and stats.n_eval_f > 0, stats
+  assert np.isfinite(stats.t_total) and stats.t_total >= 0, stats
+
+@sc.function(sc.arg("r", ()), outputs=sc.arg("y"), name="nested_nlp")
+def nested_nlp(r):
+  return ipopt(r)[0].sum()
+
+np.testing.assert_allclose(nested_nlp(np.array(1.0)), 3.0 / np.sqrt(5.0), atol=1e-6)
+stats = nested_nlp.solver_stats()
+assert stats.to_solver_status().ok and stats.iter > 0, stats
+
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.GetModuleHandleW.restype = ctypes.c_void_p
 handle = kernel32.GetModuleHandleW("piqpc.dll")
@@ -83,7 +102,12 @@ assert handle, "piqpc.dll is not loaded"
 buffer = ctypes.create_unicode_buffer(32768)
 kernel32.GetModuleFileNameW(ctypes.c_void_p(handle), buffer, len(buffer))
 assert site in Path(buffer.value).resolve().parents, buffer.value
-print(f"python {sys.version.split()[0]}: direct, nested and SQP solves passed; piqpc.dll from {buffer.value}")
+for dll in scaly_ipopt.lib_dir().glob("*.dll"):
+  handle = kernel32.GetModuleHandleW(dll.name)
+  assert handle, f"{dll.name} is not loaded"
+  kernel32.GetModuleFileNameW(ctypes.c_void_p(handle), buffer, len(buffer))
+  assert Path(buffer.value).resolve() == dll.resolve(), buffer.value
+print(f"python {sys.version.split()[0]}: direct and nested PIQP/IPOPT and SQP solves passed; all solver DLLs from installed wheels")
 """
 
 
@@ -92,7 +116,7 @@ def main() -> None:
     root = Path(root)
     if sys.argv[1:] and sys.argv[1] != "--installed":
       dist = Path(sys.argv[1]).resolve()
-      wheels = [next(dist.glob(f"{name}-*.whl")) for name in ("scaly", "scaly_piqp", "scaly_sqp")]
+      wheels = [next(dist.glob(f"{name}-*.whl")) for name in ("scaly", "scaly_ipopt", "scaly_piqp", "scaly_sqp")]
       venv = root / "venv"
       subprocess.run(["uv", "venv", "--python", sys.argv[2] if len(sys.argv) > 2 else "3.12", str(venv)], check=True)
       python = venv / "Scripts" / "python.exe"

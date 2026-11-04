@@ -26,8 +26,7 @@ still be unsuitable for PIQP.
 IPOPT and Scaly SQP accept nonlinear programs, or NLPs. They seek a local
 solution and do not guarantee a global optimum. Scaly SQP generates its
 sequential quadratic programming iteration as C and uses PIQP for the QP
-subproblems. IPOPT is a separate native solver. `scaly-ipopt` is not available
-on Windows, where Scaly SQP is the nonlinear backend.
+subproblems. IPOPT is a separate native solver.
 
 The examples below share this problem, which all three backends accept:
 
@@ -216,6 +215,13 @@ DLL depends only on system libraries that ship with Windows 10 and later.
 Windows has no rpath, so an exported executable finds `piqpc.dll` in its own
 directory or in a directory on `PATH`. Copy the DLL beside the executable, or
 add the plugin's `lib/` directory to `PATH`.
+
+The `scaly-ipopt` wheel's `lib/` directory holds `libscaly_ipopt-3.dll`, its
+import library `ipopt.lib`, which `-lipopt` links, and the GCC, Fortran and
+threading runtime DLLs it loads. Those runtime DLLs carry names private to the
+wheel, so they never clash with another copy loaded in the same process, such
+as CasADi's. An exported executable needs every DLL in that directory, found
+the same way as `piqpc.dll`.
 
 An exported solver still depends on these native libraries. The
 [code generation guide](codegen.md) covers compiling and linking the generated

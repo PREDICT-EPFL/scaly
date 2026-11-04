@@ -58,6 +58,21 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: brew install gcc
 
+      # The IPOPT hook builds through MSYS2 UCRT64, whose `bin` directory also provides the runtime
+      # DLLs the wheel bundles. Only the IPOPT build sees these tools on `PATH`.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc-fortran
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            make git patch diffutils pkgconf
+
       # The plugins load their solvers through ctypes, so the hooks tag every wheel
       # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The IPOPT
       # wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS, so its wheel
@@ -72,6 +87,7 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
           CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
         run: |
+          unset GITHUB_STEP_SUMMARY
           cache=~/.cache/scaly/solvers
           mkdir -p "$cache"
           before=$(ls "$cache")
@@ -79,14 +95,20 @@ jobs:
           uv build -o dist plugins/scaly-sqp
           uv build -o dist --sdist plugins/scaly-piqp
           uv build -o dist --sdist plugins/scaly-ipopt
-          packages=(scaly-piqp)
-          if [ "$RUNNER_OS" != Windows ]; then packages+=(scaly-ipopt); fi
-          for package in "${packages[@]}"; do
+          for package in scaly-piqp scaly-ipopt; do
+            path=$PATH
             macos="SCALY_BUILD_SOLVERS=required"
-            if [ "$package" = scaly-ipopt ]; then macos+=" MACOSX_DEPLOYMENT_TARGET=15.0"; fi
-            # cibuildwheel mounts the host's root at /host inside the manylinux container
-            CIBW_ENVIRONMENT_LINUX="SCALY_BUILD_SOLVERS=required SCALY_SOLVER_CACHE=/host$cache" CIBW_ENVIRONMENT_MACOS="$macos" \
-              env -u GITHUB_STEP_SUMMARY uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
+            if [ "$package" = scaly-ipopt ]; then
+              macos+=" MACOSX_DEPLOYMENT_TARGET=15.0"
+              if [ "$RUNNER_OS" = Windows ]; then
+                msys2=$(cygpath -u '${{ steps.msys2.outputs.msys2-location }}')
+                path="$msys2/ucrt64/bin:$msys2/usr/bin:$PATH"
+              fi
+            fi
+            # cibuildwheel mounts the host's root at /host inside the manylinux container. Only native
+            # programs may start with MSYS2 on PATH: MSYS2's `env` under Git Bash drops the environment.
+            PATH=$path CIBW_ENVIRONMENT_LINUX="SCALY_BUILD_SOLVERS=required SCALY_SOLVER_CACHE=/host$cache" CIBW_ENVIRONMENT_MACOS="$macos" \
+              uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
           done
           if [ "$(ls "$cache")" != "$before" ]; then echo "built=true" >> "$GITHUB_OUTPUT"; fi
 

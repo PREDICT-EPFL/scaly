@@ -29,15 +29,22 @@ brew install gcc
 sudo apt-get install gfortran build-essential
 ```
 
+On Windows, IPOPT source builds use MSYS2 UCRT64, which targets the Universal C Runtime. Install
+its GFortran, CMake and Ninja packages with Git, make, patch, diffutils and pkgconf, as the
+[CI build workflow](https://github.com/PREDICT-EPFL/scaly/blob/main/.github/workflows/ci-build.yml)
+does, and add its `ucrt64/bin` and `usr/bin` directories to `PATH`. The hook runs source-build
+commands through its MSYS2 shell.
+
 Then:
 
 ```bash
 SCALY_BUILD_SOLVERS=required uv sync
 ```
 
-A cold build takes 5 to 8 minutes. Each build lands in a cache shared by every checkout on the
-machine, `~/.cache/scaly/solvers` by default, under a hash of everything that decides its result:
-the plugin's `hatch_build.py`, its pins, its license texts, the platform and the compilers. A new
+A cold build takes 5 to 8 minutes on Linux and macOS, and about an hour on Windows, most of it
+for OpenBLAS. Each build lands in a cache shared by every checkout on the machine,
+`~/.cache/scaly/solvers` by default, under a hash of everything that decides its result: the
+plugin's `hatch_build.py`, its pins, its license texts, the platform and the compilers. A new
 worktree therefore copies the build its branch needs from the cache, and builds only when no
 checkout has built that version yet. Builds unused for 30 days are deleted. A failed build keeps its
 sources and build trees in the cache directory, at the path it prints.
