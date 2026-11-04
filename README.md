@@ -90,6 +90,25 @@ compiler works, benchmark results against CasADi, and the API reference.
 Scaly is still in development and the public API can still change between minor
 versions. See [versioning policy](https://github.com/PREDICT-EPFL/scaly/blob/main/docs/dev/versioning.md) for more details.
 
+## Citing Scaly
+
+Scaly is described in the preprint [Scaly: an Optimizing Compiler for Optimal
+Control](https://arxiv.org/abs/2610.41762). If you use Scaly in your work,
+please cite it:
+
+```bibtex
+@misc{oancea2026scaly,
+  title         = {Scaly: an Optimizing Compiler for Optimal Control},
+  author        = {Oancea, Tudor A. and Jones, Colin N.},
+  year          = {2026},
+  eprint        = {2610.41762},
+  archivePrefix = {arXiv},
+  primaryClass  = {eess.SY},
+  doi           = {10.48550/arXiv.2610.41762},
+  url           = {https://arxiv.org/abs/2610.41762},
+}
+```
+
 ## Acknowledgements 
 
 Scaly is developed by Tudor A. Oancea (main developer) and Colin N. Jones (methods and math), at the

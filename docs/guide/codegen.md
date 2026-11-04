@@ -116,6 +116,19 @@ The program prints `14`. It links the C math library with `-lm` and needs no
 Python runtime. The [interface reference](../how_it_works/generated_interface.md)
 lists the argument checks and return codes.
 
+The exported files are ordinary C source, so the application compiles them
+with whatever compiler and build system it already uses, such as CMake, a ROS
+package or a microcontroller's toolchain. Scaly does not need to be installed
+where they are compiled. The commands on this page write `cc` for that
+compiler. The default [GNU dialect](#c-dialect-and-vector-math) needs GCC or
+Clang, and `dialect="c"` suits other C99 compilers.
+
+`zig cc` is one way to compile them where no C compiler is installed. Scaly
+installs it with the core package on Windows, and the `toolchain` extra installs
+it on Linux and macOS, as [Installation](installation.md#compiler-selection)
+explains. With the `zig-bin` package, `uv run zig cc` takes the place of `cc` in
+these commands.
+
 ### The pointer entry
 
 `energy_call` is a header-only helper. The compiled symbol underneath it is a
