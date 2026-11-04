@@ -91,35 +91,8 @@ jobs:
           fi
 
       # zig builds its C and C++ runtimes for the host CPU on first use, which on a fresh runner takes
-      # minutes, longer than the time limits of the examples and the benchmark driver tests. Its cache
-      # is kept between runs, keyed on zig's version and the model and features of this CPU, since
-      # the JIT compiles with -march=native and runners differ in CPU.
-      - name: Locate zig's cache
-        id: zig
-        if: runner.os == 'Windows' && inputs.suite != 'python'
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}\zig
-        run: |
-          echo "ZIG_GLOBAL_CACHE_DIR=$ZIG_GLOBAL_CACHE_DIR" >> "$GITHUB_ENV"
-          zig=$(uv run python -c "from scaly.codegen.toolchain import find_c_compiler; print(find_c_compiler().command[0])")
-          cpu=$("$zig" build-exe --show-builtin | sed -n '/^pub const cpu/,/^};/p')
-          model=$(sed -n 's/.*\.model = &std\.Target\.[a-z0-9_]*\.cpu\.\([a-zA-Z0-9_]*\),/\1/p' <<<"$cpu")
-          echo "key=zig-${{ matrix.platform }}-$("$zig" version)-$model-$(sha256sum <<<"$cpu" | cut -c1-12)" | tee -a "$GITHUB_OUTPUT"
-
-      - name: Restore zig's cache
-        id: zig-cache
-        if: steps.zig.outcome == 'success'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ runner.temp }}\zig
-          key: ${{ steps.zig.outputs.key }}
-
-      - name: Probe zig's cache (temporary, #252)
-        if: steps.zig.outcome == 'success'
-        run: uv run .github/scripts/zig_cache_probe.py
-
-      # This builds both runtimes once: the JIT compiles from its cache, the driver links from a
-      # temporary directory.
+      # longer than the time limits of the examples and the benchmark driver tests. This builds both
+      # once: the JIT compiles from its cache, the driver links from a temporary directory.
       - name: Warm zig's cache
         if: runner.os == 'Windows' && inputs.suite != 'python'
         run: |
@@ -134,14 +107,6 @@ jobs:
             Path(tmp, "warm.cpp").write_text("#include <string>\nint main() { return std::string(\"warm\").size() == 4 ? 0 : 1; }\n")
             subprocess.run([*compiler(), "warm.cpp", "-o", "warm.exe", "-lshlwapi"], cwd=tmp, check=True)
           EOF
-
-      # A merge-queue cache would be visible only to its own short-lived branch.
-      - name: Save zig's cache
-        if: steps.zig-cache.outcome == 'success' && steps.zig-cache.outputs.cache-hit != 'true' && github.event_name != 'merge_group'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ runner.temp }}\zig
-          key: ${{ steps.zig.outputs.key }}
 
       - name: Restore the nightly compile cache
         if: inputs.suite == 'ci'

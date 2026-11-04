@@ -28,13 +28,12 @@ new process. The Windows rows come from a temporary step in PR #256's CI, runs 4
 A bare `zig cc -march=native -shared` of a small file took 76 to 87 s cold and 0.15 s warm on the
 runners, and 3.0 s and 0.03 s on Linux, so the runtime build is nearly all of the first call. The
 installation guide already gave about 13 s on a recent Windows desktop and 2 to 3 s on Linux and
-macOS, from #235. CI's "Warm zig's cache" step, which builds both runtimes, took 3.5 to 4.3 min
-before PR #256 cached it. On a hit it takes about 10 s (see that pull request).
+macOS, from #235. CI's "Warm zig's cache" step, which builds both runtimes, takes 2 to 4.3 min
+depending on the runner's processor.
 
 The CPU model is part of the key. In a cache already warm for the host, a one-step
 `zig cc -march=skylake -shared` built the runtime again: 82 to 84 s on the runners and 2.6 s on
-Linux. A cache copied between machines with different CPUs is therefore no help, which is why CI
-keys its zig cache on the CPU model.
+Linux. A cache copied between machines with different CPUs is therefore no help.
 
 ## A runtime built once for a generic CPU
 
@@ -54,7 +53,29 @@ of rebuilding the runtime. It costs:
 - Two compiler processes for every JIT compile instead of one.
 
 A fresh machine still pays one runtime build. The generic build helps only where a zig cache
-travels between CPU models, as in CI, and CI already gets most of that from keying on the model.
+travels between CPU models, as in CI, and there it meets the problem below.
+
+## Caching zig's cache in Windows CI
+
+PR #256 tried restoring zig's global cache in `test / windows-x86_64`, keyed on the zig version,
+zig's CPU model and a hash of its CPU features, and saving it on a miss. Over seven jobs it did not
+pay off, for two reasons.
+
+- Few hits. Runners drew four CPU models in seven jobs (`znver3`, `znver4`, `znver5` and
+  `icelake_server`), so only 3 of the 7 found an entry. A pull request's saves serve only its own
+  later runs. Only the nightly, which runs on main, would seed entries every pull request can read.
+- A hit saves little. zig's cache manifests record each input's size, modification time and file
+  ID, and each run installs zig afresh, so after a restore no recorded input matches. zig then
+  hashes every input again, for each of the roughly two thousand compilation units of the C runtime and
+  libc++, rewrites their manifests, and archives `libmingw32.lib` and `c++.lib` again. On
+  `znver5` runners both runtimes took 127 s to build cold and 123 s after a hit in one run (60 s
+  for the C runtime, 62 s for libc++), and 45 s after a hit in another. On `znver3` a hit took
+  260 s against 227 s for the miss that saved it.
+
+The expected saving was 10 to 30 s per run, for three extra steps and about 30 MB of cache per CPU
+model, so the cache was dropped. The same check after a fresh install is cheap on Linux: a cache
+restored through `tar` with a reinstalled zig compiled in 0.05 s instead of 2.8 s. There zig
+builds only compiler_rt and links against the system's C library.
 
 ## Decision
 
@@ -65,11 +86,8 @@ it, and compiling any function once already does that. The generic runtime is re
 costs above. The installation guide's *Compiler selection* section states the delay, the
 per-processor build and the CI runner time.
 
-In CI, `test / windows-x86_64` restores zig's global cache keyed on the zig version, zig's CPU
-model and a hash of its CPU features. It saves the cache on a miss outside the merge queue, whose
-caches only its own short-lived branch can read. A push to main that the merge queue already
-tested skips the test jobs, so the nightly, which runs on main, is what seeds the cache for every
-pull request. A pull request's own saves serve only its later runs. `install / windows-x86_64` keeps a cold zig cache. It is the one
-place where CI compiles on a fresh machine the way a user does, and it is not the slowest job.
+CI keeps paying the build in "Warm zig's cache", since caching zig's cache does not help on
+Windows (see above). `install / windows-x86_64` would stay cold in any case. It is the one place
+where CI compiles on a fresh machine the way a user does, and it is not the slowest job.
 
 [#252]: https://github.com/PREDICT-EPFL/scaly/issues/252
