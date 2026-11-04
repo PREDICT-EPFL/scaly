@@ -5,6 +5,9 @@ typed expression graph, typed derivative requests, first-class call nodes, prese
 structure, mixed scalar/block lowering. It generates C, compiles through a universal C ABI on first
 call, and caches the resulting shared library.
 
+If `AGENTS.local.md` exists next to this file, read it too: it holds the maintainer's private
+context, and not every agent loads it on its own.
+
 Read before changing anything:
 
 - [Architecture](docs/how_it_works/architecture.md) — the pipeline, the two dialects, what each stage owns
@@ -46,15 +49,38 @@ out of the API page (as `docs/api/core.md` does for `Expr.opaque` and `Function.
 keep roadmap or migration wording out of any docstring that renders. A known limitation of a
 finished feature is different: document it next to the behaviour it affects.
 
-## Optional procedures
+## Issues, pull requests and review
 
-`.agents/skills/` holds the maintainer's procedures for working through issues with agents.
-`plan-next` surveys the backlog and proposes what to start and in which groups, and `coordinate`
-coordinates a batch of related issues. Both start only when a user invokes them. `implement` takes
-one issue, or a small change described in the conversation, to a pull request, and the others
-(`record-decisions`, `write-docs`, `benchmark-study`, `port-from-devrush`, `inspect-work` and
-`update-work`) cover parts of that work. Use any of them only when the user or another of these skills asks for it by
-name. Nothing else in this repository requires them.
+What planning, implementing or reviewing a Scaly change needs to know, whatever workflow drives it:
+
+- **Tracking.** Tasks are GitHub issues, tracked as [Tracking work](docs/dev/issue_tracking.md)
+  describes. `inspect-issues` reads them and `update-issues` changes them. A pull request that
+  completes an issue ends with `Closes #N`, a partial one with `Part of #N`.
+- **Design.** Compiler and API design is decided in `internal/notes/core_compiler_roadmap.md`: its
+  decisions, *Order of work*, *Release scope* and *Rules for every item*. Other designs are dated
+  notes in `internal/notes/`. Compiler work also reads `internal/notes/compiler_maintenance_context.md`
+  and *Where to add things* in `docs/dev/codebase.md`.
+- **Checks.** `wt hook pre-merge --yes` runs everything a merge needs: `ty`, both Ruff checks, the
+  full suite, the benchmark smoke, the documentation build and the private-name check. Without
+  `--yes` it waits for an approval.
+- **High risk.** Changes to the IR, differentiation and code generation. They get a differential
+  test against NumPy or an unrolled reference, the most thorough review, and C snapshots that stay
+  byte-identical. When the issue says to regenerate them, the pull request shows the reviewed diff
+  and measurements of source size, generation time and run time.
+- **Other proof.** A user-visible feature updates its guide page and API entries and keeps the
+  README and `examples/` running. A performance claim needs a measurement with `benchmark-study`;
+  a Python-level timing is never evidence.
+- **Ordering.** Pull requests that regenerate the C snapshots are serialized: the next one starts
+  once the previous has merged, as [Parallel work](docs/dev/issue_tracking.md#parallel-work)
+  explains. Changes to `plugins/*/hatch_build.py` are grouped, since each costs a cold solver
+  rebuild, and so are renames of generated C symbols.
+- **Writing and notes.** Published prose follows `.agents/skills/write-docs/brief.md`. Review memos
+  and study material go in `internal/notes/<topic>_<date>/`.
+
+`.agents/skills/` holds the procedures only Scaly has: `inspect-issues` and `update-issues` for the
+tracker, `write-docs` for published prose, `benchmark-study` for measurements and the benchmark
+pages, and `port-from-devrush` for tests and examples from the frozen branch. Use them only when the user or another skill asks for
+one by name.
 
 ## Commands
 

@@ -1,9 +1,9 @@
 ---
-name: inspect-work
+name: inspect-issues
 description: Inspect Scaly GitHub issues, Project status, dependencies, ownership, and overlapping work before planning or starting a task. Makes no tracker updates. Use only when the user or another skill asks for it by name, never on your own initiative.
 ---
 
-# Inspect Scaly work
+# Inspect Scaly issues
 
 Read [the tracking conventions](../../../docs/dev/issue_tracking.md) for the meaning of labels,
 statuses, and milestones. GitHub Issues is the actionable list. Resolve a legacy reference by

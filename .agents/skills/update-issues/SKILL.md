@@ -1,9 +1,9 @@
 ---
-name: update-work
+name: update-issues
 description: Update Scaly GitHub issue classification, dependencies, Project status, and progress or handoff records within an authorized task. Not for choosing tasks or resolving ownership conflicts. Use only when the user or another skill asks for it by name, never on your own initiative.
 ---
 
-# Update Scaly work
+# Update Scaly issues
 
 Read [the tracking conventions](../../../docs/dev/issue_tracking.md) and inspect the issue's live
 metadata, discussion, dependencies, and related PRs before changing it. GitHub Issues is the
