@@ -135,10 +135,6 @@ jobs:
             subprocess.run([*compiler(), "warm.cpp", "-o", "warm.exe", "-lshlwapi"], cwd=tmp, check=True)
           EOF
 
-      - name: Probe zig's cache after warming (temporary, #252)
-        if: steps.zig.outcome == 'success'
-        run: uv run .github/scripts/zig_cache_probe.py after
-
       # A merge-queue cache would be visible only to its own short-lived branch.
       - name: Save zig's cache
         if: steps.zig-cache.outcome == 'success' && steps.zig-cache.outputs.cache-hit != 'true' && github.event_name != 'merge_group'
