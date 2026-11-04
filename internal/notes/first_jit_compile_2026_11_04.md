@@ -72,7 +72,8 @@ pay off, for two reasons.
   for the C runtime, 62 s for libc++), and 45 s after a hit in another. On `znver3` a hit took
   260 s against 227 s for the miss that saved it.
 
-The expected saving was 10 to 30 s per run, for three extra steps and about 30 MB of cache per CPU
+Against a miss on the same CPU model, the three hits saved 4 s, 82 s and -33 s, about 8 s per run
+at a hit rate of 3 in 7. That did not justify three extra steps and about 30 MB of cache per CPU
 model, so the cache was dropped. The same check after a fresh install is cheap on Linux: a cache
 restored through `tar` with a reinstalled zig compiled in 0.05 s instead of 2.8 s. There zig
 builds only compiler_rt and links against the system's C library.
