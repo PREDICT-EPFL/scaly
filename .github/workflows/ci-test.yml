@@ -150,7 +150,7 @@ jobs:
 
       - name: Benchmark smoke
         if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || inputs.suite == 'smoke') }}
-        run: exit 1 # Temporary failure-propagation probe. uv run benchmarks/run.py smoke ${{ inputs.suite == 'benchmarks' && '--full' || '' }}
+        run: uv run benchmarks/run.py smoke ${{ inputs.suite == 'benchmarks' && '--full' || '' }}
 
       - name: Closed-loop smoke
         if: ${{ !cancelled() && inputs.suite == 'smoke' }}
