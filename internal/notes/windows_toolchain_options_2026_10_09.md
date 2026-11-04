@@ -74,6 +74,8 @@ loaded through `ctypes`. Exercise Scaly's pointer entry signature, explicit expo
 from an ordinary Python process without a Visual Studio developer environment. Measure a fresh
 Zig cache separately from later compiles. Cross-compilation cannot establish this result.
 Document the first-compilation delay unless these measurements justify a warm-up mechanism.
+[The first JIT compile](first_jit_compile_2026_11_04.md) records the measurements and the
+decision to document it.
 
 Then test the core end to end, including values and derivatives, mapped calls and the native
 vector recipe. Exercise paths containing spaces, concurrent first calls, a second process using
