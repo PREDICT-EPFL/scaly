@@ -62,7 +62,18 @@ jobs:
         env:
           SCALY_BUILD_SOLVERS: ${{ inputs.rebuild-native && 'source' || 'required' }}
           MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '15.0' || '' }}
-        run: uv run --no-project --with hatchling plugins/scaly-ipopt/hatch_build.py --prepare-native >> "$GITHUB_OUTPUT"
+        run: |
+          uv run --no-project --with hatchling python - <<'PYDIAG'
+          import json, runpy
+          from pathlib import Path
+          hook = runpy.run_path('plugins/scaly-ipopt/hatch_build.py')
+          context = hook['_native_context']()
+          print('Preflight context:', json.dumps(context))
+          for entry in hook['_cache_root']().glob('ipopt-*/native-build.json'):
+              saved = json.loads(entry.read_text())
+              print('Cached context:', entry.parent.name, json.dumps(saved))
+          PYDIAG
+          uv run --no-project --with hatchling plugins/scaly-ipopt/hatch_build.py --prepare-native >> "$GITHUB_OUTPUT"
 
       - name: Install gfortran
         if: runner.os == 'macOS' && steps.native.outputs.source == 'true'
