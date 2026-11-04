@@ -6,8 +6,10 @@ CI test job. Out of scope: `setup-uv` settings and the smoke job (PR #254), `ci-
 
 - [x] Linux measurements (`.github/scripts/measure_first_compile.py`, temporary)
 - [x] Zig cache restore/save around "Warm zig's cache" in `ci-test.yml`
-- [ ] Windows measurements from the PR's CI, several runs for the CPU models and hit rate
-- [ ] Post measurements and recommendation on #252, ask the coordinator for the maintainer's choice
-- [ ] Note under `internal/notes/` with measurements, the generic-runtime answer and the decision
-- [ ] Implement the chosen outcome (user-guide text, or warm-up in `scaly.codegen.toolchain`)
-- [ ] Remove the measurement step and script, delete this plan, PR description with CI timings
+- [x] Windows measurements from the PR's CI (runs 41811995716, 41823146142)
+- [ ] Hit rate over several runs and reruns of `test / windows-x86_64`
+- [x] Post measurements and recommendation on #252; maintainer chose: document, install job stays fresh
+- [x] Note `internal/notes/first_jit_compile_2026_11_04.md`
+- [x] Guide: `docs/guide/installation.md#compiler-selection`
+- [x] Remove the measurement step and script
+- [ ] Cross-review, delete this plan, PR description with CI timings
