@@ -17,7 +17,7 @@ def test_archive_writers_share_one_lock(tmp_path):
   )
   command = [
     sys.executable,
-    str(Path(__file__).parents[1] / "hatch_build.py"),
+    str(Path(__file__).parents[1] / "native_build.py"),
     str(tmp_path / "archive.lock"),
     sys.executable,
     str(writer),

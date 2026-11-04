@@ -11,7 +11,7 @@ import pytest
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Zig wheel target")
 @pytest.mark.parametrize("language", ["C", "CXX"])
 def test_windows_wheel_keeps_haswell_target_on_avx512_host(language):
-  hook = runpy.run_path(str(Path(__file__).parents[1] / "hatch_build.py"))
+  hook = runpy.run_path(str(Path(__file__).parents[1] / "native_build.py"))
   default = hook["_DEFAULT_CC"] if language == "C" else hook["_DEFAULT_CXX"][0]
   command = hook["_compiler_command"](default)
   command[2:2] = ["-mcpu=skylake_avx512"]

@@ -124,6 +124,7 @@ exclude = [
   "hatch_build.py",
   "third_party/**",
   "plugins/*/hatch_build.py",
+  "plugins/*/native_build.py",
   "plugins/*/third_party/**",
   ".venv/**",
   "internal/**",

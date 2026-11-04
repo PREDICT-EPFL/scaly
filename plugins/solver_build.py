@@ -20,12 +20,11 @@ OUTPUTS = ("lib", "include", "licenses")
 STAMP = "native-inputs.sha256"
 
 
-def native_hash(root: Path, package: str, helper: Path) -> str:
+def native_hash(root: Path, package: str) -> str:
   digest = hashlib.sha256()
-  inputs = [root / "hatch_build.py", root / "src" / package / "build_config.json", *(root / "licenses").rglob("*")]
+  inputs = [root / "native_build.py", root / "src" / package / "build_config.json", *(root / "licenses").rglob("*")]
   for path in sorted(p for p in inputs if p.is_file()):
     digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
-  digest.update(b"solver_build.py\0" + helper.read_bytes())
   return digest.hexdigest()
 
 

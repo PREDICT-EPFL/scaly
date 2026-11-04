@@ -2760,6 +2760,8 @@ tests/test_release_workflow.py::test_unusable_verified_files_fall_back_to_the_fu
 tests/test_release_workflow.py::test_verified_testpypi_files_take_priority_over_a_newer_nightly
 tests/test_released_solvers.py::test_build_wheel_from_local_release[ipopt]
 tests/test_released_solvers.py::test_build_wheel_from_local_release[piqp]
+tests/test_released_solvers.py::test_native_hash_tracks_recipe_inputs_only[ipopt]
+tests/test_released_solvers.py::test_native_hash_tracks_recipe_inputs_only[piqp]
 tests/test_released_solvers.py::test_preparation_order_and_source_override[ipopt]
 tests/test_released_solvers.py::test_preparation_order_and_source_override[piqp]
 tests/test_released_solvers.py::test_release_lookup[None]

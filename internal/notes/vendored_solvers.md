@@ -67,9 +67,11 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default. The hook first trie
 
 ## 5. Build constraints
 
-- **Native reuse and CI cache key.** Each wheel records a SHA-256 of `hatch_build.py`,
-  the shared `solver_build.py` helper, `src/scaly_*/build_config.json` and `licenses/`, including
-  relative names and contents. Python wrappers and package versions stay out. The hook tries
+- **Native reuse and CI cache key.** Each wheel records a SHA-256 of `native_build.py`,
+  `src/scaly_*/build_config.json` and `licenses/`, including
+  relative names and contents. Python wrappers, package versions, `hatch_build.py` and the shared lookup helper stay out.
+  Each plugin keeps its build and runtime-bundling recipe in `native_build.py`, so lookup and
+  packaging changes do not invalidate native builds. The hook tries
   its local cache, then the newest PyPI release's compatible wheel, then source. It verifies
   the wheel against PyPI's SHA-256 and requires the recorded native hash to match before taking
   libraries, headers and licenses. Missing metadata, network failures and mismatches build from
@@ -78,8 +80,7 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default. The hook first trie
   entries retain compiler identity and build environment. `SCALY_BUILD_SOLVERS=source` bypasses reuse, including on Monday nightlies.
   Releases take the ordinary path. CI probes native availability before installing Fortran tools,
   retaining recorded compiler identities for restored builds when those tools are absent.
-  Linux builds reach the host cache through cibuildwheel's `/host` mount. Cache keys include
-  the shared helper as well as the plugin hooks, pins and licenses.
+  Linux builds reach the host cache through cibuildwheel's `/host` mount. CI cache keys use the same recipe files, pins and licenses.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built. On x86-64, `TARGET=PRESCOTT` fixes the common code to a Prescott baseline instead of relying on build-host CPU detection. `DYNAMIC_ARCH=1` still includes optimized kernels selected at runtime.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
 - **External solver consumers.** Generated solver calls require the plugin headers and the
@@ -110,7 +111,7 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 |---|---|---|---|
 | scaly, scaly-sqp | our code | BSD-2 | none |
 | scaly-piqp | PIQP, BLASFEO | BSD-2 | notice |
-| | Eigen | MPL-2.0 | notice. PIQP does not define `EIGEN_MPL2_ONLY` itself, so `hatch_build.py` passes it through `CMAKE_CXX_FLAGS`; PIQP 0.6.2 and 0.6.4 compile under it, which proves no LGPL Eigen file reaches the library |
+| | Eigen | MPL-2.0 | notice. PIQP does not define `EIGEN_MPL2_ONLY` itself, so `native_build.py` passes it through `CMAKE_CXX_FLAGS`; PIQP 0.6.2 and 0.6.4 compile under it, which proves no LGPL Eigen file reaches the library |
 | | LDL inside PIQP (`piqp/sparse/LDL_License.txt`) | LGPL-2.1-or-later | notice plus the LGPL-2.1 text. PIQP's `sparse/ldlt` is a modified LDL, instantiated in `ldlt.cpp` and compiled into `libpiqpc`, so the shared library we ship contains LGPL code. That is allowed: the LGPL text travels with it, the modified source is PIQP's public tag, and `libpiqpc` is a separately loaded shared library the user can replace |
 | scaly-ipopt | IPOPT | EPL-2.0 | notice, upstream source of the pinned version; a separate dynamically loaded module, so our BSD-2 is unaffected |
 | | MUMPS 5.8.2, via COIN-OR `ThirdParty-Mumps` 3.0.12 | CeCILL-C, EPL-2.0 for the wrapper | notice for each |

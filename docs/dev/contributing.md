@@ -47,7 +47,8 @@ SCALY_BUILD_SOLVERS=required uv sync
 
 A source build takes 5 to 8 minutes on Linux and macOS, and about an hour on Windows, most of it
 for OpenBLAS. Builds are shared by checkouts through `~/.cache/scaly/solvers`. The native-input
-hash covers the hook, its shared build helper, `build_config.json` and license texts. Released
+hash covers the plugin's `native_build.py` recipe, `build_config.json` and license texts.
+The hook and shared lookup helper stay outside it, so lookup fixes reuse existing native libraries. Released
 libraries are cached by this hash and platform alone. Source builds also include compiler
 identity and build environment in their key. Builds unused for 30 days are deleted. A failed
 build keeps its sources and build trees in the cache directory, at the path it prints.
@@ -63,7 +64,7 @@ native libraries remain byte-identical until the recipe changes.
 
 In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
 in `src/scaly_*/build_config.json`, which pins its version, and a row in the
-`_write_third_party_notices` call of that plugin's `hatch_build.py`, which copies its license texts
+`_write_third_party_notices` call of that plugin's `native_build.py`, which copies its license texts
 into the wheel. The `test_*_notices.py` test in each of those plugins fails when a pinned dependency
 has no license directory.
 
@@ -134,9 +135,9 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
 - `ci` passes only when every other job passed. It is the one required check, and its summary
   has a row per platform saying whether the native libraries were built or came from the cache.
 
-The native libraries are rebuilt only when a plugin's `hatch_build.py`, `build_config.json` or
-`licenses/` changes, so an edit to a plugin's Python code reuses them. Google Benchmark is built once
-per compiler and restored from the cache too. A push to main runs CI again unless it only touches
+The native cache tracks each plugin's `native_build.py`, `build_config.json` and `licenses/`, so
+edits to Python wrappers or lookup code reuse the libraries. Source builds also retain compiler
+identities in their keys. Google Benchmark is built once per compiler and restored from the cache too. A push to main runs CI again unless it only touches
 `internal/`, and stops after its first job when the merge queue already tested the same commit.
 
 ## Nightly and release checks
