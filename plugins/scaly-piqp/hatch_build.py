@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import runpy
 import shlex
 import shutil
 import stat
@@ -16,6 +17,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+
+_HELPER = Path(__file__).parent / "solver_build.py"
+if not _HELPER.exists():
+  _HELPER = _HELPER.parent.parent / "solver_build.py"
+_SHARED = runpy.run_path(str(_HELPER))
 
 
 def _blasfeo_target(system: str, machine: str) -> tuple[str, str]:
@@ -57,13 +63,15 @@ _BUILD_SOLVER_REQUIRE = {"1", "true", "yes", "on", "required", "require", "force
 
 def _solver_build_mode() -> str:
   raw = os.environ.get("SCALY_BUILD_SOLVERS", "auto").strip().lower()
+  if raw in {"source", "force"}:
+    return "source"
   if raw in _BUILD_SOLVER_SKIP:
     return "skip"
   if raw in _BUILD_SOLVER_REQUIRE:
     return "require"
   if raw in {"", "auto"}:
     return "auto"
-  raise RuntimeError("SCALY_BUILD_SOLVERS must be one of auto, required/1/true, or skip/0/false")
+  raise RuntimeError("SCALY_BUILD_SOLVERS must be one of auto, required/1/true, source/force, or skip/0/false")
 
 
 # Windows has no system C compiler, so the build requirements bring the zig that the JIT also uses.
@@ -187,14 +195,40 @@ def _tool_identity(cmd: str) -> str:
 def _cache_key(root: Path) -> str:
   """Hash every input of the build, so two checkouts share a build exactly when it would come out the same."""
   digest = hashlib.sha256()
-  inputs = [Path(__file__), root / "src" / "scaly_piqp" / "build_config.json", *(root / "licenses").rglob("*")]
-  for path in sorted(p for p in inputs if p.is_file()):
-    digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
+  digest.update(_SHARED["native_hash"](root, "scaly_piqp", _HELPER).encode())
   tools = [_tool_identity(os.environ.get("CC", _DEFAULT_CC)), _tool_identity(os.environ.get("CXX", _DEFAULT_CXX[0]))]
   env = [f"{name}={os.environ.get(name, '')}" for name in _KEY_ENV]
   for part in (platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0], *tools, *env):
     digest.update(part.encode() + b"\0")
   return digest.hexdigest()[:16]
+
+
+def _native_context() -> dict:
+  tools = {name: _tool_identity(os.environ.get(name, default)) for name, default in (("CC", _DEFAULT_CC), ("CXX", _DEFAULT_CXX[0]))}
+  return {
+    "platform": [platform.system(), platform.machine(), *platform.libc_ver(), platform.mac_ver()[0]],
+    "tools": tools,
+    "env": {name: os.environ.get(name, "") for name in _KEY_ENV},
+  }
+
+
+def _prepare_native(root: Path) -> tuple[Path, str, str]:
+  digest = _SHARED["native_hash"](root, "scaly_piqp", _HELPER)
+  cache = _cache_root()
+  key = _cache_key(root)
+  entry = cache / f"piqp-{key}"
+  if _solver_build_mode() == "source":
+    return entry, key, digest
+  if entry.exists():
+    return entry, key, digest
+  local = _SHARED["find_local"](cache, "piqp", digest, _native_context())
+  if local is not None:
+    return local, local.name.removeprefix("piqp-"), digest
+  release = cache / _SHARED["release_key"]("scaly_piqp", digest)
+  with _locked(cache / "locks" / f"{release.name}.lock"):
+    if release.exists() or _SHARED["download_release"]("scaly_piqp", digest, release):
+      return release, release.name, digest
+  return entry, key, digest
 
 
 @contextmanager
@@ -256,6 +290,8 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
   next attempt at the same key replaces it."""
   cache = entry.parent
   with _locked(cache / "locks" / f"{entry.name}.lock"):
+    if _solver_build_mode() == "source":
+      _remove_tree(entry)
     if not entry.exists():
       if missing := missing_tools():
         return missing
@@ -267,6 +303,8 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
       except BaseException:
         hook.app.display_error(f"The build failed; its sources and build trees are kept in {scratch}")
         raise
+      metadata = {"hash": _SHARED["native_hash"](root, "scaly_piqp", _HELPER), **_native_context()}
+      (scratch / "out" / "native-build.json").write_text(json.dumps(metadata))
       (scratch / "out").rename(entry)
       _remove_tree(scratch)
     os.utime(entry)
@@ -474,23 +512,28 @@ class BuildHook(BuildHookInterface):
     package_dir = root / "src" / "scaly_piqp"
     lib_dir = package_dir / "lib"
     mode = _solver_build_mode()
-    strict = mode == "require" or (mode == "auto" and version != "editable")
+    strict = mode in {"require", "source"} or (mode == "auto" and version != "editable")
     if mode != "skip" or any(lib_dir.iterdir() if lib_dir.exists() else ()):
       build_data["pure_python"] = False
       build_data["tag"] = _wheel_tag()
     if mode == "skip":
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
       return
-    key = _cache_key(root)
+    entry, key, digest = _prepare_native(root)
+    marker = package_dir / "native-inputs.sha256"
+    marker.write_text(digest + "\n")
+    build_data.setdefault("force_include", {})[str(marker)] = "scaly_piqp/native-inputs.sha256"
+    if (entry / "wheel-libs").is_dir():
+      build_data["force_include"][str(entry / "wheel-libs")] = "scaly_piqp.libs"
     stamp = root / ".build_key"
-    if stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
+    if mode != "source" and stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
       self.app.display_info(f"PIQP C interface already built at {lib_dir}")
       return
 
     def build(src: Path, out: Path) -> None:
       _build_piqp(self, src, out / "lib", out / "include" / "piqp", out / "licenses", root / "licenses")
 
-    missing = _install_build(self, root, package_dir, _cache_root() / f"piqp-{key}", key, _missing_piqp_tools, build)
+    missing = _install_build(self, root, package_dir, entry, key, _missing_piqp_tools, build)
     if missing:
       msg = f"missing native toolchain for PIQP build: {', '.join(missing)}"
       if strict:

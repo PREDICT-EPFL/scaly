@@ -21,6 +21,7 @@ src/scaly/include/
 third_party/
 plugins/*/third_party/
 plugins/*/.build_key
+plugins/*/src/*/native-inputs.sha256
 plugins/*/src/*/lib/
 plugins/*/src/*/include/
 plugins/*/src/*/_piqp_ext*.so

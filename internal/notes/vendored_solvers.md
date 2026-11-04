@@ -54,7 +54,7 @@ build_data["infer_tag"] = True
 
 ABI tag stays `none` because the vendored libs are loaded via `ctypes`, not linked as a CPython extension module — there's no Python ABI to bind to. Output becomes `scaly-0.1.0-py3-none-macosx_14_0_arm64.whl` / `scaly-0.1.0-py3-none-linux_x86_64.whl` per build host.
 
-Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolchain is present, `uv sync` builds the solver stack; if it is missing (for example no `gfortran`), the hook skips the missing solver libraries and solver tests are skipped. CI sets `SCALY_BUILD_SOLVERS=required` so missing toolchains/build regressions remain fatal. `SCALY_BUILD_SOLVERS=skip` is available for intentionally Python-only syncs.
+Editable installs use `SCALY_BUILD_SOLVERS=auto` by default. The hook first tries cached and released libraries. If neither matches, it builds with the native toolchain when present; otherwise it skips the missing solver libraries and solver tests are skipped. CI sets `SCALY_BUILD_SOLVERS=required` so missing toolchains/build regressions remain fatal. `SCALY_BUILD_SOLVERS=skip` is available for intentionally Python-only syncs.
 
 **Wheel repair:** a correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
 
@@ -67,19 +67,18 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 ## 5. Build constraints
 
-- **CI cache key.** `ci-build.yml` restores `~/.cache/scaly/solvers`, the hooks' own
-  cache, keyed on the platform and a hash of every plugin's `hatch_build.py`,
-  `src/*/build_config.json` and `licenses/`
-  ([decision 2](ci_and_native_builds_2026_11_02.md#native-code)). Python sources, READMEs and
-  versions stay out, so a wrapper edit or a version bump restores both builds. The hook still checks
-  each restored build against its own key, which adds the compilers, and builds again when they
-  changed, for instance after a runner image update. The run then saves the cache under a key ending
-  in the run id, and the next run restores the newest cache with the same inputs, falling back to
-  the newest for the platform. On Linux the hook runs in cibuildwheel's manylinux container and
-  reaches the cache through cibuildwheel's `/host` mount. macOS installs Homebrew's `gcc` on every
-  run so that the Fortran compiler in the hook's key stays the same. Cold IPOPT build is ~5-8 min
-  locally and 17 min on CI's Linux x86-64. The nightly bypasses the native cache on Mondays or
-  with `rebuild-native`, and reuses it otherwise.
+- **Native reuse and CI cache key.** Each wheel records a SHA-256 of `hatch_build.py`,
+  the shared `solver_build.py` helper, `src/scaly_*/build_config.json` and `licenses/`, including
+  relative names and contents. Python wrappers and package versions stay out. The hook tries
+  its local cache, then the newest PyPI release's compatible wheel, then source. It verifies
+  the wheel against PyPI's SHA-256 and requires the recorded native hash to match before taking
+  libraries, headers and licenses. Missing metadata, network failures and mismatches build from
+  source. PyPI entries use the native hash and platform; source entries retain compiler identity
+  and build environment. `SCALY_BUILD_SOLVERS=source` bypasses reuse, including on Monday nightlies.
+  Releases take the ordinary path. CI probes native availability before installing Fortran tools,
+  retaining recorded compiler identities for restored builds when those tools are absent.
+  Linux builds reach the host cache through cibuildwheel's `/host` mount. Cache keys include
+  the shared helper as well as the plugin hooks, pins and licenses.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built. On x86-64, `TARGET=PRESCOTT` fixes the common code to a Prescott baseline instead of relying on build-host CPU detection. `DYNAMIC_ARCH=1` still includes optimized kernels selected at runtime.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
 - **External solver consumers.** Generated solver calls require the plugin headers and the
