@@ -124,11 +124,12 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
 - `docs` builds the site and fails on any warning, such as a broken link.
 - `build / <platform>`, `test / <platform>` and `install / <platform>` run on linux-x86_64,
   linux-arm64, macos-arm64, macos-x86_64 and windows-x86_64. The build job makes the platform's
-  wheels once. The test job runs the whole suite against them, and on linux-x86_64 also the
-  benchmark and closed-loop smoke runs. The install job installs them into a clean environment,
+  wheels once. The test job runs the whole suite against them. The install job installs them into a clean environment,
   a slim container on Linux, and solves with every backend.
+- `smoke / linux-x86_64` runs the benchmark and closed-loop smoke checks after `build`, in
+  parallel with tests and install checks.
 - `ci` passes only when every other job passed. It is the one required check, and its summary
-  has a row per platform saying whether the native libraries were built or came from the cache.
+  has a row per platform saying whether the native libraries were built or came from the cache, and the smoke result.
 
 The native libraries are rebuilt only when a plugin's `hatch_build.py`, `build_config.json` or
 `licenses/` changes, so an edit to a plugin's Python code reuses them. Google Benchmark is built once

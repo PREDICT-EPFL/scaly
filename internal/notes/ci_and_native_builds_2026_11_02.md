@@ -91,6 +91,12 @@ Measured on 2026-11-02:
    of closed-loop smoke after pytest. The separate job repeats environment setup but removes
    that serial work from the test job. It runs the same checks and feeds the required `ci`
    check and its platform summary table.
+   setup-uv restores without saving on pull requests and merge-queue runs. Main saves pruned
+   build and baseline test caches with fixed suffixes and an empty dependency glob, at most ten
+   entries for the current runner images. These immutable entries do not refresh when dependencies
+   change; uv downloads missing dependencies on each run. This bounds storage rather than creating
+   an entry per lockfile change. Runner image and action key changes can add a generation until
+   older entries expire. Docs and install jobs do not cache uv downloads.
 10. **One required check, `ci`**, which depends on every other job and fails unless all of them
     succeeded. The ruleset requires only it, and the merge queue and the maintainer's bypass stay.
     Rejected: required checks named after matrix entries, which never report, or report "skipped",
