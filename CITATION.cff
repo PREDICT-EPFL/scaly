@@ -8,8 +8,8 @@ authors:
     given-names: Tudor
     email: tudor.oancea@epfl.ch
     affiliation: "EPFL"
-version: 0.1.0
-date-released: 2026-10-21
+version: 0.1.1
+date-released: 2026-11-04
 license: BSD-2-Clause
 repository-code: "https://github.com/PREDICT-EPFL/scaly"
 keywords:

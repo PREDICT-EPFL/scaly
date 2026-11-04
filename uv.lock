@@ -1044,7 +1044,7 @@ wheels = [
 
 [[package]]
 name = "scaly"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 default-groups = ["dev", "docs"]
 dependencies = [
@@ -1135,7 +1135,7 @@ docs = [
 
 [[package]]
 name = "scaly-ipopt"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "plugins/scaly-ipopt" }
 dependencies = [
     { name = "scaly" },
@@ -1146,7 +1146,7 @@ requires-dist = [{ name = "scaly", editable = "." }]
 
 [[package]]
 name = "scaly-piqp"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "plugins/scaly-piqp" }
 dependencies = [
     { name = "scaly" },

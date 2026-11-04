@@ -5,6 +5,10 @@ x86-64 processors only. Numerical function calls compile generated C, so the
 Python package needs access to a C compiler even when the application itself
 is entirely Python.
 
+!!! note "Intel Macs"
+    Scaly 0.1.x is the last release line with solver wheels for Intel Macs. From
+    0.2.0, Scaly supports macOS on Apple silicon only.
+
 ## The core package and solver plugins
 
 The core package provides symbolic expressions, functions, derivatives, and
