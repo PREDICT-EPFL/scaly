@@ -32,6 +32,8 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
 
       - name: Build the documentation site
         run: |

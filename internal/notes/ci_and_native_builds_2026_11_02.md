@@ -85,6 +85,19 @@ Measured on 2026-11-02:
    it on the slowest path. The build job costs a job start and an artifact round trip per
    platform, and every test job waits for the slowest build. Cutting cibuildwheel's own overhead
    of 0.5 to 1.6 minutes per warm build is left for a later discussion.
+   Revised on 2026-11-04: the benchmark and closed-loop smoke run in a separate
+   `smoke / linux-x86_64` job after `build`, in parallel with the tests and install checks.
+   The Linux test job previously added 1.3 to 1.7 minutes of benchmark smoke and 4 to 7 minutes
+   of closed-loop smoke after pytest. The separate job repeats environment setup but removes
+   that serial work from the test job. It runs the same checks and feeds the required `ci`
+   check and its platform summary table.
+   setup-uv restores without saving on pull requests and merge-queue runs. Main saves pruned
+   build and baseline test caches keyed by `uv.lock`, with one shared suffix per platform.
+   Jobs on the same platform share an entry for each lock version. Old lock versions expire
+   after seven days without access; pruning removes downloaded wheels before saving. Rejected:
+   keys independent of dependencies, which freeze the first saved cache indefinitely while daily
+   restores keep it alive. Runner image and action key changes can add a generation until older
+   entries expire. Docs and install jobs do not cache uv downloads.
 10. **One required check, `ci`**, which depends on every other job and fails unless all of them
     succeeded. The ruleset requires only it, and the merge queue and the maintainer's bypass stay.
     Rejected: required checks named after matrix entries, which never report, or report "skipped",

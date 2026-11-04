@@ -62,7 +62,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: uv sync (Python/core only)
         env:
@@ -102,7 +102,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Install docs dependencies
         run: uv sync --frozen --only-group docs
@@ -132,13 +132,20 @@ jobs:
     needs: build
     uses: ./.github/workflows/ci-test.yml
 
+  smoke:
+    needs: build
+    uses: ./.github/workflows/ci-test.yml
+    with:
+      suite: smoke
+      environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
+
   install:
     needs: build
     uses: ./.github/workflows/ci-install.yml
 
   # A skipped required check counts as passed, so this runs whatever happened before it.
   ci:
-    needs: [queue, lint, docs, build, test, install]
+    needs: [queue, lint, docs, build, test, smoke, install]
     if: always() && needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -152,15 +159,17 @@ jobs:
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq '.jobs[]' | jq -s .)
           result() { r=$(jq -r --arg name "$1" '.[] | select(.name == $name) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
           {
-            echo "| Platform | Native code | Install | Tests |"
-            echo "| --- | --- | --- | --- |"
+            echo "| Platform | Native code | Install | Tests | Smoke |"
+            echo "| --- | --- | --- | --- | --- |"
             for platform in $(jq -r '.[].name | select(test("^(build|test|install) / ")) | sub("^[a-z]+ / "; "")' <<<"$jobs" | sort -u); do
               native=$(result "build / $platform")
               if [ "$native" = success ]; then
                 saved=$(jq -r --arg name "build / $platform" '.[] | select(.name == $name) | .steps[] | select(.name == "Save the native libraries") | .conclusion' <<<"$jobs")
                 if [ "$saved" = success ]; then native=built; else native=cached; fi
               fi
-              echo "| $platform | $native | $(result "install / $platform") | $(result "test / $platform") |"
+              smoke="not run"
+              if [ "$platform" = linux-x86_64 ]; then smoke=$(result "smoke / $platform"); fi
+              echo "| $platform | $native | $(result "install / $platform") | $(result "test / $platform") | $smoke |"
             done
             echo
             echo "lint: $(result lint), docs: $(result docs)"

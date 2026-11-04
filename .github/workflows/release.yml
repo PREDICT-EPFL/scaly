@@ -172,6 +172,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.2.0
         if: ${{ !matrix.container }}
+        with:
+          enable-cache: false
 
       - name: Install from TestPyPI
         if: runner.os != 'Windows'
