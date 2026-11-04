@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       suite:
-        description: ci, toolchain, python or benchmarks
+        description: ci, smoke, toolchain, python or benchmarks
         type: string
         default: ci
       environments:
@@ -43,6 +43,10 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (inputs.suite == 'ci' || matrix.save-cache) }}
+          prune-cache: true
+          cache-dependency-glob: ""
+          cache-suffix: test
 
       - name: Select Python and compilers
         env:
@@ -109,7 +113,7 @@ jobs:
           EOF
 
       - name: Restore the nightly compile cache
-        if: inputs.suite == 'ci'
+        if: inputs.suite == 'ci' || inputs.suite == 'smoke'
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.SCALY_CACHE_DIR }}
@@ -123,7 +127,7 @@ jobs:
           uv run python -c "from benchmarks.harness.gbench import GBENCH_TAG, gbench_prefix; prefix = gbench_prefix(); print(f'path={prefix.as_posix()}'); print(f'key=gbench-${{ matrix.platform }}-{GBENCH_TAG}-{prefix.name}')" >> "$GITHUB_OUTPUT"
 
       - name: Restore Google Benchmark
-        if: inputs.suite == 'ci'
+        if: inputs.suite == 'ci' || inputs.suite == 'smoke'
         id: gbench-cache
         uses: actions/cache/restore@v6
         with:
@@ -134,22 +138,22 @@ jobs:
         run: uv run python -c "from benchmarks.harness.gbench import gbench_flags; gbench_flags()"
 
       - name: Save Google Benchmark
-        if: (inputs.suite == 'ci' || matrix.save-cache) && steps.gbench-cache.outputs.cache-hit != 'true'
+        if: (inputs.suite == 'ci' || inputs.suite == 'smoke' || matrix.save-cache) && steps.gbench-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ steps.gbench.outputs.path }}
           key: ${{ steps.gbench.outputs.key }}
 
       - name: Pytest
-        if: inputs.suite != 'benchmarks'
+        if: inputs.suite != 'benchmarks' && inputs.suite != 'smoke'
         run: uv run pytest -n=auto
 
       - name: Benchmark smoke
-        if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || (inputs.suite == 'ci' && matrix.platform == 'linux-x86_64')) }}
-        run: uv run benchmarks/run.py smoke ${{ inputs.suite == 'benchmarks' && '--full' || '' }}
+        if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || inputs.suite == 'smoke') }}
+        run: exit 1 # Temporary failure-propagation probe. uv run benchmarks/run.py smoke ${{ inputs.suite == 'benchmarks' && '--full' || '' }}
 
       - name: Closed-loop smoke
-        if: ${{ !cancelled() && inputs.suite == 'ci' && matrix.platform == 'linux-x86_64' }}
+        if: ${{ !cancelled() && inputs.suite == 'smoke' }}
         run: |
           uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
           uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly

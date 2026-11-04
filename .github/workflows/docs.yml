@@ -22,7 +22,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Install docs dependencies
         run: uv sync --frozen --only-group docs
