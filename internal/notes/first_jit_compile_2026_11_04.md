@@ -67,8 +67,9 @@ per-processor build and the CI runner time.
 
 In CI, `test / windows-x86_64` restores zig's global cache keyed on the zig version, zig's CPU
 model and a hash of its CPU features. It saves the cache on a miss outside the merge queue, whose
-caches only its own short-lived branch can read. The nightly runs on main, so its saves seed the
-cache for every pull request. `install / windows-x86_64` keeps a cold zig cache. It is the one
+caches only its own short-lived branch can read. A push to main that the merge queue already
+tested skips the test jobs, so the nightly, which runs on main, is what seeds the cache for every
+pull request. A pull request's own saves serve only its later runs. `install / windows-x86_64` keeps a cold zig cache. It is the one
 place where CI compiles on a fresh machine the way a user does, and it is not the slowest job.
 
 [#252]: https://github.com/PREDICT-EPFL/scaly/issues/252

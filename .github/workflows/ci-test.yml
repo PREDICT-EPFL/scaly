@@ -92,7 +92,7 @@ jobs:
 
       # zig builds its C and C++ runtimes for the host CPU on first use, which on a fresh runner takes
       # minutes, longer than the time limits of the examples and the benchmark driver tests. Its cache
-      # is kept between runs, keyed on zig's version and its model and features of this CPU, since
+      # is kept between runs, keyed on zig's version and the model and features of this CPU, since
       # the JIT compiles with -march=native and runners differ in CPU.
       - name: Locate zig's cache
         id: zig
@@ -114,6 +114,10 @@ jobs:
           path: ${{ runner.temp }}\zig
           key: ${{ steps.zig.outputs.key }}
 
+      - name: Probe zig's cache (temporary, #252)
+        if: steps.zig.outcome == 'success'
+        run: uv run .github/scripts/zig_cache_probe.py
+
       # This builds both runtimes once: the JIT compiles from its cache, the driver links from a
       # temporary directory.
       - name: Warm zig's cache
@@ -130,6 +134,10 @@ jobs:
             Path(tmp, "warm.cpp").write_text("#include <string>\nint main() { return std::string(\"warm\").size() == 4 ? 0 : 1; }\n")
             subprocess.run([*compiler(), "warm.cpp", "-o", "warm.exe", "-lshlwapi"], cwd=tmp, check=True)
           EOF
+
+      - name: Probe zig's cache after warming (temporary, #252)
+        if: steps.zig.outcome == 'success'
+        run: uv run .github/scripts/zig_cache_probe.py after
 
       # A merge-queue cache would be visible only to its own short-lived branch.
       - name: Save zig's cache

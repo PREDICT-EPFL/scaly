@@ -63,7 +63,7 @@ macOS. On Windows, where zig also builds a MinGW-w64 C runtime, the first
 compilation of a small function took about 13 seconds on a recent desktop
 processor, and about 0.4 seconds in later processes. On a four-core Windows
 runner of GitHub Actions it took 1.3 to 1.5 minutes, so a test with a time limit
-should compile any function once before it starts.
+should compile one function first.
 
 `SCALY_CC` selects a different compiler and takes precedence over all of
 these. If it is unset and neither package is installed, Scaly respects `CC`
