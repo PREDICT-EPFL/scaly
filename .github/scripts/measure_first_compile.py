@@ -5,6 +5,8 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,20 +21,21 @@ WIN = sys.platform == "win32"
 EXT = ".dll" if WIN else ".so"
 NATIVE = "-march=native"
 
-KERNEL = r"""
-#include <math.h>
-#ifdef _WIN32
-#define EXPORT __declspec(dllexport)
-#else
-#define EXPORT
-#endif
-EXPORT void kernel(const double* x, double* y, int n) {
-  for (int i = 0; i < n; ++i) {
-    double v = x[i];
-    y[i] = sin(v) * exp(-v) + cos(3.0 * v) + pow(v, 1.3) + tanh(v) + log1p(v * v) + fma(v, v, 1.0) + sqrt(v) / (1.0 + atan2(v, 2.0));
-  }
+OPS = {
+  "sin": "sin(v)",
+  "cos": "cos(v)",
+  "exp": "exp(-v)",
+  "log1p": "log1p(v * v)",
+  "pow": "pow(v, 1.3)",
+  "tanh": "tanh(v)",
+  "atan2": "atan2(v, 2.0)",
+  "fma": "fma(v, v, 1.0)",
+  "sqrt": "sqrt(v)",
 }
-"""
+KERNEL = "#include <math.h>\n#ifdef _WIN32\n#define EXPORT __declspec(dllexport)\n#else\n#define EXPORT\n#endif\n" + "".join(
+  f"EXPORT void k_{name}(const double* x, double* y, int n) {{ for (int i = 0; i < n; ++i) {{ double v = x[i]; y[i] = {expr}; }} }}\n"
+  for name, expr in OPS.items()
+)
 
 PROGRAM = r"""
 import time, numpy as np, scaly as sc
@@ -70,15 +73,15 @@ def scaly_call(name: str, env: dict[str, str], cwd: Path) -> tuple[float, float]
   return wall, float(out.stdout.split()[-1])
 
 
-def kernel_speed(lib: Path) -> float:
-  dll = ctypes.CDLL(str(lib))
-  dll.kernel.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
-  x = np.linspace(0.1, 4.0, 1 << 16)
+def kernel_speed(lib: ctypes.CDLL, name: str) -> float:
+  fn = getattr(lib, f"k_{name}")
+  fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+  x = np.linspace(0.1, 4.0, 1 << 14)
   y = np.empty_like(x)
   best = float("inf")
-  for _ in range(60):
+  for _ in range(40):
     start = time.perf_counter()
-    dll.kernel(x.ctypes.data, y.ctypes.data, x.size)
+    fn(x.ctypes.data, y.ctypes.data, x.size)
     best = min(best, time.perf_counter() - start)
   return best * 1e9 / x.size
 
@@ -92,7 +95,7 @@ def main() -> None:
   model = next(line.split(".")[-1].rstrip(",") for line in builtin.splitlines() if ".model = " in line)
   print(f"platform={platform.system()} {platform.machine()} cpu={cpu_name()!r} zig_model={model} cores={os.cpu_count()} zig={version}")
 
-  with tempfile.TemporaryDirectory(prefix="first-compile-") as root:
+  with tempfile.TemporaryDirectory(prefix="first-compile-", ignore_cleanup_errors=True) as root:
     root = Path(root)
     work = root / "work"
     work.mkdir()
@@ -152,11 +155,17 @@ def main() -> None:
       if path.exists():
         print(f"zig cache size after the scaly calls: {sum(p.stat().st_size for p in path.rglob('*') if p.is_file()) / 1e6:.1f} MB")
     # Interleaved and repeated, so frequency ramps and noise land on both builds alike.
-    one = split = float("inf")
-    for _ in range(5):
-      one, split = min(one, kernel_speed(work / f"one{EXT}")), min(split, kernel_speed(work / f"split{EXT}"))
-    print(f"kernel, one step native:            {one:6.2f} ns/element")
-    print(f"kernel, native object + generic rt: {split:6.2f} ns/element ({100 * (split / one - 1):+.1f}%)")
+    libs = ctypes.CDLL(str(work / f"one{EXT}")), ctypes.CDLL(str(work / f"split{EXT}"))
+    for name in OPS:
+      one = split = float("inf")
+      for _ in range(7):
+        one, split = min(one, kernel_speed(libs[0], name)), min(split, kernel_speed(libs[1], name))
+      print(f"kernel {name:<6} one step native {one:6.2f} ns, native object + generic runtime {split:6.2f} ns ({100 * (split / one - 1):+.1f}%)")
+    if objdump := shutil.which("objdump"):
+      for lib in ("one", "split"):
+        imports = subprocess.run([objdump, "-p", str(work / f"{lib}{EXT}")], capture_output=True, text=True).stdout
+        found = sorted(op for op in OPS if re.search(rf"\b{op}\b", imports))
+        print(f"{lib}: math imported from shared libraries: {found}")
 
 
 if __name__ == "__main__":
