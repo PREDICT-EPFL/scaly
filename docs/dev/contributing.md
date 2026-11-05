@@ -131,7 +131,7 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
   `sys.version_info`, because CI runs a single Python version and would never test the other branch.
 - `docs` builds the site and fails on any warning, such as a broken link.
 - `build / <platform>`, `test / <platform>` and `install / <platform>` run on linux-x86_64,
-  linux-arm64, macos-arm64, macos-x86_64 and windows-x86_64. The build job makes the platform's
+  linux-arm64, macos-arm64 and windows-x86_64. The build job makes the platform's
   wheels once. The test job runs the whole suite against them. The install job installs them into
   a clean environment, a slim container on Linux, and solves with every backend.
 - `smoke / linux-x86_64` runs the benchmark and closed-loop smoke checks after `build`, in
