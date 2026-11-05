@@ -222,7 +222,7 @@ def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z])
+    return _mapped_call(stage, 4, [(z, 0, 2)])
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 0, 6)
 
@@ -241,7 +241,7 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_workspace_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(outer, 4, [z])
+    return _mapped_call(outer, 4, [(z, 0, 2)])
 
   # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
@@ -258,7 +258,7 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
   @sc.function(sc.group(sc.arg("z", 3 * stages), sc.arg("weights", 9)), outputs=sc.arg("y"), name="metric_hoist_map")
   def mapped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, weights = inputs
-    return _mapped_call(stage, stages, {"x": z, "w": (weights, 0, 0)})
+    return _mapped_call(stage, stages, [(z, 0, 3), (weights, 0, 0)])
 
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in render_c_module(mapped, lanes=1).program.args)
   program = render_c_module(mapped).program
@@ -274,7 +274,7 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_scheduled_map")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z])
+    return _mapped_call(stage, 4, [(z, 0, 2)])
 
   program = render_c_module(mapped, lanes=1).program
   proc_count = int(program.attrs["proc_count"])
@@ -302,7 +302,7 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
 
   @sc.function(sc.arg("z", 2048), outputs=sc.arg("y"), name="metric_spill_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(outer, 2, [z])
+    return _mapped_call(outer, 2, [(z, 0, 1024)])
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (2, 1024, 2048)
 
@@ -315,7 +315,7 @@ def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
 
   @sc.function(sc.arg("z", 4), outputs=sc.arg("y"), name="metric_shared_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z])
+    return _mapped_call(stage, 4, [(z, 0, 1)])
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 0, 3)
 
@@ -330,7 +330,7 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
 
   @sc.function(sc.arg("z", 12), outputs=sc.arg("y"), name="metric_pair_map")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z]).sum()
+    return _mapped_call(stage, 4, [(z, 0, 3)]).sum()
 
   stages = {}
   lower_function(mapped, observe=lambda name, program: stages.__setitem__(name, program))
@@ -380,7 +380,7 @@ def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
 
   @sc.function(sc.arg("z", 1), outputs=sc.arg("y"), name="metric_unit_with_call")
   def root(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 1, [z]) + other(z)
+    return _mapped_call(stage, 1, [(z, 0, 1)]) + other(z)
 
   assert _dispatch_metrics(root.instantiate(), render_c_module(root).program) == (1, 0, 1)
 

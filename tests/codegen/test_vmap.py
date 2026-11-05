@@ -165,7 +165,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
     mapped = _mapped_call(
       eq_interstage,
       length=horizon,
-      inputs={"z": (z, 0, RK4_NZ), "znext": (z, RK4_NZ, RK4_NZ), "params": (p, RK4_NX * (horizon + 1), 0)},
+      inputs=[(z, 0, RK4_NZ), (z, RK4_NZ, RK4_NZ), (p, RK4_NX * (horizon + 1), 0)],
     )
     return sc.concat([initial, mapped])
 

@@ -1642,6 +1642,7 @@ tests/function/test_sugar.py::test_views_and_their_derivatives_match_numpy[gappe
 tests/function/test_sugar.py::test_views_and_their_derivatives_match_numpy[negative]
 tests/function/test_sugar.py::test_views_and_their_derivatives_match_numpy[nested_slice]
 tests/function/test_sugar.py::test_views_and_their_derivatives_match_numpy[transpose]
+tests/function/test_sugar.py::test_windows_must_fit_inside_their_tensor
 tests/function/test_sugar.py::test_zero_length_and_zero_parameter_maps
 tests/function/test_tree.py::test_call_dispatch_predicates_ignore_structure
 tests/function/test_tree.py::test_call_dispatches_on_leaf_kind

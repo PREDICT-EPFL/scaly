@@ -233,7 +233,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache: Path, nested: bo
     return ((value - target.exp()) ** 2).sum().block()
 
   x, param = sc.sym("x", 3), sc.sym("param", 1)
-  cost = _mapped_call(stage, 3, [x, param]).sum()
+  cost = _mapped_call(stage, 3, [(x, 0, 1), (param, 0, 0)]).sum()
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
 

@@ -697,7 +697,7 @@ def _mapped_mlp(stages: int, *, broadcast: bool) -> tuple[sc.Function, np.ndarra
   )
   def fn(inputs):
     z, weights = inputs
-    return _mapped_call(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0 if broadcast else 9)})
+    return _mapped_call(stage, stages, [(z, 0, 3), (weights, 0, 0 if broadcast else 9)])
 
   weights = as_concrete(fn).inputs[1]
   rng = np.random.default_rng(3)
@@ -746,8 +746,8 @@ def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
   @sc.function(sc.group(sc.arg("z", 12), sc.arg("weights", 36)), outputs=sc.arg("y"), name="hoist_two_map")
   def fn(inputs):
     z, weights = inputs
-    first = _mapped_call(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
-    second = _mapped_call(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
+    first = _mapped_call(stage, 4, [(z, 0, 3), (weights, 0, 0)])
+    second = _mapped_call(stage, 4, [(z, 0, 0), (weights, 0, 9)])
     return first + second
 
   assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoist_0", "hoist_two_map"]

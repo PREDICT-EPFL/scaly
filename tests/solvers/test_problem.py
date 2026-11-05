@@ -182,7 +182,7 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
 def test_single_block_problem_preserves_vmap_decision_input() -> None:
   @sc.problem(vars=sc.arg("z", 6), params=sc.arg("p", ()), name="single_block_vmap")
   def mapped_problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    rows = _mapped_call(single_block_stage, 3, {"stage": z})
+    rows = _mapped_call(single_block_stage, 3, [(z, 0, 2)])
     return sc.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
 
   solve = sc.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")

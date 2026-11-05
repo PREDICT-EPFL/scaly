@@ -117,6 +117,19 @@ def test_zero_length_and_zero_parameter_maps() -> None:
   assert sc.vmap(constant, 3).symbolic_call().shape == (3,)
 
 
+def test_windows_must_fit_inside_their_tensor() -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="window_pair")
+  def pair(x: sc.Expr) -> sc.Expr:
+    return x * x
+
+  mapped = sc.vmap(pair, 4)
+  np.testing.assert_array_equal(mapped(sc.window(np.arange(8.0), 0, 2)), np.arange(8.0).reshape(4, 2) ** 2)
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    mapped(sc.window(np.arange(7.0), 0, 2))
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    mapped.symbolic_call(sc.window(sc.sym("z", 8), 1, 2))
+
+
 def test_bare_map_and_resolution_errors() -> None:
   @sc.function()
   def square(x: sc.Expr) -> sc.Expr:
