@@ -10,7 +10,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import importlib.metadata
-import importlib.util
 import json
 import os
 import platform
@@ -212,9 +211,8 @@ def _command(value: str) -> tuple[str, ...] | None:
 
 
 def find_c_compiler() -> Compiler | None:
-  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``zig-bin`` or ``ziglang`` package, else ``CC``, else ``cc`` on ``PATH``.
+  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``zig cc`` from the ``zig-bin`` package, else ``CC``, else ``cc`` on ``PATH``.
 
-  ``zig-bin`` installs ``zig`` into its environment's scripts directory, ``ziglang`` inside its package.
   Returns the compiler command and which of those settings supplied it, or ``None`` if nothing is found.
   """
   if override := os.environ.get("SCALY_CC"):
@@ -222,9 +220,6 @@ def find_c_compiler() -> Compiler | None:
     return Compiler(command, "SCALY_CC") if command is not None else None
   if (zig := _zig_bin_executable()) is not None:
     return Compiler((zig, "cc"), "zig-bin")
-  spec = importlib.util.find_spec("ziglang")
-  if spec is not None and spec.origin is not None and (zig := shutil.which("zig", path=str(Path(spec.origin).parent))) is not None:
-    return Compiler((zig, "cc"), "ziglang")
   if override := os.environ.get("CC"):
     command = _command(override)
     return Compiler(command, "CC") if command is not None else None

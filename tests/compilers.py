@@ -37,7 +37,7 @@ def named_compiler(name: str) -> tuple[str, ...]:
     pytest.skip("Windows Clang requires the unsupported MSVC toolchain; these codegen cases also run with packaged Zig")
   if name == "zig":
     compiler = find_c_compiler()
-    if compiler is None or compiler.source not in ("zig-bin", "ziglang"):
+    if compiler is None or compiler.source != "zig-bin":
       pytest.skip("the toolchain extra is not installed")
     return compiler.command
   found = shutil.which(name)
