@@ -72,18 +72,15 @@ def test_ipopt_receives_the_exact_lagrangian_hessian() -> None:
 
   circle = build_nlp(x=x, f=-x[0] - x[1], h_eq=sc.stack([x[0] ** 2 + x[1] ** 2 - 2.0]), name="ipopt_exact_hess_circle")
   out = solve_nlp(circle, np.array([2.0, 0.5]), np.zeros(1), np.zeros(0), np.zeros(2))
+  stats = circle.stats()
+  assert stats is not None and stats.status == sc.ScalySolveStatus.OK and stats.iter <= 10
   np.testing.assert_allclose(out["x"], [1.0, 1.0], atol=1e-6)
 
 
-@pytest.mark.parametrize(
-  ("rows", "cols"),
-  [((), ())],
-  ids=["empty"],
-)
-def test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns(rows: tuple[int, ...], cols: tuple[int, ...]) -> None:
+def test_ipopt_wrapper_accepts_an_empty_hessian_pattern() -> None:
   from scaly_ipopt.codegen import render_wrapper
 
-  solver = _wrapper_fixture(rows, cols)
+  solver = _wrapper_fixture((), ())
   source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0)))
   assert "ipopt_fixture_hess_rows" not in source
   assert "ipopt_fixture_hess_cols" not in source

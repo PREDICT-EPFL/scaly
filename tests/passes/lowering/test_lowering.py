@@ -1,3 +1,5 @@
+"""Lowering to Program IR: exact matrix products and reductions, and normalization of hinted functions."""
+
 from __future__ import annotations
 
 import numpy as np

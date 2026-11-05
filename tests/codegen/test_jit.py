@@ -459,6 +459,16 @@ def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache: Path) -> Non
     np.testing.assert_array_equal(got[1], np.fmax(a, b))
 
 
+def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache: Path) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name="log")
+  def fun(x):
+    return x + 1
+
+  with pytest.raises(ValueError) as error:
+    fun(np.ones(2))
+  assert str(error.value) == "exported C identifier 'log' clashes with another declaration; give the function a distinct name"
+
+
 def test_unsupported_lowering_still_raises_jit_unavailable(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from scaly.passes.lowering import LoweringError
 
