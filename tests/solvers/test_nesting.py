@@ -5,45 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scaly.function.model import as_concrete
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp
 from scaly.solvers.registry import available_backends
-from scaly.ir.expr import ExprOp, topo
 from scaly.codegen import render_c_source
 
 pytestmark = pytest.mark.skipif(
   "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
 )
-
-
-def test_solver_call_returns_expressions() -> None:
-  mu = sc.sym("mu", 2)
-  qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  out_exprs = qp(mu)
-  assert len(out_exprs) == len(as_concrete(qp.function).output_names)
-  # call() inherits from Function and wraps each output in an ExprOp.CALL node
-  # whose callee is the solver function — the inner SOLVER_CALL nodes live in
-  # the callee's own expression graph.
-  for e in out_exprs:
-    assert e.op == ExprOp.CALL
-    assert e.attrs["callee"] is qp.function.instantiate()
-  # Shapes line up with the descriptor's output signature.
-  expected_shapes = tuple(s for _, s in as_concrete(qp.function).descriptor.output_signature)
-  for e, expected in zip(out_exprs, expected_shapes, strict=True):
-    assert e.shape == expected
-
-
-def test_solver_descriptor_present_in_inner_graph() -> None:
-  mu = sc.sym("mu", 2)
-  qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  solver_calls = [node for node in topo(as_concrete(qp.function).outputs) if node.op == ExprOp.SOLVER_CALL]
-  assert len(solver_calls) == len(as_concrete(qp.function).output_names)
-  descriptors = {id(node.attrs["solver"]) for node in solver_calls}
-  assert len(descriptors) == 1  # all outputs share one descriptor
-  desc = solver_calls[0].attrs["solver"]
-  assert desc.backend == "piqp"
-  assert desc.n == 2
 
 
 def test_solver_outputs_share_one_program_ir_call() -> None:

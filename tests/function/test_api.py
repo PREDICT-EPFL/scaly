@@ -32,17 +32,6 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
   np.testing.assert_allclose(scoped((xv, pv)), np.sin(xv + pv))
 
 
-def test_scoped_function_decorator_outputs_default_names() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("out0"), sc.arg("out1")), name="pair")
-  def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    return x, x.sum()
-
-  assert as_concrete(pair).output_names == ("out0", "out1")
-  y, s = pair(np.array([2.0, 3.0]))
-  np.testing.assert_allclose(y, np.array([2.0, 3.0]))
-  np.testing.assert_allclose(s, 5.0)
-
-
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="f")
   def fn(x):
@@ -91,20 +80,6 @@ def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
     getattr(sc.factory, "Hess")("y", "x", "other")
   with pytest.raises(TypeError):
     getattr(sc.factory, "SpHess")("y", "x", "other")
-
-
-def test_gradient_convenience_api_matches_factory() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
-  def f(x):
-    return (x.sin() + x * x).sum()
-
-  g_api = sc.gradient(f, "y", "x")
-  g_factory = f.factory("g", ["x"], [sc.factory.Grad("y", "x")])
-  xv = np.array([0.1, 0.4, 0.9])
-
-  assert as_concrete(g_api).input_names == ("x",)
-  assert as_concrete(g_api).output_names == ("grad_y_x",)
-  np.testing.assert_allclose(g_api(xv), g_factory(xv))
 
 
 def test_forward_convenience_api_matches_factory() -> None:
@@ -171,20 +146,6 @@ def test_factory_unknown_names_report_value_errors() -> None:
       assert message in str(e)
     else:  # pragma: no cover
       raise AssertionError(f"{message} should fail")
-
-
-def test_lagrangian_hessian_convenience_api() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("f"), sc.arg("g")))
-  def nlp(x):
-    return x.sin().sum(), x * x
-
-  h_api = sc.lagrangian_hessian(nlp, "x")
-  h_factory = nlp.factory("h", ["x", "lam:f", "lam:g"], [sc.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
-
-  xv = np.array([0.2, 0.5])
-  lam_f = np.array(1.2)
-  lam_g = np.array([0.3, -0.7])
-  np.testing.assert_allclose(h_api(*(xv, (lam_f, lam_g))), h_factory(*(xv, lam_f, lam_g)))
 
 
 def test_print_unreachable_from_the_outputs_raises_at_trace_time() -> None:

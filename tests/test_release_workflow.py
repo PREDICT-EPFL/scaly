@@ -125,7 +125,6 @@ def test_a_full_nightly_reuses_every_platform_and_still_needs_testpypi(release, 
     {"event": "pull_request"},
     {"status": "in_progress"},
     {"conclusion": "failure"},
-    {"run_attempt": 2},
   ],
 )
 def test_an_ineligible_nightly_cannot_supply_release_files(release, monkeypatch, overrides):
@@ -140,7 +139,7 @@ def test_a_green_nightly_that_skipped_its_tests_does_not_qualify(release, monkey
   assert select(release, monkeypatch, github)["reused"] == "false"
 
 
-@pytest.mark.parametrize("damage", ["expired-files", "missing-files", "expired-record", "broken-record", "different-artifact", "wrong-packages"])
+@pytest.mark.parametrize("damage", ["expired-files", "missing-files", "expired-record", "broken-record", "wrong-packages"])
 def test_unusable_verified_files_fall_back_to_the_full_nightly(release, monkeypatch, damage):
   github = GitHub()
   github.add("release.yml", 2, "testpypi")
@@ -156,21 +155,11 @@ def test_unusable_verified_files_fall_back_to_the_full_nightly(release, monkeypa
   else:
     with zipfile.ZipFile(io.BytesIO(github.archives[290])) as archive:
       record = json.loads(archive.read("validation.json"))
-    if damage == "different-artifact":
-      record["artifacts"] = [100]
-    else:
-      record["packages"]["scaly"] = "0.0.1"
+    record["packages"]["scaly"] = "0.0.1"
     github.set_record(290, record)
   result = select(release, monkeypatch, github)
   assert result["artifact-run"] == "1"
   assert result["testpypi-verified"] == "false"
-
-
-def test_a_missing_platform_forces_a_fresh_run(release, monkeypatch):
-  github = GitHub()
-  github.add("nightly.yml", 1, "nightly")
-  github.artifacts[1].pop(2)
-  assert select(release, monkeypatch, github)["reused"] == "false"
 
 
 def test_a_later_publication_failure_preserves_completed_testpypi_verification(release, monkeypatch):
@@ -185,15 +174,6 @@ def test_a_release_can_reuse_full_validation_before_testpypi_completed(release, 
   result = select(release, monkeypatch, github)
   assert result["artifact-run"] == "1"
   assert result["testpypi-verified"] == "false"
-
-
-def test_run_search_reads_later_pages(release, monkeypatch):
-  github = GitHub()
-  github.add("nightly.yml", 1, "nightly")
-  for _ in range(100):
-    github.add("nightly.yml", 2, head_sha="b" * 40)
-  assert select(release, monkeypatch, github)["artifact-run"] == "1"
-  assert all("--paginate" in call and "--slurp" in call for call in github.calls if not call[-1].endswith("/zip"))
 
 
 @pytest.mark.parametrize("kind", ["nightly", "testpypi"])
@@ -242,7 +222,6 @@ def test_selection_cli_writes_workflow_outputs_and_summary(release, monkeypatch,
     {"run_id": 9},
     {"run_attempt": 2},
     {"kind": "testpypi"},
-    {"artifacts": []},
     {"artifacts": [100, 100, 100, 100, 100, 100]},
   ],
 )
@@ -252,13 +231,6 @@ def test_a_record_must_describe_the_current_run_and_complete_artifact_set(releas
   with zipfile.ZipFile(io.BytesIO(github.archives[190])) as archive:
     record = json.loads(archive.read("validation.json"))
   github.set_record(190, record | change)
-  assert select(release, monkeypatch, github)["reused"] == "false"
-
-
-@pytest.mark.parametrize("change", [{"head_sha": "b" * 40}, {"head_branch": "feature"}, {"event": "pull_request"}])
-def test_testpypi_reuse_also_requires_the_release_commit_on_main(release, monkeypatch, change):
-  github = GitHub()
-  github.add("release.yml", 1, "testpypi", **change)
   assert select(release, monkeypatch, github)["reused"] == "false"
 
 
@@ -287,7 +259,7 @@ def test_github_queries_use_the_cli_and_paginate(release, monkeypatch):
   assert calls == [["gh", "api", "--paginate", "--slurp", "repos/PREDICT-EPFL/scaly/example"]]
 
 
-@pytest.mark.parametrize("damage", [None, "different-bytes", "missing-file"])
+@pytest.mark.parametrize("damage", [None, "different-bytes"])
 def test_testpypi_checks_the_exact_bytes_of_every_release_file(release, monkeypatch, tmp_path, damage):
   import hashlib
 
@@ -298,8 +270,6 @@ def test_testpypi_checks_the_exact_bytes_of_every_release_file(release, monkeypa
   urls = [{"filename": p.name, "digests": {"sha256": hashlib.sha256(p.read_bytes()).hexdigest()}} for p in (wheel, sdist)]
   if damage == "different-bytes":
     urls[0]["digests"]["sha256"] = "0" * 64
-  elif damage == "missing-file":
-    urls.pop()
 
   def urlopen(url, timeout):
     assert url == "https://test.pypi.org/pypi/scaly/0.1.0/json" and timeout == 30

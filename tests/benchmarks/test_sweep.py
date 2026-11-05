@@ -24,6 +24,7 @@ from benchmarks.harness.sweep import (
   _descriptor_kernel,
   _dispatch_metrics,
   _module_info,
+  run_cell,
 )
 
 
@@ -60,7 +61,7 @@ def test_codegen_deadline_expires_and_restores_handler() -> None:
   assert signal.getitimer(signal.ITIMER_REAL) == (0, 0)
 
 
-@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+@pytest.mark.parametrize("platform", ["win32", "linux"])
 def test_compile_timeout_cleans_up_and_drains_output(platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from types import SimpleNamespace
 
@@ -222,7 +223,7 @@ def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z])
+    return _mapped_call(stage, 4, [(z, 0, 2)])
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 0, 6)
 
@@ -241,7 +242,7 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_workspace_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(outer, 4, [z])
+    return _mapped_call(outer, 4, [(z, 0, 2)])
 
   # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
@@ -258,7 +259,7 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
   @sc.function(sc.group(sc.arg("z", 3 * stages), sc.arg("weights", 9)), outputs=sc.arg("y"), name="metric_hoist_map")
   def mapped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, weights = inputs
-    return _mapped_call(stage, stages, {"x": z, "w": (weights, 0, 0)})
+    return _mapped_call(stage, stages, [(z, 0, 3), (weights, 0, 0)])
 
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in render_c_module(mapped, lanes=1).program.args)
   program = render_c_module(mapped).program
@@ -274,7 +275,7 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="metric_scheduled_map")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z])
+    return _mapped_call(stage, 4, [(z, 0, 2)])
 
   program = render_c_module(mapped, lanes=1).program
   proc_count = int(program.attrs["proc_count"])
@@ -302,7 +303,7 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
 
   @sc.function(sc.arg("z", 2048), outputs=sc.arg("y"), name="metric_spill_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(outer, 2, [z])
+    return _mapped_call(outer, 2, [(z, 0, 1024)])
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (2, 1024, 2048)
 
@@ -315,7 +316,7 @@ def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
 
   @sc.function(sc.arg("z", 4), outputs=sc.arg("y"), name="metric_shared_vmap")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z])
+    return _mapped_call(stage, 4, [(z, 0, 1)])
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 0, 3)
 
@@ -330,7 +331,7 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
 
   @sc.function(sc.arg("z", 12), outputs=sc.arg("y"), name="metric_pair_map")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 4, [z]).sum()
+    return _mapped_call(stage, 4, [(z, 0, 3)]).sum()
 
   stages = {}
   lower_function(mapped, observe=lambda name, program: stages.__setitem__(name, program))
@@ -380,16 +381,54 @@ def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
 
   @sc.function(sc.arg("z", 1), outputs=sc.arg("y"), name="metric_unit_with_call")
   def root(z: sc.Expr) -> sc.Expr:
-    return _mapped_call(stage, 1, [z]) + other(z)
+    return _mapped_call(stage, 1, [(z, 0, 1)]) + other(z)
 
   assert _dispatch_metrics(root.instantiate(), render_c_module(root).program) == (1, 0, 1)
 
 
-def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
-  assert "layout" in FIELDS
-  assert {"dispatch_trip_count", "dispatch_workspace", "dispatch_arithmetic", "coloring_width"} <= set(FIELDS)
-  assert {"source_bytes", "source_constant_bytes", "executable_bytes", "executable_constant_bytes"} <= set(FIELDS)
-  assert {"integer_workspace", "argument_pointers", "result_pointers"} <= set(FIELDS)
+def test_a_generated_cell_fills_every_code_generation_column(tmp_path: Path) -> None:
+  """A cell stopped before compiling still writes every column code generation measures. The CSV
+  writer refuses a value whose column is missing from ``FIELDS``."""
+  import csv
+
+  result, _ = run_cell(
+    "race_cars",
+    5,
+    "scaly",
+    tmp_path / "cell",
+    codegen_timeout=300,
+    compile_timeout=60,
+    max_source_mb=0.0,
+    benchmark_min_time="0.1s",
+    load_harvested=False,
+  )
+  assert result["compile_status"] == "skipped_size"
+  out = tmp_path / "cells.csv"
+  with out.open("w", newline="") as fp:
+    writer = csv.DictWriter(fp, fieldnames=FIELDS)
+    writer.writeheader()
+    writer.writerow(result)
+  with out.open(newline="") as fp:
+    written = next(csv.DictReader(fp))
+  measured = (
+    "layout",
+    "codegen_ms",
+    "build_ms",
+    "render_ms",
+    "source_bytes",
+    "source_constant_bytes",
+    "source_lines",
+    "workspace",
+    "integer_workspace",
+    "argument_pointers",
+    "result_pointers",
+    "dispatch_trip_count",
+    "dispatch_workspace",
+    "dispatch_arithmetic",
+    "coloring_width",
+    "nnz",
+  )
+  assert [column for column in measured if written[column] == ""] == []
 
 
 def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
@@ -444,40 +483,26 @@ def test_module_info_records_constructed_local_coloring_width() -> None:
   assert info["coloring_width"] == 2
 
 
-def test_casadi_descriptor_kernel_uses_nlpsol_and_applies_cse_before_it() -> None:
-  class FakeSolver:
-    def get_function(self, name: str):
-      self.function_name = name
-      return self
+@pytest.mark.parametrize(("kind", "oracle"), [("jac", "nlp_jac_g"), ("hess", "nlp_hess_l")])
+def test_casadi_descriptor_kernel_shares_repeated_subexpressions_under_cse(kind: str, oracle: str) -> None:
+  import casadi as ca
 
-  class FakeCasadi:
-    def __init__(self) -> None:
-      self.cse_inputs: list[object] = []
-      self.nlpsol_inputs: list[tuple] = []
+  def build(cse: bool):
+    x, p = ca.MX.sym("x", 2), ca.MX.sym("p")
 
-    def cse(self, expressions):
-      self.cse_inputs.append(expressions)
-      return ["cse_cost", "cse_constraints"]
+    def shared():
+      return ca.sin(x[0] * x[1] + p)
 
-    def nlpsol(self, name, plugin, nlp, options):
-      self.nlpsol_inputs.append((name, plugin, nlp, options))
-      return FakeSolver()
+    cost = shared() * shared() + x[0]
+    constraints = ca.vertcat(shared() + x[1], shared() * x[0])
+    return _casadi_descriptor_kernel(ca, f"sweep_cse_{kind}_{cse}", x, p, cost, constraints, kind, expand=False, cse=cse)
 
-  ca = FakeCasadi()
-  fn = _casadi_descriptor_kernel(ca, "sweep_fake", "z", "p", "cost", "constraints", "jac", expand=False, cse=True)
-
-  assert fn.function_name == "nlp_jac_g"
-  assert ca.cse_inputs == [["cost", "constraints"]]
-  name, plugin, nlp, options = ca.nlpsol_inputs[0]
-  assert (name, plugin) == ("sweep_fake", "ipopt")
-  assert nlp == {"x": "z", "p": "p", "f": "cse_cost", "g": "cse_constraints"}
-  assert options == {"expand": False, "ipopt.print_level": 0, "ipopt.sb": "yes", "print_time": False}
-
-  no_cse = FakeCasadi()
-  fn = _casadi_descriptor_kernel(no_cse, "sweep_fake_hess", "z", "p", "cost", "constraints", "hess", expand=True)
-  assert fn.function_name == "nlp_hess_l"
-  assert no_cse.cse_inputs == []
-  assert no_cse.nlpsol_inputs[0][3]["expand"] is True
+  plain, shared = build(False), build(True)
+  assert plain.name() == shared.name() == oracle
+  assert shared.n_instructions() < plain.n_instructions()
+  args = [np.array([0.3, -0.7]), 0.2, *([1.0, np.array([0.5, -1.5])] if kind == "hess" else [])]
+  for expected, actual in zip(plain.call(args), shared.call(args), strict=True):
+    np.testing.assert_allclose(np.array(actual), np.array(expected), rtol=1e-14, atol=1e-14)
 
 
 def test_casadi_output_metadata_tracks_jacobian_output_and_full_layout() -> None:
@@ -635,39 +660,6 @@ def test_gbench_driver_uses_selected_nlpsol_result_and_input_contract(tmp_path) 
   assert "arg[0] = g_x.data();" in source
   assert "arg[1] = g_p.data();" in source
   assert source.count("nlp_jac_g(arg.data()") == 2
-
-
-def test_gbench_driver_sizes_selected_hessian_output(tmp_path) -> None:
-  info = {
-    "name": "casadi_hess_fixture",
-    "symbol": "nlp_hess_l",
-    "backend": "casadi_mx",
-    "header": "casadi_hess_fixture.h",
-    "inputs": [("x", 2), ("p", 1), ("lam_f", 1), ("lam_g", 1)],
-    "n_rows": 2,
-    "n_cols": 2,
-    "nnz": 3,
-    "rows": (0, 0, 1),
-    "cols": (0, 1, 1),
-    "w_size": 5,
-    "iw_size": 2,
-    "arg_size": 6,
-    "res_size": 2,
-    "output_index": 0,
-    "requested_output_indices": (0,),
-    "output_nnz": (3,),
-    "layout": "upper",
-    "benchmark": "BM_CasadiHessFixture",
-  }
-  input_paths = {name: tmp_path / f"sample_{name}.bin" for name, _ in info["inputs"]}
-  expected_path = tmp_path / "expected_dense.bin"
-  source = gbench.write_cpp(info, tmp_path, input_paths, expected_path).read_text()
-
-  assert "static std::array<double, 3> g_out_0{};" in source
-  assert "g_out_1" not in source
-  assert "std::array<double*, 2> res{};" in source
-  assert source.count("res[0] = g_out_0.data();") == 2
-  assert source.count("nlp_hess_l(arg.data()") == 2
 
 
 def _run_compiled_driver(

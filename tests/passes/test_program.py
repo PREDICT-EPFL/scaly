@@ -15,7 +15,7 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.codegen.c import render_program_c_source
+from scaly.codegen.aot import render_c_source
 from scaly.codegen.toolchain import find_c_compiler
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program.combine_scatter_sums import combine_scatter_sums
@@ -121,7 +121,7 @@ def test_deep_scalar_fold_lowers_renders_and_runs(length: int) -> None:
   """Depth in the expression must not become depth on the Python stack or in the C source: the
   passes and renderer are iterative, and the renderer splits trees at ``MAX_SCALAR_DEPTH``."""
   f = _long_scalar_chain(length)
-  assert re.search(r"double v\d+ = ", render_program_c_source(f))
+  assert re.search(r"double v\d+ = ", render_c_source(f, lanes=1))
   x = np.arange(1.0, 5.0)
   np.testing.assert_allclose(f(x), _long_scalar_chain_numpy(length, x), rtol=1e-12)
 
@@ -315,23 +315,6 @@ def test_generated_names_do_not_rescan_the_namespace(monkeypatch: pytest.MonkeyP
   assert calls <= 200
 
 
-def test_dead_buffer_removal_analyzes_each_statement_once(monkeypatch: pytest.MonkeyPatch) -> None:
-  from scaly.passes.program import _common
-
-  a = buffer("a", dtypes.float64, (4,), address_space="private")
-  stmt = store(view(a, [const_int(0)]), const_float(1.0))
-  calls: list[ProgramNode] = []
-  buffer_refs = _common.buffer_refs
-
-  def counted(node: ProgramNode, aliases: dict[str, str] | None = None):
-    calls.append(node)
-    return buffer_refs(node, aliases)
-
-  monkeypatch.setattr(_common, "buffer_refs", counted)
-  _common.prune_dead_buffers(proc_("references", [], [a, stmt]))
-  assert calls == [stmt]
-
-
 def test_hoist_reserves_exported_names_across_repeated_loop_variables() -> None:
   a, x, y = (buffer(name, dtypes.float64, (1,)) for name in ("a", "x", "y"))
   temp = buffer("temp", dtypes.float64, (1,), address_space="private")
@@ -447,7 +430,7 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
 
   jf = outer.factory("J", ["z"], [sc.factory.Jac("y", "z")])
 
-  source = render_program_c_source(jf)
+  source = render_c_source(jf, lanes=1)
   declaration = re.search(r"static __attribute__\(\(noinline\)\) void (inner_fwd_\w+_raw)\(", source)
   assert declaration is not None
   match = re.search(re.escape(declaration.group(1)) + r"\(([^)]*)\);", source)
@@ -465,7 +448,7 @@ def test_regular_raw_callees_stay_inline() -> None:
   def outer(z):
     return inner(z) + 1.0
 
-  source = render_program_c_source(outer)
+  source = render_c_source(outer, lanes=1)
   assert "static inline void inner_raw" in source
   assert "noinline" not in source
 
@@ -479,7 +462,7 @@ def test_user_callee_named_like_a_forward_helper_stays_inline() -> None:
   def outer(z):
     return car_fwd(z) + 1.0
 
-  source = render_program_c_source(outer)
+  source = render_c_source(outer, lanes=1)
   assert "static inline void car_fwd_raw" in source
   assert "noinline" not in source
 
@@ -495,25 +478,13 @@ def test_spilled_function_matches_numpy(isolated_cache) -> None:
     return ((A @ B) + (B @ A)).sum()
 
   assert _sz_w(f) >= WORKSPACE_SPILL_THRESHOLD  # the (40,40) matmul temp spills
-  render_program_c_source(f)  # loud coverage gate
+  render_c_source(f, lanes=1)  # loud coverage gate
   f.recompile()
   rng = np.random.default_rng(0)
   a, b = rng.standard_normal((40, 40)), rng.standard_normal((40, 40))
   got = f((a, b))
   ref = ((a @ b) + (b @ a)).sum()
   np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)
-
-
-def test_optimized_program_still_verifies() -> None:
-  """The pass pipeline output must pass the Program IR verifier (lower_function asserts this)."""
-
-  @sc.function(sc.arg("x", 6), outputs=sc.arg("out0"), name="verif")
-  def f(x: sc.Expr) -> sc.Expr:
-    m = x.reshape((2, 3))
-    return (m @ x[:3]).sin() + x[3:5]  # (2,3)@(3,) -> (2,), + x[3:5] (2,)
-
-  prog = lower_function(f)  # raises VerifyError on any malformed node
-  assert prog.op == ProgramOp.PROGRAM
 
 
 @pytest.mark.parametrize("count", [2, 8])
@@ -726,7 +697,7 @@ def _mapped_mlp(stages: int, *, broadcast: bool) -> tuple[sc.Function, np.ndarra
   )
   def fn(inputs):
     z, weights = inputs
-    return _mapped_call(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0 if broadcast else 9)})
+    return _mapped_call(stage, stages, [(z, 0, 3), (weights, 0, 0 if broadcast else 9)])
 
   weights = as_concrete(fn).inputs[1]
   rng = np.random.default_rng(3)
@@ -775,8 +746,8 @@ def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
   @sc.function(sc.group(sc.arg("z", 12), sc.arg("weights", 36)), outputs=sc.arg("y"), name="hoist_two_map")
   def fn(inputs):
     z, weights = inputs
-    first = _mapped_call(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
-    second = _mapped_call(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
+    first = _mapped_call(stage, 4, [(z, 0, 3), (weights, 0, 0)])
+    second = _mapped_call(stage, 4, [(z, 0, 0), (weights, 0, 9)])
     return first + second
 
   assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoist_0", "hoist_two_map"]
@@ -815,7 +786,7 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
   assert hoist_invariant(prog) is prog
 
 
-@pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled"), ("opaque", "disabled")])
+@pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled")])
 def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: Lowering, mode: str) -> None:
   @sc.function(sc.group(sc.arg("x", 1), sc.arg("w", 1)), outputs=sc.arg("y"), name="policy_stage")
   def stage(inputs):

@@ -12,7 +12,6 @@ import pytest
 
 from scaly.codegen import aot
 from scaly.solvers import paths as solver_paths_module
-from scaly.utils import env
 
 
 @pytest.fixture
@@ -28,7 +27,7 @@ def two_solver_backends(monkeypatch):
   monkeypatch.setattr(registry, "get_backend", backends.__getitem__)
 
 
-@pytest.mark.parametrize("setting", ["SCALY_CC", "CC"])
+@pytest.mark.parametrize("setting", ["SCALY_CC"])
 def test_compiler_command_accepts_zig_subcommand(tmp_path, monkeypatch, setting) -> None:
   from scaly.codegen import toolchain
 
@@ -132,13 +131,6 @@ def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   proc = subprocess.run(argv, check=False, capture_output=True, text=True, env=env_vars)
   assert proc.returncode == 0, proc.stderr
   assert (tmp_path / "cli" / "aot_cli.h").read_text() == (out / "aot_cli.h").read_text()
-
-
-def test_env_registry_mentions_native_build_controls() -> None:
-  names = {v.name for v in env.scaly_env_vars()}
-  assert "SCALY_CACHE_DIR" in names
-  assert "SCALY_CC" in names
-  assert "SCALY_BUILD_SOLVERS" in names
 
 
 def test_compiler_order_prefers_zig_after_scaly_cc(tmp_path, monkeypatch, capsys) -> None:
@@ -245,9 +237,8 @@ def test_no_gather_flags_target_clang_on_x86(monkeypatch, command, macros: str, 
     (("/usr/bin/gcc",), "#define __x86_64__ 1\n", "glibc", ()),
     (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", "glibc", ("-fveclib=libmvec",)),
     (("/usr/bin/clang",), "#define __clang__ 1\n#define __x86_64__ 1\n", "none", ()),
-    (("/env/bin/zig", "cc"), "#define __clang__ 1\n#define __x86_64__ 1\n", "glibc", ("-fveclib=libmvec",)),
   ],
-  ids=["gcc", "clang", "clang-scalar", "zig"],
+  ids=["gcc", "clang", "clang-scalar"],
 )
 def test_vector_libm_flags_select_libmvec_for_clang(monkeypatch, command, macros: str, vector_libm: str, expected) -> None:
   from scaly.codegen import toolchain

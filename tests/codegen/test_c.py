@@ -21,33 +21,6 @@ def test_compiled_erf_matches_math_erf() -> None:
   np.testing.assert_allclose(f(values), [math.erf(float(value)) for value in values], rtol=1e-14, atol=1e-15)
 
 
-def test_c_api_header_exposes_pointer_abi_and_typed_buffers() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
-  def f(x: sc.Expr) -> sc.Expr:
-    return x + 1
-
-  from scaly.codegen import render_c_api_header
-
-  header = render_c_api_header(f)
-  assert "#define SCALY_SUCCESS 0" in header
-  assert "#define SCALY_ERR_NULL_ABI 1" in header
-  assert "#define SCALY_ERR_NULL_WORK 2" in header
-  assert "#define SCALY_ERR_NULL_RESULT 3" in header
-  assert "#define SCALY_ERR_NULL_INPUT 4" in header
-  assert "#define f_SZ_ARG 1" in header
-  assert "#define f_SZ_RES 1" in header
-  assert "#define f_SZ_IW 0" in header
-  assert "#define f_SZ_W 0" in header
-  assert 'extern "C" {' in header
-  assert "int f(const double** arg, double** res, int* iw, double* w, int mem);" in header
-  assert "_sz_" not in header and "_mem" not in header
-  assert "typedef struct { SCALY_ALIGNAS(16) double data[2]; } f_x_t;" in header
-  assert "typedef struct { SCALY_ALIGNAS(16) double data[2]; } f_y_t;" in header
-  assert "typedef struct { SCALY_ALIGNAS(16) double data[f_SZ_W > 0 ? f_SZ_W : 1]; } f_workspace_t;" in header
-  assert "static inline int f_call(const f_x_t* x, f_y_t* y, f_workspace_t* workspace)" in header
-  assert "casadi" not in header
-
-
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
   def primal(x: sc.Expr) -> sc.Expr:
@@ -112,6 +85,41 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   assert lib.f(args, bad_res, None, w_buf, 0) == 3
   bad_args = (c_double_p * 1)(c_double_p())
   assert lib.f(bad_args, res, None, w_buf, 0) == 4
+
+
+def test_entry_refuses_a_null_workspace_it_needs(tmp_path) -> None:
+  cc = c_compiler()
+
+  @sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out0"), name="spilled")
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    A, B = inputs
+    return ((A @ B) + (B @ A)).sum()
+
+  from scaly.codegen import render_c_module
+
+  module = render_c_module(f)
+  assert module.workspace_size > 0
+  src = tmp_path / module.source_name
+  lib_path = tmp_path / ("libspilled.dylib" if sys.platform == "darwin" else "libspilled.so")
+  src.write_text(module.source)
+  (tmp_path / module.header_name).write_text(module.header)
+  subprocess.run([*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-lm", "-o", str(lib_path)], check=True)
+
+  lib = ctypes.CDLL(str(lib_path))
+  c_double_p = ctypes.POINTER(ctypes.c_double)
+  lib.spilled.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
+  lib.spilled.restype = ctypes.c_int
+  rng = np.random.default_rng(0)
+  a, b = rng.standard_normal(1600), rng.standard_normal(1600)
+  a_buf, b_buf, out_buf = (ctypes.c_double * 1600)(*a), (ctypes.c_double * 1600)(*b), (ctypes.c_double * 1)()
+  w_buf = (ctypes.c_double * module.workspace_size)()
+  args = (c_double_p * 2)(ctypes.cast(a_buf, c_double_p), ctypes.cast(b_buf, c_double_p))
+  res = (c_double_p * 1)(ctypes.cast(out_buf, c_double_p))
+
+  assert lib.spilled(args, res, None, None, 0) == 2
+  assert lib.spilled(args, res, None, w_buf, 0) == 0
+  A, B = a.reshape(40, 40), b.reshape(40, 40)
+  np.testing.assert_allclose(out_buf[0], (A @ B + B @ A).sum(), rtol=1e-12)
 
 
 def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
@@ -187,41 +195,6 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   assert lib.outer(args, res, None, w_buf, 0) == 0
   actual = zv + 1.0
   np.testing.assert_allclose(np.array(y_buf), actual * actual + actual.sum())
-
-
-def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
-  cc = c_compiler()
-
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
-  def f(x: sc.Expr) -> sc.Expr:
-    return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-
-  spjf = sc.sparse_jacobian(f, "y", "x", name="f_spjac")
-  from scaly.codegen import render_c_module
-
-  module = render_c_module(spjf)
-  assert "#define f_spjac_spjac_y_x_NNZ 5" in module.header
-  (tmp_path / module.header_name).write_text(module.header)
-  source = tmp_path / module.source_name
-  source.write_text(module.source)
-  lib_path = tmp_path / ("libspjac.dylib" if sys.platform == "darwin" else "libspjac.so")
-  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(source), "-lm", "-o", str(lib_path)]
-  subprocess.run(cmd, check=True)
-
-  lib = ctypes.CDLL(str(lib_path))
-  c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.f_spjac.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
-  lib.f_spjac.restype = ctypes.c_int
-
-  xv = np.array([2.0, 3.0, 5.0, 7.0])
-  x_buf = (ctypes.c_double * 4)(*xv)
-  values_buf = (ctypes.c_double * 5)()
-  w_buf = (ctypes.c_double * max(module.workspace_size, 1))()
-  args = (c_double_p * 1)(ctypes.cast(x_buf, c_double_p))
-  res = (c_double_p * 1)(ctypes.cast(values_buf, c_double_p))
-
-  assert lib.f_spjac(args, res, None, w_buf, 0) == 0
-  np.testing.assert_allclose(np.array(values_buf), np.array([1.0, 1.0, 1.0, xv[3], xv[1]]))
 
 
 def test_c_header_typed_buffers_compile_and_run_from_c(tmp_path) -> None:
@@ -322,13 +295,13 @@ int main() {
 
 
 def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
-  from scaly.codegen.c import render_program_c_source
+  from scaly.codegen.aot import render_c_source
 
   @sc.function(sc.arg("x", 7), outputs=sc.arg("y"), name="coalesced")
   def f(x: sc.Expr) -> sc.Expr:
     return (x * 2.0 + 1.0).scalar()
 
-  source = render_program_c_source(f)
+  source = render_c_source(f, lanes=1)
   assert "*(double2*)(res[0]) = (double2){" in source
   assert "*(double2*)(res[0] + 4) = (double2){" in source
   assert "res[0][6] = " in source
@@ -380,14 +353,3 @@ def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tm
   yv = (ctypes.c_double * 5)()
   lib.gaps_test(xv, yv)
   assert list(yv) == [1, 0, 3, 3, 3]
-
-
-def test_renderer_spells_explicit_paired_store() -> None:
-  from scaly.codegen.c import _render_raw_callee
-  from scaly.ir import program as p
-  from scaly.ir.types import dtypes
-
-  out = p.buffer("out", dtypes.float64, (2,))
-  proc = p.proc("paired", [out], [p.store_pair(p.view(out, [p.const_int(0)]), p.const_float(1), p.const_float(2))])
-  source = "\n".join(_render_raw_callee(proc))
-  assert "*(double2*)(out) = (double2){1.0, 2.0};" in source

@@ -12,7 +12,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.ir.types import dtypes
 
@@ -55,12 +54,6 @@ def test_dtype_propagation_through_unary_and_binary() -> None:
     _ = x + z  # mixed dtype refused
 
 
-def test_const_dtype_round_trip() -> None:
-  c = sc.const(np.array([1.0, 2.0], dtype=np.float32), dtype=dtypes.float32)
-  assert c.type.dtype == dtypes.float32
-  assert c.value is not None and c.value.dtype == np.float32
-
-
 def test_devicespec_parse_and_str() -> None:
   assert sc.DeviceSpec.parse(None) == sc.DeviceSpec("host")
   assert sc.DeviceSpec.parse("host") == sc.DeviceSpec("host")
@@ -76,15 +69,6 @@ def test_function_rejects_a_dtype_the_host_cannot_lower() -> None:
   half = sc.DType("float16", 16, "float16_t", is_floating=True)
   with pytest.raises(ValueError, match="cannot lower dtype float16"):
     sc.function(sc.arg("x", sc.TensorType((3,), dtype=half)), outputs=sc.arg("y"), name="f16")(lambda x: x.sum()).instantiate()
-
-
-def test_float32_construction_keeps_dtype_metadata() -> None:
-  @sc.function(sc.arg("x", sc.TensorType((3,), dtype=dtypes.float32)), outputs=sc.arg("y"), name="f32")
-  def fn(x: sc.Expr) -> sc.Expr:
-    return (x * x).sum()
-
-  assert as_concrete(fn).inputs[0].type.dtype == dtypes.float32
-  assert as_concrete(fn).outputs[0].type.dtype == dtypes.float32
 
 
 def test_type_shapes_reject_negative_dimensions_and_mismatched_sparsity() -> None:

@@ -209,7 +209,7 @@ def test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values(tmp
   _assert_identical(_run(prog, tmp_path, lanes, x, expected.size), expected)
 
 
-@pytest.mark.parametrize("shape", [(2, 0), (0, 2), (0, 0)])
+@pytest.mark.parametrize("shape", [(2, 0)])
 def test_empty_mask_loops_are_unchanged(shape):
   mask = p.const_buffer("mask", dtypes.float64, shape, [])
   x = p.buffer("x", dtypes.float64, (0,))

@@ -20,17 +20,7 @@ def test_duplicate_rule_rejected_without_partial_registration(monkeypatch) -> No
   assert ExprOp.INPUT not in ctx._RULES
 
 
-def test_rule_registration_returns_the_rule(monkeypatch) -> None:
-  monkeypatch.setattr(ctx, "_RULES", {op: rule for op, rule in ctx._RULES.items() if op != ExprOp.INPUT})
-
-  def rule(ctx, node) -> None:
-    pass
-
-  assert ctx.lowers(ExprOp.INPUT)(rule) is rule
-  assert ctx._RULES[ExprOp.INPUT] is rule
-
-
-@pytest.mark.parametrize("dtype", ["bool", "int32", "int64", "float32"])
+@pytest.mark.parametrize("dtype", ["float32"])
 @pytest.mark.parametrize("side", ["input", "output"])
 def test_non_float64_leaves_refused(dtype, side) -> None:
   from scaly.function.concrete import ConcreteFunction

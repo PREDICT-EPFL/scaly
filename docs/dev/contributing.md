@@ -96,7 +96,7 @@ renaming a test, regenerate it from the complete collection:
   raw=$(mktemp)
   fresh=$(mktemp)
   trap 'rm -f "$raw" "$fresh"' EXIT
-  uv run pytest --collect-only -q >"$raw" 2>&1 || true
+  uv run pytest --collect-only -q >"$raw" 2>/dev/null || true
   grep -E '^(tests|plugins|typing_playground)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
   test -s "$fresh"
   mv "$fresh" tests/baseline/pytest_nodeids.txt
@@ -105,9 +105,10 @@ generation_status=$?
 [ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q
 ```
 
-The first collection can exit nonzero because the existing baseline is stale or missing. The `grep`
-keeps only pytest node IDs, including parameter IDs with spaces, and `sort` makes the file
-deterministic. The final collection must pass.
+The first collection can exit nonzero because the existing baseline is stale or missing. The recipe
+discards its error output: written to the same file, the error can land in the middle of a node ID
+and corrupt the baseline. The `grep` keeps only pytest node IDs, including parameter IDs with
+spaces, and `sort` makes the file deterministic. The final collection must pass.
 
 A test that needs a built solver carries a marker:
 

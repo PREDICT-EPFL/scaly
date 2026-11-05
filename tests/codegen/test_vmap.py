@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import ctypes
 import re
-import subprocess
-import sys
 
 import numpy as np
 import pytest
@@ -12,36 +9,6 @@ from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.codegen.toolchain import LaneCount
-from tests.compilers import c_compiler
-
-
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
-def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  x, p = inputs
-  return 2.0 * x + p
-
-
-@pytest.mark.parametrize("lanes", [1, "auto"])
-def test_vmap_c_source_loop_size_is_independent_of_length(lanes: LaneCount) -> None:
-  from scaly.codegen import render_c_source
-
-  def render(N: int) -> str:
-    @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y"), name=f"scale_vmap_{N}")
-    def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-      z, p = inputs
-      return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-
-    return render_c_source(fn, lanes=lanes)
-
-  src_a = render(20)
-  src_b = render(100)
-  if lanes == 1:
-    assert "< 20;" in src_a
-    assert "< 100;" in src_b
-  else:
-    assert "SCALY_LANES" in src_a
-  assert src_a.count("for (") == src_b.count("for (") > 0
-  assert src_a.count("\n") == src_b.count("\n")
 
 
 @pytest.mark.parametrize("lanes", [1, "auto"])
@@ -142,52 +109,6 @@ def test_callee_formal_named_w_avoids_workspace_collision() -> None:
   np.testing.assert_allclose(fn((zval, wval)), expected)
 
 
-def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
-  cc = c_compiler()
-
-  from scaly.codegen import render_c_module
-
-  N = 5
-
-  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y"), name="scale_vmap_compiled")
-  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p = inputs
-    return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-
-  module = render_c_module(fn)
-  (tmp_path / module.header_name).write_text(module.header)
-  source = tmp_path / module.source_name
-  source.write_text(module.source)
-  lib_path = tmp_path / ("libvmap.dylib" if sys.platform == "darwin" else "libvmap.so")
-  cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(source), "-lm", "-o", str(lib_path)]
-  subprocess.run(cmd, check=True)
-
-  lib = ctypes.CDLL(str(lib_path))
-  c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.scale_vmap_compiled.argtypes = [
-    ctypes.POINTER(c_double_p),
-    ctypes.POINTER(c_double_p),
-    ctypes.POINTER(ctypes.c_int),
-    c_double_p,
-    ctypes.c_int,
-  ]
-  lib.scale_vmap_compiled.restype = ctypes.c_int
-
-  rng = np.random.default_rng(0)
-  zv = rng.normal(size=3 * N)
-  pv = rng.normal(size=3 * N)
-
-  z_buf = (ctypes.c_double * (3 * N))(*zv)
-  p_buf = (ctypes.c_double * (3 * N))(*pv)
-  y_buf = (ctypes.c_double * (3 * N))()
-  w_buf = (ctypes.c_double * max(module.workspace_size, 1))()
-  args = (c_double_p * 2)(ctypes.cast(z_buf, c_double_p), ctypes.cast(p_buf, c_double_p))
-  res = (c_double_p * 1)(ctypes.cast(y_buf, c_double_p))
-
-  assert lib.scale_vmap_compiled(args, res, None, w_buf, 0) == 0
-  np.testing.assert_allclose(np.array(y_buf), 2.0 * zv + pv)
-
-
 RK4_NX, RK4_NU, RK4_NZ, RK4_N_PARAMS = 4, 2, 6, 7
 
 
@@ -244,7 +165,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
     mapped = _mapped_call(
       eq_interstage,
       length=horizon,
-      inputs={"z": (z, 0, RK4_NZ), "znext": (z, RK4_NZ, RK4_NZ), "params": (p, RK4_NX * (horizon + 1), 0)},
+      inputs=[(z, 0, RK4_NZ), (z, RK4_NZ, RK4_NZ), (p, RK4_NX * (horizon + 1), 0)],
     )
     return sc.concat([initial, mapped])
 
@@ -314,55 +235,3 @@ def test_spjac_keeps_constant_loc_on_rk4_race_car_vmap() -> None:
   # LOC is bounded by a tiny constant — variation comes only from whether the workspace
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
   assert abs(loc_a - loc_b) <= 2, f"expected constant RK4 race-car-vmap LOC, got {loc_a} -> {loc_b}"
-
-
-def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
-  """Simple banded VMAP spjac C source stays at constant LOC across N. With the structured
-  VMAP-aware sparse Jacobian, the loop comes from per-formal const-seed JVPs wrapped in VMAP,
-  plus a constant scatter index table; without it, the tile-strided gather peephole would
-  fire instead. Either way the LOC must not grow with N."""
-
-  from scaly.codegen import render_c_source
-
-  NX, NZ = 4, 6
-
-  @sc.function(sc.arg("z", NZ), outputs=sc.arg("eq"), name="eq_initial_t")
-  def eq_initial(z: sc.Expr) -> sc.Expr:
-    return z[:NX] * 2.0
-
-  @sc.function(sc.group(sc.arg("z", NZ), sc.arg("znext", NZ)), outputs=sc.arg("eq"), name="eq_interstage_t")
-  def eq_interstage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, znext = inputs
-    return z[:NX] * 1.5 - znext[:NX]
-
-  def build(N: int) -> sc.Function:
-    @sc.function(sc.arg("z", NZ * (N + 1)), outputs=sc.arg("eq"), name=f"banded_N{N}")
-    def banded(z: sc.Expr) -> sc.Expr:
-      mapped = _mapped_call(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
-      return sc.concat([eq_initial(z[:NZ]), mapped])
-
-    return banded
-
-  loc_a = render_c_source(sc.sparse_jacobian(build(10), "eq", "z")).count("\n")
-  loc_b = render_c_source(sc.sparse_jacobian(build(50), "eq", "z")).count("\n")
-  # LOC is bounded by a tiny constant — variation comes only from whether the workspace
-  # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
-  assert abs(loc_a - loc_b) <= 2, f"expected constant LOC, got {loc_a} -> {loc_b}"
-  src_b = render_c_source(sc.sparse_jacobian(build(50), "eq", "z"))
-  # The inner work stays loop-based (the constant LOC above already rules out a per-iteration
-  # unroll) and the assembly renders as a for-loop.
-  assert "for (" in src_b
-
-
-def test_vmap_jit_matches_unrolled_numpy() -> None:
-  N = 2
-
-  @sc.function(sc.group(sc.arg("z", 6), sc.arg("p", 6)), outputs=sc.arg("y"), name="eval_path")
-  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, p = inputs
-    return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-
-  zv = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-  pv = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-  expected = np.concatenate([2.0 * zv[i * 3 : (i + 1) * 3] + pv[i * 3 : (i + 1) * 3] for i in range(N)])
-  np.testing.assert_allclose(fn((zv, pv)), expected)

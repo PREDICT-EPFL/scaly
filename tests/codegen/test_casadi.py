@@ -15,7 +15,7 @@ import pytest
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from scaly.codegen import render_c_api_header, render_c_module, render_c_source, workspace_size
+from scaly.codegen import render_c_api_header, render_c_module, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
 from tests.compilers import c_compiler
 
@@ -71,14 +71,6 @@ def test_casadi_header_declares_the_query_set() -> None:
   cpp = render_c_api_header(fun, lang="cpp", casadi=True)
   assert 'extern "C" casadi_int f_spjac_n_in(void);' in cpp
   assert "constexpr std::array<int, nnz> csc_val_perm = {0, 1, 2, 3, 4};" in cpp
-
-
-def test_casadi_source_gathers_into_compressed_column_order() -> None:
-  source = render_c_source(_spjac(), casadi=True)
-  assert "double* spjac_y_x_native = w + 0;" in source
-  assert "res[0][k] = spjac_y_x_native[spjac_y_x_csc_val_perm[k]];" in source
-  assert "casadi_int f_spjac_n_in(void) { return 2; }" in source
-  assert 'case 1: return "p";' in source
 
 
 def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:

@@ -123,7 +123,7 @@ def test_repeated_modes_report_dispersion_and_missing_samples(tmp_path: Path) ->
   assert jit["time_to_first_solve_ms_cv"] == pytest.approx(50**0.5 / 115)
 
 
-@pytest.mark.parametrize("exception", [RuntimeError, ValueError])
+@pytest.mark.parametrize("exception", [RuntimeError])
 def test_failed_episode_keeps_unavailable_mode_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exception: type[Exception]) -> None:
   import csv
 

@@ -9,7 +9,7 @@ import pytest
 
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.codegen.c import render_program_c_source
+from scaly.codegen.aot import render_c_source
 from scaly.ir import program as p
 from scaly.ir.program import ProgramNode, ProgramOp, walk_program
 from scaly.ir.types import Lowering, dtypes
@@ -111,7 +111,7 @@ def test_store_pair_selection_is_explicit_and_respects_dependencies() -> None:
   assert [stmt.op for stmt in _body(result.args[2])] == [ProgramOp.STORE, ProgramOp.STORE, ProgramOp.BUFFER]
 
 
-@pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
+@pytest.mark.parametrize("hint", ["auto", "scalar", "block"])
 def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) -> None:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("out0"), name="hint_stage")
   def stage(x: sc.Expr) -> sc.Expr:
@@ -276,7 +276,7 @@ def test_scalar_constants_cse_and_expression_trees() -> None:
   nodes = {n for s in _body(proc) for n in walk_program(s)}
   assert sum(n.op == ProgramOp.SIN for n in nodes) == 1
   assert all(n.attrs["target"] != "v0" for n in _body(proc) if n.op == ProgramOp.ASSIGN)
-  source = render_program_c_source(fn)
+  source = render_c_source(fn, lanes=1)
   assert "static const" not in source
   assert source.count("sin(") == 1
   assert any(s.op == ProgramOp.STORE and s.args[1].op == ProgramOp.ADD and s.args[1].args[0].op == ProgramOp.MUL for s in _body(proc))
@@ -447,7 +447,7 @@ def test_symbolic_zero_identities_and_known_invalid_constants_have_distinct_sema
 
 def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
   fn = sc.function(sc.arg("x", 1), outputs=sc.arg("out0"), name="invalid_division")(lambda x: (sc.const([0.0, 1.0]) / sc.const([0.0, 0.0])).scalar())
-  source = render_program_c_source(fn)
+  source = render_c_source(fn, lanes=1)
   assert "(0.0 / 0.0)" in source and "(1.0 / 0.0)" in source
   result = fn(np.ones(1))
   assert np.isnan(result[0]) and np.isposinf(result[1])

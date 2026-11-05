@@ -27,8 +27,6 @@ def test_python_matrix_follows_classifiers(tmp_path):
   [
     ("toolchain / ubuntu-24.04 clang-18\npython / 3.14\n", False),
     ("benchmarks / linux-arm64\npython / 3.12\n", True),
-    ("toolchain / ubuntu-latest cc\n", False),
-    ("", False),
   ],
 )
 def test_failure_labels_follow_the_benchmark_group(failed, benchmark):

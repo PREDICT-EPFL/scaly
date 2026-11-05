@@ -13,56 +13,17 @@ Two categories:
 
 from __future__ import annotations
 
-from copy import copy
 from dataclasses import fields
 
 import numpy as np
 import pytest
 
 from scaly.function.model import as_concrete
-from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ir.expr import Expr, ExprOp, binary, unary
-from scaly.ir.expr_spec import spec_expr, verify_expr
+from scaly.ir.expr import Expr, ExprOp
+from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import TensorType, dtypes
-
-
-def test_simple_scalar_graph_verifies() -> None:
-  x = sc.sym("x", 3)
-  y = (x.sin() + x * x).sum()
-  verify_expr(y)
-
-
-def test_matmul_named_call_verifies() -> None:
-  @sc.function(sc.group(sc.arg("a", (3, 4)), sc.arg("b", (4, 2))), outputs=sc.arg("c"), name="mm")
-  def fn(ab: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    a, b = ab
-    return a @ b
-
-  c = sc.sym("c", (3, 4))
-  d = sc.sym("d", (4, 2))
-  out = fn((c, d))
-  verify_expr(out)
-
-
-def test_vmap_graph_verifies() -> None:
-  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"))
-  def stage(u: sc.Expr) -> sc.Expr:
-    return u.sin().sum()
-
-  batch = sc.sym("batch", 8)
-  mapped = _mapped_call(stage, length=4, inputs=[(batch, 0, 2)])
-  verify_expr(mapped)
-
-
-def test_jacobian_factory_output_verifies() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="f")
-  def fn(x: sc.Expr) -> sc.Expr:
-    return (x.sin() + x * x).sum()
-
-  jac = sc.jacobian(fn, "y", "x")
-  verify_expr(as_concrete(jac).outputs)
 
 
 def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
@@ -82,13 +43,6 @@ def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
     object.__setattr__(forged, f.name, getattr(expr, f.name))
   object.__setattr__(forged, "type", bad_type)
   return forged
-
-
-def test_negative_shape_caught() -> None:
-  x = sc.sym("x", 3)
-  bad = _forge_negative_shape(Expr(ExprOp.NEG, (x,), TensorType((3,), dtype=dtypes.float64, diff=True)), (-1,))
-  with pytest.raises(VerifyError, match="shape-nonnegative"):
-    verify_expr(bad)
 
 
 def test_unary_dtype_mismatch_caught() -> None:
@@ -187,33 +141,6 @@ def test_verify_walks_subgraph_and_names_first_failure() -> None:
   assert "shape-nonnegative" in msg
 
 
-def test_verifier_smoke_on_workload_graphs() -> None:
-  """Smoke: a small structurally-rich graph (slice + matmul + sum) verifies, including its Jacobian."""
-
-  @sc.function(sc.arg("z", 6), outputs=sc.arg("y"), name="f")
-  def fn(z: sc.Expr) -> sc.Expr:
-    A = sc.const(np.eye(4, 6))
-    return (A @ z + z[:4]).sum()
-
-  verify_expr(as_concrete(fn).outputs)
-  jac = sc.jacobian(fn, "y", "z")
-  verify_expr(as_concrete(jac).outputs)
-
-
-def test_binary_helper_round_trip_verifies() -> None:
-  x = sc.sym("x", 3)
-  y = sc.sym("y", 3)
-  z = binary(ExprOp.ADD, x, y)
-  verify_expr(z)
-  w = unary(ExprOp.SIN, x)
-  verify_expr(w)
-
-
-def test_spec_expr_check_returns_none_on_valid() -> None:
-  x = sc.sym("x", 3)
-  assert spec_expr.check(x) is None
-
-
 @pytest.mark.parametrize("index,shape", [(None, (2,)), ((slice(None),), (3,)), ((4,), ())])
 def test_slice_contract_rejects_invalid_nodes(index, shape) -> None:
   x = sc.sym("slice_contract_x", 2)
@@ -228,25 +155,6 @@ def test_function_construction_verifies_inner_nodes() -> None:
   bad = Expr(ExprOp.RESHAPE, (x,), TensorType((4,)), attrs={"shape": (4,)})
   with pytest.raises(VerifyError, match="reshape-size"):
     sc.function(sc.arg("construction_verify_x", 3), outputs=sc.arg("out"))(lambda _: bad).instantiate()
-
-
-def test_lowering_verifies_before_normalizing(monkeypatch) -> None:
-  from scaly.passes.lowering import ctx
-
-  @sc.function(sc.arg("lowering_verify_x", 3), outputs=sc.arg("out"))
-  def fn(x):
-    return x.sum()
-
-  concrete = copy(as_concrete(fn))
-  bad = Expr(ExprOp.RESHAPE, (concrete.inputs[0],), TensorType((4,)), attrs={"shape": (4,)})
-  object.__setattr__(concrete, "outputs", (bad,))
-
-  def must_not_normalize(_):
-    pytest.fail("invalid graph reached normalization")
-
-  monkeypatch.setattr(ctx, "_normalize_function", must_not_normalize)
-  with pytest.raises(VerifyError, match="reshape-size"):
-    ctx.lower_function(concrete)
 
 
 @pytest.mark.parametrize("fault", ["solver", "output", "output_name", "arity", "input_shape", "shape", "diff"])

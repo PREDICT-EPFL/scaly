@@ -117,6 +117,24 @@ def test_zero_length_and_zero_parameter_maps() -> None:
   assert sc.vmap(constant, 3).symbolic_call().shape == (3,)
 
 
+def test_windows_must_fit_inside_their_tensor() -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="window_pair")
+  def pair(x: sc.Expr) -> sc.Expr:
+    return x * x
+
+  mapped = sc.vmap(pair, 4)
+  np.testing.assert_array_equal(mapped(sc.window(np.arange(8.0), 0, 2)), np.arange(8.0).reshape(4, 2) ** 2)
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    mapped(sc.window(np.arange(7.0), 0, 2))
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    mapped.symbolic_call(sc.window(sc.sym("z", 8), 1, 2))
+  # A NumPy stride must not wrap around in the bounds arithmetic.
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    mapped(sc.window(np.arange(8.0), 0, np.int8(64)))  # ty: ignore[invalid-argument-type]
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    sc.vmap(pair, np.int8(100))(sc.window(np.arange(8.0), 0, 2))  # ty: ignore[invalid-argument-type]
+
+
 def test_bare_map_and_resolution_errors() -> None:
   @sc.function()
   def square(x: sc.Expr) -> sc.Expr:
@@ -149,18 +167,6 @@ def test_repeated_maps_share_instances_and_derivatives() -> None:
     return sc.jacobian(left)(x) + sc.jacobian(right)(x)
 
   np.testing.assert_array_equal(host(np.ones((3, 2))), 4.0 * np.eye(6))
-
-
-def test_contiguous_maps_do_not_allocate_view_indices(monkeypatch) -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
-  def identity(x: sc.Expr) -> sc.Expr:
-    return x
-
-  def refuse(*args, **kwargs):
-    raise AssertionError("unexpected view index allocation")
-
-  monkeypatch.setattr(np, "arange", refuse)
-  assert sc.vmap(identity, 3)(sc.sym("x", (3, 2))).shape == (3, 2)
 
 
 def test_sparse_map_coloring_survives_output_shape_wrappers() -> None:

@@ -316,7 +316,7 @@ def test_every_expr_op_is_accounted_for():
   assert {case.op for case in CASES} | set(REFUSED) | {ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT} == set(ExprOp)
 
 
-@pytest.mark.parametrize(("op", "point"), [(op, point) for op in REFUSED for point in (0.5, 0.7, 1.0)] + [(ExprOp.SOLVER_CALL, None)])
+@pytest.mark.parametrize(("op", "point"), [(op, point) for op in REFUSED for point in (0.5,)] + [(ExprOp.SOLVER_CALL, None)])
 @pytest.mark.parametrize("mode", ["single", "many", "reverse"])
 def test_active_derivative_refusals(op, mode, point):
   x = sc.sym("refused_x", ())

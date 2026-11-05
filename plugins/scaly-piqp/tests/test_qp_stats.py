@@ -32,7 +32,8 @@ def test_qp_stats_success_and_timing_split() -> None:
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
   assert stats.status == sc.ScalySolveStatus.OK
   assert stats.iter > 0
-  assert stats.obj == pytest.approx(float(out["cost"]), rel=1e-12, abs=1e-12)
+  x = out["x"]
+  assert stats.obj == pytest.approx(0.5 * x @ np.array([[4.0, 1.0], [1.0, 2.0]]) @ x - x.sum(), rel=1e-12, abs=1e-12)
   assert stats.n_eval_f == 1
   assert all(value >= 0.0 for value in (stats.t_total, stats.t_fe, stats.t_solver, stats.t_qp, stats.t_globalization, stats.t_glue))
   assert stats.t_solver == 0.0 and stats.t_qp > 0.0 and stats.t_globalization == 0.0

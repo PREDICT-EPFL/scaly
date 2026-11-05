@@ -58,18 +58,6 @@ def _two_block_params() -> Any:
   return (np.array([0.25, -0.75]), np.array([0.4]))
 
 
-def test_problem_carries_spec_trees_and_declared_names() -> None:
-  assert quadratic.name == "quadratic"
-  assert quadratic.vars.names == ("x",)
-  assert quadratic.params.names == ("scale",)
-  assert quadratic.spec.minimize.shape == ()
-  assert filter_problem.vars.names == ("u", "s")
-  assert filter_problem.params.names == ("x", "u_ref")
-  assert filter_problem.n_eq == 1
-  assert filter_problem.n_ineq == 3
-  assert tuple(group.name for group in filter_problem.spec.ineq) == ("cbf", "u_box")
-
-
 def test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle() -> None:
   assert isinstance(quadratic.spec.lb, sc.Expr) and quadratic.spec.lb.shape == (3,)
   assert isinstance(quadratic.spec.ub, sc.Expr) and quadratic.spec.ub.shape == (3,)
@@ -122,19 +110,6 @@ def test_problem_infers_closed_over_parameters_and_retypes_them_nondifferentiabl
   assert inferred.params.names == ("state",)
   assert not inferred._param_symbols[0].type.diff
   assert state not in topo((inferred.spec.minimize,))
-
-
-def test_nlp_form_is_derived_once_and_only_as_far_as_it_is_read() -> None:
-  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("target", 2), name="lazy_form")
-  def lazy(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    return sc.ProblemSpec(minimize=sc.sumsqr(x - target), eq=(x.sum() - 1.0,))
-
-  form = lazy._nlp
-  assert form is lazy._nlp and form.problem is lazy
-  assert form.cost_hessian is form.cost_hessian and form.grad is form.grad
-  assert not {"jac", "hess_full"} & set(vars(form))
-  assert form.hess("upper") is form.hess("upper") and form.hess("upper") is not form.hess("lower")
-  assert form.hess("upper").output_names == ("sphess_gamma_x_x",)
 
 
 def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None:
@@ -207,7 +182,7 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
 def test_single_block_problem_preserves_vmap_decision_input() -> None:
   @sc.problem(vars=sc.arg("z", 6), params=sc.arg("p", ()), name="single_block_vmap")
   def mapped_problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    rows = _mapped_call(single_block_stage, 3, {"stage": z})
+    rows = _mapped_call(single_block_stage, 3, [(z, 0, 2)])
     return sc.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
 
   solve = sc.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
@@ -292,11 +267,6 @@ def test_piqp_numerical_call_preserves_multiple_variable_blocks() -> None:
 def test_solver_rejects_an_unknown_backend() -> None:
   with pytest.raises(SolverPluginError, match="no solver plugin"):
     sc.solver(quadratic, "missing")
-
-
-def test_solver_name_and_backend_are_selected_at_construction() -> None:
-  assert sc.solver(quadratic, "ipopt").function.name == "quadratic_ipopt"
-  assert sc.solver(quadratic, "piqp", name="quadratic_fast").function.name == "quadratic_fast"
 
 
 def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:

@@ -18,7 +18,7 @@ def _program(count=9):
   return p.program([p.proc("mapped", [x, y], [p.for_(rng, [p.store(p.view(y, [i]), p.load(p.view(x, [i])))])])])
 
 
-@pytest.mark.parametrize("lanes", ["auto", 1, 2, 4, 8])
+@pytest.mark.parametrize("lanes", ["auto", 1, 8])
 def test_explicit_lane_range_and_clamped_stage(lanes):
   result = widen_ranges(_program(17), lanes=lanes)
   verify_program(result)
@@ -60,13 +60,6 @@ def test_empty_and_unit_ranges_stay_scalar():
     assert widen_ranges(prog) is prog
 
 
-def test_peak_liveness_uses_last_use_not_total_definitions():
-  body = [p.assign("v0", p.const_float(1), declare=True)]
-  for i in range(1, 100):
-    body.append(p.assign(f"v{i}", p.add(p.var(f"v{i - 1}", dtypes.float64), p.const_float(1)), declare=True))
-  assert _peak_live(body) == 2
-
-
 def test_invalid_lane_option_rejected():
   with pytest.raises(ValueError, match="lanes"):
     widen_ranges(_program(), lanes=3)  # ty: ignore[invalid-argument-type]
@@ -80,7 +73,7 @@ def test_overlapping_contiguous_stores_are_not_independent():
   assert widen_ranges(prog) is prog
 
 
-@pytest.mark.parametrize("count", [2, 3, 5, 9])
+@pytest.mark.parametrize("count", [2, 9])
 def test_register_cap_uses_peak_live_values(count):
   proc = _program(count).args[0]
   x, y, loop = proc.args

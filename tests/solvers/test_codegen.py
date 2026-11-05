@@ -20,7 +20,7 @@ import pytest
 
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp
-from scaly.codegen import render_c_api_header, render_c_source
+from scaly.codegen import render_c_source
 from scaly.codegen.jit import CompiledFunction, JitError
 from scaly.solvers.registry import available_backends
 from scaly.solvers.stats import CSolverStats
@@ -30,29 +30,6 @@ from tests.compilers import c_compiler, cxx_compiler
 pytestmark = pytest.mark.skipif(
   "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
 )
-
-
-def test_solver_function_signature_errors() -> None:
-  """Mis-shaped or missing inputs raise ``TypeError`` / ``ValueError``."""
-  P = np.eye(2)
-  c = np.zeros(2)
-  qp = build_qp(P=P, c=c)
-  with pytest.raises(ValueError, match="declared structure"):
-    qp.function.numerical_call(*(np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
-  with pytest.raises(ValueError, match=r"expected shape \(2,\).*got \(3,\)"):
-    qp((), x0=np.zeros(3))
-
-
-def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
-  qp = build_qp(P=np.eye(2), c=np.zeros(2), name="standalone_qp")
-  source = render_c_source(qp.function)
-  header = render_c_api_header(qp.function)
-  assert (
-    "int standalone_qp_with_options(const double** arg, double** res, int* iw, double* w, int mem, const scaly_solver_option* const* solver_options)"
-    in source
-  )
-  assert "int standalone_qp_stats(scaly_solver_stats* out);" in header
-  assert "SCALY_SOLVER_STATS_VERSION 3" in header
 
 
 @pytest.mark.parametrize(

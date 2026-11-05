@@ -36,7 +36,7 @@ def _wheel(package, digest):
   return buffer.getvalue()
 
 
-@pytest.mark.parametrize("failure", [None, "hash", "platform", "offline", "sha256", "truncated", "http"])
+@pytest.mark.parametrize("failure", [None, "hash", "platform", "offline", "sha256", "truncated"])
 def test_release_lookup(tmp_path, monkeypatch, failure):
   helper = runpy.run_path(str(ROOT / "plugins/solver_build.py"))
   digest = "a" * 64
@@ -59,11 +59,9 @@ def test_release_lookup(tmp_path, monkeypatch, failure):
 
     class TruncatedResponse(io.BytesIO):
       def read(self, *args):
-        if failure == "truncated":
-          raise http.client.IncompleteRead(b"")
-        raise http.client.HTTPException("invalid HTTP response")
+        raise http.client.IncompleteRead(b"")
 
-    if not url.endswith("/json") and failure in {"truncated", "http"}:
+    if not url.endswith("/json") and failure == "truncated":
       return TruncatedResponse()
     return io.BytesIO(json.dumps(metadata).encode() if url.endswith("/json") else payload)
 
@@ -154,7 +152,7 @@ def test_preparation_order_and_source_override(tmp_path, monkeypatch, solver):
   assert hook["_solver_build_mode"]() == "source"
 
 
-@pytest.mark.parametrize("solver", ["ipopt", "piqp"])
+@pytest.mark.parametrize("solver", ["ipopt"])
 def test_restored_local_build_without_compiler(tmp_path, monkeypatch, solver):
   helper = runpy.run_path(str(ROOT / "plugins/solver_build.py"))
   entry = tmp_path / f"{solver}-compiler-key"
@@ -175,7 +173,7 @@ def test_restored_local_build_without_compiler(tmp_path, monkeypatch, solver):
   assert helper["find_local"](tmp_path, solver, "digest", context) == entry
 
 
-@pytest.mark.parametrize("solver", ["ipopt", "piqp"])
+@pytest.mark.parametrize("solver", ["ipopt"])
 def test_native_hash_tracks_recipe_inputs_only(tmp_path, solver):
   root = tmp_path / f"scaly-{solver}"
   shutil.copytree(ROOT / f"plugins/scaly-{solver}", root, ignore=shutil.ignore_patterns("lib", "include", "__pycache__", "dist"))

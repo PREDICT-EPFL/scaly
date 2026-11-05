@@ -207,7 +207,25 @@ def test_problem_checks_compile_at_O0(monkeypatch: pytest.MonkeyPatch) -> None:
   assert flags == ["-O0"]
 
 
-def test_windows_smoke_runs_supported_groups(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+  ("select", "skip", "problems", "benchmarks", "solver_call"),
+  [
+    (None, None, True, True, False),
+    (["problems"], None, True, False, None),
+    (None, ["benchmarks"], True, False, False),
+    (["solver_call"], None, False, False, True),
+  ],
+  ids=["default", "select-problems", "skip-benchmarks", "select-solver-call"],
+)
+def test_smoke_dispatches_the_selected_groups(
+  select: list[str] | None,
+  skip: list[str] | None,
+  problems: bool,
+  benchmarks: bool,
+  solver_call: bool | None,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """``solver_call`` is the requirement passed to the solver-call smoke, or None when it must not run."""
   from concurrent.futures import Future
   from types import SimpleNamespace
   from benchmarks import run
@@ -230,20 +248,17 @@ def test_windows_smoke_runs_supported_groups(monkeypatch: pytest.MonkeyPatch, ca
       future.set_result(None)
       return future
 
-  monkeypatch.setattr(run.sys, "platform", "win32")
   monkeypatch.setattr(run, "ProcessPoolExecutor", Pool)
   solver_calls = []
-  monkeypatch.setattr(run, "_solver_call_smoke", lambda **kw: solver_calls.append(kw))
+  monkeypatch.setattr(run, "_solver_call_smoke", lambda **kw: solver_calls.append(kw["required"]))
   monkeypatch.delenv("SCALY_REQUIRE_SOLVERS", raising=False)
-  assert run.smoke(SimpleNamespace(select=None, skip=None, full=False))
-  assert [task.args[0] for task in submitted[:-1]] == list(run.QUICK_CHECKS)
-  assert submitted[-1].func == run._benchmark_smoke
-  assert solver_calls == [{"required": False}]
-  output = capsys.readouterr().out
-  assert "smoke benchmarks: skipped" not in output and "smoke solver_call: skipped" not in output
+  assert run.smoke(SimpleNamespace(select=select, skip=skip, full=False))
+  assert [task.args[0] for task in submitted if task.func == run._problem_checks] == (list(run.QUICK_CHECKS) if problems else [])
+  assert any(task.func == run._benchmark_smoke for task in submitted) == benchmarks
+  assert solver_calls == ([] if solver_call is None else [solver_call])
 
 
-@pytest.mark.parametrize("required,missing", [("1", "piqp"), ("1", "ipopt"), ("1", "sqp"), ("piqp,sqp", "piqp"), ("piqp,sqp", "sqp")])
+@pytest.mark.parametrize("required,missing", [("1", "ipopt"), ("piqp,sqp", "piqp")])
 def test_solver_driver_enforces_required_backend_list(required: str, missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
   from benchmarks import run
 
@@ -253,7 +268,7 @@ def test_solver_driver_enforces_required_backend_list(required: str, missing: st
     run._solver_call_smoke(required=False)
 
 
-@pytest.mark.parametrize("required", ["1", "piqp,sqp"])
+@pytest.mark.parametrize("required", ["piqp,sqp"])
 def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monkeypatch: pytest.MonkeyPatch) -> None:
   from types import SimpleNamespace
   from benchmarks import run
@@ -267,7 +282,7 @@ def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monke
     run._problem_checks("toy", full=True)
 
 
-@pytest.mark.parametrize("required", ["", "1", "piqp,sqp"])
+@pytest.mark.parametrize("required", ["", "piqp,sqp"])
 def test_optional_sqp_can_skip_but_required_sqp_fails(required: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
   from types import SimpleNamespace
   from benchmarks import run

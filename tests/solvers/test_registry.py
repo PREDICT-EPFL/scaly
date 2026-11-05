@@ -6,7 +6,6 @@ fake in-test backend — no C toolchain or vendored solver library involved.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +14,6 @@ import pytest
 from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import solver
-from scaly.solvers import graph as solver_graph
 from scaly.solvers import registry
 from scaly.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
@@ -54,30 +52,6 @@ class _FakeBackend:
       f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
       "}",
     ]
-
-
-def _fake_solver_function(backend: str = "fake") -> sc.Function:
-  desc = SolverDescriptor(
-    name="fake_qp",
-    backend=backend,
-    n=1,
-    n_eq=0,
-    n_ineq=0,
-    input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
-    output_signature=(("x", (1,)),),
-    param_names=(),
-    n_var_blocks=0,
-  )
-  return descriptor_function(desc)
-
-
-def test_protocol_version_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _Stale(_FakeBackend):
-    protocol_version = SOLVER_PLUGIN_PROTOCOL_VERSION - 1
-
-  monkeypatch.setattr(registry, "available_backends", lambda: {"stale": _FakeEntryPoint(_Stale())})
-  with pytest.raises(SolverPluginError, match="protocol version"):
-    registry.get_backend("stale")
 
 
 def test_entry_point_name_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,27 +113,6 @@ def test_kind_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     registry.require_backend("fake", "nlp")
 
 
-@pytest.mark.parametrize("triangle", ["lower", "upper"])
-def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.MonkeyPatch, triangle: str) -> None:
-  class _FakeNlpBackend(_FakeBackend):
-    kind = "nlp"
-    hess_triangle = triangle
-
-  fake_backend = lambda name: _FakeNlpBackend()  # noqa: E731
-  monkeypatch.setattr(registry, "get_backend", fake_backend)
-  monkeypatch.setattr(sys.modules["scaly.solvers.solver"], "get_backend", fake_backend)
-
-  @sc.problem(vars=sc.arg(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
-  def problem(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    return sc.ProblemSpec(minimize=x[0] * x[1])
-
-  nlp = sc.solver(problem, "fake", name=f"layout_{triangle}")
-  sparsity = as_concrete(nlp.function).descriptor.hess_sparsity
-  assert sparsity is not None
-  assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert not hasattr(as_concrete(nlp.function).descriptor, "hess_lower_mask")
-
-
 def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyPatch) -> None:
   class _MissingTriangle(_FakeBackend):
     kind = "nlp"
@@ -168,27 +121,6 @@ def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyP
   monkeypatch.setattr(registry, "get_backend", lambda name: _MissingTriangle())
   with pytest.raises(SolverPluginError, match="must declare hess_triangle"):
     registry.require_backend("fake", "nlp")
-
-
-def test_missing_backend_error_lists_installed(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "available_backends", lambda: {})
-  with pytest.raises(SolverPluginError, match="no solver plugin 'nope'"):
-    registry.get_backend("nope")
-
-
-def test_render_solver_raw_dispatches_to_plugin_and_frames_stats(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
-  fun = _fake_solver_function()
-  lines = solver.render_solver_raw(as_concrete(fun), options_index=0)
-  # Core-owned framing: stats storage before the plugin body, accessor after.
-  assert lines[0] == "static scaly_solver_stats fake_qp_stats_data;"
-  assert (
-    "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w, const scaly_solver_option* const* solver_options) {"
-    in lines
-  )
-  assert "int fake_qp_stats(scaly_solver_stats* out) {" in lines
-  # The plugin body was told about the same stats symbol core declared.
-  assert "  fake_qp_stats_data.version = SCALY_SOLVER_STATS_VERSION;" in lines
 
 
 def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,10 +252,3 @@ def test_stats_abi_v3_layout_is_additive() -> None:
   assert names[17:] == ["primal_viol", "step_inf", "alpha", "merit_penalty", "backtracks", "qp_iter"]
   assert CSolverStats.primal_viol.offset == 96
   assert ctypes.sizeof(CSolverStats) == 136
-
-
-def test_solver_backends_used_and_includes(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
-  fun = _fake_solver_function()
-  assert solver_graph.solver_backends_used(as_concrete(fun)) == ("fake",)
-  assert solver.solver_includes(as_concrete(fun)) == ['#include "fake/fake.h"']

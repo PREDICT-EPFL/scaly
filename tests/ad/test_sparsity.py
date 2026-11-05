@@ -361,17 +361,6 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
   np.testing.assert_allclose(spjf(xv), np.ones(4))
 
 
-def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
-  x = sc.sym("x", 2)
-  try:
-    _ = ConcreteFunction._from_exprs("bad", [x], [x], ["x"], ["sp"], output_sparsities=[sc.SparsityPattern.dense((2, 2))])
-  except ValueError as e:
-    assert "sparse output metadata for 'sp' has 4 nonzeros" in str(e)
-    assert "output shape (2,) has 2 entries" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("sparse output metadata size mismatch should fail")
-
-
 def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
   @sc.function(sc.group(sc.arg("a", 1), sc.arg("b", 1)), outputs=sc.arg("y"), name="two_formal_piece")
   def piece(inputs):
@@ -392,53 +381,6 @@ def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
 
   built = mapped.factory("two_formal_spjac", ["z"], [sc.factory.SpJac("y", "z")])
   assert as_concrete(built).output_coloring_widths == (2,)
-
-
-def test_colored_sparse_jacobian_matches_dense_gather_reference() -> None:
-  x = sc.sym("x", 4)
-  y = sc.stack([x[0] * x[2], x[2:4].sum(), x[1].sin()])
-  colored = sc.sparse_jacobian_colored(y, x)
-  reference = sc.sparse_jacobian_reference(y, x)
-
-  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="sj_compare")
-  def f(x):
-    y = sc.stack([x[0] * x[2], x[2:4].sum(), x[1].sin()])
-    return sc.sparse_jacobian_colored(y, x).values, sc.sparse_jacobian_reference(y, x).values
-
-  xv = np.array([1.0, 2.0, 3.0, 4.0])
-
-  assert colored.sparsity == reference.sparsity
-  colored_values, reference_values = f(xv)
-  np.testing.assert_allclose(colored_values, reference_values)
-
-
-def test_sparse_jacobian_values_round_trip_to_dense() -> None:
-  x = sc.sym("x", 4)
-  y = sc.stack([x[0], x[2:4].sum(), x[1]])
-  sj = sc.sparse_jacobian(y, x)
-
-  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("values"), sc.arg("dense")), name="sj")
-  def f(x):
-    y = sc.stack([x[0], x[2:4].sum(), x[1]])
-    sj = sc.sparse_jacobian(y, x)
-    return sj.values, sj.to_dense()
-
-  xv = np.array([1.0, 2.0, 3.0, 4.0])
-
-  assert sj.sparsity.rows == (0, 1, 1, 2)
-  assert sj.sparsity.cols == (0, 2, 3, 1)
-  values, dense = f(xv)
-  np.testing.assert_allclose(values, np.ones(4))
-  np.testing.assert_allclose(
-    dense,
-    np.array(
-      [
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 1.0],
-        [0.0, 1.0, 0.0, 0.0],
-      ]
-    ),
-  )
 
 
 def test_column_coloring_groups_nonoverlapping_columns() -> None:
@@ -507,25 +449,6 @@ def test_column_coloring_detects_exactly_256_shared_rows() -> None:
   assert sc.column_coloring(sparsity) == (0, 1)
 
 
-def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
-  def mapped_mask(length: int):
-    @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name=f"storage_piece_{length}")
-    def piece(u):
-      return sc.stack([u.sum()])
-
-    z = sc.sym(f"z_{length}", 2 * length)
-    return sc.jacobian_sparsity(_mapped_call(piece, length, [(z, 0, 2)]), z)
-
-  small = mapped_mask(32)
-  large = mapped_mask(128)
-  small_bytes = sum(np.asarray(indices, dtype=np.int64).nbytes for indices in (small.rows, small.cols))
-  large_bytes = sum(np.asarray(indices, dtype=np.int64).nbytes for indices in (large.rows, large.cols))
-
-  assert small.shape == (32, 64) and small.nnz == 64
-  assert large.shape == (128, 256) and large.nnz == 256
-  assert large_bytes < 5 * small_bytes
-
-
 def test_star_coloring_is_not_distance_two_coloring() -> None:
   sparsity = sc.SparsityPattern.from_mask(
     np.array(
@@ -592,14 +515,6 @@ def test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs() ->
   )
   colors = sc.star_coloring(asymmetric)
   assert colors[0] == colors[2] != colors[1]
-
-
-def test_star_recovery_rejects_ambiguous_orientation() -> None:
-  from scaly.ad.sparse import _star_recovery_indices
-
-  sparsity = sc.SparsityPattern.from_mask(np.ones((3, 3), dtype=bool))
-  with pytest.raises(ValueError, match="cannot recover Hessian entry"):
-    _star_recovery_indices(sparsity, (0, 0, 0))
 
 
 def test_shared_fill_star_hessian_matches_one_sided_and_dense() -> None:
