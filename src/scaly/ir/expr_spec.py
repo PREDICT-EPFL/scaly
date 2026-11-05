@@ -12,7 +12,7 @@ small and focused on Scaly's expression dialect. The contract:
   raises ``VerifyError`` at the first invalid node, naming the node, the op,
   and the failing rule.
 
-Function construction and lowering run the verifier at their expression-graph boundaries.
+Function construction runs the verifier, including for graphs rewritten before lowering.
 Passes can also call it explicitly after graph rewrites or AD transforms.
 """
 
