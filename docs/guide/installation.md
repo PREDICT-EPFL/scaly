@@ -1,9 +1,9 @@
 # Installation
 
-Scaly supports Python 3.12 or newer on Linux, on macOS for Apple silicon only,
-and on Windows for x86-64 processors only. Numerical function calls compile
-generated C, so the Python package needs access to a C compiler even when the
-application itself is entirely Python.
+Scaly supports Python 3.12 or newer on Linux, on Apple silicon Macs, and on
+Windows for x86-64 processors only. Numerical function calls compile generated
+C, so the Python package needs access to a C compiler even when the application
+itself is entirely Python.
 
 ## The core package and solver plugins
 
