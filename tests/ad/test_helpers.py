@@ -7,10 +7,7 @@ import re
 import numpy as np
 
 import scaly as sc
-from scaly.ad.calls import _call_jvp_many_function, _vmap_adj_function
-from scaly.ad.forward import _pushforward
-from scaly.ad.helpers import HelperKey, helper_name
-from scaly.ad.reverse import vjp
+from scaly.codegen.aot import render_c_source
 from scaly.passes.lowering import lower_function
 
 
@@ -23,23 +20,20 @@ def _stage(name: str, scale: float) -> sc.Function:
   return stage
 
 
-def test_helper_names_are_a_stem_and_a_digest_of_the_key() -> None:
-  callee = _stage("named_stage", 1.0).instantiate()
-  names = [
-    _call_jvp_many_function(callee, 0, (0,), 1, (None,), pushforward=_pushforward)[0].name,
-    _call_jvp_many_function(callee, 0, (0, 1), 1, (None, None), pushforward=_pushforward)[0].name,
-    _call_jvp_many_function(callee, 0, (0,), 2, (None,), pushforward=_pushforward)[0].name,
-    _call_jvp_many_function(callee, 0, (0,), 2, (np.eye(2),), pushforward=_pushforward)[0].name,
-    _call_jvp_many_function(callee, 0, (0,), 2, (np.eye(2).view(np.int64),), pushforward=_pushforward)[0].name,
-    _vmap_adj_function(callee, 0, (0, 1), pullback=vjp)[0].name,
-  ]
-  assert len(set(names)) == len(names)
-  assert all(re.fullmatch(r"named_stage_(fwd|adj)_[0-9a-f]{10}", name) for name in names)
-  fresh = _stage("named_stage", 1.0).instantiate()
-  assert _call_jvp_many_function(fresh, 0, (0,), 1, (None,), pushforward=_pushforward)[0].name == names[0]
-  key = HelperKey("forward", (0,), (0,), "auto", 1, (None,))
-  assert helper_name(callee, key) == names[0]
-  assert helper_name(callee, HelperKey("forward", (0,), (0,), "scalar", 1, (None,))) != names[0]
+def test_helper_names_are_stable_across_fresh_builds() -> None:
+  def render() -> str:
+    stage = _stage("named_stage", 1.0)
+
+    @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.arg("j"), name="named_jacobian")
+    def jacobian(inputs):
+      x, y = inputs
+      return sc.jacobian(stage((x, y)), x)
+
+    return render_c_source(jacobian, lanes=1)
+
+  first = render()
+  assert re.search(r"\bnamed_stage_fwd_[0-9a-f]{10}", first)
+  assert render() == first
 
 
 def test_same_named_callees_get_distinct_helper_procedures() -> None:

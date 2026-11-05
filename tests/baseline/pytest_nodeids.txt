@@ -903,10 +903,10 @@ tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape0-out_shape0]
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape1-out_shape1]
 tests/ad/test_expr.py::test_unbroadcast_uses_one_scatter[shape2-out_shape2]
 tests/ad/test_forward.py::test_forward_handles_deep_expression_graph
-tests/ad/test_forward.py::test_inactive_subgraphs_do_not_allocate_tangents[False-dtype0]
-tests/ad/test_forward.py::test_inactive_subgraphs_do_not_allocate_tangents[False-dtype1]
-tests/ad/test_forward.py::test_inactive_subgraphs_do_not_allocate_tangents[True-dtype0]
-tests/ad/test_forward.py::test_inactive_subgraphs_do_not_allocate_tangents[True-dtype1]
+tests/ad/test_forward.py::test_inactive_subgraphs_add_no_tangent_nodes[dtype0]
+tests/ad/test_forward.py::test_inactive_subgraphs_add_no_tangent_nodes[dtype1]
+tests/ad/test_forward.py::test_inactive_subgraphs_inside_a_call_do_not_allocate_tangents[dtype0]
+tests/ad/test_forward.py::test_inactive_subgraphs_inside_a_call_do_not_allocate_tangents[dtype1]
 tests/ad/test_forward.py::test_joint_inputs_and_outputs_against_numpy[0]
 tests/ad/test_forward.py::test_joint_inputs_and_outputs_against_numpy[1]
 tests/ad/test_forward.py::test_joint_inputs_and_outputs_against_numpy[3]
@@ -940,7 +940,7 @@ tests/ad/test_forward.py::test_print_differentiates_only_its_returned_value
 tests/ad/test_forward.py::test_runtime_callee_seeds_use_one_body_traversal
 tests/ad/test_forward.py::test_zero_tangents_and_empty_seed_axis_keep_dtype[dtype0]
 tests/ad/test_forward.py::test_zero_tangents_and_empty_seed_axis_keep_dtype[dtype1]
-tests/ad/test_helpers.py::test_helper_names_are_a_stem_and_a_digest_of_the_key
+tests/ad/test_helpers.py::test_helper_names_are_stable_across_fresh_builds
 tests/ad/test_helpers.py::test_same_named_callees_get_distinct_helper_procedures
 tests/ad/test_joint_jvp.py::test_call_combines_constant_and_runtime_tangents
 tests/ad/test_joint_jvp.py::test_call_helpers_are_cached_on_their_callee
