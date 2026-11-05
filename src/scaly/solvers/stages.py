@@ -52,8 +52,9 @@ def detect_stage_layout(jac: SparsityPattern, hess: SparsityPattern, n_eq: int) 
   Initial-state rows are local equalities rather than a transition from an empty
   stage. Inequalities are assigned separately because Scaly stacks them after
   every equality. Empty local rows belong to stage zero. No variables are reordered.
-  Unfixed initial-state components use the first transition's state count unless
-  the initial constraints show that the initial state is larger.
+  Initial-state size reaches the rightmost variable touched by its leading rows.
+  Fixing only a prefix is indistinguishable from a smaller initial state. Supply
+  a layout when that distinction matters.
   """
   m, n = jac.shape
   if not 0 < n_eq <= m:
@@ -87,8 +88,6 @@ def detect_stage_layout(jac: SparsityPattern, hess: SparsityPattern, n_eq: int) 
     offsets.pop(1)
     groups.pop(0)
     nx[0] += starts[0]
-    if groups:
-      nx[0] = max(nx[0], min(offsets[1], nx[1]))
   nu = [end - begin - size for begin, end, size in zip(offsets, (*offsets[1:], n), nx, strict=True)]
 
   dynamics = tuple(tuple(group) for group in groups)

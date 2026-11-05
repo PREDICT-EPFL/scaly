@@ -64,13 +64,26 @@ def test_detects_reordered_and_partial_initial_conditions(initial: str) -> None:
   problem = replace(problem, spec=replace(problem.spec, eq=(residual, *problem.spec.eq[1:])))
   layout = as_concrete(sc.solver(problem, "ipopt").function).descriptor.stage_layout
   first = residual.size
+  nx0 = 1 if initial == "partial_first" else 2
   assert layout == StageLayout(
-    nx=(2, 2, 2),
-    nu=(1, 1, 0),
+    nx=(nx0, 2, 2),
+    nu=(3 - nx0, 1, 0),
     dynamics=((first, first + 1), (first + 2, first + 3)),
     eq=(tuple(range(first)), (), ()),
     ineq=((problem.n_eq + 1,), (), (problem.n_eq,)),
   )
+
+
+def test_preserves_initial_state_size_when_state_grows() -> None:
+  @sc.problem(vars=sc.arg("z", 8), params=sc.arg("initial", 1))
+  def growing(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(
+      minimize=sc.sumsqr(z),
+      eq=(z[:1] - p, z[3:6] - z[0] ** 2 - z[1:3].sum(), z[7:8] - z[3:6].sum() - z[6]),
+    )
+
+  layout = as_concrete(sc.solver(growing, "ipopt").function).descriptor.stage_layout
+  assert layout == StageLayout(nx=(1, 3, 1), nu=(2, 1, 0), dynamics=((1, 2, 3), (4,)), eq=((0,), (), ()), ineq=((), (), ()))
 
 
 def test_detects_local_equalities_and_changing_stage_sizes() -> None:
