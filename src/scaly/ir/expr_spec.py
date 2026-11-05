@@ -250,7 +250,10 @@ def _call_attrs(expr: Expr) -> str | None:
 
 
 def _vmap_attrs(expr: Expr) -> str | None:
-  """Verify VMAP's flat outer storage; callee formals/outputs may be rank-2, but outers are rank-1."""
+  """Verify VMAP's flat outer storage: outers are rank-1 and every window fits inside its outer.
+
+  Callee formals and outputs may be rank-2; a window spans its formal's size.
+  """
   callee = expr.attrs.get("callee")
   if callee is None:
     return "VMAP missing 'callee' attr"
@@ -262,11 +265,16 @@ def _vmap_attrs(expr: Expr) -> str | None:
     return f"VMAP length must be non-negative, got {length}"
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
-  if len(starts) != len(callee.inputs) or len(strides) != len(callee.inputs):
-    return f"VMAP starts/strides length mismatch vs callee {callee.name!r} inputs"
-  for outer in expr.args:
+  if len(expr.args) != len(callee.inputs) or len(starts) != len(callee.inputs) or len(strides) != len(callee.inputs):
+    return f"VMAP args/starts/strides length mismatch vs callee {callee.name!r} inputs"
+  for i, (outer, start, stride, formal) in enumerate(zip(expr.args, starts, strides, callee.inputs, strict=True)):
+    start, stride = int(start), int(stride)
     if len(outer.shape) != 1:
       return f"VMAP outer arg must be rank-1, got {outer.shape}"
+    if start < 0 or stride < 0:
+      return f"VMAP input {i} start and stride must be non-negative, got {start} and {stride}"
+    if length > 0 and start + (length - 1) * stride + formal.size > outer.size:
+      return f"VMAP input {i} reads past its outer of size {outer.size}: start={start}, stride={stride}, length={length}, formal_size={formal.size}"
   expected_size = length * int(expr.attrs["slice_size"])
   if expr.shape != (expected_size,):
     return f"VMAP output shape {expr.shape} != ({expected_size},)"

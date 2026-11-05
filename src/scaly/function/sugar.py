@@ -19,9 +19,9 @@ def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr
 
   ``inputs`` holds one ``(outer, start, stride)`` per callee input, in order. The i-th call reads
   ``outer[start + i*stride : start + i*stride + formal.size]`` from a rank-1 ``outer``, and
-  ``stride=0`` broadcasts one slice to every call. Callers check that the windows fit. Formals and
-  outputs may be rank-2; the node has shape ``(length * callee.outputs[output].size,)``, with the
-  calls' outputs concatenated flat.
+  ``stride=0`` broadcasts one slice to every call. The verifier refuses a window that reads past its
+  outer when the function holding the node is built. Formals and outputs may be rank-2; the node
+  has shape ``(length * callee.outputs[output].size,)``, with the calls' outputs concatenated flat.
   """
   callee = as_concrete(callee)
   out_expr = callee.outputs[output]

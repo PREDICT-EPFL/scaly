@@ -1772,6 +1772,16 @@ tests/ir/test_verifier.py::test_transpose_axes_must_be_permutation
 tests/ir/test_verifier.py::test_unary_dtype_mismatch_caught
 tests/ir/test_verifier.py::test_verify_walks_subgraph_and_names_first_failure
 tests/ir/test_verifier.py::test_vmap_rank1_outer_required
+tests/ir/test_verifier.py::test_vmap_window_bounds_do_not_wrap_around_for_numpy_attrs[1000-stride1-2-True]
+tests/ir/test_verifier.py::test_vmap_window_bounds_do_not_wrap_around_for_numpy_attrs[4-stride0-8-False]
+tests/ir/test_verifier.py::test_vmap_window_bounds_use_each_formal_size_and_name_the_input
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[0-9-5-True]
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4--1-2-False]
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-0-2-True]
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-0-3-False]
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-1-2-False]
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6--2-False]
+tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6-0-True]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration
 tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaf_refused
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[input-float32]
