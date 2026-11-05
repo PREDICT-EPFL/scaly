@@ -87,6 +87,41 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   assert lib.f(bad_args, res, None, w_buf, 0) == 4
 
 
+def test_entry_refuses_a_null_workspace_it_needs(tmp_path) -> None:
+  cc = c_compiler()
+
+  @sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out0"), name="spilled")
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    A, B = inputs
+    return ((A @ B) + (B @ A)).sum()
+
+  from scaly.codegen import render_c_module
+
+  module = render_c_module(f)
+  assert module.workspace_size > 0
+  src = tmp_path / module.source_name
+  lib_path = tmp_path / ("libspilled.dylib" if sys.platform == "darwin" else "libspilled.so")
+  src.write_text(module.source)
+  (tmp_path / module.header_name).write_text(module.header)
+  subprocess.run([*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-lm", "-o", str(lib_path)], check=True)
+
+  lib = ctypes.CDLL(str(lib_path))
+  c_double_p = ctypes.POINTER(ctypes.c_double)
+  lib.spilled.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
+  lib.spilled.restype = ctypes.c_int
+  rng = np.random.default_rng(0)
+  a, b = rng.standard_normal(1600), rng.standard_normal(1600)
+  a_buf, b_buf, out_buf = (ctypes.c_double * 1600)(*a), (ctypes.c_double * 1600)(*b), (ctypes.c_double * 1)()
+  w_buf = (ctypes.c_double * module.workspace_size)()
+  args = (c_double_p * 2)(ctypes.cast(a_buf, c_double_p), ctypes.cast(b_buf, c_double_p))
+  res = (c_double_p * 1)(ctypes.cast(out_buf, c_double_p))
+
+  assert lib.spilled(args, res, None, None, 0) == 2
+  assert lib.spilled(args, res, None, w_buf, 0) == 0
+  A, B = a.reshape(40, 40), b.reshape(40, 40)
+  np.testing.assert_allclose(out_buf[0], (A @ B + B @ A).sum(), rtol=1e-12)
+
+
 def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
   cc = c_compiler()
 

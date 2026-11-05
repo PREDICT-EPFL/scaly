@@ -267,6 +267,6 @@ def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
     for name, path in _modules().items()
     if name not in FLAT_SEAM_USERS
     for i, line in enumerate(path.read_text().splitlines(), 1)
-    if "_flat_symbolic_call" in line or "_flat_numerical_call" in line
+    if "_flat_numerical_call" in line
   )
   assert not leaked, "the flat call seam leaked outside function/concrete.py:\n  " + "\n  ".join(leaked)

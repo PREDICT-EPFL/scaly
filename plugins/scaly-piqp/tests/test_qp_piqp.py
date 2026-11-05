@@ -87,11 +87,6 @@ def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
     x0 = out["x"]
 
 
-# ---------------------------------------------------------------------------
-# NLP (IPOPT)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.solver("piqp")
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
