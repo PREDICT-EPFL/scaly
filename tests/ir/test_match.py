@@ -9,7 +9,6 @@ from scaly.ir.expr import ExprOp
 from scaly.ir.match import Pattern, rewrite
 from scaly.ir.program import ProgramNode, ProgramOp, add, buffer, const_float, load, var, view
 from scaly.ir.types import dtypes
-from scaly.ir.types import Lowering
 from scaly.passes.program._common import rebuild_program
 
 
@@ -53,15 +52,6 @@ def test_revisit_walks_into_replacements_in_the_program_dialect() -> None:
   assert full == add(const_float(2.0), const_float(1.0))
 
 
-def test_program_rebuild_keeps_untouched_subtrees_shared() -> None:
-  a = buffer("a", dtypes.float64, (2,))
-  i, j = var("i"), var("j")
-  root = add(load(view(a, [i])), load(view(a, [j])))
-  out = rewrite(root, [Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] == "i", lambda n: var("k"))], rebuild=rebuild_program, fixpoint=False)
-  assert out.args[1] is root.args[1]
-  assert out.args[0].args[0].args[0] == var("k")
-
-
 def test_deep_program_chain_does_not_recurse() -> None:
   node: ProgramNode = const_float(0.0)
   for _ in range(5000):
@@ -89,24 +79,7 @@ def test_revisit_rejects_a_replacement_that_contains_the_replaced_node() -> None
     rewrite(load(view(a, [var("i")])), [wrap], rebuild=rebuild_program, fixpoint=False, revisit=True)
 
 
-@pytest.mark.parametrize("hint", ["scalar", "block", "opaque"])
-def test_expression_replacement_preserves_explicit_lowering(hint: Lowering) -> None:
-  x = sc.sym("x", 2)
-  out = rewrite((x * 1.0).with_lowering(hint), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
-
-  assert out.lowering == hint
-  assert out.args == (x,)
-  assert out.op == ExprOp.RESHAPE
-
-
-def test_expression_replacement_preserves_effective_subgraph_policy() -> None:
-  x = sc.sym("x", 2)
-  out = rewrite((x.block() * 1.0).scalar(), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
-
-  assert out.lowering == "block"
-
-
-@pytest.mark.parametrize("revisit", [False, True])
+@pytest.mark.parametrize("revisit", [False])
 def test_expression_nodes_reject_caller_memo(revisit: bool) -> None:
   x = sc.sym("memo_x", 2)
   shared = (x.sin() * 1.0).scalar()

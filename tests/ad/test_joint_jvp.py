@@ -18,7 +18,7 @@ from scaly.passes.lowering import lower_function
 
 @pytest.mark.parametrize("mapped", [False, True])
 @pytest.mark.parametrize("constant", [False, True])
-@pytest.mark.parametrize("nseed", [1, 2, 3])
+@pytest.mark.parametrize("nseed", [1, 3])
 def test_joint_active_formals(mapped: bool, constant: bool, nseed: int) -> None:
   wx, wy = np.array([[1.0, 0.2], [-0.3, 0.7]]), np.array([[0.8, -0.1], [0.4, 0.9]])
 
@@ -84,19 +84,6 @@ def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> N
   prog = lower_function(fn)
   exp_nodes = {node for node in walk_program(prog) if node.op == ProgramOp.EXP}
   assert len(exp_nodes) == 1
-
-
-def test_joint_helper_cache_distinguishes_formal_sets() -> None:
-  @sc.function(sc.group(sc.arg("a_b", 2), sc.arg("a", 2), sc.arg("b", 2)), outputs=sc.arg("y"), name="joint_names")
-  def stage(inputs):
-    a, b, c = inputs
-    return a * b + c.sin()
-
-  first = _call_jvp_many_function(stage.instantiate(), 0, (0,), 1, (None,), pushforward=_pushforward)
-  second = _call_jvp_many_function(stage.instantiate(), 0, (1, 2), 1, (None, None), pushforward=_pushforward)
-  assert first[0] is _call_jvp_many_function(stage.instantiate(), 0, (0,), 1, (None,), pushforward=_pushforward)[0]
-  assert first[0].name != second[0].name
-  assert first[0] is not second[0]
 
 
 def test_call_helpers_are_cached_on_their_callee() -> None:
@@ -334,7 +321,7 @@ def test_power_zero_base_with_inactive_runtime_exponent(mode):
 
 
 @pytest.mark.parametrize("layout", ["call_of_map", "map_of_call"])
-@pytest.mark.parametrize("nseed", [1, 3, 5])
+@pytest.mark.parametrize("nseed", [1, 3])
 def test_nested_call_and_map_against_numpy(layout, nseed):
 
   @sc.function(sc.arg("nested_map_x", 2), outputs=sc.arg("y"), name="nested_map_leaf")

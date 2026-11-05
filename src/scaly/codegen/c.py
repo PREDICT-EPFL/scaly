@@ -45,17 +45,6 @@ _PRINTF_CONVERSION = {"double": "%.17g"}
 _PRINTF_DEFINES = ["#ifndef SCALY_PRINTF", "#include <stdio.h>", "#define SCALY_PRINTF printf", "#endif"]
 
 
-def can_render_program_c(fun: Function | ConcreteFunction) -> bool:
-  """True iff ``fun`` lowers and renders through the Program IR path. Diagnostic helper
-  (e.g. for coverage probes); the hot path is ``aot._render_source`` calling ``render_program_c``."""
-  fun = as_concrete(fun)
-  try:
-    render_program_c_source(fun)
-  except LoweringError:
-    return False
-  return True
-
-
 def _includes(
   extra: tuple[str, ...] = (), *, dialect: CDialect = "gnu", prog: ProgramNode | None = None, vector_libm: VectorLibm = "none"
 ) -> list[str]:

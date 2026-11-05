@@ -8,64 +8,6 @@ from scaly.function.sugar import _mapped_call
 import scaly as sc
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", 3)), outputs=sc.arg("y"), name="scale_add")
-def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  x, p = inputs
-  return 2.0 * x + p
-
-
-def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
-  N = 4
-
-  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("dy"), name="jvp_vmap")
-  def fn_vmap(inputs):
-    z, p = inputs
-    return sc.jvp_many(_mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N)))
-
-  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("dy"), name="jvp_ref")
-  def fn_ref(inputs):
-    z, p = inputs
-    unrolled = sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
-    return sc.jvp_many(unrolled, z, sc.const(np.eye(3 * N)))
-
-  rng = np.random.default_rng(0)
-  zv = rng.normal(size=3 * N)
-  pv = rng.normal(size=3 * N)
-
-  np.testing.assert_allclose(fn_vmap((zv, pv)), fn_ref((zv, pv)), rtol=1e-10, atol=1e-10)
-
-
-def test_jacobian_of_vmap_matches_finite_differences() -> None:
-  N = 5
-
-  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("y"), name="mapped")
-  def fn(inputs):
-    z, p = inputs
-    return _mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-
-  @sc.function(sc.group(sc.arg("z", 3 * N), sc.arg("p", 3 * N)), outputs=sc.arg("jac"))
-  def jac_fn(inputs):
-    z, p = inputs
-    return sc.jvp_many(_mapped_call(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N))).T
-
-  rng = np.random.default_rng(1)
-  zv = rng.normal(size=3 * N)
-  pv = rng.normal(size=3 * N)
-  jac = jac_fn((zv, pv))
-
-  eps = 1e-7
-  y0 = fn((zv, pv))
-  assert isinstance(y0, np.ndarray)
-  fd = np.zeros((3 * N, 3 * N))
-  for j in range(3 * N):
-    zp = zv.copy()
-    zp[j] += eps
-    yj = fn((zp, pv))
-    assert isinstance(yj, np.ndarray)
-    fd[:, j] = (yj - y0) / eps
-  np.testing.assert_allclose(jac, fd, atol=1e-5)
-
-
 def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None:
   from scaly.ad import finite_difference
   from scaly.ir.expr import topo

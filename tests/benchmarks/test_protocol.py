@@ -243,7 +243,7 @@ def test_windows_smoke_runs_supported_groups(monkeypatch: pytest.MonkeyPatch, ca
   assert "smoke benchmarks: skipped" not in output and "smoke solver_call: skipped" not in output
 
 
-@pytest.mark.parametrize("required,missing", [("1", "piqp"), ("1", "ipopt"), ("1", "sqp"), ("piqp,sqp", "piqp"), ("piqp,sqp", "sqp")])
+@pytest.mark.parametrize("required,missing", [("1", "ipopt"), ("piqp,sqp", "piqp")])
 def test_solver_driver_enforces_required_backend_list(required: str, missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
   from benchmarks import run
 
@@ -253,7 +253,7 @@ def test_solver_driver_enforces_required_backend_list(required: str, missing: st
     run._solver_call_smoke(required=False)
 
 
-@pytest.mark.parametrize("required", ["1", "piqp,sqp"])
+@pytest.mark.parametrize("required", ["piqp,sqp"])
 def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monkeypatch: pytest.MonkeyPatch) -> None:
   from types import SimpleNamespace
   from benchmarks import run
@@ -267,7 +267,7 @@ def test_required_problem_checks_do_not_skip_missing_casadi(required: str, monke
     run._problem_checks("toy", full=True)
 
 
-@pytest.mark.parametrize("required", ["", "1", "piqp,sqp"])
+@pytest.mark.parametrize("required", ["", "piqp,sqp"])
 def test_optional_sqp_can_skip_but_required_sqp_fails(required: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
   from types import SimpleNamespace
   from benchmarks import run

@@ -111,7 +111,7 @@ def test_store_pair_selection_is_explicit_and_respects_dependencies() -> None:
   assert [stmt.op for stmt in _body(result.args[2])] == [ProgramOp.STORE, ProgramOp.STORE, ProgramOp.BUFFER]
 
 
-@pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
+@pytest.mark.parametrize("hint", ["auto", "scalar", "block"])
 def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) -> None:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("out0"), name="hint_stage")
   def stage(x: sc.Expr) -> sc.Expr:

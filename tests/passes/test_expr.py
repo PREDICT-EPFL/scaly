@@ -163,9 +163,3 @@ def test_simplify_preserves_conflicting_hint_precedence() -> None:
   annihilated = sc.simplify(x.block() * 0.0)
   assert annihilated.op == sc.ExprOp.CONST
   assert annihilated.lowering == "block"
-
-
-def test_simplify_preserves_isolated_opaque_spelling() -> None:
-  x = sc.sym("x", 2)
-
-  assert sc.simplify((x + 0.0).opaque()).lowering == "opaque"

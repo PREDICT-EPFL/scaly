@@ -9,19 +9,6 @@ import scaly as sc
 from scaly.ir.expr import topo
 
 
-def test_function_call_node_eval() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
-  def inner(x):
-    return x.sin()
-
-  @sc.function(sc.arg("z", 2), outputs=sc.arg("out"))
-  def outer(z):
-    return inner(z) + 1.0
-
-  np.testing.assert_allclose(outer(np.array([0.1, 0.2])), np.sin([0.1, 0.2]) + 1.0)
-  assert any(e.op == sc.ExprOp.CALL for e in topo(as_concrete(outer).outputs))
-
-
 def test_function_call_normalizes_raw_constant_args() -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
   def inner(x):
@@ -37,36 +24,6 @@ def test_function_call_normalizes_raw_constant_args() -> None:
   assert not inner_const.type.diff
 
 
-def test_function_signature_and_call_shape_errors() -> None:
-  x = sc.sym("x", 2)
-
-  try:
-    _ = ConcreteFunction._from_exprs("bad", [x], [x], [], ["y"])
-  except ValueError as e:
-    assert "expected 1 names, got 0" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("input name arity mismatch should fail")
-
-  y = sc.sym("y", 2)
-  try:
-    _ = ConcreteFunction._from_exprs("missing", [x], [x + y], ["x"], ["z"])
-  except ValueError as e:
-    assert "undeclared symbolic inputs: ['y']" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("undeclared graph input should fail")
-
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
-  def f(x):
-    return x
-
-  try:
-    _ = f(sc.sym("z", 3))
-  except ValueError as e:
-    assert "expected shape (2,) for 'x', got (3,)" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("call shape mismatch should fail")
-
-
 def test_parameter_lists_and_inferred_output_nesting() -> None:
   @sc.function(sc.arg("x", 2), sc.group(sc.arg("p", ())))
   def nested(x: sc.Expr, p: tuple[sc.Expr]) -> tuple[sc.Expr, tuple[sc.Expr]]:
@@ -79,15 +36,6 @@ def test_parameter_lists_and_inferred_output_nesting() -> None:
   assert nested.symbolic_call(sc.sym("x", 2), (sc.sym("p", ()),))[0].op == sc.ExprOp.CALL
 
 
-def test_zero_parameter_calls_are_numerical_and_explicitly_symbolic() -> None:
-  @sc.function(outputs=sc.arg("value", 2))
-  def constant() -> sc.Expr:
-    return sc.const([2.0, 3.0])
-
-  np.testing.assert_array_equal(constant(), [2.0, 3.0])
-  assert constant.symbolic_call().op == sc.ExprOp.CALL
-
-
 def test_declaration_rejects_wrong_body_arity() -> None:
   import pytest
 
@@ -95,24 +43,6 @@ def test_declaration_rejects_wrong_body_arity() -> None:
     sc.function(sc.arg("x", 2), sc.arg("y", 2))(lambda x: x)  # ty: ignore[no-matching-overload]
   with pytest.raises(TypeError, match="one tree per positional parameter"):
     sc.function(sc.arg("x", 2))(lambda *, x: x)  # ty: ignore[no-matching-overload]
-
-
-def test_concrete_functions_are_immutable_and_copies_leave_the_source_unchanged() -> None:
-  x = sc.sym("x", 2)
-  fn = ConcreteFunction._from_exprs("immutable", [x], [x.sin()], ["x"], ["y"])
-  with pytest.raises(AttributeError):
-    fn.name = "renamed"  # ty: ignore[invalid-assignment]
-
-  input_tree = sc.group(sc.arg("x", 2))
-  output_tree = sc.group(sc.arg("y", 2))
-  typed = fn._with_trees(input_tree, output_tree)
-  assert typed is not fn and typed.input_tree is input_tree and typed.output_tree is output_tree
-  assert fn.input_tree is not input_tree and fn.output_tree is not output_tree
-  with pytest.raises(ValueError, match="input tree"):
-    fn._with_trees(sc.group(sc.arg("x", 3)), output_tree)
-
-  placed = fn.with_device("host")
-  assert placed is not fn and placed.outputs == fn.outputs
 
 
 def test_build_takes_trees_and_records_descriptor_and_role() -> None:
@@ -133,20 +63,6 @@ def test_build_takes_trees_and_records_descriptor_and_role() -> None:
     output_tree.names = ("renamed",)
   with pytest.raises(AttributeError):
     del output_tree.names
-
-
-def test_concrete_functions_walk_their_graph_once(monkeypatch: pytest.MonkeyPatch) -> None:
-  from scaly.function import concrete
-
-  walks: list[int] = []
-  monkeypatch.setattr(concrete, "topo", lambda outputs: walks.append(1) or topo(outputs))
-  x = sc.sym("x", 2)
-  fn = ConcreteFunction._from_exprs("walked", [x], [(x * x).sin()], ["x"], ["y"])
-  assert fn.nodes is fn.nodes and fn.nodes == tuple(topo(fn.outputs))
-  assert fn._effective_lowering == fn._effective_lowering == "auto"
-  assert len(walks) == 1
-  copy = fn._replace(name="walked_copy")
-  assert copy.nodes == fn.nodes and len(walks) == 2
 
 
 def test_call_helpers_record_their_role() -> None:

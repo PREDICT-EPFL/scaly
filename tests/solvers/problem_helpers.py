@@ -132,14 +132,9 @@ def solve_qp(
   lam_eq0: np.ndarray,
   lam_ineq0: np.ndarray,
   *params: np.ndarray,
-  **named_params: np.ndarray,
 ) -> dict[str, np.ndarray]:
   """Run a typed one-block QP and expose the retired matrix-builder result names."""
-  descriptor = cast(SolverDescriptor, as_concrete(solver.function).descriptor)
-  if params and named_params:
-    raise TypeError("pass positional or named QP parameters, not both")
-  values = params or tuple(named_params[name] for name in descriptor.param_names)
-  param_values: Any = () if not values else values[0] if len(values) == 1 else values
+  param_values: Any = () if not params else params[0] if len(params) == 1 else params
   outputs = solver(param_values, warm=(x0, np.zeros_like(x0), lam_eq0, lam_ineq0))
   result = dict(zip(as_concrete(solver.function).output_names, outputs, strict=True))
   result["x"] = outputs[0]

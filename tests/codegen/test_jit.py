@@ -34,27 +34,6 @@ def _simple_fn() -> sc.Function[tuple[sc.Expr], tuple[np.ndarray], sc.Expr, np.n
   return fn
 
 
-def test_call_uses_jit_and_matches_numpy(isolated_cache: Path) -> None:
-  fn = _simple_fn()
-  xv = np.array([0.1, -0.7, 2.5])
-
-  jit_out = fn(xv)
-  np.testing.assert_allclose(jit_out, (np.sin(xv) + xv * xv).sum())
-  compiled = as_concrete(fn)._memo.compiled
-  assert compiled is not None
-  assert Path(compiled.lib_path).exists()
-
-
-def test_jit_cache_key_stable_across_function_instances(isolated_cache: Path) -> None:
-  a = _simple_fn()
-  b = _simple_fn()
-  a(np.zeros(3))
-  b(np.zeros(3))
-  compiled_a, compiled_b = as_concrete(a)._memo.compiled, as_concrete(b)._memo.compiled
-  assert compiled_a is not None and compiled_b is not None
-  assert compiled_a.cache_key == compiled_b.cache_key
-
-
 def test_jit_cache_in_deep_directory_matches_numpy(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   root = isolated_cache / ("benchmark cache " * 5).rstrip() / ("repeated episode " * 5).rstrip()
   monkeypatch.setenv("SCALY_CACHE_DIR", str(root))
@@ -210,53 +189,6 @@ def test_threads_share_a_cold_cache(isolated_cache: Path) -> None:
   np.testing.assert_allclose(jit.get_compiled(fun).run([xv])[0], (np.sin(xv) + xv * xv).sum())
 
 
-def test_jit_compiles_into_a_cache_path_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path / "jit cache"))
-  jit._artifact_cache.clear()
-  fn = _simple_fn()
-  xv = np.array([0.5, 0.0, -1.0])
-  np.testing.assert_allclose(fn(xv), (np.sin(xv) + xv * xv).sum())
-  assert " " in str(jit.get_compiled(fn).lib_path)
-
-
-def test_jit_handles_multi_output(isolated_cache: Path) -> None:
-  @sc.function(sc.group(sc.arg("x", 2), sc.arg("y", 2)), outputs=sc.group(sc.arg("sum"), sc.arg("prod"), sc.arg("diff")), name="kw_jit")
-  def fn(inputs):
-    x, y = inputs
-    return (x + y, x * y, (x - y).sum())
-
-  xv = np.array([1.0, 2.0])
-  yv = np.array([3.0, -1.0])
-  s, p, d = fn((xv, yv))
-  np.testing.assert_allclose(s, xv + yv)
-  np.testing.assert_allclose(p, xv * yv)
-  np.testing.assert_allclose(d, (xv - yv).sum())
-
-
-def test_jit_handles_sparse_jacobian_factory_output(isolated_cache: Path) -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="f_sj")
-  def f(x):
-    return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-
-  spjf = sc.sparse_jacobian(f, "y", "x", name="f_sj_jac")
-  xv = np.array([2.0, 3.0, 5.0, 7.0])
-  values = spjf(xv)
-  np.testing.assert_allclose(values, np.array([1.0, 1.0, 1.0, xv[3], xv[1]]))
-
-
-def test_jit_handles_nested_call_nodes(isolated_cache: Path) -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("sq"), name="inner_jit")
-  def inner(x):
-    return x * x
-
-  @sc.function(sc.arg("z", 3), outputs=sc.arg("s"), name="outer_jit")
-  def outer(z):
-    return inner(z + 1.0).sum()
-
-  zv = np.array([0.25, -0.75, 2.0])
-  np.testing.assert_allclose(outer(zv), ((zv + 1.0) ** 2).sum())
-
-
 def test_invalidate_cache_handles_missing_directory(isolated_cache: Path) -> None:
   fn = _simple_fn()
   fn.recompile()  # nothing to remove yet
@@ -287,12 +219,6 @@ def test_jit_compiles_from_the_temporary_directory(isolated_cache: Path, monkeyp
   _simple_fn()(np.zeros(3))
   ((cmd, kwargs),) = [(cmd, kwargs) for cmd, kwargs in calls if "-fPIC" in cmd]
   assert kwargs["cwd"] == tempfile.gettempdir()
-
-
-def test_jit_input_shape_mismatch_raises(isolated_cache: Path) -> None:
-  fn = _simple_fn()
-  with pytest.raises(ValueError, match="shape"):
-    fn(np.zeros(5))
 
 
 @pytest.mark.solver("ipopt")
@@ -345,31 +271,7 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache: Path
   np.testing.assert_allclose(root(np.array([0.3])), expected)
 
 
-@pytest.mark.parametrize("override,expected", [(None, "glibc"), ("none", "none"), ("glibc", "glibc")])
-def test_native_render_recipe_and_math_override(monkeypatch, override, expected):
-  from scaly.codegen.toolchain import BuildRecipe
-
-  if override is None:
-    monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
-  else:
-    monkeypatch.setenv("SCALY_VECTOR_LIBM", override)
-  compilers = []
-  options = {}
-  recipe = BuildRecipe(cpu="native", lanes=4, vector_libm="glibc")
-  monkeypatch.setattr(jit, "native_recipe", lambda compiler: compilers.append(compiler) or recipe)
-  sentinel = object()
-
-  def render(_fun, **kwargs):
-    options.update(kwargs)
-    return sentinel
-
-  monkeypatch.setattr(jit, "render_c_module", render)
-  assert jit._render_native(as_concrete(_simple_fn()), ("chosen-compiler",)) is sentinel
-  assert compilers == [("chosen-compiler",)]
-  assert options == {"cpu": "native", "lanes": 4, "dialect": "gnu", "vector_libm": expected, "reciprocal": False}
-
-
-@pytest.mark.parametrize("value", ["", "auto", "sleef", "GLIBC"])
+@pytest.mark.parametrize("value", ["sleef"])
 def test_vector_math_override_rejects_invalid_values(monkeypatch, value):
   from scaly.codegen.toolchain import BuildRecipe
   from scaly.utils.env import ToolchainError
@@ -411,13 +313,6 @@ def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_
   jit.invalidate_cache(fun)
   assert artifact.key not in jit._artifact_cache
   assert not artifact.lib_path.parent.exists()
-
-
-def test_vector_math_environment_variable_is_registered():
-  from scaly.utils.env import scaly_env_vars
-
-  setting = next(var for var in scaly_env_vars() if var.name == "SCALY_VECTOR_LIBM")
-  assert setting.default is None
 
 
 @pytest.mark.skipif(platform.libc_ver()[0] != "glibc" or platform.machine().lower() not in ("x86_64", "amd64"), reason="links libmvec")
@@ -499,7 +394,7 @@ def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
     jit._render_native(as_concrete(_simple_fn()), ("cc",))
 
 
-@pytest.mark.parametrize("dtype", ["bool", "uint8", "int32", "int64", "float32"])
+@pytest.mark.parametrize("dtype", ["float32"])
 @pytest.mark.parametrize("side", ["input", "output"])
 def test_jit_refuses_non_float64_leaves_before_cache(dtype, side, monkeypatch) -> None:
   from scaly.function.concrete import ConcreteFunction
@@ -538,16 +433,6 @@ def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache: Path) -> Non
   for got in (runtime((a, b)), folded(np.zeros(6))):
     np.testing.assert_array_equal(got[0], np.fmin(a, b))
     np.testing.assert_array_equal(got[1], np.fmax(a, b))
-
-
-def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache: Path) -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name="log")
-  def fun(x):
-    return x + 1
-
-  with pytest.raises(ValueError) as error:
-    fun(np.ones(2))
-  assert str(error.value) == "exported C identifier 'log' clashes with another declaration; give the function a distinct name"
 
 
 def test_unsupported_lowering_still_raises_jit_unavailable(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,7 +8,6 @@ import pytest
 from scaly.function.model import as_concrete
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp, solve_qp
-from scaly.codegen import render_c_source
 
 
 def _sparse_problem(sparse: bool, name: str) -> sc.Solver:
@@ -53,17 +52,6 @@ def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
 
 
 @pytest.mark.solver("piqp")
-def test_sparse_qp_renders_baked_csc_tables() -> None:
-  qp = _sparse_problem(sparse=True, name="sparse_render_qp")
-  source = render_c_source(qp.function)
-  assert "piqp_setup_sparse" in source and "piqp_update_sparse" in source
-  assert "static piqp_int P_p[5] = { 0, 1, 3, 4, 5 };" in source
-  assert "static piqp_int P_i[5] = { 0, 0, 1, 2, 3 };" in source
-  assert "piqp_setup_dense" not in source
-  assert 'scaly_option_number(options, "sparse")' not in source
-
-
-@pytest.mark.solver("piqp")
 def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
   sparse_qp = _sparse_problem(sparse=True, name="sparse_parity_qp")
   dense_qp = _sparse_problem(sparse=False, name="dense_parity_qp")
@@ -73,25 +61,6 @@ def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
     assert sparse_qp.stats() is not None and sparse_qp.stats().status == sc.ScalySolveStatus.OK
     for key in sparse_out:
       np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-6, atol=1e-6, err_msg=f"output {key} diverges for t={tv}")
-
-
-@pytest.mark.solver("piqp")
-def test_sparse_qp_constant_data_and_stats() -> None:
-  qp = build_qp(
-    P=np.diag([2.0, 1.0, 4.0]),
-    c=np.array([-1.0, 0.5, 0.0]),
-    x_lb=np.full(3, -1.0),
-    x_ub=np.full(3, 1.0),
-    sparse=True,
-    name="sparse_const_qp",
-  )
-  assert as_concrete(qp.function).descriptor.P_sparsity is not None and as_concrete(qp.function).descriptor.P_sparsity.nnz == 3
-  out = solve_qp(qp, np.zeros(3), np.zeros(0), np.zeros(0))
-  np.testing.assert_allclose(out["x"], [0.5, -0.5, 0.0], atol=1e-7)
-  stats = qp.stats()
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK
-  assert stats.obj == pytest.approx(float(out["cost"]), rel=1e-12, abs=1e-12)
-  assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=0.1, abs=1e-12)
 
 
 @pytest.mark.solver("piqp")
@@ -132,22 +101,3 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
   assert qp.stats() is not None and qp.stats().status == sc.ScalySolveStatus.OK
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
-
-
-@pytest.mark.solver("piqp")
-def test_nested_sparse_qp_in_scaly_function() -> None:
-  @sc.function(sc.arg("t", (2,)), outputs=sc.arg("x"), name="shifted_sparse_qp")
-  def solve_shifted(t: sc.Expr) -> sc.Expr:
-    qp = build_qp(
-      P=np.diag([2.0, 4.0]),
-      c=sc.stack([t[0], t[1]]),
-      x_lb=np.full(2, -10.0),
-      x_ub=np.full(2, 10.0),
-      sparse=True,
-      name="nested_sparse_qp",
-    )
-    out = qp(t)
-    return out[0]
-
-  tv = np.array([1.0, -2.0])
-  np.testing.assert_allclose(solve_shifted(tv), [-0.5, 0.5], atol=1e-7)

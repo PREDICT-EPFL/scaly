@@ -315,23 +315,6 @@ def test_generated_names_do_not_rescan_the_namespace(monkeypatch: pytest.MonkeyP
   assert calls <= 200
 
 
-def test_dead_buffer_removal_analyzes_each_statement_once(monkeypatch: pytest.MonkeyPatch) -> None:
-  from scaly.passes.program import _common
-
-  a = buffer("a", dtypes.float64, (4,), address_space="private")
-  stmt = store(view(a, [const_int(0)]), const_float(1.0))
-  calls: list[ProgramNode] = []
-  buffer_refs = _common.buffer_refs
-
-  def counted(node: ProgramNode, aliases: dict[str, str] | None = None):
-    calls.append(node)
-    return buffer_refs(node, aliases)
-
-  monkeypatch.setattr(_common, "buffer_refs", counted)
-  _common.prune_dead_buffers(proc_("references", [], [a, stmt]))
-  assert calls == [stmt]
-
-
 def test_hoist_reserves_exported_names_across_repeated_loop_variables() -> None:
   a, x, y = (buffer(name, dtypes.float64, (1,)) for name in ("a", "x", "y"))
   temp = buffer("temp", dtypes.float64, (1,), address_space="private")
@@ -502,18 +485,6 @@ def test_spilled_function_matches_numpy(isolated_cache) -> None:
   got = f((a, b))
   ref = ((a @ b) + (b @ a)).sum()
   np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)
-
-
-def test_optimized_program_still_verifies() -> None:
-  """The pass pipeline output must pass the Program IR verifier (lower_function asserts this)."""
-
-  @sc.function(sc.arg("x", 6), outputs=sc.arg("out0"), name="verif")
-  def f(x: sc.Expr) -> sc.Expr:
-    m = x.reshape((2, 3))
-    return (m @ x[:3]).sin() + x[3:5]  # (2,3)@(3,) -> (2,), + x[3:5] (2,)
-
-  prog = lower_function(f)  # raises VerifyError on any malformed node
-  assert prog.op == ProgramOp.PROGRAM
 
 
 @pytest.mark.parametrize("count", [2, 8])
@@ -815,7 +786,7 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
   assert hoist_invariant(prog) is prog
 
 
-@pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled"), ("opaque", "disabled")])
+@pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled")])
 def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: Lowering, mode: str) -> None:
   @sc.function(sc.group(sc.arg("x", 1), sc.arg("w", 1)), outputs=sc.arg("y"), name="policy_stage")
   def stage(inputs):

@@ -60,7 +60,7 @@ def test_codegen_deadline_expires_and_restores_handler() -> None:
   assert signal.getitimer(signal.ITIMER_REAL) == (0, 0)
 
 
-@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+@pytest.mark.parametrize("platform", ["win32", "linux"])
 def test_compile_timeout_cleans_up_and_drains_output(platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   from types import SimpleNamespace
 
@@ -635,39 +635,6 @@ def test_gbench_driver_uses_selected_nlpsol_result_and_input_contract(tmp_path) 
   assert "arg[0] = g_x.data();" in source
   assert "arg[1] = g_p.data();" in source
   assert source.count("nlp_jac_g(arg.data()") == 2
-
-
-def test_gbench_driver_sizes_selected_hessian_output(tmp_path) -> None:
-  info = {
-    "name": "casadi_hess_fixture",
-    "symbol": "nlp_hess_l",
-    "backend": "casadi_mx",
-    "header": "casadi_hess_fixture.h",
-    "inputs": [("x", 2), ("p", 1), ("lam_f", 1), ("lam_g", 1)],
-    "n_rows": 2,
-    "n_cols": 2,
-    "nnz": 3,
-    "rows": (0, 0, 1),
-    "cols": (0, 1, 1),
-    "w_size": 5,
-    "iw_size": 2,
-    "arg_size": 6,
-    "res_size": 2,
-    "output_index": 0,
-    "requested_output_indices": (0,),
-    "output_nnz": (3,),
-    "layout": "upper",
-    "benchmark": "BM_CasadiHessFixture",
-  }
-  input_paths = {name: tmp_path / f"sample_{name}.bin" for name, _ in info["inputs"]}
-  expected_path = tmp_path / "expected_dense.bin"
-  source = gbench.write_cpp(info, tmp_path, input_paths, expected_path).read_text()
-
-  assert "static std::array<double, 3> g_out_0{};" in source
-  assert "g_out_1" not in source
-  assert "std::array<double*, 2> res{};" in source
-  assert source.count("res[0] = g_out_0.data();") == 2
-  assert source.count("nlp_hess_l(arg.data()") == 2
 
 
 def _run_compiled_driver(

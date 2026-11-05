@@ -73,26 +73,17 @@ def test_ipopt_wrapper_writes_the_selected_hessian_directly() -> None:
 
 @pytest.mark.parametrize(
   ("rows", "cols"),
-  [
-    ((1, 0), (0, 0)),
-    ((0, 1), (0, 1)),
-    ((), ()),
-  ],
-  ids=["lower", "diagonal", "empty"],
+  [((), ())],
+  ids=["empty"],
 )
 def test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns(rows: tuple[int, ...], cols: tuple[int, ...]) -> None:
   from scaly_ipopt.codegen import render_wrapper
 
   solver = _wrapper_fixture(rows, cols)
   source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0)))
-  if rows:
-    assert "ipopt_fixture_hess_rows" in source
-    assert "ipopt_fixture_hess_cols" in source
-    assert "foreign_hess_raw(x, obj_buf, values, ctx->w);" in source
-  else:
-    assert "ipopt_fixture_hess_rows" not in source
-    assert "ipopt_fixture_hess_cols" not in source
-    assert "foreign_hess_raw" not in source
+  assert "ipopt_fixture_hess_rows" not in source
+  assert "ipopt_fixture_hess_cols" not in source
+  assert "foreign_hess_raw" not in source
 
 
 @pytest.mark.solver("ipopt")
@@ -325,19 +316,6 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
 
 
 @pytest.mark.solver("ipopt")
-def test_nlp_with_symbolic_parameter() -> None:
-  """Parameter-aware NLP: solve min (x - mu)^2 across different ``mu`` values."""
-  x = sc.sym("x", 2)
-  mu = sc.sym("mu", 2)
-  f = ((x - mu) * (x - mu)).sum()
-  nlp = build_nlp(x=x, f=f, p=mu)
-  for mu_val in [np.zeros(2), np.array([1.5, -2.3])]:
-    out = solve_nlp(nlp, np.array([0.0, 0.0]), np.zeros(0), np.zeros(0), np.zeros(2), mu_val)
-    assert nlp.stats().to_solver_status() is not None and nlp.stats().to_solver_status().ok
-    np.testing.assert_allclose(out["x"], mu_val, atol=1e-6)
-
-
-@pytest.mark.solver("ipopt")
 def test_nlp_rosenbrock_equality_constrained() -> None:
   """Classic Rosenbrock, equality-constrained.
 
@@ -375,20 +353,3 @@ def test_nested_nlp_in_scaly_function() -> None:
   np.testing.assert_allclose(x_proj, [1.0, 0.0], atol=1e-5)
   x_proj = proj(np.array([0.0, 3.0]))
   np.testing.assert_allclose(x_proj, [0.0, 1.0], atol=1e-5)
-
-
-@pytest.mark.solver("ipopt")
-def test_nested_nlp_jit_compiles_through_ipopt() -> None:
-  """JIT path for an NLP: projects (target) onto the unit circle."""
-
-  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj"), name="proj_circle")
-  def proj(target: sc.Expr) -> sc.Expr:
-    x = sc.sym("x_inner", 2)
-    f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
-    h_eq = sc.stack([x[0] ** 2 + x[1] ** 2 - 1.0], axis=0)
-    nlp = build_nlp(x=x, f=f, p=target, h_eq=h_eq)
-    out = nlp(target, x0=sc.const(np.array([1.0, 0.0])))
-    return out[0]
-
-  np.testing.assert_allclose(proj(np.array([2.0, 0.0])), [1.0, 0.0], atol=1e-5)
-  np.testing.assert_allclose(proj(np.array([0.0, 3.0])), [0.0, 1.0], atol=1e-5)

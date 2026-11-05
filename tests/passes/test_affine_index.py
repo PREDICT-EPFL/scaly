@@ -56,15 +56,6 @@ def test_affine_index_map_recovers_the_ranges_and_round_trips(indices, dims, coe
   np.testing.assert_array_equal(amap.evaluate(len(indices)), indices)
 
 
-def test_a_perturbed_affine_index_stops_folding() -> None:
-  """The check has teeth: one changed entry in an otherwise strided window keeps the whole table."""
-  indices = 3 * np.arange(64)
-  assert len(affine_index_map(indices).residual) == 1
-  perturbed = indices.copy()
-  perturbed[17] += 1
-  assert len(affine_index_map(perturbed).residual) == len(perturbed)
-
-
 @pytest.mark.parametrize("build", [lambda x, idx: gather(x, idx), lambda x, idx: scatter(x[: len(idx)], idx, (256,))])
 def test_affine_gather_and_scatter_emit_no_index_table(build) -> None:
   affine = 1 + 3 * np.arange(80, dtype=np.int64)

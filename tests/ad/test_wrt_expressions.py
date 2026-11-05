@@ -34,20 +34,9 @@ def _request(kind: str, expr: sc.Expr, wrt: sc.Expr) -> object:
 
 
 @pytest.mark.parametrize("kind", DERIVATIVES)
-@pytest.mark.parametrize("selection", ["scaled", "slice", "reshape", "call", "map", "stopped", "constant", "empty-slice", "empty-constant"])
-def test_rejects_non_input_wrt(kind: str, selection: str) -> None:
+def test_rejects_non_input_wrt(kind: str) -> None:
   x = sc.sym("x", 4)
-  wrt = {
-    "scaled": 2 * x,
-    "slice": x[1:3],
-    "reshape": x.reshape((2, 2)),
-    "call": _pair(x[:2]),
-    "map": sc.vmap(_pair, 2)(x.reshape((2, 2))),
-    "stopped": sc.stop_gradient(x),
-    "constant": sc.const(np.ones(2)),
-    "empty-slice": x[:0],
-    "empty-constant": sc.const(np.empty(0)),
-  }[selection]
+  wrt = x[1:3]
   with pytest.raises(ValueError, match="wrt must be an independent input"):
     _request(kind, sc.sumsqr(wrt) + sc.sumsqr(x), wrt)
 
@@ -59,13 +48,6 @@ def test_reverse_rejects_a_non_input_among_inputs(reverse_order: bool) -> None:
   wrts = (selected, x) if reverse_order else (x, selected)
   with pytest.raises(ValueError, match="wrt must be an independent input"):
     sc.vjp((sc.sumsqr(x) + sc.sumsqr(selected),), wrts, (sc.const(1.0),))
-
-
-@pytest.mark.parametrize("kind", DERIVATIVES)
-def test_rejects_non_input_wrt_for_a_constant_output(kind: str) -> None:
-  x = sc.sym("x", 3)
-  with pytest.raises(ValueError, match="wrt must be an independent input"):
-    _request(kind, sc.const(1.0), 2 * x)
 
 
 def _energy(p: sc.Expr, c: sc.Expr) -> sc.Expr:

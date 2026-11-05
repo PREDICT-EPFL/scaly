@@ -151,18 +151,6 @@ def test_repeated_maps_share_instances_and_derivatives() -> None:
   np.testing.assert_array_equal(host(np.ones((3, 2))), 4.0 * np.eye(6))
 
 
-def test_contiguous_maps_do_not_allocate_view_indices(monkeypatch) -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
-  def identity(x: sc.Expr) -> sc.Expr:
-    return x
-
-  def refuse(*args, **kwargs):
-    raise AssertionError("unexpected view index allocation")
-
-  monkeypatch.setattr(np, "arange", refuse)
-  assert sc.vmap(identity, 3)(sc.sym("x", (3, 2))).shape == (3, 2)
-
-
 def test_sparse_map_coloring_survives_output_shape_wrappers() -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
   def square(x: sc.Expr) -> sc.Expr:

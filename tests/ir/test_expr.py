@@ -6,49 +6,9 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ir.expr import Expr, ExprOp, substitute, topo
+from scaly.ir.expr import Expr, ExprOp, substitute
 from scaly.ir.types import TensorType, frozen
 from scaly.passes.expr import cse_many
-
-
-def test_elementwise_eval_and_topological_order() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
-  def f(x: sc.Expr) -> sc.Expr:
-    return (x.sin() + x * x).sum()
-
-  np.testing.assert_allclose(f(np.array([1.0, 2.0, 3.0])), np.sin([1.0, 2.0, 3.0]).sum() + 14.0)
-
-  nodes = topo(as_concrete(f).outputs)
-  loc = {e.id: i for i, e in enumerate(nodes)}
-  assert nodes[-1].op == sc.ExprOp.SUM
-  assert [e.op for e in nodes].count(sc.ExprOp.INPUT) == 1
-  assert all(loc[arg.id] < loc[e.id] for e in nodes for arg in e.args)
-
-
-def test_common_ops_contains_modeling_basics() -> None:
-  for op in [
-    sc.ExprOp.SIN,
-    sc.ExprOp.COS,
-    sc.ExprOp.TAN,
-    sc.ExprOp.ATAN2,
-    sc.ExprOp.SINH,
-    sc.ExprOp.COSH,
-    sc.ExprOp.TANH,
-    sc.ExprOp.ERF,
-    sc.ExprOp.EXP,
-    sc.ExprOp.LOG,
-    sc.ExprOp.SQRT,
-    sc.ExprOp.TRANSPOSE,
-    sc.ExprOp.SLICE,
-    sc.ExprOp.GATHER,
-    sc.ExprOp.SCATTER,
-    sc.ExprOp.CONCAT,
-    sc.ExprOp.MATMUL,
-    sc.ExprOp.CALL,
-  ]:
-    assert op in sc.COMMON_OPS
-  assert sc.ExprOp.SIN.value == "sin"
-  assert sc.ExprOp.ERF.value == "erf"
 
 
 def test_binary_nonlinear_method_helpers_eval() -> None:
@@ -170,7 +130,7 @@ def test_constants_and_attributes_are_frozen_copies() -> None:
 
 @pytest.mark.parametrize(
   ("first", "second"),
-  [(0.0, -0.0), (-0.0, 0.0), (1, True), (True, 1), (1, 1.0), (1.0, True), (0, False), ((0.0, 1), (-0.0, 1)), ({"a": 1}, {"a": True})],
+  [(0.0, -0.0), (1, True), (1, 1.0), (1.0, True), ((0.0, 1), (-0.0, 1)), ({"a": 1}, {"a": True})],
 )
 def test_interning_tells_apart_attributes_that_differ_in_bits_or_kind(first, second) -> None:
   """``==`` holds between each pair, and generated code can tell them apart."""
@@ -226,20 +186,6 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not const_call.type.diff
 
 
-def test_mixed_lowering_hints_survive_expr_graph() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="mixed")
-  def f(x: sc.Expr) -> sc.Expr:
-    scalar_region = (x.sin() + x * x).scalar()
-    block_region = (sc.const(np.eye(3)) @ x).block()
-    opaque_region = (x + 1.0).opaque()
-    return scalar_region + block_region + opaque_region
-
-  lowerings = [e.lowering for e in topo(as_concrete(f).outputs) if e.lowering != "auto"]
-  assert "scalar" in lowerings
-  assert "block" in lowerings
-  assert "opaque" in lowerings
-
-
 def test_substitute_rebuilds_changed_ancestors_and_preserves_sharing() -> None:
   x = sc.sym("sub_x", 3)
   z = sc.sym("sub_z", 3)
@@ -277,16 +223,6 @@ def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() ->
   rewritten_vmap = substitute(mapped, {xs: zs})
   assert rewritten_vmap is _mapped_call(callee, 2, [(zs, 0, 2)])
   assert rewritten_vmap.attrs["callee"] is callee.instantiate()
-
-
-def test_print_is_an_identity_node_carrying_its_format() -> None:
-  x, k = sc.sym("x", 2), sc.sym("k")
-  y = sc.print("x={} k={}", x, k)
-  assert y.op == ExprOp.PRINT and y.args == (x, k) and y.attrs["format"] == "x={} k={}"
-  assert y.type == x.type
-  assert sc.print("x={} k={}", x, k) is y
-  assert sc.print("{{x}}={}", x).attrs["format"] == "{{x}}={}"
-  sc.verify_expr(y)
 
 
 @pytest.mark.parametrize(

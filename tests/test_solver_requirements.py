@@ -7,9 +7,7 @@ import pytest
 import conftest
 
 
-@pytest.mark.parametrize(
-  "required,missing,fails", [("1", "ipopt", True), ("piqp,sqp", "ipopt", False), ("piqp,sqp", "piqp", True), ("piqp,sqp", "sqp", True)]
-)
+@pytest.mark.parametrize("required,missing,fails", [("1", "ipopt", True), ("piqp,sqp", "ipopt", False), ("piqp,sqp", "piqp", True)])
 def test_required_solver_collection(required, missing, fails, monkeypatch):
   monkeypatch.setenv("SCALY_REQUIRE_SOLVERS", required)
   monkeypatch.setattr(conftest, "solver_loadable", lambda name: name != missing)

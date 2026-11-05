@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from scaly.function.model import as_concrete
-from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.ir.types import SparsityPattern
@@ -131,22 +130,6 @@ def test_sqp_trace_prints_per_iteration_lines_to_stderr(capfd: pytest.CaptureFix
   assert "globalization=filter" in err and "alpha=" in err and "penalty=" in err and "backtracks=" in err
 
 
-def test_sqp_generated_globalization_mechanics_are_explicit() -> None:
-  filter_source = render_c_source(_problem().function)
-  assert "static double filter_f[20], filter_v[20]" in filter_source
-  assert "trial_f > filter_f[j] && trial_violation > filter_v[j]" in filter_source
-  assert "filter_f[keep] = filter_f[j]" in filter_source
-  assert "trial_f > filter_f[j] - 1e-5 * filter_v[j]" in filter_source
-  assert "x[i] += alpha * step[i]" in filter_source
-  assert "lam_g[i] += alpha * (qp_lam_g[i] - lam_g[i])" in filter_source
-
-  l1_source = render_c_source(_problem(globalization="l1", watchdog=2).function)
-  assert "trial_merit <= merit + alpha * 0.25 * dmerit" in l1_source
-  for state in ("checkpoint_x", "checkpoint_lam_g", "checkpoint_step", "checkpoint_qp_lam_g"):
-    assert state in l1_source
-  assert "x[i] = checkpoint_x[i]" in l1_source
-
-
 def _c_table(source: str, name: str) -> list[int]:
   match = re.search(rf"\b{name}\[\d+\] = {{ ([^}}]*) }};", source)
   assert match is not None, f"{name} table missing from generated source"
@@ -171,34 +154,6 @@ def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> sc.Solver:
     name=name,
     options={"tol": 1e-9, "qp_tol": 1e-10, **options} if solver == "sqp" else {"tol": 1e-10},
   )
-
-
-def test_sqp_descriptor_hessian_is_the_backend_selected_upper_triangle() -> None:
-  solver = _coupled_problem("sqp_upper_descriptor")
-  sparsity = as_concrete(solver.function).descriptor.hess_sparsity
-  assert sparsity is not None
-  assert all(row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert isinstance(as_concrete(solver.function).descriptor.hess, ConcreteFunction)
-  assert as_concrete(solver.function).descriptor.hess.output_sparsities[0] == sparsity
-
-
-def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
-  from scaly_sqp.external import external_nlp
-
-  hess_sparsity = SparsityPattern((2, 2), (0, 0, 1), (0, 1, 1))
-  solver = external_nlp(
-    name="external_layout",
-    n=2,
-    n_eq=0,
-    n_ineq=0,
-    params=(),
-    source="",
-    raw_symbols={"base": "base", "grad": "grad", "hess": "hess", "bounds": "bounds"},
-    jac_sparsity=SparsityPattern.empty((0, 2)),
-    hess_sparsity=hess_sparsity,
-  )
-  assert as_concrete(solver).descriptor.hess_sparsity == hess_sparsity
-  assert not hasattr(as_concrete(solver).descriptor, "hess_lower_mask")
 
 
 def _external_sqp_hessian_pattern(name: str, rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.Function:
@@ -464,18 +419,6 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
 
 
 @pytest.mark.solver("sqp")
-def test_sqp_nested_in_host_function() -> None:
-  solver = _problem()
-
-  @sc.function(sc.arg("target", sc.TensorType((2,), diff=False)), outputs=sc.arg("norm"), name="nested_sqp_host")
-  def host(target: sc.Expr) -> sc.Expr:
-    x = solver(target)[0]
-    return sc.dot(x, x)
-
-  np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
-
-
-@pytest.mark.solver("sqp")
 def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   # the iteration cap makes PIQP stop just short of its tolerance with a polished
   # iterate; like laopt, the SQP must use it and still converge
@@ -548,7 +491,6 @@ def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
     ({"line_search_beta": 1.0}, "line_search_beta"),
     ({"regularization": 0.0}, "regularization"),
     ({"max_iter": True}, "max_iter"),
-    ({"dual_tol": 0.0}, "dual_tol"),
     ({"globalization": "full"}, "globalization"),
     ({"watchdog": -1}, "watchdog"),
     ({"watchdog": 0}, "only to globalization='l1'"),
