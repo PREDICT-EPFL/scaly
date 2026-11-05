@@ -15,6 +15,8 @@ class StageLayout:
   ``eq[k]`` and ``ineq[k]`` contain the remaining constraints of stage ``k``.
   All row indices refer to the stacked ``[equalities; inequalities]`` vector.
   The number of local constraints is the length of the corresponding tuple.
+  Next-state Jacobian blocks are structurally diagonal, without a guarantee
+  about their coefficients.
   """
 
   nx: tuple[int, ...]
@@ -29,21 +31,29 @@ class StageLayout:
     return len(self.nx) - 1
 
 
-_SHARED_VARIABLE = "Shared variables such as free final time require the stage form of the OCP builder (#88)."
+_SHARED_VARIABLE = "For shared variables such as free final time, use the stage form of the OCP builder (#88)."
 
 
 def _jac_error(row: int, col: int, reason: str) -> ValueError:
-  return ValueError(f"stage detection: constraint row {row}, variable {col}: {reason}. {_SHARED_VARIABLE}")
+  return ValueError(
+    f"stage detection: constraint row {row}, variable {col}: {reason}. "
+    "Use stage-ordered variables and dynamics rows in stage and next-state order. "
+    f"Local equalities follow the dynamics leaving their stage. {_SHARED_VARIABLE}"
+  )
 
 
 def detect_stage_layout(jac: SparsityPattern, hess: SparsityPattern, n_eq: int) -> StageLayout:
   """Walk equality-row rightmost nonzeros, then verify stage-local Jacobian and Hessian blocks.
 
-  Dynamics rows must appear in stage and next-state order. The walk follows
+  Dynamics rows must appear in stage and next-state order. Apart from initial-state
+  rows, local equalities follow the dynamics leaving their stage. Terminal rows
+  come last. The walk follows
   CasADi's ``structure_detection=auto`` in ``interfaces/fatrop/fatrop_interface.cpp``.
   Initial-state rows are local equalities rather than a transition from an empty
   stage. Inequalities are assigned separately because Scaly stacks them after
   every equality. Empty local rows belong to stage zero. No variables are reordered.
+  Unfixed initial-state components use the first transition's state count unless
+  the initial constraints show that the initial state is larger.
   """
   m, n = jac.shape
   if not 0 < n_eq <= m:
@@ -72,10 +82,13 @@ def detect_stage_layout(jac: SparsityPattern, hess: SparsityPattern, n_eq: int) 
 
   nx = [min(starts[0], len(groups[0])), *(len(group) for group in groups)]
   offsets = [0, *starts]
-  if starts[0] == 0:
+  if starts[0] == 0 or (len(groups) > 1 and any(rows[row][0] < starts[0] for row in groups[1])):
     nx.pop(0)
-    offsets.pop(0)
+    offsets.pop(1)
     groups.pop(0)
+    nx[0] += starts[0]
+    if groups:
+      nx[0] = max(nx[0], min(offsets[1], nx[1]))
   nu = [end - begin - size for begin, end, size in zip(offsets, (*offsets[1:], n), nx, strict=True)]
 
   dynamics = tuple(tuple(group) for group in groups)

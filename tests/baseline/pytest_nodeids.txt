@@ -2228,6 +2228,10 @@ tests/solvers/test_stages.py::test_detects_initial_rows_dynamics_and_separate_in
 tests/solvers/test_stages.py::test_detects_initial_rows_dynamics_and_separate_inequalities[2-1-False]
 tests/solvers/test_stages.py::test_detects_initial_rows_dynamics_and_separate_inequalities[2-1-True]
 tests/solvers/test_stages.py::test_detects_local_equalities_and_changing_stage_sizes
+tests/solvers/test_stages.py::test_detects_reordered_and_partial_initial_conditions[combined]
+tests/solvers/test_stages.py::test_detects_reordered_and_partial_initial_conditions[partial_first]
+tests/solvers/test_stages.py::test_detects_reordered_and_partial_initial_conditions[partial_last]
+tests/solvers/test_stages.py::test_detects_reordered_and_partial_initial_conditions[reversed]
 tests/solvers/test_stages.py::test_mapped_dynamics_match_an_unrolled_layout
 tests/solvers/test_stages.py::test_rejects_cross_stage_lagrangian_hessian[dynamics-ipopt]
 tests/solvers/test_stages.py::test_rejects_cross_stage_lagrangian_hessian[dynamics-sqp]

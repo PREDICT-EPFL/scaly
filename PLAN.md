@@ -38,3 +38,17 @@ general-purpose solvers retain support for arbitrary nonlinear programs.
 - `wt hook pre-merge --yes` passed. The full suite reported 2,439 passed and 89 skipped.
   Benchmark smoke passed with IPOPT-dependent checks skipped because the native plugin is
   unavailable. Documentation built without warnings. Generated C snapshots are unchanged.
+
+## Cross-review
+
+- Opus found that reversed, partial and combined initial-state rows were mistaken for dynamics.
+  Four added regressions failed before the fix, including a partial first-component condition
+  that exposed an incorrect state/control split.
+- The detector now removes that false transition and infers unfixed initial-state components
+  from the first real transition. All 31 focused tests and both benchmark layout gates pass.
+- Clarified equality ordering and the structural-only diagonal guarantee. Supplied layouts remain
+  trusted as agreed. The layout type needs no additions.
+- Repeat merge checks for the fix, then ask Opus for one low-effort delta check. Remove this plan
+  before marking the pull request ready.
+- Merge checks passed again after the fix: 2,443 tests passed and 89 skipped. Smoke, strict
+  types, lint, formatting, docs and the private-name check passed. No C snapshots changed.

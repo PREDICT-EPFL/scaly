@@ -48,6 +48,31 @@ def test_detects_initial_rows_dynamics_and_separate_inequalities(initial: bool, 
   assert descriptor.stage_layout is layout
 
 
+@pytest.mark.parametrize("initial", ["reversed", "partial_first", "partial_last", "combined"])
+def test_detects_reordered_and_partial_initial_conditions(initial: str) -> None:
+  problem = _tracking()
+  z, p = problem._var_symbols[0], problem._param_symbols[0]
+  residual = z[:2] - p
+  if initial == "reversed":
+    residual = sc.stack([residual[1], residual[0]])
+  elif initial == "partial_first":
+    residual = residual[:1]
+  elif initial == "partial_last":
+    residual = residual[1:]
+  else:
+    residual = z[0] + z[1] - p[0]
+  problem = replace(problem, spec=replace(problem.spec, eq=(residual, *problem.spec.eq[1:])))
+  layout = as_concrete(sc.solver(problem, "ipopt").function).descriptor.stage_layout
+  first = residual.size
+  assert layout == StageLayout(
+    nx=(2, 2, 2),
+    nu=(1, 1, 0),
+    dynamics=((first, first + 1), (first + 2, first + 3)),
+    eq=(tuple(range(first)), (), ()),
+    ineq=((problem.n_eq + 1,), (), (problem.n_eq,)),
+  )
+
+
 def test_detects_local_equalities_and_changing_stage_sizes() -> None:
   @sc.problem(vars=sc.arg("z", 9))
   def varying(z: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
