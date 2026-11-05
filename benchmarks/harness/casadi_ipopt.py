@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 
 from scaly.codegen.jit import load_library, opt_flag
-from scaly.codegen.toolchain import cache_root, find_c_compiler, no_gather_flags
+from scaly.codegen.toolchain import cache_root, compiler_fingerprint, find_c_compiler, no_gather_flags
 from scaly.solvers.paths import backend_compile_flags, solver_paths
 from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
 from scaly.utils.env import shared_lib_ext, shared_lib_flag
@@ -301,7 +301,7 @@ class CompiledCasadiIpopt:
       + _SHIM
       + importlib.metadata.version("casadi")
       + solver_digest
-      + shlex.join(compiler)
+      + compiler_fingerprint(tuple(compiler))  # -march=native: a library built on another CPU must miss
       + opt
       + " ".join(NATIVE_CFLAGS)
       + repr(math_flags(*compiler))

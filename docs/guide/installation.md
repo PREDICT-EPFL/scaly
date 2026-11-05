@@ -36,6 +36,12 @@ platform, a source build needs additional tools, described in
 [backend guide](solver_backends.md) compares the supported problems and
 solver options.
 
+On x86-64, the PIQP wheels need a processor with AVX2 and FMA instructions:
+Intel Core processors from Haswell (2013) on, or any AMD Zen processor. Scaly SQP
+uses PIQP, so it needs them too. On an older processor, or in a virtual machine
+whose CPU model hides AVX2, PIQP crashes with an illegal-instruction error. The
+IPOPT wheels run on any x86-64 processor.
+
 ## Compiler selection
 
 On Linux and macOS, Scaly normally uses `cc` from `PATH`. Apple's command-line

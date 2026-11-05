@@ -311,7 +311,9 @@ jobs:
             tag=$(jq -r .tag <<<"$package"); prefix=$(jq -r .prefix <<<"$package")
             if gh release view "$tag" >/dev/null 2>&1; then echo "$tag already released"; continue; fi
             flags=(--target "$GITHUB_SHA" --title "$name $version" --generate-notes)
-            previous=$(git tag --list "$name-v*" --sort=-v:refname | head -n 1)
+            # Without the suffixes, version sort places 0.1.0a2 after 0.1.0.
+            previous=$(git -c versionsort.suffix=a -c versionsort.suffix=b -c versionsort.suffix=rc \
+              tag --list "$name-v*" --sort=-v:refname | head -n 1)
             [ -n "$previous" ] && flags+=(--notes-start-tag "$previous")
             [ "$name" != scaly ] && flags+=(--latest=false)
             gh release create "$tag" "${flags[@]}" release/"$prefix".tar.gz release/"$prefix"-*.whl
