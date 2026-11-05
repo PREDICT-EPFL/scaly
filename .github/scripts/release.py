@@ -10,7 +10,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-DIST_NAMES = {"dist-pure", "dist-linux-x86_64", "dist-linux-arm64", "dist-macos-arm64", "dist-macos-x86_64", "dist-windows-x86_64"}
+DIST_NAMES = {"dist-pure", "dist-linux-x86_64", "dist-linux-arm64", "dist-macos-arm64", "dist-windows-x86_64"}
 
 
 def gh(*args):
