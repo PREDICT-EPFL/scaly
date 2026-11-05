@@ -59,16 +59,20 @@ def test_ipopt_wrapper_rejects_a_mixed_hessian_triangle() -> None:
     render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0))
 
 
-def test_ipopt_wrapper_writes_the_selected_hessian_directly() -> None:
-  from scaly_ipopt.codegen import render_wrapper
+@pytest.mark.solver("ipopt")
+def test_ipopt_receives_the_exact_lagrangian_hessian() -> None:
+  """Newton steps on the exact Hessian reach Rosenbrock's minimum in about 21 iterations, and the
+  second problem's only curvature comes from its constraint, through the multipliers."""
+  x = sc.sym("x", 2)
+  rosenbrock = build_nlp(x=x, f=(1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2, name="ipopt_exact_hess_rosenbrock")
+  out = solve_nlp(rosenbrock, np.array([-1.2, 1.0]), np.zeros(0), np.zeros(0), np.zeros(2))
+  stats = rosenbrock.stats()
+  assert stats is not None and stats.status == sc.ScalySolveStatus.OK and stats.iter <= 30
+  np.testing.assert_allclose(out["x"], [1.0, 1.0], atol=1e-6)
 
-  solver = _wrapper_fixture((0, 0, 1), (0, 1, 1))
-  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0)))
-  assert "h_scratch" not in source
-  assert "hess_lower_idx" not in source
-  assert "foreign_hess_raw(x, obj_buf, values, ctx->w);" in source
-  assert "ipopt_fixture_hess_rows[3] = { 0, 0, 1 }" in source
-  assert "ipopt_fixture_hess_cols[3] = { 0, 1, 1 }" in source
+  circle = build_nlp(x=x, f=-x[0] - x[1], h_eq=sc.stack([x[0] ** 2 + x[1] ** 2 - 2.0]), name="ipopt_exact_hess_circle")
+  out = solve_nlp(circle, np.array([2.0, 0.5]), np.zeros(1), np.zeros(0), np.zeros(2))
+  np.testing.assert_allclose(out["x"], [1.0, 1.0], atol=1e-6)
 
 
 @pytest.mark.parametrize(

@@ -1,8 +1,8 @@
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_archive_writers_share_one_lock
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
+plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_receives_the_exact_lagrangian_hessian
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[empty]
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_rejects_a_mixed_hessian_triangle
-plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_writes_the_selected_hessian_directly
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nested_nlp_in_scaly_function
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_box_only_quadratic
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_equality_constrained_quadratic
@@ -41,7 +41,6 @@ plugins/scaly-sqp/tests/test_nlp_sqp.py::test_same_sqp_wrapper_accepts_casadi_co
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_bakes_csc_patterns_from_the_descriptor_sparsity
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_bound_complementarity_uses_the_slack_selected_by_multiplier_sign
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_continues_with_best_iterate_after_qp_max_iter
-plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_convexifies_with_a_modified_ldl_factorization
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_diagnostics_stats_fields
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_does_not_accept_unconverged_unconstrained_iterate
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_enforces_coupled_constraints_and_reports_box_multiplier
@@ -58,6 +57,7 @@ plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_ldl_symbolic_matches_a_dense_r
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_maps_lower_and_full_hessian_patterns_to_first_canonical_sources[full-symmetric-scrambled]
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_maps_lower_and_full_hessian_patterns_to_first_canonical_sources[lower-scrambled]
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_max_iter_status
+plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_raises_a_negative_pivot_to_its_magnitude
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_rejects_invalid_options[options0-line_search_beta]
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_rejects_invalid_options[options1-regularization]
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_rejects_invalid_options[options2-max_iter]

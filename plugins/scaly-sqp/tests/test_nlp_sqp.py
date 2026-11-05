@@ -262,16 +262,23 @@ def test_sqp_sparse_and_dense_qp_interfaces_agree() -> None:
   assert sparse_stats.iter == dense_stats.iter
 
 
-def test_sqp_convexifies_with_a_modified_ldl_factorization() -> None:
-  source = render_c_source(_problem().function)
-  # the modification is a diagonal shift, so it goes straight onto P's diagonal
-  assert "double target = fabs(dk); if (target < min_reg) target = min_reg;" in source
-  assert "if (target > dk) { double e = target - dk; P_x[P_diag[k]] += e;" in source
-  # a negative pivot becomes its magnitude, never a clamp to min_reg: clamping
-  # runs the shift away (9.4e19 -> 2.0e46 -> 4.8e89 on canonical race)
-  assert "dk = min_reg;" not in source
-  # the dense Cholesky probe and its J^T J normal-curvature branch are gone
-  assert "JTJ" not in source and "probe_shift" not in source and "factor_ok" not in source
+@pytest.mark.solver("sqp")
+def test_sqp_raises_a_negative_pivot_to_its_magnitude(capfd: pytest.CaptureFixture[str]) -> None:
+  """H = [[1, 2], [2, 1]] factors with the pivots 1 and 1 - 4 = -3. Raising -3 to its magnitude
+  shifts the diagonal by 6; clamping it to the regularization would shift by about 3."""
+  x = sc.sym("x", 2)
+  solver = build_nlp(
+    x=x,
+    f=0.5 * x[0] ** 2 + 0.5 * x[1] ** 2 + 2.0 * x[0] * x[1],
+    x_lb=np.full(2, -1.0),
+    x_ub=np.full(2, 1.0),
+    solver="sqp",
+    name="sqp_negative_pivot_shift",
+    options={"tol": 1e-8, "max_iter": 40, "trace": True},
+  )
+  solve_nlp(solver, np.array([0.3, -0.2]), np.zeros(0), np.zeros(0), np.zeros(2))
+  shifts = [float(value) for value in re.findall(r" shift=(\S+)", capfd.readouterr().err)]
+  assert shifts and shifts == pytest.approx([6.0] * len(shifts), rel=1e-3)
 
 
 def test_sqp_ldl_symbolic_matches_a_dense_reference() -> None:
