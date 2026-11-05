@@ -122,6 +122,68 @@ def test_vmap_rank1_outer_required() -> None:
     verify_expr(bad)
 
 
+def _vmap(callee, outers, length: int, starts, strides) -> Expr:
+  """A VMAP node built without the builder's own window checks, so only the verifier judges it."""
+  concrete = as_concrete(callee)
+  out = concrete.outputs[0]
+  return Expr(
+    ExprOp.VMAP,
+    tuple(outers),
+    TensorType((length * out.size,)),
+    attrs={"callee": concrete, "output": 0, "length": length, "starts": tuple(starts), "strides": tuple(strides), "slice_size": out.size},
+  )
+
+
+@pytest.mark.parametrize(
+  ("length", "start", "stride", "fits"),
+  [(4, 0, 2, True), (4, 6, 0, True), (0, 9, 5, True), (4, 1, 2, False), (4, 0, 3, False), (4, -1, 2, False), (4, 6, -2, False)],
+)
+def test_vmap_windows_must_fit_inside_their_outer(length: int, start: int, stride: int, fits: bool) -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name="window_stage")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return u.sin().sum()
+
+  def build():
+    return sc.function(sc.arg("z", 8), outputs=sc.arg("y"), name="window_host")(lambda z: _vmap(stage, [z], length, [start], [stride])).instantiate()
+
+  if fits:
+    build()
+  else:
+    with pytest.raises(VerifyError, match="vmap-attrs"):
+      build()
+
+
+def test_vmap_window_bounds_use_each_formal_size_and_name_the_input() -> None:
+  @sc.function(sc.group(sc.arg("a", (2, 3)), sc.arg("b", 2)), outputs=sc.arg("y"), name="window_pair_stage")
+  def stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    a, b = inputs
+    return a.sum() * b.sum()
+
+  def build(starts, strides):
+    host = sc.function(sc.group(sc.arg("z", 12), sc.arg("w", 2)), outputs=sc.arg("y"), name="window_pair_host")
+    return host(lambda inputs: _vmap(stage, inputs, 4, starts, strides)).instantiate()
+
+  build([0, 0], [2, 0])
+  with pytest.raises(VerifyError, match="input 0 reads past its outer of size 12"):
+    build([0, 0], [3, 0])
+  with pytest.raises(VerifyError, match="input 1 reads past its outer of size 2"):
+    build([0, 1], [2, 0])
+
+
+@pytest.mark.parametrize(("length", "stride", "size", "fits"), [(4, np.int8(64), 8, False), (1000, np.int8(0), 2, True)])
+def test_vmap_window_bounds_do_not_wrap_around_for_numpy_attrs(length: int, stride: np.int8, size: int, fits: bool) -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"))
+  def stage(u: sc.Expr) -> sc.Expr:
+    return u
+
+  node = _vmap(stage, [sc.sym("z", size)], length, [0], [stride])
+  if fits:
+    verify_expr(node)
+  else:
+    with pytest.raises(VerifyError, match="vmap-attrs"):
+      verify_expr(node)
+
+
 def test_const_value_dtype_must_match() -> None:
   arr = np.array([1.0, 2.0], dtype=np.float32)
   # forge a CONST whose declared type dtype is float64 but value dtype is float32
