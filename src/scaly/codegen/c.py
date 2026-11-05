@@ -23,9 +23,7 @@ from .abi import abi_status_defines, c_api_signature, c_ident
 from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
 from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
-from ..function.model import Function, as_concrete
-from ..passes.lowering import LoweringError, lower_function, main_proc
-from ..passes.program import ProgramObserver
+from ..passes.lowering import LoweringError, main_proc
 from ..ir import program as p
 from ..ir.expr import OP_INFO
 from ..ir.match import Pattern, rewrite
@@ -63,13 +61,6 @@ def _includes(
 
 # Width 4 measured slower than scalar stores under GCC on the chain M=5 Hessian.
 _VECTOR_TYPEDEF = "typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));"
-
-
-def render_program_c_source(fun: Function | ConcreteFunction, observe: ProgramObserver | None = None) -> str:
-  """Lower a non-solver host ``fun`` and render it. ``codegen/aot.py`` lowers once for the whole
-  module and calls ``render_program_c`` directly; this is the standalone convenience."""
-  fun = as_concrete(fun)
-  return render_program_c(lower_function(fun, observe=observe), fun)
 
 
 def render_program_c(

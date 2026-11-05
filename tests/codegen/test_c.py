@@ -260,13 +260,13 @@ int main() {
 
 
 def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
-  from scaly.codegen.c import render_program_c_source
+  from scaly.codegen.aot import render_c_source
 
   @sc.function(sc.arg("x", 7), outputs=sc.arg("y"), name="coalesced")
   def f(x: sc.Expr) -> sc.Expr:
     return (x * 2.0 + 1.0).scalar()
 
-  source = render_program_c_source(f)
+  source = render_c_source(f, lanes=1)
   assert "*(double2*)(res[0]) = (double2){" in source
   assert "*(double2*)(res[0] + 4) = (double2){" in source
   assert "res[0][6] = " in source

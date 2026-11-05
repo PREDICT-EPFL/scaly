@@ -15,7 +15,7 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.codegen.c import render_program_c_source
+from scaly.codegen.aot import render_c_source
 from scaly.codegen.toolchain import find_c_compiler
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program.combine_scatter_sums import combine_scatter_sums
@@ -121,7 +121,7 @@ def test_deep_scalar_fold_lowers_renders_and_runs(length: int) -> None:
   """Depth in the expression must not become depth on the Python stack or in the C source: the
   passes and renderer are iterative, and the renderer splits trees at ``MAX_SCALAR_DEPTH``."""
   f = _long_scalar_chain(length)
-  assert re.search(r"double v\d+ = ", render_program_c_source(f))
+  assert re.search(r"double v\d+ = ", render_c_source(f, lanes=1))
   x = np.arange(1.0, 5.0)
   np.testing.assert_allclose(f(x), _long_scalar_chain_numpy(length, x), rtol=1e-12)
 
@@ -430,7 +430,7 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
 
   jf = outer.factory("J", ["z"], [sc.factory.Jac("y", "z")])
 
-  source = render_program_c_source(jf)
+  source = render_c_source(jf, lanes=1)
   declaration = re.search(r"static __attribute__\(\(noinline\)\) void (inner_fwd_\w+_raw)\(", source)
   assert declaration is not None
   match = re.search(re.escape(declaration.group(1)) + r"\(([^)]*)\);", source)
@@ -448,7 +448,7 @@ def test_regular_raw_callees_stay_inline() -> None:
   def outer(z):
     return inner(z) + 1.0
 
-  source = render_program_c_source(outer)
+  source = render_c_source(outer, lanes=1)
   assert "static inline void inner_raw" in source
   assert "noinline" not in source
 
@@ -462,7 +462,7 @@ def test_user_callee_named_like_a_forward_helper_stays_inline() -> None:
   def outer(z):
     return car_fwd(z) + 1.0
 
-  source = render_program_c_source(outer)
+  source = render_c_source(outer, lanes=1)
   assert "static inline void car_fwd_raw" in source
   assert "noinline" not in source
 
@@ -478,7 +478,7 @@ def test_spilled_function_matches_numpy(isolated_cache) -> None:
     return ((A @ B) + (B @ A)).sum()
 
   assert _sz_w(f) >= WORKSPACE_SPILL_THRESHOLD  # the (40,40) matmul temp spills
-  render_program_c_source(f)  # loud coverage gate
+  render_c_source(f, lanes=1)  # loud coverage gate
   f.recompile()
   rng = np.random.default_rng(0)
   a, b = rng.standard_normal((40, 40)), rng.standard_normal((40, 40))
