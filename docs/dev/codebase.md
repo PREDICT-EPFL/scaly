@@ -92,6 +92,7 @@ src/scaly/
     registry.py          plugin discovery and protocol validation
     paths.py             vendored solver library and header discovery
     stats.py             the versioned solver-statistics ABI and SolverStatus
+    stages.py            stage layouts and their detection from NLP sparsity
     qp.py nlp.py         quadratic proof/extraction and the NLP solver descriptor
     _oracle.py           shared oracle-assembly helpers
 
@@ -119,7 +120,7 @@ one, never a higher one.
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
+| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/{stats,stages}` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, solver statistics and stage layouts. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,concrete,tree}` | Function declarations, concrete graph instances, and typed trees over import layer 1. |
 | 4 | `ad/{forward,reverse,calls,helpers,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |

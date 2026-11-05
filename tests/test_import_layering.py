@@ -51,6 +51,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.ad.rules": 2,
   "scaly.ad.sparsity": 2,
   "scaly.solvers.stats": 2,
+  "scaly.solvers.stages": 2,
   "scaly.function": 3,
   "scaly.function.model": 3,
   "scaly.function.concrete": 3,

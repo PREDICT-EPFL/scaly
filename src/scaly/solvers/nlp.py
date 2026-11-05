@@ -67,6 +67,7 @@ def build_nlp[SV, NV, SP, NP](
     bounds=nlp.bounds,
     jac_sparsity=nlp.jac_sparsity,
     hess_sparsity=hess_sparsity,
+    _stage_layout=problem.stage_layout,
     compile_options=tuple(sorted(compile_options.items())),
     runtime_options=solver_options(resolved_options),
   )

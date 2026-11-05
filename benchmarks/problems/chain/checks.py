@@ -60,6 +60,19 @@ def check_dims_and_rk4() -> None:
     np.testing.assert_allclose(actual, rk4_step_np(x, u, params), rtol=1e-10, atol=1e-10)
 
 
+def check_stage_layout() -> None:
+  """Detection recovers the chain states, controls and original equality rows."""
+  for n_masses, horizon in ((3, 1), (5, 3)):
+    nx = n_state(n_masses)
+    layout = as_concrete(chain_nlp(n_masses, horizon).function).descriptor.stage_layout
+    assert layout.N == horizon
+    assert layout.nx == (nx,) * (horizon + 1)
+    assert layout.nu == (NU,) * horizon + (0,)
+    assert layout.dynamics == tuple(tuple(range(nx * (k + 1), nx * (k + 2))) for k in range(horizon))
+    assert layout.eq == (tuple(range(nx)),) + ((),) * horizon
+    assert layout.ineq == ((),) * (horizon + 1)
+
+
 def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   """Dense and sparse equality Jacobians agree with CasADi and with the dense reference."""
   for n_masses, horizon in ((3, 2), (5, 3)):
@@ -353,6 +366,7 @@ def check_closed_loop_uses_fastest_casadi_encoding() -> None:
 CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "casadi_sweep_transform": (check_casadi_sweep_transforms_by_default, None, True),
   "dims_and_rk4": (check_dims_and_rk4, None, False),
+  "stage_layout": (check_stage_layout, None, False),
   "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, None, True),
   "nlp_objective": (check_nlp_objective_matches_casadi, "ipopt", True),
   "one_reference": (check_one_reference_for_every_end_mass_term, None, False),

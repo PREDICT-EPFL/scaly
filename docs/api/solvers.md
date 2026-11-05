@@ -24,6 +24,11 @@ queries support solver integrations and compiler extensions.
 ::: scaly.solvers.problem.ProblemSpec
 
 ::: scaly.solvers.problem.Problem
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^stage_layout$"
 
 ::: scaly.solvers.problem.problem
 
@@ -55,6 +60,11 @@ how they fit together.
 ::: scaly.codegen.solver.SolverWrapperCtx
 
 ::: scaly.solvers.model.SolverDescriptor
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^stage_layout$"
 
 ::: scaly.solvers.model.ExternalOracle
 

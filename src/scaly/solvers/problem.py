@@ -18,6 +18,7 @@ from ..ir.expr import Expr, ExprOp, as_expr, check_prints_reach, concat, recordi
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from ._oracle import collect_free_inputs
+from .stages import StageLayout
 
 
 NO_LB: Expr = Expr.const(float("-inf"))
@@ -69,6 +70,7 @@ class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
   params: Tree[SymbolicParams, NumericalParams]
   _var_symbols: tuple[Expr, ...] = field(repr=False)
   _param_symbols: tuple[Expr, ...] = field(repr=False)
+  stage_layout: StageLayout | None = None
 
   @property
   def n_eq(self) -> int:
