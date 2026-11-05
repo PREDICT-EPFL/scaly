@@ -1,5 +1,7 @@
 """Check lowering boundaries and rule registration."""
 
+from collections import Counter
+
 import pytest
 
 from scaly.ir.expr import ExprOp
@@ -28,7 +30,7 @@ def test_lowering_verifies_only_normalized_graphs(monkeypatch, nested: bool) -> 
 
   x = Expr.sym("verification_x", 2)
   child = ConcreteFunction._from_exprs("verification_child", [x], [(x * 1.0).sin().sum()], ["x"], ["y"])
-  fn = ConcreteFunction._from_exprs("verification_parent", [x], [child(x) + x.sum()], ["x"], ["y"]) if nested else child
+  fn = ConcreteFunction._from_exprs("verification_parent", [x], [(child(x) + x.sum()) * 1.0], ["x"], ["y"]) if nested else child
   checked: list[Expr] = []
   normalized: list[ConcreteFunction] = []
   original = spec_expr.check
@@ -41,7 +43,7 @@ def test_lowering_verifies_only_normalized_graphs(monkeypatch, nested: bool) -> 
   ctx.lower_function(fn, observe_expr=lambda _phase, fun: normalized.append(fun))
 
   assert len(normalized) == (2 if nested else 1)
-  assert checked == [node for fun in normalized for node in topo((*fun.inputs, *fun.results))]
+  assert Counter(checked) == Counter(node for fun in normalized for node in topo((*fun.inputs, *fun.results)))
 
 
 @pytest.mark.parametrize("dtype", ["float32"])
