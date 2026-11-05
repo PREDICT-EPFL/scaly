@@ -271,6 +271,30 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache: Path
   np.testing.assert_allclose(root(np.array([0.3])), expected)
 
 
+@pytest.mark.parametrize("override,expected", [(None, "glibc"), ("none", "none"), ("glibc", "glibc")])
+def test_native_render_recipe_and_math_override(monkeypatch, override, expected):
+  from scaly.codegen.toolchain import BuildRecipe
+
+  if override is None:
+    monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  else:
+    monkeypatch.setenv("SCALY_VECTOR_LIBM", override)
+  compilers = []
+  options = {}
+  recipe = BuildRecipe(cpu="native", lanes=4, vector_libm="glibc")
+  monkeypatch.setattr(jit, "native_recipe", lambda compiler: compilers.append(compiler) or recipe)
+  sentinel = object()
+
+  def render(_fun, **kwargs):
+    options.update(kwargs)
+    return sentinel
+
+  monkeypatch.setattr(jit, "render_c_module", render)
+  assert jit._render_native(as_concrete(_simple_fn()), ("chosen-compiler",)) is sentinel
+  assert compilers == [("chosen-compiler",)]
+  assert options == {"cpu": "native", "lanes": 4, "dialect": "gnu", "vector_libm": expected, "reciprocal": False}
+
+
 @pytest.mark.parametrize("value", ["sleef"])
 def test_vector_math_override_rejects_invalid_values(monkeypatch, value):
   from scaly.codegen.toolchain import BuildRecipe

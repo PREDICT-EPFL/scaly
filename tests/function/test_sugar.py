@@ -128,6 +128,11 @@ def test_windows_must_fit_inside_their_tensor() -> None:
     mapped(sc.window(np.arange(7.0), 0, 2))
   with pytest.raises(ValueError, match="reads past outer tensor"):
     mapped.symbolic_call(sc.window(sc.sym("z", 8), 1, 2))
+  # A NumPy stride must not wrap around in the bounds arithmetic.
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    mapped(sc.window(np.arange(8.0), 0, np.int8(64)))  # ty: ignore[invalid-argument-type]
+  with pytest.raises(ValueError, match="reads past outer tensor"):
+    sc.vmap(pair, np.int8(100))(sc.window(np.arange(8.0), 0, 2))  # ty: ignore[invalid-argument-type]
 
 
 def test_bare_map_and_resolution_errors() -> None:

@@ -66,6 +66,7 @@ def window[T](value: T, start: int, stride: int, /) -> T:
   Iteration ``i`` reads at ``start + i * stride``. For a shape hole, use a leading-axis
   view or explicitly instantiate the callee to specify the window width.
   """
+  start, stride = int(start), int(stride)
   if start < 0 or stride < 0:
     raise ValueError("window start and stride must be non-negative")
   return cast(T, _Window(value, start, stride))
@@ -232,6 +233,7 @@ def vmap[SI, NI, SO, NO](callee: Function[SI, NI, SO, NO] | ConcreteFunction[SI,
   """
   if not isinstance(callee, Function | ConcreteFunction):
     raise TypeError("vmap callee must be an scaly Function")
+  length = int(length)
   if length < 0:
     raise ValueError("vmap length must be non-negative")
   source = Function._from_instance(callee) if isinstance(callee, ConcreteFunction) else callee

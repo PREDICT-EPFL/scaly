@@ -1267,6 +1267,9 @@ tests/codegen/test_jit.py::test_jit_refuses_non_float64_leaves_before_cache[outp
 tests/codegen/test_jit.py::test_math_library_does_not_use_solver_namespace
 tests/codegen/test_jit.py::test_native_compiler_probe_has_jit_diagnostic
 tests/codegen/test_jit.py::test_native_recipe_render_policies_separate_cache_entries
+tests/codegen/test_jit.py::test_native_render_recipe_and_math_override[None-glibc]
+tests/codegen/test_jit.py::test_native_render_recipe_and_math_override[glibc-glibc]
+tests/codegen/test_jit.py::test_native_render_recipe_and_math_override[none-none]
 tests/codegen/test_jit.py::test_numerical_call_refuses_integer_leaf_before_cast
 tests/codegen/test_jit.py::test_old_handle_stays_callable_after_recompilation
 tests/codegen/test_jit.py::test_processes_share_a_cold_cache
