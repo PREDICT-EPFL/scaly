@@ -400,6 +400,14 @@ tables describe the converted output order.
     required, unlike CasADi's convention of treating null inputs as zero and
     skipping null outputs.
 
+The [acados race-car example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/acados_race_car.py)
+uses this interface for discrete dynamics and external costs, including their
+sparse Jacobians and exact Hessians. It generates an acados solver from CasADi
+expressions, replaces the dynamics and cost sources with Scaly modules before
+compilation, and compares every sequential quadratic programming (SQP) iterate
+against a pure-CasADi solver. The example's docstring gives the setup for
+acados-wheels 0.6.0, which currently requires access to its private repository.
+
 ## Solver export and deployment dependencies
 
 `write_module` and `scaly_codegen` accept an `sc.Solver` as well as a

@@ -11,13 +11,13 @@ Read the findings and route comments, the two probes on
 cost. The private 0.6.0 wheel downloaded on la015 with the recorded SHA-256.
 
 - [x] Inspect scope, prerequisites, checkout, tracker, conventions and examples.
-- [ ] Add and run a failing small-instance iterate comparison test.
-- [ ] Implement a standalone example with independent Scaly and CasADi models,
+- [x] Add and run a failing small-instance iterate comparison test.
+- [x] Implement a standalone example with independent Scaly and CasADi models,
   matching stage semantics, sparse derivatives and source replacement.
-- [ ] Verify the example and test with the wheel, demonstrate dynamics and cost
+- [x] Verify the example and test with the wheel, demonstrate dynamics and cost
   perturbation failures, and verify skips without acados.
-- [ ] Document setup and link from the code generation guide using write-docs.
-- [ ] Refresh the node-ID baseline and run all pre-merge checks.
+- [x] Document setup and link from the code generation guide using write-docs.
+- [x] Refresh the node-ID baseline and run all pre-merge checks.
 - [ ] Commit, push, open the sole draft PR against main, link it, obtain one
   cross-review, address findings and confirm fixes with a delta check.
 - [ ] Remove this plan, complete the PR evidence and tracker status, mark ready
@@ -26,3 +26,14 @@ cost. The private 0.6.0 wheel downloaded on la015 with the recorded SHA-256.
 Phases run sequentially. Only independent checks may run concurrently. A source
 swap failure permits #242's native-adapter/custom-update fallback, with evidence
 in the PR. If both routes fail, report on #243 and stop.
+
+The source swap works without C glue. Wheel tests pass, and both tests skip in
+the ordinary environment. Negative checks temporarily changed only Scaly's RK4
+step by 1% or its throttle penalty by 10%. Both failed the state comparison at
+iterate 1, stage 1, with differences 0.00126089 and 0.002697. Changes were restored.
+The standalone 20-interval solve converges in five iterations at cost 65.80579739.
+Logs and downloaded wheel are in `/tmp/scaly-acados-243/` on la015.
+
+Pre-merge checks passed, including 2,411 tests with 91 skipped, smoke and docs.
+The six-interval case converges in five SQP steps with maximum iterate differences
+below 2e-11, including state, control, dynamics and inequality multipliers.

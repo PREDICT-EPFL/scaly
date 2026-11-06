@@ -18,6 +18,8 @@ EXAMPLES = [*sorted((ROOT / "examples").glob("*.py")), ROOT / "README.md"]
   [pytest.param(path, id=path.name, marks=[pytest.mark.solver(SOLVERS[path.name])] if path.name in SOLVERS else []) for path in EXAMPLES],
 )
 def test_example(path: Path, tmp_path: Path) -> None:
+  if path.name == "acados_race_car.py":
+    pytest.importorskip("acados_template")
   source = path.read_text()
   if path.name == "README.md":
     fence = re.search(r"^```python\s*\n(.*?)^```", source, re.MULTILINE | re.DOTALL)
