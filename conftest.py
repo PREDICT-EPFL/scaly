@@ -85,14 +85,12 @@ def pytest_collection_modifyitems(items) -> None:
     for mark in item.iter_markers(name="solver"):
       name = mark.args[0]
       if package := mark.kwargs.get("package"):
-        if sys.platform == "win32":
-          item.add_marker(pytest.mark.skip(reason=f"{name} supports Linux and macOS"))
-          continue
         key = (name, package, mark.kwargs["header"])
         if key not in native_available:
           spec = importlib.util.find_spec(package)
           root = Path(spec.origin).parent if spec is not None and spec.origin else None
-          library = root / "lib" / f"lib{name}{shared_lib_ext()}" if root else None
+          filename = f"{name}.dll" if sys.platform == "win32" else f"lib{name}{shared_lib_ext()}"
+          library = root / "lib" / filename if root else None
           native_available[key] = bool(
             root
             and (root / "include" / mark.kwargs["header"]).is_file()

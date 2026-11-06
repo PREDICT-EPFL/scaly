@@ -1,7 +1,7 @@
 # scaly-fatrop
 
 This package bundles the [Fatrop](https://github.com/meco-group/fatrop) shared library and C
-headers for Linux and macOS. `scaly_fatrop.lib_dir()` and `scaly_fatrop.include_dir()` return
+headers for Linux, macOS and Windows. `scaly_fatrop.lib_dir()` and `scaly_fatrop.include_dir()` return
 the directories needed to compile and link a C consumer of `fatrop/ocp/OCPCInterface.h`.
 
 Link with `-lfatrop` and add `lib_dir()` to the runtime library search path. The included BLASFEO

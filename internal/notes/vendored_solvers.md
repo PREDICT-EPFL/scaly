@@ -109,7 +109,7 @@ Tests and examples stay off, and `BUILD_WITH_C_INTERFACE` stays on.
 
 BLASFEO uses `X64_INTEL_HASWELL` on x86-64, `ARMV8A_APPLE_M1` on macOS arm64 and
 `ARMV8A_ARM_CORTEX_A76` on Linux arm64, matching PIQP. x86-64 requires AVX2 and FMA.
-There is no AVX-512 build or runtime dispatch. Windows is outside this package's supported targets.
+There is no AVX-512 build or runtime dispatch. Windows x86-64 uses the same Haswell target.
 
 The shared library exports only `fatrop_ocp_c_*`. C and C++ compilation uses hidden visibility,
 and `GCC_HASCLASSVISIBILITY` enables the C header's explicit export annotations. A Linux version
@@ -117,6 +117,14 @@ script or macOS exported-symbols list also hides the BLASFEO assembly kernels, w
 visibility flags do not affect. Hidden definitions bind within Fatrop even if PIQP was loaded
 globally first. The C consumer uses BLASFEO's matrix-access macros rather than linking BLASFEO
 functions. The package includes the BLASFEO headers required by `OCPCInterface.h`.
+
+Windows builds use Zig and Ninja, with the same CMake assembly and archive-tool configuration as
+PIQP. The DLL exports the C interface's explicit `__declspec(dllexport)` annotations. The
+recipe installs `fatrop.dll` and its import
+library together under `lib/`. C consumers define `FATROP_SYMBOL_EXPORT=__declspec(dllimport)`
+when including the upstream header. Executables find the DLL through `PATH`, and Python consumers
+can add `lib_dir()` through `os.add_dll_directory`. The Windows export test reads the Portable Executable export
+table and also checks that the DLL does not import a separate BLASFEO DLL.
 
 CMake installs the versioned shared library and its unversioned alias together. Both must travel
 because external C consumers record the versioned library name. macOS uses `@rpath` install names
@@ -132,7 +140,7 @@ SHA-256 and native-input hash before copying libraries, headers and notices.
 `plugins/scaly-fatrop/tests/test_fatrop_build.py` compiles and runs a C optimal-control solve,
 checks that only C interface symbols are exported, and solves with both PIQP and Fatrop in one
 process in either global load order. The CI tests run against the built wheels on both Linux
-architectures and macOS arm64. The release-reuse tests also build a wheel from its source archive
+architectures, macOS arm64 and Windows x86-64. The release-reuse tests also build a wheel from its source archive
 without compilers using a matching local index.
 
 ## License survey, 2026-09-07

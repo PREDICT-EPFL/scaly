@@ -116,7 +116,7 @@ def main() -> None:
     root = Path(root)
     if sys.argv[1:] and sys.argv[1] != "--installed":
       dist = Path(sys.argv[1]).resolve()
-      wheels = [next(dist.glob(f"{name}-*.whl")) for name in ("scaly", "scaly_ipopt", "scaly_piqp", "scaly_sqp")]
+      wheels = [next(dist.glob(f"{name}-*.whl")) for name in ("scaly", "scaly_ipopt", "scaly_piqp", "scaly_sqp", "scaly_fatrop")]
       venv = root / "venv"
       subprocess.run(["uv", "venv", "--python", sys.argv[2] if len(sys.argv) > 2 else "3.12", str(venv)], check=True)
       python = venv / "Scripts" / "python.exe"

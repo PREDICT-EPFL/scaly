@@ -55,6 +55,9 @@ static int objective(double scale, const double *x, const double *p, const doubl
   return 1;
 }
 
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
 int run_solve(void) {
   struct FatropOcpCInterface problem = {0};
   problem.get_nx = nx;

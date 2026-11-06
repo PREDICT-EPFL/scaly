@@ -58,7 +58,8 @@ allow-direct-references = true
 
 [dependency-groups]
 dev = [
-  "scaly-fatrop; sys_platform != 'win32'",
+  "scaly-fatrop",
+  "pefile",
   "scaly-ipopt",
   "scaly-piqp",
   "scaly-sqp",

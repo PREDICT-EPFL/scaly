@@ -8,6 +8,7 @@ import os
 import platform
 import runpy
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -63,6 +64,8 @@ def _missing_fatrop_tools() -> list[str]:
     missing.append("cc")
   if not any(_compiler_command(cmd) for cmd in ([os.environ["CXX"]] if "CXX" in os.environ else _DEFAULT_CXX)):
     missing.append("c++")
+  if platform.system() == "Windows" and shutil.which("ninja") is None:
+    missing.append("ninja")
   return missing
 
 
@@ -73,8 +76,15 @@ _CACHE_MAX_AGE = 30 * 24 * 3600
 
 
 def _remove_tree(path: Path) -> None:
+  def remove_readonly(function, filename, error):
+    if not isinstance(error, PermissionError):
+      raise error
+    # Disposable Git clones contain read-only pack files on Windows.
+    os.chmod(filename, stat.S_IWRITE)
+    function(filename)
+
   if path.exists():
-    shutil.rmtree(path)
+    shutil.rmtree(path, onexc=remove_readonly)
 
 
 def _cache_root() -> Path:
@@ -134,6 +144,29 @@ def _prepare_native(root: Path) -> tuple[Path, str, str]:
 def _locked(path: Path, *, wait: bool = True):
   """Hold an exclusive lock on `path`, yielding whether it was taken. Lock files are never deleted."""
   path.parent.mkdir(parents=True, exist_ok=True)
+  if os.name == "nt":
+    import msvcrt
+
+    with path.open("a+b") as f:
+      if f.seek(0, os.SEEK_END) == 0:
+        f.write(b"\0")
+        f.flush()
+      while True:
+        f.seek(0)
+        try:
+          msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+          break
+        except OSError:
+          if not wait:
+            yield False
+            return
+          time.sleep(0.1)
+      try:
+        yield True
+      finally:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    return
   import fcntl
 
   with path.open("w") as f:
@@ -213,10 +246,6 @@ class BuildHook(BuildHookInterface):
       build_data["tag"] = _wheel_tag()
     if mode == "skip":
       self.app.display_info("Skipping vendored solver build because SCALY_BUILD_SOLVERS=skip/0")
-      return
-    if platform.system() not in {"Linux", "Darwin"}:
-      if strict:
-        raise RuntimeError("Fatrop supports Linux and macOS")
       return
     entry, key, digest = _prepare_native(root)
     marker = package_dir / "native-inputs.sha256"

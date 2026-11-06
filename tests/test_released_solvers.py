@@ -76,7 +76,7 @@ def test_release_lookup(tmp_path, monkeypatch, failure):
     assert not target.exists()
 
 
-@pytest.mark.parametrize("solver", ["ipopt", "piqp", pytest.param("fatrop", marks=pytest.mark.skipif(sys.platform == "win32", reason="Linux/macOS"))])
+@pytest.mark.parametrize("solver", ["ipopt", "piqp", "fatrop"])
 def test_build_wheel_from_local_release(tmp_path, monkeypatch, solver):
   root = tmp_path / f"scaly-{solver}"
   shutil.copytree(ROOT / f"plugins/scaly-{solver}", root, ignore=shutil.ignore_patterns("lib", "include", "__pycache__", ".build_key", "dist"))
@@ -133,7 +133,7 @@ def test_build_wheel_from_local_release(tmp_path, monkeypatch, solver):
     assert b"old wrapper" not in wheel.read(f"{package}/__init__.py")
 
 
-@pytest.mark.parametrize("solver", ["ipopt", "piqp", pytest.param("fatrop", marks=pytest.mark.skipif(sys.platform == "win32", reason="Linux/macOS"))])
+@pytest.mark.parametrize("solver", ["ipopt", "piqp", "fatrop"])
 def test_preparation_order_and_source_override(tmp_path, monkeypatch, solver):
   hook = runpy.run_path(str(ROOT / f"plugins/scaly-{solver}/hatch_build.py"))
   prepare = hook["_prepare_native"]
