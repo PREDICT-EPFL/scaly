@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -8,6 +9,9 @@ if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function.concrete import ConcreteFunction
 
+
+# Generated wrappers name it, so a PIQP upgrade changes their source and with it the JIT cache key.
+PIQP_VERSION = json.loads((Path(__file__).parent / "build_config.json").read_text())["piqp"]["version"]
 
 _SETTINGS = frozenset(
   {

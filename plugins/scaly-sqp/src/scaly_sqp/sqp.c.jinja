@@ -65,7 +65,7 @@ static double {{ raw_symbol }}_option_number(const scaly_solver_option* options,
   while (strcmp(options->name, name)) ++options;
   return options->kind == 0 ? (double)options->integer : options->number;
 }
-// PIQP-backed SQP wrapper for {{ name }} (n={{ n }}, equality={{ nh }}, inequality={{ ng }}, nnz jac/hess = {{ nnz_j }}/{{ nnz_h }}, nnz P/A/G = {{ nnz_p }}/{{ a_rows|length }}/{{ g_rows|length }}).
+// PIQP {{ piqp_version }}-backed SQP wrapper for {{ name }} (n={{ n }}, equality={{ nh }}, inequality={{ ng }}, nnz jac/hess = {{ nnz_j }}/{{ nnz_h }}, nnz P/A/G = {{ nnz_p }}/{{ a_rows|length }}/{{ g_rows|length }}).
 static void {{ raw_symbol }}({{ signature }}) {
   const scaly_solver_option* options = solver_options[{{ options_index }}];
   const int l1 = (int){{ raw_symbol }}_option_number(options, "globalization");
@@ -164,7 +164,7 @@ static void {{ raw_symbol }}({{ signature }}) {
   double f = 0.0, trial_f = 0.0, primal = 0.0, complementarity = 0.0, stationarity = 0.0;
   int status = SCALY_SOLVE_MAX_ITER, native_status = PIQP_SOLVED, iterations = 0;
   piqp_workspace* qp = NULL; piqp_settings settings; piqp_set_default_settings_{{ qp_mode }}(&settings);
-  settings.max_iter = qp_max_iter; settings.eps_abs = qp_tol; settings.eps_rel = qp_tol; settings.eps_duality_gap_abs = qp_tol; settings.eps_duality_gap_rel = qp_tol; settings.verbose = 0; settings.preconditioner_reuse_on_update = 0;
+  settings.max_iter = qp_max_iter; settings.eps_abs = qp_tol; settings.eps_rel = qp_tol; settings.eps_duality_gap_abs = qp_tol; settings.eps_duality_gap_rel = qp_tol; settings.eps_primal_inf = qp_tol; settings.eps_dual_inf = qp_tol; settings.verbose = 0; settings.preconditioner_reuse_on_update = 0;
   if (!inputs_ok) status = SCALY_SOLVE_NUMERICS;
   for (int sqp_iter = 0; sqp_iter <= max_iter && inputs_ok; ++sqp_iter) {
     iterations = sqp_iter;
@@ -267,7 +267,7 @@ superlinear rate — stationarity then decays by only ~0.7 per iteration). #}
     piqp_status qp_status = piqp_solve(qp); stats_t_qp += scaly_clock_s() - qp0; native_status = (int)qp_status;
     stats_qp_iter += (int)qp->result->info.iter;
     if (trace) if (qp_status != PIQP_SOLVED) fprintf(stderr, "{{ trace_prefix }} iter=%d qp_status=%d qp_iter=%d primal_res=%.3e dual_res=%.3e gap=%.3e rel_gap=%.3e qp not solved\n", sqp_iter + 1, (int)qp_status, (int)qp->result->info.iter, qp->result->info.primal_res, qp->result->info.dual_res, qp->result->info.duality_gap, qp->result->info.duality_gap_rel);
-    // like laopt, continue with PIQP's best iterate on max-iter or infeasibility; globalization and the KKT test judge it
+    // like laopt, continue with PIQP's returned point on max-iter or infeasibility; globalization and the KKT test judge it
     if (qp_status != PIQP_SOLVED && qp_status != PIQP_MAX_ITER_REACHED && qp_status != PIQP_PRIMAL_INFEASIBLE && qp_status != PIQP_DUAL_INFEASIBLE) { status = SCALY_SOLVE_NUMERICS; break; }
     for (int i = 0; i < {{ n }}; ++i) step[i] = qp->result->x[i];
 {% if nh %}

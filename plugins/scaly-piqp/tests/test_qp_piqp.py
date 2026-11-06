@@ -170,6 +170,7 @@ def test_supported_settings_match_vendored_struct() -> None:
 @pytest.mark.solver("piqp")
 def test_valid_settings_still_render_and_solve(sparse: bool) -> None:
   from scaly.codegen.aot import render_c_source
+  from scaly_piqp import PIQP_VERSION
 
   @sc.problem(vars=sc.arg("x", 1), params=sc.arg("target", 1))
   def tracking(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
@@ -178,6 +179,7 @@ def test_valid_settings_still_render_and_solve(sparse: bool) -> None:
   options = {"sparse": sparse, "eps_abs": 1e-8, "max_iter": 100, "verbose": False, "preconditioner_reuse_on_update": True}
   solve = sc.solver(tracking, "piqp", options=options)
   source = render_c_source(solve.function)
+  assert f"// PIQP {PIQP_VERSION} solver wrapper" in source
   for key in options:
     if key != "sparse":
       assert f'"{key}", offsetof(piqp_settings, {key})' in source

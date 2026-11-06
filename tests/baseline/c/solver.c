@@ -88,7 +88,7 @@ static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* 
 }
 
 static scaly_solver_stats corpus_qp_stats_data;
-// PIQP solver wrapper for corpus_qp (n=2, p=0, m=0, nnz P/A/G = 4/0/0).
+// PIQP 0.7.0 solver wrapper for corpus_qp (n=2, p=0, m=0, nnz P/A/G = 4/0/0).
 static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w, const scaly_solver_option* const* solver_options) {
   (void)in0;
   (void)in1;
