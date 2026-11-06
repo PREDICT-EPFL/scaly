@@ -161,8 +161,9 @@ code allocates memory or checks a shape at run time, because no shape can change
 
 **Each dialect has a verifier.** A table of rules states which operands, types and attributes each
 operation accepts. Construction checks common mistakes as nodes are built, and `sc.verify_expr` and
-`verify_program` check a whole graph. Function construction and lowering run the expression
-verifier. Lowering also verifies its result, so a malformed program fails before any C exists.
+`verify_program` check a whole graph. Function construction runs the expression verifier, including
+on graphs rewritten before lowering. Lowering verifies its result, so a malformed program fails
+before any C exists.
 
 ## Everything is a pass
 

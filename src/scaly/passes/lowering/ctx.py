@@ -9,7 +9,6 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.expr_spec import verify_expr
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
@@ -68,7 +67,6 @@ def lower_function(
   ``w[]`` to fit the oracle and the CALL-to-solver gets ``callee_needs_w`` right.
   """
   fun = as_concrete(fun)
-  verify_expr((*fun.inputs, *fun.outputs))
   names, symbols, residuals = _function_names(fun)
   callees: dict[ConcreteFunction, ProgramNode] = {}
   solver_fns: dict[ConcreteFunction, ConcreteFunction] = {}
@@ -162,7 +160,6 @@ def _lower_to_proc(
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
 ) -> ProgramNode:
-  verify_expr((*fun.inputs, *fun.outputs))
   lowering = fun._effective_lowering
   symbol = symbols[fun]
   fun = _normalize_function(fun, residuals=fun in residuals)
