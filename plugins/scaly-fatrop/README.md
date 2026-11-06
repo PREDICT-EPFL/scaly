@@ -4,8 +4,11 @@ This package bundles the [Fatrop](https://github.com/meco-group/fatrop) shared l
 headers for Linux, macOS and Windows. `scaly_fatrop.lib_dir()` and `scaly_fatrop.include_dir()` return
 the directories needed to compile and link a C consumer of `fatrop/ocp/OCPCInterface.h`.
 
-Link with `-lfatrop` and add `lib_dir()` to the runtime library search path. The included BLASFEO
-headers provide the matrix and vector types used by the C interface. BLASFEO is linked statically
+Link with `-lfatrop` and add `lib_dir()` to the runtime library search path. On Windows, compile
+consumers with `FATROP_SYMBOL_EXPORT` defined as `__declspec(dllimport)`. Put `lib_dir()` on
+`PATH` for executables. Python consumers can use `os.add_dll_directory` in a `with` block.
+
+The included BLASFEO headers provide the matrix and vector types used by the C interface. BLASFEO is linked statically
 with hidden symbols, so this package can share a process with `scaly-piqp`.
 
 Fatrop uses BSD-2-Clause and EPL-2.0 licenses. BLASFEO uses BSD-2-Clause. The wheel includes their

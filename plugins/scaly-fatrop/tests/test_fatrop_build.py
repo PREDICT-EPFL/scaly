@@ -55,7 +55,7 @@ def test_only_c_interface_is_exported():
     with pefile.PE(str(package.lib_dir() / "fatrop.dll")) as library:
       symbols = {entry.name.decode() for entry in library.DIRECTORY_ENTRY_EXPORT.symbols}
       imports = {entry.dll.decode().lower() for entry in library.DIRECTORY_ENTRY_IMPORT}
-    assert not any("blasfeo" in name for name in imports)
+    assert all(name in {"kernel32.dll", "ucrtbase.dll"} or name.startswith("api-ms-win-crt-") for name in imports), imports
   else:
     library = next(package.lib_dir().glob("libfatrop.*"))
     command = ["nm", "-gU"] if sys.platform == "darwin" else ["nm", "-D", "--defined-only"]

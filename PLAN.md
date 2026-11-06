@@ -29,3 +29,8 @@ library, with exactly the 12 C exports and only system DLL imports. Both the C e
 shared probe link. Zig rejected `--exclude-all-symbols`; removed it and verified that explicit
 `__declspec(dllexport)` annotations restrict the DLL exports. CI uses the existing Zig 0.17 pin
 and must establish Windows execution and coexistence.
+
+The independent Windows review approved with two notes. Added public C-consumer macro and DLL
+search-path instructions, and restricted Windows imports to Kernel32 and the Universal C Runtime.
+Validate the import gate against the real cross-built DLL and an injected C++ runtime dependency,
+then run the focused delta check. The native Windows CI run is still in progress.
