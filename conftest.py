@@ -80,6 +80,7 @@ def pytest_collection_modifyitems(items) -> None:
   require = os.environ.get("SCALY_REQUIRE_SOLVERS", "")
   required = set(require.split(",")) if require else set()
   missing = set()
+  native_available = {}
   for item in items:
     for mark in item.iter_markers(name="solver"):
       name = mark.args[0]
@@ -87,17 +88,20 @@ def pytest_collection_modifyitems(items) -> None:
         if sys.platform == "win32":
           item.add_marker(pytest.mark.skip(reason=f"{name} supports Linux and macOS"))
           continue
-        spec = importlib.util.find_spec(package)
-        root = Path(spec.origin).parent if spec is not None and spec.origin else None
-        library = root / "lib" / f"lib{name}{shared_lib_ext()}" if root else None
-        available = bool(
-          root
-          and (root / "include" / mark.kwargs["header"]).is_file()
-          and library
-          and library.is_file()
-          and subprocess.run([sys.executable, "-c", "import ctypes, sys; ctypes.CDLL(sys.argv[1])", str(library)], capture_output=True).returncode
-          == 0
-        )
+        key = (name, package, mark.kwargs["header"])
+        if key not in native_available:
+          spec = importlib.util.find_spec(package)
+          root = Path(spec.origin).parent if spec is not None and spec.origin else None
+          library = root / "lib" / f"lib{name}{shared_lib_ext()}" if root else None
+          native_available[key] = bool(
+            root
+            and (root / "include" / mark.kwargs["header"]).is_file()
+            and library
+            and library.is_file()
+            and subprocess.run([sys.executable, "-c", "import ctypes, sys; ctypes.CDLL(sys.argv[1])", str(library)], capture_output=True).returncode
+            == 0
+          )
+        available = native_available[key]
         diagnostic = f"Missing native {name} package, library or headers"
       else:
         available = solver_loadable(name)

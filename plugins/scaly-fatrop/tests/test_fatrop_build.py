@@ -108,6 +108,7 @@ assert probe.run_solve() == 0
       str(c_probe[1]),
       str(piqp_first),
     ],
+    cwd=ROOT.parents[1],
     check=True,
     capture_output=True,
     text=True,

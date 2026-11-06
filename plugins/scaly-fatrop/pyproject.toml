@@ -18,7 +18,7 @@ packages = ["src/scaly_fatrop"]
 artifacts = ["src/scaly_fatrop/lib/*", "src/scaly_fatrop/include/**/*", "src/scaly_fatrop/licenses/**/*"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src/", "/hatch_build.py", "/native_build.py", "/licenses/"]
+include = ["/src/", "/hatch_build.py", "/native_build.py"]
 exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/*/native-inputs.sha256"]
 
 [tool.hatch.build.targets.sdist.force-include]
@@ -28,7 +28,7 @@ exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/*/native-
 path = "hatch_build.py"
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "hatch_build.py" }, { file = "native_build.py" }, { file = "../solver_build.py" }, { file = "src/scaly_fatrop/build_config.json" }, { file = "licenses/**" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "hatch_build.py" }, { file = "native_build.py" }, { file = "../solver_build.py" }, { file = "src/scaly_fatrop/build_config.json" }]
 
 [tool.uv.sources]
 scaly = { workspace = true }

@@ -14,7 +14,7 @@ project architecture, codebase, conventions, contributing and issue-tracking gui
 3. [x] Add the package, static hidden BLASFEO build, cache/release reuse and Linux/macOS CI.
 4. [x] Prove the C solve and coexistence with PIQP, wheel licenses and cache reuse. Perturb the
    implementation to verify the new tests fail. Record build and license constraints.
-5. [ ] Run all merge checks, commit, push and open a linked draft PR. All merge checks pass,
+5. [x] Run all merge checks, commit, push and open a linked draft PR. All merge checks pass,
    including 2,461 passed tests, 50 skips, benchmark smoke and the documentation build.
 6. [ ] Run cross-review, address findings and confirm fixes with a delta check. Remove this
    temporary plan, mark the PR ready, update the tracker and watch CI.
@@ -32,3 +32,10 @@ Use `LD_LIBRARY_PATH=$HOME/.cache/scaly/solvers/$(cat plugins/scaly-ipopt/.build
 for local merge checks so the auditwheel-renamed quadmath runtime is found. The first strict xdist
 runs reported a worker failure rather than the underlying missing-library collection error.
 The named differentiation test passed independently.
+
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/267. Opus approved the main review at low
+effort, with five notes and no required changes. Removed unused licenses paths from the package
+metadata, cached native availability within collection, and fixed the coexistence subprocess's
+working directory. The existing BSD metadata convention is retained, with dependency licenses
+in the wheel notices. CI will establish the macOS deployment target. Validate and run the focused
+delta check before removing this plan and marking the PR ready.
