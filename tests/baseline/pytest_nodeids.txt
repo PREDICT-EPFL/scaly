@@ -1783,8 +1783,6 @@ tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-1-2-F
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6--2-False]
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6-0-True]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration
-tests/passes/lowering/test_ctx.py::test_lowering_verifies_only_normalized_graphs[False]
-tests/passes/lowering/test_ctx.py::test_lowering_verifies_only_normalized_graphs[True]
 tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaf_refused
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[input-float32]
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[output-float32]

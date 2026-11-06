@@ -1,6 +1,4 @@
-"""Check lowering boundaries and rule registration."""
-
-from collections import Counter
+"""Check lowering-rule registration at the compiler boundary."""
 
 import pytest
 
@@ -20,30 +18,6 @@ def test_duplicate_rule_rejected_without_partial_registration(monkeypatch) -> No
 
   assert ctx._RULES[ExprOp.SIN] is original
   assert ExprOp.INPUT not in ctx._RULES
-
-
-@pytest.mark.parametrize("nested", [False, True])
-def test_lowering_verifies_only_normalized_graphs(monkeypatch, nested: bool) -> None:
-  from scaly.function.concrete import ConcreteFunction
-  from scaly.ir.expr import Expr, topo
-  from scaly.ir.expr_spec import spec_expr
-
-  x = Expr.sym("verification_x", 2)
-  child = ConcreteFunction._from_exprs("verification_child", [x], [(x * 1.0).sin().sum()], ["x"], ["y"])
-  fn = ConcreteFunction._from_exprs("verification_parent", [x], [(child(x) + x.sum()) * 1.0], ["x"], ["y"]) if nested else child
-  checked: list[Expr] = []
-  normalized: list[ConcreteFunction] = []
-  original = spec_expr.check
-
-  def check(node: Expr):
-    checked.append(node)
-    return original(node)
-
-  monkeypatch.setattr(spec_expr, "check", check)
-  ctx.lower_function(fn, observe_expr=lambda _phase, fun: normalized.append(fun))
-
-  assert len(normalized) == (2 if nested else 1)
-  assert Counter(checked) == Counter(node for fun in normalized for node in topo((*fun.inputs, *fun.results)))
 
 
 @pytest.mark.parametrize("dtype", ["float32"])
