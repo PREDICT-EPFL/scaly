@@ -32,6 +32,8 @@ plugins/scaly-piqp/tests/test_qp_sparse.py::test_sparse_qp_bakes_exactly_the_upp
 plugins/scaly-piqp/tests/test_qp_sparse.py::test_sparse_qp_matches_dense_over_parameter_sweep
 plugins/scaly-piqp/tests/test_qp_sparse.py::test_sparse_qp_patterns_exclude_structural_zeros
 plugins/scaly-piqp/tests/test_qp_sparse.py::test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle
+plugins/scaly-piqp/tests/test_qp_stats.py::test_qp_dual_infeasible_returns_unit_direction
+plugins/scaly-piqp/tests/test_qp_stats.py::test_qp_primal_infeasible_returns_farkas_certificate
 plugins/scaly-piqp/tests/test_qp_stats.py::test_qp_reserved_name_is_a_user_error
 plugins/scaly-piqp/tests/test_qp_stats.py::test_qp_stats_maps_max_iter_status
 plugins/scaly-piqp/tests/test_qp_stats.py::test_qp_stats_success_and_timing_split

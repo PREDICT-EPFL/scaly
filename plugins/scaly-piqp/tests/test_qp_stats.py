@@ -61,3 +61,23 @@ def test_qp_reserved_name_is_a_user_error() -> None:
   qp = build_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
   with pytest.raises(ValueError, match="exported C identifier 'w'"):
     solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
+
+
+@pytest.mark.solver("piqp")
+def test_qp_primal_infeasible_returns_farkas_certificate() -> None:
+  # x1 + x2 >= 2 with x <= 0.5: the certificate is z_l = 1 on the row and z_bu = 1 on both bounds,
+  # accepted within PIQP's default eps_primal_inf of 1e-4.
+  qp = build_qp(P=np.eye(2), c=np.zeros(2), G_ineq=np.ones((1, 2)), l_ineq=np.array([2.0]), u_ineq=np.array([np.inf]), x_ub=np.full(2, 0.5))
+  out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(1))
+  assert qp.stats().status == sc.ScalySolveStatus.PRIMAL_INFEASIBLE
+  np.testing.assert_allclose(out["lam_ineq"], [-1.0], atol=1e-3)
+  np.testing.assert_allclose(out["lam_box"], [1.0, 1.0], atol=1e-3)
+
+
+@pytest.mark.solver("piqp")
+def test_qp_dual_infeasible_returns_unit_direction() -> None:
+  # Minimizing -x1 with x1 >= 0 free above: the certificate is the unbounded direction (1, 0).
+  qp = build_qp(P=np.diag([0.0, 1.0]), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2))
+  out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
+  assert qp.stats().status == sc.ScalySolveStatus.DUAL_INFEASIBLE
+  np.testing.assert_allclose(out["x"], [1.0, 0.0], atol=1e-6)
