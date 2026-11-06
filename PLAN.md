@@ -10,13 +10,25 @@ Sources: issue #237 and parent #236, `plugins/scaly-piqp/{hatch_build,native_bui
 project architecture, codebase, conventions, contributing and issue-tracking guides.
 
 1. [x] Inspect prerequisites, parent, checkout and open PRs. Record work in the tracker.
-2. [ ] Inspect Fatrop v1.2.0, then write and run failing native C and packaging tests.
-3. [ ] Add the package, static hidden BLASFEO build, cache/release reuse and Linux/macOS CI.
-4. [ ] Prove the C solve and coexistence with PIQP, wheel licenses and cache reuse. Perturb the
+2. [x] Inspect Fatrop v1.2.0, then write and run failing native C and packaging tests.
+3. [x] Add the package, static hidden BLASFEO build, cache/release reuse and Linux/macOS CI.
+4. [x] Prove the C solve and coexistence with PIQP, wheel licenses and cache reuse. Perturb the
    implementation to verify the new tests fail. Record build and license constraints.
-5. [ ] Run all merge checks, commit, push and open a linked draft PR.
+5. [ ] Run all merge checks, commit, push and open a linked draft PR. All merge checks pass,
+   including 2,461 passed tests, 50 skips, benchmark smoke and the documentation build.
 6. [ ] Run cross-review, address findings and confirm fixes with a delta check. Remove this
    temporary plan, mark the PR ready, update the tracker and watch CI.
 
 Steps are sequential. Cross-platform CI provides Linux arm64 and macOS evidence unavailable
 on the local Linux x86 machine. Keep generated C snapshots byte-identical.
+
+Local evidence: 23 focused tests passed, and a fresh installation of the actual wheel compiled
+and ran the standalone C solve and contained all three upstream license texts. Incorrect expected
+solution, AVX-512 target, missing EPL text and exposed native symbols each caused the corresponding
+test to fail. Restored the production recipe and verified the cache key and wheel native stamp.
+
+The strict full-suite run exposed an existing editable IPOPT runtime issue, tracked in #266.
+Use `LD_LIBRARY_PATH=$HOME/.cache/scaly/solvers/$(cat plugins/scaly-ipopt/.build_key)/wheel-libs`
+for local merge checks so the auditwheel-renamed quadmath runtime is found. The first strict xdist
+runs reported a worker failure rather than the underlying missing-library collection error.
+The named differentiation test passed independently.

@@ -1,6 +1,6 @@
 # Vendored solver build context
 
-The `plugins/scaly-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes preserve build constraints and the reasoning behind the hooks. Current work is tracked
+The `plugins/scaly-{piqp,ipopt,fatrop}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes preserve build constraints and the reasoning behind the hooks. Current work is tracked
 in GitHub Issues; `ci.yml` builds and tests the release wheels. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
 
 ## 1. Runtime bundling replaced static linking — done, and enforced
@@ -100,6 +100,41 @@ OPENBLAS_BRANCH = "v0.3.28"
 
 IPOPT, MUMPS and OpenBLAS were the latest tags at extraction time. METIS moved from `ThirdParty-Metis releases/2.0.1` (METIS 4.0.3 inside) to upstream 5.2.1 in September 2026, see section 2.
 
+## 7. Fatrop
+
+`scaly-fatrop` pins Fatrop v1.2.0 and BLASFEO 0.1.4.3 in `build_config.json`. The recipe builds
+BLASFEO separately as a position-independent static archive, then points Fatrop at that install.
+Fatrop's `WITH_BUILD_BLASFEO` option stays off because it fetches an unpinned BLASFEO `master`.
+Tests and examples stay off, and `BUILD_WITH_C_INTERFACE` stays on.
+
+BLASFEO uses `X64_INTEL_HASWELL` on x86-64, `ARMV8A_APPLE_M1` on macOS arm64 and
+`ARMV8A_ARM_CORTEX_A76` on Linux arm64, matching PIQP. x86-64 requires AVX2 and FMA.
+There is no AVX-512 build or runtime dispatch. Windows is outside this package's supported targets.
+
+The shared library exports only `fatrop_ocp_c_*`. C and C++ compilation uses hidden visibility,
+and `GCC_HASCLASSVISIBILITY` enables the C header's explicit export annotations. A Linux version
+script or macOS exported-symbols list also hides the BLASFEO assembly kernels, which compiler
+visibility flags do not affect. Hidden definitions bind within Fatrop even if PIQP was loaded
+globally first. The C consumer uses BLASFEO's matrix-access macros rather than linking BLASFEO
+functions. The package includes the BLASFEO headers required by `OCPCInterface.h`.
+
+CMake installs the versioned shared library and its unversioned alias together. Both must travel
+because external C consumers record the versioned library name. macOS uses `@rpath` install names
+and `@loader_path` for runtime lookup. The recipe re-signs each installed Mach-O image after
+CMake changes its load commands. Linux uses `$ORIGIN`, passed directly to CMake without a shell
+or make-variable expansion. Only system C and C++ runtimes remain dynamically linked.
+
+The hook follows the same local-cache, released-wheel and source-build order as PIQP and IPOPT.
+The native hash covers its recipe, pins and `licenses/`. Source cache keys also record compilers
+and build environment, including `ASMFLAGS`. The shared release lookup verifies the wheel's
+SHA-256 and native-input hash before copying libraries, headers and notices.
+
+`plugins/scaly-fatrop/tests/test_fatrop_build.py` compiles and runs a C optimal-control solve,
+checks that only C interface symbols are exported, and solves with both PIQP and Fatrop in one
+process in either global load order. The CI tests run against the built wheels on both Linux
+architectures and macOS arm64. The release-reuse tests also build a wheel from its source archive
+without compilers using a matching local index.
+
 ## License survey, 2026-09-07
 
 Scaly and the three plugins are BSD-2-Clause. The plugin wheels also ship other people's binaries,
@@ -120,6 +155,8 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 | | libgfortran, libquadmath | GPL-3 + GCC runtime exception | notice; the exception covers this use |
 | | METIS 5.2.1 | Apache-2.0 | notice |
 | | GKlib | Apache-2.0, plus two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file, per its `LICENSES.md` | notice for each |
+| scaly-fatrop | Fatrop 1.2.0 | BSD-2-Clause and EPL-2.0 for IPOPT-derived files | both texts and the pinned upstream source link |
+| | BLASFEO 0.1.4.3 | BSD-2-Clause | notice |
 
 The build hooks generate each wheel's notices from this table's pins, and
 `plugins/*/tests/test_*_notices.py` fails when a dependency in `build_config.json` has no license

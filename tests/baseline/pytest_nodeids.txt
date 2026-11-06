@@ -1,3 +1,11 @@
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Darwin-arm64-ARMV8A_APPLE_M1]
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Linux-aarch64-ARMV8A_ARM_CORTEX_A76]
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Linux-x86_64-X64_INTEL_HASWELL]
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_only_c_interface_is_exported
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_pinned_licenses
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_piqp_and_fatrop_solve_in_one_process[False]
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_piqp_and_fatrop_solve_in_one_process[True]
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_standalone_c_solve
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_archive_writers_share_one_lock
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_receives_the_exact_lagrangian_hessian
@@ -2389,9 +2397,12 @@ tests/test_release_workflow.py::test_unusable_verified_files_fall_back_to_the_fu
 tests/test_release_workflow.py::test_unusable_verified_files_fall_back_to_the_full_nightly[missing-files]
 tests/test_release_workflow.py::test_unusable_verified_files_fall_back_to_the_full_nightly[wrong-packages]
 tests/test_release_workflow.py::test_verified_testpypi_files_take_priority_over_a_newer_nightly
+tests/test_released_solvers.py::test_build_wheel_from_local_release[fatrop]
 tests/test_released_solvers.py::test_build_wheel_from_local_release[ipopt]
 tests/test_released_solvers.py::test_build_wheel_from_local_release[piqp]
+tests/test_released_solvers.py::test_native_hash_tracks_recipe_inputs_only[fatrop]
 tests/test_released_solvers.py::test_native_hash_tracks_recipe_inputs_only[ipopt]
+tests/test_released_solvers.py::test_preparation_order_and_source_override[fatrop]
 tests/test_released_solvers.py::test_preparation_order_and_source_override[ipopt]
 tests/test_released_solvers.py::test_preparation_order_and_source_override[piqp]
 tests/test_released_solvers.py::test_release_lookup[None]

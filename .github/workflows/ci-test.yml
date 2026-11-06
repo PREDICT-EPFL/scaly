@@ -75,13 +75,17 @@ jobs:
         run: |
           flags=(--no-install-package scaly-piqp --no-install-package scaly-ipopt)
           wheels=(dist/scaly_piqp-*.whl dist/scaly_ipopt-*.whl)
+          if [ "$RUNNER_OS" != Windows ]; then
+            flags+=(--no-install-package scaly-fatrop)
+            wheels+=(dist/scaly_fatrop-*.whl)
+          fi
           if [ "$RUNNER_OS" = Windows ]; then
             flags+=(--no-install-package scaly --no-install-package scaly-sqp)
             wheels+=(dist/scaly-[0-9]*.whl dist/scaly_sqp-*.whl)
           fi
           uv sync --frozen ${{ matrix.toolchain && runner.os != 'Windows' && '--extra toolchain' || '' }} "${flags[@]}"
           uv pip install --no-deps "${wheels[@]}"
-          uv run python -c "import importlib, sys; names = ('scaly', 'scaly_ipopt', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
+          uv run python -c "import importlib, sys; names = ('scaly', 'scaly_ipopt', 'scaly_piqp', 'scaly_sqp') if sys.platform == 'win32' else ('scaly_piqp', 'scaly_ipopt', 'scaly_fatrop'); assert all('site-packages' in importlib.import_module(n).__file__ for n in names)"
 
       - name: Native toolchain report
         run: |

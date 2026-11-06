@@ -58,6 +58,7 @@ allow-direct-references = true
 
 [dependency-groups]
 dev = [
+  "scaly-fatrop; sys_platform != 'win32'",
   "scaly-ipopt",
   "scaly-piqp",
   "scaly-sqp",
@@ -89,6 +90,7 @@ members = ["plugins/*"]
 exclude = ["plugins/solver_build.py"]
 
 [tool.uv.sources]
+scaly-fatrop = { workspace = true }
 scaly-ipopt = { workspace = true }
 scaly-piqp = { workspace = true }
 scaly-sqp = { workspace = true }

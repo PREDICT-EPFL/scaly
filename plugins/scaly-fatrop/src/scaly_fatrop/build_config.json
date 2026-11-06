@@ -1,0 +1,12 @@
+{
+  "fatrop": {
+    "tag": "v1.2.0",
+    "version": "1.2.0",
+    "linkage": "shared"
+  },
+  "blasfeo": {
+    "tag": "0.1.4.3",
+    "version": "0.1.4.3",
+    "linkage": "static"
+  }
+}
