@@ -72,6 +72,7 @@ plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_solves_an_indefinite_coupled_h
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_sparse_and_dense_qp_interfaces_agree
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_sparse_assembly_reaches_the_same_solution_as_ipopt
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_stats_split_is_additive
+plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_steps_through_a_qp_with_weak_curvature
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_trace_is_off_by_default
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_trace_prefix_sanitizes_hostile_names
 plugins/scaly-sqp/tests/test_nlp_sqp.py::test_sqp_trace_prints_per_iteration_lines_to_stderr

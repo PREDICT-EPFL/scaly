@@ -9,6 +9,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.ir.types import SparsityPattern
+from scaly_piqp import PIQP_VERSION
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
@@ -43,6 +44,8 @@ def test_sqp_generated_wrapper_reuses_one_qp_workspace(interface: str) -> None:
   assert "settings.preconditioner_reuse_on_update = 0" in source
   assert "settings.eps_duality_gap_abs = qp_tol" in source
   assert "settings.eps_duality_gap_rel = qp_tol" in source
+  assert "settings.eps_primal_inf = qp_tol; settings.eps_dual_inf = qp_tol" in source
+  assert f"// PIQP {PIQP_VERSION}-backed SQP wrapper" in source
 
 
 @pytest.mark.solver("sqp")
@@ -116,7 +119,7 @@ def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
   )
   source = render_c_source(fun.function)
   assert "[scaly-sqp pct_s__quote_sep_end]" in source
-  assert '// PIQP-backed SQP wrapper for pct%s "quote\fsep\u2028end (' in source
+  assert f'// PIQP {PIQP_VERSION}-backed SQP wrapper for pct%s "quote\fsep\u2028end (' in source
   # the raw name may appear in comments, but never inside a format string
   assert all("pct%s" not in line and '"quote' not in line for line in source.splitlines() if "fprintf" in line)
 
@@ -435,6 +438,19 @@ def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.native_status == -1  # PIQP_MAX_ITER_REACHED on the last QP
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
+
+
+@pytest.mark.solver("sqp")
+def test_sqp_steps_through_a_qp_with_weak_curvature() -> None:
+  # PIQP's default eps_dual_inf of 1e-4 calls this subproblem unbounded and returns a unit direction
+  @sc.problem(vars=sc.arg("x", 1), name="sqp_weak_curvature")
+  def weak_curvature(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=0.5e-6 * x[0] ** 2 - x[0], lb=sc.const(0.0))
+
+  solver = sc.solver(weak_curvature, "sqp")
+  x, *_ = solver(())
+  assert solver.stats().status == sc.ScalySolveStatus.OK
+  np.testing.assert_allclose(x, [1e6], rtol=1e-3)
 
 
 @pytest.mark.solver("sqp")
