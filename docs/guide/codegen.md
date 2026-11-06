@@ -384,8 +384,10 @@ print(float(external_energy([1.0, 2.0, 3.0])))  # 14.0
 
 The generated `casadi_int` macro defaults to `long long int`, matching CasADi's
 loader. Consumers expecting another integer width need a matching build.
-In particular, acados uses `-Dcasadi_int=int`. The option works with either
-`lang="c"` or `lang="cpp"`.
+An acados build must pass `-Dcasadi_int=int` through
+`ocp.code_gen_options.ext_fun_compile_flags`, as the
+[acados race-car example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/acados_race_car.py)
+does. The option works with either `lang="c"` or `lang="cpp"`.
 
 For sparse outputs, this mode writes values in CSC order. If native scaly
 ordering differs, the generated entry point permutes the values using extra
@@ -400,13 +402,12 @@ tables describe the converted output order.
     required, unlike CasADi's convention of treating null inputs as zero and
     skipping null outputs.
 
-The [acados race-car example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/acados_race_car.py)
-uses this interface for discrete dynamics and external costs, including their
+The example uses this interface for discrete dynamics and external costs, including their
 sparse Jacobians and exact Hessians. It generates an acados solver from CasADi
 expressions, replaces the dynamics and cost sources with Scaly modules before
-compilation, and compares every sequential quadratic programming (SQP) iterate
+compilation, and compares every sequential quadratic programming iterate
 against a pure-CasADi solver. The example's docstring gives the setup for
-acados-wheels 0.6.0, which currently requires access to its private repository.
+acados-wheels 0.6.0, which requires access to its private repository.
 
 ## Solver export and deployment dependencies
 

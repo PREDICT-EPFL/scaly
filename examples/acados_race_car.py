@@ -1,11 +1,11 @@
 """Solve race-car tracking with acados and compare every sequential quadratic programming (SQP) iterate.
 
-The four states are position, heading and speed. Throttle and steering drive a
+The four states are planar position, heading and speed. Throttle and steering drive a
 kinematic bicycle model discretized by fourth-order Runge-Kutta. The parameters,
 tracking weights, actuator limits and footprint corridor match the race-car
 benchmark. A circular reference keeps this example independent of track files.
-The benchmark's terminal controls have no dynamics and minimize their penalty to
-zero, so this formulation eliminates them.
+The formulation eliminates the benchmark's independent terminal controls, whose
+minimum penalty is zero.
 
 Requires a C compiler and acados-wheels 0.6.0, which pins acados 5033648. With
 access to the private wheel repository, on Linux x86-64 run from this checkout:
@@ -15,18 +15,20 @@ access to the private wheel repository, on Linux x86-64 run from this checkout:
 
 Both solvers use acados' SQP with exact Hessians. CasADi describes the
 optimal-control problem and generates the corridor
-constraints for both solvers. For the Scaly solver, before compilation we replace
+constraints for both solvers. Before compiling the Scaly solver, the script replaces
 the generated dynamics and initial, path and terminal external costs with Scaly
-``casadi=True`` modules. Their sparse derivatives use acados' CasADi query
-interface, with ``-Dcasadi_int=int``. No C adapter is needed.
+``casadi=True`` modules. acados loads these modules through CasADi's
+external-function queries, which also describe their sparse outputs. The build
+passes ``-Dcasadi_int=int`` through ``ocp.code_gen_options.ext_fun_compile_flags``
+to match acados' integer width. No C adapter is needed.
 
 The pure-CasADi solver retains all its generated sources. Both start with the same
-states, controls and multipliers. The script compares their stored iterates and
-final costs, and prints the temporary directory containing both builds.
+states, controls and multipliers. The script compares all their stored state,
+control and multiplier iterates and final costs, and prints the directory
+containing both builds under ``examples/generated/acados_race_car/``.
 """
 
 from pathlib import Path
-import tempfile
 
 import casadi as ca
 import numpy as np
@@ -147,8 +149,8 @@ def replace_sources(directory: Path, name: str) -> None:
       "cost": value,
       "grad_cost_ux": sc.gradient(value, ux),
       "hess_cost_ux_ux": sc.sparse_hessian(value, ux),
-      "hess_cost_z_z": sc.SparseJacobian(sc.SparsityPattern((0, 0), (), ()), sc.const(np.empty(0))),
-      "hess_cost_z_ux": sc.SparseJacobian(sc.SparsityPattern((0, nu + NX), (), ()), sc.const(np.empty(0))),
+      "hess_cost_z_z": sc.SparseJacobian(sc.SparsityPattern.empty((0, 0)), sc.const(np.empty(0))),
+      "hess_cost_z_ux": sc.SparseJacobian(sc.SparsityPattern.empty((0, nu + NX)), sc.const(np.empty(0))),
     }
     for derivative, count in (("", 1), ("_jac", 2), ("_jac_hess", 5)):
       _export(
@@ -216,19 +218,23 @@ def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
   return solver
 
 
-def main() -> None:
-  """Solve both versions and check their state and control iterates."""
-  work = Path(tempfile.mkdtemp(prefix="scaly-acados-race-car-"))
-  print(f"Generated sources and builds: {work}")
-  actual, reference = [solve_race_car(work, scaly=use_scaly) for use_scaly in (True, False)]
+def compare_iterates(actual: AcadosOcpSolver, reference: AcadosOcpSolver) -> None:
+  """Check convergence, every state, control and multiplier iterate, and final cost."""
   assert actual.status == reference.status == 0
   assert actual.get_stats("sqp_iter") == reference.get_stats("sqp_iter")
   for iteration in range(int(actual.get_stats("sqp_iter")) + 1):
-    for field in ("x", "u"):
-      np.testing.assert_allclose(
-        getattr(actual.get_iterate(iteration), field), getattr(reference.get_iterate(iteration), field), atol=1e-7, rtol=1e-7
-      )
+    left, right = [solver.get_iterate(iteration).flatten() for solver in (actual, reference)]
+    for field in ("x", "u", "pi", "lam"):
+      np.testing.assert_allclose(getattr(left, field), getattr(right, field), atol=1e-7, rtol=1e-7, err_msg=f"{field} at SQP iterate {iteration}")
   np.testing.assert_allclose(actual.get_cost(), reference.get_cost(), atol=1e-8, rtol=1e-8)
+
+
+def main() -> None:
+  """Solve both versions and compare all their iterates."""
+  work = Path(__file__).resolve().parent / "generated" / "acados_race_car"
+  print(f"Generated sources and builds: {work}")
+  actual, reference = [solve_race_car(work, scaly=use_scaly) for use_scaly in (True, False)]
+  compare_iterates(actual, reference)
   print(f"Both solvers converged in {actual.get_stats('sqp_iter')} SQP iterations, cost {actual.get_cost():.10g}. All iterates agree.")
 
 

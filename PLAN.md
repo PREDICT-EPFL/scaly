@@ -37,3 +37,17 @@ Logs and downloaded wheel are in `/tmp/scaly-acados-243/` on la015.
 Pre-merge checks passed, including 2,411 tests with 91 skipped, smoke and docs.
 The six-interval case converges in five SQP steps with maximum iterate differences
 below 2e-11, including state, control, dynamics and inequality multipliers.
+
+The maintainer authorized one exception under src/scaly/codegen/: clarify only
+the casadi_defines docstring, together with the guide passage, that the acados
+build must receive -Dcasadi_int=int through ext_fun_compile_flags. No new
+cross-review for this wording fix. AST comparison confirms no executable change,
+and direct C/C++ export comparison confirms byte-identical generated artifacts.
+
+Original Opus review returned three action items. Fixed the shared comparison
+to include x/u/pi/lam in both script and test, moved standalone builds under
+examples/generated/acados_race_car so the example test owns them, and clarified
+query-interface versus integer-flag wording. Applied the small prose and empty
+sparsity notes. Recorded the public sparse-output layout gap as a use case on
+existing follow-up #48, comment 6681566995, rather than creating a duplicate.
+The maintainer-only exporter docstring correction remains the sole src/ edit.
