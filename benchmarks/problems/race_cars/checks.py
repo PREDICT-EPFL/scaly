@@ -32,6 +32,7 @@ from benchmarks.problems.race_cars import (
   CAR_WIDTH,
   DELTA_MAX,
   NX,
+  NU,
   NZ,
   T_MAX,
   RaceCarParams,
@@ -228,6 +229,19 @@ def check_exact_hessian_default() -> None:
   )
   sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
   assert next(option.integer for option in as_concrete(sqp.function).descriptor.runtime_options if option.name == b"hessian") == 1
+
+
+def check_stage_layout() -> None:
+  """Detection recovers the race-car stages, terminal controls and corridor rows."""
+  for horizon in (1, 3):
+    layout = as_concrete(_race_car_nlp(EpisodeConfig(horizon=horizon)).function).descriptor.stage_layout
+    n_eq = NX * (horizon + 1)
+    assert layout.N == horizon
+    assert layout.nx == (NX,) * (horizon + 1)
+    assert layout.nu == (NU,) * (horizon + 1)
+    assert layout.dynamics == tuple(tuple(range(NX * (k + 1), NX * (k + 2))) for k in range(horizon))
+    assert layout.eq == (tuple(range(NX)),) + ((),) * horizon
+    assert layout.ineq == ((),) + tuple((n_eq + 2 * k, n_eq + 2 * k + 1) for k in range(horizon))
 
 
 def check_casadi_ipopt_is_compiled() -> None:
@@ -505,6 +519,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "casadi_mirror": (check_casadi_mirror_dimensions, None, True),
   "mapped_cost": (check_mapped_cost_matches_casadi, None, True),
   "exact_hessian_default": (check_exact_hessian_default, None, False),
+  "stage_layout": (check_stage_layout, None, False),
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, "ipopt", True),
   "episode_artifacts": (check_episode_artifacts, "ipopt", False),
   "recorded_scene": (check_recorded_scene_and_artifacts, "ipopt", True),

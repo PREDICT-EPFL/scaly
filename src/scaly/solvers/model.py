@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
 from ..ir.expr import Expr, ExprOp
@@ -12,6 +13,7 @@ from ..function.model import Function
 from ..function.tree import Tree
 from ..function.tree import flat_tree, flat_parameters
 from ..ir.types import SparsityPattern, TensorType
+from .stages import StageLayout, detect_stage_layout
 
 
 class CSolverOption(ctypes.Structure):
@@ -88,6 +90,7 @@ class SolverDescriptor:
   # Sparsity (NLP)
   jac_sparsity: SparsityPattern | None = None
   hess_sparsity: SparsityPattern | None = None
+  _stage_layout: StageLayout | None = None
   # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
   # triangle), A_eq, G_ineq, baked into the generated wrapper as static
   # tables; the oracle emits compact CSC-ordered value buffers. None => dense.
@@ -114,6 +117,15 @@ class SolverDescriptor:
   def structural_key(self) -> tuple[Any, ...]:
     """Stable per-instance key used by ``Expr.structural_key`` for SOLVER_CALL nodes."""
     return ("SolverDescriptor", self._key, self.name, self.backend, self.n, self.n_eq, self.n_ineq)
+
+  @cached_property
+  def stage_layout(self) -> StageLayout:
+    """The supplied stage layout, or a layout detected and checked on first access."""
+    if self._stage_layout is not None:
+      return self._stage_layout
+    if self.jac_sparsity is None or self.hess_sparsity is None:
+      raise ValueError("stage detection requires NLP Jacobian and Lagrangian Hessian sparsity")
+    return detect_stage_layout(self.jac_sparsity, self.hess_sparsity, self.n_eq)
 
 
 def descriptor_function(
