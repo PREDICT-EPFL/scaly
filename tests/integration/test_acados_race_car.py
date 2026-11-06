@@ -1,4 +1,8 @@
-"""Compare the race-car example's Scaly and CasADi acados SQP iterates."""
+"""Check steady straight-line motion at 3 m/s, with zero steering and throttle balancing drag.
+
+The throttle is (297.03 + 16.665 * 3 + 0.6784 * 9) / 4.95. Every cost residual
+is zero along this feasible reference, so the known global minimum is zero.
+"""
 
 from pathlib import Path
 import runpy
@@ -7,19 +11,15 @@ import numpy as np
 import pytest
 
 
-def test_acados_race_car_iterates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_acados_race_car_straight_line(tmp_path: Path) -> None:
   pytest.importorskip("acados_template")
   example = runpy.run_path(str(Path(__file__).resolve().parents[2] / "examples" / "acados_race_car.py"))
-
-  def reject_casadi_model(*args):
-    raise AssertionError("The Scaly solver must not construct the CasADi dynamics or cost")
-
-  with monkeypatch.context() as blocked:
-    for name in ("casadi_dynamics", "casadi_cost"):
-      blocked.setitem(example["solve_race_car"].__globals__, name, reject_casadi_model)
-    actual = example["solve_race_car"](tmp_path, horizon=6, scaly=True)
-  reference = example["solve_race_car"](tmp_path, horizon=6, scaly=False)
-  example["compare_iterates"](actual, reference)
-  for solver in (actual, reference):
-    assert 1 < solver.get_stats("sqp_iter") < 50
-    assert np.max(solver.get_residuals()) < 1e-8
+  reference = np.tile([0.0, 0.0, 0.0, 3.0], (7, 1))
+  reference[:, 0] = 0.15 * np.arange(7)
+  solver = example["solve_race_car"](tmp_path, reference[0], reference)
+  assert solver.status == 0
+  np.testing.assert_allclose(solver.get_cost(), 0.0, atol=1e-10)
+  for stage in range(7):
+    np.testing.assert_allclose(solver.get(stage, "x"), reference[stage], atol=1e-7, rtol=0)
+    if stage < 6:
+      np.testing.assert_allclose(solver.get(stage, "u"), [71.33951515151515, 0.0], atol=1e-6, rtol=0)

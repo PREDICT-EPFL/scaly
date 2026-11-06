@@ -408,9 +408,8 @@ functions that express the next state and stage cost in Scaly. It generates an
 acados solver with shaped zero CasADi placeholders and replaces
 the dynamics and cost sources with Scaly modules before compilation. acados
 reads the actual sparsity and workspace requirements from Scaly's queries, so
-the placeholders need only the correct shapes. The example compares every
-sequential quadratic programming iterate against an independent pure-CasADi
-solver. The handwritten CasADi dynamics and costs serve only that reference.
+the placeholders need only the correct shapes. The example solves race-car
+tracking with acados' sequential quadratic programming solver.
 The example's docstring gives the setup for acados-wheels 0.6.0, which requires
 access to its private repository.
 

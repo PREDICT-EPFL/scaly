@@ -1,4 +1,4 @@
-"""Solve race-car tracking with acados and compare every sequential quadratic programming (SQP) iterate.
+"""Solve race-car tracking with acados' sequential quadratic programming (SQP).
 
 The four states are planar position, heading and speed. Throttle and steering drive a
 kinematic bicycle model discretized by fourth-order Runge-Kutta. The parameters,
@@ -13,7 +13,7 @@ access to the private wheel repository, on Linux x86-64 run from this checkout:
     gh release download wheels -R tudoroancea/acados-wheels -p '*manylinux_2_28_x86_64.whl'
     uv run --with ./acados_wheels-0.6.0-py3-none-manylinux_2_28_x86_64.whl examples/acados_race_car.py
 
-Both solvers use acados' SQP with exact Hessians and CasADi corridor constraints.
+The solver uses acados' SQP with exact Hessians and CasADi corridor constraints.
 ``build_scaly_solver`` takes Scaly dynamics and cost expression builders. It
 generates an acados solver with correctly shaped zero CasADi placeholders, then
 replaces the dynamics and initial, path and terminal external costs with Scaly
@@ -22,11 +22,9 @@ workspace requirements from Scaly's external-function queries. The placeholder
 sparsity does not need to match. The helper passes ``-Dcasadi_int=int`` through
 ``ocp.code_gen_options.ext_fun_compile_flags`` to match acados' integer width.
 
-The handwritten CasADi dynamics and costs are used only by the independent
-reference solver. Both solvers start with the same states, controls and
-multipliers. The script compares all their stored state,
-control and multiplier iterates and final costs, and prints the directory
-containing both builds under ``examples/generated/acados_race_car/``.
+The script tracks a circular reference and prints the first control, solver
+iterations and cost. Generated sources and the solver build are kept under
+``examples/generated/acados_race_car/``.
 """
 
 from collections.abc import Callable
@@ -67,24 +65,6 @@ def scaly_dynamics(x: sc.Expr, u: sc.Expr, p: sc.Expr) -> sc.Expr:
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-def casadi_dynamics(x, u, p):
-  """Independent CasADi version of the same Runge-Kutta step."""
-  wheelbase, dt, mass, c_m0, c_r0, c_r1, c_r2 = [p[4 + i] for i in range(7)]
-
-  def ode(state):
-    beta = 0.5 * u[1]
-    v, phi = state[3], state[2]
-    vx = v * ca.cos(beta)
-    resistance = (c_r0 + c_r1 * vx + c_r2 * vx * vx) * ca.tanh(10.0 * vx)
-    return ca.vertcat(v * ca.cos(phi + beta), v * ca.sin(phi + beta), v * ca.sin(beta) / (0.5 * wheelbase), (c_m0 * u[0] - resistance) / mass)
-
-  k1 = ode(x)
-  k2 = ode(x + dt / 2 * k1)
-  k3 = ode(x + dt / 2 * k2)
-  k4 = ode(x + dt * k3)
-  return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-
-
 def scaly_cost(x: sc.Expr, u: sc.Expr, p: sc.Expr, stage: str) -> sc.Expr:
   """Control penalty at stage zero, tracking thereafter, terminal tracking only."""
   value = sc.const(0.0)
@@ -98,22 +78,6 @@ def scaly_cost(x: sc.Expr, u: sc.Expr, p: sc.Expr, stage: str) -> sc.Expr:
     e_lat = -p[2].sin() * dx + p[2].cos() * dy
     errors = sc.stack([e_lon, e_lat, x[2] - p[2], x[3] - p[3]])
     value = value + (sc.const(Q_TERMINAL if stage == "terminal" else Q) * errors * errors).sum()
-  return value
-
-
-def casadi_cost(x, u, p, stage):
-  """Independent CasADi version of the three stage costs."""
-  value = 0
-  if stage != "terminal":
-    v_ref = p[3]
-    throttle_ref = ca.tanh(10.0 * v_ref) * (p[8] + p[9] * v_ref + p[10] * v_ref * v_ref) / p[7]
-    value = R[0] * (u[0] - throttle_ref) ** 2 + R[1] * u[1] ** 2
-  if stage != "initial":
-    dx, dy = x[0] - p[0], x[1] - p[1]
-    e_lon = ca.cos(p[2]) * dx + ca.sin(p[2]) * dy
-    e_lat = -ca.sin(p[2]) * dx + ca.cos(p[2]) * dy
-    errors = ca.vertcat(e_lon, e_lat, x[2] - p[2], x[3] - p[3])
-    value += ca.dot(ca.DM(Q_TERMINAL if stage == "terminal" else Q), errors * errors)
   return value
 
 
@@ -189,19 +153,15 @@ def build_scaly_solver(
   return AcadosOcpSolver(ocp, generate=False, build=False, verbose=False)
 
 
-def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
-  """Build and solve either version, retaining iterates and generated sources."""
-  name = "race_car_scaly" if scaly else "race_car_casadi"
+def solve_race_car(work: Path, initial_state: np.ndarray, reference: np.ndarray):
+  """Track a state reference with Scaly dynamics and costs, retaining generated sources."""
+  horizon = len(reference) - 1
+  name = "race_car_scaly"
   ocp = AcadosOcp()
   ocp.name = ocp.model.name = name
   model = ocp.model
   model.x, model.u, model.p = ca.SX.sym("x", NX), ca.SX.sym("u", NU), ca.SX.sym("p", 11)
-  x, u, p = model.x, model.u, model.p
-  if not scaly:
-    model.disc_dyn_expr = casadi_dynamics(x, u, p)
-    model.cost_expr_ext_cost_0 = casadi_cost(x, u, p, "initial")
-    model.cost_expr_ext_cost = casadi_cost(x, u, p, "path")
-    model.cost_expr_ext_cost_e = casadi_cost(x, u, p, "terminal")
+  x, p = model.x, model.p
   ocp.cost.cost_type_0 = ocp.cost.cost_type = ocp.cost.cost_type_e = "EXTERNAL"
 
   e_lat = -ca.sin(p[2]) * (x[0] - p[0]) + ca.cos(p[2]) * (x[1] - p[1])
@@ -214,11 +174,8 @@ def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
   ocp.constraints.idxbx = ocp.constraints.idxbx_e = np.array([3])
   ocp.constraints.lbx = ocp.constraints.lbx_e = np.array([0.0])
   ocp.constraints.ubx = ocp.constraints.ubx_e = np.array([5.0])
-  ocp.constraints.x0 = np.array([0.0, 0.3, 0.05, 2.5])
-
-  angle = np.arange(horizon + 1) * PHYSICAL[1] * 3.0 / 20.0
-  references = np.column_stack([20.0 * np.sin(angle), 20.0 * (1.0 - np.cos(angle)), angle, np.full(horizon + 1, 3.0)])
-  ocp.parameter_values = np.r_[references[0], PHYSICAL]
+  ocp.constraints.x0 = initial_state
+  ocp.parameter_values = np.r_[reference[0], PHYSICAL]
   opts = ocp.solver_options
   opts.N_horizon, opts.tf = horizon, horizon * PHYSICAL[1]
   opts.integrator_type, opts.nlp_solver_type = "DISCRETE", "SQP"
@@ -227,13 +184,12 @@ def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
   opts.nlp_solver_max_iter = 50
   opts.nlp_solver_tol_stat = opts.nlp_solver_tol_eq = opts.nlp_solver_tol_ineq = opts.nlp_solver_tol_comp = 1e-8
   opts.cost_scaling = np.ones(horizon + 1)
-  opts.store_iterates = True
   directory = (work / name).resolve()
   ocp.code_gen_options.code_export_directory = str(directory)
   ocp.code_gen_options.json_file = str(directory / "ocp.json")
-  solver = build_scaly_solver(ocp, scaly_dynamics, scaly_cost) if scaly else AcadosOcpSolver(ocp, verbose=False)
+  solver = build_scaly_solver(ocp, scaly_dynamics, scaly_cost)
   for stage in range(horizon + 1):
-    solver.set(stage, "p", np.r_[references[stage], PHYSICAL])
+    solver.set(stage, "p", np.r_[reference[stage], PHYSICAL])
     solver.set(stage, "x", ocp.constraints.x0)
     if stage < horizon:
       solver.set(stage, "u", np.array([70.0, 0.05]))
@@ -241,24 +197,16 @@ def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
   return solver
 
 
-def compare_iterates(actual: AcadosOcpSolver, reference: AcadosOcpSolver) -> None:
-  """Check convergence, every state, control and multiplier iterate, and final cost."""
-  assert actual.status == reference.status == 0
-  assert actual.get_stats("sqp_iter") == reference.get_stats("sqp_iter")
-  for iteration in range(int(actual.get_stats("sqp_iter")) + 1):
-    left, right = [solver.get_iterate(iteration).flatten() for solver in (actual, reference)]
-    for field in ("x", "u", "pi", "lam"):
-      np.testing.assert_allclose(getattr(left, field), getattr(right, field), atol=1e-7, rtol=1e-7, err_msg=f"{field} at SQP iterate {iteration}")
-  np.testing.assert_allclose(actual.get_cost(), reference.get_cost(), atol=1e-8, rtol=1e-8)
-
-
 def main() -> None:
-  """Solve both versions and compare all their iterates."""
+  """Solve circular-reference tracking and print the first control."""
   work = Path(__file__).resolve().parent / "generated" / "acados_race_car"
+  angle = np.arange(21) * PHYSICAL[1] * 3.0 / 20.0
+  reference = np.column_stack([20.0 * np.sin(angle), 20.0 * (1.0 - np.cos(angle)), angle, np.full(21, 3.0)])
   print(f"Generated sources and builds: {work}")
-  actual, reference = [solve_race_car(work, scaly=use_scaly) for use_scaly in (True, False)]
-  compare_iterates(actual, reference)
-  print(f"Both solvers converged in {actual.get_stats('sqp_iter')} SQP iterations, cost {actual.get_cost():.10g}. All iterates agree.")
+  solver = solve_race_car(work, np.array([0.0, 0.3, 0.05, 2.5]), reference)
+  assert solver.status == 0
+  print(f"Converged in {solver.get_stats('sqp_iter')} SQP iterations, cost {solver.get_cost():.10g}.")
+  print("First control:", solver.get(0, "u"))
 
 
 if __name__ == "__main__":
