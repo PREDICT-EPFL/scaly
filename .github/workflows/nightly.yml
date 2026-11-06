@@ -82,9 +82,7 @@ jobs:
          {"platform":"linux-arm64","runner":"ubuntu-26.04-arm","label":"ubuntu-26.04-arm cc"},
          {"platform":"macos-arm64","runner":"macos-15","label":"macos-15 cc","save-cache":true},
          {"platform":"macos-arm64","runner":"macos-15","label":"macos-15 zig cc","toolchain":true},
-         {"platform":"macos-x86_64","runner":"macos-15-intel","label":"macos-15-intel cc","save-cache":true},
          {"platform":"macos-arm64","runner":"macos-26","label":"macos-26 cc"},
-         {"platform":"macos-x86_64","runner":"macos-26-intel","label":"macos-26-intel cc"},
          {"platform":"windows-x86_64","runner":"windows-latest","label":"windows-latest zig cc","toolchain":true,"save-cache":true}]
 
   python:

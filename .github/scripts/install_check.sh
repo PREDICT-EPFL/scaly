@@ -6,5 +6,5 @@ set -eux
 /tmp/env/bin/pip install --only-binary :all: dist/*.whl
 /tmp/env/bin/python .github/scripts/solve_smoke.py
 /tmp/env/bin/pip install --only-binary :all: "$(echo dist/scaly-[0-9]*.whl)[toolchain]"
-/tmp/env/bin/scaly_toolchain | grep -E '\((zig-bin|ziglang)\)'
+/tmp/env/bin/scaly_toolchain | grep '(zig-bin)'
 /tmp/env/bin/python .github/scripts/solve_smoke.py

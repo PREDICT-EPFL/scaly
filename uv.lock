@@ -1069,8 +1069,7 @@ sqp = [
     { name = "scaly-sqp" },
 ]
 toolchain = [
-    { name = "zig-bin", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
-    { name = "ziglang", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "zig-bin" },
 ]
 
 [package.dev-dependencies]
@@ -1104,9 +1103,8 @@ requires-dist = [
     { name = "scaly-piqp", marker = "extra == 'piqp'", editable = "plugins/scaly-piqp" },
     { name = "scaly-sqp", marker = "extra == 'sqp'", editable = "plugins/scaly-sqp" },
     { name = "scipy", specifier = ">=1.18.0" },
-    { name = "zig-bin", marker = "(platform_machine != 'x86_64' and extra == 'toolchain') or (sys_platform != 'darwin' and extra == 'toolchain')", specifier = "==0.17.*" },
     { name = "zig-bin", marker = "sys_platform == 'win32'", specifier = "==0.17.*" },
-    { name = "ziglang", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'toolchain'", specifier = "==0.17.*" },
+    { name = "zig-bin", marker = "extra == 'toolchain'", specifier = "==0.17.*" },
 ]
 provides-extras = ["piqp", "ipopt", "sqp", "solvers", "toolchain"]
 
@@ -1402,12 +1400,4 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/85/ea4e6c4aebc6fc367ffc821dc9367e5b44bd737ee74e286ea2c802dfd62b/zig_bin-0.17.0-py3-none-manylinux_2_31_riscv64.musllinux_1_2_riscv64.whl", hash = "sha256:e239c9d9ddd7e0c9f20ed4435b3002a8b70a2b14f1036ecf42cb4f382ca63d1e", size = 102153047, upload-time = "2026-10-04T16:51:18.828Z" },
     { url = "https://files.pythonhosted.org/packages/57/4e/6e6dac8467a6e020f69699fb4d81463f7dddb76bda2095ac9f1eb2a90973/zig_bin-0.17.0-py3-none-win_amd64.whl", hash = "sha256:08321521a39c5b739b8fa4203bc7f8e37688376834ca7bcd0e2d5e3fc13081a8", size = 102616346, upload-time = "2026-10-04T16:51:30.397Z" },
     { url = "https://files.pythonhosted.org/packages/92/80/209b4d3025356dfaf580bac380f479bafa32f5ddae5a0b5e5e7faed45005/zig_bin-0.17.0-py3-none-win_arm64.whl", hash = "sha256:b16229b85c5bef073fd193611e97801b18757665487d4973d175a94636d308e5", size = 98106467, upload-time = "2026-10-04T16:51:40.94Z" },
-]
-
-[[package]]
-name = "ziglang"
-version = "0.17.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/52/4f8a8f157d994482e501bb37e01f4883990b9848b9d8b809fe95e97aac6d/ziglang-0.17.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:4d910f0e363ddb60a6b8ddb55235617797a8ccbcb6c5c7132a949d9f833eea42", size = 104418550, upload-time = "2026-10-08T01:00:25.486Z" },
 ]

@@ -19,7 +19,6 @@ jobs:
           - { platform: linux-x86_64, runner: ubuntu-latest }
           - { platform: linux-arm64, runner: ubuntu-24.04-arm }
           - { platform: macos-arm64, runner: macos-15 }
-          - { platform: macos-x86_64, runner: macos-15-intel }
           - { platform: windows-x86_64, runner: windows-latest }
     steps:
       - uses: actions/checkout@v7

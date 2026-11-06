@@ -19,7 +19,6 @@ on:
           [{"platform":"linux-x86_64","runner":"ubuntu-latest"},
            {"platform":"linux-arm64","runner":"ubuntu-24.04-arm"},
            {"platform":"macos-arm64","runner":"macos-15"},
-           {"platform":"macos-x86_64","runner":"macos-15-intel"},
            {"platform":"windows-x86_64","runner":"windows-latest"}]
 
 jobs:
@@ -91,7 +90,7 @@ jobs:
           uv run python --version
           uv run scaly_toolchain
           if [ "$RUNNER_OS" = Windows ] || [ "${{ matrix.toolchain }}" = true ]; then
-            uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source in ('zig-bin', 'ziglang'), cc"
+            uv run python -c "from scaly.codegen.toolchain import find_c_compiler; cc = find_c_compiler(); assert cc is not None and cc.source == 'zig-bin', cc"
           fi
 
       # zig builds its C and C++ runtimes for the host CPU on first use, which on a fresh runner takes

@@ -13,7 +13,7 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / ".github" / "scripts" / "release.py"
 SHA = "a" * 40
 PACKAGES = {"scaly": "0.1.0", "scaly-piqp": "0.1.0"}
-DISTS = ["dist-pure", "dist-linux-x86_64", "dist-linux-arm64", "dist-macos-arm64", "dist-macos-x86_64", "dist-windows-x86_64"]
+DISTS = ["dist-pure", "dist-linux-x86_64", "dist-linux-arm64", "dist-macos-arm64", "dist-windows-x86_64"]
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def test_a_full_nightly_reuses_every_platform_and_still_needs_testpypi(release, 
   github.add("nightly.yml", 1, "nightly", event="schedule")
   assert select(release, monkeypatch, github) == {
     "artifact-run": "1",
-    "artifact-ids": "100,101,102,103,104,105",
+    "artifact-ids": "100,101,102,103,104",
     "reused": "true",
     "testpypi-verified": "false",
   }
@@ -187,7 +187,7 @@ def test_record_binds_validation_to_current_artifact_ids(release, monkeypatch, k
     "run_id": 1,
     "run_attempt": 1,
     "kind": kind,
-    "artifacts": [100] if kind == "testpypi" else list(range(100, 106)),
+    "artifacts": [100] if kind == "testpypi" else list(range(100, 105)),
     "packages": PACKAGES if kind == "testpypi" else {},
   }
   github.artifacts[1][0]["expired"] = True
@@ -222,7 +222,7 @@ def test_selection_cli_writes_workflow_outputs_and_summary(release, monkeypatch,
     {"run_id": 9},
     {"run_attempt": 2},
     {"kind": "testpypi"},
-    {"artifacts": [100, 100, 100, 100, 100, 100]},
+    {"artifacts": [100, 100, 100, 100, 100]},
   ],
 )
 def test_a_record_must_describe_the_current_run_and_complete_artifact_set(release, monkeypatch, change):
@@ -244,7 +244,7 @@ def test_record_cli_writes_the_validation_file(release, monkeypatch, tmp_path):
   monkeypatch.setattr(sys, "argv", [str(SCRIPT), "record", "nightly"])
   release.main()
   record = json.loads(Path("validation.json").read_text())
-  assert record["sha"] == SHA and record["artifacts"] == list(range(100, 106))
+  assert record["sha"] == SHA and record["artifacts"] == list(range(100, 105))
 
 
 def test_github_queries_use_the_cli_and_paginate(release, monkeypatch):

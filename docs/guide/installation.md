@@ -1,13 +1,9 @@
 # Installation
 
-Scaly supports Python 3.12 or newer on Linux and macOS, and on Windows for
-x86-64 processors only. Numerical function calls compile generated C, so the
-Python package needs access to a C compiler even when the application itself
-is entirely Python.
-
-!!! note "Intel Macs"
-    Scaly 0.1.x is the last release line with solver wheels for Intel Macs. From
-    0.2.0, Scaly supports macOS on Apple silicon only.
+Scaly supports Python 3.12 or newer on Linux, on Apple silicon Macs, and on
+Windows for x86-64 processors only. Numerical function calls compile generated
+C, so the Python package needs access to a C compiler even when the application
+itself is entirely Python.
 
 ## The core package and solver plugins
 
@@ -59,11 +55,10 @@ uv add "scaly[toolchain]"
 pip install "scaly[toolchain]"
 ```
 
-It brings `zig cc` 0.17 from the `zig-bin` package, or from `ziglang` on
-Intel macOS, where `zig-bin` has no wheel. `zig cc` is a Clang driver that
-ships with its own C runtime support, so the same Clang compiles numerical
-functions on every system. When either package is installed, Scaly prefers it
-to `CC` and `cc`.
+It brings `zig cc` 0.17 from the `zig-bin` package. `zig cc` is a Clang driver
+that ships with its own C runtime support, so the same Clang compiles numerical
+functions on every system. When `zig-bin` is installed, Scaly prefers it to
+`CC` and `cc`.
 
 The first compilation on a machine takes longer while zig builds that runtime
 support into its own cache. Scaly compiles for the host processor, so zig builds
@@ -76,7 +71,7 @@ runner of GitHub Actions it took 1.3 to 1.5 minutes, so a test with a time limit
 should compile one function first.
 
 `SCALY_CC` selects a different compiler and takes precedence over all of
-these. If it is unset and neither package is installed, Scaly respects `CC`
+these. If it is unset and `zig-bin` is not installed, Scaly respects `CC`
 before falling back to `cc`.
 
 For example, this selects Clang for one process:
@@ -95,8 +90,8 @@ Other compilers and systems may work, but they are not tested.
 | Ubuntu 22.04 | x86-64, arm64 | GCC 11, and Clang 14 on x86-64 |
 | Ubuntu 24.04 | x86-64, arm64 | GCC 13, and Clang 18 and `zig cc` 0.17 on x86-64 |
 | Ubuntu 26.04 | x86-64, arm64 | GCC 15, and Clang 22 on x86-64 |
-| macOS 15 | arm64, x86-64 | Apple Clang 17 (Xcode 16.4), and `zig cc` 0.17 on arm64 |
-| macOS 26 | arm64, x86-64 | Apple Clang 21 (Xcode 26) |
+| macOS 15 | arm64 | Apple Clang 17 (Xcode 16.4), and `zig cc` 0.17 |
+| macOS 26 | arm64 | Apple Clang 21 (Xcode 26) |
 | Windows Server 2025 | x86-64 | `zig cc` 0.17 |
 
 The selected executable must exist. An invalid override does not fall back to
