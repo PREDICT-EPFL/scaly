@@ -403,11 +403,15 @@ tables describe the converted output order.
     skipping null outputs.
 
 The example uses this interface for discrete dynamics and external costs, including their
-sparse Jacobians and exact Hessians. It generates an acados solver from CasADi
-expressions, replaces the dynamics and cost sources with Scaly modules before
-compilation, and compares every sequential quadratic programming iterate
-against a pure-CasADi solver. The example's docstring gives the setup for
-acados-wheels 0.6.0, which requires access to its private repository.
+sparse Jacobians and exact Hessians. Its helper takes Scaly expression builders,
+generates an acados solver with shaped zero CasADi placeholders, and replaces
+the dynamics and cost sources with Scaly modules before compilation. acados
+reads the actual sparsity and workspace requirements from Scaly's queries, so
+the placeholders need only the correct shapes. The example compares every
+sequential quadratic programming iterate against an independent pure-CasADi
+solver. The handwritten CasADi dynamics and costs serve only that reference.
+The example's docstring gives the setup for acados-wheels 0.6.0, which requires
+access to its private repository.
 
 ## Solver export and deployment dependencies
 

@@ -13,21 +13,23 @@ access to the private wheel repository, on Linux x86-64 run from this checkout:
     gh release download wheels -R tudoroancea/acados-wheels -p '*manylinux_2_28_x86_64.whl'
     uv run --with ./acados_wheels-0.6.0-py3-none-manylinux_2_28_x86_64.whl examples/acados_race_car.py
 
-Both solvers use acados' SQP with exact Hessians. CasADi describes the
-optimal-control problem and generates the corridor
-constraints for both solvers. Before compiling the Scaly solver, the script replaces
-the generated dynamics and initial, path and terminal external costs with Scaly
-``casadi=True`` modules. acados loads these modules through CasADi's
-external-function queries, which also describe their sparse outputs. The build
-passes ``-Dcasadi_int=int`` through ``ocp.code_gen_options.ext_fun_compile_flags``
-to match acados' integer width. No C adapter is needed.
+Both solvers use acados' SQP with exact Hessians and CasADi corridor constraints.
+``build_scaly_solver`` takes Scaly dynamics and cost expression builders. It
+generates an acados solver with correctly shaped zero CasADi placeholders, then
+replaces the dynamics and initial, path and terminal external costs with Scaly
+``casadi=True`` modules before compilation. acados reads the actual sparsity and
+workspace requirements from Scaly's external-function queries. The placeholder
+sparsity does not need to match. The helper passes ``-Dcasadi_int=int`` through
+``ocp.code_gen_options.ext_fun_compile_flags`` to match acados' integer width.
 
-The pure-CasADi solver retains all its generated sources. Both start with the same
-states, controls and multipliers. The script compares all their stored state,
+The handwritten CasADi dynamics and costs are used only by the independent
+reference solver. Both solvers start with the same states, controls and
+multipliers. The script compares all their stored state,
 control and multiplier iterates and final costs, and prints the directory
 containing both builds under ``examples/generated/acados_race_car/``.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import casadi as ca
@@ -129,12 +131,33 @@ def _export(path: Path, inputs: tuple[sc.Expr, ...], outputs: dict[str, sc.Expr 
   path.write_text(render_c_module(fun, casadi=True).body)
 
 
-def replace_sources(directory: Path, name: str) -> None:
-  """Replace acados' generated C files with matching Scaly functions."""
-  ux, x, u, pi, p = sc.sym("ux", NU + NX), sc.sym("x", NX), sc.sym("u", NU), sc.sym("pi", NX), sc.sym("p", 11)
-  phi = scaly_dynamics(ux[NU:], ux[:NU], p)
+def build_scaly_solver(
+  ocp: AcadosOcp,
+  dynamics: Callable[[sc.Expr, sc.Expr, sc.Expr], sc.Expr],
+  cost: Callable[[sc.Expr, sc.Expr, sc.Expr, str], sc.Expr],
+) -> AcadosOcpSolver:
+  """Build Scaly oracles for an optimal-control problem with discrete dynamics and exact Hessians.
+
+  The problem uses EXTERNAL costs and declares CasADi SX vectors ``x``, ``u``
+  and ``p``, with no algebraic variables.
+  ``dynamics(x, u, p)`` returns the next state. ``cost(x, u, p, stage)`` returns
+  a scalar for ``initial``, ``path`` or ``terminal``. Terminal ``u`` is empty.
+  CasADi zero placeholders supply the shapes for acados generation. Scaly's
+  exports replace their values, derivatives and metadata before compilation.
+  """
+  model = ocp.model
+  nx, nu, np_ = model.x.numel(), model.u.numel(), model.p.numel()
+  model.disc_dyn_expr = ca.SX.zeros(nx, 1)
+  model.cost_expr_ext_cost_0 = model.cost_expr_ext_cost = model.cost_expr_ext_cost_e = ca.SX(0)
+  ocp.code_gen_options.ext_fun_compile_flags += " -Dcasadi_int=int"
+  directory, name = Path(ocp.code_gen_options.code_export_directory), model.name
+  builder = ocp_get_default_cmake_builder()
+  AcadosOcpSolver.generate(ocp, cmake_builder=builder, verbose=False)
+
+  ux, x, u, pi, p = sc.sym("ux", nu + nx), sc.sym("x", nx), sc.sym("u", nu), sc.sym("pi", nx), sc.sym("p", np_)
+  phi = dynamics(ux[nu:], ux[:nu], p)
   jac = sc.sparse_jacobian(phi, ux)
-  transposed = sc.SparseJacobian(sc.SparsityPattern((NU + NX, NX), jac.sparsity.cols, jac.sparsity.rows), jac.values)
+  transposed = sc.SparseJacobian(sc.SparsityPattern((nu + nx, nx), jac.sparsity.cols, jac.sparsity.rows), jac.values)
   hess = sc.sparse_hessian((phi * pi).sum(), ux)
   outputs = {"phi": phi, "jac_phi_ux": transposed, "hess_lagrangian_ux_ux": hess}
   replacements = {ux: sc.concat([u, x])}
@@ -142,15 +165,15 @@ def replace_sources(directory: Path, name: str) -> None:
     inputs = (x, u, pi, p) if count == 3 else (x, u, p)
     _export(directory / f"{name}_model" / f"{name}_dyn_disc_phi_fun{suffix}.c", inputs, dict(list(outputs.items())[:count]), replacements)
 
-  for stage, suffix, nu in (("initial", "_0", NU), ("path", "", NU), ("terminal", "_e", 0)):
-    ux, u, z = sc.sym("ux", nu + NX), sc.sym("u", nu), sc.sym("z", 0)
-    value = scaly_cost(ux[nu:], ux[:nu], p, stage)
+  for stage, suffix, stage_nu in (("initial", "_0", nu), ("path", "", nu), ("terminal", "_e", 0)):
+    ux, u, z = sc.sym("ux", stage_nu + nx), sc.sym("u", stage_nu), sc.sym("z", 0)
+    value = cost(ux[stage_nu:], ux[:stage_nu], p, stage)
     outputs = {
       "cost": value,
       "grad_cost_ux": sc.gradient(value, ux),
       "hess_cost_ux_ux": sc.sparse_hessian(value, ux),
       "hess_cost_z_z": sc.SparseJacobian(sc.SparsityPattern.empty((0, 0)), sc.const(np.empty(0))),
-      "hess_cost_z_ux": sc.SparseJacobian(sc.SparsityPattern.empty((0, nu + NX)), sc.const(np.empty(0))),
+      "hess_cost_z_ux": sc.SparseJacobian(sc.SparsityPattern.empty((0, stage_nu + nx)), sc.const(np.empty(0))),
     }
     for derivative, count in (("", 1), ("_jac", 2), ("_jac_hess", 5)):
       _export(
@@ -159,6 +182,9 @@ def replace_sources(directory: Path, name: str) -> None:
         dict(list(outputs.items())[:count]),
         {ux: sc.concat([u, x])},
       )
+
+  AcadosOcpSolver.build(str(directory), cmake_builder=builder, verbose=False)
+  return AcadosOcpSolver(ocp, generate=False, build=False, verbose=False)
 
 
 def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
@@ -169,10 +195,11 @@ def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
   model = ocp.model
   model.x, model.u, model.p = ca.SX.sym("x", NX), ca.SX.sym("u", NU), ca.SX.sym("p", 11)
   x, u, p = model.x, model.u, model.p
-  model.disc_dyn_expr = casadi_dynamics(x, u, p)
-  model.cost_expr_ext_cost_0 = casadi_cost(x, u, p, "initial")
-  model.cost_expr_ext_cost = casadi_cost(x, u, p, "path")
-  model.cost_expr_ext_cost_e = casadi_cost(x, u, p, "terminal")
+  if not scaly:
+    model.disc_dyn_expr = casadi_dynamics(x, u, p)
+    model.cost_expr_ext_cost_0 = casadi_cost(x, u, p, "initial")
+    model.cost_expr_ext_cost = casadi_cost(x, u, p, "path")
+    model.cost_expr_ext_cost_e = casadi_cost(x, u, p, "terminal")
   ocp.cost.cost_type_0 = ocp.cost.cost_type = ocp.cost.cost_type_e = "EXTERNAL"
 
   e_lat = -ca.sin(p[2]) * (x[0] - p[0]) + ca.cos(p[2]) * (x[1] - p[1])
@@ -202,13 +229,7 @@ def solve_race_car(work: Path, *, horizon: int = 20, scaly: bool = True):
   directory = (work / name).resolve()
   ocp.code_gen_options.code_export_directory = str(directory)
   ocp.code_gen_options.json_file = str(directory / "ocp.json")
-  ocp.code_gen_options.ext_fun_compile_flags = "-O2 -Dcasadi_int=int"
-  builder = ocp_get_default_cmake_builder()
-  AcadosOcpSolver.generate(ocp, cmake_builder=builder, verbose=False)
-  if scaly:
-    replace_sources(directory, name)
-  AcadosOcpSolver.build(str(directory), cmake_builder=builder, verbose=False)
-  solver = AcadosOcpSolver(ocp, generate=False, build=False, verbose=False)
+  solver = build_scaly_solver(ocp, scaly_dynamics, scaly_cost) if scaly else AcadosOcpSolver(ocp, verbose=False)
   for stage in range(horizon + 1):
     solver.set(stage, "p", np.r_[references[stage], PHYSICAL])
     solver.set(stage, "x", ocp.constraints.x0)
