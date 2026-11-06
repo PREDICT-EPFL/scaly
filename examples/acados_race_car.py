@@ -136,14 +136,16 @@ def build_scaly_solver(
   dynamics: Callable[[sc.Expr, sc.Expr, sc.Expr], sc.Expr],
   cost: Callable[[sc.Expr, sc.Expr, sc.Expr, str], sc.Expr],
 ) -> AcadosOcpSolver:
-  """Build Scaly oracles for an optimal-control problem with discrete dynamics and exact Hessians.
+  """Build and load an acados solver with Scaly dynamics and external costs.
 
-  The problem uses EXTERNAL costs and declares CasADi SX vectors ``x``, ``u``
-  and ``p``, with no algebraic variables.
+  The problem uses discrete dynamics, exact Hessians and EXTERNAL costs. It
+  declares CasADi SX vectors ``x``, ``u`` and ``p``, with no algebraic variables
+  or global parameters ``p_global``.
   ``dynamics(x, u, p)`` returns the next state. ``cost(x, u, p, stage)`` returns
   a scalar for ``initial``, ``path`` or ``terminal``. Terminal ``u`` is empty.
-  CasADi zero placeholders supply the shapes for acados generation. Scaly's
-  exports replace their values, derivatives and metadata before compilation.
+  CasADi zero placeholders supply the shapes for acados generation. Scaly
+  modules replace the value and derivative functions, including their sparsity
+  and workspace queries, before compilation.
   """
   model = ocp.model
   nx, nu, np_ = model.x.numel(), model.u.numel(), model.p.numel()

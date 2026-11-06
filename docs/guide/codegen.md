@@ -403,8 +403,9 @@ tables describe the converted output order.
     skipping null outputs.
 
 The example uses this interface for discrete dynamics and external costs, including their
-sparse Jacobians and exact Hessians. Its helper takes Scaly expression builders,
-generates an acados solver with shaped zero CasADi placeholders, and replaces
+sparse Jacobians and exact Hessians. Its `build_scaly_solver` helper takes
+functions that express the next state and stage cost in Scaly. It generates an
+acados solver with shaped zero CasADi placeholders and replaces
 the dynamics and cost sources with Scaly modules before compilation. acados
 reads the actual sparsity and workspace requirements from Scaly's queries, so
 the placeholders need only the correct shapes. The example compares every
