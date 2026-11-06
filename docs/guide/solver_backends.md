@@ -187,7 +187,8 @@ different solver version, because they are the same libraries used when you
 test the model through Scaly's JIT path.
 
 The build configuration of the shipped libraries favours speed. PIQP and Blasfeo use CMake's Release build configuration, with Blasfeo enabled
-in PIQP. On Linux, IPOPT uses OpenBLAS built with `DYNAMIC_ARCH=1` to select
+in PIQP. PIQP is built without OpenMP, so its `num_threads` setting has no effect
+and its `sparse_multistage_parallel` KKT solver is unavailable. On Linux, IPOPT uses OpenBLAS built with `DYNAMIC_ARCH=1` to select
 CPU-specific kernels at runtime. Such choices can outperform a distribution's
 more generic library build, depending on its configuration and your workload.
 Bundling alone does not guarantee a faster solve.
