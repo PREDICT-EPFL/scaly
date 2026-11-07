@@ -36,11 +36,17 @@ elementwise/gather/scatter domains and movement/contraction offsets. All remain 
 and #43. Logical indexing and derivative dimensions retain mathematical size; their full-size
 allocations belong to #41. Solver decision-vector dimensions and tree leaf counts retain size.
 
-PR: https://github.com/PREDICT-EPFL/scaly/pull/274, draft. Opus review is running.
+PR: https://github.com/PREDICT-EPFL/scaly/pull/274, draft. Opus approved with no actionable findings.
 Sol found two issues, both reproduced by new tests and fixed locally: concurrent cache misses
 could publish multiple identities, and arithmetic simplification could replace sparse expressions
 with dense ones or a smaller pattern. A lock protects canonical publication, arithmetic full
 constants can refuse a rewrite, neutral rewrites check pattern identity, and zero MATMUL folding
 waits for a replacement with the same storage. The focused 150-test run and types passed.
-The complete pre-merge hook is running again. Send only the fix delta to fresh reviewer tasks
-once both reviews have finished; do not start another full review.
+The repeated pre-merge hook passed, 2516 tests passed and 91 solver skips. Sol confirmed its
+fixes in the one delta check. One Opus note exposed a lowering-hint rewrite that still inserted
+unsupported RESHAPE; sparse arithmetic with explicit hints now stays as written, with a failing-
+then-passing regression. Its focused 158-test run passed and the final hook is running.
+Send only the combined fix delta to one fresh low-effort Opus task, then remove this plan and
+mark ready. Do not start another full review. Remaining notes are recorded on #40, #42 and #46.
+Copy/pickle of a canonical pattern is unsupported and has no current consumer; no speculative
+serialization support is added. Boundary declaration type copies remain with #42 as requested.
