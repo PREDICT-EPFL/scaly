@@ -380,12 +380,15 @@ def test_bounded_requires_at_least_one_bound() -> None:
     sc.bounded(sc.sym("g", 1))
 
 
-def test_bounded_coerces_its_bounds_beside_the_expression() -> None:
-  g = sc.sym("g", 2, dtype=sc.dtypes.float32)
-  hi = sc.bounded(g, lo=0, hi=[1.0, 2.0]).hi
-  assert hi is not None and hi.type.dtype == sc.dtypes.float32
+def test_bounded_casts_numerical_bounds_of_the_same_kind() -> None:
+  g = sc.sym("g", 2)
+  group = sc.bounded(g, lo=np.array([0, 1]), hi=[1.0, 2.0])
+  assert group.lo is not None and group.lo.type.dtype == sc.dtypes.float64 and np.asarray(group.lo.value).dtype == np.float64
+  assert group.hi is not None and group.hi.type.dtype == sc.dtypes.float64
+  with pytest.raises(TypeError, match="cannot cast"):
+    sc.bounded(g, hi=np.array([1j, 2]))
   with pytest.raises(TypeError, match="mixed dtypes"):
-    sc.bounded(sc.sym("g", 2), lo=np.array([0, 1]))
+    sc.bounded(g, lo=sc.sym("n", 2, dtype=sc.dtypes.int64, diff=False))
 
 
 def test_single_block_solver_signature_is_not_nested() -> None:
