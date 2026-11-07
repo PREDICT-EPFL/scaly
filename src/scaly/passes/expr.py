@@ -23,6 +23,8 @@ def simplify(expr: Expr) -> Expr:
   annihilation, ``x - x``, negation normalization, small constant powers), folding of all-constant
   subgraphs, identity reshape, transpose and gather, slice of slice, slice of stack, ``A.T @ v`` as
   ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and a matmul with an all-ones vector as sums.
+  Also folds elementwise and matrix products with no possible nonzero terms, and sums,
+  gathers, scatters, stacks and concatenations of known zeros.
   """
   return rewrite(expr, SIMPLIFY_PATTERNS, fixpoint=False, revisit=True, max_steps=100_000)
 
