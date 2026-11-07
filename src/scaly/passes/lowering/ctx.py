@@ -1,9 +1,9 @@
-"""Own lowering state, rule registration, flat-index helpers, and the ConcreteFunction-to-program driver."""
+"""Own lowering state, rule registration, the loop-nest emitter, and the ConcreteFunction-to-program driver."""
 
 from __future__ import annotations
 
 from typing import Literal
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
 from ...function.tree import flat_tree
 from ..program import ProgramObserver, optimize_program
+from ..program._common import affine_coefficients, fold_index, rebuild_program, substitute_var, trip_count
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.program_spec import verify_program
 from ...ir.types import DeviceSpec, DType, dtypes
@@ -367,6 +368,72 @@ class LowerCtx:
       out = term if out is None else p.add(out, term)
     return out if out is not None else p.const_int(0)
 
+  # --- loop nests -------------------------------------------------------------
+  #
+  # A kernel is a nest of ranges, a scalar body and its writes. ``nest`` and ``reduce`` give the
+  # ranges and one coordinate per axis; an access map is the tuple of coordinates a kernel passes
+  # to ``read`` or ``write``, each affine in the loop variables or a table lookup from
+  # ``index_at``; ``emit`` places the nest. Bounds may be program expressions, such as the
+  # ``rowptr[i]`` to ``rowptr[i + 1]`` of a sparse row, and a coordinate need not start at zero.
+
+  def nest(
+    self, extents: Sequence[int | tuple[ProgramNode, ProgramNode]], name: str, *, kind: RangeKind = RangeKind.GLOBAL
+  ) -> tuple[list[ProgramNode], list[ProgramNode]]:
+    """One range per axis of ``extents`` and the coordinate of each axis, outermost first.
+
+    An extent is a static length or a ``(start, stop)`` pair of index expressions. A static axis of
+    length one gets no range and coordinate zero. A domain with no range left runs once, as one
+    unit loop, so that every kernel stays a loop for the program passes before ``unroll_unit_loops``.
+    """
+    loops = [k for k, extent in enumerate(extents) if extent != 1]
+    ranges: list[ProgramNode] = []
+    coords: list[ProgramNode] = []
+    for k, extent in enumerate(extents):
+      if extent == 1:
+        coords.append(p.const_int(0))
+        continue
+      var = self.names.allocate(name if k == loops[-1] else f"{name}_{k}")
+      start, stop = (0, extent) if isinstance(extent, int) else extent
+      ranges.append(p.range_(var, start, stop, kind=kind))
+      coords.append(p.var(var))
+    if not ranges:
+      ranges.append(p.range_(self.names.allocate(name), 0, 1, kind=kind))
+    return ranges, coords
+
+  def reduce(self, extents: Sequence[int | tuple[ProgramNode, ProgramNode]], name: str) -> tuple[list[ProgramNode], list[ProgramNode]]:
+    """``nest`` over reduction axes: every iteration updates the same outputs, in order."""
+    return self.nest(extents, name, kind=RangeKind.REDUCE)
+
+  def read(self, expr: Expr, coords: Sequence[ProgramNode]) -> ProgramNode:
+    """The scalar value of ``expr`` at ``coords``."""
+    return p.load(p.view(self.buf_of(expr), [_flat(expr.shape, coords)]))
+
+  def write(self, expr: Expr, coords: Sequence[ProgramNode], value: ProgramNode) -> ProgramNode:
+    """The statement storing ``value`` as ``expr``'s element at ``coords``."""
+    return p.store(p.view(self.buf_of(expr), [_flat(expr.shape, coords)]), value)
+
+  def emit(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> None:
+    """Append ``body`` inside ``ranges``, outermost first.
+
+    A static empty range drops the whole nest, so an empty tensor emits no store. Adjacent ranges
+    merge where every access is contiguous across them. A unit loop offsets each constant view
+    index by its variable, the flat form of a one-element domain the program passes match on."""
+    if any(trip_count(r) == 0 for r in ranges):
+      return
+    merged, stmts = _merge(list(ranges), list(body))
+    if len(merged) == 1 and trip_count(merged[0]) == 1:
+      unit = p.var(merged[0].attrs["name"])
+
+      def offset(view: ProgramNode) -> ProgramNode:
+        index = view.args[0]
+        return ProgramNode(ProgramOp.VIEW, (unit if index.attrs["value"] == 0 else p.add(index, unit),), view.attrs, view.dtype)
+
+      pattern = Pattern(ProgramOp.VIEW, lambda v: v.args[0].op == ProgramOp.CONST_INT, offset)
+      stmts = [rewrite(stmt, [pattern], rebuild=rebuild_program, fixpoint=False) for stmt in stmts]
+    for rng in reversed(merged):
+      stmts = [p.for_(rng, stmts)]
+    self.statements.extend(stmts)
+
 
 def _stride(shape: tuple[int, ...], dim: int) -> int:
   s = 1
@@ -375,52 +442,75 @@ def _stride(shape: tuple[int, ...], dim: int) -> int:
   return s
 
 
-def _coord_p(flat: ProgramNode, shape: tuple[int, ...], dim: int) -> ProgramNode:
-  """Decompose flat output index ``flat`` into the ``dim``-th coordinate of ``shape``."""
-  stride = _stride(shape, dim)
-  v = flat if stride == 1 else p.div(flat, p.const_int(stride))
-  # The leading dim needs no modulo: flat < size guarantees (flat // stride) < shape[0].
-  return v if dim == 0 else p.mod(v, p.const_int(int(shape[dim])))
-
-
-def _flat_index_p(coords: list[ProgramNode], shape: tuple[int, ...]) -> ProgramNode:
-  terms = [c if (st := _stride(shape, i)) == 1 else p.mul(c, p.const_int(st)) for i, c in enumerate(coords)]
-  if not terms:
-    return p.const_int(0)
-  acc = terms[0]
-  for t in terms[1:]:
-    acc = p.add(acc, t)
-  return acc
-
-
-def _affine_sum(vars_: list[ProgramNode], coeffs: list[int]) -> ProgramNode:
-  """Build ``Σ coeffs[i] * vars_[i]`` as a ProgramNode, dropping zero coeffs and unit multiplies."""
-  acc: ProgramNode | None = None
-  for v, c in zip(vars_, coeffs, strict=True):
-    if c == 0:
+def _flat(shape: tuple[int, ...], coords: Sequence[ProgramNode]) -> ProgramNode:
+  """The row-major element index of ``coords`` in a tensor of ``shape``: strides times coordinates."""
+  if len(coords) != len(shape):
+    raise LoweringError(f"{len(coords)} coordinates for a tensor of shape {shape}")
+  offset = 0
+  out: ProgramNode | None = None
+  for dim, coord in enumerate(coords):
+    stride = _stride(shape, dim)
+    if coord.op == ProgramOp.CONST_INT:
+      offset += int(coord.attrs["value"]) * stride
       continue
-    term = v if c == 1 else p.mul(v, p.const_int(c))
-    acc = term if acc is None else p.add(acc, term)
-  return acc if acc is not None else p.const_int(0)
+    term = coord if stride == 1 else p.mul(coord, p.const_int(stride))
+    out = term if out is None else p.add(out, term)
+  if out is None:
+    return p.const_int(offset)
+  return p.add(p.const_int(offset), out) if offset else out
 
 
-def _row_major_strides(shape: tuple[int, ...]) -> list[int]:
-  strides = [1] * len(shape)
-  for i in range(len(shape) - 2, -1, -1):
-    strides[i] = strides[i + 1] * int(shape[i + 1])
-  return strides
+def _shift(coord: ProgramNode, start: int, step: int = 1) -> ProgramNode:
+  """The coordinate ``start + step * coord``, folded when ``coord`` is a constant."""
+  if coord.op == ProgramOp.CONST_INT:
+    return p.const_int(start + step * int(coord.attrs["value"]))
+  scaled = coord if step == 1 else p.mul(coord, p.const_int(step))
+  return scaled if start == 0 else p.add(p.const_int(start), scaled)
 
 
-def _broadcast_index_p(flat: ProgramNode, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> ProgramNode:
-  """Map an output flat index to the source flat index under numpy broadcasting
-  (right-aligned; size-1 dims and missing leading dims read index 0)."""
-  if in_shape == out_shape or not out_shape:
-    return flat
-  if not in_shape:
-    return p.const_int(0)
-  offset = len(out_shape) - len(in_shape)
-  coords = [p.const_int(0) if d == 1 else _coord_p(flat, out_shape, offset + i) for i, d in enumerate(in_shape)]
-  return _flat_index_p(coords, in_shape)
+def _accesses(body: Sequence[ProgramNode], names: frozenset[str]) -> list[dict[str, int]] | None:
+  """Each view's coefficients of ``names``, or None if one is not affine or a loop variable is read as a value."""
+  out: list[dict[str, int]] = []
+  stack, seen = list(body), set()
+  while stack:
+    n = stack.pop()
+    if n in seen:
+      continue
+    seen.add(n)
+    if n.op == ProgramOp.VIEW:
+      coefficients = affine_coefficients(n.args[0], names)
+      if coefficients is None:
+        return None
+      out.append(coefficients)
+    elif n.op == ProgramOp.VAR and n.attrs["name"] in names:
+      return None
+    else:
+      stack.extend(n.args)
+  return out
+
+
+def _merge(ranges: list[ProgramNode], body: list[ProgramNode]) -> tuple[list[ProgramNode], list[ProgramNode]]:
+  """Merge adjacent loops wherever every view in ``body`` is contiguous across them.
+
+  Outer ``a`` over ``[0, da)`` and inner ``b`` over ``[0, db)`` merge when each view index reads
+  ``ca * a + cb * b + rest`` with ``ca == cb * db``: then ``b`` over ``[0, da * db)`` with ``a = 0``
+  gives the same indices. So an elementwise kernel without broadcasting stays one flat loop."""
+  k = len(ranges) - 2
+  while k >= 0:
+    outer, inner = ranges[k], ranges[k + 1]
+    da, db = trip_count(outer), trip_count(inner)
+    if (
+      da is not None
+      and db is not None
+      and outer.attrs["kind"] == inner.attrs["kind"]
+      and all(r.args[0].op == ProgramOp.CONST_INT and r.args[0].attrs["value"] == 0 and r.args[2].attrs["value"] == 1 for r in (outer, inner))
+      and (accesses := _accesses(body, frozenset((outer.attrs["name"], inner.attrs["name"])))) is not None
+      and all(c.get(outer.attrs["name"], 0) == c.get(inner.attrs["name"], 0) * db for c in accesses)
+    ):
+      body = [fold_index(substitute_var(stmt, outer.attrs["name"], p.const_int(0))) for stmt in body]
+      ranges[k : k + 2] = [p.range_(inner.attrs["name"], 0, da * db, kind=inner.attrs["kind"])]
+    k -= 1
+  return ranges, body
 
 
 def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...], names: NameScope) -> ProgramNode:

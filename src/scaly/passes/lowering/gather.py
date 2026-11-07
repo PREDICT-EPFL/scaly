@@ -10,15 +10,12 @@ from .ctx import LowerCtx, lowers, _size_of
 
 @lowers(ExprOp.GATHER)
 def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
-  """``out[k] = src[indices[k]]`` via a ``static const`` index table + one GLOBAL loop (any size)."""
+  """``out[k] = src[indices[k]]`` over the flat output, the index as arithmetic or a ``static const`` table."""
   src = node.args[0]
   idx = node.attrs["indices"].reshape(-1)
   out = ctx.alloc_tmp(node)
-  vname = ctx.names.allocate(f"i_{out.attrs['name']}")
-  rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
-  k = p.var(vname)
-  src_idx = ctx.index_at(idx, k)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
+  ranges, (k,) = ctx.nest((len(idx),), f"i_{out.attrs['name']}")
+  ctx.emit(ranges, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [ctx.index_at(idx, k)])))])
 
 
 @lowers(ExprOp.SCATTER)
