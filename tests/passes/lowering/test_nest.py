@@ -16,7 +16,8 @@ from scaly.ir import program as p
 from scaly.ir.expr import Expr, ExprOp
 from scaly.ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from scaly.passes.lowering import ctx, lower_function, main_proc
-from scaly.passes.program._common import affine_coefficients
+from scaly.passes.program._common import affine_coefficients, inline_producer
+from scaly.utils.names import NameScope
 
 _HAVE_CC = find_c_compiler() is not None
 needs_cc = pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
@@ -297,3 +298,69 @@ def test_sparse_row_loop_matches_numpy(monkeypatch, isolated_cache) -> None:
   fn.recompile()
   xv = np.random.default_rng(2).standard_normal(5)
   np.testing.assert_array_equal(fn(xv), _SPARSE @ xv)
+
+
+def _bare_ctx() -> ctx.LowerCtx:
+  """A lowering context with only the state ``nest`` and ``emit`` use."""
+  lctx = object.__new__(ctx.LowerCtx)
+  lctx.names = NameScope()
+  lctx.statements = []
+  return lctx
+
+
+def _unbound(stmt: ProgramNode, bound: frozenset[str] = frozenset()) -> set[str]:
+  """Loop variables read below ``stmt`` that no enclosing range binds."""
+  if stmt.op == ProgramOp.FOR:
+    rng, *body = stmt.args
+    inner = bound | {rng.attrs["name"]}
+    return _unbound(rng, bound).union(*(_unbound(s, inner) for s in body))
+  return {n.attrs["name"] for n in walk_program(stmt) if n.op == ProgramOp.VAR and n.attrs["name"] not in bound}
+
+
+def test_unit_loop_not_from_zero_keeps_constant_indices() -> None:
+  lctx = _bare_ctx()
+  x, y = (p.buffer(n, sc.dtypes.float64, (5,)) for n in ("x", "y"))
+  ranges, (q,) = lctx.reduce([(p.const_int(2), p.const_int(3))], "q")
+  lctx.emit(ranges, [p.store(p.view(y, [p.const_int(0)]), p.load(p.view(x, [q])))])
+  (stmt,) = lctx.statements
+  assert [v.args[0] for v in walk_program(stmt) if v.op == ProgramOp.VIEW and v.attrs["buffer"] == "y"] == [p.const_int(0)]
+
+
+def test_merge_rewrites_the_bounds_of_inner_loops() -> None:
+  """Rows ``3 i + j`` of a 2 x 3 nest merge into one row loop, inner bounds included."""
+  lctx = _bare_ctx()
+  x, y = p.buffer("x", sc.dtypes.float64, (7,)), p.buffer("y", sc.dtypes.float64, (6,))
+  rowptr = p.const_buffer("rowptr", sc.dtypes.int64, (7,), [0, 1, 3, 4, 4, 5, 7])
+  ranges, (i, j) = lctx.nest((2, 3), "row")
+  r = p.add(p.mul(i, p.const_int(3)), j)
+  row, (q,) = lctx.reduce([(p.load(p.view(rowptr, [r])), p.load(p.view(rowptr, [p.add(r, p.const_int(1))])))], "q")
+  target = p.view(y, [r])
+  lctx.emit([*ranges, *row], [p.store(target, p.add(p.load(target), p.load(p.view(x, [q]))))])
+  (stmt,) = lctx.statements
+  assert not _unbound(stmt)
+  (outer, _) = _loops(stmt)
+  assert int(outer.args[1].attrs["value"]) == 6
+  assert _strides(stmt, "rowptr") == [{outer.attrs["name"]: 1}] * 2
+
+
+def test_inner_bounds_can_forbid_a_merge() -> None:
+  """The body is contiguous across ``i`` and ``j``, but a bound read at ``rowptr[i]`` is not."""
+  lctx = _bare_ctx()
+  x, y = p.buffer("x", sc.dtypes.float64, (7,)), p.buffer("y", sc.dtypes.float64, (6,))
+  rowptr = p.const_buffer("rowptr", sc.dtypes.int64, (3,), [0, 3, 7])
+  ranges, (i, j) = lctx.nest((2, 3), "row")
+  row, (q,) = lctx.reduce([(p.load(p.view(rowptr, [i])), p.load(p.view(rowptr, [p.add(i, p.const_int(1))])))], "q")
+  target = p.view(y, [p.add(p.mul(i, p.const_int(3)), j)])
+  lctx.emit([*ranges, *row], [p.store(target, p.add(p.load(target), p.load(p.view(x, [q]))))])
+  (stmt,) = lctx.statements
+  assert not _unbound(stmt)
+  assert [int(r.args[1].attrs["value"]) for r in _loops(stmt)[:2]] == [2, 3]
+
+
+def test_a_loaded_store_offset_is_not_a_producer() -> None:
+  """``tmp[i + offset[0]] = x[i]`` is not ``tmp`` row-major over its loop, so fusion must not inline it."""
+  tmp = p.buffer("tmp", sc.dtypes.float64, (4,), address_space="private")
+  table = p.const_buffer("offset", sc.dtypes.int64, (1,), [2])
+  i = p.var("i")
+  store = p.store(p.view(tmp, [p.add(i, p.load(p.view(table, [p.const_int(0)])))]), p.load(p.view(p.buffer("x", sc.dtypes.float64, (4,)), [i])))
+  assert inline_producer(p.for_(p.range_("i", 0, 2), [store])) is None
