@@ -100,6 +100,7 @@ def test_python_scalars_take_the_dtype_of_the_expression_beside_them() -> None:
   assert sc.stack([x32[0], 0.0]).type.dtype == dtypes.float32 and sc.concat([[0.0], x32]).type.dtype == dtypes.float32
   assert (x32.reshape((3, 1)) @ [[1.0, 2.0]]).type.dtype == dtypes.float32
   assert (i64 + 3).type.dtype == dtypes.int64
+  assert sc.concat([[], i64]).type.dtype == dtypes.int64 and (x32 + 2**100).type.dtype == dtypes.float32
   x64 = sc.sym("x64", 3)
   assert np.asarray((x64 * 2).args[1].value).dtype == np.float64
   with pytest.raises(TypeError, match="float"):

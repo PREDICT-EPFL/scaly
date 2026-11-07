@@ -569,13 +569,24 @@ def as_expr(x: Any) -> Expr:
 _WEAK_KINDS = {"b": 0, "i": 1, "u": 1, "f": 2}
 
 
+def _weak_kind(x: Any) -> int:
+  # Read from the Python values: NumPy infers ``object`` for an int beyond int64 and ``float64`` for ``[]``.
+  if isinstance(x, list | tuple):
+    return max(map(_weak_kind, x), default=0)
+  if isinstance(x, bool):
+    return 0
+  if isinstance(x, int):
+    return 1
+  return _WEAK_KINDS.get(np.asarray(x).dtype.kind, len(_WEAK_KINDS))
+
+
 def _coerce(x: Any, like: Expr | None) -> Expr:
   """``x`` as an operand beside ``like``. A Python value is weak and takes ``like``'s dtype; an
   ``Expr`` or a NumPy value is strong and keeps its own, which ``promote_dtype`` then checks."""
   if isinstance(x, Expr | np.ndarray | np.generic) or like is None:
     return as_expr(x)
   dtype = like.type.dtype
-  if _WEAK_KINDS.get(np.asarray(x).dtype.kind, len(_WEAK_KINDS)) > _WEAK_KINDS[dtype.numpy().kind]:
+  if _weak_kind(x) > _WEAK_KINDS[dtype.numpy().kind]:
     raise TypeError(f"cannot combine {type(x).__name__} {x!r} with an expression of dtype {dtype}")
   return Expr.const(x, dtype=dtype)
 
