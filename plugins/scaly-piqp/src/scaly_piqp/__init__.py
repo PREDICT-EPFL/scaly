@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -8,6 +9,9 @@ if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function.concrete import ConcreteFunction
 
+
+# Generated wrappers name it, so a PIQP upgrade changes their source and with it the JIT cache key.
+PIQP_VERSION = json.loads((Path(__file__).parent / "build_config.json").read_text())["piqp"]["version"]
 
 _SETTINGS = frozenset(
   {
@@ -19,6 +23,8 @@ _SETTINGS = frozenset(
     "eps_duality_gap_abs",
     "eps_duality_gap_rel",
     "infeasibility_threshold",
+    "eps_primal_inf",
+    "eps_dual_inf",
     "reg_lower_limit",
     "reg_finetune_lower_limit",
     "reg_finetune_primal_update_threshold",
@@ -30,6 +36,7 @@ _SETTINGS = frozenset(
     "preconditioner_iter",
     "tau",
     "kkt_solver",
+    "num_threads",
     "iterative_refinement_always_enabled",
     "iterative_refinement_eps_abs",
     "iterative_refinement_eps_rel",
@@ -54,6 +61,7 @@ _INTEGER_SETTINGS = frozenset(
     "preconditioner_reuse_on_update",
     "preconditioner_iter",
     "kkt_solver",
+    "num_threads",
     "iterative_refinement_always_enabled",
     "iterative_refinement_max_iter",
     "verbose",

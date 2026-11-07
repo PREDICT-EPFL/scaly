@@ -14,6 +14,7 @@ import re
 from typing import TYPE_CHECKING
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
+from scaly_piqp import PIQP_VERSION
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
@@ -126,6 +127,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   hess_raw, bounds_raw = ctx.raw_symbol_of(hess), ctx.raw_symbol_of(bounds)
   return _TEMPLATE.render(
     qp_mode=dict(desc.compile_options)["qp"],
+    piqp_version=PIQP_VERSION,
     name=fun.name,
     options_index=ctx.options_index,
     raw_symbol=ctx.raw_symbol,

@@ -88,7 +88,7 @@ static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* 
 }
 
 static scaly_solver_stats corpus_qp_stats_data;
-// PIQP solver wrapper for corpus_qp (n=2, p=0, m=0, nnz P/A/G = 4/0/0).
+// PIQP 0.7.0 solver wrapper for corpus_qp (n=2, p=0, m=0, nnz P/A/G = 4/0/0).
 static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w, const scaly_solver_option* const* solver_options) {
   (void)in0;
   (void)in1;
@@ -114,8 +114,10 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
     { "compute_timings", offsetof(piqp_settings, compute_timings), 1 },
     { "delta_init", offsetof(piqp_settings, delta_init), 0 },
     { "eps_abs", offsetof(piqp_settings, eps_abs), 0 },
+    { "eps_dual_inf", offsetof(piqp_settings, eps_dual_inf), 0 },
     { "eps_duality_gap_abs", offsetof(piqp_settings, eps_duality_gap_abs), 0 },
     { "eps_duality_gap_rel", offsetof(piqp_settings, eps_duality_gap_rel), 0 },
+    { "eps_primal_inf", offsetof(piqp_settings, eps_primal_inf), 0 },
     { "eps_rel", offsetof(piqp_settings, eps_rel), 0 },
     { "infeasibility_threshold", offsetof(piqp_settings, infeasibility_threshold), 0 },
     { "iterative_refinement_always_enabled", offsetof(piqp_settings, iterative_refinement_always_enabled), 1 },
@@ -128,6 +130,7 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
     { "kkt_solver", offsetof(piqp_settings, kkt_solver), 2 },
     { "max_factor_retires", offsetof(piqp_settings, max_factor_retires), 1 },
     { "max_iter", offsetof(piqp_settings, max_iter), 1 },
+    { "num_threads", offsetof(piqp_settings, num_threads), 1 },
     { "preconditioner_iter", offsetof(piqp_settings, preconditioner_iter), 1 },
     { "preconditioner_reuse_on_update", offsetof(piqp_settings, preconditioner_reuse_on_update), 1 },
     { "preconditioner_scale_cost", offsetof(piqp_settings, preconditioner_scale_cost), 1 },

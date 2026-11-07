@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 
-from . import _SETTINGS, _INTEGER_SETTINGS
+from . import _SETTINGS, _INTEGER_SETTINGS, PIQP_VERSION
 
 from typing import TYPE_CHECKING
 
@@ -77,7 +77,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   params = [*c_inputs, *c_outputs, "double* w", "const scaly_solver_option* const* solver_options"]
 
   lines: list[str] = []
-  lines.append(f"// PIQP solver wrapper for {fun.name} (n={n}, p={p}, m={m}, nnz P/A/G = {nnz_P}/{nnz_A}/{nnz_G}).")
+  lines.append(f"// PIQP {PIQP_VERSION} solver wrapper for {fun.name} (n={n}, p={p}, m={m}, nnz P/A/G = {nnz_P}/{nnz_A}/{nnz_G}).")
   lines.append(f"static void {raw}({', '.join(params)}) {{")
   # PIQP does not consume warm starts yet.
   for input_index in range(param_start):

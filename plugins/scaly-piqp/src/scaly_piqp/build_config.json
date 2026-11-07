@@ -1,7 +1,7 @@
 {
   "piqp": {
-    "tag": "v0.6.4",
-    "version": "0.6.4",
+    "tag": "v0.7.0",
+    "version": "0.7.0",
     "linkage": "shared"
   },
   "eigen": {
