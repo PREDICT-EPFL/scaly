@@ -174,6 +174,10 @@ does not see this dependency. If you change those attributes, update the rendere
 A scalar math op touches three files. Its row in the elementwise table carries everything the
 passes need to know about it.
 
+Every expression op also needs a support classification in `OP_INFO`: reuse its `pattern_rule`
+or set `support_rule`. For deliberately unknown support, add the op to the unknown set in
+`tests/test_op_coverage.py`.
+
 | To add | Touch |
 | --- | --- |
 | A scalar math op | `ExprOp`, `OP_INFO` and the `COMMON_ELEMENTWISE_UNARY` or `_BINARY` set in `ir/expr.py`; a matching `ProgramOp` in `ir/program.py` and its category set; a row in `ELEMENTWISE` in `ad/rules.py` giving its partials, NumPy fold, program op, C spelling and whether it is an expensive libm call. Verification, both AD modes, constant folding, lowering, C rendering and fusion read these |

@@ -21,8 +21,8 @@ def compute_support(root: Expr, rules: Mapping[ExprOp, OpInfo]) -> Support:
     node, visited = stack.pop()
     if node._support_cache is not None:
       continue
-    info = rules.get(cast("ExprOp", node.op))
-    rule = None if info is None else info.pattern_rule or info.support_rule
+    info = rules[cast("ExprOp", node.op)]
+    rule = info.pattern_rule or info.support_rule
     if not visited:
       stack.append((node, True))
       children = node.args
@@ -74,12 +74,10 @@ def _pattern(support: Support, shape: tuple[int, int]) -> CanonicalPattern:
   return CanonicalPattern(shape, tuple(i // shape[1] for i in entries), tuple(i % shape[1] for i in entries))
 
 
-def _combine(a: Support, b: Support, size: int, *, intersection: bool) -> Support:
+def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
   if a is None or b is None:
     return (b if a is None else a) if intersection else None
-  x, y = _pattern(a, (1, size)), _pattern(b, (1, size))
-  result = x.intersection(y) if intersection else x.union(y)
-  return frozenset(result.cols)
+  return a & b if intersection else a | b
 
 
 def _rule(node: Expr, op: str | None) -> Support:
@@ -90,7 +88,7 @@ def _rule(node: Expr, op: str | None) -> Support:
     return _cached(node.args[0])
   if op in {"union", "intersection"}:
     a, b = (broadcast_support(arg, node.shape) for arg in node.args)
-    return _combine(a, b, node.size, intersection=op == "intersection")
+    return _combine(a, b, intersection=op == "intersection")
   if op == "numerator":
     return broadcast_support(node.args[0], node.shape)
   if op == "sum":

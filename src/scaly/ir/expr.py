@@ -138,7 +138,9 @@ class OpInfo:
   arity: int | None
   differentiable: bool = True
   pattern_rule: Literal["preserve", "union", "intersection", "matmul"] | None = None
-  support_rule: str | None = None
+  support_rule: (
+    Literal["const", "preserve", "union", "numerator", "sum", "transpose", "slice", "gather", "scatter", "stack", "concat", "call", "vmap"] | None
+  ) = None
 
   @property
   def name(self) -> str:
@@ -378,7 +380,7 @@ class Expr:
   def support(self) -> Support:
     """Flat logical entries that may be nonzero, or ``None`` when any entry may be nonzero.
 
-    Computed iteratively on first access and cached independently of node identity.
+    Computed iteratively on first access and cached per node, outside the intern key.
     """
     return compute_support(self, OP_INFO)
 

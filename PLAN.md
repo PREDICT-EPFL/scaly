@@ -63,4 +63,19 @@ Phases depend on the preceding phase. Independent validation commands may run to
   now passes 116 tests. A new check verifies ordinary relations remain within
   every intermediate node's support. Both new regression gates detect in-memory
   perturbations, bringing the mutation checks to fourteen.
-- Opus's main review is pending. The full merge hook is rerunning on the fix.
+- Sol confirmed that fix at low effort. The full merge hook on it passes 2,611
+  tests with 52 skips, plus all remaining checks.
+- Opus reproduced expensive sorting, validation and digesting in flat unions and
+  intersections. They now use direct set algebra under the shared `OP_INFO`
+  rules, retaining `CanonicalPattern.matmul` for Boolean matrix products. The
+  same `chain_jac:65` generation reproduction takes 6.6 seconds here against
+  5.0 seconds on the base, rather than the review's 79 to 88 seconds before the
+  fix. Remaining support-cache memory is recorded on #41.
+- Replaced the guide's abstract sentence with an executed example returning
+  `[0, 0]` while NumPy returns `[0, nan]`. Updated the simplify docstring,
+  contributor support-classification instructions, descriptor typing and cache
+  wording. Print elimination follows existing semantics. The non-snapshot
+  `npmpc` kernel's removal of a zero accumulation term is expected.
+- Fifteen perturbations are detected, including changing flat intersection to
+  union. The focused run passes 117 cases. The full merge hook is rerunning on
+  these fixes. Opus's short delta check remains before readiness.
