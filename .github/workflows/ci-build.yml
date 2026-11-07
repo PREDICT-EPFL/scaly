@@ -1,7 +1,7 @@
 name: CI builds
 
-# Builds every distribution once per platform for the test and install jobs. The files are kept
-# for the longest period the organization allows. CI, nightly and release runs use this build.
+# Builds every distribution once per platform for the test jobs. The files are kept for the
+# longest period the organization allows. Nightly and release runs use this build.
 on:
   workflow_call:
     inputs:
@@ -39,98 +39,13 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      # A native build depends on its recipe, pins and license texts and on the platform, so Python
-      # sources, READMEs and the version stay out of the key. The hook also checks each restored
-      # build against its recorded compiler key. Explicit compiler selections must still match.
-      # Every save gets a new key, so the newest cache for the same inputs is the one restored.
-      - name: Restore the native libraries
-        if: ${{ !inputs.rebuild-native }}
-        id: restore
-        uses: actions/cache/restore@v6
-        with:
-          path: ~/.cache/scaly/solvers
-          key: native-${{ matrix.platform }}-${{ hashFiles('plugins/*/native_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            native-${{ matrix.platform }}-${{ hashFiles('plugins/*/native_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-
-            native-${{ matrix.platform }}-
-
-      - name: Record restored native entries
-        run: |
-          mkdir -p ~/.cache/scaly/solvers
-          ls ~/.cache/scaly/solvers > "$RUNNER_TEMP/native-before"
-
-      - name: Prepare IPOPT native libraries
-        id: native
-        if: runner.os != 'Linux'
-        env:
-          SCALY_BUILD_SOLVERS: ${{ inputs.rebuild-native && 'source' || 'required' }}
-          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '15.0' || '' }}
-        run: uv run --no-project --with hatchling plugins/scaly-ipopt/hatch_build.py --prepare-native >> "$GITHUB_OUTPUT"
-
-      - name: Install gfortran
-        if: runner.os == 'macOS' && steps.native.outputs.source == 'true'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install gcc
-
-      # The IPOPT hook builds through MSYS2 UCRT64, whose `bin` directory also provides the runtime
-      # DLLs the wheel bundles. Only the IPOPT build sees these tools on `PATH`.
-      - uses: msys2/setup-msys2@v2
-        id: msys2
-        if: runner.os == 'Windows' && steps.native.outputs.source == 'true'
-        with:
-          msystem: UCRT64
-          path-type: inherit
-          update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc-fortran
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            make git patch diffutils pkgconf
-
-      # The plugins load their solvers through ctypes, so the hooks tag every wheel
-      # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The IPOPT
-      # wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS, so its wheel
-      # cannot claim an older deployment target than that. cibuildwheel runs without
-      # `GITHUB_STEP_SUMMARY`, so its summaries stay off the run page.
-      - name: Build the distributions
+      - name: Build
         id: build
-        env:
-          CIBW_BUILD: cp312-*
-          CIBW_SKIP: "*-musllinux_*"
-          CIBW_ARCHS_WINDOWS: AMD64
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
-          SCALY_BUILD_SOLVERS: ${{ inputs.rebuild-native && 'source' || 'required' }}
-          CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=${{ inputs.rebuild-native && 'source' || 'required' }}
-        run: |
-          unset GITHUB_STEP_SUMMARY
-          cache=~/.cache/scaly/solvers
-          mkdir -p "$cache"
-          before=$(cat "$RUNNER_TEMP/native-before")
-          uv build -o dist .
-          uv build -o dist plugins/scaly-sqp
-          uv build -o dist --sdist plugins/scaly-piqp
-          uv build -o dist --sdist plugins/scaly-ipopt
-          uv build -o dist --sdist plugins/scaly-fatrop
-          packages=(scaly-piqp scaly-ipopt scaly-fatrop)
-          for package in "${packages[@]}"; do
-            path=$PATH
-            macos="SCALY_BUILD_SOLVERS=$SCALY_BUILD_SOLVERS"
-            if [ "$package" = scaly-ipopt ]; then
-              macos+=" MACOSX_DEPLOYMENT_TARGET=15.0"
-              if [ "$RUNNER_OS" = Windows ] && [ "${{ steps.native.outputs.source }}" = true ]; then
-                msys2=$(cygpath -u '${{ steps.msys2.outputs.msys2-location }}')
-                path="$msys2/ucrt64/bin:$msys2/usr/bin:$PATH"
-              fi
-            fi
-            # cibuildwheel mounts the host's root at /host inside the manylinux container. Only native
-            # programs may start with MSYS2 on PATH: MSYS2's `env` under Git Bash drops the environment.
-            PATH=$path CIBW_ENVIRONMENT_LINUX="SCALY_BUILD_SOLVERS=$SCALY_BUILD_SOLVERS SCALY_SOLVER_CACHE=/host$cache" CIBW_ENVIRONMENT_MACOS="$macos" \
-              uvx cibuildwheel@4.2.1 --output-dir dist "plugins/$package"
-          done
-          if [ "$(ls "$cache")" != "$before" ]; then echo "built=true" >> "$GITHUB_OUTPUT"; fi
+        uses: ./.github/actions/build
+        with:
+          platform: ${{ matrix.platform }}
+          rebuild-native: ${{ inputs.rebuild-native }}
 
-      # `ci.yml` reads whether this step ran to report whether the native libraries were built.
       - name: Save the native libraries
         if: steps.build.outputs.built == 'true'
         uses: actions/cache/save@v6
