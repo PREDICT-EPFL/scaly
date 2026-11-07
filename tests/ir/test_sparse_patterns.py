@@ -286,3 +286,8 @@ def test_simplification_preserves_stored_patterns() -> None:
     assert result.type.pattern is expr.type.pattern
     assert result.type.storage_size == expr.type.storage_size
     verify_expr(result)
+  for lowering in ("scalar", "block", "opaque"):
+    expr = (x * 1.0).with_lowering(lowering)
+    result = simplify(expr)
+    assert result.type.pattern is expr.type.pattern and result.lowering == lowering
+    verify_expr(result)
