@@ -32,8 +32,9 @@ CASADI_QUERIES = (
 
 def casadi_defines() -> list[str]:
   """``casadi_int`` and ``casadi_real`` as CasADi spells them: guarded macros with CasADi's own
-  defaults, so ``casadi.external`` (which reads ``long long``) loads the library as built, and an
-  acados build (which reads ``int``) compiles the same ``.c`` with ``-Dcasadi_int=int``. The two
+  defaults, so ``casadi.external`` (which reads ``long long``) loads the library as built. An
+  acados build reads ``int`` and must be given ``-Dcasadi_int=int`` through
+  ``ocp.code_gen_options.ext_fun_compile_flags`` when compiling the same ``.c``. The two
   consumers disagree on the width, so no single binary serves both; the macro is the switch."""
   return ["#ifndef casadi_real", "#define casadi_real double", "#endif", "#ifndef casadi_int", "#define casadi_int long long int", "#endif"]
 
