@@ -241,23 +241,19 @@ result of the call, or [print from the generated code](#printing-from-generated-
 ### Symbolic values are not Python conditions
 
 A condition based on a symbolic input cannot select a branch at evaluation time.
-Nothing prevents using an `Expr` as a Python truth value:
+The body runs once, while Scaly builds the graph, and a branch Python took then
+would be taken for every input. An `Expr` therefore has no truth value:
 
 ```python
 @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
 def branch(x: sc.Expr) -> sc.Expr:
     return x if x else sc.const(10.0)
-
-print(branch(np.array(0.0)))  # 0.0, not 10.0
+# TypeError: an Expr has no truth value: a Python branch on one would take the same path for every input
 ```
 
-The symbolic `x` is treated as true while the body runs, so only the expression
-`x` is returned. This function has no recorded branch.
-
-!!! warning "A Python branch on an `Expr` is silently wrong"
-    Scaly has no symbolic conditional selection, and nothing raises when a body
-    tests an `Expr`. The function keeps whichever branch Python took while the
-    body ran, for every later evaluation.
+The error comes from the decorator, which traces a fully declared body straight
+away. `and`, `or`, `not` and `while` on an `Expr` raise the same way. Scaly has no
+symbolic conditional selection.
 
 ### Supported array operations
 

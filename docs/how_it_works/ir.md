@@ -44,8 +44,27 @@ data types fails when you build it:
 ```python
 x = sc.sym("x", 3)
 x + sc.sym("n", 3, dtype=sc.dtypes.int64)
-# TypeError: mixed-dtype operation not supported: float64 vs int64; give all operands the same dtype
+# TypeError: mixed dtypes float64 and int64; give all operands the same dtype
 ```
+
+A Python number or list beside an expression takes that expression's data type.
+An `int` may join an integer or floating expression, but it raises
+`OverflowError` outside an integer type's range, and a `float` beside an integer
+expression raises `TypeError`. NumPy arrays and scalars keep their own data
+type, so they must match the expression. `sc.const` follows the same rule: it
+keeps a NumPy value's data type and makes anything else `float64`.
+
+```python
+n = sc.sym("n", 3, dtype=sc.dtypes.int64, diff=False)
+n + 1                    # int64
+x * np.float32(2.0)      # TypeError: mixed dtypes float64 and float32
+sc.const(np.arange(3))   # an int64 constant
+sc.const([0, 1, 2])      # a float64 constant
+```
+
+A numerical call converts each argument to its leaf's data type when NumPy's
+`same_kind` casting rule allows it, as from `int64` or `float32` to `float64`,
+and raises `TypeError` for anything else, such as a complex array.
 
 Data types matter inside the graph and the generated procedures. Lowering and
 numerical evaluation require every `Function` input and output leaf to be
