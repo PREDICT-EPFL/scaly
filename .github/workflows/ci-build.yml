@@ -111,7 +111,9 @@ jobs:
           uv build -o dist plugins/scaly-sqp
           uv build -o dist --sdist plugins/scaly-piqp
           uv build -o dist --sdist plugins/scaly-ipopt
-          for package in scaly-piqp scaly-ipopt; do
+          uv build -o dist --sdist plugins/scaly-fatrop
+          packages=(scaly-piqp scaly-ipopt scaly-fatrop)
+          for package in "${packages[@]}"; do
             path=$PATH
             macos="SCALY_BUILD_SOLVERS=$SCALY_BUILD_SOLVERS"
             if [ "$package" = scaly-ipopt ]; then

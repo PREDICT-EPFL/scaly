@@ -13,7 +13,7 @@ def test_required_solver_collection(required, missing, fails, monkeypatch):
   monkeypatch.setattr(conftest, "solver_loadable", lambda name: name != missing)
   monkeypatch.setattr(conftest, "solver_diagnostic", lambda *args: "missing library")
   skipped = []
-  item = SimpleNamespace(iter_markers=lambda **kwargs: [SimpleNamespace(args=(missing,))], add_marker=skipped.append)
+  item = SimpleNamespace(iter_markers=lambda **kwargs: [pytest.mark.solver(missing).mark], add_marker=skipped.append)
   if fails:
     with pytest.raises(pytest.UsageError, match=missing):
       conftest.pytest_collection_modifyitems([item])

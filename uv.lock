@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "scaly",
+    "scaly-fatrop",
     "scaly-ipopt",
     "scaly-piqp",
     "scaly-sqp",
@@ -711,6 +712,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pefile"
+version = "2024.8.26"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/4f/2750f7f6f025a1507cd3b7218691671eecfd0bbebebe8b39aa0fe1d360b8/pefile-2024.8.26.tar.gz", hash = "sha256:3ff6c5d8b43e8c37bb6e6dd5085658d658a7a0bdcd20b6a07b1fcfc1c4e9d632", size = 76008, upload-time = "2024-08-26T20:58:38.155Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl", hash = "sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f", size = 74766, upload-time = "2024-08-26T21:01:02.632Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1080,10 +1090,12 @@ dev = [
     { name = "hatchling" },
     { name = "matplotlib" },
     { name = "ninja" },
+    { name = "pefile" },
     { name = "pydantic" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "scaly-fatrop" },
     { name = "scaly-ipopt" },
     { name = "scaly-piqp" },
     { name = "scaly-sqp" },
@@ -1116,10 +1128,12 @@ dev = [
     { name = "hatchling", specifier = ">=1.32.4" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "ninja", specifier = ">=1.13.2" },
+    { name = "pefile" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.17.1" },
+    { name = "scaly-fatrop", editable = "plugins/scaly-fatrop" },
     { name = "scaly-ipopt", editable = "plugins/scaly-ipopt" },
     { name = "scaly-piqp", editable = "plugins/scaly-piqp" },
     { name = "scaly-sqp", editable = "plugins/scaly-sqp" },
@@ -1130,6 +1144,17 @@ docs = [
     { name = "mkdocstrings-python", specifier = ">=2.0.3" },
     { name = "zensical", specifier = ">=0.0.28" },
 ]
+
+[[package]]
+name = "scaly-fatrop"
+version = "0.1.0"
+source = { editable = "plugins/scaly-fatrop" }
+dependencies = [
+    { name = "scaly" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "scaly", editable = "." }]
 
 [[package]]
 name = "scaly-ipopt"

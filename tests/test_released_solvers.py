@@ -76,7 +76,7 @@ def test_release_lookup(tmp_path, monkeypatch, failure):
     assert not target.exists()
 
 
-@pytest.mark.parametrize("solver", ["ipopt", "piqp"])
+@pytest.mark.parametrize("solver", ["ipopt", "piqp", "fatrop"])
 def test_build_wheel_from_local_release(tmp_path, monkeypatch, solver):
   root = tmp_path / f"scaly-{solver}"
   shutil.copytree(ROOT / f"plugins/scaly-{solver}", root, ignore=shutil.ignore_patterns("lib", "include", "__pycache__", ".build_key", "dist"))
@@ -133,7 +133,7 @@ def test_build_wheel_from_local_release(tmp_path, monkeypatch, solver):
     assert b"old wrapper" not in wheel.read(f"{package}/__init__.py")
 
 
-@pytest.mark.parametrize("solver", ["ipopt", "piqp"])
+@pytest.mark.parametrize("solver", ["ipopt", "piqp", "fatrop"])
 def test_preparation_order_and_source_override(tmp_path, monkeypatch, solver):
   hook = runpy.run_path(str(ROOT / f"plugins/scaly-{solver}/hatch_build.py"))
   prepare = hook["_prepare_native"]
@@ -173,7 +173,7 @@ def test_restored_local_build_without_compiler(tmp_path, monkeypatch, solver):
   assert helper["find_local"](tmp_path, solver, "digest", context) == entry
 
 
-@pytest.mark.parametrize("solver", ["ipopt"])
+@pytest.mark.parametrize("solver", ["ipopt", "fatrop"])
 def test_native_hash_tracks_recipe_inputs_only(tmp_path, solver):
   root = tmp_path / f"scaly-{solver}"
   shutil.copytree(ROOT / f"plugins/scaly-{solver}", root, ignore=shutil.ignore_patterns("lib", "include", "__pycache__", "dist"))
@@ -181,6 +181,9 @@ def test_native_hash_tracks_recipe_inputs_only(tmp_path, solver):
   shutil.copy2(ROOT / "plugins/solver_build.py", helper)
   native_hash = runpy.run_path(str(helper))["native_hash"]
   package = f"scaly_{solver}"
+  notice = root / "licenses/test-notice.txt"
+  notice.parent.mkdir(exist_ok=True)
+  notice.write_text("test license text")
   original = native_hash(root, package)
   for path in (helper, root / "hatch_build.py"):
     path.write_text(path.read_text() + "\n# lookup-only change\n")
