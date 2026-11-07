@@ -84,6 +84,7 @@ def pytest_collection_modifyitems(items) -> None:
   for item in items:
     for mark in item.iter_markers(name="solver"):
       name = mark.args[0]
+      # Remove this branch and the package/header marker arguments when #239 registers the Fatrop backend.
       if package := mark.kwargs.get("package"):
         key = (name, package, mark.kwargs["header"])
         if key not in native_available:
