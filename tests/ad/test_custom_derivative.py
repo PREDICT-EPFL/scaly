@@ -323,7 +323,7 @@ def test_a_mapped_reverse_rule_reads_its_residuals_in_first_and_second_derivativ
 
 @sc.function(sc.arg("x", 3))
 def coupled(x):
-  return x * x + 0.0 * x.sum()
+  return x * x + x.sum()
 
 
 def test_declared_sparsity_replaces_the_body_pattern() -> None:
