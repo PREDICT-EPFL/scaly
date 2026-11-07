@@ -57,13 +57,13 @@ keeps a NumPy value's data type and makes anything else `float64`.
 ```python
 n = sc.sym("n", 3, dtype=sc.dtypes.int64, diff=False)
 n + 1                    # int64
-x * np.float32(2.0)      # TypeError: mixed dtypes float64 and float32
+x * np.int64(2)          # TypeError: mixed dtypes float64 and int64
 sc.const(np.arange(3))   # an int64 constant
 sc.const([0, 1, 2])      # a float64 constant
 ```
 
 A numerical call converts each argument to its leaf's data type when NumPy's
-`same_kind` casting rule allows it, as from `int64` or `float32` to `float64`,
+`same_kind` casting rule allows it, as from `int64` to `float64`,
 and raises `TypeError` for anything else, such as a complex array.
 
 Data types matter inside the graph and the generated procedures. Lowering and

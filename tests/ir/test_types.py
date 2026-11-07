@@ -116,6 +116,7 @@ def test_numpy_values_are_strong_and_must_match() -> None:
   x64 = sc.sym("x64", 3)
   assert (x32 * np.float32(2)).type.dtype == dtypes.float32
   assert (x64 + np.arange(3.0)).type.dtype == dtypes.float64
+  assert sc.stack([np.float32(1), 2.0]).type.dtype == dtypes.float32
   for bad in [lambda: x32 * np.float64(2), lambda: np.float32(2) * x64, lambda: x64 + np.arange(3), lambda: x32 + x64, lambda: sc.stack([x32, x64])]:
     with pytest.raises(TypeError, match="mixed dtypes"):
       bad()

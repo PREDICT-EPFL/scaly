@@ -577,6 +577,8 @@ def _weak_kind(x: Any) -> int:
     return 0
   if isinstance(x, int):
     return 1
+  if isinstance(x, float):
+    return 2
   return _WEAK_KINDS.get(np.asarray(x).dtype.kind, len(_WEAK_KINDS))
 
 
@@ -592,8 +594,9 @@ def _coerce(x: Any, like: Expr | None) -> Expr:
 
 
 def _operands(*xs: Any) -> tuple[Expr, ...]:
-  """Coerce every operand beside the first ``Expr`` among them."""
-  like = next((x for x in xs if isinstance(x, Expr)), None)
+  """Coerce every operand beside the first ``Expr`` among them, or else the first NumPy value."""
+  strong = [x for x in xs if isinstance(x, Expr | np.ndarray | np.generic)]
+  like = next((x for x in strong if isinstance(x, Expr)), as_expr(strong[0]) if strong else None)
   return tuple(_coerce(x, like) for x in xs)
 
 
