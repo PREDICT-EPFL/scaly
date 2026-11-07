@@ -54,6 +54,24 @@ def test_sparse_inputs_keep_only_stored_derivative_relations() -> None:
   np.testing.assert_array_equal(sc.jacobian_sparsity(x.sin(), x).to_mask(), expected)
 
 
+def test_ordinary_derivative_relations_stay_within_each_nodes_support() -> None:
+  from scaly.ad.sparsity import _jac_mask
+  from scaly.ir.expr import topo
+
+  x = sc.sym("support_relations", (2, 3))
+  a = x * sc.const([[1, 0, 2], [0, 3, 0]])
+  b = sc.concat([a.sin(), a[:, ::-1]], axis=0)
+  product = b @ sc.const([[0, 1], [1, 0], [0, 0]])
+  moved = product.T.reshape((8,)).gather([7, 0, 1, 1])
+  scattered = sc.scatter(moved, [2, 4, 2, 0], (6,))
+  output = sc.concat([scattered, (a / (x * x + 1)).vec(), sc.stack([a.sum(), (a * 0).sum()])])
+  memo = {}
+  _jac_mask(output, x, memo)
+  for node in topo([output]):
+    if node.support is not None:
+      assert set(memo[(node.id, x.id)].tocoo().row) <= node.support
+
+
 def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Function, sc.Function]:
   if shared:
 

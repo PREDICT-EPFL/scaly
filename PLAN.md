@@ -28,7 +28,8 @@ CALL uses only the callee's own support. Argument specialization belongs to #221
 - [x] Restrict derivative relations using support, without the #41 rewrite.
 - [x] Run randomized soundness and mutation checks, the suite, snapshots and hooks.
 - [x] Add the guide sentence, API filter and named follow-ups.
-- [ ] Commit, push and open the stacked draft PR. Run one cross-review and delta check.
+- [x] Commit, push and open the stacked draft PR, #277.
+- [ ] Finish the cross-review fixes and delta checks.
 - [ ] Record criterion evidence, mark ready, update tracker and watch the PR.
 
 Phases depend on the preceding phase. Independent validation commands may run together.
@@ -50,3 +51,16 @@ Phases depend on the preceding phase. Independent validation commands may run to
 - C snapshots and lowering source have no diff against the stack base.
 - Scalar zero skipping is tracked by #276, after #27 and #40. SELECT belongs
   to #30, axis REDUCE to #66 and LOOP to #31. Their ops are absent here.
+
+## Review fixes
+
+- Sol reproduced loss of custom derivative rows outside primal support. Removed
+  the blanket result-support filter, retaining sparse input bounds and the local
+  coefficient filters. Ordinary operations propagate supported relations without
+  that filter. Custom declared and undeclared derivatives survive calls, maps,
+  nested calls, unary operations, multiplication, division and matrix products.
+- All eight new custom-derivative cases failed before the fix. The focused run
+  now passes 116 tests. A new check verifies ordinary relations remain within
+  every intermediate node's support. Both new regression gates detect in-memory
+  perturbations, bringing the mutation checks to fourteen.
+- Opus's main review is pending. The full merge hook is rerunning on the fix.
