@@ -356,6 +356,43 @@ def test_declared_sparsity_takes_masks_and_patterns_and_checks_their_shape() -> 
     sc.custom_derivative(coupled, sparsity=lambda of, wrt, shape: np.eye(2, dtype=bool))
 
 
+@pytest.mark.parametrize("declared", [False, True])
+@pytest.mark.parametrize("mapped", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+def test_custom_derivative_rows_outside_primal_support_survive_composition(declared: bool, mapped: bool, nested: bool) -> None:
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
+  def masked(x):
+    return x * sc.const([0, 1, 0])
+
+  @sc.function(sc.arg("x", 3), sc.arg("dx", 3), outputs=sc.arg("dy"))
+  def identity_jvp(x, dx):
+    return dx
+
+  ruled = sc.custom_derivative(masked, jvp=identity_jvp, sparsity=(lambda of, wrt, shape: np.eye(*shape, dtype=bool)) if declared else None)
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
+  def wrapper(x):
+    return ruled(x)
+
+  callee = wrapper if nested else ruled
+  shape = (2, 3) if mapped else (3,)
+  weights = np.array([2.0, 3.0, 4.0])
+
+  @sc.function(sc.arg("q", shape), outputs=sc.group(sc.arg("dense"), sc.arg("sparse")))
+  def derivatives(q):
+    y = sc.vmap(callee, 2)(q) if mapped else callee(q)
+    outputs = sc.concat([y.vec(), y.sin().vec(), (y * q).vec(), (y / (q + 2)).vec(), (y @ sc.const(np.diag(weights))).vec()])
+    return sc.jacobian(outputs, q), sc.sparse_jacobian(outputs, q).to_dense()
+
+  q = np.arange(np.prod(shape)).reshape(shape) / 5 + 0.1
+  primal = q * np.array([0, 1, 0])
+  coefficients = [np.ones(shape), np.cos(primal), q + primal, 1 / (q + 2) - primal / (q + 2) ** 2, np.broadcast_to(weights, shape)]
+  expected = np.concatenate([np.diag(values.reshape(-1)) for values in coefficients])
+  dense, sparse = derivatives(q)
+  np.testing.assert_allclose(dense, expected)
+  np.testing.assert_allclose(sparse, expected)
+
+
 # --- a solve whose derivative reuses its factorization ------------------------------------------
 
 N = 4

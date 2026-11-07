@@ -130,14 +130,15 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arra
           if memo[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in memo:
             stack.append((callee_out, formal, 0))
     else:
-      memo[key] = _supported_rows(_jac_mask_uncached(node, variable, memo), node.support)
+      memo[key] = _jac_mask_uncached(node, variable, memo)
 
   return memo[(expr.id, wrt.id)]
 
 
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
-    return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
+    mask = sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
+    return _supported_rows(mask, expr.support)
   if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
     return _empty((expr.size, wrt.size))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
