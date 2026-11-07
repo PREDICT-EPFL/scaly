@@ -149,7 +149,7 @@ def _is_one(e: Expr) -> bool:
 
 
 def _arith(e: Expr) -> Expr:
-  return e if e.type.pattern is not None and e.lowering != "auto" else fold(ARITH_EXPR, e)
+  return e if e.type.pattern is not None else fold(ARITH_EXPR, e)
 
 
 def _zero_unary(e: Expr) -> Expr:

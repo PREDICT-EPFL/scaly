@@ -291,3 +291,6 @@ def test_simplification_preserves_stored_patterns() -> None:
     result = simplify(expr)
     assert result.type.pattern is expr.type.pattern and result.lowering == lowering
     verify_expr(result)
+  mixed = x.scalar() * Expr.const(1.0).block()
+  for expr in (mixed, -(-mixed)):
+    assert simplify(expr).type.pattern is expr.type.pattern
