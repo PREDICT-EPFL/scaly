@@ -36,7 +36,7 @@ from acados_template import AcadosOcp, AcadosOcpSolver  # ty: ignore[unresolved-
 from acados_template.builders import ocp_get_default_cmake_builder  # ty: ignore[unresolved-import]
 
 import scaly as sc
-from scaly.codegen import render_c_module
+from scaly.codegen import write_module
 from scaly.function.concrete import ConcreteFunction
 from scaly.ir.expr import substitute
 
@@ -92,7 +92,7 @@ def _export(path: Path, inputs: tuple[sc.Expr, ...], outputs: dict[str, sc.Expr 
     output_sparsities=[out.sparsity if isinstance(out, sc.SparseJacobian) else None for out in outputs.values()],
   )
   assert path.is_file(), f"acados did not generate {path}"
-  path.write_text(render_c_module(fun, casadi=True).body)
+  write_module(fun, path.parent, casadi=True)
 
 
 def build_scaly_solver(
