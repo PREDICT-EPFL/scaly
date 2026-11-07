@@ -530,6 +530,21 @@ Both are separate numerical choices. Neither enables general fast-math flags.
 See [arithmetic semantics](../how_it_works/lowering.md#arithmetic-semantics)
 for simplifications that apply independently of these options.
 
+A product becomes zero when the compiler proves that its two factors cannot
+both be nonzero at any entry:
+
+```python
+import numpy as np
+
+@sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
+def zero_product(x: sc.Expr) -> sc.Expr:
+    return (x * sc.const([1, 0])) * sc.const([0, np.nan])
+
+print(zero_product(np.ones(2)))  # [0. 0.]
+```
+
+NumPy evaluates `(np.ones(2) * [1, 0]) * [0, np.nan]` as `[0, nan]`.
+
 The same choices are available to `scaly_codegen` as `--cpu`, `--lanes`,
 `--dialect`, `--vector-libm`, and `--reciprocal`. The
 [render-options reference](../api/codegen.md#render-options) lists their values.

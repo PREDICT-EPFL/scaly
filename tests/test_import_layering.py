@@ -38,6 +38,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.ir": 1,
   "scaly.ir.types": 1,
   "scaly.ir.expr": 1,
+  "scaly.ir.support": 1,
   "scaly.ir.match": 1,
   "scaly.ir.program": 1,
   "scaly.ir.program_spec": 1,

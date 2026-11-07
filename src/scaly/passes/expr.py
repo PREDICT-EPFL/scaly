@@ -11,7 +11,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from ..ad.rules import ELEMENTWISE
-from ..ir.expr import Expr, ExprOp, _attrs_key, matmul, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _attrs_key, matmul, stack, topo
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -23,6 +23,8 @@ def simplify(expr: Expr) -> Expr:
   annihilation, ``x - x``, negation normalization, small constant powers), folding of all-constant
   subgraphs, identity reshape, transpose and gather, slice of slice, slice of stack, ``A.T @ v`` as
   ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and a matmul with an all-ones vector as sums.
+  Also folds elementwise and matrix products with no possible nonzero terms, and sums,
+  gathers, scatters, stacks and concatenations of known zeros.
   """
   return rewrite(expr, SIMPLIFY_PATTERNS, fixpoint=False, revisit=True, max_steps=100_000)
 
@@ -139,8 +141,7 @@ def _const_value(e: Expr) -> np.ndarray | None:
 
 
 def _is_zero(e: Expr) -> bool:
-  value = _const_value(e)
-  return value is not None and bool(np.all(value == 0))
+  return e.support == frozenset()
 
 
 def _is_one(e: Expr) -> bool:
@@ -153,7 +154,7 @@ def _arith(e: Expr) -> Expr:
 
 
 def _zero_unary(e: Expr) -> Expr:
-  return zeros_like(e)
+  return Expr.const(np.zeros(e.shape), dtype=e.type.dtype, lowering=e.lowering)
 
 
 def _all_args_zero(e: Expr) -> bool:
@@ -167,10 +168,6 @@ def _reshape_identity(e: Expr) -> Expr:
 def _transpose_identity(e: Expr) -> Expr:
   axes = e.attrs["axes"]
   return e.args[0] if axes == tuple(range(len(axes))) else e
-
-
-def _matmul_zero(e: Expr) -> Expr:
-  return zeros_like(e) if e.type.pattern is None and (_is_zero(e.args[0]) or _is_zero(e.args[1])) else e
 
 
 def _slice_of_slice_step1(e: Expr) -> bool:
@@ -265,11 +262,11 @@ def _gather_identity(e: Expr) -> bool:
 
 
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
+  *(Pattern(op, lambda e: e.type.pattern is None and _is_zero(e), _zero_unary) for op in (ExprOp.MUL, ExprOp.MATMUL)),
   Pattern(None, _all_args_const, _constant_fold),
   *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
   Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape and not e.attrs.get("lowering_identity"), _reshape_identity),
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
-  Pattern(ExprOp.MATMUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]), _matmul_zero),
   Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),
   Pattern(ExprOp.MATMUL, _matmul_ones_vector, _matmul_ones),
   Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
