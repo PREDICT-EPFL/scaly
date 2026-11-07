@@ -55,19 +55,19 @@ jobs:
           path: ~/.cache/scaly/solvers
           key: native-${{ matrix.platform }}-${{ hashFiles('plugins/*/native_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # Smoke builds independently in the same run, so its artifact names must be distinct.
       - uses: actions/upload-artifact@v7
+        if: inputs.suite == 'ci'
         with:
-          name: dist-${{ inputs.suite == 'smoke' && 'smoke-' || '' }}${{ matrix.platform }}
+          name: dist-${{ matrix.platform }}
           path: |
             dist/*.whl
             !dist/*-none-any.whl
           retention-days: 90
 
       - uses: actions/upload-artifact@v7
-        if: matrix.platform == 'linux-x86_64'
+        if: inputs.suite == 'ci' && matrix.platform == 'linux-x86_64'
         with:
-          name: dist-${{ inputs.suite == 'smoke' && 'smoke-' || '' }}pure
+          name: dist-pure
           path: |
             dist/*-none-any.whl
             dist/*.tar.gz

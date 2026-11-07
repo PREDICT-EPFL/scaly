@@ -1,8 +1,5 @@
 name: Check installed distributions
 description: Install the wheels into a clean environment and solve with every backend.
-
-# Installs the wheels the build job made into a clean environment, the way a user gets them, and
-# solves with every backend.
 runs:
   using: composite
   steps:

@@ -1,7 +1,7 @@
 name: CI builds
 
-# Builds every distribution once per platform for the test and install jobs. The files are kept
-# for the longest period the organization allows. CI, nightly and release runs use this build.
+# Builds every distribution once per platform for the test jobs. The files are kept for the
+# longest period the organization allows. Nightly and release runs use this build.
 on:
   workflow_call:
     inputs:
@@ -46,7 +46,6 @@ jobs:
           platform: ${{ matrix.platform }}
           rebuild-native: ${{ inputs.rebuild-native }}
 
-      # `ci.yml` reads whether this step ran to report whether the native libraries were built.
       - name: Save the native libraries
         if: steps.build.outputs.built == 'true'
         uses: actions/cache/save@v6

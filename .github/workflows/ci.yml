@@ -148,7 +148,7 @@ jobs:
         run: |
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq '.jobs[]' | jq -s .)
           result() { r=$(jq -r --arg name "$1" '.[] | select(.name == $name) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
-          step() { r=$(jq -r --arg name "$1" --arg step "$2" '.[] | select(.name == $name) | .steps[]? | select(.name == $step) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
+          step() { r=$(jq -r --arg name "$1" --arg step "$2" '.[] | select(.name == $name) | .steps[]? | select(.name == $step) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-$(result "$1")}"; }
           {
             echo "| Platform | Native code | Install | Tests | Smoke |"
             echo "| --- | --- | --- | --- | --- |"
