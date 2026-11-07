@@ -14,7 +14,7 @@ from ..function.api import gradient, sparse_jacobian
 from ..function.concrete import ConcreteFunction
 from ..function.tree import Tree, append_parameter, arg, flat_tree, parameter_list
 from ..function.tree import group as tree_group
-from ..ir.expr import Expr, ExprOp, as_expr, check_prints_reach, concat, recording_prints, substitute
+from ..ir.expr import Expr, ExprOp, as_expr, check_prints_reach, concat, promote_dtype, recording_prints, substitute
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from ._oracle import collect_free_inputs
@@ -39,10 +39,27 @@ class Bounded:
 
 
 def bounded(expr: Expr, lo: Any = None, hi: Any = None, *, name: str | None = None) -> Bounded:
-  """Declare a lower- and/or upper-bounded inequality group."""
+  """Declare a lower- and/or upper-bounded inequality group.
+
+  A numerical bound converts to the expression's dtype when NumPy's ``same_kind`` rule allows it,
+  as the arguments of a numerical call do. An expression bound must have the expression's dtype.
+  """
   if lo is None and hi is None:
     raise ValueError("bounded needs at least one of lo / hi")
-  return Bounded(as_expr(expr), None if lo is None else as_expr(lo), None if hi is None else as_expr(hi), name)
+  expr = as_expr(expr)
+  dtype = expr.type.dtype
+
+  def limit(bound: Any) -> Expr | None:
+    if bound is None or isinstance(bound, Expr):
+      return bound
+    array = np.asarray(bound)
+    if not np.can_cast(array.dtype, dtype.numpy(), "same_kind"):
+      raise TypeError(f"cannot cast bound of dtype {array.dtype} to {dtype}")
+    return Expr.const(array, dtype=dtype)
+
+  lo, hi = limit(lo), limit(hi)
+  promote_dtype(expr, *(bound for bound in (lo, hi) if bound is not None))
+  return Bounded(expr, lo, hi, name)
 
 
 @dataclass(frozen=True, slots=True)

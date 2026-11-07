@@ -183,7 +183,10 @@ class _Leaf(Tree[Expr, Array]):
     dtype = self.types[0].dtype
     if dtype != dtypes.float64:
       raise NotImplementedError(f"{what}: input leaf {self.names[0]!r} has dtype {dtype}; only float64 leaves are supported")
-    array = np.asarray(value, dtype=dtype.numpy())
+    array = np.asarray(value)
+    if not np.can_cast(array.dtype, dtype.numpy(), "same_kind"):
+      raise TypeError(f"{what}: cannot cast {array.dtype} to {dtype} for {self.names[0]!r}")
+    array = array.astype(dtype.numpy(), copy=False)
     if array.shape != self.shapes[0]:
       raise ValueError(f"{what}: expected shape {self.shapes[0]} for {self.names[0]!r}, got {array.shape}")
     return (np.require(array, requirements="C"),)

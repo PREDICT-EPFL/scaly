@@ -380,6 +380,17 @@ def test_bounded_requires_at_least_one_bound() -> None:
     sc.bounded(sc.sym("g", 1))
 
 
+def test_bounded_casts_numerical_bounds_of_the_same_kind() -> None:
+  g = sc.sym("g", 2)
+  group = sc.bounded(g, lo=np.array([0, 1]), hi=[1.0, 2.0])
+  assert group.lo is not None and group.lo.type.dtype == sc.dtypes.float64 and np.asarray(group.lo.value).dtype == np.float64
+  assert group.hi is not None and group.hi.type.dtype == sc.dtypes.float64
+  with pytest.raises(TypeError, match="cannot cast"):
+    sc.bounded(g, hi=np.array([1j, 2]))
+  with pytest.raises(TypeError, match="mixed dtypes"):
+    sc.bounded(g, lo=sc.sym("n", 2, dtype=sc.dtypes.int64, diff=False))
+
+
 def test_single_block_solver_signature_is_not_nested() -> None:
   solve = sc.solver(quadratic, "sqp", name="quadratic_sqp")
   assert as_concrete(solve.function).input_names == ("x", "lam:x", "lam_eq", "lam_ineq", "scale")

@@ -304,9 +304,13 @@ class Expr:
   def const(value: Any, *, dtype: DType | str | None = None, lowering: Lowering = "auto") -> Expr:
     """Wrap an array or scalar as a constant node.
 
-    Constants are never differentiable: a derivative with respect to one is structurally zero.
+    A NumPy array or scalar keeps its dtype, and anything else becomes ``float64``, unless
+    ``dtype`` says otherwise. Constants are never differentiable: a derivative with respect to one
+    is structurally zero.
     """
-    dtype_eff = as_dtype(dtype) if dtype is not None else dtypes.float64
+    if dtype is None:
+      dtype = value.dtype.name if isinstance(value, np.ndarray | np.generic) else dtypes.float64
+    dtype_eff = as_dtype(dtype)
     arr = _asarray(value, dtype=dtype_eff)
     return Expr(ExprOp.CONST, type=TensorType(tuple(arr.shape), dtype=dtype_eff, diff=False), value=arr, lowering=lowering)
 
@@ -485,40 +489,43 @@ class Expr:
     return unary(ExprOp.NEG, self)
 
   def __add__(self, other: Any) -> Expr:
-    return binary(ExprOp.ADD, self, as_expr(other))
+    return binary(ExprOp.ADD, self, _coerce(other, self))
 
   def __radd__(self, other: Any) -> Expr:
-    return binary(ExprOp.ADD, as_expr(other), self)
+    return binary(ExprOp.ADD, _coerce(other, self), self)
 
   def __sub__(self, other: Any) -> Expr:
-    return binary(ExprOp.SUB, self, as_expr(other))
+    return binary(ExprOp.SUB, self, _coerce(other, self))
 
   def __rsub__(self, other: Any) -> Expr:
-    return binary(ExprOp.SUB, as_expr(other), self)
+    return binary(ExprOp.SUB, _coerce(other, self), self)
 
   def __mul__(self, other: Any) -> Expr:
-    return binary(ExprOp.MUL, self, as_expr(other))
+    return binary(ExprOp.MUL, self, _coerce(other, self))
 
   def __rmul__(self, other: Any) -> Expr:
-    return binary(ExprOp.MUL, as_expr(other), self)
+    return binary(ExprOp.MUL, _coerce(other, self), self)
 
   def __truediv__(self, other: Any) -> Expr:
-    return binary(ExprOp.DIV, self, as_expr(other))
+    return binary(ExprOp.DIV, self, _coerce(other, self))
 
   def __rtruediv__(self, other: Any) -> Expr:
-    return binary(ExprOp.DIV, as_expr(other), self)
+    return binary(ExprOp.DIV, _coerce(other, self), self)
 
   def __pow__(self, other: Any) -> Expr:
-    return binary(ExprOp.POW, self, as_expr(other))
+    return binary(ExprOp.POW, self, _coerce(other, self))
 
   def __rpow__(self, other: Any) -> Expr:
-    return binary(ExprOp.POW, as_expr(other), self)
+    return binary(ExprOp.POW, _coerce(other, self), self)
 
   def __matmul__(self, other: Any) -> Expr:
-    return matmul(self, as_expr(other))
+    return matmul(self, _coerce(other, self))
 
   def __rmatmul__(self, other: Any) -> Expr:
-    return matmul(as_expr(other), self)
+    return matmul(_coerce(other, self), self)
+
+  def __bool__(self) -> bool:
+    raise TypeError("an Expr has no truth value: a Python branch on one would take the same path for every input")
 
   def inputs(self) -> dict[str, Expr]:
     ret: dict[str, Expr] = {}
@@ -559,6 +566,40 @@ def as_expr(x: Any) -> Expr:
   return x if isinstance(x, Expr) else Expr.const(x)
 
 
+_WEAK_KINDS = {"b": 0, "i": 1, "u": 1, "f": 2}
+
+
+def _weak_kind(x: Any) -> int:
+  # Read from the Python values: NumPy infers ``object`` for an int beyond int64 and ``float64`` for ``[]``.
+  if isinstance(x, list | tuple):
+    return max(map(_weak_kind, x), default=0)
+  if isinstance(x, bool):
+    return 0
+  if isinstance(x, int):
+    return 1
+  if isinstance(x, float):
+    return 2
+  return _WEAK_KINDS.get(np.asarray(x).dtype.kind, len(_WEAK_KINDS))
+
+
+def _coerce(x: Any, like: Expr | None) -> Expr:
+  """``x`` as an operand beside ``like``. A Python value is weak and takes ``like``'s dtype; an
+  ``Expr`` or a NumPy value is strong and keeps its own, which ``promote_dtype`` then checks."""
+  if isinstance(x, Expr | np.ndarray | np.generic) or like is None:
+    return as_expr(x)
+  dtype = like.type.dtype
+  if _weak_kind(x) > _WEAK_KINDS[dtype.numpy().kind]:
+    raise TypeError(f"cannot combine {type(x).__name__} {x!r} with an expression of dtype {dtype}")
+  return Expr.const(x, dtype=dtype)
+
+
+def _operands(*xs: Any) -> tuple[Expr, ...]:
+  """Coerce every operand beside the first ``Expr`` among them, or else the first NumPy value."""
+  strong = [x for x in xs if isinstance(x, Expr | np.ndarray | np.generic)]
+  like = next((x for x in strong if isinstance(x, Expr)), as_expr(strong[0]) if strong else None)
+  return tuple(_coerce(x, like) for x in xs)
+
+
 def common_lowering(*exprs: Expr) -> Lowering:
   explicit = {e.lowering for e in exprs if e.lowering != "auto"}
   if len(explicit) == 1:
@@ -582,7 +623,7 @@ def promote_dtype(*exprs: Expr) -> DType:
   first = exprs[0].type.dtype
   for e in exprs[1:]:
     if e.type.dtype != first:
-      raise TypeError(f"mixed-dtype operation not supported: {first} vs {e.type.dtype}; give all operands the same dtype")
+      raise TypeError(f"mixed dtypes {first} and {e.type.dtype}; give all operands the same dtype")
   return first
 
 
@@ -678,17 +719,17 @@ def stop_gradient(value: Any) -> Expr:
 
 def atan2(y: Any, x: Any) -> Expr:
   """Two-argument arctangent, elementwise: the angle of the point ``(x, y)``."""
-  return binary(ExprOp.ATAN2, as_expr(y), as_expr(x))
+  return binary(ExprOp.ATAN2, *_operands(y, x))
 
 
 def minimum(x: Any, y: Any) -> Expr:
   """Elementwise minimum. Non-smooth, so the result is marked non-differentiable."""
-  return binary(ExprOp.MINIMUM, as_expr(x), as_expr(y))
+  return binary(ExprOp.MINIMUM, *_operands(x, y))
 
 
 def maximum(x: Any, y: Any) -> Expr:
   """Elementwise maximum. Non-smooth, so the result is marked non-differentiable."""
-  return binary(ExprOp.MAXIMUM, as_expr(x), as_expr(y))
+  return binary(ExprOp.MAXIMUM, *_operands(x, y))
 
 
 def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
@@ -703,10 +744,16 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
   if len(index) > len(shape):
     raise IndexError(f"too many indices for shape {shape}")
   index = index + (slice(None),) * (len(shape) - len(index))
-  for item in index:
-    if not isinstance(item, int | slice):
+
+  def integer(item: Any) -> int:
+    if isinstance(item, bool | np.bool_) or not isinstance(item, int | np.integer):
       raise TypeError(f"unsupported index component {item!r}")
-  return index
+    return int(item)
+
+  return tuple(
+    slice(*(None if v is None else integer(v) for v in (item.start, item.stop, item.step))) if isinstance(item, slice) else integer(item)
+    for item in index
+  )
 
 
 def matmul(x: Expr, y: Expr) -> Expr:
@@ -733,7 +780,7 @@ def matmul(x: Expr, y: Expr) -> Expr:
 
 def dot(x: Any, y: Any) -> Expr:
   """Scalar product of two expressions with the same number of entries, whatever their shapes."""
-  x, y = as_expr(x), as_expr(y)
+  x, y = _operands(x, y)
   if x.size != y.size:
     raise ValueError(f"dot size mismatch: {x.shape} has {x.size} entries, {y.shape} has {y.size}")
   return (x.vec() * y.vec()).sum()
@@ -824,7 +871,7 @@ def split(x: Any, sections: int | Iterable[int], *, axis: int = 0) -> tuple[Expr
 
 def stack(xs: Iterable[Any], *, axis: int = 0) -> Expr:
   """Join equally shaped expressions along a new axis, adding one to the rank."""
-  exprs = tuple(as_expr(x) for x in xs)
+  exprs = _operands(*xs)
   if not exprs:
     raise ValueError("stack requires at least one expression")
   base = exprs[0].shape
@@ -841,7 +888,7 @@ def stack(xs: Iterable[Any], *, axis: int = 0) -> Expr:
 
 def concat(xs: Iterable[Any], *, axis: int = 0) -> Expr:
   """Join expressions along an existing ``axis``. All other dimensions must agree."""
-  exprs = tuple(as_expr(x) for x in xs)
+  exprs = _operands(*xs)
   if not exprs:
     raise ValueError("concat requires at least one expression")
   base = exprs[0].shape
