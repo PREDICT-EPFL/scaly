@@ -1,7 +1,9 @@
 """Stored-pattern identity, storage and fixed expression rules against NumPy references."""
 
 from dataclasses import FrozenInstanceError, fields
+from concurrent.futures import ThreadPoolExecutor
 import gc
+from threading import Barrier, Event
 import weakref
 
 import numpy as np
@@ -246,3 +248,41 @@ def test_sparse_graph_cannot_reach_unfinished_lowering_boundary() -> None:
   x = _input("boundary_pattern", np.eye(3, dtype=bool))
   with pytest.raises(NotImplementedError, match="cannot lower tensors with stored patterns"):
     ConcreteFunction._from_exprs("sparse_boundary", [x], [x.sin()], ["x"], ["y"])
+
+
+def test_concurrent_canonicalization_has_one_identity_and_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+  from scaly.ir import types
+
+  original = types.sha256
+  calls = []
+
+  def digest(data):
+    calls.append(data)
+    Event().wait(0.05)
+    return original(data)
+
+  monkeypatch.setattr(types, "sha256", digest)
+  start = Barrier(8)
+
+  def build(_):
+    start.wait()
+    return CanonicalPattern((101, 103), (0, 100), (102, 0))
+
+  with ThreadPoolExecutor(max_workers=8) as pool:
+    patterns = list(pool.map(build, range(8)))
+  assert all(pattern is patterns[0] for pattern in patterns)
+  assert len(calls) == 1
+  x = Expr(ExprOp.INPUT, type=TensorType((101, 103), pattern=patterns[0]), name="thread_pattern_x")
+  y = Expr(ExprOp.INPUT, type=TensorType((101, 103), pattern=patterns[-1]), name="thread_pattern_y")
+  assert substitute(x.sin(), {x: y}) is y.sin()
+
+
+def test_simplification_preserves_stored_patterns() -> None:
+  from scaly.passes.expr import simplify
+
+  x = _input("simplify_pattern", np.eye(3, dtype=bool))
+  for expr in (x - x, x * 0.0, x * 1.0, x + 0.0, -(x + 0.0), (x + 0.0).sin(), x @ Expr.const(np.zeros((3, 3))), x + x, -(-x)):
+    result = simplify(expr)
+    assert result.type.pattern is expr.type.pattern
+    assert result.type.storage_size == expr.type.storage_size
+    verify_expr(result)

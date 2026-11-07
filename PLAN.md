@@ -14,7 +14,7 @@ architecture, codebase, conventions, contributing and compiler maintenance conte
   in the pull request and defer lowering and boundary work to #42.
 - [x] Prove ten invariant groups fail under perturbation. The full suite passed, 2514 passed and
   91 solver skips, including byte-identical C snapshots. Types, Ruff and docs passed.
-  The pre-merge hook is still running benchmark smoke before its remaining checks.
+  The complete pre-merge hook passed, including benchmark smoke, docs and private-name checks.
 - [ ] Push a draft PR against main, cross-review under the skill's model rules, fix findings,
   confirm fixes, remove this plan, and mark ready with tracker evidence.
 
@@ -35,3 +35,12 @@ layouts; VMAP windows and scratch; lowering input/output/private buffers, copy l
 elementwise/gather/scatter domains and movement/contraction offsets. All remain unchanged for #42
 and #43. Logical indexing and derivative dimensions retain mathematical size; their full-size
 allocations belong to #41. Solver decision-vector dimensions and tree leaf counts retain size.
+
+PR: https://github.com/PREDICT-EPFL/scaly/pull/274, draft. Opus review is running.
+Sol found two issues, both reproduced by new tests and fixed locally: concurrent cache misses
+could publish multiple identities, and arithmetic simplification could replace sparse expressions
+with dense ones or a smaller pattern. A lock protects canonical publication, arithmetic full
+constants can refuse a rewrite, neutral rewrites check pattern identity, and zero MATMUL folding
+waits for a replacement with the same storage. The focused 150-test run and types passed.
+The complete pre-merge hook is running again. Send only the fix delta to fresh reviewer tasks
+once both reviews have finished; do not start another full review.

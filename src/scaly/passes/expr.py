@@ -170,7 +170,7 @@ def _transpose_identity(e: Expr) -> Expr:
 
 
 def _matmul_zero(e: Expr) -> Expr:
-  return zeros_like(e) if _is_zero(e.args[0]) or _is_zero(e.args[1]) else e
+  return zeros_like(e) if e.type.pattern is None and (_is_zero(e.args[0]) or _is_zero(e.args[1])) else e
 
 
 def _slice_of_slice_step1(e: Expr) -> bool:
