@@ -26,16 +26,16 @@ class _HasArgs(Protocol):
 class Arith[Node: _HasArgs]:
   """What a rule may ask of a node: its arithmetic kind, a uniform constant's value, and how to build results.
 
-  ``fits(arg, result)`` says whether ``arg`` may stand in for ``result`` (same shape and dtype).
+  ``fits(arg, result)`` says whether ``arg`` may stand in for ``result`` (same shape, dtype and storage).
   ``scalar`` makes a coefficient of the result's dtype; ``full`` makes a constant that takes the
-  result's place, so tensor and scalar constants materialize differently under one policy.
+  result's place, or returns None if it cannot preserve storage.
   """
 
   kind: Callable[[Node], str | None]
   const: Callable[[Node], int | float | None]
   fits: Callable[[Node, Node], bool]
   scalar: Callable[[int | float, Node], Node]
-  full: Callable[[int | float, Node], Node]
+  full: Callable[[int | float, Node], Node | None]
   build: Callable[[str, tuple[Node, ...], Node], Node]
 
 
@@ -126,14 +126,14 @@ def _expr_const(e: Expr) -> int | float | None:
   return first.item() if bool(np.all(e.value == first)) else None
 
 
-def _expr_full(value: int | float, like: Expr) -> Expr:
-  return Expr.const(np.full(like.shape, value), dtype=like.type.dtype, lowering=like.lowering)
+def _expr_full(value: int | float, like: Expr) -> Expr | None:
+  return None if like.type.pattern is not None else Expr.const(np.full(like.shape, value), dtype=like.type.dtype, lowering=like.lowering)
 
 
 ARITH_EXPR: Arith[Expr] = Arith(
   kind=lambda e: str(e.op) if str(e.op) in _KINDS else None,
   const=_expr_const,
-  fits=lambda arg, result: arg.shape == result.shape and arg.type.dtype == result.type.dtype,
+  fits=lambda arg, result: arg.shape == result.shape and arg.type.dtype == result.type.dtype and arg.type.pattern is result.type.pattern,
   scalar=lambda value, like: Expr.const(value, dtype=like.type.dtype, lowering=like.lowering),
   full=_expr_full,
   build=lambda kind, args, like: Expr(ExprOp(kind), args, like.type, lowering=like.lowering),

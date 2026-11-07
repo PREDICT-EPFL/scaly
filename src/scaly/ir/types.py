@@ -8,6 +8,7 @@ from hashlib import sha256
 from operator import index, mul
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
+from threading import Lock
 from typing import Any, Literal
 import weakref
 
@@ -235,6 +236,7 @@ def _check_compressed_ptr(name: str, ptr: tuple[int, ...], n_outer: int, nnz: in
 
 
 _PATTERN_CACHE: weakref.WeakValueDictionary[tuple, CanonicalPattern] = weakref.WeakValueDictionary()
+_PATTERN_LOCK = Lock()
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
@@ -254,14 +256,15 @@ class CanonicalPattern:
     pattern = SparsityPattern(shape, rows, cols)
     coordinates = sorted((index(r), index(c)) for r, c in zip(pattern.rows, pattern.cols))
     key = ((index(pattern.shape[0]), index(pattern.shape[1])), tuple(r for r, _ in coordinates), tuple(c for _, c in coordinates))
-    if (cached := _PATTERN_CACHE.get(key)) is not None:
-      return cached
-    instance = object.__new__(cls)
-    for name, value in zip(("shape", "rows", "cols"), key, strict=True):
-      object.__setattr__(instance, name, value)
-    object.__setattr__(instance, "digest", sha256(repr(key).encode("ascii")).hexdigest())
-    _PATTERN_CACHE[key] = instance
-    return instance
+    with _PATTERN_LOCK:
+      if (cached := _PATTERN_CACHE.get(key)) is not None:
+        return cached
+      instance = object.__new__(cls)
+      for name, value in zip(("shape", "rows", "cols"), key, strict=True):
+        object.__setattr__(instance, name, value)
+      object.__setattr__(instance, "digest", sha256(repr(key).encode("ascii")).hexdigest())
+      _PATTERN_CACHE[key] = instance
+      return instance
 
   @property
   def nnz(self) -> int:
