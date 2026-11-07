@@ -70,7 +70,7 @@ def _structural_key(expr: Expr) -> tuple[Any, ...]:
   children = tuple(arg.id for arg in expr.args)
   if expr.op in {ExprOp.ADD, ExprOp.MUL}:
     children = tuple(sorted(children))
-  return (
+  key = (
     ExprOp(expr.op).value,
     expr.name,
     expr.type.shape,
@@ -81,6 +81,7 @@ def _structural_key(expr: Expr) -> tuple[Any, ...]:
     value_key,
     children,
   )
+  return key if expr.type.pattern is None else (*key, ("pattern", expr.type.pattern.digest))
 
 
 def _all_args_const(e: Expr) -> bool:
@@ -148,7 +149,7 @@ def _is_one(e: Expr) -> bool:
 
 
 def _arith(e: Expr) -> Expr:
-  return fold(ARITH_EXPR, e)
+  return e if e.type.pattern is not None else fold(ARITH_EXPR, e)
 
 
 def _zero_unary(e: Expr) -> Expr:
@@ -169,7 +170,7 @@ def _transpose_identity(e: Expr) -> Expr:
 
 
 def _matmul_zero(e: Expr) -> Expr:
-  return zeros_like(e) if _is_zero(e.args[0]) or _is_zero(e.args[1]) else e
+  return zeros_like(e) if e.type.pattern is None and (_is_zero(e.args[0]) or _is_zero(e.args[1])) else e
 
 
 def _slice_of_slice_step1(e: Expr) -> bool:

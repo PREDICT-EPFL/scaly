@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import reduce
-from operator import mul
+from hashlib import sha256
+from operator import index, mul
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
+from threading import Lock
 from typing import Any, Literal
+import weakref
 
 import numpy as np
 
@@ -133,6 +136,8 @@ class SparsityPattern:
   cols: tuple[int, ...]
 
   def __post_init__(self) -> None:
+    for name in ("shape", "rows", "cols"):
+      object.__setattr__(self, name, tuple(getattr(self, name)))
     if len(self.shape) != 2:
       raise ValueError(f"sparsity shape must be rank-2, got {self.shape}")
     _check_shape("sparsity", self.shape)
@@ -146,6 +151,14 @@ class SparsityPattern:
   @property
   def nnz(self) -> int:
     return len(self.rows)
+
+  def canonicalize(self) -> tuple[CanonicalPattern, tuple[int, ...]]:
+    """Return the interned row-major pattern and indices that reorder its values.
+
+    ``values_canonical[k] = values[permutation[k]]``. Stored zeros keep their coordinates.
+    """
+    order = tuple(sorted(range(self.nnz), key=lambda i: (self.rows[i], self.cols[i])))
+    return CanonicalPattern(self.shape, tuple(self.rows[i] for i in order), tuple(self.cols[i] for i in order)), order
 
   @staticmethod
   def empty(shape: tuple[int, int]) -> SparsityPattern:
@@ -222,6 +235,72 @@ def _check_compressed_ptr(name: str, ptr: tuple[int, ...], n_outer: int, nnz: in
     raise ValueError(f"{name} must be nondecreasing")
 
 
+_PATTERN_CACHE: weakref.WeakValueDictionary[tuple, CanonicalPattern] = weakref.WeakValueDictionary()
+_PATTERN_LOCK = Lock()
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
+class CanonicalPattern:
+  """Immutable stored coordinates, interned by content and compared by identity.
+
+  Coordinates have row-major order. The digest describes the shape and coordinates and is
+  computed once per interned instance. Physical buffer order belongs to lowering.
+  """
+
+  shape: tuple[int, int]
+  rows: tuple[int, ...]
+  cols: tuple[int, ...]
+  digest: str
+
+  def __new__(cls, shape: tuple[int, int], rows: tuple[int, ...], cols: tuple[int, ...]) -> CanonicalPattern:
+    pattern = SparsityPattern(shape, rows, cols)
+    coordinates = sorted((index(r), index(c)) for r, c in zip(pattern.rows, pattern.cols))
+    key = ((index(pattern.shape[0]), index(pattern.shape[1])), tuple(r for r, _ in coordinates), tuple(c for _, c in coordinates))
+    with _PATTERN_LOCK:
+      if (cached := _PATTERN_CACHE.get(key)) is not None:
+        return cached
+      instance = object.__new__(cls)
+      for name, value in zip(("shape", "rows", "cols"), key, strict=True):
+        object.__setattr__(instance, name, value)
+      object.__setattr__(instance, "digest", sha256(repr(key).encode("ascii")).hexdigest())
+      _PATTERN_CACHE[key] = instance
+      return instance
+
+  @property
+  def nnz(self) -> int:
+    return len(self.rows)
+
+  def to_mask(self) -> np.ndarray:
+    """Return a Boolean matrix of the stored coordinates."""
+    return SparsityPattern(self.shape, self.rows, self.cols).to_mask()
+
+  def union(self, other: CanonicalPattern) -> CanonicalPattern:
+    """Return the coordinates stored in either pattern."""
+    return self._combine(other, intersection=False)
+
+  def intersection(self, other: CanonicalPattern) -> CanonicalPattern:
+    """Return the coordinates stored in both patterns."""
+    return self._combine(other, intersection=True)
+
+  def _combine(self, other: CanonicalPattern, *, intersection: bool) -> CanonicalPattern:
+    if self.shape != other.shape:
+      raise ValueError(f"pattern shapes differ: {self.shape} and {other.shape}")
+    a, b = set(zip(self.rows, self.cols)), set(zip(other.rows, other.cols))
+    coordinates = a & b if intersection else a | b
+    return CanonicalPattern(self.shape, tuple(r for r, _ in coordinates), tuple(c for _, c in coordinates))
+
+  def matmul(self, other: CanonicalPattern) -> CanonicalPattern:
+    """Return the Boolean matrix product of two patterns."""
+    from scipy import sparse
+
+    if self.shape[1] != other.shape[0]:
+      raise ValueError(f"cannot multiply patterns {self.shape} and {other.shape}")
+    a = sparse.coo_array((np.ones(self.nnz, dtype=bool), (self.rows, self.cols)), shape=self.shape).tocsr()
+    b = sparse.coo_array((np.ones(other.nnz, dtype=bool), (other.rows, other.cols)), shape=other.shape).tocsr()
+    product = (a @ b).tocoo()
+    return CanonicalPattern((self.shape[0], other.shape[1]), tuple(map(int, product.row)), tuple(map(int, product.col)))
+
+
 @dataclass(frozen=True, slots=True)
 class TensorType:
   """The shape and dtype of an expression, and whether it is differentiable (``diff``)."""
@@ -229,11 +308,17 @@ class TensorType:
   shape: tuple[int, ...] = ()
   dtype: DType = dtypes.float64
   diff: bool = True
+  pattern: CanonicalPattern | None = None
 
   def __post_init__(self) -> None:
     _check_shape("tensor", self.shape)
     if not isinstance(self.dtype, DType):
       object.__setattr__(self, "dtype", as_dtype(self.dtype))
+    if self.pattern is not None:
+      if not isinstance(self.pattern, CanonicalPattern):
+        raise TypeError("tensor pattern must be canonical; use SparsityPattern.canonicalize()")
+      if self.ndim < 2 or self.shape[-2:] != self.pattern.shape:
+        raise ValueError(f"tensor last two axes {self.shape[-2:]} do not match pattern shape {self.pattern.shape}")
 
   @property
   def ndim(self) -> int:
@@ -242,6 +327,16 @@ class TensorType:
   @property
   def size(self) -> int:
     return reduce(mul, self.shape, 1)
+
+  @property
+  def storage_shape(self) -> tuple[int, ...]:
+    """The stored values' shape, with one shared pattern per batch entry."""
+    return self.shape if self.pattern is None else (*self.shape[:-2], self.pattern.nnz)
+
+  @property
+  def storage_size(self) -> int:
+    """The number of stored values, including explicit zeros."""
+    return reduce(mul, self.storage_shape, 1)
 
   @property
   def is_scalar(self) -> bool:

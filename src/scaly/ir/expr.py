@@ -15,11 +15,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Generator, Iterable, Mapping
+from typing import Any, Generator, Iterable, Literal, Mapping
 
 import numpy as np
 
-from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes, frozen
+from .types import CanonicalPattern, DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes, frozen
 
 
 class ExprOp(StrEnum):
@@ -136,6 +136,7 @@ class OpInfo:
   op: ExprOp
   arity: int | None
   differentiable: bool = True
+  pattern_rule: Literal["preserve", "union", "intersection", "matmul"] | None = None
 
   @property
   def name(self) -> str:
@@ -145,26 +146,26 @@ class OpInfo:
 OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.INPUT: OpInfo(ExprOp.INPUT, 0),
   ExprOp.CONST: OpInfo(ExprOp.CONST, 0, False),
-  ExprOp.NEG: OpInfo(ExprOp.NEG, 1),
-  ExprOp.SIN: OpInfo(ExprOp.SIN, 1),
+  ExprOp.NEG: OpInfo(ExprOp.NEG, 1, pattern_rule="preserve"),
+  ExprOp.SIN: OpInfo(ExprOp.SIN, 1, pattern_rule="preserve"),
   ExprOp.COS: OpInfo(ExprOp.COS, 1),
-  ExprOp.TAN: OpInfo(ExprOp.TAN, 1),
-  ExprOp.ASIN: OpInfo(ExprOp.ASIN, 1),
+  ExprOp.TAN: OpInfo(ExprOp.TAN, 1, pattern_rule="preserve"),
+  ExprOp.ASIN: OpInfo(ExprOp.ASIN, 1, pattern_rule="preserve"),
   ExprOp.ACOS: OpInfo(ExprOp.ACOS, 1),
-  ExprOp.ATAN: OpInfo(ExprOp.ATAN, 1),
-  ExprOp.SINH: OpInfo(ExprOp.SINH, 1),
+  ExprOp.ATAN: OpInfo(ExprOp.ATAN, 1, pattern_rule="preserve"),
+  ExprOp.SINH: OpInfo(ExprOp.SINH, 1, pattern_rule="preserve"),
   ExprOp.COSH: OpInfo(ExprOp.COSH, 1),
-  ExprOp.TANH: OpInfo(ExprOp.TANH, 1),
-  ExprOp.ERF: OpInfo(ExprOp.ERF, 1),
+  ExprOp.TANH: OpInfo(ExprOp.TANH, 1, pattern_rule="preserve"),
+  ExprOp.ERF: OpInfo(ExprOp.ERF, 1, pattern_rule="preserve"),
   ExprOp.EXP: OpInfo(ExprOp.EXP, 1),
   ExprOp.LOG: OpInfo(ExprOp.LOG, 1),
-  ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1),
-  ExprOp.ABS: OpInfo(ExprOp.ABS, 1),
-  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, False),
-  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, False),
-  ExprOp.ADD: OpInfo(ExprOp.ADD, 2),
-  ExprOp.SUB: OpInfo(ExprOp.SUB, 2),
-  ExprOp.MUL: OpInfo(ExprOp.MUL, 2),
+  ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1, pattern_rule="preserve"),
+  ExprOp.ABS: OpInfo(ExprOp.ABS, 1, pattern_rule="preserve"),
+  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, False, pattern_rule="preserve"),
+  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, False, pattern_rule="preserve"),
+  ExprOp.ADD: OpInfo(ExprOp.ADD, 2, pattern_rule="union"),
+  ExprOp.SUB: OpInfo(ExprOp.SUB, 2, pattern_rule="union"),
+  ExprOp.MUL: OpInfo(ExprOp.MUL, 2, pattern_rule="intersection"),
   ExprOp.DIV: OpInfo(ExprOp.DIV, 2),
   ExprOp.POW: OpInfo(ExprOp.POW, 2),
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2),
@@ -178,13 +179,58 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1),
   ExprOp.STACK: OpInfo(ExprOp.STACK, None),
   ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None),
-  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2),
+  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, pattern_rule="matmul"),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
   ExprOp.PRINT: OpInfo(ExprOp.PRINT, None),
-  ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1),
+  ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1, pattern_rule="preserve"),
 }
+
+
+def _broadcast_pattern(type_: TensorType, shape: tuple[int, int]) -> CanonicalPattern:
+  pattern = type_.pattern
+  if pattern is None:
+    return CanonicalPattern(shape, tuple(r for r in range(shape[0]) for _ in range(shape[1])), tuple(range(shape[1])) * shape[0])
+  if pattern.shape == shape:
+    return pattern
+  if broadcast_shape(pattern.shape, shape) != shape:
+    raise ValueError(f"cannot broadcast pattern {pattern.shape} to {shape}")
+  coordinates = [
+    (r, c)
+    for row, col in zip(pattern.rows, pattern.cols, strict=True)
+    for r in (range(shape[0]) if pattern.shape[0] == 1 else (row,))
+    for c in (range(shape[1]) if pattern.shape[1] == 1 else (col,))
+  ]
+  return CanonicalPattern(shape, tuple(r for r, _ in coordinates), tuple(c for _, c in coordinates))
+
+
+def stored_pattern(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...]) -> CanonicalPattern | None:
+  """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
+  if not any(t.pattern is not None for t in types):
+    return None
+  rule = OP_INFO[ExprOp(op)].pattern_rule
+  if rule is None or len(shape) < 2:
+    raise ValueError(f"{op} has no stored-pattern rule for sparse operands with output shape {shape}; use to_dense() explicitly")
+  if rule == "preserve":
+    return types[0].pattern
+  matrix_shape = (shape[-2], shape[-1])
+  if rule == "matmul":
+    if any(t.ndim != 2 for t in types):
+      raise ValueError(f"{op} has no stored-pattern rule for these ranks; use to_dense() explicitly")
+    x, y = types
+    return _broadcast_pattern(x, (x.shape[0], x.shape[1])).matmul(_broadcast_pattern(y, (y.shape[0], y.shape[1])))
+  a, b = (_broadcast_pattern(t, matrix_shape) for t in types)
+  return a.union(b) if rule == "union" else a.intersection(b)
+
+
+def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: TensorType) -> None:
+  """Reject an unsupported sparse operation or an output pattern that disagrees with its rule."""
+  if op == ExprOp.INPUT:
+    return
+  expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape)
+  if type_.pattern is not expected:
+    raise ValueError(f"{op} output pattern disagrees with its stored-pattern rule")
 
 
 def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
@@ -262,6 +308,8 @@ class Expr:
     if op is None:  # callers like ``copy.copy`` / pickling instantiate w/o args
       return object.__new__(cls)
     type_eff = type if type is not None else TensorType()
+    if type_eff.pattern is not None or any(arg.type.pattern is not None for arg in args):
+      check_stored_pattern(op, args, type_eff)
     attrs_eff = attrs if attrs is not None else {}
     key = _intern_key(op, args, type_eff, name, value, attrs_eff, lowering)
     cached = _NODE_CACHE.get(key)
@@ -344,6 +392,8 @@ class Expr:
         value_key,
         tuple(arg._key_cache for arg in node.args),
       )
+      if node.type.pattern is not None:
+        key = (*key, ("pattern", node.type.pattern.digest))
       object.__setattr__(node, "_key_cache", key)
     assert self._key_cache is not None
     return self._key_cache
@@ -545,6 +595,8 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
       return (float, struct.pack("<d", v))
     if isinstance(v, Expr):
       return v.structural_key()
+    if isinstance(v, CanonicalPattern):
+      return v
     if hasattr(v, "structural_key") and callable(getattr(v, "structural_key")):
       return v.structural_key()
     if hasattr(v, "name") and hasattr(v, "input_names") and hasattr(v, "output_names"):
@@ -628,14 +680,17 @@ def promote_dtype(*exprs: Expr) -> DType:
 
 
 def unary(op: ExprOp | str, x: Expr) -> Expr:
-  return Expr(op, (x,), TensorType(x.shape, dtype=x.type.dtype, diff=op_diff(op, x)), lowering=x.lowering)
+  return Expr(
+    op, (x,), TensorType(x.shape, dtype=x.type.dtype, diff=op_diff(op, x), pattern=stored_pattern(op, (x.type,), x.shape)), lowering=x.lowering
+  )
 
 
 def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
+  shape = broadcast_shape(x.shape, y.shape)
   return Expr(
     op,
     (x, y),
-    TensorType(broadcast_shape(x.shape, y.shape), dtype=promote_dtype(x, y), diff=op_diff(op, x, y)),
+    TensorType(shape, dtype=promote_dtype(x, y), diff=op_diff(op, x, y), pattern=stored_pattern(op, (x.type, y.type), shape)),
     lowering=common_lowering(x, y),
   )
 
@@ -775,7 +830,12 @@ def matmul(x: Expr, y: Expr) -> Expr:
     shape = (x.shape[0], y.shape[1])
   else:
     raise NotImplementedError(f"matmul shape inference for {x.shape} @ {y.shape}")
-  return Expr(ExprOp.MATMUL, (x, y), TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y)), lowering=common_lowering(x, y))
+  return Expr(
+    ExprOp.MATMUL,
+    (x, y),
+    TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y), pattern=stored_pattern(ExprOp.MATMUL, (x.type, y.type), shape)),
+    lowering=common_lowering(x, y),
+  )
 
 
 def dot(x: Any, y: Any) -> Expr:
@@ -952,7 +1012,7 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
 def substitute(expr: Expr, replacements: Mapping[Expr, Expr]) -> Expr:
   """Replace expressions simultaneously and rebuild only their changed ancestors."""
   for source, replacement in replacements.items():
-    if source.shape != replacement.shape or source.type.dtype != replacement.type.dtype:
+    if source.shape != replacement.shape or source.type.dtype != replacement.type.dtype or source.type.pattern is not replacement.type.pattern:
       raise ValueError(
         f"cannot substitute {source.name or source.op} {source.type.dtype}{source.shape} with "
         f"{replacement.name or replacement.op} {replacement.type.dtype}{replacement.shape}"
