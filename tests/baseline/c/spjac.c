@@ -138,16 +138,16 @@ static inline __attribute__((always_inline)) void lanes_2(long long i, long long
   for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
   lanes_8_8_8_8_vec_st(&s1[(i) + 0], b, n);
 }
-static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, const double* k5, double* s0, const double* s1, int64_t d0_t7) {
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, const double* k5, double* s0, const double* s1, int64_t i_t7_0) {
   int64_t v0[SCALY_WIDTH_4_4_4_4];
-  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) v0[k] = (d0_t7 + (((i + k) < 3 ? (i + k) : 3) * 12));
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) v0[k] = ((((i + k) < 3 ? (i + k) : 3) * 12) + i_t7_0);
   double ls[SCALY_WIDTH_4_4_4_4];
   for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) ls[k] = s1[v0[k]];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
   double l_2s[SCALY_WIDTH_4_4_4_4];
   for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l_2s[k] = k5[v0[k]];
   lanes_4_4_4_4_vec l_2 = *(const lanes_4_4_4_4_vec_mem*)l_2s;
-  lanes_4_4_4_4_vec_st(&s0[(((d0_t7 * 4) + i)) + 0], (l - l_2), n);
+  lanes_4_4_4_4_vec_st(&s0[(((i_t7_0 * 4) + i)) + 0], (l - l_2), n);
 }
 static inline __attribute__((always_inline)) void lanes_4(long long i, long long n, const int64_t* k8, const double* s0, double* spjac_eq_z) {
   double ls[SCALY_WIDTH_8_8_8_8];
@@ -184,12 +184,12 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
   for (long long i_t3 = 0; i_t3 < 24; ++i_t3) {
     s1[k4[i_t3]] = s0[k2[i_t3]];
   }
-  for (long long d0_t7 = 0; d0_t7 < 12; ++d0_t7) {
-    for (long long d1_t7_start = 0; d1_t7_start <= 4 - SCALY_WIDTH_4_4_4_4; d1_t7_start += SCALY_WIDTH_4_4_4_4) {
-      lanes_3(d1_t7_start, SCALY_WIDTH_4_4_4_4, k5, s0, s1, d0_t7);
+  for (long long i_t7_0 = 0; i_t7_0 < 12; ++i_t7_0) {
+    for (long long i_t7_start = 0; i_t7_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t7_start += SCALY_WIDTH_4_4_4_4) {
+      lanes_3(i_t7_start, SCALY_WIDTH_4_4_4_4, k5, s0, s1, i_t7_0);
     }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, k5, s0, s1, d0_t7);
+    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, k5, s0, s1, i_t7_0);
 #endif
   }
   for (long long i_spjac_eq_z_start = 0; i_spjac_eq_z_start <= 36 - SCALY_WIDTH_8_8_8_8; i_spjac_eq_z_start += SCALY_WIDTH_8_8_8_8) {

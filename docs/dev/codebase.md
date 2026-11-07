@@ -29,7 +29,7 @@ src/scaly/
     arith.py             shared arithmetic identities (simplify_arith, fold_program)
     expr.py              simplify, constant folding, CSE            (Expr -> Expr)
     lowering/           expression-to-program lowering
-      ctx.py            lowering state, rule registry, flat indices, lower_function
+      ctx.py            lowering state, rule registry, loop nests and access maps, lower_function
       elementwise.py    unary and binary arithmetic with broadcasting
       movement.py       constants, reshapes, slices, transposes, stacks, concatenations
       reduce.py         full tensor reductions
