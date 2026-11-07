@@ -1,0 +1,24 @@
+name: Check installed distributions
+description: Install the wheels into a clean environment and solve with every backend.
+
+# Installs the wheels the build job made into a clean environment, the way a user gets them, and
+# solves with every backend.
+runs:
+  using: composite
+  steps:
+    # A slim image carries no Fortran runtime, so this proves the IPOPT wheel brings its own.
+    - name: Solve with every backend, plain and through zig cc
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = Linux ]; then
+          docker run --rm -v "$PWD:/work" -w /work "python:$(cat .python-version)-slim" sh -c \
+            'apt-get update -q && apt-get install -yq --no-install-recommends gcc libc6-dev && .github/scripts/install_check.sh python'
+        else
+          .github/scripts/install_check.sh "$(uv python find)"
+        fi
+
+    - name: Fresh install without the toolchain extra
+      if: runner.os == 'Windows'
+      shell: bash
+      run: uv run --no-project .github/scripts/windows_install.py dist "$(cat .python-version)"

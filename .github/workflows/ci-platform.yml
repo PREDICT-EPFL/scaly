@@ -1,0 +1,91 @@
+name: CI platforms
+
+on:
+  workflow_call:
+    inputs:
+      suite:
+        description: ci or smoke
+        type: string
+        default: ci
+      environments:
+        description: JSON matrix with platform, runner and optional label, python, cc, cxx, toolchain and save-cache
+        type: string
+        default: >-
+          [{"platform":"linux-x86_64","runner":"ubuntu-latest"},
+           {"platform":"linux-arm64","runner":"ubuntu-24.04-arm"},
+           {"platform":"macos-arm64","runner":"macos-15"},
+           {"platform":"windows-x86_64","runner":"windows-latest"}]
+
+jobs:
+  platform:
+    name: ${{ matrix.label || matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.environments) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          prune-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: ${{ matrix.platform }}
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Build
+        id: build
+        uses: ./.github/actions/build
+        with:
+          platform: ${{ matrix.platform }}
+
+      # `ci.yml` reads whether this step ran to report whether the native libraries were built.
+      - name: Save the native libraries
+        if: steps.build.outputs.built == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/scaly/solvers
+          key: native-${{ matrix.platform }}-${{ hashFiles('plugins/*/native_build.py', 'plugins/*/src/*/build_config.json', 'plugins/*/licenses/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Smoke builds independently in the same run, so its artifact names must be distinct.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ inputs.suite == 'smoke' && 'smoke-' || '' }}${{ matrix.platform }}
+          path: |
+            dist/*.whl
+            !dist/*-none-any.whl
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.platform == 'linux-x86_64'
+        with:
+          name: dist-${{ inputs.suite == 'smoke' && 'smoke-' || '' }}pure
+          path: |
+            dist/*-none-any.whl
+            dist/*.tar.gz
+          retention-days: 90
+
+      - name: Install
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.suite == 'ci' }}
+        uses: ./.github/actions/install
+
+      - name: Test
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: ./.github/actions/test
+        with:
+          platform: ${{ matrix.platform }}
+          suite: ${{ inputs.suite }}
+          python: ${{ matrix.python }}
+          cc: ${{ matrix.cc }}
+          cxx: ${{ matrix.cxx }}
+          toolchain: ${{ matrix.toolchain || false }}
+          save-cache: ${{ matrix.save-cache || false }}
+          download: 'false'

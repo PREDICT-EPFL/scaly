@@ -120,32 +120,22 @@ jobs:
             exit 1
           fi
 
-  build:
+  platforms:
     needs: queue
     if: needs.queue.outputs.tested != 'true'
-    uses: ./.github/workflows/ci-build.yml
-
-  # A failed build on any platform skips every platform's tests and install checks, since a job
-  # cannot wait for one matrix entry of another. A failing build is a bug to fix before anything
-  # else, and its fix starts a new run anyway.
-  test:
-    needs: build
-    uses: ./.github/workflows/ci-test.yml
+    uses: ./.github/workflows/ci-platform.yml
 
   smoke:
-    needs: build
-    uses: ./.github/workflows/ci-test.yml
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
+    uses: ./.github/workflows/ci-platform.yml
     with:
       suite: smoke
       environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
 
-  install:
-    needs: build
-    uses: ./.github/workflows/ci-install.yml
-
   # A skipped required check counts as passed, so this runs whatever happened before it.
   ci:
-    needs: [queue, lint, docs, build, test, smoke, install]
+    needs: [queue, lint, docs, platforms, smoke]
     if: always() && needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -158,22 +148,23 @@ jobs:
         run: |
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq '.jobs[]' | jq -s .)
           result() { r=$(jq -r --arg name "$1" '.[] | select(.name == $name) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
+          step() { r=$(jq -r --arg name "$1" --arg step "$2" '.[] | select(.name == $name) | .steps[]? | select(.name == $step) | .conclusion // "not finished"' <<<"$jobs"); echo "${r:-not run}"; }
           {
             echo "| Platform | Native code | Install | Tests | Smoke |"
             echo "| --- | --- | --- | --- | --- |"
-            for platform in $(jq -r '.[].name | select(test("^(build|test|install) / ")) | sub("^[a-z]+ / "; "")' <<<"$jobs" | sort -u); do
-              native=$(result "build / $platform")
+            for platform in linux-x86_64 linux-arm64 macos-arm64 windows-x86_64; do
+              native=$(step "platforms / $platform" Build)
               if [ "$native" = success ]; then
-                saved=$(jq -r --arg name "build / $platform" '.[] | select(.name == $name) | .steps[] | select(.name == "Save the native libraries") | .conclusion' <<<"$jobs")
+                saved=$(step "platforms / $platform" "Save the native libraries")
                 if [ "$saved" = success ]; then native=built; else native=cached; fi
               fi
               smoke="not run"
-              if [ "$platform" = linux-x86_64 ]; then smoke=$(result "smoke / $platform"); fi
-              echo "| $platform | $native | $(result "install / $platform") | $(result "test / $platform") | $smoke |"
+              if [ "$platform" = linux-x86_64 ]; then smoke=$(step "smoke / $platform" Test); fi
+              echo "| $platform | $native | $(step "platforms / $platform" Install) | $(step "platforms / $platform" Test) | $smoke |"
             done
             echo
             echo "lint: $(result lint), docs: $(result docs)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then
             echo "::error::Not every job succeeded: $(echo $failed)"
