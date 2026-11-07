@@ -218,6 +218,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       raise ValueError(f"function {name!r} declares non-input expressions as inputs: {non_inputs}")
     verify_expr((*self.inputs, *self.results))
     for expr in (*self.inputs, *self.results):
+      if expr.type.pattern is not None:
+        raise NotImplementedError(f"function {name!r} cannot lower tensors with stored patterns")
       if expr.type.dtype not in dtypes.all():
         raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")
 

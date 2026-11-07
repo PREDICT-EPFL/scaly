@@ -38,6 +38,7 @@ def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
   object.__setattr__(bad_type, "shape", shape)
   object.__setattr__(bad_type, "dtype", expr.type.dtype)
   object.__setattr__(bad_type, "diff", expr.type.diff)
+  object.__setattr__(bad_type, "pattern", expr.type.pattern)
   forged = object.__new__(Expr)
   for f in fields(Expr):
     object.__setattr__(forged, f.name, getattr(expr, f.name))

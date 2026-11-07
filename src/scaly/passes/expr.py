@@ -70,7 +70,7 @@ def _structural_key(expr: Expr) -> tuple[Any, ...]:
   children = tuple(arg.id for arg in expr.args)
   if expr.op in {ExprOp.ADD, ExprOp.MUL}:
     children = tuple(sorted(children))
-  return (
+  key = (
     ExprOp(expr.op).value,
     expr.name,
     expr.type.shape,
@@ -81,6 +81,7 @@ def _structural_key(expr: Expr) -> tuple[Any, ...]:
     value_key,
     children,
   )
+  return key if expr.type.pattern is None else (*key, ("pattern", expr.type.pattern.digest))
 
 
 def _all_args_const(e: Expr) -> bool:
