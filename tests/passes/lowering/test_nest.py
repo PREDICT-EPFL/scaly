@@ -122,9 +122,13 @@ def test_movement_matches_numpy(case, isolated_cache) -> None:
   _check(f"nest_mv_{case}", shapes, body, reference)
 
 
-@pytest.mark.parametrize("case", sorted(set(_MOVEMENT) - {"gather"}))
+_STRIDED_SLICES = {"slice_steps", "slice_int", "slice_last", "chain"}
+
+
+@pytest.mark.parametrize("case", sorted(set(_MOVEMENT) - {"gather"} - _STRIDED_SLICES))
 def test_dense_kernels_index_without_division(case) -> None:
-  """Every dense kernel reads and writes at strides times coordinates; only a gather's table may divide."""
+  """Every dense kernel reads and writes at strides times coordinates, except a gather's table and a
+  strided slice copy."""
   shapes, body, _ = _MOVEMENT[case]
   assert not _divides(_lowered(_compiled(f"nest_div_{case}", shapes, body)))
 
@@ -132,6 +136,16 @@ def test_dense_kernels_index_without_division(case) -> None:
 @pytest.mark.parametrize("case", sorted(_ELEMENTWISE))
 def test_broadcasts_index_without_division(case) -> None:
   assert not _divides(_lowered(_compiled(f"nest_bdiv_{case}", _ELEMENTWISE[case], lambda a, b: a * b)))
+
+
+def test_strided_slice_copies_in_one_flat_loop() -> None:
+  """Lanes over a nest of short rows split each row's store across cache lines, so until lanes handle
+  nests a strided slice copy is one flat loop whose source coordinates divide."""
+  (copy,) = _nests(_lowered(_compiled("nest_flat_slice", ((7, 27),), lambda a: a[:, 9:18])))
+  (rng,) = _loops(copy)
+  assert int(rng.args[1].attrs["value"]) == 63
+  assert _strides(copy, "y") == [{rng.attrs["name"]: 1}]
+  assert _divides(copy)
 
 
 def test_contiguous_axes_merge_into_one_loop() -> None:

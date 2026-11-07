@@ -68,8 +68,9 @@ def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...
 @lowers(ExprOp.SLICE)
 def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   """General SLICE: integer indices drop a dim, slices keep one. A contiguous slice (constant
-  flat offset, no stride) becomes a zero-copy pointer alias of its source; otherwise a nest over the
-  output reads source coordinate ``start + step * c``. Covers rank-1, multi-dim, integer, strided."""
+  flat offset, no stride) becomes a zero-copy pointer alias of its source; otherwise one flat loop
+  over the output reads source coordinate ``start + step * c``. Covers rank-1, multi-dim, integer,
+  strided."""
   src = node.args[0]
   src_shape = src.shape
   index = node.attrs["index"]
@@ -79,7 +80,11 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     ctx.value_buffers[node.id] = alias.attrs["name"]
     return
   out = ctx.alloc_tmp(node)
-  ranges, coords = ctx.nest(node.shape, f"i_{out.attrs['name']}")
+  # One flat loop, its coordinates as quotients and remainders, rather than a nest of short rows:
+  # lanes over such a nest split each row's vector store across cache lines, and the loads that
+  # read the copy back stall (chain M=9 ran 1.4 times slower). Until lanes handle nests (#71).
+  ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
+  coords = [p.const_int(0) if extent == 1 else _flat_coordinate(k, node.shape, dim) for dim, extent in enumerate(node.shape)]
   source: list[ProgramNode] = []
   out_dim = 0
   for dim, item in enumerate(index):
@@ -89,7 +94,14 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     start, _stop, step = item.indices(int(src_shape[dim]))
     source.append(_shift(coords[out_dim], start, step))
     out_dim += 1
-  ctx.emit(ranges, [ctx.write(node, coords, ctx.read(src, source))])
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read(src, source))])
+
+
+def _flat_coordinate(k: ProgramNode, shape: tuple[int, ...], dim: int) -> ProgramNode:
+  """Axis ``dim``'s coordinate of row-major position ``k`` in ``shape``."""
+  stride = _stride(shape, dim)
+  quotient = k if stride == 1 else p.div(k, p.const_int(stride))
+  return quotient if dim == 0 else p.mod(quotient, p.const_int(int(shape[dim])))
 
 
 @lowers(ExprOp.TRANSPOSE)
