@@ -416,12 +416,13 @@ class LowerCtx:
     """Append ``body`` inside ``ranges``, outermost first.
 
     A static empty range drops the whole nest, so an empty tensor emits no store. Adjacent ranges
-    merge where every access is contiguous across them. A unit loop offsets each constant view
-    index by its variable, the flat form of a one-element domain the program passes match on."""
+    merge where every access is contiguous across them. A unit loop from zero offsets each constant
+    view index by its variable, which is zero, the flat form of a one-element domain the program
+    passes match on."""
     if any(trip_count(r) == 0 for r in ranges):
       return
     merged, stmts = _merge(list(ranges), list(body))
-    if len(merged) == 1 and trip_count(merged[0]) == 1:
+    if len(merged) == 1 and trip_count(merged[0]) == 1 and merged[0].args[0] == p.const_int(0):
       unit = p.var(merged[0].attrs["name"])
 
       def offset(view: ProgramNode) -> ProgramNode:
@@ -490,7 +491,8 @@ def _accesses(body: Sequence[ProgramNode], names: frozenset[str]) -> list[dict[s
 
 
 def _merge(ranges: list[ProgramNode], body: list[ProgramNode]) -> tuple[list[ProgramNode], list[ProgramNode]]:
-  """Merge adjacent loops wherever every view in ``body`` is contiguous across them.
+  """Merge adjacent loops wherever every view in ``body``, and in the bounds of the loops inside, is
+  contiguous across them.
 
   Outer ``a`` over ``[0, da)`` and inner ``b`` over ``[0, db)`` merge when each view index reads
   ``ca * a + cb * b + rest`` with ``ca == cb * db``: then ``b`` over ``[0, da * db)`` with ``a = 0``
@@ -504,11 +506,11 @@ def _merge(ranges: list[ProgramNode], body: list[ProgramNode]) -> tuple[list[Pro
       and db is not None
       and outer.attrs["kind"] == inner.attrs["kind"]
       and all(r.args[0].op == ProgramOp.CONST_INT and r.args[0].attrs["value"] == 0 and r.args[2].attrs["value"] == 1 for r in (outer, inner))
-      and (accesses := _accesses(body, frozenset((outer.attrs["name"], inner.attrs["name"])))) is not None
+      and (accesses := _accesses([*ranges[k + 2 :], *body], frozenset((outer.attrs["name"], inner.attrs["name"])))) is not None
       and all(c.get(outer.attrs["name"], 0) == c.get(inner.attrs["name"], 0) * db for c in accesses)
     ):
-      body = [fold_index(substitute_var(stmt, outer.attrs["name"], p.const_int(0))) for stmt in body]
-      ranges[k : k + 2] = [p.range_(inner.attrs["name"], 0, da * db, kind=inner.attrs["kind"])]
+      nested, body = ([fold_index(substitute_var(n, outer.attrs["name"], p.const_int(0))) for n in nodes] for nodes in (ranges[k + 2 :], body))
+      ranges[k:] = [p.range_(inner.attrs["name"], 0, da * db, kind=inner.attrs["kind"]), *nested]
     k -= 1
   return ranges, body
 

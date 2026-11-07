@@ -1825,6 +1825,7 @@ tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[none]
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[simplify]
 tests/passes/lowering/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
+tests/passes/lowering/test_nest.py::test_a_loaded_store_offset_is_not_a_producer
 tests/passes/lowering/test_nest.py::test_broadcasts_index_without_division[empty_columns]
 tests/passes/lowering/test_nest.py::test_broadcasts_index_without_division[empty_rows]
 tests/passes/lowering/test_nest.py::test_broadcasts_index_without_division[leading]
@@ -1868,8 +1869,10 @@ tests/passes/lowering/test_nest.py::test_empty_extent_emits_no_store[shapes1-<la
 tests/passes/lowering/test_nest.py::test_empty_extent_emits_no_store[shapes2-<lambda>]
 tests/passes/lowering/test_nest.py::test_empty_extent_emits_no_store[shapes3-<lambda>]
 tests/passes/lowering/test_nest.py::test_fusion_keeps_a_transpose_and_inlines_a_broadcast
+tests/passes/lowering/test_nest.py::test_inner_bounds_can_forbid_a_merge
 tests/passes/lowering/test_nest.py::test_leading_seed_matvec_access_maps
 tests/passes/lowering/test_nest.py::test_leading_seed_matvec_matches_numpy
+tests/passes/lowering/test_nest.py::test_merge_rewrites_the_bounds_of_inner_loops
 tests/passes/lowering/test_nest.py::test_movement_matches_numpy[chain]
 tests/passes/lowering/test_nest.py::test_movement_matches_numpy[concat0]
 tests/passes/lowering/test_nest.py::test_movement_matches_numpy[concat1]
@@ -1889,6 +1892,7 @@ tests/passes/lowering/test_nest.py::test_reshape_reads_a_materialized_transpose_
 tests/passes/lowering/test_nest.py::test_singleton_axes_get_coordinate_zero
 tests/passes/lowering/test_nest.py::test_sparse_row_loop_has_loaded_bounds_and_table_reads
 tests/passes/lowering/test_nest.py::test_sparse_row_loop_matches_numpy
+tests/passes/lowering/test_nest.py::test_unit_loop_not_from_zero_keeps_constant_indices
 tests/passes/test_affine_index.py::test_a_gather_reads_exactly_the_elements_numpy_would[100]
 tests/passes/test_affine_index.py::test_a_gather_reads_exactly_the_elements_numpy_would[120]
 tests/passes/test_affine_index.py::test_a_gather_reads_exactly_the_elements_numpy_would[40_0]

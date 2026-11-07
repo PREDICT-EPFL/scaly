@@ -85,9 +85,15 @@ def inline_producer(stmt: ProgramNode) -> tuple[str, tuple[tuple[str, int], ...]
     stride *= trip
   if len(loops) > 1 and any(trip <= 0 for _, trip in loops[1:]):
     return None
-  variables = {n.attrs["name"] for n in walk_program(index) if n.op == ProgramOp.VAR}
+  nodes = list(walk_program(index))
+  variables = {n.attrs["name"] for n in nodes if n.op == ProgramOp.VAR}
   coefficients = affine_coefficients(index, frozenset(expected))
-  if variables != expected.keys() or coefficients is None or {k: v for k, v in coefficients.items() if v} != expected:
+  if (
+    variables != expected.keys()
+    or any(n.op not in (ProgramOp.VAR, ProgramOp.CONST_INT, ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL) for n in nodes)
+    or coefficients is None
+    or {k: v for k, v in coefficients.items() if v} != expected
+  ):
     return None
   return target.attrs["buffer"], tuple(loops), rhs
 
