@@ -44,8 +44,9 @@ constants can refuse a rewrite, neutral rewrites check pattern identity, and zer
 waits for a replacement with the same storage. The focused 150-test run and types passed.
 The repeated pre-merge hook passed, 2516 tests passed and 91 solver skips. Sol confirmed its
 fixes in the one delta check. One Opus note exposed a lowering-hint rewrite that still inserted
-unsupported RESHAPE; sparse arithmetic with explicit hints now stays as written, with a failing-
-then-passing regression. Its focused 158-test run passed and the final hook is running.
+unsupported RESHAPE, including mixed hints. The final smaller fix retains all sparse arithmetic
+and zero MATMUL nodes. The generic arithmetic adapter is unchanged from main. Regression tests
+failed before each fix, and mutation checks catch removing the guards. The final suite is running.
 Send only the combined fix delta to one fresh low-effort Opus task, then remove this plan and
 mark ready. Do not start another full review. Remaining notes are recorded on #40, #42 and #46.
 Copy/pickle of a canonical pattern is unsupported and has no current consumer; no speculative
