@@ -26,7 +26,7 @@ CALL uses only the callee's own support. Argument specialization belongs to #221
 - [x] Add failing rule, cache, simplification and derivative tests against NumPy.
 - [x] Implement support with the shared pattern algebra and connect simplification.
 - [x] Restrict derivative relations using support, without the #41 rewrite.
-- [ ] Run randomized soundness and mutation checks, the suite, snapshots and hooks.
+- [x] Run randomized soundness and mutation checks, the suite, snapshots and hooks.
 - [x] Add the guide sentence, API filter and named follow-ups.
 - [ ] Commit, push and open the stacked draft PR. Run one cross-review and delta check.
 - [ ] Record criterion evidence, mark ready, update tracker and watch the PR.
@@ -45,7 +45,8 @@ Phases depend on the preceding phase. Independent validation commands may run to
 - Benchmark smoke, docs build, two linked examples, Ruff and strict ty pass.
 - The full collection has 2,654 tests. The first full run found two structural
   expectations to update, the empty-product reduction loop and the op coverage
-  allowlist. The full merge hook is running again after those fixes.
+  allowlist. The final full run passes 2,602 tests with 52 skips, and the full
+  `wt hook pre-merge --yes` passes, including benchmark smoke, docs and private names.
 - C snapshots and lowering source have no diff against the stack base.
 - Scalar zero skipping is tracked by #276, after #27 and #40. SELECT belongs
   to #30, axis REDUCE to #66 and LOOP to #31. Their ops are absent here.

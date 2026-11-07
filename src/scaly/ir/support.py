@@ -15,6 +15,7 @@ type Support = frozenset[int] | None
 
 
 def compute_support(root: Expr, rules: Mapping[ExprOp, OpInfo]) -> Support:
+  """Compute and cache support without recursing through operands or callees."""
   stack = [(root, False)]
   while stack:
     node, visited = stack.pop()
