@@ -5,6 +5,8 @@ Covers:
 - ``DeviceSpec.parse``, which accepts only the host.
 - dtype propagation through expression construction and the rejection of
   mixed-dtype binary ops.
+- the scalar coercion rule: weak Python scalars, strong NumPy values, ``sc.const`` keeping a
+  NumPy dtype, no truth value, NumPy integer indices.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.ir.expr import ExprOp, topo
 from scaly.ir.types import dtypes
 
 
@@ -86,3 +89,59 @@ def test_type_shapes_reject_negative_dimensions_and_mismatched_sparsity() -> Non
     assert "negative dimensions" in str(e)
   else:  # pragma: no cover
     raise AssertionError("negative sparsity shape should fail")
+
+
+def test_python_scalars_take_the_dtype_of_the_expression_beside_them() -> None:
+  x32 = sc.sym("x32", 3, dtype=dtypes.float32)
+  i64 = sc.sym("i64", 3, dtype=dtypes.int64, diff=False)
+  for y in [x32 * 2.0, 2 + x32, x32 - True, x32 + [1.0, 2.0, 3.0], sc.minimum(x32, 0.0), sc.atan2(1.0, x32), x32**2, sc.dot(x32, [1, 2, 3])]:
+    assert y.type.dtype == dtypes.float32
+    assert all(np.asarray(leaf.value).dtype == np.float32 for leaf in topo([y]) if leaf.op == ExprOp.CONST)
+  assert sc.stack([x32[0], 0.0]).type.dtype == dtypes.float32 and sc.concat([[0.0], x32]).type.dtype == dtypes.float32
+  assert (x32.reshape((3, 1)) @ [[1.0, 2.0]]).type.dtype == dtypes.float32
+  assert (i64 + 3).type.dtype == dtypes.int64
+  x64 = sc.sym("x64", 3)
+  assert np.asarray((x64 * 2).args[1].value).dtype == np.float64
+  with pytest.raises(TypeError, match="float"):
+    _ = i64 * 1.5
+  with pytest.raises(OverflowError):
+    _ = sc.sym("i32", dtype=dtypes.int32, diff=False) + 2**40
+  with pytest.raises(OverflowError):
+    _ = sc.sym("u8", dtype=dtypes.uint8, diff=False) + -1
+
+
+def test_numpy_values_are_strong_and_must_match() -> None:
+  x32 = sc.sym("x32", 3, dtype=dtypes.float32)
+  x64 = sc.sym("x64", 3)
+  assert (x32 * np.float32(2)).type.dtype == dtypes.float32
+  assert (x64 + np.arange(3.0)).type.dtype == dtypes.float64
+  for bad in [lambda: x32 * np.float64(2), lambda: np.float32(2) * x64, lambda: x64 + np.arange(3), lambda: x32 + x64, lambda: sc.stack([x32, x64])]:
+    with pytest.raises(TypeError, match="mixed dtypes"):
+      bad()
+
+
+def test_const_keeps_numpy_dtypes_and_defaults_to_float64() -> None:
+  assert sc.const(np.arange(3)).type.dtype == dtypes.int64
+  assert sc.const(np.ones(2, dtype=np.float32)).type.dtype == dtypes.float32
+  assert sc.const(np.float32(1.0)).type.dtype == dtypes.float32
+  assert sc.const(np.array([True])).type.dtype == dtypes.bool_
+  assert np.asarray(sc.const(np.arange(3), dtype="float64").value).dtype == np.float64
+  assert sc.const([1, 2]).type.dtype == dtypes.float64 and sc.const(3).type.dtype == dtypes.float64
+
+
+def test_an_expression_has_no_truth_value() -> None:
+  x = sc.sym("x")
+  with pytest.raises(TypeError, match="truth value"):
+    bool(x)
+  with pytest.raises(TypeError, match="truth value"):
+    _ = x and 1.0
+
+
+def test_indexing_accepts_numpy_integers() -> None:
+  x = sc.sym("x", (4, 3))
+  row, block = x[np.int64(2)], x[np.int32(1) : np.int64(3), np.uint8(0)]
+  assert row is x[2] and block is x[1:3, 0]
+  assert [type(item) for item in row.attrs["index"][:1] + (block.attrs["index"][0].stop, block.attrs["index"][1])] == [int, int, int]
+  for bad in [True, np.True_, 1.0]:
+    with pytest.raises(TypeError, match="index"):
+      _ = x[bad]

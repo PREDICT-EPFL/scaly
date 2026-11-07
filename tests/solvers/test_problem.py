@@ -380,6 +380,14 @@ def test_bounded_requires_at_least_one_bound() -> None:
     sc.bounded(sc.sym("g", 1))
 
 
+def test_bounded_coerces_its_bounds_beside_the_expression() -> None:
+  g = sc.sym("g", 2, dtype=sc.dtypes.float32)
+  hi = sc.bounded(g, lo=0, hi=[1.0, 2.0]).hi
+  assert hi is not None and hi.type.dtype == sc.dtypes.float32
+  with pytest.raises(TypeError, match="mixed dtypes"):
+    sc.bounded(sc.sym("g", 2), lo=np.array([0, 1]))
+
+
 def test_single_block_solver_signature_is_not_nested() -> None:
   solve = sc.solver(quadratic, "sqp", name="quadratic_sqp")
   assert as_concrete(solve.function).input_names == ("x", "lam:x", "lam_eq", "lam_ineq", "scale")

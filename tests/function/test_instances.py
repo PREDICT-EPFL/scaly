@@ -275,6 +275,18 @@ def test_concrete_symbolic_call_checks_dtype() -> None:
     identity.instantiate().symbolic_call(sc.sym("integer", 2, dtype=sc.dtypes.int64, diff=False))
 
 
+def test_numerical_call_accepts_same_kind_casts_only() -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
+  def twice(x: sc.Expr) -> sc.Expr:
+    return 2 * x
+
+  np.testing.assert_array_equal(twice(np.arange(2)), [0.0, 2.0])
+  np.testing.assert_array_equal(twice(np.array([True, False])), [2.0, 0.0])
+  for bad in [np.array([1 + 1j, 2]), np.array(["1", "2"]), np.array([1.0, None])]:
+    with pytest.raises(TypeError, match="cannot cast"):
+      twice(bad)
+
+
 def test_partial_declaration_names_encode_only_holes_and_detect_collisions(monkeypatch) -> None:
   from importlib import import_module
 
