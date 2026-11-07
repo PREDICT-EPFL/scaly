@@ -8,7 +8,7 @@ import inspect
 from pathlib import Path
 
 from scaly.ad import forward, reverse, sparsity
-from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, ExprOp
+from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp
 from scaly.ir.expr_spec import spec_expr
 from scaly.passes.lowering.ctx import _RULES
 
@@ -19,7 +19,7 @@ ELEMENTWISE = COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
 EXISTING_ELEMENTWISE_REFERENCES = {
   ("ad/rules.py", "ELEMENTWISE"): " ".join(op.name for op in ELEMENTWISE),
   ("passes/expr.py", "_structural_key"): "ADD MUL",
-  ("passes/expr.py", "SIMPLIFY_PATTERNS"): "ADD SUB MUL DIV NEG POW",
+  ("passes/expr.py", "SIMPLIFY_PATTERNS"): "ADD SUB MUL MUL DIV NEG POW",
 }
 
 
@@ -79,7 +79,9 @@ def test_every_expr_op_is_classified_in_every_pass() -> None:
     "sparsity": _dispatch_ops(sparsity._jac_mask_uncached),
     # INPUT is bound by emit_inputs; SOLVER_CALL is opaque and handled by the solver wrapper.
     "lowering": set(_RULES) | {ExprOp.INPUT, ExprOp.SOLVER_CALL},
-    # Add support rules here in #40, and graph_digest here in #64. Each must cover set(ExprOp).
+    "support": {op for op, info in OP_INFO.items() if info.pattern_rule or info.support_rule}
+    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL},
+    # Add graph_digest here in #64. It must cover set(ExprOp).
   }
   for name, classified in classifications.items():
     assert classified == set(ExprOp), f"{name}: missing {set(ExprOp) - classified}, extra {classified - set(ExprOp)}"

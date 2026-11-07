@@ -195,10 +195,11 @@ def test_matrix_panels_keep_ordered_reductions_private(shape, monkeypatch):
   observed = {}
   lower_function(product, observe=lambda phase, program: observed.__setitem__(phase, program))
   reductions = [node for node in walk_program(observed["lowered"]) if node.op == ProgramOp.FOR and node.args[0].attrs["kind"].value == "reduce"]
-  assert reductions
-  expected_accumulators = 4 * n if n <= 4 and m >= 4 else min(n, 8)
-  assert max(len(loop.args) - 1 for loop in reductions) == expected_accumulators
-  assert not any(node.op == ProgramOp.STORE for loop in reductions for stmt in loop.args[1:] for node in walk_program(stmt))
+  assert bool(reductions) == bool(k)
+  if k:
+    expected_accumulators = 4 * n if n <= 4 and m >= 4 else min(n, 8)
+    assert max(len(loop.args) - 1 for loop in reductions) == expected_accumulators
+    assert not any(node.op == ProgramOp.STORE for loop in reductions for stmt in loop.args[1:] for node in walk_program(stmt))
   rng = np.random.default_rng(184)
   a, b = rng.normal(size=(m, k)), rng.normal(size=(k, n))
   expected = np.zeros((m, n))

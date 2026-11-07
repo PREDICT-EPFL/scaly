@@ -58,8 +58,8 @@ Any value such a record derives can be read and checked on its own, in a test or
 
 `ConcreteFunction.recompile()` is the one deliberate exception to the rule against changes. It
 drops the loaded library so that the next call compiles again. `Expr` and `ProgramNode` are frozen
-but not lazy records. A graph can hold millions of them, so they are slotted and interned, and the
-one value an `Expr` caches, its structural key, lives in a slot. `CompiledFunction` compiles in its
+but not lazy records. A graph can hold millions of them, so they are slotted and interned, and an
+`Expr` caches its structural key and value support in slots. `CompiledFunction` compiles in its
 constructor, which callers rely on, so it stays an ordinary class.
 
 ## Where a module belongs

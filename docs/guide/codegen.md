@@ -530,6 +530,9 @@ Both are separate numerical choices. Neither enables general fast-math flags.
 See [arithmetic semantics](../how_it_works/lowering.md#arithmetic-semantics)
 for simplifications that apply independently of these options.
 
+Simplification treats operands as real numbers. A sharper analysis of structural
+zeros may remove a NaN from a product with a structural zero.
+
 The same choices are available to `scaly_codegen` as `--cpu`, `--lanes`,
 `--dialect`, `--vector-libm`, and `--reciprocal`. The
 [render-options reference](../api/codegen.md#render-options) lists their values.
