@@ -1845,13 +1845,9 @@ tests/passes/lowering/test_nest.py::test_broadcasts_index_without_division[singl
 tests/passes/lowering/test_nest.py::test_broadcasts_index_without_division[trailing]
 tests/passes/lowering/test_nest.py::test_concat_skips_an_empty_piece
 tests/passes/lowering/test_nest.py::test_contiguous_axes_merge_into_one_loop
-tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[chain]
 tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[concat0]
 tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[concat1]
 tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[concat_empty]
-tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[slice_int]
-tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[slice_last]
-tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[slice_steps]
 tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[stack0]
 tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[stack1]
 tests/passes/lowering/test_nest.py::test_dense_kernels_index_without_division[stack_last]
@@ -1898,6 +1894,7 @@ tests/passes/lowering/test_nest.py::test_reshape_reads_a_materialized_transpose_
 tests/passes/lowering/test_nest.py::test_singleton_axes_get_coordinate_zero
 tests/passes/lowering/test_nest.py::test_sparse_row_loop_has_loaded_bounds_and_table_reads
 tests/passes/lowering/test_nest.py::test_sparse_row_loop_matches_numpy
+tests/passes/lowering/test_nest.py::test_strided_slice_copies_in_one_flat_loop
 tests/passes/lowering/test_nest.py::test_unit_loop_not_from_zero_keeps_constant_indices
 tests/passes/test_affine_index.py::test_a_gather_reads_exactly_the_elements_numpy_would[100]
 tests/passes/test_affine_index.py::test_a_gather_reads_exactly_the_elements_numpy_would[120]
