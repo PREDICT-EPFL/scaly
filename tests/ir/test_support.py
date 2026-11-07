@@ -17,7 +17,7 @@ def _entries(mask) -> frozenset[int]:
 
 
 def _masked(name, mask) -> Expr:
-  return sc.sym(name, np.shape(mask)) * sc.const(mask)
+  return sc.sym(name, np.shape(mask)) * sc.const(mask, dtype=sc.dtypes.float64)
 
 
 def test_support_is_lazy_cached_immutable_and_outside_identity() -> None:
@@ -108,7 +108,7 @@ def test_sparse_type_bounds_support_without_changing_stored_pattern() -> None:
   pattern = SparsityPattern.from_mask(mask).canonicalize()[0]
   x = Expr(ExprOp.INPUT, type=TensorType((2, 3, 3), pattern=pattern), name="support_sparse")
   assert x.support == _entries(np.tile(mask, (2, 1, 1)))
-  result = x * sc.const(np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]]))
+  result = x * sc.const(np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]]), dtype=x.type.dtype)
   assert result.support == frozenset({4, 13}) and result.type.pattern is pattern
   zero = x * 0
   assert zero.support == frozenset() and sc.simplify(zero).type.pattern is pattern
