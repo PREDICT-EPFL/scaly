@@ -64,11 +64,11 @@ static inline __attribute__((always_inline)) void lanes_2(long long i, long long
   else for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) l[k] = s1[((i + k) < 3 ? (i + k) : 3)];
   lanes_4_4_4_4_vec_st(&s0[(i) + 0], (b * l), n);
 }
-static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, double* jac_znext_z, const double* s1, int64_t d0_jac_znext_z) {
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, double* jac_znext_z, const double* s1, int64_t i_jac_znext_z_0) {
   double ls[SCALY_WIDTH_4_4_4_4];
-  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) ls[k] = s1[(d0_jac_znext_z + (((i + k) < 3 ? (i + k) : 3) * 4))];
+  for (long long k = 0; k < SCALY_WIDTH_4_4_4_4; ++k) ls[k] = s1[((((i + k) < 3 ? (i + k) : 3) * 4) + i_jac_znext_z_0)];
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
-  lanes_4_4_4_4_vec_st(&jac_znext_z[(((d0_jac_znext_z * 4) + i)) + 0], l, n);
+  lanes_4_4_4_4_vec_st(&jac_znext_z[(((i_jac_znext_z_0 * 4) + i)) + 0], l, n);
 }
 int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -112,22 +112,22 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   }
   s2[0] = (0.10000000000000001 * s1[0]);
   for (long long j_t20_0_0 = 0; j_t20_0_0 < 4; ++j_t20_0_0) {
-    for (long long j_t20_0_1 = 0; j_t20_0_1 < 2; ++j_t20_0_1) {
-      s1[((j_t20_0_0 * 4) + j_t20_0_1)] = k0[((j_t20_0_0 * 2) + j_t20_0_1)];
+    for (long long j_t20_0 = 0; j_t20_0 < 2; ++j_t20_0) {
+      s1[((j_t20_0_0 * 4) + j_t20_0)] = k0[((j_t20_0_0 * 2) + j_t20_0)];
     }
   }
   for (long long j_t20_1_0 = 0; j_t20_1_0 < 4; ++j_t20_1_0) {
-    for (long long j_t20_1_1 = 0; j_t20_1_1 < 2; ++j_t20_1_1) {
-      double v1 = k1[((j_t20_1_0 * 2) + j_t20_1_1)];
-      s1[((j_t20_1_0 * 4) + (2 + j_t20_1_1))] = (v1 - (0.050000000000000003 * ((s0[j_t20_1_0] * t5[j_t20_1_1]) + (s2[0] * v1))));
+    for (long long j_t20_1 = 0; j_t20_1 < 2; ++j_t20_1) {
+      double v1 = k1[((j_t20_1_0 * 2) + j_t20_1)];
+      s1[((j_t20_1_0 * 4) + (2 + j_t20_1))] = (v1 - (0.050000000000000003 * ((s0[j_t20_1_0] * t5[j_t20_1]) + (s2[0] * v1))));
     }
   }
-  for (long long d0_jac_znext_z = 0; d0_jac_znext_z < 4; ++d0_jac_znext_z) {
-    for (long long d1_jac_znext_z_start = 0; d1_jac_znext_z_start <= 4 - SCALY_WIDTH_4_4_4_4; d1_jac_znext_z_start += SCALY_WIDTH_4_4_4_4) {
-      lanes_3(d1_jac_znext_z_start, SCALY_WIDTH_4_4_4_4, res[0], s1, d0_jac_znext_z);
+  for (long long i_jac_znext_z_0 = 0; i_jac_znext_z_0 < 4; ++i_jac_znext_z_0) {
+    for (long long i_jac_znext_z_start = 0; i_jac_znext_z_start <= 4 - SCALY_WIDTH_4_4_4_4; i_jac_znext_z_start += SCALY_WIDTH_4_4_4_4) {
+      lanes_3(i_jac_znext_z_start, SCALY_WIDTH_4_4_4_4, res[0], s1, i_jac_znext_z_0);
     }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[0], s1, d0_jac_znext_z);
+    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[0], s1, i_jac_znext_z_0);
 #endif
   }
   return SCALY_SUCCESS;
