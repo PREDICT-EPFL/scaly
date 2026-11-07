@@ -32,6 +32,7 @@ interfaces for inspecting or extending the compiler.
 
 ::: scaly.ir.expr.OpInfo
     options:
+      show_source: false
       show_signature: false
       filters:
         - "!^_"
@@ -63,6 +64,7 @@ expression graph for inspection and export.
 
 ::: scaly.ir.types.TensorType
     options:
+      show_source: false
       show_signature: false
       filters:
         - "!^_"
@@ -79,6 +81,7 @@ expression graph for inspection and export.
 
 ::: scaly.ir.types.SparsityPattern
     options:
+      show_source: false
       filters:
         - "!^_"
         - "!^canonicalize$"
