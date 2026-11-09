@@ -23,7 +23,8 @@ Optimization solvers are optional packages:
 | PIQP, for convex quadratic problems | `uv add "scaly[piqp]"` | `pip install "scaly[piqp]"` |
 | IPOPT, for nonlinear problems | `uv add "scaly[ipopt]"` | `pip install "scaly[ipopt]"` |
 | Scaly SQP, for nonlinear problems | `uv add "scaly[sqp]"` | `pip install "scaly[sqp]"` |
-| All three | `uv add "scaly[solvers]"` | `pip install "scaly[solvers]"` |
+| Fatrop, for nonlinear problems with stage structure | `uv add "scaly[fatrop]"` | `pip install "scaly[fatrop]"` |
+| All solvers | `uv add "scaly[solvers]"` | `pip install "scaly[solvers]"` |
 
 A solver plugin connects the symbolic problem to a native optimization library.
 The solver wheels include those native libraries. If no wheel matches the
@@ -32,10 +33,10 @@ platform, a source build needs additional tools, described in
 [backend guide](solver_backends.md) compares the supported problems and
 solver options.
 
-On x86-64, the PIQP wheels need a processor with AVX2 and FMA instructions:
+On x86-64, the PIQP and Fatrop wheels need a processor with AVX2 and FMA instructions:
 Intel Core processors from Haswell (2013) on, or any AMD Zen processor. Scaly SQP
 uses PIQP, so it needs them too. On an older processor, or in a virtual machine
-whose CPU model hides AVX2, PIQP crashes with an illegal-instruction error. The
+whose CPU model hides AVX2, these solvers crash with an illegal-instruction error. The
 IPOPT wheels run on any x86-64 processor.
 
 ## Compiler selection

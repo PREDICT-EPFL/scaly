@@ -138,6 +138,12 @@ in `t_qp`. An NLP backend that cannot separate its internal work reports it in `
 Map native statuses through the solver header's enum constants rather than integer literals.
 An upstream rename or renumbering then causes a compile error instead of an incorrect status.
 
+Fatrop's C header supplies no return-status enum. Its wrapper maps the integer
+`FatropOcpCStats.return_flag` using the pinned Fatrop 1.2.0 `IpSolverReturnFlag`
+order in `include/fatrop/ip_algorithm/ip_algorithm.hpp`, preserving the flag in
+`native_status`. A package test checks that enum's names and order against the
+wrapper's mapping. An exception from the native solve maps to `ERROR` with `-1`.
+
 ### Options
 
 `prepare_options` runs during Python solver construction, before any C generation.
@@ -200,7 +206,7 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 
 ### Nonlinear programs
 
-`kind == "nlp"`, selected by `sc.solver(problem, "ipopt")` or `"sqp"`.
+`kind == "nlp"`, selected by `sc.solver(problem, "ipopt")`, `"sqp"` or `"fatrop"`.
 
 - The problem shape is `min f(x,p)` subject to `h_eq(x,p) = 0`, two-sided inequalities, and box bounds.
 - Core concatenates the variable leaves into one internal `x` for the oracles. `desc.base` maps `(x, *params)` to `f` and, when constraints exist, stacked `g = [h_eq; g_ineq]`.
@@ -210,6 +216,24 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 - Core asks the backend for `hess_triangle` and hands the wrapper an oracle and pattern already cut to that layout. IPOPT selects lower, and scaly-sqp selects upper.
 - Any NLP oracle may instead be an `ExternalOracle` with the same signature. Its source defines `raw_symbol` using the flat-buffer convention, and `workspace_size` contributes to root and nested workspace packing.
 - The bounds oracle emits IEEE infinities for absent bounds, and the wrapper converts them to the NLP solver's native convention.
+
+### Stage layouts
+
+`desc.stage_layout` returns a `StageLayout` from `scaly.solvers.stages`. Its `nx`
+and `nu` tuples describe variables ordered `[x_0, u_0, ..., x_N, u_N]`.
+`dynamics[k]` holds the original equality rows into stage `k+1`, in next-state
+order. `eq[k]` and `ineq[k]` hold stage-local rows in the original stacked
+`[equalities; inequalities]` vector. Variable bounds are separate.
+
+The optional descriptor constructor field `_stage_layout` supplies a layout.
+Otherwise the property detects and checks one from the Jacobian and Lagrangian
+Hessian patterns on first access. Backends without a stage requirement need
+not read it. This is an additive descriptor field under protocol v8.
+
+The layout guarantees structurally diagonal next-state Jacobian blocks, not
+their numerical coefficients. The Fatrop wrapper normalizes each dynamics row
+to `F(x, u) - xnext` using its coefficient at the initial point, checks that it
+stays constant during the solve, and converts multipliers with the same scale.
 
 ## Versioning
 

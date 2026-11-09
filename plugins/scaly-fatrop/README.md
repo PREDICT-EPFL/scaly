@@ -1,5 +1,10 @@
 # scaly-fatrop
 
+The `"fatrop"` Scaly backend solves nonlinear programs with stage structure.
+Install `scaly[fatrop]`, declare a stage-ordered `sc.problem`, and select it with
+`sc.solver(problem, "fatrop")`. See the [solver guide](https://github.com/PREDICT-EPFL/scaly/blob/main/docs/guide/solvers.md#stage-structured-problems-with-fatrop)
+for the variable ordering and an example.
+
 This package bundles the [Fatrop](https://github.com/meco-group/fatrop) shared library and C
 headers for Linux, macOS and Windows. `scaly_fatrop.lib_dir()` and `scaly_fatrop.include_dir()` return
 the directories needed to compile and link a C consumer of `fatrop/ocp/OCPCInterface.h`.

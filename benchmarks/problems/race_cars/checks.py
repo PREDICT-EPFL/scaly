@@ -455,6 +455,29 @@ def check_sqp_matches_ipopt() -> None:
     )
 
 
+def check_fatrop_matches_ipopt() -> None:
+  """Whole-problem Fatrop and IPOPT reach the same race-car solution to 1e-8."""
+  config = EpisodeConfig(horizon=3, ipopt_tol=1e-12)
+  planner = MotionPlanner(load_track(config.track).center_line, horizon=config.horizon, dt=config.params.dt, v_ref=config.v_ref)
+  start = planner.center_path[0]
+  heading = float(planner.phi_ref[0])
+  _, reference = planner.plan(float(start[0]), float(start[1]), heading, 0.0)
+  reference[0] = [
+    start[0] - config.initial_lateral_offset * np.sin(heading),
+    start[1] + config.initial_lateral_offset * np.cos(heading),
+    heading,
+    0.0,
+  ]
+  params = np.concatenate([reference.reshape(-1), config.params.array()])
+  guess = _reference_guess(reference, config)
+  solutions = []
+  for backend in ("fatrop", "ipopt"):
+    solve = _race_car_nlp(config, solver=backend)
+    solutions.append(solve(params, x0=guess)[0])
+    assert solve.stats().to_solver_status().ok, solve.stats()
+  np.testing.assert_allclose(*solutions, rtol=0, atol=1e-8)
+
+
 def check_sqp_oracles_agree() -> None:
   """One SQP configuration follows the same smoke trajectory with either C oracle provider."""
   scaly_run = run_episode(smoke=True, solver="sqp", oracle="scaly")
@@ -558,6 +581,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "recorded_scene": (check_recorded_scene_and_artifacts, "ipopt", True),
   "oracles_agree": (check_oracles_agree, "ipopt", True),
   "sqp_matches_ipopt": (check_sqp_matches_ipopt, "ipopt", False),
+  "fatrop_matches_ipopt": (check_fatrop_matches_ipopt, "fatrop", False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, "sqp", True),
   "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, "sqp", True),
   "closed_loop_encoding": (check_closed_loop_uses_fastest_casadi_encoding, None, True),

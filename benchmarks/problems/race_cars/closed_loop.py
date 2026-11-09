@@ -225,7 +225,12 @@ def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: n
   return dense
 
 
-def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> sc.Solver:
+def _race_car_nlp(
+  config: EpisodeConfig,
+  *,
+  solver: str = "ipopt",
+  sqp_options: dict[str, str | int | float] | None = None,
+) -> sc.Solver:
   n = config.horizon
   weights = np.tile([config.r_throttle, config.r_steering, config.q_lon, config.q_lat, config.q_phi, config.q_v], (n + 1, 1))
   weights[-1, 2:] = [config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f]
@@ -261,9 +266,11 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
 
 
 def solver_options(config: EpisodeConfig, solver: str, sqp_options: dict[str, str | int | float] | None = None) -> dict[str, str | int | float]:
-  """The options of the episode's IPOPT or SQP solver."""
+  """The options of the episode's IPOPT, SQP or Fatrop solver."""
   if solver == "sqp":
     return {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
+  if solver == "fatrop":
+    return {"tol": config.ipopt_tol, "max_iter": config.ipopt_max_iter}
   return {"print_level": 0, "sb": "yes", "tol": config.ipopt_tol, "max_iter": config.ipopt_max_iter, "warm_start_init_point": "yes"}
 
 

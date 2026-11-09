@@ -296,7 +296,7 @@ def chain_objective_fn(n_masses: int, horizon: int) -> sc.Function:
   return objective
 
 
-def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
+def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt", options: dict[str, str | int | float] | None = None):
   """Build the chain MPC solver with bounded controls and runtime initial state and physics."""
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   n_variables = n_dec(n_masses, horizon)
@@ -320,7 +320,7 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
     problem,
     solver,
     name=f"{problem_name}_{solver}",
-    options={"max_iter": 80, "tol": 1e-6} if solver == "sqp" else None,
+    options=({"max_iter": 80, "tol": 1e-6, **(options or {})} if solver == "sqp" else options),
   )
 
 

@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import pytest
 from scaly.codegen.toolchain import find_c_compiler
 
 ROOT = Path(__file__).parents[1]
-native = pytest.mark.solver("fatrop", package="scaly_fatrop", header="fatrop/ocp/OCPCInterface.h")
+native = pytest.mark.solver("fatrop")
 
 
 @pytest.mark.parametrize(
@@ -44,6 +45,24 @@ def test_pinned_licenses():
   assert (root / "licenses/fatrop/LICENSE.txt").is_file()
   assert (root / "licenses/fatrop/LICENSE-EPL-2.0.txt").is_file()
   assert (root / "licenses/blasfeo/LICENSE.txt").is_file()
+
+
+@native
+def test_native_status_enum_matches_wrapper_mapping():
+  package = importlib.import_module("scaly_fatrop")
+  header = (package.include_dir() / "fatrop/ip_algorithm/ip_algorithm.hpp").read_text()
+  enum = re.search(r"enum class IpSolverReturnFlag\s*\{([^}]+)\}", header)
+  assert enum is not None
+  names = re.sub(r"//[^\n]*", "", enum[1])
+  assert [name.strip() for name in names.split(",") if name.strip()] == [
+    "Success",
+    "MaxIterExceeded",
+    "StopAtAcceptablePoint",
+    "LocalInfeasibility",
+    "LineSearchFailed",
+    "ErrorInStepComputation",
+    "Unknown",
+  ]
 
 
 @native

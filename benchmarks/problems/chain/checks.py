@@ -149,6 +149,19 @@ def check_builder_matches_hand_written() -> None:
     np.testing.assert_allclose(np.concatenate([z.ravel(), x_last]), expected, rtol=1e-8, atol=1e-7, err_msg=solver)  # SQP stops at 1e-6
 
 
+def check_fatrop_matches_ipopt() -> None:
+  """Whole-problem Fatrop and IPOPT reach the same chain solution to 1e-8."""
+  n_masses, horizon = 3, 10
+  guess = np.tile(np.concatenate([initial_state(n_masses), np.zeros(NU)]), horizon + 1)[: n_dec(n_masses, horizon)]
+  _, params = sample_inputs(n_masses, horizon)
+  solutions = []
+  for backend in ("fatrop", "ipopt"):
+    solve = chain_nlp(n_masses, horizon, solver=backend, options={"tol": 1e-11})
+    solutions.append(solve(params, x0=guess)[0])
+    assert solve.stats().to_solver_status().ok, solve.stats()
+  np.testing.assert_allclose(*solutions, rtol=0, atol=1e-8)
+
+
 def check_one_reference_for_every_end_mass_term() -> None:
   """Stage and terminal costs track the same end-mass reference, and only that reference.
 
@@ -393,6 +406,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, None, True),
   "nlp_objective": (check_nlp_objective_matches_casadi, "ipopt", True),
   "builder": (check_builder_matches_hand_written, "ipopt", False),
+  "fatrop_matches_ipopt": (check_fatrop_matches_ipopt, "fatrop", False),
   "one_reference": (check_one_reference_for_every_end_mass_term, None, False),
   "extract_positions": (check_extract_positions, None, False),
   "plant_step": (check_plant_step_is_parameterized_rk4, None, False),
