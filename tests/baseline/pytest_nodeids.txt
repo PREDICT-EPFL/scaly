@@ -2169,6 +2169,19 @@ tests/solvers/test_codegen.py::test_two_sqp_wrappers_in_one_translation_unit
 tests/solvers/test_nesting.py::test_duplicate_nested_solver_names_fail_before_c_compilation
 tests/solvers/test_nesting.py::test_nested_solver_stats_query_uses_compiled_host_handle
 tests/solvers/test_nesting.py::test_solver_outputs_share_one_program_ir_call
+tests/solvers/test_ocp.py::test_a_discrete_map_sums_its_costs_and_the_terminal_constraint_holds
+tests/solvers/test_ocp.py::test_a_free_final_time_reaches_the_same_solution_through_both_lowerings
+tests/solvers/test_ocp.py::test_a_stage_parameter_is_read_stage_by_stage
+tests/solvers/test_ocp.py::test_an_ocp_takes_a_model_that_scales_its_control[over]
+tests/solvers/test_ocp.py::test_an_ocp_takes_a_model_that_scales_its_control[times]
+tests/solvers/test_ocp.py::test_pack_and_unpack
+tests/solvers/test_ocp.py::test_parameters_are_the_union_of_what_the_functions_name
+tests/solvers/test_ocp.py::test_state_bounds_hold_after_the_initial_state
+tests/solvers/test_ocp.py::test_the_builder_states_the_cart_pole_as_by_hand
+tests/solvers/test_ocp.py::test_the_general_lowering_matches_an_unrolled_problem
+tests/solvers/test_ocp.py::test_the_stage_functions_compute_every_row_of_the_stage_form
+tests/solvers/test_ocp.py::test_the_stage_layout_and_variables
+tests/solvers/test_ocp.py::test_what_an_ocp_refuses
 tests/solvers/test_problem.py::test_bounded_casts_numerical_bounds_of_the_same_kind
 tests/solvers/test_problem.py::test_bounded_requires_at_least_one_bound
 tests/solvers/test_problem.py::test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle
@@ -2290,6 +2303,7 @@ tests/test_docs_prose.py::test_published_prose[docs/guide/env_vars.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/functions.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/getting_started.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/installation.md]
+tests/test_docs_prose.py::test_published_prose[docs/guide/ocp.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/solver_backends.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/solvers.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/sparsity.md]
@@ -2390,6 +2404,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers._ora
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.graph]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.nlp]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.ocp]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.paths]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.problem]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.qp]
