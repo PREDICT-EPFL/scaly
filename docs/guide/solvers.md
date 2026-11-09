@@ -357,10 +357,31 @@ xs, us = ocp.unpack(variables, stage_form=True)
 
 The controls are approximately `[-0.615385, -0.230769, -0.076923, 0]`.
 
+The two forms take Fatrop's derivatives in different ways. Both map the stage
+Functions over the stages with `vmap`, so both generate stage-vectorized code.
+The difference is what gets differentiated. `ocp.problem()`, like any
+`sc.problem` with a detectable stage layout, differentiates the whole problem
+sparsely. Columns that never share a row are grouped and differentiated
+together, and the nonzeros are scattered into Fatrop's blocks through static
+index tables, so sparsity inside a stage is exploited. `ocp.stage_problem()`
+differentiates one stage densely over its own state and control, plus any
+carried global variables, maps that over the stages and copies each dense
+block into Fatrop. Its Hessian blocks carry the gradient row, so a solve calls
+the gradient and Jacobian about half as often and skips the probe call for the
+dynamics coefficients.
+
+Neither form is the faster one in general. Dense stage blocks suit stages that
+are small or dense. The whole-problem path can win when stages are large and
+sparse, because dense blocks compute structural zeros. On the hanging chain,
+function evaluation through `stage_problem()` took 17 to 21 percent less time
+at the benchmark sizes. On larger chains, with 27 or more states per stage,
+the stage kernels were slower per call with the current compiler. Both forms
+reach the same solution in the same iterations, so timing both on your own
+problem is the reliable comparison.
+
 Global decision variables, such as free final time, become additional states
-held constant across stages in this form. With `ocp.problem()`, Fatrop uses
-whole-problem oracles and detects stage structure as above. Shared global
-decision variables require `stage_problem()`.
+held constant across stages in `stage_problem()`. Shared global decision
+variables require `stage_problem()`.
 
 The [Fatrop backend details](solver_backends.md#fatrop) cover options and limits.
 The [two-dimensional hanging-chain example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/case_studies/fatrop_chain/scaly_impl.py)

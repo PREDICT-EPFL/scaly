@@ -124,7 +124,9 @@ optimal-control stages. Select `sc.solver(ocp.stage_problem(), "fatrop")` for a
 [`DiscreteOCP`](ocp.md). This form uses the builder's recorded layout and mapped
 stage Functions to write dense stage Jacobian and Lagrangian Hessian blocks.
 It carries global decision variables as constant states, so it also supports
-problems with free final time. The problem form selects which Functions Fatrop uses.
+problems with free final time. The problem form selects how Fatrop's derivatives
+are formed, dense per stage or sparse over the whole problem, and the
+[solver guide](solvers.md#stage-structured-problems-with-fatrop) compares the two.
 
 An ordinary `sc.problem` with stage-ordered variables, including `ocp.problem()`,
 uses whole-problem oracles and scatters their sparse derivatives into stage
