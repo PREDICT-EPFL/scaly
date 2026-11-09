@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
+import scaly as sc
 from scaly.codegen.jit import get_compiled
 from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
@@ -44,10 +45,13 @@ from benchmarks.problems.race_cars import (
 )
 from benchmarks.problems.race_cars.closed_loop import (
   EpisodeConfig,
+  _feasible_guess,
   _reference_guess,
   _race_car_nlp,
   build_solver,
+  race_car_ocp,
   run_episode,
+  solver_options,
   steady_throttle,
 )
 from benchmarks.problems.race_cars.reference import MotionPlanner, fit_spline
@@ -242,6 +246,34 @@ def check_stage_layout() -> None:
     assert layout.dynamics == tuple(tuple(range(NX * (k + 1), NX * (k + 2))) for k in range(horizon))
     assert layout.eq == (tuple(range(NX)),) + ((),) * horizon
     assert layout.ineq == ((),) + tuple((n_eq + 2 * k, n_eq + 2 * k + 1) for k in range(horizon))
+
+
+def check_builder_matches_hand_written() -> None:
+  """The race car stated with ``sc.DiscreteOCP`` solves the episode's first step to the hand-written
+  problem's solution and cost with IPOPT and SQP."""
+  config = EpisodeConfig(horizon=10, ipopt_tol=1e-10, sqp_max_iter=40)
+  n = config.horizon
+  planner = MotionPlanner(load_track(config.track).center_line, horizon=n, dt=config.params.dt, v_ref=config.v_ref)
+  start, heading = planner.center_path[0], float(planner.phi_ref[0])
+  offset = config.initial_lateral_offset
+  state = np.array([start[0] - offset * np.sin(heading), start[1] + offset * np.cos(heading), heading, 0.0])
+  _, reference = planner.plan(float(state[0]), float(state[1]), float(state[2]), 0.0)
+  reference[0] = state
+  ocp = race_car_ocp(config)
+  assert ocp.problem().params.names == ("initial_state", "car", "ref")
+  for solver in ("ipopt", "sqp"):
+    guess = _feasible_guess(state, reference, config) if solver == "sqp" else _reference_guess(reference, config)
+    hand = build_solver(config, solver)
+    expected, *_ = hand(np.concatenate([reference.reshape(-1), config.params.array()]), x0=guess)
+    builder = sc.solver(ocp.problem(), solver, options=solver_options(config, solver))
+    stages = guess.reshape(n + 1, NZ)
+    variables, *_ = builder((state, config.params.array(), reference), x0=(stages[:n], stages[n, :NX]))
+    assert hand.stats().to_solver_status().ok and builder.stats().to_solver_status().ok, solver
+    xs, us = ocp.unpack(variables)
+    expected = expected.reshape(n + 1, NZ)
+    np.testing.assert_allclose(xs, expected[:, :NX], rtol=1e-7, atol=1e-7, err_msg=solver)
+    np.testing.assert_allclose(us, expected[:n, NX:], rtol=1e-7, atol=1e-7, err_msg=solver)
+    np.testing.assert_allclose(builder.stats().obj, hand.stats().obj, rtol=1e-8, err_msg=solver)
 
 
 def check_casadi_ipopt_is_compiled() -> None:
@@ -520,6 +552,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "mapped_cost": (check_mapped_cost_matches_casadi, None, True),
   "exact_hessian_default": (check_exact_hessian_default, None, False),
   "stage_layout": (check_stage_layout, None, False),
+  "builder": (check_builder_matches_hand_written, "ipopt", False),
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, "ipopt", True),
   "episode_artifacts": (check_episode_artifacts, "ipopt", False),
   "recorded_scene": (check_recorded_scene_and_artifacts, "ipopt", True),

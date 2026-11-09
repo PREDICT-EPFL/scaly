@@ -38,7 +38,9 @@ workflow passes `--full`, which runs everything below.
   Scaly-vs-CasADi trajectory agreement; for the chain of masses the dimensions and
   RK4 plant, the equality Jacobian against CasADi and a dense reference, the NLP
   objective against CasADi, the single end-mass reference behind both cost terms,
-  the episode's shapes, and the recorded scene; for `unbumpercars` the
+  the episode's shapes, and the recorded scene. Both also state their problem with
+  `sc.DiscreteOCP` and check that IPOPT and SQP solve it to the hand-written problem's
+  solution (`builder`); for `unbumpercars` the
   Scaly-vs-CasADi oracle, the parameter-tail order, the pair barrier's relative
   degree, the discrete-MLP plant's three pieces and its reversed control order,
   both symbolic discrete-MLP prediction paths against a NumPy reference, per-step

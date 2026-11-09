@@ -37,11 +37,13 @@ from benchmarks.problems.race_cars import (
   CAR_WIDTH,
   DELTA_MAX,
   N_PARAMS,
+  NU,
   NX,
   NZ,
   T_MAX,
   RaceCarParams,
   _race_car_eq_vmap_expr,
+  _rk4,
   n_param,
   rk4_step_np,
 )
@@ -255,21 +257,59 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
       ub=sc.const(ub),
     )
 
-  return sc.solver(
-    problem,
-    solver,
-    name=f"{problem_name}_{solver}",
-    options=(
-      {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
-      if solver == "sqp"
-      else {
-        "print_level": 0,
-        "sb": "yes",
-        "tol": config.ipopt_tol,
-        "max_iter": config.ipopt_max_iter,
-        "warm_start_init_point": "yes",
-      }
-    ),
+  return sc.solver(problem, solver, name=f"{problem_name}_{solver}", options=solver_options(config, solver, sqp_options))
+
+
+def solver_options(config: EpisodeConfig, solver: str, sqp_options: dict[str, str | int | float] | None = None) -> dict[str, str | int | float]:
+  """The options of the episode's IPOPT or SQP solver."""
+  if solver == "sqp":
+    return {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
+  return {"print_level": 0, "sb": "yes", "tol": config.ipopt_tol, "max_iter": config.ipopt_max_iter, "warm_start_init_point": "yes"}
+
+
+def race_car_ocp(config: EpisodeConfig) -> sc.DiscreteOCP:
+  """The problem of ``_race_car_nlp`` stated by its stages with ``sc.DiscreteOCP``.
+
+  The hand-written problem also has a control at the last stage, which only its own cost terms
+  reach. Its stage-0 state cost is zero, and the corridor leaves out stage 0; with the episode's
+  reference, whose first row is the measured state, both lowerings have the same solution and cost.
+  """
+
+  @sc.function(sc.arg("x", NX), sc.arg("u", NU), sc.arg("car", N_PARAMS), outputs=sc.arg("x_next", NX), name="race_car_ocp_step")
+  def step(x: sc.Expr, u: sc.Expr, car: sc.Expr) -> sc.Expr:
+    return _rk4(x, u, car)
+
+  stage_weights = sc.const(np.array([config.r_throttle, config.r_steering, config.q_lon, config.q_lat, config.q_phi, config.q_v]))
+  terminal_weights = sc.const(np.array([config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f]))
+
+  @sc.function(sc.arg("x", NX), sc.arg("u", NU), sc.arg("ref", NX), sc.arg("car", N_PARAMS), outputs=sc.arg("l", ()), name="race_car_ocp_stage_cost")
+  def stage_cost(x: sc.Expr, u: sc.Expr, ref: sc.Expr, car: sc.Expr) -> sc.Expr:
+    return sc.dot(stage_weights, _cost_stage(sc.concat([x, u]), ref, car) ** 2)
+
+  @sc.function(sc.arg("x", NX), sc.arg("ref", NX), sc.arg("car", N_PARAMS), outputs=sc.arg("vf", ()), name="race_car_ocp_terminal_cost")
+  def terminal_cost(x: sc.Expr, ref: sc.Expr, car: sc.Expr) -> sc.Expr:
+    return sc.dot(terminal_weights, _cost_stage(sc.concat([x, sc.const(np.zeros(NU))]), ref, car)[NU:] ** 2)
+
+  @sc.function(sc.arg("x", NX), sc.arg("u", NU), sc.arg("ref", NX), outputs=sc.arg("corridor", 2), name="race_car_ocp_corridor")
+  def corridor(x: sc.Expr, u: sc.Expr, ref: sc.Expr) -> sc.Expr:
+    return _corridor_stage(sc.concat([x, u]), ref)
+
+  @sc.function(sc.arg("x", NX), sc.arg("ref", NX), outputs=sc.arg("corridor", 2), name="race_car_ocp_terminal_corridor")
+  def terminal_corridor(x: sc.Expr, ref: sc.Expr) -> sc.Expr:
+    return _corridor_stage(sc.concat([x, sc.const(np.zeros(NU))]), ref)
+
+  width = config.track_half_width
+  return sc.DiscreteOCP(
+    N=config.horizon,
+    dynamics=step,
+    stage_cost=stage_cost,
+    terminal_cost=terminal_cost,
+    path=(sc.StageConstraint(corridor, lo=-width, hi=width),),
+    terminal=(sc.StageConstraint(terminal_corridor, lo=-width, hi=width),),
+    x_bounds=([-np.inf, -np.inf, -np.inf, 0.0], [np.inf, np.inf, np.inf, config.max_speed]),
+    u_bounds=([-T_MAX, -DELTA_MAX], [T_MAX, DELTA_MAX]),
+    stage_params=("ref",),
+    name=f"race_car_ocp_N{config.horizon}",
   )
 
 
