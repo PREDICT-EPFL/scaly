@@ -11,6 +11,8 @@ plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_backend_registration
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_bound_classification_changes_between_calls_and_errors_reset_stats
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_changing_state_sizes_and_zero_controls
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_empty_hessian_and_scaled_transition
+plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_fixed_bounds_cannot_abort_native_construction[box]
+plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_fixed_bounds_cannot_abort_native_construction[inequality]
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_invalid_options[options0-ValueError]
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_invalid_options[options1-ValueError]
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_invalid_options[options2-ValueError]

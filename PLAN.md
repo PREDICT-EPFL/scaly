@@ -34,3 +34,10 @@ return relaxed variables with honor_original_bounds=no. Full hooks passed.
 Zensical's cached build emitted false missing-page warnings. A clean strict
 build passed with no warnings. The paper's default tolerance also gives 13
 iterations on both Fatrop paths.
+
+Technical review found that fixed bounds can create more stage equalities than
+variables and abort Fatrop's uncaught native constructor. Added a pre-constructor
+dimension check and a subprocess regression for both bounded expressions and
+variable bounds, including recovery on a subsequent call. The two regressions failed with SIGABRT before the guard and pass after it.
+Validation after the fix: 26 Fatrop tests pass, whole suite 2522 passed /
+52 skipped, Ruff, ty and clean strict docs pass. Delta check pending.

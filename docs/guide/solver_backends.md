@@ -137,6 +137,8 @@ its multipliers are ignored because the native C interface has no dual
 initialization entry. Each call creates a native solver with the current
 parameter-dependent bounds. Fixed bounds become stage equalities, and absent
 bounds contribute no constraints.
+If a stage has more local equalities than variables, including fixed bounds,
+the solve returns `ERROR`.
 
 Scaly defaults to `print_level=0` and `tol=1e-8`. Other options retain Fatrop's
 defaults. Supported integer options are `print_level`, `max_iter` and

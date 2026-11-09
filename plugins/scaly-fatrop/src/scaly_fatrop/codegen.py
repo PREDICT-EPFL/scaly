@@ -264,6 +264,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
       d->kind[i] = lower == upper ? 1 : 2;
       d->column[i] = d->kind[i] == 1 ? d->ng[k]++ : d->ngi[k]++;
     }}
+    for (int k = 0; k < {stages}; ++k) if (d->ng[k] > {s}_nx[k]+{s}_nu[k]) setup_ok = 0;
     {s}_jac(d);
     for (int i = 0; i < {len(pivot_indices)}; ++i) {{
       int entry = {s}_pivot[i], row = {s}_jr[entry];

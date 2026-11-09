@@ -1,5 +1,8 @@
 """Fatrop's whole-problem wrapper agrees with reference NLP solves."""
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -142,3 +145,40 @@ def test_empty_hessian_and_scaled_transition():
     assert solve.stats().status == sc.ScalySolveStatus.OK
   solve(np.array(0.0))
   assert solve.stats().status == sc.ScalySolveStatus.ERROR
+
+
+@pytest.mark.solver("fatrop")
+@pytest.mark.parametrize("bound_kind", ["inequality", "box"])
+def test_fixed_bounds_cannot_abort_native_construction(bound_kind, tmp_path):
+  source = """
+import sys
+import numpy as np
+import scaly as sc
+
+@sc.problem(vars=sc.arg("z", 3), params=sc.arg("bounds", 2))
+def problem(z, bounds):
+  box = sys.argv[1] == "box"
+  return sc.ProblemSpec(
+    minimize=z[1]**2 + (z[2] - 3)**2,
+    eq=(z[0] - 1, z[2] - z[0] - z[1]),
+    ineq=() if box else (sc.bounded(z[:2], lo=bounds[0], hi=bounds[1]),),
+    lb=sc.stack([bounds[0], bounds[0], -np.inf]) if box else None,
+    ub=sc.stack([bounds[1], bounds[1], np.inf]) if box else None,
+  )
+
+solve = sc.solver(problem, "fatrop", options={"max_iter": 20})
+solve(np.array([0., 2.]))
+assert solve.stats().status == sc.ScalySolveStatus.OK
+result = solve(np.array([1., 1.]), x0=np.array([1., 1., 1.]))
+stats = solve.stats()
+assert stats.status == sc.ScalySolveStatus.ERROR and stats.native_status == -1
+assert stats.iter == stats.n_eval_h == stats.t_solver == 0
+assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
+np.testing.assert_array_equal(result[0], [1., 1., 1.])
+for multipliers in result[1:]:
+  np.testing.assert_array_equal(multipliers, np.zeros_like(multipliers))
+solve(np.array([0., 2.]))
+assert solve.stats().status == sc.ScalySolveStatus.OK
+"""
+  result = subprocess.run([sys.executable, "-c", source, bound_kind], cwd=tmp_path, capture_output=True, text=True, timeout=60)
+  assert result.returncode == 0, result.stdout + result.stderr
