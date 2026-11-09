@@ -1,0 +1,6807 @@
+{
+  "units": "microseconds per native C call",
+  "primary_cells": 40,
+  "control_cells": 44,
+  "historical_cells": 6,
+  "sparse_ablation_cells": 4,
+  "noise_repeats": 3,
+  "current_compiler": "Clean pushed PR #285 implementation on its approved builder/backend stack; raw provenance identifies the revision. No production edits during the investigation.",
+  "devrush_ref": "6aa1e6b489d77c742ac1af0afd99417733fb713e",
+  "historical_tree": "78a86faa",
+  "historical_limit": "Tree introducing the published artifacts, not proven to be the exact measured revision.",
+  "policy": {
+    "machine": "la015",
+    "cpu": "AMD Ryzen 9 7940HS",
+    "governor": "performance",
+    "boost": false,
+    "compiler": "GCC 13.3.0",
+    "cflags": [
+      "-O2",
+      "-march=native",
+      "-fno-math-errno"
+    ],
+    "libraries": [
+      "-lmvec",
+      "-lm"
+    ],
+    "samples": 200,
+    "batch_min_ms": 1,
+    "processes_per_cell": 1,
+    "source_limit_MiB": 50,
+    "compile_limit_s": 180
+  },
+  "primary": [
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.3039156869635917,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M3_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.233883,
+          "min_us": 0.23265,
+          "mean_us": 0.23439021,
+          "std_us": 0.004081353248321927,
+          "max_rel_error": 0.0,
+          "source_bytes": 2361,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 89.63727300000001,
+          "min_us": 89.262909,
+          "mean_us": 89.68894273499998,
+          "std_us": 0.3858351519837277,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 46373,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 186.362333,
+          "min_us": 185.312,
+          "mean_us": 186.47255918,
+          "std_us": 0.8191505637170714,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 134845,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.556536,
+          "min_us": 2.52852,
+          "mean_us": 2.559666355,
+          "std_us": 0.017039597848634545,
+          "max_rel_error": 2.6532221163938153e-16,
+          "source_bytes": 14116,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.069073,
+          "min_us": 0.067115,
+          "mean_us": 0.069086225,
+          "std_us": 0.00045331807903380004,
+          "max_rel_error": 0.0,
+          "source_bytes": 2038,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 1.3541132980026305,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M3_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.29185099999999997,
+          "min_us": 0.29037999999999997,
+          "mean_us": 0.292276365,
+          "std_us": 0.002705043140828574,
+          "max_rel_error": 0.0,
+          "source_bytes": 2812,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 109.7635,
+          "min_us": 109.4849,
+          "mean_us": 109.91927749999999,
+          "std_us": 0.6283412481001632,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 235060,
+          "workspace": 23121,
+          "coloring_width": [
+            36
+          ]
+        },
+        "hess": {
+          "median_us": 346.721667,
+          "min_us": 346.006667,
+          "mean_us": 347.360466695,
+          "std_us": 3.6428933608694853,
+          "max_rel_error": 2.6596647003132705e-17,
+          "source_bytes": 271974,
+          "workspace": 95400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.754374,
+          "min_us": 2.730179,
+          "mean_us": 2.75764169,
+          "std_us": 0.01967882475460645,
+          "max_rel_error": 2.6532221163938153e-16,
+          "source_bytes": 14295,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.788875,
+          "min_us": 2.741369,
+          "mean_us": 2.7909087700000006,
+          "std_us": 0.01778953128538999,
+          "max_rel_error": 2.6532221163938153e-16,
+          "source_bytes": 15605,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.068384,
+          "min_us": 0.066596,
+          "mean_us": 0.068450175,
+          "std_us": 0.0003997737731813058,
+          "max_rel_error": 0.0,
+          "source_bytes": 2010,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.20176585798617452,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M3_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.32476900000000003,
+          "min_us": 0.322574,
+          "mean_us": 0.32497075000000003,
+          "std_us": 0.0015703343008999415,
+          "max_rel_error": 0.0,
+          "source_bytes": 12425,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 56.117611,
+          "min_us": 55.976167000000004,
+          "mean_us": 56.139659995,
+          "std_us": 0.12479054629863803,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 108121,
+          "workspace": 13125,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 628.8055,
+          "min_us": 626.6465,
+          "mean_us": 630.5351025,
+          "std_us": 13.31036105191763,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 178978,
+          "workspace": 15000,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 1.6376780000000002,
+          "min_us": 1.620946,
+          "mean_us": 1.6387902,
+          "std_us": 0.00750414766250662,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51053,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.06469899999999999,
+          "min_us": 0.063942,
+          "mean_us": 0.06474816,
+          "std_us": 0.0004233547099682032,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8270,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.21673896798165515,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M3_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.214688,
+          "min_us": 0.213202,
+          "mean_us": 0.21548412499999997,
+          "std_us": 0.003521508894471831,
+          "max_rel_error": 0.0,
+          "source_bytes": 13958,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 82.532846,
+          "min_us": 82.07507700000001,
+          "mean_us": 82.58975845,
+          "std_us": 0.31370242271527765,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 111726,
+          "workspace": 14400,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 661.724,
+          "min_us": 657.135,
+          "mean_us": 661.889585,
+          "std_us": 1.974794294427019,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 208609,
+          "workspace": 15000,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 1.729615,
+          "min_us": 1.720002,
+          "mean_us": 1.7312556949999998,
+          "std_us": 0.01105659560187911,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51045,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 1.816931,
+          "min_us": 1.812423,
+          "mean_us": 1.8180933649999997,
+          "std_us": 0.010048911867479828,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 57207,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.129806,
+          "min_us": 0.12841999999999998,
+          "mean_us": 0.129825585,
+          "std_us": 0.0005785647662263861,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8218,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.39475732296705246,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M3_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.815864,
+          "min_us": 0.808962,
+          "mean_us": 0.8292239899999999,
+          "std_us": 0.054220135169315044,
+          "max_rel_error": 0.0,
+          "source_bytes": 13621,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 77.208769,
+          "min_us": 76.94215399999999,
+          "mean_us": 77.25538192000002,
+          "std_us": 0.29752200773407406,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 342236,
+          "workspace": 37800,
+          "coloring_width": [
+            38
+          ]
+        },
+        "hess": {
+          "median_us": 726.6035,
+          "min_us": 722.9915,
+          "mean_us": 726.8353025,
+          "std_us": 2.7042488060957153,
+          "max_rel_error": 3.1029421503654824e-17,
+          "source_bytes": 370779,
+          "workspace": 59112,
+          "coloring_width": [
+            24
+          ]
+        },
+        "constraints": {
+          "median_us": 1.663872,
+          "min_us": 1.659661,
+          "mean_us": 1.6675074550000002,
+          "std_us": 0.014051992271273663,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51045,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 1.7425419999999998,
+          "min_us": 1.738889,
+          "mean_us": 1.7442325399999996,
+          "std_us": 0.007200901090207725,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 57207,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.127601,
+          "min_us": 0.123734,
+          "mean_us": 0.12763960499999996,
+          "std_us": 0.000738507974987815,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8218,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 4,
+      "nx": 27,
+      "N": 25,
+      "build_s": 0.3215004929807037,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M4_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.29150099999999995,
+          "min_us": 0.290107,
+          "mean_us": 0.29186978,
+          "std_us": 0.0019003247967824678,
+          "max_rel_error": 0.0,
+          "source_bytes": 2592,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 148.948571,
+          "min_us": 148.729429,
+          "mean_us": 149.17065785,
+          "std_us": 1.2528724546888104,
+          "max_rel_error": 3.640919989944635e-16,
+          "source_bytes": 58925,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 282.299,
+          "min_us": 280.68575,
+          "mean_us": 282.40241625,
+          "std_us": 1.1306317666496124,
+          "max_rel_error": 1.2013067109973434e-16,
+          "source_bytes": 185233,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 3.330017,
+          "min_us": 3.2996849999999998,
+          "mean_us": 3.33467598,
+          "std_us": 0.02722659518257432,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 18060,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.079665,
+          "min_us": 0.07904900000000001,
+          "mean_us": 0.07975559,
+          "std_us": 0.0005426339094624408,
+          "max_rel_error": 0.0,
+          "source_bytes": 2155,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 4,
+      "nx": 27,
+      "N": 25,
+      "build_s": 1.642788950004615,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M4_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.373108,
+          "min_us": 0.370556,
+          "mean_us": 0.373735925,
+          "std_us": 0.004500078951778088,
+          "max_rel_error": 0.0,
+          "source_bytes": 3053,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 179.818167,
+          "min_us": 179.4875,
+          "mean_us": 180.02854415,
+          "std_us": 0.8020488995340228,
+          "max_rel_error": 3.640919989944635e-16,
+          "source_bytes": 346398,
+          "workspace": 35127,
+          "coloring_width": [
+            39
+          ]
+        },
+        "hess": {
+          "median_us": 442.274667,
+          "min_us": 440.190667,
+          "mean_us": 444.73187001,
+          "std_us": 7.4397201367024595,
+          "max_rel_error": 1.0642309854649948e-16,
+          "source_bytes": 306006,
+          "workspace": 116568,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 3.387003,
+          "min_us": 3.370483,
+          "mean_us": 3.388831145,
+          "std_us": 0.011330378435047174,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 18227,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 3.545134,
+          "min_us": 3.534018,
+          "mean_us": 3.548183725,
+          "std_us": 0.014595380504795818,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 19652,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.081027,
+          "min_us": 0.078628,
+          "mean_us": 0.08102689500000002,
+          "std_us": 0.0006445303178502471,
+          "max_rel_error": 0.0,
+          "source_bytes": 2125,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 4,
+      "nx": 27,
+      "N": 25,
+      "build_s": 0.20072533300844952,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M4_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.588452,
+          "min_us": 0.584283,
+          "mean_us": 0.58856097,
+          "std_us": 0.002312130429868439,
+          "max_rel_error": 0.0,
+          "source_bytes": 14438,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 318.82375,
+          "min_us": 312.4365,
+          "mean_us": 319.137695,
+          "std_us": 1.166353101449688,
+          "max_rel_error": 2.4272799932964234e-16,
+          "source_bytes": 71463,
+          "workspace": 20925,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1368.674,
+          "min_us": 1360.459,
+          "mean_us": 1368.6169,
+          "std_us": 3.9956321982030056,
+          "max_rel_error": 1.2013067109973434e-16,
+          "source_bytes": 141126,
+          "workspace": 23250,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.076056,
+          "min_us": 2.051402,
+          "mean_us": 2.077046625,
+          "std_us": 0.010632210548617141,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 64831,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.073708,
+          "min_us": 0.07306399999999999,
+          "mean_us": 0.073749275,
+          "std_us": 0.0005442305798050813,
+          "max_rel_error": 0.0,
+          "source_bytes": 9107,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 4,
+      "nx": 27,
+      "N": 25,
+      "build_s": 0.2141997889848426,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M4_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.260595,
+          "min_us": 0.25686200000000003,
+          "mean_us": 0.261050205,
+          "std_us": 0.002647181923034989,
+          "max_rel_error": 0.0,
+          "source_bytes": 16125,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 357.121333,
+          "min_us": 356.517,
+          "mean_us": 357.35901000499996,
+          "std_us": 0.85839703196076,
+          "max_rel_error": 2.4272799932964234e-16,
+          "source_bytes": 78952,
+          "workspace": 22500,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1341.252,
+          "min_us": 1332.475,
+          "mean_us": 1341.728115,
+          "std_us": 3.5587790142316615,
+          "max_rel_error": 1.2013067109973434e-16,
+          "source_bytes": 185200,
+          "workspace": 23250,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.1102440000000002,
+          "min_us": 2.1069180000000003,
+          "mean_us": 2.111891505,
+          "std_us": 0.0073650343860373465,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 63584,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.154541,
+          "min_us": 2.1494009999999997,
+          "mean_us": 2.1574192099999996,
+          "std_us": 0.020366617327941674,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 70517,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.14377600000000001,
+          "min_us": 0.14214500000000002,
+          "mean_us": 0.14402674,
+          "std_us": 0.0023356430021661784,
+          "max_rel_error": 0.0,
+          "source_bytes": 8963,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 4,
+      "nx": 27,
+      "N": 25,
+      "build_s": 0.4414221280021593,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M4_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.931041,
+          "min_us": 0.918538,
+          "mean_us": 0.93092065,
+          "std_us": 0.004606032804756437,
+          "max_rel_error": 0.0,
+          "source_bytes": 15578,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 314.41525,
+          "min_us": 312.439,
+          "mean_us": 314.55924125,
+          "std_us": 1.1761007517437436,
+          "max_rel_error": 2.4272799932964234e-16,
+          "source_bytes": 418090,
+          "workspace": 52650,
+          "coloring_width": [
+            41
+          ]
+        },
+        "hess": {
+          "median_us": 1163.542,
+          "min_us": 1158.942,
+          "mean_us": 1165.952035,
+          "std_us": 7.904229263185627,
+          "max_rel_error": 1.0642309854649948e-16,
+          "source_bytes": 385329,
+          "workspace": 74898,
+          "coloring_width": [
+            24
+          ]
+        },
+        "constraints": {
+          "median_us": 2.188561,
+          "min_us": 2.173272,
+          "mean_us": 2.18910801,
+          "std_us": 0.012453256891913045,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 63584,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.173279,
+          "min_us": 2.168422,
+          "mean_us": 2.18089053,
+          "std_us": 0.03450920478602658,
+          "max_rel_error": 1.761870749859939e-16,
+          "source_bytes": 70517,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.143784,
+          "min_us": 0.141942,
+          "mean_us": 0.14451293,
+          "std_us": 0.0038364423630657648,
+          "max_rel_error": 0.0,
+          "source_bytes": 8963,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 5,
+      "nx": 33,
+      "N": 25,
+      "build_s": 0.32886175700696185,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M5_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.35200400000000004,
+          "min_us": 0.350211,
+          "mean_us": 0.35225305999999995,
+          "std_us": 0.0015629648691866222,
+          "max_rel_error": 0.0,
+          "source_bytes": 2823,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 223.235,
+          "min_us": 222.9246,
+          "mean_us": 223.56962600000003,
+          "std_us": 1.2478543495586993,
+          "max_rel_error": 6.07171160260971e-16,
+          "source_bytes": 71769,
+          "workspace": 1188,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 653.1695,
+          "min_us": 646.031,
+          "mean_us": 653.394755,
+          "std_us": 3.1566909388459234,
+          "max_rel_error": 1.6493097545855445e-15,
+          "source_bytes": 142426,
+          "workspace": 20952,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.130815999999999,
+          "min_us": 4.11143,
+          "mean_us": 4.135307585,
+          "std_us": 0.02188502927630893,
+          "max_rel_error": 1.7870587993429154e-16,
+          "source_bytes": 22004,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.09531300000000001,
+          "min_us": 0.092256,
+          "mean_us": 0.09534657500000002,
+          "std_us": 0.0010014904091267497,
+          "max_rel_error": 0.0,
+          "source_bytes": 2272,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 5,
+      "nx": 33,
+      "N": 25,
+      "build_s": 1.9978572389809415,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M5_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.427794,
+          "min_us": 0.42644,
+          "mean_us": 0.42855392000000003,
+          "std_us": 0.001674450787811937,
+          "max_rel_error": 0.0,
+          "source_bytes": 3293,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 243.0468,
+          "min_us": 242.554,
+          "mean_us": 243.286626,
+          "std_us": 0.6383015617580081,
+          "max_rel_error": 6.07171160260971e-16,
+          "source_bytes": 475507,
+          "workspace": 46458,
+          "coloring_width": [
+            42
+          ]
+        },
+        "hess": {
+          "median_us": 695.32,
+          "min_us": 692.7905,
+          "mean_us": 696.3331625,
+          "std_us": 4.546181087433986,
+          "max_rel_error": 1.877009844377614e-15,
+          "source_bytes": 354804,
+          "workspace": 184113,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.126746,
+          "min_us": 4.11184,
+          "mean_us": 4.1320289400000005,
+          "std_us": 0.021929385499102366,
+          "max_rel_error": 1.7870587993429154e-16,
+          "source_bytes": 22159,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 4.26239,
+          "min_us": 4.2533900000000004,
+          "mean_us": 4.271858545,
+          "std_us": 0.07669696688608747,
+          "max_rel_error": 1.7870587993429154e-16,
+          "source_bytes": 23698,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.094128,
+          "min_us": 0.090754,
+          "mean_us": 0.094159375,
+          "std_us": 0.0008375210696367146,
+          "max_rel_error": 0.0,
+          "source_bytes": 2239,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 5,
+      "nx": 33,
+      "N": 25,
+      "build_s": 0.20052643603412434,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M5_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.491475,
+          "min_us": 0.487027,
+          "mean_us": 0.4916382650000001,
+          "std_us": 0.00279896410751384,
+          "max_rel_error": 0.0,
+          "source_bytes": 16451,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 473.262,
+          "min_us": 468.519667,
+          "mean_us": 473.82514333499995,
+          "std_us": 3.8045053961412867,
+          "max_rel_error": 4.857369282087769e-16,
+          "source_bytes": 92781,
+          "workspace": 41217,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1909.012,
+          "min_us": 1900.816,
+          "mean_us": 1910.39716,
+          "std_us": 14.76313699298929,
+          "max_rel_error": 1.6493097545855445e-15,
+          "source_bytes": 170541,
+          "workspace": 51876,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.4594720000000003,
+          "min_us": 2.4494279999999997,
+          "mean_us": 2.4688228000000003,
+          "std_us": 0.052245375291952716,
+          "max_rel_error": 1.7870587993429154e-16,
+          "source_bytes": 78621,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.084176,
+          "min_us": 0.082649,
+          "mean_us": 0.08432416,
+          "std_us": 0.0010821283255533169,
+          "max_rel_error": 3.3982882891947366e-16,
+          "source_bytes": 9944,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 5,
+      "nx": 33,
+      "N": 25,
+      "build_s": 0.21493037702748552,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M5_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.33690699999999996,
+          "min_us": 0.334052,
+          "mean_us": 0.33740409,
+          "std_us": 0.003718745760610734,
+          "max_rel_error": 0.0,
+          "source_bytes": 18291,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 512.2045,
+          "min_us": 507.8465,
+          "mean_us": 512.20428,
+          "std_us": 1.9757078100909231,
+          "max_rel_error": 4.857369282087769e-16,
+          "source_bytes": 105935,
+          "workspace": 45477,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1698.829,
+          "min_us": 1536.72,
+          "mean_us": 1715.366885,
+          "std_us": 56.721012019483105,
+          "max_rel_error": 1.6493097545855445e-15,
+          "source_bytes": 232773,
+          "workspace": 54429,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.575105,
+          "min_us": 2.569428,
+          "mean_us": 2.57813828,
+          "std_us": 0.018600795285089,
+          "max_rel_error": 1.7870587993429154e-16,
+          "source_bytes": 76135,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.701717,
+          "min_us": 2.693698,
+          "mean_us": 2.7178388250000003,
+          "std_us": 0.09221546107437827,
+          "max_rel_error": 3.3982882891947366e-16,
+          "source_bytes": 83846,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.168296,
+          "min_us": 0.164069,
+          "mean_us": 0.16842053499999998,
+          "std_us": 0.0034377640432204344,
+          "max_rel_error": 3.3982882891947366e-16,
+          "source_bytes": 9707,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 5,
+      "nx": 33,
+      "N": 25,
+      "build_s": 0.5036131750093773,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M5_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 1.251722,
+          "min_us": 1.240071,
+          "mean_us": 1.25189185,
+          "std_us": 0.005126483432080613,
+          "max_rel_error": 0.0,
+          "source_bytes": 17534,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 486.69,
+          "min_us": 474.179333,
+          "mean_us": 486.848353335,
+          "std_us": 2.318477741882046,
+          "max_rel_error": 4.857369282087769e-16,
+          "source_bytes": 544862,
+          "workspace": 69300,
+          "coloring_width": [
+            44
+          ]
+        },
+        "hess": {
+          "median_us": 1659.291,
+          "min_us": 1653.049,
+          "mean_us": 1659.58622,
+          "std_us": 5.292300629344178,
+          "max_rel_error": 1.8937688608452714e-15,
+          "source_bytes": 491589,
+          "workspace": 110970,
+          "coloring_width": [
+            30
+          ]
+        },
+        "constraints": {
+          "median_us": 2.6005439999999997,
+          "min_us": 2.592731,
+          "mean_us": 2.60214293,
+          "std_us": 0.012087127152433517,
+          "max_rel_error": 1.7870587993429154e-16,
+          "source_bytes": 76135,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.6983870000000003,
+          "min_us": 2.691492,
+          "mean_us": 2.703060885,
+          "std_us": 0.024005362916765152,
+          "max_rel_error": 3.3982882891947366e-16,
+          "source_bytes": 83846,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.170572,
+          "min_us": 0.168577,
+          "mean_us": 0.171841185,
+          "std_us": 0.005800600696737359,
+          "max_rel_error": 3.3982882891947366e-16,
+          "source_bytes": 9707,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.3614377159974538,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M6_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.662323,
+          "min_us": 0.660633,
+          "mean_us": 0.6675679099999999,
+          "std_us": 0.024011229481598596,
+          "max_rel_error": 0.0,
+          "source_bytes": 3087,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 298.00025,
+          "min_us": 297.344,
+          "mean_us": 298.40934000000004,
+          "std_us": 1.7198892831754924,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 84842,
+          "workspace": 1638,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 829.327,
+          "min_us": 826.2315,
+          "mean_us": 829.9167775,
+          "std_us": 7.944950270185608,
+          "max_rel_error": 1.8141290126813011e-16,
+          "source_bytes": 166171,
+          "workspace": 28728,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.855333,
+          "min_us": 4.845309,
+          "mean_us": 4.85942892,
+          "std_us": 0.02382883027120867,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 25949,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.105494,
+          "min_us": 0.104628,
+          "mean_us": 0.10554535,
+          "std_us": 0.0003799166365846183,
+          "max_rel_error": 0.0,
+          "source_bytes": 2389,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 2.36970930499956,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M6_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.495954,
+          "min_us": 0.492435,
+          "mean_us": 0.49628629499999993,
+          "std_us": 0.003002965552336156,
+          "max_rel_error": 0.0,
+          "source_bytes": 3565,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 295.25225,
+          "min_us": 294.68125,
+          "mean_us": 295.64860625,
+          "std_us": 0.9380403569836897,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        },
+        "hess": {
+          "median_us": 961.7445,
+          "min_us": 956.7,
+          "mean_us": 967.385525,
+          "std_us": 20.144600656813413,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 429759,
+          "workspace": 259173,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 5.0445780000000005,
+          "min_us": 5.036417,
+          "mean_us": 5.05171375,
+          "std_us": 0.03825039001840765,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 26094,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 5.152887,
+          "min_us": 5.141887,
+          "mean_us": 5.1823564950000005,
+          "std_us": 0.10603858468254544,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 27747,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.105223,
+          "min_us": 0.10385899999999999,
+          "mean_us": 0.10534528,
+          "std_us": 0.0007160620966307018,
+          "max_rel_error": 0.0,
+          "source_bytes": 2353,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.2017035559983924,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M6_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.828118,
+          "min_us": 0.825352,
+          "mean_us": 0.8285453749999999,
+          "std_us": 0.0027376444766950476,
+          "max_rel_error": 0.0,
+          "source_bytes": 18497,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 489.039,
+          "min_us": 487.62266700000004,
+          "mean_us": 489.2195216599999,
+          "std_us": 1.2215848941829885,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 113636,
+          "workspace": 56667,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 2231.609,
+          "min_us": 2226.119,
+          "mean_us": 2232.414315,
+          "std_us": 3.470312080411827,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 195285,
+          "workspace": 70602,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 3.20371,
+          "min_us": 3.1963690000000002,
+          "mean_us": 3.2071413650000005,
+          "std_us": 0.013771613005222137,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 92412,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.092957,
+          "min_us": 0.091879,
+          "mean_us": 0.09297199,
+          "std_us": 0.00043302899493251237,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10781,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.21598087495658547,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M6_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.38000599999999995,
+          "min_us": 0.37614299999999995,
+          "mean_us": 0.38069002999999996,
+          "std_us": 0.0028815659982222423,
+          "max_rel_error": 0.0,
+          "source_bytes": 20497,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 568.3425,
+          "min_us": 567.13,
+          "mean_us": 570.4358149999999,
+          "std_us": 9.718801638820947,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 134343,
+          "workspace": 62127,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 2419.398,
+          "min_us": 2413.297,
+          "mean_us": 2421.46643,
+          "std_us": 17.12091954057005,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 280012,
+          "workspace": 74085,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 3.692213,
+          "min_us": 3.6851030000000002,
+          "mean_us": 3.6961761950000005,
+          "std_us": 0.024763146719758718,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 88729,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 4.026263,
+          "min_us": 4.006757,
+          "mean_us": 4.028130679999999,
+          "std_us": 0.01612692096049118,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 97218,
+          "workspace": 1089,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.40359100000000003,
+          "min_us": 0.40185899999999997,
+          "mean_us": 0.40386139500000007,
+          "std_us": 0.0017801837489075018,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10485,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.5790059759747237,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M6_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 2.0649789999999997,
+          "min_us": 2.0586909999999996,
+          "mean_us": 2.06701967,
+          "std_us": 0.01137929376782108,
+          "max_rel_error": 0.0,
+          "source_bytes": 19544,
+          "workspace": 2139,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 423.099667,
+          "min_us": 422.097667,
+          "mean_us": 423.72906167499997,
+          "std_us": 1.3551057253890884,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 658754,
+          "workspace": 91260,
+          "coloring_width": [
+            44
+          ]
+        },
+        "hess": {
+          "median_us": 2175.574,
+          "min_us": 2171.335,
+          "mean_us": 2177.5957200000003,
+          "std_us": 6.731546724051646,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 625599,
+          "workspace": 175212,
+          "coloring_width": [
+            36
+          ]
+        },
+        "constraints": {
+          "median_us": 3.660211,
+          "min_us": 3.636392,
+          "mean_us": 3.662552065,
+          "std_us": 0.012551903157095357,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 88729,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 3.875996,
+          "min_us": 3.865669,
+          "mean_us": 3.880167055,
+          "std_us": 0.018773017091173776,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 97218,
+          "workspace": 1089,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.40550200000000003,
+          "min_us": 0.403086,
+          "mean_us": 0.40585624500000006,
+          "std_us": 0.0017102995256128542,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10485,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 8,
+      "nx": 51,
+      "N": 25,
+      "build_s": 0.38111747900256887,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M8_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.526694,
+          "min_us": 0.5244260000000001,
+          "mean_us": 0.5268795199999999,
+          "std_us": 0.0020070231561560878,
+          "max_rel_error": 0.0,
+          "source_bytes": 3549,
+          "workspace": 1350,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 513.6285,
+          "min_us": 512.8215,
+          "mean_us": 513.7880825,
+          "std_us": 0.8123920551062453,
+          "max_rel_error": 3.6438305181772654e-16,
+          "source_bytes": 111641,
+          "workspace": 4029,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1487.066,
+          "min_us": 1477.94,
+          "mean_us": 1494.9395149999998,
+          "std_us": 33.284867278819334,
+          "max_rel_error": 2.945744682738401e-16,
+          "source_bytes": 220491,
+          "workspace": 50868,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 7.019993,
+          "min_us": 7.006514,
+          "mean_us": 7.027249660000001,
+          "std_us": 0.03592194293304336,
+          "max_rel_error": 4.1583233443067797e-16,
+          "source_bytes": 33869,
+          "workspace": 1275,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.126865,
+          "min_us": 0.126025,
+          "mean_us": 0.12698206,
+          "std_us": 0.0007898364606504716,
+          "max_rel_error": 1.796814404402722e-16,
+          "source_bytes": 2623,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 8,
+      "nx": 51,
+      "N": 25,
+      "build_s": 3.0302023889962584,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M8_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.634586,
+          "min_us": 0.633161,
+          "mean_us": 0.63511034,
+          "std_us": 0.002551874623658923,
+          "max_rel_error": 0.0,
+          "source_bytes": 4045,
+          "workspace": 1350,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 380.478,
+          "min_us": 379.075333,
+          "mean_us": 381.804698355,
+          "std_us": 2.7327000408115008,
+          "max_rel_error": 3.6438305181772654e-16,
+          "source_bytes": 755357,
+          "workspace": 75906,
+          "coloring_width": [
+            48
+          ]
+        },
+        "hess": {
+          "median_us": 1396.944,
+          "min_us": 1391.593,
+          "mean_us": 1397.8630600000001,
+          "std_us": 5.104509737939934,
+          "max_rel_error": 3.3696891217948954e-16,
+          "source_bytes": 545996,
+          "workspace": 358110,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 6.830354000000001,
+          "min_us": 6.820265,
+          "mean_us": 6.838602395,
+          "std_us": 0.03173528144321991,
+          "max_rel_error": 4.1583233443067797e-16,
+          "source_bytes": 33997,
+          "workspace": 2601,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 6.9703990000000005,
+          "min_us": 6.955755,
+          "mean_us": 7.019460429999999,
+          "std_us": 0.1717207368270566,
+          "max_rel_error": 4.1583233443067797e-16,
+          "source_bytes": 35878,
+          "workspace": 2601,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.126267,
+          "min_us": 0.125159,
+          "mean_us": 0.12631388,
+          "std_us": 0.0006025108231893446,
+          "max_rel_error": 1.796814404402722e-16,
+          "source_bytes": 2581,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 8,
+      "nx": 51,
+      "N": 25,
+      "build_s": 0.20274618099210784,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M8_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 1.184771,
+          "min_us": 1.177697,
+          "mean_us": 1.1856263800000002,
+          "std_us": 0.0038311122183706295,
+          "max_rel_error": 0.0,
+          "source_bytes": 22523,
+          "workspace": 1350,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1021.746,
+          "min_us": 1019.812,
+          "mean_us": 1022.252205,
+          "std_us": 2.1227052008755525,
+          "max_rel_error": 2.4292203454515103e-16,
+          "source_bytes": 158579,
+          "workspace": 99264,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 3964.319,
+          "min_us": 3958.298,
+          "mean_us": 3965.221015,
+          "std_us": 6.253106213021785,
+          "max_rel_error": 4.14972092231158e-16,
+          "source_bytes": 235050,
+          "workspace": 124146,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 6.705773,
+          "min_us": 6.686733,
+          "mean_us": 6.729009280000001,
+          "std_us": 0.18635572978289713,
+          "max_rel_error": 2.0791616721533898e-16,
+          "source_bytes": 120069,
+          "workspace": 2550,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.12023600000000001,
+          "min_us": 0.11853,
+          "mean_us": 0.12036137999999999,
+          "std_us": 0.0006966472151035685,
+          "max_rel_error": 0.0,
+          "source_bytes": 12455,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 8,
+      "nx": 51,
+      "N": 25,
+      "build_s": 0.2182391730020754,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M8_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.49418799999999996,
+          "min_us": 0.492284,
+          "mean_us": 0.49433778,
+          "std_us": 0.0020464205817934747,
+          "max_rel_error": 0.0,
+          "source_bytes": 24829,
+          "workspace": 1350,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1141.846,
+          "min_us": 1129.032,
+          "mean_us": 1142.870115,
+          "std_us": 4.5204791705561655,
+          "max_rel_error": 2.4292203454515103e-16,
+          "source_bytes": 199675,
+          "workspace": 106281,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 3883.254,
+          "min_us": 3872.714,
+          "mean_us": 3885.45379,
+          "std_us": 13.410756821242135,
+          "max_rel_error": 4.14972092231158e-16,
+          "source_bytes": 374450,
+          "workspace": 129921,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.812629,
+          "min_us": 4.790609000000001,
+          "mean_us": 4.81627431,
+          "std_us": 0.016099770272835892,
+          "max_rel_error": 1.0395808360766949e-16,
+          "source_bytes": 113862,
+          "workspace": 5277,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 4.695475999999999,
+          "min_us": 4.666611,
+          "mean_us": 4.732125160000001,
+          "std_us": 0.14258498807876482,
+          "max_rel_error": 1.0395808360766949e-16,
+          "source_bytes": 123901,
+          "workspace": 5277,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.514019,
+          "min_us": 0.511906,
+          "mean_us": 0.5146457,
+          "std_us": 0.004776293713559808,
+          "max_rel_error": 0.0,
+          "source_bytes": 11973,
+          "workspace": 1401,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 8,
+      "nx": 51,
+      "N": 25,
+      "build_s": 0.6895908779697493,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M8_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 2.379626,
+          "min_us": 2.375521,
+          "mean_us": 2.3814807549999997,
+          "std_us": 0.011072658366965563,
+          "max_rel_error": 0.0,
+          "source_bytes": 23457,
+          "workspace": 2751,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 546.5505,
+          "min_us": 543.5505,
+          "mean_us": 547.2121800000001,
+          "std_us": 2.771296819706358,
+          "max_rel_error": 2.4292203454515103e-16,
+          "source_bytes": 910446,
+          "workspace": 134640,
+          "coloring_width": [
+            50
+          ]
+        },
+        "hess": {
+          "median_us": 3168.887,
+          "min_us": 3145.571,
+          "mean_us": 3169.0381,
+          "std_us": 10.525447045018442,
+          "max_rel_error": 4.7358542016015435e-16,
+          "source_bytes": 869745,
+          "workspace": 270414,
+          "coloring_width": [
+            42
+          ]
+        },
+        "constraints": {
+          "median_us": 4.80489,
+          "min_us": 4.797986,
+          "mean_us": 4.808566365,
+          "std_us": 0.016738375566187704,
+          "max_rel_error": 1.0395808360766949e-16,
+          "source_bytes": 113862,
+          "workspace": 5277,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 4.620461000000001,
+          "min_us": 4.602912,
+          "mean_us": 4.62795662,
+          "std_us": 0.03359821813137742,
+          "max_rel_error": 1.0395808360766949e-16,
+          "source_bytes": 123901,
+          "workspace": 5277,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.546292,
+          "min_us": 0.528709,
+          "mean_us": 0.5466196000000001,
+          "std_us": 0.00860370698942026,
+          "max_rel_error": 0.0,
+          "source_bytes": 11973,
+          "workspace": 1401,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 10,
+      "nx": 63,
+      "N": 25,
+      "build_s": 0.41983152099419385,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M10_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.64735,
+          "min_us": 0.644257,
+          "mean_us": 0.64768726,
+          "std_us": 0.0025702310637382413,
+          "max_rel_error": 0.0,
+          "source_bytes": 4058,
+          "workspace": 1650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 773.5015,
+          "min_us": 770.1395,
+          "mean_us": 773.820575,
+          "std_us": 2.4732855626163004,
+          "max_rel_error": 3.641385099569807e-16,
+          "source_bytes": 139875,
+          "workspace": 5733,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 2172.23,
+          "min_us": 2154.836,
+          "mean_us": 2172.2635499999997,
+          "std_us": 7.465307053599511,
+          "max_rel_error": 3.870654304638141e-16,
+          "source_bytes": 284160,
+          "workspace": 76428,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 8.717034,
+          "min_us": 8.7065,
+          "mean_us": 8.723387355000002,
+          "std_us": 0.025223544673149478,
+          "max_rel_error": 2.9736512346894254e-16,
+          "source_bytes": 41800,
+          "workspace": 1575,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.17677199999999998,
+          "min_us": 0.174716,
+          "mean_us": 0.1768486,
+          "std_us": 0.0007084584936225473,
+          "max_rel_error": 0.0,
+          "source_bytes": 2863,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 10,
+      "nx": 63,
+      "N": 25,
+      "build_s": 3.73929361498449,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M10_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 1.174007,
+          "min_us": 1.170083,
+          "mean_us": 1.17613426,
+          "std_us": 0.012849124243759098,
+          "max_rel_error": 0.0,
+          "source_bytes": 4565,
+          "workspace": 1650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 478.02166700000004,
+          "min_us": 476.248333,
+          "mean_us": 478.3256867,
+          "std_us": 1.4224189307688395,
+          "max_rel_error": 3.641385099569807e-16,
+          "source_bytes": 944499,
+          "workspace": 94878,
+          "coloring_width": [
+            54
+          ]
+        },
+        "hess": {
+          "median_us": 1786.581,
+          "min_us": 1778.404,
+          "mean_us": 1788.0089699999999,
+          "std_us": 14.587571178697566,
+          "max_rel_error": 4.334236700474393e-16,
+          "source_bytes": 578295,
+          "workspace": 439218,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 8.609983,
+          "min_us": 8.593888999999999,
+          "mean_us": 8.61302024,
+          "std_us": 0.016973456031719143,
+          "max_rel_error": 2.9736512346894254e-16,
+          "source_bytes": 41896,
+          "workspace": 3213,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 9.172291,
+          "min_us": 9.1416,
+          "mean_us": 9.229518295,
+          "std_us": 0.2506726157788181,
+          "max_rel_error": 2.9736512346894254e-16,
+          "source_bytes": 44011,
+          "workspace": 3213,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.174624,
+          "min_us": 0.173111,
+          "mean_us": 0.17479890500000003,
+          "std_us": 0.0008904727195689269,
+          "max_rel_error": 0.0,
+          "source_bytes": 2813,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 10,
+      "nx": 63,
+      "N": 25,
+      "build_s": 0.204583969025407,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M10_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.9165800000000001,
+          "min_us": 0.913832,
+          "mean_us": 0.9171096850000001,
+          "std_us": 0.0028246518877927365,
+          "max_rel_error": 0.0,
+          "source_bytes": 26549,
+          "workspace": 1650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1175.771,
+          "min_us": 1172.605,
+          "mean_us": 1177.522245,
+          "std_us": 11.174740898819703,
+          "max_rel_error": 2.4275900663798714e-16,
+          "source_bytes": 211992,
+          "workspace": 149076,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 5660.547,
+          "min_us": 5650.739,
+          "mean_us": 5662.795945,
+          "std_us": 16.89283434635056,
+          "max_rel_error": 5.594722407707828e-16,
+          "source_bytes": 283655,
+          "workspace": 185394,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 8.628222,
+          "min_us": 8.609385,
+          "mean_us": 8.634369495,
+          "std_us": 0.023514027611247004,
+          "max_rel_error": 1.982434156459617e-16,
+          "source_bytes": 147769,
+          "workspace": 3150,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.158015,
+          "min_us": 0.15629300000000002,
+          "mean_us": 0.15814115,
+          "std_us": 0.0008841451980052704,
+          "max_rel_error": 0.0,
+          "source_bytes": 14211,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 10,
+      "nx": 63,
+      "N": 25,
+      "build_s": 0.22059459501178935,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M10_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.615192,
+          "min_us": 0.611789,
+          "mean_us": 0.615451995,
+          "std_us": 0.0027715030363282796,
+          "max_rel_error": 0.0,
+          "source_bytes": 29167,
+          "workspace": 1650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1350.956,
+          "min_us": 1343.132,
+          "mean_us": 1356.84753,
+          "std_us": 11.346148547122361,
+          "max_rel_error": 2.4275900663798714e-16,
+          "source_bytes": 280561,
+          "workspace": 159201,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 5710.203,
+          "min_us": 5699.453,
+          "mean_us": 5711.357015,
+          "std_us": 6.580776852674651,
+          "max_rel_error": 5.594722407707828e-16,
+          "source_bytes": 492134,
+          "workspace": 194037,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 6.012606,
+          "min_us": 5.985703,
+          "mean_us": 6.022243425000001,
+          "std_us": 0.06101677021064837,
+          "max_rel_error": 1.982434156459617e-16,
+          "source_bytes": 138966,
+          "workspace": 6501,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 6.199216000000001,
+          "min_us": 6.177753,
+          "mean_us": 6.207242505000001,
+          "std_us": 0.055496334590447054,
+          "max_rel_error": 1.982434156459617e-16,
+          "source_bytes": 150663,
+          "workspace": 6501,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.612622,
+          "min_us": 0.608641,
+          "mean_us": 0.6130192900000001,
+          "std_us": 0.0021848169583761593,
+          "max_rel_error": 0.0,
+          "source_bytes": 13543,
+          "workspace": 1713,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 10,
+      "nx": 63,
+      "N": 25,
+      "build_s": 0.808333938010037,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M10_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 3.5700749999999997,
+          "min_us": 3.565335,
+          "mean_us": 3.57289693,
+          "std_us": 0.016031034093771938,
+          "max_rel_error": 0.0,
+          "source_bytes": 27373,
+          "workspace": 3363,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 685.688,
+          "min_us": 678.9,
+          "mean_us": 687.0094575,
+          "std_us": 8.656200287889835,
+          "max_rel_error": 2.4275900663798714e-16,
+          "source_bytes": 1171379,
+          "workspace": 186300,
+          "coloring_width": [
+            56
+          ]
+        },
+        "hess": {
+          "median_us": 3882.946,
+          "min_us": 3854.933,
+          "mean_us": 3880.16647,
+          "std_us": 9.44524361218745,
+          "max_rel_error": 6.384962505046676e-16,
+          "source_bytes": 1025976,
+          "workspace": 330786,
+          "coloring_width": [
+            42
+          ]
+        },
+        "constraints": {
+          "median_us": 6.023395000000001,
+          "min_us": 6.012713,
+          "mean_us": 6.030021810000001,
+          "std_us": 0.041112879993142684,
+          "max_rel_error": 1.982434156459617e-16,
+          "source_bytes": 138966,
+          "workspace": 6501,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 6.1543980000000005,
+          "min_us": 6.127758,
+          "mean_us": 6.15873953,
+          "std_us": 0.0232472888330994,
+          "max_rel_error": 1.982434156459617e-16,
+          "source_bytes": 150663,
+          "workspace": 6501,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.611318,
+          "min_us": 0.608553,
+          "mean_us": 0.611709885,
+          "std_us": 0.0023860490169591354,
+          "max_rel_error": 0.0,
+          "source_bytes": 13543,
+          "workspace": 1713,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 12,
+      "nx": 75,
+      "N": 25,
+      "build_s": 0.45753547694766894,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M12_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.7721509999999999,
+          "min_us": 0.7706660000000001,
+          "mean_us": 0.7727703149999999,
+          "std_us": 0.004536373487474805,
+          "max_rel_error": 0.0,
+          "source_bytes": 4526,
+          "workspace": 1950,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1093.444,
+          "min_us": 1090.75,
+          "mean_us": 1094.0522050000002,
+          "std_us": 2.1626202497661238,
+          "max_rel_error": 3.647410820010635e-16,
+          "source_bytes": 168795,
+          "workspace": 7725,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 3178.599,
+          "min_us": 3159.653,
+          "mean_us": 3180.7701749999997,
+          "std_us": 21.098290085145756,
+          "max_rel_error": 6.474658393989599e-16,
+          "source_bytes": 230386,
+          "workspace": 107172,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 10.74672,
+          "min_us": 10.695870999999999,
+          "mean_us": 10.75641615,
+          "std_us": 0.04650566272763112,
+          "max_rel_error": 3.432474286213007e-16,
+          "source_bytes": 49694,
+          "workspace": 1875,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.22202000000000002,
+          "min_us": 0.220958,
+          "mean_us": 0.2223164,
+          "std_us": 0.0010357526236932436,
+          "max_rel_error": 0.0,
+          "source_bytes": 3097,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 12,
+      "nx": 75,
+      "N": 25,
+      "build_s": 4.331426935037598,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M12_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.91318,
+          "min_us": 0.911701,
+          "mean_us": 0.9143194149999998,
+          "std_us": 0.0047899786869968885,
+          "max_rel_error": 0.0,
+          "source_bytes": 5051,
+          "workspace": 1950,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 577.757,
+          "min_us": 576.1585,
+          "mean_us": 578.2398475,
+          "std_us": 1.5582173515163353,
+          "max_rel_error": 3.647410820010635e-16,
+          "source_bytes": 1191947,
+          "workspace": 113850,
+          "coloring_width": [
+            60
+          ]
+        },
+        "hess": {
+          "median_us": 2060.127,
+          "min_us": 2055.618,
+          "mean_us": 2074.3038,
+          "std_us": 103.67809471343034,
+          "max_rel_error": 5.108910139007418e-16,
+          "source_bytes": 610473,
+          "workspace": 520326,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 10.206414,
+          "min_us": 10.194182000000001,
+          "mean_us": 10.288978114999999,
+          "std_us": 0.41085576219418257,
+          "max_rel_error": 3.432474286213007e-16,
+          "source_bytes": 49766,
+          "workspace": 3825,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 10.47475,
+          "min_us": 10.439375,
+          "mean_us": 10.483076600000002,
+          "std_us": 0.05511738829336353,
+          "max_rel_error": 3.432474286213007e-16,
+          "source_bytes": 52109,
+          "workspace": 3825,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.221403,
+          "min_us": 0.219547,
+          "mean_us": 0.22196944999999998,
+          "std_us": 0.004144048052182064,
+          "max_rel_error": 0.0,
+          "source_bytes": 3041,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 12,
+      "nx": 75,
+      "N": 25,
+      "build_s": 0.2078199899988249,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M12_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 1.1306310000000002,
+          "min_us": 1.121086,
+          "mean_us": 1.13119344,
+          "std_us": 0.004243057108326803,
+          "max_rel_error": 0.0,
+          "source_bytes": 30575,
+          "workspace": 1950,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1616.837,
+          "min_us": 1610.265,
+          "mean_us": 1616.5011499999998,
+          "std_us": 3.539239270034277,
+          "max_rel_error": 3.647410820010635e-16,
+          "source_bytes": 273910,
+          "workspace": 208968,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 7688.389,
+          "min_us": 7672.738,
+          "mean_us": 7694.06062,
+          "std_us": 28.57625425843657,
+          "max_rel_error": 6.474658393989599e-16,
+          "source_bytes": 341184,
+          "workspace": 258882,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 9.831515,
+          "min_us": 9.798168,
+          "mean_us": 9.84744297,
+          "std_us": 0.14327460823409094,
+          "max_rel_error": 3.432474286213007e-16,
+          "source_bytes": 175469,
+          "workspace": 3750,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.196344,
+          "min_us": 0.193795,
+          "mean_us": 0.19657160999999998,
+          "std_us": 0.0015387021477196255,
+          "max_rel_error": 1.7678189570699486e-16,
+          "source_bytes": 15885,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 12,
+      "nx": 75,
+      "N": 25,
+      "build_s": 0.22398437600350007,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M12_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.81786,
+          "min_us": 0.813943,
+          "mean_us": 0.82166775,
+          "std_us": 0.02112571802966337,
+          "max_rel_error": 0.0,
+          "source_bytes": 33499,
+          "workspace": 1950,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1917.564,
+          "min_us": 1903.677,
+          "mean_us": 1926.048855,
+          "std_us": 19.586853244051095,
+          "max_rel_error": 3.647410820010635e-16,
+          "source_bytes": 406121,
+          "workspace": 222777,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 8160.803,
+          "min_us": 7726.931,
+          "mean_us": 8058.7194,
+          "std_us": 201.20266136206024,
+          "max_rel_error": 6.474658393989599e-16,
+          "source_bytes": 491733,
+          "workspace": 270969,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 6.753544,
+          "min_us": 6.7375370000000006,
+          "mean_us": 6.770621039999999,
+          "std_us": 0.15609299925422446,
+          "max_rel_error": 1.7162371431065036e-16,
+          "source_bytes": 164068,
+          "workspace": 7725,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 6.9253540000000005,
+          "min_us": 6.893903,
+          "mean_us": 6.933794055,
+          "std_us": 0.04035544856953289,
+          "max_rel_error": 1.7678189570699486e-16,
+          "source_bytes": 177305,
+          "workspace": 7725,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.7568819999999999,
+          "min_us": 0.7547039999999999,
+          "mean_us": 0.758178205,
+          "std_us": 0.00602248093279709,
+          "max_rel_error": 1.7678189570699486e-16,
+          "source_bytes": 15031,
+          "workspace": 2025,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 12,
+      "nx": 75,
+      "N": 25,
+      "build_s": 0.9169306500116363,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M12_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 3.4903649999999997,
+          "min_us": 3.484556,
+          "mean_us": 3.4982203899999997,
+          "std_us": 0.05169527004847565,
+          "max_rel_error": 0.0,
+          "source_bytes": 31285,
+          "workspace": 3975,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 846.0355,
+          "min_us": 842.4935,
+          "mean_us": 846.1919250000001,
+          "std_us": 2.228644440480676,
+          "max_rel_error": 3.647410820010635e-16,
+          "source_bytes": 1448289,
+          "workspace": 245430,
+          "coloring_width": [
+            62
+          ]
+        },
+        "hess": {
+          "median_us": 4593.75,
+          "min_us": 4489.589,
+          "mean_us": 4571.290775,
+          "std_us": 47.990886887780626,
+          "max_rel_error": 3.2373291969947994e-16,
+          "source_bytes": 1182337,
+          "workspace": 391158,
+          "coloring_width": [
+            42
+          ]
+        },
+        "constraints": {
+          "median_us": 6.767732,
+          "min_us": 6.751121,
+          "mean_us": 6.77869647,
+          "std_us": 0.07403076673020757,
+          "max_rel_error": 1.7162371431065036e-16,
+          "source_bytes": 164068,
+          "workspace": 7725,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 6.930517,
+          "min_us": 6.917186,
+          "mean_us": 6.935673585000001,
+          "std_us": 0.023005783114825862,
+          "max_rel_error": 1.7678189570699486e-16,
+          "source_bytes": 177305,
+          "workspace": 7725,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.758467,
+          "min_us": 0.75278,
+          "mean_us": 0.758229785,
+          "std_us": 0.0024135083179427563,
+          "max_rel_error": 1.7678189570699486e-16,
+          "source_bytes": 15031,
+          "workspace": 2025,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.5274582479614764,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M15_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.941315,
+          "min_us": 0.939264,
+          "mean_us": 0.944358015,
+          "std_us": 0.017165668703694594,
+          "max_rel_error": 0.0,
+          "source_bytes": 5228,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1697.712,
+          "min_us": 1690.268,
+          "mean_us": 1698.7753300000002,
+          "std_us": 15.344829220297648,
+          "max_rel_error": 6.075435133734867e-16,
+          "source_bytes": 213795,
+          "workspace": 11253,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 5024.155,
+          "min_us": 5015.839,
+          "mean_us": 5035.29551,
+          "std_us": 35.934856947525134,
+          "max_rel_error": 2.3815606208693897e-15,
+          "source_bytes": 282214,
+          "workspace": 163008,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.816329,
+          "min_us": 12.797177,
+          "mean_us": 12.824861735,
+          "std_us": 0.03321015354976199,
+          "max_rel_error": 2.8708465272417782e-16,
+          "source_bytes": 61535,
+          "workspace": 2325,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.290252,
+          "min_us": 0.28589,
+          "mean_us": 0.29037788,
+          "std_us": 0.0017882757298666643,
+          "max_rel_error": 0.0,
+          "source_bytes": 3448,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 5.273872793011833,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M15_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 1.131433,
+          "min_us": 1.1296579999999998,
+          "mean_us": 1.13288922,
+          "std_us": 0.009296872566578287,
+          "max_rel_error": 0.0,
+          "source_bytes": 5780,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 881.3385,
+          "min_us": 877.341,
+          "mean_us": 883.3298275,
+          "std_us": 7.520811142102266,
+          "max_rel_error": 6.075435133734867e-16,
+          "source_bytes": 1339986,
+          "workspace": 142308,
+          "coloring_width": [
+            60
+          ]
+        },
+        "hess": {
+          "median_us": 2715.292,
+          "min_us": 2703.71,
+          "mean_us": 2721.3731949999997,
+          "std_us": 24.608743157992755,
+          "max_rel_error": 2.390633232758416e-15,
+          "source_bytes": 658406,
+          "workspace": 641988,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.741114,
+          "min_us": 12.719809999999999,
+          "mean_us": 12.754612765000001,
+          "std_us": 0.063511679244546,
+          "max_rel_error": 2.8708465272417782e-16,
+          "source_bytes": 61571,
+          "workspace": 4743,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 13.011731,
+          "min_us": 12.985654,
+          "mean_us": 13.020857450000001,
+          "std_us": 0.07037744180575982,
+          "max_rel_error": 2.8708465272417782e-16,
+          "source_bytes": 64256,
+          "workspace": 4743,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.289794,
+          "min_us": 0.285099,
+          "mean_us": 0.28986888,
+          "std_us": 0.0014971226491953384,
+          "max_rel_error": 0.0,
+          "source_bytes": 3383,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "fused",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.2114950500545092,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M15_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 1.971316,
+          "min_us": 1.962211,
+          "mean_us": 1.97255654,
+          "std_us": 0.010600961282779736,
+          "max_rel_error": 0.0,
+          "source_bytes": 36626,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 3221.682,
+          "min_us": 3214.869,
+          "mean_us": 3223.3166349999997,
+          "std_us": 5.945855484198203,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 148699,
+          "workspace": 317706,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 11072.804,
+          "min_us": 11051.042,
+          "mean_us": 11083.007175,
+          "std_us": 38.96158938211166,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 291542,
+          "workspace": 383136,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.725392,
+          "min_us": 12.704848,
+          "mean_us": 12.739565720000002,
+          "std_us": 0.09346443527039404,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217019,
+          "workspace": 4650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.27322,
+          "min_us": 0.27000599999999997,
+          "mean_us": 0.274095585,
+          "std_us": 0.004553117197464197,
+          "max_rel_error": 0.0,
+          "source_bytes": 18396,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "stage",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.2286503270152025,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M15_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 1.059997,
+          "min_us": 1.0549870000000001,
+          "mean_us": 1.06124762,
+          "std_us": 0.00963739982633611,
+          "max_rel_error": 0.0,
+          "source_bytes": 40009,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 3649.192,
+          "min_us": 3613.914,
+          "mean_us": 3651.053535,
+          "std_us": 13.759619232226386,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 361015,
+          "workspace": 338121,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 11147.969,
+          "min_us": 11061.454,
+          "mean_us": 11188.75987,
+          "std_us": 98.91470634125129,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 518222,
+          "workspace": 401469,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.226841,
+          "min_us": 12.208024,
+          "mean_us": 12.249332864999998,
+          "std_us": 0.1886252610566523,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 201721,
+          "workspace": 9561,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 12.608722,
+          "min_us": 12.587911,
+          "mean_us": 12.639238045,
+          "std_us": 0.20519274137487825,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217252,
+          "workspace": 9561,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.945087,
+          "min_us": 0.9432619999999999,
+          "mean_us": 0.9456907449999999,
+          "std_us": 0.004081378481779496,
+          "max_rel_error": 0.0,
+          "source_bytes": 17263,
+          "workspace": 2493,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "main",
+      "path": "whole",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 1.1361935819732025,
+      "artifact": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M15_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 4.3227,
+          "min_us": 4.315219,
+          "mean_us": 4.331106295,
+          "std_us": 0.039582528711084065,
+          "max_rel_error": 0.0,
+          "source_bytes": 37153,
+          "workspace": 4893,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1367.681,
+          "min_us": 1361.789,
+          "mean_us": 1368.086425,
+          "std_us": 4.338192773155695,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 1839711,
+          "workspace": 304290,
+          "coloring_width": [
+            62
+          ]
+        },
+        "hess": {
+          "median_us": 6424.319,
+          "min_us": 6379.673,
+          "mean_us": 6424.089385,
+          "std_us": 19.36975571526705,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 606685,
+          "workspace": 657666,
+          "coloring_width": [
+            42
+          ]
+        },
+        "constraints": {
+          "median_us": 12.214418,
+          "min_us": 12.156203,
+          "mean_us": 12.221215384999999,
+          "std_us": 0.05010284614987815,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 201721,
+          "workspace": 9561,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 12.668076,
+          "min_us": 12.646886,
+          "mean_us": 12.676631149999999,
+          "std_us": 0.043314434311278106,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217252,
+          "workspace": 9561,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.974808,
+          "min_us": 0.973189,
+          "mean_us": 0.97740049,
+          "std_us": 0.025448342299032842,
+          "max_rel_error": 0.0,
+          "source_bytes": 17263,
+          "workspace": 2493,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    }
+  ],
+  "historical": [
+    {
+      "branch": "devrush_historical_2026-09-28",
+      "path": "stage",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.27337220596382394,
+      "artifact": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M3_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.233843,
+          "min_us": 0.232668,
+          "mean_us": 0.23401631,
+          "std_us": 0.0009825404431943571,
+          "max_rel_error": 0.0,
+          "source_bytes": 2361,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 91.368818,
+          "min_us": 91.204,
+          "mean_us": 91.43071959000001,
+          "std_us": 0.26380362454360556,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 46362,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 190.303333,
+          "min_us": 189.368167,
+          "mean_us": 190.42206665000003,
+          "std_us": 0.6251498653248326,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 150804,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.56118,
+          "min_us": 2.530792,
+          "mean_us": 2.5633372750000003,
+          "std_us": 0.016052219981392935,
+          "max_rel_error": 2.6532221163938153e-16,
+          "source_bytes": 14116,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.083524,
+          "min_us": 0.08167400000000001,
+          "mean_us": 0.08347324,
+          "std_us": 0.0006409102920160203,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 1746,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush_historical_2026-09-28",
+      "path": "whole",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.5122448040056042,
+      "artifact": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M3_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.290296,
+          "min_us": 0.288956,
+          "mean_us": 0.29081467,
+          "std_us": 0.0035636450512581625,
+          "max_rel_error": 0.0,
+          "source_bytes": 2812,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 301.453,
+          "min_us": 300.75425,
+          "mean_us": 301.76286375,
+          "std_us": 0.7457095689203231,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 1538737,
+          "workspace": 44712,
+          "coloring_width": [
+            36
+          ]
+        },
+        "hess": {
+          "median_us": 363.55066700000003,
+          "min_us": 362.625333,
+          "mean_us": 368.947018335,
+          "std_us": 23.965326921676105,
+          "max_rel_error": 2.6596647003132705e-17,
+          "source_bytes": 269124,
+          "workspace": 95400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.724249,
+          "min_us": 2.699149,
+          "mean_us": 2.7286616350000004,
+          "std_us": 0.025834667365406135,
+          "max_rel_error": 2.6532221163938153e-16,
+          "source_bytes": 14295,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.9177649999999997,
+          "min_us": 2.889214,
+          "mean_us": 2.9184912600000006,
+          "std_us": 0.014834671121017263,
+          "max_rel_error": 2.6532221163938153e-16,
+          "source_bytes": 15324,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.082653,
+          "min_us": 0.080511,
+          "mean_us": 0.08267448999999999,
+          "std_us": 0.0005565559021889056,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 1713,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush_historical_2026-09-28",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.323192801035475,
+      "artifact": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M6_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.66251,
+          "min_us": 0.6608890000000001,
+          "mean_us": 0.6631906449999999,
+          "std_us": 0.003252957618122547,
+          "max_rel_error": 0.0,
+          "source_bytes": 3087,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 306.17725,
+          "min_us": 305.79875,
+          "mean_us": 306.49165125,
+          "std_us": 0.8600804581014369,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 84839,
+          "workspace": 3276,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 940.358,
+          "min_us": 936.9815,
+          "mean_us": 940.3801500000001,
+          "std_us": 1.5504453518085453,
+          "max_rel_error": 1.8141290126813011e-16,
+          "source_bytes": 209524,
+          "workspace": 25326,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.852295,
+          "min_us": 4.8341009999999995,
+          "mean_us": 4.856994395,
+          "std_us": 0.019340814007464447,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 25949,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.164564,
+          "min_us": 0.155189,
+          "mean_us": 0.16436188999999998,
+          "std_us": 0.0021347690819068293,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 2097,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush_historical_2026-09-28",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.7393576219910756,
+      "artifact": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M6_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.497546,
+          "min_us": 0.495299,
+          "mean_us": 0.49782514000000005,
+          "std_us": 0.0015365084351399725,
+          "max_rel_error": 0.0,
+          "source_bytes": 3565,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 873.104,
+          "min_us": 864.3825,
+          "mean_us": 875.2595174999999,
+          "std_us": 8.711901403901463,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 4417743,
+          "workspace": 92646,
+          "coloring_width": [
+            42
+          ]
+        },
+        "hess": {
+          "median_us": 1028.803,
+          "min_us": 1022.741,
+          "mean_us": 1031.70336,
+          "std_us": 8.598353120939022,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 420883,
+          "workspace": 259173,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 5.053256,
+          "min_us": 5.043743999999999,
+          "mean_us": 5.059025735,
+          "std_us": 0.023048507732568422,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 26094,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 5.1973400000000005,
+          "min_us": 5.184113,
+          "mean_us": 5.219407840000001,
+          "std_us": 0.09402733796544885,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 27466,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.16428,
+          "min_us": 0.16322499999999998,
+          "mean_us": 0.164830615,
+          "std_us": 0.00139865781562218,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 2056,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush_historical_2026-09-28",
+      "path": "stage",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.43023250304395333,
+      "artifact": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M15_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.9401430000000001,
+          "min_us": 0.937256,
+          "mean_us": 0.9410097399999998,
+          "std_us": 0.0042251063419045465,
+          "max_rel_error": 0.0,
+          "source_bytes": 5228,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1763.952,
+          "min_us": 1756.618,
+          "mean_us": 1764.517345,
+          "std_us": 4.931503920770812,
+          "max_rel_error": 6.075435133734867e-16,
+          "source_bytes": 213787,
+          "workspace": 20181,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 5333.056,
+          "min_us": 5321.383,
+          "mean_us": 5337.16261,
+          "std_us": 14.523989082972749,
+          "max_rel_error": 2.3815606208693897e-15,
+          "source_bytes": 477711,
+          "workspace": 140256,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.838205,
+          "min_us": 12.795691999999999,
+          "mean_us": 12.898488900000002,
+          "std_us": 0.2188387202194493,
+          "max_rel_error": 2.8708465272417782e-16,
+          "source_bytes": 61535,
+          "workspace": 2325,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.5032679999999999,
+          "min_us": 0.502582,
+          "mean_us": 0.503542015,
+          "std_us": 0.0010027781984824754,
+          "max_rel_error": 0.0,
+          "source_bytes": 3196,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "branch": "devrush_historical_2026-09-28",
+      "path": "whole",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 1.2647922660107724,
+      "artifact": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M15_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 1.1270440000000002,
+          "min_us": 1.123425,
+          "mean_us": 1.1276559300000002,
+          "std_us": 0.005146443029352597,
+          "max_rel_error": 0.0,
+          "source_bytes": 5780,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 4267.953,
+          "min_us": 4176.729,
+          "mean_us": 4294.1372,
+          "std_us": 107.56762058865822,
+          "max_rel_error": 6.075435133734867e-16,
+          "source_bytes": 14764379,
+          "workspace": 378675,
+          "coloring_width": [
+            60
+          ]
+        },
+        "hess": {
+          "median_us": 2922.073,
+          "min_us": 2909.66,
+          "mean_us": 2993.31565,
+          "std_us": 169.03437895431168,
+          "max_rel_error": 2.390633232758416e-15,
+          "source_bytes": 599617,
+          "workspace": 718263,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.746848,
+          "min_us": 12.703721999999999,
+          "mean_us": 12.761045349999998,
+          "std_us": 0.05094444671446258,
+          "max_rel_error": 2.8708465272417782e-16,
+          "source_bytes": 61571,
+          "workspace": 4743,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 13.243947,
+          "min_us": 13.21825,
+          "mean_us": 13.254326860000003,
+          "std_us": 0.03980566688792388,
+          "max_rel_error": 2.8708465272417782e-16,
+          "source_bytes": 64015,
+          "workspace": 4743,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.514578,
+          "min_us": 0.513695,
+          "mean_us": 0.51503188,
+          "std_us": 0.0016113851202081224,
+          "max_rel_error": 0.0,
+          "source_bytes": 3126,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    }
+  ],
+  "controls": {
+    "affine_M6_whole": {
+      "branch": "main",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.48657887801527977,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affine_M6_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 1.278012,
+          "min_us": 1.271017,
+          "mean_us": 1.278730565,
+          "std_us": 0.005425807141009738,
+          "max_rel_error": 0.0,
+          "source_bytes": 20564,
+          "workspace": 2139,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 213.02020000000002,
+          "min_us": 212.54520000000002,
+          "mean_us": 213.247474,
+          "std_us": 0.6351172048080701,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 651837,
+          "workspace": 91260,
+          "coloring_width": [
+            44
+          ]
+        },
+        "hess": {
+          "median_us": 801.872,
+          "min_us": 797.9945,
+          "mean_us": 802.520785,
+          "std_us": 7.458937753684617,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 699328,
+          "workspace": 175212,
+          "coloring_width": [
+            36
+          ]
+        },
+        "constraints": {
+          "median_us": 2.6131640000000003,
+          "min_us": 2.607361,
+          "mean_us": 2.614738265,
+          "std_us": 0.008634484194862561,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 88825,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.946407,
+          "min_us": 2.92631,
+          "mean_us": 2.951317195,
+          "std_us": 0.0474117900871006,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 97314,
+          "workspace": 1089,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.403403,
+          "min_us": 0.40113,
+          "mean_us": 0.4038170700000001,
+          "std_us": 0.0031868026532645946,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10485,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "affineActual_M6": {
+      "branch": "main",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.1199144619749859,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineActual_M6",
+      "kernels": {
+        "grad": {
+          "median_us": 0.38850999999999997,
+          "min_us": 0.37688900000000003,
+          "mean_us": 0.388309735,
+          "std_us": 0.005946701543799734,
+          "max_rel_error": 0.0,
+          "source_bytes": 20497,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 211.73020000000002,
+          "min_us": 211.30120000000002,
+          "mean_us": 211.951432,
+          "std_us": 0.8349016716853046,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 127608,
+          "workspace": 62127,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 794.8395,
+          "min_us": 790.7615,
+          "mean_us": 796.81928,
+          "std_us": 7.593251181749866,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 259854,
+          "workspace": 74085,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.5954409999999997,
+          "min_us": 2.591103,
+          "mean_us": 2.597114395,
+          "std_us": 0.008987560249319662,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 88825,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 2.865316,
+          "min_us": 2.846178,
+          "mean_us": 2.865833395,
+          "std_us": 0.007630769212395246,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 97314,
+          "workspace": 1089,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.403215,
+          "min_us": 0.401634,
+          "mean_us": 0.40361699999999995,
+          "std_us": 0.0018114170221516363,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10485,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M17_N25_stage": {
+      "model": "recent",
+      "M": 17,
+      "nx": 93,
+      "N": 25,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M17_N25_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 1.105815,
+          "min_us": 1.095674,
+          "std_us": 0.010041248580392832,
+          "source_bytes": 45062,
+          "workspace": 2400
+        },
+        "jac": {
+          "median_us": 1501.1625,
+          "min_us": 1495.607,
+          "std_us": 9.979590502449645,
+          "source_bytes": 340010,
+          "workspace": 317376
+        },
+        "hess": {
+          "median_us": 15325.463,
+          "min_us": 15267.954,
+          "std_us": 134.77348442387262,
+          "source_bytes": 448411,
+          "workspace": 410397
+        },
+        "constraints": {
+          "median_us": 9.7818825,
+          "min_us": 9.761941,
+          "std_us": 0.05806049923856202,
+          "source_bytes": 120970,
+          "workspace": 4818
+        },
+        "base": {
+          "median_us": 10.722361999999999,
+          "min_us": 10.699021,
+          "std_us": 0.24823990079710234,
+          "source_bytes": 138197,
+          "workspace": 4818
+        },
+        "objective": {
+          "median_us": 0.9715130000000001,
+          "min_us": 0.9700829999999999,
+          "std_us": 0.003581493636896576,
+          "source_bytes": 18194,
+          "workspace": 2493
+        }
+      }
+    },
+    "recent_M5_N25_whole": {
+      "model": "recent",
+      "M": 5,
+      "nx": 21,
+      "N": 25,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M5_N25_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.8238825,
+          "min_us": 0.815697,
+          "std_us": 0.005073021868471481,
+          "source_bytes": 16028,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 73.0185,
+          "min_us": 72.614143,
+          "std_us": 2.0413864106153925,
+          "source_bytes": 352219,
+          "workspace": 39312
+        },
+        "hess": {
+          "median_us": 928.2665,
+          "min_us": 924.296,
+          "std_us": 5.920415935259628,
+          "source_bytes": 441580,
+          "workspace": 87912
+        },
+        "constraints": {
+          "median_us": 1.3606965,
+          "min_us": 1.352347,
+          "std_us": 0.018799599006401907,
+          "source_bytes": 33153,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 1.451752,
+          "min_us": 1.448698,
+          "std_us": 0.005082420455801324,
+          "source_bytes": 40230,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.1279825,
+          "min_us": 0.12447,
+          "std_us": 0.0015276521463264726,
+          "source_bytes": 9146,
+          "workspace": 0
+        }
+      }
+    },
+    "affine_M15_whole": {
+      "branch": "main",
+      "path": "whole",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 1.0331171849975362,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affine_M15_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 3.47179,
+          "min_us": 3.4640169999999997,
+          "mean_us": 3.47328906,
+          "std_us": 0.00960455927885842,
+          "max_rel_error": 0.0,
+          "source_bytes": 38172,
+          "workspace": 4893,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 608.6565,
+          "min_us": 606.4125,
+          "mean_us": 609.100405,
+          "std_us": 2.080229904542709,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 1832773,
+          "workspace": 304290,
+          "coloring_width": [
+            62
+          ]
+        },
+        "hess": {
+          "median_us": 2246.215,
+          "min_us": 2237.268,
+          "mean_us": 2249.675935,
+          "std_us": 12.350561826000643,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 631224,
+          "workspace": 657666,
+          "coloring_width": [
+            42
+          ]
+        },
+        "constraints": {
+          "median_us": 10.462552,
+          "min_us": 10.43625,
+          "mean_us": 10.47577498,
+          "std_us": 0.060082628965422186,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 201816,
+          "workspace": 9561,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 10.762677,
+          "min_us": 10.741237,
+          "mean_us": 10.77925317,
+          "std_us": 0.08284964450905928,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217347,
+          "workspace": 9561,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.943874,
+          "min_us": 0.9426180000000001,
+          "mean_us": 0.9445386600000001,
+          "std_us": 0.005658939420174603,
+          "max_rel_error": 0.0,
+          "source_bytes": 17263,
+          "workspace": 2493,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "scalar_M6_devrush_whole": {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 2.3934208350256085,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/scalar_M6_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.496307,
+          "min_us": 0.49302999999999997,
+          "mean_us": 0.496388125,
+          "std_us": 0.0012232793882361545,
+          "max_rel_error": 0.0,
+          "source_bytes": 3565,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 294.497,
+          "min_us": 293.9335,
+          "mean_us": 294.85039875,
+          "std_us": 0.7878383360689151,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        },
+        "hess": {
+          "median_us": 959.053,
+          "min_us": 954.1035,
+          "mean_us": 960.547645,
+          "std_us": 7.415625036189587,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 429759,
+          "workspace": 259173,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 5.038755,
+          "min_us": 5.027685,
+          "mean_us": 5.047097375,
+          "std_us": 0.04686455702886707,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 26094,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 5.123698999999999,
+          "min_us": 5.1143469999999995,
+          "mean_us": 5.1312321700000005,
+          "std_us": 0.06557446226296086,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 27747,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.10511100000000001,
+          "min_us": 0.10430400000000001,
+          "mean_us": 0.10529934999999999,
+          "std_us": 0.0013201201169270838,
+          "max_rel_error": 0.0,
+          "source_bytes": 2353,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M8_N25_whole": {
+      "model": "recent",
+      "M": 8,
+      "nx": 39,
+      "N": 25,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M8_N25_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 2.0917025,
+          "min_us": 2.083868,
+          "std_us": 0.01026856348488877,
+          "source_bytes": 21953,
+          "workspace": 2139
+        },
+        "jac": {
+          "median_us": 237.89690000000002,
+          "min_us": 237.377,
+          "std_us": 0.764520372857106,
+          "source_bytes": 693070,
+          "workspace": 96174
+        },
+        "hess": {
+          "median_us": 2864.59,
+          "min_us": 2848.299,
+          "std_us": 9.562458136649598,
+          "source_bytes": 759156,
+          "workspace": 255465
+        },
+        "constraints": {
+          "median_us": 3.2167399999999997,
+          "min_us": 3.211346,
+          "std_us": 0.013821261192362757,
+          "source_bytes": 55060,
+          "workspace": 1089
+        },
+        "base": {
+          "median_us": 3.295607,
+          "min_us": 3.287878,
+          "std_us": 0.020999348541328046,
+          "source_bytes": 64651,
+          "workspace": 1089
+        },
+        "objective": {
+          "median_us": 0.408185,
+          "min_us": 0.404568,
+          "std_us": 0.003127717885769883,
+          "source_bytes": 11414,
+          "workspace": 1089
+        }
+      }
+    },
+    "affineRecent_M3_whole": {
+      "model": "recent",
+      "M": 3,
+      "nx": 9,
+      "N": 25,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineRecent_M3_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.3011015,
+          "min_us": 0.29665199999999997,
+          "std_us": 0.003045396523327709,
+          "source_bytes": 10803,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 8.422987500000001,
+          "min_us": 8.390424999999999,
+          "std_us": 0.044308502789409364,
+          "source_bytes": 122917,
+          "workspace": 11124
+        },
+        "hess": {
+          "median_us": 71.077393,
+          "min_us": 70.772929,
+          "std_us": 0.3522806816317872,
+          "source_bytes": 197502,
+          "workspace": 21924
+        },
+        "constraints": {
+          "median_us": 0.44558200000000003,
+          "min_us": 0.428316,
+          "std_us": 0.005445868100091387,
+          "source_bytes": 18252,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 0.4886335,
+          "min_us": 0.485692,
+          "std_us": 0.001871358851672675,
+          "source_bytes": 23621,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.106431,
+          "min_us": 0.105349,
+          "std_us": 0.000945111247393527,
+          "source_bytes": 7650,
+          "workspace": 0
+        }
+      }
+    },
+    "recent_M5_N10_stage": {
+      "model": "recent",
+      "M": 5,
+      "nx": 21,
+      "N": 10,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M5_N10_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.0587835,
+          "min_us": 0.05853,
+          "std_us": 0.0002109332919271308,
+          "source_bytes": 5977,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 22.2842555,
+          "min_us": 22.051378,
+          "std_us": 0.20012915373717105,
+          "source_bytes": 101216,
+          "workspace": 5040
+        },
+        "hess": {
+          "median_us": 332.10816650000004,
+          "min_us": 331.311667,
+          "std_us": 1.4354941937704884,
+          "source_bytes": 223815,
+          "workspace": 6000
+        },
+        "constraints": {
+          "median_us": 1.1545745,
+          "min_us": 1.145651,
+          "std_us": 0.006533655924995675,
+          "source_bytes": 15253,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 1.1723869999999998,
+          "min_us": 1.156193,
+          "std_us": 0.00352012193469924,
+          "source_bytes": 17023,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.06385350000000001,
+          "min_us": 0.063241,
+          "std_us": 0.0007935272619623011,
+          "source_bytes": 3265,
+          "workspace": 0
+        }
+      }
+    },
+    "affineRecent_M3_stage": {
+      "model": "recent",
+      "M": 3,
+      "nx": 9,
+      "N": 25,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineRecent_M3_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.10277599999999999,
+          "min_us": 0.10133,
+          "std_us": 0.001450280316614272,
+          "source_bytes": 9842,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 2.3405235,
+          "min_us": 2.3374140000000003,
+          "std_us": 0.008904935056100483,
+          "source_bytes": 69859,
+          "workspace": 2700
+        },
+        "hess": {
+          "median_us": 59.953470499999995,
+          "min_us": 58.868824000000004,
+          "std_us": 0.38912501088188617,
+          "source_bytes": 94358,
+          "workspace": 3900
+        },
+        "constraints": {
+          "median_us": 0.426295,
+          "min_us": 0.420674,
+          "std_us": 0.0031067934299623574,
+          "source_bytes": 18252,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 0.48600049999999995,
+          "min_us": 0.477753,
+          "std_us": 0.0027119843046593366,
+          "source_bytes": 23621,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.09814250000000001,
+          "min_us": 0.092723,
+          "std_us": 0.0019788644840428135,
+          "source_bytes": 7650,
+          "workspace": 0
+        }
+      }
+    },
+    "scalar_M6_main_fused": {
+      "branch": "main",
+      "path": "fused",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.20164400700014085,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/scalar_M6_main_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.66269,
+          "min_us": 0.66146,
+          "mean_us": 0.6632239749999999,
+          "std_us": 0.0029319990821046146,
+          "max_rel_error": 0.0,
+          "source_bytes": 3067,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 368.519667,
+          "min_us": 367.952,
+          "mean_us": 368.75356503499995,
+          "std_us": 0.7628260306859588,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 93125,
+          "workspace": 56667,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1471.951,
+          "min_us": 1469.135,
+          "mean_us": 1472.97545,
+          "std_us": 3.442644187614015,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 107171,
+          "workspace": 70602,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 6.570438,
+          "min_us": 6.557732,
+          "mean_us": 6.576120755,
+          "std_us": 0.024305434658625145,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 24072,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.16463399999999997,
+          "min_us": 0.15523599999999999,
+          "mean_us": 0.164635985,
+          "std_us": 0.0020010717969271585,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 2376,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "applePolicy_M6_devrush_whole": {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 2.39033715298865,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/applePolicy_M6_devrush_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.49756599999999995,
+          "min_us": 0.49394600000000005,
+          "mean_us": 0.4975314049999999,
+          "std_us": 0.0015017392365681336,
+          "max_rel_error": 0.0,
+          "source_bytes": 3565,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 295.4965,
+          "min_us": 294.69725,
+          "mean_us": 296.0941075,
+          "std_us": 1.3522948066301759,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        },
+        "hess": {
+          "median_us": 962.3445,
+          "min_us": 957.4655,
+          "mean_us": 962.6827225000001,
+          "std_us": 2.6956759012475113,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 429759,
+          "workspace": 259173,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 5.041715,
+          "min_us": 5.033545,
+          "mean_us": 5.047276875,
+          "std_us": 0.03103067702196624,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 26094,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 5.13648,
+          "min_us": 5.125694,
+          "mean_us": 5.14025978,
+          "std_us": 0.023310807642730472,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 27747,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.105127,
+          "min_us": 0.103117,
+          "mean_us": 0.10520730500000001,
+          "std_us": 0.0008636245589776538,
+          "max_rel_error": 0.0,
+          "source_bytes": 2353,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "scatter": [
+      {
+        "M": 3,
+        "method": "individual_writes",
+        "median_us": 7.4295075,
+        "std_us": 0.30441548244980104
+      },
+      {
+        "M": 3,
+        "method": "pack",
+        "median_us": 3.888599,
+        "std_us": 0.12948487130813932
+      },
+      {
+        "M": 6,
+        "method": "individual_writes",
+        "median_us": 25.26595,
+        "std_us": 0.12739908431344366
+      },
+      {
+        "M": 6,
+        "method": "pack",
+        "median_us": 11.7400755,
+        "std_us": 0.1275902014452441
+      },
+      {
+        "M": 15,
+        "method": "individual_writes",
+        "median_us": 136.612,
+        "std_us": 3.6383365352356094
+      },
+      {
+        "M": 15,
+        "method": "pack",
+        "median_us": 69.713667,
+        "std_us": 1.7086860790263707
+      }
+    ],
+    "pureJ_M3": {
+      "branch": "main",
+      "path": "fused",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.20038657099939883,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/pureJ_M3",
+      "kernels": {
+        "grad": {
+          "median_us": 0.324824,
+          "min_us": 0.322475,
+          "mean_us": 0.32520032,
+          "std_us": 0.0031846612384393547,
+          "max_rel_error": 0.0,
+          "source_bytes": 12425,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 53.990316,
+          "min_us": 53.734579,
+          "mean_us": 54.165769995000005,
+          "std_us": 0.4840792342201129,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 95764,
+          "workspace": 12600,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 626.8615,
+          "min_us": 625.3535,
+          "mean_us": 627.2861175,
+          "std_us": 1.4749984089741015,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 178978,
+          "workspace": 15000,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 1.7076179999999999,
+          "min_us": 1.692654,
+          "mean_us": 1.7079812300000003,
+          "std_us": 0.006020736726577052,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51053,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.064696,
+          "min_us": 0.06351,
+          "mean_us": 0.064729375,
+          "std_us": 0.0004404330034496033,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8270,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M8_N25_stage": {
+      "model": "recent",
+      "M": 8,
+      "nx": 39,
+      "N": 25,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M8_N25_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.3993725,
+          "min_us": 0.391895,
+          "std_us": 0.003615695914023804,
+          "source_bytes": 22769,
+          "workspace": 1050
+        },
+        "jac": {
+          "median_us": 243.652,
+          "min_us": 243.2502,
+          "std_us": 0.6060559067690454,
+          "source_bytes": 126625,
+          "workspace": 57330
+        },
+        "hess": {
+          "median_us": 2793.388,
+          "min_us": 2752.916,
+          "std_us": 16.675507288949824,
+          "source_bytes": 293603,
+          "workspace": 74967
+        },
+        "constraints": {
+          "median_us": 3.2391175,
+          "min_us": 3.233788,
+          "std_us": 0.008906535506059758,
+          "source_bytes": 55060,
+          "workspace": 1089
+        },
+        "base": {
+          "median_us": 3.3181405,
+          "min_us": 3.310271,
+          "std_us": 0.08602850135790427,
+          "source_bytes": 64651,
+          "workspace": 1089
+        },
+        "objective": {
+          "median_us": 0.4097005,
+          "min_us": 0.403808,
+          "std_us": 0.0027250500635067395,
+          "source_bytes": 11414,
+          "workspace": 1089
+        }
+      }
+    },
+    "scalar_M6_main_whole": {
+      "branch": "main",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.5789652239764109,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/scalar_M6_main_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 1.698034,
+          "min_us": 1.691666,
+          "mean_us": 1.6989140749999998,
+          "std_us": 0.005570667285830496,
+          "max_rel_error": 0.0,
+          "source_bytes": 4221,
+          "workspace": 2139,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 300.20775,
+          "min_us": 299.589,
+          "mean_us": 300.5503,
+          "std_us": 0.8893529029891769,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 633918,
+          "workspace": 91260,
+          "coloring_width": [
+            44
+          ]
+        },
+        "hess": {
+          "median_us": 1586.671,
+          "min_us": 1580.399,
+          "mean_us": 1586.2480600000001,
+          "std_us": 4.173111096956045,
+          "max_rel_error": 2.1082740596109881e-16,
+          "source_bytes": 201695,
+          "workspace": 175212,
+          "coloring_width": [
+            36
+          ]
+        },
+        "constraints": {
+          "median_us": 7.302963,
+          "min_us": 7.2741620000000005,
+          "mean_us": 7.3079243300000005,
+          "std_us": 0.023208375002407227,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 26683,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 7.451029999999999,
+          "min_us": 7.439148,
+          "mean_us": 7.45682047,
+          "std_us": 0.027707905922718337,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 28080,
+          "workspace": 1089,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.44702600000000003,
+          "min_us": 0.445556,
+          "mean_us": 0.44720265,
+          "std_us": 0.0013589517455501016,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 2722,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "applePolicy_M6_devrush_stage": {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.3531232589739375,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/applePolicy_M6_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.6628390000000001,
+          "min_us": 0.659284,
+          "mean_us": 0.662961045,
+          "std_us": 0.002774383316506486,
+          "max_rel_error": 0.0,
+          "source_bytes": 3087,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 295.927,
+          "min_us": 295.43375,
+          "mean_us": 296.4837275,
+          "std_us": 2.6108044578644285,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 84842,
+          "workspace": 1638,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 832.5955,
+          "min_us": 829.2845,
+          "mean_us": 833.500505,
+          "std_us": 6.209293630269834,
+          "max_rel_error": 1.8141290126813011e-16,
+          "source_bytes": 166171,
+          "workspace": 28728,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.858589,
+          "min_us": 4.846246,
+          "mean_us": 4.861043260000001,
+          "std_us": 0.013931037307563418,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 25949,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.105409,
+          "min_us": 0.104489,
+          "mean_us": 0.10545558500000002,
+          "std_us": 0.0004057001179486118,
+          "max_rel_error": 0.0,
+          "source_bytes": 2389,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "affine_M6_fused": {
+      "branch": "main",
+      "path": "fused",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.10964609100483358,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affine_M6_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.827365,
+          "min_us": 0.8252889999999999,
+          "mean_us": 0.8279095000000001,
+          "std_us": 0.00385462422547231,
+          "max_rel_error": 0.0,
+          "source_bytes": 18497,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 204.8066,
+          "min_us": 204.3918,
+          "mean_us": 204.864495,
+          "std_us": 0.35622876165203166,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 106815,
+          "workspace": 56667,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 761.78,
+          "min_us": 758.3585,
+          "mean_us": 761.616755,
+          "std_us": 2.1951163360100283,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 175795,
+          "workspace": 70602,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 2.337179,
+          "min_us": 2.3192440000000003,
+          "mean_us": 2.34571426,
+          "std_us": 0.0556540499818234,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 92502,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.093049,
+          "min_us": 0.09187000000000001,
+          "mean_us": 0.09310232500000001,
+          "std_us": 0.0005168549161969778,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10781,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "affineRecent_M5_stage": {
+      "model": "recent",
+      "M": 5,
+      "nx": 21,
+      "N": 25,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineRecent_M5_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.219767,
+          "min_us": 0.216202,
+          "std_us": 0.0014408553468871418,
+          "source_bytes": 15347,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 53.741210499999994,
+          "min_us": 53.240525999999996,
+          "std_us": 0.32129640485152366,
+          "source_bytes": 101055,
+          "workspace": 12600
+        },
+        "hess": {
+          "median_us": 297.06100000000004,
+          "min_us": 295.74725,
+          "std_us": 1.1434574560482784,
+          "source_bytes": 195078,
+          "workspace": 15000
+        },
+        "constraints": {
+          "median_us": 0.9532255000000001,
+          "min_us": 0.944033,
+          "std_us": 0.00708102092055671,
+          "source_bytes": 33249,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 1.0144655,
+          "min_us": 1.004202,
+          "std_us": 0.016586335181150855,
+          "source_bytes": 40330,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.1297785,
+          "min_us": 0.123962,
+          "std_us": 0.0016319619285329258,
+          "source_bytes": 9146,
+          "workspace": 0
+        }
+      }
+    },
+    "recent_M3_N10_stage": {
+      "model": "recent",
+      "M": 3,
+      "nx": 9,
+      "N": 10,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M3_N10_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.034279,
+          "min_us": 0.033979999999999996,
+          "std_us": 0.00012802855994192887,
+          "source_bytes": 4702,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 1.7735409999999998,
+          "min_us": 1.762317,
+          "std_us": 0.01282757993246265,
+          "source_bytes": 26722,
+          "workspace": 1080
+        },
+        "hess": {
+          "median_us": 53.129737000000006,
+          "min_us": 52.902947,
+          "std_us": 0.506258632229621,
+          "source_bytes": 110598,
+          "workspace": 1560
+        },
+        "constraints": {
+          "median_us": 0.473373,
+          "min_us": 0.465089,
+          "std_us": 0.003499562100930104,
+          "source_bytes": 9094,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 0.4902485,
+          "min_us": 0.480568,
+          "std_us": 0.00310125349560383,
+          "source_bytes": 10632,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.036267,
+          "min_us": 0.035705,
+          "std_us": 0.0003449942938862476,
+          "source_bytes": 3031,
+          "workspace": 0
+        }
+      }
+    },
+    "affineActual_M15": {
+      "branch": "main",
+      "path": "stage",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.13354409800376743,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineActual_M15",
+      "kernels": {
+        "grad": {
+          "median_us": 1.078042,
+          "min_us": 1.074009,
+          "mean_us": 1.0784442650000001,
+          "std_us": 0.0026710611323289115,
+          "max_rel_error": 0.0,
+          "source_bytes": 40009,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1259.697,
+          "min_us": 1252.893,
+          "mean_us": 1264.23754,
+          "std_us": 15.165701048744813,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 354527,
+          "workspace": 338121,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 4049.296,
+          "min_us": 4042.703,
+          "mean_us": 4055.86235,
+          "std_us": 16.13557373620419,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 498323,
+          "workspace": 401469,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 10.544798,
+          "min_us": 10.490212999999999,
+          "mean_us": 10.553676359999999,
+          "std_us": 0.05135759443413122,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 201816,
+          "workspace": 9561,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 10.951585999999999,
+          "min_us": 10.892391,
+          "mean_us": 10.963336584999999,
+          "std_us": 0.0642798367743842,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217347,
+          "workspace": 9561,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.95762,
+          "min_us": 0.9545359999999999,
+          "mean_us": 0.9585084750000001,
+          "std_us": 0.003932907285706697,
+          "max_rel_error": 0.0,
+          "source_bytes": 17263,
+          "workspace": 2493,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M3_N10_whole": {
+      "model": "recent",
+      "M": 3,
+      "nx": 9,
+      "N": 10,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M3_N10_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.1350805,
+          "min_us": 0.134031,
+          "std_us": 0.02047095859093889,
+          "source_bytes": 5715,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 4.182723,
+          "min_us": 4.174792,
+          "std_us": 0.1751303481473186,
+          "source_bytes": 50133,
+          "workspace": 4644
+        },
+        "hess": {
+          "median_us": 62.2314375,
+          "min_us": 61.886688,
+          "std_us": 0.1672270038465577,
+          "source_bytes": 161739,
+          "workspace": 8964
+        },
+        "constraints": {
+          "median_us": 0.4683845,
+          "min_us": 0.460383,
+          "std_us": 0.0027338534014974907,
+          "source_bytes": 9094,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 0.483361,
+          "min_us": 0.479113,
+          "std_us": 0.0017576079066068291,
+          "source_bytes": 10632,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.0366735,
+          "min_us": 0.036354,
+          "std_us": 0.00020175475335791387,
+          "source_bytes": 3031,
+          "workspace": 0
+        }
+      }
+    },
+    "recent_M5_N25_stage": {
+      "model": "recent",
+      "M": 5,
+      "nx": 21,
+      "N": 25,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M5_N25_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.219696,
+          "min_us": 0.21596,
+          "std_us": 0.0019795946781725918,
+          "source_bytes": 15347,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 55.185736500000004,
+          "min_us": 54.555053,
+          "std_us": 0.29671750947771053,
+          "source_bytes": 101227,
+          "workspace": 12600
+        },
+        "hess": {
+          "median_us": 829.3245,
+          "min_us": 826.3135,
+          "std_us": 1.9627943735563127,
+          "source_bytes": 223800,
+          "workspace": 15000
+        },
+        "constraints": {
+          "median_us": 1.4692195,
+          "min_us": 1.4603130000000002,
+          "std_us": 0.005090071357458568,
+          "source_bytes": 33153,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 1.445999,
+          "min_us": 1.440108,
+          "std_us": 0.003705363797843858,
+          "source_bytes": 40230,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.12898700000000002,
+          "min_us": 0.12436799999999999,
+          "std_us": 0.0016169695230872376,
+          "source_bytes": 9146,
+          "workspace": 0
+        }
+      }
+    },
+    "clang_M6_main_whole": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/clang_M6_main_whole",
+      "kernels": {
+        "base": {
+          "median_us": 2.802978,
+          "min_us": 2.796902,
+          "std_us": 0.009002947990753971,
+          "max_rel_error": 1.43139546570851e-18
+        },
+        "constraints": {
+          "median_us": 2.67836,
+          "min_us": 2.674781,
+          "std_us": 0.03983830799402296,
+          "max_rel_error": 1.8606444876044826e-16
+        },
+        "grad": {
+          "median_us": 1.2728205,
+          "min_us": 1.268345,
+          "std_us": 0.004182444058476626,
+          "max_rel_error": 0.0
+        },
+        "hess": {
+          "median_us": 1189.311,
+          "min_us": 1187.768,
+          "std_us": 3.7069805383266576,
+          "max_rel_error": 9.662922773217029e-17
+        },
+        "jac": {
+          "median_us": 313.149375,
+          "min_us": 312.6145,
+          "std_us": 1.0188320813304694,
+          "max_rel_error": 2.428291386642402e-16
+        },
+        "objective": {
+          "median_us": 0.179898,
+          "min_us": 0.176286,
+          "std_us": 0.001395122695023937,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "clang_M6_main_stage": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/clang_M6_main_stage",
+      "kernels": {
+        "base": {
+          "median_us": 2.8308955000000005,
+          "min_us": 2.8247370000000003,
+          "std_us": 0.018047522706610662,
+          "max_rel_error": 1.43139546570851e-18
+        },
+        "constraints": {
+          "median_us": 2.6718175,
+          "min_us": 2.6627069999999997,
+          "std_us": 0.045354679891110465,
+          "max_rel_error": 1.8606444876044826e-16
+        },
+        "grad": {
+          "median_us": 0.2600485,
+          "min_us": 0.25744900000000004,
+          "std_us": 0.0015149009917645605,
+          "max_rel_error": 0.0
+        },
+        "hess": {
+          "median_us": 1246.476,
+          "min_us": 1245.078,
+          "std_us": 3.6203069455329873,
+          "max_rel_error": 8.676269191084484e-17
+        },
+        "jac": {
+          "median_us": 455.7441665,
+          "min_us": 454.94233299999996,
+          "std_us": 1.9953855533629856,
+          "max_rel_error": 2.428291386642402e-16
+        },
+        "objective": {
+          "median_us": 0.1702755,
+          "min_us": 0.166942,
+          "std_us": 0.0014429494920415319,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "clang_M6_devrush_stage": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/clang_M6_devrush_stage",
+      "kernels": {
+        "constraints": {
+          "median_us": 3.8813675,
+          "min_us": 3.865488,
+          "std_us": 0.019508891558371055,
+          "max_rel_error": 9.303222438022414e-17
+        },
+        "grad": {
+          "median_us": 0.21145049999999999,
+          "min_us": 0.19819399999999998,
+          "std_us": 0.043922274836600675,
+          "max_rel_error": 0.0
+        },
+        "hess": {
+          "median_us": 1480.269,
+          "min_us": 1476.191,
+          "std_us": 3.379733754607781,
+          "max_rel_error": 6.310013957152352e-17
+        },
+        "jac": {
+          "median_us": 238.92020000000002,
+          "min_us": 238.13660000000002,
+          "std_us": 0.7046661610890066,
+          "max_rel_error": 2.4282913866424027e-16
+        },
+        "objective": {
+          "median_us": 0.209152,
+          "min_us": 0.20512,
+          "std_us": 0.0025107397730579485,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "directOutput_M3": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/directOutput_M3",
+      "kernels": {
+        "hess": {
+          "median_us": 626.4159999999999,
+          "min_us": 624.492,
+          "std_us": 13.648525411173214,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "clang_M6_main_fused": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/clang_M6_main_fused",
+      "kernels": {
+        "constraints": {
+          "median_us": 2.5745285,
+          "min_us": 2.5709560000000002,
+          "std_us": 0.014972473611263252,
+          "max_rel_error": 1.8606444876044826e-16
+        },
+        "grad": {
+          "median_us": 0.285068,
+          "min_us": 0.28354599999999996,
+          "std_us": 0.0015820700085440852,
+          "max_rel_error": 0.0
+        },
+        "hess": {
+          "median_us": 1230.2595000000001,
+          "min_us": 1228.767,
+          "std_us": 5.344482150974533,
+          "max_rel_error": 8.676269191084484e-17
+        },
+        "jac": {
+          "median_us": 383.1683335,
+          "min_us": 382.617,
+          "std_us": 3.1706943960737415,
+          "max_rel_error": 2.428291386642402e-16
+        },
+        "objective": {
+          "median_us": 0.09578,
+          "min_us": 0.09436,
+          "std_us": 0.0006285312938204086,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "pureJ_M6": {
+      "branch": "main",
+      "path": "fused",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.20079885103041306,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/pureJ_M6",
+      "kernels": {
+        "grad": {
+          "median_us": 0.831037,
+          "min_us": 0.824973,
+          "mean_us": 0.8319119200000001,
+          "std_us": 0.008139593130819033,
+          "max_rel_error": 0.0,
+          "source_bytes": 18497,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 480.674667,
+          "min_us": 479.439,
+          "mean_us": 481.06780504,
+          "std_us": 1.1369878076955122,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 90766,
+          "workspace": 55692,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 2171.863,
+          "min_us": 2168.817,
+          "mean_us": 2174.18702,
+          "std_us": 16.640612279443744,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 195285,
+          "workspace": 70602,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 3.169533,
+          "min_us": 3.149994,
+          "mean_us": 3.17240086,
+          "std_us": 0.01587626574736024,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 92412,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.09320300000000001,
+          "min_us": 0.091533,
+          "mean_us": 0.09327273500000001,
+          "std_us": 0.0006991197155411166,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 10781,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "directOutput_M15": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/directOutput_M15",
+      "kernels": {
+        "hess": {
+          "median_us": 11035.313,
+          "min_us": 11013.732,
+          "std_us": 36.92952227316775,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "pureJ_M15": {
+      "branch": "main",
+      "path": "fused",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.21391976095037535,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/pureJ_M15",
+      "kernels": {
+        "grad": {
+          "median_us": 1.959212,
+          "min_us": 1.9543510000000002,
+          "mean_us": 1.9609282250000002,
+          "std_us": 0.007405770815467562,
+          "max_rel_error": 0.0,
+          "source_bytes": 36626,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 3216.265,
+          "min_us": 3211.025,
+          "mean_us": 3217.520915,
+          "std_us": 4.602794683916113,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 94257,
+          "workspace": 315381,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 11188.976,
+          "min_us": 11098.843,
+          "mean_us": 11192.92778,
+          "std_us": 50.2589589182799,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 291542,
+          "workspace": 383136,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 12.725166999999999,
+          "min_us": 12.666191999999999,
+          "mean_us": 12.74087557,
+          "std_us": 0.05897542916240242,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217019,
+          "workspace": 4650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.27549599999999996,
+          "min_us": 0.27305,
+          "mean_us": 0.275757045,
+          "std_us": 0.0025072086488802836,
+          "max_rel_error": 0.0,
+          "source_bytes": 18396,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "affine_M15_fused": {
+      "branch": "main",
+      "path": "fused",
+      "M": 15,
+      "nx": 93,
+      "N": 25,
+      "build_s": 0.12486275896662846,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affine_M15_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 2.178471,
+          "min_us": 2.170386,
+          "mean_us": 2.1818647450000004,
+          "std_us": 0.03491877197383637,
+          "max_rel_error": 0.0,
+          "source_bytes": 36626,
+          "workspace": 2400,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 1231.771,
+          "min_us": 1227.793,
+          "mean_us": 1233.40242,
+          "std_us": 6.537853363806286,
+          "max_rel_error": 3.6452610802409206e-16,
+          "source_bytes": 142135,
+          "workspace": 317706,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 4011.038,
+          "min_us": 4004.756,
+          "mean_us": 4013.038375,
+          "std_us": 7.56938246881282,
+          "max_rel_error": 6.532280560098897e-16,
+          "source_bytes": 272293,
+          "workspace": 383136,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 11.110967,
+          "min_us": 11.090478,
+          "mean_us": 11.11441808,
+          "std_us": 0.017914738461229894,
+          "max_rel_error": 1.9138976848278523e-16,
+          "source_bytes": 217108,
+          "workspace": 4650,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.27217899999999995,
+          "min_us": 0.268886,
+          "mean_us": 0.27230782500000006,
+          "std_us": 0.0017125552580675104,
+          "max_rel_error": 0.0,
+          "source_bytes": 18396,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "clang_M6_devrush_whole": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/clang_M6_devrush_whole",
+      "kernels": {
+        "base": {
+          "median_us": 4.369399999999999,
+          "min_us": 4.357661,
+          "std_us": 0.011804322880186648,
+          "max_rel_error": 7.156977328542549e-19
+        },
+        "constraints": {
+          "median_us": 4.207422,
+          "min_us": 4.186991,
+          "std_us": 0.029637405066251656,
+          "max_rel_error": 9.303222438022414e-17
+        },
+        "grad": {
+          "median_us": 0.3598985,
+          "min_us": 0.35817899999999997,
+          "std_us": 0.002473532906755844,
+          "max_rel_error": 0.0
+        },
+        "hess": {
+          "median_us": 686.8847499999999,
+          "min_us": 684.177,
+          "std_us": 3.9175523987029095,
+          "max_rel_error": 3.513790099351647e-17
+        },
+        "jac": {
+          "median_us": 248.4515,
+          "min_us": 247.26425,
+          "std_us": 1.4432201490213268,
+          "max_rel_error": 4.268480953082348e-18
+        },
+        "objective": {
+          "median_us": 0.20815450000000002,
+          "min_us": 0.204674,
+          "std_us": 0.005507026953384331,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "affine_M3_fused": {
+      "branch": "main",
+      "path": "fused",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.10931030503707007,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affine_M3_fused",
+      "kernels": {
+        "grad": {
+          "median_us": 0.325659,
+          "min_us": 0.322647,
+          "mean_us": 0.325992025,
+          "std_us": 0.0025756438263034097,
+          "max_rel_error": 0.0,
+          "source_bytes": 12425,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 55.372474000000004,
+          "min_us": 55.249052999999996,
+          "mean_us": 55.432158965000006,
+          "std_us": 0.25084314710812683,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 108211,
+          "workspace": 13125,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 208.37539999999998,
+          "min_us": 207.634,
+          "mean_us": 208.482726,
+          "std_us": 0.6010994122782068,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 158048,
+          "workspace": 15000,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 1.159023,
+          "min_us": 1.143606,
+          "mean_us": 1.16126148,
+          "std_us": 0.030314853465467452,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51143,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.06472199999999999,
+          "min_us": 0.06352300000000001,
+          "mean_us": 0.064731135,
+          "std_us": 0.00031609146754423966,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8270,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "directOutput_M6": {
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/directOutput_M6",
+      "kernels": {
+        "hess": {
+          "median_us": 2161.9885,
+          "min_us": 2066.231,
+          "std_us": 37.054511819416135,
+          "max_rel_error": 0.0
+        }
+      }
+    },
+    "scalar_M6_devrush_stage": {
+      "branch": "devrush",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.35342191898962483,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/scalar_M6_devrush_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.663123,
+          "min_us": 0.662019,
+          "mean_us": 0.66359809,
+          "std_us": 0.002178926030209756,
+          "max_rel_error": 0.0,
+          "source_bytes": 3087,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 294.77225,
+          "min_us": 294.249,
+          "mean_us": 295.120965,
+          "std_us": 1.010669731691708,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 84842,
+          "workspace": 1638,
+          "coloring_width": [
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 832.175,
+          "min_us": 828.8385,
+          "mean_us": 832.0806125,
+          "std_us": 1.9017782616213774,
+          "max_rel_error": 1.8141290126813011e-16,
+          "source_bytes": 166171,
+          "workspace": 28728,
+          "coloring_width": [
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 4.868077,
+          "min_us": 4.855734,
+          "mean_us": 4.876268895,
+          "std_us": 0.0762622325428918,
+          "max_rel_error": 3.721288975208966e-16,
+          "source_bytes": 25949,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.10747,
+          "min_us": 0.10578,
+          "mean_us": 0.107374755,
+          "std_us": 0.0004994078553697618,
+          "max_rel_error": 0.0,
+          "source_bytes": 2389,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M17_N25_whole": {
+      "model": "recent",
+      "M": 17,
+      "nx": 93,
+      "N": 25,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M17_N25_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 4.2555365,
+          "min_us": 4.236519,
+          "std_us": 0.02118225546743815,
+          "source_bytes": 39568,
+          "workspace": 4893
+        },
+        "jac": {
+          "median_us": 691.6505,
+          "min_us": 689.582,
+          "std_us": 2.79648203621768,
+          "source_bytes": 1921521,
+          "workspace": 319590
+        },
+        "hess": {
+          "median_us": 7465.804,
+          "min_us": 7456.15,
+          "std_us": 18.06383929009186,
+          "source_bytes": 1740984,
+          "workspace": 613278
+        },
+        "constraints": {
+          "median_us": 9.745702,
+          "min_us": 9.716413000000001,
+          "std_us": 0.02243078210003382,
+          "source_bytes": 120970,
+          "workspace": 4818
+        },
+        "base": {
+          "median_us": 10.9198425,
+          "min_us": 10.891967000000001,
+          "std_us": 0.051019923037038103,
+          "source_bytes": 138197,
+          "workspace": 4818
+        },
+        "objective": {
+          "median_us": 0.9713084999999999,
+          "min_us": 0.9697709999999999,
+          "std_us": 0.0045048677323568705,
+          "source_bytes": 18194,
+          "workspace": 2493
+        }
+      }
+    },
+    "affine_M3_whole": {
+      "branch": "main",
+      "path": "whole",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.302277022972703,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affine_M3_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.572665,
+          "min_us": 0.507641,
+          "mean_us": 0.56954019,
+          "std_us": 0.020827840986639104,
+          "max_rel_error": 0.0,
+          "source_bytes": 14641,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 77.716692,
+          "min_us": 77.54630800000001,
+          "mean_us": 77.756285,
+          "std_us": 0.19182552627456145,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 342236,
+          "workspace": 37800,
+          "coloring_width": [
+            38
+          ]
+        },
+        "hess": {
+          "median_us": 256.25375,
+          "min_us": 255.51725,
+          "mean_us": 256.41726625,
+          "std_us": 0.7619153558439359,
+          "max_rel_error": 3.1029421503654824e-17,
+          "source_bytes": 402082,
+          "workspace": 59112,
+          "coloring_width": [
+            24
+          ]
+        },
+        "constraints": {
+          "median_us": 1.3734439999999999,
+          "min_us": 1.3700029999999999,
+          "mean_us": 1.376846,
+          "std_us": 0.03045722428085778,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51141,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 1.4071900000000002,
+          "min_us": 1.402985,
+          "mean_us": 1.4076749650000002,
+          "std_us": 0.004309280526614661,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 57303,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.158668,
+          "min_us": 0.15616,
+          "mean_us": 0.15911015,
+          "std_us": 0.002053657198009121,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8218,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "affineRecent_M5_whole": {
+      "model": "recent",
+      "M": 5,
+      "nx": 21,
+      "N": 25,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineRecent_M5_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.5201640000000001,
+          "min_us": 0.5092300000000001,
+          "std_us": 0.005416624791858752,
+          "source_bytes": 17057,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 72.694429,
+          "min_us": 72.493286,
+          "std_us": 0.40962669303136867,
+          "source_bytes": 352219,
+          "workspace": 39312
+        },
+        "hess": {
+          "median_us": 347.2025,
+          "min_us": 345.472333,
+          "std_us": 5.187350623879437,
+          "source_bytes": 465911,
+          "workspace": 87912
+        },
+        "constraints": {
+          "median_us": 0.9287949999999999,
+          "min_us": 0.8968079999999999,
+          "std_us": 0.03441719488557075,
+          "source_bytes": 33249,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 1.0076055,
+          "min_us": 0.9998940000000001,
+          "std_us": 0.005866133306602326,
+          "source_bytes": 40330,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.1981175,
+          "min_us": 0.172971,
+          "std_us": 0.011258771069827691,
+          "source_bytes": 9146,
+          "workspace": 0
+        }
+      }
+    },
+    "recent_M5_N10_whole": {
+      "model": "recent",
+      "M": 5,
+      "nx": 21,
+      "N": 10,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M5_N10_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.313824,
+          "min_us": 0.312154,
+          "std_us": 0.003664154844105652,
+          "source_bytes": 7586,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 29.183279499999998,
+          "min_us": 28.986412,
+          "std_us": 0.6010062244638564,
+          "source_bytes": 206067,
+          "workspace": 16632
+        },
+        "hess": {
+          "median_us": 370.52833350000003,
+          "min_us": 369.24766700000004,
+          "std_us": 4.377432866892446,
+          "source_bytes": 293833,
+          "workspace": 36072
+        },
+        "constraints": {
+          "median_us": 1.1369975,
+          "min_us": 1.127012,
+          "std_us": 0.00843947709909391,
+          "source_bytes": 15253,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 1.1724930000000002,
+          "min_us": 1.164692,
+          "std_us": 0.0029129702638657036,
+          "source_bytes": 17023,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.057631,
+          "min_us": 0.057029,
+          "std_us": 0.0005396740035666239,
+          "source_bytes": 3265,
+          "workspace": 0
+        }
+      }
+    },
+    "scalar_M6_main_stage": {
+      "branch": "main",
+      "path": "stage",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 0.21788135799579322,
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/scalar_M6_main_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.408063,
+          "min_us": 0.407325,
+          "mean_us": 0.40857018500000003,
+          "std_us": 0.003007913387300655,
+          "max_rel_error": 0.0,
+          "source_bytes": 4115,
+          "workspace": 1050,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 439.899667,
+          "min_us": 439.248333,
+          "mean_us": 440.36576834000005,
+          "std_us": 0.9999419192347778,
+          "max_rel_error": 2.428291386642402e-16,
+          "source_bytes": 112730,
+          "workspace": 62127,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 1473.905,
+          "min_us": 1470.368,
+          "mean_us": 1474.9331100000002,
+          "std_us": 5.300679611106296,
+          "max_rel_error": 1.8930041871457054e-16,
+          "source_bytes": 188011,
+          "workspace": 74085,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 7.298397,
+          "min_us": 7.264881999999999,
+          "mean_us": 7.305982524999999,
+          "std_us": 0.03911150372521637,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 26683,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 7.468985,
+          "min_us": 7.45703,
+          "mean_us": 7.47377621,
+          "std_us": 0.023048433161102503,
+          "max_rel_error": 1.860644487604483e-16,
+          "source_bytes": 28080,
+          "workspace": 1089,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.447032,
+          "min_us": 0.440959,
+          "mean_us": 0.44763731,
+          "std_us": 0.0053108278806405455,
+          "max_rel_error": 1.8321861961068925e-16,
+          "source_bytes": 2722,
+          "workspace": 1089,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M3_N25_whole": {
+      "model": "recent",
+      "M": 3,
+      "nx": 9,
+      "N": 25,
+      "path": "whole",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M3_N25_whole",
+      "kernels": {
+        "grad": {
+          "median_us": 0.3791145,
+          "min_us": 0.37397199999999997,
+          "std_us": 0.00596868983115033,
+          "source_bytes": 10658,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 7.8869880000000006,
+          "min_us": 7.866484000000001,
+          "std_us": 0.12747235425974415,
+          "source_bytes": 122917,
+          "workspace": 11124
+        },
+        "hess": {
+          "median_us": 156.5392855,
+          "min_us": 155.761429,
+          "std_us": 0.8180638686837369,
+          "source_bytes": 198601,
+          "workspace": 21924
+        },
+        "constraints": {
+          "median_us": 0.5649109999999999,
+          "min_us": 0.549453,
+          "std_us": 0.004671082324944299,
+          "source_bytes": 18156,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 0.611398,
+          "min_us": 0.5999329999999999,
+          "std_us": 0.00458150012535119,
+          "source_bytes": 23521,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.0875085,
+          "min_us": 0.086331,
+          "std_us": 0.00044179788891329157,
+          "source_bytes": 7650,
+          "workspace": 0
+        }
+      }
+    },
+    "affineActual_M3": {
+      "branch": "main",
+      "path": "stage",
+      "M": 3,
+      "nx": 21,
+      "N": 25,
+      "build_s": 0.11807164800120518,
+      "variant": "devrush_delinearize_pass",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/affineActual_M3",
+      "kernels": {
+        "grad": {
+          "median_us": 0.214362,
+          "min_us": 0.21299500000000002,
+          "mean_us": 0.21456878,
+          "std_us": 0.0007465681560703549,
+          "max_rel_error": 0.0,
+          "source_bytes": 13958,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "jac": {
+          "median_us": 56.816722,
+          "min_us": 56.683722,
+          "mean_us": 56.88664083500001,
+          "std_us": 0.2475907066281993,
+          "max_rel_error": 3.640499661143469e-16,
+          "source_bytes": 111884,
+          "workspace": 14400,
+          "coloring_width": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hess": {
+          "median_us": 209.4878,
+          "min_us": 208.6602,
+          "mean_us": 209.65798299999997,
+          "std_us": 0.8942825935332095,
+          "max_rel_error": 1.2437294756220745e-16,
+          "source_bytes": 187043,
+          "workspace": 15000,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "constraints": {
+          "median_us": 1.249214,
+          "min_us": 1.24363,
+          "mean_us": 1.2501749899999999,
+          "std_us": 0.00498563445153388,
+          "max_rel_error": 1.7688147442625435e-16,
+          "source_bytes": 51141,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        },
+        "base": {
+          "median_us": 1.357952,
+          "min_us": 1.3495160000000002,
+          "mean_us": 1.3587280800000001,
+          "std_us": 0.005968666875016954,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 57303,
+          "workspace": 0,
+          "coloring_width": [
+            null,
+            null
+          ]
+        },
+        "objective": {
+          "median_us": 0.12987100000000001,
+          "min_us": 0.12839599999999998,
+          "mean_us": 0.130027975,
+          "std_us": 0.001976597404854969,
+          "max_rel_error": 1.7752654596205845e-16,
+          "source_bytes": 8218,
+          "workspace": 0,
+          "coloring_width": [
+            null
+          ]
+        }
+      }
+    },
+    "recent_M3_N25_stage": {
+      "model": "recent",
+      "M": 3,
+      "nx": 9,
+      "N": 25,
+      "path": "stage",
+      "artifact": "benchmarks/results/fatrop-kernel-controls-2026-11-09/recent_M3_N25_stage",
+      "kernels": {
+        "grad": {
+          "median_us": 0.10251600000000001,
+          "min_us": 0.101694,
+          "std_us": 0.0005764395474456067,
+          "source_bytes": 9842,
+          "workspace": 0
+        },
+        "jac": {
+          "median_us": 2.639269,
+          "min_us": 2.634446,
+          "std_us": 0.019340065038292963,
+          "source_bytes": 70025,
+          "workspace": 2700
+        },
+        "hess": {
+          "median_us": 132.7600625,
+          "min_us": 132.25975,
+          "std_us": 0.5402548583907044,
+          "source_bytes": 110584,
+          "workspace": 3900
+        },
+        "constraints": {
+          "median_us": 0.5722305000000001,
+          "min_us": 0.561967,
+          "std_us": 0.003561225858108737,
+          "source_bytes": 18156,
+          "workspace": 0
+        },
+        "base": {
+          "median_us": 0.7134895,
+          "min_us": 0.696218,
+          "std_us": 0.006351432262782829,
+          "source_bytes": 23521,
+          "workspace": 0
+        },
+        "objective": {
+          "median_us": 0.087619,
+          "min_us": 0.086327,
+          "std_us": 0.0006470535550598398,
+          "source_bytes": 7650,
+          "workspace": 0
+        }
+      }
+    }
+  },
+  "noise_repeats_results": {
+    "noise_historical_M3_whole_hess": {
+      "source": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M3_whole/hess",
+      "median_us": 364.215,
+      "mean_us": 364.665431675,
+      "std_us": 1.2596778209786998,
+      "min_us": 363.426667,
+      "p10_us": 363.8297003,
+      "p90_us": 366.022667
+    },
+    "noise_historical_M15_whole_hess": {
+      "source": "benchmarks/results/fatrop-kernel-historical-2026-11-09/M15_whole/hess",
+      "median_us": 2895.9365,
+      "mean_us": 2899.0806850000004,
+      "std_us": 9.542417709600505,
+      "min_us": 2886.915,
+      "p10_us": 2892.2489,
+      "p90_us": 2912.1438999999996
+    },
+    "noise_investigation_M3_main_whole_grad": {
+      "source": "benchmarks/results/fatrop-kernel-investigation-2026-11-09/M3_main_whole/grad",
+      "median_us": 0.8161635,
+      "mean_us": 0.81648707,
+      "std_us": 0.004459215171397785,
+      "min_us": 0.8063859999999999,
+      "p10_us": 0.811855,
+      "p90_us": 0.8200282999999999
+    }
+  },
+  "sparse_ablation": {
+    "no_linear": {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 1.6348822460277006,
+      "artifact": "benchmarks/results/fatrop-kernel-attribution-2026-11-09/no_linear",
+      "kernels": {
+        "jac": {
+          "median_us": 295.43375,
+          "min_us": 294.7875,
+          "mean_us": 295.82123625,
+          "std_us": 0.9849837833771771,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        }
+      },
+      "choices": {
+        "linear": {
+          "disabled": true,
+          "calls": 2,
+          "accepted": 0,
+          "widths": []
+        },
+        "selection": {
+          "disabled": false,
+          "calls": 2,
+          "accepted": 0,
+          "widths": []
+        }
+      }
+    },
+    "baseline": {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 2.3387393319862895,
+      "artifact": "benchmarks/results/fatrop-kernel-attribution-2026-11-09/baseline",
+      "kernels": {
+        "jac": {
+          "median_us": 295.4615,
+          "min_us": 294.68525,
+          "mean_us": 296.00591875000003,
+          "std_us": 1.5518402786978052,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        }
+      },
+      "choices": {
+        "linear": {
+          "disabled": false,
+          "calls": 2,
+          "accepted": 0,
+          "widths": []
+        },
+        "selection": {
+          "disabled": false,
+          "calls": 4,
+          "accepted": 0,
+          "widths": []
+        }
+      }
+    },
+    "neither": {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 1.2116871480247937,
+      "artifact": "benchmarks/results/fatrop-kernel-attribution-2026-11-09/neither",
+      "kernels": {
+        "jac": {
+          "median_us": 295.35875,
+          "min_us": 294.7525,
+          "mean_us": 295.77277000000004,
+          "std_us": 1.1240328168996387,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        }
+      },
+      "choices": {
+        "linear": {
+          "disabled": true,
+          "calls": 1,
+          "accepted": 0,
+          "widths": []
+        },
+        "selection": {
+          "disabled": true,
+          "calls": 1,
+          "accepted": 0,
+          "widths": []
+        }
+      }
+    },
+    "no_selection": {
+      "branch": "devrush",
+      "path": "whole",
+      "M": 6,
+      "nx": 39,
+      "N": 25,
+      "build_s": 1.5576122410129756,
+      "artifact": "benchmarks/results/fatrop-kernel-attribution-2026-11-09/no_selection",
+      "kernels": {
+        "jac": {
+          "median_us": 295.6895,
+          "min_us": 294.7475,
+          "mean_us": 296.0980975,
+          "std_us": 1.3256136937543666,
+          "max_rel_error": 3.6424370799636035e-16,
+          "source_bytes": 601192,
+          "workspace": 56934,
+          "coloring_width": [
+            42
+          ]
+        }
+      },
+      "choices": {
+        "linear": {
+          "disabled": false,
+          "calls": 1,
+          "accepted": 0,
+          "widths": []
+        },
+        "selection": {
+          "disabled": true,
+          "calls": 2,
+          "accepted": 0,
+          "widths": []
+        }
+      }
+    }
+  },
+  "value_gates": [
+    {
+      "cell": "affineRecent_M3_stage",
+      "max_rel_errors": {
+        "constraints": 2.220446049250313e-16,
+        "objective": 0.0,
+        "base": 1.199873380404733e-18
+      }
+    },
+    {
+      "cell": "affineRecent_M3_whole",
+      "max_rel_errors": {
+        "constraints": 2.220446049250313e-16,
+        "objective": 0.0,
+        "base": 1.199873380404733e-18
+      }
+    },
+    {
+      "cell": "affineRecent_M5_stage",
+      "max_rel_errors": {
+        "constraints": 4.440892098500626e-16,
+        "objective": 0.0,
+        "base": 1.7216655337978747e-18
+      }
+    },
+    {
+      "cell": "affineRecent_M5_whole",
+      "max_rel_errors": {
+        "constraints": 4.440892098500626e-16,
+        "objective": 0.0,
+        "base": 1.7216655337978747e-18
+      }
+    },
+    {
+      "cell": "recent_M17_N25_stage",
+      "max_rel_errors": {
+        "constraints": 2.664535259100376e-17,
+        "objective": 0.0,
+        "base": 1.091393642127514e-19
+      }
+    },
+    {
+      "cell": "recent_M17_N25_whole",
+      "max_rel_errors": {
+        "constraints": 2.664535259100376e-17,
+        "objective": 0.0,
+        "base": 1.091393642127514e-19
+      }
+    },
+    {
+      "cell": "recent_M3_N10_stage",
+      "max_rel_errors": {
+        "constraints": 8.881784197001252e-16,
+        "objective": 1.532647405571967e-16,
+        "base": 1.532647405571967e-16
+      }
+    },
+    {
+      "cell": "recent_M3_N10_whole",
+      "max_rel_errors": {
+        "constraints": 8.881784197001252e-16,
+        "objective": 1.532647405571967e-16,
+        "base": 1.532647405571967e-16
+      }
+    },
+    {
+      "cell": "recent_M3_N25_stage",
+      "max_rel_errors": {
+        "constraints": 2.220446049250313e-16,
+        "objective": 0.0,
+        "base": 1.199873380404733e-18
+      }
+    },
+    {
+      "cell": "recent_M3_N25_whole",
+      "max_rel_errors": {
+        "constraints": 2.220446049250313e-16,
+        "objective": 0.0,
+        "base": 1.199873380404733e-18
+      }
+    },
+    {
+      "cell": "recent_M5_N10_stage",
+      "max_rel_errors": {
+        "constraints": 1.887379141862766e-15,
+        "objective": 0.0,
+        "base": 7.372304369734862e-18
+      }
+    },
+    {
+      "cell": "recent_M5_N10_whole",
+      "max_rel_errors": {
+        "constraints": 1.887379141862766e-15,
+        "objective": 0.0,
+        "base": 7.372304369734862e-18
+      }
+    },
+    {
+      "cell": "recent_M5_N25_stage",
+      "max_rel_errors": {
+        "constraints": 4.440892098500626e-16,
+        "objective": 0.0,
+        "base": 1.7216655337978747e-18
+      }
+    },
+    {
+      "cell": "recent_M5_N25_whole",
+      "max_rel_errors": {
+        "constraints": 4.440892098500626e-16,
+        "objective": 0.0,
+        "base": 1.7216655337978747e-18
+      }
+    },
+    {
+      "cell": "recent_M8_N25_stage",
+      "max_rel_errors": {
+        "constraints": 0.0,
+        "objective": 0.0,
+        "base": 0.0
+      }
+    },
+    {
+      "cell": "recent_M8_N25_whole",
+      "max_rel_errors": {
+        "constraints": 0.0,
+        "objective": 0.0,
+        "base": 0.0
+      }
+    }
+  ],
+  "retained_failed_attempts": [
+    {
+      "cell": "directOutput_M6_failed_attempt1",
+      "cause": "Diagnostic driver redirected a constants buffer instead of the mapped output; numerical gate rejected it."
+    },
+    {
+      "cell": "scatter_failed_attempt1",
+      "cause": "Diagnostic library lacked -lm and failed dlopen on fminf; no timing."
+    }
+  ],
+  "tool_sha256": {
+    "delinearize_pass.py": "208e7224f9a1c1990931642455d553ead69d32d48eb9bd08162a767870bacdca",
+    "recent.py": "3cfe0fecf8e3c49f616514c80efed1f0746f7f5b48202712f1bdc524ff5ce388",
+    "historic_worker.py": "42ce0fe3203b61e1b61f59240ff8bfab5b6129f1bb3709734a29326aa9fa932f",
+    "delinearized.py": "c2952c85fb8e23a268517091ddef72decb494c6198e90e724eb7b5bca63d2a3b",
+    "run.py": "925e8d8fff5c932e0c2587f97e24dec88e285c43ecb84ba96b3f70dfacb14cbd",
+    "recompile.py": "0cd392c7b1ee7db80f7feeb80306dc4bf02b2fdc04e6d85988c74e32667f40d5",
+    "controls.py": "bdef8ca178860c3396c108de2d892da1cc5e70e968724a20b308daf5dd720244",
+    "final_controls.py": "c97c8d89faa42fa574f0219e71c1f994af825a5ed06a796ae150045c4d8f68dd",
+    "sparse_ablation.py": "2bb1254fbc66f102a713eb77e4d9962e70c382590349e68f113fdd394f89dafc",
+    "scatter.c": "a02761fc1b8e645f36b19628a000bcf83db797e8917410226d9c8e34b5aa6f5c",
+    "scatter.py": "161d9cc4d5410c03327408b85905d121aa0066e21626be97a2a7b07e51af448f",
+    "time_kernel.c": "5ad39c746a612187af960721ecd89d80c8957309cfcc6c3a2151fd456e3f7c0b",
+    "kernels.py": "4a20cf12cb6deaba7d5a29b434a1bfb603de047076137c60e062c1a52d3e060e",
+    "historic_run.py": "b61c2a14194b9f2fb9187abba91758e2ab2434732dd22cea6a6741b3ff1e5364",
+    "summarize.py": "ce396cbb786993ca0bf405cde0b1f62b102366d123aa63760e4ea5e8320a0abf",
+    "recent_affine.py": "d0897e1edbc8c13587b4883fbdd06c5556efec0a404680ff7188b5426151e233"
+  },
+  "function_evaluation_projection": [
+    {
+      "M": 3,
+      "N": 10,
+      "paths": {
+        "whole": {
+          "counts": {
+            "base": 38,
+            "grad": 23,
+            "jac": 24,
+            "hess": 11
+          },
+          "contribution_us": {
+            "base": 18.367718,
+            "grad": 3.1068515,
+            "jac": 100.38535200000001,
+            "hess": 684.5458125
+          },
+          "projected_us": 806.405734,
+          "observed_us": 817.9561700671911
+        },
+        "stage": {
+          "counts": {
+            "base": 38,
+            "grad": 12,
+            "jac": 12,
+            "hess": 11
+          },
+          "contribution_us": {
+            "base": 18.629443,
+            "grad": 0.41134799999999994,
+            "jac": 21.282491999999998,
+            "hess": 584.4271070000001
+          },
+          "projected_us": 624.75039,
+          "observed_us": 643.3369417209178
+        }
+      },
+      "per_call_saving_us_at_whole_counts": {
+        "base": -0.26172499999999965,
+        "grad": 2.3184344999999995,
+        "jac": 57.82036800000001,
+        "hess": 100.11870549999992
+      },
+      "count_saving_us_at_stage_cost": 21.659560999999997
+    },
+    {
+      "M": 3,
+      "N": 25,
+      "paths": {
+        "whole": {
+          "counts": {
+            "base": 38,
+            "grad": 23,
+            "jac": 24,
+            "hess": 11
+          },
+          "contribution_us": {
+            "base": 23.233124,
+            "grad": 8.7196335,
+            "jac": 189.287712,
+            "hess": 1721.9321405
+          },
+          "projected_us": 1943.17261,
+          "observed_us": 1947.859622305259
+        },
+        "stage": {
+          "counts": {
+            "base": 38,
+            "grad": 12,
+            "jac": 12,
+            "hess": 11
+          },
+          "contribution_us": {
+            "base": 27.112601,
+            "grad": 1.2301920000000002,
+            "jac": 31.671228,
+            "hess": 1460.3606875
+          },
+          "projected_us": 1520.3747085,
+          "observed_us": 1546.3050513062626
+        }
+      },
+      "per_call_saving_us_at_whole_counts": {
+        "base": -3.879477,
+        "grad": 6.361765500000001,
+        "jac": 125.945256,
+        "hess": 261.571453
+      },
+      "count_saving_us_at_stage_cost": 32.798904
+    },
+    {
+      "M": 5,
+      "N": 10,
+      "paths": {
+        "whole": {
+          "counts": {
+            "base": 38,
+            "grad": 23,
+            "jac": 24,
+            "hess": 11
+          },
+          "contribution_us": {
+            "base": 44.55473400000001,
+            "grad": 7.2179519999999995,
+            "jac": 700.3987079999999,
+            "hess": 4075.8116685000005
+          },
+          "projected_us": 4827.9830625,
+          "observed_us": 4802.607552846894
+        },
+        "stage": {
+          "counts": {
+            "base": 38,
+            "grad": 12,
+            "jac": 12,
+            "hess": 11
+          },
+          "contribution_us": {
+            "base": 44.55070599999999,
+            "grad": 0.7054020000000001,
+            "jac": 267.411066,
+            "hess": 3653.1898315000003
+          },
+          "projected_us": 3965.8570055000005,
+          "observed_us": 4002.2085304372013
+        }
+      },
+      "per_call_saving_us_at_whole_counts": {
+        "base": 0.0040280000000145755,
+        "grad": 5.8659315,
+        "jac": 165.57657599999993,
+        "hess": 422.6218369999999
+      },
+      "count_saving_us_at_stage_cost": 268.0576845
+    },
+    {
+      "M": 5,
+      "N": 25,
+      "paths": {
+        "whole": {
+          "counts": {
+            "base": 47,
+            "grad": 29,
+            "jac": 30,
+            "hess": 14
+          },
+          "contribution_us": {
+            "base": 68.232344,
+            "grad": 23.8925925,
+            "jac": 2190.5550000000003,
+            "hess": 12995.731
+          },
+          "projected_us": 15278.4109365,
+          "observed_us": 15143.489261390641
+        },
+        "stage": {
+          "counts": {
+            "base": 47,
+            "grad": 15,
+            "jac": 15,
+            "hess": 14
+          },
+          "contribution_us": {
+            "base": 67.96195300000001,
+            "grad": 3.29544,
+            "jac": 827.7860475000001,
+            "hess": 11610.543
+          },
+          "projected_us": 12509.5864405,
+          "observed_us": 12616.902822628617
+        }
+      },
+      "per_call_saving_us_at_whole_counts": {
+        "base": 0.27039099999999516,
+        "grad": 17.5214085,
+        "jac": 534.982905,
+        "hess": 1385.188
+      },
+      "count_saving_us_at_stage_cost": 830.8617915000001
+    }
+  ]
+}
