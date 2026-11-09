@@ -85,7 +85,7 @@ src/scaly/
     toolchain.py         CPU build recipes, native feature detection, compiler discovery, cache root
 
   solvers/
-    model.py             SolverDescriptor and its opaque plain Function
+    model.py             solver descriptors, stage oracle records and opaque Functions
     problem.py           typed backend-free Problem declarations and their stacked NLP form
     ocp.py               the discrete-time OCP builder and its general and stage-form problems
     solver.py            backend selection and the parameter-based Solver call

@@ -85,7 +85,7 @@ how they fit together.
 
 ::: scaly.solvers.stages.StageLayout
 
-::: scaly.solvers._stage.StageOracles
+::: scaly.solvers.model.StageOracles
 
 ::: scaly.solvers.model.ExternalOracle
 

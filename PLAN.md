@@ -45,3 +45,12 @@ Measurement completed: eight cells, 240 successful timed solves, no iteration
 mismatches. Stage FE medians are 0.643/1.546/4.002/12.617 ms versus
 0.818/1.948/4.803/15.143 ms. Evidence and raw-summary copy are in the study note.
 PR #285 is draft, based on #239 and linked into stack #284. Cross-review remains.
+
+Review: sol approved without findings. Opus requested documentation of the
+Fatrop-only selection, a public home for StageOracles, and guide example order.
+Those are fixed, along with the prose notes, top-level template import, and the
+redundant whole-problem initialization. Retained the gradient alias, which is
+one Function shared with the ordinary descriptor, and avoided adding caching
+to the shared problem form for a construction-only cost. 154 focused tests pass;
+stage wrapper text is unchanged except whitespace. Full checks then one Opus
+delta check remain, followed by deleting this plan and marking ready.

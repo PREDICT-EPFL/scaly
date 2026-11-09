@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..ir.expr import Expr, ExprOp
 from ..function.concrete import ConcreteFunction
@@ -14,9 +14,6 @@ from ..function.tree import Tree
 from ..function.tree import flat_tree, flat_parameters
 from ..ir.types import SparsityPattern, TensorType
 from .stages import StageLayout, detect_stage_layout
-
-if TYPE_CHECKING:
-  from ._stage import StageOracles
 
 
 class CSolverOption(ctypes.Structure):
@@ -58,6 +55,23 @@ class ExternalOracle:
   def __post_init__(self) -> None:
     if self.workspace_size < 0:
       raise ValueError(f"external oracle workspace_size must be nonnegative, got {self.workspace_size}")
+
+
+@dataclass(frozen=True)
+class StageOracles:
+  """Mapped dense derivatives in recorded stage order, with row-major stage blocks.
+
+  ``grad`` returns the stacked objective gradient. ``jac`` returns the dynamics,
+  initial, path and terminal Jacobians, each in local ``[x, u]`` order.
+  ``hess`` takes the objective scale and stacked constraint multipliers after the
+  ordinary inputs. It returns stage and terminal Lagrangian blocks, each a dense
+  Hessian followed by its gradient row. A stage excludes the incoming transition's
+  linear ``-xnext`` term. Box bounds are handled by the plugin.
+  """
+
+  grad: ConcreteFunction
+  jac: ConcreteFunction
+  hess: ConcreteFunction
 
 
 @dataclass(frozen=True)

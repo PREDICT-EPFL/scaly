@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from .stage_codegen import render_callbacks
+
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function.concrete import ConcreteFunction
@@ -186,8 +188,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   }}
 """)
   if stage is not None:
-    from .stage_codegen import render_callbacks
-
     lines.extend(render_callbacks(desc, ctx, call))
   else:
     assert jac is not None and hess is not None and desc.hess is not None
@@ -287,8 +287,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
       d->column[i] = d->kind[i] == 1 ? d->ng[k]++ : d->ngi[k]++;
     }}
     for (int k = 0; k < {stages}; ++k) if (d->ng[k] > {s}_nx[k]+{s}_nu[k]) setup_ok = 0;
-    {f"{s}_jac(d);" if stage is None else ""}
-    for (int i = 0; i < {m}; ++i) if (d->kind[i] == 0) d->factor[i] = 1.0;
+    {f"{s}_jac(d);" if stage is None else f"for (int i = 0; i < {m}; ++i) if (d->kind[i] == 0) d->factor[i] = 1.0;"}
 """)
   if stage is None:
     emit(f"""
