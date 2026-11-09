@@ -24,6 +24,7 @@ nav = [
         { "Sparsity" = "guide/sparsity.md" },
         { "Solvers" = "guide/solvers.md" },
         { "Solver backends" = "guide/solver_backends.md" },
+        { "Optimal control" = "guide/ocp.md" },
         { "Code generation" = "guide/codegen.md" },
         { "Environment variables" = "guide/env_vars.md" },
     ] },

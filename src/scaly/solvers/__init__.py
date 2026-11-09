@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .ocp import DiscreteOCP, StageConstraint
 from .model import ExternalOracle, SolverDescriptor, descriptor_function
 from .paths import SolverLibraryError
 from .problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec, bounded, problem
@@ -13,6 +14,7 @@ __all__ = [
   "SCALY_SOLVER_STATS_VERSION",
   "ScalySolveStatus",
   "Bounded",
+  "DiscreteOCP",
   "ExternalOracle",
   "NO_LB",
   "NO_UB",
@@ -25,6 +27,7 @@ __all__ = [
   "SolverLibraryError",
   "SolverStats",
   "SolverStatus",
+  "StageConstraint",
   "bounded",
   "descriptor_function",
   "problem",

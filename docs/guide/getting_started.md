@@ -355,4 +355,5 @@ its derivatives. Numerical work and storage still grow with `N`, as can
 `vmap` applies when calls can be evaluated independently, so it cannot replace
 the sequential recurrence in `rollout`.
 The [functions guide](functions.md#regular-repetition-vmap) covers inputs shared
-by every stage and overlapping windows.
+by every stage and overlapping windows. [Optimal control](ocp.md) states such a
+problem by the Functions of one stage and writes out the horizon in this form.

@@ -18,6 +18,7 @@ from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.program_spec import spec_program_full
 from scaly.ir.spec import Rule, Spec, VerifyError
 from scaly.solvers.paths import SolverLibraryError
+from scaly.solvers.ocp import DiscreteOCP, StageConstraint
 from scaly.solvers.problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec
 from scaly.solvers.qp import NotQuadratic, QPData, qp_problem
 from scaly.solvers.solver import Solver
@@ -39,6 +40,8 @@ def test_public_exports_are_canonical() -> None:
   assert sc.group is group
   assert sc.Bounded is Bounded
   assert sc.Problem is Problem
+  assert sc.DiscreteOCP is DiscreteOCP
+  assert sc.StageConstraint is StageConstraint
   assert sc.ProblemSpec is ProblemSpec
   assert sc.NotQuadratic is NotQuadratic
   assert sc.NO_LB is NO_LB
@@ -50,6 +53,7 @@ def test_public_exports_are_canonical() -> None:
   assert callable(sc.bounded) and callable(sc.problem) and callable(sc.solver)
   assert {
     "Bounded",
+    "DiscreteOCP",
     "NO_LB",
     "NO_UB",
     "NotQuadratic",
@@ -58,6 +62,7 @@ def test_public_exports_are_canonical() -> None:
     "QPData",
     "Solver",
     "SolverLibraryError",
+    "StageConstraint",
     "bounded",
     "problem",
     "qp_problem",

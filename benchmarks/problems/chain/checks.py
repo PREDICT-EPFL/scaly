@@ -37,6 +37,7 @@ from benchmarks.problems.chain import (
   chain_eq_jac_dense_reference,
   chain_nlp,
   chain_objective_fn,
+  chain_ocp,
   chain_step_fn,
   initial_state,
   n_dec,
@@ -124,6 +125,28 @@ def check_nlp_objective_matches_casadi() -> None:
   ca_out = ca_solver(x0=zv, p=pv, lbg=0.0, ubg=0.0, lbx=lb, ubx=ub)
   assert ca_solver.stats()["success"]
   np.testing.assert_allclose(float(scaly_out["f"]), float(ca_out["f"]), rtol=1e-6)
+
+
+def check_builder_matches_hand_written() -> None:
+  """The chain stated with ``sc.DiscreteOCP`` solves to the hand-written problem's solution, through
+  the same IPOPT and SQP iterations."""
+  n_masses, horizon = 3, 10
+  nx, nz = n_state(n_masses), n_state(n_masses) + NU
+  zv, pv = sample_inputs(n_masses, horizon, seed=0)
+  ocp = chain_ocp(n_masses, horizon)
+  assert ocp.problem().params.names == ("initial_state", "mass", "spring_d", "rest_len", "gravity", "dt")
+  params = (pv[:nx], *(pv[i : i + 1] for i in range(nx, nx + N_PARAMS)))
+  guess = (zv[: horizon * nz].reshape(horizon, nz), zv[horizon * nz :])
+  for solver in ("ipopt", "sqp"):
+    hand = chain_nlp(n_masses, horizon, solver=solver)
+    expected, *_ = hand(pv, x0=zv)
+    expected_stats = hand.stats()
+    builder = sc.solver(ocp.problem(), solver, options={"max_iter": 80, "tol": 1e-6} if solver == "sqp" else None)
+    (z, x_last), *_ = builder(params, x0=guess)
+    stats = builder.stats()
+    assert expected_stats.to_solver_status().ok and stats.to_solver_status().ok, (solver, expected_stats.status, stats.status)
+    assert stats.iter == expected_stats.iter, (solver, stats.iter, expected_stats.iter)
+    np.testing.assert_allclose(np.concatenate([z.ravel(), x_last]), expected, rtol=1e-8, atol=1e-7, err_msg=solver)  # SQP stops at 1e-6
 
 
 def check_one_reference_for_every_end_mass_term() -> None:
@@ -369,6 +392,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "stage_layout": (check_stage_layout, None, False),
   "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, None, True),
   "nlp_objective": (check_nlp_objective_matches_casadi, "ipopt", True),
+  "builder": (check_builder_matches_hand_written, "ipopt", False),
   "one_reference": (check_one_reference_for_every_end_mass_term, None, False),
   "extract_positions": (check_extract_positions, None, False),
   "plant_step": (check_plant_step_is_parameterized_rk4, None, False),

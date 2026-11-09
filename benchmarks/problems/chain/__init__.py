@@ -324,6 +324,33 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
   )
 
 
+def chain_ocp(n_masses: int, horizon: int) -> sc.DiscreteOCP:
+  """The problem of ``chain_nlp`` stated by its stages with ``sc.DiscreteOCP``.
+
+  The physical constants are the parameters the step Function names, after ``initial_state``.
+  """
+  nx = n_state(n_masses)
+  end, vel, h = 3 * (n_masses - 2), 3 * (n_masses - 1), 1.0 / horizon
+  ref = sc.const(np.array(END_REF))
+
+  @sc.function(sc.arg("x", nx), sc.arg("u", NU), outputs=sc.arg("l", ()), name=f"chain_stage_cost_M{n_masses}_N{horizon}")
+  def stage_cost(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    return h * 0.5 * (Q_END * sc.sumsqr(x[end : end + 3] - ref) + Q_VEL * sc.sumsqr(x[vel:]) + R_U * sc.sumsqr(u))
+
+  @sc.function(sc.arg("x", nx), outputs=sc.arg("vf", ()), name=f"chain_terminal_cost_M{n_masses}")
+  def terminal_cost(x: sc.Expr) -> sc.Expr:
+    return 0.5 * Q_END_TERMINAL * sc.sumsqr(x[end : end + 3] - ref)
+
+  return sc.DiscreteOCP(
+    N=horizon,
+    dynamics=chain_step_fn(n_masses),
+    stage_cost=stage_cost,
+    terminal_cost=terminal_cost,
+    u_bounds=(-1.0, 1.0),
+    name=f"chain_ocp_M{n_masses}_N{horizon}",
+  )
+
+
 def _ca_rhs(n_masses: int, x, u, params):
   import casadi as ca
 

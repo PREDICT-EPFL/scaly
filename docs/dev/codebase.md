@@ -87,6 +87,7 @@ src/scaly/
   solvers/
     model.py             SolverDescriptor and its opaque plain Function
     problem.py           typed backend-free Problem declarations and their stacked NLP form
+    ocp.py               the discrete-time OCP builder and its general and stage-form problems
     solver.py            backend selection and the parameter-based Solver call
     graph.py             the solver queries over a Function graph
     registry.py          plugin discovery and protocol validation

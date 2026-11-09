@@ -71,6 +71,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.solvers._oracle": 5,
   "scaly.solvers.graph": 5,
   "scaly.solvers.nlp": 5,
+  "scaly.solvers.ocp": 5,
   "scaly.solvers.problem": 5,
   "scaly.solvers.solver": 5,
   "scaly.solvers.paths": 5,

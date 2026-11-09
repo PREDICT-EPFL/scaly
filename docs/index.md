@@ -57,8 +57,8 @@ uv run scaly_codegen mymodule:solve -o generated/
     After [Installation](guide/installation.md), go to [Getting started](guide/getting_started.md) for
     a quick overview of the library. The rest of the guide
     covers [functions](guide/functions.md), [derivatives](guide/derivatives.md),
-    [sparsity](guide/sparsity.md), [solvers](guide/solvers.md) and
-    [code generation](guide/codegen.md).
+    [sparsity](guide/sparsity.md), [solvers](guide/solvers.md),
+    [optimal control](guide/ocp.md) and [code generation](guide/codegen.md).
 
 - **How it works**
 
