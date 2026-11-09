@@ -19,10 +19,10 @@ keep the whole-problem path. List this selection rule as an open point.
 - [x] Extend the three Fatrop documentation sections using write-docs. Check
   parent #236's documentation requirements and run the examples.
 - [x] Run all pre-merge checks and preserve the C snapshots byte for byte.
-- [ ] Commit and push, post the concrete benchmark-study plan, obtain the
+- [x] Commit and push, post the concrete benchmark-study plan, obtain the
   required launch choice, then record chain function-evaluation time for both
   paths from native timers on la015. Store the evidence under internal/notes.
-- [ ] Open a draft PR against #239's branch, link in T3 and `gh stack link 284`.
+- [x] Open a draft PR against #239's branch, link in T3 and `gh stack link 284`.
 - [ ] One cross-review with the required reviewers, fix findings and confirm
   fixes with a delta check. Delete this plan before marking ready, update #240
   to In review, and watch the PR.
@@ -40,3 +40,8 @@ authorized by Ted; CPU-policy choice pending because la015 is powersave/boost on
 Pre-merge hooks passed: 2548 passed, 52 skipped, smoke, ty, Ruff, docs and
 private names. Clean strict docs build passed. README code and export ran. Ted
 set the CPU policy; performance and disabled boost verified.
+
+Measurement completed: eight cells, 240 successful timed solves, no iteration
+mismatches. Stage FE medians are 0.643/1.546/4.002/12.617 ms versus
+0.818/1.948/4.803/15.143 ms. Evidence and raw-summary copy are in the study note.
+PR #285 is draft, based on #239 and linked into stack #284. Cross-review remains.

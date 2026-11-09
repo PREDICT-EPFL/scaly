@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+# ruff: noqa: E402 -- direct execution must add the repository root before package imports
+
 import argparse
 from dataclasses import asdict, replace
 import json
