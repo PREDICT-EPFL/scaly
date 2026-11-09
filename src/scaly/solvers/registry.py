@@ -70,9 +70,10 @@ class SolverBackend(Protocol):
 
 
 class NlpSolverBackend(SolverBackend, Protocol):
-  """Solver backend protocol for NLP plugins, including Hessian layout."""
+  """Solver backend protocol for NLP plugins, including Hessian layout and stage oracles."""
 
   hess_triangle: Literal["lower", "upper"]
+  stage_oracles: bool = False
 
 
 def available_backends() -> dict[str, EntryPoint]:
@@ -122,6 +123,8 @@ def require_backend(name: str, kind: str) -> SolverBackend:
   if kind == "nlp":
     if getattr(backend, "hess_triangle", None) not in {"lower", "upper"}:
       raise SolverPluginError(f"solver plugin {name!r} must declare hess_triangle as 'lower' or 'upper'")
+    if not isinstance(getattr(backend, "stage_oracles", False), bool):
+      raise SolverPluginError(f"solver plugin {name!r} must declare stage_oracles as a boolean")
     return cast(NlpSolverBackend, backend)
   return backend
 

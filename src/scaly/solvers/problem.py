@@ -12,6 +12,7 @@ import numpy as np
 from ..ad.sparse import SparseJacobian, Triangle, sparse_hessian
 from ..function.api import gradient, sparse_jacobian
 from ..function.concrete import ConcreteFunction
+from ..function.model import as_concrete
 from ..function.tree import Tree, append_parameter, arg, flat_tree, parameter_list
 from ..function.tree import group as tree_group
 from ..ir.expr import Expr, ExprOp, as_expr, check_prints_reach, concat, promote_dtype, recording_prints, substitute
@@ -92,6 +93,15 @@ class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
   _param_symbols: tuple[Expr, ...] = field(repr=False)
   stage_layout: StageLayout | None = None
   stage_functions: StageFunctions | None = None
+
+  def __post_init__(self) -> None:
+    if self.stage_functions is None:
+      return
+    dynamics = as_concrete(self.stage_functions.dynamics)
+    nx, nu = (type_.size for type_ in dynamics.input_tree.types[:2])
+    layout = self.stage_layout
+    if layout is None or layout.N < 1 or layout.nx != (nx,) * (layout.N + 1) or layout.nu != (nu,) * layout.N + (0,):
+      raise ValueError("stage Functions require a matching layout with uniform state/control sizes and no terminal controls")
 
   @property
   def n_eq(self) -> int:

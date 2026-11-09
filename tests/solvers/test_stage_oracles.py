@@ -1,9 +1,15 @@
 """Dense derivatives of mapped stage Functions against whole-problem derivatives."""
 
+from dataclasses import replace
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
 
 import scaly as sc
 from scaly.function.model import as_concrete
+from scaly.solvers import registry
+from scaly.solvers.nlp import build_nlp
 
 
 def _ocp(N=3, *, globals_=True):
@@ -40,6 +46,55 @@ def _ocp(N=3, *, globals_=True):
     global_vars=("T",) if globals_ else (),
     name="stage_test",
   )
+
+
+@pytest.mark.parametrize("declared", [None, False])
+def test_backend_without_stage_oracles_keeps_whole_problem_oracles(monkeypatch, declared):
+  backend = SimpleNamespace(name="fatrop", kind="nlp", hess_triangle="lower", prepare_options=lambda options: ({}, options))
+  if declared is not None:
+    backend.stage_oracles = declared
+  monkeypatch.setattr(registry, "get_backend", lambda name: backend)
+  problem = _ocp().stage_problem()
+  desc = as_concrete(build_nlp(problem, registry.require_backend("fatrop", "nlp"), name="legacy", options=None)).descriptor
+  assert desc.stage_oracles is None
+  assert desc.jac is problem._nlp.jac
+  assert desc.hess is problem._nlp.hess("lower")
+
+
+def test_backend_can_request_stage_oracles_under_any_name(monkeypatch):
+  backend = SimpleNamespace(
+    name="mapped_backend", kind="nlp", hess_triangle="lower", stage_oracles=True, prepare_options=lambda options: ({}, options)
+  )
+  monkeypatch.setattr(registry, "get_backend", lambda name: backend)
+  problem = _ocp().stage_problem()
+  desc = as_concrete(build_nlp(problem, registry.require_backend("mapped_backend", "nlp"), name="mapped", options=None)).descriptor
+  assert desc.stage_oracles is not None
+  assert desc.grad is desc.stage_oracles.grad
+  assert desc.jac is desc.hess is None
+  assert "jac" not in problem._nlp.__dict__ and "hess_full" not in problem._nlp.__dict__
+
+
+@pytest.mark.parametrize(
+  "nx, nu",
+  [
+    ((3, 4, 3, 3), (1, 1, 1, 0)),
+    ((4, 4, 4, 4), (1, 1, 1, 0)),
+    ((3, 3, 3, 3), (1, 2, 1, 0)),
+    ((3, 3, 3, 3), (1, 1, 1, 1)),
+  ],
+)
+def test_attached_stage_functions_require_matching_layout_sizes(nx, nu):
+  problem = _ocp().stage_problem()
+  assert problem.stage_layout is not None
+  layout = replace(problem.stage_layout, nx=nx, nu=nu)
+  with pytest.raises(ValueError, match="stage Functions require"):
+    replace(problem, stage_layout=layout)
+
+
+def test_attached_stage_functions_require_a_layout():
+  problem = _ocp().stage_problem()
+  with pytest.raises(ValueError, match="stage Functions require"):
+    replace(problem, stage_layout=None)
 
 
 def test_dense_stage_derivatives_match_whole_problem():

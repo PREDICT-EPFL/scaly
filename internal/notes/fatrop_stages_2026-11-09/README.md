@@ -2,8 +2,10 @@
 
 Issue #240, PR #285, third in the #282 / #280 / #285 stack. The implementation
 uses mapped dense stage derivatives for `DiscreteOCP.stage_problem()` and keeps
-the whole-problem path for ordinary problems. This selection rule is an open
-point for the maintainer. The builder API is unchanged.
+the whole-problem path for ordinary problems. The backend's `stage_oracles`
+declaration selects mapped stage derivatives when the problem supplies stage
+Functions. Fatrop opts in, and other backends default to whole-problem oracles.
+The builder API is unchanged.
 
 ## Chain measurements
 

@@ -47,9 +47,15 @@ uses the library and header paths when it builds the generated code.
 | `prepare_options(options)` | validate option names and types, supply defaults, and return `(compile_options, runtime_options)` dicts |
 | `render_wrapper(fun, ctx)` | the C wrapper template (below) |
 
-NLP backends also satisfy `scaly.solvers.registry.NlpSolverBackend`. They declare `hess_triangle`
-as `"lower"` or `"upper"`, and `require_backend(..., "nlp")` validates it at runtime. QP backends do
-not declare this member.
+NLP backends also satisfy `scaly.solvers.registry.NlpSolverBackend`:
+
+| member | meaning |
+|---|---|
+| `hess_triangle` | `"lower"` or `"upper"`, the Hessian triangle the wrapper accepts |
+| `stage_oracles` | boolean opt-in to mapped stage oracles, default `False` when omitted |
+
+`require_backend(..., "nlp")` validates these declarations at runtime. QP backends do not declare
+these members.
 
 Discovery, protocol-version validation, and kind checking live in `src/scaly/solvers/registry.py`.
 Library and header discovery (`src/scaly/solvers/paths.py`) derives everything else from this
@@ -235,10 +241,13 @@ their numerical coefficients. The Fatrop wrapper normalizes each dynamics row
 to `F(x, u) - xnext` using its coefficient at the initial point, checks that it
 stays constant during the solve, and converts multipliers with the same scale.
 
-Only the `"fatrop"` backend receives `desc.stage_oracles` for a builder's stage
-form, instead of `desc.jac`, `desc.hess` and their sparse patterns. Core
+A backend with `stage_oracles = True` receives `desc.stage_oracles` when the
+problem supplies stage Functions, instead of `desc.jac`, `desc.hess` and their sparse patterns. Core
 constructs these dense derivatives for one stage before mapping over the
 horizon. `desc.grad` references the same Function as `desc.stage_oracles.grad`.
+Fatrop declares this opt-in. Other backends retain whole-problem oracles by default.
+The problem checks that its layout matches the Functions' uniform state/control sizes,
+with no controls at the terminal stage.
 `base` and `bounds` retain the ordinary NLP contract.
 `StageOracles.jac` takes `(x, *params)` and returns dynamics, initial, path and
 terminal Jacobians in local `[x, u]` order, with a leading stage axis on dynamics

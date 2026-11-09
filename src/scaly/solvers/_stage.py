@@ -19,7 +19,9 @@ def stage_oracles(problem: Problem[Any, Any, Any, Any]) -> StageOracles:
   """Differentiate one stage before mapping, without constructing global sparse derivatives."""
   functions, layout = problem.stage_functions, problem.stage_layout
   assert functions is not None and layout is not None
-  N, nx, nu = layout.N, layout.nx[0], layout.nu[0]
+  dynamics = as_concrete(functions.dynamics)
+  nx, nu = (type_.size for type_ in dynamics.input_tree.types[:2])
+  N = layout.N
   nz = nx + nu
   ni = len(layout.eq[0])
   np_ = len(layout.ineq[0])
@@ -40,7 +42,7 @@ def stage_oracles(problem: Problem[Any, Any, Any, Any]) -> StageOracles:
   def local(terminal: bool) -> tuple[ConcreteFunction, ConcreteFunction, ConcreteFunction]:
     width = nx if terminal else nz
     z = Expr.sym("z", (width,))
-    local_params = tuple(as_concrete(functions.dynamics).inputs[2:])
+    local_params = tuple(dynamics.inputs[2:])
     env = dict(zip(problem.params.names[1:], local_params, strict=True))
 
     def call(fn: Function | None) -> Expr:

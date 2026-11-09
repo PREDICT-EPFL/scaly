@@ -24,6 +24,7 @@ class _Backend:
   name = "fatrop"
   kind = "nlp"
   hess_triangle = "lower"
+  stage_oracles = True
   protocol_version = 8
   lib_stem = "fatrop"
   link_flags = ("-lfatrop",) + (("-DFATROP_SYMBOL_EXPORT=__declspec(dllimport)",) if sys.platform == "win32" else ())

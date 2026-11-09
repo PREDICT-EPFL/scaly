@@ -31,7 +31,7 @@ def build_nlp[SV, NV, SP, NP](
   """Build a typed plain Function around an NLP plugin descriptor."""
   compile_options, resolved_options = backend.prepare_options(options or {})
   nlp = problem._nlp
-  staged = stage_oracles(problem) if backend.name == "fatrop" and problem.stage_functions is not None else None
+  staged = stage_oracles(problem) if getattr(backend, "stage_oracles", False) and problem.stage_functions is not None else None
   hess_fn = nlp.hess(backend.hess_triangle) if staged is None else None
   hess_sparsity = hess_fn.output_sparsities[0] if hess_fn is not None else None
 
