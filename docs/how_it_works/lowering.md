@@ -9,7 +9,10 @@ of `prog.proc` lines, and trim more where they say so.
 ## One loop per operation
 
 Lowering emits each expression operation on its own, with a buffer for its
-result and a loop that fills it. For this function
+result and a loop nest that fills it. Neighbouring axes that every read and the
+write traverse contiguously share one loop, so each operation below is a single
+loop, while a transpose keeps one loop per axis and reads each operand at its
+strides. For this function
 
 ```python
 import scaly as sc
@@ -47,8 +50,7 @@ storage rather than a copy. A called function becomes its own procedure and a
 `prog.call`, and `sc.vmap` becomes a loop around that call.
 
 A few limits come from lowering rather than from the expression dialect. Matrix
-multiplication takes operands of rank at most two, transpose works up to rank
-four. An unsupported case raises
+multiplication takes operands of rank at most two. An unsupported case raises
 `LoweringError`. A solver call is not lowered at all. Its plugin renders the
 wrapper, and only the oracles it calls go through this page's pipeline.
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode, RangeKind
-from .ctx import LowerCtx, lowers, _shape_or_scalar, _size_of, _stride, _coord_p, _flat_index_p, _row_major_strides, _affine_sum
+from ...ir.program import ProgramNode
+from .ctx import LowerCtx, lowers, _flat_coordinates, _shift, _shape_or_scalar, _stride
 
 
 @lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT)
@@ -68,8 +68,9 @@ def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...
 @lowers(ExprOp.SLICE)
 def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   """General SLICE: integer indices drop a dim, slices keep one. A contiguous slice (constant
-  flat offset, no stride) becomes a zero-copy pointer alias of its source; otherwise each output
-  element reads the source via flat-index arithmetic. Covers rank-1, multi-dim, integer, strided."""
+  flat offset, no stride) becomes a zero-copy pointer alias of its source; otherwise one flat loop
+  over the output reads source coordinate ``start + step * c``. Covers rank-1, multi-dim, integer,
+  strided."""
   src = node.args[0]
   src_shape = src.shape
   index = node.attrs["index"]
@@ -79,86 +80,53 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     ctx.value_buffers[node.id] = alias.attrs["name"]
     return
   out = ctx.alloc_tmp(node)
-  vname = ctx.names.allocate(f"i_{out.attrs['name']}")
-  rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
-  k = p.var(vname)
-  coords: list[ProgramNode] = []
+  # One flat loop, its coordinates as quotients and remainders, rather than a nest of short rows:
+  # lanes over such a nest split each row's vector store across cache lines, and the loads that
+  # read the copy back stall (chain M=9 ran 1.4 times slower). Until lanes handle nests (#71).
+  ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
+  coords = _flat_coordinates(k, node.shape)
+  source: list[ProgramNode] = []
   out_dim = 0
   for dim, item in enumerate(index):
     if isinstance(item, int):
-      coords.append(p.const_int(item if item >= 0 else int(src_shape[dim]) + item))
+      source.append(p.const_int(item if item >= 0 else int(src_shape[dim]) + item))
       continue
     start, _stop, step = item.indices(int(src_shape[dim]))
-    c = _coord_p(k, node.shape, out_dim)
-    if step != 1:
-      c = p.mul(c, p.const_int(step))
-    coords.append(c if (start == 0 and step == 1) else p.add(p.const_int(start), c))
+    source.append(_shift(coords[out_dim], start, step))
     out_dim += 1
-  src_idx = _flat_index_p(coords, src_shape)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read(src, source))])
 
 
 @lowers(ExprOp.TRANSPOSE)
 def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
-  """Permuted copy: ``out[Σ o_i·out_stride_i] = src[Σ o_i·src_stride_{axes[i]}]``, one loop per output axis."""
+  """Permuted copy: output coordinate ``i`` is source coordinate ``axes[i]``."""
   src = node.args[0]
   axes = tuple(int(a) for a in node.attrs["axes"])
-  src_shape, out_shape = src.shape, node.shape
   out = ctx.alloc_tmp(node)
-  src_strides = _row_major_strides(src_shape)
-  out_strides = _row_major_strides(out_shape)
-  ranges, loop_vars = [], []
-  for i, d in enumerate(out_shape):
-    name = ctx.names.allocate(f"d{i}_{out.attrs['name']}")
-    ranges.append(p.range_(name, 0, int(d), kind=RangeKind.GLOBAL))
-    loop_vars.append(p.var(name))
-  out_idx = _affine_sum(loop_vars, out_strides)
-  src_idx = _affine_sum(loop_vars, [src_strides[axes[i]] for i in range(len(out_shape))])
-  stmt: ProgramNode = p.store(p.view(out, [out_idx]), p.load(p.view(ctx.buf_of(src), [src_idx])))
-  for rng in reversed(ranges):
-    stmt = p.for_(rng, [stmt])
-  ctx.statements.append(stmt)
+  ranges, coords = ctx.nest(node.shape, f"i_{out.attrs['name']}")
+  source = [coords[axes.index(dim)] for dim in range(len(axes))]
+  ctx.emit(ranges, [ctx.write(node, coords, ctx.read(src, source))])
 
 
 @lowers(ExprOp.STACK)
 def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
-  """Stack ``n`` rank-r inputs along a new ``axis`` into a rank-(r+1) output: each input
-  occupies index ``i`` along the new axis. Per element, decompose the input flat index into
-  its coords, insert ``i`` at ``axis``, recombine against the output shape."""
+  """Copy input ``i`` to index ``i`` along the new ``axis``."""
   axis = int(node.attrs.get("axis", 0))
-  out_shape = node.shape
   out = ctx.alloc_tmp(node)
   for i, src in enumerate(node.args):
-    src_shape = src.shape
-    name = ctx.names.allocate(f"j_{out.attrs['name']}_{i}")
-    rng = p.range_(name, 0, _size_of(src_shape), kind=RangeKind.GLOBAL)
-    j = p.var(name)
-    src_coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]
-    out_coords = src_coords[:axis] + [p.const_int(i)] + src_coords[axis:]
-    dst = _flat_index_p(out_coords, out_shape)
-    ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
+    ranges, coords = ctx.nest(src.shape, f"j_{out.attrs['name']}_{i}")
+    ctx.emit(ranges, [ctx.write(node, [*coords[:axis], p.const_int(i), *coords[axis:]], ctx.read(src, coords))])
 
 
 @lowers(ExprOp.CONCAT)
 def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
-  """Copy each input with explicit axes, shifting only the concatenated coordinate."""
+  """Copy each input, shifting only the concatenated coordinate."""
   axis = int(node.attrs.get("axis", 0))
-  out_shape = node.shape
   out = ctx.alloc_tmp(node)
   offset = 0
   for i, src in enumerate(node.args):
-    coords, ranges = [], []
-    for dim, size in enumerate(src.shape):
-      name = ctx.names.allocate(f"j_{out.attrs['name']}_{i}_{dim}")
-      coords.append(p.var(name))
-      ranges.append(p.range_(name, 0, size, kind=RangeKind.GLOBAL))
-    source = _affine_sum(coords, _row_major_strides(src.shape))
+    ranges, coords = ctx.nest(src.shape, f"j_{out.attrs['name']}_{i}")
     shifted = list(coords)
-    if offset:
-      shifted[axis] = p.add(p.const_int(offset), shifted[axis])
-    target = _affine_sum(shifted, _row_major_strides(out_shape))
-    stmt = p.store(p.view(out, [target]), p.load(p.view(ctx.buf_of(src), [source])))
-    for rng in reversed(ranges):
-      stmt = p.for_(rng, [stmt])
-    ctx.statements.append(stmt)
+    shifted[axis] = _shift(coords[axis], offset)
+    ctx.emit(ranges, [ctx.write(node, shifted, ctx.read(src, coords))])
     offset += int(src.shape[axis])

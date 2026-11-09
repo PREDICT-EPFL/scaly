@@ -4,17 +4,27 @@ from __future__ import annotations
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode, RangeKind
+from ...ir.program import ProgramNode
 from ...ad.rules import ELEMENTWISE
-from .ctx import LowerCtx, lowers, _broadcast_index_p, _size_of
+from .ctx import LowerCtx, lowers, _flat_coordinates
 
 
 @lowers(*ELEMENTWISE)
 def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
+  """One flat loop over the output. An operand of the output's shape reads at the loop variable, and
+  a broadcast one at its trailing coordinates as quotients and remainders, zero on a broadcast axis.
+
+  A broadcast stays flat rather than a nest of rows: lanes over such a nest store each row apart, and
+  the gathers reading the result back stall (unbumpercars C=8 ran 7% slower). Until lanes handle
+  nests (#71)."""
   out = ctx.alloc_tmp(node)
-  vname = ctx.names.allocate(f"i_{out.attrs['name']}")
-  rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
-  i = p.var(vname)
-  loads = tuple(p.load(p.view(ctx.buf_of(a), [_broadcast_index_p(i, a.shape, node.shape)])) for a in node.args)
-  computed = ProgramNode(ELEMENTWISE[ExprOp(node.op)].program, loads, dtype=node.type.dtype)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [i]), computed)]))
+  ranges, (flat,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
+  coords = _flat_coordinates(flat, node.shape)
+
+  def load(a: Expr) -> ProgramNode:
+    if a.shape == node.shape:
+      return p.load(p.view(ctx.buf_of(a), [flat]))
+    return ctx.read(a, [c if d != 1 else p.const_int(0) for c, d in zip(coords[len(coords) - len(a.shape) :], a.shape, strict=True)])
+
+  computed = ProgramNode(ELEMENTWISE[ExprOp(node.op)].program, tuple(load(a) for a in node.args), dtype=node.type.dtype)
+  ctx.emit(ranges, [p.store(p.view(out, [flat]), computed)])

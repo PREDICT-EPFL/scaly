@@ -686,7 +686,10 @@ remainder on that axis only, or materializes the transpose, and a test pins whic
 devrush's `delinearize_loops` idea done at emission, where the structure is known, instead of
 recovered afterwards. Migrate elementwise ops, movement ops (`RESHAPE`, `TRANSPOSE`, `SLICE`,
 `GATHER` through `index_at`), `STACK` and `CONCAT`; delete `_coord_p`, `_broadcast_index_p` and
-`_flat_index_p`. Tests: NumPy differential tests per op and shape class, transpose-reshape-slice
+`_flat_index_p`. A strided slice copy and a broadcasting elementwise op stay one flat loop with
+quotient and remainder coordinates until [#71] (revised 2026-11-07 and 2026-11-09 on PR #275: as
+nests, lanes store each row apart and the gathers reading the result back are replayed, chain M=9
+1.4 times and unbumpercars C=8 1.07 times slower than flat). Tests: NumPy differential tests per op and shape class, transpose-reshape-slice
 chains, empty dimensions. Gates: race-car N=200 within the C-79 limits, `test_fuse_ranges` and
 `test_widen_ranges` still asserting the same properties, lowering time within 10%. Regenerates
 snapshots.
@@ -781,6 +784,11 @@ of the lane count. Under a few percent, keep the 16-byte ABI. Above that, raise 
 `Buffer` alignment to 64, allocate 64-byte-aligned JIT arrays, start each unit-stride lane access on
 a lane boundary in lowering and declare the alignment to the compiler. Stack-local buffers stay as
 they are.
+Lanes over nests also take back [#27]'s strided slice copies and broadcasting elementwise ops, which
+stay flat loops until their nests no longer store rows apart before gathers read them back; gates:
+chain M=9's and unbumpercars C=8's Hessians within 5% of the flat forms, measured with pipeline
+resyncs (PR #275: chain M=9 2.1 million flat against 32.7 million as 7 x 9 rows; unbumpercars C=8
+0.3 million against 22.8 million with nested broadcasts in the mapped network stage).
 
 **[#74]. Predictable lowering of hand-written kernels.** Decision 14 as tests and the changes they
 need. A register-blocked dense product written in Python (4×4 blocks of slices, a `LOOP` over the
