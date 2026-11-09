@@ -29,8 +29,21 @@ queries support solver integrations and compiler extensions.
       filters:
         - "!^_"
         - "!^stage_layout$"
+        - "!^stage_functions$"
 
 ::: scaly.solvers.problem.problem
+
+## Optimal control problems
+
+See the [optimal control guide](../guide/ocp.md).
+
+::: scaly.solvers.ocp.DiscreteOCP
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+
+::: scaly.solvers.ocp.StageConstraint
 
 ## Solver selection
 

@@ -27,8 +27,8 @@ class StageConstraint:
 
   ``fn`` takes the state and the control for a path constraint, which holds at every stage before
   the last, and the state alone for a terminal constraint. Its further inputs are matched by name, as
-  for the costs. A side is ``None``, a number, or an array of the output's size; ``lo == hi`` makes an
-  equality.
+  for the costs. A side is ``None``, a number, or an array of the output's size, and ``lo == hi``
+  makes an equality.
   """
 
   fn: Function[Any, Any, Any, Any]
@@ -77,14 +77,14 @@ class DiscreteOCP:
   the state bounds at every stage after the first, and the terminal constraints on ``x_N``.
 
   ``dynamics`` takes the state and the control, two vectors, and returns the next state. The stage
-  cost and the path constraints take the same two; the terminal cost and constraints take the
+  cost and the path constraints take the same two, and the terminal cost and constraints take the
   state. A Function's further inputs are matched by name across Functions: a name in
   ``global_vars`` is a decision variable shared by every stage, a name in ``stage_params`` a
   parameter with one row per stage, ``N + 1`` of them, and any other name a parameter. ``x_bounds``
   and ``u_bounds`` are ``(lo, hi)`` pairs, each side ``None``, a number or an array.
 
-  ``problem()`` and ``stage_problem()`` lower it to a ``Problem``; ``pack`` and ``unpack`` convert
-  between trajectories and their variables.
+  ``problem()`` and ``stage_problem()`` lower it to a ``Problem``, and ``pack`` and ``unpack``
+  convert between trajectories and their variables.
   """
 
   N: int
@@ -175,8 +175,8 @@ class DiscreteOCP:
 
   def stage_problem(self) -> Problem[Any, Any, Any, Any]:
     """The stage form: each global variable becomes part of the state, held constant from stage to
-    stage, so every stage depends on its own variables only. The problem records its layout and its
-    ``StageFunctions``."""
+    stage, so every stage depends on its own variables only. The problem records the sizes of its
+    stages and its stage Functions for the solvers that read them."""
     return self._staged
 
   @cached_property
