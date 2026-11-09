@@ -302,9 +302,12 @@ The `"fatrop"` backend accepts a multiple-shooting problem whose variables are
 ordered `[x_0, u_0, x_1, u_1, ..., x_N, u_N]`. Each dynamics equality connects
 one stage to its next state. Costs and other constraints must be local to a
 stage. Scaly detects and checks this structure from the problem's sparse
-derivatives, then evaluates its oracles over the whole horizon.
+derivatives. The getting-started example above groups all states before all
+controls, so its variables must be reordered before selecting Fatrop.
 
-For example, one transition with `x_0=1` and `x_1=x_0+u_0`:
+For example, let `z = [x_0, u_0, x_1]` describe one transition with `x_0=1`
+and `x_1=x_0+u_0`. The cost `u_0**2 + (x_1-3)**2` penalizes the control and
+the terminal state's distance from three:
 
 ```python
 @sc.problem(vars=sc.arg("z", 3))
@@ -321,11 +324,12 @@ assert solve_fatrop.stats().to_solver_status().ok
 print(np.round(z, 6))  # [1. 1. 2.]
 ```
 
+Each scalar entry in `eq`, read in tuple order, is a constraint row.
 Dynamics rows must follow stage and next-state order. Local equalities follow
 the dynamics leaving their stage, except that initial-state equalities may
-come first. Inequality rows can appear separately in `ineq`. Scaly does not
+come first. Constraints in `ineq` may appear in any order. Scaly does not
 reorder variables to find a stage structure. Shared decision variables and
-Hessian entries coupling different stages are unsupported in this form.
+Hessian entries coupling different stages are unsupported by stage detection.
 The [Fatrop backend details](solver_backends.md#fatrop) cover options and limits.
 The [two-dimensional hanging-chain example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/case_studies/fatrop_chain/scaly_impl.py)
 shows a nonlinear problem with mapped dynamics and bounded controls.

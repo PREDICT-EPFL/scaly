@@ -2,7 +2,7 @@
 
 The `"fatrop"` Scaly backend solves nonlinear programs with stage structure.
 Install `scaly[fatrop]`, declare a stage-ordered `sc.problem`, and select it with
-`sc.solver(problem, "fatrop")`. See the [solver guide](https://predict-epfl.github.io/scaly/guide/solvers/)
+`sc.solver(problem, "fatrop")`. See the [solver guide](https://github.com/PREDICT-EPFL/scaly/blob/main/docs/guide/solvers.md#stage-structured-problems-with-fatrop)
 for the variable ordering and an example.
 
 This package bundles the [Fatrop](https://github.com/meco-group/fatrop) shared library and C

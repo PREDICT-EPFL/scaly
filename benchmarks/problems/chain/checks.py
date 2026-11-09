@@ -156,7 +156,7 @@ def check_fatrop_matches_ipopt() -> None:
   _, params = sample_inputs(n_masses, horizon)
   solutions = []
   for backend in ("fatrop", "ipopt"):
-    solve = chain_nlp(n_masses, horizon, solver=backend, options={"tol": 1e-11, **({"honor_original_bounds": "no"} if backend == "ipopt" else {})})
+    solve = chain_nlp(n_masses, horizon, solver=backend, options={"tol": 1e-11})
     solutions.append(solve(params, x0=guess)[0])
     assert solve.stats().to_solver_status().ok, solve.stats()
   np.testing.assert_allclose(*solutions, rtol=0, atol=1e-8)

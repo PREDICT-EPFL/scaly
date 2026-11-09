@@ -472,7 +472,7 @@ def check_fatrop_matches_ipopt() -> None:
   guess = _reference_guess(reference, config)
   solutions = []
   for backend in ("fatrop", "ipopt"):
-    solve = _race_car_nlp(config, solver=backend, options={"honor_original_bounds": "no"} if backend == "ipopt" else None)
+    solve = _race_car_nlp(config, solver=backend)
     solutions.append(solve(params, x0=guess)[0])
     assert solve.stats().to_solver_status().ok, solve.stats()
   np.testing.assert_allclose(*solutions, rtol=0, atol=1e-8)

@@ -2,6 +2,7 @@ plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Darwin-arm6
 plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Linux-aarch64-ARMV8A_ARM_CORTEX_A76]
 plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Linux-x86_64-X64_INTEL_HASWELL]
 plugins/scaly-fatrop/tests/test_fatrop_build.py::test_blasfeo_target[Windows-amd64-X64_INTEL_HASWELL]
+plugins/scaly-fatrop/tests/test_fatrop_build.py::test_native_status_enum_matches_wrapper_mapping
 plugins/scaly-fatrop/tests/test_fatrop_build.py::test_only_c_interface_is_exported
 plugins/scaly-fatrop/tests/test_fatrop_build.py::test_pinned_licenses
 plugins/scaly-fatrop/tests/test_fatrop_build.py::test_piqp_and_fatrop_solve_in_one_process[False]

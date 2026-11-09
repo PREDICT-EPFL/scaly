@@ -1,4 +1,7 @@
-"""Check the paper chain against an independent CasADi transcription and IPOPT."""
+"""Check the hanging chain against an independent CasADi transcription and IPOPT.
+
+Vanroye et al., "FATROP", IROS 2023 (https://arxiv.org/abs/2303.16746).
+"""
 
 from __future__ import annotations
 

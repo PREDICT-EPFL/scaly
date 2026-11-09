@@ -230,7 +230,6 @@ def _race_car_nlp(
   *,
   solver: str = "ipopt",
   sqp_options: dict[str, str | int | float] | None = None,
-  options: dict[str, str | int | float] | None = None,
 ) -> sc.Solver:
   n = config.horizon
   weights = np.tile([config.r_throttle, config.r_steering, config.q_lon, config.q_lat, config.q_phi, config.q_v], (n + 1, 1))
@@ -263,7 +262,7 @@ def _race_car_nlp(
       ub=sc.const(ub),
     )
 
-  return sc.solver(problem, solver, name=f"{problem_name}_{solver}", options=solver_options(config, solver, sqp_options) | (options or {}))
+  return sc.solver(problem, solver, name=f"{problem_name}_{solver}", options=solver_options(config, solver, sqp_options))
 
 
 def solver_options(config: EpisodeConfig, solver: str, sqp_options: dict[str, str | int | float] | None = None) -> dict[str, str | int | float]:

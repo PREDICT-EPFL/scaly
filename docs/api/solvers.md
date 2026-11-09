@@ -3,7 +3,7 @@
 Declare an optimization problem with `problem` and `ProblemSpec`, then select an installed backend
 with `solver`. The result is a `Solver` that you call with the problem parameters.
 The official plugins register `"piqp"`, `"ipopt"`, `"sqp"` and `"fatrop"`.
-Fatrop accepts stage-structured nonlinear programs through whole-problem oracles.
+Fatrop accepts stage-structured nonlinear programs.
 Use `x0=` for an initial guess or `warm=` for a previous result, and `.stats()`
 to inspect the latest numerical solve. Its `.function` exposes the full input signature
 for integrations that need a `Function`.

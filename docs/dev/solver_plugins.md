@@ -138,6 +138,12 @@ in `t_qp`. An NLP backend that cannot separate its internal work reports it in `
 Map native statuses through the solver header's enum constants rather than integer literals.
 An upstream rename or renumbering then causes a compile error instead of an incorrect status.
 
+Fatrop's C header supplies no return-status enum. Its wrapper maps the integer
+`FatropOcpCStats.return_flag` using the pinned Fatrop 1.2.0 `IpSolverReturnFlag`
+order in `include/fatrop/ip_algorithm/ip_algorithm.hpp`, preserving the flag in
+`native_status`. A package test checks that enum's names and order against the
+wrapper's mapping. An exception from the native solve maps to `ERROR` with `-1`.
+
 ### Options
 
 `prepare_options` runs during Python solver construction, before any C generation.
@@ -228,14 +234,6 @@ The layout guarantees structurally diagonal next-state Jacobian blocks, not
 their numerical coefficients. The Fatrop wrapper normalizes each dynamics row
 to `F(x, u) - xnext` using its coefficient at the initial point, checks that it
 stays constant during the solve, and converts multipliers with the same scale.
-Its five `full_eval_*` callbacks evaluate the whole horizon and return `1` to
-skip Fatrop's stage evaluations. Static tables transfer compact Jacobian and
-Hessian values into BLASFEO matrices ordered `[u_k, x_k]`.
-
-Fatrop's C header supplies no return-status enum. Its wrapper maps the integer
-`FatropOcpCStats.return_flag` using the pinned Fatrop 1.2.0 `IpSolverReturnFlag`
-order in `include/fatrop/ip_algorithm/ip_algorithm.hpp`, preserving the flag in
-`native_status`. An exception from the native solve maps to `ERROR` with `-1`.
 
 ## Versioning
 

@@ -1,7 +1,7 @@
-"""The Fatrop paper's two-dimensional hanging chain, with whole-problem NLP oracles.
+"""Two-dimensional hanging-chain control with Fatrop.
 
-Ported from origin/devrush:examples/case_studies/fatrop_chain/scaly_impl.py.
-The paper uses six free masses, an actuated end mass, 25 shooting intervals
+Vanroye et al., "FATROP", IROS 2023 (https://arxiv.org/abs/2303.16746).
+The example uses six free masses, an actuated end mass, 25 shooting intervals
 and one fourth-order Runge-Kutta step per interval over four seconds.
 """
 

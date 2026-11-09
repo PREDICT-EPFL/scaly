@@ -111,6 +111,8 @@ def test_bound_classification_changes_between_calls_and_errors_reset_stats():
   assert stats.iter == stats.n_eval_h == stats.t_solver == 0
   assert np.isfinite(np.concatenate(result[0])).all()
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
+  solve(np.array([np.nan, 0.1, 2.0, 0.0]))
+  assert solve.stats().status == sc.ScalySolveStatus.ERROR
 
 
 @pytest.mark.solver("fatrop")

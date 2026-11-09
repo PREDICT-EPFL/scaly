@@ -1,4 +1,9 @@
-"""Scatter whole-problem NLP oracles into Fatrop's stage matrices and vectors."""
+"""Scatter whole-problem NLP oracles into Fatrop's stage matrices and vectors.
+
+The five full_eval callbacks evaluate the whole horizon and return 1 to skip
+stage evaluations. Static tables transfer compact derivatives into BLASFEO
+matrices ordered [u_k, x_k].
+"""
 
 from __future__ import annotations
 
@@ -38,18 +43,14 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
       row_stage[row], dyn_col[row] = k, i
       pivots.add((row, starts[k + 1] + i))
   order = []
+  order_start = [0]
   for k in range(stages):
     for row in (*layout.eq[k], *layout.ineq[k]):
       row_stage[row] = k
       order.append(row)
     order.extend(m + i for i in range(starts[k], starts[k] + layout.nx[k] + layout.nu[k]))
-  if any(k < 0 for k in row_stage) or len(permutation) != n:
-    raise ValueError("Fatrop stage layout does not cover the problem")
-  if any(r < c for r, c in zip(hess.rows, hess.cols, strict=True)):
-    raise ValueError("Fatrop requires the lower Hessian triangle")
+    order_start.append(len(order))
   pivot_indices = [i for i, pair in enumerate(zip(jac.rows, jac.cols, strict=True)) if pair in pivots]
-  if len(pivot_indices) != len(pivots):
-    raise ValueError("Fatrop dynamics require a diagonal next-state Jacobian")
 
   lines: list[str] = []
 
@@ -70,6 +71,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     ("rstage", row_stage + var_stage),
     ("dyncol", dyn_col),
     ("order", order),
+    ("order_start", order_start),
     ("jr", jac.rows),
     ("jc", jac.cols),
     ("pivot", pivot_indices),
@@ -121,7 +123,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     }}""")
     emit("}")
 
-  for name, expression in (("nx", f"{s}_nx[k == {stages} ? k-1 : k]"), ("nu", f"{s}_nu[k]"), ("ng", "d->ng[k]"), ("ngi", "d->ngi[k]")):
+  for name, expression in (("nx", f"{s}_nx[k]"), ("nu", f"{s}_nu[k]"), ("ng", "d->ng[k]"), ("ngi", "d->ngi[k]")):
     emit(f"static int {s}_get_{name}(int k, void* ud) {{ {s}_data* d = ({s}_data*)ud; return {expression}; }}")
   emit(f"""
   static int {s}_horizon(void* ud) {{ return {stages}; }}
@@ -137,8 +139,9 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   }}
   static int {s}_bounds(double* lower, double* upper, int k, void* ud) {{
     {s}_data* d = ({s}_data*)ud;
-    for (int i = 0; i < {m + n}; ++i) if ({s}_rstage[i] == k && d->kind[i] == 2) {{
-      lower[d->column[i]] = d->lower[i]; upper[d->column[i]] = d->upper[i];
+    for (int j = {s}_order_start[k]; j < {s}_order_start[k+1]; ++j) {{
+      int i = {s}_order[j];
+      if (d->kind[i] == 2) {{ lower[d->column[i]] = d->lower[i]; upper[d->column[i]] = d->upper[i]; }}
     }}
     return 0;
   }}
@@ -335,9 +338,9 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     for (int i = 0; i < {m + n}; ++i) {{
       double value = {s}_value(d, i);
       {stats}.primal_viol = fmax({stats}.primal_viol, fmax(d->lower[i]-value, value-d->upper[i]));
-      if (!isfinite(value)) {stats}.status = SCALY_SOLVE_NUMERICS;
+      if ({stats}.status != SCALY_SOLVE_ERROR && !isfinite(value)) {stats}.status = SCALY_SOLVE_NUMERICS;
     }}
-    if (!isfinite(d->obj)) {stats}.status = SCALY_SOLVE_NUMERICS;
+    if ({stats}.status != SCALY_SOLVE_ERROR && !isfinite(d->obj)) {stats}.status = SCALY_SOLVE_NUMERICS;
     {stats}.n_eval_f = d->n_f; {stats}.n_eval_g = d->n_g;
     {stats}.n_eval_grad_f = d->n_grad; {stats}.n_eval_jac_g = d->n_jac; {stats}.n_eval_h = d->n_hess;
     {stats}.t_fe = d->t_fe; {stats}.t_solver = t_solver;

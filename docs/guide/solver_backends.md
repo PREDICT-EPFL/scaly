@@ -123,30 +123,37 @@ Fatrop uses an interior-point method with linear algebra specialized for
 optimal-control stages. Declare an ordinary `sc.problem` with stage-ordered
 variables and select `sc.solver(problem, "fatrop")`. The
 [solver guide](solvers.md#stage-structured-problems-with-fatrop) gives a complete
-example. The wrapper evaluates the whole problem's objective, constraints and
-derivatives and transfers their values into Fatrop's stage blocks.
+example.
 
 The dynamics must be explicit in the next state. Both `xnext - F(x, u)` and
-`F(x, u) - xnext` are accepted, including a nonzero constant diagonal scaling.
-That scaling may depend on parameters, but must remain constant during a solve.
+`F(x, u) - xnext` are accepted. Each row may be multiplied by a nonzero constant.
+That constant may depend on parameters, but must remain constant during a solve.
 A changing next-state coefficient or invalid bounds produces an `ERROR` status.
 Missing or incompatible stage structure raises `ValueError` when generating C.
 
-`x0` sets Fatrop's initial variables. `warm` also reuses those variables, but
-its multipliers are ignored because the native C interface has no dual
-initialization entry. Each call creates a native solver with the current
+`x0` sets Fatrop's initial variables. With `warm=previous_result`, Fatrop starts
+from the previous result's variables and ignores its multipliers. Its C interface
+does not accept initial multipliers. Each call creates a native solver with the current
 parameter-dependent bounds. Fixed bounds become stage equalities, and absent
 bounds contribute no constraints.
 If a stage has more local equalities than variables, including fixed bounds,
 the solve returns `ERROR`.
 
 Scaly defaults to `print_level=0` and `tol=1e-8`. Other options retain Fatrop's
-defaults. Supported integer options are `print_level`, `max_iter` and
+defaults. `print_level=0` suppresses the convergence log, but Fatrop still prints
+its license banner once per process. Supported integer options are `print_level`, `max_iter` and
 `acceptable_iter`. The positive numerical options are `tol`, `constr_viol_tol`,
 `compl_inf_tol`, `tol_acceptable` and `mu_init`. `linsol_it_ref` accepts a boolean.
 Unknown names and invalid types raise a Python exception at construction.
-Fatrop relaxes inequality bounds internally, so constraint violation can be
-larger than `tol` at an active bound.
+
+Fatrop relaxes nonfixed variable and inequality bounds internally by about
+`1e-8 * max(1, abs(bound))`, capped at `1e-4`. Returned variables can therefore
+sit slightly outside their declared bounds. For example, an active upper bound
+of `100` can yield `100.000001`. This relaxation does not depend on `tol` or
+`constr_viol_tol`, and no option accepted by this backend changes it.
+IPOPT also returns relaxed variables by default. Fatrop's `primal_viol` measures
+violation against the original bounds, whereas IPOPT reports its internal
+constraint violation.
 
 Statistics include the native return flag, iteration count, objective, oracle
 counts, timings and constraint violation at the returned variables. Diagnostics
