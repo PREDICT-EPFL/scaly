@@ -162,6 +162,23 @@ def check_fatrop_matches_ipopt() -> None:
   np.testing.assert_allclose(*solutions, rtol=0, atol=1e-8)
 
 
+def check_fatrop_stage_functions() -> None:
+  """Both Fatrop paths take the same iterations on the builder's chain."""
+  ocp = chain_ocp(3, 10)
+  start = initial_state(3)
+  params = (start, *(np.array([value]) for value in ChainParams(dt=0.1).array()))
+  guess = ocp.pack(start, 0.0)
+  results, iterations = [], []
+  for problem in (ocp.problem(), ocp.stage_problem()):
+    solve = sc.solver(problem, "fatrop", options={"tol": 1e-10})
+    variables, *_ = solve(params, x0=guess)
+    assert solve.stats().to_solver_status().ok, solve.stats()
+    results.append(np.concatenate([variables[0].ravel(), variables[1]]))
+    iterations.append(solve.stats().iter)
+  np.testing.assert_allclose(*results, rtol=0, atol=1e-8)
+  assert iterations[0] == iterations[1], iterations
+
+
 def check_one_reference_for_every_end_mass_term() -> None:
   """Stage and terminal costs track the same end-mass reference, and only that reference.
 
@@ -406,6 +423,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, None, True),
   "nlp_objective": (check_nlp_objective_matches_casadi, "ipopt", True),
   "builder": (check_builder_matches_hand_written, "ipopt", False),
+  "fatrop_stage_functions": (check_fatrop_stage_functions, "fatrop", False),
   "fatrop_matches_ipopt": (check_fatrop_matches_ipopt, "fatrop", False),
   "one_reference": (check_one_reference_for_every_end_mass_term, None, False),
   "extract_positions": (check_extract_positions, None, False),

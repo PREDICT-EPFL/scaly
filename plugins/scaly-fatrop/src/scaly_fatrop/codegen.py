@@ -1,4 +1,4 @@
-"""Scatter whole-problem NLP oracles into Fatrop's stage matrices and vectors.
+"""Fill Fatrop's stage matrices from whole-problem or mapped stage oracles.
 
 The five full_eval callbacks evaluate the whole horizon and return 1 to skip
 stage evaluations. Static tables transfer compact derivatives into BLASFEO
@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING
+
+from .stage_codegen import render_callbacks
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
@@ -23,9 +25,10 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   n, m, stages = desc.n, desc.n_eq + desc.n_ineq, layout.N + 1
   nv = desc.n_var_blocks
   s, stats = ctx.symbol, ctx.stats_symbol
+  stage = desc.stage_oracles
   jac, hess = desc.jac_sparsity, desc.hess_sparsity
-  assert jac is not None and hess is not None
-  assert desc.base is not None and desc.grad is not None and desc.jac is not None and desc.hess is not None and desc.bounds is not None
+  assert stage is not None or (jac is not None and hess is not None and desc.jac is not None and desc.hess is not None)
+  assert desc.base is not None and desc.grad is not None and desc.bounds is not None
   sizes = [math.prod(shape) for _, shape in desc.input_signature[:nv]]
   offsets = [sum(sizes[:i]) for i in range(nv)]
   starts = [sum(layout.nx[j] + layout.nu[j] for j in range(k)) for k in range(stages)]
@@ -50,7 +53,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
       order.append(row)
     order.extend(m + i for i in range(starts[k], starts[k] + layout.nx[k] + layout.nu[k]))
     order_start.append(len(order))
-  pivot_indices = [i for i, pair in enumerate(zip(jac.rows, jac.cols, strict=True)) if pair in pivots]
+  pivot_indices = [] if jac is None else [i for i, pair in enumerate(zip(jac.rows, jac.cols, strict=True)) if pair in pivots]
 
   lines: list[str] = []
 
@@ -72,22 +75,30 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     ("dyncol", dyn_col),
     ("order", order),
     ("order_start", order_start),
-    ("jr", jac.rows),
-    ("jc", jac.cols),
+    ("jr", () if jac is None else jac.rows),
+    ("jc", () if jac is None else jac.cols),
     ("pivot", pivot_indices),
-    ("hr", hess.rows),
-    ("hc", hess.cols),
+    ("hr", () if hess is None else hess.rows),
+    ("hc", () if hess is None else hess.cols),
   ):
     table(name, values)
   emit(f"""
   typedef struct {{
-    double x[{n}], initial[{n}], g[{max(1, m)}], grad[{n}], j[{max(1, jac.nnz)}], h[{max(1, hess.nnz)}];
+    double x[{n}], initial[{n}], g[{max(1, m)}], grad[{n}];
     double lower[{m + n}], upper[{m + n}], lam[{m + n}], factor[{max(1, m)}], obj;
     int kind[{m + n}], column[{m + n}], native[{m + n}], ng[{stages}], ngi[{stages}], invalid;
     double *w, t_fe, t_callback;
     const scaly_solver_option* const* solver_options;
     int n_f, n_g, n_grad, n_jac, n_hess;
 """)
+  if stage is None:
+    assert jac is not None and hess is not None
+    emit(f"    double j[{max(1, jac.nnz)}], h[{max(1, hess.nnz)}];")
+  else:
+    for name, output in zip(
+      ("stage_dyn", "stage_initial", "stage_path", "stage_terminal", "stage_h", "terminal_h"), (*stage.jac.outputs, *stage.hess.outputs), strict=True
+    ):
+      emit(f"    double {name}[{max(1, output.size)}];")
   for i in range(len(desc.param_names)):
     emit(f"    const double* p{i};")
   emit(f"""
@@ -113,6 +124,8 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     ("grad", desc.grad, ["d->grad"], "n_grad"),
     ("jac", desc.jac, ["d->j"], "n_jac"),
   ):
+    if oracle is None:
+      continue
     emit(f"static void {s}_{name}({s}_data* d) {{\n  {call(oracle, ['d->x', *params], outputs, count)}")
     if name == "base":
       emit("  ++d->n_g;")
@@ -173,6 +186,12 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     }}
     d->t_callback += scaly_clock_s()-begin; return 1;
   }}
+""")
+  if stage is not None:
+    lines.extend(render_callbacks(desc, ctx, call))
+  else:
+    assert jac is not None and hess is not None and desc.hess is not None
+    emit(f"""
   static int {s}_jacobian(const double* x, const double* p, const double* gp,
                          struct blasfeo_dmat* dyn, struct blasfeo_dmat* eq, struct blasfeo_dmat* ineq,
                          const struct FatropOcpCDims* dims, void* ud) {{
@@ -268,7 +287,10 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
       d->column[i] = d->kind[i] == 1 ? d->ng[k]++ : d->ngi[k]++;
     }}
     for (int k = 0; k < {stages}; ++k) if (d->ng[k] > {s}_nx[k]+{s}_nu[k]) setup_ok = 0;
-    {s}_jac(d);
+    {f"{s}_jac(d);" if stage is None else f"for (int i = 0; i < {m}; ++i) if (d->kind[i] == 0) d->factor[i] = 1.0;"}
+""")
+  if stage is None:
+    emit(f"""
     for (int i = 0; i < {len(pivot_indices)}; ++i) {{
       int entry = {s}_pivot[i], row = {s}_jr[entry];
       double coefficient = d->j[entry];
@@ -278,6 +300,8 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
         if (!isfinite(d->factor[row])) setup_ok = 0;
       }}
     }}
+""")
+  emit(f"""
     setup_ok = setup_ok && !d->invalid;
     struct FatropOcpCInterface interface = {{0}};
     interface.get_nx = {s}_get_nx; interface.get_nu = {s}_get_nu;

@@ -58,6 +58,23 @@ class ExternalOracle:
 
 
 @dataclass(frozen=True)
+class StageOracles:
+  """Mapped dense derivatives in recorded stage order, with row-major stage blocks.
+
+  ``grad`` returns the stacked objective gradient. ``jac`` returns the dynamics,
+  initial, path and terminal Jacobians, each in local ``[x, u]`` order.
+  ``hess`` takes the objective scale and stacked constraint multipliers after the
+  ordinary inputs. It returns stage and terminal Lagrangian blocks, each a dense
+  Hessian followed by its gradient row. A stage excludes the incoming transition's
+  linear ``-xnext`` term. Box bounds are handled by the plugin.
+  """
+
+  grad: ConcreteFunction
+  jac: ConcreteFunction
+  hess: ConcreteFunction
+
+
+@dataclass(frozen=True)
 class SolverDescriptor:
   """Everything a solver plugin's generated C wrapper needs to drive a solve.
 
@@ -91,6 +108,7 @@ class SolverDescriptor:
   jac_sparsity: SparsityPattern | None = None
   hess_sparsity: SparsityPattern | None = None
   _stage_layout: StageLayout | None = None
+  stage_oracles: StageOracles | None = None
   # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
   # triangle), A_eq, G_ineq, baked into the generated wrapper as static
   # tables; the oracle emits compact CSC-ordered value buffers. None => dense.

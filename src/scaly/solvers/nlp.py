@@ -13,6 +13,7 @@ from ..ir.types import TensorType
 from .model import SolverDescriptor, descriptor_function, solver_options
 from .problem import Problem
 from .registry import NlpSolverBackend
+from ._stage import stage_oracles
 
 
 def build_nlp[SV, NV, SP, NP](
@@ -30,9 +31,9 @@ def build_nlp[SV, NV, SP, NP](
   """Build a typed plain Function around an NLP plugin descriptor."""
   compile_options, resolved_options = backend.prepare_options(options or {})
   nlp = problem._nlp
-  hess_fn = nlp.hess(backend.hess_triangle)
-  hess_sparsity = hess_fn.output_sparsities[0]
-  assert hess_sparsity is not None
+  staged = stage_oracles(problem) if getattr(backend, "stage_oracles", False) and problem.stage_functions is not None else None
+  hess_fn = nlp.hess(backend.hess_triangle) if staged is None else None
+  hess_sparsity = hess_fn.output_sparsities[0] if hess_fn is not None else None
 
   solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
   input_tree = group(
@@ -61,13 +62,14 @@ def build_nlp[SV, NV, SP, NP](
     param_names=problem.params.names,
     n_var_blocks=problem.vars.size,
     base=nlp.base,
-    grad=nlp.grad,
-    jac=nlp.jac,
+    grad=staged.grad if staged is not None else nlp.grad,
+    jac=nlp.jac if staged is None else None,
     hess=hess_fn,
     bounds=nlp.bounds,
-    jac_sparsity=nlp.jac_sparsity,
+    jac_sparsity=nlp.jac_sparsity if staged is None else None,
     hess_sparsity=hess_sparsity,
     _stage_layout=problem.stage_layout,
+    stage_oracles=staged,
     compile_options=tuple(sorted(compile_options.items())),
     runtime_options=solver_options(resolved_options),
   )

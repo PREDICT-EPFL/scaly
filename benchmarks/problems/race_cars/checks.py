@@ -276,6 +276,29 @@ def check_builder_matches_hand_written() -> None:
     np.testing.assert_allclose(builder.stats().obj, hand.stats().obj, rtol=1e-8, err_msg=solver)
 
 
+def check_fatrop_stage_functions() -> None:
+  """Both Fatrop paths take the same iterations on the builder's race car."""
+  config = EpisodeConfig(horizon=10)
+  planner = MotionPlanner(load_track(config.track).center_line, horizon=10, dt=config.params.dt, v_ref=config.v_ref)
+  start, heading = planner.center_path[0], float(planner.phi_ref[0])
+  offset = config.initial_lateral_offset
+  state = np.array([start[0] - offset * np.sin(heading), start[1] + offset * np.cos(heading), heading, 0.0])
+  _, reference = planner.plan(float(state[0]), float(state[1]), float(state[2]), 0.0)
+  reference[0] = state
+  ocp = race_car_ocp(config)
+  stages = _reference_guess(reference, config).reshape(11, NZ)
+  guess = (stages[:10], stages[10, :NX])
+  results, iterations = [], []
+  for problem in (ocp.problem(), ocp.stage_problem()):
+    solve = sc.solver(problem, "fatrop", options={"tol": 1e-10})
+    variables, *_ = solve((state, config.params.array(), reference), x0=guess)
+    assert solve.stats().to_solver_status().ok, solve.stats()
+    results.append(np.concatenate([variables[0].ravel(), variables[1]]))
+    iterations.append(solve.stats().iter)
+  np.testing.assert_allclose(*results, rtol=0, atol=1e-8)
+  assert iterations[0] == iterations[1], iterations
+
+
 def check_casadi_ipopt_is_compiled() -> None:
   """The timed CasADi column is generated C linked to Scaly's IPOPT."""
   config = EpisodeConfig.smoke()
@@ -581,6 +604,7 @@ CHECKS: dict[str, tuple[Callable[[], None], str | None, bool]] = {
   "recorded_scene": (check_recorded_scene_and_artifacts, "ipopt", True),
   "oracles_agree": (check_oracles_agree, "ipopt", True),
   "sqp_matches_ipopt": (check_sqp_matches_ipopt, "ipopt", False),
+  "fatrop_stage_functions": (check_fatrop_stage_functions, "fatrop", False),
   "fatrop_matches_ipopt": (check_fatrop_matches_ipopt, "fatrop", False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, "sqp", True),
   "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, "sqp", True),

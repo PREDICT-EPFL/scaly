@@ -123,6 +123,19 @@ def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyP
     registry.require_backend("fake", "nlp")
 
 
+@pytest.mark.parametrize("value", [None, 1, "yes"])
+def test_nlp_backend_stage_oracles_flag_must_be_boolean(monkeypatch: pytest.MonkeyPatch, value) -> None:
+  class _NlpBackend(_FakeBackend):
+    kind = "nlp"
+    hess_triangle = "lower"
+
+  backend = _NlpBackend()
+  monkeypatch.setattr(backend, "stage_oracles", value, raising=False)
+  monkeypatch.setattr(registry, "get_backend", lambda name: backend)
+  with pytest.raises(SolverPluginError, match="stage_oracles.*boolean"):
+    registry.require_backend("fake", "nlp")
+
+
 def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
   oracle = ExternalOracle(
     name="foreign_base",

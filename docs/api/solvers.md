@@ -3,7 +3,10 @@
 Declare an optimization problem with `problem` and `ProblemSpec`, then select an installed backend
 with `solver`. The result is a `Solver` that you call with the problem parameters.
 The official plugins register `"piqp"`, `"ipopt"`, `"sqp"` and `"fatrop"`.
-Fatrop accepts stage-structured nonlinear programs.
+Fatrop accepts stage-structured nonlinear programs. With
+`solver(ocp.stage_problem(), "fatrop")`, it uses the builder's mapped stage
+Functions and recorded layout, including global variables carried as constant
+states. Ordinary problems use whole-problem oracles and stage detection.
 Use `x0=` for an initial guess or `warm=` for a previous result, and `.stats()`
 to inspect the latest numerical solve. Its `.function` exposes the full input signature
 for integrations that need a `Function`.
@@ -81,6 +84,8 @@ how they fit together.
         - "!^_"
 
 ::: scaly.solvers.stages.StageLayout
+
+::: scaly.solvers.model.StageOracles
 
 ::: scaly.solvers.model.ExternalOracle
 

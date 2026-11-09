@@ -330,6 +330,57 @@ the dynamics leaving their stage, except that initial-state equalities may
 come first. Constraints in `ineq` may appear in any order. Scaly does not
 reorder variables to find a stage structure. Shared decision variables and
 Hessian entries coupling different stages are unsupported by stage detection.
+
+For a problem declared with [`sc.DiscreteOCP`](ocp.md), pass `ocp.stage_problem()`
+to make Fatrop use its stage Functions. Scaly differentiates each stage Function
+and maps its dense derivative blocks over the horizon. The builder records the
+variable and constraint order, so Fatrop needs no structure detection or
+whole-problem sparse derivatives:
+
+```python
+@sc.function(sc.arg("x", 1), sc.arg("u", 1))
+def step(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    return x + u
+
+
+@sc.function(sc.arg("x", 1), sc.arg("u", 1))
+def cost(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x) + sc.sumsqr(u)
+
+
+ocp = sc.DiscreteOCP(N=4, dynamics=step, stage_cost=cost)
+solve_stages = sc.solver(ocp.stage_problem(), "fatrop")
+variables, *_ = solve_stages(np.array([1.0]), x0=ocp.pack(1.0, 0.0, stage_form=True))
+assert solve_stages.stats().to_solver_status().ok
+xs, us = ocp.unpack(variables, stage_form=True)
+```
+
+The controls are approximately `[-0.615385, -0.230769, -0.076923, 0]`.
+
+The two forms take Fatrop's derivatives in different ways. Both map the stage
+Functions over the stages with `vmap`, so both generate stage-vectorized code.
+The difference is what gets differentiated. `ocp.problem()`, like any
+`sc.problem` with a detectable stage layout, differentiates the whole problem
+sparsely. Columns that never share a row are grouped and differentiated
+together, and the nonzeros are scattered into Fatrop's blocks through static
+index tables, so sparsity inside a stage is exploited. `ocp.stage_problem()`
+differentiates one stage densely over its own state and control, plus any
+carried global variables, maps that over the stages and copies each dense
+block into Fatrop. Its Hessian blocks carry the gradient row, so a solve calls
+the gradient and Jacobian about half as often and skips the probe call for the
+dynamics coefficients.
+
+Neither form is the faster one in general. Dense stage blocks suit stages that
+are small or dense. The whole-problem path can win when stages are large and
+sparse, because dense blocks compute structural zeros. On the hanging chain,
+`stage_problem()` evaluated faster at small stage sizes and the whole-problem
+path at large ones. Both forms reach the same solution in the same iterations,
+so timing both on your own problem is the reliable comparison.
+
+Global decision variables, such as free final time, become additional states
+held constant across stages in `stage_problem()`. Shared global decision
+variables require `stage_problem()`.
+
 The [Fatrop backend details](solver_backends.md#fatrop) cover options and limits.
 The [two-dimensional hanging-chain example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/case_studies/fatrop_chain/scaly_impl.py)
 shows a nonlinear problem with mapped dynamics and bounded controls.
