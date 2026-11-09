@@ -81,4 +81,5 @@ If a study exposes a compiler path that only a benchmark exercises, copy a small
 `tests/` before changing the benchmark, as `AGENTS.md` requires.
 
 Report the revision, commands, study directory, gate and failure counts, the headline changes with
-their dispersion, and the pages changed.
+their dispersion, and the pages changed. On an issue or pull request, keep the headline changes
+visible and put full tables and log excerpts in a `<details>` block.
