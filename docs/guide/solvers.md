@@ -373,11 +373,9 @@ dynamics coefficients.
 Neither form is the faster one in general. Dense stage blocks suit stages that
 are small or dense. The whole-problem path can win when stages are large and
 sparse, because dense blocks compute structural zeros. On the hanging chain,
-function evaluation through `stage_problem()` took 17 to 21 percent less time
-at the benchmark sizes. On larger chains, with 27 or more states per stage,
-the stage kernels were slower per call with the current compiler. Both forms
-reach the same solution in the same iterations, so timing both on your own
-problem is the reliable comparison.
+`stage_problem()` evaluated faster at small stage sizes and the whole-problem
+path at large ones. Both forms reach the same solution in the same iterations,
+so timing both on your own problem is the reliable comparison.
 
 Global decision variables, such as free final time, become additional states
 held constant across stages in `stage_problem()`. Shared global decision
