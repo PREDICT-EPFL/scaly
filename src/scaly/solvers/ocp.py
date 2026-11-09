@@ -140,9 +140,13 @@ class DiscreteOCP:
 
   def _functions(self) -> tuple[tuple[Function[Any, Any, Any, Any], int, bool], ...]:
     """Every user Function with its number of leading inputs (state, control) and whether it is a cost."""
-    stage = [(self.dynamics, 2, False), *((c.fn, 2, False) for c in self.path), *((c.fn, 1, False) for c in self.terminal)]
-    costs = [(fn, leading, True) for fn, leading in ((self.stage_cost, 2), (self.terminal_cost, 1)) if fn is not None]
-    return (*stage[:1], *costs, *stage[1:])
+    return (
+      (self.dynamics, 2, False),
+      *(() if self.stage_cost is None else ((self.stage_cost, 2, True),)),
+      *(() if self.terminal_cost is None else ((self.terminal_cost, 1, True),)),
+      *((c.fn, 2, False) for c in self.path),
+      *((c.fn, 1, False) for c in self.terminal),
+    )
 
   @property
   def _nx(self) -> int:
@@ -190,8 +194,8 @@ class DiscreteOCP:
     params = {param: TensorType(type_.shape, type_.dtype, diff=False) for param, type_ in self._params.items()}
     extra = params if stage_form else {**globals_, **params}
 
-    def build(suffix: str, leading: dict[str, TensorType], body: Any) -> Function[Any, Any, Any, Any]:
-      tree = flat_parameters((*leading, *extra), (*leading.values(), *extra.values()))
+    def build(suffix: str, inputs: dict[str, TensorType], body: Any) -> Function[Any, Any, Any, Any]:
+      tree = flat_parameters(tuple(inputs), tuple(inputs.values()))
       symbols = tuple(tree.symbols())
       env = dict(zip(tree.names, symbols, strict=True))
       if stage_form:
@@ -208,31 +212,25 @@ class DiscreteOCP:
       x = env["x"][:nx] if stage_form else env["x"]
       return fn(*(x, env.get("u"))[:leading], *(env[input_name] for input_name in names[leading:]))
 
-    def stacked(constraints: tuple[StageConstraint, ...], leading: int) -> Any:
+    def stacked(constraints: Sequence[StageConstraint], leading: int) -> Any:
       return lambda env: concat([value.reshape((value.size,)) for value in (call(c.fn, env, leading) for c in constraints)])
 
     state = {"x": TensorType((nxa,))}
-    stage = {**state, "u": TensorType((nu,))}
+    stage = {**state, "u": TensorType((nu,)), **extra}
+    terminal = {**state, **extra}
 
     def dynamics(env: dict[str, Expr]) -> Expr:
       next_state = call(self.dynamics, env, 2)
       return concat([next_state, env["x"][nx:]]) if stage_form and nxa > nx else next_state
 
-    initial_tree = flat_parameters(("x", "initial_state"), (state["x"], TensorType((nx,), diff=False)))
-    x, initial_state = initial_tree.symbols()
-    initial = Function._from_instance(
-      ConcreteFunction.build(
-        f"{name}_initial", initial_tree, (x, initial_state), flat_tree(("initial",), (TensorType((nx,)),)), (x[:nx] - initial_state,)
-      )
-    )
     stage_cost, terminal_cost = self.stage_cost, self.terminal_cost
     return StageFunctions(
-      initial=initial,
+      initial=build("initial", {**state, "initial_state": TensorType((nx,), diff=False)}, lambda env: env["x"][:nx] - env["initial_state"]),
       dynamics=build("dynamics", stage, dynamics),
       cost=None if stage_cost is None else build("cost", stage, lambda env: call(stage_cost, env, 2).reshape(())),
-      path=build("path", stage, stacked(cast(tuple[StageConstraint, ...], self.path), 2)) if self.path else None,
-      terminal_cost=None if terminal_cost is None else build("terminal_cost", state, lambda env: call(terminal_cost, env, 1).reshape(())),
-      terminal=build("terminal", state, stacked(cast(tuple[StageConstraint, ...], self.terminal), 1)) if self.terminal else None,
+      path=build("path", stage, stacked(self.path, 2)) if self.path else None,
+      terminal_cost=None if terminal_cost is None else build("terminal_cost", terminal, lambda env: call(terminal_cost, env, 1).reshape(())),
+      terminal=build("terminal", terminal, stacked(self.terminal, 1)) if self.terminal else None,
       stage_params=tuple(self.stage_params),
     )
 
@@ -266,7 +264,7 @@ class DiscreteOCP:
       rows[0, :nxa] = fill
       return (Expr.const(rows), Expr.const(state), *(Expr.const(np.full(type_.shape, fill)) for type_ in globals_.values()))
 
-    def constraint(fn: Function[Any, Any, Any, Any], constraints: tuple[StageConstraint, ...], values: Expr, copies: int) -> Any:
+    def constraint(fn: Function[Any, Any, Any, Any], constraints: Sequence[StageConstraint], values: Expr, copies: int) -> Any:
       sizes = [as_concrete(c.fn).outputs[0].size for c in constraints]
       lo, hi = (
         np.tile(
@@ -296,9 +294,9 @@ class DiscreteOCP:
         cost = cost + functions.terminal_cost(*last)
       ineq = []
       if functions.path is not None:
-        ineq.append(constraint(functions.path, cast(tuple[StageConstraint, ...], self.path), vmap(functions.path, N)(*mapped).vec(), N))
+        ineq.append(constraint(functions.path, self.path, vmap(functions.path, N)(*mapped).vec(), N))
       if functions.terminal is not None:
-        ineq.append(constraint(functions.terminal, cast(tuple[StageConstraint, ...], self.terminal), functions.terminal(*last), 1))
+        ineq.append(constraint(functions.terminal, self.terminal, functions.terminal(*last), 1))
       return ProblemSpec(
         minimize=cost,
         eq=(functions.initial(flat[:nxa], initial_state), vmap(functions.dynamics, N)(*mapped).vec() - next_states),
