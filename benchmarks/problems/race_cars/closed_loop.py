@@ -272,7 +272,7 @@ def race_car_ocp(config: EpisodeConfig) -> sc.DiscreteOCP:
 
   The hand-written problem also has a control at the last stage, which only its own cost terms
   reach. Its stage-0 state cost is zero, and the corridor leaves out stage 0; with the episode's
-  reference, whose first row is the measured state, both lowerings have the same solution and cost.
+  reference, whose first row is the measured state, both formulations have the same solution and cost.
   """
 
   @sc.function(sc.arg("x", NX), sc.arg("u", NU), sc.arg("car", N_PARAMS), outputs=sc.arg("x_next", NX), name="race_car_ocp_step")

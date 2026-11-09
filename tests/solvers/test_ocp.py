@@ -180,6 +180,8 @@ def test_the_stage_functions_compute_every_row_of_the_stage_form() -> None:
     terminal_cost=arrive,
     path=(sc.StageConstraint(corridor, hi=1.0), sc.StageConstraint(power, lo=-2.0, hi=2.0)),
     terminal=(sc.StageConstraint(duration, lo=0.0),),
+    x_bounds=(-5.0, [4.0, 6.0]),
+    u_bounds=(None, 1.0),
     stage_params=("ref",),
     global_vars=("T",),
     name="contract",
@@ -196,6 +198,12 @@ def test_the_stage_functions_compute_every_row_of_the_stage_form() -> None:
   descriptor = as_concrete(sc.solver(staged, "ipopt").function).descriptor
   assert descriptor.base is not None
   f, g = descriptor.base(np.concatenate([z.ravel(), x_last]), (initial, gain, ref))
+  # The bounds leave x_0 and the carried global variable free and bound u at every stage.
+  assert descriptor.bounds is not None
+  x_lb, x_ub, _, _ = descriptor.bounds(initial, gain, ref)
+  inf = np.inf
+  np.testing.assert_array_equal(x_lb, [-inf, -inf, -inf, -inf, *[-5.0, -5.0, -inf, -inf] * (n - 1), -5.0, -5.0, -inf])
+  np.testing.assert_array_equal(x_ub, [inf, inf, inf, 1.0, *[4.0, 6.0, inf, 1.0] * (n - 1), 4.0, 6.0, inf])
 
   states, controls = [*z[:, :3], x_last], z[:, 3:]
   expected_f = sum(float(functions.cost(states[k], controls[k], gain, ref[k])) for k in range(n)) + float(
@@ -436,6 +444,20 @@ def test_the_builder_states_the_cart_pole_as_by_hand() -> None:
 def test_what_an_ocp_refuses() -> None:
   with pytest.raises(ValueError, match="N must be a positive integer"):
     sc.DiscreteOCP(N=0, dynamics=double_integrator)
+  assert sc.DiscreteOCP(N=np.int64(3), dynamics=double_integrator).problem().vars.shapes == ((3, 3), (2,))  # ty: ignore[invalid-argument-type]
+  with pytest.raises(TypeError, match="take StageConstraint values"):
+    sc.DiscreteOCP(N=3, dynamics=double_integrator, path=[effort])  # ty: ignore[invalid-argument-type]
+  with pytest.raises(ValueError, match=r"x_bounds has shape \(3,\), expected a number or \(2,\)"):
+    sc.DiscreteOCP(N=3, dynamics=double_integrator, x_bounds=(np.zeros(3), None))
+  with pytest.raises(TypeError, match="a bound is a number or an array"):
+    sc.DiscreteOCP(N=3, dynamics=double_integrator, terminal=[sc.StageConstraint(final, hi=sc.const(1.0))])
+
+  @sc.function(sc.arg("u", 1), sc.arg("x", 1), outputs=sc.arg("l", ()))
+  def swapped(u: sc.Expr, x: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x) + sc.sumsqr(u)
+
+  with pytest.raises(ValueError, match="swapped takes the state first"):
+    sc.DiscreteOCP(N=3, dynamics=integrator, stage_cost=swapped)
 
   @sc.function(sc.arg("x", 2), outputs=sc.arg("x_next", 2))
   def one_input(x: sc.Expr) -> sc.Expr:

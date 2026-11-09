@@ -24,7 +24,7 @@ Over a horizon of \(N\) stages, with states \(x_k\in\mathbb{R}^{n_x}\) and contr
 
 \(F\) maps one state and control to the next, so a continuous-time model enters through an
 integration step written as a Function. The measured initial state \(\bar x\) is a parameter of
-every solve. Each Function may also read parameters and shared decision variables, which the
+every solve. Each Function may also read parameters and global decision variables, which the
 sections below introduce.
 
 A pendulum swing-up shows the parts. The step is one explicit Euler step of the pendulum, whose
@@ -192,7 +192,7 @@ a parameter with one value reaches every stage whole, and a stage parameter is s
 first axis. The generated code evaluates each Function in a loop over the stages rather than one
 call site per stage.
 
-## Shared decision variables and a free final time
+## Global variables and a free final time
 
 A name listed in `global_vars` is a decision variable that every stage shares, such as the
 duration of a manoeuvre. The fastest way to move a cart from rest at 0 to rest at 1 with
@@ -233,13 +233,13 @@ fastest = sc.DiscreteOCP(
 ```
 
 `duration` serves twice, as the terminal cost and, with a lower bound, to keep the duration
-positive. A shared variable has no bounds of its own, so a constraint like this one bounds it.
+positive. A global variable has no bounds of its own, so a constraint like this one bounds it.
 
 ## The stage form
 
-`problem()` keeps a shared variable as one variable after the trajectory. Every stage depends on
+`problem()` keeps a global variable as one variable after the trajectory. Every stage depends on
 it, which a sparse solver such as IPOPT or Scaly's SQP handles well. `stage_problem()` states the
-same problem in a form where every stage depends on its own variables only. Each shared variable
+same problem in a form where every stage depends on its own variables only. Each global variable
 becomes part of the state, held constant by the dynamics, \(T_{k+1}=T_k\):
 
 ```python
@@ -250,7 +250,7 @@ print(staged.vars.names, staged.vars.shapes)    # ('z', 'x_N') ((20, 4), (3,))
 
 The state of the stage form is \([x_k, T_k]\), so row \(k\) of `z` holds \([x_k, T_k, u_k]\). It
 is the form that solvers built on a Riccati recursion over the stages require, and the problem
-records the sizes of its stages for them. Without shared variables the two forms are the same
+records the sizes of its stages for them. Without global variables the two forms are the same
 problem. Both are ordinary problems and reach the same solution:
 
 ```python
@@ -265,9 +265,9 @@ _, _, T_carried = fastest.unpack(carried, stage_form=True)
 print(round(float(T_shared), 4), round(float(T_carried), 4))  # 2.0 2.0
 ```
 
-`pack` takes one value per shared variable after the controls, and `unpack` returns them after the
+`pack` takes one value per global variable after the controls, and `unpack` returns them after the
 trajectory. With `stage_form=True`, both convert the variables of `stage_problem()`, and `unpack`
-reads each shared variable from the last stage.
+reads each global variable from the last stage.
 
 ## Limits
 

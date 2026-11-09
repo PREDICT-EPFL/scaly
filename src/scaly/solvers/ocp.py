@@ -49,7 +49,8 @@ class StageFunctions:
   ``initial_state``: a name in ``stage_params`` takes stage ``k``'s row of its parameter, every other
   the whole value. ``initial`` gives the rows ``layout.eq[0]``, ``dynamics`` the next state,
   ``path`` the rows ``layout.ineq[k]`` and ``terminal`` the rows ``layout.ineq[N]``. A cost or a
-  constraint the problem lacks is ``None``.
+  constraint the problem lacks is ``None``. The bounds of those rows and of the variables are the
+  problem's own, from its bounds oracle.
   """
 
   initial: Function[Any, Any, Any, Any]
@@ -62,6 +63,8 @@ class StageFunctions:
 
 
 def _side(value: Any, size: int, fill: float, what: str) -> np.ndarray:
+  if isinstance(value, Expr):
+    raise TypeError(f"{what} is an expression, but a bound is a number or an array")
   array = np.full(size, fill) if value is None else np.asarray(value, dtype=np.float64)
   if array.shape not in ((), (size,)):
     raise ValueError(f"{what} has shape {array.shape}, expected a number or ({size},)")
@@ -103,8 +106,12 @@ class DiscreteOCP:
   def __post_init__(self) -> None:
     if isinstance(self.N, bool) or not isinstance(self.N, int | np.integer) or self.N < 1:
       raise ValueError(f"N must be a positive integer, got {self.N!r}")
+    object.__setattr__(self, "N", int(self.N))
     for name, value in (("path", self.path), ("terminal", self.terminal), ("stage_params", self.stage_params), ("global_vars", self.global_vars)):
       object.__setattr__(self, name, tuple(value))
+    for constraint in (*self.path, *self.terminal):
+      if not isinstance(constraint, StageConstraint):
+        raise TypeError(f"path and terminal take StageConstraint values, got {type(constraint).__name__}")
     if self.name is None:
       object.__setattr__(self, "name", f"{self.dynamics.name}_ocp")
     dynamics = as_concrete(self.dynamics)
@@ -119,6 +126,8 @@ class DiscreteOCP:
       if any(not isinstance(part, _Leaf) for part in getattr(concrete.input_tree, "parts", ())):
         raise ValueError(f"{concrete.name} takes one tensor per input")
       names, declared = concrete.input_names, concrete.input_tree.types
+      if names[:1] == ("u",) or names[1:leading] == ("x",):
+        raise ValueError(f"{concrete.name} takes the state first, then the control, but its inputs are named {names[:leading]}")
       if tuple(type_.shape for type_ in declared[:leading]) != tuple(type_.shape for type_ in types[:leading]):
         raise ValueError(
           f"{concrete.name} takes the state{', then the control' if leading == 2 else ''} first, of shapes {[t.shape for t in types[:leading]]}"
@@ -136,6 +145,13 @@ class DiscreteOCP:
           raise ValueError(f"{field_name} names {name!r}, which no Function takes")
     if both := sorted(set(self.stage_params) & set(self.global_vars)):
       raise ValueError(f"{both[0]!r} is both a stage parameter and a global variable")
+    for pair, size, what in ((self.x_bounds, types[0].size, "x_bounds"), (self.u_bounds, types[1].size, "u_bounds")):
+      for side in pair or ():
+        _side(side, size, 0.0, what)
+    for constraint in (*self.path, *self.terminal):
+      concrete = as_concrete(constraint.fn)
+      for side in ("lo", "hi"):
+        _side(getattr(constraint, side), concrete.outputs[0].size, 0.0, f"{concrete.name} {side}")
     object.__setattr__(self, "_inputs", inputs)
 
   def _functions(self) -> tuple[tuple[Function[Any, Any, Any, Any], int, bool], ...]:
