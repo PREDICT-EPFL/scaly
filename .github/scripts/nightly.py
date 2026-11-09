@@ -17,7 +17,7 @@ def main():
     versions = [m[1] for c in project["classifiers"] if (m := re.fullmatch(r"Programming Language :: Python :: (3\.\d+)", c))]
     print(json.dumps([{"platform": "linux-x86_64", "runner": "ubuntu-latest", "python": v, "label": v} for v in versions]))
   else:
-    labels = ["source:maintainer", "kind:bug", "area:tooling"]
+    labels = ["source:maintainer", "kind:bug", "area:tooling", "ci:nightly-failing"]
     if any(name.startswith("benchmarks / ") for name in sys.stdin.read().splitlines()):
       labels.append("area:benchmarks")
     print(",".join(labels))

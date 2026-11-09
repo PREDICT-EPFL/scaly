@@ -131,14 +131,14 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TITLE: Nightly CI is failing
+      TITLE: 🔴 Nightly CI is failing
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
 
       - run: |
           failed=$(gh run view "$GITHUB_RUN_ID" --json jobs -q '.jobs[] | select(.conclusion == "failure") | .name' | sort)
-          issue=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" | head -1)
+          issue=$(gh issue list --state open --label ci:nightly-failing --json number -q '.[0].number')
           if [ -z "$failed" ]; then
             if [ -n "$issue" ]; then gh issue close "$issue" -c "Passing again at $GITHUB_SHA: $RUN_URL"; fi
             exit 0

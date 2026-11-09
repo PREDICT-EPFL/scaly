@@ -32,4 +32,4 @@ def test_python_matrix_follows_classifiers(tmp_path):
 def test_failure_labels_follow_the_benchmark_group(failed, benchmark):
   result = subprocess.run([sys.executable, str(SCRIPT), "labels"], input=failed, check=True, capture_output=True, text=True)
   labels = set(result.stdout.strip().split(","))
-  assert labels == {"source:maintainer", "kind:bug", "area:tooling"} | ({"area:benchmarks"} if benchmark else set())
+  assert labels == {"source:maintainer", "kind:bug", "area:tooling", "ci:nightly-failing"} | ({"area:benchmarks"} if benchmark else set())
