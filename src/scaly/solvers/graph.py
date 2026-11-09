@@ -35,7 +35,8 @@ def solver_callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
     return []
   desc = solver_descriptor(fun)
   out: list[ConcreteFunction] = []
-  for cand in (desc.oracle, desc.base, desc.grad, desc.jac, desc.hess, desc.bounds):
+  stage = () if desc.stage_oracles is None else (desc.stage_oracles.jac, desc.stage_oracles.hess)
+  for cand in (desc.oracle, desc.base, desc.grad, desc.jac, desc.hess, desc.bounds, *stage):
     if isinstance(cand, ConcreteFunction) and cand not in out:
       out.append(cand)
   return out

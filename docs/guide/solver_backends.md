@@ -120,8 +120,15 @@ statistics with native status `Invalid_Option`.
 ## Fatrop
 
 Fatrop uses an interior-point method with linear algebra specialized for
-optimal-control stages. Declare an ordinary `sc.problem` with stage-ordered
-variables and select `sc.solver(problem, "fatrop")`. The
+optimal-control stages. Select `sc.solver(ocp.stage_problem(), "fatrop")` for a
+[`DiscreteOCP`](ocp.md). This form uses the builder's recorded layout and mapped
+stage Functions to write dense stage Jacobian and Lagrangian Hessian blocks.
+It carries global decision variables as constant states, so it also supports
+problems with free final time. No option is needed to select this path.
+
+An ordinary `sc.problem` with stage-ordered variables, including `ocp.problem()`,
+uses whole-problem oracles and scatters their sparse derivatives into stage
+blocks. Shared global decision variables require the builder's stage form. The
 [solver guide](solvers.md#stage-structured-problems-with-fatrop) gives a complete
 example.
 
@@ -159,6 +166,9 @@ Statistics include the native return flag, iteration count, objective, oracle
 counts, timings and constraint violation at the returned variables. Diagnostics
 unavailable through Fatrop's C interface, including the last step length and
 backtrack count, are zero.
+For both paths, `t_fe` times the generated oracles in C, including bounds.
+The copies into Fatrop's matrices contribute to `t_glue`. Counts record oracle
+calls over the whole horizon, rather than individual mapped stages.
 
 ## Scaly SQP
 

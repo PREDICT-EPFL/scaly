@@ -235,6 +235,20 @@ their numerical coefficients. The Fatrop wrapper normalizes each dynamics row
 to `F(x, u) - xnext` using its coefficient at the initial point, checks that it
 stays constant during the solve, and converts multipliers with the same scale.
 
+For a builder's stage form, Fatrop receives `desc.stage_oracles` instead of
+`desc.jac`, `desc.hess` and their sparse patterns. Its `grad` is also `desc.grad`.
+These dense derivatives are constructed for one stage before mapping over the
+horizon. `base` and `bounds` retain the ordinary NLP contract.
+`StageOracles.jac` takes `(x, *params)` and returns dynamics, initial, path and
+terminal Jacobians in local `[x, u]` order, with a leading stage axis on dynamics
+and path blocks. `StageOracles.hess` takes `(x, *params, scale, lam)` and returns
+the stage and terminal Lagrangian Hessians, each followed by a gradient row.
+These rows exclude the incoming transition's linear `-xnext` term and box
+multipliers. The wrapper adds box multipliers and permutes local `[x, u]` order
+to Fatrop's `[u, x]` order. Dynamics already have coefficient `-1` on `xnext`.
+This optional descriptor field is additive under protocol v8. General problems
+continue to use the sparse-oracle contract above.
+
 ## Versioning
 
 `SOLVER_PLUGIN_PROTOCOL_VERSION` (`src/scaly/solvers/registry.py`) covers the whole contract above:

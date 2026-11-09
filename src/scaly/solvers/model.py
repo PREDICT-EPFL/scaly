@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..ir.expr import Expr, ExprOp
 from ..function.concrete import ConcreteFunction
@@ -14,6 +14,9 @@ from ..function.tree import Tree
 from ..function.tree import flat_tree, flat_parameters
 from ..ir.types import SparsityPattern, TensorType
 from .stages import StageLayout, detect_stage_layout
+
+if TYPE_CHECKING:
+  from ._stage import StageOracles
 
 
 class CSolverOption(ctypes.Structure):
@@ -91,6 +94,7 @@ class SolverDescriptor:
   jac_sparsity: SparsityPattern | None = None
   hess_sparsity: SparsityPattern | None = None
   _stage_layout: StageLayout | None = None
+  stage_oracles: StageOracles | None = None
   # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
   # triangle), A_eq, G_ineq, baked into the generated wrapper as static
   # tables; the oracle emits compact CSC-ordered value buffers. None => dense.

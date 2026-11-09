@@ -96,6 +96,7 @@ src/scaly/
     stages.py            stage layouts and their detection from NLP sparsity
     qp.py nlp.py         quadratic proof/extraction and the NLP solver descriptor
     _oracle.py           shared oracle-assembly helpers
+    _stage.py            dense derivatives mapped over a builder's stage Functions
 
   viz/
     graph.py             graph JSON, colors and labels; presentation, not compiler text

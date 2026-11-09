@@ -25,6 +25,14 @@ plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_nested_solver_preserves_work
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_nonlinear_stage_blocks_bounds_duals_and_stats[last_bounds0]
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_nonlinear_stage_blocks_bounds_duals_and_stats[last_bounds1]
 plugins/scaly-fatrop/tests/test_nlp_fatrop.py::test_nonlinear_stage_blocks_bounds_duals_and_stats[last_bounds2]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_builder_paths_take_the_same_iterations_and_return_the_same_duals[1-True]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_builder_paths_take_the_same_iterations_and_return_the_same_duals[4-False]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_builder_paths_take_the_same_iterations_and_return_the_same_duals[4-True]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_free_final_time_solves_through_stage_functions
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_missing_costs_constraints_and_zero_controls[False-1]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_missing_costs_constraints_and_zero_controls[True-0]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_missing_costs_constraints_and_zero_controls[True-1]
+plugins/scaly-fatrop/tests/test_stage_functions.py::test_nested_stage_solver_preserves_workspace_and_parameters
 plugins/scaly-ipopt/tests/test_ipopt_build.py::test_archive_writers_share_one_lock
 plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_receives_the_exact_lagrangian_hessian
@@ -2264,6 +2272,7 @@ tests/solvers/test_registry.py::test_missing_backend_hook_is_rejected[prepare_op
 tests/solvers/test_registry.py::test_missing_backend_hook_is_rejected[render_wrapper]
 tests/solvers/test_registry.py::test_nlp_backend_must_declare_a_hessian_triangle
 tests/solvers/test_registry.py::test_stats_abi_v3_layout_is_additive
+tests/solvers/test_stage_oracles.py::test_dense_stage_derivatives_match_whole_problem
 tests/solvers/test_stages.py::test_builder_supplied_layout_skips_detection
 tests/solvers/test_stages.py::test_detector_accepts_coordinate_storage_order
 tests/solvers/test_stages.py::test_detects_initial_rows_dynamics_and_separate_inequalities[0-0-False]
@@ -2419,6 +2428,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.progr
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers._oracle]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers._stage]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.graph]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.nlp]

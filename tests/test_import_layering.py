@@ -69,6 +69,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.function.factory": 5,
   "scaly.solvers": 5,
   "scaly.solvers._oracle": 5,
+  "scaly.solvers._stage": 5,
   "scaly.solvers.graph": 5,
   "scaly.solvers.nlp": 5,
   "scaly.solvers.ocp": 5,

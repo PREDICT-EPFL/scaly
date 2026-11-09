@@ -305,6 +305,37 @@ stage. Scaly detects and checks this structure from the problem's sparse
 derivatives. The getting-started example above groups all states before all
 controls, so its variables must be reordered before selecting Fatrop.
 
+For a problem declared with [`sc.DiscreteOCP`](ocp.md), pass `ocp.stage_problem()`
+to select the stage-Function path. Scaly differentiates each stage Function and
+maps its dense derivative blocks over the horizon. The recorded stage layout
+supplies the variable and constraint order, so this path needs no structure
+detection or whole-problem sparse derivatives:
+
+```python
+@sc.function(sc.arg("x", 1), sc.arg("u", 1))
+def step(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    return x + u
+
+
+@sc.function(sc.arg("x", 1), sc.arg("u", 1))
+def cost(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x) + sc.sumsqr(u)
+
+
+ocp = sc.DiscreteOCP(N=4, dynamics=step, stage_cost=cost)
+solve_stages = sc.solver(ocp.stage_problem(), "fatrop")
+variables, *_ = solve_stages(np.array([1.0]), x0=ocp.pack(1.0, 0.0, stage_form=True))
+assert solve_stages.stats().to_solver_status().ok
+xs, us = ocp.unpack(variables, stage_form=True)
+```
+
+Global decision variables, such as free final time, become additional states
+held constant across stages in this form. Global parameters stay shared, and
+per-stage parameters use their corresponding rows, including the terminal row.
+`ocp.problem()` selects the whole-problem oracle path. It supports Fatrop when
+the detected structure is compatible, but shared global decision variables
+require `stage_problem()`.
+
 For example, let `z = [x_0, u_0, x_1]` describe one transition with `x_0=1`
 and `x_1=x_0+u_0`. The cost `u_0**2 + (x_1-3)**2` penalizes the control and
 the terminal state's distance from three:
