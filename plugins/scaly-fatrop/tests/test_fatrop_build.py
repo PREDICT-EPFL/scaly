@@ -15,7 +15,7 @@ import pytest
 from scaly.codegen.toolchain import find_c_compiler
 
 ROOT = Path(__file__).parents[1]
-native = pytest.mark.solver("fatrop", package="scaly_fatrop", header="fatrop/ocp/OCPCInterface.h")
+native = pytest.mark.solver("fatrop")
 
 
 @pytest.mark.parametrize(

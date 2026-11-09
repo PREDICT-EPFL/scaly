@@ -130,7 +130,8 @@ print(lam_ineq.shape)   # (0,)
 ```
 
 Scaly supports PIQP for quadratic programs, IPOPT and a custom
-sequential quadratic programming (SQP) implementation for nonlinear programs. [Solver backends](solver_backends.md)
+sequential quadratic programming (SQP) implementation for nonlinear programs,
+and Fatrop for nonlinear programs with stage structure. [Solver backends](solver_backends.md)
 covers their differences and installation.
 
 Every call returns four groups:
@@ -270,6 +271,7 @@ What the backend does with those inputs differs:
 | PIQP      | ignored                               | ignored                                 |
 | IPOPT     | used                                  | used with `warm_start_init_point="yes"` |
 | Scaly SQP | used, then clamped to variable bounds | used                                    |
+| Fatrop    | used                                  | ignored                                 |
 
 For a receding horizon, Scaly does not shift the result by a stage. `warm=first`
 passes exactly the values in `first`. A shifted initial trajectory can be
@@ -293,6 +295,40 @@ The [complete multiple-shooting example](getting_started.md#bonus-repeated-stage
 shows the variable layout, mapped defects, and bounds for a double integrator.
 The [function guide](functions.md#regular-repetition-vmap) describes mapped
 input slices and shared parameters.
+
+### Stage-structured problems with Fatrop
+
+The `"fatrop"` backend accepts a multiple-shooting problem whose variables are
+ordered `[x_0, u_0, x_1, u_1, ..., x_N, u_N]`. Each dynamics equality connects
+one stage to its next state. Costs and other constraints must be local to a
+stage. Scaly detects and checks this structure from the problem's sparse
+derivatives, then evaluates its oracles over the whole horizon.
+
+For example, one transition with `x_0=1` and `x_1=x_0+u_0`:
+
+```python
+@sc.problem(vars=sc.arg("z", 3))
+def transition(z: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(
+        minimize=z[1]**2 + (z[2] - 3.0)**2,
+        eq=(z[0] - 1.0, z[2] - z[0] - z[1]),
+    )
+
+
+solve_fatrop = sc.solver(transition, "fatrop")
+z, *_ = solve_fatrop(())
+assert solve_fatrop.stats().to_solver_status().ok
+print(np.round(z, 6))  # [1. 1. 2.]
+```
+
+Dynamics rows must follow stage and next-state order. Local equalities follow
+the dynamics leaving their stage, except that initial-state equalities may
+come first. Inequality rows can appear separately in `ineq`. Scaly does not
+reorder variables to find a stage structure. Shared decision variables and
+Hessian entries coupling different stages are unsupported in this form.
+The [Fatrop backend details](solver_backends.md#fatrop) cover options and limits.
+The [two-dimensional hanging-chain example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/case_studies/fatrop_chain/scaly_impl.py)
+shows a nonlinear problem with mapped dynamics and bounded controls.
 
 ## Matrix-data quadratic programs
 

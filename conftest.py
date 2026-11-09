@@ -1,7 +1,5 @@
 from collections.abc import Iterator
 import os
-import importlib.util
-import subprocess
 import sys
 from pathlib import Path
 
@@ -65,7 +63,6 @@ def pytest_xdist_node_collection_finished(node, ids) -> None:
 
 
 from scaly.solvers.paths import solver_diagnostic, solver_loadable  # noqa: E402 -- needs the path above
-from scaly.utils.env import shared_lib_ext  # noqa: E402
 
 
 def pytest_collection_modifyitems(items) -> None:
@@ -76,35 +73,15 @@ def pytest_collection_modifyitems(items) -> None:
   the solver job while silently erroring in the core one. The solver job sets
   SCALY_REQUIRE_SOLVERS=1 to require every marked solver, or a comma-separated list to require
   only the supported backends. Missing required libraries fail collection instead of skipping.
-  A native package without a registered Scaly backend supplies `package` and `header` on its marker."""
+  """
   require = os.environ.get("SCALY_REQUIRE_SOLVERS", "")
   required = set(require.split(",")) if require else set()
   missing = set()
-  native_available = {}
   for item in items:
     for mark in item.iter_markers(name="solver"):
       name = mark.args[0]
-      # Remove this branch and the package/header marker arguments when #239 registers the Fatrop backend.
-      if package := mark.kwargs.get("package"):
-        key = (name, package, mark.kwargs["header"])
-        if key not in native_available:
-          spec = importlib.util.find_spec(package)
-          root = Path(spec.origin).parent if spec is not None and spec.origin else None
-          filename = f"{name}.dll" if sys.platform == "win32" else f"lib{name}{shared_lib_ext()}"
-          library = root / "lib" / filename if root else None
-          native_available[key] = bool(
-            root
-            and (root / "include" / mark.kwargs["header"]).is_file()
-            and library
-            and library.is_file()
-            and subprocess.run([sys.executable, "-c", "import ctypes, sys; ctypes.CDLL(sys.argv[1])", str(library)], capture_output=True).returncode
-            == 0
-          )
-        available = native_available[key]
-        diagnostic = f"Missing native {name} package, library or headers"
-      else:
-        available = solver_loadable(name)
-        diagnostic = solver_diagnostic(name) if not available else ""
+      available = solver_loadable(name)
+      diagnostic = solver_diagnostic(name) if not available else ""
       if not available:
         missing.add(name)
         if require != "1" and name not in required:

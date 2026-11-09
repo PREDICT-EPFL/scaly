@@ -11,17 +11,26 @@ Fatrop 1.2.0 and BLASFEO packaging are recorded in
 `origin/devrush:examples/case_studies/fatrop_chain/scaly_impl.py` using main's API.
 
 - [x] Read the issue, prerequisites, parent, repository rules and plugin contract.
-- [ ] Add failing small-problem reference tests for stage scattering, duals,
+- [x] Add failing small-problem reference tests for stage scattering, duals,
   bounds, options, nested calls and statistics.
-- [ ] Register Fatrop and generate its OCPCInterface wrapper using static stage
+- [x] Register Fatrop and generate its OCPCInterface wrapper using static stage
   tables and whole-horizon evaluations returning 1. Remove marker discovery.
-- [ ] Port the paper's 2D chain. Verify iteration parity with CasADi/Fatrop and
+- [x] Port the paper's 2D chain. Verify iteration parity with CasADi/Fatrop and
   1e-8 solution agreement with IPOPT for the hand-written chain and race car.
-- [ ] Update solver guide, backend and API pages with write-docs. Document the
+- [x] Update solver guide, backend and API pages with write-docs. Document the
   optional descriptor layout and any necessary protocol changes.
-- [ ] Prove test sensitivity, run the full pre-merge checks and preserve C snapshots.
+- [x] Prove test sensitivity, run the full pre-merge checks and preserve C snapshots.
 - [ ] Commit, push and open a draft PR against main. Run cross-review once, fix
   findings and check fixes, then mark ready and update the tracker.
 
 Steps are sequential except independent checks. Keep experimental scripts and
 results out of published docs. Delete this temporary plan before marking ready.
+
+Evidence: 24 Fatrop tests pass, whole suite 2520 passed / 52 skipped.
+The sign perturbation fails as intended. Paper chain: 14 iterations on both
+Fatrop paths at tol=1e-10; IPOPT max difference 2.498e-15. Existing chain
+M3,N10: max difference 6.051e-15; race N3: 2.140e-9. IPOPT comparisons
+return relaxed variables with honor_original_bounds=no. Full hooks passed.
+Zensical's cached build emitted false missing-page warnings. A clean strict
+build passed with no warnings. The paper's default tolerance also gives 13
+iterations on both Fatrop paths.

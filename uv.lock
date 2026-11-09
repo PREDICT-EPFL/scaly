@@ -1064,6 +1064,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+fatrop = [
+    { name = "scaly-fatrop" },
+]
 ipopt = [
     { name = "scaly-ipopt" },
 ]
@@ -1071,6 +1074,7 @@ piqp = [
     { name = "scaly-piqp" },
 ]
 solvers = [
+    { name = "scaly-fatrop" },
     { name = "scaly-ipopt" },
     { name = "scaly-piqp" },
     { name = "scaly-sqp" },
@@ -1110,7 +1114,8 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.3.3" },
-    { name = "scaly", extras = ["piqp", "ipopt", "sqp"], marker = "extra == 'solvers'" },
+    { name = "scaly", extras = ["piqp", "ipopt", "sqp", "fatrop"], marker = "extra == 'solvers'" },
+    { name = "scaly-fatrop", marker = "extra == 'fatrop'", editable = "plugins/scaly-fatrop" },
     { name = "scaly-ipopt", marker = "extra == 'ipopt'", editable = "plugins/scaly-ipopt" },
     { name = "scaly-piqp", marker = "extra == 'piqp'", editable = "plugins/scaly-piqp" },
     { name = "scaly-sqp", marker = "extra == 'sqp'", editable = "plugins/scaly-sqp" },
@@ -1118,7 +1123,7 @@ requires-dist = [
     { name = "zig-bin", marker = "sys_platform == 'win32'", specifier = "==0.17.*" },
     { name = "zig-bin", marker = "extra == 'toolchain'", specifier = "==0.17.*" },
 ]
-provides-extras = ["piqp", "ipopt", "sqp", "solvers", "toolchain"]
+provides-extras = ["piqp", "ipopt", "sqp", "fatrop", "solvers", "toolchain"]
 
 [package.metadata.requires-dev]
 dev = [

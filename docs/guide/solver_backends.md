@@ -1,6 +1,6 @@
 # Solver backends
 
-Scaly provides interfaces to PIQP, IPOPT, and its own sequential quadratic
+Scaly provides interfaces to PIQP, IPOPT, Fatrop, and its own sequential quadratic
 programming (SQP) solver. The model declaration and solver input structure stay the
 same when you switch backend. Their supported problems, numerical methods,
 and warm-start behavior differ.
@@ -17,6 +17,7 @@ select the matrix interface at construction and require separate builds.
 | `"piqp"` | convex quadratic objective and linear constraints | `uv add "scaly[piqp]"` |
 | `"ipopt"` | smooth nonlinear objective and constraints | `uv add "scaly[ipopt]"` |
 | `"sqp"` | smooth nonlinear objective and constraints | `uv add "scaly[sqp]"` |
+| `"fatrop"` | smooth nonlinear problems with stage structure | `uv add "scaly[fatrop]"` |
 
 PIQP is specialized for convex quadratic programs, or QPs. Scaly checks whether
 the expressions are quadratic and linear where required, but that check does
@@ -28,7 +29,7 @@ solution and do not guarantee a global optimum. Scaly SQP generates its
 sequential quadratic programming iteration as C and uses PIQP for the QP
 subproblems. IPOPT is a separate native solver.
 
-The examples below share this problem, which all three backends accept:
+The PIQP, IPOPT and SQP examples below share this problem:
 
 ```python
 import numpy as np
@@ -116,6 +117,40 @@ IPOPT prints once per process. `options={"sb": "yes"}` suppresses the banner
 too. A positive `print_level` enables IPOPT's convergence log. IPOPT reports rejected options through solver
 statistics with native status `Invalid_Option`.
 
+## Fatrop
+
+Fatrop uses an interior-point method with linear algebra specialized for
+optimal-control stages. Declare an ordinary `sc.problem` with stage-ordered
+variables and select `sc.solver(problem, "fatrop")`. The
+[solver guide](solvers.md#stage-structured-problems-with-fatrop) gives a complete
+example. The wrapper evaluates the whole problem's objective, constraints and
+derivatives and transfers their values into Fatrop's stage blocks.
+
+The dynamics must be explicit in the next state. Both `xnext - F(x, u)` and
+`F(x, u) - xnext` are accepted, including a nonzero constant diagonal scaling.
+That scaling may depend on parameters, but must remain constant during a solve.
+A changing next-state coefficient or invalid bounds produces an `ERROR` status.
+Missing or incompatible stage structure raises `ValueError` when generating C.
+
+`x0` sets Fatrop's initial variables. `warm` also reuses those variables, but
+its multipliers are ignored because the native C interface has no dual
+initialization entry. Each call creates a native solver with the current
+parameter-dependent bounds. Fixed bounds become stage equalities, and absent
+bounds contribute no constraints.
+
+Scaly defaults to `print_level=0` and `tol=1e-8`. Other options retain Fatrop's
+defaults. Supported integer options are `print_level`, `max_iter` and
+`acceptable_iter`. The positive numerical options are `tol`, `constr_viol_tol`,
+`compl_inf_tol`, `tol_acceptable` and `mu_init`. `linsol_it_ref` accepts a boolean.
+Unknown names and invalid types raise a Python exception at construction.
+Fatrop relaxes inequality bounds internally, so constraint violation can be
+larger than `tol` at an active bound.
+
+Statistics include the native return flag, iteration count, objective, oracle
+counts, timings and constraint violation at the returned variables. Diagnostics
+unavailable through Fatrop's C interface, including the last step length and
+backtrack count, are zero.
+
 ## Scaly SQP
 
 Sequential quadratic programming, abbreviated SQP, repeatedly approximates the
@@ -174,15 +209,15 @@ and [stopping and failure rules](../how_it_works/solvers.md#stopping-and-failure
 
 ## Native libraries and deployment
 
-The PIQP and IPOPT plugins include native libraries in their wheels. Scaly SQP
+The PIQP, IPOPT and Fatrop plugins include native libraries in their wheels. Scaly SQP
 uses the PIQP library and has no additional solver binary of its own. The
 interfaces call these libraries from generated C, so solver iterations and
 function evaluation run without returning to Python for each model value or
 derivative.
 
 An ahead-of-time application can link directly to the libraries bundled with the
-installed plugins. There is no need for a separate system installation of PIQP
-or IPOPT. Deploying with these libraries also avoids accidentally using a
+installed plugins. There is no need for a separate system installation of PIQP,
+IPOPT or Fatrop. Deploying with these libraries also avoids accidentally using a
 different solver version, because they are the same libraries used when you
 test the model through Scaly's JIT path.
 
@@ -198,6 +233,7 @@ Bundling alone does not guarantee a faster solve.
 | `scaly-piqp` | PIQP, Eigen, and Blasfeo |
 | `scaly-ipopt` | IPOPT, MUMPS, METIS, GKlib, and platform linear algebra libraries |
 | `scaly-sqp` | the library supplied by `scaly-piqp` |
+| `scaly-fatrop` | Fatrop and BLASFEO |
 
 Deployment needs the plugin's complete `lib/` directory, not only its main
 solver binary. IPOPT also needs bundled runtime libraries, including the
