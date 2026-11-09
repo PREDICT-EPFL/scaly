@@ -9,8 +9,6 @@ import numpy as np
 
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
-from ...ir.types import dtypes
-from ..arith import fold_program
 from ...utils.names import c_ident, NameScope
 
 
@@ -35,73 +33,26 @@ def rebuild_program(node: ProgramNode, args: tuple[ProgramNode, ...]) -> Program
   return ProgramNode(node.op, args, node.attrs, node.dtype)
 
 
-def affine_coefficients(index: ProgramNode, names: frozenset[str]) -> dict[str, int] | None:
-  """The coefficient of each variable in ``names`` if ``index`` is affine in them, else None.
-
-  A literal constant term is reported under the key ``""``; a subterm free of ``names`` counts as
-  zero."""
-  if index.op == ProgramOp.CONST_INT:
-    return {"": int(index.attrs["value"])}
-  if index.op == ProgramOp.VAR:
-    return {index.attrs["name"]: 1} if index.attrs["name"] in names else {}
-  if index.op in (ProgramOp.ADD, ProgramOp.SUB):
-    left, right = (affine_coefficients(a, names) for a in index.args)
-    if left is None or right is None:
-      return None
-    sign = -1 if index.op == ProgramOp.SUB else 1
-    return {name: left.get(name, 0) + sign * right.get(name, 0) for name in left.keys() | right.keys()}
-  if index.op == ProgramOp.MUL:
-    for scale, term in (index.args, index.args[::-1]):
-      if scale.op == ProgramOp.CONST_INT and (inner := affine_coefficients(term, names)) is not None:
-        return {name: c * scale.attrs["value"] for name, c in inner.items()}
-  mentioned = any(n.op == ProgramOp.VAR and n.attrs["name"] in names for n in walk_program(index))
-  return None if mentioned else {}
-
-
-def inline_producer(stmt: ProgramNode) -> tuple[str, tuple[tuple[str, int], ...], ProgramNode] | None:
-  """Match ``for v0 in [0, d0) ... for vn in [0, dn) { buf[row-major index of v0..vn] = rhs }``.
-
-  Returns the buffer, each loop's variable and trip count, outermost first, and ``rhs``. The
-  outermost trip count may be dynamic, reported as zero, since no stride depends on it."""
-  loops: list[tuple[str, int]] = []
-  while stmt.op == ProgramOp.FOR:
-    rng, *body = stmt.args
-    start, stop, step = rng.args
-    if len(body) != 1 or any(a.op != ProgramOp.CONST_INT or a.attrs["value"] != v for a, v in ((start, 0), (step, 1))):
-      return None
-    if stop.op != ProgramOp.CONST_INT and loops:
-      return None
-    loops.append((rng.attrs["name"], int(stop.attrs["value"]) if stop.op == ProgramOp.CONST_INT else 0))
-    stmt = body[0]
-  if not loops or stmt.op != ProgramOp.STORE:
+def inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | None:
+  """Match ``for v in [0,N) step 1 { buf[v] = rhs }``."""
+  if stmt.op != ProgramOp.FOR:
     return None
-  target, rhs = stmt.args
+  rng, *body = stmt.args
+  if len(body) != 1 or body[0].op != ProgramOp.STORE:
+    return None
+  target, rhs = body[0].args
   if target.op != ProgramOp.VIEW or len(target.args) != 1:
     return None
+  name = rng.attrs["name"]
   index = target.args[0]
-  stride, expected = 1, {}
-  for name, trip in reversed(loops):
-    expected[name] = stride
-    stride *= trip
-  if len(loops) > 1 and any(trip <= 0 for _, trip in loops[1:]):
+  start, _stop, step = rng.args
+  if index.op != ProgramOp.VAR or index.attrs["name"] != name:
     return None
-  nodes = list(walk_program(index))
-  variables = {n.attrs["name"] for n in nodes if n.op == ProgramOp.VAR}
-  coefficients = affine_coefficients(index, frozenset(expected))
-  if (
-    variables != expected.keys()
-    or any(n.op not in (ProgramOp.VAR, ProgramOp.CONST_INT, ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL) for n in nodes)
-    or coefficients is None
-    or {k: v for k, v in coefficients.items() if v} != expected
-  ):
+  if start.op != ProgramOp.CONST_INT or start.attrs["value"] != 0:
     return None
-  return target.attrs["buffer"], tuple(loops), rhs
-
-
-def fold_index(node: ProgramNode) -> ProgramNode:
-  """Fold the integer additions and products below ``node``, such as those a substituted zero leaves."""
-  pattern = Pattern(None, lambda n: n.dtype == dtypes.int64 and n.op in (ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL), fold_program)
-  return rewrite(node, [pattern], rebuild=rebuild_program)
+  if step.op != ProgramOp.CONST_INT or step.attrs["value"] != 1:
+    return None
+  return target.attrs["buffer"], name, rhs
 
 
 def substitute_var(node: ProgramNode, name: str, replacement: ProgramNode) -> ProgramNode:

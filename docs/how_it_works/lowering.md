@@ -11,8 +11,8 @@ of `prog.proc` lines, and trim more where they say so.
 Lowering emits each expression operation on its own, with a buffer for its
 result and a loop nest that fills it. Neighbouring axes that every read and the
 write traverse contiguously share one loop, so each operation below is a single
-loop, while a broadcast or a transpose keeps one loop per axis and reads each
-operand at its strides. For this function
+loop, while a transpose keeps one loop per axis and reads each operand at its
+strides. For this function
 
 ```python
 import scaly as sc

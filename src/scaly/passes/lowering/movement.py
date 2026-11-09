@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode
-from .ctx import LowerCtx, lowers, _shift, _shape_or_scalar, _stride
+from .ctx import LowerCtx, lowers, _flat_coordinates, _shift, _shape_or_scalar, _stride
 
 
 @lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT)
@@ -84,7 +84,7 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   # lanes over such a nest split each row's vector store across cache lines, and the loads that
   # read the copy back stall (chain M=9 ran 1.4 times slower). Until lanes handle nests (#71).
   ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
-  coords = [p.const_int(0) if extent == 1 else _flat_coordinate(k, node.shape, dim) for dim, extent in enumerate(node.shape)]
+  coords = _flat_coordinates(k, node.shape)
   source: list[ProgramNode] = []
   out_dim = 0
   for dim, item in enumerate(index):
@@ -95,13 +95,6 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     source.append(_shift(coords[out_dim], start, step))
     out_dim += 1
   ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read(src, source))])
-
-
-def _flat_coordinate(k: ProgramNode, shape: tuple[int, ...], dim: int) -> ProgramNode:
-  """Axis ``dim``'s coordinate of row-major position ``k`` in ``shape``."""
-  stride = _stride(shape, dim)
-  quotient = k if stride == 1 else p.div(k, p.const_int(stride))
-  return quotient if dim == 0 else p.mod(quotient, p.const_int(int(shape[dim])))
 
 
 @lowers(ExprOp.TRANSPOSE)

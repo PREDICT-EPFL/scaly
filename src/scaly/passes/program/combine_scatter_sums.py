@@ -52,9 +52,8 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     pr = _as_inline_producer(stmt)
     if pr is None:
       continue
-    buf, loops, rhs = pr
-    (v, _), *nested = loops
-    if nested or _trip_count(stmt.args[0]) != _size_of(decls[buf].attrs["shape"]):
+    buf, v, rhs = pr
+    if _trip_count(stmt.args[0]) != _size_of(decls[buf].attrs["shape"]):
       continue
     if rhs.op == ProgramOp.ADD and writes[buf] == {i}:
       if all(

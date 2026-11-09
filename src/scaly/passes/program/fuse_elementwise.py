@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ...ad.rules import ELEMENTWISE
-from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ._common import (
@@ -17,8 +16,6 @@ from ._common import (
   _rebuild_proc,
   _resolve_alias,
   _size_of,
-  affine_coefficients,
-  fold_index,
   prune_dead_buffers,
   substitute_var as _subst_var,
   trip_count as _trip_count,
@@ -64,66 +61,18 @@ def _count_buf_loads(node: ProgramNode, buf: str) -> int:
   return count[id(node)]
 
 
-def _expand_inlinables(node: ProgramNode, inlinable: dict[str, tuple[tuple[tuple[str, int], ...], ProgramNode]]) -> ProgramNode:
+def _expand_inlinables(node: ProgramNode, inlinable: dict[str, tuple[str, ProgramNode]]) -> ProgramNode:
   """Replace each ``LOAD(VIEW(buf,[E]))`` with the producer RHS at ``E``; the driver revisits each
-  replacement, so a whole chain of single-use producers collapses in one bottom-up pass.
-
-  A nest producer's view that runs row-major over its loops reads at ``E`` itself, scaled; any
-  other reads its coordinates as quotients and remainders of ``E``, as a flat broadcast did."""
+  replacement, so a whole chain of single-use producers collapses in one bottom-up pass."""
 
   def inlinable_load(n: ProgramNode) -> bool:
     return n.args[0].attrs["buffer"] in inlinable and len(n.args[0].args) == 1
 
   def expand(n: ProgramNode) -> ProgramNode:
-    loops, rhs = inlinable[n.args[0].attrs["buffer"]]
-    index = n.args[0].args[0]
-    if len(loops) == 1:
-      return _subst_var(rhs, loops[0][0], index)
-    strides, stride = {}, 1
-    for name, trip in reversed(loops):
-      strides[name] = stride
-      stride *= trip
-    names = frozenset(strides)
-
-    def row_major(view: ProgramNode) -> ProgramNode:
-      # A view running row-major over the producer's loops reads ``scale * index + rest``.
-      coefficients = affine_coefficients(view.args[0], names) or {}
-      scale = coefficients.get(loops[-1][0], 0)
-      if not scale or any(coefficients.get(name, 0) != scale * s for name, s in strides.items()):
-        return view
-      rest = view.args[0]
-      for name in names:
-        rest = _subst_var(rest, name, p.const_int(0))
-      term = index if scale == 1 else p.mul(index, p.const_int(scale))
-      rest = fold_index(rest)
-      at = term if rest.op == ProgramOp.CONST_INT and rest.attrs["value"] == 0 else p.add(rest, term)
-      return ProgramNode(ProgramOp.VIEW, (at,), view.attrs, view.dtype)
-
-    rhs = rewrite(rhs, [Pattern(ProgramOp.VIEW, lambda v: len(v.args) == 1, row_major)], rebuild=rebuild_program, fixpoint=False)
-    for name, trip in loops:
-      coord = index if strides[name] == 1 else p.div(index, p.const_int(strides[name]))
-      rhs = _subst_var(rhs, name, coord if name == loops[0][0] else p.mod(coord, p.const_int(trip)))
-    return rhs
+    v, rhs = inlinable[n.args[0].attrs["buffer"]]
+    return _subst_var(rhs, v, n.args[0].args[0])
 
   return rewrite(node, [Pattern(ProgramOp.LOAD, inlinable_load, expand)], rebuild=rebuild_program, fixpoint=False, revisit=True)
-
-
-def _in_nest_order(rhs: ProgramNode, loops: tuple[tuple[str, int], ...]) -> bool:
-  """Whether each read of a nest producer is a broadcast or slice: its strides shrink inwards.
-
-  Inlining such a read turns its coordinates into quotients and remainders of the consumer's
-  index, as a flat broadcast's were. A transposed read is left materialized."""
-  if len(loops) == 1:
-    return True
-  names = [name for name, _ in loops]
-  for view in (n for n in walk_program(rhs) if n.op == ProgramOp.VIEW):
-    coefficients = affine_coefficients(view.args[0], frozenset(names))
-    if coefficients is None:
-      return False
-    strides = [abs(coefficients[name]) for name in names if coefficients.get(name)]
-    if any(outer <= inner for outer, inner in zip(strides, strides[1:])):
-      return False
-  return True
 
 
 def fuse_elementwise(prog: ProgramNode) -> ProgramNode:
@@ -162,15 +111,15 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   # producer out of a matmul/contraction operand position, where each element is read m*n*k
   # times). Expensive (libm) producers additionally must appear exactly once textually so the
   # call isn't duplicated (``buf*buf``).
-  inlinable: dict[str, tuple[tuple[tuple[str, int], ...], ProgramNode]] = {}
+  inlinable: dict[str, tuple[str, ProgramNode]] = {}
   expanded_expensive: dict[str, bool] = {}
   expanded_reads: dict[str, frozenset[str]] = {}
   for i, stmt in enumerate(body):
     pr = _as_inline_producer(stmt)
     if pr is None or pr[0] not in private:
       continue
-    buf, loops, rhs = pr
-    if buf in pinned or call_in[buf] or store_in[buf] != {i} or not _in_nest_order(rhs, loops):
+    buf, v, rhs = pr
+    if buf in pinned or call_in[buf] or store_in[buf] != {i}:
       continue
     consumers = load_in[buf] - {i}
     if len(consumers) != 1:
@@ -190,7 +139,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
       moved_reads.update(expanded_reads[name])
     if ci <= i or any(moved_reads & resolved_refs[j].writes for j in range(i + 1, ci + 1)):
       continue
-    inlinable[buf] = (loops, rhs)
+    inlinable[buf] = (v, rhs)
     expanded_expensive[buf] = is_expensive
     expanded_reads[buf] = frozenset(moved_reads)
 

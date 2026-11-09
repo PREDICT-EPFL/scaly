@@ -14,12 +14,13 @@ from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
 from ...function.tree import flat_tree
 from ..program import ProgramObserver, optimize_program
-from ..program._common import affine_coefficients, fold_index, rebuild_program, substitute_var, trip_count
-from ...ir.program import ProgramNode, ProgramOp, RangeKind
+from ..program._common import rebuild_program, substitute_var, trip_count
+from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.program_spec import verify_program
 from ...ir.types import DeviceSpec, DType, dtypes
 from ...utils.names import NameScope
 from ..affine import affine_index_map
+from ..arith import fold_program
 from ..expr import cse_many, simplify
 
 LowerRule = Callable[["LowerCtx", Expr], None]
@@ -461,12 +462,51 @@ def _flat(shape: tuple[int, ...], coords: Sequence[ProgramNode]) -> ProgramNode:
   return p.add(p.const_int(offset), out) if offset else out
 
 
+def _flat_coordinates(k: ProgramNode, shape: tuple[int, ...]) -> list[ProgramNode]:
+  """The coordinates of row-major position ``k`` in ``shape``, as quotients and remainders."""
+  coords = []
+  for dim, extent in enumerate(shape):
+    stride = _stride(shape, dim)
+    quotient = k if stride == 1 else p.div(k, p.const_int(stride))
+    coords.append(p.const_int(0) if extent == 1 else quotient if dim == 0 else p.mod(quotient, p.const_int(int(extent))))
+  return coords
+
+
 def _shift(coord: ProgramNode, start: int, step: int = 1) -> ProgramNode:
   """The coordinate ``start + step * coord``, folded when ``coord`` is a constant."""
   if coord.op == ProgramOp.CONST_INT:
     return p.const_int(start + step * int(coord.attrs["value"]))
   scaled = coord if step == 1 else p.mul(coord, p.const_int(step))
   return scaled if start == 0 else p.add(p.const_int(start), scaled)
+
+
+def _coefficients(index: ProgramNode, names: frozenset[str]) -> dict[str, int] | None:
+  """The coefficient of each variable in ``names`` if ``index`` is affine in them, else None.
+
+  A literal constant term is reported under the key ``""``; a subterm free of ``names`` counts as
+  zero."""
+  if index.op == ProgramOp.CONST_INT:
+    return {"": int(index.attrs["value"])}
+  if index.op == ProgramOp.VAR:
+    return {index.attrs["name"]: 1} if index.attrs["name"] in names else {}
+  if index.op in (ProgramOp.ADD, ProgramOp.SUB):
+    left, right = (_coefficients(a, names) for a in index.args)
+    if left is None or right is None:
+      return None
+    sign = -1 if index.op == ProgramOp.SUB else 1
+    return {name: left.get(name, 0) + sign * right.get(name, 0) for name in left.keys() | right.keys()}
+  if index.op == ProgramOp.MUL:
+    for scale, term in (index.args, index.args[::-1]):
+      if scale.op == ProgramOp.CONST_INT and (inner := _coefficients(term, names)) is not None:
+        return {name: c * scale.attrs["value"] for name, c in inner.items()}
+  mentioned = any(n.op == ProgramOp.VAR and n.attrs["name"] in names for n in walk_program(index))
+  return None if mentioned else {}
+
+
+def _fold_index(node: ProgramNode) -> ProgramNode:
+  """Fold the integer additions and products below ``node``, such as those a substituted zero leaves."""
+  pattern = Pattern(None, lambda n: n.dtype == dtypes.int64 and n.op in (ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL), fold_program)
+  return rewrite(node, [pattern], rebuild=rebuild_program)
 
 
 def _accesses(body: Sequence[ProgramNode], names: frozenset[str]) -> list[dict[str, int]] | None:
@@ -479,7 +519,7 @@ def _accesses(body: Sequence[ProgramNode], names: frozenset[str]) -> list[dict[s
       continue
     seen.add(n)
     if n.op == ProgramOp.VIEW:
-      coefficients = affine_coefficients(n.args[0], names)
+      coefficients = _coefficients(n.args[0], names)
       if coefficients is None:
         return None
       out.append(coefficients)
@@ -509,7 +549,7 @@ def _merge(ranges: list[ProgramNode], body: list[ProgramNode]) -> tuple[list[Pro
       and (accesses := _accesses([*ranges[k + 2 :], *body], frozenset((outer.attrs["name"], inner.attrs["name"])))) is not None
       and all(c.get(outer.attrs["name"], 0) == c.get(inner.attrs["name"], 0) * db for c in accesses)
     ):
-      nested, body = ([fold_index(substitute_var(n, outer.attrs["name"], p.const_int(0))) for n in nodes] for nodes in (ranges[k + 2 :], body))
+      nested, body = ([_fold_index(substitute_var(n, outer.attrs["name"], p.const_int(0))) for n in nodes] for nodes in (ranges[k + 2 :], body))
       ranges[k:] = [p.range_(inner.attrs["name"], 0, da * db, kind=inner.attrs["kind"]), *nested]
     k -= 1
   return ranges, body

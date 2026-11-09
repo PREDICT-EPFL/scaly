@@ -16,7 +16,6 @@ from scaly.ir import program as p
 from scaly.ir.expr import Expr, ExprOp
 from scaly.ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from scaly.passes.lowering import ctx, lower_function, main_proc
-from scaly.passes.program._common import affine_coefficients, inline_producer
 from scaly.utils.names import NameScope
 
 _HAVE_CC = find_c_compiler() is not None
@@ -68,7 +67,7 @@ def _strides(stmt: ProgramNode, buffer: str) -> list[dict[str, int]]:
   """The coefficients of the nest's loop variables in each view of ``buffer``."""
   names = frozenset(r.attrs["name"] for r in _loops(stmt))
   views = [v for v in walk_program(stmt) if v.op == ProgramOp.VIEW and v.attrs["buffer"] == buffer]
-  return [{k: c for k, c in (affine_coefficients(v.args[0], names) or {}).items() if k} for v in views]
+  return [{k: c for k, c in (ctx._coefficients(v.args[0], names) or {}).items() if k} for v in views]
 
 
 _ELEMENTWISE = {
@@ -133,9 +132,26 @@ def test_dense_kernels_index_without_division(case) -> None:
   assert not _divides(_lowered(_compiled(f"nest_div_{case}", shapes, body)))
 
 
-@pytest.mark.parametrize("case", sorted(_ELEMENTWISE))
-def test_broadcasts_index_without_division(case) -> None:
+_BROADCASTS = sorted(case for case, (a, b) in _ELEMENTWISE.items() if np.prod(b) > 1 and a != b)
+
+
+@pytest.mark.parametrize("case", sorted(set(_ELEMENTWISE) - set(_BROADCASTS)))
+def test_elementwise_without_broadcast_indexes_without_division(case) -> None:
   assert not _divides(_lowered(_compiled(f"nest_bdiv_{case}", _ELEMENTWISE[case], lambda a, b: a * b)))
+
+
+@pytest.mark.parametrize("case", [c for c in _BROADCASTS if not c.startswith("empty")])
+def test_broadcasts_in_one_flat_loop(case) -> None:
+  """Lanes over a broadcast's nest of rows store each row apart and the reads after it stall, so until
+  lanes handle nests a broadcast is one flat loop: an operand of the output's shape reads at the loop
+  variable, the broadcast one at quotients and remainders of it."""
+  a_shape, _ = _ELEMENTWISE[case]
+  (loop,) = _nests(_lowered(_compiled(f"nest_bflat_{case}", _ELEMENTWISE[case], lambda a, b: a * b)))
+  (rng,) = _loops(loop)
+  assert int(rng.args[1].attrs["value"]) == int(np.prod(np.broadcast_shapes(*_ELEMENTWISE[case])))
+  assert _strides(loop, "y") == [{rng.attrs["name"]: 1}]
+  if a_shape == np.broadcast_shapes(*_ELEMENTWISE[case]):
+    assert _strides(loop, "x0") == [{rng.attrs["name"]: 1}]
 
 
 def test_strided_slice_copies_in_one_flat_loop() -> None:
@@ -149,14 +165,14 @@ def test_strided_slice_copies_in_one_flat_loop() -> None:
 
 
 def test_contiguous_axes_merge_into_one_loop() -> None:
-  """No broadcast, one flat loop; a broadcast operand keeps its axes, read with stride zero."""
+  """No broadcast, one flat loop; stacking along a middle axis merges only the axes after it."""
   same = _nests(_lowered(_compiled("nest_merge_same", ((2, 3, 4), (2, 3, 4)), lambda a, b: a + b)))
   assert [[int(r.args[1].attrs["value"]) for r in _loops(s)] for s in same] == [[24]]
-  (nest,) = _nests(_lowered(_compiled("nest_merge_middle", ((2, 3, 4), (2, 1, 4)), lambda a, b: a + b)))
-  outer, middle, inner = (r.attrs["name"] for r in _loops(nest))
-  assert [int(r.args[1].attrs["value"]) for r in _loops(nest)] == [2, 3, 4]
-  assert _strides(nest, "x1") == [{outer: 4, inner: 1}]
-  assert _strides(nest, "x0") == [{outer: 12, middle: 4, inner: 1}]
+  first, _ = _nests(_lowered(_compiled("nest_merge_stack", ((2, 3, 4), (2, 3, 4)), lambda a, b: sc.stack([a, b], axis=1))))
+  outer, inner = (r.attrs["name"] for r in _loops(first))
+  assert [int(r.args[1].attrs["value"]) for r in _loops(first)] == [2, 12]
+  assert _strides(first, "x0") == [{outer: 12, inner: 1}]
+  assert _strides(first, "y") == [{outer: 24, inner: 1}]
 
 
 def test_singleton_axes_get_coordinate_zero() -> None:
@@ -207,42 +223,37 @@ def test_leading_seed_matvec_matches_numpy(isolated_cache) -> None:
 
 
 def test_leading_seed_matvec_access_maps() -> None:
-  """The seed axis stays the outer loop of the tangent's nest, and every read is strided, not divided.
-
-  The seed-axis transposes are copies with strided reads, which lowering-time fusion can turn into
-  index remaps; the broadcast primal reads with stride zero on the seed loop."""
+  """The seed-axis transposes are copies with explicit coordinates and strided reads, which
+  lowering-time fusion can turn into index remaps; only the broadcast product divides, as one flat
+  loop until lanes handle nests."""
   proc = _lowered(_leading_seed_matvec())
-  assert not _divides(proc)
-  s_t, product_t, tangent = (s for s in _nests(proc) if [r.attrs["kind"] for r in _loops(s)] == [RangeKind.GLOBAL] * 2)
-  seed, entry = (r.attrs["name"] for r in _loops(tangent))
-  assert [int(r.args[1].attrs["value"]) for r in _loops(tangent)] == [3, 4]
-  primal, product = sorted({v.attrs["buffer"] for v in walk_program(tangent) if v.op == ProgramOp.VIEW} - {"t"})
-  assert _strides(tangent, primal) == [{entry: 1}]
-  assert _strides(tangent, product) == _strides(tangent, "t") == [{seed: 4, entry: 1}]
-  # S.T and the product's transpose back to the seed axis read with the source's row stride.
+  s_t, product_t = (s for s in _nests(proc) if [r.attrs["kind"] for r in _loops(s)] == [RangeKind.GLOBAL] * 2)
+  assert not _divides(s_t) and not _divides(product_t)
   outer, inner = (r.attrs["name"] for r in _loops(s_t))
   assert _strides(s_t, "S") == [{outer: 1, inner: 5}]
   outer, inner = (r.attrs["name"] for r in _loops(product_t))
-  assert [stride for b in {v.attrs["buffer"] for v in walk_program(product_t) if v.op == ProgramOp.VIEW} for stride in _strides(product_t, b)] in (
-    [{outer: 1, inner: 3}, {outer: 4, inner: 1}],
-    [{outer: 4, inner: 1}, {outer: 1, inner: 3}],
-  )
+  buffers = {v.attrs["buffer"] for v in walk_program(product_t) if v.op == ProgramOp.VIEW}
+  reads = {frozenset(stride.items()) for b in buffers for stride in _strides(product_t, b)}
+  assert reads == {frozenset({outer: 1, inner: 3}.items()), frozenset({outer: 4, inner: 1}.items())}
+  (tangent,) = (s for s in _nests(proc) if any(v.op == ProgramOp.VIEW and v.attrs["buffer"] == "t" for v in walk_program(s)))
+  (rng,) = _loops(tangent)
+  assert int(rng.args[1].attrs["value"]) == 12 and _strides(tangent, "t") == [{rng.attrs["name"]: 1}]
 
 
 def test_reshape_reads_a_materialized_transpose_in_place() -> None:
   """A reshape after a transpose is not affine in the reshape's coordinates. Lowering materializes
-  the transpose with strided reads, and the reshape aliases that copy, so no index divides."""
+  the transpose with strided reads, and the reshape aliases that copy, which the product reads at
+  its own flat position."""
   fn = _compiled("nest_pin_transpose", ((2, 3, 4), (6,)), lambda a, b: a.transpose((2, 0, 1)).reshape((4, 6)) * b)
-  proc = _lowered(fn)
-  assert not _divides(proc)
-  copy, product = _nests(proc)
+  copy, product = _nests(_lowered(fn))
+  assert not _divides(copy)
   # Output axes 1 and 2 are source axes 0 and 1, contiguous in both, so the copy is a 4 x 6 nest.
   outer, inner = (r.attrs["name"] for r in _loops(copy))
   assert [int(r.args[1].attrs["value"]) for r in _loops(copy)] == [4, 6]
   assert _strides(copy, "x0") == [{outer: 1, inner: 4}]
   copied = next(v.attrs["buffer"] for v in walk_program(copy) if v.op == ProgramOp.VIEW and v.attrs["buffer"] != "x0")
-  outer, inner = (r.attrs["name"] for r in _loops(product))
-  assert _strides(product, copied) == [{outer: 6, inner: 1}]
+  (rng,) = _loops(product)
+  assert _strides(product, copied) == [{rng.attrs["name"]: 1}]
 
 
 def test_fusion_keeps_a_transpose_and_inlines_a_broadcast() -> None:
@@ -369,12 +380,3 @@ def test_inner_bounds_can_forbid_a_merge() -> None:
   (stmt,) = lctx.statements
   assert not _unbound(stmt)
   assert [int(r.args[1].attrs["value"]) for r in _loops(stmt)[:2]] == [2, 3]
-
-
-def test_a_loaded_store_offset_is_not_a_producer() -> None:
-  """``tmp[i + offset[0]] = x[i]`` is not ``tmp`` row-major over its loop, so fusion must not inline it."""
-  tmp = p.buffer("tmp", sc.dtypes.float64, (4,), address_space="private")
-  table = p.const_buffer("offset", sc.dtypes.int64, (1,), [2])
-  i = p.var("i")
-  store = p.store(p.view(tmp, [p.add(i, p.load(p.view(table, [p.const_int(0)])))]), p.load(p.view(p.buffer("x", sc.dtypes.float64, (4,)), [i])))
-  assert inline_producer(p.for_(p.range_("i", 0, 2), [store])) is None
