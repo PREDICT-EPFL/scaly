@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
 
@@ -19,6 +19,9 @@ from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from ._oracle import collect_free_inputs
 from .stages import StageLayout
+
+if TYPE_CHECKING:
+  from .ocp import StageFunctions
 
 
 NO_LB: Expr = Expr.const(float("-inf"))
@@ -88,6 +91,7 @@ class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
   _var_symbols: tuple[Expr, ...] = field(repr=False)
   _param_symbols: tuple[Expr, ...] = field(repr=False)
   stage_layout: StageLayout | None = None
+  stage_functions: StageFunctions | None = None
 
   @property
   def n_eq(self) -> int:
