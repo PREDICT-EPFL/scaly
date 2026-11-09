@@ -106,9 +106,9 @@ initial state is the first parameter.
 
 `sc.StageConstraint(g, lo, hi)` bounds the output of a Function. In `path`, the Function takes the
 state and the control and the constraint holds at every stage before the last. In `terminal`, it
-takes the state and holds at the last stage. A side is `None`, a number or an array of the output's
-size, and equal sides make an equality. Here the rate is limited along the way and the swing must
-end upright and at rest:
+takes the state and holds at the last stage. Each takes one constraint or a sequence of them. A side
+is `None`, a number or an array of the output's size, and equal sides make an equality. Here the
+rate is limited along the way and the swing must end upright and at rest:
 
 ```python
 @sc.function(sc.arg("x", 2), outputs=sc.arg("error", 2))
@@ -125,8 +125,8 @@ constrained = sc.DiscreteOCP(
     N=N,
     dynamics=pendulum,
     stage_cost=effort,
-    path=[sc.StageConstraint(rate, lo=-6.0, hi=6.0)],
-    terminal=[sc.StageConstraint(at_top, lo=0.0, hi=0.0)],
+    path=sc.StageConstraint(rate, lo=-6.0, hi=6.0),
+    terminal=sc.StageConstraint(at_top, lo=0.0, hi=0.0),
     u_bounds=(-8.0, 8.0),
     name="constrained_swing_up",
 )

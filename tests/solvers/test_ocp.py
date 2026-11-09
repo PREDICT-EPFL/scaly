@@ -447,6 +447,8 @@ def test_what_an_ocp_refuses() -> None:
   assert sc.DiscreteOCP(N=np.int64(3), dynamics=double_integrator).problem().vars.shapes == ((3, 3), (2,))  # ty: ignore[invalid-argument-type]
   with pytest.raises(TypeError, match="take StageConstraint values"):
     sc.DiscreteOCP(N=3, dynamics=double_integrator, path=[effort])  # ty: ignore[invalid-argument-type]
+  single = sc.StageConstraint(final, hi=1.0)
+  assert sc.DiscreteOCP(N=3, dynamics=double_integrator, terminal=single).terminal == (single,)
   with pytest.raises(ValueError, match=r"x_bounds has shape \(3,\), expected a number or \(2,\)"):
     sc.DiscreteOCP(N=3, dynamics=double_integrator, x_bounds=(np.zeros(3), None))
   with pytest.raises(TypeError, match="a bound is a number or an array"):

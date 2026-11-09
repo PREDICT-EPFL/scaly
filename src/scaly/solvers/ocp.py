@@ -83,8 +83,9 @@ class DiscreteOCP:
   cost and the path constraints take the same two, and the terminal cost and constraints take the
   state. A Function's further inputs are matched by name across Functions: a name in
   ``global_vars`` is a decision variable shared by every stage, a name in ``stage_params`` a
-  parameter with one row per stage, ``N + 1`` of them, and any other name a parameter. ``x_bounds``
-  and ``u_bounds`` are ``(lo, hi)`` pairs, each side ``None``, a number or an array.
+  parameter with one row per stage, ``N + 1`` of them, and any other name a parameter. ``path`` and
+  ``terminal`` each take one ``StageConstraint`` or a sequence of them. ``x_bounds`` and
+  ``u_bounds`` are ``(lo, hi)`` pairs, each side ``None``, a number or an array.
 
   ``problem()`` and ``stage_problem()`` lower it to a ``Problem``, and ``pack`` and ``unpack``
   convert between trajectories and their variables.
@@ -94,8 +95,8 @@ class DiscreteOCP:
   dynamics: Function[Any, Any, Any, Any]
   stage_cost: Function[Any, Any, Any, Any] | None = None
   terminal_cost: Function[Any, Any, Any, Any] | None = None
-  path: Sequence[StageConstraint] = ()
-  terminal: Sequence[StageConstraint] = ()
+  path: StageConstraint | Sequence[StageConstraint] = ()
+  terminal: StageConstraint | Sequence[StageConstraint] = ()
   x_bounds: tuple[Any, Any] | None = None
   u_bounds: tuple[Any, Any] | None = None
   stage_params: Sequence[str] = ()
@@ -108,8 +109,8 @@ class DiscreteOCP:
       raise ValueError(f"N must be a positive integer, got {self.N!r}")
     object.__setattr__(self, "N", int(self.N))
     for name, value in (("path", self.path), ("terminal", self.terminal), ("stage_params", self.stage_params), ("global_vars", self.global_vars)):
-      object.__setattr__(self, name, tuple(value))
-    for constraint in (*self.path, *self.terminal):
+      object.__setattr__(self, name, (value,) if isinstance(value, StageConstraint) else tuple(value))
+    for constraint in (*self._path, *self._terminal):
       if not isinstance(constraint, StageConstraint):
         raise TypeError(f"path and terminal take StageConstraint values, got {type(constraint).__name__}")
     if self.name is None:
@@ -148,7 +149,7 @@ class DiscreteOCP:
     for pair, size, what in ((self.x_bounds, types[0].size, "x_bounds"), (self.u_bounds, types[1].size, "u_bounds")):
       for side in pair or ():
         _side(side, size, 0.0, what)
-    for constraint in (*self.path, *self.terminal):
+    for constraint in (*self._path, *self._terminal):
       concrete = as_concrete(constraint.fn)
       for side in ("lo", "hi"):
         _side(getattr(constraint, side), concrete.outputs[0].size, 0.0, f"{concrete.name} {side}")
@@ -160,9 +161,17 @@ class DiscreteOCP:
       (self.dynamics, 2, False),
       *(() if self.stage_cost is None else ((self.stage_cost, 2, True),)),
       *(() if self.terminal_cost is None else ((self.terminal_cost, 1, True),)),
-      *((c.fn, 2, False) for c in self.path),
-      *((c.fn, 1, False) for c in self.terminal),
+      *((c.fn, 2, False) for c in self._path),
+      *((c.fn, 1, False) for c in self._terminal),
     )
+
+  @property
+  def _path(self) -> tuple[StageConstraint, ...]:
+    return cast(tuple[StageConstraint, ...], self.path)
+
+  @property
+  def _terminal(self) -> tuple[StageConstraint, ...]:
+    return cast(tuple[StageConstraint, ...], self.terminal)
 
   @property
   def _nx(self) -> int:
@@ -244,9 +253,9 @@ class DiscreteOCP:
       initial=build("initial", {**state, "initial_state": TensorType((nx,), diff=False)}, lambda env: env["x"][:nx] - env["initial_state"]),
       dynamics=build("dynamics", stage, dynamics),
       cost=None if stage_cost is None else build("cost", stage, lambda env: call(stage_cost, env, 2).reshape(())),
-      path=build("path", stage, stacked(self.path, 2)) if self.path else None,
+      path=build("path", stage, stacked(self._path, 2)) if self._path else None,
       terminal_cost=None if terminal_cost is None else build("terminal_cost", terminal, lambda env: call(terminal_cost, env, 1).reshape(())),
-      terminal=build("terminal", terminal, stacked(self.terminal, 1)) if self.terminal else None,
+      terminal=build("terminal", terminal, stacked(self._terminal, 1)) if self._terminal else None,
       stage_params=tuple(self.stage_params),
     )
 
@@ -310,9 +319,9 @@ class DiscreteOCP:
         cost = cost + functions.terminal_cost(*last)
       ineq = []
       if functions.path is not None:
-        ineq.append(constraint(functions.path, self.path, vmap(functions.path, N)(*mapped).vec(), N))
+        ineq.append(constraint(functions.path, self._path, vmap(functions.path, N)(*mapped).vec(), N))
       if functions.terminal is not None:
-        ineq.append(constraint(functions.terminal, self.terminal, functions.terminal(*last), 1))
+        ineq.append(constraint(functions.terminal, self._terminal, functions.terminal(*last), 1))
       return ProblemSpec(
         minimize=cost,
         eq=(functions.initial(flat[:nxa], initial_state), vmap(functions.dynamics, N)(*mapped).vec() - next_states),
