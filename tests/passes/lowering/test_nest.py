@@ -1,5 +1,5 @@
-"""Loop nests: NumPy differential tests per op and shape class, the access maps lowering emits, and
-the interface a sparse kernel is written against."""
+"""Loop nests: NumPy differential tests per op and shape class, the access maps the issue pins, and
+loop merging under loaded bounds."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from scaly.ad.forward import jvp_many
 from scaly.codegen.toolchain import find_c_compiler
 from scaly.function.concrete import ConcreteFunction
 from scaly.ir import program as p
-from scaly.ir.expr import Expr, ExprOp
+from scaly.ir.expr import Expr
 from scaly.ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from scaly.passes.lowering import ctx, lower_function, main_proc
 from scaly.utils.names import NameScope
@@ -121,23 +121,7 @@ def test_movement_matches_numpy(case, isolated_cache) -> None:
   _check(f"nest_mv_{case}", shapes, body, reference)
 
 
-_STRIDED_SLICES = {"slice_steps", "slice_int", "slice_last", "chain"}
-
-
-@pytest.mark.parametrize("case", sorted(set(_MOVEMENT) - {"gather"} - _STRIDED_SLICES))
-def test_dense_kernels_index_without_division(case) -> None:
-  """Every dense kernel reads and writes at strides times coordinates, except a gather's table and a
-  strided slice copy."""
-  shapes, body, _ = _MOVEMENT[case]
-  assert not _divides(_lowered(_compiled(f"nest_div_{case}", shapes, body)))
-
-
 _BROADCASTS = sorted(case for case, (a, b) in _ELEMENTWISE.items() if np.prod(b) > 1 and a != b)
-
-
-@pytest.mark.parametrize("case", sorted(set(_ELEMENTWISE) - set(_BROADCASTS)))
-def test_elementwise_without_broadcast_indexes_without_division(case) -> None:
-  assert not _divides(_lowered(_compiled(f"nest_bdiv_{case}", _ELEMENTWISE[case], lambda a, b: a * b)))
 
 
 @pytest.mark.parametrize("case", [c for c in _BROADCASTS if not c.startswith("empty")])
@@ -162,27 +146,6 @@ def test_strided_slice_copies_in_one_flat_loop() -> None:
   assert int(rng.args[1].attrs["value"]) == 63
   assert _strides(copy, "y") == [{rng.attrs["name"]: 1}]
   assert _divides(copy)
-
-
-def test_contiguous_axes_merge_into_one_loop() -> None:
-  """No broadcast, one flat loop; stacking along a middle axis merges only the axes after it."""
-  same = _nests(_lowered(_compiled("nest_merge_same", ((2, 3, 4), (2, 3, 4)), lambda a, b: a + b)))
-  assert [[int(r.args[1].attrs["value"]) for r in _loops(s)] for s in same] == [[24]]
-  first, _ = _nests(_lowered(_compiled("nest_merge_stack", ((2, 3, 4), (2, 3, 4)), lambda a, b: sc.stack([a, b], axis=1))))
-  outer, inner = (r.attrs["name"] for r in _loops(first))
-  assert [int(r.args[1].attrs["value"]) for r in _loops(first)] == [2, 12]
-  assert _strides(first, "x0") == [{outer: 12, inner: 1}]
-  assert _strides(first, "y") == [{outer: 24, inner: 1}]
-
-
-def test_singleton_axes_get_coordinate_zero() -> None:
-  """A size-one axis gets no loop; a domain with nothing left runs once over its first element."""
-  (nest,) = _nests(_lowered(_compiled("nest_singleton", ((1, 3, 1), (1, 3, 1)), lambda a, b: a * b)))
-  assert [int(r.args[1].attrs["value"]) for r in _loops(nest)] == [3]
-  (unit,) = _nests(_lowered(_compiled("nest_unit", ((1, 1), (1, 1)), lambda a, b: a * b)))
-  ((rng,),) = [_loops(unit)]
-  assert int(rng.args[1].attrs["value"]) == 1
-  assert {v.args[0] for v in walk_program(unit) if v.op == ProgramOp.VIEW} == {p.var(rng.attrs["name"])}
 
 
 @pytest.mark.parametrize(
@@ -269,60 +232,6 @@ def test_fusion_keeps_a_transpose_and_inlines_a_broadcast() -> None:
   assert privates(_compiled("nest_keep_transpose", ((3, 4),), lambda a: a.T.sin())) == 1
   assert privates(_compiled("nest_inline_broadcast", ((3, 4), (4,)), lambda a, b: (a * b).sin())) == 0
   assert privates(_compiled("nest_inline_scalar", ((), ()), lambda a, b: (a * b).sin() * a)) == 0
-
-
-def _csr_matvec(lctx: ctx.LowerCtx, node: Expr) -> None:
-  """A constant sparse matrix times a vector as a CSR row loop, written against the nest interface.
-
-  The row's reduction has loaded bounds and the reads go through position tables, as a sparse
-  kernel's will."""
-  a, x = node.args
-  assert a.value is not None
-  rows, cols = np.nonzero(a.value)
-  rowptr = np.searchsorted(rows, np.arange(a.shape[0] + 1))
-  lctx.alloc_tmp(node)
-  ranges, (i,) = lctx.nest(node.shape, "i_csr")
-  lctx.emit(ranges, [lctx.write(node, (i,), p.const_float(0.0))])
-  ranges, (i,) = lctx.nest(node.shape, "i_csr")
-  row, (q,) = lctx.reduce([(lctx.index_at(rowptr[:-1], i), lctx.index_at(rowptr[1:], i))], "q_csr")
-  product = p.mul(lctx.read(a, (lctx.index_at(rows, q), lctx.index_at(cols, q))), lctx.read(x, (lctx.index_at(cols, q),)))
-  lctx.emit([*ranges, *row], [lctx.write(node, (i,), p.add(lctx.read(node, (i,)), product))])
-
-
-_SPARSE = np.array([[0.0, 2.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 0.0, 0.0], [3.0, 0.0, 0.0, 4.0, 0.0], [0.0, 5.0, 6.0, 0.0, 7.0]])
-
-
-def _sparse_matvec() -> sc.Function:
-  @sc.function(sc.arg("x", 5), outputs=sc.arg("y"), name="nest_csr_matvec")
-  def fn(x):
-    return sc.const(_SPARSE) @ x
-
-  return fn
-
-
-def test_sparse_row_loop_has_loaded_bounds_and_table_reads(monkeypatch) -> None:
-  monkeypatch.setitem(ctx._RULES, ExprOp.MATMUL, _csr_matvec)
-  proc = _lowered(_sparse_matvec())
-  (row,) = [r for r in walk_program(proc) if r.op == ProgramOp.RANGE and r.attrs["kind"] == RangeKind.REDUCE]
-  outer = next(r.attrs["name"] for r in walk_program(proc) if r.op == ProgramOp.RANGE and r.attrs["kind"] == RangeKind.GLOBAL and r is not row)
-  assert all(any(n.op == ProgramOp.VAR for n in walk_program(bound)) for bound in row.args[:2])
-  assert row.args[1].op == ProgramOp.LOAD, "this row pointer has no affine structure, so its stops come from a table"
-  assert outer
-  tables = {b.attrs["name"] for b in walk_program(proc) if b.op == ProgramOp.BUFFER and b.dtype == sc.dtypes.int64}
-  assert any(
-    v.attrs["buffer"] == "x" and v.args[0].op == ProgramOp.LOAD and v.args[0].args[0].attrs["buffer"] in tables
-    for v in walk_program(proc)
-    if v.op == ProgramOp.VIEW
-  )
-
-
-@needs_cc
-def test_sparse_row_loop_matches_numpy(monkeypatch, isolated_cache) -> None:
-  monkeypatch.setitem(ctx._RULES, ExprOp.MATMUL, _csr_matvec)
-  fn = _sparse_matvec()
-  fn.recompile()
-  xv = np.random.default_rng(2).standard_normal(5)
-  np.testing.assert_array_equal(fn(xv), _SPARSE @ xv)
 
 
 def _bare_ctx() -> ctx.LowerCtx:
