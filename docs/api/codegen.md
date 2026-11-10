@@ -37,7 +37,7 @@ These keyword options apply to `render_c_module`, `render_c_source`, `render_c_a
 | `dialect` | `"gnu"` | GNU vector extensions. `"c"` emits scalar operations inside lane loops using C99 syntax. |
 | `vector_libm` | `"none"` | Per-lane scalar math calls. `"glibc"` selects supported x86-64 libmvec functions and requires `dialect="gnu"`. |
 | `reciprocal` | `False` | Permits invariant `x / y` to become `x * (1 / y)`. This can change rounding, overflow, and underflow. |
-| `frame_budget` | `65536` | Estimated procedure frame budget in bytes. Zero moves all temporary buffers to caller-provided workspace. Scalar spills still use the stack. |
+| `frame_budget` | `65536` | Estimated stack bytes for each generated C function. Zero moves all float64 temporary arrays to caller-provided workspace. Scalars still use the stack. |
 
 The `lang` option selects the header language. It does not select the kernel dialect.
 `module.recipe.cpu_flags` contains the target compiler flags. `module.link_flags` includes
@@ -81,8 +81,8 @@ AArch64. The x86-64 levels use `-march=x86-64-v3` and `-march=x86-64-v4`. `apple
 `-mcpu=apple-m4`. `native` describes a build for the current host. Distributable binaries need a
 CPU baseline supported by every destination machine.
 
-The command-line equivalents are `--cpu`, `--lanes`, `--dialect`, `--vector-libm`, and
-`--reciprocal`, plus `--frame-budget` in bytes:
+The command-line equivalents are `--cpu`, `--lanes`, `--dialect`, `--vector-libm`,
+`--reciprocal`, and `--frame-budget`:
 
 ```bash
 uv run scaly_codegen my_model:kernel -o generated --cpu generic --lanes auto --vector-libm none

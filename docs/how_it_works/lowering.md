@@ -434,7 +434,7 @@ double s2[1];
 ```
 
 For that budget, the header reports `#define f_SZ_W 1600`, where 3200 would be needed without
-sharing, and `f_FRAME_BYTES` estimates the stack frame in bytes. The estimate
+sharing. It also reports `#define f_FRAME_BYTES 4112`, the estimated stack frame in bytes. The estimate
 counts local buffers, repeated inlined callees and a fixed scalar-spill allowance.
 A procedure's workspace requirement is its own slots plus the largest
 requirement among the procedures it calls, which reuse the space after the

@@ -636,15 +636,16 @@ For an export with non-default options, use that module's `workspace_size` or
 its header's `<name>_SZ_W` constant. In particular, CasADi sparse-output
 conversion can require additional workspace.
 
-`frame_budget` sets the estimated procedure frame budget in bytes, with a default
-of 65,536. The compiler counts local buffers, including each inlined callee's
-buffers, and reserves 4,096 bytes for scalar spills. It moves the largest buffers
-to `w` until the estimate fits. `frame_budget=0`, or `--frame-budget 0` on the
-command line, moves all temporary buffers to `w`. Scalar spills still use the
-stack, so a budget below 4,096 bytes cannot remove that allowance.
+`frame_budget` limits the stack each generated C function is estimated to need,
+in bytes, and defaults to 65,536. Scaly adds up its temporary arrays, counting
+a called Function's arrays once for each call that can be inlined, plus 4,096
+bytes for scalars the C compiler keeps on the stack. While the total is over
+the budget, Scaly moves the largest float64 array into `w`, so a smaller budget
+raises `<name>_SZ_W`. `frame_budget=0`, or `--frame-budget 0`, moves every float64
+temporary array. The 4,096 bytes remain, so a budget below that behaves like zero.
 
-`module.frame_bytes` and the header's `<name>_FRAME_BYTES` report the largest
-estimated procedure frame. This excludes external solver implementations and
-the combined stack of calls that remain separate. The estimate depends on the
-generated program. Check the compiled frame with GCC or Clang's
-`-Wframe-larger-than=<budget> -Werror` for the application's compiler flags.
+`module.frame_bytes` and `<name>_FRAME_BYTES` give the largest estimate over the
+generated C functions. A function that is not inlined adds its own frame on top
+of its caller's, and that sum is not included, nor is a solver library's stack.
+Check the compiled frames with `-Wframe-larger-than=<budget> -Werror` under the
+application's own compiler flags.

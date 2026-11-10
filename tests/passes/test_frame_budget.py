@@ -11,7 +11,7 @@ from scaly.passes.program.pack_workspace import pack_workspace
 def _procedure(name, sizes, calls=(), *, noinline=False, dtype=dtypes.float64):
   out = p.buffer("out", dtype, (1,))
   buffers = [p.buffer(f"t{i}", dtype, (size,), address_space="private") for i, size in enumerate(sizes)]
-  zero = p.const_float(0) if dtype.is_floating else ProgramNode(ProgramOp.CONST_INT, (), {"value": 0}, dtype)
+  zero = ProgramNode(ProgramOp.CONST_FLOAT if dtype.is_floating else ProgramOp.CONST_INT, (), {"value": 0.0 if dtype.is_floating else 0}, dtype)
   body = [*buffers, *(p.store(p.view(b, [p.const_int(0)]), zero) for b in buffers)]
   body += [p.store(p.view(out, [p.const_int(0)]), p.load(p.view(b, [p.const_int(0)]))) for b in buffers]
   body += [p.call(callee, [out]) for callee in calls]
@@ -61,16 +61,16 @@ def test_repeated_calls_inside_loop_are_counted_separately():
   assert packed.args[-1].attrs["frame_bytes"] == 4096
 
 
-@pytest.mark.parametrize("dtype", [dtypes.float64, dtypes.int64, dtypes.int32, dtypes.bool_])
-def test_zero_budget_spills_all_buffers(dtype):
-  proc = pack_workspace(p.program([_procedure("f", [900, 1], dtype=dtype)]), frame_budget=0).args[0]
+def test_zero_budget_spills_all_float64_buffers():
+  proc = pack_workspace(p.program([_procedure("f", [900, 1])]), frame_budget=0).args[0]
   assert proc.attrs["sz_w"] == 901
   assert all("workspace_offset" in n.attrs for n in _slots(proc))
   assert proc.attrs["frame_bytes"] == 4096
 
 
-@pytest.mark.parametrize("size", [0, 1])
-def test_empty_buffers_reserve_one_element(size):
-  proc = _procedure("f", [size])
-  packed = pack_workspace(p.program([proc])).args[0]
-  assert packed.attrs["frame_bytes"] == 4096 + 8
+@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int64, dtypes.int32, dtypes.bool_])
+def test_non_float64_buffers_stay_local_and_count_toward_frame(dtype):
+  proc = pack_workspace(p.program([_procedure("f", [900, 1], dtype=dtype)]), frame_budget=0).args[0]
+  assert proc.attrs["sz_w"] == 0
+  assert all("workspace_offset" not in n.attrs for n in _slots(proc))
+  assert proc.attrs["frame_bytes"] == 4096 + 901 * 8

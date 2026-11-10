@@ -18,7 +18,7 @@ from .fuse_elementwise import fuse_elementwise
 from .fuse_ranges import fuse_ranges
 from .hoist_invariant import hoist_invariant
 from .hoist_reciprocals import hoist_reciprocals
-from .pack_workspace import DEFAULT_FRAME_BUDGET, pack_workspace
+from .pack_workspace import pack_workspace
 from .prepare_scalar import prepare_scalar_expressions
 from .scalarize import scalarize_program
 from .unroll_unit_loops import unroll_unit_loops
@@ -53,7 +53,7 @@ def optimize_program(
   *,
   reciprocal: bool = False,
   lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1,
-  frame_budget: int = DEFAULT_FRAME_BUDGET,
+  frame_budget: int = 65536,
 ) -> ProgramNode:
   """Run the Program IR optimization pipeline in its declared order."""
   verify_program(prog)
@@ -70,7 +70,9 @@ def optimize_program(
         prog = widen_ranges(prog, lanes=lanes)
         if observe is not None:
           observe("pass:widen_ranges", prog)
-    prog = pack_workspace(prog, frame_budget=frame_budget) if name == "pack_workspace" else fn(prog)
+      prog = pack_workspace(prog, frame_budget=frame_budget)
+    else:
+      prog = fn(prog)
     if observe is not None:
       observe(f"pass:{name}", prog)
   return prog

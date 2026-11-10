@@ -7,7 +7,7 @@ from collections import Counter
 
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
-from ...ir.types import DType, DeviceSpec
+from ...ir.types import DType, DeviceSpec, dtypes
 from ._common import (
   _alias_sources,
   buffer_refs,
@@ -19,7 +19,6 @@ from ._common import (
   rebuild_program,
 )
 
-DEFAULT_FRAME_BUDGET = 65536
 SCALAR_SPILL_ALLOWANCE = 4096
 
 
@@ -94,7 +93,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   counter = 0
   for buf in order:
     dt = packable[buf].dtype
-    size = max(1, _size_of(packable[buf].attrs["shape"]))
+    size = _size_of(packable[buf].attrs["shape"])
     chosen: str | None = None
     for slot, fa in free_at.items():
       # A one-element buffer must not pin a spilled matrix slot until its consumer runs.
@@ -115,10 +114,11 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   return plan
 
 
-def pack_workspace(prog: ProgramNode, *, frame_budget: int = DEFAULT_FRAME_BUDGET) -> ProgramNode:
+def pack_workspace(prog: ProgramNode, *, frame_budget: int = 65536) -> ProgramNode:
   """Pack private storage and spill the largest slots until each estimated frame fits.
 
-  Zero spills every slot. Scalar spills still need stack space, covered by a fixed allowance.
+  Only float64 slots can use the double workspace. Other locals still count toward the estimate.
+  Zero spills every eligible slot. Scalar spills still need stack space, covered by a fixed allowance.
   """
   procs = prog.args
   plans = {pr.attrs["name"]: _plan_pack(pr) for pr in procs}
@@ -145,7 +145,7 @@ def pack_workspace(prog: ProgramNode, *, frame_budget: int = DEFAULT_FRAME_BUDGE
       if frame_budget and frame <= frame_budget:
         break
       plan = plans[owner]
-      if slot not in plan.spill_offset:
+      if plan.slot_dtype[slot] == dtypes.float64 and slot not in plan.spill_offset:
         plan.spill_offset[slot] = plan.own_spill
         plan.own_spill += plan.slot_size[slot]
         frame -= slots(name)[owner, slot] * plan.slot_size[slot] * 8
