@@ -451,7 +451,7 @@ def test_multi_buffer_write_keeps_previous_call_input_dependencies(names) -> Non
   producer, a, b, result = (buffer(name, dtypes.float64, (3,), address_space="private") for name in ("producer", *names, "result"))
   at = lambda buf: view(buf, [const_int(0)])
   copy = lambda dst, src: store(at(dst), load(at(src)))
-  call = ProgramNode(ProgramOp.CALL, (b, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()})
+  call = ProgramNode(ProgramOp.CALL, (b, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()}, dtype=dtypes.float64)
   body = [
     producer,
     a,
