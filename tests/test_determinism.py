@@ -1,5 +1,7 @@
 """Generated C stays independent of hash seeds and process-global counters.
 
+Subprocesses compare generated source and headers across different ``PYTHONHASHSEED`` values.
+
 A module-level counter makes a name depend on what the process built before, so the same
 Function would generate different C, and a different cache key, depending on what ran first.
 The check reads the source with ``ast`` and refuses an ``itertools.count`` object and an integer
