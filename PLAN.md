@@ -40,3 +40,7 @@ Evidence so far:
   result. A fresh final run is detached with nohup/setsid. Poll
   /tmp/scaly-163-pre-merge.exit for its exit status and /tmp/scaly-163-pre-merge.log for evidence.
   Check its process before restarting. Do not start another suite alongside this run.
+- The detached 16-worker suite lost a worker during severe machine memory pressure, with RAM
+  nearly full and swap exhausted. It was stopped after that failure; its log is preserved in
+  /tmp/scaly-163-pre-merge-16-workers.log. The replacement hook is detached with
+  PYTEST_XDIST_AUTO_NUM_WORKERS=2, using the same final log and exit-file paths above.
