@@ -192,11 +192,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   private = {stmt.attrs["name"] for stmt in body if stmt.op == ProgramOp.BUFFER and stmt.attrs.get("address_space") == "private"}
   while True:
     consumed = set().union(*(refs[i].reads for i in region)) & private
-    upstream = {
-      i
-      for i, ref in enumerate(refs)
-      if ref.writes & consumed and _loops(body[i]) is not None and (ref.writes & produced or not _has_expensive(body[i]))
-    }
+    upstream = {i for i, ref in enumerate(refs) if ref.writes & consumed and _loops(body[i]) is not None and not _has_expensive(body[i])}
     consumers = {i for i, ref in enumerate(refs) if ref.reads & produced and body[i].op != ProgramOp.BUFFER}
     extra = (consumers | upstream) - region
     if not extra:

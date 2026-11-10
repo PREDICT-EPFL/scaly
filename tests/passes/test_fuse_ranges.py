@@ -233,6 +233,23 @@ def test_independent_expensive_producer_stays_outside_mapped_range(producer_leng
   assert not any(n.op == ProgramOp.SIN for n in walk_program(fused))
 
 
+def test_expensive_initializer_of_shared_assembly_keeps_original_schedule():
+  prog = _raw_program()
+  callee, root = prog.args
+  x, y, tmp, mapped, _copied = root.args
+  assembly = p.buffer("assembly", dtypes.float64, (6,), address_space="private")
+  at_zero = p.view(assembly, [p.const_int(0)])
+  computed = p.for_(p.range_("j", 0, 1), [p.store(at_zero, ProgramNode(ProgramOp.SIN, (p.load(p.view(x, [p.const_int(0)])),), dtype=dtypes.float64))])
+  i = p.var("i")
+  target = p.view(assembly, [p.add(i, p.const_int(1))])
+  assembled = p.for_(p.range_("i", 0, 5), [p.store(target, p.load(p.view(tmp, [i])))])
+  copied = p.for_(p.range_("i", 0, 5), [p.store(p.view(y, [i]), p.add(p.load(target), p.load(at_zero)))])
+  body = (x, y, tmp, assembly, computed, mapped, assembled, copied)
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  verify_program(original)
+  assert fuse_ranges(original) is original
+
+
 def test_discarded_callee_outputs_do_not_materialize_reused_scratch():
   x = sc.sym("x", 2)
   stage = _function("range_multiple_outputs", [x], [x.sin(), x.exp()])

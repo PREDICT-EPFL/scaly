@@ -8,10 +8,10 @@ Cell simulation belongs to #183, lowering-time fusion to #69.
 - [x] Read the task, run plan, compiler roadmap and repository conventions.
 - [x] Capture chain M=3 and M=5 operation counts, source size and C compile time.
 - [x] Add a numerical and structural regression that fails under the old threshold.
-- [x] Select producers by their relationship to buffers already in the region.
+- [x] Select cheap upstream assembly producers without an iteration threshold.
 - [x] Confirm independent upstream work stays outside, and perturb the new gate.
 - [x] Regenerate C snapshots and the test collection baseline.
-- [ ] Run the shared-lock detached pre-merge checks on the intended push state.
+- [ ] Run the detached pre-merge checks through the shared suite runner.
 - [ ] Open a draft PR, obtain Opus high and independent sol correctness reviews,
       address findings and confirm any fixes with a focused delta check.
 - [ ] Remove this plan, publish the evidence and verdict, mark ready, and queue.
@@ -26,6 +26,15 @@ remain accessible through the REST API.
 Evidence is in `/tmp/scaly-223-evidence/` until it is copied into the PR. The
 14 regenerated snapshots are unchanged. Focused fusion tests passed 21/21;
 515 compiler, integration, snapshot and import checks passed. Ruff and ty passed.
-The first detached lock wait ended with exit 143; its required retry is queued.
+The first full pre-merge passed with 2,605 tests and 52 skips plus smoke and docs.
+The current fix needs its final full check through `~/.scaly-suite/run`.
 Both original and changed generated chain kernels pass the dense lower-triangle
 reference, including omitted-zero positions, with errors below 5e-16.
+
+The independent sol review found that the already-produced-buffer exception
+could repeat an expensive initializer in every mapped stage. Removed that
+exception and added a verified shared-assembly regression, red before the fix
+and green afterward. All 22 fusion tests pass; refreshed chain M=3/M=5 source
+hashes and counts match the measured after-state, and all snapshots are unchanged.
+Opus review is still running against the original review commit. After both
+reviews, obtain focused delta checks of this fix and address any remaining points.
