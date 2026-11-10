@@ -22,7 +22,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, check_stored_pattern, print_pieces, topo
+from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, _type_text, check_stored_pattern, print_pieces, topo
 from .spec import Rule, Spec, VerifyError
 from .types import CanonicalPattern, DType, broadcast_shape, dtypes
 
@@ -259,12 +259,12 @@ def _call_attrs(expr: Expr) -> str | None:
     if actual.shape != formal.shape:
       return f"CALL arg {i} shape {actual.shape} != callee formal shape {formal.shape}"
     if actual.type.pattern is not formal.type.pattern or actual.type.dtype != formal.type.dtype:
-      return f"CALL arg {i} must have the exact callee pattern and dtype"
+      return f"CALL arg {i} must have the exact callee pattern and dtype: {_type_text(actual.type)} != {_type_text(formal.type)}"
   expected_out = callee.results[int(out_idx)]
   if expected_out.shape != expr.shape:
     return f"CALL output shape {expr.shape} != callee output shape {expected_out.shape}"
   if expected_out.type.pattern is not expr.type.pattern or expected_out.type.dtype != expr.type.dtype:
-    return "CALL output must preserve the callee pattern and dtype"
+    return f"CALL output must preserve the callee pattern and dtype: {_type_text(expr.type)} != {_type_text(expected_out.type)}"
   return None
 
 

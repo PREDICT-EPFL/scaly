@@ -7,9 +7,14 @@ without changing patterns, dense text, generated C, or public interfaces.
 
 - [x] Read the issue, parent, tracker, compiler roadmap, architecture and contribution rules.
 - [x] Confirm a clean linked worktree, mark #302 In progress, inspect overlapping work.
-- [ ] Add failing checks for sparse listings, pattern-only diagnostics and exact dense text.
-- [ ] Add a compact suffix using stored-entry count and the existing digest, shared across printers.
-- [ ] Run focused tests, perturb the formatter to prove the tests fail, then run pre-merge checks.
+- [x] Add failing checks for sparse listings, pattern-only diagnostics and exact dense text.
+      Nine sparse checks failed before the fix; the dense check passed unchanged.
+- [x] Add a compact suffix using stored-entry count and 12 hex digits of the existing digest,
+      shared across printers. No pattern or type semantics change.
+- [x] Run focused tests and perturb the formatter to prove the tests fail.
+      137 tests passed. Erasing the suffix caused the nine sparse checks to fail again.
+- [ ] Run pre-merge checks. The first unbounded run was killed during the machine's memory
+      exhaustion and has no full-suite result. Use the run-wide lock and eight workers below.
 - [ ] Once #289 merges, fetch and rebase onto origin/main above the supplied sparse-stack base.
       Re-run the checks and confirm C snapshots remain unchanged.
 - [ ] Commit, push and open a draft PR against main. Remove this temporary plan before ready.
@@ -21,3 +26,9 @@ are sequential. Sparse names stay out of published guides and API entries until 
 
 The frozen devrush assembly tests were inspected. They exercise the older dense-only listing and
 provide no additional stored-pattern cases to port.
+
+All full-suite runs on la015 must use `flock ~/.scaly-suite.lock` with
+`PYTEST_XDIST_AUTO_NUM_WORKERS=8`. Run pre-merge detached with `nohup setsid`, store its log and
+exit file under the task's temporary directory, and poll the exit file. Focused tests use at most
+two workers. Run the full hook only on a state intended for push. Retry a killed worker or timeout
+once before treating it as a real failure.

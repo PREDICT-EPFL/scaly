@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from .expr import Expr, ExprOp, callees_of, topo
+from .expr import Expr, ExprOp, _pattern_text, callees_of, topo
 from .program import BINARY_FN_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
 from .types import TensorType
 
@@ -29,7 +29,7 @@ def type_asm(t: TensorType) -> str:
   shape = "x".join(str(d) for d in t.shape)
   dims = f"{shape}x" if shape else ""
   diff = " diff" if t.diff else ""
-  return f"tensor<{dims}{t.dtype.name}{diff}>"
+  return f"tensor<{dims}{t.dtype.name}{diff}{_pattern_text(t.pattern)}>"
 
 
 def _memref_asm(n: ProgramNode) -> str:
