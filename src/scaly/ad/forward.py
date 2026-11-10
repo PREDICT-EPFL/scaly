@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, pack, scatter, stack, to_dense, values
+from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
@@ -119,6 +120,12 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           tangent = simplify_cse_fixpoint(tangent)
       if tangent is not None and tangent.shape != (nseed, *expr.shape):
         tangent = tangent * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype)
+      if tangent is not None and tangent.type.pattern is not expr.type.pattern:
+        if expr.type.pattern is None:
+          tangent = to_dense(tangent)
+        else:
+          type_ = TensorType((nseed, *expr.shape), expr.type.dtype, pattern=expr.type.pattern)
+          tangent = pack(gather(tangent, stored_indices(type_)).reshape(type_.storage_shape), expr.type.pattern, shape=type_.shape)
     tangents[expr.id] = None if tangent is not None and _prunable_support(tangent) == frozenset() else tangent
   return tuple(tangents[out.id] if tangents[out.id] is not None or not out.type.dtype.is_floating else _zero_tangent(out, nseed) for out in outputs)
 
@@ -136,6 +143,8 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     ones = _uniform(1, (width,), dtype=expr.type.dtype)
     return values(d[0]).reshape((nseed, width)) @ ones
   if op == ExprOp.RESHAPE:
+    if args[0].type.pattern is not None:
+      return d[0].reshape((nseed, *expr.shape))
     return _reshape_tangent(d[0], expr, nseed)
   if op == ExprOp.TRANSPOSE:
     return d[0].transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
@@ -143,10 +152,14 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     return d[0][(slice(None), *expr.attrs["index"])]
   if op == ExprOp.GATHER:
     indices = expr.attrs["indices"].reshape(-1)
+    if args[0].type.pattern is not None:
+      return stack(gather(d[0][i], expr.attrs["indices"]) for i in range(nseed))
     full = (np.arange(nseed, dtype=np.int64)[:, None] * args[0].size + indices[None, :]).reshape(-1)
     return gather(d[0], full).reshape((nseed, *expr.shape))
   if op == ExprOp.SCATTER:
     indices = expr.attrs["indices"].reshape(-1)
+    if args[0].type.pattern is not None:
+      return stack(scatter(d[0][i], indices, expr.shape) for i in range(nseed))
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
     return scatter(d[0].reshape((nseed * args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
   if op == ExprOp.STACK:
@@ -155,9 +168,18 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     return concat(d, axis=expr.attrs.get("axis", 0) + 1)
   if op == ExprOp.MATMUL:
     if any(arg.type.pattern is not None for arg in args):
-      dense_expr = to_dense(args[0]) @ to_dense(args[1])
-      dense_tangent = _pushforward_rule(dense_expr, [to_dense(t) for t in d], nseed, callee)
-      return from_dense(dense_tangent, expr.type.pattern) if expr.type.pattern is not None else dense_tangent
+      terms = []
+      if not _is_zero_const(d[0]):
+        terms.append(
+          stack(d[0][i] @ args[1] for i in range(nseed)) if args[0].type.pattern is not None else _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
+        )
+      if not _is_zero_const(d[1]):
+        terms.append(
+          stack(args[0] @ d[1][i] for i in range(nseed))
+          if args[1].type.pattern is not None
+          else _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
+        )
+      return terms[0] if len(terms) == 1 else terms[0] + terms[1]
     if args[0] is args[1] and len(args[0].shape) == 1:
       return 2 * (d[0] @ args[0])
     if _is_zero_const(d[0]):

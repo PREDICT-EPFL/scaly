@@ -27,14 +27,14 @@ Use `gh stack`. Existing overlapping work is listed in the dispatch brief.
 
 ## Stored-coordinate derivatives and workload gate, second pull request
 
-- [ ] Add failing tests for sparse tangent patterns and shared multiseeds,
+- [x] Add failing tests for sparse tangent patterns and shared multiseeds,
   sampled mixed-product adjoints, and banded sparse-leaf gradient/Hessian storage.
-- [ ] Remove mixed-product AD densification. Keep the sparse edits local in
+- [x] Remove mixed-product AD densification. Keep the sparse edits local in
   forward/reverse/sparsity; evaluate elementwise partials on stored coordinates.
-- [ ] Port the Maros-Meszaros problems and independently recomputed references
+- [x] Port the Maros-Meszaros problems and independently recomputed references
   from devrush, retaining source and license. Gate KKT assembly and products,
   Jacobian patterns and absence of full matrix buffers.
-- [ ] Exercise finite differences, every kernel and every region form. Show each
+- [x] Exercise finite differences, every kernel and every region form. Show each
   new gate failing under a temporary perturbation.
 - [ ] Run focused checks then the detached full pre-merge hook. Open the final
   PR, cross-review, confirm fixes, publish the verdict line and queue it.
@@ -51,17 +51,20 @@ Forward PR #349 is draft, based on #315. Its remote head predates the local revi
 Local forward commits contain the normalization fixes.
 The final detached pre-merge hook passed with 3,031 tests and 55 skips, smoke and docs.
 The sol correctness review found three normalization bugs, all fixed with seven
-regressions that fail on the original head. The low-effort delta check is running.
+regressions that fail on the original head. The low-effort delta check approved all three findings.
 The main Opus review failed on its provider rate limit and remains missing; do not
-queue #349 or claim its main review passed. Retry the same reviewer after the
-provider recovers, with a new delegate task. Keep its findings with the one allowed
+queue #349 or claim its main review passed. Two Opus attempts failed on the provider rate limit. Retry the same reviewer after
+the provider recovers, with a new delegate task. Keep its findings with the one allowed
 combined review-fix push. No review-fix push has happened.
 
 The coordinator moved max/min stored reductions to #66, because REDUCE with kind
 arrives there. Roadmap edits and the note are in the local forward commits. The PR
 description and #66 comment are updated. No other scope change.
 
-AD draft tests and the 48 Maros-Meszaros problem/reference fixtures are prepared
-in /tmp/scaly-46/. The references were computed from devrush through a git-backed
-import loader, not copied code. Initial AD tests fail for the banded matrix buffers
-and sparse gather/scatter tangents. All 48 draft KKT tests pass on forward kernels.
+The AD implementation and 48 problem/reference fixtures are in the checkout.
+The references were computed from devrush through a git-backed import loader,
+not copied code. All 48 KKT cases and 24 AD cases pass. A focused compiler run
+passed 1,365 tests, and the perturbation evidence is in the internal AD note.
+The AD full pre-merge run is next. SELECT remains part of this PR and #46: it
+needs #320 to land, then integration in the compact map and stored partials.
+The current base has no SELECT operation. Do not close #46 before that is tested.

@@ -6,8 +6,9 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, from_dense, gather, pack, scatter, topo, to_dense, values, zeros_like
+from ..ir.expr import Expr, ExprOp, _uniform, gather, pack, scatter, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
+from ..ir.types import stored_indices
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, accumulate, carry_mask, cotangent
 from .sparsity import _check_wrt, _depends_on, _prunable_support
@@ -39,7 +40,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     if out.shape != cot.shape:
       raise ValueError(f"cotangent for output shape {out.shape} has shape {cot.shape}")
     if out.type.pattern is not None and cot.type.pattern is not out.type.pattern:
-      cot = from_dense(to_dense(cot), out.type.pattern)
+      cot = _on_pattern(cot, out)
     adjoints[out.id] = cot if out.id not in adjoints else adjoints[out.id] + cot
 
   for expr in reversed(nodes):
@@ -52,14 +53,18 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue
     active = (
-      tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg)) if expr.op in {ExprOp.CALL, *ELEMENTWISE} else None
+      tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg))
+      if expr.op in {ExprOp.CALL, *ELEMENTWISE} or (expr.op == ExprOp.MATMUL and any(arg.type.pattern is not None for arg in expr.args))
+      else None
     )
     transpose = lambda c: _local_vjp(expr, c, active)  # noqa: E731
     arg_cots = carry_mask(cot, transpose) if expr.op in _SELECTIONS else transpose(cot)
     for arg, arg_cot in zip(expr.args, arg_cots, strict=True):
       if arg_cot is not None and arg.id in expr_ids:
         if arg.type.pattern is not None and arg_cot.type.pattern is not arg.type.pattern:
-          arg_cot = from_dense(to_dense(arg_cot), arg.type.pattern)
+          arg_cot = _on_pattern(arg_cot, arg)
+        elif arg.type.pattern is None and arg_cot.type.pattern is not None:
+          arg_cot = to_dense(arg_cot)
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
@@ -101,14 +106,20 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))
     return (cot.transpose(inv),)
   if expr.op == ExprOp.SLICE:
+    if args[0].type.pattern is not None:
+      return (_stored_movement_vjp(expr, cot),)
     support = _prunable_support(cot)
     entries = support_indices(support) if support is not None and len(support) < cot.size else None
     indices = slice_indices(args[0].shape, expr.attrs["index"], entries)
     selected = gather(cot, entries) if entries is not None else cot
     return (scatter(selected, indices, args[0].shape),)
   if expr.op == ExprOp.GATHER:
+    if args[0].type.pattern is not None:
+      return (_stored_movement_vjp(expr, cot),)
     return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
   if expr.op == ExprOp.SCATTER:
+    if args[0].type.pattern is not None:
+      return (_stored_movement_vjp(expr, cot),)
     return (gather(cot, expr.attrs["indices"]),)
   if expr.op == ExprOp.STACK:
     return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
@@ -116,7 +127,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
   if expr.op == ExprOp.MATMUL:
     if any(arg.type.pattern is not None for arg in args):
-      return _matmul_vjp(to_dense(args[0]), to_dense(args[1]), to_dense(cot))
+      return _stored_matmul_vjp(args[0], args[1], cot, active)
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == ExprOp.CALL:
     return _call_vjp(expr, cot, active, pullback=vjp)
@@ -125,6 +136,57 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
       return tuple(zeros_like(arg) for arg in args)
     raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
+
+
+def _on_pattern(value: Expr, primal: Expr) -> Expr:
+  assert primal.type.pattern is not None
+  return pack(gather(value, stored_indices(primal.type)).reshape(primal.type.storage_shape), primal.type.pattern, shape=primal.shape)
+
+
+def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
+  src = expr.args[0]
+  pattern = src.type.pattern
+  assert pattern is not None
+  entries = stored_indices(src.type)
+  if expr.op == ExprOp.SCATTER:
+    selected = gather(cot, expr.attrs["indices"].reshape(-1)[entries]).reshape(src.type.storage_shape)
+  else:
+    outputs = stored_indices(expr.type)
+    inputs = slice_indices(src.shape, expr.attrs["index"], outputs) if expr.op == ExprOp.SLICE else expr.attrs["indices"].reshape(-1)[outputs]
+    slots = np.searchsorted(entries, inputs)
+    keep = slots < len(entries)
+    keep[keep] &= entries[slots[keep]] == inputs[keep]
+    selected = scatter(gather(cot, outputs[keep]), slots[keep], src.type.storage_shape)
+  return pack(selected, pattern, shape=src.shape)
+
+
+def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | None) -> tuple[Expr | None, ...]:
+  left = x.type.pattern is not None
+  src, dense = (x, y) if left else (y, x)
+  pattern = src.type.pattern
+  assert pattern is not None
+  row, col = np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64)
+  active = (0, 1) if active is None else active
+  sparse_cot = dense_cot = None
+  if len(dense.shape) == 1:
+    outer, inner = (row, col) if left else (col, row)
+    sampled = gather(cot, outer)
+    if (0 if left else 1) in active:
+      sparse_cot = pack(sampled * gather(dense, inner), pattern)
+    if (1 if left else 0) in active:
+      dense_cot = scatter(values(src) * sampled, inner, dense.shape)
+  else:
+    width = dense.shape[1] if left else dense.shape[0]
+    axis = np.arange(width, dtype=np.int64)
+    cot_indices = row[:, None] * width + axis if left else col[:, None] + axis * src.shape[1]
+    dense_indices = col[:, None] * width + axis if left else row[:, None] + axis * dense.shape[1]
+    sampled = gather(cot, cot_indices.reshape(-1)).reshape((pattern.nnz, width))
+    if (0 if left else 1) in active:
+      coefficients = gather(dense, dense_indices.reshape(-1)).reshape((pattern.nnz, width))
+      sparse_cot = pack((sampled * coefficients) @ _uniform(1, (width,), dtype=cot.type.dtype), pattern)
+    if (1 if left else 0) in active:
+      dense_cot = scatter((values(src).reshape((pattern.nnz, 1)) * sampled).vec(), dense_indices.reshape(-1), dense.shape)
+  return (sparse_cot, dense_cot) if left else (dense_cot, sparse_cot)
 
 
 def _ones_like(expr: Expr) -> Expr:

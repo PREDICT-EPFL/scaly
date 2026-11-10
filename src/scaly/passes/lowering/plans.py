@@ -64,10 +64,10 @@ def emit_map(
 
     def statements(k: ProgramNode) -> list[ProgramNode]:
       values = tuple(
-        p.const_float(0, dtype=arg.type.dtype) if indices[0] < 0 else p.load(p.view(ctx.raw_buf_of(arg), [ctx.index_at(indices, k)]))
+        p.const_float(0, dtype=arg.type.dtype) if indices[0] < 0 else p.load(p.view(ctx.raw_buf_of(arg), [ctx.index_at(indices, k, shared=True)]))
         for arg, indices in zip(operands, region.reads, strict=True)
       )
-      dst = ctx.index_at(region.writes, k)
+      dst = ctx.index_at(region.writes, k, shared=True)
       return [p.store(p.view(out, [dst]), body(values))]
 
     if len(region.writes) <= 4:
@@ -92,7 +92,7 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
     ctx.emit(ranges, [p.store(p.view(out, [i]), p.const_float(0, dtype=node.type.dtype))])
     repeated = len(np.unique(dst)) != len(dst)
     ranges, (i,) = ctx.nest((len(source),), f"scatter_{out.attrs['name']}", kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
-    target = p.view(out, [ctx.index_at(ctx.physical_slots(node, dst), i)])
+    target = p.view(out, [ctx.index_at(ctx.physical_slots(node, dst), i, shared=True)])
     value = ctx.read_stored(src, np.arange(len(source), dtype=np.int64), i)
     ctx.emit(ranges, [p.store(target, p.add(p.load(target), value) if repeated else value)])
     return
