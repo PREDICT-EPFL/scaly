@@ -45,6 +45,24 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   return [ident(n, "_in") for n in fun.input_names], [ident(n, "_out") for n in fun.output_names]
 
 
+def wrapper_param_idents(symbol: str, inputs: list[str], outputs: list[str], *, type_prefix: str) -> tuple[list[str], list[str], str]:
+  """Allocate typed-wrapper parameters without hiding entry points, local arrays or typedefs."""
+  names = NameScope(
+    (
+      symbol,
+      f"{symbol}_with_options",
+      "arg",
+      "res",
+      "solver_options",
+      "scaly_solver_option",
+      f"{type_prefix}workspace_t",
+      *(f"{type_prefix}{ident}_t" for ident in (*inputs, *outputs)),
+    ),
+    header=True,
+  )
+  return [names.allocate(n) for n in inputs], [names.allocate(n) for n in outputs], names.allocate("workspace")
+
+
 def c_api_signature(symbol: str = "f", *, solver_options: bool = False) -> str:
   """The universal ABI entry signature, spelled for a given symbol name."""
   signature = C_API_SIGNATURE.replace(" f(", f" {symbol}(")
