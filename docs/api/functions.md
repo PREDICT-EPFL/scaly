@@ -8,8 +8,17 @@ wrappers, such as `gradient`, then create functions from that declaration. See t
 ## Declared trees
 
 ::: scaly.function.tree.Tree
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^layouts$"
 
 ::: scaly.arg
+    options:
+      show_source: false
+      show_signature: false
+      heading: "arg(name, shape=None, /)"
 
 ::: scaly.group
 
@@ -69,6 +78,8 @@ name, and an input name.
 ## Mapped calls
 
 ::: scaly.function.sugar.vmap
+    options:
+      show_source: false
 
 ::: scaly.function.sugar.broadcast
 

@@ -36,14 +36,22 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   if key not in ctx.call_invocations:
     _ensure_callee(ctx, callee)
     results = callee.results if callee in ctx.residuals else callee.outputs
-    out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in results]
-    in_bufs = [ctx.buffers[n] for n in arg_names]
+    out_bufs = [ctx.new_private(o.type.dtype, o.type.storage_shape) for o in results]
+    in_bufs = [
+      ctx.buf_of(actual) if layout is None else ctx.reorder(ctx.buf_of(actual), actual, layout.permutation)
+      for actual, layout in zip(node.args, callee.input_tree.layouts, strict=True)
+    ]
     ctx.statements.append(
       ProgramNode(
         ProgramOp.CALL, tuple(in_bufs + out_bufs), attrs={"callee": ctx.symbols[callee], "n_in": len(in_bufs), "n_out": len(out_bufs), "returns": ()}
       )
     )
-    ctx.call_invocations[key] = tuple(b.attrs["name"] for b in out_bufs)
+    layouts = (*callee.output_tree.layouts, *(None for _ in results[len(callee.outputs) :]))
+    canonical = [
+      buf if layout is None else ctx.reorder(buf, expr, layout.inverse_permutation)
+      for buf, expr, layout in zip(out_bufs, results, layouts, strict=True)
+    ]
+    ctx.call_invocations[key] = tuple(b.attrs["name"] for b in canonical)
   ctx.value_buffers[node.id] = ctx.call_invocations[key][out_idx]
 
 
@@ -61,7 +69,8 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   out = ctx.alloc_tmp(node)
   # Other callee results are written every iteration but discarded: one reused scratch each.
   results = callee.results if callee in ctx.residuals else callee.outputs
-  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(results)]
+  layouts = (*callee.output_tree.layouts, *(None for _ in results[len(callee.outputs) :]))
+  scratch = [out if i == out_idx and layouts[i] is None else ctx.new_private(o.type.dtype, o.type.storage_shape) for i, o in enumerate(results)]
   if length == 0:
     return
   loop = ctx.names.allocate(f"it_{out.attrs['name']}")
@@ -69,12 +78,15 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
   it = p.var(loop)
   in_args = []
+  before = len(ctx.statements)
   for k, outer in enumerate(node.args):
     off = p.add(p.const_int(starts[k]), p.mul(p.const_int(strides[k]), it)) if strides[k] else p.const_int(starts[k])
-    in_args.append(p.view(ctx.buf_of(outer), [off]))
+    view = p.view(ctx.buf_of(outer), [off])
+    layout = callee.input_tree.layouts[k]
+    in_args.append(view if layout is None else ctx.reorder(view, callee.inputs[k], layout.permutation))
   out_args = []
   for i, sbuf in enumerate(scratch):
-    if i == out_idx:
+    if i == out_idx and layouts[i] is None:
       off = p.mul(it, p.const_int(slice_size)) if slice_size != 1 else it
       out_args.append(p.view(out, [off]))
     else:
@@ -82,4 +94,13 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   call = ProgramNode(
     ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": ctx.symbols[callee], "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
-  ctx.statements.append(p.for_(rng, [call]))
+  prologue = ctx.statements[before:]
+  del ctx.statements[before:]
+  body = [*prologue, call]
+  if (layout := layouts[out_idx]) is not None:
+    off = p.mul(it, p.const_int(slice_size))
+    ctx.reorder(scratch[out_idx], results[out_idx], layout.inverse_permutation, p.view(out, [off]))
+    body.extend(ctx.statements[before:])
+    del ctx.statements[before:]
+  ctx.statements.extend(statement for statement in body if statement.op == ProgramOp.BUFFER)
+  ctx.statements.append(p.for_(rng, [statement for statement in body if statement.op != ProgramOp.BUFFER]))

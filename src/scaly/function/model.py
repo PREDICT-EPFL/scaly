@@ -101,7 +101,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       types = tuple(
         shape
         if isinstance(shape, TensorType)
-        else TensorType(as_shape(shape), decl.dtype, decl.diff)
+        else TensorType(as_shape(shape), decl.dtype, decl.diff, decl.pattern)
         if decl is not None
         else TensorType(as_shape(shape))
         for decl, shape in zip(self.inputs.decls, shapes, strict=True)
@@ -110,7 +110,14 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         expected = TensorType(type_.shape) if decl is None else decl
         if expected != type_:
           raise TypeError(f"{self.name}: binding type {type_} contradicts declaration {expected}")
-    return cast(ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs], self._cache(types, lambda: self._build(types)))
+    return cast(
+      ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs],
+      self._cache(self._instance_key(types), lambda: self._build(types)),
+    )
+
+  def _instance_key(self, types: tuple[TensorType, ...]) -> Any:
+    layouts = (() if self.inputs is None else self.inputs.layouts) + (() if self.outputs is None else self.outputs.layouts)
+    return (types, layouts) if any(layout is not None for layout in layouts) else types
 
   def _resolve(self, args: tuple[Any, ...], what: str) -> ConcreteFunction[Any, Any, Any, Any]:
     def bind(tree: Tree[Any, Any] | None, value: Any) -> Any:
@@ -132,8 +139,12 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
         if value.type.dtype != expected_dtype:
           raise ValueError(f"{what}: expected dtype {expected_dtype} for {tree.names[0]!r}, got {value.type.dtype}")
+        if decl is not None and value.type.pattern is not decl.pattern:
+          raise ValueError(f"{what}: different stored pattern for {tree.names[0]!r}")
       else:
         shape = np.shape(value)
+        if decl is not None and decl.pattern is not None and shape == decl.storage_shape:
+          shape = decl.shape
       if decl is not None and shape != decl.shape:
         raise ValueError(f"{what}: expected shape {decl.shape} for {tree.names[0]!r}, got {shape}")
       return TensorType(shape) if decl is None else decl
@@ -145,11 +156,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     if self.inputs is not None and _structure(self.inputs.unflatten(self.inputs.decls)) != _structure(skeleton):
       raise ValueError(f"{what}: value does not have the declared structure of {self.inputs.names}")
     if skeleton not in self._argument_cache:
-      instance = (
-        self._cache(skeleton, lambda: self._build_bare(skeleton))
-        if self.inputs is None
-        else self.instantiate(tuple(type_.shape for type_ in _types(skeleton)))
-      )
+      instance = self._cache(skeleton, lambda: self._build_bare(skeleton)) if self.inputs is None else self.instantiate(_types(skeleton))
       self._argument_cache[skeleton] = instance
     return self._argument_cache[skeleton]
 
@@ -174,7 +181,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   @classmethod
   def _from_instance(cls, instance: ConcreteFunction[Any, Any, Any, Any]) -> Function[Any, Any, Any, Any]:
     function = cls(instance.name, instance.symbolic_call, instance.input_tree, instance.output_tree)
-    function._cache(instance.input_tree.types, lambda: instance)
+    function._cache(function._instance_key(instance.input_tree.types), lambda: instance)
     return function
 
   def factory(self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Any = None) -> Function:
@@ -203,7 +210,10 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         return None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
       raise ValueError(f"unknown factory input: {key!r}")
 
-    parameters = parameter_list(tuple(_Leaf(key, declaration(key)) for key in input_names))
+    input_layouts = dict(zip(source_inputs.names, source_inputs.layouts, strict=True))
+    output_layouts = {} if self.outputs is None else dict(zip(self.outputs.names, self.outputs.layouts, strict=True))
+    layouts = {**input_layouts, **{f"fwd:{k}": v for k, v in input_layouts.items()}, **{f"lam:{k}": v for k, v in output_layouts.items()}}
+    parameters = parameter_list(tuple(_Leaf(key, declaration(key), layout=layouts.get(key) or "csc") for key in input_names))
     output_names = tuple(request if isinstance(request, str) else request.output_name for request in requests)
 
     def source_skeleton(skeleton: Any) -> Any:
@@ -289,7 +299,7 @@ class _Derived(Function[Any, Any, Any, Any]):
     def compatible(left: Any, right: Any) -> bool:
       if isinstance(left, tuple):
         return isinstance(right, tuple) and len(left) == len(right) and all(compatible(a, b) for a, b in zip(left, right, strict=True))
-      return isinstance(right, TensorType) and left.shape == right.shape and left.dtype == right.dtype
+      return isinstance(right, TensorType) and left.shape == right.shape and left.dtype == right.dtype and left.pattern is right.pattern
 
     if not compatible(expected, skeleton):
       raise ValueError(f"{self.name}: seed or argument types do not match the bound source instance")

@@ -13,12 +13,13 @@ from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
 from ...function.tree import flat_tree
+from ...ir.layout import sparse_layout
 from ..program import ProgramObserver, optimize_program
 from ..program._common import rebuild_program, substitute_var, trip_count
 from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.program_spec import verify_program
-from ...ir.support import Support
-from ...ir.types import DeviceSpec, DType, dtypes
+from ...ir.support import Support, _make_support, support_indices
+from ...ir.types import DeviceSpec, DType, dtypes, stored_indices
 from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import fold_program
@@ -150,9 +151,13 @@ def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> Co
   if len(outputs) == len(fun.outputs):
     return fun._replace(outputs=outputs, rules=None)
   extra = len(outputs) - len(fun.outputs)
+  layouts = (
+    *fun.output_tree.layouts,
+    *(sparse_layout(out.type.pattern, "csr") if out.type.pattern is not None else None for out in outputs[len(fun.outputs) :]),
+  )
   return fun._replace(
     outputs=outputs,
-    output_tree=flat_tree(fun.result_names, tuple(out.type for out in outputs)),
+    output_tree=flat_tree(fun.result_names, tuple(out.type for out in outputs), layouts=layouts),
     output_sparsities=(*fun.output_sparsities, *(None,) * extra),
     output_coloring_widths=(*fun.output_coloring_widths, *(None,) * extra),
     rules=None,
@@ -239,37 +244,47 @@ class LowerCtx:
     # (callee identity, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
     self.call_invocations: dict[tuple[ConcreteFunction, tuple[str, ...]], tuple[str, ...]] = {}
     self._tmp = 0
+    self._zero_padded: dict[int, ProgramNode] = {}
 
   # --- declarations ---------------------------------------------------------
 
   def emit_inputs(self) -> None:
-    for name, expr in zip(self.input_names, self.fun.inputs, strict=True):
-      buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global")
+    for name, expr, layout in zip(self.input_names, self.fun.inputs, self.fun.input_tree.layouts, strict=True):
+      buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.storage_shape), address_space="global")
       self.params.append(buf)
       self.buffers[name] = buf
       self.value_buffers[expr.id] = name
+      if layout is not None:
+        converted = self.reorder(buf, expr, layout.inverse_permutation)
+        self.value_buffers[expr.id] = converted.attrs["name"]
 
   def register_outputs(self) -> None:
     """Register output BUFFER params and alias each unique computed output Expr to
     its output buffer, so its rule writes directly into the output (no copy)."""
     seen: set[int] = set()
-    for name, expr in zip(self.output_names, self.fun.outputs, strict=True):
-      buf = _with_support(p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global"), expr.support)
+    for name, expr, layout in zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True):
+      buf = _with_support(
+        p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.storage_shape), address_space="global"),
+        self.storage_support(expr, None if layout is None else layout.permutation),
+      )
       self.params.append(buf)
       self.buffers[name] = buf
-      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen:
+      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen or layout is not None:
         continue  # INPUT/CONST or shared output: emit_outputs inserts the copy
       seen.add(expr.id)
       self._output_alias[expr.id] = name
 
   def emit_outputs(self) -> None:
-    for name, expr in zip(self.output_names, self.fun.outputs, strict=True):
+    for name, expr, layout in zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True):
       src = self.value_buffers.get(expr.id)
       if src is None:
         raise LoweringError(f"output {name!r} expression was not lowered")
-      if src == name or expr.size == 0:
+      if src == name or expr.type.storage_size == 0:
         continue  # already written in place, or nothing to copy
-      self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.shape, self.names))
+      if layout is None:
+        self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.type.storage_shape, self.names))
+      else:
+        self.reorder(self.buffers[src], expr, layout.permutation, self.buffers[name])
 
   # --- body -----------------------------------------------------------------
 
@@ -302,9 +317,56 @@ class LowerCtx:
     if alias is not None:
       self.value_buffers[expr.id] = alias
       return self.buffers[alias]
-    buf = self.new_private(expr.type.dtype, expr.shape, support=expr.support)
+    buf = self.new_private(expr.type.dtype, expr.type.storage_shape, support=self.storage_support(expr))
     self.value_buffers[expr.id] = buf.attrs["name"]
     return buf
+
+  def storage_support(self, expr: Expr, permutation: np.ndarray | None = None) -> Support:
+    support = expr.support
+    if expr.type.pattern is None or support is None:
+      return support
+    positions = stored_indices(expr.type)
+    if permutation is not None:
+      width = expr.type.pattern.nnz
+      positions = positions.reshape(-1, width)[:, permutation].reshape(-1) if width else positions
+    return _make_support(np.flatnonzero(np.isin(positions, support_indices(support))))
+
+  def reorder(self, source: ProgramNode, expr: Expr, permutation: np.ndarray, target: ProgramNode | None = None) -> ProgramNode:
+    """Copy stored batches between canonical order and a leaf's declared order."""
+    if target is None and np.array_equal(permutation, np.arange(len(permutation))):
+      return source
+    target = self.new_private(expr.type.dtype, expr.type.storage_shape) if target is None else target
+    if expr.type.storage_size:
+      ranges, (k,) = self.nest((expr.type.storage_size,), f"layout_{self._tmp}")
+      width = len(permutation)
+      slot = p.add(p.mul(p.div(k, p.const_int(width)), p.const_int(width)), self.index_at(permutation, p.mod(k, p.const_int(width))))
+
+      def at(buffer: ProgramNode, index: ProgramNode) -> ProgramNode:
+        if buffer.op == ProgramOp.VIEW:
+          return p.view(self.buffers[buffer.attrs["buffer"]], [p.add(buffer.args[0], index)])
+        return p.view(buffer, [index])
+
+      self.emit(ranges, [p.store(at(target, k), p.load(at(source, slot)))])
+    return target
+
+  def read_indexed(self, expr: Expr, logical: np.ndarray, k: ProgramNode) -> ProgramNode:
+    """Read known logical coordinates through a stored-slot map, including structural zeros."""
+    if expr.type.pattern is None:
+      return p.load(p.view(self.buf_of(expr), [self.index_at(logical, k)]))
+    entries = stored_indices(expr.type)
+    slots = np.searchsorted(entries, logical)
+    valid = slots < len(entries)
+    valid[valid] &= entries[slots[valid]] == logical[valid]
+    source = self.buf_of(expr)
+    if not np.all(valid):
+      slots = np.where(valid, slots, len(entries))
+      if expr.id not in self._zero_padded:
+        source = self.new_private(expr.type.dtype, (len(entries) + 1,))
+        self.statements.append(_copy_loop(self.buf_of(expr), source, expr.type.storage_shape, self.names))
+        self.statements.append(p.store(p.view(source, [p.const_int(len(entries))]), p.const_float(0.0, dtype=expr.type.dtype)))
+        self._zero_padded[expr.id] = source
+      source = self._zero_padded[expr.id]
+    return p.load(p.view(source, [self.index_at(slots, k)]))
 
   def new_alias(self, dtype: DType, shape: tuple[int, ...], src_name: str, offset: int) -> ProgramNode:
     """A zero-copy private BUFFER that aliases ``src_name`` at a flat ``offset`` (rendered
@@ -414,11 +476,15 @@ class LowerCtx:
     return self.nest(extents, name, kind=RangeKind.REDUCE)
 
   def read(self, expr: Expr, coords: Sequence[ProgramNode]) -> ProgramNode:
-    """The scalar value of ``expr`` at ``coords``."""
+    """The scalar value of ``expr`` at dense logical ``coords``."""
+    if expr.type.pattern is not None:
+      raise LoweringError("sparse logical reads require an explicit stored-slot map")
     return p.load(p.view(self.buf_of(expr), [_flat(expr.shape, coords)]))
 
   def write(self, expr: Expr, coords: Sequence[ProgramNode], value: ProgramNode) -> ProgramNode:
-    """The statement storing ``value`` as ``expr``'s element at ``coords``."""
+    """The statement storing ``value`` at dense logical ``coords``."""
+    if expr.type.pattern is not None:
+      raise LoweringError("sparse logical writes require an explicit stored-slot map")
     return p.store(p.view(self.buf_of(expr), [_flat(expr.shape, coords)]), value)
 
   def emit(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> None:

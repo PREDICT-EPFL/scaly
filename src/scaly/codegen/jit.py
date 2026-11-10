@@ -361,10 +361,10 @@ class CompiledFunction:
       self._stats_entries[stats_symbol] = stats_entry
     self._sz_w = self._artifact.workspace_size
     self._input_names = tuple(fun.input_names)
-    self._input_shapes = tuple(e.shape for e in fun.inputs)
-    self._input_sizes = tuple(int(e.size) for e in fun.inputs)
-    self._output_shapes = tuple(e.shape for e in fun.outputs)
-    self._output_sizes = tuple(int(e.size) for e in fun.outputs)
+    self._input_shapes = tuple(e.type.storage_shape for e in fun.inputs)
+    self._input_sizes = tuple(e.type.storage_size for e in fun.inputs)
+    self._output_shapes = tuple(e.type.storage_shape for e in fun.outputs)
+    self._output_sizes = tuple(e.type.storage_size for e in fun.outputs)
     self._n_args = len(fun.inputs)
     self._n_res = len(fun.outputs)
 
@@ -394,7 +394,7 @@ class CompiledFunction:
       raise JitError(f"solver stats ABI mismatch for {name!r}: artifact version {raw.version}, expected {SCALY_SOLVER_STATS_VERSION}")
     return SolverStats.from_c(raw)
 
-  def run(self, args: list[np.ndarray]) -> list[np.ndarray]:
+  def run(self, args: list[Any]) -> list[Any]:
     """Dispatch the compiled entry point with positional NumPy inputs.
 
     Inputs are converted to contiguous float64 buffers with shapes validated against the
@@ -410,7 +410,8 @@ class CompiledFunction:
     for i, value in enumerate(args):
       name = self._input_names[i]
       expected_shape = self._input_shapes[i]
-      arr = np.asarray(value, dtype=np.float64)
+      layout = self._fun.input_tree.layouts[i]
+      arr = np.asarray(value, dtype=np.float64) if layout is None else layout.numerical_values(value, self._fun.inputs[i].shape)
       if arr.shape != expected_shape:
         raise ValueError(f"input {name!r} has shape {arr.shape}, expected {expected_shape}")
       if not arr.flags["C_CONTIGUOUS"]:
@@ -442,7 +443,10 @@ class CompiledFunction:
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 
-    return [out.reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]
+    return [
+      out.reshape(self._output_shapes[i]) if layout is None else layout.sparse_array(out, self._fun.outputs[i].shape)
+      for i, (out, layout) in enumerate(zip(outputs, self._fun.output_tree.layouts, strict=True))
+    ]
 
 
 def get_compiled(fun: Function | ConcreteFunction) -> CompiledFunction:

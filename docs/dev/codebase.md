@@ -16,6 +16,7 @@ src/scaly/
 
   ir/                    dialect definitions, verification, text, pass infrastructure
     types.py             DType, DeviceSpec, TensorType, SparsityPattern
+    layout.py            declared sparse value orders and immutable SciPy boundary indices
     expr.py              ExprOp, OP_INFO, Expr, interning, builders, topo, format_expr
     support.py           lazy value support over flat logical coordinates
     expr_spec.py         expression-dialect verify rules, verify_expr

@@ -14,7 +14,7 @@ interfaces for inspecting or extending the compiler.
       show_source: false
       filters:
         - "!^_"
-        - "!^(lowering|with_lowering|opaque|sym|const|support)$"
+        - "!^(lowering|with_lowering|opaque|sym|const|support|values|to_dense)$"
 
 ::: scaly.ir.expr.Expr.sym
     options:
@@ -29,6 +29,10 @@ interfaces for inspecting or extending the compiler.
       heading: "const(value, *, dtype=None)"
 
 ::: scaly.ir.expr.ExprOp
+    options:
+      show_source: false
+      filters:
+        - "!^(PACK|VALUES)$"
 
 ::: scaly.ir.expr.OpInfo
     options:

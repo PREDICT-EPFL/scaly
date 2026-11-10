@@ -12,7 +12,8 @@ from scipy.special import erf
 import scaly as sc
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
-from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, ExprOp
+from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, ExprOp, topo
+from scaly.ir.types import CanonicalPattern
 from scaly.solvers.model import SolverDescriptor
 
 
@@ -71,6 +72,19 @@ def _scatter_numpy(x):
 
 def _cases() -> list[Case]:
   cases = []
+  pattern = CanonicalPattern((2, 3), (0, 1, 1), (2, 0, 2))
+
+  def packed_numpy(x):
+    result = np.zeros(pattern.shape)
+    result[pattern.rows, pattern.cols] = np.sin(x)
+    return result
+
+  cases.extend(
+    [
+      Case("pack", ExprOp.PACK, (np.array([0.2, 0.5, 0.7]),), lambda x: sc.to_dense(sc.pack(x, pattern).sin()), packed_numpy),
+      Case("values", ExprOp.VALUES, (np.array([0.2, 0.5, 0.7]),), lambda x: sc.values(sc.pack(x, pattern).sin()), np.sin),
+    ]
+  )
   for op, (build, reference) in UNARY.items():
     for layout, shape in [("scalar", ()), ("tensor", (2, 3)), ("empty", (2, 0))]:
       values = np.linspace(0.2, 0.7, int(np.prod(shape))).reshape(shape)
@@ -241,7 +255,7 @@ def evaluated(request):
   def products(args):
     values, directions = args
     y = case.build(*values)
-    assert y.op == case.op
+    assert y.op == case.op if case.op != ExprOp.PACK else any(node.op == ExprOp.PACK for node in topo((y,)))
     singles = []
     for row in range(3):
       terms = [sc.jvp(y, x, seed[row]) for x, seed in zip(values, directions, strict=True)]

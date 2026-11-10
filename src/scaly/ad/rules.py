@@ -8,9 +8,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, gather, scatter
+from ..ir.expr import Expr, ExprOp, gather, pack, scatter, values
 from ..ir.program import ProgramOp
 from ..ir.support import support_indices, project_entries
+from ..ir.types import TensorType, stored_indices
 from .sparsity import _prunable_support
 
 type Local = Expr | int | tuple[Expr | int, Expr]
@@ -127,6 +128,11 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
   Each tangent is ``(nseed, *operand.shape)``, or ``None`` for an inactive operand, whose partial
   is never built.
   """
+  if expr.type.pattern is not None:
+    compact = _compact_elementwise(expr)
+    seed_type = TensorType((nseed, *expr.shape), expr.type.dtype, pattern=expr.type.pattern)
+    seeds = [None if t is None else _sample_stored(t, seed_type) for t in tangents]
+    return pack(tangent(compact, seeds, nseed), expr.type.pattern, shape=seed_type.shape)
   row = ELEMENTWISE[ExprOp(expr.op)]
   assert row.partials is not None
   aligned = [None if t is None else _broadcast_tangent(t, arg, expr, nseed) for arg, t in zip(expr.args, tangents, strict=True)]
@@ -147,11 +153,49 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
 def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
   """The cotangent of operand ``position`` of an elementwise ``expr``: ``cot`` times the partial,
   summed over the axes the operand was broadcast along."""
+  if expr.type.pattern is not None:
+    compact = _compact_elementwise(expr)
+    partials = ELEMENTWISE[ExprOp(expr.op)].partials
+    assert partials is not None
+    contribution = _times_partial(partials[position](compact), _sample_stored(cot, expr.type))
+    operand = expr.args[position]
+    projected = project_entries(stored_indices(expr.type), operand.shape, expr.shape)
+    if operand.type.pattern is None:
+      return scatter(contribution, projected, operand.shape)
+    entries = stored_indices(operand.type)
+    slots = np.searchsorted(entries, projected)
+    keep = slots < len(entries)
+    keep[keep] &= entries[slots[keep]] == projected[keep]
+    result = scatter(gather(contribution, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
+    return pack(result, operand.type.pattern, shape=operand.shape)
   partials = ELEMENTWISE[ExprOp(expr.op)].partials
   assert partials is not None
   local = partials[position](expr)
   # A masked partial, a select's where(c, cot, 0), would take the place of the product here.
   return _unbroadcast(_times_partial(local, cot), expr.args[position].shape, expr.shape)
+
+
+def _compact_elementwise(expr: Expr) -> Expr:
+  return Expr(
+    expr.op,
+    tuple(_sample_stored(arg, expr.type) for arg in expr.args),
+    TensorType(expr.type.storage_shape, expr.type.dtype, expr.type.diff),
+    lowering=expr.lowering,
+  )
+
+
+def _sample_stored(expr: Expr, output: TensorType) -> Expr:
+  if expr.shape == output.shape and expr.type.pattern is output.pattern:
+    return values(expr)
+  logical = project_entries(stored_indices(output), expr.shape, output.shape)
+  if expr.type.pattern is None:
+    return gather(expr, logical).reshape(output.storage_shape)
+  entries = stored_indices(expr.type)
+  slots = np.searchsorted(entries, logical)
+  keep = slots < len(entries)
+  keep[keep] &= entries[slots[keep]] == logical[keep]
+  sampled = gather(values(expr), slots[keep])
+  return scatter(sampled, np.flatnonzero(keep), output.storage_shape)
 
 
 def _times_partial(local: Local, t: Expr, align: Callable[[Expr], Expr] | None = None) -> Expr:

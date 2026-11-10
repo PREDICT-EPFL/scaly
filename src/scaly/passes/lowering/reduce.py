@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import RangeKind
-from .ctx import LowerCtx, lowers, _size_of
+from .ctx import LowerCtx, lowers
 
 
 @lowers(ExprOp.SUM)
@@ -16,6 +16,6 @@ def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
   z = p.const_int(0)
   ctx.statements.append(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
   name = ctx.names.allocate(f"i_{acc.attrs['name']}")
-  rng = p.range_(name, 0, _size_of(src.shape), kind=RangeKind.REDUCE)
+  rng = p.range_(name, 0, src.type.storage_size, kind=RangeKind.REDUCE)
   i = p.var(name)
   ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))

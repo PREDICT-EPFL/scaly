@@ -356,9 +356,15 @@ def _seeded(
   if kind in ("fwd", "adj") and outputs is not None:
     of = _unique_name(outputs.names, of, "of")
   if kind == "fwd":
-    seed = None if inputs is None or wrt is None else arg(f"fwd:{wrt}", inputs.decls[inputs.index(wrt)])
+    seed = (
+      None if inputs is None or wrt is None else arg(f"fwd:{wrt}", inputs.decls[inputs.index(wrt)], layout=inputs.layouts[inputs.index(wrt)] or "csc")
+    )
   elif kind == "adj":
-    seed = None if outputs is None or of is None else arg(f"lam:{of}", outputs.decls[outputs.index(of)])
+    seed = (
+      None
+      if outputs is None or of is None
+      else arg(f"lam:{of}", outputs.decls[outputs.index(of)], layout=outputs.layouts[outputs.index(of)] or "csc")
+    )
   else:
     seed = None if outputs is None else outputs.relabel("lam:")
   seeded = None if inputs is None or seed is None else append_parameter(inputs, seed)
@@ -371,7 +377,12 @@ def _seeded(
       seed_type = (
         concrete.inputs[concrete.input_tree.index(variable)].type if kind == "fwd" else concrete.outputs[concrete.output_tree.index(output)].type
       )
-      seed_tree = arg(seed_name, seed_type)
+      seed_layout = (
+        concrete.input_tree.layouts[concrete.input_tree.index(variable)]
+        if kind == "fwd"
+        else concrete.output_tree.layouts[concrete.output_tree.index(output)]
+      )
+      seed_tree = arg(seed_name, seed_type, layout=seed_layout or "csc")
       spec = Fwd(output, variable) if kind == "fwd" else Adj(output, variable)
       factory_inputs = [*concrete.input_names, seed_name]
       aux = None
@@ -492,8 +503,8 @@ def _with_rules(
     return (Function._from_instance(rule) if isinstance(rule, ConcreteFunction) else rule)._bind(skeleton, f"{concrete.name}: {label} rule")
 
   def check(label: str, got: tuple[Expr, ...], want: tuple[Expr, ...]) -> None:
-    if [(e.shape, e.type.dtype) for e in got] != [(e.shape, e.type.dtype) for e in want]:
-      raise TypeError(f"{concrete.name}: the {label} rule returns shapes {[e.shape for e in got]}, expected {[e.shape for e in want]}")
+    if [(e.shape, e.type.dtype, e.type.pattern) for e in got] != [(e.shape, e.type.dtype, e.type.pattern) for e in want]:
+      raise TypeError(f"{concrete.name}: the {label} rule returns types {[e.type for e in got]}, expected {[e.type for e in want]}")
 
   parameters = concrete.input_tree.unflatten(concrete.input_tree.types)
   outputs, residuals, jvp_rule, bwd_rule = concrete.outputs, (), None, None

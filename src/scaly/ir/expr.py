@@ -21,7 +21,20 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 import numpy as np
 
 from .support import Support, compute_support
-from .types import CanonicalPattern, DType, Lowering, TensorType, _array_data, as_dtype, as_shape, broadcast_shape, dtypes, frozen
+from .types import (
+  CanonicalPattern,
+  SparsityPattern,
+  DType,
+  Lowering,
+  TensorType,
+  _array_data,
+  as_dtype,
+  as_shape,
+  broadcast_shape,
+  dtypes,
+  frozen,
+  stored_indices,
+)
 
 
 class ExprOp(StrEnum):
@@ -33,6 +46,8 @@ class ExprOp(StrEnum):
 
   INPUT = "input"
   CONST = "const"
+  PACK = "pack"
+  VALUES = "values"
   NEG = "neg"
   SIN = "sin"
   COS = "cos"
@@ -108,6 +123,8 @@ COMMON_ELEMENTWISE_BINARY = {
 COMMON_STRUCTURAL = {
   ExprOp.INPUT,
   ExprOp.CONST,
+  ExprOp.PACK,
+  ExprOp.VALUES,
   ExprOp.SUM,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
@@ -140,7 +157,10 @@ class OpInfo:
   differentiable: bool = True
   pattern_rule: Literal["preserve", "union", "intersection", "matmul"] | None = None
   support_rule: (
-    Literal["const", "preserve", "union", "numerator", "sum", "transpose", "slice", "gather", "scatter", "stack", "concat", "call", "vmap"] | None
+    Literal[
+      "const", "pack", "values", "preserve", "union", "numerator", "sum", "transpose", "slice", "gather", "scatter", "stack", "concat", "call", "vmap"
+    ]
+    | None
   ) = None
 
   @property
@@ -151,6 +171,8 @@ class OpInfo:
 OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.INPUT: OpInfo(ExprOp.INPUT, 0),
   ExprOp.CONST: OpInfo(ExprOp.CONST, 0, False, support_rule="const"),
+  ExprOp.PACK: OpInfo(ExprOp.PACK, 1, support_rule="pack"),
+  ExprOp.VALUES: OpInfo(ExprOp.VALUES, 1, support_rule="values"),
   ExprOp.NEG: OpInfo(ExprOp.NEG, 1, pattern_rule="preserve"),
   ExprOp.SIN: OpInfo(ExprOp.SIN, 1, pattern_rule="preserve"),
   ExprOp.COS: OpInfo(ExprOp.COS, 1),
@@ -215,15 +237,23 @@ def stored_pattern(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple
   if not any(t.pattern is not None for t in types):
     return None
   rule = OP_INFO[ExprOp(op)].pattern_rule
+  if rule == "matmul" and len(shape) < 2:
+    return None
   if rule is None or len(shape) < 2:
     raise ValueError(f"{op} has no stored-pattern rule for sparse operands with output shape {shape}; use to_dense() explicitly")
   if rule == "preserve":
     return types[0].pattern
   matrix_shape = (shape[-2], shape[-1])
+  if rule == "intersection" and any(t.pattern is None for t in types):
+    return _broadcast_pattern(next(t for t in types if t.pattern is not None), matrix_shape)
   if rule == "matmul":
     if any(t.ndim != 2 for t in types):
       raise ValueError(f"{op} has no stored-pattern rule for these ranks; use to_dense() explicitly")
     x, y = types
+    if x.pattern is None or y.pattern is None:
+      rows = range(x.shape[0]) if x.pattern is None else sorted(set(x.pattern.rows))
+      cols = range(y.shape[1]) if y.pattern is None else sorted(set(y.pattern.cols))
+      return CanonicalPattern(matrix_shape, tuple(r for r in rows for _ in cols), tuple(c for _ in rows for c in cols))
     return _broadcast_pattern(x, (x.shape[0], x.shape[1])).matmul(_broadcast_pattern(y, (y.shape[0], y.shape[1])))
   a, b = (_broadcast_pattern(t, matrix_shape) for t in types)
   return a.union(b) if rule == "union" else a.intersection(b)
@@ -232,6 +262,20 @@ def stored_pattern(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple
 def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: TensorType) -> None:
   """Reject an unsupported sparse operation or an output pattern that disagrees with its rule."""
   if op == ExprOp.INPUT:
+    return
+  if op == ExprOp.PACK:
+    if type_.pattern is None or args[0].type.pattern is not None or args[0].shape != type_.storage_shape:
+      raise ValueError("PACK requires dense stored values matching the sparse storage shape")
+    return
+  if op == ExprOp.VALUES:
+    if args[0].type.pattern is None or type_.pattern is not None or type_.shape != args[0].type.storage_shape:
+      raise ValueError("VALUES requires a sparse operand and its dense storage shape")
+    return
+  if op in (ExprOp.CALL, ExprOp.VMAP):
+    return  # The verifier checks the callee signature.
+  if op == ExprOp.SUM and type_.pattern is None:
+    return
+  if op == ExprOp.RESHAPE and args[0].type.pattern is type_.pattern and args[0].shape == type_.shape:
     return
   expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape)
   if type_.pattern is not expected:
@@ -365,13 +409,34 @@ class Expr:
     return Expr(ExprOp.INPUT, type=TensorType(as_shape(shape), dtype=as_dtype(dtype), diff=diff), name=name, lowering=lowering)
 
   @staticmethod
-  def const(value: Any, *, dtype: DType | str | None = None, lowering: Lowering = "auto") -> Expr:
+  def const(
+    value: Any, *, dtype: DType | str | None = None, lowering: Lowering = "auto", pattern: CanonicalPattern | SparsityPattern | None = None
+  ) -> Expr:
     """Wrap an array or scalar as a constant node.
 
     A NumPy array or scalar keeps its dtype, and anything else becomes ``float64``, unless
     ``dtype`` says otherwise. Constants are never differentiable: a derivative with respect to one
     is structurally zero.
     """
+    from scipy import sparse
+
+    if sparse.issparse(value):
+      if pattern is not None:
+        raise ValueError("a SciPy sparse constant already declares its pattern")
+      coo = sparse.coo_array(value, copy=True)
+      if len(coo.shape) < 2:
+        raise ValueError("a sparse constant must have at least two axes")
+      coo.sum_duplicates()
+      coordinates = np.unique(np.stack(coo.coords[-2:]), axis=1)
+      canonical = CanonicalPattern(coo.shape[-2:], tuple(map(int, coordinates[0])), tuple(map(int, coordinates[1])))
+      order = np.lexsort(tuple(reversed(coo.coords)))
+      type_ = TensorType(coo.shape, pattern=canonical)
+      logical = np.ravel_multi_index(coo.coords, coo.shape)
+      if not np.array_equal(logical[order], stored_indices(type_)):
+        raise ValueError("batched sparse constants require a shared stored pattern")
+      return pack(Expr.const(coo.data[order].reshape(type_.storage_shape), dtype=dtype, lowering=lowering), canonical)
+    if pattern is not None:
+      return pack(Expr.const(value, dtype=dtype, lowering=lowering), pattern)
     if dtype is None:
       dtype = value.dtype.name if isinstance(value, np.ndarray | np.generic) else dtypes.float64
     dtype_eff = as_dtype(dtype)
@@ -489,6 +554,14 @@ class Expr:
 
   def gather(self, indices: Any) -> Expr:
     return gather(self, indices)
+
+  def values(self) -> Expr:
+    """Expose the stored values in canonical coordinate order."""
+    return values(self)
+
+  def to_dense(self) -> Expr:
+    """Place stored values at their logical coordinates, filling other entries with zero."""
+    return to_dense(self)
 
   def sum(self) -> Expr:
     return Expr(ExprOp.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
@@ -884,6 +957,10 @@ def dot(x: Any, y: Any) -> Expr:
   x, y = _operands(x, y)
   if x.size != y.size:
     raise ValueError(f"dot size mismatch: {x.shape} has {x.size} entries, {y.shape} has {y.size}")
+  if x.type.pattern is not None or y.type.pattern is not None:
+    if x.shape != y.shape:
+      raise ValueError("sparse dot operands must have the same logical shape")
+    return (x * y).sum()
   return (x.vec() * y.vec()).sum()
 
 
@@ -1015,7 +1092,67 @@ def vec(x: Any) -> Expr:
 
 
 def zeros_like(x: Expr) -> Expr:
+  if x.type.pattern is not None:
+    return pack(_uniform(0, x.type.storage_shape, dtype=x.type.dtype, lowering=x.lowering), x.type.pattern, shape=x.shape)
   return _uniform(0, x.shape, lowering=x.lowering)
+
+
+def pack(value: Any, pattern: CanonicalPattern | SparsityPattern, *, shape: tuple[int, ...] | None = None) -> Expr:
+  """Build a sparse tensor from stored values, including explicit zeros."""
+  x = as_expr(value)
+  if isinstance(pattern, SparsityPattern):
+    pattern, permutation = pattern.canonicalize()
+    if not x.shape or x.shape[-1] != len(permutation):
+      raise ValueError("PACK values' last axis must match the pattern's stored entries")
+    indices = np.arange(x.size, dtype=np.int64).reshape(x.shape)[..., permutation]
+    x = gather(x, indices)
+  if not isinstance(pattern, CanonicalPattern):
+    raise TypeError("PACK requires a canonical pattern or SparsityPattern")
+  shape = (*x.shape[:-1], *pattern.shape) if shape is None else shape
+  type_ = TensorType(shape, x.type.dtype, x.type.diff, pattern)
+  return Expr(ExprOp.PACK, (x,), type_, attrs={"pattern": pattern}, lowering=x.lowering)
+
+
+def values(value: Any) -> Expr:
+  """Expose canonical stored values as a dense tensor with the storage shape."""
+  x = as_expr(value)
+  if x.type.pattern is None:
+    return x
+  if x.op == ExprOp.PACK:
+    return x.args[0]
+  return Expr(ExprOp.VALUES, (x,), TensorType(x.type.storage_shape, x.type.dtype, x.type.diff), lowering=x.lowering)
+
+
+def to_dense(value: Any) -> Expr:
+  """Materialize logical entries, filling coordinates outside the pattern with zero."""
+  x = as_expr(value)
+  if x.type.pattern is None:
+    return x
+  return scatter(values(x).vec(), stored_indices(x.type), x.size).reshape(x.shape)
+
+
+def from_dense(value: Any, pattern: CanonicalPattern | SparsityPattern) -> Expr:
+  """Project a dense tensor onto a declared stored pattern."""
+  x = as_expr(value)
+  if x.type.pattern is not None:
+    raise ValueError("from_dense requires a dense tensor")
+  canonical = pattern.canonicalize()[0] if isinstance(pattern, SparsityPattern) else pattern
+  type_ = TensorType(x.shape, x.type.dtype, x.type.diff, canonical)
+  return pack(gather(x, stored_indices(type_).reshape(type_.storage_shape)), canonical, shape=x.shape)
+
+
+def sparsify(value: Any) -> Expr:
+  """Compact a tensor over its support, sharing a pattern across batch axes."""
+  x = as_expr(value)
+  if x.type.pattern is not None:
+    return x
+  if len(x.shape) < 2:
+    raise ValueError("sparsify requires at least two axes")
+  matrix_size = x.shape[-2] * x.shape[-1]
+  entries = range(matrix_size) if x.support is None else sorted({i % matrix_size for i in x.support})
+  return from_dense(
+    x, CanonicalPattern((x.shape[-2], x.shape[-1]), tuple(i // x.shape[-1] for i in entries), tuple(i % x.shape[-1] for i in entries))
+  )
 
 
 def format_expr(outputs: Expr | Iterable[Expr]) -> str:

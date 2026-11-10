@@ -354,6 +354,16 @@ def as_shape(shape: int | tuple[int, ...] | list[int] | None = None) -> tuple[in
   return ret
 
 
+def stored_indices(type_: TensorType) -> np.ndarray:
+  """Map canonical stored slots to flat logical coordinates."""
+  pattern = type_.pattern
+  if pattern is None:
+    return np.arange(type_.size, dtype=np.int64)
+  local = np.asarray(pattern.rows, dtype=np.int64) * pattern.shape[1] + np.asarray(pattern.cols, dtype=np.int64)
+  batches = reduce(mul, type_.shape[:-2], 1)
+  return (np.arange(batches, dtype=np.int64)[:, None] * (pattern.shape[0] * pattern.shape[1]) + local).reshape(-1)
+
+
 def broadcast_shape(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
   if not a:
     return b

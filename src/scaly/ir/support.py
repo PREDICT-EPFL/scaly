@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping, cast
 
 import numpy as np
 
-from .types import CanonicalPattern, _uniform_value
+from .types import CanonicalPattern, _uniform_value, stored_indices
 
 if TYPE_CHECKING:
   from .expr import Expr, ExprOp, OpInfo
@@ -144,6 +144,15 @@ def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
 
 
 def _rule(node: Expr, op: str | None) -> Support:
+  if op == "pack":
+    support = _cached(node.args[0])
+    indices = stored_indices(node.type)
+    return _make_support(indices if support is None else indices[support_indices(support)])
+  if op == "values":
+    support = _cached(node.args[0])
+    if support is None:
+      return None
+    return _make_support(np.flatnonzero(np.isin(stored_indices(node.args[0].type), support_indices(support))))
   if op == "const":
     assert node.value is not None
     if (value := _uniform_value(node.value)) is not None:
@@ -233,9 +242,11 @@ def _rule(node: Expr, op: str | None) -> Support:
       return frozenset()
     output = node.attrs["callee"].results[node.attrs["output"]]
     support = _cached(output)
+    if op == "vmap" and output.type.pattern is not None and support is not None:
+      support = _make_support(np.flatnonzero(np.isin(stored_indices(output.type), support_indices(support))))
     if op == "call" or support is None:
       return support
-    entries = np.arange(node.attrs["length"], dtype=np.int64)[:, None] * output.size + support_indices(support)
+    entries = np.arange(node.attrs["length"], dtype=np.int64)[:, None] * output.type.storage_size + support_indices(support)
     return _make_support(entries.reshape(-1))
   return None
 
