@@ -20,7 +20,8 @@ class HelperKey:
   otherwise. ``constants`` holds, per active input, the dtype and bytes of a seed baked into the
   body, or ``None`` for a seed passed at run time. ``members`` are the helpers a pack concatenates.
   ``rules`` names the callee's custom rules, so its helpers and those of the function it was made
-  from are named apart.
+  from are named apart. ``masked`` distinguishes an adjoint that accepts a select condition from
+  one that accepts only a cotangent.
   """
 
   role: Role
@@ -31,6 +32,7 @@ class HelperKey:
   constants: tuple[tuple[str, bytes] | None, ...] = ()
   members: tuple[ConcreteFunction, ...] = ()
   rules: tuple[str, ...] = ()
+  masked: bool = False
 
   @classmethod
   def of(cls, callee: ConcreteFunction, role: Role, outputs: tuple[int, ...], active: tuple[int, ...], **fields: Any) -> HelperKey:
@@ -47,4 +49,5 @@ def helper_name(callee: ConcreteFunction, key: HelperKey) -> str:
   stem = {"forward": "fwd", "adjoint": "adj"}[key.role] + ("_pack" if key.members else "")
   fields = (key.role, key.outputs, key.active, key.lowering, key.nseed, key.constants, tuple(fn.name for fn in key.members))
   fields += (key.rules,) if key.rules else ()
+  fields += (key.masked,) if key.masked else ()
   return f"{callee.name}_{stem}_{hashlib.sha1(repr(fields).encode()).hexdigest()[:10]}"

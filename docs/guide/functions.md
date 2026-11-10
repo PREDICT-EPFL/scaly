@@ -277,14 +277,9 @@ Derivatives ignore it as well: `sc.where(x > 0, x.sqrt(), 0.0)` has derivative
 zero at `x = 0`, although the derivative of the square root is infinite there.
 The condition has no derivative, and neither has any comparison.
 
-!!! warning "A NaN derivative inside a called function"
-    Reverse mode, which gradients use, keeps the branch not chosen out of the
-    derivative through elementwise operations, sums, slices, reshapes and casts,
-    but not into a `Function` the branch calls. That function's derivative is
-    built once for every caller, so a NaN or infinite derivative inside it still
-    reaches the gradient: with `root` a `Function` returning `sqrt`,
-    `sc.where(x > 0, root(x), 0.0)` has a NaN gradient at `x = 0`. Forward mode
-    gives zero. Apply `sc.where` inside the function instead.
+The same holds when a `Function` or `sc.vmap` computes the branch. With `root`
+a `Function` returning `sqrt`, `sc.where(x > 0, root(x), 0.0).sum()` has
+gradient `[0.0, 0.25]` at `x = [0.0, 4.0]`.
 
 ### Supported array operations
 

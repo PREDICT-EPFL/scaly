@@ -1190,9 +1190,8 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
 
   The three broadcast together and ``x`` and ``y`` share a dtype. The generated C computes both
   branches, so a branch may be NaN or infinite where it is not chosen, and the derivative ignores
-  the branch not chosen too: ``where(x > 0, sqrt(x), 0)`` has derivative zero at ``x = 0``. In
-  reverse mode that holds up to a ``Function`` the branch calls, whose own derivative still sees
-  every entry. The condition has no derivative.
+  the branch not chosen too: ``where(x > 0, sqrt(x), 0)`` has derivative zero at ``x = 0``,
+  including when a ``Function`` or ``vmap`` computes the square root. The condition has no derivative.
   """
   condition = _condition(condition)
   x, y = _operands(x, y)

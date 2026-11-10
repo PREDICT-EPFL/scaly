@@ -13,6 +13,7 @@ import pytest
 
 import scaly as sc
 from scaly.ad import finite_difference
+from scaly.function.sugar import _mapped_call
 
 WHERE_POINT = np.array([0.0, -1.0, -0.0, 4.0])
 WHERE_GRAD = np.array([1.0, 0.0, 1.0, 0.25 + 0.25 - 1.0 / 16.0])
@@ -174,16 +175,118 @@ def test_reverse_mode_keeps_the_mask_through_reductions_slices_broadcasts_reshap
     np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-6, err_msg=name)
 
 
-def test_reverse_mode_does_not_carry_the_mask_into_a_function_call() -> None:
-  """A called Function's derivative is built once for every caller, so its own NaN partial stays."""
+@pytest.mark.parametrize("mapped", [False, True])
+def test_reverse_mode_carries_the_mask_into_a_function_call(mapped: bool) -> None:
+  size = 4 if mapped else 2
 
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("g"), sc.arg("t")), name="sd_masked_call")
+  @sc.function(sc.arg("x", size), outputs=sc.group(*(sc.arg(k) for k in ("g", "j", "h", "rr"))), name="sd_masked_call")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
+    roots = sc.vmap(_root, 2)(x.reshape((2, 2))).vec() if mapped else _root(x)
+    chosen = sc.where(x > 0.0, roots, 0.0)
+    grad = sc.gradient(chosen.sum(), x)
+    return grad, sc.jacobian(chosen, x), sc.hessian(chosen.sum(), x), sc.gradient(grad.sum(), x)
+
+  grad, jac, hess, reverse_twice = derivatives(np.tile([0.0, 4.0], size // 2))
+  expected = np.tile([0.0, 0.25], size // 2)
+  second = np.tile([0.0, -1.0 / 32.0], size // 2)
+  np.testing.assert_array_equal(grad, expected)
+  np.testing.assert_array_equal(jac, np.diag(expected))
+  np.testing.assert_array_equal(hess, np.diag(second))
+  np.testing.assert_array_equal(reverse_twice, second)
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_called_mask_uses_the_condition_when_the_cotangent_is_zero(mapped: bool) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("g"), sc.arg("h")), name="sd_zero_cot_call")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    cost = sc.where(x > 0.0, _root(x), 0.0).sum()
-    return sc.gradient(cost, x), sc.jvp(cost, x, sc.const(np.ones(2)))
+    roots = sc.vmap(_root, 1)(x.reshape((1, 2))).vec() if mapped else _root(x)
+    cost = sc.where(x > 0.0, (roots - 2.0) ** 2, 0.0).sum()
+    return sc.gradient(cost, x), sc.hessian(cost, x)
 
-  grad, tangent = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0])))
-  assert np.isnan(grad[0]) and grad[1] == 0.25 and tangent == 0.25
+  grad, hess = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0])))
+  np.testing.assert_array_equal(grad, [0.0, 0.0])
+  np.testing.assert_array_equal(hess, np.diag([0.0, 1.0 / 8.0]))
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_nested_calls_keep_the_callers_condition_with_shared_formal_symbols(mapped: bool) -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("r"), name="sd_shifted_root")
+  def shifted(u: sc.Expr) -> sc.Expr:
+    return _root(u + 1.0)
+
+  @sc.function(sc.arg("u", 4 if mapped else 2), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_nested_calls")
+  def derivatives(u: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    roots = sc.vmap(shifted, 2)(u.reshape((2, 2))).vec() if mapped else shifted(u)
+    chosen = sc.where(u < 5.0, sc.where(u > 0.0, roots, 0.0), 0.0)
+    return sc.gradient(chosen.sum(), u), sc.jacobian(chosen, u)
+
+  for pair in ([-1.0, 3.0], [-0.5, 3.0], [-1.0, 8.0]):
+    point = np.tile(pair, 2 if mapped else 1)
+    expected = np.tile([0.0, 0.25 if pair[1] == 3.0 else 0.0], 2 if mapped else 1)
+    grad, jac = derivatives(point)
+    np.testing.assert_array_equal(grad, expected)
+    np.testing.assert_array_equal(jac, np.diag(expected))
+
+
+def test_mapped_adjoint_cache_separates_masked_and_unmasked_calls_and_reuses_conditions() -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("r"), name="sd_cached_root")
+  def root(u: sc.Expr) -> sc.Expr:
+    return u.sqrt()
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(*(sc.arg(k) for k in ("plain", "positive", "large"))), name="sd_cached_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
+    roots = sc.vmap(root, 2)(x.reshape((2, 2))).vec()
+    return tuple(sc.gradient(cost, x) for cost in (roots.sum(), sc.where(x > 0.0, roots, 0.0).sum(), sc.where(x > 4.0, roots, 0.0).sum()))
+
+  plain, positive, large = derivatives(np.array([0.0, 4.0, 0.0, 4.0]))
+  np.testing.assert_array_equal(plain, [np.inf, 0.25, np.inf, 0.25])
+  np.testing.assert_array_equal(positive, [0.0, 0.25, 0.0, 0.25])
+  np.testing.assert_array_equal(large, np.zeros(4))
+  helpers = [(key, entry[0]) for key, entry in root.instantiate()._memo.helpers.items() if key.role == "adjoint" and isinstance(entry, tuple)]
+  assert len(helpers) == 2
+  assert {key.masked for key, _ in helpers} == {False, True}
+  assert len({helper.name for _, helper in helpers}) == 2
+
+
+def test_called_mask_survives_a_mapped_call_before_a_singular_partial() -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("r"), name="sd_twice")
+  def twice(u: sc.Expr) -> sc.Expr:
+    return 2.0 * u
+
+  @sc.function(sc.arg("u", 4), outputs=sc.arg("r"), name="sd_mapped_roots")
+  def roots(u: sc.Expr) -> sc.Expr:
+    return sc.vmap(twice, 2)(u.sqrt().reshape((2, 2))).vec()
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_called_mapped_roots")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    chosen = sc.where(x > 0.0, roots(x), 0.0)
+    return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
+
+  grad, jac = derivatives(np.array([0.0, 4.0, -1.0, 9.0]))
+  expected = np.array([0.0, 0.5, 0.0, 1.0 / 3.0])
+  np.testing.assert_array_equal(grad, expected)
+  np.testing.assert_array_equal(jac, np.diag(expected))
+
+
+@pytest.mark.parametrize("stride", [0, 1])
+def test_mapped_masks_accumulate_through_shared_and_overlapping_arguments(stride: int) -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("r"), name="sd_window_twice")
+  def twice(u: sc.Expr) -> sc.Expr:
+    return 2.0 * u
+
+  indices = np.array([it * stride + j for it in range(3) for j in range(2)])
+  point = np.array([0.0, 4.0, 9.0, -1.0]) if stride else np.array([0.0, 4.0])
+
+  @sc.function(sc.arg("x", point.size), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_window_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    roots = _mapped_call(twice, 3, [(x.sqrt(), 0, stride)])
+    chosen = sc.where(sc.gather(x, indices) > 0.0, roots, 0.0)
+    return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
+
+  grad, jac = derivatives(point)
+  expected = np.array([0.0, 1.0, 2.0 / 3.0, 0.0]) if stride else np.array([0.0, 1.5])
+  np.testing.assert_array_equal(grad, expected)
+  np.testing.assert_array_equal(grad, jac.sum(axis=0))
 
 
 def test_reverse_mode_refuses_an_integer_or_bool_output() -> None:

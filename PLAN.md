@@ -11,11 +11,11 @@ context, `ad/reverse.py`, `ad/rules.py`, `ad/calls.py`, `ad/helpers.py`, and the
 Overlapping work: #312 in calls/reverse, #347 in calls, #349 in sparse lowering.
 
 - [x] Inspect issue, prerequisite, parent, checkout and overlaps.
-- [ ] Turn the call regression around, add mapped and higher derivative differential
+- [x] Turn the call regression around, add mapped and higher derivative differential
       cases, and observe the reported failures before changing production code.
-- [ ] Preserve the mask in ordinary substitutions and mapped adjoint helpers, keyed
+- [x] Preserve the mask in ordinary substitutions and mapped adjoint helpers, keyed
       separately from unmasked helpers. Keep unmasked helper names unchanged.
-- [ ] Update the functions guide and `where` docstring, run focused tests and prove
+- [x] Update the functions guide and `where` docstring, run focused tests and prove
       the regression checks detect a removed mask.
 - [ ] Refresh collection baseline and run all pre-merge checks through the shared queue.
       Existing C snapshots must stay byte-identical.
@@ -28,3 +28,11 @@ The phases are sequential. Independent checks and the two independent reviews ma
 in parallel. Full test runs use the detached shared queue, and this turn stays alive
 by polling its exit file. Push only locally validated review or merge candidates.
 Delete this temporary plan before marking the pull request ready.
+
+Focused validation: 1,261 AD, integration, snapshot and import tests passed.
+Removing call masks fails both regressions; substituting cot != 0 fails both
+zero-cotangent Hessians; removing the helper cache flag fails its regression.
+Mapped helpers pass the condition as nondifferentiable 0/1 floats and return
+input activity beside the adjoints, since #55 owns typed helper leaves. Nested
+conditions also survive the structural transpose. The original #320 head must
+be replaced with its rebased head before the first push, per the coordinator.
