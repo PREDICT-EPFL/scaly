@@ -25,7 +25,6 @@ if TYPE_CHECKING:
   assert_type(coordinates, Tree[sc.Expr, NumericalArray])
   assert_type(sc.arg("dense", 3), Tree[sc.Expr, np.ndarray])
   assert_type(sc.arg("dense", (3, 4)), Tree[sc.Expr, np.ndarray])
-  assert_type(sc.arg("unknown_shape"), Tree[sc.Expr, np.ndarray])
 
   @sc.function(default, outputs=default.relabel("out_"))
   def declared(x: sc.Expr) -> sc.Expr:

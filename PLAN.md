@@ -23,3 +23,9 @@ Validation: strict ty, Ruff lint and formatting pass; 143 focused tests pass. Th
 perturbations (default overload, inferred result and an expected error) each fail the static gate.
 The detached full pre-merge hook is waiting in /tmp/scaly-288/premerge.log; its exit file
 is /tmp/scaly-288/premerge.exit. No runtime implementation or generated snapshots changed.
+
+Cross-review by Opus found that shape-hole output declarations still allow sparse runtime
+results while retaining their old dense annotation. Preserved that spelling temporarily to
+avoid 192 dense diagnostics, recorded the departure in the roadmap, and filed #334. Removed
+the new assertion pinning shape-hole density. The dense codegen test now declares a concrete
+output shape. The guide remains free of sparse typing names. A delta check is next.

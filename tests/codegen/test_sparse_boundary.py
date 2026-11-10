@@ -165,7 +165,9 @@ def test_sparse_headers_split_shared_names_and_avoid_alias_collisions(lang, tmp_
 @pytest.mark.parametrize("lang", ["c", "cpp"])
 def test_dense_headers_allow_internal_sparse_calls(lang):
   inner = sc.function(sc.arg("x", sc.TensorType(PATTERN.shape, pattern=PATTERN)), name="sparse_header_inner")(lambda x: x.sin())
-  outer = sc.function(sc.arg("x", PATTERN.nnz), outputs=sc.arg("out"), name="dense_header_outer")(lambda x: sc.values(inner(sc.pack(x, PATTERN))))
+  outer = sc.function(sc.arg("x", PATTERN.nnz), outputs=sc.arg("out", PATTERN.nnz), name="dense_header_outer")(
+    lambda x: sc.values(inner(sc.pack(x, PATTERN)))
+  )
   header = render_c_api_header(outer, lang=lang)
   assert outer.name in header
   np.testing.assert_allclose(outer(np.arange(5.0)), np.sin(np.arange(5.0)))
