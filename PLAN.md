@@ -21,4 +21,5 @@ Use REST for GitHub reads, at most two workers for focused tests, and no runtime
 
 Focused support, chain and C snapshot checks: 61 passed. Both deliberate mutations failed the intended tests.
 Bound is 32 per callee: room for RK4 contexts and repeated mapped patterns while capping retained node-support maps.
-The Project status write is blocked by the shared GraphQL rate limit; the issue comment records ownership.
+The issue comment records ownership. A REST status update returned In progress, but subsequent reads still omit the field.
+Full pre-merge check is detached at `/tmp/scaly-221/pre-merge.log`, with exit in the adjacent `.exit` file.
