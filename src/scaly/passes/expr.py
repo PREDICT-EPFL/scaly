@@ -103,6 +103,8 @@ def _constant_fold(e: Expr) -> Expr:
         out = ELEMENTWISE[e.op].numpy(*(v.flat[0] for v in args))
         return _uniform(out, e.shape, dtype=e.type.dtype, lowering=e.lowering)
       out = _evaluate(e, args)
+      # Converting here keeps a cast of NaN or an out-of-range float to an integer a runtime operation.
+      out = None if out is None else np.asarray(out).astype(e.type.dtype.numpy())
   except FloatingPointError:
     return e
   return e if out is None else Expr.const(out, dtype=e.type.dtype, lowering=e.lowering)

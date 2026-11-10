@@ -51,6 +51,21 @@ BINARY = {
   ExprOp.POW: (lambda x, y: x**y, np.power),
   ExprOp.ATAN2: (sc.atan2, np.arctan2),
 }
+# Bool and integer values carry no tangent, and a float cast needs a second float dtype;
+# tests/ad/test_select_derivatives.py covers them.
+WITHOUT_TANGENT = {
+  ExprOp.LT,
+  ExprOp.LE,
+  ExprOp.EQ,
+  ExprOp.NE,
+  ExprOp.AND,
+  ExprOp.OR,
+  ExprOp.NOT,
+  ExprOp.ISFINITE,
+  ExprOp.CAST,
+  ExprOp.FLOORDIV,
+  ExprOp.MOD,
+}
 REFUSED = {
   ExprOp.FLOOR: lambda x: x.floor(),
   ExprOp.CEIL: lambda x: x.ceil(),
@@ -114,6 +129,18 @@ def _cases() -> list[Case]:
       values = tuple(np.linspace(0.6 + i, 1.1 + i, int(np.prod(shape))).reshape(shape) for i, shape in enumerate(shapes))
       cases.append(Case(f"{op}-{layout}", op, values, build, reference))
     cases.append(Case(f"{op}-repeated", op, (np.array([0.6, 0.9, 1.3]),), lambda x, f=build: f(x, x), lambda x, f=reference: f(x, x)))
+  for layout, shapes in [("scalars", ((), ())), ("broadcast-axes", ((2, 1), (3,))), ("empty", ((2, 0), (1, 0)))]:
+    # Away from x == y, where the choice switches.
+    values = tuple(np.linspace(0.3, 1.9, int(np.prod(shape)))[::step].reshape(shape) for shape, step in zip(shapes, (1, -1), strict=True))
+    cases.append(
+      Case(
+        f"select-{layout}",
+        ExprOp.SELECT,
+        values,
+        lambda x, y: sc.where(x > y + 0.05, x.sin(), y * x),
+        lambda x, y: np.where(x > y + 0.05, np.sin(x), y * x),
+      )
+    )
   for shape in [(3,), (2, 3), (2, 0)]:
     x = np.linspace(0.2, 0.7, int(np.prod(shape))).reshape(shape)
     label = "x".join(map(str, shape))
@@ -324,10 +351,10 @@ def test_baked_seeds_differences_and_duality(evaluated):
 
 
 def test_every_expr_op_is_accounted_for():
-  assert set(UNARY) | {ExprOp.FLOOR, ExprOp.CEIL} == COMMON_ELEMENTWISE_UNARY
-  assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} == COMMON_ELEMENTWISE_BINARY
+  assert set(UNARY) | {ExprOp.FLOOR, ExprOp.CEIL} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_UNARY == COMMON_ELEMENTWISE_UNARY
+  assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_BINARY == COMMON_ELEMENTWISE_BINARY
   # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences.
-  assert {case.op for case in CASES} | set(REFUSED) | {ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT} == set(ExprOp)
+  assert {case.op for case in CASES} | set(REFUSED) | WITHOUT_TANGENT | {ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT} == set(ExprOp)
 
 
 @pytest.mark.parametrize(("op", "point"), [(op, point) for op in REFUSED for point in (0.5,)] + [(ExprOp.SOLVER_CALL, None)])

@@ -24,18 +24,21 @@ import numpy as np
 
 from .expr import (
   COMMON_ELEMENTWISE_BINARY,
+  COMMON_ELEMENTWISE_TERNARY,
   COMMON_ELEMENTWISE_UNARY,
+  OP_INFO,
+  PRINTABLE,
   Expr,
   ExprOp,
-  OP_INFO,
   _pattern_text,
   _type_text,
   check_stored_pattern,
+  elementwise_dtype,
   print_pieces,
   topo,
 )
 from .spec import Rule, Spec, VerifyError
-from .types import CanonicalPattern, DType, broadcast_shape, dtypes
+from .types import CanonicalPattern, DType, broadcast_shape
 
 
 def verify_expr(root: Expr | Iterable[Expr], spec: "Spec | None" = None) -> None:
@@ -137,20 +140,24 @@ def _unary_shape_dtype(expr: Expr) -> str | None:
   return None
 
 
-def _binary_shape_dtype(expr: Expr) -> str | None:
-  if len(expr.args) != 2:
-    return f"binary op has {len(expr.args)} args"
-  x, y = expr.args
-  if x.type.dtype != y.type.dtype:
-    return f"binary op operands have mismatched dtypes: {x.type.dtype} vs {y.type.dtype}"
-  if x.type.dtype != expr.type.dtype:
-    return f"binary op output dtype {expr.type.dtype} != operand dtype {x.type.dtype}"
+def _elementwise_shape_dtype(expr: Expr) -> str | None:
+  shapes = [arg.shape for arg in expr.args]
   try:
-    expected = broadcast_shape(x.shape, y.shape)
+    expected = shapes[0]
+    for shape in shapes[1:]:
+      expected = broadcast_shape(expected, shape)
   except ValueError as e:
-    return f"binary op operands not broadcastable: {e}"
+    return f"elementwise operands not broadcastable: {e}"
   if expected != expr.shape:
-    return f"binary op output shape {expr.shape} != broadcast({x.shape}, {y.shape})={expected}"
+    return f"elementwise output shape {expr.shape} != broadcast of {shapes}={expected}"
+  if expr.op == ExprOp.CAST:
+    return "a cast to bool is spelled x != 0" if expr.type.dtype.is_bool else None
+  try:
+    dtype = elementwise_dtype(expr.op, *(arg.type.dtype for arg in expr.args))
+  except TypeError as e:
+    return str(e)
+  if dtype != expr.type.dtype:
+    return f"elementwise output dtype {expr.type.dtype} != {dtype}"
   return None
 
 
@@ -381,14 +388,16 @@ def _print_format(expr: Expr) -> str | None:
     return f"PRINT format has {placeholders} placeholders for {len(expr.args)} values"
   if expr.type != expr.args[0].type:
     return f"PRINT type {expr.type} differs from its first value's {expr.args[0].type}"
-  if any(a.type.dtype != dtypes.float64 for a in expr.args):
-    return "PRINT values must be float64"
+  if any(a.type.dtype not in PRINTABLE for a in expr.args):
+    return f"PRINT values must be {', '.join(map(str, PRINTABLE))}"
   return None
 
 
 # Build rule lists for elementwise op classes.
-_unary_rules = [Rule(op, "unary-shape-dtype-match", _unary_shape_dtype) for op in COMMON_ELEMENTWISE_UNARY]
-_binary_rules = [Rule(op, "binary-shape-dtype-match", _binary_shape_dtype) for op in COMMON_ELEMENTWISE_BINARY]
+_elementwise_rules = [
+  Rule(op, "elementwise-shape-dtype", _elementwise_shape_dtype)
+  for op in COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_ELEMENTWISE_TERNARY
+]
 
 
 spec_expr = Spec(
@@ -398,9 +407,8 @@ spec_expr = Spec(
     Rule(ExprOp.CONST, "const-value-present", _const_value_present),
     Rule(ExprOp.PACK, "stored-value-conversion", _storage_conversion),
     Rule(ExprOp.VALUES, "stored-value-conversion", _storage_conversion),
-    *_unary_rules,
+    *_elementwise_rules,
     Rule(ExprOp.STOP_GRADIENT, "stop-gradient-shape-dtype", _unary_shape_dtype),
-    *_binary_rules,
     Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),

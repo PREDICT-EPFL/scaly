@@ -211,3 +211,13 @@ def test_distinct_arguments_sharing_a_buffer_are_distinct_invocations(capfd) -> 
 
   np.testing.assert_allclose(outer(np.array(2.0)), 6.0)
   assert sorted(capfd.readouterr().out.splitlines()) == ["argument=2", "callee=2", "callee=2"]
+
+
+def test_integers_print_in_full_and_bools_as_words(capfd) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="print_int_bool")
+  def f(x: sc.Expr) -> sc.Expr:
+    big = sc.cast(x, "int64") * (2**40)
+    return sc.cast(sc.print("i={} b={} n={}", big, x > 0.0, sc.cast(x[0], "int32")), "float64").sum()
+
+  assert f(np.array([3.0, -7.0])) == (3 - 7) * 2.0**40
+  assert capfd.readouterr().out == "i=[3298534883328, -7696581394432] b=[True, False] n=3\n"

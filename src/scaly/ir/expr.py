@@ -73,6 +73,18 @@ class ExprOp(StrEnum):
   ATAN2 = "atan2"
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
+  LT = "lt"
+  LE = "le"
+  EQ = "eq"
+  NE = "ne"
+  AND = "and"
+  OR = "or"
+  NOT = "not"
+  ISFINITE = "isfinite"
+  SELECT = "select"
+  CAST = "cast"
+  FLOORDIV = "floordiv"
+  MOD = "mod"
   SUM = "sum"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
@@ -110,6 +122,9 @@ COMMON_ELEMENTWISE_UNARY = {
   ExprOp.ABS,
   ExprOp.FLOOR,
   ExprOp.CEIL,
+  ExprOp.NOT,
+  ExprOp.ISFINITE,
+  ExprOp.CAST,
 }
 
 COMMON_ELEMENTWISE_BINARY = {
@@ -121,7 +136,17 @@ COMMON_ELEMENTWISE_BINARY = {
   ExprOp.ATAN2,
   ExprOp.MINIMUM,
   ExprOp.MAXIMUM,
+  ExprOp.LT,
+  ExprOp.LE,
+  ExprOp.EQ,
+  ExprOp.NE,
+  ExprOp.AND,
+  ExprOp.OR,
+  ExprOp.FLOORDIV,
+  ExprOp.MOD,
 }
+
+COMMON_ELEMENTWISE_TERNARY = {ExprOp.SELECT}
 
 COMMON_STRUCTURAL = {
   ExprOp.INPUT,
@@ -147,7 +172,7 @@ COMMON_STRUCTURAL = {
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
 # (important but require carefully specified extrapolation, knots, derivatives, and codegen tables),
 # matrix exponentials/decompositions, and solver/control-flow ops.
-COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
+COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_ELEMENTWISE_TERNARY
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +186,22 @@ class OpInfo:
   pattern_rule: Literal["preserve", "union", "intersection", "matmul"] | None = None
   support_rule: (
     Literal[
-      "const", "pack", "values", "preserve", "union", "numerator", "sum", "transpose", "slice", "gather", "scatter", "stack", "concat", "call", "vmap"
+      "const",
+      "pack",
+      "values",
+      "preserve",
+      "union",
+      "select",
+      "numerator",
+      "sum",
+      "transpose",
+      "slice",
+      "gather",
+      "scatter",
+      "stack",
+      "concat",
+      "call",
+      "vmap",
     ]
     | None
   ) = None
@@ -201,6 +241,21 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2),
   ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, False, support_rule="union"),
   ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, False, support_rule="union"),
+  # Each predicate or logic op that is false wherever both operands are zero follows their union;
+  # the others (x <= x, x == x, not 0, isfinite(0)) are true at zero and have no support rule.
+  ExprOp.LT: OpInfo(ExprOp.LT, 2, False, support_rule="union"),
+  ExprOp.LE: OpInfo(ExprOp.LE, 2, False),
+  ExprOp.EQ: OpInfo(ExprOp.EQ, 2, False),
+  ExprOp.NE: OpInfo(ExprOp.NE, 2, False, support_rule="union"),
+  ExprOp.AND: OpInfo(ExprOp.AND, 2, False, support_rule="union"),
+  ExprOp.OR: OpInfo(ExprOp.OR, 2, False, support_rule="union"),
+  ExprOp.NOT: OpInfo(ExprOp.NOT, 1, False),
+  ExprOp.ISFINITE: OpInfo(ExprOp.ISFINITE, 1, False),
+  ExprOp.SELECT: OpInfo(ExprOp.SELECT, 3, support_rule="select"),
+  ExprOp.CAST: OpInfo(ExprOp.CAST, 1, support_rule="preserve"),
+  # A zero divisor gives 0, so the dividend's zeros stay.
+  ExprOp.FLOORDIV: OpInfo(ExprOp.FLOORDIV, 2, False, support_rule="numerator"),
+  ExprOp.MOD: OpInfo(ExprOp.MOD, 2, False, support_rule="numerator"),
   ExprOp.SUM: OpInfo(ExprOp.SUM, 1, support_rule="sum"),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, support_rule="preserve"),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, support_rule="transpose"),
@@ -556,8 +611,8 @@ class Expr:
     """Return this expression with a hint to expand its procedure into straight-line scalar code.
 
     The hint overrides the automatic size limits and applies to the entry point too. Only
-    procedures whose values are all ``float64`` expand, and a ``block`` hint in the same function
-    wins. See the lowering page of *How it works* for the policy.
+    procedures whose values are all ``float64``, ``int64`` or ``bool`` expand, and a ``block`` hint
+    in the same function wins. See the lowering page of *How it works* for the policy.
     """
     return self.with_lowering("scalar")
 
@@ -632,6 +687,8 @@ class Expr:
     return to_dense(self)
 
   def sum(self) -> Expr:
+    if not self.type.dtype.is_floating:
+      raise TypeError(f"sum takes floating values, got {self.type.dtype}; convert with sc.cast")
     return Expr(ExprOp.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
 
   def dot(self, other: Any) -> Expr:
@@ -694,6 +751,12 @@ class Expr:
   def ceil(self) -> Expr:
     return unary(ExprOp.CEIL, self)
 
+  def isfinite(self) -> Expr:
+    return isfinite(self)
+
+  def cast(self, dtype: DType | str) -> Expr:
+    return cast(self, dtype)
+
   def minimum(self, other: Any) -> Expr:
     return minimum(self, other)
 
@@ -733,6 +796,46 @@ class Expr:
   def __rpow__(self, other: Any) -> Expr:
     return binary(ExprOp.POW, _coerce(other, self), self)
 
+  def __floordiv__(self, other: Any) -> Expr:
+    return binary(ExprOp.FLOORDIV, self, _coerce(other, self))
+
+  def __rfloordiv__(self, other: Any) -> Expr:
+    return binary(ExprOp.FLOORDIV, _coerce(other, self), self)
+
+  def __mod__(self, other: Any) -> Expr:
+    return binary(ExprOp.MOD, self, _coerce(other, self))
+
+  def __rmod__(self, other: Any) -> Expr:
+    return binary(ExprOp.MOD, _coerce(other, self), self)
+
+  # ``==`` stays identity, which interning relies on; ``sc.equal`` compares values.
+  def __lt__(self, other: Any) -> Expr:
+    return binary(ExprOp.LT, self, _coerce(other, self))
+
+  def __le__(self, other: Any) -> Expr:
+    return binary(ExprOp.LE, self, _coerce(other, self))
+
+  def __gt__(self, other: Any) -> Expr:
+    return binary(ExprOp.LT, _coerce(other, self), self)
+
+  def __ge__(self, other: Any) -> Expr:
+    return binary(ExprOp.LE, _coerce(other, self), self)
+
+  def __and__(self, other: Any) -> Expr:
+    return binary(ExprOp.AND, self, _condition(other))
+
+  def __rand__(self, other: Any) -> Expr:
+    return binary(ExprOp.AND, _condition(other), self)
+
+  def __or__(self, other: Any) -> Expr:
+    return binary(ExprOp.OR, self, _condition(other))
+
+  def __ror__(self, other: Any) -> Expr:
+    return binary(ExprOp.OR, _condition(other), self)
+
+  def __invert__(self) -> Expr:
+    return unary(ExprOp.NOT, self)
+
   def __matmul__(self, other: Any) -> Expr:
     return matmul(self, _coerce(other, self))
 
@@ -740,7 +843,7 @@ class Expr:
     return matmul(_coerce(other, self), self)
 
   def __bool__(self) -> bool:
-    raise TypeError("an Expr has no truth value: a Python branch on one would take the same path for every input")
+    raise TypeError("an Expr has no truth value: a Python branch on one would take the same path for every input; use sc.where to choose a value")
 
   def inputs(self) -> dict[str, Expr]:
     ret: dict[str, Expr] = {}
@@ -831,7 +934,7 @@ def _weak_kind(x: Any) -> int:
 
 def _coerce(x: Any, like: Expr | None) -> Expr:
   """``x`` as an operand beside ``like``. A Python value is weak and takes ``like``'s dtype; an
-  ``Expr`` or a NumPy value is strong and keeps its own, which ``promote_dtype`` then checks."""
+  ``Expr`` or a NumPy value is strong and keeps its own, which ``elementwise_dtype`` then checks."""
   if isinstance(x, Expr | np.ndarray | np.generic) or like is None:
     return as_expr(x)
   dtype = like.type.dtype
@@ -870,14 +973,56 @@ def promote_dtype(*exprs: Expr) -> DType:
   first = exprs[0].type.dtype
   for e in exprs[1:]:
     if e.type.dtype != first:
-      raise TypeError(f"mixed dtypes {first} and {e.type.dtype}; give all operands the same dtype")
+      raise TypeError(f"mixed dtypes {first} and {e.type.dtype}; convert one with sc.cast")
   return first
 
 
+_PREDICATES = {ExprOp.LT, ExprOp.LE, ExprOp.EQ, ExprOp.NE}
+_LOGIC = {ExprOp.AND, ExprOp.OR, ExprOp.NOT}
+# What C computes exactly on integers; the libm functions and / would round through a double.
+_INTEGER_OPS = _PREDICATES | {
+  ExprOp.NEG,
+  ExprOp.ADD,
+  ExprOp.SUB,
+  ExprOp.MUL,
+  ExprOp.MINIMUM,
+  ExprOp.MAXIMUM,
+  ExprOp.FLOORDIV,
+  ExprOp.MOD,
+  ExprOp.SELECT,
+}
+
+
+def elementwise_dtype(op: ExprOp | str, *operands: DType) -> DType:
+  """The dtype of an elementwise ``op`` on operands of these dtypes, or a ``TypeError`` saying what
+  to change. A ``CAST`` is not asked: its dtype is its target."""
+  op = ExprOp(op)
+  if op == ExprOp.SELECT:
+    condition, *operands_ = operands
+    if not condition.is_bool:
+      raise TypeError(f"where takes a bool condition, got {condition}; compare first, as in x > 0")
+    operands = tuple(operands_)
+  got = ", ".join(map(str, operands))
+  if op in _LOGIC and not all(d.is_bool for d in operands):
+    raise TypeError(f"{op.value} takes bool operands, got {got}")
+  if op == ExprOp.ISFINITE and not operands[0].is_floating:
+    raise TypeError(f"isfinite takes a floating operand, got {got}")
+  if op in {ExprOp.FLOORDIV, ExprOp.MOD} and not all(d.is_integer for d in operands):
+    raise TypeError(f"{op.value} takes integer operands, got {got}")
+  if op not in _INTEGER_OPS and any(d.is_integer for d in operands):
+    raise TypeError(f"{'/' if op == ExprOp.DIV else op.value} takes floating operands, got {got}; convert with sc.cast")
+  if op not in _PREDICATES | _LOGIC | {ExprOp.SELECT} and any(d.is_bool for d in operands):
+    raise TypeError(f"{op.value} takes numbers, got {got}; convert with sc.cast")
+  first = operands[0]
+  for dtype in operands[1:]:
+    if dtype != first:
+      raise TypeError(f"mixed dtypes {first} and {dtype}; convert one with sc.cast")
+  return dtypes.bool_ if op in _PREDICATES or op == ExprOp.ISFINITE else first
+
+
 def unary(op: ExprOp | str, x: Expr) -> Expr:
-  return Expr(
-    op, (x,), TensorType(x.shape, dtype=x.type.dtype, diff=op_diff(op, x), pattern=stored_pattern(op, (x.type,), x.shape)), lowering=x.lowering
-  )
+  dtype = elementwise_dtype(op, x.type.dtype)
+  return Expr(op, (x,), TensorType(x.shape, dtype=dtype, diff=op_diff(op, x), pattern=stored_pattern(op, (x.type,), x.shape)), lowering=x.lowering)
 
 
 def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
@@ -885,9 +1030,14 @@ def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
   return Expr(
     op,
     (x, y),
-    TensorType(shape, dtype=promote_dtype(x, y), diff=op_diff(op, x, y), pattern=stored_pattern(op, (x.type, y.type), shape)),
+    TensorType(
+      shape, dtype=elementwise_dtype(op, x.type.dtype, y.type.dtype), diff=op_diff(op, x, y), pattern=stored_pattern(op, (x.type, y.type), shape)
+    ),
     lowering=common_lowering(x, y),
   )
+
+
+PRINTABLE = (dtypes.float64, dtypes.int32, dtypes.int64, dtypes.bool_)
 
 
 def print_pieces(fmt: str) -> tuple[str, ...]:
@@ -934,14 +1084,14 @@ def print_(fmt: str, *values: Any) -> Expr:
   """Return the first of ``values``, printing them all each time generated code computes it.
 
   ``fmt`` has one ``{}`` for each value, and ``{{`` and ``}}`` for literal braces. Each print ends
-  its line. A value prints with 17 significant digits, enough to read a ``float64`` back exactly,
-  and a tensor prints flat as ``[a, b, ...]``. The print is part of the returned expression, so a
+  its line. A ``float64`` prints with 17 significant digits, enough to read it back exactly, an
+  integer in full and a ``bool`` as ``True`` or ``False``, and a tensor prints flat as ``[a, b, ...]``. The print is part of the returned expression, so a
   function's outputs have to use it. A print they do not use raises ``ValueError`` when Scaly runs
   the function body to build its expression graph.
 
   Args:
     fmt: the text to print, with a ``{}`` placeholder for each value.
-    values: the ``float64`` expressions to print. The first is returned.
+    values: the expressions to print. The first is returned.
   """
   exprs = tuple(as_expr(value) for value in values)
   if not exprs:
@@ -949,8 +1099,8 @@ def print_(fmt: str, *values: Any) -> Expr:
   placeholders = len(print_pieces(fmt)) - 1
   if placeholders != len(exprs):
     raise ValueError(f"print format {fmt!r} has {placeholders} placeholders for {len(exprs)} values")
-  if any(e.type.dtype != dtypes.float64 for e in exprs):
-    raise TypeError(f"print supports float64 values, got {', '.join(str(e.type.dtype) for e in exprs)}")
+  if any(e.type.dtype not in PRINTABLE for e in exprs):
+    raise TypeError(f"print supports {', '.join(map(str, PRINTABLE))} values, got {', '.join(str(e.type.dtype) for e in exprs)}")
   node = Expr(ExprOp.PRINT, exprs, exprs[0].type, attrs={"format": fmt}, lowering=exprs[0].lowering)
   if (trace := _PRINT_TRACE.get()) is not None:
     trace.append(node)
@@ -970,6 +1120,67 @@ def stop_gradient(value: Any) -> Expr:
 def atan2(y: Any, x: Any) -> Expr:
   """Two-argument arctangent, elementwise: the angle of the point ``(x, y)``."""
   return binary(ExprOp.ATAN2, *_operands(y, x))
+
+
+def equal(x: Any, y: Any) -> Expr:
+  """Elementwise ``x == y`` as a bool expression. The ``==`` operator compares expressions by identity."""
+  return binary(ExprOp.EQ, *_operands(x, y))
+
+
+def not_equal(x: Any, y: Any) -> Expr:
+  """Elementwise ``x != y`` as a bool expression, true wherever either side is NaN."""
+  return binary(ExprOp.NE, *_operands(x, y))
+
+
+def isfinite(x: Any) -> Expr:
+  """Elementwise test that a floating value is neither infinite nor NaN.
+
+  The generated C refuses to compile under ``-ffast-math``, which assumes no value is either.
+  """
+  return unary(ExprOp.ISFINITE, as_expr(x))
+
+
+def _condition(x: Any) -> Expr:
+  if not isinstance(x, Expr | np.ndarray | np.generic):
+    raise TypeError(f"a condition is a bool expression, got {type(x).__name__}; == compares identity, use sc.equal")
+  return as_expr(x)
+
+
+def where(condition: Any, x: Any, y: Any) -> Expr:
+  """Choose elementwise: ``x`` where the bool ``condition`` holds, ``y`` elsewhere.
+
+  The three broadcast together and ``x`` and ``y`` share a dtype. The generated C computes both
+  branches, so a branch may be NaN or infinite where it is not chosen, and the derivative ignores
+  the branch not chosen too: ``where(x > 0, sqrt(x), 0)`` has derivative zero at ``x = 0``. In
+  reverse mode that holds up to a ``Function`` the branch calls, whose own derivative still sees
+  every entry. The condition has no derivative.
+  """
+  condition = _condition(condition)
+  x, y = _operands(x, y)
+  dtype = elementwise_dtype(ExprOp.SELECT, condition.type.dtype, x.type.dtype, y.type.dtype)
+  shape = broadcast_shape(condition.shape, broadcast_shape(x.shape, y.shape))
+  return Expr(
+    ExprOp.SELECT,
+    (condition, x, y),
+    TensorType(shape, dtype=dtype, diff=op_diff(ExprOp.SELECT, x, y)),
+    lowering=common_lowering(condition, x, y),
+  )
+
+
+def cast(x: Any, dtype: DType | str) -> Expr:
+  """Convert ``x`` elementwise to ``dtype``, as NumPy's ``astype`` does.
+
+  A float becomes an integer by dropping its fraction, and a float outside the integer's range,
+  NaN included, has no defined result. A cast to ``bool`` is ``x != 0``, so NaN is true. A cast
+  keeps its derivative only from one float dtype to another.
+  """
+  x, dtype = _condition(x) if isinstance(x, bool) else as_expr(x), as_dtype(dtype)
+  if dtype == x.type.dtype:
+    return x
+  if dtype.is_bool:
+    return not_equal(x, 0)
+  diff = x.type.diff and x.type.dtype.is_floating and dtype.is_floating
+  return Expr(ExprOp.CAST, (x,), TensorType(x.shape, dtype=dtype, diff=diff), lowering=x.lowering)
 
 
 def minimum(x: Any, y: Any) -> Expr:
@@ -1007,6 +1218,8 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
 
 
 def matmul(x: Expr, y: Expr) -> Expr:
+  if not x.type.dtype.is_floating or not y.type.dtype.is_floating:
+    raise TypeError(f"@ takes floating operands, got {x.type.dtype} and {y.type.dtype}; convert with sc.cast")
   if len(x.shape) == 1 and len(y.shape) == 1:
     if x.shape[0] != y.shape[0]:
       raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")

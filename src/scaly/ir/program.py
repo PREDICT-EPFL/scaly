@@ -90,6 +90,18 @@ class ProgramOp(StrEnum):
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
   BIT_SELECT = "bit_select"
+  LT = "lt"
+  LE = "le"
+  EQ = "eq"
+  NE = "ne"
+  AND = "and"
+  OR = "or"
+  NOT = "not"
+  ISFINITE = "isfinite"
+  SELECT = "select"
+  CAST = "cast"
+  FLOORDIV = "floordiv"
+  FLOORMOD = "floormod"
 
 
 class RangeKind(StrEnum):
@@ -142,6 +154,18 @@ SCALAR_OPS: frozenset[ProgramOp] = frozenset(
     ProgramOp.MINIMUM,
     ProgramOp.MAXIMUM,
     ProgramOp.BIT_SELECT,
+    ProgramOp.LT,
+    ProgramOp.LE,
+    ProgramOp.EQ,
+    ProgramOp.NE,
+    ProgramOp.AND,
+    ProgramOp.OR,
+    ProgramOp.NOT,
+    ProgramOp.ISFINITE,
+    ProgramOp.SELECT,
+    ProgramOp.CAST,
+    ProgramOp.FLOORDIV,
+    ProgramOp.FLOORMOD,
   }
 )
 

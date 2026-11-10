@@ -261,8 +261,10 @@ def _render_scalar(n: ProgramNode) -> str:
     return f"prog.{n.op.value}({_render_scalar(n.args[0])})"
   if n.op in BINARY_FN_OPS:
     return f"prog.{n.op.value}({_render_scalar(n.args[0])}, {_render_scalar(n.args[1])})"
-  if n.op == ProgramOp.BIT_SELECT:
-    return f"prog.bit_select({', '.join(_render_scalar(a) for a in n.args)})"
+  if n.op == ProgramOp.CAST:
+    return f"prog.cast<{n.dtype}>({_render_scalar(n.args[0])})"
+  if n.op in SCALAR_OPS:
+    return f"prog.{n.op.value}({', '.join(_render_scalar(a) for a in n.args)})"
   return f"<prog.{n.op.value}>"
 
 
@@ -352,8 +354,10 @@ def _format_scalar(n: ProgramNode) -> str:
     return f"{n.op.value}({_format_scalar(n.args[0])})"
   if n.op in BINARY_FN_OPS:
     return f"{n.op.value}({_format_scalar(n.args[0])}, {_format_scalar(n.args[1])})"
-  if n.op == ProgramOp.BIT_SELECT:
-    return f"bit_select({', '.join(_format_scalar(a) for a in n.args)})"
+  if n.op == ProgramOp.CAST:
+    return f"cast<{n.dtype}>({_format_scalar(n.args[0])})"
+  if n.op in SCALAR_OPS:
+    return f"{n.op.value}({', '.join(_format_scalar(a) for a in n.args)})"
   return f"<{n.op.value}>"
 
 

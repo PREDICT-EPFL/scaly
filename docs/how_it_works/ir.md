@@ -38,14 +38,22 @@ A `TensorType` holds a fixed shape of non-negative integers, a data type and a
 | `sc.dtypes.int64`   | `int64_t`  | 8     |
 | `sc.dtypes.float64` | `double`   | 8     |
 
-The default is `float64`. There is no cast operation, so an operation on two
-data types fails when you build it:
+The default is `float64`. An operation on two data types fails when you build
+it, and `sc.cast` converts one explicitly:
 
 ```python
 x = sc.sym("x", 3)
-x + sc.sym("n", 3, dtype=sc.dtypes.int64)
-# TypeError: mixed dtypes float64 and int64; give all operands the same dtype
+n = sc.sym("n", 3, dtype=sc.dtypes.int64, diff=False)
+x + n                    # TypeError: mixed dtypes float64 and int64; convert one with sc.cast
+x + sc.cast(n, "float64")  # float64
 ```
+
+`sc.cast` follows NumPy's `astype`: a float becomes an integer by dropping its
+fraction, and a cast to `bool` is `x != 0`, so NaN is true. A comparison,
+`sc.isfinite`, `&`, `|` and `~` give `bool`. `//` and `%` take integers and
+round the quotient down, as NumPy does, so `-7 // 2` is `-4` and `-7 % 2` is
+`1`. A zero divisor gives `0` for both, as in NumPy. `/` takes floating
+operands only. Arithmetic on `bool` raises and asks for a cast.
 
 A Python number or list beside an expression takes that expression's data type.
 An `int` may join an integer or floating expression, but it raises
@@ -55,7 +63,6 @@ type, so they must match the expression. `sc.const` follows the same rule: it
 keeps a NumPy value's data type and makes anything else `float64`.
 
 ```python
-n = sc.sym("n", 3, dtype=sc.dtypes.int64, diff=False)
 n + 1                    # int64
 x * np.int64(2)          # TypeError: mixed dtypes float64 and int64
 sc.const(np.arange(3))   # an int64 constant
@@ -103,6 +110,11 @@ Arity is the number of operands.
 | Hyperbolic      | `sinh`, `cosh`, `tanh`                        | 1        | Elementwise                               |
 | Other math      | `erf`, `exp`, `log`, `sqrt`, `abs`            | 1        | Elementwise                               |
 | Non-smooth      | `floor`, `ceil`, `minimum`, `maximum`         | 1 or 2   | No derivative rule                        |
+| Comparison      | `lt`, `le`, `eq`, `ne`, `isfinite`            | 1 or 2   | A `bool` result, no derivative            |
+| Logic           | `and`, `or`, `not`                            | 1 or 2   | `bool` operands                           |
+| Selection       | `select`                                      | 3        | `sc.where`, derivative of the chosen branch |
+| Conversion      | `cast`                                        | 1        | A derivative between floating types only  |
+| Integer         | `floordiv`, `mod`                             | 2        | Rounding down, as in NumPy                |
 | Reduction       | `sum`                                         | 1        | All elements into a scalar, no axis       |
 | Shape           | `reshape`, `transpose`                        | 1        | Size-preserving reshape, axis permutation |
 | Indexing        | `slice`, `gather`, `scatter`                  | 1        | Gather and scatter use flat index tables  |
@@ -210,8 +222,10 @@ the listings below show the optimized program for each example.
 | `call`                       | Call another procedure                                     |
 | `const_int`, `const_float`, `var` | Scalar constants and variables                        |
 
-Scalar arithmetic reuses the expression dialect's elementwise operations, plus
-`mod` for index arithmetic.
+Scalar arithmetic reuses the expression dialect's elementwise operations, with
+two integer divisions. `floordiv` and `floormod` round down, as the expression
+dialect's `floordiv` and `mod` do. `div` and `mod` on integers round toward zero
+as C does, and serve index arithmetic, whose operands are never negative.
 
 ### Calls and loops after lowering
 

@@ -90,6 +90,9 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         or (n.op == ProgramOp.RANGE and n.attrs.get("carried"))
         or (n.op == ProgramOp.FOR and any(a.op != ProgramOp.CONST_INT for a in n.args[0].args))
         or (n.dtype.is_floating and n.dtype.bits != 64)
+        # Lanes hold doubles: a bool, or an integer that only a cast turns into one, stays scalar.
+        or n.dtype.is_bool
+        or n.op == ProgramOp.CAST
         or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64))
         for n in nodes
       ):

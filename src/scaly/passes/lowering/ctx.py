@@ -25,6 +25,7 @@ from ..affine import affine_index_map
 from ..arith import fold_program
 from ..expr import cse_many, simplify
 
+_EXACT_STORES = (dtypes.float64, dtypes.int64, dtypes.bool_)
 LowerRule = Callable[["LowerCtx", Expr], None]
 _RULES: dict[ExprOp, LowerRule] = {}
 
@@ -182,7 +183,9 @@ def _lower_to_proc(
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
   nodes = fun.nodes
-  ctx.scalarize = all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (
+  # Narrower stores round or truncate; scalar substitution must not erase those conversions. int64
+  # and bool hold every value their operations give, so substituting them changes nothing.
+  ctx.scalarize = all(n.type.dtype in _EXACT_STORES for n in (*fun.inputs, *nodes)) and (
     lowering == "scalar" or lowering == "auto" and auto_scalarize
   )
   ctx.emit_inputs()
@@ -192,7 +195,6 @@ def _lower_to_proc(
   proc = p.proc(symbol, ctx.params, ctx.statements)
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
-  # Narrower stores round or truncate; scalar substitution must not erase those conversions.
   return ProgramNode(
     ProgramOp.PROC,
     proc.args,

@@ -248,12 +248,43 @@ would be taken for every input. An `Expr` therefore has no truth value:
 @sc.function(sc.arg("x", ()), outputs=sc.arg("y"))
 def branch(x: sc.Expr) -> sc.Expr:
     return x if x else sc.const(10.0)
-# TypeError: an Expr has no truth value: a Python branch on one would take the same path for every input
+# TypeError: an Expr has no truth value: a Python branch on one would take the same path for every input; use sc.where to choose a value
 ```
 
 The error comes from the decorator, which traces a fully declared body straight
-away. `and`, `or`, `not` and `while` on an `Expr` raise the same way. Scaly has no
-symbolic conditional selection.
+away. `and`, `or`, `not` and `while` on an `Expr` raise the same way.
+
+`sc.where(condition, a, b)` chooses between values instead, elementwise, as
+`np.where` does. The condition is a `bool` expression, built from the comparisons
+`<`, `<=`, `>` and `>=`, from `sc.equal`, `sc.not_equal` and `sc.isfinite`, and
+combined with `&`, `|` and `~`:
+
+```python
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
+def clipped_log(x: sc.Expr) -> sc.Expr:
+    return sc.where((x > 0.0) & sc.isfinite(x), x.log(), 0.0)
+
+print(clipped_log(np.array([-1.0, 2.0, np.inf])))  # [0.         0.69314718 0.        ]
+```
+
+`==` and `!=` compare expressions themselves, not their values, because Scaly
+relies on them to recognise a node it has already built. `x == 0` is therefore
+`False`, and `sc.where` refuses it with a message pointing to `sc.equal(x, 0)`.
+
+The generated code computes both branches and keeps one, so the branch not
+chosen may be NaN or infinite where it is not used, as `log` is at `-1` above.
+Derivatives ignore it as well: `sc.where(x > 0, x.sqrt(), 0.0)` has derivative
+zero at `x = 0`, although the derivative of the square root is infinite there.
+The condition has no derivative, and neither has any comparison.
+
+!!! warning "A NaN derivative inside a called function"
+    Reverse mode, which gradients use, keeps the branch not chosen out of the
+    derivative through elementwise operations, sums, slices, reshapes and casts,
+    but not into a `Function` the branch calls. That function's derivative is
+    built once for every caller, so a NaN or infinite derivative inside it still
+    reaches the gradient: with `root` a `Function` returning `sqrt`,
+    `sc.where(x > 0, root(x), 0.0)` has a NaN gradient at `x = 0`. Forward mode
+    gives zero. Apply `sc.where` inside the function instead.
 
 ### Supported array operations
 
@@ -453,10 +484,11 @@ print(damped(np.array([1.0, 0.1]), np.array(0.5)))
 ```
 
 The format has one `{}` for each value, and `{{` and `}}` stand for literal
-braces. Each print ends its line. A value prints with 17 significant digits,
-enough to read a float64 back exactly, which is why `0.1` prints as
-`0.10000000000000001`. A tensor prints flat as `[a, b, ...]` whatever its shape.
-Only float64 values can be printed.
+braces. Each print ends its line. A float64 value prints with 17 significant
+digits, enough to read it back exactly, which is why `0.1` prints as
+`0.10000000000000001`. An `int32` or `int64` value prints in full and a `bool`
+prints as `True` or `False`. A tensor prints flat as `[a, b, ...]` whatever its
+shape. Other data types cannot be printed.
 
 A print runs whenever the generated code computes its value. Inside `vmap` it
 runs once per call, in call order. A mapped function with several outputs runs

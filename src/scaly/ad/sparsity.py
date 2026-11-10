@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp, callees_of
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_TERNARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp, callees_of
 from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries, specialize_support
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
 
@@ -242,7 +242,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
       return _empty((expr.size, wrt.size))
     entries = support_indices(expr.support) if expr.support is not None else np.arange(wrt.size)
     return _incidence((wrt.size, wrt.size), entries, entries)
-  if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
+  # A bool or integer value, a predicate's or a cast's, has no derivative.
+  if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT} or not expr.type.dtype.is_floating:
     return _empty((expr.size, wrt.size))
   if expr.op == ExprOp.PACK:
     child = _jac_mask(expr.args[0], wrt, memo)
@@ -259,6 +260,9 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape, ys, memo.support_of(ys) if ys is not None else None)
     ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape, xs, memo.support_of(xs) if xs is not None else None)
     return _or(xm, ym)
+  if expr.op in COMMON_ELEMENTWISE_TERNARY:
+    _, x, y = expr.args
+    return _or(_broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape), _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape))
   if expr.op == ExprOp.SUM:
     child = _jac_mask(expr.args[0], wrt, memo)
     return _incidence((1, wrt.size), np.zeros(child.nnz, dtype=np.int64), child.col)

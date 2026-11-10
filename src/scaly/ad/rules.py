@@ -8,13 +8,25 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, gather, pack, scatter, values
+from ..ir.expr import Expr, ExprOp, cast, gather, not_equal, pack, scatter, values, where
 from ..ir.program import ProgramOp
 from ..ir.support import support_indices, project_entries
 from ..ir.types import TensorType, stored_indices
 from .sparsity import _prunable_support
 
-type Local = Expr | int | tuple[Expr | int, Expr]
+
+@dataclass(frozen=True, slots=True)
+class Mask:
+  """The partial of a select with respect to a branch: 1 where ``condition`` chooses it, else 0.
+
+  A product with a mask is a select of the product, so the branch not chosen contributes an exact
+  zero even where it, or its derivative, is NaN or infinite.
+  """
+
+  condition: Expr
+
+
+type Local = Expr | int | tuple[Expr | int, Expr] | Mask
 type Partial = Callable[[Expr], Local]
 
 
@@ -25,12 +37,14 @@ class Elementwise:
   ``partials[i]`` builds the partial of a node with respect to operand ``i``, and is called only
   when that operand is active. A partial of ``1`` or ``-1`` passes the tangent through or negates
   it. A pair ``(numerator, denominator)`` is a quotient: the tangent is multiplied by the numerator
-  before the division, so a finite product does not overflow or underflow through the partial.
+  before the division, so a finite product does not overflow or underflow through the partial. A
+  ``Mask`` selects. An operand that is not floating is never active.
   ``partials`` is ``None`` for an op without a derivative. ``jvp`` replaces the sum of partials
   times tangents with a prescribed form, more stable or cheaper; it receives the tangents aligned
   with the output.
-  ``c`` is the C spelling, a libm function or an operator, and ``c_integer`` a different spelling
-  for integer operands. ``expensive`` marks a libm call that fusion must not duplicate.
+  ``c`` is the C spelling, a libm function, an operator or a template over the operands ``{0}``,
+  ``{1}``, ``{2}`` and the result's C type ``{type}``, and ``c_integer`` a different spelling for
+  integer operands. ``expensive`` marks a libm call that fusion must not duplicate.
   """
 
   program: ProgramOp
@@ -72,6 +86,16 @@ def _div_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   quotient = _seed_axis(e)
   numerator = dx if db is None else -(quotient * db) if dx is None else dx - quotient * db
   return numerator / _seed_axis(e.args[1], e)
+
+
+def _inactive(e: Expr) -> Local:
+  raise AssertionError("a bool condition is never active")
+
+
+def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
+  _, dx, dy = tangents
+  zero = _const(0, e)
+  return where(_seed_axis(e.args[0], e), zero if dx is None else dx, zero if dy is None else dy)
 
 
 # NumPy has no erf; frompyfunc keeps constant folding vectorized without adding SciPy.
@@ -119,6 +143,29 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
   ),
   ExprOp.MINIMUM: Elementwise(ProgramOp.MINIMUM, np.fmin, "fmin", c_integer="({0} < {1} ? {0} : {1})"),
   ExprOp.MAXIMUM: Elementwise(ProgramOp.MAXIMUM, np.fmax, "fmax", c_integer="({0} > {1} ? {0} : {1})"),
+  ExprOp.LT: Elementwise(ProgramOp.LT, np.less, "<"),
+  ExprOp.LE: Elementwise(ProgramOp.LE, np.less_equal, "<="),
+  ExprOp.EQ: Elementwise(ProgramOp.EQ, np.equal, "=="),
+  ExprOp.NE: Elementwise(ProgramOp.NE, np.not_equal, "!="),
+  ExprOp.AND: Elementwise(ProgramOp.AND, np.logical_and, "&&"),
+  ExprOp.OR: Elementwise(ProgramOp.OR, np.logical_or, "||"),
+  ExprOp.NOT: Elementwise(ProgramOp.NOT, np.logical_not, "!"),
+  # isfinite may return any nonzero int; a bool holds 0 or 1.
+  ExprOp.ISFINITE: Elementwise(ProgramOp.ISFINITE, np.isfinite, "(isfinite({0}) != 0)"),
+  ExprOp.SELECT: Elementwise(
+    ProgramOp.SELECT,
+    np.where,
+    "({0} ? {1} : {2})",
+    (_inactive, lambda e: Mask(e.args[0]), lambda e: Mask(~e.args[0])),
+    _select_jvp,
+    # Integer literals are C ints: the cast keeps a select between two of them in its own width.
+    c_integer="(({type})({0} ? {1} : {2}))",
+  ),
+  # Constant folding converts to the node's dtype, so the fold itself is the identity.
+  ExprOp.CAST: Elementwise(ProgramOp.CAST, lambda x: x, "(({type})({0}))", (lambda e: 1,), lambda e, t: cast(t[0], e.type.dtype)),
+  # NumPy's floor semantics, which C's / and % do not have; codegen/c.py defines the helpers.
+  ExprOp.FLOORDIV: Elementwise(ProgramOp.FLOORDIV, np.floor_divide, "(({type})scaly_floordiv({0}, {1}))"),
+  ExprOp.MOD: Elementwise(ProgramOp.FLOORMOD, np.remainder, "(({type})scaly_floormod({0}, {1}))"),
 }
 
 
@@ -173,8 +220,56 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
   partials = ELEMENTWISE[ExprOp(expr.op)].partials
   assert partials is not None
   local = partials[position](expr)
-  # A masked partial, a select's where(c, cot, 0), would take the place of the product here.
-  return _unbroadcast(_times_partial(local, cot), expr.args[position].shape, expr.shape)
+  # A cotangent a select masked keeps its mask outside the product, so a NaN or infinite partial
+  # where the select did not choose this value stays out: where(c, t * partial, 0).
+  product = _masked(cot, lambda inner: _times_partial(local, inner))
+  arg = expr.args[position]
+  (summed,) = carry_mask(product, lambda c: (_unbroadcast(c, arg.shape, expr.shape),))
+  assert summed is not None
+  return _masked(summed, lambda inner: cast(inner, arg.type.dtype))
+
+
+def carry_mask(cot: Expr, transpose: Callable[[Expr], tuple[Expr | None, ...]]) -> tuple[Expr | None, ...]:
+  """``transpose(cot)`` for a linear map whose weights are 0 or 1, such as a sum, a slice or a
+  reshape, each result masked where no entry the mask on ``cot`` keeps reaches it."""
+  results = transpose(cot)
+  mask = _mask_of(cot)
+  if mask is None:
+    return results
+  ones = Expr.const(np.ones(cot.shape, dtype=cot.type.dtype.numpy()), dtype=cot.type.dtype)
+  weights = transpose(where(mask[0], ones, _const(0, cot)))
+  return tuple(
+    r if r is None or w is None or r.op == ExprOp.CONST or _mask_of(r) is not None else where(not_equal(w, 0), r, _const(0, r))
+    for r, w in zip(results, weights, strict=True)
+  )
+
+
+def accumulate(total: Expr, cot: Expr) -> Expr:
+  """Two cotangents of one node summed, under the union of their masks when both have one."""
+  a, b = _mask_of(total), _mask_of(cot)
+  if a is None or b is None:
+    return total + cot
+  if a[0] is b[0]:
+    return where(a[0], a[1] + b[1], _const(0, total))
+  return where(a[0] | b[0], total + cot, _const(0, total))
+
+
+def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
+  """``(condition, inner)`` when ``cot`` is ``where(condition, inner, 0)``."""
+  if ExprOp(cot.op) != ExprOp.SELECT:
+    return None
+  condition, inner, other = cot.args
+  if other.op == ExprOp.CONST and other.value is not None and not np.any(other.value) and inner.shape == cot.shape:
+    return condition, inner
+  return None
+
+
+def _masked(cot: Expr, product: Callable[[Expr], Expr]) -> Expr:
+  mask = _mask_of(cot)
+  if mask is None:
+    return product(cot)
+  inner = _masked(mask[1], product)
+  return where(mask[0], inner, _const(0, inner))
 
 
 def _compact_elementwise(expr: Expr) -> Expr:
@@ -202,6 +297,8 @@ def _sample_stored(expr: Expr, output: TensorType) -> Expr:
 
 def _times_partial(local: Local, t: Expr, align: Callable[[Expr], Expr] | None = None) -> Expr:
   """``t`` times a partial. Forward mode passes ``align`` to put the partial on the seed axis."""
+  if isinstance(local, Mask):
+    return where(local.condition, t, _const(0, t))
   if isinstance(local, tuple):
     numerator, denominator = local
     return _times_partial(numerator, t, align) / (denominator if align is None else align(denominator))

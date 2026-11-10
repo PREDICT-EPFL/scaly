@@ -9,7 +9,7 @@ import numpy as np
 
 from ..ad.derivatives import jacobian
 from ..ad.sparse import sparse_jacobian
-from ..ad.sparsity import _jac_mask
+from ..ad.sparsity import _depends_on, _jac_mask
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function
 from ..function.tree import group, arg, Tree
@@ -32,6 +32,9 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
   nrow, ncol = mat.shape
   vec = mat.vec()
   keep = np.asarray(probe, dtype=np.float64).reshape(-1) != 0.0
+  # A condition on a parameter can zero an entry at the probe that another value makes nonzero.
+  if _decides_on((mat,), params):
+    keep[:] = True
   for param in params:
     keep |= np.asarray(_jac_mask(vec, param, {}).sum(axis=1)).reshape(-1) != 0
   rows, cols = np.divmod(np.flatnonzero(keep), ncol)
@@ -68,6 +71,32 @@ def _reaches_op(exprs: Sequence[Expr], op: ExprOp) -> bool:
   return visit(exprs)
 
 
+def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
+  """Whether a bool or integer value, such as a select condition, depends on ``variables``, inside calls too.
+
+  Such a value is piecewise constant, so derivatives miss it: ``where(x > 0, x, -x)`` has a zero
+  Hessian and is still not quadratic.
+  """
+  memo: dict[tuple[int, int], bool] = {}
+  seen: set[tuple[int, tuple[int, ...]]] = set()
+
+  def visit(targets: Sequence[Expr], active: Sequence[Expr]) -> bool:
+    for node in topo(targets):
+      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
+        callee = node.attrs["callee"]
+        formals = tuple(f for f, a in zip(callee.inputs, node.args, strict=True) if any(_depends_on(a, v, memo) for v in active))
+        key = (id(callee), tuple(f.id for f in formals))
+        if formals and key not in seen:
+          seen.add(key)
+          if visit(callee.results, formals):
+            return True
+      elif not node.type.dtype.is_floating and any(_depends_on(node, v, memo) for v in active):
+        return True
+    return False
+
+  return visit(exprs, variables)
+
+
 def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> None:
   for side, bound in (("lb", problem.spec.lb), ("ub", problem.spec.ub)):
     if bound is None:
@@ -77,7 +106,7 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
         raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver")
       if _reaches_op((expr,), ExprOp.STOP_GRADIENT):
         raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through stop_gradient")
-      if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols):
+      if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols) or _decides_on((expr,), problem._var_symbols):
         raise NotQuadratic(f"{problem.name}: {side} for {name!r} depends on the variables")
   for index, inequality in enumerate(problem.spec.ineq):
     label = inequality.name or str(index)
@@ -87,7 +116,7 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
           raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver")
         if _reaches_op((bound,), ExprOp.STOP_GRADIENT):
           raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through stop_gradient")
-        if any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols):
+        if any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols) or _decides_on((bound,), problem._var_symbols):
           raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
 
 
@@ -196,6 +225,8 @@ def build_qp[SV, NV, SP, NP](
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
   if _reaches_op(proof_targets, ExprOp.STOP_GRADIENT):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through stop_gradient")
+  if _decides_on(proof_targets, problem._var_symbols):
+    raise NotQuadratic(f"{problem.name}: a condition or another bool or integer value depends on the variables")
   _prove_quadratic(problem)
   P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem)
   n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]

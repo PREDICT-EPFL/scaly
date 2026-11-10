@@ -8,18 +8,21 @@ import inspect
 from pathlib import Path
 
 from scaly.ad import forward, reverse, sparsity
-from scaly.ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp
+from scaly.ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_TERNARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp
 from scaly.ir.expr_spec import spec_expr
 from scaly.passes.lowering.ctx import _RULES
 
 ROOT = Path(__file__).resolve().parents[1] / "src" / "scaly"
-ELEMENTWISE = COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
+ELEMENTWISE = COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_ELEMENTWISE_TERNARY
 
 # The elementwise table names every member once; elsewhere only arithmetic identities may.
 EXISTING_ELEMENTWISE_REFERENCES = {
   ("ad/rules.py", "ELEMENTWISE"): " ".join(op.name for op in ELEMENTWISE),
   ("passes/expr.py", "_structural_key"): "ADD MUL",
   ("passes/expr.py", "SIMPLIFY_PATTERNS"): "ADD SUB MUL MUL DIV NEG POW",
+  # The masked cotangent a select sends, and the one op whose dtype is its own target.
+  ("ad/rules.py", "_mask_of"): "SELECT",
+  ("ir/expr_spec.py", "_elementwise_shape_dtype"): "CAST",
 }
 
 
@@ -29,6 +32,7 @@ def _dispatch_ops(*functions) -> set[ExprOp]:
   families = {
     "COMMON_ELEMENTWISE_UNARY": COMMON_ELEMENTWISE_UNARY,
     "COMMON_ELEMENTWISE_BINARY": COMMON_ELEMENTWISE_BINARY,
+    "COMMON_ELEMENTWISE_TERNARY": COMMON_ELEMENTWISE_TERNARY,
     "ELEMENTWISE": ELEMENTWISE,
   }
   for fn in functions:
@@ -82,7 +86,8 @@ def test_every_expr_op_is_classified_in_every_pass() -> None:
     # INPUT is bound by emit_inputs; SOLVER_CALL is opaque and handled by the solver wrapper.
     "lowering": set(_RULES) | {ExprOp.INPUT, ExprOp.SOLVER_CALL},
     "support": {op for op, info in OP_INFO.items() if info.pattern_rule or info.support_rule}
-    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL},
+    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL}
+    | {ExprOp.LE, ExprOp.EQ, ExprOp.NOT, ExprOp.ISFINITE},
     # Add graph_digest here in #64. It must cover set(ExprOp).
   }
   for name, classified in classifications.items():
