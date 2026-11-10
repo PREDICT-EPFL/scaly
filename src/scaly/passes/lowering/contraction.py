@@ -12,6 +12,10 @@ from .ctx import LowerCtx, lowers, LoweringError, _flat
 from .schedule import emit_reduction
 
 
+def _mm_accum(out: ProgramNode, idx: ProgramNode, a_load: ProgramNode, b_load: ProgramNode) -> ProgramNode:
+  return p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_load, b_load)))
+
+
 @lowers(ExprOp.MATMUL)
 def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
@@ -28,10 +32,6 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   b_coords = [k, coords[-1]] if len(b.shape) == 2 else [k]
   target = p.view(out, [_flat(node.shape, coords)])
   emit_reduction(ctx, outputs, reductions, target, p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)))
-
-
-def _mm_accum(out: ProgramNode, idx: ProgramNode, a_load: ProgramNode, b_load: ProgramNode) -> ProgramNode:
-  return p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_load, b_load)))
 
 
 def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:

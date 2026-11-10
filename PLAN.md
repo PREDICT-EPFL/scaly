@@ -23,7 +23,7 @@ Do not edit `passes/lowering/plans.py`, which belongs to #46.
 - [x] Show new checks fail under an implementation perturbation. Run narrow
       checks, regenerate node IDs and C snapshots, record operation counts,
       generated source size and C compile time against main.
-- [ ] Rebase over overlapping main changes, regenerate snapshots and rerun the
+- [x] Rebase over overlapping main changes, regenerate snapshots and rerun the
       full suite and `wt hook pre-merge --yes`.
 - [ ] Commit and push only task changes, open draft PR targeting main, link it
       in T3 and register its gh stack. Run one cross-review and any delta check.
@@ -99,8 +99,46 @@ use watch_pull_request for wakes. Patch its body with gh api -X PATCH and
 queue once after the verdict with gh pr merge 315 --squash --auto. A quota
 error waits until the reset from gh api rate_limit, rather than failing work.
 
+The coordinator moved the current run-wide rules to
+`/home/ted/.scaly-suite/RULES.md`; read on notification of changes. It supersedes
+the earlier lock commands for future runs. Any new full suite must run detached
+through `~/.scaly-suite/run`, which provides two slots with eight workers each.
+Focused checks remain outside those slots with at most two workers. Poll the
+detached exit file inside the turn. The rebased hook above already passed and
+does not need restarting merely because the runner changed.
+
 Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/315, registered with gh stack.
-No reviewer has been launched yet; the cross-review skill requires green local
-checks first. Once green, run Opus xhigh and a separate sol xhigh correctness
-review, then only delta checks for fixes. Put the verdict line in the PR body
+The rebased full pre-merge exited 0. All 3000 tests passed, 55 skipped; benchmark
+smoke, docs, ty, Ruff and the private-name check passed. Opus xhigh and a separate
+sol xhigh correctness review are being launched on the pushed code. Follow their
+completion wakes, then only delta checks for fixes. Put the verdict line in the PR body
 immediately so the coordinator can start #46. Remove this plan before readiness.
+
+The sol xhigh correctness review approved with no findings. It read all five C
+diffs and passed 209 focused tests with 10 skips, 54 singleton/empty product
+probes and 12 mapped-sum probes. No files changed.
+
+Opus requested two fixes: avoid extra ASSIGN statements in strided updates,
+which tripled scalarize's work estimate and disabled auto expansion of a mapped
+constant product; remove the unused UNROLL range used only as Python bounds.
+Both are fixed. The new auto-product test fails before the fix and passes after
+it, asserting scalarization, constant folding and NumPy agreement. Four lanes
+now expand with range(4). Also applied the cheap notes: ctx.nest_body returns a
+nest instead of using ctx.statements as scratch; one renderer helper builds
+ordered accumulator views; _mm_accum stays in its old location; the packing
+comment describes all one-element buffers.
+
+Post-fix validation: 405 focused tests passed, 50 skipped; Ruff, ty, complete
+collection and fresh snapshot regeneration pass. All C snapshots remain the
+same as the reviewed version. Follow-up #338 owns Phase 4 forward-mode product
+measurements and numerical comparisons allowing FMA differences. The emitter's
+output-independent-bound contract is documented and recorded on #46; loaded
+bound lanes still belong to #71.
+
+Next: commit/push fixes, run the full hook detached through ~/.scaly-suite/run
+with /tmp/scaly-45-review-fixed.log and /tmp/scaly-45-review-fixed.exit, keeping
+this turn active while polling. Then launch one LOW-effort delta task per
+reviewer, diff from the reviewed version only. Do not launch a new full review.
+The PR currently has the changes-needed line and pending confirmation. Replace
+it with the final verdict immediately after the delta results. Remove PLAN.md
+before readiness and queue once with --squash --auto.

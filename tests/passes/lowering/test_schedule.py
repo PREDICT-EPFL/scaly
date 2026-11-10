@@ -95,7 +95,9 @@ def test_strided_reduction_precedes_the_contiguous_output_axis():
   output = next(n for n in reduction.args[1:] if n.op == ProgramOp.FOR)
   assert output.args[0].attrs["kind"] == RangeKind.GLOBAL
   assert output.args[0].args[1] == p.const_int(9)
-  assert any(n.op == ProgramOp.ASSIGN for n in walk_program(output))
+  (update,) = output.args[1:]
+  assert update.op == ProgramOp.STORE and update.args[1].op == ProgramOp.ADD
+  assert update.args[1].args[0].op == ProgramOp.LOAD and update.args[1].args[0].args[0] is update.args[0]
 
 
 def test_empty_reduction_keeps_its_identity_outside_the_empty_nest():
@@ -136,6 +138,29 @@ def test_mapped_sums_keep_scalar_accumulators_in_their_procedure(isolated_cache)
   z, weights = np.linspace(-2, 3, 15), np.array([0.1, 0.3, -0.2])
   fn.recompile()
   np.testing.assert_allclose(fn((z, weights)), z.reshape(5, 3).sum(axis=1) * np.exp(weights).sum(), rtol=1e-14, atol=1e-14)
+
+
+def test_strided_product_keeps_automatic_scalarization_and_constant_folding(isolated_cache):
+  selection = np.zeros((40, 40))
+  selection[np.arange(40), np.arange(40) * 7 % 40] = 1
+
+  @sc.function(sc.group(sc.arg("x", (40, 20))), outputs=sc.arg("y"), name="auto_product_stage")
+  def stage(inputs):
+    return inputs[0].T @ sc.const(selection)
+
+  @sc.function(sc.group(sc.arg("z", 2400)), outputs=sc.arg("y"), name="auto_product_map")
+  def fn(inputs):
+    return _mapped_call(stage, 3, [(inputs[0], 0, 800)])
+
+  seen = {}
+  lower_function(fn, observe=seen.__setitem__)
+  expanded = next(proc for proc in seen["pass:scalarize"].args if proc.attrs["name"] == stage.name)
+  assert expanded.attrs.get("scalarized")
+  assert not any(n.op == ProgramOp.MUL for n in walk_program(expanded) if n.dtype.is_floating)
+  values = np.random.default_rng(45).normal(size=2400)
+  fn.recompile()
+  expected = values.reshape(3, 40, 20).transpose(0, 2, 1) @ selection
+  np.testing.assert_array_equal(np.asarray(fn((values,))).reshape(3, 20, 40), expected)
 
 
 @pytest.mark.parametrize(("sa", "sb"), [((9, 7), (7,)), ((7,), (7, 9)), ((5, 7), (7, 9))])

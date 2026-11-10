@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ...ir import program as p
-from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
+from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ..program._common import substitute_var, trip_count
 from .ctx import LowerCtx, _coefficients
 
@@ -13,36 +13,31 @@ from .ctx import LowerCtx, _coefficients
 def emit_reduction(ctx: LowerCtx, outputs: Sequence[ProgramNode], reductions: Sequence[ProgramNode], target: ProgramNode, value: ProgramNode) -> None:
   """Use four scalar output lanes for unit-stride reductions, otherwise put reduction axes first.
 
-  Unroll lanes expand during emission so each has its own named accumulator. A strided reduction
-  carries its output-sized state in the destination between iterations, with a scalar accumulator
-  for each update. Both schedules visit each output's terms in reference order.
+  Four output lanes expand during emission, each with its own named accumulator. A strided
+  reduction carries its running sums in the destination between iterations. Both schedules visit
+  each output's terms in reference order. Reduction bounds are independent of output coordinates.
   """
   identity = p.const_float(0.0, dtype=value.dtype)
   names = frozenset(r.attrs["name"] for r in reductions)
   accesses = [_coefficients(n.args[0].args[0], names) for n in walk_program(value) if n.op == ProgramOp.LOAD]
   strided = any(c is None or any(c.get(name, 0) not in (0, 1) for name in names) for c in accesses)
 
-  def accumulator(initial: ProgramNode) -> tuple[str, ProgramNode, ProgramNode]:
+  def accumulator() -> tuple[str, ProgramNode, ProgramNode]:
     name = ctx.names.allocate(f"acc_{target.attrs['buffer']}")
-    return name, p.var(name, value.dtype), p.assign(name, initial, declare=True)
+    return name, p.var(name, value.dtype), p.assign(name, identity, declare=True)
 
   if strided:
-    _, acc, initial = accumulator(identity)
-    ctx.emit(outputs, [initial, p.store(target, acc)])
-    name, acc, initial = accumulator(p.load(target))
-    ctx.emit([*reductions, *outputs], [initial, p.assign(name, p.add(acc, value)), p.store(target, acc)])
+    ctx.emit(outputs, [p.store(target, identity)])
+    ctx.emit([*reductions, *outputs], [p.store(target, p.add(p.load(target), value))])
     return
 
   def emit(outer: Sequence[ProgramNode], coordinates: Sequence[ProgramNode] = ()) -> None:
     values = [substitute_var(value, outputs[-1].attrs["name"], coord) for coord in coordinates] if coordinates else [value]
     targets = [substitute_var(target, outputs[-1].attrs["name"], coord) for coord in coordinates] if coordinates else [target]
-    accumulators = [accumulator(identity) for _ in values]
+    accumulators = [accumulator() for _ in values]
     updates = [p.assign(name, p.add(acc, term)) for (name, acc, _), term in zip(accumulators, values, strict=True)]
     # An empty reduction must not remove its identity or final store.
-    start = len(ctx.statements)
-    ctx.emit(reductions, updates)
-    loops = ctx.statements[start:]
-    del ctx.statements[start:]
+    loops = ctx.nest_body(reductions, updates)
     stores = [p.store(dst, acc) for dst, (_, acc, _) in zip(targets, accumulators, strict=True)]
     ctx.emit(outer, [*(initial for _, _, initial in accumulators), *loops, *stores])
 
@@ -52,11 +47,7 @@ def emit_reduction(ctx: LowerCtx, outputs: Sequence[ProgramNode], reductions: Se
     blocks, tail = divmod(count, 4)
     block_name = ctx.names.allocate(f"{axis.attrs['name']}_block")
     block = p.range_(block_name, 0, blocks, kind=axis.attrs["kind"])
-    lanes = p.range_(ctx.names.allocate(f"{axis.attrs['name']}_lane"), 0, 4, kind=RangeKind.UNROLL)
-    coordinates = [
-      p.add(axis.args[0], p.add(p.mul(p.var(block_name), p.const_int(4)), p.const_int(lane)))
-      for lane in range(*(int(bound.attrs["value"]) for bound in lanes.args))
-    ]
+    coordinates = [p.add(axis.args[0], p.add(p.mul(p.var(block_name), p.const_int(4)), p.const_int(lane))) for lane in range(4)]
     emit([*outputs[:-1], block], coordinates)
     if tail:
       emit([*outputs[:-1], p.range_(axis.attrs["name"], axis.args[0].attrs["value"] + 4 * blocks, axis.args[1], kind=axis.attrs["kind"])])

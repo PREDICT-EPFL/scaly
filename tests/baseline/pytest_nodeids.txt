@@ -2263,6 +2263,7 @@ tests/passes/lowering/test_schedule.py::test_product_matches_numpy[scalar-sa6-sb
 tests/passes/lowering/test_schedule.py::test_product_matches_numpy[scalar-sa7-sb7]
 tests/passes/lowering/test_schedule.py::test_product_matches_numpy[scalar-sa8-sb8]
 tests/passes/lowering/test_schedule.py::test_product_matches_numpy[scalar-sa9-sb9]
+tests/passes/lowering/test_schedule.py::test_strided_product_keeps_automatic_scalarization_and_constant_folding
 tests/passes/lowering/test_schedule.py::test_strided_reduction_precedes_the_contiguous_output_axis
 tests/passes/lowering/test_schedule.py::test_sum_matches_numpy[block-shape0]
 tests/passes/lowering/test_schedule.py::test_sum_matches_numpy[block-shape1]
