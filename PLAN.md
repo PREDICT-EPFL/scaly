@@ -32,5 +32,7 @@ All 18 isolated guard removals fail their targeted tests. Logs and the original 
 under `/tmp/scaly-carried29-zyX7cL/`. The adjacent pass, import-boundary/layering, assembly
 and snapshot run passed 252 tests; the dialect/compiled/guard run passed 114 before the
 last scalar-carried hoisting regression, which passes in its 20-test focused run.
-Ruff and strict ty pass. No roadmap departure. Project metadata is unavailable through
+The rebase onto the refreshed #28 head passes all 373 focused tests, Ruff and strict ty.
+The node-ID baseline now includes the 65 added cases; all 3,064 tests collect successfully.
+The old CI failures came from that stale baseline. No roadmap departure. Project metadata is unavailable through
 the attempted REST endpoint, so the task's identifying issue comment records the branch.
