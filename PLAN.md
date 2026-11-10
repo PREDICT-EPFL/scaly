@@ -44,3 +44,8 @@ Evidence so far:
   nearly full and swap exhausted. It was stopped after that failure; its log is preserved in
   /tmp/scaly-163-pre-merge-16-workers.log. The replacement hook is detached with
   PYTEST_XDIST_AUTO_NUM_WORKERS=2, using the same final log and exit-file paths above.
+- That nohup/setsid run also vanished during the next all-Codex stream closure without an exit
+  result. Its partial log is /tmp/scaly-163-pre-merge-2-workers-interrupted.log. Validation now
+  runs outside Codex's process tree as the transient systemd user service
+  scaly-163-pre-merge.service, still with two workers and the same final log/exit paths. Check
+  systemctl --user show scaly-163-pre-merge.service before restarting it.
