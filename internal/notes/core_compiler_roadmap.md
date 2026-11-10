@@ -91,8 +91,9 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
    support. Separately, every node has a lazily computed, cached support, the
    entries that may be nonzero whatever the storage, used by simplification, derivative sparsity
    and lowering. Derivative sparsity stays a third analysis, which consults the support of
-   coefficients but never bounds a node's derivative by the node's own support: a registered custom
-   derivative may be nonzero where the value is identically zero. Inside the graph stored values
+   coefficients, and bounds a node's derivative by the node's own support only when no custom
+   derivative is upstream: a registered custom derivative may be nonzero where the value is
+   identically zero. Inside the graph stored values
    are in canonical row-major order and lowering converts at boundaries; at the ABI a sparse leaf
    declares its layout (CSC, CSR or a given coordinate order). *Replaced in the compiler run,
    2026-11-10: "generated C does not change when an analysis gets sharper", because zero skipping

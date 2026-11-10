@@ -2,7 +2,8 @@
 
 Packet of section 1 of the [compiler run](../plan.md), parent #37. Built by stack #278: #274
 (#39), #277 (#40 and #276), #286 (#41), #287 (#42), #289 (#43). CSC and CSR are compressed sparse
-column and row storage, COO a coordinate list, ABI the binary interface of the generated C.
+column and row storage, COO a coordinate list, nnz the number of stored entries, ABI the binary
+interface of the generated C, IR the intermediate representation, AD automatic differentiation.
 
 ## Where this section sits
 
@@ -15,7 +16,7 @@ column and row storage, COO a coordinate list, ABI the binary interface of the g
 ## Needs the maintainer's decision
 
 1. Roadmap departure, applied: decision 4 now says buffers and the ABI never change when an analysis sharpens, but kernel code may (zero skipping, cotangent compaction); `[0, 1] / [0, 0]` gives `[0, inf]` expanded and `[nan, inf]` as a loop. Recommend keeping.
-2. Roadmap departure, applied: derivative sparsity is never bounded by a node's own support, because a custom derivative may be nonzero where the value is zero. Recommend keeping.
+2. Roadmap departure, applied: downstream of a custom derivative, derivative sparsity is not bounded by a node's own support, because the custom derivative may be nonzero where the value is zero. Recommend keeping.
 3. Roadmap departure, applied: stored values are in canonical row-major order inside the IR, with permutation copies at boundaries. Recommend keeping until #46's plans choose the order.
 4. Public ABI: each sparse leaf publishes only its layout's tables (`<fn>_<leaf>_csc_col_ptr`, `_csc_row_ind`, …); C omits empty tables; an empty sparse leaf accepts a null pointer. Recommend keeping.
 5. Public interface: CasADi export accepts only unbatched CSC sparse leaves. Recommend keeping; conversions can be added later.
@@ -43,7 +44,8 @@ column and row storage, COO a coordinate list, ABI the binary interface of the g
 
 # Reference
 
-Line numbers are on the #43 head (`248b2159`), paths under `src/scaly/`. Files: `design_text.diff`,
+Line numbers are on the #43 head (`a3f39a32`; its last commit changed tests only, so `src/` is as
+at `248b2159`), paths under `src/scaly/`. Files: `design_text.diff`,
 `banded_quadratic.py` and `banded_quadratic_output.txt`.
 
 ## Decisions
@@ -61,7 +63,8 @@ undo first. "Rejected" is the alternative the layer considered and why it lost.
    tables (consumers must guard), C++ publishes `std::array<int, 0>`, and an empty sparse leaf
    accepts a null data pointer. Rejected: publishing every format plus permutations (redundant)
    and one-element placeholder arrays (fabricated entries). Once released, this is ABI.
-2. **Derivative relations are not bounded by a node's own value support** (#40, kept by #41 and
+2. **Downstream of a custom derivative, derivative relations are not bounded by a node's own
+   value support** (#40, kept by #41 and
    #42; `ad/sparsity.py`, `_callee_mask`). A registered custom derivative replaces the body's
    derivative and may be nonzero where the value is identically zero, so its declared (or dense)
    rows survive through everything downstream. Rejected: the blanket filter by value support
@@ -115,7 +118,9 @@ undo first. "Rejected" is the alternative the layer considered and why it lost.
    `ir/types.py::SparsityPattern.canonicalize`, `passes/lowering/ctx.py:251-259`). Leaves, outputs
    and calls convert with a permutation copy at the boundary; private AD helpers use CSR order.
    The roadmap said the internal order "belongs to lowering"; this fixes it in the IR for now.
-   Rejected: per-buffer layout propagation, left to #46's iteration plans.
+   Rejected: per-buffer layout propagation, left to #46's iteration plans. The `CanonicalPattern`
+   docstring (`ir/types.py:247`) still says physical order belongs to lowering; the section's
+   simplification pass corrects it.
 10. **Separate `CanonicalPattern` type, weakly interned under one lock, SHA-256 digest of the
     coordinate tuples** (#39; `ir/types.py:238-267`). `TensorType.pattern` accepts only the
     canonical form; callers canonicalize explicitly and keep the permutation. Weak interning means
@@ -263,15 +268,15 @@ keeps `matmul` by an identity constant and four transposes after simplification.
 
 ## Reading list
 
-300 lines on the #43 head, in reading order.
+309 lines on the #43 head, in reading order.
 
 | Range | Lines | What to judge |
 | --- | ---: | --- |
 | `ir/types.py:238-267` | 30 | Immutable coordinates, identity equality and the locked weak intern table. |
 | `ir/types.py:317-321` | 5 | Pattern rank and agreement with the last two axes. |
-| `ir/types.py:331-339` | 9 | Shared batch pattern and the stored buffer length. |
+| `ir/types.py:332-340` | 9 | Shared batch pattern and the stored buffer length. |
 | `ir/expr.py:218-221` | 4 | A dense operand expanded to every coordinate. |
-| `ir/expr.py:235-248` | 14 | The fixed pattern rules, with #42's mixed-product and vector-result cases. |
+| `ir/expr.py:235-257` | 23 | The fixed pattern rules, with #42's vector-result, mixed elementwise and sparse-times-dense `MATMUL` cases. |
 | `ir/expr.py:280-282` | 3 | Exact result-pattern check, below #42's `PACK`, `VALUES` and callee exceptions. |
 | `passes/expr.py:163-164` | 2 | The blanket bypass of sparse arithmetic simplification. |
 | `passes/expr.py:275-276` | 2 | Support-driven zero folding, dense results only. |
@@ -319,7 +324,8 @@ Lines added and removed, excluding blank and comment-only lines; docstrings coun
 | #41 | 442 | 165 | 395 | `ir/support.py` +188, `ad/sparsity.py` +162 |
 | #42 | 877 | 169 | 800 | `ir/expr.py` +127, `ir/layout.py` +125 (new), `passes/lowering/ctx.py` +75 |
 | #43 | 118 | 31 | 319 | `codegen/cpp.py` +43, `codegen/aot.py` +36 |
-| Stack | 1,814 | 435 | 2,172 | net +1,379 in `src/` |
+| Sum of layers | 1,814 | 435 | 2,172 | net +1,379 in `src/` |
+| Main to #43 head | 1,728 | 349 | 2,127 | net +1,379; later layers rewrote earlier lines |
 
 After the section's simplification pass: not yet run (Phase 3 of the plan); this table gains a
 second column then.
