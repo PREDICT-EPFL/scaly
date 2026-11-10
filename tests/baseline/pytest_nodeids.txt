@@ -1539,6 +1539,7 @@ tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape3-cpp]
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape4-c]
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape4-cpp]
 tests/codegen/test_casadi.py::test_casadi_dense_matrix_result_from_vector
+tests/codegen/test_casadi.py::test_casadi_dense_solver_parameters_use_a_lowered_function_wrapper
 tests/codegen/test_casadi.py::test_casadi_external_dense_vector_function_without_gather
 tests/codegen/test_casadi.py::test_casadi_external_empty_dense_leaves[c-input-shape0]
 tests/codegen/test_casadi.py::test_casadi_external_empty_dense_leaves[c-input-shape1]
