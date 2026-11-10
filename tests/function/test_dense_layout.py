@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.codegen.jit import get_compiled
 from scaly.ir.layout import DenseLayout
 
 
@@ -76,3 +77,7 @@ def test_dense_layout_row_major_default_and_invalid_orders():
   pattern, _ = sc.SparsityPattern((2, 3), (0,), (1,)).canonicalize()
   with pytest.raises(ValueError, match="sparse layout"):
     sc.arg("x", sc.TensorType((2, 3), pattern=pattern), layout="column-major")
+
+  fun = sc.function(sc.arg("x", (2, 3), layout="column-major"), name="dense_bad_shape")(lambda x: x)
+  with pytest.raises(ValueError, match="shape"):
+    get_compiled(fun).run([np.arange(6, dtype=float)])

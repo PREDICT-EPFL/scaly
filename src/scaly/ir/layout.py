@@ -66,6 +66,8 @@ class DenseLayout:
   def numerical_values(self, value: Any, shape: tuple[int, ...]) -> np.ndarray:
     """Keep logical coordinates while making each matrix column-contiguous."""
     array = np.asarray(value, dtype=np.float64)
+    if array.shape != shape:
+      raise ValueError(f"dense input has shape {array.shape}, expected {shape}")
     return np.ascontiguousarray(array.swapaxes(-1, -2)).swapaxes(-1, -2)
 
   def dense_array(self, values: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
