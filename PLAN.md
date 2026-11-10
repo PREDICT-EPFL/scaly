@@ -36,5 +36,17 @@ could repeat an expensive initializer in every mapped stage. Removed that
 exception and added a verified shared-assembly regression, red before the fix
 and green afterward. All 22 fusion tests pass; refreshed chain M=3/M=5 source
 hashes and counts match the measured after-state, and all snapshots are unchanged.
-Opus review is still running against the original review commit. After both
-reviews, obtain focused delta checks of this fix and address any remaining points.
+The sol delta check approved the expensive-initializer fix. Opus reproduced
+the same issue and identified unbounded repeated cheap work. Region selection
+now caps each upstream scalar expression at eight operations, counting through
+intermediate buffers and keeping larger producers materialized. Four new
+structural cases cover one expression and split chains at two sizes; all fail
+with the bound removed, and all 26 fusion tests pass with it.
+
+The final chain M=3/M=5 source hashes, byte counts and operation counts exactly
+match the measured after-state. All 14 snapshots remain unchanged. Final
+generation samples are recorded in /tmp/scaly-223-evidence/final/. The final
+full suite needs to run on this state, followed by the one Opus delta check
+covering both act-on findings. The superseded check was stopped. The PR must
+report the M=3 four-to-two lane change on 256-register-slot targets and the
+generation-time samples as well as the already recorded static evidence.

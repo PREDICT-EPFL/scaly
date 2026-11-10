@@ -190,9 +190,30 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   region = set(seeds)
   produced = set().union(*(buffer_refs(stmt).writes for stmt in seeds.values()))
   private = {stmt.attrs["name"] for stmt in body if stmt.op == ProgramOp.BUFFER and stmt.attrs.get("address_space") == "private"}
+  # Bound repeated scalar work through upstream buffers, including chains of small loops.
+  costs: dict[str, int] = {}
+  eligible = set()
+  for i, stmt in enumerate(body):
+    if i in seeds:
+      continue
+    parsed = _loops(stmt)
+    if parsed is None or _has_expensive(stmt):
+      continue
+    scalar_ops: dict[ProgramNode, int] = {}
+    for store in parsed[1]:
+      for node in _postorder(store.args[1]):
+        scalar_ops[node] = (
+          costs.get(node.args[0].attrs["buffer"], 0) if node.op == ProgramOp.LOAD else bool(node.args) + sum(scalar_ops[arg] for arg in node.args)
+        )
+    if max((scalar_ops[store.args[1]] for store in parsed[1]), default=0) > 8:
+      continue
+    eligible.add(i)
+    for store in parsed[1]:
+      name = store.args[0].attrs["buffer"]
+      costs[name] = max(costs.get(name, 0), scalar_ops[store.args[1]])
   while True:
     consumed = set().union(*(refs[i].reads for i in region)) & private
-    upstream = {i for i, ref in enumerate(refs) if ref.writes & consumed and _loops(body[i]) is not None and not _has_expensive(body[i])}
+    upstream = {i for i in eligible if refs[i].writes & consumed}
     consumers = {i for i, ref in enumerate(refs) if ref.reads & produced and body[i].op != ProgramOp.BUFFER}
     extra = (consumers | upstream) - region
     if not extra:

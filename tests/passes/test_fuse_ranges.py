@@ -250,6 +250,38 @@ def test_expensive_initializer_of_shared_assembly_keeps_original_schedule():
   assert fuse_ranges(original) is original
 
 
+@pytest.mark.parametrize("split", [False, True])
+@pytest.mark.parametrize("depth", [9, 20])
+def test_independent_arithmetic_in_mapped_range_is_bounded(split, depth):
+  prog = _raw_program()
+  callee, root = prog.args
+  x, y, tmp, mapped, copied = root.args
+  value = p.load(p.view(x, [p.const_int(0)]))
+  factor = p.load(p.view(x, [p.const_int(1)]))
+  setup = []
+  computed = []
+  for k in range(depth):
+    value = p.add(p.mul(value, factor), p.const_float(1))
+    if split or k == depth - 1:
+      fixed = p.buffer(f"fixed{k}", dtypes.float64, (1,), address_space="private")
+      at_zero = p.view(fixed, [p.const_int(0)])
+      loop = p.for_(p.range_(f"j{k}", 0, 1), [p.store(at_zero, value)])
+      setup.extend([fixed, loop])
+      computed.append(loop)
+      value = p.load(at_zero)
+  consumer = copied.args[1]
+  copied = p.for_(copied.args[0], [p.store(consumer.args[0], p.add(consumer.args[1], value))])
+  body = (x, y, tmp, *setup, mapped, copied)
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  verify_program(original)
+  result = fuse_ranges(original)
+  verify_program(result)
+  root = result.args[-1]
+  assert computed[0] in _body(root)
+  fused = next(n for n in _body(root) if n.op == ProgramOp.FOR and n.args[0].attrs.get("mapped"))
+  assert sum(n.op in {ProgramOp.ADD, ProgramOp.MUL} and n.dtype.is_floating for n in walk_program(fused)) <= 9
+
+
 def test_discarded_callee_outputs_do_not_materialize_reused_scratch():
   x = sc.sym("x", 2)
   stage = _function("range_multiple_outputs", [x], [x.sin(), x.exp()])
