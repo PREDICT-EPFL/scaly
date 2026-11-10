@@ -492,12 +492,19 @@ class LowerCtx:
   def emit(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> None:
     """Append ``body`` inside ``ranges``, outermost first.
 
+    See ``nest_body`` for empty ranges, merging and unit-loop indices.
+    """
+    self.statements.extend(self.nest_body(ranges, body))
+
+  def nest_body(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> list[ProgramNode]:
+    """Return ``body`` inside ``ranges``, outermost first.
+
     A static empty range drops the whole nest, so an empty tensor emits no store. Adjacent ranges
     merge where every access is contiguous across them. A unit loop from zero offsets each constant
     view index by its variable, which is zero, the flat form of a one-element domain the program
     passes match on."""
     if any(trip_count(r) == 0 for r in ranges):
-      return
+      return []
     merged, stmts = _merge(list(ranges), list(body))
     if len(merged) == 1 and trip_count(merged[0]) == 1 and merged[0].args[0] == p.const_int(0):
       unit = p.var(merged[0].attrs["name"])
@@ -510,7 +517,7 @@ class LowerCtx:
       stmts = [rewrite(stmt, [pattern], rebuild=rebuild_program, fixpoint=False) for stmt in stmts]
     for rng in reversed(merged):
       stmts = [p.for_(rng, stmts)]
-    self.statements.extend(stmts)
+    return stmts
 
 
 def _stride(shape: tuple[int, ...], dim: int) -> int:

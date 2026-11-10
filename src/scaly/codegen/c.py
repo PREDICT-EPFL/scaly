@@ -495,15 +495,19 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
   return lines
 
 
+def _ordered_accumulators(stmt: ProgramNode) -> dict[str, ProgramNode]:
+  return {
+    n.attrs["target"]: p.view(p.buffer(n.attrs["target"], n.dtype, (1,)), [p.const_int(0)])
+    for n in walk_program(stmt)
+    if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")
+  }
+
+
 def _vector_captures(stmt: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
   nodes = list(walk_program(stmt))
   declared = {n.attrs["name"] for n in nodes if n.op == ProgramOp.BUFFER}
   buffers = {n.attrs["buffer"]: n for n in nodes if n.op == ProgramOp.VIEW and n.attrs["buffer"] not in declared}
-  buffers.update(
-    (n.attrs["target"], p.view(p.buffer(n.attrs["target"], n.dtype, (1,)), [p.const_int(0)]))
-    for n in nodes
-    if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")
-  )
+  buffers.update(_ordered_accumulators(stmt))
   local = {n.attrs["target"] for n in nodes if n.op == ProgramOp.ASSIGN}
   local.update(n.attrs["name"] for n in nodes if n.op == ProgramOp.RANGE)
   local.add("SCALY_LANES")
@@ -522,7 +526,7 @@ def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[
   outer = c_ident(stmt.args[0].attrs["name"])
   count, width = stmt.attrs["vector_count"], _vector_width(stmt)
   buffers, variables = _vector_captures(stmt)
-  accumulators = {n.attrs["target"] for n in walk_program(stmt) if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")}
+  accumulators = _ordered_accumulators(stmt)
   captures = [
     f"&{c_ident(n.attrs['buffer'])}" if n.attrs["buffer"] in accumulators else ptr_expr.get(n.attrs["buffer"], c_ident(n.attrs["buffer"]))
     for n in buffers
@@ -553,11 +557,7 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
       body = [substitute_var(n, name, p.var(short)) for n in body]
     width, vec = _vector_width(stmt), vector.args[0].attrs["lane_vector"]
     buffers, variables = _vector_captures(stmt)
-    accumulators = {
-      n.attrs["target"]: p.view(p.buffer(n.attrs["target"], n.dtype, (1,)), [p.const_int(0)])
-      for n in walk_program(stmt)
-      if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")
-    }
+    accumulators = _ordered_accumulators(stmt)
     writes = buffer_refs(stmt).writes | accumulators.keys()
     if accumulators:
       patterns = [
