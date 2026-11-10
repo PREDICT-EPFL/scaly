@@ -92,6 +92,7 @@ def specialize_support(callee: Any, arguments: tuple[Support, ...], rules: Mappi
 
 
 def _run_support(walk, rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Support]:
+  """Suspend callee walks so deep call nesting uses no Python recursion."""
   pending = [walk]
   result = None
   while pending:
@@ -201,11 +202,6 @@ def _cached(node: Expr) -> Support:
 
 def _entries(mask: np.ndarray) -> frozenset[int] | _SupportSet:
   return _make_support(np.flatnonzero(mask))
-
-
-def broadcast_support(node: Expr, shape: tuple[int, ...]) -> Support:
-  """Return a node's support in the coordinates of a broadcast result."""
-  return _broadcast_support(node, shape, node.support)
 
 
 def _broadcast_support(node: Expr, shape: tuple[int, ...], support: Support) -> Support:
