@@ -221,7 +221,11 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
       callee = node.attrs["callee"]
       callee_out = callee.results[node.attrs["output"]]
       # Actual masks must be known before requesting callee masks for active formals.
-      if (node.op == ExprOp.CALL or node.attrs["length"]) and not _declared(callee, node.attrs["output"]):
+      if (
+        (node.op == ExprOp.CALL or node.attrs["length"])
+        and not _declared(callee, node.attrs["output"])
+        and any(masks[(arg.id, variable.id)].nnz for arg in node.args)
+      ):
         for _, child in _call_contexts(node, context):
           for formal, actual in reversed(tuple(zip(callee.inputs, node.args, strict=True))):
             if masks[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in child.masks:

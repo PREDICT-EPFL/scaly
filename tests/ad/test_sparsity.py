@@ -109,6 +109,60 @@ def test_scalar_movement_support_and_derivative_coordinates() -> None:
       np.testing.assert_array_equal(sc.jacobian_sparsity(expr, x).to_mask(), [[source is x]])
 
 
+@pytest.mark.parametrize("mapped", [False, True])
+def test_call_sparsity_falls_back_conservatively_after_support_cache_bound(mapped) -> None:
+  @sc.function(sc.arg("x", 6), sc.arg("coefficient", 6), outputs=sc.arg("y", 6), name="bounded_jac_support")
+  def product(x, coefficient):
+    return x * coefficient
+
+  x = sc.sym("bounded_jac_x", 6)
+  masks = ((np.arange(40)[:, None] >> np.arange(6)) & 1).astype(float)
+  y = sc.vmap(product, 40)(sc.broadcast(x), sc.const(masks)) if mapped else sc.stack([product(x, sc.const(row)) for row in masks])
+  pattern = sc.jacobian_sparsity(y, x).to_mask().reshape((40, 6, 6))
+  expected = np.stack([np.diag(row) for row in masks])
+  np.testing.assert_array_equal(pattern[:32], expected[:32].astype(bool))
+  np.testing.assert_array_equal(pattern[32:], np.broadcast_to(np.eye(6, dtype=bool), (8, 6, 6)))
+  np.testing.assert_array_equal(sc.jacobian_sparsity(product(x, sc.const(masks[1])), x).to_mask(), expected[1].astype(bool))
+  fn = ConcreteFunction._from_exprs("bounded_jac_values", [x], [sc.jacobian(y, x)], ["x"], ["jac"])
+  np.testing.assert_allclose(fn(np.arange(6, dtype=float)), expected.reshape((240, 6)))
+
+
+@pytest.mark.parametrize("boundary", ["inline", "call", "map"])
+def test_mixed_tangents_preserve_custom_derivatives_outside_value_support(boundary) -> None:
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y", 2), name="mixed_custom_masked")
+  def masked(z):
+    return z * sc.const([0.0, 1.0])
+
+  @sc.function()
+  def identity(z, dz):
+    return dz
+
+  custom = sc.custom_derivative(masked, jvp=identity, sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool))
+
+  def body(z):
+    c = custom(z)
+    return c[0] * z[1] + c[1] * z[0]
+
+  callee = sc.function(sc.arg("z", 2), outputs=sc.arg("y"), name="mixed_custom_product")(body)
+  x, p, seeds = sc.sym("mixed_custom_x"), sc.sym("mixed_custom_p"), sc.sym("mixed_custom_seeds", 2)
+  z = sc.stack([x, p])
+  np.testing.assert_array_equal(sc.jacobian_sparsity(custom(z), x).to_mask(), [[True], [False]])
+  y = body(z) if boundary == "inline" else callee(z) if boundary == "call" else sc.vmap(callee, 2)(sc.broadcast(z)).vec()
+  tangent = sc.jvp_many(y, x, seeds)
+  for result in (tangent, simplify_cse_fixpoint(tangent)):
+    assert sc.jacobian_sparsity(result, x).nnz == 0
+    assert sc.jacobian_sparsity(result, p).nnz == result.size
+  second = sc.jvp_many(tangent, p, sc.const([1.0]))
+  fn = ConcreteFunction._from_exprs("mixed_custom_values", [x, p, seeds], [tangent, second], ["x", "p", "seeds"], ["first", "second"])
+  rng = np.random.default_rng(170)
+  for _ in range(5):
+    xv, pv, sv = rng.normal(), rng.normal(), rng.normal(size=2)
+    first_value, second_value = fn(xv, pv, sv)
+    expected = np.broadcast_to((2 * sv).reshape((2,) + (1,) * len(y.shape)), tangent.shape)
+    np.testing.assert_allclose(first_value, pv * expected, rtol=1e-13, atol=1e-13)
+    np.testing.assert_allclose(second_value, expected[None], rtol=1e-13, atol=1e-13)
+
+
 @pytest.mark.parametrize("operation", ["stack", "concat"])
 def test_sparsity_combines_many_parts_in_one_coordinate_batch(operation, monkeypatch) -> None:
   import scaly.ad.sparsity as analysis
@@ -770,6 +824,7 @@ def test_nested_callee_sparsity_is_analyzed_once_per_variable(monkeypatch, mappe
   expected[2:, 4:] = block
   np.testing.assert_array_equal(mask, expected)
   assert max(visits.values()) == 1
+  assert len({key[2] for key in visits}) == 3
   values = np.arange(1.0, 9.0)
 
   @sc.function(sc.arg("z", 8), outputs=sc.arg("out", 4), name="nested_mask_values")
