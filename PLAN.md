@@ -16,7 +16,7 @@ The run plan authorizes queueing after review and green checks. No runtime timin
 - [x] Remove sparse bypasses, preserve patterns when replacing operands, and build stored
       zeros with PACK over a zero values tensor. Run focused checks and perturb a rule.
 - [ ] Refresh the node-ID baseline and run all merge checks. Keep C snapshots byte-identical.
-- [ ] After PR #289 merges, fetch and rebase the task commits onto origin/main from the
+- [x] After PR #289 merges, fetch and rebase the task commits onto origin/main from the
       supplied sparse-stack tip, then rerun checks.
 - [ ] Commit, push, open and link the PR. Complete one correctness cross-review and any
       required delta check. Remove this temporary plan before making the PR ready.
@@ -31,7 +31,12 @@ and repeated the check with two workers: both sparse subtraction cases fail as e
 when the bypass is reintroduced. The implementation is restored. Focused validation
 before the interruption passed 230 tests, Ruff formatting/lint and strict ty.
 
-Run-wide memory rule from the coordinator: full checks run detached under
-`flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8 wt hook pre-merge --yes`,
-with a temporary log and exit file. Focused pytest uses at most two workers. Run full
-pre-merge only for a state intended for push, and retry a killed worker or timeout once.
+Read `~/.scaly-suite/RULES.md` on the coordinator's instruction. Full checks run detached
+through `~/.scaly-suite/run`, with two slots, eight workers, and temporary log and exit files.
+Focused pytest uses at most two workers. GitHub reads use REST; check PR state at most
+once per five minutes. Queue once after review with `gh pr merge N --squash --auto`.
+
+REST confirmed #289 merged. The required rebase onto origin/main succeeded and dropped
+the inherited header-client change already upstream. All 166 arithmetic and C snapshot
+tests passed again after rebasing. The first detached suite waiter was terminated before
+running; its retry was voluntarily cancelled while waiting to switch to the two-slot runner.
