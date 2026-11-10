@@ -225,6 +225,7 @@ def test_c_wrapper_parameters_do_not_hide_later_typedefs(tmp_path, input_name, f
     return x * 2, x + 1
 
   module = render_c_module(fun, lanes=1)
+  assert module.workspace_size == 0
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
   source.write_text(module.source)
