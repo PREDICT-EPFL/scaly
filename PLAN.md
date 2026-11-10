@@ -13,6 +13,9 @@ snapshot measurements. Work starts above the sparse stack at `248b2159`.
       All 16 regressions failed before the fix and under a restored old predicate.
       The focused run passed all 48 CasADi, pointer-entry and C snapshot tests.
 - [ ] Refresh the test collection baseline, then run all merge checks.
+      The baseline is refreshed and types, lint and formatting passed. The full suite
+      was interrupted by the machine-wide out-of-memory kill, with no test failure
+      reported. Rerun detached under `~/.scaly-suite.lock` with eight workers.
 - [ ] After #289 merges, fetch and rebase onto main with
       `git rebase --onto origin/main 248b2159`, then rerun checks.
 - [ ] Push, open the pull request against main, link it, and obtain cross-review.
