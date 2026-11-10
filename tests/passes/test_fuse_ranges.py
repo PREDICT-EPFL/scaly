@@ -152,26 +152,28 @@ def test_scalar_name_allocation_reserves_unused_assignment_targets():
   assert any(n.op == ProgramOp.FOR and n.args[0].attrs["name"] != "v0" for n in _body(root))
 
 
-def test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores():
+@pytest.mark.parametrize(("objective_size", "max_stores"), [(2, 8), (22, 3)])
+def test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores(objective_size, max_stores):
   x = sc.sym("x", 2)
   stage = _function("range_hess_stage", [x], [sc.stack([x[0] * x[1] + x[0].sin() + x[1] ** 3])])
   length = 11
 
   @sc.function(sc.arg("z", 2 * length), outputs=sc.group(sc.arg("f", ()), sc.arg("g", length)), name="range_hess_base")
   def base(z: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    return (z * z).sum(), sc.vmap(stage, length)(z).vec()
+    return (z[:objective_size] * z[:objective_size]).sum(), sc.vmap(stage, length)(z).vec()
 
   hess = base.factory("range_hess", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z", triangle="lower")], aux={"gamma": ["f", "g"]})
   observed = {}
   prog = lower_function(hess, observe=lambda name, program: observed.__setitem__(name, program))
   _assert_fused(prog)
-  assert sum(n.op in {ProgramOp.STORE, ProgramOp.STORE_PAIR} for n in walk_program(main_proc(prog))) <= 3
+  assert sum(n.op in {ProgramOp.STORE, ProgramOp.STORE_PAIR} for n in walk_program(main_proc(prog))) <= max_stores
   with pytest.raises(AssertionError):
     _assert_fused(observed["pass:scalarize"])
   data = np.linspace(-0.7, 1.1, 2 * length)
   multipliers = np.linspace(-0.3, 0.8, length)
   objective_weight = np.array(0.9)
-  expected = np.eye(2 * length) * (2 * objective_weight)
+  expected = np.zeros((2 * length, 2 * length))
+  expected[np.arange(objective_size), np.arange(objective_size)] = 2 * objective_weight
   for k, weight in enumerate(multipliers):
     expected[2 * k : 2 * k + 2, 2 * k : 2 * k + 2] += weight * np.array([[-np.sin(data[2 * k]), 1], [1, 6 * data[2 * k + 1]]])
   sparsity = as_concrete(hess).output_sparsities[0]
@@ -208,13 +210,17 @@ def test_explicit_range_value_keeps_its_original_binding():
   assert fuse_ranges(original) is original
 
 
-def test_short_upstream_producer_stays_outside_mapped_range():
+@pytest.mark.parametrize("producer_length", [1, 10])
+def test_independent_expensive_producer_stays_outside_mapped_range(producer_length):
   prog = _raw_program()
   callee, root = prog.args
   x, y, tmp, mapped, copied = root.args
-  fixed = p.buffer("fixed", dtypes.float64, (1,), address_space="private")
+  fixed = p.buffer("fixed", dtypes.float64, (producer_length,), address_space="private")
   at_zero = p.view(fixed, [p.const_int(0)])
-  computed = p.for_(p.range_("j", 0, 1), [p.store(at_zero, ProgramNode(ProgramOp.SIN, (p.load(p.view(x, [p.const_int(0)])),), dtype=dtypes.float64))])
+  computed = p.for_(
+    p.range_("j", 0, producer_length),
+    [p.store(p.view(fixed, [p.var("j")]), ProgramNode(ProgramOp.SIN, (p.load(p.view(x, [p.const_int(0)])),), dtype=dtypes.float64))],
+  )
   consumer = copied.args[1]
   copied = p.for_(copied.args[0], [p.store(consumer.args[0], p.add(consumer.args[1], p.load(at_zero)))])
   root = ProgramNode(root.op, (x, y, tmp, fixed, computed, mapped, copied), root.attrs, root.dtype)
@@ -225,6 +231,55 @@ def test_short_upstream_producer_stays_outside_mapped_range():
   assert computed in _body(root)
   fused = next(n for n in _body(root) if n.op == ProgramOp.FOR and n.args[0].attrs.get("mapped"))
   assert not any(n.op == ProgramOp.SIN for n in walk_program(fused))
+
+
+def test_expensive_initializer_of_shared_assembly_keeps_original_schedule():
+  prog = _raw_program()
+  callee, root = prog.args
+  x, y, tmp, mapped, _copied = root.args
+  assembly = p.buffer("assembly", dtypes.float64, (6,), address_space="private")
+  at_zero = p.view(assembly, [p.const_int(0)])
+  computed = p.for_(p.range_("j", 0, 1), [p.store(at_zero, ProgramNode(ProgramOp.SIN, (p.load(p.view(x, [p.const_int(0)])),), dtype=dtypes.float64))])
+  i = p.var("i")
+  target = p.view(assembly, [p.add(i, p.const_int(1))])
+  assembled = p.for_(p.range_("i", 0, 5), [p.store(target, p.load(p.view(tmp, [i])))])
+  copied = p.for_(p.range_("i", 0, 5), [p.store(p.view(y, [i]), p.add(p.load(target), p.load(at_zero)))])
+  body = (x, y, tmp, assembly, computed, mapped, assembled, copied)
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  verify_program(original)
+  assert fuse_ranges(original) is original
+
+
+@pytest.mark.parametrize("split", [False, True])
+@pytest.mark.parametrize("depth", [9, 20])
+def test_independent_arithmetic_in_mapped_range_is_bounded(split, depth):
+  prog = _raw_program()
+  callee, root = prog.args
+  x, y, tmp, mapped, copied = root.args
+  value = p.load(p.view(x, [p.const_int(0)]))
+  factor = p.load(p.view(x, [p.const_int(1)]))
+  setup = []
+  computed = []
+  for k in range(depth):
+    value = p.add(p.mul(value, factor), p.const_float(1))
+    if split or k == depth - 1:
+      fixed = p.buffer(f"fixed{k}", dtypes.float64, (1,), address_space="private")
+      at_zero = p.view(fixed, [p.const_int(0)])
+      loop = p.for_(p.range_(f"j{k}", 0, 1), [p.store(at_zero, value)])
+      setup.extend([fixed, loop])
+      computed.append(loop)
+      value = p.load(at_zero)
+  consumer = copied.args[1]
+  copied = p.for_(copied.args[0], [p.store(consumer.args[0], p.add(consumer.args[1], value))])
+  body = (x, y, tmp, *setup, mapped, copied)
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  verify_program(original)
+  result = fuse_ranges(original)
+  verify_program(result)
+  root = result.args[-1]
+  assert computed[0] in _body(root)
+  fused = next(n for n in _body(root) if n.op == ProgramOp.FOR and n.args[0].attrs.get("mapped"))
+  assert sum(n.op in {ProgramOp.ADD, ProgramOp.MUL} and n.dtype.is_floating for n in walk_program(fused)) <= 9
 
 
 def test_discarded_callee_outputs_do_not_materialize_reused_scratch():
