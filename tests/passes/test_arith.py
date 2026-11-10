@@ -231,11 +231,27 @@ def test_known_invalid_constants_stay_runtime_operations() -> None:
   assert np.isnan(fn(np.ones(2))).all()
 
 
-def test_integer_constant_evaluation_refuses_values_outside_the_dtype() -> None:
-  from scaly.ir.program import ProgramNode, ProgramOp, const_int
-  from scaly.ir.types import dtypes
-  from scaly.passes.arith import fold_program
+@pytest.mark.parametrize("dtype", [dtypes.int64, dtypes.int32])
+def test_integer_constant_arithmetic_wraps_like_numpy(dtype) -> None:
+  from scaly.passes.arith import constant
 
-  big = ProgramNode(ProgramOp.MUL, (const_int(1 << 40), const_int(1 << 40)), dtype=dtypes.int64)
-  assert fold_program(big).op == ProgramOp.MUL
-  assert fold_program(ProgramNode(ProgramOp.ADD, (const_int(1 << 40), const_int(1)), dtype=dtypes.int64)).attrs["value"] == (1 << 40) + 1
+  info = np.iinfo(dtype.numpy())
+  cases = (
+    (ProgramOp.ADD, sc.ExprOp.ADD, np.add, (info.max, 1)),
+    (ProgramOp.SUB, sc.ExprOp.SUB, np.subtract, (info.min, 1)),
+    (ProgramOp.MUL, sc.ExprOp.MUL, np.multiply, (info.max, info.max)),
+    (ProgramOp.NEG, sc.ExprOp.NEG, np.negative, (info.min,)),
+  )
+  for program_op, expr_op, reference, values in cases:
+    with np.errstate(over="ignore"):
+      expected = reference(*(np.asarray(v, dtype=dtype.numpy()) for v in values))
+    folded = fold_program(ProgramNode(program_op, tuple(constant(v, dtype) for v in values), dtype=dtype))
+    assert folded.op == ProgramOp.CONST_INT
+    assert folded.attrs["value"] == int(expected)
+    for arrays in ([np.asarray(v, dtype=dtype.numpy()) for v in values], [np.array([v, 0], dtype=dtype.numpy()) for v in values]):
+      args = tuple(sc.const(v) for v in arrays)
+      expr = sc.Expr(expr_op, args, args[0].type)
+      folded_expr = sc.simplify(expr)
+      assert folded_expr.op == sc.ExprOp.CONST
+      with np.errstate(over="ignore"):
+        np.testing.assert_array_equal(folded_expr.value, reference(*arrays))

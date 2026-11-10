@@ -179,9 +179,12 @@ def constant(value: int | float, dtype: DType) -> ProgramNode:
 
 def evaluate(op: ProgramOp, values: list[int | float], dtype: DType) -> int | float | None:
   """Evaluate a scalar operation on constants with ``dtype`` semantics, or None when the result is not
-  faithfully representable (division by zero, domain errors, overflow): those stay runtime operations."""
+  faithfully representable (division by zero, domain errors, overflow): those stay runtime operations.
+  Signed integer add, subtract, multiply and negation wrap as NumPy does."""
   value = _evaluate_scalar(op, values, dtype)
   lowest, highest = (0, 1 << dtype.bits) if dtype.is_unsigned else (-(1 << (dtype.bits - 1)), 1 << (dtype.bits - 1))
+  if value is not None and dtype.is_integer and not dtype.is_unsigned and op in (ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.NEG):
+    return (int(value) - lowest) % (highest - lowest) + lowest
   if value is not None and dtype.is_integer and not lowest <= value < highest:
     return None
   return value
