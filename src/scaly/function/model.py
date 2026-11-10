@@ -261,7 +261,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     self.instantiate().compile()
 
   def recompile(self) -> None:
-    """Invalidate a fully specified function's cache; its next numerical call recompiles."""
+    """Drop a fully specified function's compiled handle so its next numerical call uses another cache path."""
     self.instantiate().recompile()
 
   def with_device(self, device: Any) -> Function[Any, Any, Any, Any]:
