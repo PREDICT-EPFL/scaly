@@ -61,3 +61,7 @@ compiled regression. Documented custom reverse rules needing finite results at z
 cotangents. Removed the unneeded floating argument filter and stopped differentiation
 of mapped condition arguments. Documented the pre-existing callee-local mapped select
 gap and filed it as #364, outside this task. All 27 select tests and 96 C comparisons pass.
+
+Final Opus-fix pre-merge hook passed: 3,145 passed, 52 skipped and all other
+hooks green. All 96 no-select artifacts remain byte-identical. The single
+Opus delta check is next, covering its shape/doc findings and the small notes.
