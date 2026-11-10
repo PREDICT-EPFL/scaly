@@ -15,7 +15,7 @@ contributing, compiler maintenance context and the implement workflow before cha
 - [x] Use argument-specialised support in Jacobian coefficient rules, keeping custom derivative
       declarations authoritative and nested callee walks iterative and shared by support context.
 - [x] Run focused tests with at most two workers; perturb the new gates; update collection baseline.
-- [ ] Run the full pre-merge hook detached through `~/.scaly-suite/run`, poll inside this turn,
+- [x] Run the full pre-merge hook detached through `~/.scaly-suite/run`, poll inside this turn,
       and keep C snapshots byte-identical. Commit and push only the reviewable state.
 - [ ] Open the stacked PR, obtain Opus cross-review plus the high-risk sol correctness review,
       fix findings and request only the delta checks required by the cross-review skill.
@@ -30,5 +30,5 @@ The implementation also needs two small forward-mode consumers: `forward.py` pru
 movement tangent with the existing custom-derivative guard, and `calls.py` skips an empty gathered
 seed before local-colour reconstruction creates a product. No callee cloning or support changes.
 Focused tests passed, including all 17 new cases. Perturbations detected disabled support
-specialisation, disabled zero pruning and doubled runtime-seed values. Full pre-merge hook is
-running detached at `/tmp/scaly-167-suite.log`, exit file `/tmp/scaly-167-suite.exit`.
+specialisation, disabled zero pruning and doubled runtime-seed values. Full pre-merge hook passed, 2,962 tests and 52 skips, plus smoke, docs and private-name checks.
+Log: `/tmp/scaly-167-suite.log`; exit file: `/tmp/scaly-167-suite.exit` contains 0.
