@@ -150,12 +150,13 @@ def test_float32_intermediate_stores_keep_rounding(mode):
 
 
 @pytest.mark.parametrize("mode", ["block", "scalar"])
-def test_int64_constant_tables_and_sums_stay_exact(mode):
-  values = np.array([2**53 + 1, -(2**53), 2**53 + 3, -(2**53)], dtype=np.int64)
+@pytest.mark.parametrize("dtype,bits", [("int64", 53), ("int32", 24)])
+def test_integer_constant_tables_and_sums_stay_exact(mode, dtype, bits):
+  values = np.array([2**bits + 1, -(2**bits), 2**bits + 3, -(2**bits)], dtype=dtype)
 
   @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("difference"), sc.arg("total")), name=f"exact_int64_{mode}")
   def fn(x):
-    ints = sc.const(values) + sc.cast(x, "int64")
+    ints = sc.const(values) + sc.cast(x, dtype)
     return sc.cast(ints - sc.const(values - 1), "float64").with_lowering(mode), sc.cast(ints.sum(), "float64").with_lowering(mode)
 
   difference, total = fn(np.zeros(4))
