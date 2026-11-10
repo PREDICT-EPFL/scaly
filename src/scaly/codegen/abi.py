@@ -35,6 +35,7 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
     (symbol, f"{symbol}_with_options", "arg", "res", "workspace", "workspace_t", "solver_options", "call", "sz_arg", "sz_res", "sz_iw", "sz_w"),
     header=True,
   )
+  names.occupied.add(f"{symbol}_FRAME_BYTES")
 
   def ident(name: str, suffix: str) -> str:
     out = c_ident(name + suffix if name in shared else name)

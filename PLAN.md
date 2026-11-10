@@ -21,7 +21,11 @@ order and #76. Frozen devrush inspected for relevant workspace tests.
   New 34 tests and negative controls pass. All three examples pass. The full suite
   was interrupted near completion by provider drops. The two observed lane fixture
   failures are fixed with a 16384-byte budget; the dedicated regression passes.
-  Detached hook: `/tmp/scaly-76-premerge-detached.log`, result in the matching `.exit` file.
+  Added a regression for inputs that collide with the FRAME_BYTES macro; lowering and
+  header names now reserve that macro. The extra C/C++ header compile test passes.
+  Detached full hook with 16 workers lost a worker under host memory pressure, so
+  overlapping runs were stopped. Current hook uses four workers and logs to
+  `/tmp/scaly-76-premerge-four.log`, with its result in the matching `.exit` file.
 - [x] Record operation counts, source sizes and generated-C compile time, no run-time timings.
   Data: `/tmp/scaly-76-measurements.json`. Other compiler-run tasks were active, so timings
   are diagnostics, not performance evidence. All seven before/after C cases build with GCC and Clang.

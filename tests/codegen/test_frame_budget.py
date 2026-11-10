@@ -10,7 +10,7 @@ import scaly as sc
 from scaly.codegen.aot import render_c_api_header, render_c_module, render_c_source, workspace_size, write_module
 from scaly.codegen.toolchain import BuildRecipe
 from scaly.ir.program import ProgramOp, walk_program
-from tests.compilers import named_compiler
+from tests.compilers import cxx_compiler, named_compiler
 
 
 def _function():
@@ -106,6 +106,36 @@ def test_frame_option_reaches_all_render_entry_points(tmp_path):
   assert render_c_api_header(fun, frame_budget=0) == module.header
   assert write_module(fun, tmp_path, frame_budget=0).header == module.header
   assert f"#define kernel_FRAME_BYTES {module.frame_bytes}" in render_c_api_header(fun, frame_budget=0, lang="cpp")
+
+
+def test_frame_macro_does_not_shadow_buffer_names(tmp_path):
+  @sc.function(sc.arg("kernel_FRAME_BYTES", 3), outputs=sc.arg("y"), name="inner")
+  def inner(x):
+    return x.sin().block()
+
+  @sc.function(sc.arg("kernel_FRAME_BYTES", 3), outputs=sc.arg("y"), name="kernel")
+  def kernel(x):
+    return inner(x)
+
+  module = write_module(kernel, tmp_path, lanes=1)
+  subprocess.run(
+    [*named_compiler("gcc"), "-Werror", "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")],
+    capture_output=True,
+    text=True,
+    check=True,
+  )
+  cpp = render_c_api_header(kernel, lang="cpp", lanes=1)
+  (tmp_path / "kernel.hpp").write_text(cpp)
+  cpp_path = tmp_path / "use.cpp"
+  cpp_path.write_text('#include "kernel.hpp"\n')
+  subprocess.run(
+    [*cxx_compiler(), "-x", "c++", "-std=c++17", "-Werror", "-c", str(cpp_path), "-o", str(tmp_path / "header.o")],
+    capture_output=True,
+    text=True,
+    check=True,
+  )
+  assert "* kernel_FRAME_BYTES," not in module.header
+  assert "& kernel_FRAME_BYTES," not in cpp
 
 
 @pytest.mark.parametrize("budget", [-1, True, 1.5])

@@ -729,6 +729,7 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
 
   visit(root)
   symbols[root] = names.claim(root.name)
+  names.occupied.add(f"{symbols[root]}_FRAME_BYTES")
   for function in functions:
     if is_solver_function(function):
       if function is not root:
