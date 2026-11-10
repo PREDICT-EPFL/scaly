@@ -103,7 +103,7 @@ def test_store_pair_selection_is_explicit_and_respects_dependencies() -> None:
   at = lambda buf, i: p.view(buf, [p.const_int(i)])
   safe = p.proc("safe", [x, y], [p.store(at(y, 0), p.load(at(x, 0))), p.store(at(y, 1), p.load(at(x, 1)))])
   dependent = p.proc("dependent", [y], [p.store(at(y, 2), p.const_float(1)), p.store(at(y, 3), p.load(at(y, 2)))])
-  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y", "alias_offset": 0}, y.dtype)
+  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y", "alias_offset": 0}, dtype=y.dtype)
   late_alias = p.proc("late_alias", [y], [p.store(at(y, 0), p.const_float(1)), p.store(at(y, 1), p.load(at(alias, 0))), alias])
   result = coalesce_stores(p.program([safe, dependent, late_alias]))
   assert _body(result.args[0])[0].op == ProgramOp.STORE_PAIR
@@ -162,7 +162,7 @@ def _policy_proc(name: str, count: int, *, arithmetic: bool = True, lowering: Lo
   value = p.add(source, p.const_float(1.0)) if arithmetic else source
   loop = p.for_(p.range_(i.attrs["name"], 0, count), [p.store(p.view(y, [i]), value)])
   raw = p.proc(name, [x, y], [loop])
-  return ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": lowering}, raw.dtype)
+  return ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": lowering}, dtype=raw.dtype)
 
 
 def test_auto_uses_folded_scalar_operations_instead_of_tensor_shape() -> None:
@@ -216,7 +216,7 @@ def test_auto_counts_shared_post_fold_computation_once(monkeypatch) -> None:
   shared = ProgramNode(ProgramOp.SIN, (p.load(p.view(x, [p.const_int(0)])),), dtype=dtypes.float64)
   loop = p.for_(p.range_(i.attrs["name"], 0, count), [p.store(p.view(y, [i]), p.add(shared, p.const_float(0)))])
   raw = p.proc("shared_computation", [x, y], [loop])
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, dtype=raw.dtype)
   scalarized = scalarize_program(p.program([proc])).args[0]
   _assert_scalar(scalarized)
   nodes = {node for stmt in _body(scalarized) for node in walk_program(stmt)}
@@ -228,7 +228,7 @@ def test_auto_counts_shared_post_fold_computation_once(monkeypatch) -> None:
 def test_auto_preflight_bounds_buffer_materialization() -> None:
   scratch = p.buffer("huge_scratch", dtypes.float64, (AUTO_EXPANSION_WORK_PER_PROC + 1,), address_space="private")
   raw = p.proc("huge_allocation", [], [scratch])
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize_mode": "procedure", "lowering": "auto"}, dtype=raw.dtype)
   assert scalarize_program(p.program([proc])).args[0] is proc
 
 
@@ -236,7 +236,7 @@ def test_auto_rejects_call_when_callee_exceeds_budget() -> None:
   callee = _policy_proc("expensive_callee", AUTO_SCALAR_OPS_PER_PROC + 1)
   x, y = (p.buffer(name, dtypes.float64, (AUTO_SCALAR_OPS_PER_PROC + 1,)) for name in ("caller_x", "caller_y"))
   raw = p.proc("caller", [x, y], [p.call(callee.attrs["name"], [x, y])])
-  caller = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
+  caller = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, dtype=raw.dtype)
   result = scalarize_program(p.program([callee, caller]))
   assert result.args == (callee, caller)
 
@@ -403,7 +403,7 @@ def test_repeated_stores_and_aliases_read_the_latest_value() -> None:
   out = p.buffer("out", dtypes.float64, (2,))
   temp = p.buffer("temp", dtypes.float64, (3,), address_space="private")
   alias = p.buffer("alias", dtypes.float64, (1,), address_space="private")
-  alias = ProgramNode(alias.op, alias.args, {**alias.attrs, "alias_of": "temp", "alias_offset": 2}, alias.dtype)
+  alias = ProgramNode(alias.op, alias.args, {**alias.attrs, "alias_of": "temp", "alias_offset": 2}, dtype=alias.dtype)
   v = p.view(alias, [p.const_int(0)])
   read = p.load(v)
   assert p.load(v) is read
@@ -420,7 +420,7 @@ def test_repeated_stores_and_aliases_read_the_latest_value() -> None:
       p.store(p.view(out, [p.const_int(1)]), read),
     ],
   )
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize_mode": "procedure", "lowering": "scalar"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize_mode": "procedure", "lowering": "scalar"}, dtype=raw.dtype)
   scalar = scalarize_program(p.program([proc])).args[0]
   _assert_scalar(scalar)
   assert len(_body(scalar)) == 2

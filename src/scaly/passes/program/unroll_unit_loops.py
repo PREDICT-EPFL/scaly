@@ -50,7 +50,7 @@ def _unroll_unit_loop_stmt(stmt: ProgramNode) -> list[ProgramNode]:
       out.extend(_unroll_unit_loop_stmt(_subst_var(sub, vname, only_value)))
     return out
   if changed:
-    return [ProgramNode(ProgramOp.FOR, (rng, *new_body), {**stmt.attrs, "body_len": len(new_body)}, stmt.dtype)] if new_body else []
+    return [ProgramNode(ProgramOp.FOR, (rng, *new_body), {**stmt.attrs, "body_len": len(new_body)}, dtype=stmt.dtype)] if new_body else []
   return [stmt]
 
 

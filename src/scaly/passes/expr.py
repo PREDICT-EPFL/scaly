@@ -123,7 +123,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
   elif e.op == ExprOp.SCATTER:
     if e.size > max(1024, e.args[0].size):
       return None
-    out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
+    out = np.zeros(e.shape, dtype=e.type.dtype.numpy()).reshape(-1)
     indices = e.attrs["indices"].reshape(-1)
     if len(set(indices.tolist())) == len(indices):
       out[indices] = args[0].reshape(-1)
@@ -146,6 +146,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
       out = np.sum(value, axis=axes, dtype=e.type.dtype.numpy())
     else:
       out = (np.max if kind == "max" else np.min)(value, axis=axes, initial=-np.inf if kind == "max" else np.inf)
+
   elif e.op == ExprOp.MATMUL:
     out = args[0] @ args[1]
   elif e.op in ELEMENTWISE:

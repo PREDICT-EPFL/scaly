@@ -113,7 +113,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   # Spill plan: float64 slots at/above the threshold get a sequential window in w[].
   total = 0
   for slot in plan.slot_size:
-    if plan.slot_dtype[slot].is_floating and plan.slot_size[slot] >= WORKSPACE_SPILL_THRESHOLD:
+    if plan.slot_dtype[slot].is_floating and plan.slot_dtype[slot].bits == 64 and plan.slot_size[slot] >= WORKSPACE_SPILL_THRESHOLD:
       plan.spill_offset[slot] = total
       total += plan.slot_size[slot]
   plan.own_spill = total
@@ -150,7 +150,7 @@ def pack_workspace(prog: ProgramNode) -> ProgramNode:
     total(name)
 
   procs = [_apply_pack(pr, plans[pr.attrs["name"]], sz_w) for pr in procs]
-  return ProgramNode(ProgramOp.PROGRAM, tuple(procs), prog.attrs, prog.dtype)
+  return ProgramNode(ProgramOp.PROGRAM, tuple(procs), prog.attrs, dtype=prog.dtype)
 
 
 def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> ProgramNode:
@@ -170,18 +170,18 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> Pro
     }
     if slot in plan.spill_offset:
       attrs["workspace_offset"] = plan.spill_offset[slot]
-    slot_bufs[slot] = ProgramNode(ProgramOp.BUFFER, (), attrs, plan.slot_dtype[slot])
+    slot_bufs[slot] = ProgramNode(ProgramOp.BUFFER, (), attrs, dtype=plan.slot_dtype[slot])
 
   def fn(n: ProgramNode) -> ProgramNode:
     if n.op == ProgramOp.BUFFER and "alias_of" in n.attrs and n.attrs["alias_of"] in plan.rename:
-      return ProgramNode(ProgramOp.BUFFER, n.args, {**n.attrs, "alias_of": plan.rename[n.attrs["alias_of"]]}, n.dtype)
+      return ProgramNode(ProgramOp.BUFFER, n.args, {**n.attrs, "alias_of": plan.rename[n.attrs["alias_of"]]}, dtype=n.dtype)
     if n.op == ProgramOp.BUFFER and n.attrs.get("name") in plan.rename:
       return slot_bufs[plan.rename[n.attrs["name"]]]
     if n.op == ProgramOp.VIEW and n.attrs.get("buffer") in plan.rename:
-      return ProgramNode(ProgramOp.VIEW, n.args, {**n.attrs, "buffer": plan.rename[n.attrs["buffer"]]}, n.dtype)
+      return ProgramNode(ProgramOp.VIEW, n.args, {**n.attrs, "buffer": plan.rename[n.attrs["buffer"]]}, dtype=n.dtype)
     if n.op == ProgramOp.CALL:
       callee = n.attrs["callee"]
-      return ProgramNode(ProgramOp.CALL, n.args, {**n.attrs, "w_self": plan.own_spill, "callee_needs_w": sz_w.get(callee, 0) > 0}, n.dtype)
+      return ProgramNode(ProgramOp.CALL, n.args, {**n.attrs, "w_self": plan.own_spill, "callee_needs_w": sz_w.get(callee, 0) > 0}, dtype=n.dtype)
     return n
 
   new_body: list[ProgramNode] = []

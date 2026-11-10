@@ -14,7 +14,7 @@ def _program(count=9):
   x, y = (p.buffer(name, dtypes.float64, (count,)) for name in ("x", "y"))
   i = p.var("stage")
   rng = p.range_("stage", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   return p.program([p.proc("mapped", [x, y], [p.for_(rng, [p.store(p.view(y, [i]), p.load(p.view(x, [i])))])])])
 
 
@@ -46,7 +46,7 @@ def test_lane_layout_of_a_table_indexed_read_follows_its_values(table, layout, s
   indices = p.const_buffer("indices", dtypes.int64, (9,), table)
   i = p.var("stage")
   rng = p.range_("stage", 0, 9)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   read = p.load(p.view(x, [p.load(p.view(indices, [i]))]))
   prog = p.program([p.proc("table_read", [x, y], [indices, p.for_(rng, [p.store(p.view(y, [i]), read)])])])
   view = next(n for n in walk_program(widen_ranges(prog, lanes=2)) if n.op == ProgramOp.VIEW and n.attrs["buffer"] == "x")
@@ -99,7 +99,7 @@ def test_integer_value_loops_stay_scalar():
 
 def test_reduction_does_not_stage_an_aliased_accumulator():
   y = p.buffer("y", dtypes.float64, (1,))
-  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y", "alias_offset": 0}, y.dtype)
+  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y", "alias_offset": 0}, dtype=y.dtype)
   target = p.view(y, [p.const_int(0)])
   rhs = p.add(p.load(target), p.load(p.view(alias, [p.const_int(0)])))
   loop = p.for_(p.range_("i", 0, 9, kind=RangeKind.REDUCE), [p.store(target, rhs)])
@@ -163,10 +163,10 @@ def test_scheduled_index_is_not_an_independent_contiguous_output():
 
 def test_local_alias_of_external_buffer_stays_scalar():
   x, y = p.buffer("x", dtypes.float64, (9,)), p.buffer("y", dtypes.float64, (9,))
-  alias = ProgramNode(ProgramOp.BUFFER, (), {**x.attrs, "name": "local_alias", "alias_of": "x", "alias_offset": 0}, x.dtype)
+  alias = ProgramNode(ProgramOp.BUFFER, (), {**x.attrs, "name": "local_alias", "alias_of": "x", "alias_offset": 0}, dtype=x.dtype)
   i = p.var("stage")
   rng = p.range_("stage", 0, 9)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   prog = p.program([p.proc("external_alias", [x, y], [p.for_(rng, [alias, p.store(p.view(y, [i]), p.load(p.view(alias, [i])))])])])
   assert widen_ranges(prog, lanes=4) is prog
 
@@ -178,7 +178,7 @@ def test_callee_inlined_into_its_map_is_not_emitted():
   x, y = (p.buffer(name, dtypes.float64, (9,)) for name in ("x", "y"))
   i = p.var("stage")
   rng = p.range_("stage", 0, 9)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   mapped = p.proc("mapped", [x, y], [p.for_(rng, [p.call("square", [p.view(x, [i]), p.view(y, [i])])])])
   result = widen_ranges(p.program([square, mapped]), lanes=2)
   verify_program(result)

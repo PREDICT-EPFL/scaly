@@ -67,8 +67,8 @@ def _program(count=11):
   i = p.var("stage")
   value = p.load(p.view(x, [p.mul(i, p.const_int(2))]))
   rng = p.range_("stage", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
-  sin = ProgramNode(ProgramOp.SIN, (value,))
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
+  sin = ProgramNode(ProgramOp.SIN, (value,), dtype=dtypes.float64)
   rhs = p.add(p.mul(sin, value), p.const_float(0.125))
   return p.program([p.proc("kernel", [x, y], [p.for_(rng, [p.store(p.view(y, [p.mul(i, p.const_int(3))]), rhs)])])])
 
@@ -106,8 +106,8 @@ def test_fixed_lanes_keep_short_loops_scalar_and_share_one_vector_type(tmp_path,
     i, start = p.var(f"i{part}"), p.const_int(sum(counts[:part]))
     value = p.load(p.view(x, [p.add(start, i)]))
     rng = p.range_(f"i{part}", 0, count)
-    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
-    rhs = p.add(p.mul(ProgramNode(ProgramOp.SIN, (value,)), value), p.const_float(0.125))
+    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
+    rhs = p.add(p.mul(ProgramNode(ProgramOp.SIN, (value,), dtype=dtypes.float64), value), p.const_float(0.125))
     loops.append(p.for_(rng, [p.store(p.view(y, [p.add(start, i)]), rhs)]))
   prog = p.program([p.proc("kernel", [x, y], loops)])
   baseline = tmp_path / "baseline"
@@ -155,9 +155,14 @@ def _nested_program(count=7, size=3):
     "inner", [a, b], [scratch, stores, p.assign("acc", p.const_float(0), declare=True), reduction, p.store(p.view(b, [p.const_int(0)]), acc)]
   )
   rng = p.range_("stage", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   stage = p.var("stage")
-  call = ProgramNode(ProgramOp.CALL, (p.view(x, [p.mul(stage, p.const_int(size))]), p.view(y, [stage])), {"callee": "inner", "n_in": 1, "n_out": 1})
+  call = ProgramNode(
+    ProgramOp.CALL,
+    (p.view(x, [p.mul(stage, p.const_int(size))]), p.view(y, [stage])),
+    {"callee": "inner", "n_in": 1, "n_out": 1},
+    dtype=dtypes.float64,
+  )
   return p.program([callee, p.proc("kernel", [x, y], [p.for_(rng, [call])])])
 
 
@@ -233,7 +238,7 @@ def test_helper_names_do_not_capture_user_names(tmp_path):
   y = p.buffer("l", dtypes.float64, (9,))
   i = p.var("i")
   rng = p.range_("i", 0, 9)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   scalar = p.var("l_2", dtypes.float64)
   body = [
     p.assign("l_2", p.const_float(2), declare=True),
@@ -250,11 +255,11 @@ def test_minimum_maximum_and_negative_zero_broadcast(tmp_path, dialect):
   x, y = p.buffer("x", dtypes.float64, (9,)), p.buffer("y", dtypes.float64, (9,))
   i = p.var("i")
   rng = p.range_("i", 0, 9)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   zero = p.var("negative_zero", dtypes.float64)
   value = p.load(p.view(x, [i]))
-  minimum = ProgramNode(ProgramOp.MINIMUM, (value, zero))
-  maximum = ProgramNode(ProgramOp.MAXIMUM, (minimum, value))
+  minimum = ProgramNode(ProgramOp.MINIMUM, (value, zero), dtype=dtypes.float64)
+  maximum = ProgramNode(ProgramOp.MAXIMUM, (minimum, value), dtype=dtypes.float64)
   body = [p.assign("negative_zero", p.load(p.view(x, [p.const_int(0)])), declare=True), p.for_(rng, [p.store(p.view(y, [i]), maximum)])]
   prog = p.program([p.proc("kernel", [x, y], body)])
   baseline = tmp_path / "baseline"
@@ -348,7 +353,7 @@ def test_store_schedule_preserves_compiled_values(tmp_path, dialect):
   body += [p.assign(f"value{j}", p.add(p.mul(base, p.const_float(j)), p.const_float(0.25)), declare=True) for j in range(20)]
   body += [p.store(p.view(y, [p.add(p.mul(i, p.const_int(20)), p.const_int(j))]), p.var(f"value{j}", dtypes.float64)) for j in range(20)]
   rng = p.range_("i", 0, 17)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, body)])])
   baseline = tmp_path / "baseline"
   baseline.mkdir()
@@ -412,7 +417,7 @@ def test_call_jacobian_keeps_noinline_frame_in_c99(tmp_path, dialect):
 def test_c99_noinline_implementation_name_is_reserved():
   x, y = p.buffer("x", dtypes.float64, (1,)), p.buffer("y", dtypes.float64, (1,))
   proc = p.proc("f_fwd", [x, y], [p.store(p.view(y, [p.const_int(0)]), p.load(p.view(x, [p.const_int(0)])))])
-  proc = ProgramNode(proc.op, proc.args, {**proc.attrs, "noinline": True}, proc.dtype)
+  proc = ProgramNode(proc.op, proc.args, {**proc.attrs, "noinline": True}, dtype=proc.dtype)
   source = "\n".join(_render_raw_callee(proc, dialect="c", reserved_names=NameScope({"f_fwd_raw_impl"})))
   assert "void f_fwd_raw_impl_2(" in source
   assert "(*volatile f_fwd_raw)" in source
@@ -454,7 +459,7 @@ def test_mutable_integer_indices_stay_scalar(tmp_path, dialect):
   inner = p.for_(p.range_("j", 0, 3), [update])
   store = p.store(p.view(y, [i]), p.load(p.view(x, [p.var("offset")])))
   rng = p.range_("i", 0, 9)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [offset, inner, store])])])
   widened = widen_ranges(prog, lanes=4)
   assert widened is prog
@@ -486,12 +491,14 @@ def test_private_aliases_pack_active_lanes_with_tail(tmp_path, dialect, lanes):
   x, y = p.buffer("x", dtypes.float64, (51,)), p.buffer("y", dtypes.float64, (17,))
   scratch = p.buffer("scratch", dtypes.float64, (1100,), address_space="private")
   alias = ProgramNode(
-    ProgramOp.BUFFER, (), {**scratch.attrs, "name": "alias", "shape": (10,), "alias_of": "scratch", "alias_offset": 3}, scratch.dtype
+    ProgramOp.BUFFER, (), {**scratch.attrs, "name": "alias", "shape": (10,), "alias_of": "scratch", "alias_offset": 3}, dtype=scratch.dtype
   )
-  tail = ProgramNode(ProgramOp.BUFFER, (), {**alias.attrs, "name": "tail", "shape": (3,), "alias_of": "alias", "alias_offset": 2}, scratch.dtype)
+  tail = ProgramNode(
+    ProgramOp.BUFFER, (), {**alias.attrs, "name": "tail", "shape": (3,), "alias_of": "alias", "alias_offset": 2}, dtype=scratch.dtype
+  )
   i, j = p.var("i"), p.var("j")
   rng = p.range_("i", 0, 17)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   fill = p.for_(p.range_("j", 0, 3), [p.store(p.view(tail, [j]), p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), j)])))])
   value = p.add(p.load(p.view(scratch, [p.const_int(5)])), p.add(p.load(p.view(alias, [p.const_int(3)])), p.load(p.view(tail, [p.const_int(2)]))))
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [scratch, alias, tail, fill, p.store(p.view(y, [i]), value)])])])
@@ -501,7 +508,7 @@ def test_private_aliases_pack_active_lanes_with_tail(tmp_path, dialect, lanes):
     from scaly.passes.program._common import rebuild_program
 
     def cap(node):
-      return ProgramNode(node.op, node.args, {**node.attrs, "lane_cap": 4, "lane_caps": (4, 4, 4, 4)}, node.dtype)
+      return ProgramNode(node.op, node.args, {**node.attrs, "lane_cap": 4, "lane_caps": (4, 4, 4, 4)}, dtype=node.dtype)
 
     widened = rewrite(widened, [Pattern(ProgramOp.RANGE, lambda n: "lane_caps" in n.attrs, cap)], rebuild=rebuild_program, fixpoint=False)
   nodes = list(walk_program(widened))
@@ -530,7 +537,7 @@ def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect
     scratch = p.buffer(f"scratch{part}", dtypes.float64, (1100,), address_space="private")
     i = p.var(f"i{part}")
     rng = p.range_(f"i{part}", 0, count)
-    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
     value = p.mul(p.load(p.view(x, [i])), p.const_float(part + 2))
     loops.append(
       p.for_(
@@ -601,10 +608,10 @@ def test_lane_local_loads_are_one_vector_load(tmp_path, dialect, lanes):
   scratch = p.buffer("scratch", dtypes.float64, (3,), address_space="private")
   i, j = p.var("i"), p.var("j")
   rng = p.range_("i", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   fill = p.for_(p.range_("j", 0, 3), [p.store(p.view(scratch, [j]), p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), j)])))])
   loads = [p.load(p.view(scratch, [p.const_int(k)])) for k in range(3)]
-  value = p.add(p.mul(ProgramNode(ProgramOp.SIN, (loads[0],)), loads[1]), loads[2])
+  value = p.add(p.mul(ProgramNode(ProgramOp.SIN, (loads[0],), dtype=dtypes.float64), loads[1]), loads[2])
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [scratch, fill, p.store(p.view(y, [i]), value)])])])
   function, source = _compile(pack_workspace(widen_ranges(prog, lanes=lanes)), tmp_path, dialect=dialect)
   values = np.linspace(-2, 3, 3 * count)
@@ -627,9 +634,9 @@ def test_only_tail_lanes_clamp_their_index(tmp_path, dialect, lanes):
   x, y = p.buffer("i", dtypes.float64, (count + 5,)), p.buffer("k", dtypes.float64, (count + 5,))
   j = p.var("j")
   rng = p.range_("j", 5, count + 5)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   value = p.load(p.view(x, [j]))
-  rhs = p.add(p.mul(ProgramNode(ProgramOp.SIN, (value,)), value), p.const_float(0.125))
+  rhs = p.add(p.mul(ProgramNode(ProgramOp.SIN, (value,), dtype=dtypes.float64), value), p.const_float(0.125))
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, [p.store(p.view(y, [j]), rhs)])])])
   baseline = tmp_path / "baseline"
   baseline.mkdir()
@@ -649,7 +656,7 @@ def test_lane_uniform_integer_index_is_one_scalar(tmp_path, dialect, lanes):
   x, y = p.buffer("x", dtypes.float64, (3 * count,)), p.buffer("y", dtypes.float64, (count,))
   i, offset = p.var("i"), p.var("offset")
   rng = p.range_("i", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   value = p.load(p.view(x, [p.add(p.mul(i, p.const_int(3)), offset)]))
   body = [p.assign("offset", p.const_int(2), dtypes.int64, declare=True), p.store(p.view(y, [i]), p.mul(value, value))]
   prog = p.program([p.proc("kernel", [x, y], [p.for_(rng, body)])])
@@ -671,7 +678,7 @@ def test_lane_uniform_bit_select_word_reads_a_scalar_index(tmp_path, lanes):
   table = p.const_buffer("words", dtypes.uint8, (2,), words)
   i, word_index = p.var("i"), p.var("word_index")
   rng = p.range_("i", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   value = p.bit_select(p.load(p.view(table, [word_index])), p.mod(i, p.const_int(5)), p.load(p.view(x, [i])))
   body = [p.assign("word_index", p.const_int(1), dtypes.int64, declare=True), p.store(p.view(y, [i]), value)]
   prog = p.program([p.proc("kernel", [x, y], [table, p.for_(rng, body)])])
@@ -691,7 +698,7 @@ def test_lane_varying_local_slots_are_read_per_lane(tmp_path, dialect, lanes):
   doubled = p.buffer("doubled", dtypes.float64, (count,), address_space="private")
   i, j = p.var("i"), p.var("j")
   rng = p.range_("i", 0, count)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   fill = p.for_(p.range_("j", 0, count), [p.store(p.view(table, [j]), p.load(p.view(x, [j])))])
   double = p.store(p.view(doubled, [i]), p.mul(p.load(p.view(x, [i])), p.const_float(2)))
   value = p.add(p.load(p.view(table, [i])), p.load(p.view(doubled, [i])))

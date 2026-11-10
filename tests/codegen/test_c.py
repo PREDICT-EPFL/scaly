@@ -324,7 +324,7 @@ def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tm
   def at(buf, i):
     return p.view(buf, [p.const_int(i)])
 
-  a = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "a", "alias_of": "y", "alias_offset": 0}, y.dtype)
+  a = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "a", "alias_of": "y", "alias_offset": 0}, dtype=y.dtype)
   body = [
     a,
     p.store(at(y, 0), p.load(at(x, 0))),

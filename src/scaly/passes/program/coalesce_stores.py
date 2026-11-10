@@ -26,7 +26,7 @@ def coalesce_stores(prog: ProgramNode) -> ProgramNode:
     while i < len(body):
       stmt = body[i]
       if stmt.op == ProgramOp.FOR:
-        stmt = ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], aliases)), stmt.attrs, stmt.dtype)
+        stmt = ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], aliases)), stmt.attrs, dtype=stmt.dtype)
       current = _constant_store(stmt)
       following = _constant_store(body[i + 1]) if i + 1 < len(body) else None
       if current is not None and following == (current[0], current[1] + 1):
@@ -44,6 +44,6 @@ def coalesce_stores(prog: ProgramNode) -> ProgramNode:
   for node in prog.args:
     if node.op == ProgramOp.PROC:
       pc = node.attrs["param_count"]
-      node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], {})), node.attrs, node.dtype)
+      node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], {})), node.attrs, dtype=node.dtype)
     args.append(node)
-  return ProgramNode(prog.op, tuple(args), prog.attrs, prog.dtype)
+  return ProgramNode(prog.op, tuple(args), prog.attrs, dtype=prog.dtype)

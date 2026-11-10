@@ -651,7 +651,7 @@ lanes come from `widen_ranges` and later [#71], not from devrush's hand-written 
 pass int64 constants through `float(v)` (`lowering.py:492`). libm names by dtype (`sinf`, `fabsf`,
 `fminf`) and integer `abs`/`min`/`max`. The scalarize gate admits float32 once folding keeps each
 store's rounding. `widen_ranges` handles float32 lanes; `coalesce_stores` generalizes `STORE_PAIR`
-or a test pins float32 as untouched; `pack_workspace` spills by [#56]'s workspace rule.
+or a test pins float32 as untouched. Until [#56] supplies typed workspace, `pack_workspace` spills float64 buffers only, replacing immediate use of [#56]'s rule to keep this layer independent.
 `ProgramNode` loses its float64 default so every implicit double shows up, and `verify_program`
 checks that loads and stores match their buffer's dtype. Integer sums use integer accumulators.
 Tests: a float32 twin of every op test against NumPy float32 with ulp tolerances.

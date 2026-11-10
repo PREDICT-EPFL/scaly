@@ -28,6 +28,7 @@ from ..ir import program as p
 from ..ir.expr import OP_INFO
 from ..ir.match import Pattern, rewrite
 from ..ir.program import walk_program, ProgramNode, ProgramOp
+from ..ir.types import DType, dtypes
 from ..passes.program._common import name_scope, buffer_refs, prints, rebuild_program, substitute_var
 from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
@@ -44,6 +45,7 @@ _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_intege
 # printf conversion and argument by dtype. 17 significant digits read a double back exactly.
 _PRINTF = {
   "float64": ("%.17g", "{}"),
+  "float32": ("%.9g", "{}"),
   "int32": ("%lld", "(long long)({})"),
   "int64": ("%lld", "(long long)({})"),
   "bool": ("%s", '(({}) ? "True" : "False")'),
@@ -280,7 +282,7 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       size *= int(d)
     size = size or 1
     if stmt.attrs.get("address_space") == "constant" and "values" in stmt.attrs:
-      fmt = (lambda v: str(int(v))) if stmt.dtype.is_integer else _c_float
+      fmt = (lambda v: _c_int(int(v))) if stmt.dtype.is_integer or stmt.dtype.is_bool else (lambda v: _c_float(v, stmt.dtype))
       values = ", ".join(fmt(v) for v in stmt.attrs["values"])
       lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}] = {{{values}}};")
     elif "alias_of" in stmt.attrs:
@@ -423,7 +425,16 @@ def _c_string(text: str) -> str:
   return '"' + "".join(out) + '"'
 
 
-def _c_float(value: float) -> str:
+def _c_int(value: int) -> str:
+  return "(-9223372036854775807LL - 1)" if value == -(1 << 63) else str(value)
+
+
+def _c_float(value: float, dtype: DType = dtypes.float64) -> str:
+  if dtype == dtypes.float32:
+    if not math.isfinite(value):
+      return f"((float){'-INFINITY' if value < 0 else 'INFINITY' if math.isinf(value) else 'NAN'})"
+    text = f"{value:.9g}"
+    return text + ("" if "." in text or "e" in text else ".0") + "f"
   if math.isnan(value):
     return "((double)NAN)"
   if math.isinf(value):
@@ -446,10 +457,10 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       continue
     args = [text[id(a)] for a in node.args] if ready else []
     if op == ProgramOp.CONST_INT:
-      s = str(node.attrs["value"])
+      s = _c_int(node.attrs["value"])
     elif op == ProgramOp.CONST_FLOAT:
       value = node.attrs["value"]
-      s = _c_float(value)
+      s = _c_float(value, node.dtype)
       if math.isfinite(value) and "." not in s and "e" not in s:
         s += ".0"
     elif op == ProgramOp.VAR:
@@ -465,9 +476,9 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
     elif op in _BIN_SYM:
       s = f"({args[0]} {_BIN_SYM[op]} {args[1]})"
     elif op in _UNARY_C:
-      s = f"{_UNARY_C[op]}({args[0]})"
+      s = f"{_UNARY_C[op]}{'f' if node.dtype == dtypes.float32 else ''}({args[0]})"
     elif op in _BINARY_C:
-      s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
+      s = f"{_BINARY_C[op]}{'f' if node.dtype == dtypes.float32 else ''}({args[0]}, {args[1]})"
     elif op == ProgramOp.BIT_SELECT:
       zero = "0.0f" if node.dtype.bits == 32 else "0.0"
       s = f"(((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {args[2]} : {zero})"
@@ -524,11 +535,13 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
       # parameter whose vector type carries both ``aligned`` and ``may_alias``. ``_mem`` is the
       # under-aligned aliasing view for loads and stores through double buffers.
       vec = rng.attrs["lane_vector"]
-      lines.append(f"typedef double {vec} __attribute__((vector_size(8 * {width})));")
-      lines.append(f"typedef {vec} {vec}_mem __attribute__((aligned(8), may_alias));")
+      dtype = rng.attrs["lane_dtype"]
+      scalar, size = dtype.c_type, dtype.itemsize
+      lines.append(f"typedef {scalar} {vec} __attribute__((vector_size({size} * {width})));")
+      lines.append(f"typedef {vec} {vec}_mem __attribute__((aligned({size}), may_alias));")
       # One store per width: the full chunk is one vector store, the tail copies only its valid lanes.
       lines += [
-        f"static inline __attribute__((always_inline, unused)) void {vec}_st(double* p, {vec} v, long long n) {{",
+        f"static inline __attribute__((always_inline, unused)) void {vec}_st({scalar}* p, {vec} v, long long n) {{",
         f"  if (n == {width}) *({vec}_mem*)p = v;",
         "  else for (long long i = 0; i < n; ++i) p[i] = v[i];",
         "}",
@@ -538,9 +551,9 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
       ]
       if any(n.op == ProgramOp.BIT_SELECT for h in helpers for n in walk_program(h.args[1])):
         # The lane mask of BIT_SELECT: one 64-bit integer per double lane, all ones where the bit is set.
-        lines.append(f"typedef int64_t {vec}_i64 __attribute__((vector_size(8 * {width})));")
+        lines.append(f"typedef int{dtype.bits}_t {vec}_i64 __attribute__((vector_size({size} * {width})));")
       operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
-      math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm)]
+      math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm, dtype)]
       if math and vector_libm == "glibc":
         # The wrappers declare the libmvec symbols; a C++ build must see them with C linkage.
         math = ["#ifdef __cplusplus", 'extern "C" {', "#endif", *math, "#ifdef __cplusplus", "}", "#endif"]
@@ -634,18 +647,23 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
       _emit_body(body, {}, lines, 4, dialect="c")
       lines.append("  }")
     else:
-      _emit_vector_body(body, vec, start, lane, width, lines, scope, valid)
+      _emit_vector_body(body, vec, start, lane, width, lines, scope, valid, vector.args[0].attrs["lane_dtype"])
     lines.append("}")
   return lines
 
 
-def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: VectorLibm) -> list[str]:
-  function = _UNARY_C.get(op, _BINARY_C.get(op, ""))
+def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: VectorLibm, dtype: DType) -> list[str]:
+  name = _UNARY_C.get(op, _BINARY_C.get(op, ""))
+  function = name + ("f" if dtype.bits == 32 else "")
   binary = op in _BINARY_C
   params = f"{vec} x, {vec} y" if binary else f"{vec} x"
   args = "x[i], y[i]" if binary else "x[i]"
-  lines = [f"static inline __attribute__((always_inline)) {vec} {helper}_{function}({params}) {{"]
-  glibc = vector_libm == "glibc" and op in {ProgramOp.SIN, ProgramOp.COS, ProgramOp.TAN, ProgramOp.EXP, ProgramOp.LOG, ProgramOp.POW, ProgramOp.TANH}
+  lines = [f"static inline __attribute__((always_inline)) {vec} {helper}_{name}({params}) {{"]
+  glibc = (
+    dtype.bits == 64
+    and vector_libm == "glibc"
+    and op in {ProgramOp.SIN, ProgramOp.COS, ProgramOp.TAN, ProgramOp.EXP, ProgramOp.LOG, ProgramOp.POW, ProgramOp.TANH}
+  )
   if glibc:
     lines += [
       f"#if {width} > 1",
@@ -674,7 +692,7 @@ def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: 
 
 
 def _emit_vector_body(
-  body: list[ProgramNode], vec: str, start: str, lane: str, width: str, lines: list[str], scope: NameScope, valid_count: str
+  body: list[ProgramNode], vec: str, start: str, lane: str, width: str, lines: list[str], scope: NameScope, valid_count: str, dtype: DType
 ) -> None:
   vector_vars: set[str] = set()
   lane_vars: dict[str, str] = {}
@@ -709,12 +727,18 @@ def _emit_vector_body(
         continue
       if node.op == ProgramOp.BIT_SELECT:
         word_node, bit_node, value_node = node.args
-        if not node.dtype.is_floating or node.dtype.bits != 64:
-          raise LoweringError(f"lane BIT_SELECT needs float64 lanes, got {node.dtype}")
         # A word that is the same in every lane, as pack_masks emits it, is read once and broadcast.
         uniform = not varies(word_node)
         word_text = _emit_scalar(word_node, {}, first_lane() if uniform else lane_vars)
         bit_text = _emit_scalar(bit_node, {}, lane_vars)
+        if dtype.bits == 32:
+          hit = scope.allocate("kh")
+          lines.append(f"  {vec}_i64 {hit};")
+          lines.append(
+            f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {hit}[{lane}] = -(int32_t)((((uint64_t)({word_text})) >> ({bit_text})) & 1);"
+          )
+          text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {hit}))"
+          continue
         if bit_text not in lane_bits:
           lane_bits[bit_text] = scope.allocate("kb")
           lines.append(f"  {vec}_i64 {lane_bits[bit_text]};")
@@ -723,10 +747,10 @@ def _emit_vector_body(
           word, hit = scope.allocate("kw"), scope.allocate("kh")
           lane_hits[word_text, bit_text] = hit
           if uniform:
-            lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int64_t)({word_text});")
+            lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int{dtype.bits}_t)({word_text});")
           else:
             lines.append(f"  {vec}_i64 {word};")
-            lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {word}[{lane}] = (int64_t)({word_text});")
+            lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {word}[{lane}] = (int{dtype.bits}_t)({word_text});")
           lines.append(f"  {vec}_i64 {hit} = (({word} >> {lane_bits[bit_text]}) & 1) == 1;")
         text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {lane_hits[word_text, bit_text]}))"
         continue
@@ -743,7 +767,7 @@ def _emit_vector_body(
             lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}_mem*)(&{first});")
             lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_view(view, {}, lane_vars)};")
         else:
-          lines.append(f"  double {name}s[{width}];")
+          lines.append(f"  {dtype.c_type} {name}s[{width}];")
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}s[{lane}] = {_emit_view(view, {}, lane_vars)};")
           lines.append(f"  {vec} {name} = *(const {vec}_mem*){name}s;")
         value = name

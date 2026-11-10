@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ...ir import program as p
+from ..arith import constant
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import RangeKind
 from ..arith import constant
@@ -35,7 +36,7 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
   zname = ctx.names.allocate(f"z_{out.attrs['name']}")
   zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   z = p.var(zname)
-  ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0.0, node.type.dtype))]))
+  ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0, node.type.dtype))]))
   iname = ctx.names.allocate(f"i_{out.attrs['name']}")
   repeated = len(set(idx.tolist())) != len(idx)
   irng = p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)

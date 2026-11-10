@@ -47,6 +47,11 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
       _declare_name(node.attrs["target"], declared)
     if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
       pending.extend((arg, can_break, declared) for arg in node.args)
+  for proc in root.args if root.op == ProgramOp.PROGRAM else (root,):
+    buffers = {n.attrs["name"]: n for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
+    for node in walk_program(proc):
+      if node.op == ProgramOp.VIEW and (buf := buffers.get(node.attrs["buffer"])) is not None and node.dtype != buf.dtype:
+        raise VerifyError(f"verify_program: view of {buf.attrs['name']!r} has dtype {node.dtype}, buffer has dtype {buf.dtype}")
 
 
 def _declare_name(name: str, declared: set[str]) -> None:
@@ -115,6 +120,8 @@ def _view_args_scalar(n: ProgramNode) -> str | None:
 def _load_takes_view(n: ProgramNode) -> str | None:
   if len(n.args) != 1 or n.args[0].op != ProgramOp.VIEW:
     return "LOAD must wrap exactly one VIEW arg"
+  if n.dtype != n.args[0].dtype:
+    return f"LOAD dtype {n.dtype} does not match view dtype {n.args[0].dtype}"
   return None
 
 
@@ -125,6 +132,8 @@ def _store_attrs(n: ProgramNode) -> str | None:
     return "STORE target must be VIEW"
   if n.args[1].op not in SCALAR_OPS:
     return f"STORE value op {n.args[1].op} not scalar"
+  if n.dtype != n.args[0].dtype or n.dtype != n.args[1].dtype:
+    return f"STORE dtype {n.dtype} must match target dtype {n.args[0].dtype} and value dtype {n.args[1].dtype}"
   return None
 
 

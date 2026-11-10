@@ -42,7 +42,7 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   name = ctx.names.allocate(f"k{ctx._tmp}", generated=True)
   ctx._tmp += 1
   shape = (1,) if uniform else _shape_or_scalar(node.shape)
-  values = [value.flat[0].item()] if uniform else [float(v) for v in value.reshape(-1)]
+  values = [value.flat[0].item()] if uniform else value.reshape(-1).tolist()
   buf = p.const_buffer(name, node.type.dtype, shape, values)
   ctx.buffers[name] = buf
   ctx.statements.append(buf)

@@ -707,8 +707,8 @@ class Expr:
     Negative axes count from the end. An empty tuple leaves every entry unchanged.
     ``keepdims`` retains the reduced axes with extent one. Empty domains sum to zero.
     """
-    if not self.type.dtype.is_floating:
-      raise TypeError(f"sum takes floating values, got {self.type.dtype}; convert with sc.cast")
+    if not (self.type.dtype.is_floating or self.type.dtype.is_integer):
+      raise TypeError(f"sum takes floating values or integers, got {self.type.dtype}; convert with sc.cast")
     result = _reduce(self, "add", axis)
     return result.reshape(tuple(1 if i in result.attrs["axes"] else n for i, n in enumerate(self.shape))) if keepdims else result
 
@@ -726,6 +726,7 @@ class Expr:
     if result.type.pattern is not None:
       return pack(values(result) / count, result.type.pattern, shape=result.shape)
     return result / count
+
 
   def dot(self, other: Any) -> Expr:
     return dot(self, other)

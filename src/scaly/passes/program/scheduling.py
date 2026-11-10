@@ -53,7 +53,7 @@ def schedule_values(
   declarations: list[ProgramNode] = []
   for node in order:
     args = tuple(values[arg] for arg in node.args)
-    value = ProgramNode(node.op, args, node.attrs, node.dtype)
+    value = ProgramNode(node.op, args, node.attrs, dtype=node.dtype)
     d = 1 + max((depth[arg] for arg in node.args), default=0)
     can_name = node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR}
     local_product = (

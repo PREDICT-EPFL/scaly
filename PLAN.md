@@ -1,0 +1,48 @@
+# float32 lowering and exact integer constants
+
+Implement #55 under `internal/notes/compiler_run_2026_11_10/plan.md` on main.
+Stack base: `t3code/30-predicates-select-cast`, PR #320. Section coordinator: #24.
+The #55 paragraph of `internal/notes/core_compiler_roadmap.md` decides the scope.
+Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
+
+- [x] Read the issue, parent, run plan, compiler design and required repository guides.
+- [x] Add failing NumPy differential tests for float32 operations, folding, store rounding,
+  lanes, integer constants and sums, verifier errors and workspace/coalescing limits.
+- [x] Implement dtype-faithful constants, folds, C spellings, lowering and program passes.
+- [x] Remove ProgramNode's default dtype and make all callers explicit.
+- [ ] Run focused tests, perturb the new checks, regenerate the collection baseline,
+  and run all pre-merge checks through the shared detached runner.
+- [ ] Open the stacked draft PR, obtain Opus cross-review and sol correctness review,
+  address findings together, and obtain a delta check where needed.
+- [ ] Remove this temporary plan, report criteria evidence and verdict, mark ready.
+- [ ] Once #320 merges, rebase onto main, retarget the PR, verify and queue it.
+  Handle CI and queue ejections until merged.
+
+## Boundaries and reversible choices
+
+- Entry signatures, headers, JIT arrays and the public float32 parity gate belong to #56.
+  Test float32 internals through float64 leaves and direct typed raw procedures.
+- Keep non-float64 buffers on the stack until #56 supplies typed workspace rules.
+- Leave float32 coalescing untouched and pin it with a test, as the roadmap permits.
+- #340 owns signed wrapping arithmetic. This task owns literals, integer abs/min/max
+  and integer accumulator initialization. #339 owns masks inside called Functions.
+- Watch overlaps with #315, #349, #331, #314, #327/#346, #330 and #340 when rebasing.
+- Float64 C snapshots must stay byte-identical. Any required change needs reviewed
+  source/operation counts and generated-C compile time under the run plan.
+
+## Evidence and remaining work
+
+- Initial tests reproduced unrounded float32 arithmetic and literals, exact integer abs
+  losing low bits, and the integer sum builder refusing integer inputs.
+- 78 new focused cases pass. The broader pass, program-IR and vector selection passed
+  754 tests, with 47 compiler-dependent skips. Eight existing C snapshot checks passed
+  without changing a snapshot. Lint, format and strict type checks pass.
+- Mutations restoring double folding and float32 workspace spills both fail their tests.
+- The complete collection baseline now contains 3151 tests.
+- Frozen devrush arithmetic tests overlap existing main tests; no float32 suite exists there.
+- Roadmap departure recorded beside #55: defer non-float64 spills to #56 so this layer
+  does not implement its typed workspace. Report this in the PR and to the coordinator.
+- Coordinator says #320 will be force-pushed. Before pushing, fetch and rebase with
+  `git rebase --onto origin/main 457e526d` if merged, otherwise onto
+  `origin/t3code/30-predicates-select-cast` at that old base. Never cite this old
+  branch hash in durable records.

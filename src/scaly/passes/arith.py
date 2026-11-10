@@ -9,6 +9,7 @@ from typing import Any, Callable, Protocol, cast
 
 import numpy as np
 
+from ..ad.rules import ELEMENTWISE
 from ..ir import program as p
 from ..ir.expr import Expr, ExprOp, _full_like
 from ..ir.program import ProgramNode, ProgramOp
@@ -164,13 +165,14 @@ _LOGIC: dict[ProgramOp, Callable[..., bool]] = {
   ProgramOp.FLOORDIV: operator.floordiv,
   ProgramOp.FLOORMOD: operator.mod,
 }
+_NUMPY = {row.program: row.numpy for row in ELEMENTWISE.values()}
 
 
 def constant(value: int | float, dtype: DType) -> ProgramNode:
   """A program constant of ``dtype``, truncating to int for integer and bool dtypes."""
   return ProgramNode(
     ProgramOp.CONST_FLOAT if dtype.is_floating else ProgramOp.CONST_INT,
-    attrs={"value": float(value) if dtype.is_floating else int(value)},
+    attrs={"value": float(dtype.numpy().type(value)) if dtype.is_floating else int(value)},
     dtype=dtype,
   )
 
@@ -187,6 +189,9 @@ def evaluate(op: ProgramOp, values: list[int | float], dtype: DType) -> int | fl
 
 def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> int | float | None:
   try:
+    if dtype.is_floating and dtype.bits == 32 and op in _NUMPY:
+      with np.errstate(divide="raise", invalid="raise", over="raise"):
+        return float(np.float32(_NUMPY[op](*(np.float32(v) for v in values))))
     if op in {ProgramOp.DIV, ProgramOp.MOD} and dtype.is_integer:
       x, y = values
       q = (abs(x) // abs(y)) * (-1 if (x < 0) != (y < 0) else 1)
@@ -206,7 +211,7 @@ def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> 
       )
     if op in {ProgramOp.MINIMUM, ProgramOp.MAXIMUM} and all(math.isfinite(v) for v in values):
       return (min if op == ProgramOp.MINIMUM else max)(values)
-  except (ValueError, OverflowError, ZeroDivisionError):
+  except (ValueError, OverflowError, ZeroDivisionError, FloatingPointError):
     return None
   return None
 

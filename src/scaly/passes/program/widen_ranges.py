@@ -11,6 +11,7 @@ import numpy as np
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp, RangeKind
+from ...ir.types import DType
 from ...utils.names import C_MATH, NameScope
 from ._common import (
   _map_procs,
@@ -60,7 +61,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
 
   procedures = {n.attrs["name"]: n for n in prog.args if n.op == ProgramOp.PROC}
   global_spellings = name_scope(prog)
-  widths: dict[tuple[int, ...], tuple[str, str]] = {}
+  widths: dict[tuple[tuple[int, ...], DType], tuple[str, str]] = {}
   helpers = 0
 
   def widen_proc(proc: ProgramNode) -> ProgramNode:
@@ -77,7 +78,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       rng, *inner = stmt.args
 
       def recurse() -> ProgramNode:
-        return ProgramNode(stmt.op, (rng, *(transform(child) for child in stmt.args[1:])), stmt.attrs, stmt.dtype)
+        return ProgramNode(stmt.op, (rng, *(transform(child) for child in stmt.args[1:])), stmt.attrs, dtype=stmt.dtype)
 
       count = trip_count(rng)
       if rng.attrs.get("carried") or count is None or count < 2 or rng.args[2].attrs.get("value") != 1 or (lanes != "auto" and count < 2 * lanes):
@@ -85,15 +86,17 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       if rng.attrs.get("mapped"):
         inner = _inline_calls(inner, procedures, spellings)
       nodes = list(walk_program(p.block(*inner)))
+      floating = {n.dtype for n in nodes if n.op in p.SCALAR_OPS | {ProgramOp.BUFFER, ProgramOp.VIEW} and n.dtype.is_floating}
+      if len(floating) != 1:
+        return recurse()
+      dtype = next(iter(floating))
       if any(
         n.op in (ProgramOp.CALL, ProgramOp.PRINT)
         or (n.op == ProgramOp.RANGE and n.attrs.get("carried"))
         or (n.op == ProgramOp.FOR and any(a.op != ProgramOp.CONST_INT for a in n.args[0].args))
-        or (n.dtype.is_floating and n.dtype.bits != 64)
-        # Lanes hold doubles: a bool, or an integer that only a cast turns into one, stays scalar.
         or n.dtype.is_bool
         or n.op == ProgramOp.CAST
-        or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64))
+        or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and n.dtype != dtype)
         for n in nodes
       ):
         return recurse()
@@ -143,13 +146,13 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       cap = caps[-1]
       helpers += 1
       helper = global_spellings.allocate(f"lanes_{helpers}")
-      if caps not in widths:
-        key = "_".join(map(str, caps))
-        widths[caps] = (
+      if (caps, dtype) not in widths:
+        key = "_".join(map(str, caps)) + ("_f32" if dtype.bits == 32 else "")
+        widths[caps, dtype] = (
           global_spellings.allocate(f"SCALY_WIDTH_{key}", generated=True),
           global_spellings.allocate(f"lanes_{key}_vec", suffixes=("_mem", "_st", *(f"_{name}" for name in sorted(C_MATH)))),
         )
-      width_macro, vector = widths[caps]
+      width_macro, vector = widths[caps, dtype]
       width = p.var(width_macro)
       outer_name = spellings.allocate(f"{rng.attrs['name']}_start")
       lane_name = spellings.allocate(f"{rng.attrs['name']}_lane")
@@ -162,8 +165,17 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
       lane_range = ProgramNode(
         lane_range.op,
         lane_range.args,
-        {**lane_range.attrs, "lanes": lanes, "lane_cap": cap, "lane_caps": caps, "lane_width": width_macro, "lane_vector": vector, "peak_live": peak},
-        lane_range.dtype,
+        {
+          **lane_range.attrs,
+          "lanes": lanes,
+          "lane_cap": cap,
+          "lane_caps": caps,
+          "lane_width": width_macro,
+          "lane_vector": vector,
+          "lane_dtype": dtype,
+          "peak_live": peak,
+        },
+        dtype=lane_range.dtype,
       )
 
       def access(view: ProgramNode) -> ProgramNode:
@@ -175,14 +187,14 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         attrs = {**view.attrs, "lane_layout": "contiguous" if stride == 1 else "strided" if stride is not None else "gather", "lane_storage": cap}
         if stride is not None:
           attrs["lane_stride"] = stride
-        return ProgramNode(view.op, view.args, attrs, view.dtype)
+        return ProgramNode(view.op, view.args, attrs, dtype=view.dtype)
 
       def local_buffer(node: ProgramNode) -> ProgramNode:
         size = 1
         for dim in node.attrs["shape"]:
           size *= dim
         attrs = {**node.attrs, "shape": (size * cap,), "lane_storage": cap}
-        return ProgramNode(node.op, node.args, attrs, node.dtype)
+        return ProgramNode(node.op, node.args, attrs, dtype=node.dtype)
 
       def local_view(node: ProgramNode) -> ProgramNode:
         owner, offset = local_owners[node.attrs["buffer"]]
@@ -193,7 +205,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         expanded = _expand_index(scalar_index, index_definitions)
         if not any(n.op == ProgramOp.VAR and n.attrs["name"] == rng.attrs["name"] for n in walk_program(expanded)):
           attrs["lane_stride"] = 1
-        return ProgramNode(node.op, (inner_index,), attrs, node.dtype)
+        return ProgramNode(node.op, (inner_index,), attrs, dtype=node.dtype)
 
       accesses = Pattern(ProgramOp.VIEW, lambda _n: True, access)
       inner = [rewrite(n, [accesses], rebuild=rebuild_program, fixpoint=False) for n in inner]
@@ -211,7 +223,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
               promoted.append(node)
           elif node.op == ProgramOp.FOR:
             children = promote(list(node.args[1:]))
-            kept.append(ProgramNode(node.op, (node.args[0], *children), {**node.attrs, "body_len": len(children)}, node.dtype))
+            kept.append(ProgramNode(node.op, (node.args[0], *children), {**node.attrs, "body_len": len(children)}, dtype=node.dtype))
           else:
             kept.append(node)
         return kept
@@ -224,7 +236,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         result.op,
         result.args,
         {**result.attrs, "vector_helper": helper, "vector_count": count, "vector_mapped": bool(rng.attrs.get("mapped"))},
-        result.dtype,
+        dtype=result.dtype,
       )
 
     transformed = [transform(stmt) for stmt in body]
@@ -254,7 +266,7 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
       buffer = source.attrs["buffer"] if source.op == ProgramOp.VIEW else source.attrs["name"]
       offset = source.args[0] if source.op == ProgramOp.VIEW else p.const_int(0)
       arguments[alias.attrs["name"]] = ProgramNode(
-        ProgramOp.VIEW, (p.add(offset, p.const_int(alias.attrs["alias_offset"])),), {"buffer": buffer}, alias.dtype
+        ProgramOp.VIEW, (p.add(offset, p.const_int(alias.attrs["alias_offset"])),), {"buffer": buffer}, dtype=alias.dtype
       )
     statements = [n for n in statements if not (n.op == ProgramOp.BUFFER and n.attrs["name"] in arguments)]
     for node in walk_program(p.block(*statements)):
@@ -277,7 +289,7 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
       for key in ("name", "target", "alias_of"):
         if key in attrs and attrs[key] in renames:
           attrs[key] = renames[attrs[key]]
-      return ProgramNode(node.op, args, attrs, node.dtype)
+      return ProgramNode(node.op, args, attrs, dtype=node.dtype)
 
     pattern = Pattern(None, lambda _n: True, replace)
     out.extend(rewrite(n, [pattern], rebuild=rebuild_program, fixpoint=False) for n in statements)
@@ -308,7 +320,7 @@ def _ordered_reduction(body: list[ProgramNode], rng: ProgramNode, aliases: dict[
     n.op == ProgramOp.LOAD and n.args[0] is not target and _resolve_alias(n.args[0].attrs["buffer"], aliases) == owner for n in walk_program(value)
   ):
     return None
-  return ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "ordered_reduction": True}, stmt.dtype)
+  return ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "ordered_reduction": True}, dtype=stmt.dtype)
 
 
 def _axis_stride(index: ProgramNode, axis: str, varying: set[str]) -> int | None:
@@ -349,10 +361,10 @@ def _split_pairs(body: list[ProgramNode]) -> list[ProgramNode]:
   for stmt in body:
     if stmt.op == ProgramOp.FOR:
       children = _split_pairs(list(stmt.args[1:]))
-      out.append(ProgramNode(stmt.op, (stmt.args[0], *children), {**stmt.attrs, "body_len": len(children)}, stmt.dtype))
+      out.append(ProgramNode(stmt.op, (stmt.args[0], *children), {**stmt.attrs, "body_len": len(children)}, dtype=stmt.dtype))
     elif stmt.op == ProgramOp.STORE_PAIR:
       view = stmt.args[0]
-      second = ProgramNode(view.op, (p.add(view.args[0], p.const_int(1)),), view.attrs, view.dtype)
+      second = ProgramNode(view.op, (p.add(view.args[0], p.const_int(1)),), view.attrs, dtype=view.dtype)
       out.extend((p.store(view, stmt.args[1]), p.store(second, stmt.args[2])))
     else:
       out.append(stmt)

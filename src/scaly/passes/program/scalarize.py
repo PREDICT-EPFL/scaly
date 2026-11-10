@@ -125,7 +125,7 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
   names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
   declarations, values = schedule_values([value for _, value in outputs], names)
   body = [*declarations, *(p.store(target, value) for (target, _), value in zip(outputs, values, strict=True))]
-  return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, proc.dtype)
+  return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, dtype=proc.dtype)
 
 
 def scalarize_program(prog: ProgramNode) -> ProgramNode:
@@ -195,4 +195,4 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     expansion_work[name] = total_work
     scalar_growth += growth
   args = tuple(replacements.get(pr.attrs.get("name"), pr) for pr in prog.args)
-  return ProgramNode(prog.op, args, prog.attrs, prog.dtype)
+  return ProgramNode(prog.op, args, prog.attrs, dtype=prog.dtype)

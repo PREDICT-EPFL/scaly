@@ -118,13 +118,15 @@ def _raw_program(extra: Callable[[ProgramNode, ProgramNode], list[ProgramNode]] 
   a = p.buffer("a", dtypes.float64, (1,))
   b = p.buffer("b", dtypes.float64, (1,))
   callee = p.proc("stage", [a, b], [p.store(p.view(b, [p.const_int(0)]), p.load(p.view(a, [p.const_int(0)])))])
-  callee = ProgramNode(callee.op, callee.args, {**callee.attrs, "input_count": 1, "scalarized": True}, callee.dtype)
+  callee = ProgramNode(callee.op, callee.args, {**callee.attrs, "input_count": 1, "scalarized": True}, dtype=callee.dtype)
   i = p.var("i")
-  call = ProgramNode(ProgramOp.CALL, (p.view(x, [i]), p.view(tmp, [i])), {"callee": "stage", "n_in": 1, "n_out": 1, "returns": ()})
+  call = ProgramNode(
+    ProgramOp.CALL, (p.view(x, [i]), p.view(tmp, [i])), {"callee": "stage", "n_in": 1, "n_out": 1, "returns": ()}, dtype=dtypes.float64
+  )
   mapped = p.for_(p.range_("i", 0, 5), [call])
   copied = p.for_(p.range_("i", 0, 5), [p.store(p.view(y, [i]), p.load(p.view(tmp, [i])))])
   root = p.proc("root", [x, y], [tmp, mapped, *extra(x, tmp), copied])
-  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, root.dtype)
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, dtype=root.dtype)
   return p.program([callee, root])
 
 
@@ -133,7 +135,9 @@ def test_input_write_between_producer_and_consumer_blocks_motion(through_alias):
   def extra(x, _tmp):
     if not through_alias:
       return [p.store(p.view(x, [p.const_int(0)]), p.const_float(9))]
-    alias = ProgramNode(ProgramOp.BUFFER, (), {**x.attrs, "name": "alias", "address_space": "private", "alias_of": "x", "alias_offset": 0}, x.dtype)
+    alias = ProgramNode(
+      ProgramOp.BUFFER, (), {**x.attrs, "name": "alias", "address_space": "private", "alias_of": "x", "alias_offset": 0}, dtype=x.dtype
+    )
     return [alias, p.store(p.view(alias, [p.const_int(0)]), p.const_float(9))]
 
   prog = _raw_program(extra)
@@ -195,7 +199,7 @@ def test_cross_store_loop_carried_dependency_keeps_original_schedule():
       p.store(p.view(tmp, [i]), p.load(p.view(a, [i]))),
     ],
   )
-  modified = ProgramNode(root.op, (x, y, tmp, a, mapped, loop, _copied), root.attrs, root.dtype)
+  modified = ProgramNode(root.op, (x, y, tmp, a, mapped, loop, _copied), root.attrs, dtype=root.dtype)
   original = p.program([callee, modified])
   assert fuse_ranges(original) is original
 
@@ -207,7 +211,7 @@ def test_explicit_range_value_keeps_its_original_binding():
   store = loop.args[1]
   changed = p.store(store.args[0], p.add(store.args[1], p.var("i", dtypes.float64)))
   body = (*root.args[:-1], p.for_(loop.args[0], [changed]))
-  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, dtype=root.dtype)])
   assert fuse_ranges(original) is original
 
 
@@ -224,7 +228,7 @@ def test_independent_expensive_producer_stays_outside_mapped_range(producer_leng
   )
   consumer = copied.args[1]
   copied = p.for_(copied.args[0], [p.store(consumer.args[0], p.add(consumer.args[1], p.load(at_zero)))])
-  root = ProgramNode(root.op, (x, y, tmp, fixed, computed, mapped, copied), root.attrs, root.dtype)
+  root = ProgramNode(root.op, (x, y, tmp, fixed, computed, mapped, copied), root.attrs, dtype=root.dtype)
   original = p.program([callee, root])
   result = fuse_ranges(original)
   assert result is not original
@@ -304,13 +308,13 @@ def test_scalar_offset_mutation_blocks_mapped_read_motion(nested):
   x = p.buffer("x", dtypes.float64, (6,))
   call = mapped.args[1]
   offset = p.var("offset")
-  call = ProgramNode(call.op, (p.view(x, [p.add(p.var("i"), offset)]), call.args[1]), call.attrs, call.dtype)
+  call = ProgramNode(call.op, (p.view(x, [p.add(p.var("i"), offset)]), call.args[1]), call.attrs, dtype=call.dtype)
   mapped = p.for_(mapped.args[0], [call])
   changed = p.assign("offset", p.const_int(1))
   if nested:
     changed = p.for_(p.range_("j", 0, 1), [changed])
   body = (x, y, tmp, p.assign("offset", p.const_int(0), declare=True), mapped, changed, copied)
-  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, dtype=root.dtype)])
   assert fuse_ranges(original) is original
 
 
@@ -347,20 +351,25 @@ def test_shared_seed_outputs_substitute_their_common_graph_once(monkeypatch):
   value = p.load(p.view(a, [p.const_int(0)]))
   body = []
   for k in range(depth):
-    body.append(p.assign(f"v{k}", ProgramNode(ProgramOp.SIN, (value,)), declare=True))
+    body.append(p.assign(f"v{k}", ProgramNode(ProgramOp.SIN, (value,), dtype=dtypes.float64), declare=True))
     value = p.var(f"v{k}", dtypes.float64)
   body.extend(p.store(p.view(b, [p.const_int(k)]), p.add(value, p.const_float(k))) for k in range(width))
   callee = p.proc("shared_seed", [a, b], body)
-  callee = ProgramNode(callee.op, callee.args, {**callee.attrs, "input_count": 1, "scalarized": True}, callee.dtype)
+  callee = ProgramNode(callee.op, callee.args, {**callee.attrs, "input_count": 1, "scalarized": True}, dtype=callee.dtype)
   x = p.buffer("x", dtypes.float64, (length,))
   y = p.buffer("y", dtypes.float64, (length * width,))
   tmp = p.buffer("tmp", dtypes.float64, (length * width,), address_space="private")
   i = p.var("i", dtypes.int64)
-  call = ProgramNode(ProgramOp.CALL, (p.view(x, [i]), p.view(tmp, [p.mul(i, p.const_int(width))])), {"callee": "shared_seed", "n_in": 1, "n_out": 1})
+  call = ProgramNode(
+    ProgramOp.CALL,
+    (p.view(x, [i]), p.view(tmp, [p.mul(i, p.const_int(width))])),
+    {"callee": "shared_seed", "n_in": 1, "n_out": 1},
+    dtype=dtypes.float64,
+  )
   mapped = p.for_(p.range_("i", 0, length), [call])
   copied = p.for_(p.range_("i", 0, length * width), [p.store(p.view(y, [i]), p.load(p.view(tmp, [i])))])
   root = p.proc("root", [x, y], [tmp, mapped, copied])
-  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, root.dtype)
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, dtype=root.dtype)
   original = fusion.rebuild_program
   rebuilds = 0
 

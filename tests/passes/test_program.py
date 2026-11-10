@@ -267,7 +267,7 @@ def test_fold_after_unit_unroll_reads_nonuniform_constant_table() -> None:
     ProgramOp.BUFFER,
     (),
     {"name": "table", "shape": (2,), "address_space": "constant", "values": (2.0, 7.0)},
-    dtypes.float64,
+    dtype=dtypes.float64,
   )
   y = buffer("y", dtypes.float64, (1,))
   i = var("i")
@@ -282,9 +282,11 @@ def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> No
   leaf = proc_("leaf", [], [])
   dead = proc_("dead", [], [])
   oracle = proc_("oracle", [], [])
-  call = ProgramNode(ProgramOp.CALL, (), {"callee": "leaf", "n_in": 0, "n_out": 0, "returns": ()})
+  call = ProgramNode(ProgramOp.CALL, (), {"callee": "leaf", "n_in": 0, "n_out": 0, "returns": ()}, dtype=dtypes.float64)
   entry = proc_("entry", [], [call])
-  prog = ProgramNode(ProgramOp.PROGRAM, (leaf, dead, oracle, entry), {"proc_count": 4, "solver_oracles": {"solver": ("oracle",)}})
+  prog = ProgramNode(
+    ProgramOp.PROGRAM, (leaf, dead, oracle, entry), {"proc_count": 4, "solver_oracles": {"solver": ("oracle",)}}, dtype=dtypes.float64
+  )
   result = prune_procedures(prog)
   assert [proc.attrs["name"] for proc in result.args] == ["leaf", "oracle", "entry"]
 
@@ -325,15 +327,19 @@ def test_hoist_reserves_exported_names_across_repeated_loop_variables() -> None:
     ProgramOp.PROC,
     (a, x, y, *callee_body),
     {**proc_("mapped", [a, x, y], callee_body).attrs, "input_count": 2, "scalarize_mode": "disabled"},
+    dtype=dtypes.float64,
   )
   za, zx, zy = (buffer(name, dtypes.float64, (2,)) for name in ("za", "zx", "zy"))
   call = lambda: ProgramNode(
     ProgramOp.CALL,
     (view(za, [zero]), view(zx, [var("it")]), view(zy, [var("it")])),
     {"callee": "mapped", "n_in": 2, "n_out": 1, "returns": ()},
+    dtype=dtypes.float64,
   )
   root_body = [for_(range_("it", 0, 2), [call()]), for_(range_("it", 0, 2), [call()])]
-  root_proc = ProgramNode(ProgramOp.PROC, (za, zx, zy, *root_body), {**proc_("root", [za, zx, zy], root_body).attrs, "input_count": 2})
+  root_proc = ProgramNode(
+    ProgramOp.PROC, (za, zx, zy, *root_body), {**proc_("root", [za, zx, zy], root_body).attrs, "input_count": 2}, dtype=dtypes.float64
+  )
   result = hoist_invariant(program([callee, root_proc]))
   root_result = result.args[-1]
   names = [node.attrs["name"] for node in root_result.args if node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private"]
@@ -586,7 +592,7 @@ def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None
   params = list(original.args[: int(original.attrs["param_count"])])
   body = list(original.args[len(params) :])
   body.insert(-1, store(view(params[0], [const_int(0)]), const_float(42.0)))
-  mutated = ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, original.dtype)
+  mutated = ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, dtype=original.dtype)
   prog = program([mutated])
   assert combine_scatter_sums(prog) is prog
 
@@ -613,10 +619,10 @@ def test_scatter_sum_rejects_self_reading_sources(repeated: bool) -> None:
   loop = body[i]
   target, value = loop.args[1].args
   source = value.args[1].args[0] if repeated else value.args[0]
-  self_view = ProgramNode(ProgramOp.VIEW, source.args, {**source.attrs, "buffer": target.attrs["buffer"]}, source.dtype)
+  self_view = ProgramNode(ProgramOp.VIEW, source.args, {**source.attrs, "buffer": target.attrs["buffer"]}, dtype=source.dtype)
   value = add(load(target), load(self_view)) if repeated else load(self_view)
   body[i] = for_(loop.args[0], [store(target, value)])
-  mutated = program([ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, original.dtype)])
+  mutated = program([ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, dtype=original.dtype)])
   assert combine_scatter_sums(mutated) is mutated
 
 
@@ -798,6 +804,7 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
     ProgramOp.PROC,
     (a, x, y, *body),
     {**proc_("twice", [a, x, y], body).attrs, "input_count": 2, "lowering": "auto", "scalarize_mode": "inline"},
+    dtype=dtypes.float64,
   )
   za, zx, zy = (buffer(n, dtypes.float64, (4,)) for n in ("za", "zx", "zy"))
   rng = range_("it", 0, 4)
@@ -805,8 +812,11 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
     ProgramOp.CALL,
     (view(za, [const_int(0)]), view(zx, [var("it")]), view(zy, [var("it")])),
     {"callee": "twice", "n_in": 2, "n_out": 1, "returns": ()},
+    dtype=dtypes.float64,
   )
-  root = ProgramNode(ProgramOp.PROC, (za, zx, zy, for_(rng, [call])), {**proc_("root", [za, zx, zy], []).attrs, "input_count": 2})
+  root = ProgramNode(
+    ProgramOp.PROC, (za, zx, zy, for_(rng, [call])), {**proc_("root", [za, zx, zy], []).attrs, "input_count": 2}, dtype=dtypes.float64
+  )
   prog = program([callee, root])
   assert hoist_invariant(prog) is prog
 
@@ -966,12 +976,15 @@ def test_hoist_keeps_unknown_call_outputs_inside_the_map() -> None:
   a, x, y = (buffer(name, dtypes.float64, (1,)) for name in ("a", "x", "y"))
   temp = buffer("temp", dtypes.float64, (1,), address_space="private")
   at = lambda b: view(b, [const_int(0)])
-  opaque = ProgramNode(ProgramOp.CALL, (a, temp), {"callee": "external_solver", "n_in": 1, "n_out": 1, "returns": ()})
+  opaque = ProgramNode(ProgramOp.CALL, (a, temp), {"callee": "external_solver", "n_in": 1, "n_out": 1, "returns": ()}, dtype=dtypes.float64)
   raw = proc_("opaque_stage", [a, x, y], [temp, opaque, store(at(y), mul(load(at(temp)), load(at(x))))])
-  stage = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 2, "lowering": "block", "scalarize_mode": "disabled"}, raw.dtype)
+  stage = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 2, "lowering": "block", "scalarize_mode": "disabled"}, dtype=raw.dtype)
   z, out = (buffer(name, dtypes.float64, (3,)) for name in ("z", "out"))
   call = ProgramNode(
-    ProgramOp.CALL, (a, view(z, [var("i")]), view(out, [var("i")])), {"callee": "opaque_stage", "n_in": 2, "n_out": 1, "returns": ()}
+    ProgramOp.CALL,
+    (a, view(z, [var("i")]), view(out, [var("i")])),
+    {"callee": "opaque_stage", "n_in": 2, "n_out": 1, "returns": ()},
+    dtype=dtypes.float64,
   )
   root = proc_("opaque_root", [a, z, out], [for_(range_("i", 0, 3), [call])])
   prog = program([stage, root])
@@ -1053,13 +1066,16 @@ def test_scalar_invariant_assignments_are_reused_across_mapped_calls():
       p.store(p.view(out, [p.const_int(0)]), p.var("mixed", dtypes.float64)),
     ],
   )
-  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2, "scalarized": True}, stage.dtype)
+  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2, "scalarized": True}, dtype=stage.dtype)
   xs, ys = p.buffer("xs", dtypes.float64, (5,)), p.buffer("ys", dtypes.float64, (5,))
   call = ProgramNode(
-    ProgramOp.CALL, (p.view(xs, [p.var("i")]), params, p.view(ys, [p.var("i")])), {"callee": "scalar_stage", "n_in": 2, "n_out": 1, "returns": ()}
+    ProgramOp.CALL,
+    (p.view(xs, [p.var("i")]), params, p.view(ys, [p.var("i")])),
+    {"callee": "scalar_stage", "n_in": 2, "n_out": 1, "returns": ()},
+    dtype=dtypes.float64,
   )
   caller = p.proc("scalar_caller", [xs, params, ys], [p.for_(p.range_("i", 0, 5), [call])])
-  caller = ProgramNode(caller.op, caller.args, {**caller.attrs, "input_count": 2}, caller.dtype)
+  caller = ProgramNode(caller.op, caller.args, {**caller.attrs, "input_count": 2}, dtype=caller.dtype)
   result = hoist_invariant(p.program([stage, caller]))
   verify_program(result)
   assert len(result.args) == 3

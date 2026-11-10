@@ -5,6 +5,7 @@ from __future__ import annotations
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, invocation_key
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
+from ...ir.types import dtypes
 from ...function.concrete import ConcreteFunction
 from .ctx import LowerCtx, lowers, _lower_to_proc
 
@@ -53,6 +54,7 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
         "returns": (),
         **({"external": True} if node.op == ExprOp.EXTERN else {}),
       },
+      dtype=dtypes.float64,
     )
   )
   for i in used:
@@ -93,7 +95,7 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
     return
   loop = ctx.names.allocate(f"it_{ctx.buf_of(node).attrs['name']}")
   rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
   it = p.var(loop)
   in_args = []
   before = len(ctx.statements)
@@ -111,7 +113,10 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
     else:
       out_args.append(buf)
   call = ProgramNode(
-    ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": ctx.symbols[callee], "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
+    ProgramOp.CALL,
+    tuple(in_args + out_args),
+    attrs={"callee": ctx.symbols[callee], "n_in": len(in_args), "n_out": len(out_args), "returns": ()},
+    dtype=dtypes.float64,
   )
   prologue = ctx.statements[before:]
   del ctx.statements[before:]

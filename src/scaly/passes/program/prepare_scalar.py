@@ -18,18 +18,18 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
         out.append(stmt)
         continue
       if stmt.op == ProgramOp.FOR:
-        out.append(ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], names)), stmt.attrs, stmt.dtype))
+        out.append(ProgramNode(stmt.op, (stmt.args[0], *rewrite_body(stmt.args[1:], names)), stmt.attrs, dtype=stmt.dtype))
         continue
       if stmt.op == ProgramOp.STORE:
         declarations, roots = schedule_values((*stmt.args[0].args, stmt.args[1]), names)
         index = roots[:-1]
-        target = ProgramNode(ProgramOp.VIEW, index, stmt.args[0].attrs, stmt.args[0].dtype)
+        target = ProgramNode(ProgramOp.VIEW, index, stmt.args[0].attrs, dtype=stmt.args[0].dtype)
         out.extend((*declarations, p.store(target, roots[-1])))
         continue
       if stmt.op == ProgramOp.STORE_PAIR:
         declarations, roots = schedule_values((*stmt.args[0].args, *stmt.args[1:]), names)
         index_count = len(stmt.args[0].args)
-        target = ProgramNode(ProgramOp.VIEW, roots[:index_count], stmt.args[0].attrs, stmt.args[0].dtype)
+        target = ProgramNode(ProgramOp.VIEW, roots[:index_count], stmt.args[0].attrs, dtype=stmt.args[0].dtype)
         out.extend((*declarations, p.store_pair(target, roots[-2], roots[-1])))
         continue
       if stmt.op == ProgramOp.ASSIGN:
@@ -42,9 +42,10 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
         declarations, prepared = schedule_values(roots, names)
         values = iter(prepared)
         args = tuple(
-          ProgramNode(arg.op, tuple(next(values) for _ in arg.args), arg.attrs, arg.dtype) if arg.op == ProgramOp.VIEW else arg for arg in stmt.args
+          ProgramNode(arg.op, tuple(next(values) for _ in arg.args), arg.attrs, dtype=arg.dtype) if arg.op == ProgramOp.VIEW else arg
+          for arg in stmt.args
         )
-        out.extend((*declarations, ProgramNode(stmt.op, args, stmt.attrs, stmt.dtype)))
+        out.extend((*declarations, ProgramNode(stmt.op, args, stmt.attrs, dtype=stmt.dtype)))
         continue
       out.append(stmt)
     return tuple(out)
@@ -54,7 +55,7 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
     if node.op == ProgramOp.PROC:
       pc = node.attrs["param_count"]
       reserved = {arg.attrs["name"] for arg in node.args[:pc]}
-      for current in walk_program(ProgramNode(ProgramOp.BLOCK, node.args[pc:])):
+      for current in walk_program(ProgramNode(ProgramOp.BLOCK, node.args[pc:], dtype=node.dtype)):
         if current.op == ProgramOp.BUFFER:
           reserved.add(current.attrs["name"])
         elif current.op == ProgramOp.ASSIGN:
@@ -64,6 +65,6 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
         elif current.op == ProgramOp.VAR:
           reserved.add(current.attrs["name"])
       names = ScalarNameAllocator({c_ident(name) for name in reserved})
-      node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], names)), node.attrs, node.dtype)
+      node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], names)), node.attrs, dtype=node.dtype)
     args.append(node)
-  return ProgramNode(prog.op, tuple(args), prog.attrs, prog.dtype)
+  return ProgramNode(prog.op, tuple(args), prog.attrs, dtype=prog.dtype)

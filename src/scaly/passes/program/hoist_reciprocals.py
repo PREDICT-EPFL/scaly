@@ -28,7 +28,7 @@ def _hoist_proc(proc: ProgramNode) -> ProgramNode:
       return [stmt]
     rng, *children = stmt.args
     children = [n for child in children for n in transform(child)]
-    loop = ProgramNode(stmt.op, (rng, *children), {**stmt.attrs, "body_len": len(children)}, stmt.dtype)
+    loop = ProgramNode(stmt.op, (rng, *children), {**stmt.attrs, "body_len": len(children)}, dtype=stmt.dtype)
     if (trip_count(rng) or 0) < 1:
       return [loop]
     assignments: Counter[str] = Counter()
@@ -87,6 +87,6 @@ def _hoist_proc(proc: ProgramNode) -> ProgramNode:
         if (definition := invariant(value.args[0])) is not None:
           definitions[value.attrs["target"]] = definition
 
-    return [*prologue, ProgramNode(stmt.op, (rng, *rewritten), {**stmt.attrs, "body_len": len(rewritten)}, stmt.dtype)]
+    return [*prologue, ProgramNode(stmt.op, (rng, *rewritten), {**stmt.attrs, "body_len": len(rewritten)}, dtype=stmt.dtype)]
 
   return _rebuild_proc(proc, params, [n for stmt in body for n in transform(stmt)])
