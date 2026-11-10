@@ -17,6 +17,7 @@ type ShapeDecl = int | tuple[int, ...] | TensorType | None
 type LeafDecl = TensorType | None
 type Array = np.ndarray
 type NumericalArray = Array | sparse.sparray
+type _DenseNumerical = Array | tuple[_DenseNumerical, ...]
 # declaring a type alias makes the inferred types of functions easier to read:
 # Function[tuple[Expr, Expr, Expr], tuple[Array, Array, Array], Expr, Array]
 # instead of

@@ -333,6 +333,35 @@ def test_sparse_derived_results_inherit_the_primal_leaf_layout(input_order, outp
     assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
     np.testing.assert_allclose(result.toarray(), reference)
     np.testing.assert_allclose(result.data, reference[layout.rows, layout.cols])
+    concrete = derivative.instantiate()
+    concrete_result = concrete.numerical_call(*args)
+    assert isinstance(concrete_result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
+    np.testing.assert_allclose(concrete_result.toarray(), reference)
+    mapped = sc.vmap(concrete, 2)(*(sc.broadcast(value) for value in args))
+    assert isinstance(mapped, sparse.coo_array)
+    np.testing.assert_allclose(mapped.toarray(), np.stack([reference, reference]))
+
+
+def test_dense_input_with_packed_output_keeps_sparse_forward_and_dense_adjoint():
+  @sc.function(sc.arg("x", PATTERN.nnz), outputs=sc.arg("out"))
+  def stage(x: sc.Expr) -> sc.Expr:
+    return sc.pack(x.sin(), PATTERN)
+
+  values = np.array([0.2, -0.5, 1.2, 0.7])
+  direction = np.array([1.0, -2.0, 0.0, 3.0])
+  weights = sparse.csc_array((direction, (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
+  expected_values = np.cos(values) * direction
+  expected = sparse.csc_array((expected_values, (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape).toarray()
+  fwd, adj = sc.forward(stage.instantiate()), sc.adjoint(stage.instantiate())
+  assert fwd.instantiate().output_tree.layouts[0] is stage.instantiate().output_tree.layouts[0]
+  assert adj.instantiate().output_tree.layouts == (None,)
+  result = fwd(values, direction)
+  assert isinstance(result, sparse.csc_array)
+  np.testing.assert_allclose(result.toarray(), expected)
+  np.testing.assert_allclose(adj(values, weights), expected_values)
+  mapped = sc.vmap(fwd, 2)(sc.broadcast(values), sc.broadcast(direction))
+  assert isinstance(mapped, sparse.coo_array)
+  np.testing.assert_allclose(mapped.toarray(), np.stack([expected, expected]))
 
 
 def test_sparse_ad_helper_boundaries_use_canonical_order():

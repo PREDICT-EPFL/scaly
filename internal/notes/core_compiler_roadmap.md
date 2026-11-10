@@ -848,9 +848,12 @@ use the numerical union because their output pattern is not known statically. Ca
 `TensorType` has no pattern can narrow with `cast(Tree[Expr, np.ndarray], ...)`.
 
 Shape-only input holes remain dense at runtime despite the shared annotation accepting SciPy
-arrays statically. Pattern holes are separate ([#44]). The existing NumPy-only annotations of
-`gradient`, `forward` and `adjoint` can also disagree with inherited sparse results, including
-concrete and mapped calls ([#356](https://github.com/PREDICT-EPFL/scaly/issues/356)).
+arrays statically. Pattern holes are separate ([#44]). Derivative results and seeds use the same
+numerical union unless every candidate leaf in the inherited input or output tree is declared
+dense. A forward result inherits the output tree's type; gradient and adjoint results inherit the
+input tree's. Selecting a leaf by its string name cannot narrow a mixed tree statically. Dense
+shape-hole traces therefore keep the union where the shared `Tree` type cannot prove density;
+separate accepted-input and result types remain outside this model ([#191]).
 
 **What a binding carries.** The playground keys instances on shapes only (`LeafKey(shape)` in
 `trees.py`). The key becomes the bound leaf type, `(shape, dtype, diff, pattern)` with a layout for

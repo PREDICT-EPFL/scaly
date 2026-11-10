@@ -103,9 +103,17 @@ if TYPE_CHECKING:
   assert_type(sc.hessian(dense_hole)(np.ones(3)), np.ndarray)
   assert_type(sc.sparse_jacobian(dense_hole)(np.ones(3)), np.ndarray)
   assert_type(sc.sparse_hessian(dense_none_hole)(np.ones(3)), np.ndarray)
-  assert_type(sc.forward(dense_hole)(np.ones(3), np.ones(3)), np.ndarray)
+  assert_type(sc.forward(dense_hole)(np.ones(3), np.ones(3)), NumericalArray)
   assert_type(sc.adjoint(dense_none_hole)(np.ones(3), np.ones(())), np.ndarray)
   assert_type(sc.lagrangian_hessian(dense_hole)(np.ones(3), np.ones(())), np.ndarray)
+
+  @sc.function(sc.arg("x"), outputs=sc.arg("total", ()))
+  def dense_input_hole(x: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  assert_type(sc.gradient(dense_input_hole)(np.ones(3)), NumericalArray)
+  assert_type(sc.adjoint(dense_input_hole)(np.ones(3), np.ones(())), NumericalArray)
+  assert_type(sc.forward(dense_input_hole)(np.ones(3), np.ones(3)), np.ndarray)
 
 
 if TYPE_CHECKING:
@@ -325,7 +333,9 @@ if TYPE_CHECKING:
   assert_type(template.instantiate((3, ())), ConcreteFunction[tuple[sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray], sc.Expr, np.ndarray])
   assert_type(template.instantiate((3, ())).numerical_call(np.zeros(3), np.array(2.0)), np.ndarray)
   assert_type(template.instantiate((3, ())).input_shapes, tuple[tuple[int, ...], ...])
-  assert_type(sc.forward(template), sc.Function[tuple[sc.Expr, sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(
+    sc.forward(template), sc.Function[tuple[sc.Expr, sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray, NumericalArray], sc.Expr, np.ndarray]
+  )
   assert_type(template.sparsity(np.zeros(3), np.array(2.0)), sc.SparsityPattern | None)
   assert_type(template.sparsity(sc.sym("x", 3), sc.sym("p", ())), sc.SparsityPattern | None)
   template.sparsity(np.zeros(3))  # ty: ignore[no-matching-overload]
@@ -387,3 +397,32 @@ if TYPE_CHECKING:
   assert_type(sc.vmap(duplicate, 4)(np.zeros((4, 3))), tuple[np.ndarray, np.ndarray])
   sc.vmap(template, 4)(np.zeros((4, 3)))  # ty: ignore[no-matching-overload]
   sc.vmap(template, 4)(sc.sym("x", (4, 3)), np.zeros(4))  # ty: ignore[no-matching-overload]
+
+  assert_type(
+    sc.forward(step, wrt="state").numerical_call(((np.zeros(4), np.zeros(2)), (np.zeros(10), np.zeros(3), np.zeros(()))), np.ones(4)), np.ndarray
+  )
+  assert_type(sc.adjoint(duplicate, of="first")(np.zeros(3), np.ones(3)), np.ndarray)
+  assert_type(sc.forward(square.instantiate())(np.zeros(3), np.ones(3)), np.ndarray)
+  assert_type(sc.adjoint(square.instantiate()).instantiate().numerical_call(np.zeros(3), np.ones(3)), np.ndarray)
+  assert_type(sc.vmap(sc.forward(square), 2)(np.zeros((2, 3)), np.ones((2, 3))), np.ndarray)
+  assert_type(sc.vmap(sc.adjoint(square), 2)(np.zeros((2, 3)), np.ones((2, 3))), np.ndarray)
+  dense_eight_fwd = sc.forward(eight, wrt="a")
+  dense_eight_adj = sc.adjoint(eight, wrt="a")
+  assert_type(
+    dense_eight_fwd,
+    sc.Function[
+      tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
+      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+      sc.Expr,
+      np.ndarray,
+    ],
+  )
+  assert_type(
+    dense_eight_adj,
+    sc.Function[
+      tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
+      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+      sc.Expr,
+      np.ndarray,
+    ],
+  )

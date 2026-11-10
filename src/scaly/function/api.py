@@ -19,7 +19,7 @@ from ..ir.types import SparsityPattern
 from .concrete import ConcreteFunction, CustomRules
 from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from .model import Function, _traced, derived_name, lift
-from .tree import Array, NumericalArray, Tree, _G, append_parameter, arg, parameter_list
+from .tree import Array, NumericalArray, Tree, _DenseNumerical, _G, append_parameter, arg, parameter_list
 
 
 class _InferredOutputs[NI, *Ss](Protocol):
@@ -133,7 +133,7 @@ def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | st
   return function_of, function_wrt
 
 
-def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, Array]:
+def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, NumericalArray]:
   output_tree = arg(result.output_names[0], result.outputs[0].type, layout=result.output_tree.layouts[0])
   return result._with_trees(input_tree, output_tree)
 
@@ -158,7 +158,7 @@ def _unseeded[SI, NI](
   kind: type[Jac] | type[Grad] | type[Hess] | type[SpJac] | type[SpHess],
   *,
   triangle: Triangle = "full",
-) -> Function[SI, NI, Expr, Array]:
+) -> Function[SI, NI, Expr, NumericalArray]:
   source = Function._from_instance(source) if isinstance(source, ConcreteFunction) else source
   inputs, outputs = _declared(source, of, wrt)
   if inputs is not None:
@@ -178,7 +178,7 @@ def _unseeded[SI, NI](
     concrete._memo.derivatives[key] = cast(Any, _typed_result(result, concrete.input_tree))
     return concrete._memo.derivatives[key]
 
-  declaration = None if of is None or wrt is None else cast(Tree[Expr, Array], arg(kind(of, wrt).output_name))
+  declaration = None if of is None or wrt is None else arg(kind(of, wrt).output_name)
   public_name = name or (f"{source.name}_{kind(of, wrt).output_name}" if of is not None and wrt is not None else f"{source.name}_{kind.kind}")
   return lift(source, inputs, declaration, transform, name=public_name)
 
@@ -227,9 +227,15 @@ def gradient(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def gradient[SI, NI, SO, NO](
+def gradient[SI, NI: _DenseNumerical, SO, NO](
   source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
 ) -> Function[SI, NI, Expr, Array]: ...
+
+
+@overload
+def gradient[SI, NI, SO, NO](
+  source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
+) -> Function[SI, NI, Expr, NumericalArray]: ...
 
 
 def gradient(
@@ -347,7 +353,13 @@ def sparse_hessian(
 
 
 def _seeded(
-  source: Function, of: str | None, wrt: str | None, name: str | None, kind: str, aux_name: str = "gamma", triangle: Triangle = "full"
+  source: Function | ConcreteFunction,
+  of: str | None,
+  wrt: str | None,
+  name: str | None,
+  kind: str,
+  aux_name: str = "gamma",
+  triangle: Triangle = "full",
 ) -> Function:
   source = Function._from_instance(source) if isinstance(source, ConcreteFunction) else source
   inputs, outputs = _declared(source, of, wrt)
@@ -430,16 +442,88 @@ def _seeded(
   )
 
 
-def forward[*Ss, *Ns, SO, NO](
-  fn: Function[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[tuple[*Ss, Expr], tuple[*Ns, Array], Expr, Array]:
+# fmt: off
+@overload
+def forward[*Ss, NA: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, NH: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, NH, Array], Expr, Array]: ...
+@overload
+def forward[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, NH: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, NH, Array], Expr, NumericalArray]: ...
+@overload
+def forward[*Ss, *Ns, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[*Ns], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[*Ns, NumericalArray], Expr, Array]: ...
+@overload
+def forward[*Ss, *Ns, SO, NO](fn: Function[tuple[*Ss], tuple[*Ns], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[*Ns, NumericalArray], Expr, NumericalArray]: ...
+# fmt: on
+def forward(fn: Function | ConcreteFunction, of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function:
   """Create a forward derivative with one seed parameter shaped and typed as ``wrt``."""
   return _seeded(fn, of, wrt, name, "fwd")
 
 
-def adjoint[*Ss, *Ns, SO, NO](
-  fn: Function[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[tuple[*Ss, Expr], tuple[*Ns, Array], Expr, Array]:
+# fmt: off
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, NH: _DenseNumerical, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, NH, Array], Expr, Array]: ...
+@overload
+def adjoint[*Ss, NA: _DenseNumerical, NB: _DenseNumerical, NC: _DenseNumerical, ND: _DenseNumerical, NE: _DenseNumerical, NF: _DenseNumerical, NG: _DenseNumerical, NH: _DenseNumerical, SO, NO](fn: Function[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[NA, NB, NC, ND, NE, NF, NG, NH, NumericalArray], Expr, Array]: ...
+@overload
+def adjoint[*Ss, *Ns, SO, NO: _DenseNumerical](fn: Function[tuple[*Ss], tuple[*Ns], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[*Ns, Array], Expr, NumericalArray]: ...
+@overload
+def adjoint[*Ss, *Ns, SO, NO](fn: Function[tuple[*Ss], tuple[*Ns], SO, NO] | ConcreteFunction[tuple[*Ss], tuple[*Ns], SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function[tuple[*Ss, Expr], tuple[*Ns, NumericalArray], Expr, NumericalArray]: ...
+# fmt: on
+def adjoint(fn: Function | ConcreteFunction, of: str | None = None, wrt: str | None = None, *, name: str | None = None) -> Function:
   """Create an adjoint derivative with one seed parameter shaped and typed as ``of``."""
   return _seeded(fn, of, wrt, name, "adj")
 

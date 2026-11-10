@@ -29,7 +29,7 @@ def square(x: sc.Expr) -> sc.Expr:
   return multiply.symbolic_call(duplicate.symbolic_call(x))
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f"))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f", ()))
 def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return (x * x).sum() * p

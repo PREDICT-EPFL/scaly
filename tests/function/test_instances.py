@@ -128,7 +128,9 @@ type _ScalarFunction = sc.Function[tuple[sc.Expr], tuple[NumericalArray], sc.Exp
 
 
 class _Derivative(Protocol):
-  def __call__(self, fn: _ScalarFunction, /, *, name: str | None = None) -> _ScalarFunction: ...
+  def __call__(
+    self, fn: _ScalarFunction, /, *, name: str | None = None
+  ) -> _ScalarFunction | sc.Function[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, NumericalArray]: ...
 
 
 _DERIVATIVES: tuple[_Derivative, ...] = (sc.gradient, sc.jacobian, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian)
@@ -149,6 +151,7 @@ def test_unseeded_derivatives_bind_and_keep_declared_output_names(operation: _De
   assert operation(cost, name="derived").instantiate((2,)) is two
   assert operation(cost).instantiate((2,)).input_tree.types == cost.instantiate((2,)).input_tree.types
   values = derivative(np.array([2.0, 3.0]))
+  assert isinstance(values, np.ndarray)
   assert np.all(np.isfinite(values))
   if operation is sc.gradient:
     second = sc.jacobian(derivative, "grad_f_x", "x")
