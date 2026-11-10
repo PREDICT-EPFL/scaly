@@ -19,11 +19,13 @@ tests/opt/ipm/problems.py maps them to PIQP's form.
 
 The problem archives above are unchanged copies from origin/devrush at the same basename.
 The added *_patterns.npz files are reference results, generated from the frozen branch's
-src/scaly/linalg/sparse.py::SparseMatrix.block and src/scaly/ad/sparsity.py::jacobian_sparsity,
-with the full regularized KKT system stated by src/scaly/opt/ipm/kkt.py::KKT. The source is read
-through git show; no devrush implementation is ported. Fields record the stored KKT coordinates,
-the KKT-values Jacobian in CSC order, and the P, A, G, A-transpose and G-transpose product
-Jacobians. Matrix values and regularization entries are independent symbolic parameters.
+src/scaly/opt/ipm/kkt.py::Kernels.kkt_matrix, the corresponding full regularized system,
+and src/scaly/ad/sparsity.py::jacobian_sparsity. The source is read
+through git show; no devrush implementation is ported. Fields record both KKT patterns and
+their value Jacobians in CSC order, and the P, A, G,
+A-transpose and G-transpose product Jacobians with respect to the vector and matrix data.
+The P data contains its upper triangle, shared by the mirrored off-diagonal coordinates.
+Regularization entries and matrix values are independent symbolic parameters.
 
 The test rewrites that problem against main's public API and recomputes numerical references
 with SciPy and central differences. It follows devrush's equality/inequality/bound row split.

@@ -18,9 +18,13 @@ def _pattern(array):
   return CanonicalPattern(coo.shape, tuple(map(int, coo.row)), tuple(map(int, coo.col)))
 
 
-@pytest.mark.parametrize("n", [100, 400])
-def test_banded_sparse_leaf_gradient_and_hessian_have_no_square_buffer(n):
-  q = sparse.diags_array([-np.ones(n - 1), 4 * np.ones(n), -np.ones(n - 1)], offsets=[-1, 0, 1], format="csc")
+@pytest.mark.parametrize("n,symmetric", [(100, True), (400, True), (100, False)])
+def test_banded_sparse_leaf_gradient_and_hessian_have_no_square_buffer(n, symmetric):
+  q = (
+    sparse.diags_array([-np.ones(n - 1), 4 * np.ones(n), -np.ones(n - 1)], offsets=[-1, 0, 1], format="csc")
+    if symmetric
+    else sparse.diags_array([-np.ones(n - 1)], offsets=[1], shape=(n, n), format="csc")
+  )
   pattern = _pattern(q)
 
   @sc.function(sc.arg("q", sc.TensorType(q.shape, pattern=pattern), layout="csc"), sc.arg("x", n), name=f"banded_sparse_{n}")

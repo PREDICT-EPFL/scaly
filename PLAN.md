@@ -63,8 +63,17 @@ description and #66 comment are updated. No other scope change.
 
 The AD implementation and 48 problem/reference fixtures are in the checkout.
 The references were computed from devrush through a git-backed import loader,
-not copied code. All 48 KKT cases and 24 AD cases pass. A focused compiler run
+not copied code. All 48 full-system and IPM upper-triangle KKT cases and 25 AD cases pass. A focused compiler run
 passed 1,365 tests, and the perturbation evidence is in the internal AD note.
-The AD full pre-merge run is next. SELECT remains part of this PR and #46: it
+The AD source passed a full pre-merge run with 3,103 tests and 55 skips. The
+workload gate was then tightened to match the IPM upper-triangle parameterization
+and to compare product Jacobians in both vector and data arguments. Its full
+pre-merge rerun is next. SELECT remains part of this PR and #46: it
 needs #320 to land, then integration in the compact map and stored partials.
 The current base has no SELECT operation. Do not close #46 before that is tested.
+
+When #320 lands, SELECT must infer the branches' union pattern, use the compact
+map and stored partials, and preserve its mask through sparse cotangent movement.
+Cover differing patterns and batches with finite differences, and an unselected
+singular partial with a run-time condition. Do not introduce a full logical mask
+or a dense matrix while preserving the selection mask.
