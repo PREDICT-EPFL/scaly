@@ -241,18 +241,3 @@ def test_sampled_adjoint_does_not_build_an_outer_product(left):
   np.testing.assert_allclose(actual, cot[list(row)] * x[list(col)])
   matrix = sparse.coo_array((av, (pattern.rows, pattern.cols)), shape=pattern.shape)
   np.testing.assert_allclose(dense_cot, (matrix.T if left else matrix) @ cot, atol=1e-12)
-
-
-@pytest.mark.parametrize("lowering", ["scalar", "block"])
-def test_elementwise_structural_zeros_skip_infinity_and_runtime_stored_zeros_do_not(lowering):
-  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
-
-  @sc.function(
-    sc.arg("a", sc.TensorType(pattern.shape, pattern=pattern), layout="csr"), sc.arg("b", pattern.shape), name=f"stored_zero_inf_{lowering}"
-  )
-  def fn(a, b):
-    return (a * b).with_lowering(lowering)
-
-  a = sparse.coo_array(([1.0, 0.0], (pattern.rows, pattern.cols)), shape=pattern.shape)
-  actual = sparse.coo_array(fn(a, np.full((2, 2), np.inf))).toarray()
-  np.testing.assert_array_equal(actual, [[np.inf, 0], [0, np.nan]])

@@ -54,7 +54,10 @@ this task.
 Every perturbation was removed. Dense C snapshots stay unchanged. Several seeds
 continue to share one pattern; per-entry seed lists and compaction remain #225.
 Derivative outputs retain their existing compact values and separate pattern,
-which #48 changes. SELECT integration waits for #320's operation on this base.
+which #48 changes. Sparse SELECT moved to #359 after #320 left the merge queue
+without merging. It follows #30 and #46 and owns sparse union patterns and masked
+stored-coordinate partials. The prepared tests are preserved in
+[#359's handoff comment](https://github.com/PREDICT-EPFL/scaly/issues/359#issuecomment-6779722333).
 
 The section 1 packet's `sparse_values/banded_quadratic.py` runs all stages without
 errors. Stage 7 reports largest private gradient buffers of 100 and 400 entries,

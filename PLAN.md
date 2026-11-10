@@ -5,9 +5,9 @@ This is layer 2 of #45 -> #46 -> #47 in the unattended compiler run. Follow
 on main. The roadmap's decision 5 and Sparse tensors section decide the design.
 Section 1's packet is on main under the same run folder in `sparse_values/`.
 
-Base: `origin/t3code/45-accumulators`. Before the first push, if #315 merged,
-rebase only this task's commits onto `origin/main`. Do not change #45's branch.
-Use `gh stack`. Existing overlapping work is listed in the dispatch brief.
+Base: `origin/t3code/45-accumulators`. Follow the coordinator's rebase handoff
+below before the first AD push. Do not change #45's branch. Use `gh stack`.
+Existing overlapping work is listed in the dispatch brief.
 
 ## Forward kernels, first pull request
 
@@ -21,7 +21,7 @@ Use `gh stack`. Existing overlapping work is listed in the dispatch brief.
 - [x] Replace expanded mixed-product contribution tables with loaded-bound CSR
   row traversal and its transposed counterpart. Reduce stored entries.
 - [x] Verify focused checks and perturb the new gates. Preserve dense snapshots.
-- [ ] Run the detached full pre-merge hook through the suite queue, open a PR,
+- [x] Run the detached full pre-merge hook through the suite queue, open a PR,
   cross-review it, confirm fixes and queue it. Reference `Part of #46`.
 
 ## Stored-coordinate derivatives and workload gate, second pull request
@@ -46,44 +46,39 @@ counts, generated C size and compile time. Delete this temporary plan when done.
 
 ## Current handoff
 
-Forward PR #349 is draft, based on #315. Its remote head predates the local review fixes.
-Local forward commits contain the normalization fixes.
-The final detached pre-merge hook passed with 3,031 tests and 55 skips, smoke and docs.
-The sol correctness review found three normalization bugs, all fixed with seven
-regressions that fail on the original head. The low-effort delta check approved all three findings.
-The main Opus review failed on its provider rate limit and remains missing; do not
-queue #349 or claim its main review passed. Three Opus attempts failed on the provider rate limit. Retry the same reviewer after
-the provider recovers, with a new delegate task. Keep its findings with the one allowed
-combined review-fix push. No review-fix push has happened.
+Forward PR #349 is merged into the stack's parent branch, not main. Both reviewers
+approved after their delta checks. All fixes were pushed together once. The full
+hook passed 3,042 tests with 55 solver skips plus types, format, lint, smoke,
+docs and the private-name check. Its source and compile counts are in the forward
+note. All its delegate threads are settled.
 
-The coordinator moved max/min stored reductions to #66, because REDUCE with kind
-arrives there. Roadmap edits and the note are in the local forward commits. The PR
-description and #66 comment are updated. No other scope change.
+The coordinator decided #315 now lands #45 and the forward layer together. The
+AD branch is based on its published parent 0758bf13. The #45 owner is rebasing that
+parent onto main and owns its conflict resolution, Opus check and lease push.
+Do not push to the parent's branch. Do not push AD or open its PR until the
+coordinator sends the rebased parent head. Then rebase only the AD commits with
+`git rebase --onto <new head> 0758bf13`, run focused checks and one detached full
+hook, and open the AD PR. Queue AD only after #315 merges and the AD PR targets
+main. Never enable auto-merge for a pull request targeting another feature branch.
 
-The AD implementation and 48 problem/reference fixtures are in the checkout.
-The references were computed from devrush through a git-backed import loader,
-not copied code. All 48 full-system and IPM upper-triangle KKT cases and 38 AD cases pass. A focused compiler run
-passed 1,365 tests, and the perturbation evidence is in the internal AD note.
-The AD source passed a full pre-merge run with 3,103 tests and 55 skips. The
-workload gate was then tightened to match the IPM upper-triangle parameterization
-and to compare product Jacobians in both vector and data arguments. Its full
-pre-merge rerun passed with 3,104 tests and 55 skips, including smoke and docs.
-Pass-through and values outputs now compose the input and output permutations
-in the final write. Seven direct-output regressions pass; restoring the old
-lowering fails five. Sparse boundary and dense C snapshot checks passed 141 cases.
-The full pre-merge run with the boundary changes passed with 3,111 tests and 55 skips.
-Thirteen further tests cover every supported sparse unary partial and binary region
-against NumPy differences. Returning zero tangents fails all thirteen. The final
-detached pre-merge hook passed with 3,124 tests and 55 skips, including smoke,
-docs, types, formatting, lint and the private-name check. The packet's banded quadratic reproduction runs all
-stages without errors. Stage 7 reports largest gradient buffers of 100 and 400,
-and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400.
-SELECT remains part of this PR and #46: it
-needs #320 to land, then integration in the compact map and stored partials.
-The current base has no SELECT operation. Do not close #46 before that is tested.
+The AD branch includes the forward review fixes and the stored-index sharing,
+plus the exact IPM upper-triangle workload gate and direct boundary writes. The
+48 problem archives are unchanged from devrush; its implementation was imported
+through a git-backed loader only to produce references and was not copied.
+There are 36 AD cases; the duplicate scalar/block infinity cases now live in the
+forward layer. The previous AD hook passed 3,124 tests and 55 skips before the
+parent review fixes. The combined local branch passed 137 sparse-plan, AD and 48-problem workload
+cases with two workers, plus type checking. Refresh source/compile counts if the
+incoming parent changes generated C. Do the final full hook only after the
+rebased parent arrives.
 
-When #320 lands, SELECT must infer the branches' union pattern, use the compact
-map and stored partials, and preserve its mask through sparse cotangent movement.
-Cover differing patterns and batches with finite differences, and an unselected
-singular partial with a run-time condition. Do not introduce a full logical mask
-or a dense matrix while preserving the selection mask.
+The section 1 packet's banded quadratic reproduction runs all stages. At n=100
+and n=400, largest gradient buffers are 100 and 400, and sparse Hessian buffers
+are 300 and 1,200. Perturbation evidence is in the AD note.
+
+Sparse SELECT moved to #359, blocked by #30 and #46, after #320 left the merge
+queue. The roadmap departure is in this AD layer. The full prepared test file is
+preserved at https://github.com/PREDICT-EPFL/scaly/issues/359#issuecomment-6779722333.
+Do not rebase onto main for SELECT or implement it in this branch. The second
+PR's visible description must state the departure. Its cross-review is still
+outstanding; no full #46 verdict for #47 has been issued.
