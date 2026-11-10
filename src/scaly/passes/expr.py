@@ -161,11 +161,11 @@ def _is_one(e: Expr) -> bool:
 
 
 def _arith(e: Expr) -> Expr:
-  return e if e.type.pattern is not None else fold(ARITH_EXPR, e)
+  return fold(ARITH_EXPR, e)
 
 
 def _zero_unary(e: Expr) -> Expr:
-  return _uniform(0, e.shape, dtype=e.type.dtype, lowering=e.lowering)
+  return ARITH_EXPR.full(0, e)
 
 
 def _all_args_zero(e: Expr) -> bool:
@@ -273,7 +273,7 @@ def _gather_identity(e: Expr) -> bool:
 
 
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
-  *(Pattern(op, lambda e: e.type.pattern is None and _is_zero(e), _zero_unary) for op in (ExprOp.MUL, ExprOp.MATMUL)),
+  *(Pattern(op, _is_zero, _zero_unary) for op in (ExprOp.MUL, ExprOp.MATMUL)),
   Pattern(None, _all_args_const, _constant_fold),
   *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
   Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape and not e.attrs.get("lowering_identity"), _reshape_identity),

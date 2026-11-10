@@ -9,9 +9,11 @@ import pytest
 
 import scaly as sc
 from scaly.ir import program as p
+from scaly.function.concrete import ConcreteFunction
 from scaly.ir.expr import topo
+from scaly.ir.layout import sparse_layout
 from scaly.ir.program import ProgramNode, ProgramOp, walk_program
-from scaly.ir.types import dtypes
+from scaly.ir.types import CanonicalPattern, dtypes
 from scaly.passes.arith import fold_program
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program.fold_arith import fold_arith
@@ -75,6 +77,99 @@ def test_expression_graph(name: str) -> None:
   y = sc.simplify(build(x))
   assert not gone & {str(n.op) for n in topo([y])}
   np.testing.assert_allclose(_function(f"arith_expr_{name}", lambda x: sc.simplify(build(x)))(DATA), reference(DATA), rtol=1e-15, atol=0)
+
+
+@pytest.mark.parametrize("name", ["sub_self", "mul_zero", "zero_add", "add_zero", "mul_one", "one_mul", "neg_neg"])
+@pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
+@pytest.mark.parametrize("batch", [(), (2,)])
+def test_sparse_expression_graph(name, hint, batch) -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (2, 0))
+  x = sc.Expr(sc.ExprOp.INPUT, type=sc.TensorType((*batch, 2, 3), pattern=pattern), name="x")
+  build, reference, gone = CASES[name]
+  expr = build(x).with_lowering(hint)
+  result = sc.simplify(expr)
+  assert result.type.pattern is expr.type.pattern
+  assert result.type.storage_shape == expr.type.storage_shape
+  assert result.lowering == hint
+  sc.verify_expr(result)
+  if name not in {"add_zero", "zero_add"}:
+    assert not gone & {str(n.op) for n in topo([result])}
+  else:
+    assert result.op == sc.ExprOp.ADD and result.type.pattern is not None and result.type.pattern.nnz == 6
+  if name in {"sub_self", "mul_zero"}:
+    assert result.op == sc.ExprOp.PACK and result.args[0].op == sc.ExprOp.CONST
+    np.testing.assert_array_equal(result.args[0].value, np.zeros(x.type.storage_shape))
+  data = np.arange(x.type.storage_size, dtype=float).reshape(x.type.storage_shape) + 0.5
+  dense = np.zeros(x.shape)
+  dense[..., pattern.rows, pattern.cols] = data
+  fn = ConcreteFunction._from_exprs("sparse_arith", [x], [result], ["x"], ["y"], input_layouts=(sparse_layout(pattern, "csr"),))
+  actual = fn(data)
+  np.testing.assert_array_equal(actual.toarray(), reference(dense))
+  assert actual.nnz == result.type.storage_size
+
+
+@pytest.mark.parametrize("left", [False, True])
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.float64])
+def test_sparse_zero_matmul_preserves_product_pattern(left, empty, dtype) -> None:
+  pattern = CanonicalPattern((2, 3), (), ()) if empty else CanonicalPattern((2, 3), (0,), (2,))
+  x = sc.Expr(sc.ExprOp.INPUT, type=sc.TensorType((2, 3), dtype=dtype, pattern=pattern), name="x")
+  zero = sc.const(np.zeros((4, 2) if left else (3, 4), dtype=dtype.numpy()))
+  expr = (zero @ x if left else x @ zero).block()
+  result = sc.simplify(expr)
+  sc.verify_expr(result)
+  assert result.op == sc.ExprOp.PACK
+  assert result.type.pattern is expr.type.pattern
+  assert result.type.dtype == dtype and result.lowering == "block"
+  assert result.args[0].shape == expr.type.storage_shape
+  assert result.args[0].value is not None
+  np.testing.assert_array_equal(result.args[0].value, np.zeros(expr.type.storage_shape, dtype=dtype.numpy()))
+  if dtype == dtypes.float64:
+    fn = ConcreteFunction._from_exprs("sparse_zero_product", [x], [result], ["x"], ["y"])
+    actual = fn(np.ones(x.type.storage_shape))
+    np.testing.assert_array_equal(actual.toarray(), np.zeros(expr.shape))
+    assert actual.nnz == expr.type.storage_size
+
+
+def test_sparse_identities_do_not_replace_a_different_pattern_or_broadcast_shape() -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (2, 0))
+  x = sc.Expr(sc.ExprOp.INPUT, type=sc.TensorType((2, 3), pattern=pattern), name="x")
+  dense = sc.sym("dense", (2, 3))
+  zero, one = (sc.const(np.full(2, value), pattern=pattern) for value in (0.0, 1.0))
+  for expr in (dense * one, dense + zero, dense - zero):
+    result = sc.simplify(expr)
+    assert result.op == expr.op and result.type.pattern is expr.type.pattern
+    sc.verify_expr(result)
+  broadcast = sc.simplify(x * sc.const(np.ones((2, 1, 1))))
+  assert broadcast.op == sc.ExprOp.MUL and broadcast.shape == (2, 2, 3)
+  assert broadcast.type.pattern is pattern
+
+
+@pytest.mark.parametrize("build", [lambda x, z: x + z, lambda x, z: z + x, lambda x, z: x - z])
+@pytest.mark.parametrize("constant", [False, True])
+def test_sparse_stored_zero_is_a_neutral_element_when_patterns_match(build, constant) -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (2, 0))
+  x = sc.Expr(sc.ExprOp.INPUT, type=sc.TensorType((2, 3), pattern=pattern), name="x")
+  zero = sc.const([0.0, 0.0], pattern=pattern) if constant else x - x
+  assert sc.simplify(build(x, zero)) is x
+
+
+def test_sparse_full_ones_are_a_neutral_element() -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (2, 0))
+  full = CanonicalPattern((2, 3), (0, 0, 0, 1, 1, 1), (0, 1, 2, 0, 1, 2))
+  x = sc.Expr(sc.ExprOp.INPUT, type=sc.TensorType((2, 3), pattern=pattern), name="x")
+  ones = sc.const(np.ones(6), pattern=full)
+  assert sc.simplify(x * ones) is x
+
+
+def test_sparse_conflicting_lowering_hints_survive_identity_and_annihilation() -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (2, 0))
+  x = sc.Expr(sc.ExprOp.INPUT, type=sc.TensorType((2, 3), pattern=pattern), name="x")
+  for expr in (x.scalar() * sc.const(1.0).block(), -(-(x.scalar() * sc.const(1.0).block())), (x.block() * 0.0).scalar()):
+    result = sc.simplify(expr)
+    assert result.type.pattern is expr.type.pattern and result.lowering == "block"
+    assert result.op != sc.ExprOp.MUL
+    sc.verify_expr(result)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
