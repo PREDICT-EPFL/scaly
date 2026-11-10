@@ -57,8 +57,9 @@ is rebased onto the published parent 2e8800cc. The only code conflict with #313
 was the import list in `ad/forward.py`: keep `callees_of` and its invocation
 dispatch, and add `TensorType`/`stored_indices`. All sparse cases applied on top
 of that invocation logic. The roadmap reference conflict keeps all references.
-Do not push to the parent's branch. The final detached full hook runs next.
-After it passes, open AD against `t3code/45-accumulators`, or main if #315 has
+Do not push to the parent's branch. The final detached full hook passed with 3,256 tests and 55 solver skips,
+plus types, formatting, lint, smoke, docs and the private-name check.
+Open AD against `t3code/45-accumulators`, or main if #315 has
 merged. Cross-review AD with Opus and the independent sol correctness pass.
 Before queueing, require the PR base to be main. If #315 merges meanwhile,
 retarget via REST first. Never enable auto-merge on a feature-branch base.
