@@ -22,8 +22,7 @@ Do not edit `passes/lowering/plans.py`, which belongs to #46.
       survive empty reduction ranges. Delete layout-specific helpers.
 - [x] Show new checks fail under an implementation perturbation. Run narrow
       checks, regenerate node IDs and C snapshots, record operation counts,
-      generated source size and C compile time against main. Measurements remain
-      pending; the test and snapshot work is complete.
+      generated source size and C compile time against main.
 - [ ] Rebase over overlapping main changes, regenerate snapshots and rerun the
       full suite and `wt hook pre-merge --yes`.
 - [ ] Commit and push only task changes, open draft PR targeting main, link it
@@ -50,9 +49,7 @@ The first full run exposed a required hoisting fix: ASSIGN initialization,
 updates and uses cannot split between the invariant prologue and mapped body.
 `hoist_invariant._split` now keeps each scalar's uses together. A new mapped-sum
 NumPy test reproduced an undeclared C accumulator before the fix. The 54 custom
-derivative/JIT regression tests pass after it. Full checks run in tmux session
-`scaly45-premerge`, logging to `/tmp/scaly-45-pre-merge-final.log`, with exit status
-in `/tmp/scaly-45-pre-merge-final.status`, so thread interruptions do not kill them.
+derivative/JIT regression tests pass after it.
 
 Compile evidence is in `/tmp/scaly-45-evidence-{main,branch}/evidence.json` and the
 draft PR description in `/tmp/scaly-45-pr.md`. Counts match for every snapshot.
@@ -60,7 +57,38 @@ Clang 20.1.8 compiles the generated C with gather/scatter disabled. Compile CPU
 seconds are the median of three compilations, not runtime benchmark evidence.
 
 The program tests also caught greedy workspace reuse letting a scalar sum pin
-a freed 1600-element matrix slot, doubling workspace. Packing now reserves
-spill-sized slots for spill-sized values. The existing packing witness fails
+a freed 1600-element matrix slot, doubling workspace. Packing now keeps scalar
+results out of spill-sized slots. The existing packing witness fails
 before the fix and passes after it; 15 packing/hoisting tests pass. Regenerating
-the snapshots again changes no files. Restart the whole hook with this fix.
+the snapshots again changes no files.
+
+Current validation job: detached `nohup setsid` shell, log
+`/tmp/scaly-45-locked.log`, exit code `/tmp/scaly-45-locked.exit`. It runs
+`flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8 wt hook pre-merge --yes`
+on pushed compiler state `Keep scalar results out of freed matrix spill slots`.
+The coordinator's latest rule supersedes earlier caps: every full suite uses
+this lock; focused tests run unlocked with `-n 2`, never `-n=auto` outside the lock.
+The earlier unlocked runs were stopped. Poll the exit file; do not start another
+full run. Retry a killed-worker or timeout failure once before diagnosing it.
+An automatic continuation in this thread is scheduled for 19:12 Zurich time to
+check this local job. It is a one-time task named
+`Continue #45 after the locked local pre-merge`; replace it only if the local
+job is still pending. Do not use scheduled polling for GitHub checks or merging.
+At the 19:09 continuation, the locked run had reached 95% and had two failure
+markers. Wait for the final failure summaries and exit code before classifying
+them, then apply the one-rerun rule to any killed-worker or timeout failure.
+
+At 19:12 the locked run reported 2666 passed, 55 skipped and two assertions.
+The metric expected an accumulator buffer that no longer exists, so its buffer
+count changes from six to five. The affine Hessian source-size gate exposed the
+packing rule applying to all small buffers; it now applies only to scalar
+results. Both failures and the spill-reuse witness pass in a focused 3-test run.
+Ruff, ty and snapshot regeneration pass, with no further snapshot changes.
+The old hook's exit was 143 and included "Terminated"; the corrected pushed
+state gets one complete locked rerun, also covering that resource interruption.
+
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/315, registered with gh stack.
+No reviewer has been launched yet; the cross-review skill requires green local
+checks first. Once green, run Opus xhigh and a separate sol xhigh correctness
+review, then only delta checks for fixes. Put the verdict line in the PR body
+immediately so the coordinator can start #46. Remove this plan before readiness.
