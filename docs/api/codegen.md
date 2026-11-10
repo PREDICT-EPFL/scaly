@@ -107,8 +107,14 @@ participate in the JIT cache key. See [environment variables](../guide/env_vars.
 ## The CasADi layer
 
 ::: scaly.codegen.casadi.check_casadi_layout
+    options:
+      show_source: false
 
 ::: scaly.codegen.casadi.casadi_sparsity
+    options:
+      show_source: false
+      show_signature: false
+      heading: "casadi_sparsity(shape, sp)"
 
 ::: scaly.codegen.casadi.casadi_scratch
 

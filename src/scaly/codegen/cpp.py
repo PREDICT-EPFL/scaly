@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
+from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables
 from .casadi import casadi_declarations, casadi_defines
 from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_declarations
 from ..function.concrete import ConcreteFunction
@@ -81,8 +81,6 @@ def render_cpp_header(
   namespace, since a namespace and a function cannot share the global name. C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
   symbol = c_ident(fun.name)
-  if any(expr.type.pattern is not None for expr in (*fun.inputs, *fun.outputs)):
-    raise NotImplementedError("generated headers do not support stored-pattern leaves")
   inputs, outputs = buffer_idents(fun)
   params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + ["workspace_t& workspace"]
   arg_init = ", ".join(f"{i}.ptr()" for i in inputs) or "nullptr"
@@ -112,8 +110,13 @@ def render_cpp_header(
     *(f'extern "C" int {s}_stats(scaly_solver_stats* out);' for s in solver_stats_symbols(fun)),
     *(f'extern "C" {decl}' for decl in (casadi_declarations(symbol) if casadi else [])),
     "",
-    *(_buffer_alias(i, e.shape) for i, e in zip(inputs, fun.inputs, strict=True)),
-    *(_buffer_alias(o, e.shape) for o, e in zip(outputs, fun.outputs, strict=True)),
+    *(
+      ["// Sparse aliases use storage shapes; leaf metadata gives their mathematical shapes."]
+      if any((*fun.input_tree.layouts, *fun.output_tree.layouts))
+      else []
+    ),
+    *(_buffer_alias(i, e.type.storage_shape) for i, e in zip(inputs, fun.inputs, strict=True)),
+    *(_buffer_alias(o, e.type.storage_shape) for o, e in zip(outputs, fun.outputs, strict=True)),
     f"using workspace_t = Buffer<double, {symbol}_SZ_W>;",
     f"constexpr int sz_arg = {symbol}_SZ_ARG;",
     f"constexpr int sz_res = {symbol}_SZ_RES;",
@@ -135,5 +138,22 @@ def render_cpp_header(
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is not None:
       lines += ["", *_sparse_namespace(name, sp, names)]
+  for ident, type_, layout in zip(
+    (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
+  ):
+    if layout is None:
+      continue
+    lines += [
+      "",
+      f"namespace {names.allocate(ident + '_' if names.contains(ident) else ident)} {{",
+      f"constexpr int nrow = {layout.pattern.shape[0]};",
+      f"constexpr int ncol = {layout.pattern.shape[1]};",
+      f"constexpr int nnz = {layout.pattern.nnz};",
+      f"constexpr int ndim = {type_.ndim};",
+      f"constexpr std::size_t storage_size = {type_.storage_size};",
+      _std_array("shape", type_.shape, "ndim"),
+      *(_std_array(name, values, str(len(values))) for name, values in sparse_layout_tables(layout)),
+      "}",
+    ]
   lines += [f"}}  // namespace {symbol}"]
   return "\n".join(lines) + "\n"
