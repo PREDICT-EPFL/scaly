@@ -34,7 +34,19 @@ CasADi query names and std. Both reproduced on inputs and outputs. The allocator
 those declarations, plus emitted solver entry/stats/default-options names. All query names and
 three solver declaration cases have compiling regressions. Opus's initial review is still pending.
 The full hook on these fixes passes with 2,935 tests and 52 skips. Thirteen existing C++ headers
-also match the #42 renderer byte for byte. Commit the fixes and request the low-effort delta check.
+also match the #42 renderer byte for byte. The fixes are pushed, and Sol's low-effort delta check
+approves all 31 compiling regressions with no adjacent regression. Opus's initial review is the
+remaining independent review. The latest CI is running and has no failure reported yet.
+
+Opus reviewed the naming fixes too and agrees with the CasADi restriction. Its one required fix
+is to publish std::array<int, 0> index tables in C++, keeping omission only in C. The new compiled
+consumer assertion failed on the missing names, and now all 99 interface/snapshot tests pass.
+The CasADi test also compiles each header explicitly with strict flags. Its C header was already
+compiled indirectly through the generated source include, but the C++ header needed this check.
+The complete merge hook passes again with 2,935 tests and 52 skips. The pre-existing empty-dense CasADi failure is reproduced
+and filed as #290, in Triage with no release milestone. Keep C's empty-table omission, legacy-name
+precedence and the documented storage/logical shape distinction. Request Opus's short delta check
+after committing the two-line renderer fix and test additions. Sol's required delta is complete.
 
 Choices for the final report: stored-shape C++ Buffer aliases; local nrow/ncol/nnz with full shape
 and storage_size; familiar csc_col_ptr/csc_row_ind, csr_row_ptr/csr_col_ind, rows/cols spellings;

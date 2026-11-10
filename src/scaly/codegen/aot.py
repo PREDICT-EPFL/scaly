@@ -261,7 +261,7 @@ def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
       f"#define {prefix}_NDIM {type_.ndim}",
       f"#define {prefix}_STORAGE_SIZE {type_.storage_size}",
       f"static const int {prefix}_shape[{type_.ndim}] = {_c_array(type_.shape)};",
-      *(f"static const int {prefix}_{name}[{len(values)}] = {_c_array(values)};" for name, values in sparse_layout_tables(layout)),
+      *(f"static const int {prefix}_{name}[{len(values)}] = {_c_array(values)};" for name, values in sparse_layout_tables(layout) if values),
     ]
   return ["", "// Sparse leaf metadata: one local pattern shared by all batch entries.", *lines] if lines else []
 

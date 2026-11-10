@@ -123,6 +123,9 @@ def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, batch, em
   else:
     declarations = f"sparse_abi::a_t a = {{{{{initializer}}}}}; sparse_abi::b_t b = {{}}; sparse_abi::workspace_t w;"
     call = "sparse_abi::call(a, b, w)"
+    for ident, format_name in (("a", format_), ("b", out_format)):
+      tables = ("rows", "cols") if format_name == "coo" else (f"{format_name}_{'row_ind' if format_name == 'csc' else 'col_ind'}",)
+      declarations += "".join(f"static_assert(sparse_abi::{ident}::{table}.size() == sparse_abi::{ident}::nnz);" for table in tables)
   main = tmp_path / ("main.c" if lang == "c" else "main.cpp")
   main.write_text(
     f'#include <stdio.h>\n#include "{module.header_name}"\n'

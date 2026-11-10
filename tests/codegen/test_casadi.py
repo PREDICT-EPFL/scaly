@@ -17,7 +17,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
-from tests.compilers import c_compiler
+from tests.compilers import c_compiler, cxx_compiler
 
 ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out")
 
@@ -171,6 +171,10 @@ def test_casadi_sparse_leaves_match_casadi_sparsity(tmp_path, empty, lang):
     return a * 2.0, a @ x
 
   module, lib_path = _build(tmp_path, fun, lang=lang)
+  client = tmp_path / ("header.c" if lang == "c" else "header.cpp")
+  client.write_text(f'#include "{module.header_name}"\nint main(void) {{ return 0; }}\n')
+  compiler, standard = (c_compiler(), "-std=c11") if lang == "c" else (cxx_compiler(), "-std=c++17")
+  subprocess.run([*compiler, standard, "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(client)], check=True)
   ext = casadi.external(fun.name, str(lib_path))
   expected_sparsity = casadi.Sparsity.triplet(*pattern.shape, list(pattern.rows), list(pattern.cols))
   assert ext.sparsity_in(0) == expected_sparsity

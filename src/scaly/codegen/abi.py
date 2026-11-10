@@ -59,4 +59,4 @@ def sparse_layout_tables(layout: SparseLayout) -> tuple[tuple[str, tuple[int, ..
     tables = (("csr_row_ptr", layout.indptr), ("csr_col_ind", layout.indices))
   else:
     tables = (("csc_col_ptr", layout.indptr), ("csc_row_ind", layout.indices))
-  return tuple((name, tuple(map(int, values))) for name, values in tables if len(values))
+  return tuple((name, tuple(map(int, values))) for name, values in tables)
