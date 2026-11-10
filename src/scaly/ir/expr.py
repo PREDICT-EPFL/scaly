@@ -692,7 +692,8 @@ def _array_key(value: np.ndarray) -> tuple[Any, ...]:
       index = tuple(slice(0, 1) if i == axis else slice(None) for i in range(compact.ndim))
       if np.all(bits == bits[index]):
         compact, bits = compact[index], bits[index]
-  return (value.shape, value.dtype.str, compact.shape, hashlib.blake2b(compact.tobytes(), digest_size=32).digest())
+  data = compact.tobytes()
+  return (value.shape, value.dtype.str, compact.shape, hashlib.blake2b(data, digest_size=32).digest(), data)
 
 
 def _uniform(value: Any, shape: tuple[int, ...], *, dtype: DType = dtypes.float64, lowering: Lowering = "auto") -> Expr:
