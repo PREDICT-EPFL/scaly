@@ -454,7 +454,9 @@ def _vmap_vjp(
   for k in active_formals:
     arg, start, stride = vmap_expr.args[k], starts[k], strides[k]
     formal_size = callee.inputs[k].type.storage_size
-    if stride == 0:
+    if formal_size == 0:
+      vbar = zeros_like(arg)
+    elif stride == 0:
       indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
       segments = gather(mapped, indices).reshape((length, formal_size))
       vbar = Expr.const(np.ones(length, dtype=np.float64)) @ segments

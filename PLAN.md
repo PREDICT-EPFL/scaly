@@ -63,3 +63,20 @@ the current collection baseline before the draft PR and independent review.
 
 The full hook passed. Final suite: 2,829 passed and 52 optional skips. Draft PR #287 is open
 against the requested base and linked in T3. Independent Opus xhigh and Sol xhigh reviews follow.
+
+
+## Review fixes
+
+Sol found three defects, reproduced by the added AD cases before the fixes:
+- A rank-1 broadcast tangent mixed its seed axis with operand axes. Tangents now align before
+  stored-coordinate sampling; sparse seed batches retain their shared pattern when reshaped.
+- Undeclared custom rules supplied absent logical coordinates to stored-slot conversions.
+  Custom relations now use the declared storage domains, while retaining custom rows outside
+  primal value support. Direct/mapped tests cover both small and 100,000-square patterns.
+- An empty stored map window returned a scalar adjoint. It now returns zeros with the outer
+  argument's shape, tested through gradient and Hessian.
+
+All 24 sparse AD cases and 73 AD/custom/snapshot cases pass, and mutations detect all three
+regressions. The full hook is running on the fixes. Opus's review is still pending; collect it
+before the one delta check for each reviewer. Commit and push these fixes, then remove the plan
+only after review work is complete. Never merge or run gh stack.

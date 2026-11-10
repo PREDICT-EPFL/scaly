@@ -351,9 +351,16 @@ def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], s
   if not _declared(callee, output):
     return _jac_mask(out, formal, memo)
   if callee.rules.sparsity is None:
-    return sparse.coo_array(np.ones((out.size, formal.size), dtype=bool))
+    rows, cols = stored_indices(out.type), stored_indices(formal.type)
+    return _incidence((out.size, formal.size), np.repeat(rows, len(cols)), np.tile(cols, len(rows)))
   pattern = callee.rules.sparsity[output][k]
-  return _incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
+  rows, cols = np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64)
+  keep = np.ones(len(rows), dtype=bool)
+  if out.type.pattern is not None:
+    keep &= np.isin(rows, stored_indices(out.type))
+  if formal.type.pattern is not None:
+    keep &= np.isin(cols, stored_indices(formal.type))
+  return _incidence(pattern.shape, rows[keep], cols[keep])
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:

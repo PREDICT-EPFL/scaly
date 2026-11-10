@@ -146,3 +146,74 @@ def test_sparse_gradient_and_hessian_keep_logical_coordinates_without_dense_stor
   got = _evaluate("sparse_ad_quadratic", [x], [e.values(grad), hess.values], [np.array([0.2, -0.5, 1.2])])
   np.testing.assert_allclose(got[0], [0.4, -1, 2.4])
   np.testing.assert_allclose(got[1], [2, 2, 2])
+
+
+@pytest.mark.parametrize("shape", [(), (3,), (1, 3), (2, 1)])
+def test_sparse_forward_broadcast_keeps_seed_axis_separate(shape):
+  import scaly as sc
+
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 1))
+  leaf = sc.arg("v", shape)
+  fn = sc.function(leaf, name="sparse_broadcast_seed")(lambda v: sc.const([3.0, 7.0], pattern=pattern) * v)
+  actual = np.arange(np.prod(shape), dtype=float).reshape(shape) if shape else np.array(2.0)
+  dense = np.zeros(pattern.shape)
+  dense[pattern.rows, pattern.cols] = [3.0, 7.0]
+  expected = np.stack([(dense * direction.reshape(shape)).reshape(-1) for direction in np.eye(actual.size)], axis=1)
+  np.testing.assert_allclose(sc.jacobian(fn)(actual), expected)
+
+
+@pytest.mark.parametrize("shape", [(2, 3), (100_000, 100_000)])
+@pytest.mark.parametrize("mapped", [False, True])
+@pytest.mark.parametrize("declared", [False, True])
+def test_custom_sparse_rules_bound_relations_by_storage_without_losing_zero_rows(mapped, declared, shape):
+  import scaly as sc
+
+  pattern = CanonicalPattern(shape, (0, 1), (0, 1))
+  leaf = sc.arg("x", TensorType(pattern.shape, pattern=pattern), layout="csr")
+  primal = sc.function(leaf, name="sparse_custom_primal")(lambda x: x * sc.const([1.0, 0.0], pattern=pattern))
+  rule = sc.function(leaf, leaf.relabel("d"), name="sparse_custom_rule")(lambda x, dx: 3 * x * dx)
+  domain = (0, shape[1] + 1)
+  size = int(np.prod(shape))
+  declared_pattern = sc.SparsityPattern((size, size), domain, domain)
+  ruled = sc.custom_derivative(primal, jvp=rule, sparsity=(lambda *_: declared_pattern) if declared else None)
+  fn = sc.vmap(ruled, 2) if mapped else ruled
+  data = np.array([[2.0, 5.0], [7.0, 11.0]]) if mapped else np.array([2.0, 5.0])
+  batch = (np.repeat([0, 1], 2),) if mapped else ()
+  coords = (*batch, np.tile(pattern.rows, 2 if mapped else 1), np.tile(pattern.cols, 2 if mapped else 1))
+  source = sparse.coo_array((data.reshape(-1), coords), shape=(*((2,) if mapped else ()), *pattern.shape))
+  derivative = sc.sparse_jacobian(fn)
+  result = derivative(source)
+  output_pattern = derivative.sparsity()
+  assert output_pattern is not None
+  entries = np.array([*domain, *(i + size for i in domain)]) if mapped else np.array(domain)
+  assert output_pattern.shape == ((2 * size, 2 * size) if mapped else (size, size))
+  assert np.isin(output_pattern.rows, entries).all() and np.isin(output_pattern.cols, entries).all()
+  rows = np.searchsorted(entries, output_pattern.rows)
+  cols = np.searchsorted(entries, output_pattern.cols)
+  actual = sparse.coo_array((result, (rows, cols)), shape=(len(entries), len(entries))).toarray()
+  np.testing.assert_allclose(actual, np.diag(3 * data.reshape(-1)))
+
+
+def test_empty_sparse_mapped_windows_keep_outer_gradient_and_hessian_shapes():
+  import scaly as sc
+
+  pattern = CanonicalPattern((2, 3), (), ())
+  stage = sc.function(sc.arg("x", TensorType(pattern.shape, pattern=pattern)), name="empty_sparse_stage")(lambda x: x.sin())
+  loss = sc.function(sc.arg("raw", 6), name="empty_sparse_window_loss")(lambda raw: sc.vmap(stage, 2)(sc.window(raw, 0, 3)).sum())
+  data = np.arange(6.0)
+  grad = sc.gradient(loss)(data)
+  assert grad.shape == data.shape
+  np.testing.assert_array_equal(grad, np.zeros(6))
+  np.testing.assert_array_equal(sc.hessian(loss)(data), np.zeros((6, 6)))
+
+
+@pytest.mark.parametrize("nseed", [2, 5])
+def test_sparse_tangent_broadcast_preserves_seeds_and_shared_pattern_batches(nseed):
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 1))
+  x = _input("sparse_broadcast_tangent", pattern)
+  result = x * e.Expr.const(np.array([2.0, -3.0]).reshape(2, 1, 1))
+  seeds = np.arange(nseed * 2, dtype=float).reshape(nseed, 2)
+  tangent = jvp_many(result, x, e.pack(e.Expr.const(seeds), pattern))
+  got = _evaluate("sparse_broadcast_batches", [x], [e.values(tangent)], [np.array([3.0, 7.0])])[0]
+  expected = seeds[:, None, :] * np.array([2.0, -3.0])[None, :, None]
+  np.testing.assert_allclose(got, expected)

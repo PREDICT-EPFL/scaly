@@ -131,7 +131,9 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
   if expr.type.pattern is not None:
     compact = _compact_elementwise(expr)
     seed_type = TensorType((nseed, *expr.shape), expr.type.dtype, pattern=expr.type.pattern)
-    seeds = [None if t is None else _sample_stored(t, seed_type) for t in tangents]
+    seeds = [
+      None if t is None else _sample_stored(_broadcast_tangent(t, arg, expr, nseed), seed_type) for arg, t in zip(expr.args, tangents, strict=True)
+    ]
     return pack(tangent(compact, seeds, nseed), expr.type.pattern, shape=seed_type.shape)
   row = ELEMENTWISE[ExprOp(expr.op)]
   assert row.partials is not None
@@ -215,6 +217,12 @@ def _seed_axis(expr: Expr, output: Expr | None = None) -> Expr:
 
 def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
   missing = len(output.shape) - len(operand.shape)
+  if missing and tangent.type.pattern is not None:
+    return pack(
+      values(tangent).reshape((nseed, *(1,) * missing, *operand.type.storage_shape)),
+      tangent.type.pattern,
+      shape=(nseed, *(1,) * missing, *operand.shape),
+    )
   return tangent if missing == 0 else tangent.reshape((nseed, *(1,) * missing, *operand.shape))
 
 
