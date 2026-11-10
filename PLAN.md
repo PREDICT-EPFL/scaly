@@ -10,7 +10,7 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
   lanes, integer constants and sums, verifier errors and workspace/coalescing limits.
 - [x] Implement dtype-faithful constants, folds, C spellings, lowering and program passes.
 - [x] Remove ProgramNode's default dtype and make all callers explicit.
-- [ ] Run focused tests, perturb the new checks, regenerate the collection baseline,
+- [x] Run focused tests, perturb the new checks, regenerate the collection baseline,
   and run all pre-merge checks through the shared detached runner.
 - [ ] Open the stacked draft PR, obtain Opus cross-review and sol correctness review,
   address findings together, and obtain a delta check where needed.
@@ -51,5 +51,6 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
   original shared-suite queue position retained. The first runner was cancelled while
   still waiting for its slot, before any checks ran.
 - Full suite passed 3208 tests with 52 skips. Four special-value tests added afterwards
-  passed in the 84-case focused selection. Benchmark smoke and documentation checks
-  are still running; lint, formatting and types pass after the test-only additions.
+  passed in the 84-case focused selection. The shared pre-merge hook exited 0, including
+  benchmark smoke, documentation and private-name checks. The documentation build
+  has existing link warnings. The final 3264-test collection, lint, format and types pass.
