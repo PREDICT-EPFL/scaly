@@ -76,6 +76,10 @@ def test_array_keys_serialize_only_compacted_bytes(monkeypatch) -> None:
   constant.structural_key()
   assert cse_many([constant]) == (constant,)
   assert len(serialized) == 1
+  attributed = Expr(ExprOp.NEG, (sc.sym("compact_attrs", 2),), TensorType((2,)), attrs={"tile": large})
+  attributed.structural_key()
+  assert cse_many([attributed]) == (attributed,)
+  assert len(serialized) == 2
   assert _attrs_key({"tile": large}) == (("tile", ("ndarray", _array_key(large))),)
   repeated = np.broadcast_to(tile, (4, 3, 2))
   assert _array_key(repeated) == _array_key(repeated.copy())

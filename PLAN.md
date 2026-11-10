@@ -30,6 +30,14 @@ no digest-collision regression to port.
 The supplied checkout includes one later stack-owned header-test commit. The
 required rebase must leave no header changes in this task's PR.
 
+PR #329 is open against main. Opus xhigh and Sol xhigh both approve. Opus noted
+that rebuilding attribute keys duplicates retained compact bytes, so the node
+now caches its construction-time attribute key for structural equality and CSE.
+The compaction regression failed with four serializations instead of two before
+this correction. Its delta check is pending. No roadmap departure or public
+interface change was needed. The suite runner was still waiting for a slot and
+was stopped before changing the reviewed state; only the final state's run counts.
+
 The initial full run was interrupted by la015's memory exhaustion and proves
 nothing. No test processes survived it. The first detached attempt exited 143
 before producing check results. Follow the current `~/.scaly-suite/RULES.md`:

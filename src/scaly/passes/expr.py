@@ -11,7 +11,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from ..ad.rules import ELEMENTWISE
-from ..ir.expr import Expr, ExprOp, _attrs_key, _uniform, matmul, stack, topo
+from ..ir.expr import Expr, ExprOp, _uniform, matmul, stack, topo
 from ..ir.match import Pattern, _replace_args, rewrite
 from ..ir.types import _uniform_value
 from .arith import ARITH_EXPR, fold
@@ -80,7 +80,7 @@ def _structural_key(expr: Expr) -> tuple[Any, ...]:
     expr.type.dtype,
     expr.type.diff,
     expr.lowering,
-    _attrs_key(expr.attrs),
+    expr._attrs_key_cache,
     value_key,
     children,
   )
