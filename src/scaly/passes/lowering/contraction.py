@@ -6,14 +6,9 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode
-from ...ir.types import stored_indices
+from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, LoweringError, _flat
 from .schedule import emit_reduction
-
-
-def _mm_accum(out: ProgramNode, idx: ProgramNode, a_load: ProgramNode, b_load: ProgramNode) -> ProgramNode:
-  return p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_load, b_load)))
 
 
 @lowers(ExprOp.MATMUL)
@@ -38,34 +33,43 @@ def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
   if a.type.pattern is not None and b.type.pattern is not None:
     raise LoweringError("sparse-sparse products require sparse product kernels")
+  left = a.type.pattern is not None
+  src, dense = (a, b) if left else (b, a)
+  pattern = src.type.pattern
+  assert pattern is not None
+  rows = np.asarray(pattern.rows if left else pattern.cols, dtype=np.int64)
+  columns = np.asarray(pattern.cols if left else pattern.rows, dtype=np.int64)
+  order = np.lexsort((columns, rows))
+  active, counts = np.unique(rows[order], return_counts=True)
+  pointers = np.concatenate(([0], np.cumsum(counts)))
   out = ctx.alloc_tmp(node)
-  m, width = (1, a.shape[0]) if len(a.shape) == 1 else a.shape
-  n = 1 if len(b.shape) == 1 else b.shape[1]
-  a_rows: dict[int, list[tuple[int, int]]] = {}
-  b_cols: dict[int, dict[int, int]] = {}
-  if a.type.pattern is not None:
-    for slot, (row, k) in enumerate(zip(a.type.pattern.rows, a.type.pattern.cols, strict=True)):
-      a_rows.setdefault(row, []).append((k, slot))
-  if b.type.pattern is not None:
-    for slot, (k, column) in enumerate(zip(b.type.pattern.rows, b.type.pattern.cols, strict=True)):
-      b_cols.setdefault(column, {})[k] = slot
-  outputs, left, right = [], [], []
-  for slot, logical in enumerate(stored_indices(node.type)):
-    row, column = divmod(int(logical), n)
-    if a.type.pattern is not None:
-      candidates = a_rows.get(row, ())
+  name = out.attrs["name"]
+  vector = len(dense.shape) == 1
+  width = 1 if vector else dense.shape[1] if left else dense.shape[0]
+  if vector and len(active) < node.size:
+    zero, (z,) = ctx.nest((node.size,), f"zero_{name}")
+    ctx.emit(zero, [p.store(p.view(out, [z]), p.const_float(0, dtype=node.type.dtype))])
+
+  def emit_row(outputs, row, column, entries, extent):
+    reductions, (k,) = ctx.reduce((extent,), f"stored_{name}")
+    inner = ctx.index_at(columns[entries], k)
+    sparse_value = ctx.read_stored(src, entries, k)
+    dense_coords = [inner] if vector else [inner, column] if left else [column, inner]
+    if vector:
+      slot = ctx.index_at(active, row)
+    elif left:
+      slot = p.add(p.mul(row, p.const_int(width)), column)
     else:
-      candidates = ((k, row * width + k) for k in sorted(b_cols.get(column, {})))
-    for k, a_slot in candidates:
-      b_slot = b_cols.get(column, {}).get(k) if b.type.pattern is not None else k * n + column
-      if b_slot is not None:
-        outputs.append(slot)
-        left.append(a_slot)
-        right.append(b_slot)
-  ranges, (i,) = ctx.nest((node.type.storage_size,), f"zero_{out.attrs['name']}")
-  ctx.emit(ranges, [p.store(p.view(out, [i]), p.const_float(0.0, dtype=node.type.dtype))])
-  ranges, (k,) = ctx.reduce((len(outputs),), f"product_{out.attrs['name']}")
-  dst = ctx.index_at(np.asarray(outputs, dtype=np.int64), k)
-  av = p.load(p.view(ctx.buf_of(a), [ctx.index_at(np.asarray(left, dtype=np.int64), k)]))
-  bv = p.load(p.view(ctx.buf_of(b), [ctx.index_at(np.asarray(right, dtype=np.int64), k)]))
-  ctx.emit(ranges, [_mm_accum(out, dst, av, bv)])
+      slot = p.add(p.mul(column, p.const_int(len(active))), row)
+    emit_reduction(ctx, outputs, reductions, ctx.stored_view(node, slot), p.mul(sparse_value, ctx.read(dense, dense_coords)))
+
+  if ctx.scalarize and (ctx.fun._effective_lowering == "scalar" or 2 * pattern.nnz * width <= AUTO_SCALAR_OPS_PER_PROC):
+    for row, (start, stop) in enumerate(zip(pointers[:-1], pointers[1:], strict=True)):
+      outputs, (column,) = ctx.nest((width,), f"column_{name}")
+      emit_row(outputs, p.const_int(row), column, order[start:stop], int(stop - start))
+  else:
+    outputs, (row, column) = ctx.nest((len(active), width), f"row_{name}")
+    bounds = ctx.new_const_index(pointers)
+    start = p.load(p.view(bounds, [row]))
+    stop = p.load(p.view(bounds, [p.add(row, p.const_int(1))]))
+    emit_row(outputs, row, column, order, (start, stop))

@@ -2,15 +2,36 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode
 from ...ir.types import _uniform_value
 from .ctx import LowerCtx, lowers, _flat_coordinates, _shift, _shape_or_scalar, _stride
+from .plans import lower_movement, emit_map
+
+
+def _sparse_movement(ctx: LowerCtx, node: Expr) -> bool:
+  if node.type.pattern is not None or any(a.type.pattern is not None for a in node.args):
+    lower_movement(ctx, node)
+    return True
+  return False
 
 
 @lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.PACK, ExprOp.VALUES)
 def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
+  if node.op == ExprOp.PACK:
+    if node.id in ctx._output_alias:
+      emit_map(ctx, node, [np.arange(node.type.storage_size, dtype=np.int64)], lambda v: v[0])
+    else:
+      ctx.value_buffers[node.id] = ctx.buf_of(node.args[0]).attrs["name"]
+    return
+  if node.op == ExprOp.VALUES:
+    ctx.value_buffers[node.id] = ctx.buf_of(node.args[0]).attrs["name"]
+    return
+  if _sparse_movement(ctx, node):
+    return
   # Metadata-only: the result aliases its source buffer (no copy).
   ctx.value_buffers[node.id] = ctx.value_buffers[node.args[0].id]
 
@@ -78,6 +99,8 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   flat offset, no stride) becomes a zero-copy pointer alias of its source; otherwise one flat loop
   over the output reads source coordinate ``start + step * c``. Covers rank-1, multi-dim, integer,
   strided."""
+  if _sparse_movement(ctx, node):
+    return
   src = node.args[0]
   src_shape = src.shape
   index = node.attrs["index"]
@@ -107,6 +130,8 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
 @lowers(ExprOp.TRANSPOSE)
 def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   """Permuted copy: output coordinate ``i`` is source coordinate ``axes[i]``."""
+  if _sparse_movement(ctx, node):
+    return
   src = node.args[0]
   axes = tuple(int(a) for a in node.attrs["axes"])
   out = ctx.alloc_tmp(node)
@@ -118,6 +143,8 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
 @lowers(ExprOp.STACK)
 def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
   """Copy input ``i`` to index ``i`` along the new ``axis``."""
+  if _sparse_movement(ctx, node):
+    return
   axis = int(node.attrs.get("axis", 0))
   out = ctx.alloc_tmp(node)
   for i, src in enumerate(node.args):
@@ -128,6 +155,8 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
 @lowers(ExprOp.CONCAT)
 def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
   """Copy each input, shifting only the concatenated coordinate."""
+  if _sparse_movement(ctx, node):
+    return
   axis = int(node.attrs.get("axis", 0))
   out = ctx.alloc_tmp(node)
   offset = 0

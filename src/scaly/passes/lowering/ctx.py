@@ -181,6 +181,10 @@ def _lower_to_proc(
   if observe_expr is not None:
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
+  nodes = fun.nodes
+  ctx.scalarize = all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (
+    lowering == "scalar" or lowering == "auto" and auto_scalarize
+  )
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -188,7 +192,6 @@ def _lower_to_proc(
   proc = p.proc(symbol, ctx.params, ctx.statements)
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
-  nodes = fun.nodes
   # Narrower stores round or truncate; scalar substitution must not erase those conversions.
   return ProgramNode(
     ProgramOp.PROC,
@@ -202,9 +205,7 @@ def _lower_to_proc(
       **({"noinline": True} if fun.role == "forward" else {}),
       # A procedure may expand on its own and inside an expanding caller. Hoisted prologues use
       # "inline" because they only expand with their caller.
-      "scalarize_mode": "procedure"
-      if all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
-      else "disabled",
+      "scalarize_mode": "procedure" if ctx.scalarize else "disabled",
     },
     proc.dtype,
   )
@@ -224,6 +225,7 @@ class LowerCtx:
     observe_expr: ExprObserver | None = None,
   ) -> None:
     self.fun = fun
+    self.scalarize = False
     self.callees = callees
     self.solver_fns = solver_fns  # identity -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
     self.program_names = names
@@ -246,7 +248,9 @@ class LowerCtx:
       if callees_of(node):
         self.used_results.setdefault(invocation_key(node), []).append(node)
     self._tmp = 0
-    self._zero_padded: dict[int, ProgramNode] = {}
+    self._orders: dict[int, np.ndarray] = {}
+    self._canonical: dict[int, ProgramNode] = {}
+    self._output_orders: dict[int, np.ndarray] = {}
 
   # --- declarations ---------------------------------------------------------
 
@@ -257,8 +261,7 @@ class LowerCtx:
       self.buffers[name] = buf
       self.value_buffers[expr.id] = name
       if layout is not None:
-        converted = self.reorder(buf, expr, layout.inverse_permutation)
-        self.value_buffers[expr.id] = converted.attrs["name"]
+        self._orders[expr.id] = layout.inverse_permutation
 
   def register_outputs(self) -> None:
     """Register output BUFFER params and alias each unique computed output Expr to
@@ -271,10 +274,12 @@ class LowerCtx:
       )
       self.params.append(buf)
       self.buffers[name] = buf
-      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen or layout is not None:
+      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen or (layout is not None and expr.op in (ExprOp.CALL, ExprOp.VMAP)):
         continue  # INPUT/CONST or shared output: emit_outputs inserts the copy
       seen.add(expr.id)
       self._output_alias[expr.id] = name
+      if layout is not None:
+        self._output_orders[expr.id] = layout.inverse_permutation
 
   def emit_outputs(self) -> None:
     for name, expr, layout in zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True):
@@ -283,10 +288,11 @@ class LowerCtx:
         raise LoweringError(f"output {name!r} expression was not lowered")
       if src == name or expr.type.storage_size == 0:
         continue  # already written in place, or nothing to copy
+      source = self.buf_of(expr)
       if layout is None:
-        self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.type.storage_shape, self.names))
+        self.statements.append(_copy_loop(source, self.buffers[name], expr.type.storage_shape, self.names))
       else:
-        self.reorder(self.buffers[src], expr, layout.permutation, self.buffers[name])
+        self.reorder(source, expr, layout.permutation, self.buffers[name])
 
   # --- body -----------------------------------------------------------------
 
@@ -302,7 +308,35 @@ class LowerCtx:
   # --- helpers --------------------------------------------------------------
 
   def buf_of(self, expr: Expr) -> ProgramNode:
+    source = self.raw_buf_of(expr)
+    if expr.id in self._orders:
+      if expr.id not in self._canonical:
+        self._canonical[expr.id] = self.reorder(source, expr, self._orders[expr.id])
+      return self._canonical[expr.id]
+    return source
+
+  def raw_buf_of(self, expr: Expr) -> ProgramNode:
     return self.buffers[self.value_buffers[expr.id]]
+
+  def physical_slots(self, expr: Expr, slots: np.ndarray) -> np.ndarray:
+    order = self._orders.get(expr.id)
+    if order is None or not len(order):
+      return slots
+    width = len(order)
+    return np.where(slots < 0, -1, slots // width * width + order[slots % width])
+
+  def read_stored(self, expr: Expr, slots: np.ndarray, k: ProgramNode) -> ProgramNode:
+    return p.load(p.view(self.raw_buf_of(expr), [self.index_at(self.physical_slots(expr, slots), k)]))
+
+  def stored_view(self, expr: Expr, slot: ProgramNode) -> ProgramNode:
+    if (order := self._orders.get(expr.id)) is not None and len(order):
+      width = len(order)
+      if slot.op == ProgramOp.CONST_INT:
+        index = slot.attrs["value"]
+        slot = p.const_int(index // width * width + int(order[index % width]))
+      else:
+        slot = p.add(p.mul(p.div(slot, p.const_int(width)), p.const_int(width)), self.index_at(order, p.mod(slot, p.const_int(width))))
+    return p.view(self.raw_buf_of(expr), [slot])
 
   def new_private(self, dtype: DType, shape: tuple[int, ...], *, support: Support = None) -> ProgramNode:
     """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
@@ -315,9 +349,13 @@ class LowerCtx:
 
   def alloc_tmp(self, expr: Expr) -> ProgramNode:
     """Buffer to hold ``expr``'s value: the output buffer if aliased, else a fresh private temp."""
+    if expr.id in self.value_buffers:
+      return self.raw_buf_of(expr)
     alias = self._output_alias.get(expr.id)
     if alias is not None:
       self.value_buffers[expr.id] = alias
+      if expr.id in self._output_orders:
+        self._orders[expr.id] = self._output_orders[expr.id]
       return self.buffers[alias]
     buf = self.new_private(expr.type.dtype, expr.type.storage_shape, support=self.storage_support(expr))
     self.value_buffers[expr.id] = buf.attrs["name"]
@@ -350,25 +388,6 @@ class LowerCtx:
 
       self.emit(ranges, [p.store(at(target, k), p.load(at(source, slot)))])
     return target
-
-  def read_indexed(self, expr: Expr, logical: np.ndarray, k: ProgramNode) -> ProgramNode:
-    """Read known logical coordinates through a stored-slot map, including structural zeros."""
-    if expr.type.pattern is None:
-      return p.load(p.view(self.buf_of(expr), [self.index_at(logical, k)]))
-    entries = stored_indices(expr.type)
-    slots = np.searchsorted(entries, logical)
-    valid = slots < len(entries)
-    valid[valid] &= entries[slots[valid]] == logical[valid]
-    source = self.buf_of(expr)
-    if not np.all(valid):
-      slots = np.where(valid, slots, len(entries))
-      if expr.id not in self._zero_padded:
-        source = self.new_private(expr.type.dtype, (len(entries) + 1,))
-        self.statements.append(_copy_loop(self.buf_of(expr), source, expr.type.storage_shape, self.names))
-        self.statements.append(p.store(p.view(source, [p.const_int(len(entries))]), p.const_float(0.0, dtype=expr.type.dtype)))
-        self._zero_padded[expr.id] = source
-      source = self._zero_padded[expr.id]
-    return p.load(p.view(source, [self.index_at(slots, k)]))
 
   def new_alias(self, dtype: DType, shape: tuple[int, ...], src_name: str, offset: int) -> ProgramNode:
     """A zero-copy private BUFFER that aliases ``src_name`` at a flat ``offset`` (rendered
@@ -413,6 +432,8 @@ class LowerCtx:
     zero times."""
     if idx.size == 0:
       return p.const_int(0)
+    if k.op == ProgramOp.CONST_INT:
+      return p.const_int(int(idx[k.attrs["value"]]))
     amap = affine_index_map(idx)
     period = len(amap.residual)
     out: ProgramNode | None = None
