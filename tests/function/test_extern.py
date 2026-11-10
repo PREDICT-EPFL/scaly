@@ -170,7 +170,7 @@ def test_aot_exports_library_source_headers_and_build_manifest(tmp_path):
   assert library["link"] == []
   assert (tmp_path / library["sources"][0]).read_text() == PAIR_SOURCE
   assert (tmp_path / library["headers"][0]).read_text() == "#define OFFSET 0.25\n"
-  assert library["include_dirs"][0] == str((tmp_path / library["sources"][0]).parent.relative_to(tmp_path))
+  assert library["include_dirs"][0] == (tmp_path / library["sources"][0]).parent.relative_to(tmp_path).as_posix()
 
 
 def test_extern_sparse_leaves_keep_their_declared_storage_order():
