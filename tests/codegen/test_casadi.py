@@ -44,7 +44,9 @@ def _build(tmp_path, fun: sc.Function, **kwargs):
     "-Wall",
     "-Wextra",
     "-Werror",
+    *(["-Wno-unused-parameter"] if module.backends else []),
     str(source),
+    *module.link_flags,
     "-lm",
     "-o",
     str(lib_path),
@@ -244,6 +246,31 @@ def test_casadi_dense_matrix_result_from_vector(tmp_path):
   _, lib_path = _build(tmp_path, fun)
   ext = casadi.external(fun.name, str(lib_path))
   np.testing.assert_array_equal(ext(np.arange(6)).full(), np.arange(6).reshape((2, 3)))
+
+
+@pytest.mark.solver("piqp")
+def test_casadi_dense_solver_parameters_use_a_lowered_function_wrapper(tmp_path):
+  weights = np.arange(6, dtype=float).reshape((2, 3)) + 1
+
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", (2, 3)))
+  def problem(x, p):
+    target = (p * weights).sum()
+    return sc.ProblemSpec(minimize=(x[0] - target) ** 2 + x[1] ** 2, eq=(x[1],), ineq=(sc.bounded(x[:1], lo=-1000.0, hi=1000.0),))
+
+  solve = sc.solver(problem, "piqp", name="dense_solver")
+  for render in (render_c_module, render_c_api_header, workspace_size):
+    with pytest.raises(ValueError, match="solver entry.*Function wrapper"):
+      render(solve.function, casadi=True)
+
+  @sc.function(sc.arg("x0", 2), sc.arg("lam0", 2), sc.arg("lam_eq", 1), sc.arg("lam_ineq", 1), sc.arg("p", (2, 3)), name="dense_solver_external")
+  def wrapped(x0, lam0, lam_eq, lam_ineq, p):
+    return solve.function(x0, lam0, lam_eq, lam_ineq, p)
+
+  _, lib_path = _build(tmp_path, wrapped)
+  ext = casadi.external(wrapped.name, str(lib_path))
+  p = np.arange(6, dtype=float).reshape((2, 3))
+  result = ext(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(1), p)
+  np.testing.assert_allclose(result[0].full().ravel(), [(p * weights).sum(), 0])
 
 
 @pytest.mark.parametrize("empty", [False, True], ids=["nonempty", "empty"])

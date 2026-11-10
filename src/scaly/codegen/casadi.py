@@ -90,6 +90,8 @@ def casadi_layout(fun: ConcreteFunction) -> ConcreteFunction:
 
   if not any(expr.type.pattern is None and len(expr.shape) == 2 and min(expr.shape) > 1 for expr in (*fun.inputs, *fun.outputs)):
     return fun
+  if fun.descriptor is not None:
+    raise ValueError("casadi=True: dense matrix leaves on a solver entry require an ordinary Function wrapper for layout conversion")
   return replace(fun, input_tree=convert(fun.input_tree), output_tree=convert(fun.output_tree))
 
 

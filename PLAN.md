@@ -18,6 +18,11 @@ Hard-to-undo decisions to report: dense layout keyword spellings and their ABI b
 order, CasADi's export-time selection, and header metadata and typed indexing for that order.
 No roadmap departure is planned.
 
+Opaque solver entries bypass normal lowering and cannot yet convert dense matrix
+leaf orders. Direct CasADi exports retain an explicit refusal; an ordinary Function
+wrapper is compiled and checked against NumPy. Follow-up #324 owns direct opaque
+boundary support, including explicit dense layouts in solver calls.
+
 Focused validation: 154 sparse/dense boundary and CasADi tests passed, followed by
 34 dense tests with C++ buffer indexing and scalar/vector mapping regressions.
 Ruff and ty pass. Replacing DenseLayout.permutation with the identity makes the

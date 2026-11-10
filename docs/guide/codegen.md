@@ -408,6 +408,8 @@ the exported order, and the workspace queries include any conversion storage.
 !!! warning "Buffer compatibility"
     Dense arrays of rank greater than two are rejected by `casadi=True`.
     Scalars, vectors, dense matrices, and compact sparse outputs are supported.
+    A solver entry with matrix leaves must be called through an ordinary
+    `Function` wrapper, which supplies the buffer layout conversion.
     An input or output with no values accepts a null pointer. Other inputs and
     outputs require pointers, while CasADi treats a null input as zero and skips
     a null output. The `arg` and `res` pointer arrays must always be non-null.
