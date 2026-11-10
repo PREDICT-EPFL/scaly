@@ -21,11 +21,20 @@ stored tangents and sampled adjoints. Publish sparse documentation in #307, not 
       Record operation counts, generated C size and C compile time; defer execution timings.
 - [x] Run focused checks, regenerate test node IDs, then detached ~/.scaly-suite/run on the
       final review state. Dense C snapshots must remain unchanged.
-- [ ] Commit and push once for the draft PR against t3code/46-sparse-ad; register with gh stack
-      and link in T3. Run cross-review with Opus and sol; fix findings and get one delta check.
-- [ ] Publish the verdict immediately, update the issue, mark ready. After #367 merges, retarget
-      through REST to main without rebasing unless required by conflicts, then queue as RULES
-      permits. Watch CI and address failures. Delete this temporary plan before ready.
+- [x] Commit and push the draft PR #369 against t3code/46-sparse-ad, link in T3 and register
+      #367 and #369 with gh stack, stack #370.
+- [ ] Finish cross-review on the current base. Sol approved numerical correctness; Opus requested
+      removing the unsampled reverse pattern and work, including Hessians. The fix carries a
+      sample on MATMUL, with a stored-slot scratch row and sampled support/derivative analysis.
+      New build, work, workspace, Hessian and analysis gates pass, with seven perturbations.
+      Run full validation, then one delta check per reviewer. The current changes-needed verdict
+      is already in #369. Publish the final verdict immediately when the checks finish.
+- [ ] Wait for the coordinator's explicit notice that #367 merged. Do not restack or push
+      for base changes before that notice, even if a parent rebases or main advances.
+- [ ] After the notice, fetch and rebase only this task's commits onto origin/main, excluding
+      the approved #367 parent. Run focused checks and one full suite through the shared runner,
+      retarget #369 to main through REST, push once and queue once. Never use --auto on a
+      non-main base. Watch CI and address failures. Delete this temporary plan before ready.
 
 Scope limits: no sparse derivative leaves, per-entry seeds, SELECT, pattern blocks, traversal
 fusion, sparse factorization or public sparse documentation. Preserve reviewed parent code

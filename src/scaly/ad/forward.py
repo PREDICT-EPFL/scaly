@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, pack, scatter, stack, to_dense, values
+from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, matmul, pack, scatter, stack, to_dense, values
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
@@ -172,13 +172,16 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.MATMUL:
     if any(arg.type.pattern is not None for arg in args):
       terms = []
+      sampled = expr.attrs.get("sampled")
       if not _is_zero_const(d[0]):
         terms.append(
-          stack(d[0][i] @ args[1] for i in range(nseed)) if args[0].type.pattern is not None else _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
+          stack(matmul(d[0][i], args[1], sampled=sampled) for i in range(nseed))
+          if args[0].type.pattern is not None
+          else _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
         )
       if not _is_zero_const(d[1]):
         terms.append(
-          stack(args[0] @ d[1][i] for i in range(nseed))
+          stack(matmul(args[0], d[1][i], sampled=sampled) for i in range(nseed))
           if args[1].type.pattern is not None
           else _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
         )

@@ -7,15 +7,12 @@ from ...ir.expr import Expr, ExprOp
 from ...ir.program import RangeKind
 from ..arith import constant
 from .ctx import LowerCtx, lowers, _size_of
-from .plans import lower_movement, lower_sparse_product
+from .plans import lower_movement
 
 
 @lowers(ExprOp.GATHER)
 def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   """``out[k] = src[indices[k]]`` over the flat output, the index as arithmetic or a ``static const`` table."""
-  if node.args[0].id in ctx.sampled_products:
-    lower_sparse_product(ctx, node, node.args[0])
-    return
   if node.args[0].type.pattern is not None:
     lower_movement(ctx, node)
     return

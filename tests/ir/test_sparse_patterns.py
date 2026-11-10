@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from scaly.function.concrete import ConcreteFunction
-from scaly.ir.expr import Expr, ExprOp, _attrs_key, binary, format_expr, pack, substitute, unary
+from scaly.ir.expr import Expr, ExprOp, _attrs_key, binary, format_expr, matmul, pack, substitute, unary
 from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.text import render_expr_assembly, type_asm
@@ -31,6 +31,25 @@ def _forge(node: Expr, **changes) -> Expr:
   for field in fields(Expr):
     object.__setattr__(forged, field.name, changes.get(field.name, getattr(node, field.name)))
   return forged
+
+
+def test_sampled_matmul_has_an_explicit_fixed_pattern_and_verifies_it():
+  a = _input("sample_a", np.eye(3, dtype=bool))
+  b = _input("sample_b", np.ones((3, 2), dtype=bool))
+  sample = CanonicalPattern((3, 2), (0, 1), (1, 0))
+  product = matmul(a, b, sampled=sample)
+  assert product.type.pattern is sample and product.type.storage_size == 2
+  assert product is matmul(a, b, sampled=sample)
+  verify_expr(product)
+  forged = _forge(product, type=TensorType(product.shape, pattern=CanonicalPattern((3, 2), (2,), (1,))))
+  with pytest.raises(VerifyError, match="stored-pattern"):
+    verify_expr(forged)
+  for x, y, requested in (
+    (Expr(ExprOp.INPUT, type=TensorType(a.shape), name="dense_sample_a"), b, sample),
+    (a, b, CanonicalPattern((2, 3), (0,), (0,))),
+  ):
+    with pytest.raises(ValueError, match="sampled MATMUL"):
+      matmul(x, y, sampled=requested)
 
 
 def test_canonicalization_preserves_value_permutation_and_explicit_zeros() -> None:

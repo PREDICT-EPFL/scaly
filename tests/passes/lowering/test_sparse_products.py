@@ -6,6 +6,7 @@ from scipy import sparse
 
 import scaly as sc
 from scaly.ir.program import ProgramOp, walk_program
+from scaly.ir.expr import matmul
 from scaly.ir.types import CanonicalPattern
 from scaly.passes.lowering import lower_function
 
@@ -140,3 +141,18 @@ def test_sampled_product_handles_absent_and_repeated_entries_and_shared_products
     actual, product = actual
     np.testing.assert_array_equal(product.toarray(), reference)
   np.testing.assert_array_equal(actual, reference.ravel()[indices])
+
+
+@pytest.mark.parametrize("layout", ["csc", "csr", "coordinates"])
+def test_explicit_sample_skips_absent_factors_but_evaluates_stored_zeros(layout):
+  a = CanonicalPattern((2, 3), (0, 1), (0, 1))
+  b = CanonicalPattern((3, 2), (0, 1, 2), (0, 0, 1))
+  output = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  fn = sc.function(
+    sc.arg("a", sc.TensorType(a.shape, pattern=a), layout="csr"),
+    sc.arg("b", sc.TensorType(b.shape, pattern=b), layout="csr"),
+    outputs=sc.arg("c", sc.TensorType(output.shape, pattern=output), layout=_layout(output, layout)),
+    name=f"sampled_structural_zero_{layout}",
+  )(lambda a, b: matmul(a, b, sampled=output).block())
+  actual = fn(np.array([1.0, 0.0]), np.array([2.0, np.inf, np.inf]))
+  np.testing.assert_array_equal(sparse.coo_array(actual).toarray(), [[2.0, 0.0], [np.nan, 0.0]])

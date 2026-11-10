@@ -327,6 +327,10 @@ def stored_pattern(
     if types[0].pattern is not None and not any(t.pattern is not None for t in types[1:]):
       raise ValueError("select has no stored-pattern rule for a sparse condition with dense branches; use to_dense() explicitly")
     types = types[1:]
+  if op == ExprOp.MATMUL and attrs is not None and (sampled := attrs.get("sampled")) is not None:
+    if not isinstance(sampled, CanonicalPattern) or sampled.shape != shape or any(t.ndim != 2 or t.pattern is None for t in types):
+      raise ValueError("sampled MATMUL requires two sparse matrices and a matching canonical output pattern")
+    return sampled
   if not any(t.pattern is not None for t in types):
     return None
   if op == ExprOp.REDUCE:
@@ -1260,7 +1264,7 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
   )
 
 
-def matmul(x: Expr, y: Expr) -> Expr:
+def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None) -> Expr:
   """Matrix product with NumPy's ``matmul`` rules.
 
   The last two axes of each operand multiply as matrices and leading axes broadcast.
@@ -1275,10 +1279,12 @@ def matmul(x: Expr, y: Expr) -> Expr:
     raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
   shape = broadcast_shape(x.shape[:-2], y.shape[:-2])
   shape += (() if len(x.shape) == 1 else (x.shape[-2],)) + (() if len(y.shape) == 1 else (y.shape[-1],))
+  attrs = {} if sampled is None else {"sampled": sampled}
   return Expr(
     ExprOp.MATMUL,
     (x, y),
-    TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y), pattern=stored_pattern(ExprOp.MATMUL, (x.type, y.type), shape)),
+    TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y), pattern=stored_pattern(ExprOp.MATMUL, (x.type, y.type), shape, attrs)),
+    attrs=attrs,
     lowering=common_lowering(x, y),
   )
 

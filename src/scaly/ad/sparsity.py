@@ -408,8 +408,18 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   def contribution(mask: sparse.coo_array, other: Expr, *, left: bool) -> sparse.coo_array:
     if not mask.nnz:
       return _empty((expr.size, wrt.size))
-    active, inverse = np.unique(mask.row, return_inverse=True)
     support = memo.support_of(other)
+    if expr.attrs.get("sampled") is not None:
+      requested = stored_indices(expr.type)
+      assert support is not None
+      entries = support_indices(support)
+      axis = requested % n if left else requested // n
+      coefficient = _incidence((n, k), entries % n, entries // n) if left else _incidence((m, k), entries // k, entries % k)
+      joined = (_incidence((len(requested), n if left else m), np.arange(len(requested)), axis).tocsr() @ coefficient.tocsr()).tocoo()
+      sources = (requested[joined.row] // n) * k + joined.col if left else joined.col * n + requested[joined.row] % n
+      local = _incidence((expr.size, x.size if left else y.size), requested[joined.row], sources)
+      return _compose(local, mask)
+    active, inverse = np.unique(mask.row, return_inverse=True)
     if support is None:
       count = n if left else m
       source = np.repeat(np.arange(len(active)), count)

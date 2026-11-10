@@ -4,7 +4,7 @@ Issue #47 adds a column accumulator plan beside #46's compact maps. The expressi
 pattern is still #39's Boolean product. Lowering compresses active columns, matches right-hand
 entries to left-hand column bounds, and sorts the requested writes by column. It clears only
 the statically known output rows, accumulates each column in order, and writes directly into
-the declared output layout. The plan reuses `MapRegion`, `nest`, `reduce`, `index_at` and stored
+the declared output layout. The plan reuses `nest`, `reduce`, `index_at` and stored
 reads. Affine tables become index arithmetic; small constant loops can expand in the existing
 program passes. There is no scalar-product-pair table and no new intermediate-representation op.
 
@@ -14,20 +14,27 @@ Column pointers describe occupied columns, so empty logical dimensions do not en
 The numerical work is the number of contributing scalar products, plus stored-entry clearing
 and writing. Duplicate contributions accumulate in increasing shared-coordinate order.
 
-Forward automatic differentiation already forms `dA @ B + A @ dB` with stored-pattern tangents,
-so it needs no new rule. Reverse mode projects `Cbar @ B.T` and `A.T @ Cbar` onto the corresponding
-operand patterns. A single-use sparse product read by a gather lowers directly into that gather.
-This avoids allocating the unsampled product, including when its Boolean pattern is full.
-For a sampled product, all potentially updated accumulator rows are initialized once, then only
-the requested rows are cleared between columns. Unrequested rows may retain accumulated values;
-they never contribute to a requested row. Shared products and products returned as outputs keep
-their ordinary materialization. The new recognition in `ctx.py` and `gather.py` applies only to
-products of two sparse operands. Mixed-product lowering and its differentiation rules are intact.
+Forward automatic differentiation forms `dA @ B + A @ dB` with stored-pattern tangents.
+Reverse mode requests `Cbar @ B.T` and `A.T @ Cbar` on the corresponding operand patterns.
+An internal `sampled` attribute on `MATMUL` gives those products exactly the requested type,
+without constructing the unsampled Boolean pattern. Forward differentiation preserves this
+attribute, including through Hessians; reverse differentiation samples each operand again.
+Support uses the declared bound and derivative analysis joins only requested outputs.
+
+`SampledProductPlan` groups requested output rows and stores bounds into each operand's entries.
+The kernel scatters a left row's physical stored-slot indices into one dense integer row. It
+computes a scalar dot product for each requested coordinate, then clears the mapped slots.
+A missing slot gives a zero-trip range around the multiply-add, so an absent zero never
+multiplies infinity, while an explicit stored zero still does. No floating cotangent row is
+materialized. Scratch is one row of the inner dimension; all tables follow operand and requested
+output fill. The former single-use-gather shortcut is removed. Mixed-product lowering and its
+differentiation rules are intact. The roadmap's #47 paragraph records this representation.
 
 ## Evidence
 
 The new files are `tests/passes/lowering/test_sparse_products.py`, `tests/ad/test_sparse_products.py`
-and `tests/integration/test_sparse_products.py`. Their 69 cases pass. They cover compressed sparse
+and `tests/integration/test_sparse_products.py`, plus the sampled-pattern verifier case in
+`tests/ir/test_sparse_patterns.py`. Their 78 new cases pass. They cover compressed sparse
 column and row layouts and a reversed coordinate order, scalar and block lowering, rectangular
 and banded patterns, empty rows and columns, empty operands and products, zero inner dimensions,
 explicit stored zeros, and structural zeros beside infinity. Two simultaneous forward directions
@@ -41,6 +48,16 @@ times a 13,000 by 17,000 operand has three and two entries respectively; kernel 
 than 50 entries and scratch is 10,000 entries. The sampled-adjoint gate has a diagonal operand
 and a two-column operand: its unsampled adjoint would hold 97 squared entries, but every private
 buffer has at most 194 entries. Neither dense matrix nor scalar-product-pair buffers appear.
+
+The repaired reverse gate forbids building that 97-squared Boolean pattern in the first place.
+Weighted Gram derivatives with one dense column in G are checked at n=32 and n=64. All product
+patterns and buffers follow stored fill, sampled coefficient visits are bounded by 160n across
+the gradient and three Hessian directions, and each sampled plan's tables are bounded by six
+times operand and requested output fill. A 128-variable diagonal/thin sparse Hessian gate bounds
+each intermediate derivative relation by 16n entries, catching an unsampled sparsity join. A
+24-variable dense Hessian gate permits seed-by-stored-entry buffers but rejects seed-by-full-
+product buffers. A projection with absent coordinates checks both operand gradients, both orders
+of second derivatives, and the sparse Hessian against differences.
 
 The ports use only problem definitions from the frozen notebooks:
 
@@ -66,9 +83,18 @@ under each notebook port. The arithmetic perturbation also fails the stored-zero
 shared-product gates. All perturbations were removed. The existing sparse-kernel, import and
 dense-snapshot checks passed, 209 cases. No C snapshot was regenerated.
 
+Cross-review found that the original gather shortcut avoided the full buffer but still built
+the full Boolean pattern, traversed unsampled entries, and lost its buffer saving in forward-
+over-reverse. The sampled `MATMUL` mode replaces it. Seven additional in-memory perturbations
+fail the repaired gates: restoring the ordinary reverse product, dropping the sample in forward
+mode, computing full support, joining unsampled derivative rows, executing an absent factor,
+ignoring the declared sample, and corrupting sampled arithmetic. The 126-case focused group and
+277 existing support, verifier, sparsity, kernel, import and snapshot checks pass after the fix.
+
 The detached `~/.scaly-suite/run` exited zero. Its full suite passed with 3,333 tests and 55 solver
 skips, followed by benchmark smoke, the documentation build and the private-name check. Types,
 formatting and lint passed too. The node-ID baseline includes all 3,388 collected tests.
+This was the first review state; the sampled-mode fix gets a fresh full validation below.
 
 ## Counts and generated C
 
@@ -91,3 +117,21 @@ n    d   stored G  stored result  multiply-add pairs  float operations  table en
 
 Per-entry seeds, sparse derivative leaves, sparse selection and traversal fusion remain #225,
 #48, #359 and #69. Publishing the sparse names remains #307.
+
+The repaired reverse cases use the same scalar C recipe and compile command above. The Gram
+case has 2n rows and n columns, with two local entries and one shared dense column per row.
+The derivative is with respect to the diagonal weights. Coefficient visits count the sampled
+dot-product iterations, before the presence test; they bound its multiply-add count. Largest
+private buffers are stored transposes, not dense products.
+
+```text
+case       n     sampled result sizes  coefficient visits  scratch row sizes  table entries  source bytes  largest private  C compile seconds
+diag/thin  1000  1000                  2000                2                  0              2401          2000             0.032
+Gram       1000  5994, 2000            23968               1000, 1000         41965          237659        5994             0.078
+diag/thin  2000  2000                  4000                2                  0              2407          4000             0.033
+Gram       2000  11994, 4000           47968               2000, 2000         83965          501967        11994            0.112
+```
+
+The inherited forward rule still emits one kernel per seed and shares its index tables. Code
+size grows with the seed count. #225 already owns replacing those per-seed kernel groups and
+stored-slice copies; coloring bounds the seed count in the sparse derivative gates here.

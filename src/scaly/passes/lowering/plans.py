@@ -9,9 +9,9 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode, RangeKind
+from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries, _constant_condition
-from ...ir.types import CanonicalPattern, stored_indices
+from ...ir.types import CanonicalPattern, dtypes, stored_indices
 from ..arith import constant
 from .ctx import LowerCtx
 
@@ -35,7 +35,8 @@ class SparseProductPlan:
   right_slots: np.ndarray
   right_ptr: np.ndarray
   output_ptr: np.ndarray
-  output: MapRegion
+  output_writes: np.ndarray
+  output_rows: np.ndarray
 
   @staticmethod
   def build(a: CanonicalPattern, b: CanonicalPattern, logical: np.ndarray, writes: np.ndarray) -> SparseProductPlan:
@@ -59,37 +60,32 @@ class SparseProductPlan:
       right_slots,
       right_ptr,
       output_ptr,
-      MapRegion(writes[order], (rows[order],)),
+      writes[order],
+      rows[order],
     )
 
 
-def lower_sparse_product(ctx: LowerCtx, node: Expr, product: Expr | None = None) -> None:
-  """Accumulate one column and write only requested entries, directly in their physical order."""
-  sampled = product is not None
-  product = node if product is None else product
-  a, b = product.args
+def lower_sparse_product(ctx: LowerCtx, node: Expr) -> None:
+  """Accumulate one column and write stored entries directly in their physical order."""
+  if node.attrs.get("sampled") is not None:
+    _lower_sampled_product(ctx, node)
+    return
+  a, b = node.args
   assert a.type.pattern is not None and b.type.pattern is not None
   out = ctx.alloc_tmp(node)
   if not node.type.storage_size:
     return
   logical = stored_indices(node.type)
-  if sampled:
-    logical = node.attrs["indices"].reshape(-1)[logical]
   plan = SparseProductPlan.build(a.type.pattern, b.type.pattern, logical, ctx.physical_slots(node, np.arange(node.type.storage_size)))
   acc = ctx.new_private(node.type.dtype, (a.shape[0],))
   name = out.attrs["name"]
-  if sampled:
-    # Unsampled rows receive updates too; initialise them once so those additions never read uninitialised memory.
-    rows = np.unique(plan.left_rows)
-    ranges, (i,) = ctx.nest((len(rows),), f"init_{name}")
-    ctx.emit(ranges, [p.store(p.view(acc, [ctx.index_at(rows, i, shared=True)]), p.const_float(0, dtype=node.type.dtype))])
   columns, (column,) = ctx.nest((len(plan.output_ptr) - 1,), f"column_{name}", kind=RangeKind.SERIAL)
 
   def bounds(ptr: np.ndarray, index: ProgramNode) -> tuple[ProgramNode, ProgramNode]:
     return ctx.index_at(ptr, index, shared=True), ctx.index_at(ptr, p.add(index, p.const_int(1)), shared=True)
 
   outputs, (i,) = ctx.nest((bounds(plan.output_ptr, column),), f"entry_{name}")
-  row = ctx.index_at(plan.output.reads[0], i, shared=True)
+  row = ctx.index_at(plan.output_rows, i, shared=True)
   target = p.view(acc, [row])
   clear = ctx.nest_body(outputs, [p.store(target, p.const_float(0, dtype=node.type.dtype))])
   right, (j,) = ctx.reduce((bounds(plan.right_ptr, column),), f"right_{name}")
@@ -97,8 +93,78 @@ def lower_sparse_product(ctx: LowerCtx, node: Expr, product: Expr | None = None)
   dst = p.view(acc, [ctx.index_at(plan.left_rows, k, shared=True)])
   term = p.mul(ctx.read_stored(a, plan.left_slots, k), ctx.read_stored(b, plan.right_slots, j))
   updates = ctx.nest_body(right, ctx.nest_body(left, [p.store(dst, p.add(p.load(dst), term))]))
-  write = ctx.nest_body(outputs, [p.store(p.view(out, [ctx.index_at(plan.output.writes, i, shared=True)]), p.load(target))])
+  write = ctx.nest_body(outputs, [p.store(p.view(out, [ctx.index_at(plan.output_writes, i, shared=True)]), p.load(target))])
   ctx.emit(columns, [*clear, *updates, *write])
+
+
+@dataclass(frozen=True)
+class SampledProductPlan:
+  """Requested rows and dot-product bounds, without forming the full product pattern."""
+
+  output_ptr: np.ndarray
+  left_starts: np.ndarray
+  left_stops: np.ndarray
+  right_slots: np.ndarray
+  right_rows: np.ndarray
+  right_starts: np.ndarray
+  right_stops: np.ndarray
+
+  @staticmethod
+  def build(a: CanonicalPattern, b: CanonicalPattern, output: CanonicalPattern) -> SampledProductPlan:
+    rows, counts = np.unique(output.rows, return_counts=True)
+    right_slots = np.lexsort((b.rows, b.cols))
+    right_cols = np.asarray(b.cols, dtype=np.int64)[right_slots]
+    return SampledProductPlan(
+      np.concatenate(([0], np.cumsum(counts))),
+      np.searchsorted(a.rows, rows),
+      np.searchsorted(a.rows, rows, side="right"),
+      right_slots,
+      np.asarray(b.rows, dtype=np.int64)[right_slots],
+      np.searchsorted(right_cols, output.cols),
+      np.searchsorted(right_cols, output.cols, side="right"),
+    )
+
+
+def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
+  a, b = node.args
+  assert a.type.pattern is not None and b.type.pattern is not None and node.type.pattern is not None
+  out = ctx.alloc_tmp(node)
+  if not node.type.storage_size:
+    return
+  plan = SampledProductPlan.build(a.type.pattern, b.type.pattern, node.type.pattern)
+  slots = ctx.new_private(dtypes.int64, (a.shape[1],))
+  name = out.attrs["name"]
+  active = np.unique(plan.right_rows)
+  initial, (i,) = ctx.nest((len(active),), f"init_{name}")
+  ctx.emit(initial, [p.store(p.view(slots, [ctx.index_at(active, i, shared=True)]), p.const_int(-1))])
+  rows, (row,) = ctx.nest((len(plan.left_starts),), f"row_{name}", kind=RangeKind.SERIAL)
+  scatter, (k,) = ctx.nest(((ctx.index_at(plan.left_starts, row, shared=True), ctx.index_at(plan.left_stops, row, shared=True)),), f"scatter_{name}")
+  target = p.view(slots, [ctx.index_at(np.asarray(a.type.pattern.cols, dtype=np.int64), k, shared=True)])
+  physical = ctx.physical_slots(a, np.arange(a.type.storage_size))
+  fill = ctx.nest_body(scatter, [p.store(target, ctx.index_at(physical, k, shared=True))])
+  clear = ctx.nest_body(scatter, [p.store(target, p.const_int(-1))])
+  outputs, (entry,) = ctx.nest(
+    ((ctx.index_at(plan.output_ptr, row, shared=True), ctx.index_at(plan.output_ptr, p.add(row, p.const_int(1)), shared=True)),), f"entry_{name}"
+  )
+  right, (j,) = ctx.reduce(
+    ((ctx.index_at(plan.right_starts, entry, shared=True), ctx.index_at(plan.right_stops, entry, shared=True)),), f"dot_{name}"
+  )
+  slot = p.load(p.view(slots, [ctx.index_at(plan.right_rows, j, shared=True)]))
+  # A zero-trip range skips absent factors, including 0*inf; a stored zero still executes its product.
+  start = ProgramNode(ProgramOp.MAXIMUM, (slot, p.const_int(0)), dtype=dtypes.int64)
+  stop = ProgramNode(ProgramOp.MAXIMUM, (p.add(slot, p.const_int(1)), p.const_int(0)), dtype=dtypes.int64)
+  present, (pos,) = ctx.reduce(((start, stop),), f"present_{name}")
+  acc_name = ctx.names.allocate(f"acc_{name}")
+  acc = p.var(acc_name, node.type.dtype)
+  value = p.mul(p.load(p.view(ctx.raw_buf_of(a), [pos])), ctx.read_stored(b, plan.right_slots, j))
+  dot = ctx.nest_body(right, ctx.nest_body(present, [p.assign(acc_name, p.add(acc, value))]))
+  writes = ctx.physical_slots(node, np.arange(node.type.storage_size))
+  body = [
+    p.assign(acc_name, p.const_float(0, dtype=node.type.dtype), declare=True),
+    *dot,
+    p.store(p.view(out, [ctx.index_at(writes, entry, shared=True)]), acc),
+  ]
+  ctx.emit(rows, [*fill, *ctx.nest_body(outputs, body), *clear])
 
 
 def stored_slots(expr: Expr, logical: np.ndarray) -> np.ndarray:
