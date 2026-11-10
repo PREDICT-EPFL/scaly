@@ -2574,6 +2574,8 @@ tests/codegen/test_float32.py::test_verifier_rejects_buffer_dtype_mismatches[vie
 tests/codegen/test_frame_budget.py::test_compiler_gate_rejects_unspilled_frame[clang]
 tests/codegen/test_frame_budget.py::test_compiler_gate_rejects_unspilled_frame[gcc]
 tests/codegen/test_frame_budget.py::test_frame_macro_does_not_shadow_buffer_names
+tests/codegen/test_frame_budget.py::test_frame_macro_does_not_shadow_sparse_namespace[clang]
+tests/codegen/test_frame_budget.py::test_frame_macro_does_not_shadow_sparse_namespace[gcc]
 tests/codegen/test_frame_budget.py::test_frame_option_reaches_all_render_entry_points
 tests/codegen/test_frame_budget.py::test_generated_frames_fit_and_match_numpy[0-1-gnu-clang]
 tests/codegen/test_frame_budget.py::test_generated_frames_fit_and_match_numpy[0-1-gnu-gcc]

@@ -138,6 +138,24 @@ def test_frame_macro_does_not_shadow_buffer_names(tmp_path):
   assert "& kernel_FRAME_BYTES," not in cpp
 
 
+@pytest.mark.parametrize("compiler", ["gcc", "clang"])
+def test_frame_macro_does_not_shadow_sparse_namespace(tmp_path, compiler):
+  @sc.function(sc.arg("FRAME_BYTES", 2), outputs=sc.arg("y"), name="base")
+  def base(x):
+    return x * x
+
+  fun = base.factory("spjac_y", ["FRAME_BYTES"], [sc.factory.SpJac("y", "FRAME_BYTES")])
+  module = write_module(fun, tmp_path, lang="cpp", lanes=1)
+  path = tmp_path / "use.cpp"
+  path.write_text(f'#include "{module.header_name}"\n')
+  result = subprocess.run(
+    [*named_compiler(compiler), "-x", "c++", "-std=c++17", "-Werror", "-c", str(path), "-o", str(tmp_path / "use.o")],
+    capture_output=True,
+    text=True,
+  )
+  assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("budget", [-1, True, 1.5])
 def test_invalid_frame_budget(budget):
   with pytest.raises(ValueError, match="frame_budget"):

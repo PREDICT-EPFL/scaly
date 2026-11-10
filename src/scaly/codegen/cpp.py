@@ -189,6 +189,7 @@ def render_cpp_header(
     ),
     header=True,
   )
+  names.occupied.add(f"{symbol}_FRAME_BYTES")
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is not None:
       lines += ["", *_sparse_namespace(name, sp, names)]
