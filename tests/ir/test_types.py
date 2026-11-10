@@ -11,6 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -36,6 +38,40 @@ def test_dtype_registry_and_string_compat() -> None:
   assert dtypes.uint8.numpy() == np.uint8
   with pytest.raises(ValueError):
     sc.as_dtype("complex64")
+
+
+@pytest.mark.parametrize(
+  "field,value",
+  [
+    ("name", "float_alias"),
+    ("bits", 32),
+    ("c_type", "float"),
+    ("is_floating", False),
+    ("is_integer", True),
+    ("is_bool", True),
+    ("is_unsigned", True),
+  ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_interning_distinguishes_every_dtype_field(field: str, value: object, reverse: bool) -> None:
+  original = dtypes.float64
+  distinct = replace(original, **{field: value})
+  first_dtype, second_dtype = (distinct, original) if reverse else (original, distinct)
+  name = f"dtype_intern_{field}_{reverse}"
+  first = sc.sym(name, 3, dtype=first_dtype)
+  second = sc.sym(name, 3, dtype=second_dtype)
+  assert first is not second
+  assert first.type.dtype is first_dtype
+  assert second.type.dtype is second_dtype
+  assert first.type.dtype.c_type == first_dtype.c_type
+  assert second.type.dtype.c_type == second_dtype.c_type
+  assert first_dtype != second_dtype
+  assert len({first_dtype, second_dtype}) == 2
+  assert replace(first_dtype) == first_dtype
+  assert hash(replace(first_dtype)) == hash(first_dtype) == hash(first_dtype.name)
+  assert first_dtype == first_dtype.name and first_dtype.name == first_dtype
+  assert sc.sym(name, 3, dtype=replace(first_dtype)) is first
+  assert sc.sym(name, 3, dtype=replace(second_dtype)) is second
 
 
 def test_unsigned_constants_fold_within_their_own_range() -> None:

@@ -45,7 +45,15 @@ class DType:
 
   def __eq__(self, other: object) -> bool:  # backward compat with string dtype
     if isinstance(other, DType):
-      return self.name == other.name
+      return (self.name, self.bits, self.c_type, self.is_floating, self.is_integer, self.is_bool, self.is_unsigned) == (
+        other.name,
+        other.bits,
+        other.c_type,
+        other.is_floating,
+        other.is_integer,
+        other.is_bool,
+        other.is_unsigned,
+      )
     if isinstance(other, str):
       return self.name == other
     return NotImplemented
