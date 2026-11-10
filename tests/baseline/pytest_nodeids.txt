@@ -1361,6 +1361,9 @@ tests/codegen/test_casadi.py::test_casadi_sparse_leaves_match_casadi_sparsity[cp
 tests/codegen/test_cpp.py::test_cpp_header_and_c_header_compile_the_same_kernel
 tests/codegen/test_cpp.py::test_cpp_header_compiles_and_runs
 tests/codegen/test_cpp.py::test_cpp_header_declares_namespace_buffers_and_constexpr_tables
+tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported_entry[workspace_2-sum]
+tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported_entry[x-sum]
+tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported_entry[x-workspace_2]
 tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_output
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
 tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[clang]
