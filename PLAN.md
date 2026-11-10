@@ -15,7 +15,7 @@ stay unchanged. Nearby PRs #335 and #341 may merge; rebase only for a conflict.
       uncertain patterns on the numerical union without adding a Tree type parameter.
 - [x] Check runtime derivatives and inherited layouts against NumPy, including sparse maps;
       prove the static gate fails under a targeted annotation perturbation.
-- [ ] Run strict types on all CI targets, Ruff, snapshots/import checks and the detached full
+- [x] Run strict types on all CI targets, Ruff, snapshots/import checks and the detached full
       pre-merge hook through the shared suite slot. Record results here.
 - [ ] Open and link the draft PR, obtain one cross-review and any required delta check, then
       record completion evidence and the typing tradeoff in the PR. Delete this plan before ready.
@@ -30,3 +30,7 @@ Restoring NumPy-only result annotations separately for gradient, forward and adj
 15, 15 and 10 diagnostics. The fixed repository passes strict ty for the default, Python 3.14
 and Windows targets, plus both Ruff checks. The focused runtime run passes all 97 cases.
 The roadmap removes the #356 gap and records the conservative typing choice, with no departure.
+The broader focused run passed all 251 frontend/snapshot/import cases, and the final full
+collection passed. The detached shared-slot pre-merge hook passed with exit 0: strict types,
+both Ruff checks, 3,360 tests passed and 52 skipped, benchmark smoke, documentation build with
+no issues, and the private-name check. Log path is in `/tmp/scaly-356-suite-path`.
