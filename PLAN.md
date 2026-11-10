@@ -52,14 +52,16 @@ hook passed 3,042 tests with 55 solver skips plus types, format, lint, smoke,
 docs and the private-name check. Its source and compile counts are in the forward
 note. All its delegate threads are settled.
 
-The coordinator decided #315 now lands #45 and the forward layer together. The
-AD branch is based on its published parent 0758bf13. The #45 owner is rebasing that
-parent onto main and owns its conflict resolution, Opus check and lease push.
-Do not push to the parent's branch. Do not push AD or open its PR until the
-coordinator sends the rebased parent head. Then rebase only the AD commits with
-`git rebase --onto <new head> 0758bf13`, run focused checks and one detached full
-hook, and open the AD PR. Queue AD only after #315 merges and the AD PR targets
-main. Never enable auto-merge for a pull request targeting another feature branch.
+The coordinator decided #315 now lands #45 and the forward layer together. AD
+is rebased onto the published parent 2e8800cc. The only code conflict with #313
+was the import list in `ad/forward.py`: keep `callees_of` and its invocation
+dispatch, and add `TensorType`/`stored_indices`. All sparse cases applied on top
+of that invocation logic. The roadmap reference conflict keeps all references.
+Do not push to the parent's branch. The final detached full hook runs next.
+After it passes, open AD against `t3code/45-accumulators`, or main if #315 has
+merged. Cross-review AD with Opus and the independent sol correctness pass.
+Before queueing, require the PR base to be main. If #315 merges meanwhile,
+retarget via REST first. Never enable auto-merge on a feature-branch base.
 
 The AD branch includes the forward review fixes and the stored-index sharing,
 plus the exact IPM upper-triangle workload gate and direct boundary writes. The
@@ -67,10 +69,11 @@ plus the exact IPM upper-triangle workload gate and direct boundary writes. The
 through a git-backed loader only to produce references and was not copied.
 There are 36 AD cases; the duplicate scalar/block infinity cases now live in the
 forward layer. The previous AD hook passed 3,124 tests and 55 skips before the
-parent review fixes. The combined local branch passed 137 sparse-plan, AD and 48-problem workload
-cases with two workers, plus type checking. Refresh source/compile counts if the
-incoming parent changes generated C. Do the final full hook only after the
-rebased parent arrives.
+parent review fixes. After the parent rebase, 1,515 focused tests passed, including calls, maps,
+sparse kernels, all 48 workload problems and dense snapshots. Types, lint and
+formatting passed. The KKT test adds a NumPy-array assertion for #328's broader
+numerical return type. Source sizes and compile times were refreshed in the AD
+note; operation counts and largest private buffers are unchanged.
 
 The section 1 packet's banded quadratic reproduction runs all stages. At n=100
 and n=400, largest gradient buffers are 100 and 400, and sparse Hessian buffers

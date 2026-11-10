@@ -133,10 +133,12 @@ def test_maros_meszaros_kkt_and_products_without_dense_matrix_buffers(name):
       dp = derivative.sparsity()
       assert dp is not None
       jac = sparse.coo_array((derivative(numeric), (dp.rows, dp.cols)), shape=dp.shape).tocsc()
+      numeric_values = values(numeric)
+      assert isinstance(numeric_values, np.ndarray)
       for column in np.unique(np.linspace(0, len(numeric) - 1, min(len(numeric), 5), dtype=int)):
         change = np.zeros_like(numeric)
         selected = jac.indices[jac.indptr[column] : jac.indptr[column + 1]]
-        scale = max(1.0, abs(numeric[column]), np.max(np.abs(values(numeric)[selected]), initial=0))
+        scale = max(1.0, abs(numeric[column]), np.max(np.abs(numeric_values[selected]), initial=0))
         step = 1e-5 * scale
         change[column] = step
         difference = (values(numeric + change) - values(numeric - change)) / (2 * step)

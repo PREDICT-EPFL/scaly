@@ -63,7 +63,7 @@ The section 1 packet's `sparse_values/banded_quadratic.py` runs all stages witho
 errors. Stage 7 reports largest private gradient buffers of 100 and 400 entries,
 and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400 respectively.
 
-Validation through detached `~/.scaly-suite/run` passed with 3,124 tests and 55
+Before the parent rebase, detached `~/.scaly-suite/run` passed with 3,124 tests and 55
 solver skips, including types, formatting, lint, benchmark smoke, documentation
 build and the private-name check. No dense C snapshot was regenerated.
 
@@ -76,8 +76,17 @@ private buffers are measured after program optimization. Compile time uses
 `cc -O3 -fno-math-errno -std=c99 -c`; no run-time measurement is evidence here.
 
 ```text
-banded100_grad_banded100_x: n=100, nnz(Q)=298, arithmetic operations=1292, largest private buffer=100, source bytes=8611, compile seconds=0.032
-banded100_sphess_banded100_x_x: n=100, nnz(Q)=298, arithmetic operations=3876, largest private buffer=300, source bytes=13093, compile seconds=0.038
-banded400_grad_banded400_x: n=400, nnz(Q)=1198, arithmetic operations=5192, largest private buffer=400, source bytes=33077, compile seconds=0.036
-banded400_sphess_banded400_x_x: n=400, nnz(Q)=1198, arithmetic operations=15576, largest private buffer=1200, source bytes=48614, compile seconds=0.047
+banded100_grad_banded100_x: n=100, nnz(Q)=298, arithmetic operations=1292, largest private buffer=100, source bytes=8526, compile seconds=0.064
+banded100_sphess_banded100_x_x: n=100, nnz(Q)=298, arithmetic operations=3876, largest private buffer=300, source bytes=13093, compile seconds=0.066
+banded400_grad_banded400_x: n=400, nnz(Q)=1198, arithmetic operations=5192, largest private buffer=400, source bytes=32992, compile seconds=0.076
+banded400_sphess_banded400_x_x: n=400, nnz(Q)=1198, arithmetic operations=15576, largest private buffer=1200, source bytes=48614, compile seconds=0.093
 ```
+
+The rebase over #313 conflicted only in `ad/forward.py`'s imports. It keeps
+`callees_of` and the invocation dispatch from #313, adding `TensorType` and
+`stored_indices` for the sparse tangent normalization. No invocation logic was
+replaced. The other conflict joined the roadmap's existing link references with
+the new #359 reference. Focused checks on the published parent passed 1,515 tests,
+including calls, mapped calls, sparse AD, workload gates and dense C snapshots.
+The KKT test now asserts that the stored-values output is a NumPy array before
+indexing it, matching #328's broader numerical return type.
