@@ -75,11 +75,12 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
     for b in call_inputs:
       for dep in deps.get(b, set()):
         last_use[dep] = max(last_use.get(dep, i), i)
+    produced_from = set(reads)
+    for r in reads:
+      produced_from.update(deps.get(r, set()))
     for b in writes:
       first_write.setdefault(b, i)
-      deps[b] = set(reads)
-      for r in reads:
-        deps[b].update(deps.get(r, set()))
+      deps[b] = set(produced_from)
     for b in writes | reads:
       last_use[b] = i
     for n in walk_program(stmt):

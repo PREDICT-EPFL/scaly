@@ -2472,6 +2472,8 @@ tests/passes/test_program.py::test_hoist_recognizes_generated_pure_callees_in_ne
 tests/passes/test_program.py::test_hoist_refuses_a_buffer_read_between_two_invariant_writes
 tests/passes/test_program.py::test_hoist_reserves_exported_names_across_repeated_loop_variables
 tests/passes/test_program.py::test_joint_mapped_products_reuse_scalar_invariants_against_numpy
+tests/passes/test_program.py::test_multi_buffer_write_keeps_previous_call_input_dependencies[names0]
+tests/passes/test_program.py::test_multi_buffer_write_keeps_previous_call_input_dependencies[names1]
 tests/passes/test_program.py::test_no_spill_when_temps_small
 tests/passes/test_program.py::test_packing_reuses_slots_and_spills
 tests/passes/test_program.py::test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order
@@ -2714,6 +2716,7 @@ tests/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[wide]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[workspace]
 tests/test_c_snapshot.py::test_generated_solver_c_matches_snapshot[solver]
+tests/test_determinism.py::test_generated_c_is_independent_of_hash_seed
 tests/test_determinism.py::test_no_module_level_counters
 tests/test_determinism.py::test_the_check_finds_a_counter[_n = 0\ndef fresh():\n  global _n\n  _n += 1\n  return f't{_n}'\n]
 tests/test_determinism.py::test_the_check_finds_a_counter[from itertools import count as fresh\n_ids = fresh()\n]
