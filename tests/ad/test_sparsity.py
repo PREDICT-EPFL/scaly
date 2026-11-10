@@ -13,6 +13,35 @@ from scaly.ad import finite_difference
 from scaly.ad.sparse import Triangle
 
 
+def test_scalar_movement_support_and_derivative_coordinates() -> None:
+  x = sc.sym("scalar_coordinate_map")
+  for source in (x, sc.const(2.0), sc.const(0.0)):
+    for expr in (source.T, source[()]):
+      assert expr.support == source.support
+      np.testing.assert_array_equal(sc.jacobian_sparsity(expr, x).to_mask(), [[source is x]])
+
+
+@pytest.mark.parametrize("operation", ["stack", "concat"])
+def test_sparsity_combines_many_parts_in_one_coordinate_batch(operation, monkeypatch) -> None:
+  import scaly.ad.sparsity as analysis
+
+  x = sc.sym("many_incidence_parts")
+  part = sc.scatter(x * sc.const(np.ones(2048)), np.arange(2048) * 2, (4096,))
+  original = analysis._incidence
+  work = 0
+
+  def incidence(shape, rows, cols):
+    nonlocal work
+    work += len(rows)
+    return original(shape, rows, cols)
+
+  monkeypatch.setattr(analysis, "_incidence", incidence)
+  pattern = sc.jacobian_sparsity(getattr(sc, operation)([part] * 64), x)
+  assert pattern.nnz == 64 * 2048
+  assert work <= 8 * pattern.nnz
+  np.testing.assert_array_equal(pattern.to_mask().reshape(-1), np.tile(np.arange(4096) % 2 == 0, 64))
+
+
 def test_value_support_filters_elementwise_derivative_relations() -> None:
   x = sc.sym("support_jac_x", 4)
   mask = sc.const([0, 2, 0, 3])

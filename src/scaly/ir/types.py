@@ -374,13 +374,22 @@ def broadcast_shape(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
   return tuple(reversed(out))
 
 
+def _array_data(value: np.ndarray) -> np.ndarray:
+  return value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in value.strides)] if value.ndim else value
+
+
+def _uniform_value(value: np.ndarray) -> np.generic | None:
+  return value.flat[0] if value.size and all(stride == 0 or dim <= 1 for stride, dim in zip(value.strides, value.shape, strict=True)) else None
+
+
 def frozen(value: Any) -> Any:
   """``value`` as an immutable copy, for an interned node's ``attrs``: a mapping becomes a read-only
   view, a list a tuple and an array a read-only copy, all the way down."""
   if isinstance(value, np.ndarray):
-    out = value.copy()
+    compact = _array_data(value)
+    out = compact.copy()
     out.flags.writeable = False
-    return out
+    return np.broadcast_to(out, value.shape) if compact.shape != value.shape else out
   if isinstance(value, Mapping):
     return MappingProxyType({k: frozen(v) for k, v in value.items()})
   if isinstance(value, list) or type(value) is tuple:

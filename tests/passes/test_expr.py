@@ -12,6 +12,24 @@ from scaly.function import Tree
 from scaly.ir.types import Lowering
 
 
+@pytest.mark.parametrize("dense_first", [False, True])
+def test_uniform_sum_keeps_numpy_signed_zero(dense_first) -> None:
+  values = np.broadcast_to(-0.0, (2048 + dense_first,))
+  first = sc.const(values.copy() if dense_first else values)
+  second = sc.const(values if dense_first else values.copy())
+  assert first is second
+  folded = sc.simplify(first.sum())
+  assert folded.value is not None
+  assert np.signbit(folded.value) == np.signbit(np.sum(values))
+
+
+def test_small_constant_scatter_still_folds() -> None:
+  values = sc.const([2.0, 1.0, 2.0, 0.0])
+  folded = sc.simplify(sc.scatter(values, [0, 1, 4, 4], (6,)))
+  assert folded.op == sc.ExprOp.CONST
+  np.testing.assert_array_equal(folded.value, [2.0, 1.0, 0.0, 0.0, 2.0, 0.0])
+
+
 def test_cse_merges_equivalent_subgraphs() -> None:
   x = sc.sym("x", 2)
   np.testing.assert_allclose(_eval("cse_eval", sc.arg("x", 2), lambda x: sc.cse((x + 1.0) * (x + 1.0)), np.array([2.0, 3.0])), np.array([9.0, 16.0]))

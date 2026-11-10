@@ -11,6 +11,45 @@ from scaly.ir.types import TensorType, frozen
 from scaly.passes.expr import cse_many
 
 
+def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> None:
+  from scaly.ir.expr import _uniform, zeros_like
+
+  shape = (100_000, 100_000)
+  zero = zeros_like(sc.sym("uniform_large", shape, dtype=sc.dtypes.float32))
+  assert zero.type.dtype == sc.dtypes.float64
+  assert zero.value is not None and zero.value.strides == (0, 0)
+  assert not zero.value.flags.writeable and zero.support == frozenset()
+  assert zero.structural_key() is zero.structural_key()
+  assert sc.cse(zero) is zero
+  assert _uniform(-0.0, (3,)) is sc.const(np.full(3, -0.0))
+  assert _uniform(0.0, (3,)) is not _uniform(-0.0, (3,))
+  tiled = np.broadcast_to([1.0, -2.0], (4, 3, 2))
+  assert sc.const(tiled) is sc.const(tiled.copy())
+  source = np.array([7.0])
+  constant = sc.const(np.broadcast_to(source, shape))
+  source[0] = 9
+  assert constant.value is not None and constant.value[99_999, 99_999] == 7
+
+
+@pytest.mark.parametrize("dense_first", [False, True])
+def test_uniform_constant_storage_does_not_depend_on_creation_order(dense_first) -> None:
+  values = np.full(2048 + dense_first, 0.1)
+  view = np.broadcast_to(values[:1], values.shape)
+  first, second = (values, view) if dense_first else (view, values)
+  constant = sc.const(first)
+  assert constant is sc.const(second)
+  assert constant.value is not None and constant.value.strides == (0,)
+  assert constant.support is None
+  assert sc.simplify(constant.sum()).value == 0.1 * values.size
+
+
+@pytest.mark.parametrize("index", [(3, slice(None)), (-4, slice(None)), (slice(None), 0), (slice(None, None, 0), slice(None))])
+def test_slice_rejects_invalid_indices_without_a_shape_allocation(index) -> None:
+  shape = (3, 0)
+  with pytest.raises((IndexError, ValueError)):
+    sc.sym("invalid_slice", shape)[index]
+
+
 def test_binary_nonlinear_method_helpers_eval() -> None:
   @sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.group(sc.arg("atan"), sc.arg("min"), sc.arg("max")), name="binary_helpers")
   def f(xy: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:

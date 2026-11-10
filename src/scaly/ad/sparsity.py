@@ -13,7 +13,7 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp
-from ..ir.support import Support, broadcast_support
+from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries
 from ..ir.types import SparsityPattern, broadcast_shape
 
 
@@ -42,6 +42,36 @@ def _check_wrt(wrt: Expr) -> None:
     raise ValueError("wrt must be an independent input from sc.sym or a Function declaration")
 
 
+def _prunable_support(expr: Expr) -> Support:
+  """Known zeros that can be removed without dropping custom derivative paths."""
+  support = expr.support
+  if support is None or len(support) == expr.size:
+    return support
+  pending = [(expr, False)]
+  while pending:
+    node, visited = pending.pop()
+    if node._custom_derivative_cache is not None:
+      continue
+    if node.op == ExprOp.STOP_GRADIENT:
+      object.__setattr__(node, "_custom_derivative_cache", False)
+      continue
+    children = node.args
+    if node.op in {ExprOp.CALL, ExprOp.VMAP}:
+      callee, output = node.attrs["callee"], node.attrs["output"]
+      if not visited and _declared(callee, output):
+        object.__setattr__(node, "_custom_derivative_cache", True)
+        continue
+      children = (*children, callee.results[output])
+    if visited:
+      object.__setattr__(node, "_custom_derivative_cache", any(child._custom_derivative_cache for child in children))
+    else:
+      pending.append((node, True))
+      pending.extend((child, False) for child in children if child._custom_derivative_cache is None)
+  if expr._custom_derivative_cache:
+    return None
+  return support
+
+
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
   """Estimate structural sparsity of ``d vec(expr) / d vec(wrt)``.
 
@@ -60,8 +90,11 @@ def column_coloring(sparsity: SparsityPattern) -> tuple[int, ...]:
   Columns of one color can be recovered from a single forward pass, so the number of colors is
   the number of passes a compact Jacobian costs.
   """
-  row_ptr, col_ind, _ = sparsity.to_csr()
-  col_ptr, row_ind, _ = sparsity.to_csc()
+  rows, inverse = np.unique(np.asarray(sparsity.rows, dtype=np.int64), return_inverse=True)
+  mask = _incidence((len(rows), sparsity.shape[1]), inverse, np.asarray(sparsity.cols, dtype=np.int64))
+  csr, csc = mask.tocsr(), mask.tocsc()
+  row_ptr, col_ind = csr.indptr, csr.indices
+  col_ptr, row_ind = csc.indptr, csc.indices
   colors: list[int] = []
   for col in range(sparsity.shape[1]):
     used = {colors[other] for row in row_ind[col_ptr[col] : col_ptr[col + 1]] for other in col_ind[row_ptr[row] : row_ptr[row + 1]] if other < col}
@@ -79,37 +112,51 @@ def color_groups(colors: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
   return tuple(tuple(i for i, c in enumerate(colors) if c == color) for color in range(max(colors) + 1))
 
 
-def _empty(shape: tuple[int, int]) -> sparse.csr_array:
-  return sparse.csr_array(shape, dtype=bool)
+def _empty(shape: tuple[int, int]) -> sparse.coo_array:
+  return sparse.coo_array(shape, dtype=bool)
 
 
-def _mask_sparsity(mask: sparse.csr_array) -> SparsityPattern:
-  mask.sort_indices()
-  coo = mask.tocoo()
-  return SparsityPattern(mask.shape, tuple(int(x) for x in coo.row), tuple(int(x) for x in coo.col))
+def _mask_sparsity(mask: sparse.coo_array) -> SparsityPattern:
+  mask.sum_duplicates()
+  return SparsityPattern(mask.shape, tuple(map(int, mask.row)), tuple(map(int, mask.col)))
 
 
-def _or(x: sparse.csr_array, y: sparse.csr_array) -> sparse.csr_array:
-  return sparse.csr_array(x + y, dtype=bool)
+def _or(x: sparse.coo_array, y: sparse.coo_array) -> sparse.coo_array:
+  return _incidence(x.shape, np.concatenate((x.row, y.row)), np.concatenate((x.col, y.col)))
 
 
-def _compose(outer: sparse.csr_array, inner: sparse.csr_array) -> sparse.csr_array:
-  return sparse.csr_array(outer @ inner, dtype=bool)
+def _compose(outer: sparse.coo_array, inner: sparse.coo_array) -> sparse.coo_array:
+  if not outer.nnz or not inner.nnz:
+    return _empty((outer.shape[0], inner.shape[1]))
+  rows, ri = np.unique(outer.row, return_inverse=True)
+  cols, ci = np.unique(inner.col, return_inverse=True)
+  domain, inverse = np.unique(np.concatenate((outer.col, inner.row)), return_inverse=True)
+  a = sparse.csr_array((outer.data, (ri, inverse[: outer.nnz])), shape=(len(rows), len(domain)))
+  b = sparse.csr_array((inner.data, (inverse[outer.nnz :], ci)), shape=(len(domain), len(cols)))
+  product = (a @ b).tocoo()
+  return _incidence((outer.shape[0], inner.shape[1]), rows[product.row], cols[product.col])
 
 
-def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sparse.csr_array:
-  return sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
+def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sparse.coo_array:
+  result = sparse.coo_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
+  result.sum_duplicates()
+  return result
 
 
-def _supported_rows(mask: sparse.csr_array, support: Support) -> sparse.csr_array:
+def _supported_rows(mask: sparse.coo_array, support: Support) -> sparse.coo_array:
   if support is None:
     return mask
-  coo = mask.tocoo()
-  keep = np.fromiter((int(row) in support for row in coo.row), dtype=bool, count=coo.nnz)
-  return sparse.csr_array((coo.data[keep], (coo.row[keep], coo.col[keep])), shape=mask.shape)
+  keep = np.isin(mask.row, support_indices(support))
+  return _incidence(mask.shape, mask.row[keep], mask.col[keep])
 
 
-def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+def _take_rows(mask: sparse.coo_array, indices: np.ndarray) -> sparse.coo_array:
+  indices = np.asarray(indices).reshape(-1)
+  incidence = _incidence((len(indices), mask.shape[0]), np.arange(len(indices)), indices)
+  return _compose(incidence, mask)
+
+
+def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
   stack = [(expr, wrt, 0)]
   while stack:
     node, variable, phase = stack.pop()
@@ -135,42 +182,43 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arra
   return memo[(expr.id, wrt.id)]
 
 
-def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
   if expr.op == ExprOp.INPUT:
-    mask = sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
-    return _supported_rows(mask, expr.support)
+    if expr.id != wrt.id:
+      return _empty((expr.size, wrt.size))
+    entries = support_indices(expr.support) if expr.support is not None else np.arange(wrt.size)
+    return _incidence((wrt.size, wrt.size), entries, entries)
   if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
     return _empty((expr.size, wrt.size))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op in COMMON_ELEMENTWISE_BINARY:
     x, y = expr.args
-    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape)
-    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape)
     rule = OP_INFO[ExprOp(expr.op)]
-    if rule.pattern_rule == "intersection":
-      xm = _supported_rows(xm, broadcast_support(y, expr.shape))
-    if rule.pattern_rule == "intersection" or rule.support_rule == "numerator":
-      ym = _supported_rows(ym, broadcast_support(x, expr.shape))
+    xs = x if rule.pattern_rule == "intersection" or rule.support_rule == "numerator" else None
+    ys = y if rule.pattern_rule == "intersection" else None
+    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape, ys)
+    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape, xs)
     return _or(xm, ym)
   if expr.op == ExprOp.SUM:
     child = _jac_mask(expr.args[0], wrt, memo)
-    incidence = _incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
-    return _compose(incidence, child)
+    return _incidence((1, wrt.size), np.zeros(child.nnz, dtype=np.int64), child.col)
   if expr.op in {ExprOp.RESHAPE, ExprOp.PRINT}:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op == ExprOp.TRANSPOSE:
-    order = np.arange(expr.size).reshape(expr.args[0].shape).transpose(expr.attrs["axes"]).reshape(-1)
-    return _jac_mask(expr.args[0], wrt, memo)[order]
+    child = _jac_mask(expr.args[0], wrt, memo)
+    rows = transpose_entries(child.row, expr.args[0].shape, expr.attrs["axes"])
+    return _incidence((expr.size, wrt.size), rows, child.col)
   if expr.op == ExprOp.SLICE:
-    order = np.arange(expr.args[0].size).reshape(expr.args[0].shape)[expr.attrs["index"]].reshape(-1)
-    return _jac_mask(expr.args[0], wrt, memo)[order]
+    child = _jac_mask(expr.args[0], wrt, memo)
+    rows, keep = slice_entries(child.row, expr.args[0].shape, expr.attrs["index"])
+    return _incidence((expr.size, wrt.size), rows, child.col[keep])
   if expr.op == ExprOp.GATHER:
-    return _jac_mask(expr.args[0], wrt, memo)[expr.attrs["indices"].reshape(-1)]
+    return _take_rows(_jac_mask(expr.args[0], wrt, memo), expr.attrs["indices"])
   if expr.op == ExprOp.SCATTER:
     child = _jac_mask(expr.args[0], wrt, memo)
     indices = expr.attrs["indices"].reshape(-1)
-    return _compose(_incidence((expr.size, child.shape[0]), indices, np.arange(child.shape[0])), child)
+    return _incidence((expr.size, wrt.size), indices[child.row], child.col)
   if expr.op == ExprOp.STACK:
     return _stack_mask(expr, wrt, memo)
   if expr.op == ExprOp.CONCAT:
@@ -188,70 +236,95 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
 
 
-def _broadcast_mask(mask: sparse.csr_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> sparse.csr_array:
-  if in_shape == out_shape:
-    return mask
+def _broadcast_mask(
+  mask: sparse.coo_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...], coefficient: Expr | None = None
+) -> sparse.coo_array:
+  shape = (int(np.prod(out_shape, dtype=np.int64)), mask.shape[1])
+  if not mask.nnz:
+    return _empty(shape)
+  support = coefficient.support if coefficient is not None else None
+  if coefficient is not None and support is not None and len(support) == coefficient.size:
+    support = None
+  if in_shape == out_shape and (support is None or coefficient is not None and coefficient.shape == out_shape):
+    return _supported_rows(mask, support)
   _ = broadcast_shape(in_shape, out_shape)
-  if not in_shape:
-    return mask[np.zeros(int(np.prod(out_shape, dtype=int)), dtype=np.int64)]
-  source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
-  return mask[np.broadcast_to(source, out_shape).reshape(-1)]
+  if coefficient is not None and support is not None:
+    if not len(support):
+      return _empty(shape)
+    bound_cost = len(support) * (shape[0] // coefficient.size)
+    mask_cost = mask.nnz * (shape[0] // int(np.prod(in_shape, dtype=np.int64)))
+    if bound_cost < mask_cost:
+      rows = broadcast_entries(support_indices(support), coefficient.shape, out_shape)[0]
+      source = project_entries(rows, in_shape, out_shape)
+      return _compose(_incidence((shape[0], mask.shape[0]), rows, source), mask)
+  rows, source = (mask.row, np.arange(mask.nnz)) if in_shape == out_shape else broadcast_entries(mask.row, in_shape, out_shape)
+  if coefficient is not None and support is not None:
+    keep = np.isin(project_entries(rows, coefficient.shape, out_shape), support_indices(support))
+    rows, source = rows[keep], source[keep]
+  return _incidence(shape, rows, mask.col[source])
 
 
-def _combine_children(
-  expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array], child_index: np.ndarray, elem_index: np.ndarray
-) -> sparse.csr_array:
-  offsets = np.cumsum([0, *(arg.size for arg in expr.args[:-1])])
-  children = sparse.vstack([_jac_mask(arg, wrt, memo) for arg in expr.args], format="csr")
-  return children[offsets[child_index] + elem_index]
+def _stack_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+  return _combine_children(expr, wrt, memo, stack=True)
 
 
-def _stack_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
-  base = expr.args[0].shape
+def _concat_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+  return _combine_children(expr, wrt, memo, stack=False)
+
+
+def _combine_children(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array], *, stack: bool) -> sparse.coo_array:
+  rows, cols = [], []
+  offset = 0
   axis = expr.attrs.get("axis", 0)
-  child = np.stack([np.full(base, i, dtype=np.int64) for i in range(len(expr.args))], axis=axis).reshape(-1)
-  elem = np.stack([np.arange(arg.size, dtype=np.int64).reshape(base) for arg in expr.args], axis=axis).reshape(-1)
-  return _combine_children(expr, wrt, memo, child, elem)
+  for i, arg in enumerate(expr.args):
+    mask = _jac_mask(arg, wrt, memo)
+    coords = list(np.unravel_index(mask.row, arg.shape)) if arg.shape else []
+    if stack:
+      coords.insert(axis, np.full(mask.nnz, i))
+    else:
+      coords[axis] = coords[axis] + offset
+      offset += arg.shape[axis]
+    rows.append(np.ravel_multi_index(tuple(coords), expr.shape))
+    cols.append(mask.col)
+  return _incidence((expr.size, wrt.size), np.concatenate(rows), np.concatenate(cols))
 
 
-def _concat_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
-  axis = expr.attrs.get("axis", 0)
-  child = np.concatenate([np.full(arg.shape, i, dtype=np.int64) for i, arg in enumerate(expr.args)], axis=axis).reshape(-1)
-  elem = np.concatenate([np.arange(arg.size, dtype=np.int64).reshape(arg.shape) for arg in expr.args], axis=axis).reshape(-1)
-  return _combine_children(expr, wrt, memo, child, elem)
-
-
-def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
   x, y = expr.args
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
-  x_rows: list[int] = []
-  y_rows: list[int] = []
-  x_out_rows: list[int] = []
-  y_out_rows: list[int] = []
-  if len(x.shape) == 1 and len(y.shape) == 1:
-    entries = ((0, k, k) for k in range(x.shape[0]))
-  elif len(x.shape) == 2 and len(y.shape) == 1:
-    entries = ((i, i * x.shape[1] + k, k) for i in range(x.shape[0]) for k in range(x.shape[1]))
-  elif len(x.shape) == 1 and len(y.shape) == 2:
-    entries = ((j, k, k * y.shape[1] + j) for j in range(y.shape[1]) for k in range(x.shape[0]))
-  elif len(x.shape) == 2 and len(y.shape) == 2:
-    entries = (
-      (i * y.shape[1] + j, i * x.shape[1] + k, k * y.shape[1] + j) for i in range(x.shape[0]) for j in range(y.shape[1]) for k in range(x.shape[1])
-    )
-  else:  # pragma: no cover
-    raise NotImplementedError(f"matmul sparsity for {x.shape} @ {y.shape}")
-  xs, ys = x.support, y.support
-  for out, xr, yr in entries:
-    if ys is None or yr in ys:
-      x_out_rows.append(out)
-      x_rows.append(xr)
-    if xs is None or xr in xs:
-      y_out_rows.append(out)
-      y_rows.append(yr)
-  return _or(
-    _compose(_incidence((expr.size, x.size), np.asarray(x_out_rows, dtype=np.int64), np.asarray(x_rows, dtype=np.int64)), xm),
-    _compose(_incidence((expr.size, y.size), np.asarray(y_out_rows, dtype=np.int64), np.asarray(y_rows, dtype=np.int64)), ym),
-  )
+  m, k = (1, x.shape[0]) if len(x.shape) == 1 else x.shape
+  n = 1 if len(y.shape) == 1 else y.shape[1]
+
+  def contribution(mask: sparse.coo_array, other: Expr, *, left: bool) -> sparse.coo_array:
+    if not mask.nnz:
+      return _empty((expr.size, wrt.size))
+    active, inverse = np.unique(mask.row, return_inverse=True)
+    support = other.support
+    if support is None:
+      count = n if left else m
+      source = np.repeat(np.arange(len(active)), count)
+      destination = np.tile(np.arange(count), len(active))
+      output = (active[source] // k) * n + destination if left else destination * n + active[source] % n
+    else:
+      entries = support_indices(support)
+      # Boolean join over contraction coordinates and compact active entry labels.
+      if left:
+        a = _incidence((len(active), k), np.arange(len(active)), active % k).tocsr()
+        b = _incidence((k, n), entries // n, entries % n).tocsr()
+        joined = (a @ b).tocoo()
+        source = joined.row
+        output = (active[source] // k) * n + joined.col
+      else:
+        a = _incidence((m, k), entries // k, entries % k).tocsr()
+        b = _incidence((k, len(active)), active // n, np.arange(len(active))).tocsr()
+        joined = (a @ b).tocoo()
+        source = joined.col
+        output = joined.row * n + active[source] % n
+    local = _incidence((expr.size, len(active)), output, source)
+    compressed = _incidence((len(active), wrt.size), inverse, mask.col)
+    return _compose(local, compressed)
+
+  return _or(contribution(xm, y, left=True), contribution(ym, x, left=False))
 
 
 def _declared(callee: Any, output: int) -> bool:
@@ -259,7 +332,7 @@ def _declared(callee: Any, output: int) -> bool:
   return callee.rules is not None and output < len(callee.outputs)
 
 
-def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
   """The pattern of ``callee``'s result ``output`` in its input ``k``.
 
   A function with custom rules has the pattern it declares, or a dense one; its body need not
@@ -269,12 +342,12 @@ def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], s
   if not _declared(callee, output):
     return _jac_mask(out, formal, memo)
   if callee.rules.sparsity is None:
-    return sparse.csr_array(np.ones((out.size, formal.size), dtype=bool))
+    return sparse.coo_array(np.ones((out.size, formal.size), dtype=bool))
   pattern = callee.rules.sparsity[output][k]
   return _incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
 
 
-def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
   callee = expr.attrs["callee"]
   ret = _empty((expr.size, wrt.size))
   for k, actual in enumerate(expr.args):
@@ -284,7 +357,7 @@ def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arr
   return ret
 
 
-def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
   callee = expr.attrs["callee"]
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
@@ -301,7 +374,7 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arr
     start, stride = starts[formal_idx], strides[formal_idx]
     window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
     windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)
-    tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="csr")
+    tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="coo")
     ret = _or(ret, _compose(tiled, _compose(windows, outer_dep)))
   return ret
 
@@ -371,5 +444,5 @@ def _symmetrize_sparsity(sparsity: SparsityPattern) -> SparsityPattern:
     raise ValueError(f"symmetric sparsity requires a square pattern, got {sparsity.shape}")
   rows = np.asarray(sparsity.rows, dtype=np.int64)
   cols = np.asarray(sparsity.cols, dtype=np.int64)
-  mask = sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=sparsity.shape)
-  return _mask_sparsity(mask.maximum(mask.T))
+  mask = sparse.coo_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=sparsity.shape)
+  return _mask_sparsity(_or(mask, sparse.coo_array(mask.T)))

@@ -18,6 +18,101 @@ from scaly.ir.expr import ExprOp, topo
 from scaly.passes.lowering import lower_function
 
 
+def test_reverse_compaction_checks_each_callee_once(monkeypatch) -> None:
+  import scaly.ad.sparsity as analysis
+
+  @sc.function(sc.arg("x", 2))
+  def masked(x):
+    return x * sc.const([1.0, 0.0])
+
+  count = 0
+  original = analysis._declared
+
+  def declared(callee, output):
+    nonlocal count
+    count += 1
+    return original(callee, output)
+
+  monkeypatch.setattr(analysis, "_declared", declared)
+  cot = sc.sym("memoized_custom_reachability", 2)
+  for _ in range(300):
+    cot = masked(cot)
+    assert analysis._prunable_support(cot) == frozenset({0})
+  assert count <= 301
+
+
+@pytest.mark.parametrize("mapping", ["slice", "broadcast"])
+@pytest.mark.parametrize("wrapper", ["direct", "nested", "mapped"])
+def test_reverse_coordinate_maps_preserve_custom_cotangent_derivatives(mapping, wrapper) -> None:
+  from scaly.ad.forward import jvp
+  from scaly.ad.reverse import vjp
+  from scaly.function.concrete import ConcreteFunction
+
+  @sc.function(sc.arg("x", 2))
+  def masked(x):
+    return x * sc.const([0.0, 1.0])
+
+  @sc.function()
+  def identity(x, dx):
+    return dx
+
+  custom = sc.custom_derivative(masked, jvp=identity, sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool))
+
+  @sc.function(sc.arg("x", 2))
+  def nested(x):
+    return custom(x)
+
+  x = sc.sym("custom_coordinate_x", (2, 2))
+  cot = sc.vmap(custom, 2)(x) if wrapper == "mapped" else sc.stack([(nested if wrapper == "nested" else custom)(x[i]) for i in range(2)])
+  if mapping == "slice":
+    z = sc.sym("custom_coordinate_z", (3, 2))
+    expr = z[:2]
+    expected_pattern = np.vstack((np.eye(4, dtype=bool), np.zeros((2, 4), dtype=bool)))
+    expected = np.vstack((np.ones((2, 2)), np.zeros((1, 2))))
+  else:
+    z = sc.sym("custom_coordinate_z", (1, 2))
+    expr = z + sc.const(np.zeros((2, 2)))
+    expected_pattern = np.tile(np.eye(2, dtype=bool), (1, 2))
+    expected = np.full((1, 2), 2.0)
+  pulled = vjp((expr,), (z,), (cot,))[0]
+  np.testing.assert_array_equal(sc.jacobian_sparsity(pulled, x).to_mask(), expected_pattern)
+  delta = jvp(pulled, x, sc.const(np.ones((2, 2))))
+  fn = ConcreteFunction._from_exprs("custom_coordinate_delta", [x], [delta], ["x"], ["delta"])
+  np.testing.assert_array_equal(fn(np.arange(4.0).reshape(2, 2)), expected)
+
+
+def test_hessian_preserves_custom_derivative_inside_slice_cotangent() -> None:
+  @sc.function(sc.arg("x", 2))
+  def masked(x):
+    return x * sc.const([0.0, 1.0])
+
+  @sc.function()
+  def identity(x, dx):
+    return dx
+
+  custom = sc.custom_derivative(masked, jvp=identity, sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool))
+
+  @sc.function(sc.arg("x", 2))
+  def square(x):
+    return x * x
+
+  @sc.function()
+  def forward(x):
+    return x * x, x
+
+  @sc.function()
+  def backward(res, cot):
+    return custom(res) * cot
+
+  ruled = sc.custom_derivative(square, fwd=forward, bwd=backward)
+
+  @sc.function(sc.arg("x", 3))
+  def sliced(x):
+    return ruled(x[:2]).sum()
+
+  np.testing.assert_array_equal(sc.hessian(sliced)(np.array([3.0, 4.0, 5.0])), np.diag([1.0, 1.0, 0.0]))
+
+
 def _reached(fn) -> list:
   """Every ConcreteFunction ``fn`` reaches through calls and maps, ``fn`` first."""
   found, todo = [], [as_concrete(fn)]

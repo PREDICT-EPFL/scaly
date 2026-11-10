@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack
+from ..ir.expr import Expr, ExprOp, _uniform, concat, gather, scatter, stack
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
@@ -45,7 +45,7 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
 
 
 def _zero_tangent(expr: Expr, nseed: int) -> Expr:
-  return Expr.const(np.zeros((nseed, *expr.shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype, lowering=expr.lowering)
+  return _uniform(0, (nseed, *expr.shape), dtype=expr.type.dtype, lowering=expr.lowering)
 
 
 def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, callee: str = "<top-level>") -> tuple[Expr | None, ...]:
@@ -107,7 +107,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         } and all(t.op == ExprOp.CONST for t in d):
           tangent = simplify_cse_fixpoint(tangent)
       if tangent is not None and tangent.shape != (nseed, *expr.shape):
-        tangent = tangent * Expr.const(np.ones((1, *expr.shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
+        tangent = tangent * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype)
     tangents[expr.id] = None if tangent is not None and _is_zero_const(tangent) else tangent
   return tuple(tangents[out.id] if tangents[out.id] is not None or not out.type.dtype.is_floating else _zero_tangent(out, nseed) for out in outputs)
 
@@ -116,7 +116,7 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   args = expr.args
   op = expr.op
   if op == ExprOp.SUM:
-    ones = Expr.const(np.ones(args[0].size, dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
+    ones = _uniform(1, (args[0].size,), dtype=expr.type.dtype)
     return d[0].reshape((nseed, args[0].size)) @ ones
   if op == ExprOp.RESHAPE:
     return d[0].reshape((nseed, *expr.shape))

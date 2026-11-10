@@ -20,6 +20,65 @@ def _masked(name, mask) -> Expr:
   return sc.sym(name, np.shape(mask)) * sc.const(mask, dtype=sc.dtypes.float64)
 
 
+@pytest.mark.parametrize("operation", ["stack", "concat"])
+def test_support_combines_many_parts_in_one_coordinate_batch(operation, monkeypatch) -> None:
+  part = sc.scatter(sc.sym("many_support_entries", 2048), np.arange(2048) * 2, (4096,))
+  support = part.support
+  assert support is not None
+  cls = type(support)
+  original = cls.__or__
+  work = 0
+
+  def union(left, right):
+    nonlocal work
+    work += len(left) + len(right)
+    return original(left, right)
+
+  monkeypatch.setattr(cls, "__or__", union)
+  result = getattr(sc, operation)([part] * 64).support
+  assert result is not None and len(result) == 64 * 2048
+  assert work <= 3 * len(result)
+
+
+def test_compact_support_set_operations_and_sorted_coordinates() -> None:
+  from scaly.ir.support import support_indices
+
+  support = sc.scatter(sc.sym("set_operations", 2048), np.arange(2048) * 2, (4096,)).support
+  assert support is not None
+  reference, small = frozenset(range(0, 4096, 2)), frozenset({8, 1000, 1001})
+  assert support - small == reference - small
+  assert small - support == small - reference
+  assert support ^ small == reference ^ small
+  assert hash(support) == hash(reference)
+  np.testing.assert_array_equal(support_indices(frozenset([1000, 8])), [8, 1000])
+
+
+@pytest.mark.parametrize("width", [400, 2048])
+def test_growing_support_caches_use_compact_immutable_coordinates(width) -> None:
+  from dataclasses import FrozenInstanceError
+  from scaly.ir.support import support_indices
+
+  x = sc.sym("support_partial_sums", width)
+  parts = [sc.scatter(x, np.arange(width) + i * 4096, (100_000_000,)) for i in range(40)]
+  sums = [parts[0]]
+  for part in parts[1:]:
+    sums.append(sums[-1] + part)
+  assert sums[-1].support is not None and len(sums[-1].support) == 40 * width
+  for node in sums:
+    support = node.support
+    assert support is not None
+    if len(support) <= 1024:
+      assert isinstance(support, frozenset)
+      continue
+    coordinates = support_indices(support)
+    assert coordinates.nbytes == len(support) * 8
+    with pytest.raises(ValueError):
+      coordinates.flags.writeable = True
+    with pytest.raises((FrozenInstanceError, AttributeError)):
+      support._entries = np.array([])
+  assert (sums[-1] + sums[-1]).support is sums[-1].support
+
+
 def test_support_is_lazy_cached_immutable_and_outside_identity() -> None:
   x = sc.sym("support_cache", 3)
   expr = x * sc.const([0, 1, 0])

@@ -17,6 +17,18 @@ from scaly.ir.program import ProgramOp
 _HAVE_CC = find_c_compiler() is not None
 
 
+def test_large_uniform_constants_lower_without_expanding_initializers() -> None:
+  from scaly.ir.expr import _uniform
+  from scaly.ir.program import walk_program
+
+  value = _uniform(2.5, (2048,))
+  fn = ConcreteFunction._from_exprs("uniform_lowering", [], [value], [], ["out"])
+  program = lower_function(fn)
+  tables = [node.attrs["values"] for node in walk_program(program) if node.op == ProgramOp.BUFFER and "values" in node.attrs]
+  assert sum(map(len, tables)) <= 1
+  np.testing.assert_array_equal(fn(), np.full(2048, 2.5))
+
+
 # One entry per matmul loop shape: the serial dot, a blocked mat@vec (two four-row blocks, a block plus
 # a tail of rows, a tail only), the reduction-outermost vec@mat and mat@mat, and the two transpose folds.
 _MATMUL_CASES = {

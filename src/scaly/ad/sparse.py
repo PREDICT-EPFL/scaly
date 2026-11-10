@@ -316,7 +316,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     contributes = np.zeros(nnz, dtype=bool)
     if in_window.any():
       valid = np.flatnonzero(in_window)
-      contributes[valid] = np.asarray(local_mask[lr_global[valid], lc_arr[valid]]).reshape(-1)
+      contributes[valid] = np.asarray(local_mask.tocsr()[lr_global[valid], lc_arr[valid]]).reshape(-1)
     if not contributes.any():
       continue
     contrib_idx = np.flatnonzero(contributes)

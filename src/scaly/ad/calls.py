@@ -77,7 +77,7 @@ def body_cotangents(callee: Any, output: int, wrts: Sequence[int], cotangent: Ex
 
 
 def _is_zero_const(expr: Expr) -> bool:
-  return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
+  return expr.op == ExprOp.CONST and expr.value is not None and expr.support == frozenset()
 
 
 def _call_jvp_many_function(
@@ -198,7 +198,7 @@ def _local_seed_colors(
 ) -> tuple[csr_array, tuple[int, ...]] | None:
   mask = _callee_mask(callee, output, formal, {})
   colors = column_coloring(_mask_sparsity(mask)) if mask.nnz else ()
-  return (mask, colors) if colors and max(colors) + 1 < nseed else None
+  return (mask.tocsr(), colors) if colors and max(colors) + 1 < nseed else None
 
 
 def _vmap_jvp_many(
