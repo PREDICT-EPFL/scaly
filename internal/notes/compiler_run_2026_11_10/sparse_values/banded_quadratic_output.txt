@@ -1,0 +1,1413 @@
+
+===== 1. Q's type and stored pattern =====
+TensorType(shape=(5, 5), dtype=DType(name='float64', bits=64, c_type='double', is_floating=True, is_integer=False, is_bool=False, is_unsigned=False), diff=True, pattern=CanonicalPattern(shape=(5, 5), rows=(0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4), cols=(0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4), digest='e18432b20450a1fedb2085f16cca61f5d37771d8daaa7f9ba6f7c0ecfdd5d810')) 
+rows (0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4) 
+cols (0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4) 
+layout SparseLayout(pattern=CanonicalPattern(shape=(5, 5), rows=(0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4), cols=(0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4), digest='e18432b20450a1fedb2085f16cca61f5d37771d8daaa7f9ba6f7c0ecfdd5d810'), format='csc', order=(0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12))
+
+===== 2. f: each node's support =====
+INPUT      shape=(5,)  support=unknown (any entry)
+INPUT      shape=(5, 5) pattern nnz=13  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+MATMUL     shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
+MATMUL     shape=()  support=1 of 1: [0]
+
+===== 3. f: traced expression =====
+expr.module {
+  expr.func @f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%f: tensor<float64 diff>) {
+    %0 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
+    %1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+    %2 = expr.matmul(%1, %0) : tensor<5xfloat64 diff>
+    %3 = expr.matmul(%0, %2) : tensor<float64 diff>
+    expr.return %3
+  }
+}
+
+===== 3b. f: simplified expression =====
+%0 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
+%1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%2 = expr.matmul(%1, %0) : tensor<5xfloat64 diff>
+%3 = expr.matmul(%0, %2) : tensor<float64 diff>
+expr.return %3
+
+===== 4. f: program =====
+prog.module {function_symbols=[[@f, "f"]]} {
+  prog.proc @f(%Q: memref<13xfloat64>, %x: memref<5xfloat64>, %f_2: memref<1xfloat64>) {device=host, input_count=2, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
+    %k1 = prog.buffer : memref<13xint64, constant> = dense<[0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12]>
+    %s0 = prog.buffer : memref<5xfloat64, private>
+    prog.for %zero_t2 = 0 to 5 step 1 {kind=global} {
+      prog.store 0, %s0[%zero_t2] : float64
+    }
+    %k3 = prog.buffer : memref<13xint64, constant> = dense<[0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4]>
+    %k4 = prog.buffer : memref<13xint64, constant> = dense<[0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4]>
+    prog.for %product_t2 = 0 to 13 step 1 {kind=reduce} {
+      %v0 = prog.assign prog.load %k3[%product_t2] : int64 {declare=True}
+      prog.store prog.add(prog.load %s0[%v0], prog.mul(prog.load %Q[prog.load %k1[%product_t2]], prog.load %x[prog.load %k4[%product_t2]])), %s0[%v0] : float64
+    }
+    prog.store 0, %f_2[0] : float64
+    prog.for %k_f_2 = 0 to 5 step 1 {kind=reduce} {
+      prog.store prog.add(prog.load %f_2[0], prog.mul(prog.load %x[%k_f_2], prog.load %s0[%k_f_2])), %f_2[0] : float64
+    }
+  }
+}
+
+===== 5. f: generated C =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c f.c
+ * clang -O3 -fno-math-errno -c f.c
+ * Link with: -lm
+ */
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
+#ifndef SCALY_LANES
+#if defined(__AVX512F__)
+#define SCALY_LANES 8
+#elif defined(__AVX__) || (defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS >= 256)
+#define SCALY_LANES 4
+#elif defined(__SSE2__) || defined(__aarch64__)
+#define SCALY_LANES 2
+#else
+#define SCALY_LANES 1
+#endif
+#endif
+#if SCALY_LANES != 1 && SCALY_LANES != 2 && SCALY_LANES != 4 && SCALY_LANES != 8
+#error "SCALY_LANES must be 1, 2, 4 or 8"
+#endif
+#if defined(__AVX512F__)
+#define SCALY_REGISTER_SLOTS 256
+#elif defined(__AVX__) || defined(__aarch64__)
+#define SCALY_REGISTER_SLOTS 64
+#elif defined(__SSE2__)
+#define SCALY_REGISTER_SLOTS 32
+#else
+#define SCALY_REGISTER_SLOTS 16
+#endif
+#define SCALY_WIDTH_8_8_8_8 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8))
+typedef double lanes_8_8_8_8_vec __attribute__((vector_size(8 * SCALY_WIDTH_8_8_8_8)));
+typedef lanes_8_8_8_8_vec lanes_8_8_8_8_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) void lanes_8_8_8_8_vec_st(double* p, lanes_8_8_8_8_vec v, long long n) {
+  if (n == SCALY_WIDTH_8_8_8_8) *(lanes_8_8_8_8_vec_mem*)p = v;
+  else for (long long i = 0; i < n; ++i) p[i] = v[i];
+}
+
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s0) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* f_2, const double* s0, const double* x) {
+  lanes_8_8_8_8_vec l;
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 4 ? (i + k) : 4)];
+  lanes_8_8_8_8_vec l_2;
+  if (n == SCALY_WIDTH_8_8_8_8) l_2 = *(const lanes_8_8_8_8_vec_mem*)(&x[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2[k] = x[((i + k) < 4 ? (i + k) : 4)];
+  for (long long k = 0; k < n; ++k) f_2[0] = (f_2[0] + (l_2[k] * l[k]));
+}
+int f(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  static const int64_t k1[13] = {0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12};
+  double s0[5];
+  static const int64_t k3[13] = {0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4};
+  static const int64_t k4[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+  for (long long zero_t2_start = 0; zero_t2_start <= 5 - SCALY_WIDTH_8_8_8_8; zero_t2_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_1(zero_t2_start, SCALY_WIDTH_8_8_8_8, s0);
+  }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_1(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0);
+#endif
+  for (long long product_t2 = 0; product_t2 < 13; ++product_t2) {
+    int64_t v0 = k3[product_t2];
+    s0[v0] = (s0[v0] + (arg[0][k1[product_t2]] * arg[1][k4[product_t2]]));
+  }
+  res[0][0] = 0.0;
+  for (long long k_f_2_start = 0; k_f_2_start <= 5 - SCALY_WIDTH_8_8_8_8; k_f_2_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(k_f_2_start, SCALY_WIDTH_8_8_8_8, res[0], s0, arg[1]);
+  }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, res[0], s0, arg[1]);
+#endif
+  return SCALY_SUCCESS;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+
+===== 5b. f: generated C header =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c f.c
+ * clang -O3 -fno-math-errno -c f.c
+ * Link with: -lm
+ */
+#pragma once
+
+#include <stddef.h>
+
+#ifndef SCALY_SUCCESS
+#define SCALY_SUCCESS 0
+#endif
+#ifndef SCALY_ERR_NULL_ABI
+#define SCALY_ERR_NULL_ABI 1
+#endif
+#ifndef SCALY_ERR_NULL_WORK
+#define SCALY_ERR_NULL_WORK 2
+#endif
+#ifndef SCALY_ERR_NULL_RESULT
+#define SCALY_ERR_NULL_RESULT 3
+#endif
+#ifndef SCALY_ERR_NULL_INPUT
+#define SCALY_ERR_NULL_INPUT 4
+#endif
+
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+
+#define f_SZ_ARG 2
+#define f_SZ_RES 1
+#define f_SZ_IW 0
+#define f_SZ_W 0
+
+// The pointer ABI for f.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int f(const double** arg, double** res, int* iw, double* w, int mem);
+#ifdef __cplusplus
+}
+#endif
+
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[13]; } f_Q_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } f_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } f_f__t;
+typedef struct { SCALY_ALIGNAS(16) double data[f_SZ_W > 0 ? f_SZ_W : 1]; } f_workspace_t;
+static inline int f_call(const f_Q_t* Q, const f_x_t* x, f_f__t* f_, f_workspace_t* workspace) {
+  const double* arg[f_SZ_ARG > 0 ? f_SZ_ARG : 1] = {Q->data, x->data};
+  double* res[f_SZ_RES > 0 ? f_SZ_RES : 1] = {f_->data};
+  return f(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+}
+
+// Sparse leaf metadata: one local pattern shared by all batch entries.
+#define f_Q_NROW 5
+#define f_Q_NCOL 5
+#define f_Q_NNZ 13
+#define f_Q_NDIM 2
+#define f_Q_STORAGE_SIZE 13
+static const int f_Q_shape[2] = {5, 5};
+static const int f_Q_csc_col_ptr[6] = {0, 2, 5, 8, 11, 13};
+static const int f_Q_csc_row_ind[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+
+
+===== 6. f: numerical call vs NumPy =====
+140.0
+
+===== 2. grad_f: each node's support =====
+CONST      shape=()  support=1 of 1: [0]
+INPUT      shape=(5, 5) pattern nnz=13  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+INPUT      shape=(5,)  support=unknown (any entry)
+MATMUL     shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
+MUL        shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
+VALUES     shape=(13,)  support=13 of 13: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+RESHAPE    shape=(13,)  support=13 of 13: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+SCATTER    shape=(25,)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+RESHAPE    shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+TRANSPOSE  shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+MUL        shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
+MATMUL     shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
+ADD        shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
+
+===== 3. grad_f: traced expression =====
+expr.module {
+  expr.func @grad_f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%grad_f_x: tensor<5xfloat64 diff>) {
+    %0 = expr.const {lowering="auto", value=1.} : tensor<float64>
+    %1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+    %2 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
+    %3 = expr.matmul(%1, %2) : tensor<5xfloat64 diff>
+    %4 = expr.mul(%0, %3) : tensor<5xfloat64 diff>
+    %5 = expr.values(%1) : tensor<13xfloat64 diff>
+    %6 = expr.reshape(%5) {shape=[13]} : tensor<13xfloat64 diff>
+    %7 = expr.scatter(%6) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
+    %8 = expr.reshape(%7) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
+    %9 = expr.transpose(%8) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+    %10 = expr.mul(%0, %2) : tensor<5xfloat64 diff>
+    %11 = expr.matmul(%9, %10) : tensor<5xfloat64 diff>
+    %12 = expr.add(%4, %11) : tensor<5xfloat64 diff>
+    expr.return %12
+  }
+}
+
+===== 3b. grad_f: simplified expression =====
+%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%1 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
+%2 = expr.matmul(%0, %1) : tensor<5xfloat64 diff>
+%3 = expr.values(%0) : tensor<13xfloat64 diff>
+%4 = expr.scatter(%3) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
+%5 = expr.reshape(%4) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
+%6 = expr.matmul(%1, %5) : tensor<5xfloat64 diff>
+%7 = expr.add(%2, %6) : tensor<5xfloat64 diff>
+expr.return %7
+
+===== 4. grad_f: program =====
+prog.module {function_symbols=[[@grad_f, "grad_f"]]} {
+  prog.proc @grad_f(%Q: memref<13xfloat64>, %x: memref<5xfloat64>, %grad_f_x: memref<5xfloat64>) {device=host, input_count=2, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
+    %s0 = prog.buffer : memref<13xfloat64, private>
+    %k1 = prog.buffer : memref<13xint64, constant> = dense<[0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12]>
+    prog.for %layout_1 = 0 to 13 step 1 {kind=global} {
+      prog.store prog.load %Q[prog.load %k1[%layout_1]], %s0[%layout_1] : float64
+    }
+    %s1 = prog.buffer : memref<5xfloat64, private>
+    prog.for %zero_t2 = 0 to 5 step 1 {kind=global} {
+      prog.store 0, %s1[%zero_t2] : float64
+    }
+    %k3 = prog.buffer : memref<13xint64, constant> = dense<[0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4]>
+    %k4 = prog.buffer : memref<13xint64, constant> = dense<[0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4]>
+    prog.for %product_t2 = 0 to 13 step 1 {kind=reduce} {
+      %v0 = prog.assign prog.load %k3[%product_t2] : int64 {declare=True}
+      prog.store prog.add(prog.load %s1[%v0], prog.mul(prog.load %s0[%product_t2], prog.load %x[prog.load %k4[%product_t2]])), %s1[%v0] : float64
+    }
+    %s2 = prog.buffer : memref<25xfloat64, private>
+    prog.for %z_t5 = 0 to 25 step 1 {kind=global} {
+      prog.store 0, %s2[%z_t5] : float64
+    }
+    %k6 = prog.buffer : memref<13xint64, constant> = dense<[0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]>
+    prog.for %i_t5 = 0 to 13 step 1 {kind=global} {
+      prog.store prog.load %s0[%i_t5], %s2[prog.load %k6[%i_t5]] : float64
+    }
+    prog.for %j_t7 = 0 to 5 step 1 {kind=global} {
+      prog.store 0, %s0[%j_t7] : float64
+    }
+    prog.for %k_t7 = 0 to 5 step 1 {kind=reduce} {
+      prog.for %j_t7 = 0 to 5 step 1 {kind=global} {
+        prog.store prog.add(prog.load %s0[%j_t7], prog.mul(prog.load %x[%k_t7], prog.load %s2[prog.add(prog.mul(%k_t7, 5), %j_t7)])), %s0[%j_t7] : float64
+      }
+    }
+    prog.for %i_grad_f_x = 0 to 5 step 1 {kind=global} {
+      prog.store prog.add(prog.load %s1[%i_grad_f_x], prog.load %s0[%i_grad_f_x]), %grad_f_x[%i_grad_f_x] : float64
+    }
+  }
+}
+
+===== 5. grad_f: generated C =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c grad_f.c
+ * clang -O3 -fno-math-errno -c grad_f.c
+ * Link with: -lm
+ */
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
+#ifndef SCALY_LANES
+#if defined(__AVX512F__)
+#define SCALY_LANES 8
+#elif defined(__AVX__) || (defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS >= 256)
+#define SCALY_LANES 4
+#elif defined(__SSE2__) || defined(__aarch64__)
+#define SCALY_LANES 2
+#else
+#define SCALY_LANES 1
+#endif
+#endif
+#if SCALY_LANES != 1 && SCALY_LANES != 2 && SCALY_LANES != 4 && SCALY_LANES != 8
+#error "SCALY_LANES must be 1, 2, 4 or 8"
+#endif
+#if defined(__AVX512F__)
+#define SCALY_REGISTER_SLOTS 256
+#elif defined(__AVX__) || defined(__aarch64__)
+#define SCALY_REGISTER_SLOTS 64
+#elif defined(__SSE2__)
+#define SCALY_REGISTER_SLOTS 32
+#else
+#define SCALY_REGISTER_SLOTS 16
+#endif
+#define SCALY_WIDTH_8_8_8_8 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8))
+typedef double lanes_8_8_8_8_vec __attribute__((vector_size(8 * SCALY_WIDTH_8_8_8_8)));
+typedef lanes_8_8_8_8_vec lanes_8_8_8_8_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) void lanes_8_8_8_8_vec_st(double* p, lanes_8_8_8_8_vec v, long long n) {
+  if (n == SCALY_WIDTH_8_8_8_8) *(lanes_8_8_8_8_vec_mem*)p = v;
+  else for (long long i = 0; i < n; ++i) p[i] = v[i];
+}
+
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, const double* Q, const int64_t* k1, double* s0) {
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = Q[k1[((i + k) < 12 ? (i + k) : 12)]];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], l, n);
+}
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* s1) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s1[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, double* s2) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s2[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_4(long long i, long long n, double* s0) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_5(long long i, long long n, double* s0, const double* s2, const double* x, int64_t k_t7) {
+  lanes_8_8_8_8_vec l;
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 4 ? (i + k) : 4)];
+  double l_2s[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = x[k_t7];
+  lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
+  lanes_8_8_8_8_vec l_3;
+  if (n == SCALY_WIDTH_8_8_8_8) l_3 = *(const lanes_8_8_8_8_vec_mem*)(&s2[((k_t7 * 5) + i)]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_3[k] = s2[((k_t7 * 5) + ((i + k) < 4 ? (i + k) : 4))];
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], (l + (l_2 * l_3)), n);
+}
+static inline __attribute__((always_inline)) void lanes_6(long long i, long long n, double* grad_f_x, const double* s0, const double* s1) {
+  lanes_8_8_8_8_vec l;
+  if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s1[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s1[((i + k) < 4 ? (i + k) : 4)];
+  lanes_8_8_8_8_vec l_2;
+  if (n == SCALY_WIDTH_8_8_8_8) l_2 = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2[k] = s0[((i + k) < 4 ? (i + k) : 4)];
+  lanes_8_8_8_8_vec_st(&grad_f_x[(i) + 0], (l + l_2), n);
+}
+int grad_f(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  double s0[13];
+  static const int64_t k1[13] = {0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12};
+  double s1[5];
+  static const int64_t k3[13] = {0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4};
+  static const int64_t k4[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+  double s2[25];
+  static const int64_t k6[13] = {0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24};
+  for (long long layout_1_start = 0; layout_1_start <= 13 - SCALY_WIDTH_8_8_8_8; layout_1_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_1(layout_1_start, SCALY_WIDTH_8_8_8_8, arg[0], k1, s0);
+  }
+#if (13 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_1(13 - 13 % SCALY_WIDTH_8_8_8_8, 13 % SCALY_WIDTH_8_8_8_8, arg[0], k1, s0);
+#endif
+  for (long long zero_t2_start = 0; zero_t2_start <= 5 - SCALY_WIDTH_8_8_8_8; zero_t2_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(zero_t2_start, SCALY_WIDTH_8_8_8_8, s1);
+  }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s1);
+#endif
+  for (long long product_t2 = 0; product_t2 < 13; ++product_t2) {
+    int64_t v0 = k3[product_t2];
+    s1[v0] = (s1[v0] + (s0[product_t2] * arg[1][k4[product_t2]]));
+  }
+  for (long long z_t5_start = 0; z_t5_start <= 25 - SCALY_WIDTH_8_8_8_8; z_t5_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_3(z_t5_start, SCALY_WIDTH_8_8_8_8, s2);
+  }
+#if (25 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_3(25 - 25 % SCALY_WIDTH_8_8_8_8, 25 % SCALY_WIDTH_8_8_8_8, s2);
+#endif
+  for (long long i_t5 = 0; i_t5 < 13; ++i_t5) {
+    s2[k6[i_t5]] = s0[i_t5];
+  }
+  for (long long j_t7_start = 0; j_t7_start <= 5 - SCALY_WIDTH_8_8_8_8; j_t7_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_4(j_t7_start, SCALY_WIDTH_8_8_8_8, s0);
+  }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_4(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0);
+#endif
+  for (long long k_t7 = 0; k_t7 < 5; ++k_t7) {
+    for (long long j_t7_start_2 = 0; j_t7_start_2 <= 5 - SCALY_WIDTH_8_8_8_8; j_t7_start_2 += SCALY_WIDTH_8_8_8_8) {
+      lanes_5(j_t7_start_2, SCALY_WIDTH_8_8_8_8, s0, s2, arg[1], k_t7);
+    }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+    lanes_5(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0, s2, arg[1], k_t7);
+#endif
+  }
+  for (long long i_grad_f_x_start = 0; i_grad_f_x_start <= 5 - SCALY_WIDTH_8_8_8_8; i_grad_f_x_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_6(i_grad_f_x_start, SCALY_WIDTH_8_8_8_8, res[0], s0, s1);
+  }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_6(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, res[0], s0, s1);
+#endif
+  return SCALY_SUCCESS;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+
+===== 5b. grad_f: generated C header =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c grad_f.c
+ * clang -O3 -fno-math-errno -c grad_f.c
+ * Link with: -lm
+ */
+#pragma once
+
+#include <stddef.h>
+
+#ifndef SCALY_SUCCESS
+#define SCALY_SUCCESS 0
+#endif
+#ifndef SCALY_ERR_NULL_ABI
+#define SCALY_ERR_NULL_ABI 1
+#endif
+#ifndef SCALY_ERR_NULL_WORK
+#define SCALY_ERR_NULL_WORK 2
+#endif
+#ifndef SCALY_ERR_NULL_RESULT
+#define SCALY_ERR_NULL_RESULT 3
+#endif
+#ifndef SCALY_ERR_NULL_INPUT
+#define SCALY_ERR_NULL_INPUT 4
+#endif
+
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+
+#define grad_f_SZ_ARG 2
+#define grad_f_SZ_RES 1
+#define grad_f_SZ_IW 0
+#define grad_f_SZ_W 0
+
+// The pointer ABI for grad_f.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int grad_f(const double** arg, double** res, int* iw, double* w, int mem);
+#ifdef __cplusplus
+}
+#endif
+
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[13]; } grad_f_Q_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } grad_f_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } grad_f_grad_f_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[grad_f_SZ_W > 0 ? grad_f_SZ_W : 1]; } grad_f_workspace_t;
+static inline int grad_f_call(const grad_f_Q_t* Q, const grad_f_x_t* x, grad_f_grad_f_x_t* grad_f_x, grad_f_workspace_t* workspace) {
+  const double* arg[grad_f_SZ_ARG > 0 ? grad_f_SZ_ARG : 1] = {Q->data, x->data};
+  double* res[grad_f_SZ_RES > 0 ? grad_f_SZ_RES : 1] = {grad_f_x->data};
+  return grad_f(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+}
+
+// Sparse leaf metadata: one local pattern shared by all batch entries.
+#define grad_f_Q_NROW 5
+#define grad_f_Q_NCOL 5
+#define grad_f_Q_NNZ 13
+#define grad_f_Q_NDIM 2
+#define grad_f_Q_STORAGE_SIZE 13
+static const int grad_f_Q_shape[2] = {5, 5};
+static const int grad_f_Q_csc_col_ptr[6] = {0, 2, 5, 8, 11, 13};
+static const int grad_f_Q_csc_row_ind[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+
+
+===== 6. grad_f: numerical call vs NumPy =====
+[ 4.  8. 12. 16. 32.]
+
+===== 2. hess_f: each node's support =====
+INPUT      shape=(5, 5) pattern nnz=13  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+VALUES     shape=(13,)  support=13 of 13: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+SCATTER    shape=(25,)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+RESHAPE    shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+CONST      shape=(5, 5)  support=5 of 25: [0, 6, 12, 18, 24]
+MATMUL     shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+TRANSPOSE  shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+TRANSPOSE  shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+MATMUL     shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+TRANSPOSE  shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+ADD        shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+TRANSPOSE  shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+
+===== 3. hess_f: traced expression =====
+expr.module {
+  expr.func @hess_f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%hess_f_x_x: tensor<5x5xfloat64 diff>) {
+    %0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+    %1 = expr.values(%0) : tensor<13xfloat64 diff>
+    %2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
+    %3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
+    %4 = expr.const {lowering="auto", value=[[1., 0., 0., 0., 0.],
+     [0., 1., 0., 0., 0.],
+     [0., 0., 1., 0., 0.],
+     [0., 0., 0., 1., 0.],
+     [0., 0., 0., 0., 1.]]} : tensor<5x5xfloat64>
+    %5 = expr.matmul(%3, %4) : tensor<5x5xfloat64 diff>
+    %6 = expr.transpose(%5) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+    %7 = expr.transpose(%3) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+    %8 = expr.matmul(%7, %4) : tensor<5x5xfloat64 diff>
+    %9 = expr.transpose(%8) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+    %10 = expr.add(%6, %9) : tensor<5x5xfloat64 diff>
+    %11 = expr.transpose(%10) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+    expr.return %11
+  }
+}
+
+===== 3b. hess_f: simplified expression =====
+%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%1 = expr.values(%0) : tensor<13xfloat64 diff>
+%2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
+%3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
+%4 = expr.const {lowering="auto", value=[[1., 0., 0., 0., 0.],
+ [0., 1., 0., 0., 0.],
+ [0., 0., 1., 0., 0.],
+ [0., 0., 0., 1., 0.],
+ [0., 0., 0., 0., 1.]]} : tensor<5x5xfloat64>
+%5 = expr.matmul(%3, %4) : tensor<5x5xfloat64 diff>
+%6 = expr.transpose(%5) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+%7 = expr.transpose(%3) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+%8 = expr.matmul(%7, %4) : tensor<5x5xfloat64 diff>
+%9 = expr.transpose(%8) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+%10 = expr.add(%6, %9) : tensor<5x5xfloat64 diff>
+%11 = expr.transpose(%10) {axes=[1, 0]} : tensor<5x5xfloat64 diff>
+expr.return %11
+
+===== 4. hess_f: program =====
+prog.module {function_symbols=[[@hess_f, "hess_f"]]} {
+  prog.proc @hess_f(%Q: memref<13xfloat64>, %x: memref<5xfloat64>, %hess_f_x_x: memref<5x5xfloat64>) {device=host, input_count=2, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
+    %k1 = prog.buffer : memref<13xint64, constant> = dense<[0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12]>
+    %s0 = prog.buffer : memref<25xfloat64, private>
+    prog.for %z_t2 = 0 to 25 step 1 {kind=global} {
+      prog.store 0, %s0[%z_t2] : float64
+    }
+    %k3 = prog.buffer : memref<13xint64, constant> = dense<[0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]>
+    prog.for %i_t2 = 0 to 13 step 1 {kind=global} {
+      prog.store prog.load %Q[prog.load %k1[%i_t2]], %s0[prog.load %k3[%i_t2]] : float64
+    }
+    %k4 = prog.buffer : memref<5x5xfloat64, constant> = dense<[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]>
+    %s1 = prog.buffer : memref<25xfloat64, private>
+    prog.for %i_t5 = 0 to 5 step 1 {kind=global} {
+      %acc_t5_0 = prog.assign 0 : float64 {declare=True}
+      %acc_t5_1 = prog.assign 0 : float64 {declare=True}
+      %acc_t5_2 = prog.assign 0 : float64 {declare=True}
+      %acc_t5_3 = prog.assign 0 : float64 {declare=True}
+      %acc_t5_4 = prog.assign 0 : float64 {declare=True}
+      prog.for %k_t5 = 0 to 5 step 1 {kind=reduce} {
+        %acc_t5_0 = prog.assign prog.add(%acc_t5_0, prog.mul(prog.load %s0[prog.add(prog.mul(%i_t5, 5), %k_t5)], prog.load %k4[prog.mul(%k_t5, 5)])) : float64
+        %acc_t5_1 = prog.assign prog.add(%acc_t5_1, prog.mul(prog.load %s0[prog.add(prog.mul(%i_t5, 5), %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 5), 1)])) : float64
+        %acc_t5_2 = prog.assign prog.add(%acc_t5_2, prog.mul(prog.load %s0[prog.add(prog.mul(%i_t5, 5), %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 5), 2)])) : float64
+        %acc_t5_3 = prog.assign prog.add(%acc_t5_3, prog.mul(prog.load %s0[prog.add(prog.mul(%i_t5, 5), %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 5), 3)])) : float64
+        %acc_t5_4 = prog.assign prog.add(%acc_t5_4, prog.mul(prog.load %s0[prog.add(prog.mul(%i_t5, 5), %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 5), 4)])) : float64
+      }
+      prog.store %acc_t5_0, %s1[prog.mul(%i_t5, 5)] : float64
+      prog.store %acc_t5_1, %s1[prog.add(prog.mul(%i_t5, 5), 1)] : float64
+      prog.store %acc_t5_2, %s1[prog.add(prog.mul(%i_t5, 5), 2)] : float64
+      prog.store %acc_t5_3, %s1[prog.add(prog.mul(%i_t5, 5), 3)] : float64
+      prog.store %acc_t5_4, %s1[prog.add(prog.mul(%i_t5, 5), 4)] : float64
+    }
+    %s2 = prog.buffer : memref<25xfloat64, private>
+    prog.for %i_t6_0 = 0 to 5 step 1 {kind=global} {
+      prog.for %i_t6 = 0 to 5 step 1 {kind=global} {
+        prog.store prog.load %s1[prog.add(prog.mul(%i_t6, 5), %i_t6_0)], %s2[prog.add(prog.mul(%i_t6_0, 5), %i_t6)] : float64
+      }
+    }
+    prog.for %i_t7_0 = 0 to 5 step 1 {kind=global} {
+      prog.for %i_t7 = 0 to 5 step 1 {kind=global} {
+        prog.store prog.load %s0[prog.add(prog.mul(%i_t7, 5), %i_t7_0)], %s1[prog.add(prog.mul(%i_t7_0, 5), %i_t7)] : float64
+      }
+    }
+    prog.for %i_t8 = 0 to 5 step 1 {kind=global} {
+      %acc_t8_0 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_1 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_2 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_3 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_4 = prog.assign 0 : float64 {declare=True}
+      prog.for %k_t8 = 0 to 5 step 1 {kind=reduce} {
+        %acc_t8_0 = prog.assign prog.add(%acc_t8_0, prog.mul(prog.load %s1[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %k4[prog.mul(%k_t8, 5)])) : float64
+        %acc_t8_1 = prog.assign prog.add(%acc_t8_1, prog.mul(prog.load %s1[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %k4[prog.add(prog.mul(%k_t8, 5), 1)])) : float64
+        %acc_t8_2 = prog.assign prog.add(%acc_t8_2, prog.mul(prog.load %s1[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %k4[prog.add(prog.mul(%k_t8, 5), 2)])) : float64
+        %acc_t8_3 = prog.assign prog.add(%acc_t8_3, prog.mul(prog.load %s1[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %k4[prog.add(prog.mul(%k_t8, 5), 3)])) : float64
+        %acc_t8_4 = prog.assign prog.add(%acc_t8_4, prog.mul(prog.load %s1[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %k4[prog.add(prog.mul(%k_t8, 5), 4)])) : float64
+      }
+      prog.store %acc_t8_0, %s0[prog.mul(%i_t8, 5)] : float64
+      prog.store %acc_t8_1, %s0[prog.add(prog.mul(%i_t8, 5), 1)] : float64
+      prog.store %acc_t8_2, %s0[prog.add(prog.mul(%i_t8, 5), 2)] : float64
+      prog.store %acc_t8_3, %s0[prog.add(prog.mul(%i_t8, 5), 3)] : float64
+      prog.store %acc_t8_4, %s0[prog.add(prog.mul(%i_t8, 5), 4)] : float64
+    }
+    prog.for %i_t9_0 = 0 to 5 step 1 {kind=global} {
+      prog.for %i_t9 = 0 to 5 step 1 {kind=global} {
+        prog.store prog.load %s0[prog.add(prog.mul(%i_t9, 5), %i_t9_0)], %s1[prog.add(prog.mul(%i_t9_0, 5), %i_t9)] : float64
+      }
+    }
+    prog.for %i_hess_f_x_x_0 = 0 to 5 step 1 {kind=global} {
+      prog.for %i_hess_f_x_x = 0 to 5 step 1 {kind=global} {
+        %v0 = prog.assign prog.add(prog.mul(%i_hess_f_x_x, 5), %i_hess_f_x_x_0) : int64 {declare=True}
+        prog.store prog.add(prog.load %s2[%v0], prog.load %s1[%v0]), %hess_f_x_x[prog.add(prog.mul(%i_hess_f_x_x_0, 5), %i_hess_f_x_x)] : float64
+      }
+    }
+  }
+}
+
+===== 5. hess_f: generated C =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c hess_f.c
+ * clang -O3 -fno-math-errno -c hess_f.c
+ * Link with: -lm
+ */
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
+#ifndef SCALY_LANES
+#if defined(__AVX512F__)
+#define SCALY_LANES 8
+#elif defined(__AVX__) || (defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS >= 256)
+#define SCALY_LANES 4
+#elif defined(__SSE2__) || defined(__aarch64__)
+#define SCALY_LANES 2
+#else
+#define SCALY_LANES 1
+#endif
+#endif
+#if SCALY_LANES != 1 && SCALY_LANES != 2 && SCALY_LANES != 4 && SCALY_LANES != 8
+#error "SCALY_LANES must be 1, 2, 4 or 8"
+#endif
+#if defined(__AVX512F__)
+#define SCALY_REGISTER_SLOTS 256
+#elif defined(__AVX__) || defined(__aarch64__)
+#define SCALY_REGISTER_SLOTS 64
+#elif defined(__SSE2__)
+#define SCALY_REGISTER_SLOTS 32
+#else
+#define SCALY_REGISTER_SLOTS 16
+#endif
+#define SCALY_WIDTH_8_8_8_8 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8))
+typedef double lanes_8_8_8_8_vec __attribute__((vector_size(8 * SCALY_WIDTH_8_8_8_8)));
+typedef lanes_8_8_8_8_vec lanes_8_8_8_8_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) void lanes_8_8_8_8_vec_st(double* p, lanes_8_8_8_8_vec v, long long n) {
+  if (n == SCALY_WIDTH_8_8_8_8) *(lanes_8_8_8_8_vec_mem*)p = v;
+  else for (long long i = 0; i < n; ++i) p[i] = v[i];
+}
+
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s0) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const double* s1, double* s2, int64_t i_t6_0) {
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s1[((((i + k) < 4 ? (i + k) : 4) * 5) + i_t6_0)];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  lanes_8_8_8_8_vec_st(&s2[(((i_t6_0 * 5) + i)) + 0], l, n);
+}
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, const double* s0, double* s1, int64_t i_t7_0) {
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s0[((((i + k) < 4 ? (i + k) : 4) * 5) + i_t7_0)];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  lanes_8_8_8_8_vec_st(&s1[(((i_t7_0 * 5) + i)) + 0], l, n);
+}
+static inline __attribute__((always_inline)) void lanes_4(long long i, long long n, const double* s0, double* s1, int64_t i_t9_0) {
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s0[((((i + k) < 4 ? (i + k) : 4) * 5) + i_t9_0)];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  lanes_8_8_8_8_vec_st(&s1[(((i_t9_0 * 5) + i)) + 0], l, n);
+}
+static inline __attribute__((always_inline)) void lanes_5(long long i, long long n, double* hess_f_x_x, const double* s1, const double* s2, int64_t i_hess_f_x_x_0) {
+  int64_t v0[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) v0[k] = ((((i + k) < 4 ? (i + k) : 4) * 5) + i_hess_f_x_x_0);
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s2[v0[k]];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  double l_2s[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = s1[v0[k]];
+  lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
+  lanes_8_8_8_8_vec_st(&hess_f_x_x[(((i_hess_f_x_x_0 * 5) + i)) + 0], (l + l_2), n);
+}
+int hess_f(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  static const int64_t k1[13] = {0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12};
+  double s0[25];
+  static const int64_t k3[13] = {0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24};
+  static const double k4[25] = {1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1};
+  double s1[25];
+  double s2[25];
+  for (long long z_t2_start = 0; z_t2_start <= 25 - SCALY_WIDTH_8_8_8_8; z_t2_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_1(z_t2_start, SCALY_WIDTH_8_8_8_8, s0);
+  }
+#if (25 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_1(25 - 25 % SCALY_WIDTH_8_8_8_8, 25 % SCALY_WIDTH_8_8_8_8, s0);
+#endif
+  for (long long i_t2 = 0; i_t2 < 13; ++i_t2) {
+    s0[k3[i_t2]] = arg[0][k1[i_t2]];
+  }
+  for (long long i_t5 = 0; i_t5 < 5; ++i_t5) {
+    double acc_t5_0 = 0.0;
+    double acc_t5_1 = 0.0;
+    double acc_t5_2 = 0.0;
+    double acc_t5_3 = 0.0;
+    double acc_t5_4 = 0.0;
+    for (long long k_t5 = 0; k_t5 < 5; ++k_t5) {
+      acc_t5_0 = (acc_t5_0 + (s0[((i_t5 * 5) + k_t5)] * k4[(k_t5 * 5)]));
+      acc_t5_1 = (acc_t5_1 + (s0[((i_t5 * 5) + k_t5)] * k4[((k_t5 * 5) + 1)]));
+      acc_t5_2 = (acc_t5_2 + (s0[((i_t5 * 5) + k_t5)] * k4[((k_t5 * 5) + 2)]));
+      acc_t5_3 = (acc_t5_3 + (s0[((i_t5 * 5) + k_t5)] * k4[((k_t5 * 5) + 3)]));
+      acc_t5_4 = (acc_t5_4 + (s0[((i_t5 * 5) + k_t5)] * k4[((k_t5 * 5) + 4)]));
+    }
+    s1[(i_t5 * 5)] = acc_t5_0;
+    s1[((i_t5 * 5) + 1)] = acc_t5_1;
+    s1[((i_t5 * 5) + 2)] = acc_t5_2;
+    s1[((i_t5 * 5) + 3)] = acc_t5_3;
+    s1[((i_t5 * 5) + 4)] = acc_t5_4;
+  }
+  for (long long i_t6_0 = 0; i_t6_0 < 5; ++i_t6_0) {
+    for (long long i_t6_start = 0; i_t6_start <= 5 - SCALY_WIDTH_8_8_8_8; i_t6_start += SCALY_WIDTH_8_8_8_8) {
+      lanes_2(i_t6_start, SCALY_WIDTH_8_8_8_8, s1, s2, i_t6_0);
+    }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+    lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s1, s2, i_t6_0);
+#endif
+  }
+  for (long long i_t7_0 = 0; i_t7_0 < 5; ++i_t7_0) {
+    for (long long i_t7_start = 0; i_t7_start <= 5 - SCALY_WIDTH_8_8_8_8; i_t7_start += SCALY_WIDTH_8_8_8_8) {
+      lanes_3(i_t7_start, SCALY_WIDTH_8_8_8_8, s0, s1, i_t7_0);
+    }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+    lanes_3(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0, s1, i_t7_0);
+#endif
+  }
+  for (long long i_t8 = 0; i_t8 < 5; ++i_t8) {
+    double acc_t8_0 = 0.0;
+    double acc_t8_1 = 0.0;
+    double acc_t8_2 = 0.0;
+    double acc_t8_3 = 0.0;
+    double acc_t8_4 = 0.0;
+    for (long long k_t8 = 0; k_t8 < 5; ++k_t8) {
+      acc_t8_0 = (acc_t8_0 + (s1[((i_t8 * 5) + k_t8)] * k4[(k_t8 * 5)]));
+      acc_t8_1 = (acc_t8_1 + (s1[((i_t8 * 5) + k_t8)] * k4[((k_t8 * 5) + 1)]));
+      acc_t8_2 = (acc_t8_2 + (s1[((i_t8 * 5) + k_t8)] * k4[((k_t8 * 5) + 2)]));
+      acc_t8_3 = (acc_t8_3 + (s1[((i_t8 * 5) + k_t8)] * k4[((k_t8 * 5) + 3)]));
+      acc_t8_4 = (acc_t8_4 + (s1[((i_t8 * 5) + k_t8)] * k4[((k_t8 * 5) + 4)]));
+    }
+    s0[(i_t8 * 5)] = acc_t8_0;
+    s0[((i_t8 * 5) + 1)] = acc_t8_1;
+    s0[((i_t8 * 5) + 2)] = acc_t8_2;
+    s0[((i_t8 * 5) + 3)] = acc_t8_3;
+    s0[((i_t8 * 5) + 4)] = acc_t8_4;
+  }
+  for (long long i_t9_0 = 0; i_t9_0 < 5; ++i_t9_0) {
+    for (long long i_t9_start = 0; i_t9_start <= 5 - SCALY_WIDTH_8_8_8_8; i_t9_start += SCALY_WIDTH_8_8_8_8) {
+      lanes_4(i_t9_start, SCALY_WIDTH_8_8_8_8, s0, s1, i_t9_0);
+    }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+    lanes_4(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0, s1, i_t9_0);
+#endif
+  }
+  for (long long i_hess_f_x_x_0 = 0; i_hess_f_x_x_0 < 5; ++i_hess_f_x_x_0) {
+    for (long long i_hess_f_x_x_start = 0; i_hess_f_x_x_start <= 5 - SCALY_WIDTH_8_8_8_8; i_hess_f_x_x_start += SCALY_WIDTH_8_8_8_8) {
+      lanes_5(i_hess_f_x_x_start, SCALY_WIDTH_8_8_8_8, res[0], s1, s2, i_hess_f_x_x_0);
+    }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+    lanes_5(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, res[0], s1, s2, i_hess_f_x_x_0);
+#endif
+  }
+  return SCALY_SUCCESS;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+
+===== 5b. hess_f: generated C header =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c hess_f.c
+ * clang -O3 -fno-math-errno -c hess_f.c
+ * Link with: -lm
+ */
+#pragma once
+
+#include <stddef.h>
+
+#ifndef SCALY_SUCCESS
+#define SCALY_SUCCESS 0
+#endif
+#ifndef SCALY_ERR_NULL_ABI
+#define SCALY_ERR_NULL_ABI 1
+#endif
+#ifndef SCALY_ERR_NULL_WORK
+#define SCALY_ERR_NULL_WORK 2
+#endif
+#ifndef SCALY_ERR_NULL_RESULT
+#define SCALY_ERR_NULL_RESULT 3
+#endif
+#ifndef SCALY_ERR_NULL_INPUT
+#define SCALY_ERR_NULL_INPUT 4
+#endif
+
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+
+#define hess_f_SZ_ARG 2
+#define hess_f_SZ_RES 1
+#define hess_f_SZ_IW 0
+#define hess_f_SZ_W 0
+
+// The pointer ABI for hess_f.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int hess_f(const double** arg, double** res, int* iw, double* w, int mem);
+#ifdef __cplusplus
+}
+#endif
+
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[13]; } hess_f_Q_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } hess_f_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[25]; } hess_f_hess_f_x_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[hess_f_SZ_W > 0 ? hess_f_SZ_W : 1]; } hess_f_workspace_t;
+static inline int hess_f_call(const hess_f_Q_t* Q, const hess_f_x_t* x, hess_f_hess_f_x_x_t* hess_f_x_x, hess_f_workspace_t* workspace) {
+  const double* arg[hess_f_SZ_ARG > 0 ? hess_f_SZ_ARG : 1] = {Q->data, x->data};
+  double* res[hess_f_SZ_RES > 0 ? hess_f_SZ_RES : 1] = {hess_f_x_x->data};
+  return hess_f(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+}
+
+// Sparse leaf metadata: one local pattern shared by all batch entries.
+#define hess_f_Q_NROW 5
+#define hess_f_Q_NCOL 5
+#define hess_f_Q_NNZ 13
+#define hess_f_Q_NDIM 2
+#define hess_f_Q_STORAGE_SIZE 13
+static const int hess_f_Q_shape[2] = {5, 5};
+static const int hess_f_Q_csc_col_ptr[6] = {0, 2, 5, 8, 11, 13};
+static const int hess_f_Q_csc_row_ind[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+
+
+===== 6. hess_f: numerical call vs NumPy =====
+[[ 8. -2.  0.  0.  0.]
+ [-2.  8. -2.  0.  0.]
+ [ 0. -2.  8. -2.  0.]
+ [ 0.  0. -2.  8. -2.]
+ [ 0.  0.  0. -2.  8.]]
+
+===== 2. sparse_hess_f: each node's support =====
+INPUT      shape=(5, 5) pattern nnz=13  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+VALUES     shape=(13,)  support=13 of 13: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+SCATTER    shape=(25,)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+RESHAPE    shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]
+CONST      shape=(5, 3)  support=5 of 15: [0, 4, 6, 11, 12]
+MATMUL     shape=(5, 3)  support=11 of 15: [0, 1, 3, 4, 6, 7, 8, 9, 11, 12, 14]
+TRANSPOSE  shape=(3, 5)  support=11 of 15: [0, 1, 2, 3, 4, 5, 6, 7, 12, 13, 14]
+CONST      shape=(3, 5)  support=5 of 15: [0, 2, 4, 6, 13]
+MATMUL     shape=(3, 5)  support=11 of 15: [0, 1, 2, 3, 4, 5, 6, 7, 12, 13, 14]
+ADD        shape=(3, 5)  support=11 of 15: [0, 1, 2, 3, 4, 5, 6, 7, 12, 13, 14]
+TRANSPOSE  shape=(5, 3)  support=11 of 15: [0, 1, 3, 4, 6, 7, 8, 9, 11, 12, 14]
+GATHER     shape=(13,)  support=13 of 13: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+===== 3. sparse_hess_f: traced expression =====
+expr.module {
+  expr.func @sparse_hess_f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%sphess_f_x_x: tensor<13xfloat64 diff>) {
+    %0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+    %1 = expr.values(%0) : tensor<13xfloat64 diff>
+    %2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
+    %3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
+    %4 = expr.const {lowering="auto", value=[[1., 0., 0.],
+     [0., 1., 0.],
+     [1., 0., 0.],
+     [0., 0., 1.],
+     [1., 0., 0.]]} : tensor<5x3xfloat64>
+    %5 = expr.matmul(%3, %4) : tensor<5x3xfloat64 diff>
+    %6 = expr.transpose(%5) {axes=[1, 0]} : tensor<3x5xfloat64 diff>
+    %7 = expr.const {lowering="auto", value=[[1., 0., 1., 0., 1.],
+     [0., 1., 0., 0., 0.],
+     [0., 0., 0., 1., 0.]]} : tensor<3x5xfloat64>
+    %8 = expr.matmul(%7, %3) : tensor<3x5xfloat64 diff>
+    %9 = expr.add(%6, %8) : tensor<3x5xfloat64 diff>
+    %10 = expr.transpose(%9) {axes=[1, 0]} : tensor<5x3xfloat64 diff>
+    %11 = expr.gather(%10) {indices=[ 0,  1,  1, ..., 14, 14, 12]} : tensor<13xfloat64 diff>
+    expr.return %11
+  }
+}
+
+===== 3b. sparse_hess_f: simplified expression =====
+%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%1 = expr.values(%0) : tensor<13xfloat64 diff>
+%2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
+%3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
+%4 = expr.const {lowering="auto", value=[[1., 0., 0.],
+ [0., 1., 0.],
+ [1., 0., 0.],
+ [0., 0., 1.],
+ [1., 0., 0.]]} : tensor<5x3xfloat64>
+%5 = expr.matmul(%3, %4) : tensor<5x3xfloat64 diff>
+%6 = expr.transpose(%5) {axes=[1, 0]} : tensor<3x5xfloat64 diff>
+%7 = expr.const {lowering="auto", value=[[1., 0., 1., 0., 1.],
+ [0., 1., 0., 0., 0.],
+ [0., 0., 0., 1., 0.]]} : tensor<3x5xfloat64>
+%8 = expr.matmul(%7, %3) : tensor<3x5xfloat64 diff>
+%9 = expr.add(%6, %8) : tensor<3x5xfloat64 diff>
+%10 = expr.transpose(%9) {axes=[1, 0]} : tensor<5x3xfloat64 diff>
+%11 = expr.gather(%10) {indices=[ 0,  1,  1, ..., 14, 14, 12]} : tensor<13xfloat64 diff>
+expr.return %11
+
+===== 4. sparse_hess_f: program =====
+prog.module {function_symbols=[[@sparse_hess_f, "sparse_hess_f"]]} {
+  prog.proc @sparse_hess_f(%Q: memref<13xfloat64>, %x: memref<5xfloat64>, %sphess_f_x_x: memref<13xfloat64>) {device=host, input_count=2, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
+    %k1 = prog.buffer : memref<13xint64, constant> = dense<[0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12]>
+    %s0 = prog.buffer : memref<25xfloat64, private>
+    prog.for %z_t2 = 0 to 25 step 1 {kind=global} {
+      prog.store 0, %s0[%z_t2] : float64
+    }
+    %k3 = prog.buffer : memref<13xint64, constant> = dense<[0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24]>
+    prog.for %i_t2 = 0 to 13 step 1 {kind=global} {
+      prog.store prog.load %Q[prog.load %k1[%i_t2]], %s0[prog.load %k3[%i_t2]] : float64
+    }
+    %k4 = prog.buffer : memref<5x3xfloat64, constant> = dense<[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]>
+    %s1 = prog.buffer : memref<15xfloat64, private>
+    %acc_t5_0 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_1 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_2 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_3 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_4 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_5 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_6 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_7 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_8 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_9 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_10 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_11 = prog.assign 0 : float64 {declare=True}
+    prog.for %k_t5 = 0 to 5 step 1 {kind=reduce} {
+      %acc_t5_0 = prog.assign prog.add(%acc_t5_0, prog.mul(prog.load %s0[%k_t5], prog.load %k4[prog.mul(%k_t5, 3)])) : float64
+      %acc_t5_1 = prog.assign prog.add(%acc_t5_1, prog.mul(prog.load %s0[%k_t5], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 1)])) : float64
+      %acc_t5_2 = prog.assign prog.add(%acc_t5_2, prog.mul(prog.load %s0[%k_t5], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 2)])) : float64
+      %acc_t5_3 = prog.assign prog.add(%acc_t5_3, prog.mul(prog.load %s0[prog.add(5, %k_t5)], prog.load %k4[prog.mul(%k_t5, 3)])) : float64
+      %acc_t5_4 = prog.assign prog.add(%acc_t5_4, prog.mul(prog.load %s0[prog.add(5, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 1)])) : float64
+      %acc_t5_5 = prog.assign prog.add(%acc_t5_5, prog.mul(prog.load %s0[prog.add(5, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 2)])) : float64
+      %acc_t5_6 = prog.assign prog.add(%acc_t5_6, prog.mul(prog.load %s0[prog.add(10, %k_t5)], prog.load %k4[prog.mul(%k_t5, 3)])) : float64
+      %acc_t5_7 = prog.assign prog.add(%acc_t5_7, prog.mul(prog.load %s0[prog.add(10, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 1)])) : float64
+      %acc_t5_8 = prog.assign prog.add(%acc_t5_8, prog.mul(prog.load %s0[prog.add(10, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 2)])) : float64
+      %acc_t5_9 = prog.assign prog.add(%acc_t5_9, prog.mul(prog.load %s0[prog.add(15, %k_t5)], prog.load %k4[prog.mul(%k_t5, 3)])) : float64
+      %acc_t5_10 = prog.assign prog.add(%acc_t5_10, prog.mul(prog.load %s0[prog.add(15, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 1)])) : float64
+      %acc_t5_11 = prog.assign prog.add(%acc_t5_11, prog.mul(prog.load %s0[prog.add(15, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 2)])) : float64
+    }
+    prog.store_pair %acc_t5_0, %acc_t5_1, %s1[0] : float64
+    prog.store_pair %acc_t5_2, %acc_t5_3, %s1[2] : float64
+    prog.store_pair %acc_t5_4, %acc_t5_5, %s1[4] : float64
+    prog.store_pair %acc_t5_6, %acc_t5_7, %s1[6] : float64
+    prog.store_pair %acc_t5_8, %acc_t5_9, %s1[8] : float64
+    prog.store_pair %acc_t5_10, %acc_t5_11, %s1[10] : float64
+    %acc_t5_0_2 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_1_2 = prog.assign 0 : float64 {declare=True}
+    %acc_t5_2_2 = prog.assign 0 : float64 {declare=True}
+    prog.for %k_t5 = 0 to 5 step 1 {kind=reduce} {
+      %acc_t5_0_2 = prog.assign prog.add(%acc_t5_0_2, prog.mul(prog.load %s0[prog.add(20, %k_t5)], prog.load %k4[prog.mul(%k_t5, 3)])) : float64
+      %acc_t5_1_2 = prog.assign prog.add(%acc_t5_1_2, prog.mul(prog.load %s0[prog.add(20, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 1)])) : float64
+      %acc_t5_2_2 = prog.assign prog.add(%acc_t5_2_2, prog.mul(prog.load %s0[prog.add(20, %k_t5)], prog.load %k4[prog.add(prog.mul(%k_t5, 3), 2)])) : float64
+    }
+    prog.store_pair %acc_t5_0_2, %acc_t5_1_2, %s1[12] : float64
+    prog.store %acc_t5_2_2, %s1[14] : float64
+    %s2 = prog.buffer : memref<15xfloat64, private>
+    prog.for %i_t6_0 = 0 to 3 step 1 {kind=global} {
+      prog.for %i_t6 = 0 to 5 step 1 {kind=global} {
+        prog.store prog.load %s1[prog.add(prog.mul(%i_t6, 3), %i_t6_0)], %s2[prog.add(prog.mul(%i_t6_0, 5), %i_t6)] : float64
+      }
+    }
+    %k7 = prog.buffer : memref<3x5xfloat64, constant> = dense<[1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]>
+    prog.for %i_t8 = 0 to 3 step 1 {kind=global} {
+      %acc_t8_0 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_1 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_2 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_3 = prog.assign 0 : float64 {declare=True}
+      %acc_t8_4 = prog.assign 0 : float64 {declare=True}
+      prog.for %k_t8 = 0 to 5 step 1 {kind=reduce} {
+        %acc_t8_0 = prog.assign prog.add(%acc_t8_0, prog.mul(prog.load %k7[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %s0[prog.mul(%k_t8, 5)])) : float64
+        %acc_t8_1 = prog.assign prog.add(%acc_t8_1, prog.mul(prog.load %k7[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %s0[prog.add(prog.mul(%k_t8, 5), 1)])) : float64
+        %acc_t8_2 = prog.assign prog.add(%acc_t8_2, prog.mul(prog.load %k7[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %s0[prog.add(prog.mul(%k_t8, 5), 2)])) : float64
+        %acc_t8_3 = prog.assign prog.add(%acc_t8_3, prog.mul(prog.load %k7[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %s0[prog.add(prog.mul(%k_t8, 5), 3)])) : float64
+        %acc_t8_4 = prog.assign prog.add(%acc_t8_4, prog.mul(prog.load %k7[prog.add(prog.mul(%i_t8, 5), %k_t8)], prog.load %s0[prog.add(prog.mul(%k_t8, 5), 4)])) : float64
+      }
+      prog.store %acc_t8_0, %s1[prog.mul(%i_t8, 5)] : float64
+      prog.store %acc_t8_1, %s1[prog.add(prog.mul(%i_t8, 5), 1)] : float64
+      prog.store %acc_t8_2, %s1[prog.add(prog.mul(%i_t8, 5), 2)] : float64
+      prog.store %acc_t8_3, %s1[prog.add(prog.mul(%i_t8, 5), 3)] : float64
+      prog.store %acc_t8_4, %s1[prog.add(prog.mul(%i_t8, 5), 4)] : float64
+    }
+    prog.for %i_t10_0 = 0 to 5 step 1 {kind=global} {
+      prog.for %i_t10 = 0 to 3 step 1 {kind=global} {
+        %v0 = prog.assign prog.add(prog.mul(%i_t10, 5), %i_t10_0) : int64 {declare=True}
+        prog.store prog.add(prog.load %s2[%v0], prog.load %s1[%v0]), %s0[prog.add(prog.mul(%i_t10_0, 3), %i_t10)] : float64
+      }
+    }
+    %k11 = prog.buffer : memref<13xint64, constant> = dense<[0, 1, 1, 4, 7, 7, 6, 8, 8, 11, 14, 14, 12]>
+    prog.for %i_sphess_f_x_x = 0 to 13 step 1 {kind=global} {
+      prog.store prog.load %s0[prog.load %k11[%i_sphess_f_x_x]], %sphess_f_x_x[%i_sphess_f_x_x] : float64
+    }
+  }
+}
+
+===== 5. sparse_hess_f: generated C =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c sparse_hess_f.c
+ * clang -O3 -fno-math-errno -c sparse_hess_f.c
+ * Link with: -lm
+ */
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
+#ifndef SCALY_LANES
+#if defined(__AVX512F__)
+#define SCALY_LANES 8
+#elif defined(__AVX__) || (defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS >= 256)
+#define SCALY_LANES 4
+#elif defined(__SSE2__) || defined(__aarch64__)
+#define SCALY_LANES 2
+#else
+#define SCALY_LANES 1
+#endif
+#endif
+#if SCALY_LANES != 1 && SCALY_LANES != 2 && SCALY_LANES != 4 && SCALY_LANES != 8
+#error "SCALY_LANES must be 1, 2, 4 or 8"
+#endif
+#if defined(__AVX512F__)
+#define SCALY_REGISTER_SLOTS 256
+#elif defined(__AVX__) || defined(__aarch64__)
+#define SCALY_REGISTER_SLOTS 64
+#elif defined(__SSE2__)
+#define SCALY_REGISTER_SLOTS 32
+#else
+#define SCALY_REGISTER_SLOTS 16
+#endif
+#define SCALY_WIDTH_8_8_8_8 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 8 : SCALY_REGISTER_SLOTS == 64 ? 8 : SCALY_REGISTER_SLOTS == 32 ? 8 : 8))
+typedef double lanes_8_8_8_8_vec __attribute__((vector_size(8 * SCALY_WIDTH_8_8_8_8)));
+typedef lanes_8_8_8_8_vec lanes_8_8_8_8_vec_mem __attribute__((aligned(8), may_alias));
+static inline __attribute__((always_inline, unused)) void lanes_8_8_8_8_vec_st(double* p, lanes_8_8_8_8_vec v, long long n) {
+  if (n == SCALY_WIDTH_8_8_8_8) *(lanes_8_8_8_8_vec_mem*)p = v;
+  else for (long long i = 0; i < n; ++i) p[i] = v[i];
+}
+
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s0) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s0[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const double* s1, double* s2, int64_t i_t6_0) {
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s1[((((i + k) < 4 ? (i + k) : 4) * 3) + i_t6_0)];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  lanes_8_8_8_8_vec_st(&s2[(((i_t6_0 * 5) + i)) + 0], l, n);
+}
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, const int64_t* k11, const double* s0, double* sphess_f_x_x) {
+  double ls[SCALY_WIDTH_8_8_8_8];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s0[k11[((i + k) < 12 ? (i + k) : 12)]];
+  lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+  lanes_8_8_8_8_vec_st(&sphess_f_x_x[(i) + 0], l, n);
+}
+int sparse_hess_f(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  static const int64_t k1[13] = {0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12};
+  double s0[25];
+  static const int64_t k3[13] = {0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 19, 23, 24};
+  static const double k4[15] = {1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0};
+  double s1[15];
+  double s2[15];
+  static const double k7[15] = {1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0};
+  static const int64_t k11[13] = {0, 1, 1, 4, 7, 7, 6, 8, 8, 11, 14, 14, 12};
+  for (long long z_t2_start = 0; z_t2_start <= 25 - SCALY_WIDTH_8_8_8_8; z_t2_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_1(z_t2_start, SCALY_WIDTH_8_8_8_8, s0);
+  }
+#if (25 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_1(25 - 25 % SCALY_WIDTH_8_8_8_8, 25 % SCALY_WIDTH_8_8_8_8, s0);
+#endif
+  for (long long i_t2 = 0; i_t2 < 13; ++i_t2) {
+    s0[k3[i_t2]] = arg[0][k1[i_t2]];
+  }
+  double acc_t5_0 = 0.0;
+  double acc_t5_1 = 0.0;
+  double acc_t5_2 = 0.0;
+  double acc_t5_3 = 0.0;
+  double acc_t5_4 = 0.0;
+  double acc_t5_5 = 0.0;
+  double acc_t5_6 = 0.0;
+  double acc_t5_7 = 0.0;
+  double acc_t5_8 = 0.0;
+  double acc_t5_9 = 0.0;
+  double acc_t5_10 = 0.0;
+  double acc_t5_11 = 0.0;
+  for (long long k_t5 = 0; k_t5 < 5; ++k_t5) {
+    acc_t5_0 = (acc_t5_0 + (s0[k_t5] * k4[(k_t5 * 3)]));
+    acc_t5_1 = (acc_t5_1 + (s0[k_t5] * k4[((k_t5 * 3) + 1)]));
+    acc_t5_2 = (acc_t5_2 + (s0[k_t5] * k4[((k_t5 * 3) + 2)]));
+    acc_t5_3 = (acc_t5_3 + (s0[(5 + k_t5)] * k4[(k_t5 * 3)]));
+    acc_t5_4 = (acc_t5_4 + (s0[(5 + k_t5)] * k4[((k_t5 * 3) + 1)]));
+    acc_t5_5 = (acc_t5_5 + (s0[(5 + k_t5)] * k4[((k_t5 * 3) + 2)]));
+    acc_t5_6 = (acc_t5_6 + (s0[(10 + k_t5)] * k4[(k_t5 * 3)]));
+    acc_t5_7 = (acc_t5_7 + (s0[(10 + k_t5)] * k4[((k_t5 * 3) + 1)]));
+    acc_t5_8 = (acc_t5_8 + (s0[(10 + k_t5)] * k4[((k_t5 * 3) + 2)]));
+    acc_t5_9 = (acc_t5_9 + (s0[(15 + k_t5)] * k4[(k_t5 * 3)]));
+    acc_t5_10 = (acc_t5_10 + (s0[(15 + k_t5)] * k4[((k_t5 * 3) + 1)]));
+    acc_t5_11 = (acc_t5_11 + (s0[(15 + k_t5)] * k4[((k_t5 * 3) + 2)]));
+  }
+  *(double2*)(s1) = (double2){acc_t5_0, acc_t5_1};
+  *(double2*)(s1 + 2) = (double2){acc_t5_2, acc_t5_3};
+  *(double2*)(s1 + 4) = (double2){acc_t5_4, acc_t5_5};
+  *(double2*)(s1 + 6) = (double2){acc_t5_6, acc_t5_7};
+  *(double2*)(s1 + 8) = (double2){acc_t5_8, acc_t5_9};
+  *(double2*)(s1 + 10) = (double2){acc_t5_10, acc_t5_11};
+  double acc_t5_0_2 = 0.0;
+  double acc_t5_1_2 = 0.0;
+  double acc_t5_2_2 = 0.0;
+  for (long long k_t5 = 0; k_t5 < 5; ++k_t5) {
+    acc_t5_0_2 = (acc_t5_0_2 + (s0[(20 + k_t5)] * k4[(k_t5 * 3)]));
+    acc_t5_1_2 = (acc_t5_1_2 + (s0[(20 + k_t5)] * k4[((k_t5 * 3) + 1)]));
+    acc_t5_2_2 = (acc_t5_2_2 + (s0[(20 + k_t5)] * k4[((k_t5 * 3) + 2)]));
+  }
+  *(double2*)(s1 + 12) = (double2){acc_t5_0_2, acc_t5_1_2};
+  s1[14] = acc_t5_2_2;
+  for (long long i_t6_0 = 0; i_t6_0 < 3; ++i_t6_0) {
+    for (long long i_t6_start = 0; i_t6_start <= 5 - SCALY_WIDTH_8_8_8_8; i_t6_start += SCALY_WIDTH_8_8_8_8) {
+      lanes_2(i_t6_start, SCALY_WIDTH_8_8_8_8, s1, s2, i_t6_0);
+    }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+    lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s1, s2, i_t6_0);
+#endif
+  }
+  for (long long i_t8 = 0; i_t8 < 3; ++i_t8) {
+    double acc_t8_0 = 0.0;
+    double acc_t8_1 = 0.0;
+    double acc_t8_2 = 0.0;
+    double acc_t8_3 = 0.0;
+    double acc_t8_4 = 0.0;
+    for (long long k_t8 = 0; k_t8 < 5; ++k_t8) {
+      acc_t8_0 = (acc_t8_0 + (k7[((i_t8 * 5) + k_t8)] * s0[(k_t8 * 5)]));
+      acc_t8_1 = (acc_t8_1 + (k7[((i_t8 * 5) + k_t8)] * s0[((k_t8 * 5) + 1)]));
+      acc_t8_2 = (acc_t8_2 + (k7[((i_t8 * 5) + k_t8)] * s0[((k_t8 * 5) + 2)]));
+      acc_t8_3 = (acc_t8_3 + (k7[((i_t8 * 5) + k_t8)] * s0[((k_t8 * 5) + 3)]));
+      acc_t8_4 = (acc_t8_4 + (k7[((i_t8 * 5) + k_t8)] * s0[((k_t8 * 5) + 4)]));
+    }
+    s1[(i_t8 * 5)] = acc_t8_0;
+    s1[((i_t8 * 5) + 1)] = acc_t8_1;
+    s1[((i_t8 * 5) + 2)] = acc_t8_2;
+    s1[((i_t8 * 5) + 3)] = acc_t8_3;
+    s1[((i_t8 * 5) + 4)] = acc_t8_4;
+  }
+  for (long long i_t10_0 = 0; i_t10_0 < 5; ++i_t10_0) {
+    for (long long i_t10 = 0; i_t10 < 3; ++i_t10) {
+      int64_t v0 = ((i_t10 * 5) + i_t10_0);
+      s0[((i_t10_0 * 3) + i_t10)] = (s2[v0] + s1[v0]);
+    }
+  }
+  for (long long i_sphess_f_x_x_start = 0; i_sphess_f_x_x_start <= 13 - SCALY_WIDTH_8_8_8_8; i_sphess_f_x_x_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_3(i_sphess_f_x_x_start, SCALY_WIDTH_8_8_8_8, k11, s0, res[0]);
+  }
+#if (13 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_3(13 - 13 % SCALY_WIDTH_8_8_8_8, 13 % SCALY_WIDTH_8_8_8_8, k11, s0, res[0]);
+#endif
+  return SCALY_SUCCESS;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+
+===== 5b. sparse_hess_f: generated C header =====
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c sparse_hess_f.c
+ * clang -O3 -fno-math-errno -c sparse_hess_f.c
+ * Link with: -lm
+ */
+#pragma once
+
+#include <stddef.h>
+
+#ifndef SCALY_SUCCESS
+#define SCALY_SUCCESS 0
+#endif
+#ifndef SCALY_ERR_NULL_ABI
+#define SCALY_ERR_NULL_ABI 1
+#endif
+#ifndef SCALY_ERR_NULL_WORK
+#define SCALY_ERR_NULL_WORK 2
+#endif
+#ifndef SCALY_ERR_NULL_RESULT
+#define SCALY_ERR_NULL_RESULT 3
+#endif
+#ifndef SCALY_ERR_NULL_INPUT
+#define SCALY_ERR_NULL_INPUT 4
+#endif
+
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+
+#define sparse_hess_f_SZ_ARG 2
+#define sparse_hess_f_SZ_RES 1
+#define sparse_hess_f_SZ_IW 0
+#define sparse_hess_f_SZ_W 0
+
+// The pointer ABI for sparse_hess_f.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int sparse_hess_f(const double** arg, double** res, int* iw, double* w, int mem);
+#ifdef __cplusplus
+}
+#endif
+
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[13]; } sparse_hess_f_Q_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } sparse_hess_f_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[13]; } sparse_hess_f_sphess_f_x_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[sparse_hess_f_SZ_W > 0 ? sparse_hess_f_SZ_W : 1]; } sparse_hess_f_workspace_t;
+static inline int sparse_hess_f_call(const sparse_hess_f_Q_t* Q, const sparse_hess_f_x_t* x, sparse_hess_f_sphess_f_x_x_t* sphess_f_x_x, sparse_hess_f_workspace_t* workspace) {
+  const double* arg[sparse_hess_f_SZ_ARG > 0 ? sparse_hess_f_SZ_ARG : 1] = {Q->data, x->data};
+  double* res[sparse_hess_f_SZ_RES > 0 ? sparse_hess_f_SZ_RES : 1] = {sphess_f_x_x->data};
+  return sparse_hess_f(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+}
+
+// Sparse output metadata for compact derivative buffers.
+#define sparse_hess_f_sphess_f_x_x_NNZ 13
+#define sparse_hess_f_sphess_f_x_x_NROW 5
+#define sparse_hess_f_sphess_f_x_x_NCOL 5
+static const int sparse_hess_f_sphess_f_x_x_rows[13] = {0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4};
+static const int sparse_hess_f_sphess_f_x_x_cols[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+static const int sparse_hess_f_sphess_f_x_x_csr_row_ptr[6] = {0, 2, 5, 8, 11, 13};
+static const int sparse_hess_f_sphess_f_x_x_csr_col_ind[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+static const int sparse_hess_f_sphess_f_x_x_csr_val_perm[13] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+static const int sparse_hess_f_sphess_f_x_x_csc_col_ptr[6] = {0, 2, 5, 8, 11, 13};
+static const int sparse_hess_f_sphess_f_x_x_csc_row_ind[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+static const int sparse_hess_f_sphess_f_x_x_csc_val_perm[13] = {0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12};
+
+// Sparse leaf metadata: one local pattern shared by all batch entries.
+#define sparse_hess_f_Q_NROW 5
+#define sparse_hess_f_Q_NCOL 5
+#define sparse_hess_f_Q_NNZ 13
+#define sparse_hess_f_Q_NDIM 2
+#define sparse_hess_f_Q_STORAGE_SIZE 13
+static const int sparse_hess_f_Q_shape[2] = {5, 5};
+static const int sparse_hess_f_Q_csc_col_ptr[6] = {0, 2, 5, 8, 11, 13};
+static const int sparse_hess_f_Q_csc_row_ind[13] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+
+
+===== 6. sparse_hess_f: numerical call vs NumPy =====
+[ 8. -2. -2.  8. -2. -2.  8. -2. -2.  8. -2. -2.  8.]
+
+===== 7. Scaling probe: largest private buffer per function =====
+n=100 nnz(Q)=298 f100: largest private float64 buffer = 100 entries; lowering took 0.0 s
+n=100 nnz(Q)=298 f100_grad_f_x: largest private float64 buffer = 10000 entries; lowering took 0.0 s
+n=100 nnz(Q)=298 f100_sphess_f_x_x: largest private float64 buffer = 10000 entries; lowering took 0.0 s
+n=400 nnz(Q)=1198 f400: largest private float64 buffer = 400 entries; lowering took 0.0 s
+n=400 nnz(Q)=1198 f400_grad_f_x: largest private float64 buffer = 160000 entries; lowering took 0.0 s
+n=400 nnz(Q)=1198 f400_sphess_f_x_x: largest private float64 buffer = 160000 entries; lowering took 0.0 s
+
+NumPy reference: f = 140.0  grad = [ 4.  8. 12. 16. 32.] 
+hess =
+ [[ 8. -2.  0.  0.  0.]
+ [-2.  8. -2.  0.  0.]
+ [ 0. -2.  8. -2.  0.]
+ [ 0.  0. -2.  8. -2.]
+ [ 0.  0.  0. -2.  8.]]

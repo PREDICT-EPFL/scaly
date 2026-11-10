@@ -85,12 +85,20 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
    an optional canonical, interned pattern over its last two axes, with leading batch axes sharing
    it; its shape stays mathematical and its storage is `(*batch, nnz)`. The pattern is set by fixed
    rules when the graph is built, like shape inference, so storage is a contract: an op whose rule
-   gives no pattern refuses a sparse operand instead of densifying, and generated C does not change
-   when an analysis gets sharper. Separately, every node has a lazily computed, cached support, the
+   gives no pattern refuses a sparse operand instead of densifying, and buffer sizes and the ABI do
+   not change when an analysis gets sharper. The code inside a kernel may: scalar expansion skips
+   entries the support proves zero, and reverse differentiation compacts cotangents to their known
+   support. Separately, every node has a lazily computed, cached support, the
    entries that may be nonzero whatever the storage, used by simplification, derivative sparsity
-   and lowering. Derivative sparsity stays a third analysis, which consults the support. The order
-   of stored values inside the graph belongs to lowering; at the ABI a sparse leaf declares its
-   layout (CSC, CSR or a given coordinate order).
+   and lowering. Derivative sparsity stays a third analysis, which consults the support of
+   coefficients but never bounds a node's derivative by the node's own support: a registered custom
+   derivative may be nonzero where the value is identically zero. Inside the graph stored values
+   are in canonical row-major order and lowering converts at boundaries; at the ABI a sparse leaf
+   declares its layout (CSC, CSR or a given coordinate order). *Replaced in the compiler run,
+   2026-11-10: "generated C does not change when an analysis gets sharper", because zero skipping
+   ([#276]) and cotangent compaction ([#41]) change kernel code but never buffers or the ABI; and
+   "the order of stored values inside the graph belongs to lowering", because [#42] fixes the
+   canonical order in the IR until [#46]'s iteration plans can choose it.*
 5. **Sparse kernels are planned in lowering, in TACO's manner.** Every pattern is known at build
    time, so the index merging and output-pattern assembly TACO does at run time happen in Python.
    Lowering builds a private iteration plan per kernel (domains, access maps, the scalar body,
@@ -912,7 +920,9 @@ arbitrary order for derivative outputs until [#48] and gains a canonicalization 
 canonical pattern and the value permutation. Each op's pattern rule is fixed, like its shape rule,
 and shared with [#40]'s support rules restricted to sparse operands: union for addition and
 subtraction, intersection for multiplication, the Boolean product for `MATMUL`, unchanged for
-zero-preserving unary ops. An op whose rule gives no pattern raises on a sparse operand at
+zero-preserving unary ops. A dense operand counts as every coordinate, so storage never depends on
+values: `x + 0` for a sparse `x` has a full explicit pattern and `x * 0` keeps `x`'s pattern. A
+`MATMUL` of a sparse matrix and a dense vector is dense. An op whose rule gives no pattern raises on a sparse operand at
 construction (`exp` of a sparse matrix asks for `to_dense()`), and the verifier enforces the same.
 `structural_key`, `substitute` and the verifier include the pattern. The 89 places on main that
 assume `size` equals buffer length get a storage size; a missed one is a wrong address, so the audit
@@ -925,12 +935,19 @@ never part of the intern key; `None` means any entry may be nonzero. One rule pe
 movement ops, `GATHER`, `SCATTER` and `CONCAT`; union for `ADD`, `SUB`, `MAXIMUM`, `MINIMUM` and
 `SELECT` (per entry when the condition is constant); intersection for `MUL`; the numerator for
 `DIV`; unchanged for zero-preserving unary ops; the projection for `REDUCE`; the Boolean product for
-`MATMUL`, computed with SciPy; for `CALL` the callee's support under its arguments' support
-([#221]), tiled over stages for maps; a fixed point over carries for `LOOP`. Constants give their nonzero entries and a sparse type bounds the
+`MATMUL`, computed with SciPy; for `CALL` the callee's own support, tiled over stages for maps,
+and with [#221] the callee's support under its arguments' support; a fixed point over carries for `LOOP`. Constants give their nonzero entries and a sparse type bounds the
 support by its pattern. Uses: `passes/expr.py::_is_zero` becomes "support is empty" and disjoint
 products fold; `ad/sparsity.py` consults support in `MUL`, `DIV`, `SELECT` and `MATMUL`, so a dense
-constant with zero blocks no longer gets a dense Jacobian, and keeps its relations only over each
-node's nonzero entries, never `expr.size` rows; scalar lowering skips known zeros. A randomized
+constant with zero blocks no longer gets a dense Jacobian. Relations cover stored coordinates and
+the declared (or, undeclared, dense) rows of functions with custom derivatives and everything
+downstream of them, never `expr.size` rows. *Replaced in the compiler run, 2026-11-10: "keeps its
+relations only over each node's nonzero entries", because a registered custom derivative may be
+nonzero where the value is identically zero, and filtering by value support made sparse and dense
+Jacobians disagree.* Scalar expansion skips known zeros ([#276]) but still
+writes every output entry; loop code evaluates them, so `[0, 1] / [0, 0]` gives `[0, inf]` expanded
+and `[nan, inf]` as a loop, and the lowering page says so. A `PRINT` whose value only feeds a
+product folded to zero disappears with it. A randomized
 harness checks soundness: random values on random patterns, and every entry outside the support is
 zero. Simplification over the reals already treats constant zeros as strong (`x * 0` folds to `0`
 in `passes/arith.py`); the guide states that a sharper analysis may remove a NaN from a product with
@@ -943,6 +960,12 @@ scatter of constants by allocating the full shape, `ad/sparsity.py` allocates CS
 length `expr.size`, transpose and slice rules build `arange(size)`, `_matmul_mask` enumerates the
 dense contraction domain, and constant hashing serializes full arrays. Uniform constants
 (`CONST`'s uniform form) fix the first; each of the others gets its own fix in this item.
+Every bitwise-uniform constant is stored as a scalar-backed view, whatever its size or how it was
+built. A uniform `SUM` over more than 1,024 entries folds to the value times the count, which can
+round differently from NumPy. A scatter of constants folds only when its result has at most
+`max(1024, len(values))` entries. Constants are keyed by a 32-byte digest of their compacted bytes
+([#301] adds a byte comparison on a match). Derivative relations are coordinate lists with their
+logical shape; only their occupied rows and columns are compressed.
 
 **[#42]. The sparse boundary.** A sparse leaf declares its pattern (or a pattern hole, [#44]) and
 its layout: CSC by default, CSR, or a coordinate list in an order the caller gives, for solvers that
@@ -955,12 +978,22 @@ drops entries outside the pattern, a builder over `GATHER` and `PACK`. An explic
 compacts a dense-typed value over its support. Lowering, calls and maps allocate and offset by
 storage size. A symbolic call requires the exact pattern; a numerical call canonicalizes a copy and
 checks it. Outputs come back as SciPy sparse arrays sharing the pattern's read-only index arrays.
+A leaf is declared as `sc.arg(name, TensorType(shape, pattern=P), layout=...)`. A sparse constant
+is `PACK` over a dense `CONST` of its values. A numerical sparse argument is a SciPy array or a
+values vector in the declared layout; a batched sparse result comes back as an N-dimensional COO
+array. Derived functions inherit layouts: a forward result takes the output's, an adjoint or
+gradient the input's. Until [#46], the derivative of a product with a sparse operand goes through a
+dense copy of that operand, so it allocates and works over its logical size.
 
 **[#43]. Sparse inputs in the generated interfaces.** The ABI passes only values, in each leaf's
 declared layout. The C and C++ headers publish dimensions, `nnz` and the pointer and index tables of
 that layout for inputs as well as outputs; `casadi.py` stops forcing input patterns to `None`. A
 batched sparse leaf publishes its local pattern once, which closes the header half of [#94]. An empty
-pattern emits no zero-length C array.
+pattern emits no zero-length C array; C++ publishes a zero-length `std::array`, and an empty sparse
+leaf accepts a null data pointer. The tables are `csc_col_ptr` and `csc_row_ind`, `csr_row_ptr` and
+`csr_col_ind`, or `rows` and `cols` for a coordinate order, each prefixed by the function and leaf
+name. CasADi reads values in CSC only, so `casadi=True` refuses a CSR, coordinate-order or batched
+sparse leaf instead of converting.
 
 **[#46]. Sparse kernels and the sampled adjoint.** Decision 5's iteration plans for sparse
 operands, in `passes/lowering/plans.py`. Absent entries are structural zeros, so a sparse product
@@ -1507,3 +1540,5 @@ writing the guide).
 [#220]: https://github.com/PREDICT-EPFL/scaly/issues/220
 [#221]: https://github.com/PREDICT-EPFL/scaly/issues/221
 [#225]: https://github.com/PREDICT-EPFL/scaly/issues/225
+[#276]: https://github.com/PREDICT-EPFL/scaly/issues/276
+[#301]: https://github.com/PREDICT-EPFL/scaly/issues/301

@@ -1,0 +1,23 @@
+diff --git a/docs/how_it_works/architecture.md b/docs/how_it_works/architecture.md
+index 2d7a358..0ecbcf6 100644
+--- a/docs/how_it_works/architecture.md
++++ b/docs/how_it_works/architecture.md
+@@ -156,7 +156,9 @@ seed once and adds that node to itself. The intern tables hold weak references,
+ are still garbage-collected. An explicit `sc.cse` pass remains for the cases interning cannot see.
+ 
+ **Every node has a static type.** An expression node's `TensorType` holds a fixed shape, a data
+-type and a differentiability flag. Program buffers have fixed shapes too. Nothing in the generated
++type, a differentiability flag and, for a sparse tensor, the pattern of entries it stores. The
++pattern follows fixed rules like the shape, so it never depends on values. Program buffers have
++fixed shapes too, sized by stored entries for sparse values. Nothing in the generated
+ code allocates memory or checks a shape at run time, because no shape can change after tracing.
+ 
+ **Each dialect has a verifier.** A table of rules states which operands, types and attributes each
+@@ -173,6 +175,7 @@ all passes of this kind, sorted by what they consume and produce:
+ | Pass                   | From             | To                 |
+ | ---------------------- | ---------------- | ------------------ |
+ | Simplification and CSE | Expression graph | Expression graph   |
++| Support analysis       | Expression graph | Each node's entries that may be nonzero |
+ | Sparsity analysis      | Expression graph | A sparsity pattern |
+ | Differentiation        | Expression graph | Expression graph   |
+ | Lowering               | Expression graph | Program            |
