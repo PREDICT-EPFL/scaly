@@ -206,5 +206,6 @@ def test_casadi_rejects_sparse_leaves_it_cannot_describe(side, layout):
     fun = sc.function(sc.arg("v", int(np.prod(shape[:-2])) * pattern.nnz), outputs=leaf, name="bad_sparse_external")(
       lambda v: sc.pack(v.reshape((*shape[:-2], pattern.nnz)), pattern)
     )
-  with pytest.raises(ValueError, match=f"{side} 'a'.*{'batch' if layout == 'batch' else 'CSC'}"):
+  reason = "batch axes" if layout == "batch" else f"must declare CSC layout; got {layout!r}"
+  with pytest.raises(ValueError, match=f"{side} 'a'.*{reason}"):
     render_c_module(fun, casadi=True)
