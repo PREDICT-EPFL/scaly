@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from .abi import abi_status_defines, c_api_signature, c_ident
 from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
 from ..ad.rules import ELEMENTWISE
@@ -430,6 +432,7 @@ def _c_int(value: int) -> str:
 
 def _c_float(value: float, dtype: DType = dtypes.float64) -> str:
   if dtype == dtypes.float32:
+    value = np.asarray(value).astype(np.float32).item()
     if not math.isfinite(value):
       return f"((float){'-INFINITY' if value < 0 else 'INFINITY' if math.isinf(value) else 'NAN'})"
     text = f"{value:.9g}"

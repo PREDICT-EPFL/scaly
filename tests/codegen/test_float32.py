@@ -38,6 +38,31 @@ def test_folding_rounds_every_float32_operation(op):
   assert folded.attrs["value"] == float(expected)
 
 
+@pytest.mark.parametrize("value", [(1 << 62) + (1 << 38) + 1, -((1 << 62) + (1 << 38) + 1)])
+def test_int64_to_float32_folding_rounds_once(value):
+  expected = np.array(value, dtype=np.int64).astype(np.float32).item()
+  cast = ProgramNode(ProgramOp.CAST, (p.const_int(value),), dtype=dtypes.float32)
+  assert fold_program(cast).attrs["value"] == expected
+  assert constant(value, dtypes.float32).attrs["value"] == expected
+  assert p.const_float(value, dtypes.float32).attrs["value"] == expected
+
+
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_scalarizing_a_call_keeps_int64_to_float32_rounding(mode):
+  value = (1 << 62) + (1 << 38) + 1
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("zero"), name="midpoint_zero")
+  def hidden_zero(x):
+    return (x * 0).scalar()
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("out"), name=f"midpoint_{mode}")
+  def fn(x):
+    integer = sc.cast(hidden_zero(x), "int64") + sc.const(np.array(value, dtype=np.int64))
+    return sc.cast(sc.cast(integer, "float32"), "float64").with_lowering(mode)
+
+  assert fn(np.array(1.0)) == np.array(value, dtype=np.int64).astype(np.float32).astype(np.float64).item()
+
+
 def _run_raw(prog, tmp_path, inputs, outputs, *, dialect="gnu"):
   verify_program(prog)
   params = prog.args[-1].args[: prog.args[-1].attrs["param_count"]]
@@ -249,6 +274,17 @@ def test_float32_constant_reads_round_to_the_buffer_dtype():
   folded = fold_arith(prog)
   value = next(n for n in walk_program(folded) if n.op == ProgramOp.STORE).args[1]
   assert value.attrs["value"] == 16777216.0
+
+
+@pytest.mark.parametrize("value", [1.0 + 2**-24, (1 << 62) + (1 << 38) + 1])
+@pytest.mark.parametrize("folded", [False, True])
+def test_float32_constant_table_formatting_matches_folded_reads(tmp_path, value, folded):
+  table = p.const_buffer("table", dtypes.float32, (1,), [value])
+  out = p.buffer("out", dtypes.float32, (1,))
+  prog = p.program([p.proc("kernel", [out], [table, p.store(p.view(out, [p.const_int(0)]), p.load(p.view(table, [p.const_int(0)])))])])
+  got = np.empty(1, dtype=np.float32)
+  _run_raw(fold_arith(prog) if folded else prog, tmp_path, [], [got])
+  assert got[0] == np.asarray(value).astype(np.float32).item()
 
 
 def test_program_nodes_require_an_explicit_dtype():

@@ -172,7 +172,7 @@ def constant(value: int | float, dtype: DType) -> ProgramNode:
   """A program constant of ``dtype``, truncating to int for integer and bool dtypes."""
   return ProgramNode(
     ProgramOp.CONST_FLOAT if dtype.is_floating else ProgramOp.CONST_INT,
-    attrs={"value": float(dtype.numpy().type(value)) if dtype.is_floating else int(value)},
+    attrs={"value": np.asarray(value).astype(dtype.numpy()).item() if dtype.is_floating else int(value)},
     dtype=dtype,
   )
 
@@ -191,7 +191,7 @@ def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> 
   try:
     if dtype.is_floating and dtype.bits == 32 and op in _NUMPY:
       with np.errstate(divide="raise", invalid="raise", over="raise"):
-        return float(np.float32(_NUMPY[op](*(np.float32(v) for v in values))))
+        return float(np.float32(_NUMPY[op](*(np.asarray(v).astype(np.float32) for v in values))))
     if op in {ProgramOp.DIV, ProgramOp.MOD} and dtype.is_integer:
       x, y = values
       q = (abs(x) // abs(y)) * (-1 if (x < 0) != (y < 0) else 1)

@@ -292,7 +292,7 @@ def const_int(value: int) -> ProgramNode:
 
 
 def const_float(value: float, dtype: DType = dtypes.float64) -> ProgramNode:
-  return ProgramNode(ProgramOp.CONST_FLOAT, (), attrs={"value": float(dtype.numpy().type(value))}, dtype=dtype)
+  return ProgramNode(ProgramOp.CONST_FLOAT, (), attrs={"value": np.asarray(value).astype(dtype.numpy()).item()}, dtype=dtype)
 
 
 def var(name: str, dtype: DType = dtypes.int64) -> ProgramNode:

@@ -54,3 +54,11 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
   passed in the 84-case focused selection. The shared pre-merge hook exited 0, including
   benchmark smoke, documentation and private-name checks. The documentation build
   has existing link warnings. The final 3264-test collection, lint, format and types pass.
+- Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/360, linked to this thread.
+- Sol correctness review found two midpoint rounding defects: Python integer conversion
+  could round through double, and nine-digit table formatting ran before float32 rounding.
+  Both have failing reproductions and fixes using direct NumPy array conversions.
+  The focused arithmetic, dtype and snapshot selection passes 259 tests. Eight added
+  midpoint cases bring the dtype selection to 92 cases and the full collection to 3272.
+  Run the full hook again for these production changes, then obtain the short sol fix
+  check and the main Opus review before the final push.
