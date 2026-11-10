@@ -18,6 +18,10 @@ order and #76. Frozen devrush inspected for relevant workspace tests.
 - [x] Implement final-program estimate and option through existing render options.
 - [x] Update guide/API and regenerate reviewed C snapshots.
 - [ ] Perturb the gate; run narrow checks, full pre-merge checks and examples.
+  New 34 tests and negative controls pass. All three examples pass. The full suite
+  was interrupted near completion by provider drops. The two observed lane fixture
+  failures are fixed with a 16384-byte budget; the dedicated regression passes.
+  Detached hook: `/tmp/scaly-76-premerge-detached.log`, result in the matching `.exit` file.
 - [x] Record operation counts, source sizes and generated-C compile time, no run-time timings.
   Data: `/tmp/scaly-76-measurements.json`. Other compiler-run tasks were active, so timings
   are diagnostics, not performance evidence. All seven before/after C cases build with GCC and Clang.

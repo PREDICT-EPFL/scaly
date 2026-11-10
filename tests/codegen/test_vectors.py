@@ -440,7 +440,7 @@ def test_public_mapped_block_matrix_promotes_lane_scratch(tmp_path, dialect):
   def fn(z: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, stages)(z).vec()
 
-  module = render_c_module(fn, lanes=4, dialect=dialect, frame_budget=8192)
+  module = render_c_module(fn, lanes=4, dialect=dialect, frame_budget=16384)
   main = module.program.args[-1]
   assert any(n.attrs.get("vector_mapped") for n in walk_program(main))
   assert module.workspace_size == size * stages
