@@ -222,7 +222,7 @@ class ProgramNode:
     dtype: DType = dtypes.float64,
   ) -> "ProgramNode":
     attrs = attrs or {}
-    key = (op.value, tuple(weakref.ref(a) for a in args), _attrs_key(attrs), dtype.name)
+    key = (op.value, tuple(weakref.ref(a) for a in args), _attrs_key(attrs), dtype)
     cached = _PROGRAM_NODE_CACHE.get(key)
     if cached is not None:
       return cached

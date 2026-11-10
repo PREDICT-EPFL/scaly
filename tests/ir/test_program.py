@@ -11,6 +11,7 @@ vocabulary:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -165,6 +166,33 @@ def test_interning_hit_returns_the_node_as_it_was_built() -> None:
   again = ProgramNode(ProgramOp.NEG, (x,), {"width": np.int64(3)}, dtypes.float64)
 
   assert again is node and node.attrs is attrs and type(attrs["width"]) is int
+
+
+@pytest.mark.parametrize(
+  "field,value",
+  [
+    ("name", "float_alias"),
+    ("bits", 32),
+    ("c_type", "float"),
+    ("is_floating", False),
+    ("is_integer", True),
+    ("is_bool", True),
+    ("is_unsigned", True),
+  ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_interning_distinguishes_every_dtype_field(field: str, value: object, reverse: bool) -> None:
+  original = dtypes.float64
+  distinct = replace(original, **{field: value})
+  first_dtype, second_dtype = (distinct, original) if reverse else (original, distinct)
+  name = f"dtype_intern_{field}_{reverse}"
+  first = p.buffer(name, first_dtype, (3,))
+  second = p.buffer(name, second_dtype, (3,))
+  assert first is not second
+  assert first.dtype is first_dtype and second.dtype is second_dtype
+  assert (first.dtype.c_type, second.dtype.c_type) == (first_dtype.c_type, second_dtype.c_type)
+  assert p.buffer(name, replace(first_dtype), (3,)) is first
+  assert p.buffer(name, replace(second_dtype), (3,)) is second
 
 
 def test_node_holds_a_frozen_copy_of_its_attributes() -> None:
