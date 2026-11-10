@@ -178,7 +178,7 @@ def _unseeded[SI, NI](
     concrete._memo.derivatives[key] = cast(Any, _typed_result(result, concrete.input_tree))
     return concrete._memo.derivatives[key]
 
-  declaration = None if of is None or wrt is None else arg(kind(of, wrt).output_name)
+  declaration = None if of is None or wrt is None else cast(Tree[Expr, Array], arg(kind(of, wrt).output_name))
   public_name = name or (f"{source.name}_{kind(of, wrt).output_name}" if of is not None and wrt is not None else f"{source.name}_{kind.kind}")
   return lift(source, inputs, declaration, transform, name=public_name)
 

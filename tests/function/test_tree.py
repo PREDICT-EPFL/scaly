@@ -18,7 +18,7 @@ def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod"))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod", 3))
 def multiply(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, y = inputs
   return x * y
@@ -210,6 +210,7 @@ def test_call_dispatches_on_leaf_kind() -> None:
   # Only G introduces a tuple: a one-leaf tree is the bare value on both sides.
   assert not isinstance(multiply((xv, yv)), tuple)
   first, second = duplicate(xv)
+  assert isinstance(first, np.ndarray)
   np.testing.assert_allclose(first, xv)
   np.testing.assert_allclose(second, xv)
 

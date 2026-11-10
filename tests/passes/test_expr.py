@@ -96,7 +96,9 @@ def test_simplify_folds_matrix_transpose_into_matmul() -> None:
 
 
 def _eval(name: str, inputs: Tree[sc.Expr, np.ndarray], body: Callable[[sc.Expr], sc.Expr], value: np.ndarray) -> np.ndarray:
-  return sc.function(inputs, outputs=sc.arg("y"), name=name)(body)(value)
+  result = sc.function(inputs, outputs=sc.arg("y"), name=name)(body)(value)
+  assert isinstance(result, np.ndarray)
+  return result
 
 
 def test_matmul_with_ones_vector_becomes_sums() -> None:

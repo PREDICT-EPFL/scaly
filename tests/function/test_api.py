@@ -15,7 +15,7 @@ from scaly.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
-  @sc.function(sc.group(sc.arg("x", 3), sc.arg("p", sc.TensorType((3,), diff=False))), outputs=sc.arg("y"), name="scoped")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("p", sc.TensorType((3,), diff=False))), outputs=sc.arg("y", 3), name="scoped")
   def scoped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return (x + p).sin()

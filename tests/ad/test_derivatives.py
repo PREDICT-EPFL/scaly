@@ -51,7 +51,7 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
   lam_size = length * as_concrete(callee).outputs[0].size
   inputs = sc.group(sc.arg("z", zv.size), sc.arg("lam", lam_size))
 
-  @sc.function(inputs, outputs=sc.group(sc.arg("mapped"), sc.arg("unrolled")), name=f"{name}_grads")
+  @sc.function(inputs, outputs=sc.group(sc.arg("mapped", zv.shape), sc.arg("unrolled", zv.shape)), name=f"{name}_grads")
   def grad_fn(inputs):
     z, lam = inputs
     mapped_obj, unrolled_obj = objectives(z, lam)
@@ -72,7 +72,7 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
 
 
 def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
-  @sc.function(sc.group(sc.arg("x", (2, 3)), sc.arg("b", 3)), outputs=sc.group(sc.arg("grad_x"), sc.arg("grad_b")), name="vjp")
+  @sc.function(sc.group(sc.arg("x", (2, 3)), sc.arg("b", 3)), outputs=sc.group(sc.arg("grad_x", (2, 3)), sc.arg("grad_b", 3)), name="vjp")
   def f(inputs):
     x, b = inputs
     y0 = (x + b).sum()
@@ -96,7 +96,7 @@ def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
   def f(x):
     return x * x
 
-  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("rev"), sc.arg("fwd")), name="nested_sq")
+  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("rev", 1), sc.arg("fwd", 1)), name="nested_sq")
   def fn(x):
     k1 = f(2 * x)
     k2 = f(x + k1)
@@ -132,7 +132,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
 
   inputs = sc.group(sc.arg("x", 2), sc.arg("u", 1), sc.arg("lam", 2))
 
-  @sc.function(inputs, outputs=sc.group(sc.arg("rev"), sc.arg("fwd"), sc.arg("hess")), name="rk4_adj")
+  @sc.function(inputs, outputs=sc.group(sc.arg("rev", 2), sc.arg("fwd", 2), sc.arg("hess", (2, 2))), name="rk4_adj")
   def fn(inputs):
     x, u, lam = inputs
     xnext = rk4(x, u)
@@ -156,7 +156,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
 
 def test_erf_forward_reverse_jacobian_and_sparse_hessian() -> None:
 
-  @sc.function(sc.group(sc.arg("x", 3), sc.arg("seed", 3)), outputs=sc.group(sc.arg("jvp"), sc.arg("vjp")), name="erf_seed_ad")
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("seed", 3)), outputs=sc.group(sc.arg("jvp", 3), sc.arg("vjp", 3)), name="erf_seed_ad")
   def ad(inputs):
     x, seed = inputs
     y = x.erf()
@@ -192,7 +192,7 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian() -> None:
 def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
   @sc.function(
     sc.group(sc.arg("x", (2, 3)), sc.arg("seeds", (4, 2, 3))),
-    outputs=sc.arg("tangent"),
+    outputs=sc.arg("tangent", 4),
     name="jvp_many_sum",
   )
   def fn(inputs):
@@ -348,7 +348,7 @@ def test_float32_structural_derivatives_match_numpy(case):
 def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   @sc.function(
     sc.group(sc.arg("x", 6), sc.arg("seeds", (3, 6))),
-    outputs=sc.arg("tangent"),
+    outputs=sc.arg("tangent", (3, 3, 3)),
     name="jvp_many_scatter_gather",
   )
   def fn(inputs):
@@ -371,7 +371,7 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
 def test_jvp_many_transpose_stays_structural() -> None:
   @sc.function(
     sc.group(sc.arg("x", 12), sc.arg("seeds", (4, 12))),
-    outputs=sc.arg("tangent"),
+    outputs=sc.arg("tangent", (4, 2, 2, 3)),
     name="jvp_many_transpose",
   )
   def fn(inputs):
@@ -400,7 +400,7 @@ def test_matrix_vector_vjp_graph_uses_tensor_ops() -> None:
 
 
 def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
-  @sc.function(sc.arg("z", 6), outputs=sc.arg("dense"), name="spjac_scalar_plus_vec")
+  @sc.function(sc.arg("z", 6), outputs=sc.arg("dense", (5, 6)), name="spjac_scalar_plus_vec")
   def f(z):
     return sc.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z).to_dense()
 
@@ -477,7 +477,7 @@ def test_vjp_through_vmap_adjoint_names_disambiguate_active_formal_sets() -> Non
     m2 = _mapped_call(piece, 2, [(z[0:4], 0, 2), (c0, 0, 2), (z[4:8], 0, 2)])
     return m1.sum() + m2.sum()
 
-  @sc.function(sc.arg("z", 8), outputs=sc.arg("grad_z"), name="vmap_vjp_collision_grads")
+  @sc.function(sc.arg("z", 8), outputs=sc.arg("grad_z", 8), name="vmap_vjp_collision_grads")
   def grad_fn(z):
     (grad_z,) = sc.vjp((obj_fn(z),), (z,), (sc.const(1.0),))
     return grad_z
@@ -491,7 +491,7 @@ def test_vjp_through_vmap_adjoint_names_disambiguate_active_formal_sets() -> Non
 def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   @sc.function(
     sc.group(sc.arg("x", 2), sc.arg("p", sc.TensorType((2,), diff=False)), sc.arg("seed", 2)),
-    outputs=sc.group(sc.arg("dy"), sc.arg("grad")),
+    outputs=sc.group(sc.arg("dy", ()), sc.arg("grad", 2)),
     name="smooth_wrt_x",
   )
   def f(inputs):

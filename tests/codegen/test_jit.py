@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is require
 
 
 def _simple_fn() -> sc.Function[tuple[sc.Expr], tuple[np.ndarray], sc.Expr, np.ndarray]:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="smoke_jit")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ()), name="smoke_jit")
   def fn(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 
@@ -408,7 +408,7 @@ def test_invalidation_preserves_another_process_artifact(isolated_cache: Path, m
       assert time.monotonic() < deadline, f"child did not reach {phase}"
       time.sleep(0.01)
 
-    @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name=f"shared_invalidation_{phase}")
+    @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ()), name=f"shared_invalidation_{phase}")
     def fn(x: sc.Expr) -> sc.Expr:
       return (x.sin() + x * x).sum()
 
@@ -492,7 +492,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache: Path, nested: bo
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
 
-    @sc.function(sc.arg("param", 1), outputs=sc.arg("solution"), name="hoisted_oracle_host")
+    @sc.function(sc.arg("param", 1), outputs=sc.arg("solution", 3), name="hoisted_oracle_host")
     def fun(param):
       return solver(param)[0]
 
@@ -516,7 +516,7 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache: Path
       value = value.sin() + 0.1
     return value.block()
 
-  @sc.function(sc.arg("z", 1), outputs=sc.arg("y"), name="named_deep_root")
+  @sc.function(sc.arg("z", 1), outputs=sc.arg("y", 1), name="named_deep_root")
   def root(z):
     return stage(z)
 

@@ -843,11 +843,14 @@ descriptors) are made with `lift`, whose transform runs per source instance. The
 type is `np.ndarray | scipy.sparse.sparray`, so a leaf's sparseness need not be declared
 statically, and a numerical call on a sparse output returns the union.
 
-Replaced in the compiler run: the universal numerical-leaf union is temporarily limited to
-`TensorType`/`layout=` declarations and inferred single-`Expr` outputs; shape-hole output declarations
-keep their NumPy annotation to avoid 192 dense-test diagnostics, although sparse traces can return
-SciPy arrays ([#334](https://github.com/PREDICT-EPFL/scaly/issues/334)). A dense `TensorType` also types as the union because its pattern is a runtime
-value; callers that know it has no pattern can narrow with `cast(Tree[Expr, np.ndarray], ...)`.
+A concrete dense shape declaration keeps its NumPy type. Shape holes and a general `TensorType`
+use the numerical union because their output pattern is not known statically. Callers that know a
+`TensorType` has no pattern can narrow with `cast(Tree[Expr, np.ndarray], ...)`.
+
+Shape-only input holes remain dense at runtime despite the shared annotation accepting SciPy
+arrays statically. Pattern holes are separate ([#44]). The existing NumPy-only annotations of
+`gradient`, `forward` and `adjoint` can also disagree with inherited sparse results, including
+concrete and mapped calls ([#356](https://github.com/PREDICT-EPFL/scaly/issues/356)).
 
 **What a binding carries.** The playground keys instances on shapes only (`LeafKey(shape)` in
 `trees.py`). The key becomes the bound leaf type, `(shape, dtype, diff, pattern)` with a layout for

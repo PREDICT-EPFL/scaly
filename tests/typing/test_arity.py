@@ -13,23 +13,23 @@ from scaly.function.tree import NumericalArray
 from scaly.solvers.stats import SolverStats
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first"), sc.arg("second", 3)))
+@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first", 3), sc.arg("second", 3)))
 def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod"))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.arg("prod", 3))
 def multiply(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, y = inputs
   return x * y
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.arg("square"))
+@sc.function(sc.arg("x", 3), outputs=sc.arg("square", 3))
 def square(x: sc.Expr) -> sc.Expr:
   return multiply.symbolic_call(duplicate.symbolic_call(x))
 
 
-@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f"))
+@sc.function(sc.group(sc.arg("x", 3), sc.arg("p", ())), outputs=sc.arg("f", ()))
 def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return (x * x).sum() * p
@@ -37,14 +37,14 @@ def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.group(sc.group(sc.arg("state", 4), sc.arg("u", 2)), sc.group(sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ()))),
-  outputs=sc.arg("next"),
+  outputs=sc.arg("next", 4),
 )
 def step(inputs: tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr, sc.Expr]]) -> sc.Expr:
   (state, _u), (_pw, _physics, _dt) = inputs
   return state
 
 
-@sc.function(sc.group(sc.arg("state", 4), sc.arg("u", 2), sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ())), outputs=sc.arg("next"))
+@sc.function(sc.group(sc.arg("state", 4), sc.arg("u", 2), sc.arg("pw", 10), sc.arg("physics", 3), sc.arg("dt", ())), outputs=sc.arg("next", 4))
 def step_flat(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, _u, _pw, _physics, _dt = inputs
   return state
@@ -83,6 +83,32 @@ hess_l = sc.lagrangian_hessian(duplicate, "x")
 
 
 if TYPE_CHECKING:
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("total"))
+  def dense_hole(x: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("total", None))
+  def dense_none_hole(x: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  assert_type(dense_hole(np.ones(3)), NumericalArray)
+  assert_type(dense_none_hole(np.ones(3)), NumericalArray)
+  dense_grad = sc.gradient(dense_hole)
+  assert_type(dense_grad, sc.Function[tuple[sc.Expr], tuple[np.ndarray], sc.Expr, np.ndarray])
+  assert_type(dense_grad(np.ones(3)), np.ndarray)
+  assert_type(dense_grad.instantiate().numerical_call(np.ones(3)), np.ndarray)
+  assert_type(sc.vmap(dense_grad, 2)(np.ones((2, 3))), np.ndarray)
+  assert_type(sc.jacobian(dense_none_hole)(np.ones(3)), np.ndarray)
+  assert_type(sc.hessian(dense_hole)(np.ones(3)), np.ndarray)
+  assert_type(sc.sparse_jacobian(dense_hole)(np.ones(3)), np.ndarray)
+  assert_type(sc.sparse_hessian(dense_none_hole)(np.ones(3)), np.ndarray)
+  assert_type(sc.forward(dense_hole)(np.ones(3), np.ones(3)), np.ndarray)
+  assert_type(sc.adjoint(dense_none_hole)(np.ones(3), np.ones(())), np.ndarray)
+  assert_type(sc.lagrangian_hessian(dense_hole)(np.ones(3), np.ones(())), np.ndarray)
+
+
+if TYPE_CHECKING:
   parts = [sc.arg(f"part{i}", 1) for i in range(3)]
   assert_type(sc.group(*parts), Tree[tuple[sc.Expr, ...], tuple[np.ndarray, ...]])
   assert_type(sc.group(*(sc.arg(f"part{i}", 1) for i in range(8))), Tree[tuple[sc.Expr, ...], tuple[np.ndarray, ...]])
@@ -90,7 +116,7 @@ if TYPE_CHECKING:
   assert_type(sc.group(sc.group(sc.arg("nested", 1)), *parts), Tree[tuple[Any, ...], tuple[Any, ...]])
   sc.group()  # ty: ignore[no-matching-overload]
 
-  @sc.function(sc.group(*parts), outputs=sc.arg("out"))
+  @sc.function(sc.group(*parts), outputs=sc.arg("out", 3))
   def dynamic_group(values: tuple[sc.Expr, ...]) -> sc.Expr:
     return sc.concat(values)
 
@@ -295,11 +321,11 @@ if TYPE_CHECKING:
   def template(x: sc.Expr, p: sc.Expr) -> sc.Expr:
     return (x * x).sum() * p
 
-  assert_type(template, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
-  assert_type(template.instantiate((3, ())), ConcreteFunction[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(template, sc.Function[tuple[sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(template.instantiate((3, ())), ConcreteFunction[tuple[sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray], sc.Expr, np.ndarray])
   assert_type(template.instantiate((3, ())).numerical_call(np.zeros(3), np.array(2.0)), np.ndarray)
   assert_type(template.instantiate((3, ())).input_shapes, tuple[tuple[int, ...], ...])
-  assert_type(sc.forward(template), sc.Function[tuple[sc.Expr, sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(sc.forward(template), sc.Function[tuple[sc.Expr, sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray, np.ndarray], sc.Expr, np.ndarray])
   assert_type(template.sparsity(np.zeros(3), np.array(2.0)), sc.SparsityPattern | None)
   assert_type(template.sparsity(sc.sym("x", 3), sc.sym("p", ())), sc.SparsityPattern | None)
   template.sparsity(np.zeros(3))  # ty: ignore[no-matching-overload]
@@ -352,7 +378,7 @@ if TYPE_CHECKING:
 
 
 if TYPE_CHECKING:
-  assert_type(sc.vmap(template, 4), sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(sc.vmap(template, 4), sc.Function[tuple[sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray], sc.Expr, np.ndarray])
   assert_type(sc.vmap(template, 4)(sc.sym("batch", (4, 3)), sc.broadcast(sc.sym("p", ()))), sc.Expr)
   assert_type(sc.vmap(template, 4)(np.zeros((4, 3)), sc.broadcast(np.array(2.0))), np.ndarray)
   assert_type(sc.broadcast(sc.sym("p", ())), sc.Expr)

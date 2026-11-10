@@ -395,7 +395,7 @@ def test_packing_reuses_slots_and_spills() -> None:
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric workspace collision check")
 def test_workspace_slots_do_not_collide_with_output_names() -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("s1"), sc.arg("s2")), name="slot_collision")
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("s1", (2, 2)), sc.arg("s2", (2, 2))), name="slot_collision")
   def f(x):
     matrix = x.reshape((2, 2))
     square = matrix @ matrix
@@ -638,7 +638,7 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
 
   index_sets = [[0, 3, 6], [1, 4, 7], [2, 5, 6], [0, 1, 2]]
 
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("sum"), name="reshaped_scatter_sum")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("sum", (2, 4)), name="reshaped_scatter_sum")
   def f(x):
     terms = [scatter((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
     return sum(terms[1:], start=terms[0])
@@ -768,7 +768,7 @@ def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
     x, w = inputs
     return (w.reshape((3, 3)).exp() @ x.exp()).sin()
 
-  @sc.function(sc.group(sc.arg("z", 12), sc.arg("weights", 36)), outputs=sc.arg("y"), name="hoist_two_map")
+  @sc.function(sc.group(sc.arg("z", 12), sc.arg("weights", 36)), outputs=sc.arg("y", 12), name="hoist_two_map")
   def fn(inputs):
     z, weights = inputs
     first = _mapped_call(stage, 4, [(z, 0, 3), (weights, 0, 0)])
@@ -842,7 +842,7 @@ def test_hoist_recognizes_generated_pure_callees_in_nested_maps() -> None:
     z, w = inputs
     return _mapped_call(inner, 2, [(z, 0, 1), (w, 0, 0)]).block()
 
-  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 1)), outputs=sc.arg("y"), name="nested_root")
+  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 1)), outputs=sc.arg("y", 6), name="nested_root")
   def root(inputs):
     z, w = inputs
     return _mapped_call(middle, 3, [(z, 0, 2), (w, 0, 0)])
@@ -869,7 +869,7 @@ def test_hoist_positions_and_existing_procedure_names_do_not_collide() -> None:
 
   @sc.function(
     sc.group(sc.group(*(sc.arg(f"z{i}", 3) for i in range(8))), sc.group(*(sc.arg(f"z{i}", 3) for i in range(8, 13)))),
-    outputs=sc.arg("y"),
+    outputs=sc.arg("y", 3),
     name="position_root",
   )
   def root(inputs):
@@ -1004,7 +1004,7 @@ def test_joint_mapped_products_reuse_scalar_invariants_against_numpy():
     coefficient = params[0].exp() * params[1].sin()
     return sc.stack([coefficient * x[0].sin() + x[1], coefficient * x[0] * x[1]])
 
-  @sc.function(sc.group(sc.arg("z", 10), sc.arg("p", 2)), outputs=sc.arg("dy"), name="invariant_joint_map")
+  @sc.function(sc.group(sc.arg("z", 10), sc.arg("p", 2)), outputs=sc.arg("dy", (3, 10)), name="invariant_joint_map")
   def products(inputs):
     z, params = inputs
     return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 2), (params, 0, 0)]), z, sc.const(np.arange(30.0).reshape(3, 10) / 17))
@@ -1034,7 +1034,7 @@ def test_scalar_schedule_keeps_cheap_products_local_without_duplicating_loads():
 
 
 def test_auto_lanes_leave_tiny_structural_rows_to_the_c_compiler():
-  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y"), name="tiny_rows")
+  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y", (2, 4)), name="tiny_rows")
   def fn(x):
     return sc.concat([x.sin(), x[:, :1]], axis=1)
 

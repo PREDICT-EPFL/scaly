@@ -16,7 +16,10 @@ def test_stop_gradient_modes_and_sparsity(shape: tuple[int, ...], nseed: int) ->
   point = np.linspace(0.3, 1.2, int(np.prod(shape))).reshape(shape)
   seeds = np.arange(nseed * point.size, dtype=float).reshape((nseed, *shape))
 
-  @sc.function(sc.arg("x", shape), outputs=sc.group(sc.arg("value"), sc.arg("many"), sc.arg("adj"), sc.arg("hess")))
+  @sc.function(
+    sc.arg("x", shape),
+    outputs=sc.group(sc.arg("value", shape), sc.arg("many", (nseed, *shape)), sc.arg("adj", shape), sc.arg("hess", (point.size, point.size))),
+  )
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     frozen = sc.stop_gradient(x)
     cost = sc.sumsqr(x * frozen)
@@ -38,7 +41,7 @@ def test_stop_gradient_inside_calls_and_maps(mapped: bool) -> None:
   def piece(x: sc.Expr) -> sc.Expr:
     return x * sc.stop_gradient(x) + sc.stop_gradient(x.floor())
 
-  @sc.function(sc.arg("x", (3, 2)), outputs=sc.group(sc.arg("value"), sc.arg("jac"), sc.arg("sparse"), sc.arg("adj")))
+  @sc.function(sc.arg("x", (3, 2)), outputs=sc.group(sc.arg("value", (3, 2)), sc.arg("jac", (6, 6)), sc.arg("sparse", (6, 6)), sc.arg("adj", (3, 2))))
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     out = sc.vmap(piece, 3)(x) if mapped else sc.stack([piece(x[i]) for i in range(3)])
     return out, sc.jacobian(out, x), sc.sparse_jacobian(out, x).to_dense(), sc.vjp((out,), (x,), (sc.const(np.ones(out.shape)),))[0]
@@ -100,7 +103,7 @@ def test_stop_gradient_mapped_primal_c_is_identical(stop_inside: bool) -> None:
 
 
 def test_reverse_ignores_nonsmooth_operations_of_stopped_inputs() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("value"), sc.arg("grad"), sc.arg("jac"), sc.arg("sparse")))
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("value", ()), sc.arg("grad", 2), sc.arg("jac", (1, 2)), sc.arg("sparse", (1, 2))))
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     scale = sc.maximum(sc.stop_gradient(sc.sumsqr(x)), 1e-6)
     cost = (x / scale).sum()
@@ -122,7 +125,7 @@ def test_reverse_ignores_nonsmooth_calls_of_stopped_inputs(mapped: bool) -> None
   def rounded(a: sc.Expr) -> sc.Expr:
     return a.floor() * 2.0
 
-  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("value"), sc.arg("grad"), sc.arg("jac"), sc.arg("sparse")))
+  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("value", ()), sc.arg("grad", (2, 2)), sc.arg("jac", (1, 4)), sc.arg("sparse", (1, 4))))
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     frozen = sc.stop_gradient(x)
     value = sc.vmap(rounded, 2)(frozen) if mapped else sc.stack([rounded(frozen[i]) for i in range(2)])
@@ -146,7 +149,7 @@ def test_reverse_ignores_a_solver_with_stopped_parameters() -> None:
 
   inner = sc.solver(inner_problem, "sqp", options={"tol": 1e-9, "dual_tol": 1e-9, "qp_tol": 1e-10})
 
-  @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("value"), sc.arg("grad"), sc.arg("jac")))
+  @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("value", ()), sc.arg("grad", ()), sc.arg("jac", (1, 1))))
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     cost = x * inner(sc.stop_gradient(x))[0]
     return cost, sc.gradient(cost, x), sc.jacobian(cost, x)

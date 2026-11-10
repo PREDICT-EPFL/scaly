@@ -168,16 +168,21 @@ def test_nested_sparse_maps_keep_shared_patterns_and_batch_offsets(layout) -> No
   np.testing.assert_array_equal(result.toarray(), -source.toarray())
 
 
-def test_sparse_default_csc_layout_handles_a_non_involutive_permutation() -> None:
+@pytest.mark.parametrize("outputs", [None, sc.arg("out"), sc.arg("out", None)], ids=["inferred", "hole", "none_hole"])
+def test_sparse_default_csc_layout_handles_a_non_involutive_permutation(outputs) -> None:
   pattern = CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
   leaf = sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern))
   layout = leaf.layouts[0]
   assert layout is not None and not np.array_equal(layout.permutation, layout.inverse_permutation)
-  stage = sc.function(leaf, name="sparse_cycle")(lambda x: x.sin())
+  decorator = sc.function(leaf, name="sparse_cycle") if outputs is None else sc.function(leaf, outputs=outputs, name="sparse_cycle")
+  stage = decorator(lambda x: x.sin())
   source = sparse.coo_array(([2.0, 3.0, 5.0, 7.0, 11.0], (pattern.rows, pattern.cols)), shape=pattern.shape)
   direct = stage(source)
   assert isinstance(direct, sparse.csc_array)
   np.testing.assert_allclose(direct.toarray(), np.sin(source.toarray()))
+  concrete = stage.instantiate()(source)
+  assert isinstance(concrete, sparse.csc_array)
+  np.testing.assert_array_equal(concrete.toarray(), direct.toarray())
   mapped = sc.vmap(stage, 2)
   result = mapped(sc.broadcast(source))
   assert isinstance(result, sparse.coo_array)

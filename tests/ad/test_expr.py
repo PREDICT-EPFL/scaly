@@ -12,7 +12,7 @@ import scaly as sc
 
 
 def test_structural_transpose_concat_vec_eval_and_ad() -> None:
-  @sc.function(sc.arg("x", (2, 2)), outputs=sc.arg("y"))
+  @sc.function(sc.arg("x", (2, 2)), outputs=sc.arg("y", 8))
   def f(x):
     return sc.concat([x.T, x + 1.0], axis=1).vec()
 
@@ -38,7 +38,7 @@ def test_structural_transpose_concat_vec_eval_and_ad() -> None:
 
 
 def test_slice_split_eval_and_ad() -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", 3))
   def f(x):
     left, right = sc.split(x, [2, 2])
     return sc.stack([x[0], x[2:4].sum(), sc.concat([left, right])[3]])
@@ -66,7 +66,7 @@ def test_slice_split_eval_and_ad() -> None:
 
 
 def test_gather_scatter_eval_and_ad() -> None:
-  @sc.function(sc.arg("x", 5), outputs=sc.arg("y"))
+  @sc.function(sc.arg("x", 5), outputs=sc.arg("y", 5))
   def f(x):
     return sc.scatter(x.gather([3, 1, 4]), [0, 2, 3], 5)
 

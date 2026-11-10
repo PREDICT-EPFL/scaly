@@ -83,7 +83,7 @@ def bicycle_eq_function(horizon: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Exp
 
   @sc.function(
     _inputs_tree(horizon),
-    outputs=sc.arg("eq"),
+    outputs=sc.arg("eq", NX * (horizon + 1)),
     name=f"bicycle_eq_N{horizon}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -102,7 +102,7 @@ def bicycle_eq_function_vmap(horizon: int) -> sc.Function[tuple[tuple[sc.Expr, s
 
   @sc.function(
     _inputs_tree(horizon),
-    outputs=sc.arg("eq"),
+    outputs=sc.arg("eq", NX * (horizon + 1)),
     name=f"bicycle_eq_vmap_N{horizon}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -231,7 +231,11 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
   def reference_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return rebound(reference.values, inputs)
 
-  @sc.function(_inputs_tree(horizon), outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="bicycle_spjac_compare")
+  @sc.function(
+    _inputs_tree(horizon),
+    outputs=sc.group(sc.arg("colored", colored.values.shape), sc.arg("reference", reference.values.shape)),
+    name="bicycle_spjac_compare",
+  )
   def compare(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     return rebound(colored.values, inputs), rebound(reference.values, inputs)
 

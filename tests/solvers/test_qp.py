@@ -37,7 +37,7 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
     quantity = x * frozen - 1 if location in {"eq", "ineq"} else frozen
     return cost, quantity
 
-  @sc.function(sc.arg("x", 2), sc.arg("p", 2), outputs=sc.group(sc.arg("cost"), sc.arg("quantity")))
+  @sc.function(sc.arg("x", 2), sc.arg("p", 2), outputs=sc.group(sc.arg("cost", ()), sc.arg("quantity", 2)))
   def values(x: sc.Expr, p: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return terms(x, p)
 

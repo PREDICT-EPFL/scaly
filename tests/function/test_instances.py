@@ -15,6 +15,7 @@ import pytest
 import scaly as sc
 from scaly.codegen import render_c_source, render_c_module
 from scaly.function.model import Function
+from scaly.function.tree import NumericalArray
 
 
 def test_shape_bindings_trace_once_and_share_symbolic_and_numerical_instances() -> None:
@@ -123,7 +124,7 @@ def test_duplicate_generated_identifiers_keep_distinct_calls() -> None:
   np.testing.assert_array_equal(host(np.array([2.0, 3.0])), [8.0, 14.0])
 
 
-type _ScalarFunction = sc.Function[tuple[sc.Expr], tuple[np.ndarray], sc.Expr, np.ndarray]
+type _ScalarFunction = sc.Function[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, np.ndarray]
 
 
 class _Derivative(Protocol):

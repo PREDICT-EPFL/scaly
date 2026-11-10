@@ -95,7 +95,7 @@ def test_mapped_windows_and_broadcast_formals_against_numpy(length, stride, seed
 
   @sc.function(
     sc.group(sc.arg("windows_z", size), sc.arg("windows_seeds", (nseed, size)), sc.arg("windows_cot", 2 * length)),
-    outputs=sc.group(sc.arg("value"), sc.arg("many"), sc.arg("single"), sc.arg("adj")),
+    outputs=sc.group(sc.arg("value", 2 * length), sc.arg("many", (nseed, 2 * length)), sc.arg("single", (nseed, 2 * length)), sc.arg("adj", size)),
     name="window_products",
   )
   def products(inputs):

@@ -474,7 +474,12 @@ def test_custom_derivative_rows_outside_primal_support_survive_composition(decla
   shape = (2, 3) if mapped else (3,)
   weights = np.array([2.0, 3.0, 4.0])
 
-  @sc.function(sc.arg("q", shape), outputs=sc.group(sc.arg("dense"), sc.arg("sparse")))
+  @sc.function(
+    sc.arg("q", shape),
+    outputs=sc.group(
+      sc.arg("dense", (5 * int(np.prod(shape)), int(np.prod(shape)))), sc.arg("sparse", (5 * int(np.prod(shape)), int(np.prod(shape))))
+    ),
+  )
   def derivatives(q):
     y = sc.vmap(callee, 2)(q) if mapped else callee(q)
     outputs = sc.concat([y.vec(), y.sin().vec(), (y * q).vec(), (y / (q + 2)).vec(), (y @ sc.const(np.diag(weights))).vec()])
