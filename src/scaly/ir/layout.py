@@ -19,6 +19,30 @@ def _readonly(value: Any) -> np.ndarray:
   return np.frombuffer(np.asarray(value, dtype=np.int64).tobytes(), dtype=np.int64)
 
 
+def bind_sparse(value: Any) -> tuple[CanonicalPattern, np.ndarray]:
+  """Canonicalize a copied SciPy argument and recover its shared matrix pattern."""
+  if not np.can_cast(value.dtype, np.float64, "same_kind"):
+    raise TypeError(f"cannot cast {value.dtype} to float64")
+  copied = value.copy() if value.format in ("csr", "csc", "coo") else sparse.coo_array(value, copy=True)
+  copied.sum_duplicates()
+  copied = sparse.coo_array(copied)
+  copied.sum_duplicates()
+  shape = copied.shape
+  if len(shape) < 2:
+    raise ValueError("a pattern hole needs a matrix or a batch of matrices")
+  count = prod(shape[:-2])
+  if count == 0:
+    raise ValueError("an empty batch cannot bind a pattern hole; instantiate it with a TensorType")
+  nnz, remainder = divmod(copied.nnz, count)
+  rows, cols = copied.coords[-2:]
+  pattern = CanonicalPattern(shape[-2:], tuple(map(int, rows[:nnz])), tuple(map(int, cols[:nnz])))
+  if remainder or any(
+    not np.array_equal(actual, expected) for actual, expected in zip(copied.coords, sparse_layout(pattern, "csr").coordinates(shape), strict=True)
+  ):
+    raise ValueError("sparse batches must share one stored pattern")
+  return pattern, np.ascontiguousarray(copied.data.reshape((*shape[:-2], nnz)), dtype=np.float64)
+
+
 @dataclass(frozen=True, eq=False)
 class SparseLayout:
   """One declared order of a canonical pattern's stored values."""

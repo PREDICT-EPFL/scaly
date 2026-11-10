@@ -357,13 +357,11 @@ def _seeded(
     of = _unique_name(outputs.names, of, "of")
   if kind == "fwd":
     seed = (
-      None if inputs is None or wrt is None else arg(f"fwd:{wrt}", inputs.decls[inputs.index(wrt)], layout=inputs.layouts[inputs.index(wrt)] or "csc")
+      None if inputs is None or wrt is None else arg(f"fwd:{wrt}", inputs.decls[inputs.index(wrt)], layout=inputs._layout_decls[inputs.index(wrt)])
     )
   elif kind == "adj":
     seed = (
-      None
-      if outputs is None or of is None
-      else arg(f"lam:{of}", outputs.decls[outputs.index(of)], layout=outputs.layouts[outputs.index(of)] or "csc")
+      None if outputs is None or of is None else arg(f"lam:{of}", outputs.decls[outputs.index(of)], layout=outputs._layout_decls[outputs.index(of)])
     )
   else:
     seed = None if outputs is None else outputs.relabel("lam:")

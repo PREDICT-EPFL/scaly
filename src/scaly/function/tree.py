@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from types import EllipsisType
 from typing import Any, TypeGuard, cast, overload
 
 import numpy as np
@@ -22,6 +23,21 @@ type NumericalArray = Array | sparse.sparray
 # Function[tuple[Expr, Expr, Expr], tuple[ndarray[tuple[Any, ...], dtype[Any]], ndarray[tuple[Any, ...], dtype[Any]], ndarray[tuple[Any, ...], dtype[Any]]], Expr, ndarray[tuple[Any, ...], dtype[Any]]]
 
 
+@dataclass(frozen=True, slots=True)
+class _PatternHole(TensorType):
+  """A leaf declaration whose stored pattern is supplied by a binding."""
+
+  shape_hole: bool = False
+
+
+def _is_hole(decl: LeafDecl) -> bool:
+  return decl is None or isinstance(decl, _PatternHole)
+
+
+def _shape_hole(decl: LeafDecl) -> bool:
+  return decl is None or isinstance(decl, _PatternHole) and decl.shape_hole
+
+
 def _leaves(value: Any) -> list[Any]:
   """Every non-tuple atom of ``value``, without consulting a declared structure."""
   if isinstance(value, tuple):
@@ -39,6 +55,7 @@ class Tree[Symbolic, Numerical]:
   names: tuple[str, ...]
   decls: tuple[LeafDecl, ...]
   layouts: tuple[SparseLayout | None, ...]
+  _layout_decls: tuple[Layout, ...]
 
   def __setattr__(self, name: str, value: Any) -> None:
     if name in self.__dict__:
@@ -50,21 +67,21 @@ class Tree[Symbolic, Numerical]:
 
   @property
   def has_holes(self) -> bool:
-    """Whether any leaf shape needs binding."""
-    return any(decl is None for decl in self.decls)
+    """Whether any leaf needs binding."""
+    return any(_is_hole(decl) for decl in self.decls)
 
   @property
   def shapes(self) -> tuple[tuple[int, ...], ...]:
     """The leaf shapes in C-signature order."""
-    if any(decl is None for decl in self.decls):
+    if any(_shape_hole(decl) for decl in self.decls):
       raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
     return tuple(cast(TensorType, decl).shape for decl in self.decls)
 
   @property
   def types(self) -> tuple[TensorType, ...]:
     """The leaf tensor types in C-signature order."""
-    if any(decl is None for decl in self.decls):
-      raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
+    if self.has_holes:
+      raise TypeError(f"tree {self.names} has shape or pattern holes; resolve them by tracing first")
     return cast(tuple[TensorType, ...], self.decls)
 
   @property
@@ -89,7 +106,13 @@ class Tree[Symbolic, Numerical]:
     if len(traced) != self.size:
       raise TypeError(f"declared {self.size} outputs {self.names}, body returned {len(traced)}")
     for name, decl, actual in zip(self.names, self.decls, traced, strict=True):
-      if decl is not None and (decl.shape != actual.shape or decl.dtype != actual.dtype or decl.pattern is not actual.pattern):
+      if decl is not None and (
+        not _shape_hole(decl)
+        and decl.shape != actual.shape
+        or decl.dtype != actual.dtype
+        or not isinstance(decl, _PatternHole)
+        and decl.pattern is not actual.pattern
+      ):
         raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
     return traced
 
@@ -140,6 +163,7 @@ class _Leaf(Tree[Expr, Array]):
 
   The declared name is external metadata and need not match the local name used by a decorated
   function body. Pass a ``TensorType`` to set dtype or differentiability explicitly.
+  ``pattern=...`` leaves the stored pattern to a call or an explicit ``TensorType`` binding.
 
   **A single leaf is passed and returned unpacked.** An ``arg`` input tree takes the tensor itself,
   not ``(tensor,)``, and an ``arg`` output tree returns the tensor itself, not a one-element tuple.
@@ -147,18 +171,29 @@ class _Leaf(Tree[Expr, Array]):
   returned tensor along its first axis exactly as NumPy would.
   """
 
-  def __init__(self, name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> None:
+  def __init__(self, name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc", pattern: EllipsisType | None = None) -> None:
     if not isinstance(name, str) or not name:
       raise ValueError("arg needs a non-empty name")
     self.names = (name,)
     if shape is None:
-      self.decls = (None,)
+      decl = None
     elif isinstance(shape, TensorType):
-      self.decls = (shape,)
+      decl = shape
     else:
-      self.decls = (TensorType(as_shape(shape)),)
-    decl = self.decls[0]
-    if decl is None or decl.pattern is None:
+      decl = TensorType(as_shape(shape))
+    if pattern is not None:
+      if pattern is not Ellipsis:
+        raise TypeError("a pattern hole is declared with pattern=...")
+      if decl is not None and decl.pattern is not None:
+        raise ValueError("a pattern hole cannot replace a concrete stored pattern")
+      decl = _PatternHole(shape_hole=True) if decl is None else _PatternHole(decl.shape, decl.dtype, decl.diff)
+    self.decls = (decl,)
+    self._layout_decls = (layout,)
+    if isinstance(decl, _PatternHole):
+      if layout not in ("csc", "csr"):
+        raise ValueError("a pattern hole needs a 'csc' or 'csr' layout")
+      self.layouts = (None,)
+    elif decl is None or decl.pattern is None:
       if layout != "csc":
         raise ValueError("a layout requires a declared sparse pattern")
       self.layouts = (None,)
@@ -172,22 +207,22 @@ class _Leaf(Tree[Expr, Array]):
     return Expr(ExprOp.INPUT, type=type_, name=self.names[0])
 
   def relabel(self, prefix: str) -> _Leaf:
-    return _Leaf(prefix + self.names[0], self.decls[0], layout=self.layouts[0] or "csc")
+    return _Leaf(prefix + self.names[0], self.decls[0], layout=self.layouts[0] or self._layout_decls[0])
 
   def with_types(self, types: tuple[TensorType, ...]) -> _Leaf:
     if len(types) != 1:
       raise ValueError(f"arg expects one resolved type, got {len(types)}")
-    return _Leaf(self.names[0], types[0], layout=self.layouts[0] or "csc")
+    return _Leaf(self.names[0], types[0], layout=self.layouts[0] or self._layout_decls[0] if types[0].pattern is not None else "csc")
 
   def flatten_symbolic(self, value: Expr, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, Expr):
       raise ValueError(f"{what}: expected an Expr for {self.names[0]!r}, got {type(value).__name__}")
     decl = self.decls[0]
-    if decl is not None and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
+    if decl is not None and not _shape_hole(decl) and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
     if decl is not None and value.type.dtype != decl.dtype:
       raise ValueError(f"{what}: expected dtype {decl.dtype} for {self.names[0]!r}, got {value.type.dtype}")
-    if decl is not None and value.type.pattern is not decl.pattern:
+    if decl is not None and not isinstance(decl, _PatternHole) and value.type.pattern is not decl.pattern:
       raise ValueError(f"{what}: different stored pattern for {self.names[0]!r}")
     return (value,)
 
@@ -221,16 +256,16 @@ def arg(name: str, shape: int | tuple[int, ...] | None = None, /) -> Tree[Expr, 
 
 
 @overload
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> Tree[Expr, NumericalArray]: ...
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc", pattern: EllipsisType | None = None) -> Tree[Expr, NumericalArray]: ...
 
 
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> Tree[Expr, Any]:
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc", pattern: EllipsisType | None = None) -> Tree[Expr, Any]:
   """Declare one named tensor, optionally leaving its shape to a call or trace.
 
   A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
   A ``TensorType`` sets the dtype and differentiability explicitly.
   """
-  return _Leaf(name, shape, layout=layout)
+  return _Leaf(name, shape, layout=layout, pattern=pattern)
 
 
 class _G(Tree[Any, Any]):
@@ -241,6 +276,7 @@ class _G(Tree[Any, Any]):
     self.names = tuple(name for part in parts for name in part.names)
     self.decls = tuple(decl for part in parts for decl in part.decls)
     self.layouts = tuple(layout for part in parts for layout in part.layouts)
+    self._layout_decls = tuple(layout for part in parts for layout in part._layout_decls)
     self._check_unique()
 
   def symbols(self, *, diff: bool | None = None) -> tuple[Any, ...]:
