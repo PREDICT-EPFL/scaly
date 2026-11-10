@@ -259,8 +259,8 @@ class LowerCtx:
       src = self.value_buffers.get(expr.id)
       if src is None:
         raise LoweringError(f"output {name!r} expression was not lowered")
-      if src == name:
-        continue  # already written in place via the output alias
+      if src == name or expr.size == 0:
+        continue  # already written in place, or nothing to copy
       self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.shape, self.names))
 
   # --- body -----------------------------------------------------------------
