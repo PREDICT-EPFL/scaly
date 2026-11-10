@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c multi_output.c
  * clang -O3 -fno-math-errno -c multi_output.c
@@ -40,6 +40,7 @@
 #define multi_output_SZ_RES 2
 #define multi_output_SZ_IW 0
 #define multi_output_SZ_W 0
+#define multi_output_FRAME_BYTES 4176
 
 // The pointer ABI for multi_output.
 #ifdef __cplusplus
