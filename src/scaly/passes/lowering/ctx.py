@@ -66,6 +66,7 @@ def lower_function(
   *,
   reciprocal: bool = False,
   lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1,
+  frame_budget: int = 65536,
 ) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
@@ -118,7 +119,7 @@ def lower_function(
   )
   if observe is not None:
     observe("lowered", prog)
-  prog = optimize_program(prog, observe=observe, reciprocal=reciprocal, lanes=lanes)
+  prog = optimize_program(prog, observe=observe, reciprocal=reciprocal, lanes=lanes, frame_budget=frame_budget)
   verify_program(prog)
   return prog
 

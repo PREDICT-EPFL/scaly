@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c shooting_spjac_eq_z.c
  * clang -O3 -fno-math-errno -c shooting_spjac_eq_z.c
@@ -40,6 +40,7 @@
 #define shooting_spjac_eq_z_SZ_RES 1
 #define shooting_spjac_eq_z_SZ_IW 0
 #define shooting_spjac_eq_z_SZ_W 0
+#define shooting_spjac_eq_z_FRAME_BYTES 4864
 
 // The pointer ABI for shooting_spjac_eq_z.
 #ifdef __cplusplus

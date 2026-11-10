@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import Counter
 
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
@@ -18,7 +19,8 @@ from ._common import (
   rebuild_program,
 )
 
-WORKSPACE_SPILL_THRESHOLD = 1024
+DEFAULT_FRAME_BUDGET = 65536
+SCALAR_SPILL_ALLOWANCE = 4096
 
 
 @dataclass(slots=True)
@@ -28,15 +30,15 @@ class _PackPlan:
   slot_size: dict[str, int] = field(default_factory=dict)  # slot name -> element count
   spill_offset: dict[str, int] = field(default_factory=dict)  # slot name -> offset into w[]
   own_spill: int = 0  # doubles this proc spills to its own w[] window
-  callees: set[str] = field(default_factory=set)  # callee names this proc invokes
+  callees: list[str] = field(default_factory=list)  # one entry per call site
 
 
 def _plan_pack(proc: ProgramNode) -> _PackPlan:
-  """Lifetime-pack a PROC's private buffers into shared slots and choose which slots spill.
+  """Lifetime-pack a PROC's private buffers into shared slots.
 
   Greedy left-edge packing over statement order (the lowerer emits values in topological /
-  creation order, so first-write order is a valid schedule). Slots are dtype-homogeneous;
-  only ``float64`` slots are spill-eligible since ``w[]`` is ``double*``.
+  creation order, so first-write order is a valid schedule). Slots are dtype-homogeneous.
+  Storage remains eight bytes per element until the typed workspace layout is introduced.
   """
   _params, body = _proc_parts(proc)
   private = _private_decls(body)
@@ -45,11 +47,14 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   # a read of an alias extends the lifetime of the buffer it points at.
   packable = {name: decl for name, decl in private.items() if name not in alias_src}
   plan = _PackPlan()
+  pending = list(body)
+  while pending:
+    stmt = pending.pop()
+    if stmt.op == ProgramOp.CALL:
+      plan.callees.append(stmt.attrs["callee"])
+    elif stmt.op in (ProgramOp.FOR, ProgramOp.BLOCK):
+      pending.extend(stmt.args[1:] if stmt.op == ProgramOp.FOR else stmt.args)
   if not packable:
-    for stmt in body:
-      for n in walk_program(stmt):
-        if n.op == ProgramOp.CALL:
-          plan.callees.add(n.attrs["callee"])
     return plan
 
   def owner(name: str) -> str:
@@ -81,9 +86,6 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       deps[b] = produced_from
     for b in writes | reads:
       last_use[b] = i
-    for n in walk_program(stmt):
-      if n.op == ProgramOp.CALL:
-        plan.callees.add(n.attrs["callee"])
 
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
   order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))
@@ -92,7 +94,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   counter = 0
   for buf in order:
     dt = packable[buf].dtype
-    size = _size_of(packable[buf].attrs["shape"])
+    size = max(1, _size_of(packable[buf].attrs["shape"]))
     chosen: str | None = None
     for slot, fa in free_at.items():
       # A one-element buffer must not pin a spilled matrix slot until its consumer runs.
@@ -110,19 +112,43 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
     plan.slot_size[chosen] = max(plan.slot_size[chosen], size)
     free_at[chosen] = last_use[buf] + 1
 
-  # Spill plan: float64 slots at/above the threshold get a sequential window in w[].
-  total = 0
-  for slot in plan.slot_size:
-    if plan.slot_dtype[slot].is_floating and plan.slot_dtype[slot].bits == 64 and plan.slot_size[slot] >= WORKSPACE_SPILL_THRESHOLD:
-      plan.spill_offset[slot] = total
-      total += plan.slot_size[slot]
-  plan.own_spill = total
   return plan
 
 
-def pack_workspace(prog: ProgramNode) -> ProgramNode:
+def pack_workspace(prog: ProgramNode, *, frame_budget: int = DEFAULT_FRAME_BUDGET) -> ProgramNode:
+  """Pack private storage and spill the largest slots until each estimated frame fits.
+
+  Zero spills every slot. Scalar spills still need stack space, covered by a fixed allowance.
+  """
   procs = prog.args
   plans = {pr.attrs["name"]: _plan_pack(pr) for pr in procs}
+  procedures = {pr.attrs["name"]: pr for pr in procs}
+  inline_slots: dict[str, Counter[tuple[str, str]]] = {}
+
+  def slots(name: str) -> Counter[tuple[str, str]]:
+    if name not in inline_slots:
+      counts = Counter({(name, slot): 1 for slot in plans[name].slot_size})
+      for callee in plans[name].callees:
+        if callee in plans and not procedures[callee].attrs.get("noinline"):
+          counts.update(slots(callee))
+      inline_slots[name] = counts
+    return inline_slots[name]
+
+  def estimate(name: str) -> int:
+    return SCALAR_SPILL_ALLOWANCE + sum(
+      count * plans[owner].slot_size[slot] * 8 for (owner, slot), count in slots(name).items() if slot not in plans[owner].spill_offset
+    )
+
+  for name in plans:
+    frame = estimate(name)
+    for owner, slot in sorted(slots(name), key=lambda key: plans[key[0]].slot_size[key[1]], reverse=True):
+      if frame_budget and frame <= frame_budget:
+        break
+      plan = plans[owner]
+      if slot not in plan.spill_offset:
+        plan.spill_offset[slot] = plan.own_spill
+        plan.own_spill += plan.slot_size[slot]
+        frame -= slots(name)[owner, slot] * plan.slot_size[slot] * 8
 
   # A solver wrapper (rendered by codegen/solver, so it has no PROC here) is an opaque callee: it owns
   # no spill of its own but passes its ``w`` straight through to its oracle Functions, so its
@@ -149,15 +175,15 @@ def pack_workspace(prog: ProgramNode) -> ProgramNode:
   for name in plans:
     total(name)
 
-  procs = [_apply_pack(pr, plans[pr.attrs["name"]], sz_w) for pr in procs]
+  procs = [_apply_pack(pr, plans[pr.attrs["name"]], sz_w, estimate(pr.attrs["name"])) for pr in procs]
   return ProgramNode(ProgramOp.PROGRAM, tuple(procs), prog.attrs, dtype=prog.dtype)
 
 
-def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> ProgramNode:
+def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int], frame_bytes: int) -> ProgramNode:
   params, body = _proc_parts(proc)
   name = proc.attrs["name"]
   if not plan.rename and not plan.callees:
-    return _rebuild_proc(proc, params, body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill)
+    return _rebuild_proc(proc, params, body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill, frame_bytes=frame_bytes)
 
   # Slot BUFFER nodes (one decl per slot, sized to the slot max, tagged with a spill offset).
   slot_bufs: dict[str, ProgramNode] = {}
@@ -195,4 +221,4 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> Pro
       seen_slot.add(slot_name)
     new_body.append(rewritten)
 
-  return _rebuild_proc(proc, params, new_body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill)
+  return _rebuild_proc(proc, params, new_body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill, frame_bytes=frame_bytes)

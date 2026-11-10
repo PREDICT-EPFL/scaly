@@ -50,8 +50,11 @@ class BuildRecipe:
   dialect: CDialect = "gnu"
   vector_libm: VectorLibm = "none"
   reciprocal: bool = False
+  frame_budget: int = 65536
 
   def __post_init__(self) -> None:
+    if type(self.frame_budget) is not int or self.frame_budget < 0:
+      raise ValueError("frame_budget must be a nonnegative integer of bytes")
     if self.cpu not in CPU_LEVELS:
       raise ValueError(f"cpu must be one of {CPU_LEVELS}, got {self.cpu!r}")
     if self.lanes != "auto" and (type(self.lanes) is not int or self.lanes not in (1, 2, 4, 8)):
@@ -91,7 +94,7 @@ class BuildRecipe:
       (
         "/* Scaly build recipe",
         f" * CPU baseline: {baseline}",
-        f" * lanes={self.lanes}, dialect={self.dialect}, vector_libm={self.vector_libm}, reciprocal={self.reciprocal}",
+        f" * lanes={self.lanes}, dialect={self.dialect}, vector_libm={self.vector_libm}, reciprocal={self.reciprocal}, frame_budget={self.frame_budget}",
         f" * Math library: {libc}",
         *(f" * {command}" for command in commands),
         " * Link with: " + " ".join((*self.link_flags, "-lm")),

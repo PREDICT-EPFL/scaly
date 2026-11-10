@@ -635,3 +635,16 @@ The number counts `double` entries in `w`, not bytes or total temporary memory.
 For an export with non-default options, use that module's `workspace_size` or
 its header's `<name>_SZ_W` constant. In particular, CasADi sparse-output
 conversion can require additional workspace.
+
+`frame_budget` sets the estimated procedure frame budget in bytes, with a default
+of 65,536. The compiler counts local buffers, including each inlined callee's
+buffers, and reserves 4,096 bytes for scalar spills. It moves the largest buffers
+to `w` until the estimate fits. `frame_budget=0`, or `--frame-budget 0` on the
+command line, moves all temporary buffers to `w`. Scalar spills still use the
+stack, so a budget below 4,096 bytes cannot remove that allowance.
+
+`module.frame_bytes` and the header's `<name>_FRAME_BYTES` report the largest
+estimated procedure frame. This excludes external solver implementations and
+the combined stack of calls that remain separate. The estimate depends on the
+generated program. Check the compiled frame with GCC or Clang's
+`-Wframe-larger-than=<budget> -Werror` for the application's compiler flags.

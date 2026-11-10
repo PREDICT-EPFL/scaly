@@ -294,7 +294,10 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}const {stmt.dtype.c_type}* {name} = {rhs};")
     elif "workspace_offset" in stmt.attrs:
       # A spilled slot: a window into the caller-provided w[] instead of a stack array.
-      lines.append(f"{pad}{stmt.dtype.c_type}* {name} = w + {stmt.attrs['workspace_offset']};")
+      rhs = f"w + {stmt.attrs['workspace_offset']}"
+      if stmt.dtype.c_type != "double":
+        rhs = f"({stmt.dtype.c_type}*)({rhs})"
+      lines.append(f"{pad}{stmt.dtype.c_type}* {name} = {rhs};")
     else:
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 

@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c dynamics.c
  * clang -O3 -fno-math-errno -c dynamics.c
@@ -40,6 +40,7 @@
 #define dynamics_SZ_RES 1
 #define dynamics_SZ_IW 0
 #define dynamics_SZ_W 0
+#define dynamics_FRAME_BYTES 4112
 
 // The pointer ABI for dynamics.
 #ifdef __cplusplus

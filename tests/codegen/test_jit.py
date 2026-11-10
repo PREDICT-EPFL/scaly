@@ -548,7 +548,7 @@ def test_native_render_recipe_and_math_override(monkeypatch, override, expected)
   monkeypatch.setattr(jit, "render_c_module", render)
   assert jit._render_native(as_concrete(_simple_fn()), ("chosen-compiler",)) is sentinel
   assert compilers == [("chosen-compiler",)]
-  assert options == {"cpu": "native", "lanes": 4, "dialect": "gnu", "vector_libm": expected, "reciprocal": False}
+  assert options == {"cpu": "native", "lanes": 4, "dialect": "gnu", "vector_libm": expected, "reciprocal": False, "frame_budget": 65536}
 
 
 @pytest.mark.parametrize("value", ["sleef"])

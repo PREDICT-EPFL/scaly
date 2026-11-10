@@ -88,7 +88,7 @@ def _multi_output_vmap() -> sc.Function:
 def _workspace() -> sc.Function:
   """A shared intermediate large enough to spill after expression normalization."""
 
-  @sc.function(sc.arg("x", 2048), outputs=sc.group(sc.arg("sum"), sc.arg("sumsqr")), name="workspace")
+  @sc.function(sc.arg("x", 16384), outputs=sc.group(sc.arg("sum"), sc.arg("sumsqr")), name="workspace")
   def workspace(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     value = x.sin()
     return (value.sum(), (value * value).sum())

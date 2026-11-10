@@ -115,7 +115,7 @@ def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   )
   monkeypatch.syspath_prepend(str(tmp_path))
   out = tmp_path / "generated"
-  aot.main(["scaly_aot_cli_target:build", "-o", str(out)])
+  aot.main(["scaly_aot_cli_target:build", "-o", str(out), "--frame-budget", "0"])
   assert "#define aot_cli_SZ_W 0" in (out / "aot_cli.h").read_text()
   source = (out / "aot_cli.c").read_text()
   assert source.startswith("/* Scaly build recipe")
@@ -126,7 +126,18 @@ def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   # an already-imported module (RuntimeWarning, two copies of its render-observer list), so -W error
   # is what pins the shim in place.
   env_vars = {**os.environ, "PYTHONPATH": str(tmp_path)}
-  argv = [sys.executable, "-W", "error::RuntimeWarning", "-m", "scaly.codegen", "scaly_aot_cli_target:build", "-o", str(tmp_path / "cli")]
+  argv = [
+    sys.executable,
+    "-W",
+    "error::RuntimeWarning",
+    "-m",
+    "scaly.codegen",
+    "scaly_aot_cli_target:build",
+    "-o",
+    str(tmp_path / "cli"),
+    "--frame-budget",
+    "0",
+  ]
   proc = subprocess.run(argv, check=False, capture_output=True, text=True, env=env_vars)
   assert proc.returncode == 0, proc.stderr
   assert (tmp_path / "cli" / "aot_cli.h").read_text() == (out / "aot_cli.h").read_text()

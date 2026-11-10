@@ -97,7 +97,7 @@ def test_entry_refuses_a_null_workspace_it_needs(tmp_path) -> None:
 
   from scaly.codegen import render_c_module
 
-  module = render_c_module(f)
+  module = render_c_module(f, frame_budget=8192)
   assert module.workspace_size > 0
   src = tmp_path / module.source_name
   lib_path = tmp_path / ("libspilled.dylib" if sys.platform == "darwin" else "libspilled.so")

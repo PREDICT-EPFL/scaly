@@ -108,10 +108,19 @@ class CModule:
     if compiler is None:
       raise RuntimeError("external libraries need a C compiler")
     return tuple(prepare_library(library, compiler.command) for library in self._libraries)
+  @cached_property
+  def frame_bytes(self) -> int:
+    """Largest estimated procedure frame in bytes, including inlined locals and scalar spills.
+
+    External solver implementations are outside this estimate.
+    """
+    return _frame_bytes(self.program)
 
   @cached_property
   def header(self) -> str:
-    return self.recipe.comment(self.source_name) + _render_header(self.fun, self.backends, self.workspace_size, lang=self.lang, casadi=self.casadi)
+    return self.recipe.comment(self.source_name) + _render_header(
+      self.fun, self.backends, self.workspace_size, self.frame_bytes, lang=self.lang, casadi=self.casadi
+    )
 
   @cached_property
   def source(self) -> str:
@@ -179,7 +188,9 @@ def _lower(
   backends = solver_backends_used(fun)
   if backends:
     solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
-  prog = lower_function(fun, observe=observe, observe_expr=observe_expr, reciprocal=recipe.reciprocal, lanes=recipe.lanes)
+  prog = lower_function(
+    fun, observe=observe, observe_expr=observe_expr, reciprocal=recipe.reciprocal, lanes=recipe.lanes, frame_budget=recipe.frame_budget
+  )
   sz_w = (
     _solver_root_workspace(prog, dict(prog.attrs["function_symbols"])[fun]) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
   )
@@ -310,9 +321,13 @@ def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityP
   return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
 
 
-def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, lang: str, casadi: bool) -> str:
+def _frame_bytes(prog: ProgramNode) -> int:
+  return max((int(pr.attrs["frame_bytes"]) for pr in prog.args), default=0)
+
+
+def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, lang: str, casadi: bool) -> str:
   if lang == "cpp":
-    return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
+    return render_cpp_header(fun, backends, sz_w, frame_bytes, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
   lines = [
     "#pragma once",
@@ -329,6 +344,7 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
     f"#define {symbol}_SZ_IW 0",
     f"#define {symbol}_SZ_W {sz_w}",
+    f"#define {symbol}_FRAME_BYTES {frame_bytes}",
     "",
     f"// The pointer ABI for {fun.name}.",
     "#ifdef __cplusplus",
@@ -508,6 +524,7 @@ def render_c_source(
   vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
   cpu: CpuLevel = "generic",
+  frame_budget: int = 65536,
 ) -> str:
   """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
   the CasADi 3.8 compatible symbols.
@@ -515,7 +532,7 @@ def render_c_source(
   A ``LoweringError`` for a function that cannot be lowered propagates. There is no fallback.
   """
   fun = as_concrete(fun)
-  recipe = BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)
+  recipe = BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
   return _render_observed(fun, casadi=casadi, recipe=recipe)[1]
 
 
@@ -534,6 +551,7 @@ def render_c_api_header(
   vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
   cpu: CpuLevel = "generic",
+  frame_budget: int = 65536,
 ) -> str:
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
   buffers of the chosen ``lang``, the
@@ -542,9 +560,11 @@ def render_c_api_header(
   _check_lang(lang)
   if casadi:
     fun = casadi_layout(fun)
-  ctx = _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal))
+  ctx = _lower(
+    fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
+  )
   return ctx.recipe.comment(f"{c_ident(fun.name)}.c") + _render_header(
-    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), lang=lang, casadi=casadi
+    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), _frame_bytes(ctx.prog), lang=lang, casadi=casadi
   )
 
 
@@ -560,6 +580,7 @@ def render_c_module(
   vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
   cpu: CpuLevel = "generic",
+  frame_budget: int = 65536,
 ) -> CModule:
   """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C.
   ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
@@ -569,7 +590,7 @@ def render_c_module(
   ctx, body = _render_observed(
     fun,
     casadi=casadi,
-    recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal),
+    recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget),
     source_name=source_name,
   )
   symbol = c_ident(fun.name)
@@ -596,6 +617,7 @@ def workspace_size(
   vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
   cpu: CpuLevel = "generic",
+  frame_budget: int = 65536,
 ) -> int:
   """Doubles of scratch ``fun`` needs in ``w[]``, the value its header's ``SZ_W`` quotes.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
@@ -605,7 +627,9 @@ def workspace_size(
     fun = casadi_layout(fun)
   return entry_workspace(
     fun,
-    _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)).workspace_size,
+    _lower(
+      fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
+    ).workspace_size,
     casadi=casadi,
   )
 
@@ -621,11 +645,14 @@ def write_module(
   vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
   cpu: CpuLevel = "generic",
+  frame_budget: int = 65536,
 ) -> CModule:
   """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module. A ``Solver`` renders its ``function``."""
   if isinstance(fun, Solver):
     fun = fun.function
-  module = render_c_module(fun, lang=lang, casadi=casadi, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, cpu=cpu)
+  module = render_c_module(
+    fun, lang=lang, casadi=casadi, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, cpu=cpu, frame_budget=frame_budget
+  )
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
@@ -659,6 +686,7 @@ def main(argv: list[str] | None = None) -> None:
   parser.add_argument("--dialect", choices=("gnu", "c"), default="gnu")
   parser.add_argument("--vector-libm", choices=("none", "glibc"), default="none")
   parser.add_argument("--reciprocal", action="store_true", help="allow reciprocal multiplication, including changed rounding and overflow")
+  parser.add_argument("--frame-budget", type=int, default=65536, help="estimated frame budget in bytes; zero spills all buffers")
   args = parser.parse_args(argv)
   module_name, _, attr = args.target.partition(":")
   if not attr:
@@ -676,10 +704,12 @@ def main(argv: list[str] | None = None) -> None:
     dialect=args.dialect,
     vector_libm=args.vector_libm,
     reciprocal=args.reciprocal,
+    frame_budget=args.frame_budget,
   )
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")
+  print(f"frame_bytes: {module.frame_bytes}")
   print(module.recipe.comment(module.source_name).rstrip())
   if module._libraries:
     print("build manifest: " + str(args.out_dir / f"{c_ident(module.fun.name)}.build.json"))

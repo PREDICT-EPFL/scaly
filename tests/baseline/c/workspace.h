@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c workspace.c
  * clang -O3 -fno-math-errno -c workspace.c
@@ -39,7 +39,8 @@
 #define workspace_SZ_ARG 1
 #define workspace_SZ_RES 2
 #define workspace_SZ_IW 0
-#define workspace_SZ_W 2048
+#define workspace_SZ_W 16384
+#define workspace_FRAME_BYTES 4096
 
 // The pointer ABI for workspace.
 #ifdef __cplusplus
@@ -51,7 +52,7 @@ int workspace(const double** arg, double** res, int* iw, double* w, int mem);
 #endif
 
 // Typed buffers: one struct per input and output, and the caller-owned workspace.
-typedef struct { SCALY_ALIGNAS(16) double data[2048]; } workspace_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[16384]; } workspace_x_t;
 typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sum_t;
 typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sumsqr_t;
 typedef struct { SCALY_ALIGNAS(16) double data[workspace_SZ_W > 0 ? workspace_SZ_W : 1]; } workspace_workspace_t;
