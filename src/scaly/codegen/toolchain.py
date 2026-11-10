@@ -281,8 +281,9 @@ def resolve_library(name: str, command: tuple[str, ...]) -> LinkedLibrary:
   candidates = tuple(dict.fromkeys(filter(None, (found, f"lib{name}.so", f"lib{name}.dylib", f"lib{name}.dll.a", f"{name}.lib", f"lib{name}.a"))))
   search_dirs = [Path(part[2:]) for part in command if part.startswith("-L") and len(part) > 2]
   search_dirs += [Path(command[i + 1]) for i, part in enumerate(command[:-1]) if part == "-L"]
-  for candidate in candidates:
-    path = next((directory / candidate for directory in search_dirs if (directory / candidate).is_file()), Path(candidate))
+  explicit = [directory / candidate for directory in search_dirs for candidate in candidates if not Path(candidate).is_absolute()]
+  for candidate in (*explicit, *candidates):
+    path = Path(candidate)
     if not path.is_absolute() or not path.is_file():
       reported = subprocess.run([*command, f"-print-file-name={candidate}"], text=True, capture_output=True, check=True).stdout.strip()
       path = Path(reported) if reported else path

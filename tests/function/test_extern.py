@@ -244,3 +244,14 @@ def test_inactive_external_derivatives_and_zero_input_call():
     outputs=sc.arg("y", ()),
   )
   np.testing.assert_allclose(constant(), 2)
+
+
+@pytest.mark.parametrize("field", ["include_dirs", "compile_flags", "link"])
+def test_library_rejects_a_bare_string_for_a_sequence_field(field):
+  with pytest.raises(TypeError, match=field):
+    pair_library(**{field: "-O3" if field == "compile_flags" else "inc"})
+
+
+def test_custom_derivative_of_an_extern_asks_for_a_wrapping_function():
+  with pytest.raises(TypeError, match="wrap.*Function"):
+    sc.custom_derivative(pair(), sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool))

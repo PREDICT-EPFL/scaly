@@ -45,6 +45,9 @@ class CLibrary:
   def __post_init__(self) -> None:
     if not self.name:
       raise ValueError("CLibrary needs a non-empty name")
+    for name in ("include_dirs", "compile_flags", "link"):
+      if isinstance(getattr(self, name), str):
+        raise TypeError(f"CLibrary {name} needs a sequence of strings, not a bare string")
     object.__setattr__(self, "sources", _files(self.sources))
     object.__setattr__(self, "headers", _files(self.headers))
     if set(dict(self.sources)) & set(dict(self.headers)):
@@ -122,8 +125,9 @@ def extern(library: CLibrary, symbol: str, *, inputs: tuple[Tree[Any, Any], ...]
   ``inputs`` gives one ``sc.arg`` or ``sc.group`` tree per positional parameter; ``outputs`` is
   the output tree. Every leaf must have a concrete shape, dtype and stored pattern. The C symbol
   returns ``void`` and takes one ``const T*`` per input leaf, one ``T*`` per output leaf, then
-  ``double* w`` with ``workspace`` doubles of scratch. Sparse buffers use their declared layout.
-  Leaf dtypes must be supported by Scaly's generated calling convention.
+  ``double* w`` with ``workspace`` doubles of scratch, or ``NULL`` when ``workspace=0``.
+  Leaves follow each tree's flatten order. Sparse buffers use their declared layout.
+  The generated calling convention currently supports float64 leaves only.
 
   Calls must be deterministic and reentrant: read-only inputs, fully written outputs, no retained
   pointers, hidden state or aliased buffers. Report failure as an ordinary output. A symbolic call

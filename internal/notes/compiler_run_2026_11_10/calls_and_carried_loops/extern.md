@@ -56,3 +56,27 @@ checks both forms against finite differences.
 - #84 owns Windows acceptance beyond the existing CI jobs.
 
 No roadmap departure was needed. Runtime timings are not evidence during the shared-machine run.
+
+## Build manifest and review notes
+
+Paths in `source`, each library's `sources` and `headers`, and the first `include_dirs` entry are
+relative to the manifest directory. Additional include directories are absolute, resolved when
+constructing `CLibrary`. `defines` is a JSON object, where `null` means `-DNAME` without `=value`.
+`compile_flags` applies to that record's source files. Compile them as separate C translation
+units, then link their objects with the generated source. `link` contains toolchain-resolved
+library names, and `versions` is dependency-version metadata. The generated source's root flags
+record the CPU recipe, but the consumer chooses compiler-specific vectorization tuning. The AOT
+command reports the manifest and does not require a compiler or prepare a JIT cache entry.
+
+The interface has no library-directory field. Prebuilt libraries use the compiler's search path,
+including `SCALY_CC="cc -L..."` or `LIBRARY_PATH`. Explicit compiler directories take precedence
+over a system copy. A custom derivative attaches to a wrapping Function, and passing the extern
+itself reports that requirement. Flatten order, NULL workspace and the current float64 boundary
+are explicit in the extern docstring.
+
+#357 owns reuse of compatible Linux linker namespaces. The operating system limits the number
+of live namespaces, so many linked-binary rebuilds in one process can exhaust them. The loader now
+reports its actual error. Source-only builds share one namespace. The key still preprocesses each
+source when a graph is looked up, to detect changed included headers. `_Extern` supplies the
+callee metadata the compiler walks, rather than being a concrete expression graph. These last two
+choices remain implementation points for the section's later simplification pass.

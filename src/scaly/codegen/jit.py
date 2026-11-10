@@ -89,6 +89,9 @@ def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ())
   dlmopen = libc.dlmopen
   dlmopen.argtypes = [ctypes.c_long, ctypes.c_char_p, ctypes.c_int]
   dlmopen.restype = ctypes.c_void_p
+  dlerror = libc.dlerror
+  dlerror.argtypes = []
+  dlerror.restype = ctypes.c_char_p
   with _LINKER_NAMESPACE_LOCK:
     previous = _LINKER_NAMESPACES.get(namespace)
     namespace_id, anchor, environ = previous if previous is not None else (_LM_ID_NEWLM, None, None)
@@ -96,9 +99,11 @@ def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ())
     # before another initializer calls getenv, since Python may have replaced that array.
     if environ is not None:
       environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
+    dlerror()
     handle = dlmopen(namespace_id, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
     if not handle:
-      raise OSError(f"dlmopen failed for {path}")
+      error = dlerror()
+      raise OSError(f"dlmopen failed for {path}: {error.decode(errors='replace') if error else 'unknown loader error'}")
     # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
     lib = ctypes.CDLL(None)
     lib._handle = handle
@@ -402,7 +407,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     flags=module.link_flags,
     workspace_size=module.workspace_size,
     solver_library=bool(module.backends or module._libraries),
-    prints=prints(module.program),
+    prints=prints(module.program) or bool(module._libraries),
     namespace=("extern", *(f"{link.path}:{link.identity}" for build in module._library_builds for link in build.links)) if module._libraries else (),
   )
   if verify and index is not None and indexed is not None and replace(indexed, lib_path=lib_path) != artifact:
@@ -594,7 +599,9 @@ class CompiledFunction:
       sys.stdout.flush()
     status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
     if self._artifact.prints:
-      _process_libc().fflush(None)
+      libc = self._lib if self._artifact.solver_library and sys.platform == "linux" else _process_libc()
+      if flush := getattr(libc, "fflush", None):
+        flush(None)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

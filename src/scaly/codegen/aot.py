@@ -681,7 +681,9 @@ def main(argv: list[str] | None = None) -> None:
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")
   print(module.recipe.comment(module.source_name).rstrip())
-  if module.link_flags:
+  if module._libraries:
+    print("build manifest: " + str(args.out_dir / f"{c_ident(module.fun.name)}.build.json"))
+  elif module.link_flags:
     print("link flags: " + " ".join(module.link_flags))
 
 

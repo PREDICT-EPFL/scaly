@@ -19,7 +19,7 @@ The frozen devrush extern tests supply the compile/nest/reject cases, rewritten 
       the internal section note and end-to-end example test. No guide page or plugin changes.
 - [x] Run focused checks, perturb new gates, then all pre-merge checks through the detached
       ~/.scaly-suite/run queue. Existing C snapshots must remain byte-identical.
-- [ ] Commit, push once, open/link a draft PR and get one claude-opus-5-5 high review.
+- [x] Commit, push once, open/link a draft PR and get one claude-opus-5-5 high review.
 - [ ] Fix findings together, run relevant checks, get one short delta check on fixes only,
       update the review verdict, mark ready and queue once with --squash --auto.
 
@@ -38,3 +38,9 @@ CModule build helpers are private to keep this interface out of the published re
 Final pre-review validation: ~/.scaly-suite/run completed wt hook pre-merge --yes with exit 0.
 2994 tests passed, 52 skipped; Ruff, ty, benchmark smoke, docs build and private-name check pass.
 Existing C snapshot files are unchanged. Ready for the one Opus high review.
+
+Opus review consumed and its delegate settled. Three act-on findings: isolated stdout flush,
+dlmopen error detail, and bare strings accepted as sequence fields. Fixes add reproductions.
+Cheap notes also addressed: explicit library search precedence, compiler-free AOT CLI export,
+NULL/flatten-order/dtype calling-convention docs, manifest format and direct custom-rule error.
+Remaining notes: namespace cap, current library-search API, warm preprocessing and callee protocol.

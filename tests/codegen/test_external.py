@@ -54,7 +54,7 @@ def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):
   library = sc.CLibrary(
     "shared",
     sources={"shared.c": SOURCE},
-    defines={"LOCAL_ONLY": 2},
+    defines={"LOCAL_ONLY": 2, "NO_VALUE": None},
     compile_flags=("-O1",),
     link=("m",) if sys.platform != "win32" else (),
     versions={"m": "system"},
@@ -67,7 +67,7 @@ def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):
   for index, record in enumerate(manifest["libraries"]):
     flags = [
       *("-I" + str(tmp_path / path) for path in record["include_dirs"]),
-      *(f"-D{k}={v}" for k, v in record["defines"].items()),
+      *(f"-D{k}" + (f"={v}" if v is not None else "") for k, v in record["defines"].items()),
       *record["compile_flags"],
     ]
     for source in record["sources"]:
@@ -146,3 +146,54 @@ def test_changed_linked_binary_changes_key_and_linux_namespace(isolated_cache, m
   assert first.cache_key != second.cache_key
   np.testing.assert_allclose(first.run([np.array(3.0)]), [15])
   np.testing.assert_allclose(second.run([np.array(3.0)]), [21])
+
+
+def test_external_and_generated_prints_survive_redirected_stdout():
+  script = r'''
+import numpy as np
+import scaly as sc
+library = sc.CLibrary("printing", sources={"printing.c": r"""
+#include <stdio.h>
+void external_printing(const double* x, double* y, double* w) {
+  (void)w; printf("external %.0f\n", x[0]); y[0] = x[0];
+}
+"""})
+external = sc.extern(library, "external_printing", inputs=(sc.arg("x", ()),), outputs=sc.arg("y", ()))
+@sc.function(sc.arg("x", ()))
+def host(x):
+  return sc.print("generated {}", external(x))
+print("before")
+host(np.array(3.))
+print("between")
+external(np.array(4.))
+print("after")
+'''
+  output = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True).stdout
+  assert output == "before\nexternal 3\ngenerated 3\nbetween\nexternal 4\nafter\n"
+
+
+def test_missing_external_symbol_names_loader_error():
+  import pytest
+
+  if sys.platform != "linux":
+    pytest.skip("dlmopen diagnostics")
+  missing = sc.extern(sc.CLibrary("missing"), "external_symbol_does_not_exist", inputs=(), outputs=sc.arg("y", ()))
+  with pytest.raises(OSError, match="undefined symbol: external_symbol_does_not_exist"):
+    missing()
+
+
+def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, capsys):
+  from types import SimpleNamespace
+  from scaly.codegen import aot
+
+  library = sc.CLibrary("portable", sources={"shared.c": SOURCE}, defines={"LOCAL_ONLY": 2}, link=("m",))
+  kernel = library_host(library)
+  monkeypatch.setattr(aot.importlib, "import_module", lambda name: SimpleNamespace(kernel=kernel))
+  monkeypatch.setattr(aot, "find_c_compiler", lambda: None)
+  cache = tmp_path / "cache"
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(cache))
+  aot.main(["model:kernel", "--out-dir", str(tmp_path / "export"), "--lanes", "1"])
+  assert "build manifest: " in capsys.readouterr().out
+  assert not cache.exists()
+  manifest = json.loads((tmp_path / "export" / "external_build_host.build.json").read_text())
+  assert manifest["libraries"][0]["link"] == ["m"]

@@ -1648,9 +1648,12 @@ tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported
 tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_output
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
 tests/codegen/test_external.py::test_an_included_header_changes_library_and_jit_keys
+tests/codegen/test_external.py::test_aot_cli_exports_without_a_compiler_or_jit_cache
 tests/codegen/test_external.py::test_changed_linked_binary_changes_key_and_linux_namespace
+tests/codegen/test_external.py::test_external_and_generated_prints_survive_redirected_stdout
 tests/codegen/test_external.py::test_library_compiles_once_for_two_symbols_and_multiple_graphs
 tests/codegen/test_external.py::test_manifest_consumer_compiles_each_translation_unit_and_links
+tests/codegen/test_external.py::test_missing_external_symbol_names_loader_error
 tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[clang]
 tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[zig cc]
 tests/codegen/test_jit.py::test_compiler_wrapper_change_misses_the_cache
@@ -1913,6 +1916,7 @@ tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_comp
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[real path]
 tests/codegen/test_toolchain.py::test_compiler_fingerprint_changes_with_the_compiler_and_host[version]
 tests/codegen/test_toolchain.py::test_compiler_order_prefers_zig_after_scaly_cc
+tests/codegen/test_toolchain.py::test_explicit_library_directory_wins_over_the_system_copy
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[glibc-2.34-none]
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[glibc-2.35-glibc]
 tests/codegen/test_toolchain.py::test_native_recipe_checks_vector_libm_host[musl-1.2-none]
@@ -2257,6 +2261,7 @@ tests/function/test_extern.py::test_active_derivative_names_custom_derivative[fo
 tests/function/test_extern.py::test_active_derivative_names_custom_derivative[jacobian]
 tests/function/test_extern.py::test_active_derivative_names_custom_derivative[reverse]
 tests/function/test_extern.py::test_aot_exports_library_source_headers_and_build_manifest
+tests/function/test_extern.py::test_custom_derivative_of_an_extern_asks_for_a_wrapping_function
 tests/function/test_extern.py::test_extern_rejects_invalid_declarations[input_hole]
 tests/function/test_extern.py::test_extern_rejects_invalid_declarations[link]
 tests/function/test_extern.py::test_extern_rejects_invalid_declarations[output_hole]
@@ -2269,6 +2274,9 @@ tests/function/test_extern.py::test_external_call_nests_maps_and_allocates_unuse
 tests/function/test_extern.py::test_external_source_two_results_share_one_invocation_and_match_numpy
 tests/function/test_extern.py::test_inactive_external_derivatives_and_zero_input_call
 tests/function/test_extern.py::test_library_content_and_flags_change_jit_key
+tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[compile_flags]
+tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[include_dirs]
+tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[link]
 tests/function/test_extern.py::test_named_system_math_library_is_resolved_and_linked
 tests/function/test_extern.py::test_wrapper_custom_derivative_matches_finite_differences[False]
 tests/function/test_extern.py::test_wrapper_custom_derivative_matches_finite_differences[True]
