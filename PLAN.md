@@ -44,3 +44,9 @@ Initial targeted checks: 130 passed. Ruff and ty passed. Mutation checks split s
 and erased PRINT argument identity; six grouping gates and the identity gate failed as expected.
 The first full hook and standalone collection were interrupted by the provider stream closure.
 The printing example passed. The workspace header collision is tracked separately as #311.
+
+The detached tmux jobs were also interrupted. Validation now runs in user services
+`scaly28-check` and `scaly28-smoke`, writing `/tmp/scaly28-pre-merge.log` and
+`/tmp/scaly28-smoke.log` plus `.exit` files. The only observed suite failure is the source-based
+operation coverage test not recognizing callees_of. It now recognizes CALLEE_OPS; the targeted
+21 tests and all static checks pass. Removing VMAP from that family makes the coverage gate fail.

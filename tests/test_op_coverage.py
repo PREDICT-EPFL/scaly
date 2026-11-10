@@ -8,7 +8,7 @@ import inspect
 from pathlib import Path
 
 from scaly.ad import forward, reverse, sparsity
-from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp
+from scaly.ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp
 from scaly.ir.expr_spec import spec_expr
 from scaly.passes.lowering.ctx import _RULES
 
@@ -36,6 +36,8 @@ def _dispatch_ops(*functions) -> set[ExprOp]:
       if not isinstance(node, ast.If):
         continue
       for condition in ast.walk(node.test):
+        if isinstance(condition, ast.Call) and isinstance(condition.func, ast.Name) and condition.func.id == "callees_of":
+          ops.update(CALLEE_OPS)
         if not isinstance(condition, ast.Compare) or ast.unparse(condition.left) not in {"expr.op", "op"}:
           continue
         for comparator in condition.comparators:

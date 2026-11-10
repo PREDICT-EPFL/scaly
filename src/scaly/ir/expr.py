@@ -89,6 +89,9 @@ class ExprOp(StrEnum):
   STOP_GRADIENT = "stop_gradient"
 
 
+CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP}
+
+
 COMMON_ELEMENTWISE_UNARY = {
   ExprOp.NEG,
   ExprOp.SIN,
@@ -730,7 +733,7 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 def callees_of(node: Expr) -> tuple[Any, ...]:
   """The concrete functions invoked by ``node``, or an empty tuple for other operations."""
-  return (node.attrs["callee"],) if node.op in (ExprOp.CALL, ExprOp.VMAP) else ()
+  return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
 
 
 def invocation_key(node: Expr) -> tuple[Any, ...] | None:
