@@ -91,10 +91,16 @@ mode, computing full support, joining unsampled derivative rows, executing an ab
 ignoring the declared sample, and corrupting sampled arithmetic. The 126-case focused group and
 277 existing support, verifier, sparsity, kernel, import and snapshot checks pass after the fix.
 
-The detached `~/.scaly-suite/run` exited zero. Its full suite passed with 3,333 tests and 55 solver
+The detached `~/.scaly-suite/run` exited zero after the sampled-mode fix. Its full suite passed with 3,342 tests and 55 solver
 skips, followed by benchmark smoke, the documentation build and the private-name check. Types,
-formatting and lint passed too. The node-ID baseline includes all 3,388 collected tests.
-This was the first review state; the sampled-mode fix gets a fresh full validation below.
+formatting and lint passed too. The node-ID baseline includes all 3,397 collected tests.
+
+Cross-review approved the fix. The main review by claude-opus-5-5 at xhigh effort identified the
+unsampled-pattern defect; the independent gpt-6.1-sol review at xhigh effort found no numerical
+defect. Each model's one low-effort check confirmed the repaired pattern, differentiation and
+lowering, with 122 focused cases passing. No issue remains open in #47's scope. The per-seed
+code-growth note stays with #225, the temporary root plan is removed before ready, and plain
+output-row/write fields replace the misleading reuse of `MapRegion`.
 
 ## Counts and generated C
 
