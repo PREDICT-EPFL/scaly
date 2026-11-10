@@ -31,6 +31,10 @@ class Unkeyed(Exception):
 # memo is computed state.
 _FIELDS = ("name", "inputs", "outputs", "output_sparsities", "output_coloring_widths", "device", "descriptor", "role", "rules")
 _NOT_READ = ("input_tree", "output_tree", "_memo")
+# What a tree holds: the digest reads the names and the layouts, while the declared types only reach
+# the generated header, which the expression types already fix, and the parts only group the leaves.
+_TREE_READ = ("names", "layouts")
+_TREE_NOT_READ = ("decls", "parts")
 
 # The array element kinds whose bytes are their value: flags, integers, floats and complex numbers.
 _PLAIN_KINDS = "biufc"

@@ -50,6 +50,11 @@ def test_every_field_of_a_function_is_read_or_named_unread() -> None:
   assert set(digest._FIELDS) | set(digest._NOT_READ) == {field.name for field in dataclasses.fields(ConcreteFunction)}
 
 
+def test_everything_a_tree_holds_is_read_or_named_unread() -> None:
+  held = set(vars(sc.group(sc.arg("x", 2), sc.arg("y"))))
+  assert set(digest._TREE_READ) | set(digest._TREE_NOT_READ) == held | set(vars(sc.arg("z")))
+
+
 @pytest.mark.parametrize(
   "one, other",
   [
