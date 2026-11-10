@@ -82,7 +82,8 @@ def render_cpp_header(
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
   symbol = c_ident(fun.name)
   inputs, outputs = buffer_idents(fun)
-  params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + ["workspace_t& workspace"]
+  workspace = NameScope((symbol, f"{symbol}_with_options", *inputs, *outputs), header=True).allocate("workspace")
+  params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + [f"workspace_t& {workspace}"]
   arg_init = ", ".join(f"{i}.ptr()" for i in inputs) or "nullptr"
   res_init = ", ".join(f"{o}.ptr()" for o in outputs) or "nullptr"
   lines = [
@@ -131,7 +132,7 @@ def render_cpp_header(
       f"inline int call({', '.join(call_params)}) {{",
       f"  const double* arg[sz_arg > 0 ? sz_arg : 1] = {{{arg_init}}};",
       f"  double* res[sz_res > 0 ? sz_res : 1] = {{{res_init}}};",
-      f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? workspace.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
+      f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? {workspace}.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
       "}",
     ]
   names = NameScope(
