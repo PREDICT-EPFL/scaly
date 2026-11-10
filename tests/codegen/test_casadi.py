@@ -140,6 +140,57 @@ def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
   assert ext.sparsity_out(1).shape == (1, 1)
 
 
+@pytest.mark.parametrize("shape", [(0,), (0, 3), (3, 0), (0, 0)])
+@pytest.mark.parametrize("side", ["input", "output"])
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+def test_casadi_external_empty_dense_leaves(tmp_path, shape, side, lang):
+  if side == "input":
+    fun = sc.function(sc.arg("z", shape), outputs=sc.arg("s"), name="empty_dense")(lambda z: z.sum())
+  else:
+    fun = sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("z", shape), sc.arg("s")), name="empty_dense")(
+      lambda x: (x[:0].reshape(shape), x.sum())
+    )
+
+  module, lib_path = _build(tmp_path, fun, lang=lang)
+  ext = casadi.external(fun.name, str(lib_path))
+  dims = (0, 1) if len(shape) == 1 else shape
+  x = np.array([2.0, -3.0, 5.0])
+  if side == "input":
+    assert ext.size_in(0) == dims
+    assert ext.nnz_in(0) == 0
+    assert ext.size_out(0) == (1, 1)
+    expected = np.empty(shape).sum()
+    np.testing.assert_allclose(float(ext(casadi.DM.zeros(*dims))), expected)
+  else:
+    assert ext.size_in(0) == (3, 1)
+    assert ext.size_out(0) == dims
+    assert ext.nnz_out(0) == 0
+    assert ext.size_out(1) == (1, 1)
+    z, s = ext(x)
+    np.testing.assert_array_equal(z.full(), np.empty(dims))
+    expected = x.sum()
+    np.testing.assert_allclose(float(s), expected)
+
+  lib = ctypes.CDLL(str(lib_path))
+  entry = lib.empty_dense
+  ptr = ctypes.POINTER(ctypes.c_double)
+  entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.POINTER(ctypes.c_int), ptr, ctypes.c_int]
+  entry.restype = ctypes.c_int
+  scalar = (ctypes.c_double * 1)()
+  args = (ptr * 1)(None if side == "input" else x.ctypes.data_as(ptr))
+  res = (ptr * ext.n_out())(*([None] if side == "output" else []), ctypes.cast(scalar, ptr))
+  work = (ctypes.c_double * max(module.workspace_size, 1))()
+  assert entry(args, res, None, work, 0) == 0
+  np.testing.assert_allclose(scalar[0], expected)
+  assert entry(None, res, None, work, 0) == 1
+  assert entry(args, None, None, work, 0) == 1
+  res[ext.n_out() - 1] = None
+  assert entry(args, res, None, work, 0) == 3
+  if side == "output":
+    args[0] = None
+    assert entry(args, res, None, work, 0) == 4
+
+
 def test_casadi_rejects_dense_matrix_buffers() -> None:
   @sc.function(sc.arg("m", (2, 3)), outputs=sc.arg("n"), name="dense")
   def fun(m: sc.Expr) -> sc.Expr:

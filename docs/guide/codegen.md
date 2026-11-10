@@ -398,9 +398,10 @@ tables describe the converted output order.
     Dense matrices with both dimensions greater than one, and dense arrays of
     rank greater than two, are rejected by `casadi=True`. Scaly uses row-major
     storage while CasADi uses column-major storage. Scalars, vectors, and compact
-    sparse outputs are supported. Every input and output pointer is still
-    required, unlike CasADi's convention of treating null inputs as zero and
-    skipping null outputs.
+    sparse outputs are supported. An input or output with no values accepts a
+    null pointer. Other inputs and outputs require pointers, while CasADi treats
+    a null input as zero and skips a null output. The `arg` and `res` pointer
+    arrays must always be non-null.
 
 The example uses this interface for discrete dynamics and external costs, including their
 sparse Jacobians and exact Hessians. Its `build_scaly_solver` helper takes

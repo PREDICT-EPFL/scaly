@@ -188,8 +188,11 @@ starts with null checks that return one of five codes:
 | `SCALY_SUCCESS`         | 0     | evaluation finished                                   |
 | `SCALY_ERR_NULL_ABI`    | 1     | `arg` or `res` is null                                |
 | `SCALY_ERR_NULL_WORK`   | 2     | `w` is null and the header's `SZ_W` is not zero       |
-| `SCALY_ERR_NULL_RESULT` | 3     | an output pointer is null                             |
-| `SCALY_ERR_NULL_INPUT`  | 4     | an input pointer is null                              |
+| `SCALY_ERR_NULL_RESULT` | 3     | an output that holds values has a null pointer        |
+| `SCALY_ERR_NULL_INPUT`  | 4     | an input that holds values has a null pointer         |
+
+An input or output with no stored values may have a null pointer. The `arg`
+and `res` pointer arrays must still be non-null.
 
 `rollout` has no workspace, so its entry casts `w` away and the
 `SCALY_ERR_NULL_WORK` check is absent. The checks cannot tell whether a
@@ -252,6 +255,10 @@ The scratch starts after the function's own packed workspace, and the header's
 `SZ_W` and the `_work` query both include it. Outputs already in column order,
 such as the matrices extracted for a quadratic program, need no copy. The
 header's sparsity tables describe the order actually written.
+
+`casadi.external` passes a null pointer for an input or output with no values.
+The sparsity queries keep its declared dimensions, with a shape `(0,)`
+reported as a zero-by-one column vector.
 
 ## Solver statistics
 
