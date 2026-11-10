@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, TypeGuard, cast, overload
 
 import numpy as np
+from scipy import sparse
 
 from ..ir.expr import Expr, ExprOp
+from ..ir.layout import Layout, SparseLayout, sparse_layout
 from ..ir.types import TensorType, as_shape, dtypes
 
 type ShapeDecl = int | tuple[int, ...] | TensorType | None
 type LeafDecl = TensorType | None
 type Array = np.ndarray
+type NumericalArray = np.ndarray | sparse.sparray
 # declaring a type alias makes the inferred types of functions easier to read:
 # Function[tuple[Expr, Expr, Expr], tuple[Array, Array, Array], Expr, Array]
 # instead of
@@ -34,6 +38,7 @@ class Tree[Symbolic, Numerical]:
 
   names: tuple[str, ...]
   decls: tuple[LeafDecl, ...]
+  layouts: tuple[SparseLayout | None, ...]
 
   def __setattr__(self, name: str, value: Any) -> None:
     if name in self.__dict__:
@@ -84,7 +89,7 @@ class Tree[Symbolic, Numerical]:
     if len(traced) != self.size:
       raise TypeError(f"declared {self.size} outputs {self.names}, body returned {len(traced)}")
     for name, decl, actual in zip(self.names, self.decls, traced, strict=True):
-      if decl is not None and (decl.shape != actual.shape or decl.dtype != actual.dtype):
+      if decl is not None and (decl.shape != actual.shape or decl.dtype != actual.dtype or decl.pattern is not actual.pattern):
         raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
     return traced
 
@@ -142,7 +147,7 @@ class _Leaf(Tree[Expr, Array]):
   returned tensor along its first axis exactly as NumPy would.
   """
 
-  def __init__(self, name: str, shape: ShapeDecl = None, /) -> None:
+  def __init__(self, name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> None:
     if not isinstance(name, str) or not name:
       raise ValueError("arg needs a non-empty name")
     self.names = (name,)
@@ -152,20 +157,27 @@ class _Leaf(Tree[Expr, Array]):
       self.decls = (shape,)
     else:
       self.decls = (TensorType(as_shape(shape)),)
+    decl = self.decls[0]
+    if decl is None or decl.pattern is None:
+      if layout != "csc":
+        raise ValueError("a layout requires a declared sparse pattern")
+      self.layouts = (None,)
+    else:
+      self.layouts = (sparse_layout(decl.pattern, layout),)
 
   def symbols(self, *, diff: bool | None = None) -> Expr:
     type_ = self.types[0]
     if diff is not None:
-      type_ = TensorType(type_.shape, type_.dtype, diff)
+      type_ = replace(type_, diff=diff)
     return Expr(ExprOp.INPUT, type=type_, name=self.names[0])
 
   def relabel(self, prefix: str) -> _Leaf:
-    return _Leaf(prefix + self.names[0], self.decls[0])
+    return _Leaf(prefix + self.names[0], self.decls[0], layout=self.layouts[0] or "csc")
 
   def with_types(self, types: tuple[TensorType, ...]) -> _Leaf:
     if len(types) != 1:
       raise ValueError(f"arg expects one resolved type, got {len(types)}")
-    return _Leaf(self.names[0], types[0])
+    return _Leaf(self.names[0], types[0], layout=self.layouts[0] or "csc")
 
   def flatten_symbolic(self, value: Expr, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, Expr):
@@ -175,14 +187,21 @@ class _Leaf(Tree[Expr, Array]):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
     if decl is not None and value.type.dtype != decl.dtype:
       raise ValueError(f"{what}: expected dtype {decl.dtype} for {self.names[0]!r}, got {value.type.dtype}")
+    if decl is not None and value.type.pattern is not decl.pattern:
+      raise ValueError(f"{what}: different stored pattern for {self.names[0]!r}")
     return (value,)
 
-  def flatten_numerical(self, value: Array, what: str) -> tuple[Array, ...]:
+  def flatten_numerical(self, value: NumericalArray, what: str) -> tuple[Array, ...]:
     if isinstance(value, Expr):
       raise ValueError(f"{what}: expected a numerical value for {self.names[0]!r}, got Expr")
     dtype = self.types[0].dtype
     if dtype != dtypes.float64:
       raise NotImplementedError(f"{what}: input leaf {self.names[0]!r} has dtype {dtype}; only float64 leaves are supported")
+    layout = self.layouts[0]
+    if layout is not None:
+      return (layout.numerical_values(value, self.shapes[0]),)
+    if sparse.issparse(value):
+      raise ValueError(f"{what}: sparse argument for dense leaf {self.names[0]!r}")
     array = np.asarray(value)
     if not np.can_cast(array.dtype, dtype.numpy(), "same_kind"):
       raise TypeError(f"{what}: cannot cast {array.dtype} to {dtype} for {self.names[0]!r}")
@@ -197,13 +216,21 @@ class _Leaf(Tree[Expr, Array]):
     return values[0]
 
 
-def arg(name: str, shape: ShapeDecl = None, /) -> Tree[Expr, Array]:
+@overload
+def arg(name: str, shape: ShapeDecl = None, /) -> Tree[Expr, Array]: ...
+
+
+@overload
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout) -> Tree[Expr, NumericalArray]: ...
+
+
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> Tree[Expr, Any]:
   """Declare one named tensor, optionally leaving its shape to a call or trace.
 
   A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
   A ``TensorType`` sets the dtype and differentiability explicitly.
   """
-  return _Leaf(name, shape)
+  return _Leaf(name, shape, layout=layout)
 
 
 class _G(Tree[Any, Any]):
@@ -213,6 +240,7 @@ class _G(Tree[Any, Any]):
     self.parts = parts
     self.names = tuple(name for part in parts for name in part.names)
     self.decls = tuple(decl for part in parts for decl in part.decls)
+    self.layouts = tuple(layout for part in parts for layout in part.layouts)
     self._check_unique()
 
   def symbols(self, *, diff: bool | None = None) -> tuple[Any, ...]:
@@ -318,13 +346,12 @@ def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
   return _G(parts)
 
 
-def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...]) -> Tree[Any, Any]:
+def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...], *, layouts: tuple[SparseLayout | None, ...] | None = None) -> Tree[Any, Any]:
   """Build the private flat tree used by dynamic ``Function.factory`` results."""
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")
-  if len(names) == 1:
-    return arg(names[0], types[0])
-  return _G(tuple(arg(name, type_) for name, type_ in zip(names, types, strict=True)), public=False)
+  leaves = tuple(arg(name, type_, layout=layout or "csc") for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
+  return leaves[0] if len(leaves) == 1 else _G(leaves, public=False)
 
 
 def inferred_outputs(value: Any, name: str) -> Tree[Any, Any]:
@@ -352,8 +379,10 @@ def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _G:
   return parameter_list((*cast(_G, params).parts, tree))
 
 
-def flat_parameters(names: tuple[str, ...], types: tuple[TensorType, ...]) -> _G:
+def flat_parameters(names: tuple[str, ...], types: tuple[TensorType, ...], *, layouts: tuple[SparseLayout | None, ...] | None = None) -> _G:
   """Build a parameter list with one tensor per parameter."""
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")
-  return parameter_list(tuple(arg(name, type_) for name, type_ in zip(names, types, strict=True)))
+  return parameter_list(
+    tuple(arg(name, type_, layout=layout or "csc") for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
+  )

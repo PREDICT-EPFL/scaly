@@ -258,9 +258,13 @@ def _call_attrs(expr: Expr) -> str | None:
   for i, (actual, formal) in enumerate(zip(expr.args, callee.inputs, strict=True)):
     if actual.shape != formal.shape:
       return f"CALL arg {i} shape {actual.shape} != callee formal shape {formal.shape}"
+    if actual.type.pattern is not formal.type.pattern or actual.type.dtype != formal.type.dtype:
+      return f"CALL arg {i} must have the exact callee pattern and dtype"
   expected_out = callee.results[int(out_idx)]
   if expected_out.shape != expr.shape:
     return f"CALL output shape {expr.shape} != callee output shape {expected_out.shape}"
+  if expected_out.type.pattern is not expr.type.pattern or expected_out.type.dtype != expr.type.dtype:
+    return "CALL output must preserve the callee pattern and dtype"
   return None
 
 
@@ -288,9 +292,12 @@ def _vmap_attrs(expr: Expr) -> str | None:
       return f"VMAP outer arg must be rank-1, got {outer.shape}"
     if start < 0 or stride < 0:
       return f"VMAP input {i} start and stride must be non-negative, got {start} and {stride}"
-    if length > 0 and start + (length - 1) * stride + formal.size > outer.size:
+    if length > 0 and start + (length - 1) * stride + formal.type.storage_size > outer.size:
       return f"VMAP input {i} reads past its outer of size {outer.size}: start={start}, stride={stride}, length={length}, formal_size={formal.size}"
   expected_size = length * int(expr.attrs["slice_size"])
+  output = int(expr.attrs["output"])
+  if not 0 <= output < len(callee.results) or int(expr.attrs["slice_size"]) != callee.results[output].type.storage_size:
+    return "VMAP slice_size must match the selected output's stored size"
   if expr.shape != (expected_size,):
     return f"VMAP output shape {expr.shape} != ({expected_size},)"
   return None
@@ -304,6 +311,14 @@ def _scatter_indices(expr: Expr) -> str | None:
     return "SCATTER missing values arg"
   if int(np.asarray(idx).size) != expr.args[0].size:
     return f"SCATTER indices size {np.asarray(idx).size} != values size {expr.args[0].size}"
+  return None
+
+
+def _storage_conversion(expr: Expr) -> str | None:
+  if expr.type.dtype != expr.args[0].type.dtype:
+    return "stored-value conversions must preserve dtype"
+  if expr.op == ExprOp.PACK and expr.attrs.get("pattern") is not expr.type.pattern:
+    return "PACK attribute must match the result pattern"
   return None
 
 
@@ -369,6 +384,8 @@ spec_expr = Spec(
     *spec_expr_shared.any,
     Rule(ExprOp.INPUT, "input-has-name", _input_has_name),
     Rule(ExprOp.CONST, "const-value-present", _const_value_present),
+    Rule(ExprOp.PACK, "stored-value-conversion", _storage_conversion),
+    Rule(ExprOp.VALUES, "stored-value-conversion", _storage_conversion),
     *_unary_rules,
     Rule(ExprOp.STOP_GRADIENT, "stop-gradient-shape-dtype", _unary_shape_dtype),
     *_binary_rules,

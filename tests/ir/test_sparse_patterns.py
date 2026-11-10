@@ -155,15 +155,12 @@ def test_zero_preserving_unary_retains_pattern(op: ExprOp) -> None:
     ExprOp.EXP,
     ExprOp.LOG,
     ExprOp.SUM,
-    ExprOp.RESHAPE,
     ExprOp.TRANSPOSE,
     ExprOp.SLICE,
     ExprOp.GATHER,
     ExprOp.SCATTER,
     ExprOp.STACK,
     ExprOp.CONCAT,
-    ExprOp.CALL,
-    ExprOp.VMAP,
     ExprOp.SOLVER_CALL,
     ExprOp.PRINT,
     ExprOp.DIV,
@@ -242,12 +239,12 @@ def test_pattern_copies_mutable_input_and_verifier_checks_shape() -> None:
     verify_expr(_forge(x, type=invalid))
 
 
-def test_sparse_graph_cannot_reach_unfinished_lowering_boundary() -> None:
+def test_sparse_graph_crosses_lowering_boundary() -> None:
   from scaly.function.concrete import ConcreteFunction
 
   x = _input("boundary_pattern", np.eye(3, dtype=bool))
-  with pytest.raises(NotImplementedError, match="cannot lower tensors with stored patterns"):
-    ConcreteFunction._from_exprs("sparse_boundary", [x], [x.sin()], ["x"], ["y"])
+  function = ConcreteFunction._from_exprs("sparse_boundary", [x], [x.sin()], ["x"], ["y"])
+  np.testing.assert_allclose(function(np.arange(3.0)).toarray(), np.diag(np.sin(np.arange(3.0))))
 
 
 def test_concurrent_canonicalization_has_one_identity_and_digest(monkeypatch: pytest.MonkeyPatch) -> None:

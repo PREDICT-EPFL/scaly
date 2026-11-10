@@ -101,6 +101,8 @@ participate in the JIT cache key. See [environment variables](../guide/env_vars.
 ## The C++ header
 
 ::: scaly.codegen.cpp.render_cpp_header
+    options:
+      show_source: false
 
 ## The CasADi layer
 
@@ -113,6 +115,8 @@ participate in the JIT cache key. See [environment variables](../guide/env_vars.
 ## Compiling and caching
 
 ::: scaly.codegen.jit.CompiledFunction
+    options:
+      show_source: false
 
 ::: scaly.codegen.jit.load_library
 

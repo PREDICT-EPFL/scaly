@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, gather, scatter, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _uniform, from_dense, gather, pack, scatter, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, cotangent
@@ -36,6 +36,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   for out, cot in zip(outputs, cotangents, strict=True):
     if out.shape != cot.shape:
       raise ValueError(f"cotangent for output shape {out.shape} has shape {cot.shape}")
+    if out.type.pattern is not None and cot.type.pattern is not out.type.pattern:
+      cot = from_dense(to_dense(cot), out.type.pattern)
     adjoints[out.id] = cot if out.id not in adjoints else adjoints[out.id] + cot
 
   for expr in reversed(nodes):
@@ -50,6 +52,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     active = tuple(i for i, arg in enumerate(expr.args) if needed(arg)) if expr.op in {ExprOp.CALL, *ELEMENTWISE} else None
     for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot, active), strict=True):
       if arg_cot is not None and arg.id in expr_ids:
+        if arg.type.pattern is not None and arg_cot.type.pattern is not arg.type.pattern:
+          arg_cot = from_dense(to_dense(arg_cot), arg.type.pattern)
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
@@ -57,6 +61,11 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
 def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr | None, ...]:
   args = expr.args
+  if expr.op == ExprOp.PACK:
+    return (values(cot),)
+  if expr.op == ExprOp.VALUES:
+    assert args[0].type.pattern is not None
+    return (pack(cot, args[0].type.pattern, shape=args[0].shape),)
   if expr.op in ELEMENTWISE:
     if ELEMENTWISE[expr.op].partials is None:
       raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
@@ -76,8 +85,8 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     support = _prunable_support(cot)
     entries = support_indices(support) if support is not None and len(support) < cot.size else None
     indices = slice_indices(args[0].shape, expr.attrs["index"], entries)
-    values = gather(cot, entries) if entries is not None else cot
-    return (scatter(values, indices, args[0].shape),)
+    selected = gather(cot, entries) if entries is not None else cot
+    return (scatter(selected, indices, args[0].shape),)
   if expr.op == ExprOp.GATHER:
     return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
   if expr.op == ExprOp.SCATTER:
@@ -87,6 +96,8 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
   if expr.op == ExprOp.CONCAT:
     return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
   if expr.op == ExprOp.MATMUL:
+    if any(arg.type.pattern is not None for arg in args):
+      return _matmul_vjp(to_dense(args[0]), to_dense(args[1]), to_dense(cot))
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == ExprOp.CALL:
     return _call_vjp(expr, cot, active, pullback=vjp)
@@ -98,6 +109,8 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
 
 
 def _ones_like(expr: Expr) -> Expr:
+  if expr.type.pattern is not None:
+    return pack(_uniform(1, expr.type.storage_shape, dtype=expr.type.dtype, lowering=expr.lowering), expr.type.pattern, shape=expr.shape)
   return _uniform(1, expr.shape, lowering=expr.lowering)
 
 

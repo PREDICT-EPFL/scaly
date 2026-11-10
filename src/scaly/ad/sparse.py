@@ -13,13 +13,24 @@ from typing import Literal
 import numpy as np
 
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter
+from ..ir.expr import Expr, ExprOp, concat, gather, pack, scatter, values as stored_values
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
 from .forward import _pushforward, jvp_many
-from .sparsity import _callee_mask, _check_wrt, _depends_on, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
-from ..ir.types import SparsityPattern
+from .sparsity import (
+  _callee_mask,
+  _check_wrt,
+  _depends_on,
+  _incidence,
+  _mask_sparsity,
+  _stored_slots,
+  _symmetrize_sparsity,
+  column_coloring,
+  jacobian_sparsity,
+  star_coloring,
+)
+from ..ir.types import SparsityPattern, stored_indices
 
 
 Triangle = Literal["full", "lower", "upper"]
@@ -97,7 +108,12 @@ def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
   _check_wrt(wrt)
   expr = cse(expr)
   sparsity = jacobian_sparsity(expr, wrt)
-  colors = column_coloring(sparsity)
+  coloring_pattern = (
+    SparsityPattern(sparsity.shape[:1] + (wrt.type.storage_size,), sparsity.rows, tuple(map(int, _stored_slots(wrt.type, np.asarray(sparsity.cols)))))
+    if wrt.type.pattern is not None
+    else sparsity
+  )
+  colors = column_coloring(coloring_pattern)
   return _sparse_jacobian_colored(expr, wrt, sparsity, colors)
 
 
@@ -112,13 +128,18 @@ def _sparse_jacobian_colored(
   if sparsity.nnz == 0:
     return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), 0)
   ncolors = max(colors) + 1 if colors else 0
-  seeds = np.zeros((ncolors, wrt.size), dtype=wrt.type.dtype.numpy())
+  seeds = np.zeros((ncolors, wrt.type.storage_size), dtype=wrt.type.dtype.numpy())
   for col, color in enumerate(colors):
     seeds[color, col] = 1.0
-  compressed = jvp_many(expr, wrt, Expr.const(seeds.reshape((ncolors, *wrt.shape)), dtype=wrt.type.dtype)).reshape((ncolors, expr.size)).T
+  seed_expr = Expr.const(seeds.reshape((ncolors, *wrt.type.storage_shape)), dtype=wrt.type.dtype)
+  if wrt.type.pattern is not None:
+    seed_expr = pack(seed_expr, wrt.type.pattern, shape=(ncolors, *wrt.shape))
+  compressed = stored_values(jvp_many(expr, wrt, seed_expr)).reshape((ncolors, expr.type.storage_size)).T
   rows = np.asarray(sparsity.rows, dtype=np.int64)
   cols = np.asarray(sparsity.cols, dtype=np.int64)
   if recovery_indices is None:
+    rows = _stored_slots(expr.type, rows)
+    cols = _stored_slots(wrt.type, cols)
     flat = rows * ncolors + np.asarray([colors[int(col)] for col in cols], dtype=np.int64)
   else:
     flat = recovery_indices
@@ -289,6 +310,11 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   for f_idx in direct_formals:
     formal = callee.inputs[f_idx]
     local_mask = _callee_mask(callee, output_idx, f_idx, {})
+    out = callee.results[output_idx]
+    if out.type.pattern is not None or formal.type.pattern is not None:
+      local_mask = _incidence(
+        (out.type.storage_size, formal.type.storage_size), _stored_slots(out.type, local_mask.row), _stored_slots(formal.type, local_mask.col)
+      )
     if not local_mask.nnz:
       continue
     local_sparsity = _mask_sparsity(local_mask)
@@ -297,10 +323,10 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
       continue
     c_f = max(local_colors) + 1
     coloring_width += c_f
-    seed_f = np.zeros((c_f, formal.size), dtype=formal.type.dtype.numpy())
+    seed_f = np.zeros((c_f, formal.type.storage_size), dtype=formal.type.dtype.numpy())
     for j, c in enumerate(local_colors):
       seed_f[c, j] = 1.0
-    seed_f_shaped = seed_f.reshape((c_f, *formal.shape)) if formal.shape != (formal.size,) else seed_f
+    seed_f_shaped = seed_f.reshape((c_f, *formal.type.storage_shape))
     inner_fn, arg_indices, active = _call_jvp_many_const_function(callee, output_idx, f_idx, seed_f_shaped, pushforward=_pushforward)
     active_count = len(active)
     if active_count == 0:
@@ -308,7 +334,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
     mapped_flat = _mapped_call(inner_fn, length, primal_specs)
     # Build a per-formal contribution map for each nnz.
-    formal_size = formal.size
+    formal_size = formal.type.storage_size
     start_f = starts[f_idx]
     stride_f = strides[f_idx]
     lc_arr = cols_arr - (start_f + it_global * stride_f)
@@ -356,6 +382,19 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
   if expr.size != 1:
     raise ValueError("sparse_hessian expects a scalar expression")
   _check_wrt(wrt)
+  if wrt.type.pattern is not None:
+    grad = stored_values(gradient(expr, wrt))
+    relation = jacobian_sparsity(grad, wrt)
+    compact = _symmetrize_sparsity(
+      SparsityPattern((grad.size, wrt.type.storage_size), relation.rows, tuple(map(int, _stored_slots(wrt.type, np.asarray(relation.cols)))))
+    )
+    entries = stored_indices(wrt.type)
+    cols = tuple(map(int, entries[np.asarray(compact.cols, dtype=np.int64)]))
+    relation = SparsityPattern((grad.size, wrt.size), compact.rows, cols)
+    result = _sparse_jacobian_colored(grad, wrt, relation, column_coloring(compact))
+    rows = entries[np.asarray(compact.rows, dtype=np.int64)]
+    sparsity = SparsityPattern((wrt.size, wrt.size), tuple(map(int, rows)), cols)
+    return SparseJacobian(sparsity, result.values, result.coloring_width).triangle(triangle)
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)

@@ -37,6 +37,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.utils.torch_state_dict": 0,
   "scaly.ir": 1,
   "scaly.ir.types": 1,
+  "scaly.ir.layout": 1,
   "scaly.ir.expr": 1,
   "scaly.ir.support": 1,
   "scaly.ir.match": 1,

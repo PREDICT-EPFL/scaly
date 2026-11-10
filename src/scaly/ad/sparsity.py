@@ -14,7 +14,11 @@ from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp
 from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries
-from ..ir.types import SparsityPattern, broadcast_shape
+from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
+
+
+def _stored_slots(type_: TensorType, entries: np.ndarray) -> np.ndarray:
+  return entries if type_.pattern is None else np.searchsorted(stored_indices(type_), entries)
 
 
 def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool], *, through_stops: bool = True) -> bool:
@@ -190,6 +194,11 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
     return _incidence((wrt.size, wrt.size), entries, entries)
   if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
     return _empty((expr.size, wrt.size))
+  if expr.op == ExprOp.PACK:
+    child = _jac_mask(expr.args[0], wrt, memo)
+    return _incidence((expr.size, wrt.size), stored_indices(expr.type)[child.row], child.col)
+  if expr.op == ExprOp.VALUES:
+    return _take_rows(_jac_mask(expr.args[0], wrt, memo), stored_indices(expr.args[0].type))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op in COMMON_ELEMENTWISE_BINARY:
@@ -342,9 +351,16 @@ def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], s
   if not _declared(callee, output):
     return _jac_mask(out, formal, memo)
   if callee.rules.sparsity is None:
-    return sparse.coo_array(np.ones((out.size, formal.size), dtype=bool))
+    rows, cols = stored_indices(out.type), stored_indices(formal.type)
+    return _incidence((out.size, formal.size), np.repeat(rows, len(cols)), np.tile(cols, len(rows)))
   pattern = callee.rules.sparsity[output][k]
-  return _incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
+  rows, cols = np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64)
+  keep = np.ones(len(rows), dtype=bool)
+  if out.type.pattern is not None:
+    keep &= np.isin(rows, stored_indices(out.type))
+  if formal.type.pattern is not None:
+    keep &= np.isin(cols, stored_indices(formal.type))
+  return _incidence(pattern.shape, rows[keep], cols[keep])
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
@@ -372,10 +388,16 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arr
       continue
     callee_dep = _callee_mask(callee, expr.attrs["output"], formal_idx, memo)
     start, stride = starts[formal_idx], strides[formal_idx]
-    window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
-    windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)
-    tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="coo")
-    ret = _or(ret, _compose(tiled, _compose(windows, outer_dep)))
+    output = callee.results[expr.attrs["output"]]
+    rows = _stored_slots(output.type, callee_dep.row)
+    cols = _stored_slots(formal.type, callee_dep.col)
+    iterations = np.arange(length, dtype=np.int64)[:, None]
+    windows = _incidence(
+      (expr.size, actual_outer.size),
+      (iterations * output.type.storage_size + rows).reshape(-1),
+      (start + iterations * stride + cols).reshape(-1),
+    )
+    ret = _or(ret, _compose(windows, outer_dep))
   return ret
 
 

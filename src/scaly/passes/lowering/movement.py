@@ -9,7 +9,7 @@ from ...ir.types import _uniform_value
 from .ctx import LowerCtx, lowers, _flat_coordinates, _shift, _shape_or_scalar, _stride
 
 
-@lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT)
+@lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.PACK, ExprOp.VALUES)
 def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
   # Metadata-only: the result aliases its source buffer (no copy).
   ctx.value_buffers[node.id] = ctx.value_buffers[node.args[0].id]

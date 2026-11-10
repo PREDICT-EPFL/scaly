@@ -16,10 +16,16 @@ Jacobian. A vector-Jacobian product, `vjp`, propagates output weights back to th
 `jvp_many` handles several directions together.
 
 ::: scaly.ad.forward.jvp
+    options:
+      show_source: false
 
 ::: scaly.ad.forward.jvp_many
+    options:
+      show_source: false
 
 ::: scaly.ad.reverse.vjp
+    options:
+      show_source: false
 
 ## Holding a value fixed in derivatives
 
@@ -28,10 +34,14 @@ Jacobian. A vector-Jacobian product, `vjp`, propagates output weights back to th
 ## Whole derivatives
 
 ::: scaly.ad.derivatives.jacobian
+    options:
+      show_source: false
 
 ::: scaly.ad.derivatives.gradient
 
 ::: scaly.ad.derivatives.hessian
+    options:
+      show_source: false
 
 ::: scaly.ad.derivatives.finite_difference
 
@@ -56,7 +66,11 @@ that can be evaluated together without mixing their results. See the
 ::: scaly.ad.sparse.sparse_jacobian
 
 ::: scaly.ad.sparse.sparse_hessian
+    options:
+      show_source: false
 
 ::: scaly.ad.sparse.sparse_jacobian_colored
+    options:
+      show_source: false
 
 ::: scaly.ad.sparse.sparse_jacobian_reference

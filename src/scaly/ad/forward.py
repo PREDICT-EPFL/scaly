@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, concat, gather, scatter, stack
+from ..ir.expr import Expr, ExprOp, _uniform, concat, from_dense, gather, pack, scatter, stack, to_dense, values
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
@@ -18,7 +18,15 @@ def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
-  tangent = jvp_many(expr, wrt, seed.reshape((1, *seed.shape)))
+  if seed.shape != wrt.shape:
+    raise ValueError(f"JVP expects seed shape {wrt.shape}, got {seed.shape}")
+  if seed.type.pattern is not wrt.type.pattern:
+    if seed.type.pattern is not None or wrt.type.pattern is None:
+      raise ValueError("JVP seeds must have the primal's stored pattern")
+    seed = from_dense(seed, wrt.type.pattern)
+  tangent = jvp_many(expr, wrt, _reshape_tangent(seed, wrt, 1))
+  if expr.type.pattern is not None:
+    return pack(values(tangent).reshape(expr.type.storage_shape), expr.type.pattern, shape=expr.shape)
   if tangent.op == ExprOp.CONST:
     assert tangent.value is not None
     return Expr.const(tangent.value.reshape(expr.shape), dtype=tangent.type.dtype, lowering=tangent.lowering)
@@ -38,6 +46,10 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
     raise TypeError("integer and boolean values have no tangent")
   if seeds.type.dtype != wrt.type.dtype:
     raise TypeError(f"JVP seeds must have primal dtype {wrt.type.dtype}, got {seeds.type.dtype}")
+  if seeds.type.pattern is not wrt.type.pattern:
+    if seeds.type.pattern is not None or wrt.type.pattern is None:
+      raise ValueError("JVP seeds must have the primal's stored pattern")
+    seeds = from_dense(seeds, wrt.type.pattern)
   seeds = simplify_cse_fixpoint(seeds)
   (ret,) = _pushforward((expr,), {wrt: seeds}, seeds.shape[0])
   assert ret is not None
@@ -45,7 +57,14 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
 
 
 def _zero_tangent(expr: Expr, nseed: int) -> Expr:
-  return _uniform(0, (nseed, *expr.shape), dtype=expr.type.dtype, lowering=expr.lowering)
+  zero = _uniform(0, (nseed, *expr.type.storage_shape), dtype=expr.type.dtype, lowering=expr.lowering)
+  return pack(zero, expr.type.pattern, shape=(nseed, *expr.shape)) if expr.type.pattern is not None else zero
+
+
+def _reshape_tangent(tangent: Expr, primal: Expr, nseed: int) -> Expr:
+  if primal.type.pattern is not None:
+    return pack(values(tangent).reshape((nseed, *primal.type.storage_shape)), primal.type.pattern, shape=(nseed, *primal.shape))
+  return tangent.reshape((nseed, *primal.shape))
 
 
 def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, callee: str = "<top-level>") -> tuple[Expr | None, ...]:
@@ -115,11 +134,17 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
 def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) -> Expr:
   args = expr.args
   op = expr.op
+  if op == ExprOp.PACK:
+    assert expr.type.pattern is not None
+    return pack(d[0], expr.type.pattern, shape=(nseed, *expr.shape))
+  if op == ExprOp.VALUES:
+    return values(d[0])
   if op == ExprOp.SUM:
-    ones = _uniform(1, (args[0].size,), dtype=expr.type.dtype)
-    return d[0].reshape((nseed, args[0].size)) @ ones
+    width = args[0].type.storage_size
+    ones = _uniform(1, (width,), dtype=expr.type.dtype)
+    return values(d[0]).reshape((nseed, width)) @ ones
   if op == ExprOp.RESHAPE:
-    return d[0].reshape((nseed, *expr.shape))
+    return _reshape_tangent(d[0], expr, nseed)
   if op == ExprOp.TRANSPOSE:
     return d[0].transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
   if op == ExprOp.SLICE:
@@ -137,6 +162,10 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.CONCAT:
     return concat(d, axis=expr.attrs.get("axis", 0) + 1)
   if op == ExprOp.MATMUL:
+    if any(arg.type.pattern is not None for arg in args):
+      dense_expr = to_dense(args[0]) @ to_dense(args[1])
+      dense_tangent = _pushforward_rule(dense_expr, [to_dense(t) for t in d], nseed, callee)
+      return from_dense(dense_tangent, expr.type.pattern) if expr.type.pattern is not None else dense_tangent
     if args[0] is args[1] and len(args[0].shape) == 1:
       return 2 * (d[0] @ args[0])
     if _is_zero_const(d[0]):

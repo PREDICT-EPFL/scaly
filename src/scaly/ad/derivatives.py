@@ -10,7 +10,8 @@ from typing import Any
 
 import numpy as np
 
-from ..ir.expr import Expr
+from ..ir.expr import Expr, pack, scatter, to_dense, values
+from ..ir.types import stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import jvp_many
 from .reverse import _ones_like, vjp
@@ -25,6 +26,13 @@ def jacobian(expr: Expr, wrt: Expr) -> Expr:
   identity through forward mode in one batched pass, then simplifying.
   """
   _check_wrt(wrt)
+  if expr.type.pattern is not None or wrt.type.pattern is not None:
+    count = wrt.type.storage_size
+    compact = Expr.const(np.eye(count, dtype=wrt.type.dtype.numpy()).reshape((count, *wrt.type.storage_shape)), dtype=wrt.type.dtype)
+    seeds = pack(compact, wrt.type.pattern, shape=(count, *wrt.shape)) if wrt.type.pattern is not None else compact
+    tangent = values(jvp_many(expr, wrt, seeds)).reshape((count, expr.type.storage_size)).T
+    indices = (stored_indices(expr.type)[:, None] * wrt.size + stored_indices(wrt.type)[None, :]).reshape(-1)
+    return simplify_cse_fixpoint(scatter(tangent, indices, (expr.size, wrt.size)))
   if wrt.size == 0:
     return Expr.const(np.zeros((expr.size, 0), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
   seed_arr = np.eye(wrt.size, dtype=wrt.type.dtype.numpy()).reshape((wrt.size, *wrt.shape))
@@ -46,7 +54,7 @@ def hessian(expr: Expr, wrt: Expr) -> Expr:
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
-  return jacobian(gradient(expr, wrt).reshape((wrt.size,)), wrt)
+  return jacobian(to_dense(gradient(expr, wrt)).reshape((wrt.size,)), wrt)
 
 
 def finite_difference(fun: Any, x: np.ndarray, eps: float = 1e-6) -> np.ndarray:

@@ -9,13 +9,23 @@ from scipy.sparse import csr_array
 
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, substitute, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, pack, scatter, stack, substitute, topo, values, zeros_like
+from ..ir.types import TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
-from .sparsity import _callee_mask, _depends_on, _mask_sparsity, column_coloring
+from .sparsity import _callee_mask, _depends_on, _incidence, _mask_sparsity, _stored_slots, column_coloring
 
 _Pushforward = Callable[[Sequence[Expr], dict[Expr, Expr], int, str], tuple[Expr | None, ...]]
 _Pullback = Callable[[Sequence[Expr], Sequence[Expr], Sequence[Expr]], tuple[Expr, ...]]
+
+
+def _stored_result(result: Expr, primal: Expr, batch: tuple[int, ...] = ()) -> Expr:
+  compact = result.reshape((*batch, *primal.type.storage_shape))
+  return pack(compact, primal.type.pattern, shape=(*batch, *primal.shape)) if primal.type.pattern is not None else compact
+
+
+def _tangent_symbol(name: str, primal: Expr, batch: tuple[int, ...] = ()) -> Expr:
+  return Expr(ExprOp.INPUT, type=TensorType((*batch, *primal.shape), primal.type.dtype, primal.type.diff, primal.type.pattern), name=name)
 
 
 def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], nseed: int, pushforward: _Pushforward) -> tuple[Expr | None, ...]:
@@ -35,15 +45,15 @@ def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], n
 def _rule_tangent(callee: Any, output: int, seeds: dict[int, Expr], nseed: int) -> Expr:
   rule = callee.rules.jvp
   reads = _reads(callee, output)
-  specs = [(inp.reshape((inp.size,)), 0, 0) for inp in callee.inputs]
+  specs = [(values(inp).vec(), 0, 0) for inp in callee.inputs]
   for k, inp in enumerate(callee.inputs):
     seed = seeds.get(k) if reads[k] else None
     specs.append(
-      (Expr.const(np.zeros(inp.size, dtype=inp.type.dtype.numpy()), dtype=inp.type.dtype), 0, 0)
+      (Expr.const(np.zeros(inp.type.storage_size, dtype=inp.type.dtype.numpy()), dtype=inp.type.dtype), 0, 0)
       if seed is None
-      else (seed.reshape((nseed * inp.size,)), 0, inp.size)
+      else (values(seed).reshape((nseed * inp.type.storage_size,)), 0, inp.type.storage_size)
     )
-  return _mapped_call(rule, nseed, specs, output).reshape((nseed, *callee.outputs[output].shape))
+  return _stored_result(_mapped_call(rule, nseed, specs, output), callee.outputs[output], (nseed,))
 
 
 def _reads(callee: Any, output: int) -> tuple[bool, ...]:
@@ -77,7 +87,8 @@ def body_cotangents(callee: Any, output: int, wrts: Sequence[int], cotangent: Ex
 
 
 def _is_zero_const(expr: Expr) -> bool:
-  return expr.op == ExprOp.CONST and expr.value is not None and expr.support == frozenset()
+  compact = values(expr)
+  return compact.op == ExprOp.CONST and compact.value is not None and compact.support == frozenset()
 
 
 def _call_jvp_many_function(
@@ -103,9 +114,9 @@ def _call_jvp_many_function(
     if all(value is not None for value in constants):
       active = tuple(row for row in range(nseed) if any(value is not None and np.any(value[row] != 0) for value in constants))
     seeds = {
-      i: Expr.sym(f"fwd:{callee.input_names[i]}", (nseed, *callee.inputs[i].shape), dtype=callee.inputs[i].type.dtype)
+      i: _tangent_symbol(f"fwd:{callee.input_names[i]}", callee.inputs[i], (nseed,))
       if value is None
-      else Expr.const(value[list(active)], dtype=callee.inputs[i].type.dtype)
+      else _stored_result(Expr.const(value[list(active)], dtype=callee.inputs[i].type.dtype), callee.inputs[i], (len(active),))
       for i, value in zip(formal_indices, constants, strict=True)
     }
     single_constant = len(formal_indices) == 1 and constants[0] is not None
@@ -163,7 +174,7 @@ def _pack_jvp_maps(callee: ConcreteFunction[Any, Any, Any, Any], result: Expr, m
     inputs = tuple(bindings)
     key = HelperKey.of(callee, "forward", (), (), members=functions)
     if key not in cache:
-      outputs = [fn.outputs[0].reshape((fn.outputs[0].size,)) for fn in functions]
+      outputs = [values(fn.outputs[0]).vec() for fn in functions]
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
       cache[key] = ConcreteFunction._from_exprs(helper_name(callee, key), inputs, [packed], [names[inp] for inp in inputs], ["fwd"], role="forward")
@@ -172,7 +183,7 @@ def _pack_jvp_maps(callee: ConcreteFunction[Any, Any, Any, Any], result: Expr, m
     width = fn.outputs[0].size
     offset = 0
     for member, function in zip(members, functions, strict=True):
-      size = function.outputs[0].size
+      size = function.outputs[0].type.storage_size
       indices = (np.arange(length)[:, None] * width + offset + np.arange(size)).reshape(-1)
       replacements[member] = gather(mapped, indices)
       offset += size
@@ -197,6 +208,9 @@ def _local_seed_colors(
   callee: ConcreteFunction[Any, Any, Any, Any], output: int, formal: int, nseed: int
 ) -> tuple[csr_array, tuple[int, ...]] | None:
   mask = _callee_mask(callee, output, formal, {})
+  out, inp = callee.results[output], callee.inputs[formal]
+  if out.type.pattern is not None or inp.type.pattern is not None:
+    mask = _incidence((out.type.storage_size, inp.type.storage_size), _stored_slots(out.type, mask.row), _stored_slots(inp.type, mask.col))
   colors = column_coloring(_mask_sparsity(mask)) if mask.nnz else ()
   return (mask.tocsr(), colors) if colors and max(colors) + 1 < nseed else None
 
@@ -228,7 +242,7 @@ def _vmap_jvp_many(
     if actual_tan is None or _is_zero_const(actual_tan):
       continue
     formal = callee.inputs[formal_idx]
-    formal_size = formal.size
+    formal_size = formal.type.storage_size
     outer_size = actual_outer.size
     start = starts[formal_idx]
     stride = strides[formal_idx]
@@ -249,7 +263,7 @@ def _vmap_jvp_many(
           callee,
           output_idx,
           formal_idx,
-          tiles[r].reshape((nseed, *formal.shape)),
+          tiles[r].reshape((nseed, *formal.type.storage_shape)),
           pushforward=pushforward,
         )
         if not active:
@@ -280,7 +294,7 @@ def _vmap_jvp_many(
       seed_f = np.zeros((c_f, formal_size), dtype=expr.type.dtype.numpy())
       for j, c in enumerate(local_colors):
         seed_f[c, j] = 1.0
-      seed_f_shaped = seed_f.reshape((c_f, *formal.shape)) if formal.shape != (formal.size,) else seed_f
+      seed_f_shaped = seed_f.reshape((c_f, *formal.type.storage_shape))
       inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(callee, output_idx, formal_idx, seed_f_shaped, pushforward=pushforward)
       active_count = len(active)
       if active_count == 0:
@@ -339,7 +353,7 @@ def _vmap_jvp_many(
       callee, output_idx, formals, nseed, (None,) * len(formals), pushforward=pushforward
     )
     primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
-    seed_specs = [(generic_seeds[i], 0, nseed * callee.inputs[i].size) for i in seed_indices]
+    seed_specs = [(generic_seeds[i], 0, nseed * callee.inputs[i].type.storage_size) for i in seed_indices]
     mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
     term = mapped_flat.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size))
     ret = term if ret is None else ret + term
@@ -351,26 +365,32 @@ def _vmap_jvp_many(
 def _call_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, pushforward: _Pushforward) -> Expr:
   formals = tuple(i for i, tangent in enumerate(tangents) if tangent is not None and not _is_zero_const(tangent))
   if not formals:
-    ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
-    return ret
+    return _stored_result(
+      Expr.const(np.zeros((nseed, *expr.type.storage_shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), expr, (nseed,)
+    )
   active_tangents = {i: tangents[i] for i in formals}
-  constants = tuple(t.value if t.op == ExprOp.CONST else None for t in active_tangents.values() if t is not None)
+  constants = tuple(values(t).value if values(t).op == ExprOp.CONST else None for t in active_tangents.values() if t is not None)
   fn, arg_indices, seed_indices, active = _call_jvp_many_function(
     expr.attrs["callee"], expr.attrs["output"], formals, nseed, constants, pushforward=pushforward
   )
   if not active:
-    return Expr.const(np.zeros((nseed, *expr.shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
+    return _stored_result(
+      Expr.const(np.zeros((nseed, *expr.type.storage_shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), expr, (nseed,)
+    )
   call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices if tangents[i] is not None]
   ret = fn.symbolic_call(*fn.input_tree.unflatten(tuple(call_args)))
   if len(active) != nseed:
     active_pos = {row: i for i, row in enumerate(active)}
-    ret = stack(
+    compact = stack(
       [
-        ret[active_pos[row]] if row in active_pos else Expr.const(np.zeros(expr.shape, dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
+        values(ret)[active_pos[row]]
+        if row in active_pos
+        else Expr.const(np.zeros(expr.type.storage_shape, dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
         for row in range(nseed)
       ],
       axis=0,
     )
+    ret = _stored_result(compact, expr, (nseed,))
   return ret
 
 
@@ -396,9 +416,9 @@ def _vmap_adj_function(
   cache = callee._memo.helpers
   if key not in cache:
     lam_name = f"lam:{callee.output_names[output_index]}"
-    lam = Expr.sym(lam_name, callee.outputs[output_index].shape)
+    lam = _tangent_symbol(lam_name, callee.outputs[output_index])
     grads = body_cotangents(callee, output_index, active_formals, lam, pullback)
-    adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
+    adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([values(grad).vec() for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
@@ -428,13 +448,15 @@ def _vmap_vjp(
   adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals, pullback=pullback)
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
   mapped = _mapped_call(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
-  adj_size = sum(callee.inputs[k].size for k in active_formals)
+  adj_size = sum(callee.inputs[k].type.storage_size for k in active_formals)
   ret: list[tuple[Expr, Expr]] = []
   offset = 0
   for k in active_formals:
     arg, start, stride = vmap_expr.args[k], starts[k], strides[k]
-    formal_size = callee.inputs[k].size
-    if stride == 0:
+    formal_size = callee.inputs[k].type.storage_size
+    if formal_size == 0:
+      vbar = zeros_like(arg)
+    elif stride == 0:
       indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
       segments = gather(mapped, indices).reshape((length, formal_size))
       vbar = Expr.const(np.ones(length, dtype=np.float64)) @ segments
@@ -465,7 +487,7 @@ def _call_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None, *, pullback
   # inner vjp would make it part of the substituted graph: if the caller reuses a callee formal
   # symbol (the usual construction pattern), occurrences of that symbol *inside the cotangent*
   # would be rewritten to this call's actuals, corrupting the adjoint.
-  lam = Expr.sym(f"lam:{callee.result_names[output_idx]}", callee_out.shape)
+  lam = _tangent_symbol(f"lam:{callee.result_names[output_idx]}", callee_out)
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   replacements[lam.id] = cot
   indices = tuple(range(len(args))) if active is None else active

@@ -7,13 +7,13 @@ from functools import cached_property
 import hashlib
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Sequence, cast, overload
 
-import numpy as np
 
 from ..ir.expr import Expr, ExprOp, check_prints_reach, linear_combination, recording_prints, topo
 from ..ir.expr_spec import verify_expr
+from ..ir.layout import SparseLayout, sparse_layout
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
-from .tree import Tree, flat_tree, flat_parameters, inferred_outputs
+from .tree import NumericalArray, Tree, flat_tree, flat_parameters, inferred_outputs
 
 if TYPE_CHECKING:
   from ..ad.helpers import HelperKey
@@ -202,9 +202,17 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     output_sparsities: Sequence[SparsityPattern | None] | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
     role: Role | None = None,
+    *,
+    input_layouts: tuple[SparseLayout | None, ...] | None = None,
+    output_layouts: tuple[SparseLayout | None, ...] | None = None,
   ) -> ConcreteFunction[Any, Any, Any, Any]:
-    input_tree = flat_parameters(tuple(input_names), tuple(expr.type for expr in inputs))
-    output_tree = flat_tree(tuple(output_names), tuple(expr.type for expr in outputs))
+    if role is not None:
+      if input_layouts is None:
+        input_layouts = tuple(sparse_layout(expr.type.pattern, "csr") if expr.type.pattern is not None else None for expr in inputs)
+      if output_layouts is None:
+        output_layouts = tuple(sparse_layout(expr.type.pattern, "csr") if expr.type.pattern is not None else None for expr in outputs)
+    input_tree = flat_parameters(tuple(input_names), tuple(expr.type for expr in inputs), layouts=input_layouts)
+    output_tree = flat_tree(tuple(output_names), tuple(expr.type for expr in outputs), layouts=output_layouts)
     return cls.build(
       name, input_tree, inputs, output_tree, outputs, output_sparsities=output_sparsities, output_coloring_widths=output_coloring_widths, role=role
     )
@@ -218,13 +226,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       raise ValueError(f"function {name!r} declares non-input expressions as inputs: {non_inputs}")
     verify_expr((*self.inputs, *self.results))
     for expr in (*self.inputs, *self.results):
-      if expr.type.pattern is not None:
-        raise NotImplementedError(f"function {name!r} cannot lower tensors with stored patterns")
       if expr.type.dtype not in dtypes.all():
         raise ValueError(f"function {name!r} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}').")
 
-    def layout(types: Sequence[TensorType]) -> list[tuple[tuple[int, ...], Any]]:
-      return [(type_.shape, type_.dtype) for type_ in types]
+    def layout(types: Sequence[TensorType]) -> list[tuple[Any, ...]]:
+      return [(type_.shape, type_.dtype, type_.pattern) for type_ in types]
 
     if layout(self.input_tree.types) != layout([expr.type for expr in self.inputs]):
       raise ValueError(f"function {name!r}: input tree {self.input_tree.names} does not match the input expressions")
@@ -339,9 +345,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     """One ``CALL`` node per result, all of one invocation."""
     actual_diff = any(arg.type.diff for arg in actuals)
     return tuple(
-      Expr(
-        ExprOp.CALL, tuple(actuals), TensorType(out.shape, out.type.dtype, diff=out.type.diff and actual_diff), attrs={"callee": self, "output": i}
-      )
+      Expr(ExprOp.CALL, tuple(actuals), replace(out.type, diff=out.type.diff and actual_diff), attrs={"callee": self, "output": i})
       for i, out in enumerate(self.results)
     )
 
@@ -363,7 +367,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       self._memo.compiled = _jit().CompiledFunction(self)
     return self._memo.compiled
 
-  def _flat_numerical_call(self, *args: Any) -> tuple[np.ndarray, ...]:
+  def _flat_numerical_call(self, *args: Any) -> tuple[NumericalArray, ...]:
     """Evaluate from flat leaves: lazily compile and run through the universal ABI.
 
     The leaf-level seam under ``numerical_call``. Nothing outside ``function/`` should reach for
@@ -433,6 +437,9 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     all_inputs = dict(in_expr)
     all_inputs.update({f"lam:{k}": v for k, v in duals.items()})
     all_inputs.update({f"fwd:{k}": v for k, v in seeds.items()})
+    input_layouts = dict(zip(self.input_names, self.input_tree.layouts, strict=True))
+    output_layouts = dict(zip(self.output_names, self.output_tree.layouts, strict=True))
+    layouts = {**input_layouts, **{f"fwd:{k}": v for k, v in input_layouts.items()}, **{f"lam:{k}": v for k, v in output_layouts.items()}}
     all_outputs = dict(out_expr)
     for aux_name, names in aux.items():
       if aux_name in out_expr:
@@ -450,6 +457,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     ret_output_names: list[str] = []
     ret_sparsities: list[SparsityPattern | None] = []
     ret_coloring_widths: list[int | None] = []
+    ret_layouts: list[SparseLayout | None] = []
     for spec in outputs:
       if isinstance(spec, str):
         if spec not in all_outputs:
@@ -463,6 +471,21 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       ret_output_names.append(output_name)
       ret_sparsities.append(sparsity)
       ret_coloring_widths.append(coloring_width)
+      layout = output_layouts.get(spec) if isinstance(spec, str) else None
+      if not isinstance(spec, str):
+        if spec.kind == "fwd":
+          layout = output_layouts.get(spec.of)
+        elif spec.kind in {"adj", "grad"}:
+          layout = input_layouts.get(spec.wrt)
+      ret_layouts.append(layout)
     return ConcreteFunction._from_exprs(
-      name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths
+      name,
+      ret_inputs,
+      ret_outputs,
+      inputs,
+      ret_output_names,
+      ret_sparsities,
+      output_coloring_widths=ret_coloring_widths,
+      input_layouts=tuple(layouts[key] for key in inputs),
+      output_layouts=tuple(ret_layouts),
     )

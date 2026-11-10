@@ -6,6 +6,8 @@ from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode
 from ...ad.rules import ELEMENTWISE
+from ...ir.types import stored_indices
+from ...ir.support import project_entries
 from .ctx import LowerCtx, lowers, _flat_coordinates
 
 
@@ -18,6 +20,13 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   the gathers reading the result back stall (unbumpercars C=8 ran 7% slower). Until lanes handle
   nests (#71)."""
   out = ctx.alloc_tmp(node)
+  if node.type.pattern is not None:
+    ranges, (flat,) = ctx.nest((node.type.storage_size,), f"i_{out.attrs['name']}")
+    logical = stored_indices(node.type)
+    operands = tuple(ctx.read_indexed(a, project_entries(logical, a.shape, node.shape), flat) for a in node.args)
+    computed = ProgramNode(ELEMENTWISE[ExprOp(node.op)].program, operands, dtype=node.type.dtype)
+    ctx.emit(ranges, [p.store(p.view(out, [flat]), computed)])
+    return
   ranges, (flat,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
   coords = _flat_coordinates(flat, node.shape)
 

@@ -248,6 +248,8 @@ def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityP
 
 
 def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, lang: str, casadi: bool) -> str:
+  if any(expr.type.pattern is not None for expr in (*fun.inputs, *fun.outputs)):
+    raise NotImplementedError("generated headers do not support stored-pattern leaves")
   if lang == "cpp":
     return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)

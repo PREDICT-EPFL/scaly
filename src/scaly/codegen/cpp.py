@@ -81,6 +81,8 @@ def render_cpp_header(
   namespace, since a namespace and a function cannot share the global name. C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
   symbol = c_ident(fun.name)
+  if any(expr.type.pattern is not None for expr in (*fun.inputs, *fun.outputs)):
+    raise NotImplementedError("generated headers do not support stored-pattern leaves")
   inputs, outputs = buffer_idents(fun)
   params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + ["workspace_t& workspace"]
   arg_init = ", ".join(f"{i}.ptr()" for i in inputs) or "nullptr"
