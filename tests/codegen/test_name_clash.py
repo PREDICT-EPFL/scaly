@@ -176,3 +176,40 @@ def test_header_parameters_do_not_shadow_buffer_aliases() -> None:
   inputs, outputs = buffer_idents(as_concrete(fun))
   assert inputs == ["x_t", "x_2"]
   assert not set((*inputs, *outputs)) & {f"{name}_t" for name in (*inputs, *outputs)}
+
+
+@pytest.mark.parametrize("input_name", ["x", "workspace_2"])
+def test_workspace_parameter_does_not_shadow_exported_entry(tmp_path, input_name) -> None:
+  @sc.function(sc.arg(input_name, 2048), outputs=sc.group(sc.arg("sum"), sc.arg("sumsqr")), name="workspace")
+  def fun(x):
+    value = x.sin()
+    return value.sum(), (value * value).sum()
+
+  module = render_c_module(fun, lanes=1)
+  assert module.workspace_size > 0
+  (tmp_path / module.header_name).write_text(module.header)
+  source = tmp_path / module.source_name
+  source.write_text(module.source)
+  main = tmp_path / "main.c"
+  exe = tmp_path / "main"
+  main.write_text(
+    f"""
+#include <math.h>
+#include "workspace.h"
+
+int main(void) {{
+  workspace_{input_name}_t x = {{{{0}}}};
+  workspace_sum_t sum = {{{{0}}}};
+  workspace_sumsqr_t sumsqr = {{{{0}}}};
+  workspace_workspace_t scratch;
+  x.data[0] = 0.5;
+  int err = workspace_call(&x, &sum, &sumsqr, &scratch);
+  if (err) return err;
+  if (fabs(sum.data[0] - sin(0.5)) > 1e-12) return 10;
+  if (fabs(sumsqr.data[0] - sin(0.5) * sin(0.5)) > 1e-12) return 11;
+  return workspace_call(&x, &sum, &sumsqr, NULL) == SCALY_ERR_NULL_WORK ? 0 : 12;
+}}
+"""
+  )
+  subprocess.run([*c_compiler(), "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
+  subprocess.run([str(exe)], check=True)
