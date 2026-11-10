@@ -134,7 +134,7 @@ def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | st
 
 
 def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, Array]:
-  output_tree = arg(result.output_names[0], result.outputs[0].type, layout=result.output_tree.layouts[0] or "csc")
+  output_tree = arg(result.output_names[0], result.outputs[0].type, layout=result.output_tree.layouts[0])
   return result._with_trees(input_tree, output_tree)
 
 
@@ -359,7 +359,9 @@ def _seeded(
   def multipliers(tree: Tree) -> Tree:
     if isinstance(tree, _G):
       return _G(tuple(multipliers(part) for part in tree.parts), public=False)
-    return arg("lam:" + tree.names[0], tree.decls[0], layout=tree._layout_decls[0], pattern=... if tree.decls[0] is None else None)
+    layout = tree._layout_decls[0]
+    pattern = ... if tree.decls[0] is None and layout in (None, "csc", "csr") else None
+    return arg("lam:" + tree.names[0], tree.decls[0], layout=layout, pattern=pattern)
 
   if kind == "fwd":
     seed = (
@@ -388,7 +390,7 @@ def _seeded(
         if kind == "fwd"
         else concrete.output_tree.layouts[concrete.output_tree.index(output)]
       )
-      seed_tree = arg(seed_name, seed_type, layout=seed_layout or "csc")
+      seed_tree = arg(seed_name, seed_type, layout=seed_layout)
       spec = Fwd(output, variable) if kind == "fwd" else Adj(output, variable)
       factory_inputs = [*concrete.input_names, seed_name]
       aux = None

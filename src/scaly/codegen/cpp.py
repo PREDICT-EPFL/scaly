@@ -11,6 +11,7 @@ from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sp
 from .casadi import CASADI_QUERIES, casadi_declarations, casadi_defines
 from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_declarations
 from ..function.concrete import ConcreteFunction
+from ..ir.layout import DenseLayout, LeafLayout, SparseLayout
 from ..solvers.stats import stats_c_defs
 from ..utils.names import NameScope
 
@@ -45,9 +46,32 @@ struct alignas(16) Buffer {
 #endif"""
 
 
-def _buffer_alias(ident: str, shape: tuple[int, ...]) -> str:
+COLUMN_MAJOR_BUFFER_TEMPLATE = """#ifndef SCALY_COLUMN_MAJOR_BUFFER_HPP
+#define SCALY_COLUMN_MAJOR_BUFFER_HPP
+template <typename T, std::size_t... Ns>
+struct alignas(16) ColumnMajorBuffer : Buffer<T, Ns...> {
+  template <typename... I> T& operator()(I... idx) { return this->data[offset(idx...)]; }
+  template <typename... I> const T& operator()(I... idx) const { return this->data[offset(idx...)]; }
+  template <typename... I> static constexpr std::size_t offset(I... idx) {
+    static_assert(sizeof...(I) == sizeof...(Ns), "Buffer: one index per dimension");
+    constexpr std::size_t shape[] = {Ns..., 1};
+    const std::size_t index[] = {static_cast<std::size_t>(idx)..., 0};
+    constexpr std::size_t ndim = sizeof...(Ns);
+    std::size_t off = 0;
+    for (std::size_t k = 0; k < ndim; ++k) {
+      const std::size_t axis = ndim >= 2 && k >= ndim - 2 ? 2 * ndim - 3 - k : k;
+      assert(index[axis] < shape[axis]);
+      off = off * shape[axis] + index[axis];
+    }
+    return off;
+  }
+};
+#endif"""
+
+
+def _buffer_alias(ident: str, shape: tuple[int, ...], layout: LeafLayout = None) -> str:
   dims = "".join(f", {d}" for d in shape)
-  return f"using {ident}_t = Buffer<double{dims}>;"
+  return f"using {ident}_t = {'ColumnMajorBuffer' if isinstance(layout, DenseLayout) else 'Buffer'}<double{dims}>;"
 
 
 def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
@@ -103,6 +127,11 @@ def render_cpp_header(
     f"#define {symbol}_SZ_W {sz_w}",
     "",
     BUFFER_TEMPLATE,
+    *(
+      ["", COLUMN_MAJOR_BUFFER_TEMPLATE]
+      if any(isinstance(layout, DenseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
+      else []
+    ),
     "",
     f"namespace {symbol} {{",
     f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
@@ -113,11 +142,11 @@ def render_cpp_header(
     "",
     *(
       ["// Sparse aliases use storage shapes; leaf metadata gives their mathematical shapes."]
-      if any((*fun.input_tree.layouts, *fun.output_tree.layouts))
+      if any(isinstance(layout, SparseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
       else []
     ),
-    *(_buffer_alias(i, e.type.storage_shape) for i, e in zip(inputs, fun.inputs, strict=True)),
-    *(_buffer_alias(o, e.type.storage_shape) for o, e in zip(outputs, fun.outputs, strict=True)),
+    *(_buffer_alias(i, e.type.storage_shape, layout) for i, e, layout in zip(inputs, fun.inputs, fun.input_tree.layouts, strict=True)),
+    *(_buffer_alias(o, e.type.storage_shape, layout) for o, e, layout in zip(outputs, fun.outputs, fun.output_tree.layouts, strict=True)),
     f"using workspace_t = Buffer<double, {symbol}_SZ_W>;",
     f"constexpr int sz_arg = {symbol}_SZ_ARG;",
     f"constexpr int sz_res = {symbol}_SZ_RES;",
@@ -158,7 +187,10 @@ def render_cpp_header(
   for ident, type_, layout in zip(
     (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
   ):
-    if layout is None:
+    if isinstance(layout, DenseLayout):
+      lines += ["", f"namespace {names.allocate(ident + '_' if names.contains(ident) else ident)} {{", "constexpr bool column_major = true;", "}"]
+      continue
+    if not isinstance(layout, SparseLayout):
       continue
     lines += [
       "",

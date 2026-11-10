@@ -86,7 +86,8 @@ def _batch_tree(tree: Tree, length: int) -> Tree:
   if isinstance(tree, _G):
     return _G(tuple(_batch_tree(part, length) for part in tree.parts), public=False)
   decl = tree.decls[0]
-  return _Leaf(tree.names[0], None if decl is None else replace(decl, shape=(length, *decl.shape)), layout=tree._layout_decls[0])
+  layout = tree._layout_decls[0] if tree.has_holes else tree.layouts[0]
+  return _Leaf(tree.names[0], None if decl is None else replace(decl, shape=(length, *decl.shape)), layout=layout)
 
 
 def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False) -> tuple[Expr, int, int]:
@@ -276,7 +277,7 @@ class _Mapped(_Derived):
       array = np.asarray([actual[start + i * stride : start + i * stride + formal.type.storage_size] for i in range(self._length)]).reshape(
         (self._length, *formal.type.storage_shape)
       )
-      arrays.append(array if layout is None else array[..., layout.permutation])
+      arrays.append(array[..., layout.permutation] if formal.type.pattern is not None and layout is not None else array)
 
     return mapped.numerical_call(*mapped.input_tree.unflatten(tuple(arrays)))
 

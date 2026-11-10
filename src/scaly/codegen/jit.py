@@ -36,6 +36,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
+from ..ir.layout import DenseLayout, SparseLayout
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.paths import solver_paths
@@ -451,6 +452,8 @@ class CompiledFunction:
       arr = np.asarray(value, dtype=np.float64) if layout is None else layout.numerical_values(value, self._fun.inputs[i].shape)
       if arr.shape != expected_shape:
         raise ValueError(f"input {name!r} has shape {arr.shape}, expected {expected_shape}")
+      if isinstance(layout, DenseLayout):
+        arr = arr.ravel(order="K")
       if not arr.flags["C_CONTIGUOUS"]:
         arr = np.ascontiguousarray(arr)
       arg_buffers.append(arr)
@@ -481,7 +484,11 @@ class CompiledFunction:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 
     return [
-      out.reshape(self._output_shapes[i]) if layout is None else layout.sparse_array(out, self._fun.outputs[i].shape)
+      layout.sparse_array(out, self._fun.outputs[i].shape)
+      if isinstance(layout, SparseLayout)
+      else layout.dense_array(out, self._output_shapes[i])
+      if isinstance(layout, DenseLayout)
+      else out.reshape(self._output_shapes[i])
       for i, (out, layout) in enumerate(zip(outputs, self._fun.output_tree.layouts, strict=True))
     ]
 

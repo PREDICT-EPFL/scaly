@@ -325,11 +325,11 @@ class LowerCtx:
 
   def storage_support(self, expr: Expr, permutation: np.ndarray | None = None) -> Support:
     support = expr.support
-    if expr.type.pattern is None or support is None:
+    if support is None or expr.type.pattern is None and permutation is None:
       return support
-    positions = stored_indices(expr.type)
+    positions = np.arange(expr.type.storage_size) if expr.type.pattern is None else stored_indices(expr.type)
     if permutation is not None:
-      width = expr.type.pattern.nnz
+      width = len(permutation)
       positions = positions.reshape(-1, width)[:, permutation].reshape(-1) if width else positions
     return _make_support(np.flatnonzero(np.isin(positions, support_indices(support))))
 

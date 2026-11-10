@@ -1,4 +1,4 @@
-"""Declared sparse value orders and immutable SciPy boundary index arrays."""
+"""Declared dense and sparse value orders and immutable boundary index arrays."""
 
 from __future__ import annotations
 
@@ -43,6 +43,34 @@ def bind_sparse(value: Any) -> tuple[CanonicalPattern, np.ndarray]:
   ):
     raise ValueError("sparse batches must share one stored pattern")
   return pattern, np.ascontiguousarray(copied.data.reshape((*shape[:-2], nnz)), dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class DenseLayout:
+  """Column-major order within each dense matrix, with leading batch axes unchanged."""
+
+  shape: tuple[int, ...] | None
+
+  @cached_property
+  def permutation(self) -> np.ndarray:
+    """Indices mapping row-major matrix values to column-major values."""
+    assert self.shape is not None
+    shape = self.shape[-2:]
+    return _readonly(np.arange(prod(shape)).reshape(shape).T.ravel())
+
+  @cached_property
+  def inverse_permutation(self) -> np.ndarray:
+    """Indices restoring row-major matrix values."""
+    return _readonly(np.argsort(self.permutation))
+
+  def numerical_values(self, value: Any, shape: tuple[int, ...]) -> np.ndarray:
+    """Keep logical coordinates while making each matrix column-contiguous."""
+    array = np.asarray(value, dtype=np.float64)
+    return np.ascontiguousarray(array.swapaxes(-1, -2)).swapaxes(-1, -2)
+
+  def dense_array(self, values: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """View a column-major value buffer with its mathematical shape."""
+    return values.reshape((*shape[:-2], shape[-1], shape[-2])).swapaxes(-1, -2)
 
 
 @dataclass(frozen=True, eq=False)
@@ -142,7 +170,8 @@ class SparseLayout:
     return sparse.coo_array((values.reshape(-1), self.coordinates(shape)), shape=shape, copy=False)
 
 
-type Layout = str | SparsityPattern | SparseLayout
+type LeafLayout = DenseLayout | SparseLayout | None
+type Layout = str | SparsityPattern | SparseLayout | DenseLayout | None
 _LAYOUTS: WeakValueDictionary[tuple[Any, ...], SparseLayout] = WeakValueDictionary()
 _LAYOUT_LOCK = Lock()
 

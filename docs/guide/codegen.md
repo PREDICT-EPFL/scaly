@@ -76,8 +76,12 @@ static inline int energy_call(const energy_x_t* x, energy_energy__t* energy_, en
 ```
 
 Each struct holds one contiguous buffer of `double` values. Arrays use
-row-major order, as in a contiguous NumPy array, and a scalar occupies one
-entry. Python tuple groups do not become extra buffers. The output name becomes
+row-major order by default, as in a contiguous NumPy array, and a scalar occupies one
+entry. A leaf declared with `sc.arg("A", (2, 3), layout="column-major")` stores
+each matrix by column. Leading batch axes keep their row-major order.
+The C header marks such a leaf with `<function>_<leaf>_COLUMN_MAJOR 1`.
+Python calls accept ordinary NumPy arrays and preserve their logical coordinates.
+Python tuple groups do not become extra buffers. The output name becomes
 `energy_` inside the generated interface to avoid a collision with the function
 name, which accounts for the double underscore in `energy_energy__t`.
 
@@ -239,6 +243,8 @@ struct alignas(16) Buffer {
 
 `Buffer<double, 2, 3>` holds a two-by-three matrix in row-major order.
 `buffer(i, j)` accesses an element, with bounds assertions in debug builds.
+Column-major leaves use `ColumnMajorBuffer`, whose indexing methods use the
+declared order. Their metadata namespace contains `column_major = true`.
 `Buffer<double>` is a scalar, accessed as `buffer()`. Empty buffers reserve
 one physical element while reporting a logical `size` of zero.
 
@@ -394,14 +400,17 @@ ordering differs, the generated entry point permutes the values using extra
 workspace. The module's workspace size includes that storage, and its header
 tables describe the converted output order.
 
+Dense matrix inputs and outputs use column-major leaf layouts in a CasADi
+export. This changes the exported buffers' order without changing the original
+function's declaration or its Python results. The C and C++ headers describe
+the exported order, and the workspace queries include any conversion storage.
+
 !!! warning "Buffer compatibility"
-    Dense matrices with both dimensions greater than one, and dense arrays of
-    rank greater than two, are rejected by `casadi=True`. Scaly uses row-major
-    storage while CasADi uses column-major storage. Scalars, vectors, and compact
-    sparse outputs are supported. An input or output with no values accepts a
-    null pointer. Other inputs and outputs require pointers, while CasADi treats
-    a null input as zero and skips a null output. The `arg` and `res` pointer
-    arrays must always be non-null.
+    Dense arrays of rank greater than two are rejected by `casadi=True`.
+    Scalars, vectors, dense matrices, and compact sparse outputs are supported.
+    An input or output with no values accepts a null pointer. Other inputs and
+    outputs require pointers, while CasADi treats a null input as zero and skips
+    a null output. The `arg` and `res` pointer arrays must always be non-null.
 
 The example uses this interface for discrete dynamics and external costs, including their
 sparse Jacobians and exact Hessians. Its `build_scaly_solver` helper takes

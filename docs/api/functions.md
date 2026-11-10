@@ -18,7 +18,7 @@ wrappers, such as `gradient`, then create functions from that declaration. See t
     options:
       show_source: false
       show_signature: false
-      heading: "arg(name, shape=None, /)"
+      heading: 'arg(name, shape=None, /, *, layout=None)'
 
 ::: scaly.group
 
