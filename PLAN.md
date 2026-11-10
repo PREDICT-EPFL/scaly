@@ -10,11 +10,11 @@ The section coordinator's evidence is on #167. Read architecture, codebase, conv
 contributing, compiler maintenance context and the implement workflow before changing code.
 
 - [x] Read the brief, tracker and existing code. Checkout is the prepared worktree at #333's tip.
-- [ ] Add regressions for top level, calls, maps, mixed selections and runtime-seed values;
+- [x] Add regressions for top level, calls, maps, mixed selections and runtime-seed values;
       reproduce the remaining failure on #333.
-- [ ] Use argument-specialised support in Jacobian coefficient rules, keeping custom derivative
+- [x] Use argument-specialised support in Jacobian coefficient rules, keeping custom derivative
       declarations authoritative and nested callee walks iterative and shared by support context.
-- [ ] Run focused tests with at most two workers; perturb the new gates; update collection baseline.
+- [x] Run focused tests with at most two workers; perturb the new gates; update collection baseline.
 - [ ] Run the full pre-merge hook detached through `~/.scaly-suite/run`, poll inside this turn,
       and keep C snapshots byte-identical. Commit and push only the reviewable state.
 - [ ] Open the stacked PR, obtain Opus cross-review plus the high-risk sol correctness review,
@@ -25,3 +25,10 @@ contributing, compiler maintenance context and the implement workflow before cha
 
 Open PRs #320 and #313 touch `ad/sparsity.py`. Expect a conflict if either lands first. No roadmap
 departure is needed. A devrush search found no mixed-tangent regression to port.
+
+The implementation also needs two small forward-mode consumers: `forward.py` prunes an empty
+movement tangent with the existing custom-derivative guard, and `calls.py` skips an empty gathered
+seed before local-colour reconstruction creates a product. No callee cloning or support changes.
+Focused tests passed, including all 17 new cases. Perturbations detected disabled support
+specialisation, disabled zero pruning and doubled runtime-seed values. Full pre-merge hook is
+running detached at `/tmp/scaly-167-suite.log`, exit file `/tmp/scaly-167-suite.exit`.
