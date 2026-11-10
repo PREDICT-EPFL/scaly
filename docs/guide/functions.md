@@ -460,9 +460,9 @@ Only float64 values can be printed.
 
 A print runs whenever the generated code computes its value. Inside `vmap` it
 runs once per call, in call order. A mapped function with several outputs runs
-once per trip and computes all used outputs together. Calls with different
-argument expressions are separate, so `callee(x)` and
-`callee(sc.print("x={}", x))` each invoke the callee. Two identical prints of the same values are
+once per call and computes all the outputs the caller uses. A call is shared
+only when its arguments are the same expressions, so `callee(x)` and
+`callee(sc.print("x={}", x))` each run the callee. Two identical prints of the same values are
 the same expression and print once, and prints that do not depend on each other
 have no guaranteed order. A function called from another runs only when the
 caller uses one of its outputs, so a print inside an unused call never runs.

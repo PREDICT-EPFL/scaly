@@ -26,9 +26,9 @@ keys so differently sized siblings group. Record this departure in the roadmap i
 - [x] Capture baseline operation counts, source bytes and generated-C compile times.
 - [x] Implement discovery, invocation grouping and lowering; update printing guide and roadmap.
 - [x] Prove the tests fail under perturbation; regenerate C and collection snapshots.
-- [ ] Run the full suite and `wt hook pre-merge --yes`, plus relevant examples.
+- [x] Run the full suite and `wt hook pre-merge --yes`, plus relevant examples.
 - [x] Commit, push and open draft PR #313 against main.
-- [ ] Run one Opus 5.5 high cross-review on the current diff after the full hook passes.
+- [x] Run one Opus 5.5 high cross-review on the current diff after the full hook passes.
       Publish its verdict and review line immediately so #29 can start.
 - [ ] Rebase onto the sparse stack after it lands; regenerate snapshots and evidence.
       Fix review findings and include non-trivial rebase resolutions in one short delta check.
@@ -59,5 +59,20 @@ The final hook runs as `scaly28-final-check`, with log `/tmp/scaly28-final-pre-m
 and exit file `/tmp/scaly28-final-pre-merge.exit`. The previous complete suite had only the
 coverage parser failure, now fixed: 2610 passed, 52 skipped, one failed. Smoke passed.
 
-The final full suite passed: 2611 passed, 52 skipped in 94.29 seconds. The final hook
-is continuing through benchmark smoke, the documentation build and the private-name check.
+The final full suite passed: 2611 passed, 52 skipped. The full hook completed with exit 0,
+including benchmark smoke, the documentation build and the private-name check.
+
+The first Opus task was cancelled after the coordinator reported it stalled during an
+out-of-memory episode. Its fresh replacement approved the implementation with no blocking
+findings. Its only actionable item was a small printing-guide wording fix, now applied and
+checked with a clean documentation build. The PR description has the approval line. The
+reviewer ran 28 focused tests successfully and checked buffer reuse and several forced lane
+widths. Keep the one delta check for the fixes plus non-trivial sparse-stack rebase resolutions.
+
+Current resource rule: focused tests use `-n 2` with no lock. Full suites and pre-merge hooks
+run detached under `flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8`, with log
+and exit files under /tmp. Rerun a killed worker or timeout once before treating it as real.
+
+GitHub GraphQL quota is exhausted; REST reads and updates work. The sparse stack remains
+unmerged and origin/main remains at the original base. Wait for it before rebasing and
+marking this PR ready. Do not start a second main review.
