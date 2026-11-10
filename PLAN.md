@@ -22,6 +22,18 @@ compiler maintenance context, core compiler roadmap Foundations #64 and Rules fo
 
 Each phase depends on the previous one, except the iteration audit can accompany diagnosis.
 
+Run-wide validation rule from the section coordinator:
+
+- One full suite across the run at a time. Every new full hook uses
+  `flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8 wt hook pre-merge --yes`.
+  A bare full `uv run pytest -n=auto` takes the same lock. Run detached and poll its exit file
+  with short commands, since acquiring the lock may take longer than a tool call.
+- Focused tests stay unlocked with at most two workers. Never use `-n=auto` outside the lock.
+- Run full pre-merge only on a state intended for push. Retry a killed worker or timeout once
+  before treating it as a real failure.
+- The currently running detached two-worker service is explicitly allowed to finish. Any
+  replacement or later full run must take the lock and use eight workers.
+
 Evidence so far:
 
 - The new subprocess test failed before the fix on map_of_call_1 at seed 1. An aggregate probe
