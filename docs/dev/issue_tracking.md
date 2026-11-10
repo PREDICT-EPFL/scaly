@@ -28,7 +28,7 @@ maintainer's proposal can remain deferred. Apply one origin label and keep it af
 
 | Group | Labels | Meaning |
 | --- | --- | --- |
-| Origin | `source:community`, `source:maintainer` | Where the report or proposal originated, regardless of who filed it. |
+| Origin | `source:community`, `source:maintainer`, `source:agent` | Where the report or proposal originated, regardless of who filed it. `source:agent` marks an issue an agent created during unattended work, which no maintainer has assessed yet. |
 | Kind | `kind:bug`, `kind:feature`, `kind:maintenance`, `kind:research`, `kind:question` | One primary kind. Research can finish with a decision rather than code. |
 | Area | `area:api`, `area:compiler`, `area:solvers`, `area:c-api`, `area:benchmarks`, `area:docs`, `area:tooling` | Usually one area, several for work that crosses boundaries. Tooling includes packaging, continuous integration, and platform support. |
 | Assistance | `needs:reproduction`, `needs:feedback`, `help wanted`, `good first issue` | Missing information or opportunities to contribute. Remove `needs:*` labels when resolved. |
