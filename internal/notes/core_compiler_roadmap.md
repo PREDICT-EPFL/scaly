@@ -847,6 +847,11 @@ A concrete dense shape declaration keeps its NumPy type. Shape holes and a gener
 use the numerical union because their output pattern is not known statically. Callers that know a
 `TensorType` has no pattern can narrow with `cast(Tree[Expr, np.ndarray], ...)`.
 
+Shape-only input holes remain dense at runtime despite the shared annotation accepting SciPy
+arrays statically. Pattern holes are separate ([#44]). The existing NumPy-only annotations of
+`gradient`, `forward` and `adjoint` can also disagree with inherited sparse results, including
+concrete and mapped calls ([#356](https://github.com/PREDICT-EPFL/scaly/issues/356)).
+
 **What a binding carries.** The playground keys instances on shapes only (`LeafKey(shape)` in
 `trees.py`). The key becomes the bound leaf type, `(shape, dtype, diff, pattern)` with a layout for
 sparse leaves, and a leaf declaration gains optional dtype and pattern fields, each of which may be

@@ -13,7 +13,7 @@ from scaly.codegen import render_c_api_header
 from scaly.function import Tree
 
 
-@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first", 3), sc.arg("second", 3)))
+@sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("first"), sc.arg("second", 3)))
 def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
@@ -210,6 +210,7 @@ def test_call_dispatches_on_leaf_kind() -> None:
   # Only G introduces a tuple: a one-leaf tree is the bare value on both sides.
   assert not isinstance(multiply((xv, yv)), tuple)
   first, second = duplicate(xv)
+  assert isinstance(first, np.ndarray)
   np.testing.assert_allclose(first, xv)
   np.testing.assert_allclose(second, xv)
 
