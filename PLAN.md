@@ -13,7 +13,8 @@ byte-identical C snapshots. Constant handling outside keys is out of scope.
 - [ ] Run the full merge checks. The 51 focused expression tests pass. Removing the
       byte comparison makes four regressions fail; doubling the serialized payload
       makes the compaction check fail. Both mutations were restored.
-- [ ] Wait for #289 to merge, fetch and rebase onto main using the supplied stack base.
+- [x] Wait for #289 to merge, fetch and rebase onto main using the supplied stack base.
+      The inherited header-test change was dropped as already present upstream.
       Rerun checks after rebasing. Do not open a PR before this point.
 - [ ] Push, open and link a draft PR, obtain one correctness cross-review and a delta
       check if needed, and remove this temporary plan before marking ready.
@@ -30,8 +31,9 @@ The supplied checkout includes one later stack-owned header-test commit. The
 required rebase must leave no header changes in this task's PR.
 
 The initial full run was interrupted by la015's memory exhaustion and proves
-nothing. No test processes survived it. The run now serializes full suites with
-`flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8 wt hook pre-merge --yes`,
-launched detached with `nohup setsid`, a log and an exit file under a temporary
-directory. Focused tests use at most two workers. Retry killed-worker or timeout
-failures once. Run the full checks only on a state intended for pushing.
+nothing. No test processes survived it. The first detached attempt exited 143
+before producing check results. Follow the current `~/.scaly-suite/RULES.md`:
+full checks run through `~/.scaly-suite/run`, launched detached with `nohup setsid`
+and a log and exit file under a temporary directory. Focused tests use at most
+two workers. Retry killed-worker or timeout failures once. Run the full checks
+only on a state intended for pushing. GitHub reads use REST.
