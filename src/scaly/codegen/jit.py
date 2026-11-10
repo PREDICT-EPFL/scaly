@@ -48,8 +48,10 @@ if TYPE_CHECKING:
 from ..function.model import Function, as_concrete
 
 
-# Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
-# that previously cached `.so` files are not reused by a newer Scaly version.
+# Bump when the ABI, codegen output, or JIT cache layout changes incompatibly.
+# Solver modules also key on the contents of their include and library search
+# directories, each read once per process. Keep native files fixed while Python
+# runs, and stop it before replacing solver headers or libraries at the same paths.
 _JIT_CACHE_VERSION = "7"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
@@ -165,17 +167,53 @@ def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, ou
   ]
 
 
-def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str) -> str:
+def solver_inputs_fingerprint(link_flags: tuple[str, ...]) -> str:
+  """Content digest of solver include/library trees, each read once per process.
+
+  The digest covers indirect headers and bundled library dependencies, even when a plugin's
+  version stays unchanged. Native files must stay fixed during the process, as loaded libraries do.
+  """
+  h = hashlib.sha256()
+  directories = dict.fromkeys(Path(flag[2:]) for flag in link_flags if flag.startswith(("-I", "-L")))
+  for directory in directories:
+    h.update(_solver_directory_fingerprint(directory))
+  return h.hexdigest()
+
+
+@functools.cache
+def _solver_directory_fingerprint(directory: Path) -> bytes:
+  h = hashlib.sha256(os.fsencode(directory) + b"\0")
+  for root, subdirs, files in os.walk(directory, followlinks=True):
+    root_path = Path(root)
+    ancestors = {(directory / parent).resolve() for parent in root_path.relative_to(directory).parents}
+    ancestors.add(root_path.resolve())
+    subdirs[:] = sorted(name for name in subdirs if (root_path / name).resolve() not in ancestors)
+    for filename in sorted(files):
+      path = root_path / filename
+      if not path.is_file():
+        continue
+      h.update(os.fsencode(path.relative_to(directory)))
+      h.update(b"\0")
+      try:
+        with path.open("rb") as stream:
+          h.update(b"\1" + hashlib.file_digest(stream, "sha256").digest())
+      except PermissionError:
+        h.update(b"\0")
+  return h.digest()
+
+
+def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str, solver_inputs: str = "") -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
   Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
   previously cached artifacts. ConcreteFunction names and the full compile command are included so
   two functions that happen to share a source skeleton (different symbols or solver rpaths) still
   get distinct entries. ``toolchain`` is the compiler's ``compiler_fingerprint``, so another
-  compiler, a changed one at the same path, or another CPU misses the cache.
+  compiler, a changed one at the same path, or another CPU misses the cache. ``solver_inputs``
+  identifies the native headers and libraries used to build a solver module.
   """
   h = hashlib.sha256()
-  for part in (_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, *command):
+  for part in (_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, solver_inputs, *command):
     h.update(part.encode())
     h.update(b"\0")
   return h.hexdigest()
@@ -191,7 +229,8 @@ def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule,
   if epoch := _cache_epochs.get(fun.name, 0):
     toolchain += f":{os.getpid()}:{epoch}"
   command = _compile_command(compiler.command, module, "module.c", "module" + shared_lib_ext())
-  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain)
+  solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
+  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
 
 
 @dataclass(frozen=True, slots=True)

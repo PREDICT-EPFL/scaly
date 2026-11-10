@@ -1412,6 +1412,15 @@ tests/codegen/test_jit.py::test_publication_leaves_a_loaded_library_callable
 tests/codegen/test_jit.py::test_recompile_before_first_call
 tests/codegen/test_jit.py::test_recompile_uses_another_path_and_preserves_files
 tests/codegen/test_jit.py::test_scalar_math_override_reaches_compilation
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-both]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-cycle]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-dangling]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-header]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-library]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-symlink]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-unreadable]
+tests/codegen/test_jit.py::test_solver_build_change_misses_cache[True-both]
+tests/codegen/test_jit.py::test_solver_fingerprint_reads_files_once_per_configuration
 tests/codegen/test_jit.py::test_threads_share_a_cold_cache
 tests/codegen/test_jit.py::test_unsupported_lowering_still_raises_jit_unavailable
 tests/codegen/test_jit.py::test_vector_math_override_rejects_invalid_values[sleef]
