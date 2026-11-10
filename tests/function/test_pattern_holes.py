@@ -150,7 +150,7 @@ def test_lifted_holes_keep_seed_factory_and_mapped_layouts(layout: str) -> None:
   mapped: Any = sc.vmap(source, 2)
   with pytest.raises(ValueError, match="bind open source inputs"):
     source.factory("missing_pattern", [], ["out_x"])
-  for pattern in PATTERNS[:2]:
+  for pattern in PATTERNS:
     x = sparse.coo_array((np.arange(pattern.nnz, dtype=float) / 10, (pattern.rows, pattern.cols)), shape=SHAPE)
     seed = sparse.coo_array((np.ones(pattern.nnz), (pattern.rows, pattern.cols)), shape=SHAPE)
     expected = np.cos(x.toarray()) * seed.toarray()
@@ -161,11 +161,15 @@ def test_lifted_holes_keep_seed_factory_and_mapped_layouts(layout: str) -> None:
       assert all(item is not None and item.format == layout for item in instance.input_tree.layouts)
       assert f"p{pattern.digest[:8]}" in instance.name
     np.testing.assert_allclose(factory(x).toarray(), np.sin(x.toarray()))
-    np.testing.assert_allclose(mapped(sc.broadcast(x)).toarray(), np.broadcast_to(np.sin(x.toarray()), (2, *SHAPE)))
+    batched = sparse.coo_array(
+      (np.tile(x.data, 2), (np.repeat([0, 1], pattern.nnz), np.tile(pattern.rows, 2), np.tile(pattern.cols, 2))), shape=(2, *SHAPE)
+    )
+    for actual in (sc.broadcast(x), batched):
+      np.testing.assert_allclose(mapped(actual).toarray(), np.broadcast_to(np.sin(x.toarray()), (2, *SHAPE)))
   for function in (source, forward, adjoint, factory, mapped):
-    assert len(function.instances) == 2
+    assert len(function.instances) == 3
   with pytest.raises(ValueError, match="seed or argument types"):
-    forward(x, sparse.coo_array(SHAPE))
+    forward(x, sparse.coo_array(([1.0], ([0], [0])), shape=SHAPE))
 
 
 def test_nested_shape_and_pattern_holes_and_declared_metadata() -> None:

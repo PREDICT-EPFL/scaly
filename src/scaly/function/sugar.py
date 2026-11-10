@@ -141,6 +141,7 @@ class _Mapped(_Derived):
   def _arguments(self, args: tuple[Any, ...]) -> tuple[ConcreteFunction, list[Any], list[tuple[int, int]], Any]:
     actuals = []
     layouts = []
+    canonical_inputs: dict[int, np.ndarray] = {}
 
     def resolve(tree: Tree | None, value: Any) -> Any:
       if isinstance(tree, _G) or (tree is None and isinstance(value, tuple)):
@@ -175,6 +176,7 @@ class _Mapped(_Derived):
           )
           decl = TensorType(shape, decl.dtype, decl.diff, pattern)
         if canonical is not None:
+          canonical_inputs[len(actuals)] = canonical
           actual = cast(Any, canonical)
       pattern = None if decl is None else decl.pattern
       if isinstance(marker, _Window):
@@ -233,6 +235,10 @@ class _Mapped(_Derived):
 
     skeleton = resolve(self._source.inputs, args)
     concrete = self._source._bind(skeleton, self.name)
+    for index, canonical in canonical_inputs.items():
+      layout = concrete.input_tree.layouts[index]
+      assert layout is not None
+      actuals[index] = canonical[..., layout.permutation].reshape(-1)
     return concrete, actuals, layouts, skeleton
 
   @overload
