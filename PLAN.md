@@ -13,7 +13,7 @@ compiler maintenance context, core compiler roadmap Foundations #64 and Rules fo
       other representative Functions. Confirm failure on the original implementation.
 - [x] Locate the first unstable compiler pass and fix iteration using graph or statement order.
       Audit other seed-dependent iteration in lowering, program passes, and rendering.
-- [ ] Verify differential behavior, mutation detection, snapshots, full suite, and merge hooks.
+- [x] Verify differential behavior, mutation detection, snapshots, full suite, and merge hooks.
       If snapshots move, review why and collect the run plan's required evidence.
 - [ ] Commit, push, open and link draft PR. Obtain one correctness cross-review and a delta
       check if needed. Remove this temporary plan before marking ready.
@@ -65,3 +65,9 @@ Evidence so far:
   52 skipped. Benchmark smoke has passed its four problem-oracle checks and is still running
   the remaining cells. Draft PR and cross-review can proceed with the review prerequisites
   green; the remaining hooks must finish before the PR is ready to queue.
+- Final systemd hook completed with exit 0. Benchmark smoke, documentation build, and the
+  private-name check all passed. No C snapshot changed.
+- Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/317, based on main. gh pr create hit a
+  GraphQL rate-limit error; a REST check confirmed no PR existed, then REST creation succeeded.
+  The PR is linked in T3. Cross-review is next: Opus at xhigh and a separate sol correctness
+  review at xhigh. No review verdict yet. Remove PLAN.md before marking the PR ready.
