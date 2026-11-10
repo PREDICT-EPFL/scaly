@@ -42,6 +42,26 @@ def _check_wrt(wrt: Expr) -> None:
     raise ValueError("wrt must be an independent input from sc.sym or a Function declaration")
 
 
+def _prunable_support(expr: Expr) -> Support:
+  """Known zeros that can be removed without dropping custom derivative paths."""
+  support = expr.support
+  if support is None or len(support) == expr.size:
+    return support
+  pending, seen = [expr], set()
+  while pending:
+    node = pending.pop()
+    if node.id in seen or node.op == ExprOp.STOP_GRADIENT:
+      continue
+    seen.add(node.id)
+    pending.extend(node.args)
+    if node.op in {ExprOp.CALL, ExprOp.VMAP}:
+      callee, output = node.attrs["callee"], node.attrs["output"]
+      if _declared(callee, output):
+        return None
+      pending.append(callee.results[output])
+  return support
+
+
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
   """Estimate structural sparsity of ``d vec(expr) / d vec(wrt)``.
 

@@ -11,6 +11,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, gather, scatter
 from ..ir.program import ProgramOp
 from ..ir.support import support_indices
+from .sparsity import _prunable_support
 
 type Local = Expr | int | tuple[Expr | int, Expr]
 type Partial = Callable[[Expr], Local]
@@ -178,7 +179,7 @@ def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...
     return cot
   if not in_shape:
     return cot.sum()
-  if (support := cot.support) is not None and len(support) < cot.size:
+  if (support := _prunable_support(cot)) is not None and len(support) < cot.size:
     entries = support_indices(support)
     coords = np.unravel_index(entries, out_shape)
     padded = (1,) * (len(out_shape) - len(in_shape)) + in_shape

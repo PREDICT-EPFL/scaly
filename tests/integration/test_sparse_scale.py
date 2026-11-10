@@ -1,5 +1,6 @@
 """Compiler work over represented entries of a matrix with a large logical shape."""
 
+import ctypes
 import json
 import os
 import subprocess
@@ -7,6 +8,7 @@ import sys
 import threading
 import time
 import tracemalloc
+from ctypes import wintypes
 
 import numpy as np
 import pytest
@@ -26,26 +28,24 @@ _TIME_LIMIT = 180
 _MEMORY_LIMIT = 2 * 1024**3
 
 
+class _MemoryCounters(ctypes.Structure):
+  _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD)] + [
+    (name, ctypes.c_size_t) for name in ("peak_rss", "rss", "peak_paged", "paged", "peak_nonpaged", "nonpaged", "pagefile", "peak_pagefile")
+  ]
+
+
 def _peak_rss() -> int:
   if sys.platform != "win32":
     import resource
 
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return int(peak if sys.platform == "darwin" else peak * 1024)
-  import ctypes
-  from ctypes import wintypes
-
-  class Counters(ctypes.Structure):
-    _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD)] + [
-      (name, ctypes.c_size_t) for name in ("peak_rss", "rss", "peak_paged", "paged", "peak_nonpaged", "nonpaged", "pagefile", "peak_pagefile")
-    ]
-
-  counters = Counters()
+  counters = _MemoryCounters()
   counters.cb = ctypes.sizeof(counters)
   process = ctypes.windll.kernel32.GetCurrentProcess
   process.restype = wintypes.HANDLE
   query = ctypes.windll.psapi.GetProcessMemoryInfo
-  query.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+  query.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MemoryCounters), wintypes.DWORD]
   assert query(process(), ctypes.byref(counters), counters.cb)
   return counters.peak_rss
 

@@ -134,7 +134,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
   elif e.op == ExprOp.SUM:
     value = args[0]
     if value.size > 1024 and all(stride == 0 or dim <= 1 for stride, dim in zip(value.strides, value.shape, strict=True)):
-      out = np.asarray(value.flat[0] * value.size, dtype=e.type.dtype.numpy())
+      out = np.asarray(np.sum(value.flat[:1]) * value.size, dtype=e.type.dtype.numpy())
     else:
       out = np.asarray(np.sum(value), dtype=np.float64)
   elif e.op == ExprOp.MATMUL:

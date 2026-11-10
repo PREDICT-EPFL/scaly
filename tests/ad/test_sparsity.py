@@ -13,6 +13,14 @@ from scaly.ad import finite_difference
 from scaly.ad.sparse import Triangle
 
 
+def test_scalar_movement_support_and_derivative_coordinates() -> None:
+  x = sc.sym("scalar_coordinate_map")
+  for source in (x, sc.const(2.0), sc.const(0.0)):
+    for expr in (source.T, source[()]):
+      assert expr.support == source.support
+      np.testing.assert_array_equal(sc.jacobian_sparsity(expr, x).to_mask(), [[source is x]])
+
+
 def test_value_support_filters_elementwise_derivative_relations() -> None:
   x = sc.sym("support_jac_x", 4)
   mask = sc.const([0, 2, 0, 3])

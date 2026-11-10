@@ -53,3 +53,20 @@ The final merge hook passed 2,726 tests with 52 optional skips, benchmark smoke,
 run must confirm portability. Coloring and original reverse-broadcast/slice perturbations are
 also being checked against this expanded gate. The original matmul enumeration times out in a
 separate three-second reproduction that the current implementation passes.
+
+## Review fixes
+
+Sol reproduced lost custom derivatives when cotangent values were compacted by value support,
+scalar coordinate-map failures and a signed-zero SUM difference. New tests failed on all seven
+custom derivative cases, scalar movement, and uniform-first negative zero before the fixes.
+The reverse compaction guard traverses operands and ordinary callees iteratively and refuses to
+remove entries if custom rules can contribute derivative paths. The derivative relation row
+domain itself remains the rows present in COO incidence, including custom declarations/dense
+patterns and all downstream images; it never comes from the differentiated node's value support.
+The maintainer's #40 investigation memo was read without edits. Its eight-case composition test
+passes. New direct/nested/mapped reverse-map tests and a public Hessian reproduction pass.
+Scalar coordinate maps retain one-dimensional arrays; uniform SUM obtains NumPy's additive-zero
+behavior before scaling. Windows peak-memory queries now share one ctypes structure type across
+the watchdog and main thread, avoiding concurrent argtype changes between distinct class types.
+The 197-test focused check passed, including snapshots and the gate. The full suite rerun passes 2,736 tests with 52 skips; the remaining merge-hook checks
+are in progress. Opus's independent review is still pending.

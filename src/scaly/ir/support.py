@@ -210,13 +210,15 @@ def _rule(node: Expr, op: str | None) -> Support:
 
 def transpose_entries(entries: np.ndarray, shape: tuple[int, ...], axes: tuple[int, ...]) -> np.ndarray:
   """Permute only the given flat coordinates."""
-  coords = np.unravel_index(entries, shape) if shape else ()
+  if not shape:
+    return entries
+  coords = np.unravel_index(entries, shape)
   return np.ravel_multi_index(tuple(coords[axis] for axis in axes), tuple(shape[axis] for axis in axes))
 
 
 def slice_entries(entries: np.ndarray, shape: tuple[int, ...], index: tuple[Any, ...]) -> tuple[np.ndarray, np.ndarray]:
   """Map selected coordinates into a slice and return their selection mask."""
-  coords = np.unravel_index(entries, shape)
+  coords = np.unravel_index(entries, shape) if shape else ()
   keep = np.ones(len(entries), dtype=bool)
   output = np.zeros(len(entries), dtype=np.int64)
   for dim, item, coord in zip(shape, index, coords, strict=True):

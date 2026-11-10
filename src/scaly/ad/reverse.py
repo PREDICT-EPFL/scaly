@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, gather, scatter, topo, zeros_like
 from ..ir.support import slice_indices, support_indices
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, cotangent
-from .sparsity import _check_wrt, _depends_on
+from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
@@ -73,7 +73,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))
     return (cot.transpose(inv),)
   if expr.op == ExprOp.SLICE:
-    support = cot.support
+    support = _prunable_support(cot)
     entries = support_indices(support) if support is not None and len(support) < cot.size else None
     indices = slice_indices(args[0].shape, expr.attrs["index"], entries)
     values = gather(cot, entries) if entries is not None else cot
