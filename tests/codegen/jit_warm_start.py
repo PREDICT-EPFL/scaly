@@ -1,0 +1,44 @@
+"""Call a Function and say whether this process lowered it to find its library.
+
+Run it twice with one cache: the first run compiles, the second finds the library through the JIT
+index without lowering anything, whatever its ``PYTHONHASHSEED``::
+
+  SCALY_CACHE_DIR=/tmp/warm PYTHONHASHSEED=1 uv run tests/codegen/jit_warm_start.py
+  SCALY_CACHE_DIR=/tmp/warm PYTHONHASHSEED=2 uv run tests/codegen/jit_warm_start.py
+
+Under ``SCALY_JIT_KEY=verify`` the second run lowers too, and checks the C it renders is the C the
+indexed library was built from.
+"""
+
+import json
+
+import numpy as np
+
+import scaly as sc
+import scaly.codegen.aot as aot
+import scaly.codegen.jit as jit
+
+lowered = []
+lower = aot.lower_function
+
+
+def counted(fun, *args, **kwargs):
+  lowered.append(fun.name)
+  return lower(fun, *args, **kwargs)
+
+
+setattr(aot, "lower_function", counted)
+
+
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="warm_start")
+def inner(x):
+  return x.sin() * x
+
+
+@sc.function(sc.arg("x", 3), sc.arg("p", 2), outputs=sc.arg("y"), name="warm_start_outer")
+def outer(x, p):
+  return (inner(x) * p[0] + p[1] * x.exp()).sum()
+
+
+result = outer(np.array([0.5, -1.0, 2.0]), np.array([2.0, 0.25]))
+print(json.dumps({"lowered": len(lowered), "result": float(result), "library": str(jit.get_compiled(outer).lib_path)}))

@@ -120,7 +120,9 @@ _RENDER_OBSERVERS: list[Callable[[ConcreteFunction], RenderObserver | None]] = [
 
 def register_render_observer(begin: Callable[[ConcreteFunction], RenderObserver | None]) -> None:
   """Watch every source render. ``begin`` is called with the function about to be rendered and
-  returns an observer, or ``None`` to sit that render out.
+  returns an observer, or ``None`` to sit that render out. The JIT also calls it to ask whether a
+  render would be watched, and renders a watched function rather than load its library from the
+  index, so an observer records nothing before its first callback.
 
   Codegen owns this hook so that visualization depends on codegen and not the other way round.
   """
