@@ -142,9 +142,41 @@ jobs:
       suite: verify
       environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
 
+  embedded:
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
+    runs-on: ubuntu-latest
+    env:
+      SCALY_BUILD_SOLVERS: skip
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - name: Install the Cortex-M build tools
+        run: |
+          uv sync --frozen --extra toolchain
+          uv run --frozen --extra toolchain zig version
+          nm --version
+          size --version
+          readelf --version
+      - name: Build float32 oracles for Cortex-M4F and M7
+        run: uv run --frozen --extra toolchain pytest -q -s tests/codegen/test_embedded.py --basetemp=embedded-build
+      - name: Record flash and RAM
+        run: find embedded-build -name report.txt -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cortex-m-oracles
+          path: |
+            embedded-build/**/embedded_oracle.c
+            embedded-build/**/embedded_oracle.h
+            embedded-build/**/oracle.o
+            embedded-build/**/oracle.su
+            embedded-build/**/report.txt
+
   # A skipped required check counts as passed, so this runs whatever happened before it.
   ci:
-    needs: [queue, lint, docs, platforms, smoke, verify]
+    needs: [queue, lint, docs, platforms, smoke, verify, embedded]
     if: always() && needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -172,7 +204,7 @@ jobs:
               echo "| $platform | $native | $(step "platforms / $platform" Install) | $(step "platforms / $platform" Test) | $smoke |"
             done
             echo
-            echo "lint: $(result lint), docs: $(result docs), JIT index verified: $(step "verify / linux-x86_64" Test)"
+            echo "lint: $(result lint), docs: $(result docs), JIT index verified: $(step "verify / linux-x86_64" Test), embedded: $(result embedded)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
           failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then

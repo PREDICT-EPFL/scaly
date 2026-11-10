@@ -575,6 +575,56 @@ microcontroller. Its declaration has to come from somewhere, here a header
 given to `-include`, because the source includes `<stdio.h>` only for its own
 definition. A source without prints does not mention `SCALY_PRINTF`.
 
+## Embedded builds
+
+An oracle `Function`, such as a dynamics model or its Jacobian, can be compiled
+for a bare-metal Cortex-M4F or M7. Its generated C needs no Python runtime or
+heap. Supply the target's math library for any libm calls it uses.
+
+The [embedded oracle example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/embedded_oracle.py)
+exports the nonlinear stages from the mapped-derivatives example and their sparse
+Jacobian in `float32`. From a repository checkout, generate it with a zero frame
+budget and compile it with Zig:
+
+```bash
+uv run scaly_codegen examples.embedded_oracle:oracle -o generated/embedded \
+    --dialect c --lanes 1 --frame-budget 0
+uv run --extra toolchain zig cc -target thumb-freestanding-eabihf \
+    -mcpu=cortex_m4+vfp4d16sp -ffreestanding -Os \
+    -fno-unwind-tables -fno-asynchronous-unwind-tables \
+    '-DSCALY_PRINTF(...)=' -Iexamples/embedded \
+    -c generated/embedded/embedded_oracle.c -o generated/embedded/oracle.o
+size generated/embedded/oracle.o
+nm --undefined-only generated/embedded/oracle.o
+```
+
+Zig spells Clang's `thumbv7em-none-eabihf` target as
+`thumb-freestanding-eabihf` with the CPU selected separately. The `vfp4d16sp`
+feature enables the single-precision floating-point unit. Use
+`-mcpu=cortex_m7+vfp4d16sp` for the M7. Disabling unwind tables avoids an
+unwind-runtime dependency, and `SCALY_PRINTF` removes generated prints.
+Zig supplies no bare-metal `math.h`, so the example includes declarations of
+its two libm functions in `examples/embedded/math.h`. An application can use
+its board toolchain's math header instead. This object needs only `sinf` and
+`cosf`, which the final application must link from a hard-float target libm.
+
+`frame_budget=0` in Python, or `--frame-budget 0` on the command line, sends
+every eligible temporary array to the caller's `w[]`. Allocate
+`embedded_oracle_SZ_W` floats for this example, plus eight input floats,
+eight output values and sixteen Jacobian values. These buffers may have
+static storage. The generated header describes the Jacobian's stored entries.
+This oracle has no integer or boolean temporary arrays. In a function whose
+inputs and outputs all have one floating type, temporary arrays of another
+type stay on the stack even at zero frame budget. Scalar locals, saved
+registers, return addresses and libm also need stack space.
+
+The Linux `size` command reports the object sections. Flash usage is
+`text + data`, and static RAM is `data + bss`. Add the caller's input, output
+and workspace buffers to RAM. These object sizes exclude the target libm,
+startup code and application stack, and do not measure a complete firmware
+image. The continuous-integration build records the sizes and per-function
+stack usage for both targets without executing on hardware.
+
 ## CPU targets, vector lanes, and math libraries
 
 A generated module carries a `BuildRecipe` in `module.recipe`. It records the
