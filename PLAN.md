@@ -34,15 +34,17 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
 
 - Initial tests reproduced unrounded float32 arithmetic and literals, exact integer abs
   losing low bits, and the integer sum builder refusing integer inputs.
-- 78 new focused cases pass. The broader pass, program-IR and vector selection passed
+- 80 new focused cases pass. The broader pass, program-IR and vector selection passed
   754 tests, with 47 compiler-dependent skips. Eight existing C snapshot checks passed
   without changing a snapshot. Lint, format and strict type checks pass.
 - Mutations restoring double folding and float32 workspace spills both fail their tests.
-- The complete collection baseline now contains 3151 tests.
+- After moving onto the updated #320 base, the complete collection contains 3260 tests.
 - Frozen devrush arithmetic tests overlap existing main tests; no float32 suite exists there.
 - Roadmap departure recorded beside #55: defer non-float64 spills to #56 so this layer
   does not implement its typed workspace. Report this in the PR and to the coordinator.
-- Coordinator says #320 will be force-pushed. Before pushing, fetch and rebase with
-  `git rebase --onto origin/main 457e526d` if merged, otherwise onto
-  `origin/t3code/30-predicates-select-cast` at that old base. Never cite this old
-  branch hash in durable records.
+- Rebased onto the updated #320 branch. Resolved call lowering by retaining main's
+  sibling-result grouping and adding explicit dtypes. A new workspace regression on
+  that base also needed an explicit CALL dtype. Strict types pass after that correction.
+- Full pre-merge checks are detached under `/tmp/scaly-55-suite-2.*`, with the
+  original shared-suite queue position retained. The first runner was cancelled while
+  still waiting for its slot, before any checks ran.
