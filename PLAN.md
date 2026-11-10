@@ -13,10 +13,14 @@ without changing patterns, dense text, generated C, or public interfaces.
       shared across printers. No pattern or type semantics change.
 - [x] Run focused tests and perturb the formatter to prove the tests fail.
       137 tests passed. Erasing the suffix caused the nine sparse checks to fail again.
-- [ ] Run pre-merge checks. The first unbounded run was killed during the machine's memory
-      exhaustion and has no full-suite result. Use the run-wide lock and eight workers below.
-- [ ] Once #289 merges, fetch and rebase onto origin/main above the supplied sparse-stack base.
-      Re-run the checks and confirm C snapshots remain unchanged.
+- [ ] Run pre-merge checks through `~/.scaly-suite/run`, detached. Final-candidate logs are
+      `/tmp/scaly-302.YMUXBc/premerge-main.log` and `.exit`.
+      The original unbounded run was killed during memory exhaustion. One detached attempt was
+      terminated while waiting for the old lock. Its retry was deliberately stopped when #289
+      merged so the rebased candidate can be checked. Neither is a full-suite result.
+- [x] Once #289 merges, fetch and rebase only this task's commits onto origin/main, using the
+      merge base with `origin/t3code/43-sparse-interfaces`. Exactly two own commits replayed.
+      `tests/baseline/c/` has no diff. Re-run checks on this rebased state.
 - [ ] Commit, push and open a draft PR against main. Remove this temporary plan before ready.
 - [ ] Get the cross-review verdict, fix findings and confirm any fixes with one delta check.
 - [ ] With green CI and an approving verdict, queue with gh pr merge --squash and report evidence.
@@ -27,8 +31,8 @@ are sequential. Sparse names stay out of published guides and API entries until 
 The frozen devrush assembly tests were inspected. They exercise the older dense-only listing and
 provide no additional stored-pattern cases to port.
 
-All full-suite runs on la015 must use `flock ~/.scaly-suite.lock` with
-`PYTEST_XDIST_AUTO_NUM_WORKERS=8`. Run pre-merge detached with `nohup setsid`, store its log and
-exit file under the task's temporary directory, and poll the exit file. Focused tests use at most
-two workers. Run the full hook only on a state intended for push. Retry a killed worker or timeout
-once before treating it as a real failure.
+Read `~/.scaly-suite/RULES.md` for the current run-wide rules. Full suites use
+`~/.scaly-suite/run`, detached with `nohup setsid`, with the log and exit file under the task's
+temporary directory. Poll the exit file inside the turn. Focused tests use at most two workers.
+GitHub reads use REST, PR checks are read at most once per five minutes, and the merge request is
+`gh pr merge N --squash --auto`, once after the verdict.
