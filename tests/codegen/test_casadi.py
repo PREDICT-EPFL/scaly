@@ -17,7 +17,7 @@ from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
-from tests.compilers import c_compiler
+from tests.compilers import c_compiler, cxx_compiler
 
 ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out")
 
@@ -155,3 +155,59 @@ def test_casadi_rejects_dense_matrix_buffers() -> None:
     return row * 2.0
 
   render_c_module(row_ok, casadi=True)
+
+
+@pytest.mark.parametrize("empty", [False, True], ids=["nonempty", "empty"])
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+def test_casadi_sparse_leaves_match_casadi_sparsity(tmp_path, empty, lang):
+  from scipy import sparse
+
+  pattern = sc.SparsityPattern((3, 4), (), ()) if empty else sc.SparsityPattern((3, 4), (0, 0, 1, 2), (1, 3, 0, 1))
+  pattern, _ = pattern.canonicalize()
+  type_ = sc.TensorType(pattern.shape, pattern=pattern)
+
+  @sc.function(sc.arg("a", type_), sc.arg("x", 4), outputs=sc.group(sc.arg("b", type_), sc.arg("y", 3)), name="sparse_external")
+  def fun(a, x):
+    return a * 2.0, a @ x
+
+  module, lib_path = _build(tmp_path, fun, lang=lang)
+  client = tmp_path / ("header.c" if lang == "c" else "header.cpp")
+  client.write_text(f'#include "{module.header_name}"\nint main(void) {{ return 0; }}\n')
+  compiler, standard = (c_compiler(), "-std=c11") if lang == "c" else (cxx_compiler(), "-std=c++17")
+  subprocess.run(
+    [*compiler, standard, "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-c", str(client), "-o", str(client.with_suffix(".o"))], check=True
+  )
+  ext = casadi.external(fun.name, str(lib_path))
+  expected_sparsity = casadi.Sparsity.triplet(*pattern.shape, list(pattern.rows), list(pattern.cols))
+  assert ext.sparsity_in(0) == expected_sparsity
+  assert ext.sparsity_out(0) == expected_sparsity
+  assert ext.sparsity_in(1) == casadi.Sparsity.dense(4, 1)
+  assert ext.sparsity_out(1) == casadi.Sparsity.dense(3, 1)
+  values = np.arange(pattern.nnz, dtype=float)  # Includes an explicit stored zero.
+  reference = sparse.coo_array((values, (pattern.rows, pattern.cols)), shape=pattern.shape).tocsc()
+  matrix = casadi.DM(expected_sparsity, reference.data)
+  x = np.array([2.0, -3.0, 5.0, 7.0])
+  b, y = ext(matrix, x)
+  np.testing.assert_allclose(b.full(), reference.toarray() * 2)
+  np.testing.assert_allclose(y.full().ravel(), reference @ x)
+  assert module.workspace_size == workspace_size(fun)
+  assert "_native" not in module.body
+
+
+@pytest.mark.parametrize("side", ["input", "output"])
+@pytest.mark.parametrize("layout", ["csr", "coo", "batch"])
+def test_casadi_rejects_sparse_leaves_it_cannot_describe(side, layout):
+  pattern = sc.SparsityPattern((3, 4), (0, 1), (1, 0))
+  pattern, _ = pattern.canonicalize()
+  shape = (2, *pattern.shape) if layout == "batch" else pattern.shape
+  order = sc.SparsityPattern(pattern.shape, (1, 0), (0, 1)) if layout == "coo" else "csr" if layout == "csr" else "csc"
+  leaf = sc.arg("a", sc.TensorType(shape, pattern=pattern), layout=order)
+  if side == "input":
+    fun = sc.function(leaf, name="bad_sparse_external")(lambda a: sc.values(a).sum())
+  else:
+    fun = sc.function(sc.arg("v", int(np.prod(shape[:-2])) * pattern.nnz), outputs=leaf, name="bad_sparse_external")(
+      lambda v: sc.pack(v.reshape((*shape[:-2], pattern.nnz)), pattern)
+    )
+  reason = "batch axes" if layout == "batch" else f"must declare CSC layout; got {layout!r}"
+  with pytest.raises(ValueError, match=f"{side} 'a'.*{reason}"):
+    render_c_module(fun, casadi=True)

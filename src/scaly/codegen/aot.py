@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from scaly.codegen.toolchain import BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
-from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
+from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables
 from scaly.codegen.c import _c_reserved_names, _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
 from scaly.codegen.casadi import (
   casadi_declarations,
@@ -50,6 +50,7 @@ from scaly.solvers.graph import external_oracles, is_solver_function, solver_bac
 from scaly.solvers.paths import backend_compile_flags
 from scaly.solvers.solver import Solver
 from scaly.solvers.stats import stats_c_defs, stats_c_timing_defs
+from scaly.utils.names import NameScope
 
 if TYPE_CHECKING:
   from collections.abc import Callable
@@ -193,11 +194,11 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   lines = ["", "// Typed buffers: one struct per input and output, and the caller-owned workspace."]
   inputs, outputs = buffer_idents(fun)
   for ident, expr in zip(inputs, fun.inputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;")
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"const {symbol}_{ident}_t* {ident}")
     arg_values.append(f"{ident}->data")
   for ident, expr in zip(outputs, fun.outputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;")
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"{symbol}_{ident}_t* {ident}")
     res_values.append(f"{ident}->data")
   params.append(f"{symbol}_workspace_t* workspace")
@@ -223,22 +224,46 @@ def _sparse_tables(fun: ConcreteFunction, symbol: str, sparsities: tuple[Sparsit
     prefix = f"{symbol}_{c_ident(name)}"
     row_ptr, col_ind, csr_perm = sp.to_csr()
     col_ptr, row_ind, csc_perm = sp.to_csc()
+    # values_csr[k] = values[csr_val_perm[k]], and likewise for CSC.
+    tables = (
+      ("rows", sp.rows),
+      ("cols", sp.cols),
+      ("csr_row_ptr", row_ptr),
+      ("csr_col_ind", col_ind),
+      ("csr_val_perm", csr_perm),
+      ("csc_col_ptr", col_ptr),
+      ("csc_row_ind", row_ind),
+      ("csc_val_perm", csc_perm),
+    )
     lines += [
       f"#define {prefix}_NNZ {sp.nnz}",
       f"#define {prefix}_NROW {sp.shape[0]}",
       f"#define {prefix}_NCOL {sp.shape[1]}",
-      f"static const int {prefix}_rows[{sp.nnz}] = {_c_array(sp.rows)};",
-      f"static const int {prefix}_cols[{sp.nnz}] = {_c_array(sp.cols)};",
-      f"static const int {prefix}_csr_row_ptr[{sp.shape[0] + 1}] = {_c_array(row_ptr)};",
-      f"static const int {prefix}_csr_col_ind[{sp.nnz}] = {_c_array(col_ind)};",
-      # The compact value buffer stays in (rows, cols) COO order, which is not necessarily sorted;
-      # values_csr[k] = values[csr_val_perm[k]] (and likewise for CSC) pairs it with the indices.
-      f"static const int {prefix}_csr_val_perm[{sp.nnz}] = {_c_array(csr_perm)};",
-      f"static const int {prefix}_csc_col_ptr[{sp.shape[1] + 1}] = {_c_array(col_ptr)};",
-      f"static const int {prefix}_csc_row_ind[{sp.nnz}] = {_c_array(row_ind)};",
-      f"static const int {prefix}_csc_val_perm[{sp.nnz}] = {_c_array(csc_perm)};",
+      *(f"static const int {prefix}_{table}[{len(values)}] = {_c_array(values)};" for table, values in tables if values),
     ]
   return ["", "// Sparse output metadata for compact derivative buffers.", *lines] if lines else []
+
+
+def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
+  lines: list[str] = []
+  inputs, outputs = buffer_idents(fun)
+  names = NameScope((c_ident(name) for name, sp in zip(fun.output_names, fun.output_sparsities, strict=True) if sp is not None), header=True)
+  for ident, type_, layout in zip(
+    (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
+  ):
+    if layout is None:
+      continue
+    prefix = f"{symbol}_{names.allocate(ident + '_' if names.contains(ident) else ident)}"
+    lines += [
+      f"#define {prefix}_NROW {layout.pattern.shape[0]}",
+      f"#define {prefix}_NCOL {layout.pattern.shape[1]}",
+      f"#define {prefix}_NNZ {layout.pattern.nnz}",
+      f"#define {prefix}_NDIM {type_.ndim}",
+      f"#define {prefix}_STORAGE_SIZE {type_.storage_size}",
+      f"static const int {prefix}_shape[{type_.ndim}] = {_c_array(type_.shape)};",
+      *(f"static const int {prefix}_{name}[{len(values)}] = {_c_array(values)};" for name, values in sparse_layout_tables(layout) if values),
+    ]
+  return ["", "// Sparse leaf metadata: one local pattern shared by all batch entries.", *lines] if lines else []
 
 
 def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:
@@ -248,8 +273,6 @@ def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityP
 
 
 def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, lang: str, casadi: bool) -> str:
-  if any(expr.type.pattern is not None for expr in (*fun.inputs, *fun.outputs)):
-    raise NotImplementedError("generated headers do not support stored-pattern leaves")
   if lang == "cpp":
     return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
@@ -283,6 +306,7 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
   ]
   lines += _typed_buffers(fun, symbol)
   lines += _sparse_tables(fun, symbol, header_sparsities(fun, casadi=casadi))
+  lines += _sparse_leaf_tables(fun, symbol)
   return "\n".join(lines) + "\n"
 
 

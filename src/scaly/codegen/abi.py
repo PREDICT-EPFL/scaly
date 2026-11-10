@@ -5,6 +5,7 @@ the symbol mangling (``docs/how_it_works/generated_interface.md``). The typed st
 from __future__ import annotations
 
 from ..function.concrete import ConcreteFunction
+from ..ir.layout import SparseLayout
 from ..utils.names import c_ident as c_ident, NameScope
 
 # ``mem`` follows CasADi 3.8: an ``int`` memory handle a stateful function would index a pool with.
@@ -48,3 +49,14 @@ def c_api_signature(symbol: str = "f", *, solver_options: bool = False) -> str:
   """The universal ABI entry signature, spelled for a given symbol name."""
   signature = C_API_SIGNATURE.replace(" f(", f" {symbol}(")
   return signature[:-1] + ", const scaly_solver_option* const* solver_options)" if solver_options else signature
+
+
+def sparse_layout_tables(layout: SparseLayout) -> tuple[tuple[str, tuple[int, ...]], ...]:
+  """The local index tables in a sparse leaf's declared value order, without value permutations."""
+  if layout.format == "coo":
+    tables = (("rows", layout.rows), ("cols", layout.cols))
+  elif layout.format == "csr":
+    tables = (("csr_row_ptr", layout.indptr), ("csr_col_ind", layout.indices))
+  else:
+    tables = (("csc_col_ptr", layout.indptr), ("csc_row_ind", layout.indices))
+  return tuple((name, tuple(map(int, values))) for name, values in tables)

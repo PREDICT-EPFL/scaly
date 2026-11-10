@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from .abi import c_ident
 from ..function.concrete import ConcreteFunction
+from ..ir.layout import SparseLayout
 from ..ir.types import SparsityPattern
 
 CASADI_QUERIES = (
@@ -62,12 +63,17 @@ def check_casadi_layout(fun: ConcreteFunction) -> None:
   """CasADi buffers are column-major and scaly's are row-major. Scalars, vectors and compact sparse
   outputs agree. A dense matrix with both dimensions above one would need a transpose, so it is
   rejected here rather than hand the caller a transposed matrix."""
-  for kind, names, exprs, sparsities in (
-    ("input", fun.input_names, fun.inputs, (None,) * len(fun.inputs)),
-    ("output", fun.output_names, fun.outputs, fun.output_sparsities),
+  for kind, names, exprs, layouts, sparsities in (
+    ("input", fun.input_names, fun.inputs, fun.input_tree.layouts, (None,) * len(fun.inputs)),
+    ("output", fun.output_names, fun.outputs, fun.output_tree.layouts, fun.output_sparsities),
   ):
-    for name, expr, sp in zip(names, exprs, sparsities, strict=True):
-      if sp is None and (len(expr.shape) > 2 or (len(expr.shape) == 2 and min(expr.shape) > 1)):
+    for name, expr, layout, sp in zip(names, exprs, layouts, sparsities, strict=True):
+      if layout is not None:
+        if len(expr.shape) > 2:
+          raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} has batch axes; CasADi only supports two-dimensional sparse leaves")
+        if layout.format != "csc":
+          raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} must declare CSC layout; got {layout.format!r}")
+      elif sp is None and (len(expr.shape) > 2 or (len(expr.shape) == 2 and min(expr.shape) > 1)):
         raise ValueError(
           f"casadi=True: {kind} {name!r} of {fun.name!r} has dense matrix shape {expr.shape}; CasADi is column-major, so only scalars, vectors and compact sparse outputs are supported"
         )
@@ -81,11 +87,13 @@ def _dense_dims(shape: tuple[int, ...]) -> tuple[int, int]:
   return (shape[0], shape[1])
 
 
-def casadi_sparsity(shape: tuple[int, ...], sp: SparsityPattern | None) -> tuple[int, ...]:
+def casadi_sparsity(shape: tuple[int, ...], sp: SparsityPattern | SparseLayout | None) -> tuple[int, ...]:
   """CasADi's compressed encoding: ``{nrow, ncol, 1}`` for dense, ``{nrow, ncol, colind..., row...}``
   for sparse. ``check_casadi_layout`` has already ruled out dense matrices."""
   if sp is None:
     return (*_dense_dims(shape), 1)
+  if isinstance(sp, SparseLayout):
+    return (*sp.pattern.shape, *map(int, sp.indptr), *map(int, sp.indices))
   col_ptr, row_ind, _ = sp.to_csc()
   return (*sp.shape, *col_ptr, *row_ind)
 
@@ -167,8 +175,14 @@ def render_casadi_queries(fun: ConcreteFunction, sz_w: int) -> list[str]:
   names_in: list[str] = []
   names_out: list[str] = []
   for kind, names, exprs, sparsities, into in (
-    ("in", fun.input_names, fun.inputs, (None,) * n_in, names_in),
-    ("out", fun.output_names, fun.outputs, fun.output_sparsities, names_out),
+    ("in", fun.input_names, fun.inputs, fun.input_tree.layouts, names_in),
+    (
+      "out",
+      fun.output_names,
+      fun.outputs,
+      tuple(layout or sp for layout, sp in zip(fun.output_tree.layouts, fun.output_sparsities, strict=True)),
+      names_out,
+    ),
   ):
     for k, (name, expr, sp) in enumerate(zip(names, exprs, sparsities, strict=True)):
       values = casadi_sparsity(expr.shape, sp)
