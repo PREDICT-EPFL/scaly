@@ -29,6 +29,26 @@ departure is needed. A devrush search found no mixed-tangent regression to port.
 The implementation also needs two small forward-mode consumers: `forward.py` prunes an empty
 movement tangent with the existing custom-derivative guard, and `calls.py` skips an empty gathered
 seed before local-colour reconstruction creates a product. No callee cloning or support changes.
-Focused tests passed, including all 17 new cases. Perturbations detected disabled support
-specialisation, disabled zero pruning and doubled runtime-seed values. Full pre-merge hook passed, 2,962 tests and 52 skips, plus smoke, docs and private-name checks.
-Log: `/tmp/scaly-167-suite.log`; exit file: `/tmp/scaly-167-suite.exit` contains 0.
+Focused tests passed, including all 22 new cases. Perturbations detected disabled support
+specialisation, disabled zero pruning and doubled runtime-seed values. The updated full pre-merge hook passed, 2,967 tests and 52 skips, plus smoke, docs and private-name checks.
+Log: `/tmp/scaly-167-suite-review.log`; exit file: `/tmp/scaly-167-suite-review.exit` contains 0.
+
+
+## Review handoff
+
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/347. Sol approved without findings. Opus's
+xhigh review found one test gap: counting visits per support lookup allowed fresh contexts to
+hide duplicate work. The test now requires exactly three contexts and fails when sharing is
+perturbed. Also skipped inactive call specialisation and added CALL/VMAP cache-fallback and
+inline/call/map custom-derivative regressions. All new gates were perturbed and failed.
+
+The one Opus low-effort delta check failed before returning a verdict because the Claude API
+hit its rate limit. No substitute reviewer was launched. Confirmation is still missing; keep the
+PR draft. Once the provider resumes, request only the fix delta against the original review,
+not another full review. Delete this plan in the last commit before ready.
+
+The duplicated map-window grouping is maintenance follow-up #350, labelled source:agent.
+No roadmap departure. #333 remains unmerged as of 19:36 UTC, so this PR still targets its branch.
+The old base is the tip of origin/t3code/221-call-support at dispatch. On its squash merge,
+exclude that old base when rebasing onto origin/main, then force-with-lease and retarget through
+REST. Queue once after the base is main and the review is complete. Children do not watch PRs.
