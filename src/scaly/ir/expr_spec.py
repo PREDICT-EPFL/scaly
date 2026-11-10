@@ -22,9 +22,9 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, print_pieces, topo
+from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, check_stored_pattern, print_pieces, topo
 from .spec import Rule, Spec, VerifyError
-from .types import DType, broadcast_shape, dtypes
+from .types import CanonicalPattern, DType, broadcast_shape, dtypes
 
 
 def verify_expr(root: Expr | Iterable[Expr], spec: "Spec | None" = None) -> None:
@@ -69,11 +69,26 @@ def _arity_matches(expr: Expr) -> str | None:
   return None
 
 
+def _stored_pattern(expr: Expr) -> str | None:
+  pattern = expr.type.pattern
+  if pattern is not None:
+    if not isinstance(pattern, CanonicalPattern):
+      return "type.pattern must be canonical"
+    if expr.type.ndim < 2 or expr.shape[-2:] != pattern.shape:
+      return f"type.pattern shape {pattern.shape} disagrees with last two axes {expr.shape[-2:]}"
+  try:
+    check_stored_pattern(expr.op, expr.args, expr.type)
+  except ValueError as exc:
+    return str(exc)
+  return None
+
+
 spec_expr_shared = Spec(
   [
     Rule(None, "shape-nonnegative", _shape_nonneg),
     Rule(None, "dtype-is-DType", _dtype_is_dtype),
     Rule(None, "arity-matches-op", _arity_matches),
+    Rule(None, "stored-pattern", _stored_pattern),
   ]
 )
 
