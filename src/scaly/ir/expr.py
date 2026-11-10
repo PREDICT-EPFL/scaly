@@ -1,9 +1,9 @@
 """Expression dialect vocabulary: ``ExprOp``, ``OP_INFO``, ``Expr``, interning, builders, topo.
 
-The verify rules are ``ir/expr_spec.py`` and the one builder that needs a ``Function`` — ``vmap``
-— is ``function/sugar.py``. The printers are ``ir/text.py``, with one exception: ``format_expr``
-stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.py`` import
-``ir/text.py``, which imports ``ir/expr.py``.
+The verify rules are ``ir/expr_spec.py`` and ``function/sugar.py`` owns ``vmap``, the builder that
+needs a ``Function``. The assembly printers are ``ir/text.py``. ``format_expr`` stays here with
+helpers for type text because ``Expr.debug`` calls it, and moving it would make ``ir/expr.py``
+import ``ir/text.py``, which imports ``ir/expr.py``.
 """
 
 from __future__ import annotations

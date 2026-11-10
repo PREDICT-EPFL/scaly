@@ -22,7 +22,18 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, _type_text, check_stored_pattern, print_pieces, topo
+from .expr import (
+  COMMON_ELEMENTWISE_BINARY,
+  COMMON_ELEMENTWISE_UNARY,
+  Expr,
+  ExprOp,
+  OP_INFO,
+  _pattern_text,
+  _type_text,
+  check_stored_pattern,
+  print_pieces,
+  topo,
+)
 from .spec import Rule, Spec, VerifyError
 from .types import CanonicalPattern, DType, broadcast_shape, dtypes
 
@@ -317,8 +328,9 @@ def _scatter_indices(expr: Expr) -> str | None:
 def _storage_conversion(expr: Expr) -> str | None:
   if expr.type.dtype != expr.args[0].type.dtype:
     return "stored-value conversions must preserve dtype"
-  if expr.op == ExprOp.PACK and expr.attrs.get("pattern") is not expr.type.pattern:
-    return "PACK attribute must match the result pattern"
+  if expr.op == ExprOp.PACK and (pattern := expr.attrs.get("pattern")) is not expr.type.pattern:
+    actual = _pattern_text(pattern) if isinstance(pattern, CanonicalPattern) else f" {pattern!r}"
+    return f"PACK attribute must match the result pattern: got{actual}, expected{_pattern_text(expr.type.pattern)}"
   return None
 
 

@@ -18,7 +18,7 @@ import numpy as np
 
 from .expr import Expr, ExprOp, _pattern_text, callees_of, topo
 from .program import BINARY_FN_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
-from .types import TensorType
+from .types import CanonicalPattern, TensorType
 
 if TYPE_CHECKING:
   from ..function.concrete import ConcreteFunction
@@ -41,6 +41,8 @@ def _memref_asm(n: ProgramNode) -> str:
 
 
 def _value_asm(v: Any) -> str:
+  if isinstance(v, CanonicalPattern):
+    return f"pattern<{v.shape[0]}x{v.shape[1]} nnz={v.nnz} digest={v.digest[:12]}>"
   if isinstance(v, np.ndarray):
     return np.array2string(v, threshold=8, separator=", ")
   if isinstance(v, str):

@@ -24,8 +24,15 @@ without changing patterns, dense text, generated C, or public interfaces.
 - [x] Once #289 merges, fetch and rebase only this task's commits onto origin/main, using the
       merge base with `origin/t3code/43-sparse-interfaces`. Exactly two own commits replayed.
       `tests/baseline/c/` has no diff. Re-run checks on this rebased state.
-- [ ] Commit, push and open a draft PR against main. Remove this temporary plan before ready.
+- [x] Commit, push and open draft PR #337 against main. Remove this temporary plan before ready.
 - [ ] Get the cross-review verdict, fix findings and confirm any fixes with one delta check.
+      Sol found two PACK gaps: the pattern attribute still enumerated all coordinates, and its
+      verifier mismatch hid both patterns. Both are fixed locally and have failing-before-fix
+      regressions. Pattern attributes now use `pattern<MxN nnz=N digest=<12 hex digits>>`.
+      116 focused tests, including C snapshots, pass after the fixes. Opus approved with four
+      nonblocking notes. PACK coverage is fixed, and the module docstring now acknowledges the
+      shared type text. Diagnostic wording preferences and higher-level errors remain unchanged.
+      Final checks of these fixes will be `/tmp/scaly-302.YMUXBc/premerge-fixes.log` and `.exit`.
 - [ ] With green CI and an approving verdict, queue with gh pr merge --squash and report evidence.
 
 Independent reads and checks can run concurrently. Rebase, edits, review fixes, pushes and queueing

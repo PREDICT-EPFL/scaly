@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from scaly.function.concrete import ConcreteFunction
-from scaly.ir.expr import Expr, ExprOp, _attrs_key, binary, format_expr, substitute, unary
+from scaly.ir.expr import Expr, ExprOp, _attrs_key, binary, format_expr, pack, substitute, unary
 from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.text import render_expr_assembly, type_asm
@@ -228,6 +228,32 @@ def test_listed_pattern_counts_stored_zeros_instead_of_support() -> None:
   assert x.support == frozenset({4})
   for text in (format_expr(x), render_expr_assembly(x)):
     assert f"nnz=3 pattern={pattern.digest[:12]}" in text
+
+
+def test_pack_assembly_keeps_large_pattern_attributes_compact() -> None:
+  indices = tuple(range(1000))
+  pattern = CanonicalPattern((1000, 1000), indices, indices)
+  packed = pack(Expr.sym("packed_values", 1000), pattern)
+  line = render_expr_assembly(packed).splitlines()[1]
+  assert line == (
+    f"%1 = expr.pack(%0) {{pattern=pattern<1000x1000 nnz=1000 digest={pattern.digest[:12]}>}}"
+    f" : tensor<1000x1000xfloat64 diff nnz=1000 pattern={pattern.digest[:12]}>"
+  )
+
+
+def test_pack_attribute_mismatch_names_the_patterns() -> None:
+  diagonal = CanonicalPattern((3, 3), (0, 1, 2), (0, 1, 2))
+  antidiagonal = CanonicalPattern((3, 3), (0, 1, 2), (2, 1, 0))
+  values = Expr.sym("mismatched_packed_values", 3)
+  for attribute in (diagonal, None, "invalid"):
+    attrs = {} if attribute is None else {"pattern": attribute}
+    bad = Expr(ExprOp.PACK, (values,), TensorType((3, 3), pattern=antidiagonal), attrs=attrs)
+    with pytest.raises(VerifyError) as error:
+      verify_expr(bad)
+    message = str(error.value)
+    assert "PACK attribute must match the result pattern" in message
+    assert f"nnz=3 pattern={antidiagonal.digest[:12]}" in message
+    assert (f"nnz=3 pattern={diagonal.digest[:12]}" if attribute is diagonal else repr(attribute)) in message
 
 
 def test_dense_listing_and_type_text_stay_exact() -> None:
