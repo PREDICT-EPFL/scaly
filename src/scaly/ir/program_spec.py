@@ -29,7 +29,9 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
     node, can_break = pending.pop()
     if node.op == ProgramOp.BREAK_IF and not can_break:
       raise VerifyError("verify_program: BREAK_IF requires the nearest loop to be carried with exit_var")
-    if node.op == ProgramOp.FOR:
+    if node.op == ProgramOp.PROC:
+      can_break = False
+    elif node.op == ProgramOp.FOR:
       can_break = bool(node.attrs.get("exit_var"))  # the FOR rule has checked that its range is carried
     if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
       pending.extend((arg, can_break) for arg in node.args)

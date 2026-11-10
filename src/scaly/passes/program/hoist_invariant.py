@@ -120,14 +120,23 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope,
   for i, (_, writes) in refs.items():
     for b in writes:
       writers.setdefault(b, set()).add(i)
-  # A carried loop's index and the scalars it reads or assigns tie statements to it that the buffer analysis cannot see.
-  scalars = lambda root: {
+  carried_vars = {
     n.attrs["target" if n.op == ProgramOp.ASSIGN else "name"]
-    for n in walk_program(root)
+    for loop in walk_program(proc)
+    if loop.op == ProgramOp.FOR and loop.args[0].attrs.get("carried")
+    for n in walk_program(loop)
     if n.op in (ProgramOp.VAR, ProgramOp.RANGE, ProgramOp.ASSIGN)
   }
-  carried_vars = {name for loop in walk_program(proc) if loop.op == ProgramOp.FOR and loop.args[0].attrs.get("carried") for name in scalars(loop)}
-  carried_work = {i for i, stmt in enumerate(body) if scalars(stmt) & carried_vars}
+  carried_work = {
+    i
+    for i, stmt in enumerate(body)
+    if any(
+      (n.op == ProgramOp.RANGE and n.attrs.get("carried"))
+      or (n.op == ProgramOp.VAR and n.attrs["name"] in carried_vars)
+      or (n.op == ProgramOp.ASSIGN and n.attrs["target"] in carried_vars)
+      for n in walk_program(stmt)
+    )
+  }
   opaque_calls = {
     i
     for i, stmt in enumerate(body)
