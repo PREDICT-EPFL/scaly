@@ -188,8 +188,8 @@ starts with null checks that return one of five codes:
 | `SCALY_SUCCESS`         | 0     | evaluation finished                                   |
 | `SCALY_ERR_NULL_ABI`    | 1     | `arg` or `res` is null                                |
 | `SCALY_ERR_NULL_WORK`   | 2     | `w` is null and the header's `SZ_W` is not zero       |
-| `SCALY_ERR_NULL_RESULT` | 3     | an output pointer is null                             |
-| `SCALY_ERR_NULL_INPUT`  | 4     | an input pointer is null                              |
+| `SCALY_ERR_NULL_RESULT` | 3     | a nonempty output pointer is null                    |
+| `SCALY_ERR_NULL_INPUT`  | 4     | a nonempty input pointer is null                     |
 
 `rollout` has no workspace, so its entry casts `w` away and the
 `SCALY_ERR_NULL_WORK` check is absent. The checks cannot tell whether a
@@ -225,6 +225,11 @@ concrete Jacobian, and [versioning](../dev/versioning.md) says what a release
 promises about them.
 
 ## The CasADi layer
+
+Zero-size dense inputs and outputs accept null values pointers, as passed by
+`casadi.external`. Their queries keep the declared dimensions, with a shape
+`(0,)` reported as a zero-by-one column vector. The `arg` and `res` pointer
+arrays must still be non-null, and nonempty leaves require values pointers.
 
 CasADi expects sparse values in compressed-column order. With `casadi=True`,
 an output whose native order differs is written to extra workspace and then

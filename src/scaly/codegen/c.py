@@ -114,12 +114,8 @@ def entry_prologue(fun: ConcreteFunction, sz_w: int, *, options_count: int = 0) 
       "  if (!solver_options) return SCALY_ERR_NULL_INPUT;",
       *(f"  if (!solver_options[{i}]) return SCALY_ERR_NULL_INPUT;" for i in range(options_count)),
     ]
-  lines += [
-    f"  if (!arg[{i}]) return SCALY_ERR_NULL_INPUT;" for i, expr in enumerate(fun.inputs) if expr.type.pattern is None or expr.type.storage_size
-  ]
-  lines += [
-    f"  if (!res[{i}]) return SCALY_ERR_NULL_RESULT;" for i, expr in enumerate(fun.outputs) if expr.type.pattern is None or expr.type.storage_size
-  ]
+  lines += [f"  if (!arg[{i}]) return SCALY_ERR_NULL_INPUT;" for i, expr in enumerate(fun.inputs) if expr.type.storage_size]
+  lines += [f"  if (!res[{i}]) return SCALY_ERR_NULL_RESULT;" for i, expr in enumerate(fun.outputs) if expr.type.storage_size]
   return lines
 
 

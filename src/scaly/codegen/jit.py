@@ -51,7 +51,7 @@ from ..function.model import Function, as_concrete
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Scaly version.
-_JIT_CACHE_VERSION = "6"
+_JIT_CACHE_VERSION = "7"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)

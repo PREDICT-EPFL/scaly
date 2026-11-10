@@ -6,10 +6,12 @@ The unattended compiler-run plan overrides the implement skill for merging and
 snapshot measurements. Work starts above the sparse stack at `248b2159`.
 
 - [x] Read the issue, parent, run rules, project conventions and interface implementation.
-- [ ] Add compiled CasADi regressions for empty dense inputs and outputs, dimensions,
+- [x] Add compiled CasADi regressions for empty dense inputs and outputs, dimensions,
       and preservation of nonempty null-pointer errors. Observe failures before fixing.
-- [ ] Emit leaf null checks only when storage is nonempty. Update the cache version
+- [x] Emit leaf null checks only when storage is nonempty. Update the cache version
       and the generated-interface explanation. Verify regressions and perturb the fix.
+      All 16 regressions failed before the fix and under a restored old predicate.
+      The focused run passed all 48 CasADi, pointer-entry and C snapshot tests.
 - [ ] Refresh the test collection baseline, then run all merge checks.
 - [ ] After #289 merges, fetch and rebase onto main with
       `git rebase --onto origin/main 248b2159`, then rerun checks.
