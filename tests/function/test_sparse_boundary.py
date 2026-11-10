@@ -202,6 +202,7 @@ def test_sparse_window_layout_routes_overlapping_values_and_derivatives(layout, 
   factors = weights[declared.rows, declared.cols]
   expected = (np.sin(data[indices]) * factors).sum(axis=1)
   for result in (mapped(data[indices]), mapped(sc.window(data, 1, stride)), wrapper(data)):
+    assert isinstance(result, np.ndarray)
     np.testing.assert_allclose(result, expected)
   jac = np.zeros((3, size))
   jac[np.arange(3)[:, None], indices] = np.cos(data[indices]) * factors
