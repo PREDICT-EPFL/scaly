@@ -1,6 +1,6 @@
 {
   "machine": "la015",
-  "baseline": "origin/main before the sparse stack, Fill Fatrop blocks from mapped stage Functions",
+  "baseline": "origin/main after the five-layer sparse stack #278",
   "measurement": "Static unique ProgramNode counts after optimize_program; UTF-8 bytes of generated C; three wall-clock C object compilation samples with /usr/bin/cc -O3 -fno-math-errno -c. No run-time measurements. The machine was shared; compile samples are recorded, not evidence of a speedup.",
   "workspace_compile": "Only the compile sample renders the workspace corpus as workspace_measure, to avoid the pre-existing typed-wrapper parameter collision. Source sizes and operation counts use the unchanged corpus name.",
   "multi_output": "The vmap_multi snapshot builder, also rendered on the baseline with the same body and names. Five trips, a vector result of size two and a scalar result, both used.",
@@ -34,9 +34,9 @@
           "view": 9
         },
         "compile_seconds": [
-          0.09949162602424622,
-          0.2918648520135321,
-          0.42457320500398055
+          0.024586511019151658,
+          0.026572425034828484,
+          0.023499206989072263
         ]
       },
       "jac": {
@@ -59,9 +59,9 @@
           "view": 24
         },
         "compile_seconds": [
-          0.24357206898275763,
-          0.11607447999995202,
-          0.0830050670192577
+          0.03585666499566287,
+          0.035004492034204304,
+          0.03534138802206144
         ]
       },
       "vmap": {
@@ -84,9 +84,9 @@
           "view": 14
         },
         "compile_seconds": [
-          0.099576409033034,
-          0.11146290396573022,
-          0.1224396470352076
+          0.04077901702839881,
+          0.04135551198851317,
+          0.040859280969016254
         ]
       },
       "spjac": {
@@ -112,9 +112,9 @@
           "view": 21
         },
         "compile_seconds": [
-          0.4113263229955919,
-          0.12941199605120346,
-          0.1631697599659674
+          0.06029865797609091,
+          0.06239377299789339,
+          0.06273070798488334
         ]
       },
       "wide": {
@@ -158,9 +158,9 @@
           "view": 32
         },
         "compile_seconds": [
-          0.22009777900530025,
-          0.16367842501495034,
-          0.5916760209947824
+          0.08552084700204432,
+          0.09991577896289527,
+          0.08720992301823571
         ]
       },
       "workspace": {
@@ -183,9 +183,9 @@
           "view": 6
         },
         "compile_seconds": [
-          0.23749428300652653,
-          0.4542053240002133,
-          0.5337912389659323
+          0.03102621901780367,
+          0.03022884199162945,
+          0.07295173301827163
         ]
       },
       "solver": {
@@ -210,9 +210,9 @@
           "view": 9
         },
         "compile_seconds": [
-          0.1829223069944419,
-          0.5930711150285788,
-          0.7059932450065389
+          0.05945556302322075,
+          0.061900397995486856,
+          0.06013446400174871
         ]
       },
       "vmap_multi": {
@@ -235,9 +235,9 @@
           "view": 10
         },
         "compile_seconds": [
-          0.11136978497961536,
-          0.08382481697481126,
-          0.10469257197109982
+          0.032843701948877424,
+          0.03243412700248882,
+          0.03317225101636723
         ]
       }
     }
@@ -272,9 +272,9 @@
           "view": 9
         },
         "compile_seconds": [
-          0.2795071540167555,
-          0.311305031995289,
-          0.13470042997505516
+          0.02400505600962788,
+          0.022822641010861844,
+          0.025261664006393403
         ]
       },
       "jac": {
@@ -297,9 +297,9 @@
           "view": 24
         },
         "compile_seconds": [
-          0.10554105800110847,
-          0.10233755898661911,
-          0.1546318109612912
+          0.03639387397561222,
+          0.03496435604756698,
+          0.03961769101442769
         ]
       },
       "vmap": {
@@ -322,9 +322,9 @@
           "view": 14
         },
         "compile_seconds": [
-          0.14172073098598048,
-          0.5211659870110452,
-          0.6183456730213948
+          0.042553928040433675,
+          0.04449850396485999,
+          0.04660833696834743
         ]
       },
       "vmap_multi": {
@@ -347,9 +347,9 @@
           "view": 9
         },
         "compile_seconds": [
-          0.1981395449838601,
-          0.5753529950161465,
-          0.3410348679753952
+          0.03884148399811238,
+          0.032140825991518795,
+          0.03564241505227983
         ]
       },
       "spjac": {
@@ -375,9 +375,9 @@
           "view": 21
         },
         "compile_seconds": [
-          0.41900673002237454,
-          0.20777083100983873,
-          0.1960943170124665
+          0.06756127497646958,
+          0.06824799999594688,
+          0.06912677502259612
         ]
       },
       "wide": {
@@ -421,9 +421,9 @@
           "view": 32
         },
         "compile_seconds": [
-          0.5600748109864071,
-          0.9669195259921253,
-          0.750085971027147
+          0.11285554297501221,
+          0.1045984310330823,
+          0.10564215201884508
         ]
       },
       "workspace": {
@@ -446,9 +446,9 @@
           "view": 6
         },
         "compile_seconds": [
-          0.22527650301344693,
-          0.7680387999862432,
-          0.7119356019538827
+          0.048163486004341394,
+          0.04076257499400526,
+          0.03151981602422893
         ]
       },
       "solver": {
@@ -473,11 +473,13 @@
           "view": 9
         },
         "compile_seconds": [
-          0.5309647630201653,
-          0.6866072390112095,
-          0.20237347803777084
+          0.08447513298597187,
+          0.06535259302472696,
+          0.06262023694580421
         ]
       }
     }
-  }
+  },
+  "baseline_commit": "8d8c7870e9184ca87c2e259e807c95c954766087",
+  "rebase": "Sparse storage widths and per-result declared layouts are preserved while sibling invocations are grouped. All existing C snapshots and the new multi-output snapshot remain byte-identical to their pre-rebase versions."
 }

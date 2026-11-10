@@ -2,12 +2,14 @@
 
 import numpy as np
 import pytest
+from scipy import sparse
 
 import scaly as sc
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 from scaly.ir.program import ProgramOp, walk_program
+from scaly.ir.types import CanonicalPattern, SparsityPattern
 from scaly.passes.lowering import lower_function, main_proc
 
 
@@ -94,3 +96,43 @@ def test_different_map_layouts_are_distinct_invocations() -> None:
     np.testing.assert_allclose(got[2 * i], np.sin(rows))
     np.testing.assert_allclose(got[2 * i + 1], rows.sum(axis=1))
   assert sum(node.op == ProgramOp.CALL for node in walk_program(_lowered_main(outer))) == 4
+
+
+@pytest.mark.parametrize("length", [None, 0, 1, 5])
+def test_sparse_siblings_preserve_each_declared_layout(length) -> None:
+  pattern = CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
+  short = CanonicalPattern((2, 4), (0, 0, 1), (0, 3, 1))
+  short_layout = SparsityPattern(short.shape, (0, 1, 0), (3, 1, 0))
+  wide_type, short_type = sc.TensorType(pattern.shape, pattern=pattern), sc.TensorType(short.shape, pattern=short)
+
+  @sc.function(
+    sc.arg("x", wide_type, layout="csc"),
+    outputs=sc.group(sc.arg("wide", wide_type, layout="csc"), sc.arg("unused", pattern.shape), sc.arg("short", short_type, layout=short_layout)),
+  )
+  def stage(x):
+    dense = sc.to_dense(x)
+    return (2.0 * x).block(), dense, sc.from_dense(dense[:2, :].sin(), short).block()
+
+  shape = pattern.shape if length is None else (length, *pattern.shape)
+
+  @sc.function(sc.arg("xs", sc.TensorType(shape, pattern=pattern), layout="csr"))
+  def outer(xs):
+    a, _, b = stage(xs) if length is None else sc.vmap(stage, length)(xs)
+    return b, a
+
+  count = 1 if length is None else length
+  data = np.linspace(-0.9, 1.2, count * pattern.nnz)
+  coords = (
+    (pattern.rows, pattern.cols)
+    if length is None
+    else (np.repeat(np.arange(count), pattern.nnz), np.tile(pattern.rows, count), np.tile(pattern.cols, count))
+  )
+  source = sparse.coo_array((data, coords), shape=shape)
+  b, a = outer(source)
+  expected = source.toarray()
+  np.testing.assert_allclose(a.toarray(), 2.0 * expected)
+  np.testing.assert_allclose(b.toarray(), np.sin(expected[..., :2, :]))
+  calls = [node for node in walk_program(_lowered_main(outer)) if node.op == ProgramOp.CALL]
+  assert len(calls) == int(length != 0)
+  if calls:
+    assert calls[0].attrs["n_out"] == 3

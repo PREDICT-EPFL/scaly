@@ -58,7 +58,9 @@ def _result_buffers(ctx: LowerCtx, node: Expr) -> tuple[list[ProgramNode], dict[
   assert key is not None
   siblings = ctx.used_results[key]
   used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
-  buffers = [ctx.alloc_tmp(used[i]) if i in used else ctx.new_private(result.type.dtype, result.type.storage_shape) for i, result in enumerate(results)]
+  buffers = [
+    ctx.alloc_tmp(used[i]) if i in used else ctx.new_private(result.type.dtype, result.type.storage_shape) for i, result in enumerate(results)
+  ]
   for sibling in siblings:
     ctx.value_buffers[sibling.id] = buffers[int(sibling.attrs["output"])].attrs["name"]
   return buffers, used

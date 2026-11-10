@@ -2149,6 +2149,10 @@ tests/passes/lowering/test_calls.py::test_different_map_layouts_are_distinct_inv
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[0]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[1]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[5]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[0]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[1]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[5]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[None]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration
 tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaf_refused
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[input-float32]

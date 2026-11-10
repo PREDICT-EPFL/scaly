@@ -3,7 +3,8 @@
 Work on `t3code/28-invocation-model`, based on `origin/main`, under
 `internal/notes/compiler_run_2026_11_10/plan.md` (read from the compiler-run-plan worktree
 until PR #291 merges). That plan permits concurrent snapshot changes and queueing this PR.
-The next layer, #29, starts on this branch after the review verdict.
+The next layer, #29, is active on `t3code/29-carried-ranges` in its own thread. The coordinator
+needs this branch's new head after rebasing so that layer can follow it.
 
 ## Context
 
@@ -30,8 +31,9 @@ keys so differently sized siblings group. Record this departure in the roadmap i
 - [x] Commit, push and open draft PR #313 against main.
 - [x] Run one Opus 5.5 high cross-review on the current diff after the full hook passes.
       Publish its verdict and review line immediately so #29 can start.
-- [ ] Rebase onto the sparse stack after it lands; regenerate snapshots and evidence.
-      Fix review findings and include non-trivial rebase resolutions in one short delta check.
+- [x] Rebase onto the merged sparse stack; regenerate snapshots and evidence.
+- [ ] Run one short Opus delta check on the guide wording fix and the sparse-layout conflict
+      resolution. Then run the full pre-merge through `~/.scaly-suite/run`.
 - [ ] Delete this plan, finish the PR evidence and review line, mark ready, update tracker,
       and queue with `gh pr merge --squash` once checks are green.
 
@@ -69,10 +71,20 @@ checked with a clean documentation build. The PR description has the approval li
 reviewer ran 28 focused tests successfully and checked buffer reuse and several forced lane
 widths. Keep the one delta check for the fixes plus non-trivial sparse-stack rebase resolutions.
 
-Current resource rule: focused tests use `-n 2` with no lock. Full suites and pre-merge hooks
-run detached under `flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8`, with log
-and exit files under /tmp. Rerun a killed worker or timeout once before treating it as real.
+Current resource and GitHub rules live in `~/.scaly-suite/RULES.md`. Full suites run detached
+through `~/.scaly-suite/run`, with log and exit files under /tmp. Focused tests use at most
+`-n 2`, never `-n=auto` outside the runner. Read GitHub through REST only. Queue once with
+`gh pr merge 313 --squash --auto`; a rate-limit response means waiting for its reset.
 
-GitHub GraphQL quota is exhausted; REST reads and updates work. The sparse stack remains
-unmerged and origin/main remains at the original base. Wait for it before rebasing and
-marking this PR ready. Do not start a second main review.
+The sparse stack has merged. The substantive conflict resolution keeps stored buffer widths,
+callee input layout conversion, and one canonical stacked output per used sibling. Each sparse
+result with a declared layout uses one per-call scratch slice, converted back to that sibling's
+canonical output after the shared call. AD imports and the operation-coverage parser preserve
+the sparse stack's additions. A second callee classification in sparsity support is migrated too.
+`function/model.py` still has no hard-coded call/map set.
+
+Rebase validation: 131 focused tests passed, including new sparse sibling layout comparisons
+for an ordinary call and maps of lengths zero, one and five. Both a plain and a mapped case
+fail when the layout conversions are perturbed to identity. Ruff format/lint and strict ty pass.
+Snapshot regeneration leaves every file unchanged. Source bytes, operation counts and C object
+compile samples have been refreshed against main after the sparse stack. No run-time timings.
