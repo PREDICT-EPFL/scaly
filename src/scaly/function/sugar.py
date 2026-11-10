@@ -150,24 +150,29 @@ class _Mapped(_Derived):
       decl = None if tree is None else tree.decls[0]
       marker = value if isinstance(value, (_Broadcast, _Window)) else None
       value = marker.value if marker is not None else value
-      if tree is None and not isinstance(value, (Expr, np.ndarray)):
-        raise TypeError("bare mapped function leaves must be Expr or ndarray")
+      if tree is None and not isinstance(value, (Expr, np.ndarray)) and not sparse.issparse(value):
+        raise TypeError("bare mapped function leaves must be Expr, ndarray or SciPy sparse")
       is_expr = isinstance(value, Expr)
       actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
+      if tree is None and (sparse.issparse(actual) or is_expr and actual.type.pattern is not None):
+        decl = _PatternHole(shape_hole=True)
       repeated = isinstance(marker, _Broadcast)
       canonical = None
       if isinstance(decl, _PatternHole):
         if isinstance(marker, _Window):
           raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
         pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
-        shape = (
-          actual.shape[1:]
-          if decl.shape_hole and not repeated and actual.shape and (pattern is None or len(actual.shape) > 2) and actual.shape[0] == self._length
-          else actual.shape
-          if decl.shape_hole
-          else decl.shape
-        )
-        decl = TensorType(shape, decl.dtype, decl.diff, pattern)
+        if decl.shape_hole and pattern is None:
+          decl = None
+        else:
+          shape = (
+            actual.shape[1:]
+            if decl.shape_hole and not repeated and len(actual.shape) > 2 and actual.shape[0] == self._length
+            else actual.shape
+            if decl.shape_hole
+            else decl.shape
+          )
+          decl = TensorType(shape, decl.dtype, decl.diff, pattern)
         if canonical is not None:
           actual = cast(Any, canonical)
       pattern = None if decl is None else decl.pattern

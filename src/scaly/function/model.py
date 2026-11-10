@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 from typing import TYPE_CHECKING, Any, cast, overload
 
@@ -189,6 +189,13 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   def _bind(self, skeleton: Any, what: str) -> ConcreteFunction[Any, Any, Any, Any]:
     if self.inputs is not None and _structure(self.inputs.unflatten(self.inputs.decls)) != _structure(skeleton):
       raise ValueError(f"{what}: value does not have the declared structure of {self.inputs.names}")
+    if self.inputs is not None:
+      skeleton = self.inputs.unflatten(
+        tuple(
+          type_ if decl is None or type_.diff == decl.diff else replace(type_, diff=decl.diff)
+          for decl, type_ in zip(self.inputs.decls, _types(skeleton), strict=True)
+        )
+      )
     if skeleton not in self._argument_cache:
       instance = self._cache(skeleton, lambda: self._build_bare(skeleton)) if self.inputs is None else self.instantiate(_types(skeleton))
       self._argument_cache[skeleton] = instance

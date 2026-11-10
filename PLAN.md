@@ -36,3 +36,10 @@ holes. Regressions fail before the fixes. Fixed bare whole-type binding, inferre
 holes, instance-owned numerical ordering, and dense leading-axis mapping. Also simplified copied
 canonicalization and clarified unequal-batch errors. 142 focused tests pass. Need the slotted
 full hook again, correctness review, and one Opus delta check. No fixes have been pushed yet.
+
+Correctness review found mapped bare sparse arguments rejected and dense holes with a wrong
+leading axis implicitly broadcast. Added four failing reproductions, fixed both in sugar.py.
+An adjacent inferred-derivative case also lost declared diff=False; a failing regression now
+passes with declared differentiability restored in internal source bindings. 147 focused tests
+pass, including 27 pattern-hole tests, Ruff and ty pass. Need final slotted full hook and one
+delta check per reviewer. All review fixes remain local for a single combined push.

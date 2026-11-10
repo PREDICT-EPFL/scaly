@@ -258,3 +258,44 @@ def test_unequal_batch_pattern_sizes_report_the_shared_pattern_error(counts) -> 
   source = sparse.coo_array((np.ones(nnz), (np.repeat([0, 1], counts), np.zeros(nnz, dtype=int), np.r_[0, np.arange(counts[1])])), shape=(2, *SHAPE))
   with pytest.raises(ValueError, match="share one stored pattern"):
     identity(source)
+
+
+@pytest.mark.parametrize("derived", [False, True])
+def test_bare_and_inferred_output_derivatives_map_sparse_arguments(derived: bool) -> None:
+  source: Any = sc.adjoint(sc.function(sc.arg("x", SHAPE, pattern=..., layout="csr"))(lambda x: x.sin())) if derived else sc.function()(lambda x: -x)
+  mapped: Any = sc.vmap(source, 2)
+  for pattern in PATTERNS[:2]:
+    x = sparse.coo_array((np.arange(pattern.nnz, dtype=float) / 10, (pattern.rows, pattern.cols)), shape=SHAPE)
+    actuals = (x, x) if derived else (x,)
+    expected = np.cos(x.toarray()) * x.toarray() if derived else -x.toarray()
+    np.testing.assert_allclose(mapped(*(sc.broadcast(value) for value in actuals)).toarray(), np.broadcast_to(expected, (2, *SHAPE)))
+    symbol = sc.arg("actual", sc.TensorType(SHAPE, pattern=pattern)).symbols()
+    symbols = (symbol, symbol) if derived else (symbol,)
+    result = mapped.symbolic_call(*(sc.broadcast(value) for value in symbols))
+    assert result.shape == (2, *SHAPE) and result.type.pattern is pattern
+  assert len(source.instances) == len(mapped.instances) == 2
+
+
+@pytest.mark.parametrize("shape", [(3,), (3, 4)])
+def test_dense_unbound_pattern_maps_require_a_leading_axis_or_broadcast(shape) -> None:
+  source: Any = sc.function(sc.arg("x", pattern=...))(lambda x: x * 2)
+  mapped: Any = sc.vmap(source, 2)
+  values = np.arange(np.prod(shape), dtype=float).reshape(shape)
+  with pytest.raises(ValueError, match="cannot map shape"):
+    mapped(values)
+  with pytest.raises(ValueError, match="cannot map shape"):
+    mapped.symbolic_call(sc.sym("actual", shape))
+  np.testing.assert_array_equal(mapped(sc.broadcast(values)), np.broadcast_to(values * 2, (2, *shape)))
+
+
+def test_inferred_derivatives_keep_declared_differentiability() -> None:
+  source: Any = sc.function(sc.arg("x", sc.TensorType(SHAPE, diff=False), pattern=...))(lambda x: x.sin())
+  adjoint: Any = sc.adjoint(source)
+  mapped: Any = sc.vmap(adjoint, 2)
+  pattern = PATTERNS[0]
+  value = sparse.coo_array((np.ones(pattern.nnz), (pattern.rows, pattern.cols)), shape=SHAPE)
+  expected = np.cos(value.toarray()) * value.toarray()
+  np.testing.assert_allclose(adjoint(value, value).toarray(), expected)
+  np.testing.assert_allclose(mapped(sc.broadcast(value), sc.broadcast(value)).toarray(), np.broadcast_to(expected, (2, *SHAPE)))
+  assert not next(iter(source.instances.values())).inputs[0].type.diff
+  assert not next(iter(adjoint.instances.values())).inputs[0].type.diff
