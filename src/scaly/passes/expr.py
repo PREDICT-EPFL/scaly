@@ -165,7 +165,7 @@ def _arith(e: Expr) -> Expr:
 
 
 def _zero_unary(e: Expr) -> Expr:
-  return zeros_like(e)
+  return zeros_like(e) if e.type.pattern is not None else _uniform(0, e.shape, dtype=e.type.dtype, lowering=e.lowering)
 
 
 def _all_args_zero(e: Expr) -> bool:
