@@ -11,6 +11,8 @@ from scaly.ir.program import ProgramOp, walk_program
 from scaly.passes.lowering import lower_function
 from scaly.ad.forward import jvp_many
 from scaly.ad.reverse import vjp
+from scaly.ad.rules import ELEMENTWISE
+from scaly.ir.expr import ExprOp
 
 
 def _pattern(array):
@@ -109,6 +111,57 @@ def test_sparse_movement_derivatives_match_finite_differences(operation):
   def loss(v):
     return fn(v).sum()
 
+  np.testing.assert_allclose(sc.gradient(loss)(v), reference.sum(axis=0), rtol=1e-7, atol=1e-7)
+
+
+@pytest.mark.parametrize("operation", ["neg", "sin", "tan", "asin", "atan", "sinh", "tanh", "erf", "sqrt", "abs"])
+def test_sparse_unary_partials_match_numpy_differences_on_stored_coordinates(operation):
+  pattern = CanonicalPattern((17, 19), (0, 4, 9, 16), (18, 2, 8, 0))
+
+  @sc.function(sc.arg("v", 4), name=f"stored_partial_{operation}")
+  def fn(v):
+    x = sc.pack(v, pattern)
+    result = -x if operation == "neg" else getattr(x, operation)()
+    assert result.type.pattern is pattern
+    return sc.values(result.block())
+
+  v = np.array([-0.75, -0.15, 0.35, 0.55]) if operation == "abs" else np.array([0.15, 0.35, 0.55, 0.75])
+  numpy = ELEMENTWISE[ExprOp(operation)].numpy
+  reference = finite_difference(numpy, v)
+  np.testing.assert_allclose(fn(v), numpy(v), atol=1e-12)
+  derivative = sc.jacobian(fn)
+  np.testing.assert_allclose(derivative(v), reference, rtol=1e-7, atol=1e-7)
+  loss = sc.function(sc.arg("v", 4), name=f"stored_partial_loss_{operation}")(lambda v: fn(v).sum())
+  np.testing.assert_allclose(sc.gradient(loss)(v), reference.sum(axis=0), rtol=1e-7, atol=1e-7)
+  for function in (fn, derivative):
+    for buffer in walk_program(lower_function(function)):
+      if buffer.op == ProgramOp.BUFFER and buffer.attrs["address_space"] == "private":
+        assert np.prod(buffer.attrs["shape"]) <= 4 * pattern.nnz
+
+
+@pytest.mark.parametrize("operation", ["add", "sub", "mul"])
+def test_sparse_binary_regions_match_numpy_differences(operation):
+  a = CanonicalPattern((5, 7), (0, 1, 3, 4), (6, 0, 2, 4))
+  b = CanonicalPattern(a.shape, (0, 2, 4), (6, 3, 0))
+  output = a.intersection(b) if operation == "mul" else a.union(b)
+
+  @sc.function(sc.arg("v", 7), name=f"stored_binary_{operation}")
+  def fn(v):
+    x, y = sc.pack(v[:4], a), sc.pack(v[4:], b)
+    result = x + y if operation == "add" else x - y if operation == "sub" else x * y
+    assert result.type.pattern is output
+    return sc.values(result.block())
+
+  def numpy(v):
+    x, y = np.zeros(a.shape), np.zeros(b.shape)
+    x[a.rows, a.cols], y[b.rows, b.cols] = v[:4], v[4:]
+    return getattr(np, {"add": "add", "sub": "subtract", "mul": "multiply"}[operation])(x, y)[output.rows, output.cols]
+
+  v = np.array([0.2, -0.7, 0.9, 1.3, -0.4, 0.8, 1.1])
+  reference = finite_difference(numpy, v)
+  np.testing.assert_allclose(fn(v), numpy(v), atol=1e-12)
+  np.testing.assert_allclose(sc.jacobian(fn)(v), reference, rtol=1e-7, atol=1e-7)
+  loss = sc.function(sc.arg("v", 7), name=f"stored_binary_loss_{operation}")(lambda v: fn(v).sum())
   np.testing.assert_allclose(sc.gradient(loss)(v), reference.sum(axis=0), rtol=1e-7, atol=1e-7)
 
 

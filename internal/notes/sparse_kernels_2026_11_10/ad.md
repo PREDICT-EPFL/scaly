@@ -7,6 +7,10 @@ with one sparse operand keeps that operand sparse in forward mode. Reverse mode
 samples the cotangent for its sparse adjoint and scatters stored contributions for
 the dense adjoint. It does not form a dense outer product or project the sparse
 primal through a dense matrix. Sparse movement adjoints scatter into stored slots.
+Pass-through outputs compose input and output layouts in the final write.
+`values()` outputs write canonical values directly without a temporary for reordering.
+All ten supported sparse unary partials and the three binary maps are checked
+against NumPy differences in both derivative modes.
 
 The structural product join in `ad/sparsity.py` already implements the required
 matrix-product dependency rule. The workload gates pin it against devrush's
@@ -40,11 +44,21 @@ this task.
   multiseed gate. The correct lowering emits one.
 - Allocating sparse intermediates by mathematical shape fails the KKT memory gate.
 - Corrupting a saved devrush Jacobian coordinate fails the pattern comparison.
+  Separate corruptions of the IPM upper-triangle Jacobian and a product's
+  matrix-data Jacobian also fail their comparisons.
+- Restoring the old boundary copies fails five direct-output cases, including
+  a batched shared output with different declared layouts.
+- Returning zero elementwise tangents fails all thirteen unary and binary
+  partial checks.
 
 Every perturbation was removed. Dense C snapshots stay unchanged. Several seeds
 continue to share one pattern; per-entry seed lists and compaction remain #225.
 Derivative outputs retain their existing compact values and separate pattern,
 which #48 changes. SELECT integration waits for #320's operation on this base.
+
+The section 1 packet's `sparse_values/banded_quadratic.py` runs all stages without
+errors. Stage 7 reports largest private gradient buffers of 100 and 400 entries,
+and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400 respectively.
 
 ## Counts and generated C
 

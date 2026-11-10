@@ -2,9 +2,8 @@
 
 This is layer 2 of #45 -> #46 -> #47 in the unattended compiler run. Follow
 `~/.scaly-suite/RULES.md` and `internal/notes/compiler_run_2026_11_10/plan.md`
-(the coordinator checkout supplies the latter until #291 merges). The roadmap's
-decision 5 and Sparse tensors section decide the design. Read section 1's packet
-from `origin/compiler-run/sparse-values-packet` until #308 merges.
+on main. The roadmap's decision 5 and Sparse tensors section decide the design.
+Section 1's packet is on main under the same run folder in `sparse_values/`.
 
 Base: `origin/t3code/45-accumulators`. Before the first push, if #315 merged,
 rebase only this task's commits onto `origin/main`. Do not change #45's branch.
@@ -53,7 +52,7 @@ The final detached pre-merge hook passed with 3,031 tests and 55 skips, smoke an
 The sol correctness review found three normalization bugs, all fixed with seven
 regressions that fail on the original head. The low-effort delta check approved all three findings.
 The main Opus review failed on its provider rate limit and remains missing; do not
-queue #349 or claim its main review passed. Two Opus attempts failed on the provider rate limit. Retry the same reviewer after
+queue #349 or claim its main review passed. Three Opus attempts failed on the provider rate limit. Retry the same reviewer after
 the provider recovers, with a new delegate task. Keep its findings with the one allowed
 combined review-fix push. No review-fix push has happened.
 
@@ -63,12 +62,22 @@ description and #66 comment are updated. No other scope change.
 
 The AD implementation and 48 problem/reference fixtures are in the checkout.
 The references were computed from devrush through a git-backed import loader,
-not copied code. All 48 full-system and IPM upper-triangle KKT cases and 25 AD cases pass. A focused compiler run
+not copied code. All 48 full-system and IPM upper-triangle KKT cases and 38 AD cases pass. A focused compiler run
 passed 1,365 tests, and the perturbation evidence is in the internal AD note.
 The AD source passed a full pre-merge run with 3,103 tests and 55 skips. The
 workload gate was then tightened to match the IPM upper-triangle parameterization
 and to compare product Jacobians in both vector and data arguments. Its full
-pre-merge rerun is next. SELECT remains part of this PR and #46: it
+pre-merge rerun passed with 3,104 tests and 55 skips, including smoke and docs.
+Pass-through and values outputs now compose the input and output permutations
+in the final write. Seven direct-output regressions pass; restoring the old
+lowering fails five. Sparse boundary and dense C snapshot checks passed 141 cases.
+The full pre-merge run with the boundary changes passed with 3,111 tests and 55 skips.
+Thirteen further tests cover every supported sparse unary partial and binary region
+against NumPy differences. Returning zero tangents fails all thirteen. The next
+full run includes these tests. The packet's banded quadratic reproduction runs all
+stages without errors. Stage 7 reports largest gradient buffers of 100 and 400,
+and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400.
+SELECT remains part of this PR and #46: it
 needs #320 to land, then integration in the compact map and stored partials.
 The current base has no SELECT operation. Do not close #46 before that is tested.
 

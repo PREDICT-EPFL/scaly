@@ -298,11 +298,15 @@ class LowerCtx:
         raise LoweringError(f"output {name!r} expression was not lowered")
       if src == name or expr.type.storage_size == 0:
         continue  # already written in place, or nothing to copy
-      source = self.buf_of(expr)
-      if layout is None:
+      source = self.raw_buf_of(expr)
+      order = self._orders.get(expr.id)
+      permutation = order if layout is None else layout.permutation
+      if layout is not None and order is not None:
+        permutation = order[permutation]
+      if permutation is None:
         self.statements.append(_copy_loop(source, self.buffers[name], expr.type.storage_shape, self.names))
       else:
-        self.reorder(source, expr, layout.permutation, self.buffers[name])
+        self.reorder(source, expr, permutation, self.buffers[name])
 
   # --- body -----------------------------------------------------------------
 

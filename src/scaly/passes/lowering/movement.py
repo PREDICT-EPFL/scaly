@@ -21,14 +21,11 @@ def _sparse_movement(ctx: LowerCtx, node: Expr) -> bool:
 
 @lowers(ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.PACK, ExprOp.VALUES)
 def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
-  if node.op == ExprOp.PACK:
+  if node.op in (ExprOp.PACK, ExprOp.VALUES):
     if node.id in ctx._output_alias:
       emit_map(ctx, node, [np.arange(node.type.storage_size, dtype=np.int64)], lambda v: v[0])
     else:
       ctx.value_buffers[node.id] = ctx.buf_of(node.args[0]).attrs["name"]
-    return
-  if node.op == ExprOp.VALUES:
-    ctx.value_buffers[node.id] = ctx.buf_of(node.args[0]).attrs["name"]
     return
   if _sparse_movement(ctx, node):
     return
