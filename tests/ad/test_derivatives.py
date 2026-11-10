@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
+import pytest
 
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad import finite_difference
-from scaly.ir.expr import topo
+from scaly.ir.expr import substitute, topo
+from scaly.passes.expr import simplify_cse_fixpoint
 
 
 def _vmap_vjp_piece(name: str, nargs: int = 1) -> sc.Function:
@@ -231,6 +233,79 @@ def test_float32_reduction_derivative_paths() -> None:
   assert hessian.shape == (3, 3)
   assert sparse_jacobian.sparsity.shape == (1, 3)
   assert sparse_hessian.sparsity.shape == (3, 3)
+
+
+@pytest.mark.parametrize(
+  "case",
+  ["sum", "dot", "matvec", "vecmat", "matmat", "self_dot", "self_matmul", "print", "print_repeated", "unreached", "call", "mapped", "broadcast"],
+)
+@pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp", "gradient", "jacobian", "hessian"])
+def test_float32_structural_derivatives_stay_float32(case, mode):
+  f32 = sc.dtypes.float32
+  x, y = (sc.sym(name, (2, 2), dtype=f32) for name in ("structural_x", "structural_y"))
+  if case.startswith("print"):
+    # Public float32 printing belongs to lowering support; exercise its AD rule directly.
+    first = x * x
+    other = first if case == "print_repeated" else y * y
+    out = sc.Expr(sc.ExprOp.PRINT, (first, other), first.type, attrs={"format": "{} {}"}).sum()
+  elif case in {"call", "mapped", "broadcast"}:
+
+    @sc.function(sc.arg("structural_body_x", sc.TensorType((2,), dtype=f32)), outputs=sc.arg("y"), name="structural_body")
+    def body(value):
+      return value * value
+
+    out = (body(x.vec()[:2]) if case == "call" else _mapped_call(body, 2, [(x.vec(), 0, 2 if case == "mapped" else 0)])).sum()
+  else:
+    out = {
+      "sum": lambda: (x * x).sum(),
+      "dot": lambda: x.vec() @ y.vec(),
+      "matvec": lambda: (x @ y[0]).sum(),
+      "vecmat": lambda: (x[0] @ y).sum(),
+      "matmat": lambda: (x @ y).sum(),
+      "self_dot": lambda: x.vec() @ x.vec(),
+      "self_matmul": lambda: (x @ x).sum(),
+      "unreached": lambda: (y * y).sum(),
+    }[case]()
+  for wrt in (x, y):
+    derivative = {
+      "jvp": lambda: sc.jvp(out, wrt, sc.sym("structural_seed", wrt.shape, dtype=f32)),
+      "jvp_many": lambda: sc.jvp_many(out, wrt, sc.sym("structural_seeds", (3, *wrt.shape), dtype=f32)),
+      "vjp": lambda: sc.vjp((out,), (wrt,), (sc.sym("structural_cot", out.shape, dtype=f32),))[0],
+      "gradient": lambda: sc.gradient(out, wrt),
+      "jacobian": lambda: sc.jacobian(out, wrt),
+      "hessian": lambda: sc.hessian(out, wrt),
+    }[mode]()
+    nodes = topo((derivative,))
+    assert {node.type.dtype for node in nodes if node.type.dtype.is_floating} == {f32}
+    assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None)
+
+
+@pytest.mark.parametrize("case", ["sum", "self_dot", "print"])
+def test_float32_structural_derivatives_match_numpy(case):
+  f32 = sc.dtypes.float32
+  x, diagnostic, unused = (sc.sym(name, 3, dtype=f32) for name in ("numeric_x", "numeric_diagnostic", "numeric_unused"))
+  squared = x * x
+  if case == "print":
+    squared = sc.Expr(sc.ExprOp.PRINT, (squared, diagnostic * diagnostic), squared.type, attrs={"format": "{} {}"})
+  out = x @ x if case == "self_dot" else squared.sum()
+  values = np.array([0.25, -0.5, 1.5], dtype=np.float32)
+  seeds = np.array([[0.5, -1.0, 0.25], [-0.5, 0.75, 1.0]], dtype=np.float32)
+  grad = 2 * values
+  derivatives = (
+    sc.jvp(out, x, sc.const(seeds[0])),
+    sc.jvp_many(out, x, sc.const(seeds)),
+    *sc.vjp((out,), (x, diagnostic, unused), (sc.const(np.float32(3)),)),
+    sc.gradient(out, x),
+    sc.jacobian(out, x),
+    sc.hessian(out, x),
+  )
+  expected = (grad @ seeds[0], seeds @ grad, 3 * grad, np.zeros(3), np.zeros(3), grad, grad.reshape(1, 3), 2 * np.eye(3))
+  replacements = {expr: sc.const(values) for expr in (x, diagnostic, unused)}
+  for derivative, reference in zip(derivatives, expected, strict=True):
+    result = simplify_cse_fixpoint(substitute(derivative, replacements))
+    assert result.op == sc.ExprOp.CONST
+    assert result.value is not None and result.value.dtype == np.float32
+    np.testing.assert_allclose(result.value, reference, rtol=1e-6, atol=1e-7)
 
 
 def test_jvp_many_scatter_and_gather_stays_structural() -> None:

@@ -167,7 +167,7 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
       dense_tangent = _pushforward_rule(dense_expr, [to_dense(t) for t in d], nseed, callee)
       return from_dense(dense_tangent, expr.type.pattern) if expr.type.pattern is not None else dense_tangent
     if args[0] is args[1] and len(args[0].shape) == 1:
-      return 2 * (d[0] @ args[0])
+      return Expr.const(2, dtype=expr.type.dtype) * (d[0] @ args[0])
     if _is_zero_const(d[0]):
       return _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
     if _is_zero_const(d[1]):

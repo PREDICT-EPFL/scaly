@@ -1094,7 +1094,7 @@ def vec(x: Any) -> Expr:
 def zeros_like(x: Expr) -> Expr:
   if x.type.pattern is not None:
     return pack(_uniform(0, x.type.storage_shape, dtype=x.type.dtype, lowering=x.lowering), x.type.pattern, shape=x.shape)
-  return _uniform(0, x.shape, lowering=x.lowering)
+  return _uniform(0, x.shape, dtype=x.type.dtype, lowering=x.lowering)
 
 
 def pack(value: Any, pattern: CanonicalPattern | SparsityPattern, *, shape: tuple[int, ...] | None = None) -> Expr:

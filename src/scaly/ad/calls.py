@@ -459,7 +459,7 @@ def _vmap_vjp(
     elif stride == 0:
       indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
       segments = gather(mapped, indices).reshape((length, formal_size))
-      vbar = Expr.const(np.ones(length, dtype=np.float64)) @ segments
+      vbar = Expr.const(np.ones(length, dtype=arg.type.dtype.numpy()), dtype=arg.type.dtype) @ segments
       if start != 0 or formal_size != arg.size:
         vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
     else:
