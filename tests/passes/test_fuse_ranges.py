@@ -435,27 +435,21 @@ def test_two_block_gathers_upstream_of_map_still_fuse():
   np.testing.assert_allclose(fn(data, av, bv), expected)
 
 
-@pytest.mark.parametrize("case", ["few_indices", "fold_store", "fold_aliases", "fold_consumer", "mixed_trips"])
-def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
-  import ctypes
-  import subprocess
-
-  from scaly.codegen.c import render_program_c
-  from scaly.passes.program import optimize_program
-  from scaly.utils.env import shared_lib_ext, shared_lib_flag
-  from tests.compilers import c_compiler
-
+def _position_dependent_program(case, length=12):
   original = _raw_program()
   callee, root = original.args
   _x, _y, _tmp, mapped, copied = root.args
-  length = 12
   x, y = (p.buffer(name, dtypes.float64, (length,)) for name in ("x", "y"))
   tmp = p.buffer("tmp", dtypes.float64, (length,), address_space="private")
   mapped = p.for_(p.range_("i", 0, length), mapped.args[1:])
   copied = p.for_(p.range_("i", 0, length), copied.args[1:])
   extra = p.buffer("extra", dtypes.float64, (length,), address_space="private")
   i = p.var("i")
-  read_x = p.load(p.view(x, [p.div(i, p.const_int(4)) if case == "few_indices" else i]))
+  read_x = p.load(p.view(x, [p.div(i, p.const_int(4)) if case in {"few_indices", "stage_indices"} else i]))
+  if case == "fold_trip_consumer":
+    read_x = p.load(p.view(x, [p.mod(i, p.const_int(3))]))
+  if case == "shared_trip_consumer":
+    read_x = p.load(p.view(x, [p.div(i, p.const_int(length // 2))]))
   read_extra = p.load(p.view(extra, [i]))
   declarations, upstream = [extra], []
   rhs = read_x
@@ -463,6 +457,10 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
     zeros = p.const_buffer("zeros", dtypes.float64, (length,), [0.0] * length)
     declarations.append(zeros)
     rhs = p.mul(rhs, p.load(p.view(zeros, [i])))
+  if case == "signed_zero":
+    zeros = p.const_buffer("zeros", dtypes.float64, (length,), [0.0] * (length // 2) + [-0.0] * (length // 2))
+    declarations.append(zeros)
+    rhs = p.div(p.const_float(1), p.load(p.view(zeros, [i])))
   if case == "fold_aliases":
     for offset in range(length):
       rhs = p.mul(rhs, p.sub(read_x, p.load(p.view(x, [p.const_int(offset)]))))
@@ -477,9 +475,42 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
     upstream = [p.for_(p.range_("i", 0, length), [p.store(p.view(extra, [i]), rhs)]), mapped]
   if case == "fold_consumer":
     read_extra = p.mul(read_extra, p.const_float(0))
+  if case == "fold_trip_consumer":
+    read_extra = p.mul(p.sub(read_extra, read_x), p.load(p.view(x, [p.const_int(length - 1)])))
+  if case == "shared_trip_consumer":
+    read_extra = p.add(read_extra, read_x)
+  if case == "stage_indices":
+    read_extra = p.mul(read_extra, p.sub(p.load(p.view(tmp, [i])), p.load(p.view(x, [p.div(i, p.const_int(6))]))))
   copied = p.for_(copied.args[0], [p.store(p.view(y, [i]), p.add(p.load(p.view(tmp, [i])), read_extra))])
   root = ProgramNode(root.op, (x, y, tmp, *declarations, *upstream, copied), root.attrs, root.dtype)
-  original = p.program([callee, root])
+  return p.program([callee, root])
+
+
+@pytest.mark.parametrize(
+  "case",
+  [
+    "few_indices",
+    "fold_store",
+    "fold_aliases",
+    "fold_consumer",
+    "fold_trip_consumer",
+    "shared_trip_consumer",
+    "mixed_trips",
+    "signed_zero",
+    "stage_indices",
+  ],
+)
+def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
+  import ctypes
+  import subprocess
+
+  from scaly.codegen.c import render_program_c
+  from scaly.passes.program import optimize_program
+  from scaly.utils.env import shared_lib_ext, shared_lib_flag
+  from tests.compilers import c_compiler
+
+  length = 12
+  original = _position_dependent_program(case, length)
   fused = fuse_ranges(original)
   assert fused is not original
   assert not any(n.op == ProgramOp.CALL for n in walk_program(fused.args[-1]))
@@ -503,4 +534,41 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
     expected += data[np.arange(length) // 4]
   elif case == "mixed_trips":
     expected[: length // 2] += data[: length // 2]
+  elif case == "signed_zero":
+    with np.errstate(divide="ignore"):
+      expected += 1.0 / np.r_[np.zeros(length // 2), -np.zeros(length // 2)]
+  elif case == "stage_indices":
+    expected += data[np.arange(length) // 4] * (data - data[np.arange(length) // 6])
+  elif case == "shared_trip_consumer":
+    expected += 2 * data[np.arange(length) // (length // 2)]
   np.testing.assert_allclose(out, expected)
+
+
+@pytest.mark.parametrize("case", ["fold_trip_consumer", "shared_trip_consumer"])
+def test_deferred_load_matches_stage_load_without_position_rewrites(monkeypatch, case):
+  fusion = importlib.import_module("scaly.passes.program.fuse_ranges")
+  rewrite = fusion._rewrite
+  counts = []
+  for length in (64, 4096):
+    calls = []
+
+    def counted(*args):
+      calls.append(None)
+      return rewrite(*args)
+
+    monkeypatch.setattr(fusion, "_rewrite", counted)
+    original = _position_dependent_program(case, length)
+    assert fuse_ranges(original) is not original
+    counts.append(len(calls))
+  assert counts[0] == counts[1]
+
+
+def test_signed_zero_constants_preserve_atan2_quadrants():
+  a = sc.sym("a", 1)
+  stage = _function("zero_stage", [a], [a])
+  x = sc.sym("x", 5)
+  zeros = np.array([0.0, -0.0, 0.0, -0.0, 0.0])
+  result = sc.const(zeros).atan2(sc.vmap(stage, 5)(x).vec())
+  fn = _function("signed_zero", [x], [result])
+  data = -np.ones(5)
+  np.testing.assert_allclose(fn(data), np.arctan2(zeros, data))
