@@ -16,8 +16,8 @@ def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> 
 
   shape = (100_000, 100_000)
   zero = zeros_like(sc.sym("uniform_large", shape, dtype=sc.dtypes.float32))
-  assert zero.type.dtype == sc.dtypes.float64
-  assert zero.value is not None and zero.value.strides == (0, 0)
+  assert zero.type.dtype == sc.dtypes.float32
+  assert zero.value is not None and zero.value.dtype == np.float32 and zero.value.strides == (0, 0)
   assert not zero.value.flags.writeable and zero.support == frozenset()
   assert zero.structural_key() is zero.structural_key()
   assert sc.cse(zero) is zero
