@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 
 from scaly.function.model import as_concrete
@@ -65,7 +67,8 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def inputs_tree(N: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
-    return sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
+    p = cast(Tree[sc.Expr, np.ndarray], sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
+    return sc.group(sc.arg("z", NZ * (N + 1)), p)
 
   def build(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
     @sc.function(
@@ -149,7 +152,8 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def inputs_tree(N: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
-    return sc.group(sc.arg("z", NZ * (N + 1)), sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
+    p = cast(Tree[sc.Expr, np.ndarray], sc.arg("p", sc.TensorType((NX * (N + 1),), diff=False)))
+    return sc.group(sc.arg("z", NZ * (N + 1)), p)
 
   def build_vmap(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
     @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_vmap_N{N}")
@@ -238,8 +242,10 @@ def _pair_index_table(bodies: list[int]) -> np.ndarray:
 
 
 def _build_pairs_fn(mapped: bool) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
+  p_tree = cast(Tree[sc.Expr, np.ndarray], sc.arg("p", sc.TensorType((NS * NB,), diff=False)))
+
   @sc.function(
-    sc.group(sc.arg("u", NU * NB + 1), sc.arg("p", sc.TensorType((NS * NB,), diff=False))),
+    sc.group(sc.arg("u", NU * NB + 1), p_tree),
     outputs=sc.arg("h"),
     name=f"pairs_{'vmap' if mapped else 'unroll'}",
   )

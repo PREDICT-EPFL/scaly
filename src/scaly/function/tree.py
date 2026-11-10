@@ -15,7 +15,7 @@ from ..ir.types import TensorType, as_shape, dtypes
 type ShapeDecl = int | tuple[int, ...] | TensorType | None
 type LeafDecl = TensorType | None
 type Array = np.ndarray
-type NumericalArray = np.ndarray | sparse.sparray
+type NumericalArray = Array | sparse.sparray
 # declaring a type alias makes the inferred types of functions easier to read:
 # Function[tuple[Expr, Expr, Expr], tuple[Array, Array, Array], Expr, Array]
 # instead of
@@ -217,11 +217,11 @@ class _Leaf(Tree[Expr, Array]):
 
 
 @overload
-def arg(name: str, shape: ShapeDecl = None, /) -> Tree[Expr, Array]: ...
+def arg(name: str, shape: int | tuple[int, ...] | None = None, /) -> Tree[Expr, Array]: ...
 
 
 @overload
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout) -> Tree[Expr, NumericalArray]: ...
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> Tree[Expr, NumericalArray]: ...
 
 
 def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc") -> Tree[Expr, Any]:

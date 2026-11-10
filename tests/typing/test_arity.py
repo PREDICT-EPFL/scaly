@@ -9,6 +9,7 @@ import numpy as np
 import scaly as sc
 from scaly.function import Tree
 from scaly.function.concrete import ConcreteFunction
+from scaly.function.tree import NumericalArray
 from scaly.solvers.stats import SolverStats
 
 
@@ -100,7 +101,7 @@ if TYPE_CHECKING:
   square.solver_stats().not_a_statistic  # ty: ignore[unresolved-attribute]
   assert_type(sc.NO_LB, sc.Expr)
   assert_type(sc.NO_UB, sc.Expr)
-  sc.arg("x", "3")  # ty: ignore[invalid-argument-type]
+  sc.arg("x", "3")  # ty: ignore[no-matching-overload]
   sc.group(sc.arg("x", 3))
   sc.group(sc.arg("x", 3), sc.arg("y", 3), ("z", 3))  # ty: ignore[no-matching-overload]
   assert_type(sc.group(sc.arg("x", 3), sc.arg("p", ())), Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]])
@@ -269,8 +270,8 @@ if TYPE_CHECKING:
   def energy(x: sc.Expr, p: sc.Expr) -> sc.Expr:
     return (x * x).sum() * p
 
-  assert_type(energy, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
-  assert_type(energy(np.zeros(3), np.array(2.0)), np.ndarray)
+  assert_type(energy, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, NumericalArray])
+  assert_type(energy(np.zeros(3), np.array(2.0)), NumericalArray)
   assert_type(energy(sc.sym("x", 3), sc.sym("p", ())), sc.Expr)
   energy(sc.sym("x", 3), np.array(2.0))  # ty: ignore[no-matching-overload]
   energy(np.zeros(3))  # ty: ignore[no-matching-overload]
@@ -316,8 +317,8 @@ if TYPE_CHECKING:
   def zero() -> sc.Expr:
     return sc.const(2.0)
 
-  assert_type(zero, sc.Function[tuple[()], tuple[()], sc.Expr, np.ndarray])
-  assert_type(zero(), np.ndarray)
+  assert_type(zero, sc.Function[tuple[()], tuple[()], sc.Expr, NumericalArray])
+  assert_type(zero(), NumericalArray)
 
   @sc.function()
   def zero_pair() -> tuple[sc.Expr, sc.Expr]:
