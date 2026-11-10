@@ -174,16 +174,87 @@ def test_sparse_type_bounds_support_without_changing_stored_pattern() -> None:
   assert sc.simplify(result * sc.const(1)).type.pattern is pattern
 
 
-def test_calls_use_callee_support_and_maps_tile_it() -> None:
+def test_calls_specialize_callee_support_and_maps_tile_it() -> None:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="support_callee")
   def callee(x):
     return x * sc.const([0, 1, 0])
 
-  assert callee(sc.const([0, 0, 0])).support == frozenset({1})
+  assert callee(sc.const([0, 0, 0])).support == frozenset()
   for length in (0, 1, 4):
     actual = sc.sym("support_map", 3 * length)
     mapped = _mapped_call(callee, length, [(actual, 0, 3)])
     assert mapped.support == frozenset(3 * i + 1 for i in range(length))
+
+
+def test_call_support_cache_is_shared_by_outputs_and_argument_support() -> None:
+  from scaly.function.model import as_concrete
+  from scaly.ir.support import specialize_support
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("a"), sc.arg("b")), name="support_siblings")
+  def callee(x):
+    return x.sin(), x[::-1]
+
+  concrete = as_concrete(callee)
+  x = _masked("support_actual", [0, 1, 0, 1])
+  a, b = callee(x)
+  assert a.support == frozenset({1, 3}) and b.support == frozenset({0, 2})
+  same = _masked("support_other_actual", [0, 1, 0, 1])
+  assert callee(same)[0].support is a.support
+  context = specialize_support(concrete, (x.support,), OP_INFO)
+  assert context(concrete.outputs[0]) is a.support
+  assert len(concrete._memo.supports) == 1
+  assert concrete.inputs[0].support is None and concrete.outputs[0].support is None
+
+
+def test_call_support_specializations_are_bounded_and_keep_cached_patterns() -> None:
+  from scaly.ir.support import _SPECIALIZATION_LIMIT
+
+  width = _SPECIALIZATION_LIMIT + 9
+  x = sc.sym("support_bound_formal", width)
+  callee = ConcreteFunction._from_exprs("support_bound", [x], [x.sin()], ["x"], ["y"])
+  actuals = [_masked(f"support_bound_{i}", np.arange(width) == i) for i in range(width)]
+  for i, actual in enumerate(actuals):
+    support = callee(actual).support
+    assert support == (frozenset({i}) if i < _SPECIALIZATION_LIMIT else None)
+  assert len(callee._memo.supports) == _SPECIALIZATION_LIMIT
+  assert callee(actuals[0]).support == frozenset({0})
+  assert callee(_masked("support_bound_reused", np.arange(width) == 0)).support == frozenset({0})
+  assert len(callee._memo.supports) == _SPECIALIZATION_LIMIT
+
+
+@pytest.mark.parametrize("start,stride", [(0, 3), (2, 2), (1, 0)])
+def test_mapped_argument_support_uses_windows_and_repeated_stage_patterns(start, stride) -> None:
+  x = sc.sym("support_window_formal", 3)
+  callee = ConcreteFunction._from_exprs("support_window", [x], [x.sin()], ["x"], ["y"])
+  length = 50
+  mask = np.arange(start + (length - 1) * stride + 3) % 3 == 0
+  actual = _masked("support_windows", mask)
+  mapped = _mapped_call(callee, length, [(actual, start, stride)])
+  expected = np.stack([mask[start + i * stride : start + i * stride + 3] for i in range(length)])
+  assert mapped.support == _entries(expected)
+  assert len(callee._memo.supports) == len({tuple(row) for row in expected})
+
+
+def test_sparse_mapped_arguments_and_outputs_use_logical_support_coordinates() -> None:
+  pattern = SparsityPattern.from_mask(np.eye(3, dtype=bool)).canonicalize()[0]
+  x = Expr(ExprOp.INPUT, type=TensorType((3, 3), pattern=pattern), name="support_sparse_formal")
+  callee = ConcreteFunction._from_exprs("support_sparse_call", [x], [x.sin()], ["x"], ["y"])
+  mask = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1], [0, 0, 0]])
+  actual = sc.pack(_masked("support_sparse_stages", mask), pattern, shape=(4, 3, 3))
+  mapped = _mapped_call(callee, 4, [(sc.values(actual).vec(), 0, 3)])
+  assert mapped.support == _entries(mask)
+  assert callee(sc.pack(_masked("support_sparse_single", mask[0]), pattern)).support == frozenset({0, 8})
+
+
+def test_nested_call_support_is_iterative_under_argument_specialization() -> None:
+  x = sc.sym("support_nested_formal", 3)
+  output = x.sin()
+  for i in range(1100):
+    callee = ConcreteFunction._from_exprs(f"support_specialized_nested_{i}", [x], [output], ["x"], ["y"])
+    output = callee(x)
+  outer = ConcreteFunction._from_exprs("support_specialized_outer", [x], [output], ["x"], ["y"])
+  assert outer(_masked("support_nested_actual", [0, 1, 0])).support == frozenset({1})
+  assert output.support is None
 
 
 def test_randomized_support_soundness_against_numpy() -> None:
@@ -192,6 +263,16 @@ def test_randomized_support_soundness_against_numpy() -> None:
     masks = [rng.random((3, 4)) < 0.35 for _ in range(2)]
     x, y = [_masked(f"sound_{case}_{i}", mask) for i, mask in enumerate(masks)]
     graphs = [x + y, x - y, x * y, x / (y * y + 1), x.sin(), x.maximum(y), x.minimum(y), x.T @ y, x @ y.T]
+    a, b = sc.sym(f"sound_formal_a_{case}", (3, 4)), sc.sym(f"sound_formal_b_{case}", (3, 4))
+    body = [a + b, a - b, a * b, a / (b * b + 1), a.sin(), a.maximum(b), a.minimum(b), a.T @ b, a @ b.T]
+    callee = ConcreteFunction._from_exprs(f"sound_calls_{case}", [a, b], body, ["a", "b"], [f"out_{i}" for i in range(len(body))])
+    calls = callee(x, y)
+    maps = [_mapped_call(callee, 3, [(sc.concat([x.vec(), x.vec() * 0, x.vec()]), 0, 12), (y.vec(), 0, 0)], i) for i in range(len(body))]
+    zero_x = [x * 0 + y, x * 0 - y, x * 0 * y, x * 0 / (y * y + 1), (x * 0).sin(), (x * 0).maximum(y), (x * 0).minimum(y), (x * 0).T @ y, x * 0 @ y.T]
+    for inline, call, mapped, middle in zip(graphs, calls, maps, zero_x, strict=True):
+      assert call.support == inline.support
+      expected_support = sc.concat([inline.vec(), middle.vec(), inline.vec()]).support
+      assert mapped.support == expected_support
     for _ in range(5):
       a, b = [rng.normal(size=(3, 4)) * mask for mask in masks]
       expected = [a + b, a - b, a * b, a / (b * b + 1), np.sin(a), np.fmax(a, b), np.fmin(a, b), a.T @ b, a @ b.T]
@@ -200,6 +281,12 @@ def test_randomized_support_soundness_against_numpy() -> None:
         if support is not None:
           assert _entries(value != 0) <= support
           assert all(value.reshape(-1)[i] == 0 for i in set(range(value.size)) - support)
+      for expr, value in zip(calls, expected, strict=True):
+        assert expr.support is None or _entries(value != 0) <= expr.support
+      middle_values = [b, -b, np.zeros_like(a), np.zeros_like(a), np.zeros_like(a), np.fmax(0, b), np.fmin(0, b), np.zeros((4, 4)), np.zeros((3, 3))]
+      for expr, value, middle in zip(maps, expected, middle_values, strict=True):
+        actual = np.concatenate([value.reshape(-1), middle.reshape(-1), value.reshape(-1)])
+        assert expr.support is None or _entries(actual != 0) <= expr.support
 
 
 def test_disjoint_products_fold_and_structural_zero_removes_nan() -> None:

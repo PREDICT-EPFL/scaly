@@ -16,6 +16,7 @@ from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
 from .tree import NumericalArray, Tree, flat_tree, flat_parameters, inferred_outputs
 
 if TYPE_CHECKING:
+  from ..ir.support import Support
   from ..ad.helpers import HelperKey
   from ..codegen.jit import CompiledFunction
   from ..solvers.stats import SolverStats
@@ -93,6 +94,7 @@ class CustomRules:
 class _Memo:
   """State computed from a ConcreteFunction and cached beside it, never part of its definition."""
 
+  supports: dict[tuple[Support, ...], dict[Expr, Support]] = field(default_factory=dict)
   compiled: CompiledFunction | None = None
   derivatives: dict[tuple[str, DerivSpec], ConcreteFunction[Any, Any, Any, Any]] = field(default_factory=dict)
   maps: dict[int, ConcreteFunction[Any, Any, Any, Any]] = field(default_factory=dict)
