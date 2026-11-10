@@ -9,10 +9,12 @@ import weakref
 import numpy as np
 import pytest
 
-from scaly.ir.expr import Expr, ExprOp, _attrs_key, binary, substitute, unary
+from scaly.function.concrete import ConcreteFunction
+from scaly.ir.expr import Expr, ExprOp, _attrs_key, binary, format_expr, pack, substitute, unary
 from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
-from scaly.ir.types import CanonicalPattern, SparsityPattern, TensorType
+from scaly.ir.text import render_expr_assembly, type_asm
+from scaly.ir.types import CanonicalPattern, SparsityPattern, TensorType, dtypes
 from scaly.passes.expr import cse_many
 
 
@@ -200,6 +202,99 @@ def test_patterns_participate_in_interning_structural_keys_substitution_and_veri
       verify_expr(_forge(valid, type=bad_type))
   with pytest.raises(ValueError, match="pattern"):
     Expr(ExprOp.CONST, type=x.type, value=np.eye(3))
+
+
+@pytest.mark.parametrize("mask", [np.zeros((3, 3), dtype=bool), np.eye(3, dtype=bool), np.ones((3, 3), dtype=bool)])
+@pytest.mark.parametrize("batch", [(), (2, 4)])
+def test_sparse_listings_show_the_shared_stored_pattern(mask: np.ndarray, batch: tuple[int, ...]) -> None:
+  x = _input("listed_pattern", mask, batch)
+  y = x.sin()
+  pattern = _pattern(mask)
+  summary = f"nnz={pattern.nnz} pattern={pattern.digest[:12]}"
+  shape = "x".join(map(str, x.shape))
+  tensor = f"tensor<{shape}xfloat64 diff {summary}>"
+  assert type_asm(x.type) == tensor
+  assert render_expr_assembly(y) == (
+    f'%0 = expr.input {{lowering="auto", name="listed_pattern"}} : {tensor}\n%1 = expr.sin(%0) : {tensor}\nexpr.return %1'
+  )
+  assert format_expr(y) == (f"%0 = input listed_pattern : float64{x.shape} {summary}\n%1 = sin(%0) : float64{x.shape} {summary}\noutputs %1")
+  fun = ConcreteFunction._from_exprs("listed_sparse", [x], [y], ["x"], ["y"])
+  assert f"expr.func @listed_sparse(%x: {tensor}) -> (%y: {tensor})" in render_expr_assembly(fun)
+
+
+def test_listed_pattern_counts_stored_zeros_instead_of_support() -> None:
+  pattern = CanonicalPattern((3, 3), (0, 1, 2), (0, 1, 2))
+  x = Expr.const([0.0, 5.0, 0.0], pattern=pattern)
+  assert x.support == frozenset({4})
+  for text in (format_expr(x), render_expr_assembly(x)):
+    assert f"nnz=3 pattern={pattern.digest[:12]}" in text
+
+
+def test_pack_assembly_keeps_large_pattern_attributes_compact() -> None:
+  indices = tuple(range(1000))
+  pattern = CanonicalPattern((1000, 1000), indices, indices)
+  packed = pack(Expr.sym("packed_values", 1000), pattern)
+  line = render_expr_assembly(packed).splitlines()[1]
+  assert line == (
+    f"%1 = expr.pack(%0) {{pattern=pattern<1000x1000 nnz=1000 digest={pattern.digest[:12]}>}}"
+    f" : tensor<1000x1000xfloat64 diff nnz=1000 pattern={pattern.digest[:12]}>"
+  )
+
+
+def test_pack_attribute_mismatch_names_the_patterns() -> None:
+  diagonal = CanonicalPattern((3, 3), (0, 1, 2), (0, 1, 2))
+  antidiagonal = CanonicalPattern((3, 3), (0, 1, 2), (2, 1, 0))
+  values = Expr.sym("mismatched_packed_values", 3)
+  for attribute in (diagonal, None, "invalid"):
+    attrs = {} if attribute is None else {"pattern": attribute}
+    bad = Expr(ExprOp.PACK, (values,), TensorType((3, 3), pattern=antidiagonal), attrs=attrs)
+    with pytest.raises(VerifyError) as error:
+      verify_expr(bad)
+    message = str(error.value)
+    assert "PACK attribute must match the result pattern" in message
+    assert f"nnz=3 pattern={antidiagonal.digest[:12]}" in message
+    assert (f"nnz=3 pattern={diagonal.digest[:12]}" if attribute is diagonal else repr(attribute)) in message
+
+
+def test_dense_listing_and_type_text_stay_exact() -> None:
+  assert type_asm(TensorType(())) == "tensor<float64 diff>"
+  assert type_asm(TensorType((2, 3), dtypes.float32, False)) == "tensor<2x3xfloat32>"
+  x = Expr.sym("dense_listing", (2, 3))
+  assert format_expr(x.sin()) == "%0 = input dense_listing : float64(2, 3)\n%1 = sin(%0) : float64(2, 3)\noutputs %1"
+  assert render_expr_assembly(x.sin()) == (
+    '%0 = expr.input {lowering="auto", name="dense_listing"} : tensor<2x3xfloat64 diff>\n%1 = expr.sin(%0) : tensor<2x3xfloat64 diff>\nexpr.return %1'
+  )
+  with pytest.raises(ValueError) as substitution:
+    substitute(x, {x: Expr.sym("dense_other", (3, 2))})
+  assert str(substitution.value) == "cannot substitute dense_listing float64(2, 3) with dense_other float64(3, 2)"
+
+
+@pytest.mark.parametrize("dense", [False, True])
+def test_pattern_mismatch_diagnostics_show_both_patterns(dense: bool) -> None:
+  mask = np.eye(3, dtype=bool)
+  x = _input("diagnostic_pattern", mask)
+  other = Expr.sym("other_pattern", (3, 3)) if dense else _input("other_pattern", np.fliplr(mask))
+  summaries = [f"nnz=3 pattern={_pattern(mask).digest[:12]}"]
+  if not dense:
+    summaries.append(f"nnz=3 pattern={_pattern(np.fliplr(mask)).digest[:12]}")
+  fun = ConcreteFunction._from_exprs("pattern_diagnostic", [x], [x], ["x"], ["y"])
+  with pytest.raises(ValueError) as substitution:
+    substitute(x.sin(), {x: other})
+  with pytest.raises(ValueError) as construction:
+    Expr(ExprOp.SIN, (x,), other.type)
+  for error in (substitution, construction):
+    for summary in summaries:
+      assert summary in str(error.value)
+  invalid = [
+    _forge(x.sin(), type=other.type),
+    Expr(ExprOp.CALL, (other,), x.type, attrs={"callee": fun, "output": 0}),
+    Expr(ExprOp.CALL, (x,), other.type, attrs={"callee": fun, "output": 0}),
+  ]
+  for node in invalid:
+    with pytest.raises(VerifyError) as verification:
+      verify_expr(node)
+    for summary in summaries:
+      assert summary in str(verification.value)
 
 
 def test_digest_is_computed_once_and_numpy_coordinates_normalize(monkeypatch: pytest.MonkeyPatch) -> None:

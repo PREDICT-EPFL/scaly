@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from .expr import Expr, ExprOp, callees_of, topo
+from .expr import Expr, ExprOp, _pattern_text, callees_of, topo
 from .program import BINARY_FN_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
-from .types import TensorType
+from .types import CanonicalPattern, TensorType
 
 if TYPE_CHECKING:
   from ..function.concrete import ConcreteFunction
@@ -29,7 +29,7 @@ def type_asm(t: TensorType) -> str:
   shape = "x".join(str(d) for d in t.shape)
   dims = f"{shape}x" if shape else ""
   diff = " diff" if t.diff else ""
-  return f"tensor<{dims}{t.dtype.name}{diff}>"
+  return f"tensor<{dims}{t.dtype.name}{diff}{_pattern_text(t.pattern)}>"
 
 
 def _memref_asm(n: ProgramNode) -> str:
@@ -41,6 +41,8 @@ def _memref_asm(n: ProgramNode) -> str:
 
 
 def _value_asm(v: Any) -> str:
+  if isinstance(v, CanonicalPattern):
+    return f"pattern<{v.shape[0]}x{v.shape[1]} nnz={v.nnz} digest={v.digest[:12]}>"
   if isinstance(v, np.ndarray):
     return np.array2string(v, threshold=8, separator=", ")
   if isinstance(v, str):

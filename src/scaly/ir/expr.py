@@ -1,9 +1,9 @@
 """Expression dialect vocabulary: ``ExprOp``, ``OP_INFO``, ``Expr``, interning, builders, topo.
 
-The verify rules are ``ir/expr_spec.py`` and the one builder that needs a ``Function`` — ``vmap``
-— is ``function/sugar.py``. The printers are ``ir/text.py``, with one exception: ``format_expr``
-stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.py`` import
-``ir/text.py``, which imports ``ir/expr.py``.
+The verify rules are ``ir/expr_spec.py`` and ``function/sugar.py`` owns ``vmap``, the builder that
+needs a ``Function``. The assembly printers are ``ir/text.py``. ``format_expr`` stays here with
+helpers for type text because ``Expr.debug`` calls it, and moving it would make ``ir/expr.py``
+import ``ir/text.py``, which imports ``ir/expr.py``.
 """
 
 from __future__ import annotations
@@ -262,6 +262,14 @@ def stored_pattern(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple
   return a.union(b) if rule == "union" else a.intersection(b)
 
 
+def _pattern_text(pattern: CanonicalPattern | None) -> str:
+  return "" if pattern is None else f" nnz={pattern.nnz} pattern={pattern.digest[:12]}"
+
+
+def _type_text(type_: TensorType) -> str:
+  return f"{type_.dtype}{type_.shape}{_pattern_text(type_.pattern)}"
+
+
 def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: TensorType) -> None:
   """Reject an unsupported sparse operation or an output pattern that disagrees with its rule."""
   if op == ExprOp.INPUT:
@@ -282,7 +290,10 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
     return
   expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape)
   if type_.pattern is not expected:
-    raise ValueError(f"{op} output pattern disagrees with its stored-pattern rule")
+    raise ValueError(
+      f"{op} output pattern disagrees with its stored-pattern rule:"
+      f" got{_pattern_text(type_.pattern) or ' dense'}, expected{_pattern_text(expected) or ' dense'}"
+    )
 
 
 def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
@@ -1203,7 +1214,7 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       rhs = f"vmap[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
     else:
       rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
-    lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")
+    lines.append(f"{lhs} = {rhs} : {_type_text(e.type)}")
   lines.append("outputs " + ", ".join(f"%{loc[e.id]}" for e in outs))
   return "\n".join(lines)
 
@@ -1213,8 +1224,8 @@ def substitute(expr: Expr, replacements: Mapping[Expr, Expr]) -> Expr:
   for source, replacement in replacements.items():
     if source.shape != replacement.shape or source.type.dtype != replacement.type.dtype or source.type.pattern is not replacement.type.pattern:
       raise ValueError(
-        f"cannot substitute {source.name or source.op} {source.type.dtype}{source.shape} with "
-        f"{replacement.name or replacement.op} {replacement.type.dtype}{replacement.shape}"
+        f"cannot substitute {source.name or source.op} {_type_text(source.type)} with "
+        f"{replacement.name or replacement.op} {_type_text(replacement.type)}"
       )
   rebuilt = {source.id: replacement for source, replacement in replacements.items()}
   for node in topo((expr,)):
