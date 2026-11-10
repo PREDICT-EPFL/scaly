@@ -201,7 +201,8 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     rng = n.args[0]
     var = rng.attrs["name"]
     start, stop, step = (_render_scalar(a) for a in rng.args)
-    lines.append(f"{pad}prog.for %{var} = {start} to {stop} step {step} {{kind={rng.attrs['kind'].value}}} {{")
+    markers = (", carried" if rng.attrs.get("carried") else "") + (", exit_var" if n.attrs.get("exit_var") else "")
+    lines.append(f"{pad}prog.for %{var} = {start} to {stop} step {step} {{kind={rng.attrs['kind'].value}{markers}}} {{")
     for stmt in n.args[1:]:
       _render_stmt(stmt, indent + 1, lines)
     lines.append(f"{pad}}}")
@@ -218,6 +219,8 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     lines.append(f"{pad}{ret_prefix}prog.call @{n.attrs['callee']}({args}){_attrs_asm(n.attrs, skip={'callee', 'returns'})}")
   elif n.op == ProgramOp.PRINT:
     lines.append(f"{pad}prog.print({', '.join(_render_scalar(a) for a in n.args)}){_attrs_asm(n.attrs)}")
+  elif n.op == ProgramOp.BREAK_IF:
+    lines.append(f"{pad}prog.break_if {_render_scalar(n.args[0])}")
   else:
     lines.append(f"{pad}// stmt {n.op.value}: {_render_scalar(n) if n.op in SCALAR_OPS else _attrs_asm(n.attrs)}")
 
@@ -292,7 +295,8 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     start = _format_scalar(rng.args[0])
     stop = _format_scalar(rng.args[1])
     step = _format_scalar(rng.args[2])
-    lines.append(f"{pad}for {rng.attrs['name']} in [{start}, {stop}) step {step} kind={kind}:")
+    markers = (", carried" if rng.attrs.get("carried") else "") + (", exit_var" if n.attrs.get("exit_var") else "")
+    lines.append(f"{pad}for {rng.attrs['name']} in [{start}, {stop}) step {step} kind={kind}{markers}:")
     for sub in n.args[1:]:
       _format_node(sub, indent + 1, lines)
   elif n.op == ProgramOp.STORE:
@@ -314,6 +318,8 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     pieces = n.attrs["pieces"]
     parts = [json.dumps(pieces[0]), *(f"{_format_scalar(a)} {json.dumps(piece)}" for a, piece in zip(n.args, pieces[1:], strict=True))]
     lines.append(f"{pad}print {' '.join(parts)}")
+  elif n.op == ProgramOp.BREAK_IF:
+    lines.append(f"{pad}break_if {_format_scalar(n.args[0])}")
   else:
     # fallback for unknown / scalar at statement scope
     lines.append(f"{pad}{n.op.value}")

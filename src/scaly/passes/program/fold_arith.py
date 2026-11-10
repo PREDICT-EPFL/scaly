@@ -138,7 +138,12 @@ def _fold_body(body: list[ProgramNode], names: NameScope) -> list[ProgramNode]:
           outer_store = any(node.op == ProgramOp.VAR and node.attrs["name"] in bounds for store in stores for node in walk_program(store.args[0]))
           # Keep top-level selectors intact for pack_masks; expose inner copy coordinates.
           if (
-            start == 0 and step == 1 and rng.attrs["kind"] != RangeKind.REDUCE and outer_store and not any(node.op == ProgramOp.FOR for node in nodes)
+            start == 0
+            and step == 1
+            and not rng.attrs.get("carried")
+            and rng.attrs["kind"] != RangeKind.REDUCE
+            and outer_store
+            and not any(node.op == ProgramOp.FOR for node in nodes)
           ):
             divisors = {
               int(node.args[1].attrs["value"])

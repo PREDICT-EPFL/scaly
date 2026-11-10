@@ -224,3 +224,77 @@ def test_bit_select_builds_verifies_and_prints():
   assert "prog.bit_select(prog.load %mask[prog.div(%i, 8)], prog.mod(%i, 8), prog.load %x[%i])" in render_program_assembly(prog)
   with pytest.raises(TypeError, match="integer word and bit"):
     p.bit_select(p.load(p.view(x, [i])), i, p.load(p.view(x, [i])))
+
+
+def test_carried_loop_builds_verifies_and_prints():
+  from scaly.ir.text import render_program_assembly
+
+  flag = p.buffer("flag", dtypes.bool_, (1,))
+  loop = p.for_(p.range_("i", 0, 3, carried=True), [p.break_if(p.load(p.view(flag, [p.const_int(0)])))], exit_var=True)
+  prog = p.program([p.proc("carried", [flag], [loop])])
+  verify_program(prog)
+  assert loop.args[0].attrs["kind"] == RangeKind.SERIAL
+  assert loop.args[0].attrs["carried"] is True
+  assert "carried, exit_var" in format_program(prog)
+  assert "break_if flag[0]" in format_program(prog)
+  assert "carried, exit_var" in render_program_assembly(prog)
+  assert "prog.break_if prog.load %flag[0]" in render_program_assembly(prog)
+  assert "carried" not in p.range_("chunk", 0, 3).attrs
+
+
+@pytest.mark.parametrize("where", ["bare", "block", "serial", "no_exit", "nested", "other_proc", "shared"])
+def test_break_requires_the_nearest_loop_to_be_carried_with_an_exit_variable(where):
+  stop = p.break_if(p.var("flag", dtypes.bool_))
+  carried = lambda body: p.for_(p.range_("i", 0, 3, carried=True), body, exit_var=True)
+  if where == "bare":
+    root = stop
+  elif where == "block":
+    root = p.block(stop)
+  elif where == "serial":
+    root = p.for_(p.range_("i", 0, 3), [stop], exit_var=True)
+  elif where == "no_exit":
+    root = p.for_(p.range_("i", 0, 3, carried=True), [stop])
+  elif where == "nested":
+    root = carried([p.for_(p.range_("j", 0, 3), [p.block(stop)])])
+  elif where == "other_proc":
+    root = p.program([p.proc("valid", [], [carried([stop])]), p.proc("invalid", [], [stop])])
+  else:
+    root = p.proc("shared", [], [carried([stop]), p.for_(p.range_("j", 0, 3), [stop])])
+  with pytest.raises(VerifyError, match="BREAK_IF.*carried.*exit_var|exit_var.*carried"):
+    verify_program(root)
+
+
+def test_nested_carried_breaks_and_blocks_verify():
+  stop = p.break_if(p.var("flag", dtypes.bool_))
+  inner = p.for_(p.range_("j", 0, 2, carried=True), [p.block(stop)], exit_var=True)
+  verify_program(p.for_(p.range_("i", 0, 3, carried=True), [inner, stop], exit_var=True))
+
+
+@pytest.mark.parametrize("value", [p.const_int(1), p.const_float(1), p.buffer("not_scalar", dtypes.bool_, (1,))])
+def test_break_if_requires_a_boolean_scalar(value):
+  with pytest.raises(TypeError, match="bool scalar"):
+    p.break_if(value)
+  with pytest.raises(VerifyError, match="bool scalar"):
+    verify_program(ProgramNode(ProgramOp.BREAK_IF, (value,)))
+
+
+@pytest.mark.parametrize("args", [(), (p.var("flag", dtypes.bool_),) * 2])
+def test_break_if_requires_exactly_one_condition(args):
+  with pytest.raises(VerifyError, match="one bool scalar"):
+    verify_program(ProgramNode(ProgramOp.BREAK_IF, args))
+
+
+@pytest.mark.parametrize("attr,value", [("carried", 1), ("carried", "yes"), ("exit_var", 1), ("exit_var", "yes")])
+def test_carried_and_exit_markers_are_boolean(attr, value):
+  rng = p.range_("i", 0, 3, carried=True)
+  node = rng if attr == "carried" else p.for_(rng, [])
+  malformed = ProgramNode(node.op, node.args, {**node.attrs, attr: value}, node.dtype)
+  with pytest.raises(VerifyError, match=f"{attr}.*bool"):
+    verify_program(malformed)
+
+
+@pytest.mark.parametrize("start,step", [(1, 1), (0, 2)])
+def test_exit_variable_is_a_trip_count(start, step):
+  loop = p.for_(p.range_("i", start, 5, step=step, carried=True), [], exit_var=True)
+  with pytest.raises(VerifyError, match="exit_var.*start.*0.*step.*1"):
+    verify_program(loop)

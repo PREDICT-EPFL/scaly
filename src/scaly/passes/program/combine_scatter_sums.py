@@ -67,6 +67,8 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     scatter = body[j]
     if j <= i or scatter.op != ProgramOp.FOR or len(scatter.args) != 2 or scatter.args[1].op != ProgramOp.STORE:
       continue
+    if scatter.args[0].attrs.get("carried"):
+      continue
     target, value = scatter.args[1].args
     accumulating = value.op == ProgramOp.ADD and value.args[0] == load(target)
     if accumulating:

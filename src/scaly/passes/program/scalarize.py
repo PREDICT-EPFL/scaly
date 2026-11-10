@@ -145,7 +145,7 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
         total += factor * callee_work
       elif node.op == ProgramOp.FOR:
         rng = node.args[0]
-        if any(a.op != ProgramOp.CONST_INT for a in rng.args):
+        if rng.attrs.get("carried") or any(a.op != ProgramOp.CONST_INT for a in rng.args):
           return None
         start, stop, step = (a.attrs["value"] for a in rng.args)
         if step <= 0:

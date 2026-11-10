@@ -11,7 +11,7 @@ import pytest
 import scaly as sc
 
 from scaly.ir import program as p
-from scaly.ir.program import ProgramOp, walk_program
+from scaly.ir.program import ProgramNode, ProgramOp, walk_program
 from scaly.ir.types import dtypes
 from scaly.codegen.c import _includes, _render_raw_callee
 from scaly.passes.program import optimize_program
@@ -66,6 +66,17 @@ def _assert_identical(result: np.ndarray, expected: np.ndarray) -> None:
   np.testing.assert_array_equal(result, expected)
   number = ~np.isnan(expected)
   np.testing.assert_array_equal(np.signbit(result[number]), np.signbit(expected[number]))
+
+
+def test_mask_packing_keeps_carried_ranges():
+  prog = _program(_masks(29))
+  raw = prog.args[0]
+  loop = raw.args[-1]
+  rng = loop.args[0]
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "carried": True}, rng.dtype)
+  loop = ProgramNode(loop.op, (rng, *loop.args[1:]), {**loop.attrs, "exit_var": True}, loop.dtype)
+  prog = p.program([ProgramNode(raw.op, (*raw.args[:-1], loop), raw.attrs, raw.dtype)])
+  assert pack_masks(prog) is prog
 
 
 def _reference(masks: list[np.ndarray], x: np.ndarray) -> np.ndarray:

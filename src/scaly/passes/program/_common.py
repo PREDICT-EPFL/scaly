@@ -38,6 +38,8 @@ def inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | None:
   if stmt.op != ProgramOp.FOR:
     return None
   rng, *body = stmt.args
+  if rng.attrs.get("carried"):
+    return None
   if len(body) != 1 or body[0].op != ProgramOp.STORE:
     return None
   target, rhs = body[0].args

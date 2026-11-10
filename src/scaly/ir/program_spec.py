@@ -24,6 +24,21 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
     if result is not None:
       rule, diag = result
       raise VerifyError(f"verify_program: node op={node.op.value} failed rule {rule.description!r}: {diag}")
+  pending = [(root, False)]
+  while pending:
+    node, can_break = pending.pop()
+    if node.op == ProgramOp.BREAK_IF and not can_break:
+      raise VerifyError("verify_program: BREAK_IF requires the nearest loop to be carried with exit_var")
+    if node.op == ProgramOp.PROC:
+      can_break = False
+    elif node.op == ProgramOp.FOR:
+      can_break = bool(node.args[0].attrs.get("carried") and node.attrs.get("exit_var"))
+    if node.op in (ProgramOp.PROGRAM, ProgramOp.BLOCK):
+      pending.extend((arg, can_break) for arg in node.args)
+    elif node.op == ProgramOp.PROC:
+      pending.extend((arg, can_break) for arg in node.args[node.attrs["param_count"] :])
+    elif node.op == ProgramOp.FOR:
+      pending.extend((arg, can_break) for arg in node.args[1:])
 
 
 # ---------- shared rules ----------
@@ -125,6 +140,8 @@ def _range_kind(n: ProgramNode) -> str | None:
     return "RANGE missing valid 'kind' attr"
   if "name" not in n.attrs:
     return "RANGE missing 'name' attr"
+  if not isinstance(n.attrs.get("carried", False), bool):
+    return "RANGE 'carried' must be boolean"
   if "lanes" in n.attrs:
     if n.attrs["kind"] != RangeKind.VECTOR or n.attrs["lanes"] not in ("auto", 1, 2, 4, 8):
       return "lane width requires a VECTOR range and auto or 1, 2, 4, 8 lanes"
@@ -141,11 +158,27 @@ def _range_kind(n: ProgramNode) -> str | None:
 def _for_body(n: ProgramNode) -> str | None:
   if not n.args or n.args[0].op != ProgramOp.RANGE:
     return "FOR first arg must be RANGE"
+  if not isinstance(n.attrs.get("exit_var", False), bool):
+    return "FOR 'exit_var' must be boolean"
+  if n.attrs.get("exit_var"):
+    rng = n.args[0]
+    if not rng.attrs.get("carried"):
+      return "FOR exit_var requires a carried range"
+    if len(rng.args) != 3 or any(
+      arg.op != ProgramOp.CONST_INT or arg.attrs.get("value") != value for arg, value in ((rng.args[0], 0), (rng.args[2], 1))
+    ):
+      return "FOR exit_var requires start 0 and step 1 to report the trip count"
   if "vector_helper" in n.attrs:
     if len(n.args) != 2 or n.args[1].op != ProgramOp.FOR or n.args[1].args[0].attrs.get("kind") != RangeKind.VECTOR:
       return "vector helper requires exactly one nested VECTOR range"
     if not isinstance(n.attrs.get("vector_count"), int) or n.attrs["vector_count"] < 1:
       return "vector helper requires a positive static trip count"
+  return None
+
+
+def _break_if_attrs(n: ProgramNode) -> str | None:
+  if len(n.args) != 1 or n.args[0].op not in SCALAR_OPS or not n.args[0].dtype.is_bool:
+    return "BREAK_IF takes one bool scalar"
   return None
 
 
@@ -204,6 +237,7 @@ spec_program_full = Spec(
     Rule(ProgramOp.ASSIGN, "assign-attrs", _assign_attrs),
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),
+    Rule(ProgramOp.BREAK_IF, "break-if-attrs", _break_if_attrs),
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),
     Rule(ProgramOp.PRINT, "print-pieces", _print_pieces),
     Rule(ProgramOp.PROC, "proc-params", _proc_params),
