@@ -19,7 +19,7 @@ proceed with explicit rejection of other layouts and batch axes rather than work
   batches and empty patterns. Build CasADi sparsity from leaf types.
 - [x] Prove tests detect wrong tables/value ordering by temporary perturbations.
   Run focused tests, dense snapshots, #41 scale gate and custom derivative regression.
-- [ ] Run the full pre-merge hook, commit, push and open a draft PR against #42.
+- [x] Run the full pre-merge hook, commit, push and open a draft PR against #42.
 - [ ] Apply cross-review with Opus and Sol, fix findings and run short delta checks.
 - [ ] Remove this plan, finish the PR evidence and tracker status, mark ready and watch CI.
 
@@ -28,6 +28,13 @@ the preceding 85-test focused run. Three temporary mutations failed as required:
 in C and C++, corrupted compiled values in C and C++, and lost CasADi input sparsity. All restored.
 The complete pre-merge hook passes: 2,904 passed, 52 skipped, strict types, Ruff, benchmark smoke,
 docs without warnings and private-name check. The node-ID baseline has 2,956 tests.
+
+Draft PR #289 is linked in T3. Sol's review found two C++ metadata namespace collisions, with
+CasADi query names and std. Both reproduced on inputs and outputs. The allocator now reserves
+those declarations, plus emitted solver entry/stats/default-options names. All query names and
+three solver declaration cases have compiling regressions. Opus's initial review is still pending.
+The full hook on these fixes passes with 2,935 tests and 52 skips. Thirteen existing C++ headers
+also match the #42 renderer byte for byte. Commit the fixes and request the low-effort delta check.
 
 Choices for the final report: stored-shape C++ Buffer aliases; local nrow/ncol/nnz with full shape
 and storage_size; familiar csc_col_ptr/csc_row_ind, csr_row_ptr/csr_col_ind, rows/cols spellings;

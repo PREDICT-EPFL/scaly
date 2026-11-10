@@ -10,6 +10,7 @@ from scipy import sparse
 
 import scaly as sc
 from scaly.codegen.aot import render_c_api_header, write_module
+from scaly.codegen.casadi import CASADI_QUERIES
 from scaly.ir.types import CanonicalPattern
 from tests.compilers import c_compiler, cxx_compiler
 
@@ -198,3 +199,34 @@ def test_sparse_output_named_after_function_compiles(lang, tmp_path):
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
   subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-fsyntax-only", str(main)], check=True)
+
+
+@pytest.mark.parametrize("name", ["std", *(f"f_{query}" for query in CASADI_QUERIES)])
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_cpp_sparse_metadata_avoids_declared_function_and_library_names(name, side, tmp_path):
+  type_ = sc.TensorType(PATTERN.shape, pattern=PATTERN)
+  if side == "input":
+    fun = sc.function(sc.arg(name, type_), name="f")(lambda a: sc.values(a))
+  else:
+    fun = sc.function(sc.arg("v", PATTERN.nnz), outputs=sc.arg(name, type_), name="f")(lambda v: sc.pack(v, PATTERN))
+  module = write_module(fun, tmp_path, lang="cpp", casadi=True)
+  main = tmp_path / "main.cpp"
+  main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
+  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(main)], check=True)
+
+
+@pytest.mark.parametrize("name", ["solver_names_with_options", "solver_qp_stats", "solver_qp_default_options"])
+def test_cpp_sparse_metadata_avoids_solver_declarations(name, tmp_path):
+  from tests.solvers.problem_helpers import build_qp
+
+  type_ = sc.TensorType(PATTERN.shape, pattern=PATTERN)
+
+  @sc.function(sc.arg(name, type_), sc.arg("mu", 2), outputs=sc.arg("b", type_), name="solver_names")
+  def fun(a, mu):
+    qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="solver_qp")
+    return a * qp(mu)[0][0]
+
+  module = write_module(fun, tmp_path, lang="cpp")
+  main = tmp_path / "main.cpp"
+  main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
+  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(main)], check=True)
