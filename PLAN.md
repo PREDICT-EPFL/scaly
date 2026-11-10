@@ -17,7 +17,7 @@ Overlapping work: #312 in calls/reverse, #347 in calls, #349 in sparse lowering.
       separately from unmasked helpers. Keep unmasked helper names unchanged.
 - [x] Update the functions guide and `where` docstring, run focused tests and prove
       the regression checks detect a removed mask.
-- [ ] Refresh collection baseline and run all pre-merge checks through the shared queue.
+- [x] Refresh collection baseline and run all pre-merge checks through the shared queue.
       Existing C snapshots must stay byte-identical.
 - [ ] Open the pull request on #320's branch, complete cross-review with Opus and the
       required independent correctness review, and confirm any fixes once.
@@ -36,3 +36,7 @@ Mapped helpers pass the condition as nondifferentiable 0/1 floats and return
 input activity beside the adjoints, since #55 owns typed helper leaves. Nested
 conditions also survive the structural transpose. Rebased onto the updated #320 branch without conflicts before the first push,
 per the coordinator. The full check was still queued when the rebase finished.
+
+Full pre-merge check passed through the shared queue: 3,138 tests passed,
+52 skipped, benchmark smoke, docs, type, format, lint and private-name checks green.
+All 48 extra C/header artifacts still match the updated base byte for byte.
