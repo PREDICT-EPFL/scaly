@@ -289,6 +289,26 @@ def test_mapped_masks_accumulate_through_shared_and_overlapping_arguments(stride
   np.testing.assert_array_equal(grad, jac.sum(axis=0))
 
 
+def test_two_mapped_calls_merge_their_masks_before_a_singular_partial() -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("r"), name="sd_double")
+  def twice(u: sc.Expr) -> sc.Expr:
+    return 2.0 * u
+
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("r"), name="sd_triple")
+  def thrice(u: sc.Expr) -> sc.Expr:
+    return 3.0 * u
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_merged_maps")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    roots = x.sqrt().reshape((2, 2))
+    chosen = sc.where(x > 0.0, sc.vmap(twice, 2)(roots).vec(), 0.0) + sc.where(x > 4.0, sc.vmap(thrice, 2)(roots).vec(), 0.0)
+    return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
+
+  grad, jac = derivatives(np.array([0.0, 4.0, -1.0, 9.0]))
+  np.testing.assert_allclose(grad, [0.0, 0.5, 0.0, 5.0 / 6.0], rtol=1e-15)
+  np.testing.assert_allclose(grad, jac.sum(axis=0), rtol=1e-15)
+
+
 def test_reverse_mode_refuses_an_integer_or_bool_output() -> None:
   x = sc.sym("x", 3)
   for value in (sc.cast(x, "int64")[0], (x > 0.0)[0]):

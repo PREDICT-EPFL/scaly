@@ -50,7 +50,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):
         if arg.id in expr_ids:
-          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+          adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
       continue
     active = (
       tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg))
