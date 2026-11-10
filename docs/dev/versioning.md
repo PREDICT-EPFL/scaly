@@ -68,6 +68,19 @@ the `<prefix>_csr_val_perm` and `<prefix>_csc_val_perm` tables, as
 `_JIT_CACHE_VERSION` in `src/scaly/codegen/jit.py` is bumped so a cached library from an older
 version is never reused.
 
+### Cached solver modules
+
+Cached solver modules depend on the names and contents of readable files in their native include
+and library directories. These come from installed plugins, `SCALY_SOLVER_INCLUDE_DIR`,
+`SCALY_SOLVER_LIB_DIR`, and the parent directories of `SCALY_<NAME>_LIB` overrides. Scaly reads
+each directory once per process, across all solver backends. A changed file selects a new cache
+entry even when the generated C and plugin version stay the same. Pointing an override at a system
+directory such as `/usr/lib` reads every readable file beneath it.
+
+Keep native solver files fixed while Python runs, and stop Python before replacing them. Replacing
+them in a live process can store a new build under the old cache key, leaving an incorrect entry
+on disk after that process exits.
+
 ### Plugin protocol
 
 `SOLVER_PLUGIN_PROTOCOL_VERSION` and `SCALY_SOLVER_STATS_VERSION` version the

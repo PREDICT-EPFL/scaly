@@ -377,6 +377,8 @@ The key is a SHA-256 hash over, in order:
   size and modification time of its executable, its `--version` output, and
   the macros the host recipe probe prints, which name the CPU features and the
   compiler version
+- for a solver module, a digest of the names and contents of readable files
+  in its native include and library directories
 - the full compile command apart from file paths: the optimization, CPU and
   `-fno-math-errno` flags, `-fPIC -shared`, the link flags (solver paths,
   `-lmvec`) and `-lm`
@@ -402,7 +404,10 @@ half-written library.
 
 Nothing about tracing or rendering is cached on disk. A new process runs the
 Python body again when the decorator executes, lowers and renders the C again,
-and hashes it. Only the C compiler call is skipped when the library exists.
+and hashes it. Solver modules also read every readable file beneath their
+native include and library directories, once per directory per process,
+even when several solver backends use the same directories. Only the C
+compiler call is skipped when the library exists.
 That is the difference between the 42 ms and 9 ms runs above. Within a process,
 a second `Function` with the same generated source finds the artifact in an
 in-memory table and does not touch the compiler either.

@@ -22,6 +22,7 @@ from scaly.function.sugar import _mapped_call
 import scaly as sc
 import scaly.codegen.jit as jit
 from scaly.codegen.toolchain import find_c_compiler, no_gather_flags
+from scaly.utils.env import shared_lib_ext, shared_lib_flag
 
 
 pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is required for JIT smoke tests")
@@ -77,6 +78,156 @@ def test_compiler_wrapper_change_misses_the_cache(isolated_cache: Path, monkeypa
   first = build("")
   assert build() == first
   assert build(": patched\n") != first
+
+
+_SOLVER_INPUTS_CHILD = """
+import json
+import os
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import scaly as sc
+import scaly.codegen.jit as jit
+import scaly.solvers.paths as paths
+import scaly.solvers.registry as registry
+
+root = Path(os.environ["TEST_SOLVER_ROOT"])
+backend = SimpleNamespace(name="ipopt", lib_stem="cache_solver", header="solver/api.h", link_flags=("-lcache_solver",))
+paths._backends = lambda: {backend.name: backend}
+registry.get_backend = lambda _name: backend
+paths._plugin_solver_paths = lambda: [(root / "include", root / "lib")] if os.environ["TEST_SOLVER_PLUGIN"] == "1" else []
+
+@sc.function(sc.arg("x", 1), outputs=sc.arg("y", 1), name="solver_cache_inputs")
+def fun(x):
+  return x
+
+body = '''#include <solver/api.h>
+int solver_cache_inputs(const double** arg, double** res, int* iw, double* w, int mem) {
+  Settings settings = {0};
+  settings.value = arg[0][0] + OFFSET;
+  res[0][0] = evaluate(&settings);
+  return 0;
+}
+int solver_cache_inputs_with_options(const double** arg, double** res, int* iw, double* w, int mem, const void* options) {
+  return solver_cache_inputs(arg, res, iw, w, mem);
+}
+'''
+render = jit._render_native
+jit._render_native = lambda fun, compiler: replace(render(fun, compiler), body=body, backends=(backend.name,))
+compiles = []
+run = jit.subprocess.run
+jit.subprocess.run = lambda command, **kwargs: (compiles.append("-fPIC" in command), run(command, **kwargs))[1]
+compiled = jit.get_compiled(fun)
+result = compiled.run([np.array([3.0])])[0].item()
+print(json.dumps({"key": compiled.cache_key, "compiles": sum(compiles), "result": result}))
+"""
+
+
+@pytest.mark.parametrize(
+  "plugin,changed",
+  [
+    (False, "header"),
+    (False, "library"),
+    (False, "both"),
+    (True, "both"),
+    (False, "symlink"),
+    (False, "dangling"),
+    (False, "cycle"),
+    (False, "unreadable"),
+  ],
+)
+def test_solver_build_change_misses_cache(tmp_path: Path, plugin: bool, changed: str) -> None:
+  if changed in ("symlink", "dangling", "cycle", "unreadable") and sys.platform == "win32":
+    pytest.skip("needs POSIX file permissions or directory symlinks")
+  compiler = find_c_compiler()
+  assert compiler is not None
+  include, lib = tmp_path / "include", tmp_path / "lib"
+  (include / "solver").mkdir(parents=True)
+  if changed == "symlink":
+    target = tmp_path / "native-headers"
+    (include / "solver").rename(target)
+    (include / "solver").symlink_to(target, target_is_directory=True)
+  if changed in ("dangling", "cycle"):
+    (include / "unused-link").symlink_to("missing-header" if changed == "dangling" else ".", target_is_directory=changed == "cycle")
+  lib.mkdir()
+  if changed == "unreadable":
+    (lib / "unused-file").write_bytes(b"unrelated to the solver")
+    (lib / "unused-file").chmod(0)
+  header = include / "solver" / "layout.h"
+  api = include / "solver" / "api.h"
+  api.write_text('#include "layout.h"\nextern double evaluate(const Settings* settings);\n')
+  source = tmp_path / "solver.c"
+  library = lib / ("cache_solver.dll" if sys.platform == "win32" else f"libcache_solver{shared_lib_ext()}")
+
+  def install(*, offset: int, swapped: bool, revision: int, build_library: bool = True) -> None:
+    fields = "double padding; double value;" if swapped else "double value; double padding;"
+    header.write_text(f"typedef struct {{ {fields} }} Settings;\n#define OFFSET {offset}\n")
+    if build_library:
+      source.write_text(f"#include <solver/api.h>\ndouble evaluate(const Settings* settings) {{ return settings->value + {revision}; }}\n")
+      command = [*compiler.command, "-fPIC", shared_lib_flag(), f"-I{include}", str(source), "-o", str(library)]
+      if sys.platform == "win32":
+        command += [f"-Wl,--out-implib,{lib / 'libcache_solver.dll.a'}"]
+      subprocess.run(command, check=True, capture_output=True, text=True)
+
+  child_env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache"), "TEST_SOLVER_ROOT": str(tmp_path), "TEST_SOLVER_PLUGIN": str(int(plugin))}
+  for variable in ("SCALY_IPOPT_LIB", "SCALY_SOLVER_INCLUDE_DIR", "SCALY_SOLVER_LIB_DIR", "SCALY_SOLVER_SYSTEM_FALLBACK"):
+    child_env.pop(variable, None)
+  if not plugin:
+    child_env.update(SCALY_SOLVER_INCLUDE_DIR=str(include), SCALY_SOLVER_LIB_DIR=str(lib))
+
+  def build() -> dict:
+    result = subprocess.run([sys.executable, "-c", _SOLVER_INPUTS_CHILD], env=child_env, check=False, capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+  install(offset=0, swapped=False, revision=0)
+  first = build()
+  assert first["compiles"] == 1 and first["result"] == 3.0
+  assert build() == {**first, "compiles": 0}
+  previous = header.stat()
+  install(
+    offset=int(changed != "library"),
+    swapped=changed == "both",
+    revision=int(changed in ("library", "both")),
+    build_library=changed in ("library", "both"),
+  )
+  os.utime(header, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+  second = build()
+  assert second["key"] != first["key"]
+  assert second["compiles"] == 1
+  assert second["result"] == (5.0 if changed == "both" else 4.0)
+  assert build() == {**second, "compiles": 0}
+
+
+def test_solver_fingerprint_reads_files_once_per_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  include, lib = tmp_path / "include", tmp_path / "lib"
+  include.mkdir()
+  lib.mkdir()
+  (include / "solver.h").write_bytes(b"solver headers")
+  (lib / "libsolver.so").write_bytes(b"solver library")
+  flags = (f"-I{include}", f"-L{lib}", "-lsolver")
+  opened = []
+  original_open = Path.open
+
+  def record(path, *args, **kwargs):
+    opened.append(path)
+    return original_open(path, *args, **kwargs)
+
+  monkeypatch.setattr(Path, "open", record)
+  first = jit.solver_inputs_fingerprint(flags)
+  assert set(opened) == {include / "solver.h", lib / "libsolver.so"}
+  assert len(opened) == 2
+
+  def unexpected_io(*args, **kwargs):
+    pytest.fail("a warm fingerprint must not read or stat files")
+
+  monkeypatch.setattr(Path, "open", unexpected_io)
+  monkeypatch.setattr(Path, "stat", unexpected_io)
+  monkeypatch.setattr(os, "walk", unexpected_io)
+  assert jit.solver_inputs_fingerprint(flags) == first
+  assert jit.solver_inputs_fingerprint((*flags[:-1], "-lother_solver", "-lmvec")) == first
 
 
 def test_recompile_uses_another_path_and_preserves_files(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
