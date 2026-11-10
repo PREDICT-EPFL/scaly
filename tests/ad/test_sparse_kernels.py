@@ -114,6 +114,35 @@ def test_sparse_movement_derivatives_match_finite_differences(operation):
   np.testing.assert_allclose(sc.gradient(loss)(v), reference.sum(axis=0), rtol=1e-7, atol=1e-7)
 
 
+@pytest.mark.parametrize("operation", ["slice", "gather_matrix", "gather_vector", "scatter"])
+@pytest.mark.parametrize("kind", ["grad", "sparse_jac"])
+def test_sparse_movement_derivative_buffers_scale_with_stored_entries(operation, kind):
+  n = 512
+  source = sparse.diags_array([-np.ones(n - 1), 4 * np.ones(n), -np.ones(n - 1)], offsets=[-1, 0, 1], format="coo")
+  pattern = _pattern(source)
+  leaf = sc.arg("a", sc.TensorType(source.shape, pattern=pattern), layout="csc")
+  reverse = np.arange(n - 1, -1, -1)
+  logical = np.asarray(pattern.rows) * n + pattern.cols
+
+  def body(a):
+    moved = {
+      "slice": lambda: a[::2, :],
+      "gather_matrix": lambda: sc.gather(a, (reverse[:, None] * n + reverse[None, :])[: n // 2]),
+      "gather_vector": lambda: sc.gather(a, np.concatenate((logical[::2], logical[:3]))),
+      "scatter": lambda: sc.scatter(a, np.arange(n * n - 1, -1, -1), source.shape),
+    }[operation]()
+    values = sc.values(moved).sin()
+    return values.sum() if kind == "grad" else values
+
+  fn = sc.function(leaf, name=f"stored_movement_{operation}_{kind}")(body)
+  derivative = sc.gradient(fn, wrt="a") if kind == "grad" else sc.sparse_jacobian(fn, wrt="a")
+  observed = {}
+  lower_function(derivative, observe=observed.__setitem__)
+  for program in (observed["lowered"], observed["pass:pack_workspace"]):
+    sizes = [np.prod(b.attrs["shape"]) for b in walk_program(program) if b.op == ProgramOp.BUFFER and b.attrs["address_space"] == "private"]
+    assert max(sizes, default=0) <= 8 * pattern.nnz
+
+
 @pytest.mark.parametrize("operation", ["neg", "sin", "tan", "asin", "atan", "sinh", "tanh", "erf", "sqrt", "abs"])
 def test_sparse_unary_partials_match_numpy_differences_on_stored_coordinates(operation):
   pattern = CanonicalPattern((17, 19), (0, 4, 9, 16), (18, 2, 8, 0))
@@ -189,7 +218,7 @@ def test_sparse_multiseeds_keep_one_pattern_and_one_index_table():
 
 
 @pytest.mark.parametrize("form", ["straight", "dense", "affine", "table"])
-def test_map_region_derivatives_match_finite_differences(form):
+def test_forward_map_regions_and_reverse_scatter_match_finite_differences(form):
   indices = {
     "straight": np.array([9, 2, 4]),
     "dense": np.arange(13),

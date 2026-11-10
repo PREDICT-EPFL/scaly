@@ -14,8 +14,9 @@ CSC form, q, r, l, u); no values were changed. The problems read
   minimize 1/2 x^T P x + q^T x + r   subject to   l <= A x <= u,
 
 with P stored in full (both triangles) and +-1e20 (sometimes rounded to 9.999999999999998e19)
-standing for an infinite bound. The loader in
-tests/opt/ipm/problems.py maps them to PIQP's form.
+standing for an infinite bound. The loader, _problem in
+tests/integration/test_sparse_kkt.py, splits equality, inequality and bound rows
+for the interior-point method's regularized systems.
 
 The problem archives above are unchanged copies from origin/devrush at the same basename.
 The added *_patterns.npz files are reference results, generated from the frozen branch's

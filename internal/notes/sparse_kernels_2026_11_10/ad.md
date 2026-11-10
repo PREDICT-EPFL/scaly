@@ -50,9 +50,21 @@ this task.
   a batched shared output with different declared layouts.
 - Returning zero elementwise tangents fails all thirteen unary and binary
   partial checks.
+- Eight large-leaf movement gates check gradient and sparse Jacobian buffers
+  before and after optimization for slice, matrix and vector gather, and scatter.
+  The 512 by 512 band has 1,534 stored entries. Restoring the old reverse rules
+  fails the slice, vector-gather and scatter gradient gates with 262,144-entry
+  buffers. Restoring the old forward rules fails the matrix-gather and scatter
+  sparse Jacobian gates with 131,072- and 262,144-entry buffers. All eight pass
+  with the stored-coordinate rules.
 
 Every perturbation was removed. Dense C snapshots stay unchanged. Several seeds
 continue to share one pattern; per-entry seed lists and compaction remain #225.
+The current product, gather and scatter tangent rules emit a kernel group and
+stored-size slice copies per seed. Generated code therefore grows with the seed
+count for dense Jacobians with respect to sparse matrix data. #225 owns replacing
+those groups and copies with a traversal over seed-axis stored values. Colored
+sparse Jacobians and Hessians keep a bounded seed count in the banded gates.
 Derivative outputs retain their existing compact values and separate pattern,
 which #48 changes. Sparse SELECT moved to #359 after #320 left the merge queue
 without merging. It follows #30 and #46 and owns sparse union patterns and masked
@@ -63,9 +75,10 @@ The section 1 packet's `sparse_values/banded_quadratic.py` runs all stages witho
 errors. Stage 7 reports largest private gradient buffers of 100 and 400 entries,
 and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400 respectively.
 
-After the parent rebase, detached `~/.scaly-suite/run` passed with 3,256 tests and 55
-solver skips, including types, formatting, lint, benchmark smoke, documentation
-build and the private-name check. No dense C snapshot was regenerated.
+After the review fixes, 206 focused tests passed. Detached `~/.scaly-suite/run`
+passed with 3,264 tests and 55 solver skips, including types, formatting, lint,
+benchmark smoke, documentation build and the private-name check. No dense C
+snapshot was regenerated.
 
 ## Counts and generated C
 

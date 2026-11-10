@@ -221,6 +221,7 @@ Milestone 1, 0.2.0: dtypes, sparse matrices into generated C, and the lowering f
   sparse       #39 pattern in TensorType -> #40 support on every node -> #41 no full-size work
                -> #42 sparse boundary -> #43 interfaces
                #46 sparse kernels and the sampled adjoint (after #42, #45) -> #47 sparse-sparse products
+               #359 sparse SELECT (after #30, #46)
                #221 call support from argument support (after #40)
                -> #225 seed-axis tangents over their nonzero pairs (after #46)
                if they fit: #44 pattern holes (after #43), #48 sparse derivative outputs (after #43, #47)
