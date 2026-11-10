@@ -315,8 +315,21 @@ class LowerCtx:
   # --- body -----------------------------------------------------------------
 
   def emit_body(self) -> None:
+    users: dict[int, list[Expr]] = {}
     for node in self.fun.nodes:
-      if node.id in self.value_buffers:
+      for arg in node.args:
+        users.setdefault(arg.id, []).append(node)
+    self.sampled_products = {
+      node.id
+      for node in self.fun.nodes
+      if node.op == ExprOp.MATMUL
+      and all(arg.type.pattern is not None for arg in node.args)
+      and len(consumers := users.get(node.id, [])) == 1
+      and consumers[0].op == ExprOp.GATHER
+      and node not in self.fun.outputs
+    }
+    for node in self.fun.nodes:
+      if node.id in self.value_buffers or node.id in self.sampled_products:
         continue  # input (or already lowered)
       rule = _RULES.get(ExprOp(node.op))
       if rule is None:

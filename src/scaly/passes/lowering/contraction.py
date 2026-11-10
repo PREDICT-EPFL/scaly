@@ -9,6 +9,7 @@ from ...ir.expr import Expr, ExprOp
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, LoweringError, _flat
 from .schedule import emit_reduction
+from .plans import lower_sparse_product
 
 
 @lowers(ExprOp.MATMUL)
@@ -37,7 +38,8 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
   if a.type.pattern is not None and b.type.pattern is not None:
-    raise LoweringError("sparse-sparse products require sparse product kernels")
+    lower_sparse_product(ctx, node)
+    return
   left = a.type.pattern is not None
   src, dense = (a, b) if left else (b, a)
   pattern = src.type.pattern

@@ -174,6 +174,9 @@ def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
 
 
 def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | None) -> tuple[Expr | None, ...]:
+  if x.type.pattern is not None and y.type.pattern is not None:
+    active = (0, 1) if active is None else active
+    return _on_pattern(cot @ y.T, x) if 0 in active else None, _on_pattern(x.T @ cot, y) if 1 in active else None
   left = x.type.pattern is not None
   src, dense = (x, y) if left else (y, x)
   pattern = src.type.pattern

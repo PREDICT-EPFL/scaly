@@ -11,7 +11,7 @@ from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries, _constant_condition
-from ...ir.types import stored_indices
+from ...ir.types import CanonicalPattern, stored_indices
 from ..arith import constant
 from .ctx import LowerCtx
 
@@ -22,6 +22,83 @@ class MapRegion:
 
   writes: np.ndarray
   reads: tuple[np.ndarray, ...]
+
+
+@dataclass(frozen=True)
+class SparseProductPlan:
+  """Compressed column traversals, with no table of scalar multiplication pairs."""
+
+  left_slots: np.ndarray
+  left_rows: np.ndarray
+  left_starts: np.ndarray
+  left_stops: np.ndarray
+  right_slots: np.ndarray
+  right_ptr: np.ndarray
+  output_ptr: np.ndarray
+  output: MapRegion
+
+  @staticmethod
+  def build(a: CanonicalPattern, b: CanonicalPattern, logical: np.ndarray, writes: np.ndarray) -> SparseProductPlan:
+    rows, cols = logical // b.shape[1], logical % b.shape[1]
+    order = np.lexsort((rows, cols))
+    columns, counts = np.unique(cols[order], return_counts=True)
+    output_ptr = np.concatenate(([0], np.cumsum(counts)))
+    left_slots = np.lexsort((a.rows, a.cols))
+    left_columns, counts = np.unique(np.asarray(a.cols)[left_slots], return_counts=True)
+    left_ptr = np.concatenate(([0], np.cumsum(counts)))
+    right_slots = np.lexsort((b.rows, b.cols))
+    br, bc = np.asarray(b.rows, dtype=np.int64), np.asarray(b.cols, dtype=np.int64)
+    right_slots = right_slots[np.isin(br[right_slots], left_columns) & np.isin(bc[right_slots], columns)]
+    left_column = np.searchsorted(left_columns, br[right_slots])
+    right_ptr = np.concatenate((np.searchsorted(bc[right_slots], columns), [len(right_slots)]))
+    return SparseProductPlan(
+      left_slots,
+      np.asarray(a.rows, dtype=np.int64)[left_slots],
+      left_ptr[left_column],
+      left_ptr[left_column + 1],
+      right_slots,
+      right_ptr,
+      output_ptr,
+      MapRegion(writes[order], (rows[order],)),
+    )
+
+
+def lower_sparse_product(ctx: LowerCtx, node: Expr, product: Expr | None = None) -> None:
+  """Accumulate one column and write only requested entries, directly in their physical order."""
+  sampled = product is not None
+  product = node if product is None else product
+  a, b = product.args
+  assert a.type.pattern is not None and b.type.pattern is not None
+  out = ctx.alloc_tmp(node)
+  if not node.type.storage_size:
+    return
+  logical = stored_indices(node.type)
+  if sampled:
+    logical = node.attrs["indices"].reshape(-1)[logical]
+  plan = SparseProductPlan.build(a.type.pattern, b.type.pattern, logical, ctx.physical_slots(node, np.arange(node.type.storage_size)))
+  acc = ctx.new_private(node.type.dtype, (a.shape[0],))
+  name = out.attrs["name"]
+  if sampled:
+    # Unsampled rows receive updates too; initialise them once so those additions never read uninitialised memory.
+    rows = np.unique(plan.left_rows)
+    ranges, (i,) = ctx.nest((len(rows),), f"init_{name}")
+    ctx.emit(ranges, [p.store(p.view(acc, [ctx.index_at(rows, i, shared=True)]), p.const_float(0, dtype=node.type.dtype))])
+  columns, (column,) = ctx.nest((len(plan.output_ptr) - 1,), f"column_{name}", kind=RangeKind.SERIAL)
+
+  def bounds(ptr: np.ndarray, index: ProgramNode) -> tuple[ProgramNode, ProgramNode]:
+    return ctx.index_at(ptr, index, shared=True), ctx.index_at(ptr, p.add(index, p.const_int(1)), shared=True)
+
+  outputs, (i,) = ctx.nest((bounds(plan.output_ptr, column),), f"entry_{name}")
+  row = ctx.index_at(plan.output.reads[0], i, shared=True)
+  target = p.view(acc, [row])
+  clear = ctx.nest_body(outputs, [p.store(target, p.const_float(0, dtype=node.type.dtype))])
+  right, (j,) = ctx.reduce((bounds(plan.right_ptr, column),), f"right_{name}")
+  left, (k,) = ctx.reduce(((ctx.index_at(plan.left_starts, j, shared=True), ctx.index_at(plan.left_stops, j, shared=True)),), f"left_{name}")
+  dst = p.view(acc, [ctx.index_at(plan.left_rows, k, shared=True)])
+  term = p.mul(ctx.read_stored(a, plan.left_slots, k), ctx.read_stored(b, plan.right_slots, j))
+  updates = ctx.nest_body(right, ctx.nest_body(left, [p.store(dst, p.add(p.load(dst), term))]))
+  write = ctx.nest_body(outputs, [p.store(p.view(out, [ctx.index_at(plan.output.writes, i, shared=True)]), p.load(target))])
+  ctx.emit(columns, [*clear, *updates, *write])
 
 
 def stored_slots(expr: Expr, logical: np.ndarray) -> np.ndarray:
