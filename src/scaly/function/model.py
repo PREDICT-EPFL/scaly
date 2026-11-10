@@ -252,7 +252,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         return declarations[key[4:]]
       if key.startswith("lam:"):
         decl = None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
-        return _PatternHole(shape_hole=True) if decl is None else decl
+        return _PatternHole(shape_hole=True) if decl is None and layouts.get(key) in (None, "csc", "csr") else decl
       raise ValueError(f"unknown factory input: {key!r}")
 
     input_layouts = dict(zip(source_inputs.names, source_inputs._layout_decls, strict=True))
