@@ -45,3 +45,16 @@ Changing the identity to 11, suppressing the strided schedule and using two
 output lanes each failed its new check. Five source snapshots changed, all
 headers and the sparse-Jacobian and mapped sources stayed identical. Ruff and
 ty pass. The full pre-merge hook is running, including the whole test suite.
+
+The first full run exposed a required hoisting fix: ASSIGN initialization,
+updates and uses cannot split between the invariant prologue and mapped body.
+`hoist_invariant._split` now keeps each scalar's uses together. A new mapped-sum
+NumPy test reproduced an undeclared C accumulator before the fix. The 54 custom
+derivative/JIT regression tests pass after it. Full checks run in tmux session
+`scaly45-premerge`, logging to `/tmp/scaly-45-pre-merge-final.log`, with exit status
+in `/tmp/scaly-45-pre-merge-final.status`, so thread interruptions do not kill them.
+
+Compile evidence is in `/tmp/scaly-45-evidence-{main,branch}/evidence.json` and the
+draft PR description in `/tmp/scaly-45-pr.md`. Counts match for every snapshot.
+Clang 20.1.8 compiles the generated C with gather/scatter disabled. Compile CPU
+seconds are the median of three compilations, not runtime benchmark evidence.
