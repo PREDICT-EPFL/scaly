@@ -39,5 +39,16 @@ Findings and evidence:
 - The float32 NumPy differential passes and fails after perturbing the stage math.
 - `sc.print` rejects float32 in the supplied stack. Filed #373 with source:agent.
   This change tests print removal with a supported boolean diagnostic instead.
-- #314 is first in the merge queue, awaiting its combination's checks. Type checking
-  and the zero-budget build currently fail only because frame_budget is absent.
+- #314's merge-group run failed after upstream added a test depending on the old spill
+  threshold. The section coordinator sent the correction to #76's owner and confirmed
+  #207 stays local until #314 lands. No push, pull request, full suite or review yet.
+- Type checking and the zero-budget build currently fail because frame_budget is absent.
+- Current checks: Ruff lint/format pass, collection passes with 3360 tests, the float32
+  differential and documentation/public-name checks pass (28 cases with two workers),
+  and the documentation site builds. The numeric perturbation fails as expected.
+- The symbol checker rejects malloc injected into the no-budget probe. Both Cortex-M
+  probes leave only sinf/cosf undefined; the supported boolean diagnostic compiles
+  without stdio or undefined symbols when SCALY_PRINTF is empty.
+- Reports record object flash/static RAM and caller-buffer requirements. They exclude
+  startup, target libm and stack. Zig caches do not recreate Clang's side-file stack
+  reports, so this change does not rely on them.

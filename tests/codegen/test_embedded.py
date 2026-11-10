@@ -29,6 +29,31 @@ def _check_symbols(obj: Path) -> None:
   assert not unexpected, f"symbols outside target libm: {sorted(unexpected)}"
 
 
+def _compile(source: Path, obj: Path, cpu: str) -> None:
+  subprocess.run(
+    [
+      "zig",
+      "cc",
+      "-target",
+      "thumb-freestanding-eabihf",
+      f"-mcpu={cpu}+vfp4d16sp",
+      "-ffreestanding",
+      "-Os",
+      "-fno-unwind-tables",
+      "-fno-asynchronous-unwind-tables",
+      "-DSCALY_PRINTF(...)=",
+      f"-I{INCLUDE}",
+      "-c",
+      str(source),
+      "-o",
+      str(obj),
+    ],
+    check=True,
+    capture_output=True,
+    text=True,
+  )
+
+
 def test_embedded_values_and_jacobian_match_numpy() -> None:
   z = np.linspace(-0.7, 0.8, 8, dtype=np.float32)
   values, jac = oracle(z)
@@ -58,20 +83,7 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
   ]
   assert not local, "zero frame budget must spill this oracle's float32 arrays"
   obj = tmp_path / "oracle.o"
-  command = [
-    "zig",
-    "cc",
-    "-target",
-    "thumb-freestanding-eabihf",
-    f"-mcpu={cpu}+vfp4d16sp",
-    "-ffreestanding",
-    "-Os",
-    "-fstack-usage",
-    "-fno-unwind-tables",
-    "-fno-asynchronous-unwind-tables",
-  ]
-  command += ["-DSCALY_PRINTF(...)=", f"-I{INCLUDE}", "-c", str(tmp_path / module.source_name), "-o", str(obj)]
-  subprocess.run(command, check=True, capture_output=True, text=True)
+  _compile(tmp_path / module.source_name, obj, cpu)
   attributes = subprocess.run(["readelf", "-A", str(obj)], check=True, capture_output=True, text=True).stdout
   assert "Tag_CPU_arch: v7E-M" in attributes
   assert "Tag_ABI_VFP_args: VFP registers" in attributes
@@ -86,17 +98,18 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
   printed = write_module(diagnostic, tmp_path, dialect="c", lanes=1, frame_budget=0)
   assert "SCALY_PRINTF(" in printed.source
   print_obj = tmp_path / "diagnostic.o"
-  subprocess.run([*command[:-4], "-c", str(tmp_path / printed.source_name), "-o", str(print_obj)], check=True, capture_output=True, text=True)
+  _compile(tmp_path / printed.source_name, print_obj, cpu)
   _check_symbols(print_obj)
   sizes = subprocess.run(["size", str(obj)], check=True, capture_output=True, text=True).stdout
+  text, data, bss = map(int, sizes.splitlines()[-1].split()[:3])
   inputs = sum(e.type.storage_size * e.type.dtype.itemsize for e in module.fun.inputs)
   outputs = sum(e.type.storage_size * e.type.dtype.itemsize for e in module.fun.outputs)
   report = (
     f"## {cpu}\n\n```text\n{sizes}\n"
+    f"Flash: {text + data} bytes; static RAM: {data + bss} bytes\n"
     f"Caller workspace: {4 * module.workspace_size} bytes; inputs: {inputs} bytes; outputs: {outputs} bytes\n"
     f"Undefined symbols: {', '.join(sorted(_undefined(obj)))}\n"
-    "Stack usage per C function, excluding callees and target libm:\n"
-    f"{obj.with_suffix('.su').read_text()}```\n\n"
+    "```\n\n"
     "Object text includes code and read-only data. Flash is text + data, static RAM is data + bss. "
     "Caller buffers are additional RAM. Target libm, startup code and application stack are excluded.\n"
   )
@@ -106,6 +119,6 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
   # A real extra object dependency proves that the same gate rejects non-libm symbols.
   bad_source, bad_obj = tmp_path / "needs_heap.c", tmp_path / "needs_heap.o"
   bad_source.write_text(module.source + "\nextern void* malloc(unsigned);\nvoid* needs_heap(unsigned n) { return malloc(n); }\n")
-  subprocess.run([*command[:-4], "-c", str(bad_source), "-o", str(bad_obj)], check=True, capture_output=True, text=True)
+  _compile(bad_source, bad_obj, cpu)
   with pytest.raises(AssertionError, match="symbols outside target libm.*malloc"):
     _check_symbols(bad_obj)

@@ -171,7 +171,6 @@ jobs:
             embedded-build/**/embedded_oracle.c
             embedded-build/**/embedded_oracle.h
             embedded-build/**/oracle.o
-            embedded-build/**/oracle.su
             embedded-build/**/report.txt
 
   # A skipped required check counts as passed, so this runs whatever happened before it.

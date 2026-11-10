@@ -622,8 +622,8 @@ The Linux `size` command reports the object sections. Flash usage is
 `text + data`, and static RAM is `data + bss`. Add the caller's input, output
 and workspace buffers to RAM. These object sizes exclude the target libm,
 startup code and application stack, and do not measure a complete firmware
-image. The continuous-integration build records the sizes and per-function
-stack usage for both targets without executing on hardware.
+image. The continuous integration build records the object sizes and caller
+buffer requirements for both targets without executing on hardware.
 
 ## CPU targets, vector lanes, and math libraries
 
