@@ -1,6 +1,7 @@
 """Mapped range fusion preserves scalar sharing, pointer offsets, and memory ordering."""
 
 from collections.abc import Callable
+import importlib
 
 import numpy as np
 import pytest
@@ -372,3 +373,202 @@ def test_shared_seed_outputs_substitute_their_common_graph_once(monkeypatch):
   result = fusion.fuse_ranges(p.program([callee, root]))
   assert not any(node.op == ProgramOp.CALL for node in walk_program(result.args[-1]))
   assert rebuilds < 8 * (depth + width)
+
+
+def _stencil_gradient(length, measurement):
+  x = sc.sym("x", 2)
+  step = _function("stencil_step", [x], [x.sin() + x * x])
+  z = sc.sym("z", (length, 2))
+  residual = z[1:] - sc.vmap(step, length - 1)(z[:-1])
+  cost = (residual * residual).sum()
+  if measurement:
+    cost = cost + (z[:, 0] * z[:, 0]).sum()
+  return _function("stencil_grad", [z], [sc.gradient(cost, z)])
+
+
+@pytest.mark.parametrize("measurement", [False, True])
+def test_stencil_rewrite_work_is_independent_of_stage_count(monkeypatch, measurement):
+  fusion = importlib.import_module("scaly.passes.program.fuse_ranges")
+  original = fusion._rewrite
+  counts = []
+  for length in (64, 4096):
+    calls = []
+
+    def counted(*args):
+      calls.append(None)
+      return original(*args)
+
+    monkeypatch.setattr(fusion, "_rewrite", counted)
+    lower_function(_stencil_gradient(length, measurement))
+    counts.append(len(calls))
+  assert counts[0] > 0
+  assert counts[0] == counts[1]
+
+
+@pytest.mark.parametrize("measurement", [False, True])
+def test_stencil_gradient_matches_numpy(measurement):
+  data = np.linspace(-0.7, 0.8, 18).reshape(9, 2)
+  residual = data[1:] - (np.sin(data[:-1]) + data[:-1] ** 2)
+  expected = np.zeros_like(data)
+  expected[1:] += 2 * residual
+  expected[:-1] -= 2 * residual * (np.cos(data[:-1]) + 2 * data[:-1])
+  if measurement:
+    expected[:, 0] += 2 * data[:, 0]
+  np.testing.assert_allclose(_stencil_gradient(9, measurement)(data), expected)
+
+
+def test_two_block_gathers_upstream_of_map_still_fuse():
+  length = 8
+  x = sc.sym("x", 2)
+  step = _function("upstream_step", [x], [x.sin()])
+  z = sc.sym("z", (length, 2))
+  a, b = sc.sym("a", 2 * length), sc.sym("b", 2 * length)
+  mapped = sc.vmap(step, length)(z)
+  indices = np.repeat([0, 1], length)
+  extra = (sc.gather(a, indices) + sc.gather(b, indices)).reshape((length, 2))
+  result = mapped * extra
+  fn = _function("upstream_values", [z, a, b], [result])
+  _assert_fused(lower_function(fn))
+  data = np.linspace(-0.7, 0.8, 2 * length).reshape(length, 2)
+  av, bv = np.linspace(0.2, 0.6, 2 * length), np.linspace(-0.8, -0.3, 2 * length)
+  expected = np.sin(data) * (av[indices] + bv[indices]).reshape(length, 2)
+  np.testing.assert_allclose(fn(data, av, bv), expected)
+
+
+def _position_dependent_program(case, length=12):
+  original = _raw_program()
+  callee, root = original.args
+  _x, _y, _tmp, mapped, copied = root.args
+  x, y = (p.buffer(name, dtypes.float64, (length,)) for name in ("x", "y"))
+  tmp = p.buffer("tmp", dtypes.float64, (length,), address_space="private")
+  mapped = p.for_(p.range_("i", 0, length), mapped.args[1:])
+  copied = p.for_(p.range_("i", 0, length), copied.args[1:])
+  extra = p.buffer("extra", dtypes.float64, (length,), address_space="private")
+  i = p.var("i")
+  read_x = p.load(p.view(x, [p.div(i, p.const_int(4)) if case in {"few_indices", "stage_indices"} else i]))
+  if case == "fold_trip_consumer":
+    read_x = p.load(p.view(x, [p.mod(i, p.const_int(3))]))
+  if case == "shared_trip_consumer":
+    read_x = p.load(p.view(x, [p.div(i, p.const_int(length // 2))]))
+  read_extra = p.load(p.view(extra, [i]))
+  declarations, upstream = [extra], []
+  rhs = read_x
+  if case == "fold_store":
+    zeros = p.const_buffer("zeros", dtypes.float64, (length,), [0.0] * length)
+    declarations.append(zeros)
+    rhs = p.mul(rhs, p.load(p.view(zeros, [i])))
+  if case == "signed_zero":
+    zeros = p.const_buffer("zeros", dtypes.float64, (length,), [0.0] * (length // 2) + [-0.0] * (length // 2))
+    declarations.append(zeros)
+    rhs = p.div(p.const_float(1), p.load(p.view(zeros, [i])))
+  if case == "fold_aliases":
+    for offset in range(length):
+      rhs = p.mul(rhs, p.sub(read_x, p.load(p.view(x, [p.const_int(offset)]))))
+  if case == "mixed_trips":
+    initialized = p.for_(p.range_("i", 0, length), [p.store(p.view(extra, [i]), p.const_float(0))])
+    partial = p.for_(p.range_("i", 0, length // 2), [p.store(p.view(extra, [i]), p.load(p.view(tmp, [i])))])
+    prepared = p.buffer("prepared", dtypes.float64, (length,), address_space="private")
+    declarations.append(prepared)
+    upstream = [initialized, mapped, partial, p.for_(p.range_("i", 0, length), [p.store(p.view(prepared, [i]), p.mul(read_extra, p.const_float(1)))])]
+    read_extra = p.load(p.view(prepared, [i]))
+  else:
+    upstream = [p.for_(p.range_("i", 0, length), [p.store(p.view(extra, [i]), rhs)]), mapped]
+  if case == "fold_consumer":
+    read_extra = p.mul(read_extra, p.const_float(0))
+  if case == "fold_trip_consumer":
+    read_extra = p.mul(p.sub(read_extra, read_x), p.load(p.view(x, [p.const_int(length - 1)])))
+  if case == "shared_trip_consumer":
+    read_extra = p.add(read_extra, read_x)
+  if case == "stage_indices":
+    read_extra = p.mul(read_extra, p.sub(p.load(p.view(tmp, [i])), p.load(p.view(x, [p.div(i, p.const_int(6))]))))
+  copied = p.for_(copied.args[0], [p.store(p.view(y, [i]), p.add(p.load(p.view(tmp, [i])), read_extra))])
+  root = ProgramNode(root.op, (x, y, tmp, *declarations, *upstream, copied), root.attrs, root.dtype)
+  return p.program([callee, root])
+
+
+@pytest.mark.parametrize(
+  "case",
+  [
+    "few_indices",
+    "fold_store",
+    "fold_aliases",
+    "fold_consumer",
+    "fold_trip_consumer",
+    "shared_trip_consumer",
+    "mixed_trips",
+    "signed_zero",
+    "stage_indices",
+  ],
+)
+def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
+  import ctypes
+  import subprocess
+
+  from scaly.codegen.c import render_program_c
+  from scaly.passes.program import optimize_program
+  from scaly.utils.env import shared_lib_ext, shared_lib_flag
+  from tests.compilers import c_compiler
+
+  length = 12
+  original = _position_dependent_program(case, length)
+  fused = fuse_ranges(original)
+  assert fused is not original
+  assert not any(n.op == ProgramOp.CALL for n in walk_program(fused.args[-1]))
+  verify_program(fused)
+  optimized = optimize_program(original)
+  _assert_fused(optimized)
+  arg = sc.sym("x", length)
+  signature = ConcreteFunction._from_exprs("root", [arg], [arg], ["x"], ["y"])
+  source = tmp_path / "cells.c"
+  library = tmp_path / ("cells" + shared_lib_ext())
+  source.write_text(render_program_c(optimized, signature))
+  subprocess.run([*c_compiler(), "-O2", "-fPIC", shared_lib_flag(), str(source), "-lm", "-o", str(library)], check=True)
+  entry = ctypes.CDLL(str(library)).root
+  ptr = ctypes.POINTER(ctypes.c_double)
+  entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.POINTER(ctypes.c_int), ptr, ctypes.c_int]
+  entry.restype = ctypes.c_int
+  data, out = np.linspace(-0.7, 0.8, length), np.empty(length)
+  assert entry((ptr * 1)(data.ctypes.data_as(ptr)), (ptr * 1)(out.ctypes.data_as(ptr)), None, None, 0) == 0
+  expected = data.copy()
+  if case == "few_indices":
+    expected += data[np.arange(length) // 4]
+  elif case == "mixed_trips":
+    expected[: length // 2] += data[: length // 2]
+  elif case == "signed_zero":
+    with np.errstate(divide="ignore"):
+      expected += 1.0 / np.r_[np.zeros(length // 2), -np.zeros(length // 2)]
+  elif case == "stage_indices":
+    expected += data[np.arange(length) // 4] * (data - data[np.arange(length) // 6])
+  elif case == "shared_trip_consumer":
+    expected += 2 * data[np.arange(length) // (length // 2)]
+  np.testing.assert_allclose(out, expected)
+
+
+@pytest.mark.parametrize("case", ["fold_trip_consumer", "shared_trip_consumer"])
+def test_deferred_load_matches_stage_load_without_position_rewrites(monkeypatch, case):
+  fusion = importlib.import_module("scaly.passes.program.fuse_ranges")
+  rewrite = fusion._rewrite
+  counts = []
+  for length in (64, 4096):
+    calls = []
+
+    def counted(*args):
+      calls.append(None)
+      return rewrite(*args)
+
+    monkeypatch.setattr(fusion, "_rewrite", counted)
+    original = _position_dependent_program(case, length)
+    assert fuse_ranges(original) is not original
+    counts.append(len(calls))
+  assert counts[0] == counts[1]
+
+
+def test_signed_zero_constants_preserve_atan2_quadrants():
+  a = sc.sym("a", 1)
+  stage = _function("zero_stage", [a], [a])
+  x = sc.sym("x", 5)
+  zeros = np.array([0.0, -0.0, 0.0, -0.0, 0.0])
+  result = sc.const(zeros).atan2(sc.vmap(stage, 5)(x).vec())
+  fn = _function("signed_zero", [x], [result])
+  data = -np.ones(5)
+  np.testing.assert_allclose(fn(data), np.arctan2(zeros, data))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,10 +27,19 @@ from .scheduling import ScalarNameAllocator, schedule_values
 from .fuse_elementwise import _has_expensive
 
 
+@dataclass
+class _Cells:
+  trips: np.ndarray
+  values: np.ndarray
+  positions: np.ndarray
+  order: np.ndarray
+
+
 @dataclass(frozen=True)
-class _Cell:
-  trip: int | None
-  value: ProgramNode
+class _Value:
+  node: ProgramNode
+  loads: dict[ProgramNode, np.ndarray]
+  stage_loads: frozenset[ProgramNode]
 
 
 def _rewrite(node: ProgramNode, replacements: dict[ProgramNode, ProgramNode], folded: dict[ProgramNode, ProgramNode]) -> ProgramNode:
@@ -247,7 +255,11 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   names = ScalarNameAllocator(occupied)
   coordinate = names.fresh()
   stage = p.var(coordinate)
-  cells: dict[str, dict[int, _Cell]] = {}
+  no_trip = np.iinfo(np.int64).min
+  cells: dict[str, _Cells] = {}
+  values: list[_Value] = []
+  value_ids: dict[ProgramNode, int] = {}
+  store_count = sum(n.op == ProgramOp.STORE for i in region for n in walk_program(seeds.get(i, body[i])))
   new_constants: list[ProgramNode] = []
   folded: dict[ProgramNode, ProgramNode] = {}
   rewritten: dict[tuple[ProgramNode, tuple[tuple[ProgramNode, ProgramNode], ...]], ProgramNode] = {}
@@ -259,23 +271,65 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       value = rewritten[key] = _rewrite(rhs, replacements, folded)
     return value
 
-  def index_expr(indices: list[int], trips: list[int]) -> ProgramNode:
-    base = indices[0]
-    stride = (indices[-1] - base) // (trips[-1] - trips[0]) if len(trips) > 1 else 0
-    if all(value == base + stride * (trip - trips[0]) for value, trip in zip(indices, trips, strict=True)):
-      return fold_program(p.add(p.const_int(base - stride * trips[0]), fold_program(p.mul(p.const_int(stride), stage))))
-    values = [0] * (trips[-1] - trips[0] + 1)
-    for trip, value in zip(trips, indices, strict=True):
-      values[trip - trips[0]] = value
-    mapping = affine_index_map(np.asarray(values, dtype=np.int64))
-    index = fold_program(p.sub(stage, p.const_int(trips[0])))
+  def intern(node: ProgramNode, loads: dict[ProgramNode, np.ndarray] | None = None, stage_loads: set[ProgramNode] | None = None) -> int:
+    used = set(_loads(node)) if loads else set()
+    pending = {load: indices for load, indices in (loads or {}).items() if load in used}
+    if not pending and node in value_ids:
+      return value_ids[node]
+    result = len(values)
+    values.append(_Value(node, pending, frozenset(stage_loads or ()) & pending.keys()))
+    if not pending:
+      value_ids[node] = result
+    return result
+
+  def groups(columns: list[np.ndarray], count: int, limit: int | None = None) -> list[np.ndarray] | None:
+    inverse = np.zeros(count, dtype=np.int64)
+    first = np.array([0])
+    for column in columns:
+      if np.all(column == column[0]):
+        continue
+      _, ids = np.unique(column, return_inverse=True)
+      _, first, inverse = np.unique(inverse * (int(ids.max()) + 1) + ids, return_index=True, return_inverse=True)
+    if limit is not None and len(first) > limit:
+      return None
+    order = np.argsort(inverse, kind="stable")
+    parts = np.split(order, np.flatnonzero(np.diff(inverse[order])) + 1)
+    return [parts[k] for k in np.argsort(first)]
+
+  def occurrences(trips: np.ndarray):
+    order = np.argsort(trips, kind="stable")
+    starts = np.r_[True, np.diff(trips[order]) != 0]
+    ranks = np.arange(len(order)) - np.maximum.accumulate(np.where(starts, np.arange(len(order)), 0))
+    for occurrence in range(int(ranks.max()) + 1):
+      yield order[ranks == occurrence]
+
+  def defer(load: ProgramNode, indices: np.ndarray, pending: dict[ProgramNode, np.ndarray]) -> ProgramNode:
+    if np.all(indices == indices[0]):
+      return p.load(rebuild_program(load.args[0], (p.const_int(int(indices[0])),)))
+    for existing, previous in pending.items():
+      if existing.args[0].attrs == load.args[0].attrs and existing.dtype == load.dtype and np.array_equal(previous, indices):
+        return existing
+    index = p.var(f"__fuse_index_{len(pending)}")
+    placeholder = p.load(rebuild_program(load.args[0], (index,)))
+    pending[placeholder] = indices
+    return placeholder
+
+  def index_expr(indices: np.ndarray, trips: np.ndarray) -> ProgramNode:
+    base = int(indices[0])
+    stride = int(indices[-1] - base) // int(trips[-1] - trips[0]) if len(trips) > 1 else 0
+    if np.all(indices == base + stride * (trips - trips[0])):
+      return fold_program(p.add(p.const_int(base - stride * int(trips[0])), fold_program(p.mul(p.const_int(stride), stage))))
+    table_values = np.zeros(int(trips[-1] - trips[0]) + 1, dtype=np.int64)
+    table_values[trips - trips[0]] = indices
+    mapping = affine_index_map(table_values)
+    index = fold_program(p.sub(stage, p.const_int(int(trips[0]))))
     period = len(mapping.residual)
     if period == 1:
       result = p.const_int(int(mapping.residual[0]))
     else:
       table = p.const_buffer(names.fresh(), p.dtypes.int64, (period,), mapping.residual.tolist())
       new_constants.append(table)
-      result = p.load(p.view(table, [index if period == len(values) else p.mod(index, p.const_int(period))]))
+      result = p.load(p.view(table, [index if period == len(table_values) else p.mod(index, p.const_int(period))]))
     stride = period
     for dim, coeff in zip(reversed(mapping.dims), reversed(mapping.coeffs), strict=True):
       if coeff:
@@ -334,21 +388,65 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       if len(target.args) != 1:
         return proc
       output_indices = _indices(target.args[0], variables, constants, count)
-      if output_indices is None or len(set(output_indices.tolist())) != count:
+      if output_indices is None or np.any(np.diff(np.sort(output_indices)) == 0):
         return proc
-      output = cells.setdefault(dest, {})
+      if dest not in cells:
+        size = int(np.prod(declarations[dest].attrs["shape"]))
+        cells[dest] = _Cells(np.full(size, no_trip), np.full(size, -1), np.zeros(size, dtype=np.int64), np.empty(0, dtype=np.int64))
+      output = cells[dest]
+      missing = output.values[output_indices] == -1
+      output.order = np.concatenate((output.order, output_indices[missing]))
+
+      def save(positions: np.ndarray, trips: np.ndarray | int, value: int, scheduled: set[ProgramNode] | None = None) -> None:
+        template = values[value]
+        if template.loads:
+          # Indices that coincide at only some positions can expose scalar identities there.
+          bindings = {
+            load: template.loads[load] if load in template.loads else np.full(len(positions), load.args[0].args[0].attrs["value"])
+            for load in _loads(template.node)
+            if load in template.loads or load.args[0].args[0].op == ProgramOp.CONST_INT
+          }
+          leaves = list(bindings)
+          equalities = [
+            bindings[left] == bindings[right]
+            for j, left in enumerate(leaves)
+            for right in leaves[j + 1 :]
+            if left not in (scheduled or ())
+            and right not in (scheduled or ())
+            and left.args[0].attrs == right.args[0].attrs
+            and left.dtype == right.dtype
+          ]
+          parts = groups(equalities, len(positions))
+          assert parts is not None
+          for part in parts:
+            replacements = {}
+            pending = {}
+            for load in leaves:
+              if load not in template.loads:
+                continue
+              indices = bindings[load][part]
+              replacements[load] = defer(load, indices, pending)
+            node = rewrite_value(template.node, replacements)
+            stage_loads = {replacements[load] for load in (scheduled or set()) & replacements.keys()}
+            stage_loads.difference_update(replacements[load] for load in template.loads if load not in (scheduled or ()))
+            indices = output_indices[positions[part]]
+            output.trips[indices] = trips[part] if isinstance(trips, np.ndarray) else trips
+            output.values[indices] = intern(node, pending, stage_loads)
+            output.positions[indices] = np.arange(len(part))
+          return
+        indices = output_indices[positions]
+        output.trips[indices] = trips
+        output.values[indices] = value
+        output.positions[indices] = np.arange(len(positions))
+
       if rhs.op in {ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT} and i not in seeds:
-        for idx in output_indices:
-          output[int(idx)] = _Cell(None, rhs)
+        save(np.arange(count), no_trip, intern(rhs))
         continue
       if i in seeds and not any(load.args[0].attrs["buffer"] in cells for load in _loads(rhs)):
-        if len(ranges) != 1:
+        if len(ranges) != 1 or not np.all(missing):
           return proc
         value = rewrite(rhs, [pattern], rebuild=rebuild_program, fixpoint=False, memo=substituted)
-        for trip, idx in zip(axes[0], output_indices, strict=True):
-          if int(idx) in output:
-            return proc
-          output[int(idx)] = _Cell(int(trip) + seed_offsets[i], value)
+        save(np.arange(count), axes[0] + seed_offsets[i], intern(value))
         continue
       loads = _loads(rhs)
       indexed = []
@@ -361,70 +459,110 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
         if load.args[0].attrs["buffer"] == dest and not np.array_equal(indices, output_indices):
           return proc
         indexed.append(indices)
-      mapped = [j for j, load in enumerate(loads) if load.args[0].attrs["buffer"] in cells or load.args[0].attrs["buffer"] in constant_values]
-      groups: dict[tuple[ProgramNode, ...], dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
-      for position in range(count):
-        inputs = []
-        for j in mapped:
-          name = loads[j].args[0].attrs["buffer"]
-          index = int(indexed[j][position])
-          inputs.append(_Cell(None, constant(constant_values[name][index], loads[j].dtype)) if name in constant_values else cells[name].get(index))
-        if any(cell is None for cell in inputs):
+      mapped = {}
+      for j, load in enumerate(loads):
+        name = load.args[0].attrs["buffer"]
+        indices = indexed[j]
+        if name in constant_values:
+          table = np.asarray(constant_values[name])[indices]
+          _, first, inverse = np.unique(table.view(f"u{table.itemsize}"), return_index=True, return_inverse=True)
+          ids = np.array([intern(constant(value.item(), load.dtype)) for value in table[first]])
+          mapped[j] = (np.full(count, no_trip), ids[inverse], np.zeros(count, dtype=np.int64))
+        elif name in cells:
+          source = cells[name]
+          ids = source.values[indices]
+          if np.any(ids == -1):
+            return proc
+          mapped[j] = (source.trips[indices], ids, source.positions[indices])
+      trips = np.full(count, no_trip)
+      fallback = np.full(count, np.iinfo(np.int64).max)
+      for source_trips, ids, _ in mapped.values():
+        distinct, inverse = np.unique(ids, return_inverse=True)
+        nonconstant = np.array([values[int(idx)].node.op not in {ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT} for idx in distinct])
+        active = (source_trips != no_trip) & nonconstant[inverse]
+        if np.any(active & (trips != no_trip) & (trips != source_trips)):
           return proc
-        present = [cell for cell in inputs if cell is not None]
-        trips = {cell.trip for cell in present if cell.trip is not None and cell.value.op not in {ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT}}
-        if not trips:
-          trips = set(sorted(cell.trip for cell in present if cell.trip is not None)[:1])
-        if len(trips) > 1:
-          return proc
-        if not trips:
-          replacements = dict(zip((loads[j] for j in mapped), (cell.value for cell in present), strict=True))
-          for j, load in enumerate(loads):
-            if j not in mapped:
-              view = ProgramNode(ProgramOp.VIEW, (p.const_int(int(indexed[j][position])),), load.args[0].attrs, load.args[0].dtype)
-              replacements[load] = p.load(view)
-          value = rewrite_value(rhs, replacements)
-          output[int(output_indices[position])] = _Cell(None, value)
-          continue
-        trip = next(iter(trips))
-        groups[tuple(cell.value for cell in present)][trip].append(position)
-      for values, positions in groups.items():
-        for occurrence in range(max(map(len, positions.values()))):
-          trips = sorted(trip for trip, ps in positions.items() if len(ps) > occurrence)
-          ps = [positions[trip][occurrence] for trip in trips]
-          replacements = dict(zip((loads[j] for j in mapped), values, strict=True))
-          for j, load in enumerate(loads):
-            if j not in mapped:
-              idx = index_expr([int(indexed[j][pos]) for pos in ps], trips)
-              view = ProgramNode(ProgramOp.VIEW, (idx,), load.args[0].attrs, load.args[0].dtype)
-              replacements[load] = p.load(view)
-          value = rewrite_value(rhs, replacements)
-          for trip, pos in zip(trips, ps, strict=True):
-            idx = int(output_indices[pos])
-            output[idx] = _Cell(trip, value)
+        trips = np.where(active, source_trips, trips)
+        fallback = np.minimum(fallback, np.where(source_trips == no_trip, np.iinfo(np.int64).max, source_trips))
+      trips = np.where((trips == no_trip) & (fallback != np.iinfo(np.int64).max), fallback, trips)
+      partitions = groups([ids for _, ids, _ in mapped.values()], count)
+      assert partitions is not None
+      for positions in partitions:
+        without_trip = positions[trips[positions] == no_trip]
+        with_trip = positions[trips[positions] != no_trip]
+        batches = [without_trip] if len(without_trip) else []
+        if len(with_trip):
+          batches.extend(with_trip[ps] for ps in occurrences(trips[with_trip]))
+        for ps in batches:
+          replacements = {}
+          pending: dict[ProgramNode, np.ndarray] = {}
+          scheduled = set()
+          inherited = set()
+          has_deferred = any(values[int(ids[ps[0]])].loads for _, ids, _ in mapped.values())
 
-  final: list[tuple[str, ProgramNode, list[int], list[int]]] = []
+          for j, load in enumerate(loads):
+            if j in mapped:
+              _, ids, source_positions = mapped[j]
+              value = values[int(ids[ps[0]])]
+              bindings = {leaf: defer(leaf, indices[source_positions[ps]], pending) for leaf, indices in value.loads.items()}
+              scheduled.update(bindings[leaf] for leaf in value.stage_loads)
+              inherited.update(bindings[leaf] for leaf in value.loads if leaf not in value.stage_loads)
+              replacements[load] = rewrite_value(value.node, bindings) if bindings else value.node
+            elif trips[ps[0]] != no_trip and not has_deferred:
+              index = index_expr(indexed[j][ps], trips[ps])
+              replacements[load] = p.load(rebuild_program(load.args[0], (index,)))
+            else:
+              replacements[load] = defer(load, indexed[j][ps], pending)
+              if trips[ps[0]] != no_trip and replacements[load] in pending:
+                scheduled.add(replacements[load])
+          value = rewrite_value(rhs, replacements)
+          scheduled.difference_update(inherited)
+          save(ps, trips[ps], intern(value, pending), scheduled)
+
+  final: list[tuple[str, ProgramNode, np.ndarray, np.ndarray]] = []
   boundaries: set[int] = set()
   for param in params[proc.attrs["input_count"] :]:
     name = param.attrs["name"]
-    if name not in produced:
+    if name not in produced or name not in cells:
       continue
-    groups: dict[ProgramNode, dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
-    for idx, cell in cells.get(name, {}).items():
-      if cell.trip is None:
+    output = cells[name]
+    indices = output.order
+    trips = output.trips[indices]
+    if np.any(trips == no_trip):
+      return proc
+    resolved = np.empty(len(indices), dtype=np.int64)
+    partitions = groups([output.values[indices]], len(indices))
+    assert partitions is not None
+    for ps in partitions:
+      value = values[int(output.values[indices[ps[0]]])]
+      positions = output.positions[indices[ps]]
+      bindings = {load: offsets[positions] for load, offsets in value.loads.items()}
+      # Group inherited indices before building stage loads to avoid unnecessary lookup tables.
+      parts = groups([offsets for load, offsets in bindings.items() if load not in value.stage_loads], len(ps), store_count)
+      if parts is None:
         return proc
-      groups[cell.value][cell.trip].append(idx)
-    for value, positions in groups.items():
-      for occurrence in range(max(map(len, positions.values()))):
-        trips = sorted(trip for trip, ps in positions.items() if len(ps) > occurrence)
-        indices = [positions[trip][occurrence] for trip in trips]
-        final.append((name, value, trips, indices))
-        for start, end in zip(trips, trips[1:] + [trips[-1] + 2], strict=True):
-          if end != start + 1:
-            boundaries.add(start + 1)
-            boundaries.add(end)
-        boundaries.add(trips[0])
-  if len(final) > sum(n.op == ProgramOp.STORE for i in region for n in walk_program(seeds.get(i, body[i]))):
+      for part in parts:
+        replacements = {}
+        _, first = np.unique(trips[ps[part]], return_index=True)
+        for load, offsets in bindings.items():
+          index = index_expr(offsets[part[first]], trips[ps[part[first]]]) if load in value.stage_loads else p.const_int(int(offsets[part[0]]))
+          replacements[load] = p.load(rebuild_program(load.args[0], (index,)))
+        node = rewrite_value(value.node, replacements) if replacements else value.node
+        resolved[ps[part]] = intern(node)
+    partitions = groups([resolved], len(indices))
+    assert partitions is not None
+    for ps in partitions:
+      value = values[int(resolved[ps[0]])].node
+      for selected in occurrences(trips[ps]):
+        selected = ps[selected]
+        ts, ix = trips[selected], indices[selected]
+        final.append((name, value, ts, ix))
+        ends = np.r_[ts[1:], ts[-1] + 2]
+        gaps = ends != ts + 1
+        boundaries.update((ts[gaps] + 1).tolist())
+        boundaries.update(ends[gaps].tolist())
+        boundaries.add(int(ts[0]))
+  if len(final) > store_count:
     return proc
   bounds = sorted(boundaries)
   if len(bounds) > 2 * len(region) + 2:
@@ -433,16 +571,16 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   for start, stop in zip(bounds, bounds[1:]):
     stores = []
     for name, value, trips, indices in final:
-      if start not in trips:
+      if not np.any(trips == start):
         continue
-      selected = [(trip, idx) for trip, idx in zip(trips, indices, strict=True) if start <= trip < stop]
-      if len(selected) != stop - start:
+      selected = (trips >= start) & (trips < stop)
+      if np.count_nonzero(selected) != stop - start:
         return proc
-      target = p.view(declarations[name], [index_expr([idx for _, idx in selected], [trip for trip, _ in selected])])
+      target = p.view(declarations[name], [index_expr(indices[selected], trips[selected])])
       stores.append(p.store(target, value))
     if stores:
-      assignments, values = schedule_values([store.args[1] for store in stores], names)
-      scheduled = [*assignments, *(p.store(store.args[0], value) for store, value in zip(stores, values, strict=True))]
+      assignments, scheduled_values = schedule_values([store.args[1] for store in stores], names)
+      scheduled = [*assignments, *(p.store(store.args[0], value) for store, value in zip(stores, scheduled_values, strict=True))]
       rng = p.range_(coordinate, start, stop, kind=p.RangeKind.GLOBAL)
       rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
       loops.append(p.for_(rng, scheduled))
