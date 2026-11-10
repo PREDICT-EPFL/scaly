@@ -17,7 +17,7 @@ The frozen devrush extern tests supply the compile/nest/reject cases, rewritten 
       all native content in the JIT key, and export a portable AOT build manifest.
 - [x] Add public exports/docstrings, explicitly exclude API names from published docs and write
       the internal section note and end-to-end example test. No guide page or plugin changes.
-- [ ] Run focused checks, perturb new gates, then all pre-merge checks through the detached
+- [x] Run focused checks, perturb new gates, then all pre-merge checks through the detached
       ~/.scaly-suite/run queue. Existing C snapshots must remain byte-identical.
 - [ ] Commit, push once, open/link a draft PR and get one claude-opus-5-5 high review.
 - [ ] Fix findings together, run relevant checks, get one short delta check on fixes only,
@@ -34,3 +34,7 @@ Full suite and all pre-merge checks are next, through the shared queue.
 First full pre-merge run: 2990 passed, 52 skipped, one coverage-gate failure. Added EXTERN
 to the differential suite's exhaustive classification and all three derivative-refusal modes.
 CModule build helpers are private to keep this interface out of the published reference.
+
+Final pre-review validation: ~/.scaly-suite/run completed wt hook pre-merge --yes with exit 0.
+2994 tests passed, 52 skipped; Ruff, ty, benchmark smoke, docs build and private-name check pass.
+Existing C snapshot files are unchanged. Ready for the one Opus high review.
