@@ -244,9 +244,9 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(outer, 4, [(z, 0, 2)])
 
-  # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
+  # Four buffer slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
-  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 6, 25)
+  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (4, 5, 25)
 
 
 @pytest.mark.parametrize("stages", [1, 5])
