@@ -10,7 +10,7 @@ The compiler run plan and `~/.scaly-suite/RULES.md` override the normal implemen
       copied canonicalization, explicit zeros, errors and the concrete values path.
 - [x] Add `arg(..., pattern=...)`, pattern-aware bindings, layout resolution and deterministic names.
 - [x] Verify lifted declarations preserve holes; inspect frozen devrush tests for useful cases.
-- [ ] Run focused tests, demonstrate a perturbation fails, then the slotted full pre-merge checks.
+- [x] Run focused tests, demonstrate a perturbation fails, then the slotted full pre-merge checks.
 - [ ] Commit, push once, open and link the draft PR, and run cross-review plus any delta check.
 - [ ] Apply review fixes, record evidence and hard-to-undo choices, remove this plan, finish checks,
       mark ready and queue once checks are green.
@@ -25,3 +25,8 @@ bound whole TensorTypes plus resolved leaf layouts as instance keys versus nnz o
 Focused validation: 134 tests, Ruff and ty pass. The new binding tests failed before the change;
 replacing pattern-name tokens with a constant fails both reuse/name cases. Devrush explicitly
 deferred pattern holes and contains no cases to port. Full collection baseline now has 3001 tests.
+
+Full slotted pre-merge hook passed: 2949 passed, 52 skipped; benchmark smoke, docs build,
+Ruff, ty and private-name check passed. C snapshots are byte-identical. README solver example,
+function_composition, mapped_derivatives and function_with_print passed. Seven SciPy formats
+bind and agree with NumPy. No roadmap departures. Cross-review and CI remain.
