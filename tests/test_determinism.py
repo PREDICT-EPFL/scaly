@@ -1,4 +1,4 @@
-"""Generated names stay content-derived: no module in ``src/scaly`` keeps a counter across calls.
+"""Generated C stays independent of hash seeds and process-global counters.
 
 A module-level counter makes a name depend on what the process built before, so the same
 Function would generate different C, and a different cache key, depending on what ran first.
@@ -9,11 +9,82 @@ global that a function rebinds.
 from __future__ import annotations
 
 import ast
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+import scaly as sc
+from scaly.codegen import render_c_api_header, render_c_source
+from scaly.function.concrete import ConcreteFunction
+from scaly.function.sugar import _mapped_call
+from tests.test_c_snapshot import CORPUS
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "scaly"
+
+
+def _mapped_stage() -> ConcreteFunction:
+  @sc.function(sc.group(sc.arg("x"), sc.arg("p", ())), outputs=sc.group(sc.arg("y"), sc.group(sc.arg("cost", ()))))
+  def stage(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, tuple[sc.Expr]]:
+    x, p = inputs
+    return x * p, ((x * x).sum(),)
+
+  return sc.vmap(stage, 3).instantiate(((3, 2), (3,)))
+
+
+def _nested_call_map(layout: str, nseed: int) -> sc.Function:
+  @sc.function(sc.arg("nested_map_x", 2), outputs=sc.arg("y"), name="nested_map_leaf")
+  def leaf(x):
+    return sc.stack([x[0] * x[1], x[1].sin()])
+
+  @sc.function(sc.arg("nested_map_z", 6), outputs=sc.arg("y"), name="nested_call_of_map")
+  def call_of_map(z):
+    return _mapped_call(leaf, 3, [(z, 0, 2)]) * z
+
+  @sc.function(sc.arg("nested_map_w", 2), outputs=sc.arg("y"), name="nested_stage_with_call")
+  def stage_with_call(w):
+    return leaf(w) + w.exp()
+
+  @sc.function(
+    sc.group(sc.arg("outer_map_z", 6), sc.arg("outer_map_seeds", (nseed, 6)), sc.arg("outer_map_cot", 6)),
+    outputs=sc.group(sc.arg("value"), sc.arg("single"), sc.arg("many"), sc.arg("adj")),
+  )
+  def products(inputs):
+    z, seeds, cot = inputs
+    y = call_of_map(z) if layout == "call_of_map" else _mapped_call(stage_with_call, 3, [(z, 0, 2)])
+    return y, sc.stack([sc.jvp(y, z, seeds[i]) for i in range(nseed)]), sc.jvp_many(y, z, seeds), sc.vjp((y,), (z,), (cot,))[0]
+
+  return products
+
+
+def _render_corpus() -> dict[str, tuple[str, str]]:
+  functions: dict[str, sc.Function | ConcreteFunction] = {name: build() for name, build in CORPUS.items()}
+  functions["mapped_stage"] = _mapped_stage()
+  for layout in ("call_of_map", "map_of_call"):
+    for nseed in (1, 3):
+      functions[f"{layout}_{nseed}"] = _nested_call_map(layout, nseed)
+  return {name: (render_c_source(fun), render_c_api_header(fun)) for name, fun in functions.items()}
+
+
+def test_generated_c_is_independent_of_hash_seed() -> None:
+  expected = None
+  for seed in (0, 1, 4, 5, 7, 42):
+    result = subprocess.run(
+      [sys.executable, "-c", "import json; from tests.test_determinism import _render_corpus; print(json.dumps(_render_corpus()))"],
+      env={**os.environ, "PYTHONHASHSEED": str(seed)},
+      cwd=SRC.parents[1],
+      capture_output=True,
+      check=True,
+      timeout=120,
+    )
+    rendered = json.loads(result.stdout)
+    if expected is None:
+      expected = rendered
+    for name, artifacts in rendered.items():
+      assert artifacts == expected[name], f"{name} changed under PYTHONHASHSEED={seed}"
 
 
 def module_counters(source: str) -> list[str]:
