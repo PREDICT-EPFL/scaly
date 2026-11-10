@@ -23,6 +23,8 @@ if TYPE_CHECKING:
   assert_type(csc, Tree[sc.Expr, NumericalArray])
   assert_type(csr, Tree[sc.Expr, NumericalArray])
   assert_type(coordinates, Tree[sc.Expr, NumericalArray])
+  assert_type(sc.arg("holed", pattern.shape, pattern=...), Tree[sc.Expr, NumericalArray])
+  assert_type(sc.arg("holed", pattern=...), Tree[sc.Expr, NumericalArray])
   assert_type(sc.arg("dense", 3), Tree[sc.Expr, np.ndarray])
   assert_type(sc.arg("dense", (3, 4)), Tree[sc.Expr, np.ndarray])
 
