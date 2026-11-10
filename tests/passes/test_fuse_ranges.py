@@ -250,7 +250,7 @@ def test_expensive_initializer_of_shared_assembly_keeps_original_schedule():
   assembled = p.for_(p.range_("i", 0, 5), [p.store(target, p.load(p.view(tmp, [i])))])
   copied = p.for_(p.range_("i", 0, 5), [p.store(p.view(y, [i]), p.add(p.load(target), p.load(at_zero)))])
   body = (x, y, tmp, assembly, computed, mapped, assembled, copied)
-  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, dtype=root.dtype)])
   verify_program(original)
   assert fuse_ranges(original) is original
 
@@ -277,7 +277,7 @@ def test_independent_arithmetic_in_mapped_range_is_bounded(split, depth):
   consumer = copied.args[1]
   copied = p.for_(copied.args[0], [p.store(consumer.args[0], p.add(consumer.args[1], value))])
   body = (x, y, tmp, *setup, mapped, copied)
-  original = p.program([callee, ProgramNode(root.op, body, root.attrs, root.dtype)])
+  original = p.program([callee, ProgramNode(root.op, body, root.attrs, dtype=root.dtype)])
   verify_program(original)
   result = fuse_ranges(original)
   verify_program(result)
