@@ -40,12 +40,10 @@ static inline __attribute__((always_inline, unused)) void lanes_8_8_8_8_vec_st(d
   if (n == SCALY_WIDTH_8_8_8_8) *(lanes_8_8_8_8_vec_mem*)p = v;
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
 }
-#define SCALY_WIDTH_2_2_2_2 (SCALY_LANES < (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2) ? SCALY_LANES : (SCALY_REGISTER_SLOTS == 256 ? 2 : SCALY_REGISTER_SLOTS == 64 ? 2 : SCALY_REGISTER_SLOTS == 32 ? 2 : 2))
-typedef double lanes_2_2_2_2_vec __attribute__((vector_size(8 * SCALY_WIDTH_2_2_2_2)));
-typedef lanes_2_2_2_2_vec lanes_2_2_2_2_vec_mem __attribute__((aligned(8), may_alias));
-static inline __attribute__((always_inline, unused)) void lanes_2_2_2_2_vec_st(double* p, lanes_2_2_2_2_vec v, long long n) {
-  if (n == SCALY_WIDTH_2_2_2_2) *(lanes_2_2_2_2_vec_mem*)p = v;
-  else for (long long i = 0; i < n; ++i) p[i] = v[i];
+static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_sin(lanes_8_8_8_8_vec x) {
+  lanes_8_8_8_8_vec result;
+  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = sin(x[i]);
+  return result;
 }
 
 #define SCALY_SUCCESS 0
@@ -58,27 +56,26 @@ static inline __attribute__((always_inline, unused)) void lanes_2_2_2_2_vec_st(d
 extern "C" {
 #endif
 
-static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* total, const double* x) {
-  lanes_2_2_2_2_vec l;
-  if (n == SCALY_WIDTH_2_2_2_2) l = *(const lanes_2_2_2_2_vec_mem*)(&x[i]);
-  else for (long long k = 0; k < SCALY_WIDTH_2_2_2_2; ++k) l[k] = x[((i + k) < 1 ? (i + k) : 1)];
-  for (long long k = 0; k < n; ++k) total[0] = (total[0] + l[k]);
-}
-static inline void pair_raw(const double* x, double* vector, double* total, double* w) {
-  (void)w;
-  for (long long i_vector = 0; i_vector < 2; ++i_vector) {
-    vector[i_vector] = sin(x[i_vector]);
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* s0, double* totals, const double* xs) {
+  for (long long lane_i_vector = 0; lane_i_vector < 2; lane_i_vector += 1) {
+    double ls[SCALY_WIDTH_8_8_8_8];
+    for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = xs[((2 * ((i + k) < 4 ? (i + k) : 4)) + lane_i_vector)];
+    lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
+    lanes_8_8_8_8_vec r = lanes_8_8_8_8_vec_sin(l);
+    for (long long k = 0; k < n; ++k) s0[(((((i + k) < 4 ? (i + k) : 4) * 2) + lane_i_vector)) + 0] = r[k];
   }
-  total[0] = 0.0;
-  for (long long i_total_start = 0; i_total_start <= 2 - SCALY_WIDTH_2_2_2_2; i_total_start += SCALY_WIDTH_2_2_2_2) {
-    lanes_1(i_total_start, SCALY_WIDTH_2_2_2_2, total, x);
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec lane_acc_total = b;
+  for (long long lane_i_total = 0; lane_i_total < 2; lane_i_total += 1) {
+    double l_2s[SCALY_WIDTH_8_8_8_8];
+    for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = xs[((2 * ((i + k) < 4 ? (i + k) : 4)) + lane_i_total)];
+    lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
+    lane_acc_total = (lane_acc_total + l_2);
   }
-#if (2 % SCALY_WIDTH_2_2_2_2) != 0
-  lanes_1(2 - 2 % SCALY_WIDTH_2_2_2_2, 2 % SCALY_WIDTH_2_2_2_2, total, x);
-#endif
+  lanes_8_8_8_8_vec_st(&totals[((i + 0)) + 0], lane_acc_total, n);
 }
-
-static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const double* s0, double* vectors) {
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, const double* s0, double* vectors) {
   lanes_8_8_8_8_vec l;
   if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 9 ? (i + k) : 9)];
@@ -93,14 +90,17 @@ int multi_output(const double** arg, double** res, int* iw, double* w, int mem) 
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   if (!res[1]) return SCALY_ERR_NULL_RESULT;
   double s0[10];
-  for (long long it_t0 = 0; it_t0 < 5; ++it_t0) {
-    pair_raw((arg[0] + (2 * it_t0)), (s0 + (it_t0 * 2)), (res[1] + it_t0), NULL);
+  for (long long it_t0_start = 0; it_t0_start <= 5 - SCALY_WIDTH_8_8_8_8; it_t0_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(it_t0_start, SCALY_WIDTH_8_8_8_8, s0, res[1], arg[0]);
   }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0, res[1], arg[0]);
+#endif
   for (long long c_vectors_start = 0; c_vectors_start <= 10 - SCALY_WIDTH_8_8_8_8; c_vectors_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_2(c_vectors_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);
+    lanes_3(c_vectors_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);
   }
 #if (10 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_2(10 - 10 % SCALY_WIDTH_8_8_8_8, 10 % SCALY_WIDTH_8_8_8_8, s0, res[0]);
+  lanes_3(10 - 10 % SCALY_WIDTH_8_8_8_8, 10 % SCALY_WIDTH_8_8_8_8, s0, res[0]);
 #endif
   return SCALY_SUCCESS;
 }
