@@ -213,3 +213,39 @@ int main(void) {{
   )
   subprocess.run([*c_compiler(), "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
+
+
+@pytest.mark.parametrize(
+  "input_name,first_output,second_output",
+  [("f_y_t", "y", "z"), ("f_workspace_t", "y", "z"), ("x", "f_z_t", "z"), ("x", "f_workspace_t", "z")],
+)
+def test_c_wrapper_parameters_do_not_hide_later_typedefs(tmp_path, input_name, first_output, second_output) -> None:
+  @sc.function(sc.arg(input_name, 2), outputs=sc.group(sc.arg(first_output), sc.arg(second_output)), name="f")
+  def fun(x):
+    return x * 2, x + 1
+
+  module = render_c_module(fun, lanes=1)
+  (tmp_path / module.header_name).write_text(module.header)
+  source = tmp_path / module.source_name
+  source.write_text(module.source)
+  main = tmp_path / "main.c"
+  exe = tmp_path / "main"
+  main.write_text(
+    f"""
+#include "f.h"
+
+int main(void) {{
+  f_{input_name}_t x = {{{{2, -3}}}};
+  f_{first_output}_t first = {{{{0}}}};
+  f_{second_output}_t second = {{{{0}}}};
+  f_workspace_t scratch;
+  int err = f_call(&x, &first, &second, &scratch);
+  if (err) return err;
+  if (first.data[0] != 4 || first.data[1] != -6) return 10;
+  if (second.data[0] != 3 || second.data[1] != -2) return 11;
+  return f_call(&x, &first, &second, NULL);
+}}
+"""
+  )
+  subprocess.run([*c_compiler(), "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
+  subprocess.run([str(exe)], check=True)

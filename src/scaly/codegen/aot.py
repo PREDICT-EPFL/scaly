@@ -193,15 +193,29 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   res_values: list[str] = []
   lines = ["", "// Typed buffers: one struct per input and output, and the caller-owned workspace."]
   inputs, outputs = buffer_idents(fun)
+  names = NameScope(
+    (
+      symbol,
+      f"{symbol}_with_options",
+      "arg",
+      "res",
+      "solver_options",
+      f"{symbol}_workspace_t",
+      *(f"{symbol}_{ident}_t" for ident in (*inputs, *outputs)),
+    ),
+    header=True,
+  )
   for ident, expr in zip(inputs, fun.inputs, strict=True):
+    param = names.allocate(ident)
     lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
-    params.append(f"const {symbol}_{ident}_t* {ident}")
-    arg_values.append(f"{ident}->data")
+    params.append(f"const {symbol}_{ident}_t* {param}")
+    arg_values.append(f"{param}->data")
   for ident, expr in zip(outputs, fun.outputs, strict=True):
+    param = names.allocate(ident)
     lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
-    params.append(f"{symbol}_{ident}_t* {ident}")
-    res_values.append(f"{ident}->data")
-  workspace = NameScope((symbol, f"{symbol}_with_options", *inputs, *outputs), header=True).allocate("workspace")
+    params.append(f"{symbol}_{ident}_t* {param}")
+    res_values.append(f"{param}->data")
+  workspace = names.allocate("workspace")
   params.append(f"{symbol}_workspace_t* {workspace}")
   lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
   for runtime in (False, True) if solver_backends_used(fun) else (False,):

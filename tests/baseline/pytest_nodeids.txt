@@ -1505,6 +1505,10 @@ tests/codegen/test_jit.py::test_scalar_math_override_reaches_compilation
 tests/codegen/test_jit.py::test_threads_share_a_cold_cache
 tests/codegen/test_jit.py::test_unsupported_lowering_still_raises_jit_unavailable
 tests/codegen/test_jit.py::test_vector_math_override_rejects_invalid_values[sleef]
+tests/codegen/test_name_clash.py::test_c_wrapper_parameters_do_not_hide_later_typedefs[f_workspace_t-y-z]
+tests/codegen/test_name_clash.py::test_c_wrapper_parameters_do_not_hide_later_typedefs[f_y_t-y-z]
+tests/codegen/test_name_clash.py::test_c_wrapper_parameters_do_not_hide_later_typedefs[x-f_workspace_t-z]
+tests/codegen/test_name_clash.py::test_c_wrapper_parameters_do_not_hide_later_typedefs[x-f_z_t-z]
 tests/codegen/test_name_clash.py::test_cpp_keyword_inputs_and_self_named_sparse_output
 tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[SCALY_SUCCESS]
 tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[_Upper]
