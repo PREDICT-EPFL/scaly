@@ -223,7 +223,7 @@ def test_sparse_seeded_functions_and_factory_preserve_source_layouts(layout) -> 
   expected = np.cos(source.toarray()) * direction.toarray()
   for derivative in (forward, adjoint):
     result = derivative(x, seed)
-    assert isinstance(result, sparse.csc_array)
+    assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
     np.testing.assert_allclose(result.toarray(), expected)
   factory = stage.factory("sparse_seeded_factory", ["x", "fwd:x", "lam:y"], ["y", sc.factory.Fwd("y", "x"), sc.factory.Adj("y", "x")])
   assert factory.inputs is not None and factory.outputs is not None
@@ -292,10 +292,60 @@ def test_sparse_custom_rules_preserve_boundaries_and_reject_different_patterns(l
   for derivative in (sc.forward(ruled), sc.adjoint(ruled)):
     call: Any = derivative
     result = call(declared.numerical_values(primal, PATTERN.shape), declared.numerical_values(seed, PATTERN.shape))
-    assert isinstance(result, sparse.csc_array)
+    assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
+    assert result.format == declared.format
     np.testing.assert_allclose(result.toarray(), 3 * primal.toarray() * seed.toarray())
   other = CanonicalPattern(PATTERN.shape, (0, 1, 2, 2), (0, 1, 0, 3))
   wrong_type = replace(type_, pattern=other)
   wrong = sc.function(x, dx, outputs=sc.arg("bad", wrong_type), name="sparse_custom_wrong")(lambda x, dx: sc.pack(sc.values(dx), other))
   with pytest.raises(TypeError, match="rule returns types"):
     sc.custom_derivative(source, jvp=wrong)
+
+
+@pytest.mark.parametrize("input_order,output_order", [("csr", "csc"), (COORDINATE_LAYOUT, "csr"), ("csc", COORDINATE_LAYOUT)])
+def test_sparse_derived_results_inherit_the_primal_leaf_layout(input_order, output_order):
+  type_ = sc.TensorType(PATTERN.shape, pattern=PATTERN)
+  inp = sc.arg("x", type_, layout=input_order)
+  out = sc.arg("y", type_, layout=output_order)
+  stage = sc.function(inp, outputs=out, name="derived_sparse_layout")(lambda x: x.sin())
+  objective = sc.function(inp, name="derived_sparse_objective")(lambda x: (x * x).sum())
+  source = sparse.coo_array(([0.2, -0.5, 1.2, 0.7], (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
+  seed = sparse.coo_array(([1.0, -2.0, 0.0, 3.0], (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
+  expected = np.cos(source.toarray()) * seed.toarray()
+  cases = (
+    (sc.forward(stage), out.layouts[0], (source, seed), expected),
+    (sc.adjoint(stage), inp.layouts[0], (source, seed), expected),
+    (sc.gradient(objective), inp.layouts[0], (source,), 2 * source.toarray()),
+  )
+  for derivative, layout, args, reference in cases:
+    assert layout is not None
+    assert derivative.instantiate().output_tree.layouts[0] is layout
+    result = derivative(*args)
+    assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
+    np.testing.assert_allclose(result.toarray(), reference)
+    np.testing.assert_allclose(result.data, reference[layout.rows, layout.cols])
+
+
+def test_sparse_ad_helper_boundaries_use_canonical_order():
+  from scaly.ir.expr import topo
+
+  type_ = sc.TensorType(PATTERN.shape, pattern=PATTERN)
+  stage = sc.function(sc.arg("x", type_, layout="csr"), name="canonical_helper_stage")(lambda x: x.sin())
+  mapped = sc.vmap(stage, 3)
+  objective = sc.function(sc.arg("x", sc.TensorType((3, *PATTERN.shape), pattern=PATTERN), layout="csr"), name="canonical_helper_loss")(
+    lambda x: mapped(x).sum()
+  )
+  derivative = sc.gradient(objective).instantiate()
+  helpers = []
+  pending = [derivative]
+  visited = set()
+  while pending:
+    function = pending.pop()
+    if function in visited:
+      continue
+    visited.add(function)
+    if function.role is not None:
+      helpers.append(function)
+      assert all(layout is None or layout.format == "csr" for layout in (*function.input_tree.layouts, *function.output_tree.layouts))
+    pending.extend(node.attrs["callee"] for node in topo(function.outputs) if node.op in {sc.ExprOp.CALL, sc.ExprOp.VMAP})
+  assert helpers

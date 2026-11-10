@@ -80,3 +80,32 @@ All 24 sparse AD cases and 73 AD/custom/snapshot cases pass, and mutations detec
 regressions. The full hook is running on the fixes. Opus's review is still pending; collect it
 before the one delta check for each reviewer. Commit and push these fixes, then remove the plan
 only after review work is complete. Never merge or run gh stack.
+
+
+Opus reviewed the current head and independently confirmed the fixed broadcast defect. Its
+remaining findings are API source-listing leaks, sparse generated headers that still claim dense
+buffers, and derivative results defaulting to CSC instead of inheriting leaf layout. The source
+filters and result-layout fixes are implemented and pass 77 focused cases. Cheap notes addressed:
+internal AD helper boundaries now use canonical CSR order, CSC permutation uses NumPy lexsort,
+and the column-colored sparse-input Hessian fallback will be named with the temporary paths.
+The layout field stays in the instance key because the task explicitly requires it, even though
+layouts cannot vary within a fully declared Function today. The static typing limit stays noted.
+
+The header refusal is prepared in untracked `sparse_header_refusal.patch`; `git apply --check`
+passes and both bad headers were reproduced. It is NOT applied: the maintainer's brief forbids
+editing another batch task's files, and the #274 audit assigns aot.py/cpp.py interfaces to #43.
+An asynchronous question asks permission for this narrow refusal. Do not apply it before approval.
+All other changes are independently testable; the complete hook is running on them.
+
+The coordinator also requests a final-report-only inventory of all #42 choices the sparse roadmap
+section left open or that depart from it, with alternatives/reasons, file/function, undo cost and
+logical-size work, plus every reviewer disagreement and its resolution. Do not put that inventory
+in the PR description. Main review and Sol agreed on the broadcast defect; no explicit reviewer
+disagreement has appeared. Sol's low delta check approved all three earlier fixes.
+
+
+All non-header Opus fixes pass the full suite: 2,848 passed and 52 optional skips, with 2,900
+collection entries. The full hook's benchmark smoke is finishing. The static typing limit now
+has follow-up #288 in the 0.2.0 backlog, blocked by #42. No main-review/Sol disagreement has
+been observed; the main reviewer independently reproduced Sol's broadcast bug and confirmed
+its fix. The complete Opus delta check still waits on the header-ownership answer.

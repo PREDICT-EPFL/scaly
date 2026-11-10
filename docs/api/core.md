@@ -95,6 +95,8 @@ expression graph for inspection and export.
 ## Builders
 
 ::: scaly.ir.expr.dot
+    options:
+      show_source: false
 
 ::: scaly.ir.expr.sumsqr
 

@@ -134,7 +134,7 @@ def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | st
 
 
 def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, Array]:
-  output_tree = arg(result.output_names[0], result.outputs[0].type)
+  output_tree = arg(result.output_names[0], result.outputs[0].type, layout=result.output_tree.layouts[0] or "csc")
   return result._with_trees(input_tree, output_tree)
 
 

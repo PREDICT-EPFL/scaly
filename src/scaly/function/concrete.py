@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Seq
 
 from ..ir.expr import Expr, ExprOp, check_prints_reach, linear_combination, recording_prints, topo
 from ..ir.expr_spec import verify_expr
-from ..ir.layout import SparseLayout
+from ..ir.layout import SparseLayout, sparse_layout
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
 from .tree import NumericalArray, Tree, flat_tree, flat_parameters, inferred_outputs
@@ -206,6 +206,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     input_layouts: tuple[SparseLayout | None, ...] | None = None,
     output_layouts: tuple[SparseLayout | None, ...] | None = None,
   ) -> ConcreteFunction[Any, Any, Any, Any]:
+    if role is not None:
+      if input_layouts is None:
+        input_layouts = tuple(sparse_layout(expr.type.pattern, "csr") if expr.type.pattern is not None else None for expr in inputs)
+      if output_layouts is None:
+        output_layouts = tuple(sparse_layout(expr.type.pattern, "csr") if expr.type.pattern is not None else None for expr in outputs)
     input_tree = flat_parameters(tuple(input_names), tuple(expr.type for expr in inputs), layouts=input_layouts)
     output_tree = flat_tree(tuple(output_names), tuple(expr.type for expr in outputs), layouts=output_layouts)
     return cls.build(
@@ -466,7 +471,13 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       ret_output_names.append(output_name)
       ret_sparsities.append(sparsity)
       ret_coloring_widths.append(coloring_width)
-      ret_layouts.append(output_layouts.get(spec) if isinstance(spec, str) else None)
+      layout = output_layouts.get(spec) if isinstance(spec, str) else None
+      if not isinstance(spec, str):
+        if spec.kind == "fwd":
+          layout = output_layouts.get(spec.of)
+        elif spec.kind in {"adj", "grad"}:
+          layout = input_layouts.get(spec.wrt)
+      ret_layouts.append(layout)
     return ConcreteFunction._from_exprs(
       name,
       ret_inputs,

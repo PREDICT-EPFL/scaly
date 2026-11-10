@@ -139,7 +139,7 @@ def sparse_layout(pattern: CanonicalPattern, layout: Layout = "csc") -> SparseLa
       format_, order = "coo", tuple(map(int, np.argsort(permutation)))
     elif layout in ("csc", "csr"):
       format_ = layout
-      order = tuple(sorted(range(pattern.nnz), key=lambda i: (pattern.cols[i], pattern.rows[i]))) if layout == "csc" else tuple(range(pattern.nnz))
+      order = tuple(map(int, np.lexsort((pattern.rows, pattern.cols)))) if layout == "csc" else tuple(range(pattern.nnz))
     else:
       raise ValueError("sparse layout must be 'csc', 'csr', or a coordinate pattern")
     cached = SparseLayout(pattern, format_, order)
