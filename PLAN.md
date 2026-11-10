@@ -34,5 +34,5 @@ Removing call masks fails both regressions; substituting cot != 0 fails both
 zero-cotangent Hessians; removing the helper cache flag fails its regression.
 Mapped helpers pass the condition as nondifferentiable 0/1 floats and return
 input activity beside the adjoints, since #55 owns typed helper leaves. Nested
-conditions also survive the structural transpose. The original #320 head must
-be replaced with its rebased head before the first push, per the coordinator.
+conditions also survive the structural transpose. Rebased onto the updated #320 branch without conflicts before the first push,
+per the coordinator. The full check was still queued when the rebase finished.
