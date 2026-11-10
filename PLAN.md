@@ -16,7 +16,7 @@ request with `gh pr merge --squash`. No generated-code timing measurements.
       canonical compact values at the frontend. Preserve ordinary symbolic sparse arguments.
 - [x] Cover CSC, CSR, coordinate order, a non-involutive permutation, batched leaves, empty
       patterns and map lengths, overlapping and broadcast windows, and derivative routing.
-- [ ] Run focused tests and show the regressions fail when the fix is perturbed. Refresh the
+- [x] Run focused tests and show the regressions fail when the fix is perturbed. Refresh the
       complete pytest collection baseline and run the pre-merge hook, preserving C snapshots.
 - [ ] After #289 merges, fetch and rebase onto main as directed, resolve only in-scope conflicts,
       rerun checks, push and open a draft pull request against main.
@@ -35,3 +35,15 @@ All full-suite runs now use the shared `~/.scaly-suite.lock` and eight workers, 
 `nohup setsid`. Run `flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8 wt hook
 pre-merge --yes`, capture a temporary log and exit file, and poll the exit file. Run the full
 hook only on a state intended for push. Focused tests use at most two workers.
+
+The detached retry passed the complete pre-merge hook, including 2998 passed / 52 skipped,
+benchmark smoke, documentation and private-name checks. Log and exit file:
+`/tmp/scaly-300-retry.Uoz8GT/premerge.{log,exit}`. The first detached lock wait was terminated
+with exit 143 before any checks ran. Collection has 3050 tests; the focused run has 120 passed.
+C snapshots are unchanged. No dedicated timing measurements were taken.
+
+The coordinator now requires GitHub reads through REST because the shared GraphQL quota ran
+out. Check `pulls/289` at most once per five minutes; the 18:16 UTC status still has #286,
+#287 and #289 in the queue. Check the task PR's checks at most once per five minutes, use T3
+watches for wakes, and queue it once with `gh pr merge --squash --auto` after verdict and green
+checks. A rate-limit error means waiting for the reset rather than declaring failure.
