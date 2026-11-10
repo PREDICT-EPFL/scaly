@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
-from ...ir.program import ProgramNode, ProgramOp, buffer, for_, walk_program
+from ...ir.program import ProgramNode, ProgramOp, buffer, walk_program
 from ...utils.names import NameScope
 from ._common import (
   name_scope,
@@ -92,7 +92,7 @@ def _hoist_proc(
     ]
     new_body.extend(bufs)
     new_body.append(_call(prologue, [*(c.args[k] for k in used), *bufs]))
-    new_body.append(for_(rng, [_call(hoisted, [*c.args[:n_in], *bufs, *c.args[n_in:]])]))
+    new_body.append(ProgramNode(stmt.op, (rng, _call(hoisted, [*c.args[:n_in], *bufs, *c.args[n_in:]])), stmt.attrs, stmt.dtype))
   return proc if len(new_body) == len(body) else _rebuild_proc(proc, params, new_body)
 
 
@@ -120,13 +120,32 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope,
   for i, (_, writes) in refs.items():
     for b in writes:
       writers.setdefault(b, set()).add(i)
+  carried_vars = {
+    n.attrs["target" if n.op == ProgramOp.ASSIGN else "name"]
+    for loop in walk_program(proc)
+    if loop.op == ProgramOp.FOR and loop.args[0].attrs.get("carried")
+    for n in walk_program(loop)
+    if n.op in (ProgramOp.VAR, ProgramOp.RANGE, ProgramOp.ASSIGN)
+  }
+  carried_work = {
+    i
+    for i, stmt in enumerate(body)
+    if any(
+      (n.op == ProgramOp.RANGE and n.attrs.get("carried"))
+      or (n.op == ProgramOp.VAR and n.attrs["name"] in carried_vars)
+      or (n.op == ProgramOp.ASSIGN and n.attrs["target"] in carried_vars)
+      for n in walk_program(stmt)
+    )
+  }
   opaque_calls = {
     i
     for i, stmt in enumerate(body)
     if stmt.op != ProgramOp.BUFFER and any(n.op == ProgramOp.CALL and n.attrs["callee"] not in pure for n in walk_program(stmt))
   }
   call_buffers = {name for i in opaque_calls for name in stmt_refs[i].reads | stmt_refs[i].writes}
-  hoist = {i for i, (reads, writes) in refs.items() if not writes & outputs and i not in opaque_calls and not (reads | writes) & call_buffers}
+  hoist = {
+    i for i, (reads, writes) in refs.items() if not writes & outputs and i not in opaque_calls | carried_work and not (reads | writes) & call_buffers
+  }
   while True:
     known = fixed | {b for b, ws in writers.items() if ws <= hoist}
     kept = {i for i in hoist if refs[i][0] <= known and refs[i][1] <= known}

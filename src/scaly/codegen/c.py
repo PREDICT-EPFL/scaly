@@ -275,7 +275,9 @@ def _emit_statement(
   options_name: str = "solver_options",
 ) -> None:
   pad = " " * indent
-  if stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
+  if stmt.op == ProgramOp.BLOCK:
+    _emit_body(list(stmt.args), ptr_expr, lines, indent, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+  elif stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
@@ -284,9 +286,14 @@ def _emit_statement(
     stop = _emit_scalar(rng.args[1], ptr_expr)
     step = _emit_scalar(rng.args[2], ptr_expr)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
-    lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
+    if stmt.attrs.get("exit_var"):
+      lines.append(f"{pad}long long {name} = {start};")
+    declaration = "" if stmt.attrs.get("exit_var") else "long long "
+    lines.append(f"{pad}for ({declaration}{name} = {start}; {name} < {stop}; {incr}) {{")
     _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
     lines.append(f"{pad}}}")
+  elif stmt.op == ProgramOp.BREAK_IF:
+    lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) break;")
   elif stmt.op == ProgramOp.STORE:
     _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.STORE_PAIR:

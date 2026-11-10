@@ -28,7 +28,7 @@ def _unroll_unit_loops_proc(proc: ProgramNode) -> ProgramNode:
 
 
 def _unroll_unit_loop_stmt(stmt: ProgramNode) -> list[ProgramNode]:
-  if stmt.op != ProgramOp.FOR:
+  if stmt.op != ProgramOp.FOR or stmt.attrs.get("exit_var"):
     return [stmt]
 
   rng, *body = stmt.args

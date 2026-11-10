@@ -69,7 +69,7 @@ def _loops(stmt: ProgramNode) -> tuple[list[ProgramNode], tuple[ProgramNode, ...
   ranges = []
   while stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
-    if trip_count(rng) is None or trip_count(rng) == 0 or rng.attrs["kind"] == p.RangeKind.REDUCE:
+    if rng.attrs.get("carried") or trip_count(rng) is None or trip_count(rng) == 0 or rng.attrs["kind"] == p.RangeKind.REDUCE:
       return None
     ranges.append(rng)
     body = stmt.args[1:]

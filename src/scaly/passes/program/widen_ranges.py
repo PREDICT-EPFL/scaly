@@ -80,13 +80,14 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         return ProgramNode(stmt.op, (rng, *(transform(child) for child in stmt.args[1:])), stmt.attrs, stmt.dtype)
 
       count = trip_count(rng)
-      if count is None or count < 2 or rng.args[2].attrs.get("value") != 1 or (lanes != "auto" and count < 2 * lanes):
+      if rng.attrs.get("carried") or count is None or count < 2 or rng.args[2].attrs.get("value") != 1 or (lanes != "auto" and count < 2 * lanes):
         return recurse()
       if rng.attrs.get("mapped"):
         inner = _inline_calls(inner, procedures, spellings)
       nodes = list(walk_program(p.block(*inner)))
       if any(
-        n.op in (ProgramOp.CALL, ProgramOp.PRINT)
+        n.op in (ProgramOp.CALL, ProgramOp.PRINT, ProgramOp.BREAK_IF)
+        or (n.op == ProgramOp.RANGE and n.attrs.get("carried"))
         or (n.op == ProgramOp.FOR and any(a.op != ProgramOp.CONST_INT for a in n.args[0].args))
         or (n.dtype.is_floating and n.dtype.bits != 64)
         or (n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR) and (not n.dtype.is_floating or n.dtype.bits != 64))

@@ -97,6 +97,8 @@ def _layout(stmt: ProgramNode, masks: dict[str, ProgramNode]) -> tuple[_Layout, 
   if stmt.op != ProgramOp.FOR or len(stmt.args) != 2:
     return None
   rng, store = stmt.args
+  if rng.attrs.get("carried"):
+    return None
   start, stop, step = (a.attrs.get("value") if a.op == ProgramOp.CONST_INT else None for a in rng.args)
   name = rng.attrs["name"]
   if start != 0 or step != 1 or stop is None or stop <= 0 or store.op != ProgramOp.STORE:
