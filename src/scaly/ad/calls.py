@@ -29,6 +29,12 @@ def _tangent_symbol(name: str, primal: Expr, batch: tuple[int, ...] = ()) -> Exp
   return Expr(ExprOp.INPUT, type=TensorType((*batch, *primal.shape), primal.type.dtype, primal.type.diff, primal.type.pattern), name=name)
 
 
+def _masked_seed(cot: Expr, condition: Expr) -> Expr:
+  compact = values(cot)
+  seed = where(condition, compact, zeros_like(compact))
+  return seed if cot.type.pattern is None else pack(seed, cot.type.pattern, shape=cot.shape)
+
+
 def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], nseed: int, pushforward: _Pushforward) -> tuple[Expr | None, ...]:
   """Tangents of the selected results of ``callee``, with ``seeds`` keyed by input index.
 
@@ -422,15 +428,16 @@ def _vmap_adj_function(
     lam = _tangent_symbol(lam_name, callee.outputs[output_index])
     mask_name = f"mask:{callee.output_names[output_index]}"
     # Helper leaves are float64 until typed lowering lands; the condition travels as nondifferentiable 0/1 values.
-    mask = Expr(ExprOp.INPUT, type=TensorType(lam.shape, lam.type.dtype, diff=False), name=mask_name) if masked else None
-    seed = lam if mask is None else where(cast_expr(mask, dtypes.bool_), lam, zeros_like(lam))
+    mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype, diff=False), name=mask_name) if masked else None
+    seed = lam if mask is None else _masked_seed(lam, cast_expr(mask, dtypes.bool_))
     grads = body_cotangents(callee, output_index, active_formals, seed, pullback)
     parts = [values(grad).vec() for grad in grads]
     if masked:
       for grad in grads:
-        condition = cotangent_mask(grad)
+        compact = values(grad)
+        condition = cotangent_mask(compact)
         ones = Expr.const(np.ones(grad.type.storage_shape, dtype=grad.type.dtype.numpy()), dtype=grad.type.dtype)
-        parts.append((ones if condition is None else where(condition, ones.reshape(grad.shape), zeros_like(grad))).vec())
+        parts.append((ones if condition is None else where(condition, ones, zeros_like(compact))).vec())
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat(parts)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -519,12 +526,12 @@ def _call_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None, *, pullback
   lam = _tangent_symbol(f"lam:{callee.result_names[output_idx]}", callee_out)
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   replacements[lam.id] = cot
-  condition = cotangent_mask(cot)
+  condition = cotangent_mask(values(cot))
   seed = lam
   if condition is not None:
-    mask = Expr(ExprOp.INPUT, type=TensorType(lam.shape, dtypes.bool_), name=f"mask:{callee.result_names[output_idx]}")
-    replacements[mask.id] = condition | Expr.const(np.zeros(cot.shape, dtype=bool), dtype=dtypes.bool_)
-    seed = where(mask, lam, zeros_like(lam))
+    mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, dtypes.bool_), name=f"mask:{callee.result_names[output_idx]}")
+    replacements[mask.id] = condition | Expr.const(np.zeros(cot.type.storage_shape, dtype=bool), dtype=dtypes.bool_)
+    seed = _masked_seed(lam, mask)
   indices = tuple(range(len(args))) if active is None else active
   grads = body_cotangents(callee, output_idx, indices, seed, pullback)
   adjoints = dict(zip(indices, grads, strict=True))

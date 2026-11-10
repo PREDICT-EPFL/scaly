@@ -40,3 +40,9 @@ per the coordinator. The full check was still queued when the rebase finished.
 Full pre-merge check passed through the shared queue: 3,138 tests passed,
 52 skipped, benchmark smoke, docs, type, format, lint and private-name checks green.
 All 48 extra C/header artifacts still match the updated base byte for byte.
+
+Correctness review found sparse mapped seeds using logical rather than stored coordinates
+and a scatter transpose losing the source shape in a second reverse derivative. Both
+reproduced in new tests. Seeds, sparse partials and activity now use stored coordinates,
+and the scatter transpose restores its source shape. Added ordinary/mapped sparse sin
+and sqrt cases, plus second reverse derivatives through a broadcast. Opus review pending.

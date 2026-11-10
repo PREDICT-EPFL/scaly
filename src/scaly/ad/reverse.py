@@ -126,7 +126,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
   if expr.op == ExprOp.SCATTER:
     if args[0].type.pattern is not None:
       return (_stored_movement_vjp(expr, cot),)
-    return (gather(cot, expr.attrs["indices"]),)
+    return (gather(cot, expr.attrs["indices"]).reshape(args[0].shape),)
   if expr.op == ExprOp.STACK:
     return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
   if expr.op == ExprOp.CONCAT:

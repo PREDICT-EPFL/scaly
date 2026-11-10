@@ -14,6 +14,7 @@ import pytest
 import scaly as sc
 from scaly.ad import finite_difference
 from scaly.function.sugar import _mapped_call
+from scaly.ir.types import CanonicalPattern
 
 WHERE_POINT = np.array([0.0, -1.0, -0.0, 4.0])
 WHERE_GRAD = np.array([1.0, 0.0, 1.0, 0.25 + 0.25 - 1.0 / 16.0])
@@ -307,6 +308,48 @@ def test_two_mapped_calls_merge_their_masks_before_a_singular_partial() -> None:
   grad, jac = derivatives(np.array([0.0, 4.0, -1.0, 9.0]))
   np.testing.assert_allclose(grad, [0.0, 0.5, 0.0, 5.0 / 6.0], rtol=1e-15)
   np.testing.assert_allclose(grad, jac.sum(axis=0), rtol=1e-15)
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+@pytest.mark.parametrize("singular", [False, True])
+def test_called_masks_use_stored_coordinates_for_sparse_outputs(mapped: bool, singular: bool) -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 2))
+
+  @sc.function(sc.arg("u", sc.TensorType(pattern.shape, pattern=pattern)), outputs=sc.arg("r"), name="sd_sparse_sin")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return u.sqrt() if singular else u.sin()
+
+  size = 4 if mapped else 2
+
+  @sc.function(sc.arg("x", size), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_sparse_mask")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    sparse = sc.pack(x.reshape((2, 2)), pattern) if mapped else sc.pack(x, pattern)
+    chosen = sc.where(x > 0.0, sc.values(sc.vmap(stage, 2)(sparse) if mapped else stage(sparse)).vec(), 0.0)
+    return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
+
+  point = np.array([0.0, 4.0, -1.0, 9.0]) if mapped else np.array([0.0, 4.0])
+  grad, jac = derivatives(point)
+  expected = np.zeros_like(point)
+  active = point > 0.0
+  expected[active] = 0.5 / np.sqrt(point[active]) if singular else np.cos(point[active])
+  np.testing.assert_allclose(grad, expected, rtol=1e-15)
+  np.testing.assert_array_equal(grad, jac.sum(axis=0))
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_called_masks_preserve_broadcast_shapes_in_a_second_reverse_derivative(mapped: bool) -> None:
+  @sc.function(sc.arg("u", 1), outputs=sc.arg("r"), name="sd_bcast_sin")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return u.sin() + np.zeros((2, 2))
+
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("cost"), name="sd_bcast_loss")
+  def loss(x: sc.Expr) -> sc.Expr:
+    y = sc.vmap(stage, 1)(x.reshape((1, 1))) if mapped else stage(x)
+    return sc.where(x > 0.0, y, 0.0).sum()
+
+  second = sc.gradient(sc.gradient(loss))
+  np.testing.assert_allclose(second(np.array([1.0])), [-4.0 * np.sin(1.0)], rtol=1e-15)
+  np.testing.assert_array_equal(second(np.array([0.0])), [0.0])
 
 
 def test_reverse_mode_refuses_an_integer_or_bool_output() -> None:
