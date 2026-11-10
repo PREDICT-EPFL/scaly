@@ -36,4 +36,7 @@ Evidence so far:
   the small Program reproduction covers the same packing hazard on main's IR.
 - The first narrow run passed 56 tests, including the existing NumPy references for both
   reported examples and all C snapshots. No snapshot regeneration so far.
-- Full merge hooks are running; final code needs a complete run after the workspace change.
+- Foreground merge hooks were interrupted by two provider-stream closures and have no final
+  result. A fresh final run is detached with nohup/setsid. Poll
+  /tmp/scaly-163-pre-merge.exit for its exit status and /tmp/scaly-163-pre-merge.log for evidence.
+  Check its process before restarting. Do not start another suite alongside this run.
