@@ -127,9 +127,19 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope,
   }
   call_buffers = {name for i in opaque_calls for name in stmt_refs[i].reads | stmt_refs[i].writes}
   hoist = {i for i, (reads, writes) in refs.items() if not writes & outputs and i not in opaque_calls and not (reads | writes) & call_buffers}
+  scalar_uses: dict[str, set[int]] = {n.attrs["target"]: set() for n in walk_program(proc) if n.op == ProgramOp.ASSIGN}
+  for i, stmt in enumerate(body):
+    for node in walk_program(stmt):
+      name = node.attrs.get("target") if node.op == ProgramOp.ASSIGN else node.attrs.get("name") if node.op == ProgramOp.VAR else None
+      if name in scalar_uses:
+        scalar_uses[name].add(i)
   while True:
     known = fixed | {b for b, ws in writers.items() if ws <= hoist}
     kept = {i for i in hoist if refs[i][0] <= known and refs[i][1] <= known}
+    # A C local cannot cross the procedure boundary between the prologue and the mapped body.
+    for uses in scalar_uses.values():
+      if not uses <= kept:
+        kept -= uses
     if kept == hoist:
       break
     hoist = kept

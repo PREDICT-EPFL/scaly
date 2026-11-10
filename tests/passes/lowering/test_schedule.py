@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.function.sugar import _mapped_call
 from scaly.ir import program as p
 from scaly.ir.program import ProgramOp, RangeKind, walk_program
 from scaly.passes.lowering import lower_function, main_proc
@@ -119,6 +120,22 @@ def test_sum_of_special_values_matches_numpy(size, isolated_cache):
     rows.append(row)
   for row in rows:
     np.testing.assert_array_equal(fn((row,)), row.sum())
+
+
+def test_mapped_sums_keep_scalar_accumulators_in_their_procedure(isolated_cache):
+  @sc.function(sc.group(sc.arg("x", 3), sc.arg("weights", 3)), outputs=sc.arg("y"), name="sum_stage")
+  def stage(inputs):
+    x, weights = inputs
+    return (x.sum() * weights.exp().sum()).block()
+
+  @sc.function(sc.group(sc.arg("z", 15), sc.arg("weights", 3)), outputs=sc.arg("y"), name="sum_map")
+  def fn(inputs):
+    z, weights = inputs
+    return _mapped_call(stage, 5, [(z, 0, 3), (weights, 0, 0)])
+
+  z, weights = np.linspace(-2, 3, 15), np.array([0.1, 0.3, -0.2])
+  fn.recompile()
+  np.testing.assert_allclose(fn((z, weights)), z.reshape(5, 3).sum(axis=1) * np.exp(weights).sum(), rtol=1e-14, atol=1e-14)
 
 
 @pytest.mark.parametrize(("sa", "sb"), [((9, 7), (7,)), ((7,), (7, 9)), ((5, 7), (7, 9))])

@@ -2227,6 +2227,7 @@ tests/passes/lowering/test_nest.py::test_reshape_reads_a_materialized_transpose_
 tests/passes/lowering/test_nest.py::test_strided_slice_copies_in_one_flat_loop
 tests/passes/lowering/test_nest.py::test_unit_loop_not_from_zero_keeps_constant_indices
 tests/passes/lowering/test_schedule.py::test_empty_reduction_keeps_its_identity_outside_the_empty_nest
+tests/passes/lowering/test_schedule.py::test_mapped_sums_keep_scalar_accumulators_in_their_procedure
 tests/passes/lowering/test_schedule.py::test_product_keeps_each_outputs_reference_sum_order[sa0-sb0]
 tests/passes/lowering/test_schedule.py::test_product_keeps_each_outputs_reference_sum_order[sa1-sb1]
 tests/passes/lowering/test_schedule.py::test_product_keeps_each_outputs_reference_sum_order[sa2-sb2]
