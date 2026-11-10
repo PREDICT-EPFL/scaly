@@ -181,6 +181,10 @@ def _lower_to_proc(
   if observe_expr is not None:
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
+  nodes = fun.nodes
+  ctx.scalarize = all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (
+    lowering == "scalar" or lowering == "auto" and auto_scalarize
+  )
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -188,7 +192,6 @@ def _lower_to_proc(
   proc = p.proc(symbol, ctx.params, ctx.statements)
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
-  nodes = fun.nodes
   # Narrower stores round or truncate; scalar substitution must not erase those conversions.
   return ProgramNode(
     ProgramOp.PROC,
@@ -202,9 +205,7 @@ def _lower_to_proc(
       **({"noinline": True} if fun.role == "forward" else {}),
       # A procedure may expand on its own and inside an expanding caller. Hoisted prologues use
       # "inline" because they only expand with their caller.
-      "scalarize_mode": "procedure"
-      if all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
-      else "disabled",
+      "scalarize_mode": "procedure" if ctx.scalarize else "disabled",
     },
     proc.dtype,
   )
@@ -224,6 +225,7 @@ class LowerCtx:
     observe_expr: ExprObserver | None = None,
   ) -> None:
     self.fun = fun
+    self.scalarize = False
     self.callees = callees
     self.solver_fns = solver_fns  # identity -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
     self.program_names = names
@@ -333,9 +335,6 @@ class LowerCtx:
       else:
         slot = p.add(p.mul(p.div(slot, p.const_int(width)), p.const_int(width)), self.index_at(order, p.mod(slot, p.const_int(width))))
     return p.view(self.raw_buf_of(expr), [slot])
-
-  def store_stored(self, expr: Expr, slot: ProgramNode, value: ProgramNode) -> ProgramNode:
-    return p.store(self.stored_view(expr, slot), value)
 
   def new_private(self, dtype: DType, shape: tuple[int, ...], *, support: Support = None) -> ProgramNode:
     """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""

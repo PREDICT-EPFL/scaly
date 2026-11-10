@@ -8,7 +8,6 @@ import scaly as sc
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import CanonicalPattern
 from scaly.passes.lowering import lower_function
-from scaly.passes.lowering.plans import map_regions
 from scaly.ir import program as p
 from scaly.ir.program import RangeKind
 from scaly.passes.program.fuse_ranges import fuse_ranges
@@ -125,8 +124,6 @@ def test_each_map_region_form_matches_numpy(form):
     "affine": np.arange(12, -1, -1),
     "table": np.array([4, 7, 0, 1, 11, 6, 10, 8, 2, 12, 3, 9, 5]),
   }[form]
-  (region,) = map_regions(np.arange(len(indices)), (indices,))
-  assert region.form == form
   pattern = CanonicalPattern((13, 17), tuple(range(13)), tuple(i * 5 % 17 for i in range(13)))
   logical = np.asarray(pattern.rows) * 17 + pattern.cols
   fn = sc.function(sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout="csr"), name=f"region_{form}")(
@@ -216,3 +213,87 @@ def test_sparse_identity_preserves_empty_batch_pattern(operation):
   result = fn(np.empty((0, 2)))
   assert isinstance(result, sparse.sparray)
   assert result.shape == (0, 2, 2) and result.nnz == 0
+
+
+@pytest.mark.parametrize("left", [True, False])
+@pytest.mark.parametrize("vector", [True, False])
+def test_sparse_scalar_hint_expands_mixed_products(left, vector):
+  pattern = CanonicalPattern((6, 5), (0, 0, 1, 2, 3, 3, 5, 5), (0, 4, 2, 2, 1, 3, 0, 2))
+  shape = ((5,) if left else (6,)) if vector else ((5, 3) if left else (3, 6))
+  fn = sc.function(
+    sc.arg("a", sc.TensorType(pattern.shape, pattern=pattern), layout="csc"), sc.arg("b", shape), name=f"sparse_scalar_{left}_{vector}"
+  )(lambda a, b: ((a.sin() @ b if left else b @ a.sin()) * 2).with_lowering("scalar"))
+  proc = lower_function(fn).args[0]
+  assert proc.attrs.get("scalarized")
+  assert not any(n.op == ProgramOp.FOR or n.op == ProgramOp.BUFFER and "values" in n.attrs for n in walk_program(proc))
+  data = np.linspace(-0.5, 0.8, pattern.nnz)
+  a = sparse.coo_array((data, (pattern.rows, pattern.cols)), shape=pattern.shape)
+  b = np.random.default_rng(46).normal(size=shape)
+  actual = fn(a, b)
+  transformed = np.sin(a.toarray())
+  np.testing.assert_allclose(
+    sparse.coo_array(actual).toarray() if sparse.issparse(actual) else actual, 2 * (transformed @ b if left else b @ transformed), atol=1e-12
+  )
+
+
+@pytest.mark.parametrize("n", [4, 128])
+def test_sparse_mapped_stage_expands_small_default_product(n):
+  random = np.random.default_rng(46)
+  pattern = (
+    CanonicalPattern((4, 4), (0, 0, 1, 2, 3, 3), (0, 3, 1, 2, 0, 2))
+    if n == 4
+    else CanonicalPattern(
+      (n, n), tuple(map(int, np.repeat(np.arange(n), 8))), tuple(map(int, np.concatenate([random.choice(n, 8, replace=False) for _ in range(n)])))
+    )
+  )
+  leaf = sc.arg("a", sc.TensorType(pattern.shape, pattern=pattern), layout="csc")
+  stage = sc.function(leaf, sc.arg("x", n), name="sparse_scalar_stage")(lambda a, x: (a @ x).sin() + x)
+  fn = sc.function(leaf, sc.arg("xs", (10, n)), name="sparse_scalar_map")(lambda a, xs: sc.vmap(stage, 10)(sc.broadcast(a), xs))
+  observed = {}
+  lower_function(fn, observe=observed.__setitem__)
+  callee = observed["pass:scalarize"].args[0]
+  assert callee.attrs.get("scalarized")
+  assert not any(n.op == ProgramOp.FOR or n.op == ProgramOp.BUFFER and "values" in n.attrs for n in walk_program(callee))
+  a = sparse.coo_array((random.normal(size=pattern.nnz), (pattern.rows, pattern.cols)), shape=pattern.shape)
+  xs = random.normal(size=(10, n))
+  np.testing.assert_allclose(fn(a, xs), np.sin((a @ xs.T).T) + xs, atol=1e-12)
+
+
+@pytest.mark.parametrize("source_layout", ["csc", "csr"])
+def test_sparse_map_orders_writes_to_avoid_duplicate_layout_tables(source_layout):
+  rows, cols = np.nonzero(np.random.default_rng(3).random((7, 9)) < 0.3)
+  pattern = CanonicalPattern((7, 9), tuple(map(int, rows)), tuple(map(int, cols)))
+  type_ = sc.TensorType(pattern.shape, pattern=pattern)
+  fn = sc.function(sc.arg("x", type_, layout=source_layout), outputs=sc.arg("y", type_, layout="csc"), name=f"sparse_contiguous_{source_layout}")(
+    lambda x: x.sin().block()
+  )
+  tables = [n for n in walk_program(_lowered(fn)) if n.op == ProgramOp.BUFFER and "values" in n.attrs]
+  assert len(tables) == (0 if source_layout == "csc" else 1)
+  a = sparse.coo_array((np.linspace(-0.5, 0.8, pattern.nnz), (rows, cols)), shape=pattern.shape)
+  np.testing.assert_allclose(sparse.coo_array(fn(a)).toarray(), np.sin(a.toarray()), atol=1e-12)
+
+
+def test_sparse_scatter_folds_output_layout_into_destination_table():
+  pattern = CanonicalPattern((4, 5), (0, 0, 1, 1, 2, 3), (0, 3, 0, 3, 4, 4))
+  indices = np.arange(20)
+  indices[[0, 3, 5, 8, 14, 19]] = [8, 0, 12, 3, 19, 8]
+  fn = sc.function(sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout="csr"), name="sparse_scatter_layout")(
+    lambda x: sc.scatter(x, indices, pattern.shape).block()
+  )
+  tables = [n for n in walk_program(_lowered(fn)) if n.op == ProgramOp.BUFFER and "values" in n.attrs]
+  assert len(tables) == 1
+  a = sparse.coo_array((np.arange(1.0, 7.0), (pattern.rows, pattern.cols)), shape=pattern.shape)
+  reference = np.zeros(20)
+  np.add.at(reference, indices[np.asarray(pattern.rows) * 5 + pattern.cols], a.data)
+  np.testing.assert_array_equal(sparse.coo_array(fn(a)).toarray(), reference.reshape(pattern.shape))
+
+
+@pytest.mark.parametrize("lowering", ["scalar", "block"])
+def test_elementwise_structural_zeros_skip_infinity_and_runtime_stored_zeros_do_not(lowering):
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+  fn = sc.function(
+    sc.arg("a", sc.TensorType(pattern.shape, pattern=pattern), layout="csr"), sc.arg("b", pattern.shape), name=f"stored_zero_inf_{lowering}"
+  )(lambda a, b: (a * b).with_lowering(lowering))
+  a = sparse.coo_array(([1.0, 0.0], (pattern.rows, pattern.cols)), shape=pattern.shape)
+  actual = sparse.coo_array(fn(a, np.full((2, 2), np.inf))).toarray()
+  np.testing.assert_array_equal(actual, [[np.inf, 0], [0, np.nan]])

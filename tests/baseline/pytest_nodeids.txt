@@ -2289,6 +2289,8 @@ tests/passes/lowering/test_sparse_plans.py::test_each_map_region_form_matches_nu
 tests/passes/lowering/test_sparse_plans.py::test_each_map_region_form_matches_numpy[dense]
 tests/passes/lowering/test_sparse_plans.py::test_each_map_region_form_matches_numpy[straight]
 tests/passes/lowering/test_sparse_plans.py::test_each_map_region_form_matches_numpy[table]
+tests/passes/lowering/test_sparse_plans.py::test_elementwise_structural_zeros_skip_infinity_and_runtime_stored_zeros_do_not[block]
+tests/passes/lowering/test_sparse_plans.py::test_elementwise_structural_zeros_skip_infinity_and_runtime_stored_zeros_do_not[scalar]
 tests/passes/lowering/test_sparse_plans.py::test_loaded_bound_reduce_is_never_fused_or_widened
 tests/passes/lowering/test_sparse_plans.py::test_mixed_product_uses_loaded_bounds_and_linear_tables[False-False]
 tests/passes/lowering/test_sparse_plans.py::test_mixed_product_uses_loaded_bounds_and_linear_tables[False-True]
@@ -2296,6 +2298,10 @@ tests/passes/lowering/test_sparse_plans.py::test_mixed_product_uses_loaded_bound
 tests/passes/lowering/test_sparse_plans.py::test_mixed_product_uses_loaded_bounds_and_linear_tables[True-True]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_identity_preserves_empty_batch_pattern[reshape]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_identity_preserves_empty_batch_pattern[transpose]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_map_orders_writes_to_avoid_duplicate_layout_tables[csc]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_map_orders_writes_to_avoid_duplicate_layout_tables[csr]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_mapped_stage_expands_small_default_product[128]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_mapped_stage_expands_small_default_product[4]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_numpy[block-concat]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_numpy[block-gather]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_numpy[block-reshape]
@@ -2310,6 +2316,11 @@ tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_nump
 tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_numpy[scalar-slice]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_numpy[scalar-stack]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_movement_maps_match_numpy[scalar-transpose]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_scalar_hint_expands_mixed_products[False-False]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_scalar_hint_expands_mixed_products[False-True]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_scalar_hint_expands_mixed_products[True-False]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_scalar_hint_expands_mixed_products[True-True]
+tests/passes/lowering/test_sparse_plans.py::test_sparse_scatter_folds_output_layout_into_destination_table
 tests/passes/lowering/test_sparse_plans.py::test_sparse_slice_of_stack_keeps_its_stored_type
 tests/passes/lowering/test_sparse_plans.py::test_sparse_zero_movement_keeps_its_stored_type[concat]
 tests/passes/lowering/test_sparse_plans.py::test_sparse_zero_movement_keeps_its_stored_type[gather]

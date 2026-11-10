@@ -710,7 +710,7 @@ and `sc.diag` are builder sugar. AD: the reverse rule of an axis reduction is a 
 replaces [#26]'s interim `_unbroadcast` scatter. `A @ ones` and `ones @ A` fold to reductions, the
 part of C-10 that waited for an axis reduction. A product reduction waits for a user: its derivative
 at zeros needs the exclusive-product rule.
-This includes max and min over stored entries, with absent entries included, moved from [#46]
+[#66] also covers max and min over stored entries, with absent entries included, moved from [#46]
 because `REDUCE` with `kind` is introduced here.
 
 **[#67]. Batched matmul.** `MATMUL` with NumPy semantics: leading axes broadcast, the last two
@@ -983,6 +983,8 @@ Moved max and min over stored entries to [#66] because `REDUCE` with `kind` is i
 Each region takes one of four forms: straight-line code when small, a loop over constant tables when
 irregular, an affine loop when `LowerCtx.index_at` recovers the index (regular runs, repeated stage
 blocks), or a dense block. Output values are written straight into a boundary's declared layout.
+Movement operations returning a scalar or vector have dense storage, as do `A @ x` and `x @ A`
+with a dense vector `x`.
 AD: the tangent of a sparse value carries its pattern, several seeds store `(nseed, nnz)` against
 one shared index table, and the elementwise partials of [#20] are evaluated on stored coordinates.
 The reverse rule of `MATMUL` with a sparse operand samples the cotangent on the pattern

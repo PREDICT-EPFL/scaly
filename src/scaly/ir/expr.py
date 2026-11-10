@@ -314,8 +314,6 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
     return  # The verifier checks the callee signature.
   if op == ExprOp.SUM and type_.pattern is None:
     return
-  if op == ExprOp.RESHAPE and args[0].type.pattern is type_.pattern and args[0].shape == type_.shape:
-    return
   expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape, attrs)
   if type_.pattern is not expected:
     raise ValueError(f"{op} output pattern disagrees with its stored-pattern rule")

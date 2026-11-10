@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 
@@ -13,7 +12,6 @@ from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries
 from ...ir.types import stored_indices
-from ..affine import affine_index_map
 from .ctx import LowerCtx
 
 
@@ -23,15 +21,6 @@ class MapRegion:
 
   writes: np.ndarray
   reads: tuple[np.ndarray, ...]
-
-  @property
-  def form(self) -> Literal["straight", "table", "affine", "dense"]:
-    if len(self.writes) <= 4:
-      return "straight"
-    maps = (self.writes, *self.reads)
-    if all(np.all(np.diff(a) == 1) or np.all(a == a[0]) for a in maps):
-      return "dense"
-    return "affine" if all(len(affine_index_map(a).residual) == 1 for a in maps) else "table"
 
 
 def stored_slots(expr: Expr, logical: np.ndarray) -> np.ndarray:
@@ -49,6 +38,8 @@ def map_regions(writes: np.ndarray, reads: Sequence[np.ndarray]) -> tuple[MapReg
   """Build union and intersection regions before emission, with no run-time index comparisons."""
   if not len(writes):
     return ()
+  order = np.argsort(writes)
+  writes, reads = writes[order], tuple(r[order] for r in reads)
   membership = np.stack([r >= 0 for r in reads], axis=1)
   _, labels = np.unique(membership, axis=0, return_inverse=True)
   return tuple(MapRegion(writes[labels == label], tuple(r[labels == label] for r in reads)) for label in range(int(labels.max()) + 1))
@@ -79,7 +70,7 @@ def emit_map(
       dst = ctx.index_at(region.writes, k)
       return [p.store(p.view(out, [dst]), body(values))]
 
-    if region.form == "straight":
+    if len(region.writes) <= 4:
       for k in range(len(region.writes)):
         ctx.statements.extend(statements(p.const_int(k)))
     else:
@@ -98,10 +89,10 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
     dst = stored_slots(node, destinations)
     out = ctx.alloc_tmp(node)
     ranges, (i,) = ctx.nest((node.type.storage_size,), f"zero_{out.attrs['name']}")
-    ctx.emit(ranges, [ctx.store_stored(node, i, p.const_float(0, dtype=node.type.dtype))])
+    ctx.emit(ranges, [p.store(p.view(out, [i]), p.const_float(0, dtype=node.type.dtype))])
     repeated = len(np.unique(dst)) != len(dst)
     ranges, (i,) = ctx.nest((len(source),), f"scatter_{out.attrs['name']}", kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
-    target = ctx.stored_view(node, ctx.index_at(dst, i))
+    target = p.view(out, [ctx.index_at(ctx.physical_slots(node, dst), i)])
     value = ctx.read_stored(src, np.arange(len(source), dtype=np.int64), i)
     ctx.emit(ranges, [p.store(target, p.add(p.load(target), value) if repeated else value)])
     return

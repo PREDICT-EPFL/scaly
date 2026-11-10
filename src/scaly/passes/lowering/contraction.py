@@ -6,6 +6,7 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
+from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, LoweringError, _flat
 from .schedule import emit_reduction
 
@@ -45,22 +46,30 @@ def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
   name = out.attrs["name"]
   vector = len(dense.shape) == 1
   width = 1 if vector else dense.shape[1] if left else dense.shape[0]
-  if vector:
+  if vector and len(active) < node.size:
     zero, (z,) = ctx.nest((node.size,), f"zero_{name}")
-    ctx.emit(zero, [ctx.store_stored(node, z, p.const_float(0, dtype=node.type.dtype))])
-  outputs, (row, column) = ctx.nest((len(active), width), f"row_{name}")
-  bounds = ctx.new_const_index(pointers)
-  start = p.load(p.view(bounds, [row]))
-  stop = p.load(p.view(bounds, [p.add(row, p.const_int(1))]))
-  reductions, (k,) = ctx.reduce(((start, stop),), f"stored_{name}")
-  inner = ctx.index_at(columns[order], k)
-  sparse_value = ctx.read_stored(src, order, k)
-  dense_coords = [inner] if vector else [inner, column] if left else [column, inner]
-  physical_row = ctx.index_at(active, row)
-  if vector:
-    slot = physical_row
-  elif left:
-    slot = p.add(p.mul(row, p.const_int(width)), column)
+    ctx.emit(zero, [p.store(p.view(out, [z]), p.const_float(0, dtype=node.type.dtype))])
+
+  def emit_row(outputs, row, column, entries, extent):
+    reductions, (k,) = ctx.reduce((extent,), f"stored_{name}")
+    inner = ctx.index_at(columns[entries], k)
+    sparse_value = ctx.read_stored(src, entries, k)
+    dense_coords = [inner] if vector else [inner, column] if left else [column, inner]
+    if vector:
+      slot = ctx.index_at(active, row)
+    elif left:
+      slot = p.add(p.mul(row, p.const_int(width)), column)
+    else:
+      slot = p.add(p.mul(column, p.const_int(len(active))), row)
+    emit_reduction(ctx, outputs, reductions, ctx.stored_view(node, slot), p.mul(sparse_value, ctx.read(dense, dense_coords)))
+
+  if ctx.scalarize and (ctx.fun._effective_lowering == "scalar" or 2 * pattern.nnz * width <= AUTO_SCALAR_OPS_PER_PROC):
+    for row, (start, stop) in enumerate(zip(pointers[:-1], pointers[1:], strict=True)):
+      outputs, (column,) = ctx.nest((width,), f"column_{name}")
+      emit_row(outputs, p.const_int(row), column, order[start:stop], int(stop - start))
   else:
-    slot = p.add(p.mul(column, p.const_int(len(active))), row)
-  emit_reduction(ctx, outputs, reductions, ctx.stored_view(node, slot), p.mul(sparse_value, ctx.read(dense, dense_coords)))
+    outputs, (row, column) = ctx.nest((len(active), width), f"row_{name}")
+    bounds = ctx.new_const_index(pointers)
+    start = p.load(p.view(bounds, [row]))
+    stop = p.load(p.view(bounds, [p.add(row, p.const_int(1))]))
+    emit_row(outputs, row, column, order, (start, stop))
