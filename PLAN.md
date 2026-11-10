@@ -51,4 +51,6 @@ Review-fix pre-merge check passed through the shared queue: 3,144 passed,
 52 skipped, all hooks green. Removing the stored-coordinate seed mask fails both
 sparse sqrt regressions; removing the scatter reshape fails both broadcast reverse
 regressions. All 96 C/header comparisons, including sparse no-select gradients and
-Hessians, are byte-identical. The narrow correctness delta check is next.
+Hessians, are byte-identical. The narrow correctness delta check approved both fixes, with all 26 select tests
+passing. Its thread is settled. The required Opus review is still running. Keep
+all review fixes together for the next push; nothing new has been pushed yet.
