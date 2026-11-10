@@ -301,14 +301,17 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
 
 def _has_integer_data(body: list[ProgramNode]) -> bool:
   """Integer data needs wrapping; static loop indices keep their existing C spelling."""
-  nodes = [node for stmt in body for node in walk_program(stmt)]
-  constants = {node.attrs["name"] for node in nodes if node.op == ProgramOp.BUFFER and "values" in node.attrs}
-  return any(
-    node.dtype.is_integer
-    and not node.dtype.is_unsigned
-    and (node.op in (ProgramOp.CAST, ProgramOp.SELECT) or node.op == ProgramOp.LOAD and node.args[0].attrs["buffer"] not in constants)
-    for node in nodes
-  )
+  pending = list(body)
+  seen: set[ProgramNode] = set()
+  while pending:
+    node = pending.pop()
+    if node in seen or node.op in (ProgramOp.VIEW, ProgramOp.RANGE):
+      continue
+    seen.add(node)
+    if node.dtype.is_integer and not node.dtype.is_unsigned and node.op in (ProgramOp.CAST, ProgramOp.SELECT, ProgramOp.LOAD):
+      return True
+    pending.extend(node.args)
+  return False
 
 
 def _emit_body(

@@ -2677,6 +2677,8 @@ tests/codegen/test_frame_budget.py::test_generated_frames_fit_and_match_numpy[81
 tests/codegen/test_frame_budget.py::test_invalid_frame_budget[-1]
 tests/codegen/test_frame_budget.py::test_invalid_frame_budget[1.5]
 tests/codegen/test_frame_budget.py::test_invalid_frame_budget[True]
+tests/codegen/test_integer_arithmetic.py::test_constant_integer_data_keeps_wrapping_in_scheduled_assignments[int32]
+tests/codegen/test_integer_arithmetic.py::test_constant_integer_data_keeps_wrapping_in_scheduled_assignments[int64]
 tests/codegen/test_integer_arithmetic.py::test_signed_arithmetic_matches_numpy[False-block-int32]
 tests/codegen/test_integer_arithmetic.py::test_signed_arithmetic_matches_numpy[False-block-int64]
 tests/codegen/test_integer_arithmetic.py::test_signed_arithmetic_matches_numpy[False-scalar-int32]

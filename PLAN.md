@@ -32,3 +32,10 @@ Rebased onto #320's replacement head, verified against the force-pushed remote b
 the first push. Full pre-merge validation passed through the detached suite runner:
 3137 passed, 52 skipped, benchmark smoke, docs and all other hooks passed. The first
 queued process received SIGTERM before testing; the retry retained its queue time.
+
+The correctness review found that printed constant integer arrays can remain runtime
+data. The original detector incorrectly exempted their loads, so a scheduled addition
+could still overflow. Added failing sanitizer reproductions for both widths and fixed
+the detector to skip index positions rather than constant buffers. All 178 focused
+arithmetic, folding and snapshot checks pass. Ruff and ty pass; collection has 3191 IDs.
+The full hook must run again, and the fixes need the short delta check after Opus returns.
