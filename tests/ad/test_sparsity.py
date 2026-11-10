@@ -11,6 +11,94 @@ from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad import finite_difference
 from scaly.ad.sparse import Triangle
+from scaly.ir.expr import ExprOp, topo
+from scaly.passes.expr import simplify_cse_fixpoint
+
+
+@pytest.mark.parametrize("boundary", ["inline", "call", "map"])
+@pytest.mark.parametrize("movement", ["direct", "stack", "concat"])
+def test_mixed_tangent_selections_preserve_zeros(boundary, movement) -> None:
+  x, p, seeds = sc.sym("mixed_x"), sc.sym("mixed_p"), sc.sym("mixed_seeds", 3)
+
+  def product(z):
+    moved = z if movement == "direct" else z.reshape((1, 2)).T[::-1].gather([1, 0])
+    return moved[1] * moved[0]
+
+  callee = sc.function(sc.arg("z", 2), outputs=sc.arg("y"), name="mixed_product")(product)
+  z = sc.concat([x.reshape((1,)), p.reshape((1,))]) if movement == "concat" else sc.stack([x, p])
+  y = product(z) if boundary == "inline" else callee(z) if boundary == "call" else sc.vmap(callee, 2)(sc.broadcast(z)).vec()
+  tangent = sc.jvp_many(y, x, seeds)
+  simplified = simplify_cse_fixpoint(tangent)
+  for result in (tangent, simplified):
+    assert sc.jacobian_sparsity(result, x).nnz == 0
+    assert sc.jacobian_sparsity(result, p).nnz == result.size
+    pending, seen = [(result,)], set()
+    while pending:
+      for node in topo(pending.pop()):
+        if node.op in {ExprOp.MUL, ExprOp.MATMUL}:
+          assert node.support != frozenset()
+        if node.op in {ExprOp.CALL, ExprOp.VMAP} and node.attrs["callee"] not in seen:
+          seen.add(node.attrs["callee"])
+          pending.append(node.attrs["callee"].results)
+  fn = ConcreteFunction._from_exprs("mixed_tangent_values", [x, p, seeds], [tangent, simplified], ["x", "p", "seeds"], ["raw", "simplified"])
+  rng = np.random.default_rng(167)
+  for _ in range(5):
+    xv, pv, sv = rng.normal(), rng.normal(), rng.normal(size=3)
+    expected = np.broadcast_to((pv * sv).reshape((3,) + (1,) * len(y.shape)), tangent.shape)
+    for value in fn(xv, pv, sv):
+      np.testing.assert_allclose(value, expected, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_call_sparsity_uses_each_argument_support_context(mapped) -> None:
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y"), name="mixed_context_product")
+  def product(z):
+    return z[0] * z[1]
+
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("y"), name="mixed_context_nested")
+  def nested(z):
+    return product(z)
+
+  x = sc.sym("mixed_context_x", 2)
+  parts = [sc.stack([x[0], 0]), sc.stack([x[0], x[1]]), sc.stack([0, x[1]])]
+  y = sc.vmap(nested, 3)(sc.stack(parts)).vec() if mapped else sc.stack([nested(part) for part in parts])
+  for result in (y, simplify_cse_fixpoint(y)):
+    np.testing.assert_array_equal(sc.jacobian_sparsity(result, x).to_mask(), [[False, False], [True, True], [False, False]])
+  fn = ConcreteFunction._from_exprs("mixed_context_jac", [x], [sc.jacobian(y, x)], ["x"], ["jac"])
+  rng = np.random.default_rng(168)
+  for _ in range(5):
+    xv = rng.normal(size=2)
+    np.testing.assert_allclose(fn(xv), [[0, 0], [xv[1], xv[0]], [0, 0]], rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize("stride", [0, 1, 2])
+@pytest.mark.parametrize("sparse_formal", [False, True])
+def test_mapped_coefficient_support_uses_stage_windows(stride, sparse_formal) -> None:
+  from scaly.ir.expr import Expr
+  from scaly.ir.types import TensorType
+
+  pattern = sc.SparsityPattern.from_mask(np.eye(2, dtype=bool)).canonicalize()[0] if sparse_formal else None
+  formal = Expr(ExprOp.INPUT, type=TensorType((2, 2) if sparse_formal else (2,), pattern=pattern), name="mixed_window_formal")
+  entries = sc.values(formal).vec()
+  body = entries[:1] @ entries[1:]
+  callee = ConcreteFunction._from_exprs("mixed_window_product", [formal], [body], ["z"], ["y"])
+  x = sc.sym("mixed_window_x", 7)
+  mask = np.array([1, 1, 0, 1, 1, 0, 1], dtype=float)
+  y = _mapped_call(callee, 3, [(x * sc.const(mask), 1, stride)])
+  expected = np.zeros((3, 7))
+  for stage in range(3):
+    first = 1 + stage * stride
+    expected[stage, first : first + 2] = mask[first] * mask[first + 1]
+  np.testing.assert_array_equal(sc.jacobian_sparsity(y, x).to_mask(), expected.astype(bool))
+  fn = ConcreteFunction._from_exprs("mixed_window_jac", [x], [sc.jacobian(y, x)], ["x"], ["jac"])
+  rng = np.random.default_rng(169)
+  for _ in range(5):
+    xv = rng.normal(size=7)
+    reference = np.zeros((3, 7))
+    for stage in range(3):
+      first = 1 + stage * stride
+      reference[stage, first : first + 2] = expected[stage, first : first + 2] * xv[first : first + 2][::-1]
+    np.testing.assert_allclose(fn(xv), reference, rtol=1e-13, atol=1e-13)
 
 
 def test_scalar_movement_support_and_derivative_coordinates() -> None:
@@ -671,7 +759,7 @@ def test_nested_callee_sparsity_is_analyzed_once_per_variable(monkeypatch, mappe
   original = analysis._jac_mask_uncached
 
   def counted(expr, wrt, memo):
-    visits[expr.id, wrt.id] += 1
+    visits[expr.id, wrt.id, memo.support_of] += 1
     return original(expr, wrt, memo)
 
   monkeypatch.setattr(analysis, "_jac_mask_uncached", counted)

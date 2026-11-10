@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, ga
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
-from .sparsity import _check_wrt
+from .sparsity import _check_wrt, _prunable_support
 
 
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
@@ -119,7 +119,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           tangent = simplify_cse_fixpoint(tangent)
       if tangent is not None and tangent.shape != (nseed, *expr.shape):
         tangent = tangent * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype)
-    tangents[expr.id] = None if tangent is not None and _is_zero_const(tangent) else tangent
+    tangents[expr.id] = None if tangent is not None and _prunable_support(tangent) == frozenset() else tangent
   return tuple(tangents[out.id] if tangents[out.id] is not None or not out.type.dtype.is_floating else _zero_tangent(out, nseed) for out in outputs)
 
 
