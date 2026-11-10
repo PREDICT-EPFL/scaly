@@ -387,10 +387,12 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
             idx = int(output_indices[pos])
             output[idx] = _Cell(trip, value)
 
-  outputs = {param.attrs["name"] for param in params[proc.attrs["input_count"] :]}
   final: list[tuple[str, ProgramNode, list[int], list[int]]] = []
   boundaries: set[int] = set()
-  for name in produced & outputs:
+  for param in params[proc.attrs["input_count"] :]:
+    name = param.attrs["name"]
+    if name not in produced:
+      continue
     groups: dict[ProgramNode, dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
     for idx, cell in cells.get(name, {}).items():
       if cell.trip is None:

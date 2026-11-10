@@ -26,7 +26,7 @@ from scaly.passes.program._common import prune_procedures
 from scaly.utils.names import NameScope
 from scaly.ir import program as p
 from scaly.ir.program_spec import verify_program
-from scaly.passes.program.pack_workspace import WORKSPACE_SPILL_THRESHOLD
+from scaly.passes.program.pack_workspace import pack_workspace, WORKSPACE_SPILL_THRESHOLD
 from scaly.passes.program.unroll_unit_loops import unroll_unit_loops
 from scaly.ir.program import (
   ProgramNode,
@@ -437,6 +437,31 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   assert match is not None
   args = [a.strip() for a in match.group(1).split(",")]
   assert args[:3] == ["s0", "s2", "s3"]
+
+
+@pytest.mark.parametrize("names", [("a", "b"), ("b", "a")])
+def test_multi_buffer_write_keeps_previous_call_input_dependencies(names) -> None:
+  x, y = (buffer(name, dtypes.float64, (3,)) for name in ("x", "y"))
+  producer, a, b, result = (buffer(name, dtypes.float64, (3,), address_space="private") for name in ("producer", *names, "result"))
+  at = lambda buf: view(buf, [const_int(0)])
+  copy = lambda dst, src: store(at(dst), load(at(src)))
+  call = ProgramNode(ProgramOp.CALL, (b, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()})
+  body = [
+    producer,
+    a,
+    b,
+    result,
+    copy(producer, x),
+    copy(a, producer),
+    for_(range_("i", 0, 1), [copy(b, a), copy(a, x)]),
+    call,
+    copy(y, result),
+  ]
+  packed = pack_workspace(program([proc_("root", [x, y], body)])).args[0]
+  statements = packed.args[packed.attrs["param_count"] :]
+  original_value = next(stmt for stmt in statements if stmt.op == ProgramOp.STORE).args[0].attrs["buffer"]
+  consumer = next(stmt for stmt in statements if stmt.op == ProgramOp.CALL)
+  assert original_value not in {arg.attrs["name"] for arg in consumer.args}
 
 
 def test_regular_raw_callees_stay_inline() -> None:
