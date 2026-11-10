@@ -46,3 +46,9 @@ and a scatter transpose losing the source shape in a second reverse derivative. 
 reproduced in new tests. Seeds, sparse partials and activity now use stored coordinates,
 and the scatter transpose restores its source shape. Added ordinary/mapped sparse sin
 and sqrt cases, plus second reverse derivatives through a broadcast. Opus review pending.
+
+Review-fix pre-merge check passed through the shared queue: 3,144 passed,
+52 skipped, all hooks green. Removing the stored-coordinate seed mask fails both
+sparse sqrt regressions; removing the scatter reshape fails both broadcast reverse
+regressions. All 96 C/header comparisons, including sparse no-select gradients and
+Hessians, are byte-identical. The narrow correctness delta check is next.
