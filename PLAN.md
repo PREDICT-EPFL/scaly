@@ -12,8 +12,8 @@ trajectories and frame budgeting belong to #31–#33, #69 and #76.
 - [x] Add hand-built dialect, verifier, compiled differential and pass-guard tests; see them fail.
 - [x] Implement local vocabulary, renderer and pass guards; prove each guard with a mutation.
 - [x] Run focused checks and byte-identical C snapshot checks.
-- [ ] Commit the push candidate and run detached full pre-merge through `~/.scaly-suite/run`.
-- [ ] Push a draft PR against #28 and link it in T3.
+- [x] Commit the push candidate and run detached full pre-merge through `~/.scaly-suite/run`.
+- [x] Push a draft PR against #28 and link it in T3.
 - [ ] One Opus 5.5 high cross-review, fix findings, one short delta check.
 - [ ] After #313 merges, rebase only this layer onto origin/main, retarget, rerun checks.
 - [ ] Delete this plan, record evidence and verdict, mark ready and queue once with auto squash.
@@ -36,3 +36,20 @@ The rebase onto the refreshed #28 head passes all 373 focused tests, Ruff and st
 The node-ID baseline now includes the 65 added cases; all 3,064 tests collect successfully.
 The old CI failures came from that stale baseline. No roadmap departure. Project metadata is unavailable through
 the attempted REST endpoint, so the task's identifying issue comment records the branch.
+
+PR #331 is linked and watched; prerequisite PR #313 is watched too. The pre-review candidate passed
+the full pre-merge hook with exit zero in `pre-merge-2.log`: 3,012 passed, 52 skipped, plus
+benchmark smoke, documentation build and private-name check. Opus high found one act-on issue:
+the test wrapper used pointer types differing from the generated C, and the production bool
+header existed only for that wrapper. Corrected the wrapper and ctypes, removed the header,
+and made incompatible-pointer warnings errors. Also reject carried VECTOR ranges and cover
+both pipeline lane orderings with reciprocals enabled and disabled, using a real division.
+
+The fixes pass 198 focused tests, strict GCC compilation, two representative Zig cases,
+Ruff and strict ty. Removing the VECTOR guard fails two tests; restoring the wrong wrapper
+types fails strict compilation. Both are restored and pass. All 3,138 tests collect after
+refreshing the baseline. Next: push these fixes, run a fresh full hook and request the single
+Opus delta check on the fixes alone. Notes about unique exit-variable names belong to #31;
+conservative optimization inside exit loops and BLOCK is accepted. No further review round.
+Keep the refreshed #28 base tip in `base-tip` for the later squash rebase onto main.
+Remove this temporary plan before marking the PR ready.

@@ -52,7 +52,6 @@ def _includes(
     "#include <math.h>",
     "#include <stddef.h>",
     "#include <stdint.h>",
-    *(["#include <stdbool.h>"] if prog is not None and any(n.dtype.is_bool for n in walk_program(prog)) else []),
     *extra,
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
     *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),

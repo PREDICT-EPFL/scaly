@@ -298,3 +298,12 @@ def test_exit_variable_is_a_trip_count(start, step):
   loop = p.for_(p.range_("i", start, 5, step=step, carried=True), [], exit_var=True)
   with pytest.raises(VerifyError, match="exit_var.*start.*0.*step.*1"):
     verify_program(loop)
+
+
+@pytest.mark.parametrize("lanes", [False, True])
+def test_carried_ranges_cannot_be_vectorized(lanes):
+  rng = p.range_("i", 0, 3, kind=RangeKind.VECTOR, carried=True)
+  if lanes:
+    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "lanes": 2, "lane_cap": 2}, rng.dtype)
+  with pytest.raises(VerifyError, match="carried.*VECTOR"):
+    verify_program(rng)

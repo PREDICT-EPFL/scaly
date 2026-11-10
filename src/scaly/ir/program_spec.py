@@ -142,6 +142,8 @@ def _range_kind(n: ProgramNode) -> str | None:
     return "RANGE missing 'name' attr"
   if not isinstance(n.attrs.get("carried", False), bool):
     return "RANGE 'carried' must be boolean"
+  if n.attrs.get("carried") and n.attrs["kind"] == RangeKind.VECTOR:
+    return "a carried range cannot be VECTOR"
   if "lanes" in n.attrs:
     if n.attrs["kind"] != RangeKind.VECTOR or n.attrs["lanes"] not in ("auto", 1, 2, 4, 8):
       return "lane width requires a VECTOR range and auto or 1, 2, 4, 8 lanes"
