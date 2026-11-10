@@ -26,10 +26,12 @@ keys so differently sized siblings group. Record this departure in the roadmap i
 - [x] Capture baseline operation counts, source bytes and generated-C compile times.
 - [x] Implement discovery, invocation grouping and lowering; update printing guide and roadmap.
 - [x] Prove the tests fail under perturbation; regenerate C and collection snapshots.
-- [ ] Rebase onto the sparse stack after it lands; regenerate snapshots and evidence.
 - [ ] Run the full suite and `wt hook pre-merge --yes`, plus relevant examples.
-- [ ] Commit, push and open a draft PR against main. Run one Opus 5.5 high cross-review,
-      fix findings and run one short delta check on fixes alone. Report verdict before queueing.
+- [x] Commit, push and open draft PR #313 against main.
+- [ ] Run one Opus 5.5 high cross-review on the current diff after the full hook passes.
+      Publish its verdict and review line immediately so #29 can start.
+- [ ] Rebase onto the sparse stack after it lands; regenerate snapshots and evidence.
+      Fix review findings and include non-trivial rebase resolutions in one short delta check.
 - [ ] Delete this plan, finish the PR evidence and review line, mark ready, update tracker,
       and queue with `gh pr merge --squash` once checks are green.
 
@@ -50,3 +52,12 @@ The detached tmux jobs were also interrupted. Validation now runs in user servic
 `/tmp/scaly28-smoke.log` plus `.exit` files. The only observed suite failure is the source-based
 operation coverage test not recognizing callees_of. It now recognizes CALLEE_OPS; the targeted
 21 tests and all static checks pass. Removing VMAP from that family makes the coverage gate fail.
+
+Coordinator steering: do not wait for the sparse stack before the main review. Review the
+current diff once the final full hook passes, then report the verdict before the rebase.
+The final hook runs as `scaly28-final-check`, with log `/tmp/scaly28-final-pre-merge.log`
+and exit file `/tmp/scaly28-final-pre-merge.exit`. The previous complete suite had only the
+coverage parser failure, now fixed: 2610 passed, 52 skipped, one failed. Smoke passed.
+
+The final full suite passed: 2611 passed, 52 skipped in 94.29 seconds. The final hook
+is continuing through benchmark smoke, the documentation build and the private-name check.
