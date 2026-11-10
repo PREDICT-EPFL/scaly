@@ -30,3 +30,9 @@ Full slotted pre-merge hook passed: 2949 passed, 52 skipped; benchmark smoke, do
 Ruff, ty and private-name check passed. C snapshots are byte-identical. README solver example,
 function_composition, mapped_derivatives and function_with_print passed. Seven SciPy formats
 bind and agree with NumPy. No roadmap departures. Cross-review and CI remain.
+
+Opus review found sparse inferred-output multiplier binding and dense mapped shape/pattern
+holes. Regressions fail before the fixes. Fixed bare whole-type binding, inferred multiplier
+holes, instance-owned numerical ordering, and dense leading-axis mapping. Also simplified copied
+canonicalization and clarified unequal-batch errors. 142 focused tests pass. Need the slotted
+full hook again, correctness review, and one Opus delta check. No fixes have been pushed yet.

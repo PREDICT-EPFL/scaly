@@ -215,3 +215,46 @@ def test_pattern_name_collision_raises_instead_of_aliasing() -> None:
       identity.instantiate((sc.TensorType(SHAPE, pattern=second),))
   finally:
     object.__setattr__(second, "digest", original)
+
+
+@pytest.mark.parametrize("outputs,grouped", [(None, False), (sc.arg("y"), False), (sc.group(sc.arg("y")), True)])
+def test_inferred_sparse_output_multipliers_bind_the_whole_type(outputs, grouped: bool) -> None:
+  options = {} if outputs is None else {"outputs": outputs}
+  source: Any = sc.function(sc.arg("x", SHAPE, pattern=..., layout="csr"), name="inferred_sparse", **options)(
+    lambda x: (x.sin(),) if grouped else x.sin()
+  )
+  output = "inferred_sparse" if outputs is None else "y"
+  adjoint: Any = sc.adjoint(source)
+  hess: Any = sc.lagrangian_hessian(source)
+  factory: Any = source.factory("inferred_sparse_factory", ["x", f"lam:{output}"], [sc.factory.Adj(output, "x")])
+  for pattern in PATTERNS[:2]:
+    x = sparse.coo_array((np.arange(pattern.nnz, dtype=float) / 10 + 0.2, (pattern.rows, pattern.cols)), shape=SHAPE)
+    seed = sparse.coo_array((np.ones(pattern.nnz), (pattern.rows, pattern.cols)), shape=SHAPE)
+    expected = np.cos(x.toarray()) * seed.toarray()
+    np.testing.assert_allclose(adjoint(x, seed).toarray(), expected)
+    np.testing.assert_allclose(factory(x, seed).toarray(), expected)
+    multiplier = (seed,) if grouped else seed
+    np.testing.assert_allclose(hess(x, multiplier), np.diag((-np.sin(x.toarray()) * seed.toarray()).reshape(-1)))
+    symbol = sc.arg("actual", sc.TensorType(SHAPE, pattern=pattern)).symbols()
+    assert adjoint.symbolic_call(symbol, symbol).attrs["callee"] is next(reversed(adjoint.instances.values()))
+  assert len(source.instances) == len(adjoint.instances) == len(factory.instances) == len(hess.instances) == 2
+
+
+@pytest.mark.parametrize("shape", [(2,), (2, 5), (2, 3, 4)])
+def test_dense_shape_and_pattern_holes_map_like_shape_holes(shape) -> None:
+  source: Any = sc.function(sc.arg("x", pattern=...))(lambda x: x * 2)
+  mapped: Any = sc.vmap(source, 2)
+  values = np.arange(np.prod(shape), dtype=float).reshape(shape)
+  np.testing.assert_array_equal(mapped(values), values * 2)
+  symbol = sc.sym("actual", shape)
+  assert mapped.symbolic_call(symbol).shape == shape
+  assert len(source.instances) == len(mapped.instances) == 1
+
+
+@pytest.mark.parametrize("counts", [(1, 3), (1, 2)])
+def test_unequal_batch_pattern_sizes_report_the_shared_pattern_error(counts) -> None:
+  identity: Any = sc.function(sc.arg("x", (2, *SHAPE), pattern=...))(lambda x: x)
+  nnz = sum(counts)
+  source = sparse.coo_array((np.ones(nnz), (np.repeat([0, 1], counts), np.zeros(nnz, dtype=int), np.r_[0, np.arange(counts[1])])), shape=(2, *SHAPE))
+  with pytest.raises(ValueError, match="share one stored pattern"):
+    identity(source)

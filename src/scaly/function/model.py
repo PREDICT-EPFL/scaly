@@ -37,7 +37,7 @@ def _mangle(name: str, skeleton: Any, types: tuple[TensorType, ...], decls: tupl
   for decl, type_ in zip(decls if decls is not None else (None,) * len(types), types, strict=True):
     if _shape_hole(decl):
       tokens.append("x".join(map(str, type_.shape)) if type_.shape else "s")
-    if isinstance(decl, _PatternHole):
+    if isinstance(decl, _PatternHole) or decl is None and type_.pattern is not None:
       tokens.append(f"p{type_.pattern.digest[:8]}" if type_.pattern is not None else "pdense")
   shapes = "_".join(tokens)
   nesting = hashlib.sha256(repr(_structure(skeleton)).encode()).hexdigest()[:6]
@@ -139,6 +139,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
 
   def _prepare_arguments(self, args: tuple[Any, ...], what: str) -> tuple[ConcreteFunction[Any, Any, Any, Any], tuple[Any, ...]]:
     prepared = []
+    canonical = []
 
     def bind(tree: Tree[Any, Any] | None, value: Any) -> Any:
       if tree is not None and isinstance(tree, _G):
@@ -148,41 +149,41 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       if tree is None and isinstance(value, tuple):
         return tuple(bind(None, item) for item in value)
       if tree is None:
-        if not isinstance(value, (Expr, np.ndarray)):
-          raise TypeError(f"{what}: bare function leaves must be Expr or ndarray; use np.asarray or declare the input tree")
+        if not isinstance(value, (Expr, np.ndarray)) and not sparse.issparse(value):
+          raise TypeError(f"{what}: bare function leaves must be Expr, ndarray or SciPy sparse; use np.asarray or declare the input tree")
         if isinstance(value, Expr) and value.type.dtype != TensorType(()).dtype:
           raise ValueError(f"{what}: bare functions require float64 symbolic leaves, got {value.type.dtype}")
-        prepared.append(value)
-        return TensorType(value.shape)
-      decl = tree.decls[0]
+      decl = None if tree is None else tree.decls[0]
+      name = "input" if tree is None else tree.names[0]
       if isinstance(value, Expr):
         shape = value.shape
         expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
         if value.type.dtype != expected_dtype:
-          raise ValueError(f"{what}: expected dtype {expected_dtype} for {tree.names[0]!r}, got {value.type.dtype}")
+          raise ValueError(f"{what}: expected dtype {expected_dtype} for {name!r}, got {value.type.dtype}")
         if decl is not None and not isinstance(decl, _PatternHole) and value.type.pattern is not decl.pattern:
-          raise ValueError(f"{what}: different stored pattern for {tree.names[0]!r}")
+          raise ValueError(f"{what}: different stored pattern for {name!r}")
       else:
         shape = np.shape(value)
         if decl is not None and decl.pattern is not None and shape == decl.storage_shape:
           shape = decl.shape
       if decl is not None and not _shape_hole(decl) and shape != decl.shape:
-        raise ValueError(f"{what}: expected shape {decl.shape} for {tree.names[0]!r}, got {shape}")
-      if isinstance(decl, _PatternHole):
+        raise ValueError(f"{what}: expected shape {decl.shape} for {name!r}, got {shape}")
+      if tree is None or isinstance(decl, _PatternHole):
         pattern = value.type.pattern if isinstance(value, Expr) else None
         if sparse.issparse(value):
           pattern, value = bind_sparse(value)
-          bound = TensorType(shape, decl.dtype, decl.diff, pattern)
-          layout = tree.with_types((bound,)).layouts[0]
-          assert layout is not None
-          value = value[..., layout.permutation]
+          canonical.append(len(prepared))
         prepared.append(value)
-        return TensorType(shape, decl.dtype, decl.diff, pattern)
+        return TensorType(shape, pattern=pattern) if decl is None else TensorType(shape, decl.dtype, decl.diff, pattern)
       prepared.append(value)
       return TensorType(shape) if decl is None else decl
 
     skeleton = bind(self.inputs, args)
     instance = self._bind(skeleton, what)
+    for index in canonical:
+      layout = instance.input_tree.layouts[index]
+      assert layout is not None
+      prepared[index] = prepared[index][..., layout.permutation]
     return instance, cast(tuple[Any, ...], instance.input_tree.unflatten(tuple(prepared)))
 
   def _bind(self, skeleton: Any, what: str) -> ConcreteFunction[Any, Any, Any, Any]:
@@ -243,7 +244,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       if key.startswith("fwd:") and key[4:] in declarations:
         return declarations[key[4:]]
       if key.startswith("lam:"):
-        return None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
+        decl = None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
+        return _PatternHole(shape_hole=True) if decl is None else decl
       raise ValueError(f"unknown factory input: {key!r}")
 
     input_layouts = dict(zip(source_inputs.names, source_inputs._layout_decls, strict=True))

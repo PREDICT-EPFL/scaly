@@ -155,24 +155,21 @@ class _Mapped(_Derived):
       is_expr = isinstance(value, Expr)
       actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
       repeated = isinstance(marker, _Broadcast)
+      canonical = None
       if isinstance(decl, _PatternHole):
         if isinstance(marker, _Window):
           raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
+        pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
         shape = (
           actual.shape[1:]
-          if decl.shape_hole and not repeated and len(actual.shape) > 2 and actual.shape[0] == self._length
+          if decl.shape_hole and not repeated and actual.shape and (pattern is None or len(actual.shape) > 2) and actual.shape[0] == self._length
           else actual.shape
           if decl.shape_hole
           else decl.shape
         )
-        pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
         decl = TensorType(shape, decl.dtype, decl.diff, pattern)
-        assert tree is not None
-        tree = tree.with_types((decl,))
         if canonical is not None:
-          layout = tree.layouts[0]
-          assert layout is not None
-          actual = cast(Any, canonical[..., layout.permutation])
+          actual = cast(Any, canonical)
       pattern = None if decl is None else decl.pattern
       if isinstance(marker, _Window):
         if decl is None:
@@ -203,7 +200,7 @@ class _Mapped(_Derived):
           outer = values(actual) if pattern is not None else actual.reshape(shape if repeated else (self._length, *shape))
           actual, start, stride = _view_window(outer, self._length, width, repeated=repeated)
         else:
-          if pattern is not None:
+          if pattern is not None and canonical is None:
             layout = cast(_Leaf, tree).layouts[0]
             assert layout is not None
             actual = layout.numerical_values(actual, shape if repeated else (self._length, *shape))[..., layout.inverse_permutation]
