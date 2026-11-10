@@ -96,12 +96,13 @@ class ExprOp(StrEnum):
   MATMUL = "matmul"
   CALL = "call"
   VMAP = "vmap"
+  EXTERN = "extern"
   SOLVER_CALL = "solver_call"
   PRINT = "print"
   STOP_GRADIENT = "stop_gradient"
 
 
-CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP}
+CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.EXTERN}
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -164,6 +165,7 @@ COMMON_STRUCTURAL = {
   ExprOp.MATMUL,
   ExprOp.CALL,
   ExprOp.VMAP,
+  ExprOp.EXTERN,
   ExprOp.SOLVER_CALL,
   ExprOp.PRINT,
   ExprOp.STOP_GRADIENT,
@@ -267,6 +269,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, pattern_rule="matmul"),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, support_rule="call"),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, support_rule="vmap"),
+  ExprOp.EXTERN: OpInfo(ExprOp.EXTERN, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
   ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, support_rule="preserve"),
   ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1, pattern_rule="preserve"),
@@ -376,7 +379,7 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
     if args[0].type.pattern is None or type_.pattern is not None or type_.shape != args[0].type.storage_shape:
       raise ValueError("VALUES requires a sparse operand and its dense storage shape")
     return
-  if op in (ExprOp.CALL, ExprOp.VMAP):
+  if op in CALLEE_OPS:
     return  # The verifier checks the callee signature.
   if op == ExprOp.SUM and type_.pattern is None:
     return

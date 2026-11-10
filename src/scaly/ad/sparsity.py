@@ -216,7 +216,7 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
       stack.append((node, variable, 1, context))
       if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
         stack.extend((arg, variable, 0, context) for arg in reversed(node.args) if (arg.id, variable.id) not in masks)
-    elif phase == 1 and callees_of(node):
+    elif phase == 1 and callees_of(node) and node.op != ExprOp.EXTERN:
       stack.append((node, variable, 2, context))
       callee = node.attrs["callee"]
       callee_out = callee.results[node.attrs["output"]]
@@ -292,6 +292,14 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     return _call_mask(expr, wrt, memo)
   if expr.op == ExprOp.VMAP:
     return _vmap_mask(expr, wrt, memo)
+  if expr.op == ExprOp.EXTERN:
+    ret = _empty((expr.size, wrt.size))
+    for arg in expr.args:
+      mask = _jac_mask(arg, wrt, memo)
+      rows, cols = stored_indices(expr.type), stored_indices(arg.type)
+      dense = _incidence((expr.size, arg.size), np.repeat(rows, len(cols)), np.tile(cols, len(rows)))
+      ret = _or(ret, _compose(dense, mask))
+    return ret
   if expr.op == ExprOp.SOLVER_CALL:
     if any(_jac_mask(arg, wrt, memo).nnz for arg in expr.args):
       raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")

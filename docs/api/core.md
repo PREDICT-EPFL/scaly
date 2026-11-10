@@ -32,7 +32,7 @@ interfaces for inspecting or extending the compiler.
     options:
       show_source: false
       filters:
-        - "!^(PACK|VALUES)$"
+        - "!^(PACK|VALUES|EXTERN)$"
 
 ::: scaly.ir.expr.OpInfo
     options:
@@ -43,6 +43,8 @@ interfaces for inspecting or extending the compiler.
         - "!^(pattern_rule|support_rule)$"
 
 ## Functions
+
+<!-- The curated entries below exclude CLibrary and extern until interface review. -->
 
 ::: scaly.function.model.Function
     options:

@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
+from .external import compile_library
 from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
@@ -71,18 +72,15 @@ _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
-_SOLVER_NAMESPACE: int | None = None
-_SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
-_SOLVER_NAMESPACE_ENVIRON: ctypes.c_void_p | None = None
-_SOLVER_NAMESPACE_LOCK = threading.Lock()
+_LINKER_NAMESPACES: dict[tuple[str, ...], tuple[int, ctypes.CDLL, ctypes.c_void_p | None]] = {}
+_LINKER_NAMESPACE_LOCK = threading.Lock()
 
 
-def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
-  """Load a shared library. ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
-  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR, _SOLVER_NAMESPACE_ENVIRON
+def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ()) -> ctypes.CDLL:
+  """Load a shared library, isolating incompatible Linux dependency builds from one another."""
   if isolated and sys.platform == "win32":
     with ExitStack() as stack:
-      for directory in solver_paths().lib_dirs:
+      for directory in solver_paths(required=False).lib_dirs:
         stack.enter_context(os.add_dll_directory(str(directory.resolve())))
       return ctypes.CDLL(str(path))
   if not isolated or sys.platform != "linux":
@@ -91,29 +89,34 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   dlmopen = libc.dlmopen
   dlmopen.argtypes = [ctypes.c_long, ctypes.c_char_p, ctypes.c_int]
   dlmopen.restype = ctypes.c_void_p
-  with _SOLVER_NAMESPACE_LOCK:
-    # The namespace has its own C library, whose `environ` still points at the environment array
-    # the process had when the namespace was created. Setting a variable since then may have freed
-    # that array, and initializers that call `getenv` (libgfortran's, under IPOPT) would crash on it.
-    if _SOLVER_NAMESPACE_ENVIRON is not None:
-      _SOLVER_NAMESPACE_ENVIRON.value = ctypes.c_void_p.in_dll(libc, "environ").value
-    handle = dlmopen(_LM_ID_NEWLM if _SOLVER_NAMESPACE is None else _SOLVER_NAMESPACE, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
+  with _LINKER_NAMESPACE_LOCK:
+    previous = _LINKER_NAMESPACES.get(namespace)
+    namespace_id, anchor, environ = previous if previous is not None else (_LM_ID_NEWLM, None, None)
+    # A namespace's libc retains the process environment array from its first load. Refresh it
+    # before another initializer calls getenv, since Python may have replaced that array.
+    if environ is not None:
+      environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
+    handle = dlmopen(namespace_id, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
     if not handle:
       raise OSError(f"dlmopen failed for {path}")
     # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
     lib = ctypes.CDLL(None)
     lib._handle = handle
     lib._name = str(path)
-    if _SOLVER_NAMESPACE is None:
+    if anchor is None:
       dlinfo = libc.dlinfo
       dlinfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
       dlinfo.restype = ctypes.c_int
-      namespace = ctypes.c_long()
-      if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(namespace)) != 0:
+      resolved = ctypes.c_long()
+      if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(resolved)) != 0:
         raise OSError(f"dlinfo failed for {path}")
-      _SOLVER_NAMESPACE = namespace.value
-      _SOLVER_NAMESPACE_ANCHOR = lib
-      _SOLVER_NAMESPACE_ENVIRON = ctypes.c_void_p.in_dll(lib, "environ")
+      namespace_id, anchor = resolved.value, lib
+    if environ is None:
+      try:
+        environ = ctypes.c_void_p.in_dll(lib, "environ")
+      except ValueError:
+        pass  # A self-contained external kernel need not link libc.
+    _LINKER_NAMESPACES[namespace] = namespace_id, anchor, environ
   return lib
 
 
@@ -164,7 +167,9 @@ def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
   )
 
 
-def _compile_command(compiler: tuple[str, ...], recipe: BuildRecipe, link_flags: tuple[str, ...], source: str, output: str) -> list[str]:
+def _compile_command(
+  compiler: tuple[str, ...], recipe: BuildRecipe, link_flags: tuple[str, ...], source: str, output: str, objects: tuple[str, ...] = (), *, external: bool = False
+) -> list[str]:
   # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
   # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
@@ -178,6 +183,8 @@ def _compile_command(compiler: tuple[str, ...], recipe: BuildRecipe, link_flags:
     shared_lib_flag(),
     source,
     *exports,
+    *objects,
+    *(("-Wl,-Bsymbolic",) if external and sys.platform == "linux" else ()),
     *link_flags,
     "-lm",
     "-o",
@@ -253,9 +260,16 @@ def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
 def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule, str]:
   """Render ``fun`` for the host and derive its cache key, which hashes exactly the text handed to the compiler."""
   module = _render_native(fun, compiler.command)
-  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext())
+  toolchain = _toolchain(fun, compiler)
+  try:
+    if module.library_builds:
+      toolchain += ":extern:" + ":".join(build.key for build in module.library_builds)
+  except (OSError, subprocess.CalledProcessError) as exc:
+    detail = (exc.stderr or exc.stdout) if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+    raise JitError(f"failed to prepare external libraries for {fun.name!r}: {detail}") from exc
+  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module.libraries))
   solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
-  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=_toolchain(fun, compiler), solver_inputs=solver_inputs)
+  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
 
 
 @functools.cache
@@ -297,6 +311,7 @@ class _Artifact:
   workspace_size: int
   solver_library: bool
   prints: bool
+  namespace: tuple[str, ...] = ()
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -386,8 +401,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     key=key,
     flags=module.link_flags,
     workspace_size=module.workspace_size,
-    solver_library=bool(module.backends),
+    solver_library=bool(module.backends or module.libraries),
     prints=prints(module.program),
+    namespace=("extern", *(f"{link.path}:{link.identity}" for build in module.library_builds for link in build.links)) if module.libraries else (),
   )
   if verify and index is not None and indexed is not None and replace(indexed, lib_path=lib_path) != artifact:
     raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
@@ -418,8 +434,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # It is also short, which the function's own directory may not be: Windows refuses a working
     # directory longer than 260 characters.
     try:
+      objects = tuple(obj for build in module.library_builds for obj in compile_library(build, compiler.command))
       subprocess.run(
-        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix()),
+        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix(), objects, external=bool(module.libraries)),
         cwd=tempfile.gettempdir(),
         check=True,
         capture_output=True,
@@ -467,7 +484,9 @@ class CompiledFunction:
     fun = as_concrete(fun)
     self._fun = fun
     self._artifact = _build_artifact(fun)
-    self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.solver_library)
+    self._lib = load_library(
+      self._artifact.lib_path, isolated=self._artifact.solver_library, **({"namespace": self._artifact.namespace} if self._artifact.namespace else {})
+    )
     symbol = c_ident(fun.name)
     self._symbol = symbol
     solvers = solver_functions(fun)

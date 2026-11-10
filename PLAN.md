@@ -9,13 +9,13 @@ architecture, codebase, conventions, contributing and compiler maintenance conte
 The frozen devrush extern tests supply the compile/nest/reject cases, rewritten for this API.
 
 - [x] Inspect ownership, prerequisites, overlap and the existing compiler paths.
-- [ ] Add failing end-to-end and boundary tests for invocation grouping, compiled source,
+- [x] Add failing end-to-end and boundary tests for invocation grouping, compiled source,
       named system linking, cache content, derivative rejection/custom rules and AOT manifest.
-- [ ] Add frozen library descriptions and concrete extern declarations, EXTERN verification,
+- [x] Add frozen library descriptions and concrete extern declarations, EXTERN verification,
       AD handling, lowering and rendering with workspace and sparse leaf layouts.
-- [ ] Compile external sources separately, resolve named libraries in the toolchain, include
+- [x] Compile external sources separately, resolve named libraries in the toolchain, include
       all native content in the JIT key, and export a portable AOT build manifest.
-- [ ] Add public exports/docstrings, explicitly exclude API names from published docs and write
+- [x] Add public exports/docstrings, explicitly exclude API names from published docs and write
       the internal section note and end-to-end example test. No guide page or plugin changes.
 - [ ] Run focused checks, perturb new gates, then all pre-merge checks through the detached
       ~/.scaly-suite/run queue. Existing C snapshots must remain byte-identical.
@@ -26,3 +26,7 @@ The frozen devrush extern tests supply the compile/nest/reject cases, rewritten 
 Expected overlaps: JIT cache PRs #321/#310/#316 and frame budget #314; expression/lowering
 PRs #320/#331/#349/#337/#329/#312. Rebase only for an actual conflict or queue ejection.
 Public interface requires the maintainer's later section review. No run-time performance claims.
+
+Focused evidence: 23 extern tests and 201 surrounding tests passed, including unchanged C snapshots.
+All six completion gates failed under deliberate perturbation and were restored. Ruff/ty pass.
+Full suite and all pre-merge checks are next, through the shared queue.

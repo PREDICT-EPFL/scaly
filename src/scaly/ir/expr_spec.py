@@ -416,6 +416,7 @@ spec_expr = Spec(
     Rule(ExprOp.SOLVER_CALL, "solver-call-signature", _solver_call_signature),
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
+    Rule(ExprOp.EXTERN, "extern-attrs", _call_attrs),
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),

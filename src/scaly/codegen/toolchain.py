@@ -257,5 +257,54 @@ def main() -> None:
   print(_format_report())
 
 
+@dataclass(frozen=True, slots=True)
+class LinkedLibrary:
+  """A named dependency resolved for one compiler, with its content identity and linker flags."""
+
+  name: str
+  path: str
+  identity: str
+  flags: tuple[str, ...]
+
+
+@lru_cache(maxsize=128)
+def _library_content(path: str, size: int, mtime_ns: int) -> str:
+  with open(path, "rb") as stream:
+    return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def resolve_library(name: str, command: tuple[str, ...]) -> LinkedLibrary:
+  """Resolve a library name through the selected compiler's search path, including macOS SDK stubs."""
+  import ctypes.util
+
+  found = ctypes.util.find_library(name)
+  candidates = tuple(dict.fromkeys(filter(None, (found, f"lib{name}.so", f"lib{name}.dylib", f"lib{name}.dll.a", f"{name}.lib", f"lib{name}.a"))))
+  search_dirs = [Path(part[2:]) for part in command if part.startswith("-L") and len(part) > 2]
+  search_dirs += [Path(command[i + 1]) for i, part in enumerate(command[:-1]) if part == "-L"]
+  for candidate in candidates:
+    path = next((directory / candidate for directory in search_dirs if (directory / candidate).is_file()), Path(candidate))
+    if not path.is_absolute() or not path.is_file():
+      reported = subprocess.run([*command, f"-print-file-name={candidate}"], text=True, capture_output=True, check=True).stdout.strip()
+      path = Path(reported) if reported else path
+    if path.is_file():
+      path = path.resolve()
+      stat = path.stat()
+      identity = _library_content(str(path), stat.st_size, stat.st_mtime_ns)
+      return LinkedLibrary(
+        name,
+        str(path),
+        identity,
+        (path.as_posix(), *((f"-Wl,-rpath,{path.parent.as_posix()}",) if sys.platform != "win32" and path.suffix != ".a" else ())),
+      )
+  if sys.platform == "darwin":
+    sdk = subprocess.run(["xcrun", "--show-sdk-path"], capture_output=True, text=True, check=True).stdout.strip()
+    path = Path(sdk) / "usr" / "lib" / f"lib{name}.tbd"
+    if path.is_file():
+      stat = path.stat()
+      identity = _library_content(str(path), stat.st_size, stat.st_mtime_ns)
+      return LinkedLibrary(name, str(path), identity, (f"-l{name}",))
+  raise FileNotFoundError(f"C toolchain cannot resolve library {name!r}")
+
+
 if __name__ == "__main__":
   main()

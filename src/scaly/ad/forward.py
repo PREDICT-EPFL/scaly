@@ -90,6 +90,8 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         tangent = None
       elif expr.op == ExprOp.PRINT:
         tangent = d[0]
+      elif expr.op == ExprOp.EXTERN:
+        raise NotImplementedError(f"active derivative through extern {expr.attrs['callee'].name!r} needs sc.custom_derivative on a wrapping Function")
       elif callees_of(expr):
         read = {arg.id for arg in args}
         call_tangents = [simplify_cse_fixpoint(t) if arg.id in read and (t := tangents[arg.id]) is not None else None for arg in expr.args]

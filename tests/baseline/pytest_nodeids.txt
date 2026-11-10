@@ -1644,6 +1644,10 @@ tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported
 tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported_entry[x-workspace_2]
 tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_output
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
+tests/codegen/test_external.py::test_an_included_header_changes_library_and_jit_keys
+tests/codegen/test_external.py::test_changed_linked_binary_changes_key_and_linux_namespace
+tests/codegen/test_external.py::test_library_compiles_once_for_two_symbols_and_multiple_graphs
+tests/codegen/test_external.py::test_manifest_consumer_compiles_each_translation_unit_and_links
 tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[clang]
 tests/codegen/test_jit.py::test_clang_vectorizes_scalar_math_loops_with_libmvec[zig cc]
 tests/codegen/test_jit.py::test_compiler_wrapper_change_misses_the_cache
@@ -2246,6 +2250,25 @@ tests/function/test_digest.py::test_the_digest_changes_with[the name]
 tests/function/test_digest.py::test_the_digest_changes_with[the sign of zero]
 tests/function/test_digest.py::test_the_source_digest_reads_the_files_contents
 tests/function/test_digest.py::test_unchecked_bytecode_of_another_source_gives_no_digest
+tests/function/test_extern.py::test_active_derivative_names_custom_derivative[forward]
+tests/function/test_extern.py::test_active_derivative_names_custom_derivative[jacobian]
+tests/function/test_extern.py::test_active_derivative_names_custom_derivative[reverse]
+tests/function/test_extern.py::test_aot_exports_library_source_headers_and_build_manifest
+tests/function/test_extern.py::test_extern_rejects_invalid_declarations[input_hole]
+tests/function/test_extern.py::test_extern_rejects_invalid_declarations[link]
+tests/function/test_extern.py::test_extern_rejects_invalid_declarations[output_hole]
+tests/function/test_extern.py::test_extern_rejects_invalid_declarations[path]
+tests/function/test_extern.py::test_extern_rejects_invalid_declarations[symbol]
+tests/function/test_extern.py::test_extern_rejects_invalid_declarations[workspace]
+tests/function/test_extern.py::test_extern_sparse_leaves_keep_their_declared_storage_order
+tests/function/test_extern.py::test_extern_verifier_checks_concrete_types_and_symbol_conflicts
+tests/function/test_extern.py::test_external_call_nests_maps_and_allocates_unused_outputs
+tests/function/test_extern.py::test_external_source_two_results_share_one_invocation_and_match_numpy
+tests/function/test_extern.py::test_inactive_external_derivatives_and_zero_input_call
+tests/function/test_extern.py::test_library_content_and_flags_change_jit_key
+tests/function/test_extern.py::test_named_system_math_library_is_resolved_and_linked
+tests/function/test_extern.py::test_wrapper_custom_derivative_matches_finite_differences[False]
+tests/function/test_extern.py::test_wrapper_custom_derivative_matches_finite_differences[True]
 tests/function/test_instances.py::test_bare_structure_is_part_of_the_binding_and_name
 tests/function/test_instances.py::test_bare_variadic_body_stays_bare
 tests/function/test_instances.py::test_bare_zero_parameter_body_is_fully_declared
@@ -3646,6 +3669,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.aot]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.c]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.casadi]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.cpp]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.external]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.jit]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.solver]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.toolchain]
@@ -3653,6 +3677,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.api]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.concrete]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.digest]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.function.extern]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.factory]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.sugar]

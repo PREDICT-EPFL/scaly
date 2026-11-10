@@ -15,14 +15,26 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from scaly.codegen.toolchain import BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
+from scaly.codegen.external import LibraryBuild, export_libraries, prepare_library
+from scaly.function.extern import CLibrary
+from scaly.codegen.toolchain import find_c_compiler, BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
 from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables, wrapper_param_idents
-from scaly.codegen.c import _c_reserved_names, _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
+from scaly.codegen.c import (
+  extern_declarations,
+  _c_reserved_names,
+  _includes,
+  _render_entry,
+  _render_raw_callee,
+  entry_prologue,
+  entry_workspace,
+  render_program_c,
+)
 from scaly.codegen.casadi import (
   casadi_declarations,
   casadi_defines,
@@ -84,6 +96,20 @@ class CModule:
   recipe: BuildRecipe = BuildRecipe()
 
   @cached_property
+  def libraries(self) -> tuple[CLibrary, ...]:
+    """Build descriptions reached by the lowered graph, once per library."""
+    return tuple(dict.fromkeys(fn.library for fn in self.program.attrs.get("externs", ())))
+
+  @cached_property
+  def library_builds(self) -> tuple[LibraryBuild, ...]:
+    if not self.libraries:
+      return ()
+    compiler = find_c_compiler()
+    if compiler is None:
+      raise RuntimeError("external libraries need a C compiler")
+    return tuple(prepare_library(library, compiler.command) for library in self.libraries)
+
+  @cached_property
   def header(self) -> str:
     return self.recipe.comment(self.source_name) + _render_header(self.fun, self.backends, self.workspace_size, lang=self.lang, casadi=self.casadi)
 
@@ -103,7 +129,7 @@ class CModule:
     backend's library or header is missing: rendering has to stay possible on a machine without the
     vendored solver stack, and against a backend that has no library at all (the fake backends in
     ``tests/solvers/test_registry.py``)."""
-    return (*backend_compile_flags(self.backends), *self.recipe.link_flags)
+    return (*backend_compile_flags(self.backends), *self.recipe.link_flags, *(flag for build in self.library_builds for flag in build.link_flags))
 
 
 class RenderObserver(Protocol):
@@ -360,6 +386,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     "#endif",
     "",
   ]
+  lines += extern_declarations(prog)
   order = _function_order(fun)
   solvers = solver_functions(fun)
   symbols = dict(prog.attrs["function_symbols"])
@@ -602,6 +629,14 @@ def write_module(
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
+  if module.libraries:
+    manifest = {
+      "source": module.source_name,
+      "compile_flags": ["-O2", *module.recipe.cpu_flags, "-fno-math-errno"],
+      "link": ["m", *(["mvec"] if module.recipe.vector_libm == "glibc" else [])],
+      "libraries": export_libraries(module.libraries, out_dir),
+    }
+    (out_dir / f"{c_ident(module.fun.name)}.build.json").write_text(json.dumps(manifest, indent=2) + "\n")
   return module
 
 
@@ -680,7 +715,7 @@ def _callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
     return ret
   for node in fun.nodes:
     for callee in callees_of(node):
-      if id(callee) not in seen:
+      if isinstance(callee, ConcreteFunction) and id(callee) not in seen:
         seen.add(id(callee))
         ret.append(callee)
   return ret
