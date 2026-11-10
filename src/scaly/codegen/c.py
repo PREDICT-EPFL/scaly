@@ -496,6 +496,11 @@ def _vector_captures(stmt: ProgramNode) -> tuple[list[ProgramNode], list[Program
   nodes = list(walk_program(stmt))
   declared = {n.attrs["name"] for n in nodes if n.op == ProgramOp.BUFFER}
   buffers = {n.attrs["buffer"]: n for n in nodes if n.op == ProgramOp.VIEW and n.attrs["buffer"] not in declared}
+  buffers.update(
+    (n.attrs["target"], p.view(p.buffer(n.attrs["target"], n.dtype, (1,)), [p.const_int(0)]))
+    for n in nodes
+    if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")
+  )
   local = {n.attrs["target"] for n in nodes if n.op == ProgramOp.ASSIGN}
   local.update(n.attrs["name"] for n in nodes if n.op == ProgramOp.RANGE)
   local.add("SCALY_LANES")
@@ -514,7 +519,11 @@ def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[
   outer = c_ident(stmt.args[0].attrs["name"])
   count, width = stmt.attrs["vector_count"], _vector_width(stmt)
   buffers, variables = _vector_captures(stmt)
-  captures = [ptr_expr.get(n.attrs["buffer"], c_ident(n.attrs["buffer"])) for n in buffers]
+  accumulators = {n.attrs["target"] for n in walk_program(stmt) if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")}
+  captures = [
+    f"&{c_ident(n.attrs['buffer'])}" if n.attrs["buffer"] in accumulators else ptr_expr.get(n.attrs["buffer"], c_ident(n.attrs["buffer"]))
+    for n in buffers
+  ]
   captures += [c_ident(n.attrs["name"]) for n in variables]
   suffix = ", " + ", ".join(captures) if captures else ""
   lines += [
@@ -541,7 +550,22 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
       body = [substitute_var(n, name, p.var(short)) for n in body]
     width, vec = _vector_width(stmt), vector.args[0].attrs["lane_vector"]
     buffers, variables = _vector_captures(stmt)
-    writes = buffer_refs(stmt).writes
+    accumulators = {
+      n.attrs["target"]: p.view(p.buffer(n.attrs["target"], n.dtype, (1,)), [p.const_int(0)])
+      for n in walk_program(stmt)
+      if n.op == ProgramOp.ASSIGN and n.attrs.get("ordered_reduction")
+    }
+    writes = buffer_refs(stmt).writes | accumulators.keys()
+    if accumulators:
+      patterns = [
+        Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] in accumulators, lambda n: p.load(accumulators[n.attrs["name"]])),
+        Pattern(
+          ProgramOp.ASSIGN,
+          lambda n: bool(n.attrs.get("ordered_reduction")),
+          lambda n: ProgramNode(ProgramOp.STORE, (accumulators[n.attrs["target"]], n.args[0]), {"ordered_reduction": True}, n.dtype),
+        ),
+      ]
+      body = [rewrite(n, patterns, rebuild=rebuild_program, fixpoint=False) for n in body]
     params = [f"long long {start}", f"long long {valid}"]
     params += [f"{'const ' if n.attrs['buffer'] not in writes else ''}{n.dtype.c_type}* {c_ident(n.attrs['buffer'])}" for n in buffers]
     params += [f"{n.dtype.c_type} {c_ident(n.attrs['name'])}" for n in variables]

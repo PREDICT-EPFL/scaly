@@ -95,7 +95,8 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
         return recurse()
       assigned = [n for n in nodes if n.op == ProgramOp.ASSIGN]
       declared = {n.attrs["target"] for n in assigned if n.attrs.get("declare")}
-      if any(n.attrs["target"] not in declared for n in assigned):
+      reduction = _ordered_reduction(inner, rng, {})
+      if reduction is None and any(n.attrs["target"] not in declared for n in assigned):
         return recurse()
       local_buffers = {n.attrs["name"]: n for n in nodes if n.op == ProgramOp.BUFFER and "values" not in n.attrs}
       local_names = set(local_buffers)
@@ -280,9 +281,19 @@ def _inline_calls(body: list[ProgramNode], procedures: dict[str, ProgramNode], s
 
 
 def _ordered_reduction(body: list[ProgramNode], rng: ProgramNode, aliases: dict[str, str]) -> ProgramNode | None:
-  if rng.attrs["kind"] != RangeKind.REDUCE or len(body) != 1 or body[0].op != ProgramOp.STORE:
+  if rng.attrs["kind"] != RangeKind.REDUCE or len(body) != 1:
     return None
   stmt = body[0]
+  if stmt.op == ProgramOp.ASSIGN:
+    value = stmt.args[0]
+    if stmt.attrs.get("declare") or value.op != ProgramOp.ADD:
+      return None
+    acc = p.var(stmt.attrs["target"], stmt.dtype)
+    if value.args[0] is not acc or any(n is acc for n in walk_program(value.args[1])):
+      return None
+    return ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "ordered_reduction": True}, stmt.dtype)
+  if stmt.op != ProgramOp.STORE:
+    return None
   target, value = stmt.args
   if value.op != ProgramOp.ADD or any(n.op == ProgramOp.VAR and n.attrs["name"] == rng.attrs["name"] for n in walk_program(target)):
     return None

@@ -14,15 +14,16 @@ Do not edit `passes/lowering/plans.py`, which belongs to #46.
 - [x] Read the run plan and implement, inspect-issues, update-issues, write-plan,
       cross-review and unslop skills. Confirm linked worktree on la015, inspect
       issue dependencies and open PRs, mark #45 In progress, initialize gh stack.
-- [ ] Add failing differential and structural tests for SUM and all current
+- [x] Add failing differential and structural tests for SUM and all current
       MATMUL shape classes, empty reductions, both schedules, mutable scalar
       expansion and ordered vector lanes. Inspect devrush's reduction tests.
-- [ ] Add a single lowering scheduler and migrate reductions and contractions.
+- [x] Add a single lowering scheduler and migrate reductions and contractions.
       Keep each output's reference summation order; identity initialization must
       survive empty reduction ranges. Delete layout-specific helpers.
-- [ ] Show new checks fail under an implementation perturbation. Run narrow
+- [x] Show new checks fail under an implementation perturbation. Run narrow
       checks, regenerate node IDs and C snapshots, record operation counts,
-      generated source size and C compile time against main.
+      generated source size and C compile time against main. Measurements remain
+      pending; the test and snapshot work is complete.
 - [ ] Rebase over overlapping main changes, regenerate snapshots and rerun the
       full suite and `wt hook pre-merge --yes`.
 - [ ] Commit and push only task changes, open draft PR targeting main, link it
@@ -36,3 +37,11 @@ Do not edit `passes/lowering/plans.py`, which belongs to #46.
 Current findings: main already supports ASSIGN in scalarize for matrix panels.
 The new regression must exercise mutable accumulation, empty loops and calls.
 The sparse stack, #30 and #28 may require rebases before final evidence.
+
+Validation so far: the three structural checks fail against main. With the new
+scheduler the targeted run passed 387 tests with 50 compiler-extra skips. GCC and
+Clang both passed ordered reductions in GNU and scalar C for widths 2, 4 and 8.
+Changing the identity to 11, suppressing the strided schedule and using two
+output lanes each failed its new check. Five source snapshots changed, all
+headers and the sparse-Jacobian and mapped sources stayed identical. Ruff and
+ty pass. The full pre-merge hook is running, including the whole test suite.
