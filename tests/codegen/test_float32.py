@@ -344,3 +344,48 @@ def test_float32_calls_and_maps_keep_rounding(mode):
   values = np.tile([16777216.0, 16777218.0, -16777216.0], (5, 1))
   a = values.astype(np.float32)
   np.testing.assert_array_equal(fn(values), (a + np.float32(1)) - a)
+
+
+F32_SPECIAL = np.array([-np.inf, -3.4e38, -1.5, -1e-45, -0.0, 0.0, 1e-45, 0.1, 1.5, 3.4e38, np.inf, np.nan], dtype=np.float32)
+F32_X, F32_Y = (a.reshape(-1) for a in np.meshgrid(F32_SPECIAL, F32_SPECIAL, indexing="ij"))
+
+
+def _assert_float32_special(got, expected):
+  expected = np.asarray(expected, dtype=np.float32)
+  np.testing.assert_array_equal(got, got.astype(np.float32).astype(np.float64))
+  np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+  finite = np.isfinite(expected)
+  np.testing.assert_array_equal(got[~finite], expected[~finite])
+  np.testing.assert_array_max_ulp(got[finite].astype(np.float32), expected[finite], maxulp=4)
+
+
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_float32_special_value_grid_matches_numpy(mode):
+  """Adapt devrush's test_float32_ops_round_like_numpy_float32 to internal float32 values."""
+  ops = [sc.ExprOp.MINIMUM, sc.ExprOp.MAXIMUM, sc.ExprOp.SELECT, sc.ExprOp.LE, sc.ExprOp.EQ, sc.ExprOp.ISFINITE, sc.ExprOp.ATAN2]
+
+  @sc.function(sc.arg("x", F32_X.size), sc.arg("y", F32_X.size), outputs=sc.arg("out"), name=f"float32_special_{mode}")
+  def fn(x, y):
+    a, b = sc.cast(x, "float32"), sc.cast(y, "float32")
+    return sc.stack([sc.cast(_elementwise(op, a, b), "float64") for op in ops]).with_lowering(mode)
+
+  for op, got in zip(ops, fn(F32_X.astype(float), F32_Y.astype(float)), strict=True):
+    with np.errstate(all="ignore"):
+      _assert_float32_special(got, _reference(op, F32_X, F32_Y))
+
+
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_float32_special_libm_results_stay_float32(mode):
+  """Adapt devrush's float32 libm test, including the arithmetic around each libm result."""
+  ops = [op for op, row in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and row.c.isidentifier()]
+
+  @sc.function(sc.arg("x", F32_X.size), sc.arg("y", F32_X.size), outputs=sc.arg("out"), name=f"float32_special_libm_{mode}")
+  def fn(x, y):
+    a, b = sc.cast(x, "float32"), sc.cast(y, "float32")
+    outputs = [_elementwise(op, a, b) for op in ops] + [a**b, a.floor() * 0.1 + a.abs().sqrt()]
+    return sc.stack([sc.cast(value, "float64") for value in outputs]).with_lowering(mode)
+
+  with np.errstate(all="ignore"):
+    expected = [_reference(op, F32_X, F32_Y) for op in ops] + [F32_X**F32_Y, np.floor(F32_X) * np.float32(0.1) + np.sqrt(np.abs(F32_X))]
+  for got, ref in zip(fn(F32_X.astype(float), F32_Y.astype(float)), expected, strict=True):
+    _assert_float32_special(got, ref)
