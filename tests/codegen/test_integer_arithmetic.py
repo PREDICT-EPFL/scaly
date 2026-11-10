@@ -9,8 +9,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import CModule, render_c_module
-from scaly.passes.lowering import lower_function, main_proc
-from scaly.passes.lowering import ctx
+from scaly.passes.lowering import ctx, lower_function, main_proc
 from tests.compilers import c_compiler, named_compiler
 
 
@@ -90,7 +89,7 @@ int main(void) {{
 """
   )
   executable = tmp_path / "arithmetic"
-  flags = ["-fsanitize=signed-integer-overflow", "-fno-sanitize-recover=signed-integer-overflow"] if sanitize else []
+  flags = ["-fsanitize=signed-integer-overflow", "-fsanitize-undefined-trap-on-error"] if sanitize else []
   built = subprocess.run(
     [*command, "-std=c99", "-O2", "-DSCALY_PRINTF(...)=", *flags, str(source), "-lm", "-o", str(executable)], capture_output=True, text=True
   )

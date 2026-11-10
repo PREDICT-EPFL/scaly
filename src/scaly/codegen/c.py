@@ -26,6 +26,7 @@ from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi
 from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
 from ..passes.lowering import LoweringError, main_proc
+from ..passes.arith import SIGNED_WRAP_OPS
 from ..ir import program as p
 from ..ir.expr import OP_INFO
 from ..ir.match import Pattern, rewrite
@@ -300,7 +301,7 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
 
 
 def _has_integer_data(body: list[ProgramNode]) -> bool:
-  """Integer data needs wrapping; static loop indices keep their existing C spelling."""
+  """Detect signed data without visiting address and range expressions."""
   pending = list(body)
   seen: set[ProgramNode] = set()
   while pending:
@@ -345,13 +346,19 @@ def _emit_statement(
   dialect: CDialect = "gnu",
   solver_callees: frozenset[str] = frozenset(),
   options_name: str = "solver_options",
-  integer_data: bool = True,
+  integer_data: bool,
 ) -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.BLOCK:
     _emit_body(
-      list(stmt.args), ptr_expr, lines, indent,
-      dialect=dialect, solver_callees=solver_callees, options_name=options_name, integer_data=integer_data,
+      list(stmt.args),
+      ptr_expr,
+      lines,
+      indent,
+      dialect=dialect,
+      solver_callees=solver_callees,
+      options_name=options_name,
+      integer_data=integer_data,
     )
   elif stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
@@ -511,7 +518,7 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = (var_expr or {}).get(node.attrs["name"], c_ident(node.attrs["name"]))
     elif op == ProgramOp.LOAD:
       s = (var_expr or {}).get(f"@load{id(node)}") or _emit_view(node.args[0], ptr_expr, var_expr)
-    elif not index and node.dtype.is_integer and not node.dtype.is_unsigned and op in (ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.NEG):
+    elif not index and node.dtype.is_integer and not node.dtype.is_unsigned and op in SIGNED_WRAP_OPS:
       # Compiler indices are bounded by static shapes. User arithmetic wraps before every use,
       # including a comparison or another operation without an intervening store.
       unsigned = [f"((uint{node.dtype.bits}_t)({a}))" for a in args]
@@ -531,7 +538,9 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = f"{_BINARY_C[op]}{'f' if node.dtype == dtypes.float32 else ''}({args[0]}, {args[1]})"
     elif op == ProgramOp.BIT_SELECT:
       zero = "0.0f" if node.dtype.bits == 32 else "0.0"
-      s = f"(((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {args[2]} : {zero})"
+      word = _emit_scalar(node.args[0], ptr_expr, var_expr, index=True)
+      bit = _emit_scalar(node.args[1], ptr_expr, var_expr, index=True)
+      s = f"(((((int64_t)({word})) >> ({bit})) & 1) ? {args[2]} : {zero})"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
     text[id(node)] = s
@@ -780,8 +789,8 @@ def _emit_vector_body(
         word_node, bit_node, value_node = node.args
         # A word that is the same in every lane, as pack_masks emits it, is read once and broadcast.
         uniform = not varies(word_node)
-        word_text = _emit_scalar(word_node, {}, first_lane() if uniform else lane_vars)
-        bit_text = _emit_scalar(bit_node, {}, lane_vars)
+        word_text = _emit_scalar(word_node, {}, first_lane() if uniform else lane_vars, index=True)
+        bit_text = _emit_scalar(bit_node, {}, lane_vars, index=True)
         if dtype.bits == 32:
           hit = scope.allocate("kh")
           lines.append(f"  {vec}_i{dtype.bits} {hit};")

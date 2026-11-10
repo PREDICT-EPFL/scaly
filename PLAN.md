@@ -39,3 +39,13 @@ could still overflow. Added failing sanitizer reproductions for both widths and 
 the detector to skip index positions rather than constant buffers. All 178 focused
 arithmetic, folding and snapshot checks pass. Ruff and ty pass; collection has 3191 IDs.
 The full hook must run again, and the fixes need the short delta check after Opus returns.
+
+Opus found a float64 C change in BIT_SELECT's word/bit indices after lane widening.
+Both renderers now use index spelling for those operands. The expanded GNU/scalar-C
+lane regression failed before the fix; all 210 focused checks now pass. Direct compares
+of the affected public Hessian and both packed-mask dialects are byte-identical to base.
+Applied the cheap review notes, shared the wrapping-op set, and used sanitizer traps
+so MinGW does not need a UBSan runtime. Removing wrapping still makes the trap test fail.
+Filed the out-of-scope uint8 and invalid-cast gaps as #363 and #365, with source:agent.
+The optional renderer redesign is unnecessary for the completion criteria and deferred.
+The next full hook and the one delta check per reviewer must cover both fixes together.
