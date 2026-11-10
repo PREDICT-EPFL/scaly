@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from scipy import sparse
 
 import scaly as sc
 from scaly.codegen.jit import get_compiled
@@ -81,3 +82,26 @@ def test_dense_layout_row_major_default_and_invalid_orders():
   fun = sc.function(sc.arg("x", (2, 3), layout="column-major"), name="dense_bad_shape")(lambda x: x)
   with pytest.raises(ValueError, match="shape"):
     get_compiled(fun).run([np.arange(6, dtype=float)])
+
+
+@pytest.mark.parametrize("sparse_order", ["csc", "csr"])
+def test_dense_layout_with_pattern_holes_in_factories_maps_and_adjoints(sparse_order):
+  @sc.function(
+    sc.arg("x", layout="column-major"),
+    sc.arg("s", (2, 3), pattern=..., layout=sparse_order),
+    outputs=sc.arg("y", layout="column-major"),
+    name="mixed_layout_holes",
+  )
+  def fun(x, s):
+    return (x + s.to_dense()).sin()
+
+  x = np.arange(6, dtype=float).reshape(2, 3) / 10
+  s = sparse.coo_array(([1.0, 2.0], ([0, 1], [2, 0])), shape=(2, 3))
+  expected = np.sin(x + s.toarray())
+  factory = fun.factory("mixed_layout_factory", ["x", "s"], ["y"])
+  for evaluate in (fun, factory):
+    np.testing.assert_allclose(evaluate(x, s), expected)
+  seed = x + 2
+  np.testing.assert_allclose(sc.adjoint(fun, of="y", wrt="x")(x, s, seed), np.cos(x + s.toarray()) * seed)
+  batch = np.stack([x, x + 1])
+  np.testing.assert_allclose(sc.vmap(fun, 2)(batch, sc.broadcast(s)), np.sin(batch + s.toarray()))
