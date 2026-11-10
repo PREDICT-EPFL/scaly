@@ -10,7 +10,7 @@ from typing import Any, Callable, Protocol, cast
 import numpy as np
 
 from ..ir import program as p
-from ..ir.expr import Expr, ExprOp
+from ..ir.expr import Expr, ExprOp, _uniform
 from ..ir.program import ProgramNode, ProgramOp
 from ..ir.types import DType
 
@@ -123,11 +123,11 @@ def _expr_const(e: Expr) -> int | float | None:
   if e.op != ExprOp.CONST or e.value is None or e.value.size == 0:
     return None
   first = e.value.reshape(-1)[0]
-  return first.item() if bool(np.all(e.value == first)) else None
+  return first.item() if bool(np.all(e.value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in e.value.strides)] == first)) else None
 
 
 def _expr_full(value: int | float, like: Expr) -> Expr:
-  return Expr.const(np.full(like.shape, value), dtype=like.type.dtype, lowering=like.lowering)
+  return _uniform(value, like.shape, dtype=like.type.dtype, lowering=like.lowering)
 
 
 ARITH_EXPR: Arith[Expr] = Arith(

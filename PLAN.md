@@ -11,9 +11,9 @@ calls/maps, scalar zero skipping and sparse kernels remain with their owning tas
 - [x] Make uniform constants, folding/hashing, coordinate maps, support and derivative incidence
   depend on represented entries. Preserve #40's custom-derivative behavior.
 - [x] Remove compiler-time full-shape work exposed by lowering, keeping logical buffer sizes for #42.
-- [ ] Measure repeated gate runs and calibrate fixed cross-platform limits. Check cached-support
+- [x] Measure repeated gate runs and calibrate fixed cross-platform limits. Check cached-support
   memory with a self-contained growing-sum reproduction.
-- [ ] Run the merge checks and gate perturbations. C snapshots must stay byte-identical.
+- [x] Run the merge checks and gate perturbations. C snapshots must stay byte-identical.
 - [ ] Commit and push, open a draft PR against `t3code/40-support`, obtain cross-review, address
   findings and check the fixes. Delete this plan before marking ready, then update tracking.
 
@@ -44,3 +44,12 @@ still pass byte-for-byte. Strict Windows and Python 3.12 type checks pass.
 #40's custom derivative declaration/filter logic is unchanged. Its surrounding mask annotations,
 row storage and composition now use COO. Call/map consumers explicitly request CSR only at their
 existing boundary when they need its indexed access; sparse call layouts remain with #42.
+
+The final merge hook passed 2,726 tests with 52 optional skips, benchmark smoke, docs, strict
+`ty`, Ruff lint/format and private-name checks. The completed workload's three fresh runs were
+29.151, 23.897 and 25.970 seconds, with 352,257,925 to 352,258,083 traced bytes and 777,121,792 to
+777,441,280 peak resident bytes. The 180-second / 2-GiB limits provide at least 6.1x time and
+2.7x resident-memory headroom, including a run overlapping the full suite. The four-platform CI
+run must confirm portability. Coloring and original reverse-broadcast/slice perturbations are
+also being checked against this expanded gate. The original matmul enumeration times out in a
+separate three-second reproduction that the current implementation passes.

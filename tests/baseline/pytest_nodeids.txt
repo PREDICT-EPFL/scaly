@@ -1727,6 +1727,9 @@ tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_struc
 tests/integration/test_acados_race_car.py::test_acados_race_car_straight_line
 tests/integration/test_overlapping_stage_hessian.py::test_overlapping_stage_hessian_matches_numpy_through_packed_masks[30]
 tests/integration/test_overlapping_stage_hessian.py::test_overlapping_stage_hessian_matches_numpy_through_packed_masks[8]
+tests/integration/test_sparse_scale.py::test_sparse_assembly_movement_and_derivatives_match_numpy[index0]
+tests/integration/test_sparse_scale.py::test_sparse_assembly_movement_and_derivatives_match_numpy[index1]
+tests/integration/test_sparse_scale.py::test_sparse_matrix_compiler_resource_gate
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[1]
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[2]
 tests/integration/test_stage_transcription.py::test_dense_jacobian_matches_casadi[1]
@@ -1767,10 +1770,15 @@ tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={:.3f}-val
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={} y={}-values1-ValueError-2 placeholders for 1 value]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={}-values4-TypeError-float64]
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
+tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index0]
+tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index1]
+tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index2]
+tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index3]
 tests/ir/test_expr.py::test_structural_equality_collapses_to_identity
 tests/ir/test_expr.py::test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees
 tests/ir/test_expr.py::test_substitute_rebuilds_changed_ancestors_and_preserves_sharing
 tests/ir/test_expr.py::test_substitute_rejects_incompatible_shape_or_dtype
+tests/ir/test_expr.py::test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys
 tests/ir/test_match.py::test_deep_program_chain_does_not_recurse
 tests/ir/test_match.py::test_expression_nodes_reject_caller_memo[False]
 tests/ir/test_match.py::test_fixpoint_retries_per_node_and_single_application_does_not
@@ -1878,6 +1886,7 @@ tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[minimum]
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[mul]
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[sub]
+tests/ir/test_support.py::test_growing_support_caches_use_compact_immutable_coordinates
 tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes0]
 tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes1]
 tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes2]
@@ -1954,6 +1963,7 @@ tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[output-float3
 tests/passes/lowering/test_lowering.py::test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction
 tests/passes/lowering/test_lowering.py::test_concat_seed_mass_component_axes_match_numpy_after_index_folding
 tests/passes/lowering/test_lowering.py::test_empty_reduction_and_output_leave_adjacent_memory_untouched
+tests/passes/lowering/test_lowering.py::test_large_uniform_constants_lower_without_expanding_initializers
 tests/passes/lowering/test_lowering.py::test_lowering_normalizes_a_private_function_and_preserves_metadata
 tests/passes/lowering/test_lowering.py::test_matmul_lowering_matches_numpy_exactly[dot]
 tests/passes/lowering/test_lowering.py::test_matmul_lowering_matches_numpy_exactly[matmat]

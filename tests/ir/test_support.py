@@ -20,6 +20,28 @@ def _masked(name, mask) -> Expr:
   return sc.sym(name, np.shape(mask)) * sc.const(mask, dtype=sc.dtypes.float64)
 
 
+def test_growing_support_caches_use_compact_immutable_coordinates() -> None:
+  from dataclasses import FrozenInstanceError
+  from scaly.ir.support import support_indices
+
+  x = sc.sym("support_partial_sums", 2048)
+  parts = [sc.scatter(x, np.arange(2048) + i * 4096, (100_000_000,)) for i in range(40)]
+  sums = [parts[0]]
+  for part in parts[1:]:
+    sums.append(sums[-1] + part)
+  assert sums[-1].support is not None and len(sums[-1].support) == 40 * 2048
+  for node in sums:
+    support = node.support
+    assert support is not None
+    coordinates = support_indices(support)
+    assert coordinates.nbytes == len(support) * 8
+    with pytest.raises(ValueError):
+      coordinates.flags.writeable = True
+    with pytest.raises((FrozenInstanceError, AttributeError)):
+      support._entries = np.array([])
+  assert (sums[-1] + sums[-1]).support is sums[-1].support
+
+
 def test_support_is_lazy_cached_immutable_and_outside_identity() -> None:
   x = sc.sym("support_cache", 3)
   expr = x * sc.const([0, 1, 0])

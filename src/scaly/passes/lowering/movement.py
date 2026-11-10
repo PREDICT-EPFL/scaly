@@ -18,15 +18,20 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
 def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   value = node.value
   assert value is not None
-  # A constant of any size materializes as a read-only ``constant``-space buffer
-  # (rendered ``static const``). Output-aliasing never applies to CONST, so
-  # emit_outputs inserts a copy when a CONST is itself an output.
+  uniform = node.size > 1024 and all(stride == 0 or dim <= 1 for stride, dim in zip(value.strides, value.shape, strict=True))
   name = ctx.names.allocate(f"k{ctx._tmp}", generated=True)
   ctx._tmp += 1
-  buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), [float(v) for v in value.reshape(-1)])
+  shape = (1,) if uniform else _shape_or_scalar(node.shape)
+  values = [value.flat[0].item()] if uniform else [float(v) for v in value.reshape(-1)]
+  buf = p.const_buffer(name, node.type.dtype, shape, values)
   ctx.buffers[name] = buf
-  ctx.value_buffers[node.id] = name
   ctx.statements.append(buf)
+  if uniform:
+    out = ctx.alloc_tmp(node)
+    ranges, (i,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
+    ctx.emit(ranges, [p.store(p.view(out, [i]), p.load(p.view(buf, [p.const_int(0)])))])
+  else:
+    ctx.value_buffers[node.id] = name
 
 
 def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:

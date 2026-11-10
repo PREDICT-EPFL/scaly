@@ -378,9 +378,10 @@ def frozen(value: Any) -> Any:
   """``value`` as an immutable copy, for an interned node's ``attrs``: a mapping becomes a read-only
   view, a list a tuple and an array a read-only copy, all the way down."""
   if isinstance(value, np.ndarray):
-    out = value.copy()
+    compact = value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in value.strides)] if value.ndim else value
+    out = compact.copy()
     out.flags.writeable = False
-    return out
+    return np.broadcast_to(out, value.shape) if compact.shape != value.shape else out
   if isinstance(value, Mapping):
     return MappingProxyType({k: frozen(v) for k, v in value.items()})
   if isinstance(value, list) or type(value) is tuple:

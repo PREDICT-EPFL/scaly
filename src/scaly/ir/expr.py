@@ -8,6 +8,7 @@ stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.p
 
 from __future__ import annotations
 
+import hashlib
 import string
 import struct
 import weakref
@@ -264,7 +265,7 @@ def _intern_key(
 ) -> tuple[Any, ...]:
   op_norm = op if isinstance(op, ExprOp) else ExprOp(op)
   args_key = tuple(weakref.ref(a) for a in args)
-  value_key = None if value is None else (value.shape, str(value.dtype), value.tobytes())
+  value_key = None if value is None else _array_key(value)
   return (op_norm.value, args_key, type_, name, value_key, _attrs_key(attrs), lowering)
 
 
@@ -288,6 +289,7 @@ class Expr:
   lowering: Lowering = "auto"
   # Frozen → safe to cache. Populated lazily by structural_key on first call.
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
+  _value_key: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
   _support_cache: tuple[Support] | None = field(default=None, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
@@ -330,6 +332,7 @@ class Expr:
     put(instance, "attrs", frozen(attrs_eff))
     put(instance, "lowering", lowering)
     put(instance, "_key_cache", None)
+    put(instance, "_value_key", key[4])
     put(instance, "_support_cache", None)
     _NODE_CACHE[key] = instance
     return instance
@@ -394,7 +397,7 @@ class Expr:
         stack.append((node, True))
         stack.extend((arg, False) for arg in reversed(node.args) if arg._key_cache is None)
         continue
-      value_key = None if node.value is None else (node.value.shape, str(node.value.dtype), node.value.tobytes())
+      value_key = node._value_key
       key = (
         ExprOp(node.op).value,
         node.name,
@@ -474,7 +477,7 @@ class Expr:
 
   def __getitem__(self, index: Any) -> Expr:
     index = _normalize_index(index, self.shape)
-    shape = tuple(np.empty(self.shape)[index].shape)
+    shape = tuple(np.broadcast_to(np.empty(()), self.shape)[index].shape)
     return Expr(ExprOp.SLICE, (self,), TensorType(shape, dtype=self.type.dtype, diff=self.type.diff), attrs={"index": index}, lowering=self.lowering)
 
   def gather(self, indices: Any) -> Expr:
@@ -599,6 +602,23 @@ class Expr:
     return ret
 
 
+def _array_key(value: np.ndarray) -> tuple[Any, ...]:
+  compact = value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in value.strides)] if value.ndim else value
+  bits = compact.view(np.dtype(f"u{value.dtype.itemsize}"))
+  if bits.size and np.all(bits == bits.flat[0]):
+    return (value.shape, value.dtype.str, bits.flat[0].tobytes())
+  for axis, extent in enumerate(compact.shape):
+    if extent > 1:
+      index = tuple(slice(0, 1) if i == axis else slice(None) for i in range(compact.ndim))
+      if np.all(bits == bits[index]):
+        compact, bits = compact[index], bits[index]
+  return (value.shape, value.dtype.str, compact.shape, hashlib.blake2b(compact.tobytes(), digest_size=32).digest())
+
+
+def _uniform(value: Any, shape: tuple[int, ...], *, dtype: DType = dtypes.float64, lowering: Lowering = "auto") -> Expr:
+  return Expr.const(np.broadcast_to(np.asarray(value, dtype=dtype.numpy()), shape), dtype=dtype, lowering=lowering)
+
+
 def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
   def key(v: Any) -> Any:
     # ``==`` merges what generated code tells apart: ``-0.0`` with ``0.0``, and ``1`` with ``True``
@@ -616,7 +636,7 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
     if hasattr(v, "name") and hasattr(v, "input_names") and hasattr(v, "output_names"):
       return ("Function", weakref.ref(v))
     if isinstance(v, np.ndarray):
-      return ("ndarray", v.shape, str(v.dtype), v.tobytes())
+      return ("ndarray", _array_key(v))
     if isinstance(v, Mapping):
       return tuple((k, key(x)) for k, x in sorted(v.items()))
     if isinstance(v, slice):
@@ -988,7 +1008,7 @@ def vec(x: Any) -> Expr:
 
 
 def zeros_like(x: Expr) -> Expr:
-  return Expr.const(np.zeros(x.shape, dtype=np.float64), lowering=x.lowering)
+  return _uniform(0, x.shape, dtype=x.type.dtype, lowering=x.lowering)
 
 
 def format_expr(outputs: Expr | Iterable[Expr]) -> str:

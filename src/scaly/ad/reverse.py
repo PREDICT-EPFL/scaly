@@ -6,7 +6,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, gather, scatter, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, _uniform, gather, scatter, topo, zeros_like
+from ..ir.support import slice_indices, support_indices
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, cotangent
 from .sparsity import _check_wrt, _depends_on
@@ -72,8 +73,11 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))
     return (cot.transpose(inv),)
   if expr.op == ExprOp.SLICE:
-    indices = np.arange(args[0].size).reshape(args[0].shape)[expr.attrs["index"]]
-    return (scatter(cot, indices, args[0].shape),)
+    support = cot.support
+    entries = support_indices(support) if support is not None and len(support) < cot.size else None
+    indices = slice_indices(args[0].shape, expr.attrs["index"], entries)
+    values = gather(cot, entries) if entries is not None else cot
+    return (scatter(values, indices, args[0].shape),)
   if expr.op == ExprOp.GATHER:
     return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
   if expr.op == ExprOp.SCATTER:
@@ -94,7 +98,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
 
 
 def _ones_like(expr: Expr) -> Expr:
-  return Expr.const(np.ones(expr.shape, dtype=np.float64), lowering=expr.lowering)
+  return _uniform(1, expr.shape, dtype=expr.type.dtype, lowering=expr.lowering)
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:
