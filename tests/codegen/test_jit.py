@@ -211,8 +211,7 @@ if phase == "link":
     if "-fPIC" in command:
       source = next(arg for arg in command if arg.endswith(".c"))
       obj = ready.with_suffix(".o")
-      compiler = jit.find_c_compiler()
-      run([*compiler.command, "-fPIC", "-c", source, "-o", str(obj)], **kwargs)
+      run([*command[:command.index(jit.shared_lib_flag())], "-c", source, "-o", str(obj)], **kwargs)
       pause(Path(source).with_name(f"lib{Path(source).stem}{jit.shared_lib_ext()}"))
       command = [str(obj) if arg == source else arg for arg in command]
     return run(command, **kwargs)
@@ -271,7 +270,7 @@ def test_invalidation_preserves_another_process_artifact(isolated_cache: Path, m
     fn.recompile()
     np.testing.assert_allclose(old.run([xv])[0], expected)
     output, error = child.communicate("continue\n", timeout=120)
-    assert child.returncode == 0, (output, error)
+    assert child.returncode == 0, output + error
     np.testing.assert_allclose(fn(xv), expected)
   finally:
     if child.poll() is None:
