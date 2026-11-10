@@ -4,9 +4,11 @@ Issue #46 implements decision 5 of the core compiler roadmap. Sparse names remai
 filtered from the published API until #307 publishes the complete sparse unit.
 
 Absent coordinates are structural zeros. A sparse product visits only stored
-coordinates, so an absent zero times infinity contributes nothing. A stored zero
-is still evaluated and may produce NaN. This applies to elementwise products and
-mixed matrix products. The forward tests cover both traversal directions.
+coordinates, so an absent zero times infinity contributes nothing. A run-time zero
+at a stored coordinate is evaluated and may produce NaN. Constant folding and
+support analysis retain the existing real-arithmetic zero simplifications. This
+applies to elementwise products and mixed matrix products. The forward tests cover
+both traversal directions.
 
 Movement patterns are computed from the stored coordinates at graph construction.
 Batch axes share the union of their local patterns, including explicit zeros.
@@ -31,9 +33,10 @@ accumulator. They do not use output lanes or interchange with the output range.
 There is one contribution per stored entry and dense output column, with no
 expanded contribution table. Sparse-sparse products belong to #47.
 
-Only SUM exists on this base. Axis reductions and max/min reductions are #66's
-language change. Its stored-entry reduction must include an absent zero in a
-max/min domain and must preserve the loaded-bound scheduling contract above.
+Roadmap departure: #46 covers SUM over stored entries. Max and min over stored
+entries move to #66 because it introduces REDUCE with kind. Its max/min reduction
+must include an absent zero wherever the reduction domain contains an absent
+coordinate and must preserve the loaded-bound scheduling contract above.
 
 ## Forward validation
 

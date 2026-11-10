@@ -13,6 +13,7 @@ from scaly.ir import program as p
 from scaly.ir.program import RangeKind
 from scaly.passes.program.fuse_ranges import fuse_ranges
 from scaly.passes.program.widen_ranges import widen_ranges
+from scaly.function.model import as_concrete
 
 
 def _pattern(array):
@@ -174,3 +175,44 @@ def test_loaded_bound_reduce_is_never_fused_or_widened():
   program = p.program([p.proc("loaded_contract", [x, out], [bounds, loop])])
   assert fuse_ranges(program) is program
   assert widen_ranges(program, lanes=4) is program
+
+
+@pytest.mark.parametrize("operation", ["gather", "scatter", "stack", "concat"])
+def test_sparse_zero_movement_keeps_its_stored_type(operation):
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+
+  def body(x):
+    zero = x * 0
+    return {
+      "gather": lambda: sc.gather(zero, [[0, 1], [2, 3]]),
+      "scatter": lambda: sc.scatter(zero, [0, 1, 2, 3], (2, 2)),
+      "stack": lambda: sc.stack((zero, zero)),
+      "concat": lambda: sc.concat((zero, zero)),
+    }[operation]().block()
+
+  fn = sc.function(sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern)), name=f"sparse_zero_{operation}")(body)
+  result = fn(sparse.eye_array(2))
+  assert isinstance(result, sparse.sparray)
+  np.testing.assert_array_equal(sparse.coo_array(result).data, 0)
+
+
+def test_sparse_slice_of_stack_keeps_its_stored_type():
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+  fn = sc.function(sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern)), name="sparse_slice_stack")(
+    lambda x: sc.stack((x, -x))[:, 0, :].block()
+  )
+  result = fn(sparse.eye_array(2))
+  assert isinstance(result, sparse.sparray)
+  np.testing.assert_array_equal(sparse.coo_array(result).toarray(), [[1, 0], [-1, 0]])
+
+
+@pytest.mark.parametrize("operation", ["reshape", "transpose"])
+def test_sparse_identity_preserves_empty_batch_pattern(operation):
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+  fn = sc.function(sc.arg("x", sc.TensorType((0, 2, 2), pattern=pattern)), name=f"sparse_empty_{operation}")(
+    lambda x: (x.reshape(x.shape) if operation == "reshape" else x.transpose((0, 1, 2))).block()
+  )
+  assert as_concrete(fn).outputs[0].type.pattern is pattern
+  result = fn(np.empty((0, 2)))
+  assert isinstance(result, sparse.sparray)
+  assert result.shape == (0, 2, 2) and result.nnz == 0

@@ -264,6 +264,10 @@ def stored_pattern(
   """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
   if not any(t.pattern is not None for t in types):
     return None
+  if op == ExprOp.RESHAPE and shape == types[0].shape:
+    return types[0].pattern
+  if op == ExprOp.TRANSPOSE and attrs is not None and attrs["axes"] == tuple(range(types[0].ndim)):
+    return types[0].pattern
   if op in (ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.SCATTER, ExprOp.STACK, ExprOp.CONCAT):
     if len(shape) < 2:
       return None
