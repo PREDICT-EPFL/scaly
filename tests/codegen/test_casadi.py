@@ -174,7 +174,9 @@ def test_casadi_sparse_leaves_match_casadi_sparsity(tmp_path, empty, lang):
   client = tmp_path / ("header.c" if lang == "c" else "header.cpp")
   client.write_text(f'#include "{module.header_name}"\nint main(void) {{ return 0; }}\n')
   compiler, standard = (c_compiler(), "-std=c11") if lang == "c" else (cxx_compiler(), "-std=c++17")
-  subprocess.run([*compiler, standard, "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(client)], check=True)
+  subprocess.run(
+    [*compiler, standard, "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-c", str(client), "-o", str(client.with_suffix(".o"))], check=True
+  )
   ext = casadi.external(fun.name, str(lib_path))
   expected_sparsity = casadi.Sparsity.triplet(*pattern.shape, list(pattern.rows), list(pattern.cols))
   assert ext.sparsity_in(0) == expected_sparsity

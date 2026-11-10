@@ -159,7 +159,7 @@ def test_sparse_headers_split_shared_names_and_avoid_alias_collisions(lang, tmp_
       assert f"namespace {name} {{" in module.header
   main = tmp_path / "use.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-fsyntax-only", str(main)], check=True)
+  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-c", str(main), "-o", str(main.with_suffix(".o"))], check=True)
 
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
@@ -187,7 +187,9 @@ def test_declared_sparse_and_derivative_metadata_coexist(lang, empty, tmp_path):
   assert not re.search(r"\w+\[0\] =", module.header)
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(main)], check=True)
+  subprocess.run(
+    [*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-c", str(main), "-o", str(main.with_suffix(".o"))], check=True
+  )
 
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
@@ -201,7 +203,7 @@ def test_sparse_output_named_after_function_compiles(lang, tmp_path):
     assert "namespace selfsparse_ {" in module.header
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-fsyntax-only", str(main)], check=True)
+  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-c", str(main), "-o", str(main.with_suffix(".o"))], check=True)
 
 
 @pytest.mark.parametrize("name", ["std", *(f"f_{query}" for query in CASADI_QUERIES)])
@@ -215,7 +217,9 @@ def test_cpp_sparse_metadata_avoids_declared_function_and_library_names(name, si
   module = write_module(fun, tmp_path, lang="cpp", casadi=True)
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(main)], check=True)
+  subprocess.run(
+    [*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-c", str(main), "-o", str(main.with_suffix(".o"))], check=True
+  )
 
 
 @pytest.mark.parametrize("name", ["solver_names_with_options", "solver_qp_stats", "solver_qp_default_options"])
@@ -232,4 +236,6 @@ def test_cpp_sparse_metadata_avoids_solver_declarations(name, tmp_path):
   module = write_module(fun, tmp_path, lang="cpp")
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", str(main)], check=True)
+  subprocess.run(
+    [*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", "-c", str(main), "-o", str(main.with_suffix(".o"))], check=True
+  )
