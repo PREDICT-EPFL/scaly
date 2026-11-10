@@ -305,7 +305,9 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   def mapped(z: sc.Expr) -> sc.Expr:
     return _mapped_call(outer, 2, [(z, 0, 1024)])
 
-  assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped).program) == (2, 1024, 2048)
+  module = render_c_module(mapped, frame_budget=0)
+  assert module.workspace_size > 0
+  assert _dispatch_metrics(mapped.instantiate(), module.program) == (2, 1024, 2048)
 
 
 def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:

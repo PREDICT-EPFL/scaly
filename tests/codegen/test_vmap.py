@@ -232,6 +232,5 @@ def test_spjac_keeps_constant_loc_on_rk4_race_car_vmap() -> None:
 
   loc_a = loc(10)
   loc_b = loc(50)
-  # LOC is bounded by a tiny constant — variation comes only from whether the workspace
-  # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
+  # The line count can change when spilling adds the SZ_W null check to the wrapper.
   assert abs(loc_a - loc_b) <= 2, f"expected constant RK4 race-car-vmap LOC, got {loc_a} -> {loc_b}"
