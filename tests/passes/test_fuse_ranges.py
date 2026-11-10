@@ -435,7 +435,7 @@ def test_two_block_gathers_upstream_of_map_still_fuse():
   np.testing.assert_allclose(fn(data, av, bv), expected)
 
 
-@pytest.mark.parametrize("case", ["few_indices", "fold_store", "fold_consumer", "mixed_trips"])
+@pytest.mark.parametrize("case", ["few_indices", "fold_store", "fold_aliases", "fold_consumer", "mixed_trips"])
 def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
   import ctypes
   import subprocess
@@ -458,6 +458,9 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
     zeros = p.const_buffer("zeros", dtypes.float64, (5,), [0.0] * 5)
     declarations.append(zeros)
     rhs = p.mul(rhs, p.load(p.view(zeros, [i])))
+  if case == "fold_aliases":
+    for offset in range(5):
+      rhs = p.mul(rhs, p.sub(read_x, p.load(p.view(x, [p.const_int(offset)]))))
   if case == "mixed_trips":
     initialized = p.for_(p.range_("i", 0, 5), [p.store(p.view(extra, [i]), p.const_float(0))])
     partial = p.for_(p.range_("i", 0, 3), [p.store(p.view(extra, [i]), p.load(p.view(tmp, [i])))])

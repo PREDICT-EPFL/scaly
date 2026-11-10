@@ -302,6 +302,17 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
     for occurrence in range(int(ranks.max()) + 1):
       yield order[ranks == occurrence]
 
+  def defer(load: ProgramNode, indices: np.ndarray, pending: dict[ProgramNode, np.ndarray]) -> ProgramNode:
+    if np.all(indices == indices[0]):
+      return p.load(rebuild_program(load.args[0], (p.const_int(int(indices[0])),)))
+    for existing, previous in pending.items():
+      if existing.args[0].attrs == load.args[0].attrs and existing.dtype == load.dtype and np.array_equal(previous, indices):
+        return existing
+    index = p.var(f"__fuse_index_{len(pending)}")
+    placeholder = p.load(rebuild_program(load.args[0], (index,)))
+    pending[placeholder] = indices
+    return placeholder
+
   def index_expr(indices: np.ndarray, trips: np.ndarray) -> ProgramNode:
     base = int(indices[0])
     stride = int(indices[-1] - base) // int(trips[-1] - trips[0]) if len(trips) > 1 else 0
@@ -386,6 +397,48 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       output.order = np.concatenate((output.order, output_indices[missing]))
 
       def save(positions: np.ndarray, trips: np.ndarray | int, value: int) -> None:
+        template = values[value]
+        if template.loads:
+          # Indices that coincide at only some positions can expose scalar identities there.
+          bindings = {
+            load: template.loads[load] if load in template.loads else np.full(len(positions), load.args[0].args[0].attrs["value"])
+            for load in _loads(template.node)
+            if load in template.loads or load.args[0].args[0].op == ProgramOp.CONST_INT
+          }
+          leaves = list(bindings)
+          equalities = [
+            bindings[left] == bindings[right]
+            for j, left in enumerate(leaves)
+            for right in leaves[j + 1 :]
+            if left.args[0].attrs == right.args[0].attrs and left.dtype == right.dtype
+          ]
+          parts = groups(equalities, len(positions))
+          assert parts is not None
+          for part in parts:
+            replacements = {}
+            pending = {}
+            for load in leaves:
+              if load not in template.loads:
+                continue
+              indices = bindings[load][part]
+              alias = next(
+                (
+                  other
+                  for other in leaves
+                  if other not in template.loads
+                  and other.args[0].attrs == load.args[0].attrs
+                  and other.dtype == load.dtype
+                  and np.array_equal(bindings[other][part], indices)
+                ),
+                None,
+              )
+              replacements[load] = alias if alias is not None else defer(load, indices, pending)
+            node = rewrite_value(template.node, replacements)
+            indices = output_indices[positions[part]]
+            output.trips[indices] = trips[part] if isinstance(trips, np.ndarray) else trips
+            output.values[indices] = intern(node, pending)
+            output.positions[indices] = np.arange(len(part))
+          return
         indices = output_indices[positions]
         output.trips[indices] = trips
         output.values[indices] = value
@@ -448,26 +501,14 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
           replacements = {}
           pending: dict[ProgramNode, np.ndarray] = {}
 
-          def defer(load: ProgramNode, indices: np.ndarray) -> ProgramNode:
-            if np.all(indices == indices[0]):
-              view = rebuild_program(load.args[0], (p.const_int(int(indices[0])),))
-              return p.load(view)
-            for existing, previous in pending.items():
-              if existing.args[0].attrs == load.args[0].attrs and existing.dtype == load.dtype and np.array_equal(previous, indices):
-                return existing
-            index = p.var(f"__fuse_index_{len(pending)}")
-            placeholder = p.load(rebuild_program(load.args[0], (index,)))
-            pending[placeholder] = indices
-            return placeholder
-
           for j, load in enumerate(loads):
             if j in mapped:
               _, ids, source_positions = mapped[j]
               value = values[int(ids[ps[0]])]
-              bindings = {leaf: defer(leaf, indices[source_positions[ps]]) for leaf, indices in value.loads.items()}
+              bindings = {leaf: defer(leaf, indices[source_positions[ps]], pending) for leaf, indices in value.loads.items()}
               replacements[load] = rewrite_value(value.node, bindings) if bindings else value.node
             elif trips[ps[0]] == no_trip:
-              replacements[load] = defer(load, indexed[j][ps])
+              replacements[load] = defer(load, indexed[j][ps], pending)
             else:
               idx = index_expr(indexed[j][ps], trips[ps])
               replacements[load] = p.load(rebuild_program(load.args[0], (idx,)))
