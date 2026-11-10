@@ -376,7 +376,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     return tuple(self._compile().run(list(args)))
 
   def recompile(self) -> None:
-    """Drop the compiled handle so the next call builds a fresh library, preserving existing artifacts."""
+    """Drop the compiled handle so the next numerical call uses another cache path."""
     jit = _jit()
     self._memo.compiled = None
     jit.invalidate_cache(self)

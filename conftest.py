@@ -98,4 +98,5 @@ def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
   # Drop any process-local artifacts so the cache key derivation runs fresh.
   jit._artifact_cache.clear()
+  jit._cache_epochs.clear()
   yield tmp_path

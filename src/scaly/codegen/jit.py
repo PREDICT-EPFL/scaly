@@ -453,25 +453,16 @@ def get_compiled(fun: Function | ConcreteFunction) -> CompiledFunction:
 
 
 def invalidate_cache(fun: ConcreteFunction) -> None:
-  """Forget ``fun``'s artifact and make its next build in this process use a fresh path.
+  """Make ``fun``'s next build in this process use another cache path.
 
-  Existing source files and libraries stay on disk for other processes that may be compiling,
-  publishing or loading them. Loaded handles remain callable, including on Windows where loaded
-  DLLs cannot be deleted or replaced. After ``recompile()`` in one process, a fresh process still
-  reuses the original shared artifact instead of rebuilding it. This is safe because atomic
-  publication ensures a shared artifact is complete. Artifacts remain after process exit. Scaly
-  does not prune them, so delete the cache only when no process is using it to reclaim their space.
+  Existing source files and libraries stay on disk for processes still building or loading them.
+  Loaded handles remain callable, including on Windows, where loaded DLLs cannot be deleted or
+  replaced. After ``recompile()`` in one process, a fresh process still reuses the original shared
+  library instead of rebuilding it. Scaly writes each library under a temporary name and renames
+  it into place only when complete, so no process finds a partial library.
 
-  Safe to call when nothing is cached yet. Unsupported code generation (``NotImplementedError``)
-  is ignored because no artifact could have been built.
+  Scaly does not prune old libraries after process exit. To reclaim the space, delete the cache
+  manually while no process is using it. Safe to call before the first build.
   """
-  compiler = find_c_compiler()
-  if compiler is None:
-    return
-  try:
-    _, key = _render_and_key(fun, compiler)
-  except NotImplementedError:
-    return
   with _artifact_lock:
-    _artifact_cache.pop(key, None)
     _cache_epochs[fun.name] = _cache_epochs.get(fun.name, 0) + 1

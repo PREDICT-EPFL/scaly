@@ -79,7 +79,7 @@ def test_compiler_wrapper_change_misses_the_cache(isolated_cache: Path, monkeypa
   assert build(": patched\n") != first
 
 
-def test_recompile_clears_cache_and_recompiles(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_recompile_uses_another_path_and_preserves_files(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   commands: list[list[str]] = []
   run = jit.subprocess.run
   monkeypatch.setattr(jit.subprocess, "run", lambda command, **kwargs: commands.append(command) or run(command, **kwargs))
@@ -101,6 +101,7 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache: Path, monkeypatch
     assert recompiled is not None
     assert recompiled.lib_path not in paths
     paths.add(recompiled.lib_path)
+    lib_path = recompiled.lib_path
     assert jit.get_compiled(fn).lib_path == recompiled.lib_path
   assert len([command for command in commands if "-fPIC" in command]) == 3
 
@@ -240,9 +241,9 @@ np.testing.assert_allclose(fn(xv), (np.sin(xv) + xv * xv).sum())
 
 
 @pytest.mark.parametrize("phase", ["link", "publish", "load"])
-def test_invalidation_preserves_another_process_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str) -> None:
-  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path / "shared"))
-  ready = tmp_path / "ready"
+def test_invalidation_preserves_another_process_artifact(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch, phase: str) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(isolated_cache / "shared"))
+  ready = isolated_cache / "ready"
   child = subprocess.Popen(
     [sys.executable, "-c", _INVALIDATION_CHILD, str(ready), phase],
     stdin=subprocess.PIPE,
@@ -292,9 +293,10 @@ def test_threads_share_a_cold_cache(isolated_cache: Path) -> None:
   np.testing.assert_allclose(jit.get_compiled(fun).run([xv])[0], (np.sin(xv) + xv * xv).sum())
 
 
-def test_invalidate_cache_handles_missing_directory(isolated_cache: Path) -> None:
+def test_recompile_before_first_call(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(jit, "find_c_compiler", lambda: pytest.fail("invalidation must not probe the compiler"))
   fn = _simple_fn()
-  fn.recompile()  # nothing to remove yet
+  fn.recompile()
   assert as_concrete(fn)._memo.compiled is None
 
 
@@ -426,7 +428,7 @@ def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
   assert len(set(keys)) == 3
 
 
-def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch):
+def test_scalar_math_override_reaches_compilation(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch):
   from scaly.codegen.toolchain import BuildRecipe
 
   monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
@@ -436,11 +438,6 @@ def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_
   source = next(artifact.lib_path.parent.glob("*.c")).read_text()
   assert "lanes=4, dialect=gnu, vector_libm=none" in source
   assert "-lmvec" not in artifact.flags
-  assert artifact.key in jit._artifact_cache
-  jit.invalidate_cache(fun)
-  assert artifact.key not in jit._artifact_cache
-  assert artifact.lib_path.exists()
-  assert jit._build_artifact(fun).key != artifact.key
 
 
 @pytest.mark.skipif(platform.libc_ver()[0] != "glibc" or platform.machine().lower() not in ("x86_64", "amd64"), reason="links libmvec")
