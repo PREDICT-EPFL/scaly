@@ -66,3 +66,13 @@ tables also fails the 128-row mapped-stage scalarization gate. Elementwise
 products now have a scalar/block regression for absent zeros beside infinity and
 run-time stored zeros. The focused sparse/scalar checks passed 86 tests; compiler,
 boundary, import-layer and dense-snapshot checks passed 284 tests.
+
+Review-gate measurements use scalar lanes and C99 with the same compile flags
+above. Counts are per procedure; source size and compile time cover its whole
+generated module. No run-time measurement is claimed.
+
+```text
+scalar product: 8 sin, 13 multiplies, 3 additions; 0 loops, 0 tables; 1279 source bytes; compile 0.027 s
+mapped stage: 4 sin, 6 multiplies, 6 additions; 0 loops, 0 tables; 1909 source bytes; compile 0.052 s
+matching CSC map: 20 sin; 1 loop, 0 tables; 897 source bytes; compile 0.031 s
+```
