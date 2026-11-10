@@ -47,7 +47,7 @@ def test_library_compiles_once_for_two_symbols_and_multiple_graphs(isolated_cach
   np.testing.assert_allclose(library_host(library)(np.array(4.0)), 20)
   compiles = [c for c in commands if "-c" in c and any(Path(str(arg)).name == "shared.c" for arg in c)]
   assert len(compiles) == 1
-  assert len(write_module(library_host(library), isolated_cache / "export").libraries) == 1
+  assert len(write_module(library_host(library), isolated_cache / "export")._libraries) == 1
 
 
 def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):

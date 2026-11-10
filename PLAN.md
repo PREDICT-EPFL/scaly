@@ -30,3 +30,7 @@ Public interface requires the maintainer's later section review. No run-time per
 Focused evidence: 23 extern tests and 201 surrounding tests passed, including unchanged C snapshots.
 All six completion gates failed under deliberate perturbation and were restored. Ruff/ty pass.
 Full suite and all pre-merge checks are next, through the shared queue.
+
+First full pre-merge run: 2990 passed, 52 skipped, one coverage-gate failure. Added EXTERN
+to the differential suite's exhaustive classification and all three derivative-refusal modes.
+CModule build helpers are private to keep this interface out of the published reference.

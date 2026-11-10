@@ -262,12 +262,12 @@ def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule,
   module = _render_native(fun, compiler.command)
   toolchain = _toolchain(fun, compiler)
   try:
-    if module.library_builds:
-      toolchain += ":extern:" + ":".join(build.key for build in module.library_builds)
+    if module._library_builds:
+      toolchain += ":extern:" + ":".join(build.key for build in module._library_builds)
   except (OSError, subprocess.CalledProcessError) as exc:
     detail = (exc.stderr or exc.stdout) if isinstance(exc, subprocess.CalledProcessError) else str(exc)
     raise JitError(f"failed to prepare external libraries for {fun.name!r}: {detail}") from exc
-  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module.libraries))
+  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module._libraries))
   solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
   return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
 
@@ -401,9 +401,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     key=key,
     flags=module.link_flags,
     workspace_size=module.workspace_size,
-    solver_library=bool(module.backends or module.libraries),
+    solver_library=bool(module.backends or module._libraries),
     prints=prints(module.program),
-    namespace=("extern", *(f"{link.path}:{link.identity}" for build in module.library_builds for link in build.links)) if module.libraries else (),
+    namespace=("extern", *(f"{link.path}:{link.identity}" for build in module._library_builds for link in build.links)) if module._libraries else (),
   )
   if verify and index is not None and indexed is not None and replace(indexed, lib_path=lib_path) != artifact:
     raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
@@ -434,9 +434,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # It is also short, which the function's own directory may not be: Windows refuses a working
     # directory longer than 260 characters.
     try:
-      objects = tuple(obj for build in module.library_builds for obj in compile_library(build, compiler.command))
+      objects = tuple(obj for build in module._library_builds for obj in compile_library(build, compiler.command))
       subprocess.run(
-        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix(), objects, external=bool(module.libraries)),
+        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix(), objects, external=bool(module._libraries)),
         cwd=tempfile.gettempdir(),
         check=True,
         capture_output=True,

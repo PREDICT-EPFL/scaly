@@ -96,18 +96,18 @@ class CModule:
   recipe: BuildRecipe = BuildRecipe()
 
   @cached_property
-  def libraries(self) -> tuple[CLibrary, ...]:
+  def _libraries(self) -> tuple[CLibrary, ...]:
     """Build descriptions reached by the lowered graph, once per library."""
     return tuple(dict.fromkeys(fn.library for fn in self.program.attrs.get("externs", ())))
 
   @cached_property
-  def library_builds(self) -> tuple[LibraryBuild, ...]:
-    if not self.libraries:
+  def _library_builds(self) -> tuple[LibraryBuild, ...]:
+    if not self._libraries:
       return ()
     compiler = find_c_compiler()
     if compiler is None:
       raise RuntimeError("external libraries need a C compiler")
-    return tuple(prepare_library(library, compiler.command) for library in self.libraries)
+    return tuple(prepare_library(library, compiler.command) for library in self._libraries)
 
   @cached_property
   def header(self) -> str:
@@ -129,7 +129,7 @@ class CModule:
     backend's library or header is missing: rendering has to stay possible on a machine without the
     vendored solver stack, and against a backend that has no library at all (the fake backends in
     ``tests/solvers/test_registry.py``)."""
-    return (*backend_compile_flags(self.backends), *self.recipe.link_flags, *(flag for build in self.library_builds for flag in build.link_flags))
+    return (*backend_compile_flags(self.backends), *self.recipe.link_flags, *(flag for build in self._library_builds for flag in build.link_flags))
 
 
 class RenderObserver(Protocol):
@@ -629,12 +629,12 @@ def write_module(
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
-  if module.libraries:
+  if module._libraries:
     manifest = {
       "source": module.source_name,
       "compile_flags": ["-O2", *module.recipe.cpu_flags, "-fno-math-errno"],
       "link": ["m", *(["mvec"] if module.recipe.vector_libm == "glibc" else [])],
-      "libraries": export_libraries(module.libraries, out_dir),
+      "libraries": export_libraries(module._libraries, out_dir),
     }
     (out_dir / f"{c_ident(module.fun.name)}.build.json").write_text(json.dumps(manifest, indent=2) + "\n")
   return module
