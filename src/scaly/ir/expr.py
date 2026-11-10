@@ -20,7 +20,7 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 
 import numpy as np
 
-from .support import Support, compute_support
+from .support import Support, compute_support, slice_entries, transpose_entries
 from .types import (
   CanonicalPattern,
   SparsityPattern,
@@ -232,10 +232,45 @@ def _broadcast_pattern(type_: TensorType, shape: tuple[int, int]) -> CanonicalPa
   return CanonicalPattern(shape, tuple(r for r, _ in coordinates), tuple(c for _, c in coordinates))
 
 
-def stored_pattern(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...]) -> CanonicalPattern | None:
+def _movement_entries(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...], attrs: Mapping[str, Any]) -> np.ndarray:
+  chunks = []
+  offset = 0
+  for i, type_ in enumerate(types):
+    entries = stored_indices(type_)
+    if op == ExprOp.TRANSPOSE:
+      entries = transpose_entries(entries, type_.shape, attrs["axes"])
+    elif op == ExprOp.SLICE:
+      entries, _ = slice_entries(entries, type_.shape, attrs["index"])
+    elif op == ExprOp.GATHER:
+      entries = np.flatnonzero(np.isin(attrs["indices"].reshape(-1), entries))
+    elif op == ExprOp.SCATTER:
+      entries = attrs["indices"].reshape(-1)[entries]
+    elif op in (ExprOp.STACK, ExprOp.CONCAT):
+      axis = attrs["axis"]
+      coords = list(np.unravel_index(entries, type_.shape))
+      if op == ExprOp.STACK:
+        coords.insert(axis, np.full(len(entries), i))
+      else:
+        coords[axis] += offset
+        offset += type_.shape[axis]
+      entries = np.ravel_multi_index(tuple(coords), shape)
+    chunks.append(entries)
+  return np.concatenate(chunks)
+
+
+def stored_pattern(
+  op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...], attrs: Mapping[str, Any] | None = None
+) -> CanonicalPattern | None:
   """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
   if not any(t.pattern is not None for t in types):
     return None
+  if op in (ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.SCATTER, ExprOp.STACK, ExprOp.CONCAT):
+    if len(shape) < 2:
+      return None
+    entries = _movement_entries(op, types, shape, attrs or {})
+    width = shape[-2] * shape[-1]
+    local = np.unique(entries % width) if width else np.empty(0, dtype=np.int64)
+    return CanonicalPattern((shape[-2], shape[-1]), tuple(map(int, local // shape[-1])), tuple(map(int, local % shape[-1])))
   rule = OP_INFO[ExprOp(op)].pattern_rule
   if rule == "matmul" and len(shape) < 2:
     return None
@@ -259,7 +294,7 @@ def stored_pattern(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple
   return a.union(b) if rule == "union" else a.intersection(b)
 
 
-def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: TensorType) -> None:
+def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: TensorType, attrs: Mapping[str, Any] | None = None) -> None:
   """Reject an unsupported sparse operation or an output pattern that disagrees with its rule."""
   if op == ExprOp.INPUT:
     return
@@ -277,7 +312,7 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
     return
   if op == ExprOp.RESHAPE and args[0].type.pattern is type_.pattern and args[0].shape == type_.shape:
     return
-  expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape)
+  expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape, attrs)
   if type_.pattern is not expected:
     raise ValueError(f"{op} output pattern disagrees with its stored-pattern rule")
 
@@ -361,7 +396,7 @@ class Expr:
       return object.__new__(cls)
     type_eff = type if type is not None else TensorType()
     if type_eff.pattern is not None or any(arg.type.pattern is not None for arg in args):
-      check_stored_pattern(op, args, type_eff)
+      check_stored_pattern(op, args, type_eff, attrs)
     attrs_eff = attrs if attrs is not None else {}
     if value is not None:
       data = _array_data(value)
@@ -525,7 +560,11 @@ class Expr:
     if np.prod(shape, dtype=int) != self.size:
       raise ValueError(f"cannot reshape {self.shape} with {self.size} entries to {shape}")
     return Expr(
-      ExprOp.RESHAPE, (self,), TensorType(shape, dtype=self.type.dtype, diff=self.type.diff), attrs={"shape": shape}, lowering=self.lowering
+      ExprOp.RESHAPE,
+      (self,),
+      TensorType(shape, dtype=self.type.dtype, diff=self.type.diff, pattern=stored_pattern(ExprOp.RESHAPE, (self.type,), shape)),
+      attrs={"shape": shape},
+      lowering=self.lowering,
     )
 
   def vec(self) -> Expr:
@@ -538,7 +577,12 @@ class Expr:
     return Expr(
       ExprOp.TRANSPOSE,
       (self,),
-      TensorType(tuple(self.shape[i] for i in axes), dtype=self.type.dtype, diff=self.type.diff),
+      TensorType(
+        tuple(self.shape[i] for i in axes),
+        dtype=self.type.dtype,
+        diff=self.type.diff,
+        pattern=stored_pattern(ExprOp.TRANSPOSE, (self.type,), tuple(self.shape[i] for i in axes), {"axes": axes}),
+      ),
       attrs={"axes": axes},
       lowering=self.lowering,
     )
@@ -550,7 +594,13 @@ class Expr:
   def __getitem__(self, index: Any) -> Expr:
     index = _normalize_index(index, self.shape)
     shape = tuple(np.broadcast_to(np.empty(()), self.shape)[index].shape)
-    return Expr(ExprOp.SLICE, (self,), TensorType(shape, dtype=self.type.dtype, diff=self.type.diff), attrs={"index": index}, lowering=self.lowering)
+    return Expr(
+      ExprOp.SLICE,
+      (self,),
+      TensorType(shape, dtype=self.type.dtype, diff=self.type.diff, pattern=stored_pattern(ExprOp.SLICE, (self.type,), shape, {"index": index})),
+      attrs={"index": index},
+      lowering=self.lowering,
+    )
 
   def gather(self, indices: Any) -> Expr:
     return gather(self, indices)
@@ -994,7 +1044,14 @@ def gather(x: Any, indices: Any) -> Expr:
   """Read ``x`` at flat ``indices``. The result takes the shape of ``indices``."""
   x = as_expr(x)
   idx = _index_array(indices, x.size)
-  return Expr(ExprOp.GATHER, (x,), TensorType(tuple(idx.shape), dtype=x.type.dtype, diff=x.type.diff), attrs={"indices": idx}, lowering=x.lowering)
+  shape = tuple(idx.shape)
+  return Expr(
+    ExprOp.GATHER,
+    (x,),
+    TensorType(shape, dtype=x.type.dtype, diff=x.type.diff, pattern=stored_pattern(ExprOp.GATHER, (x.type,), shape, {"indices": idx})),
+    attrs={"indices": idx},
+    lowering=x.lowering,
+  )
 
 
 def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
@@ -1008,7 +1065,13 @@ def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
   if idx.size != values.size:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
   return Expr(
-    ExprOp.SCATTER, (values,), TensorType(shape, dtype=values.type.dtype, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering
+    ExprOp.SCATTER,
+    (values,),
+    TensorType(
+      shape, dtype=values.type.dtype, diff=values.type.diff, pattern=stored_pattern(ExprOp.SCATTER, (values.type,), shape, {"indices": idx})
+    ),
+    attrs={"indices": idx},
+    lowering=values.lowering,
   )
 
 
@@ -1060,7 +1123,16 @@ def stack(xs: Iterable[Any], *, axis: int = 0) -> Expr:
     raise ValueError(f"stack axis {axis} out of bounds for shape {base}")
   shape = base[:axis] + (len(exprs),) + base[axis:]
   return Expr(
-    ExprOp.STACK, exprs, TensorType(shape, dtype=promote_dtype(*exprs), diff=diff_any(*exprs)), attrs={"axis": axis}, lowering=common_lowering(*exprs)
+    ExprOp.STACK,
+    exprs,
+    TensorType(
+      shape,
+      dtype=promote_dtype(*exprs),
+      diff=diff_any(*exprs),
+      pattern=stored_pattern(ExprOp.STACK, tuple(e.type for e in exprs), shape, {"axis": axis}),
+    ),
+    attrs={"axis": axis},
+    lowering=common_lowering(*exprs),
   )
 
 
@@ -1080,7 +1152,12 @@ def concat(xs: Iterable[Any], *, axis: int = 0) -> Expr:
   return Expr(
     ExprOp.CONCAT,
     exprs,
-    TensorType(shape, dtype=promote_dtype(*exprs), diff=diff_any(*exprs)),
+    TensorType(
+      shape,
+      dtype=promote_dtype(*exprs),
+      diff=diff_any(*exprs),
+      pattern=stored_pattern(ExprOp.CONCAT, tuple(e.type for e in exprs), shape, {"axis": axis}),
+    ),
     attrs={"axis": axis},
     lowering=common_lowering(*exprs),
   )

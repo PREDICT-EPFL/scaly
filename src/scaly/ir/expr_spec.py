@@ -77,7 +77,7 @@ def _stored_pattern(expr: Expr) -> str | None:
     if expr.type.ndim < 2 or expr.shape[-2:] != pattern.shape:
       return f"type.pattern shape {pattern.shape} disagrees with last two axes {expr.shape[-2:]}"
   try:
-    check_stored_pattern(expr.op, expr.args, expr.type)
+    check_stored_pattern(expr.op, expr.args, expr.type, expr.attrs)
   except ValueError as exc:
     return str(exc)
   return None

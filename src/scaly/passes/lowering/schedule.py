@@ -14,8 +14,8 @@ def emit_reduction(ctx: LowerCtx, outputs: Sequence[ProgramNode], reductions: Se
   """Use four scalar output lanes for unit-stride reductions, otherwise put reduction axes first.
 
   Four output lanes expand during emission, each with its own named accumulator. A strided
-  reduction carries its running sums in the destination between iterations. Both schedules visit
-  each output's terms in reference order. Reduction bounds are independent of output coordinates.
+  reduction carries its running sums in the destination between iterations. Loaded bounds keep
+  their output coordinates outside the reduction and disable lane expansion.
   """
   identity = p.const_float(0.0, dtype=value.dtype)
   names = frozenset(r.attrs["name"] for r in reductions)
@@ -26,7 +26,8 @@ def emit_reduction(ctx: LowerCtx, outputs: Sequence[ProgramNode], reductions: Se
     name = ctx.names.allocate(f"acc_{target.attrs['buffer']}")
     return name, p.var(name, value.dtype), p.assign(name, identity, declare=True)
 
-  if strided:
+  loaded = any(n.op == ProgramOp.LOAD for r in reductions for bound in r.args[:2] for n in walk_program(bound))
+  if strided and not loaded:
     ctx.emit(outputs, [p.store(target, identity)])
     ctx.emit([*reductions, *outputs], [p.store(target, p.add(p.load(target), value))])
     return
@@ -42,7 +43,7 @@ def emit_reduction(ctx: LowerCtx, outputs: Sequence[ProgramNode], reductions: Se
     ctx.emit(outer, [*(initial for _, _, initial in accumulators), *loops, *stores])
 
   count = trip_count(outputs[-1]) if outputs else 1
-  if count is not None and count >= 4:
+  if count is not None and count >= 4 and not loaded:
     axis = outputs[-1]
     blocks, tail = divmod(count, 4)
     block_name = ctx.names.allocate(f"{axis.attrs['name']}_block")
