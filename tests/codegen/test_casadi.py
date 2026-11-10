@@ -210,7 +210,9 @@ def test_casadi_dense_matrices_match_numpy(tmp_path, lang, shape):
   np.testing.assert_allclose(n.full(), matrix * weights)
   np.testing.assert_allclose(t.full(), matrix.T)
   np.testing.assert_allclose(float(s), (matrix * weights).sum())
-  np.testing.assert_allclose(fun(matrix)[0], matrix * weights)
+  actual = fun(matrix)[0]
+  assert isinstance(actual, np.ndarray)
+  np.testing.assert_allclose(actual, matrix * weights)
   assert module.header == render_c_api_header(fun, lang=lang, casadi=True)
   assert module.workspace_size == workspace_size(fun, casadi=True)
 
