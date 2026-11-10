@@ -337,6 +337,7 @@ class Expr:
   # Frozen → safe to cache. Populated lazily by structural_key on first call.
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
   _value_key: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
+  _attrs_key_cache: tuple[tuple[str, Any], ...] = field(default=(), init=False, repr=False, compare=False)
   _support_cache: tuple[Support] | None = field(default=None, init=False, repr=False, compare=False)
   _custom_derivative_cache: bool | None = field(default=None, init=False, repr=False, compare=False)
 
@@ -386,6 +387,7 @@ class Expr:
     put(instance, "lowering", lowering)
     put(instance, "_key_cache", None)
     put(instance, "_value_key", key[4])
+    put(instance, "_attrs_key_cache", key[5])
     put(instance, "_support_cache", None)
     put(instance, "_custom_derivative_cache", None)
     _NODE_CACHE[key] = instance
@@ -480,7 +482,7 @@ class Expr:
         node.type.dtype,
         node.type.diff,
         node.lowering,
-        _attrs_key(node.attrs),
+        node._attrs_key_cache,
         value_key,
         tuple(arg._key_cache for arg in node.args),
       )
@@ -695,7 +697,8 @@ def _array_key(value: np.ndarray) -> tuple[Any, ...]:
       index = tuple(slice(0, 1) if i == axis else slice(None) for i in range(compact.ndim))
       if np.all(bits == bits[index]):
         compact, bits = compact[index], bits[index]
-  return (value.shape, value.dtype.str, compact.shape, hashlib.blake2b(compact.tobytes(), digest_size=32).digest())
+  data = compact.tobytes()
+  return (value.shape, value.dtype.str, compact.shape, hashlib.blake2b(data, digest_size=32).digest(), data)
 
 
 def _uniform(value: Any, shape: tuple[int, ...], *, dtype: DType = dtypes.float64, lowering: Lowering = "auto") -> Expr:

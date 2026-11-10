@@ -3,12 +3,87 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ir.expr import Expr, ExprOp, substitute
 from scaly.ir.types import TensorType, frozen
 from scaly.passes.expr import cse_many
+
+
+@pytest.mark.parametrize(
+  ("first", "second"),
+  [
+    ([13.0, 17.0], [19.0, 23.0]),
+    ([0.0, 13.0], [-0.0, 13.0]),
+    (
+      np.array([0x7FF8000000000001, 0x3FF0000000000000], dtype=np.uint64).view(np.float64),
+      np.array([0x7FF8000000000002, 0x3FF0000000000000], dtype=np.uint64).view(np.float64),
+    ),
+  ],
+)
+def test_constant_keys_compare_bytes_when_digests_collide(monkeypatch, first, second) -> None:
+  from scaly.ir.expr import hashlib
+
+  blake2b = hashlib.blake2b
+  monkeypatch.setattr(hashlib, "blake2b", lambda data, **kwargs: blake2b(b"", **kwargs))
+  a, b = sc.const(first), sc.const(second)
+  assert a is not b
+  assert a.structural_key() != b.structural_key()
+  assert cse_many([a, b]) == (a, b)
+  assert sc.const(np.array(first)) is a
+  assert sc.const(np.array(second)) is b
+  for node, expected in ((a, first), (b, second)):
+    assert node.value is not None
+    np.testing.assert_array_equal(node.value.view(np.uint64), np.asarray(expected).view(np.uint64))
+
+
+def test_colliding_array_attributes_and_constants_evaluate_separately(monkeypatch) -> None:
+  from scaly.ir.expr import hashlib
+
+  blake2b = hashlib.blake2b
+  monkeypatch.setattr(hashlib, "blake2b", lambda data, **kwargs: blake2b(b"", **kwargs))
+  x = sc.sym("collision_x", 3)
+  forward, backward = x.gather([0, 2]), x.gather([2, 0])
+  assert forward is not backward
+  assert forward.structural_key() != backward.structural_key()
+  assert x.gather([0, 2]) is forward
+  a, b = sc.const([13.0, 17.0]), sc.const([19.0, 23.0])
+  outputs = cse_many([a, b, forward, backward])
+  assert outputs == (a, b, forward, backward)
+  fn = ConcreteFunction._from_exprs("constant_digest_collision", [x], outputs, ["x"], ["a", "b", "forward", "backward"])
+  values = np.array([2.0, 3.0, 5.0])
+  for actual, expected in zip(fn(values), ([13.0, 17.0], [19.0, 23.0], values[[0, 2]], values[[2, 0]]), strict=True):
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_array_keys_serialize_only_compacted_bytes(monkeypatch) -> None:
+  from scaly.ir.expr import _array_key, _attrs_key, hashlib
+
+  blake2b = hashlib.blake2b
+  serialized = []
+
+  def digest(data, **kwargs):
+    assert len(data) == 16
+    serialized.append(data)
+    return blake2b(data, **kwargs)
+
+  monkeypatch.setattr(hashlib, "blake2b", digest)
+  tile = np.array([13.0, 17.0])
+  large = np.broadcast_to(tile, (100_000, 100_000, 2))
+  constant = sc.const(large)
+  constant.structural_key()
+  assert cse_many([constant]) == (constant,)
+  assert len(serialized) == 1
+  attributed = Expr(ExprOp.NEG, (sc.sym("compact_attrs", 2),), TensorType((2,)), attrs={"tile": large})
+  attributed.structural_key()
+  assert cse_many([attributed]) == (attributed,)
+  assert len(serialized) == 2
+  assert _attrs_key({"tile": large}) == (("tile", ("ndarray", _array_key(large))),)
+  repeated = np.broadcast_to(tile, (4, 3, 2))
+  assert _array_key(repeated) == _array_key(repeated.copy())
+  assert serialized and all(data == tile.tobytes() for data in serialized)
 
 
 def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> None:
