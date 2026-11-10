@@ -109,3 +109,11 @@ collection entries. The full hook's benchmark smoke is finishing. The static typ
 has follow-up #288 in the 0.2.0 backlog, blocked by #42. No main-review/Sol disagreement has
 been observed; the main reviewer independently reproduced Sol's broadcast bug and confirmed
 its fix. The complete Opus delta check still waits on the header-ownership answer.
+
+
+The maintainer approved the minimal C/C++ header refusal as an explicit exception, confirming #43
+has not started and will replace the guard. Applied the four added lines to aot.py/cpp.py and
+removed the temporary patch. Six codegen boundary cases were added; four failed before the guard.
+The tests cover sparse inputs, sparse outputs, both header paths including direct C++ rendering,
+write_module without partial files, sparse JIT after refusal, and dense exports with sparse internal
+calls. Ruff and strict types pass. The final full hook is running before the Opus delta check.
