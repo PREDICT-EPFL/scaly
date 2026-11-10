@@ -13,7 +13,7 @@ from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, pack, scatter, stac
 from ..ir.types import TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
-from .sparsity import _callee_mask, _depends_on, _incidence, _mask_sparsity, _stored_slots, column_coloring
+from .sparsity import _callee_mask, _depends_on, _incidence, _mask_sparsity, _prunable_support, _stored_slots, column_coloring
 
 _Pushforward = Callable[[Sequence[Expr], dict[Expr, Expr], int, str], tuple[Expr | None, ...]]
 _Pullback = Callable[[Sequence[Expr], Sequence[Expr], Sequence[Expr]], tuple[Expr, ...]]
@@ -336,6 +336,8 @@ def _vmap_jvp_many(
         uj_arr = unique_j[c_local].reshape(1, 1, slice_size)
         flat_idx = (c_arr * outer_size + start + it_arr * stride + uj_arr).reshape(-1)
         gathered = gather(actual_tan, flat_idx).reshape((nseed, length, slice_size))
+        if _prunable_support(gathered) == frozenset():
+          continue
         mapped_slice = mapped_3d[:, pos, :].reshape((1, length, slice_size))
         contribution = (gathered * mapped_slice).reshape((nseed, length * slice_size))
         ret = contribution if ret is None else ret + contribution

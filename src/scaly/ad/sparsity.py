@@ -7,13 +7,15 @@ one-way is what lets AD ask this module for a pattern.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp, callees_of
-from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries
+from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries, specialize_support
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
 
 
@@ -160,33 +162,81 @@ def _take_rows(mask: sparse.coo_array, indices: np.ndarray) -> sparse.coo_array:
   return _compose(incidence, mask)
 
 
-def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
-  stack = [(expr, wrt, 0)]
+@dataclass
+class _JacContext:
+  masks: dict[tuple[int, int], sparse.coo_array]
+  support_of: Callable[[Expr], Support] = lambda node: node.support
+  specializations: dict[Callable[[Expr], Support], _JacContext] = field(default_factory=dict)
+  calls: dict[Expr, list[tuple[np.ndarray, _JacContext]]] = field(default_factory=dict)
+
+
+def _call_contexts(expr: Expr, context: _JacContext) -> list[tuple[np.ndarray, _JacContext]]:
+  if expr in context.calls:
+    return context.calls[expr]
+  callee = expr.attrs["callee"]
+  groups: dict[tuple[Support, ...], list[int]] = {}
+  if expr.op == ExprOp.CALL:
+    groups[tuple(context.support_of(arg) for arg in expr.args)] = [0]
+  else:
+    windows = []
+    for arg, formal, start, stride in zip(expr.args, callee.inputs, expr.attrs["starts"], expr.attrs["strides"], strict=True):
+      support = context.support_of(arg)
+      windows.append((None if support is None else support_indices(support), formal.type, start, stride))
+    for stage in range(expr.attrs["length"]):
+      arguments = []
+      for indices, type_, start, stride in windows:
+        support = None
+        if indices is not None:
+          offset = start + stage * stride
+          lo, hi = np.searchsorted(indices, (offset, offset + type_.storage_size))
+          entries = indices[lo:hi] - offset
+          support = frozenset(map(int, entries if type_.pattern is None else stored_indices(type_)[entries]))
+        arguments.append(support)
+      groups.setdefault(tuple(arguments), []).append(stage)
+  contexts = []
+  for arguments, stages in groups.items():
+    support_of = specialize_support(callee, arguments, OP_INFO)
+    if support_of not in context.specializations:
+      context.specializations[support_of] = _JacContext({}, support_of, context.specializations)
+    contexts.append((np.asarray(stages, dtype=np.int64), context.specializations[support_of]))
+  context.calls[expr] = contexts
+  return contexts
+
+
+def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array] | _JacContext) -> sparse.coo_array:
+  root = _JacContext(memo) if isinstance(memo, dict) else memo
+  stack = [(expr, wrt, 0, root)]
   while stack:
-    node, variable, phase = stack.pop()
+    node, variable, phase, context = stack.pop()
+    masks = context.masks
     key = (node.id, variable.id)
-    if key in memo:
+    if key in masks:
       continue
     if phase == 0:
-      stack.append((node, variable, 1))
+      stack.append((node, variable, 1, context))
       if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
-        stack.extend((arg, variable, 0) for arg in reversed(node.args) if (arg.id, variable.id) not in memo)
+        stack.extend((arg, variable, 0, context) for arg in reversed(node.args) if (arg.id, variable.id) not in masks)
     elif phase == 1 and callees_of(node):
-      stack.append((node, variable, 2))
+      stack.append((node, variable, 2, context))
       callee = node.attrs["callee"]
       callee_out = callee.results[node.attrs["output"]]
       # Actual masks must be known before requesting callee masks for active formals.
-      if (node.op == ExprOp.CALL or node.attrs["length"]) and not _declared(callee, node.attrs["output"]):
-        for formal, actual in reversed(tuple(zip(callee.inputs, node.args, strict=True))):
-          if memo[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in memo:
-            stack.append((callee_out, formal, 0))
+      if (
+        (node.op == ExprOp.CALL or node.attrs["length"])
+        and not _declared(callee, node.attrs["output"])
+        and any(masks[(arg.id, variable.id)].nnz for arg in node.args)
+      ):
+        for _, child in _call_contexts(node, context):
+          for formal, actual in reversed(tuple(zip(callee.inputs, node.args, strict=True))):
+            if masks[(actual.id, variable.id)].nnz and (callee_out.id, formal.id) not in child.masks:
+              stack.append((callee_out, formal, 0, child))
     else:
-      memo[key] = _jac_mask_uncached(node, variable, memo)
+      masks[key] = _jac_mask_uncached(node, variable, context)
 
-  return memo[(expr.id, wrt.id)]
+  return root.masks[(expr.id, wrt.id)]
 
 
-def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   if expr.op == ExprOp.INPUT:
     if expr.id != wrt.id:
       return _empty((expr.size, wrt.size))
@@ -206,8 +256,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
     rule = OP_INFO[ExprOp(expr.op)]
     xs = x if rule.pattern_rule == "intersection" or rule.support_rule == "numerator" else None
     ys = y if rule.pattern_rule == "intersection" else None
-    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape, ys)
-    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape, xs)
+    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape, ys, memo.support_of(ys) if ys is not None else None)
+    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape, xs, memo.support_of(xs) if xs is not None else None)
     return _or(xm, ym)
   if expr.op == ExprOp.SUM:
     child = _jac_mask(expr.args[0], wrt, memo)
@@ -246,12 +296,11 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
 
 
 def _broadcast_mask(
-  mask: sparse.coo_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...], coefficient: Expr | None = None
+  mask: sparse.coo_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...], coefficient: Expr | None = None, support: Support = None
 ) -> sparse.coo_array:
   shape = (int(np.prod(out_shape, dtype=np.int64)), mask.shape[1])
   if not mask.nnz:
     return _empty(shape)
-  support = coefficient.support if coefficient is not None else None
   if coefficient is not None and support is not None and len(support) == coefficient.size:
     support = None
   if in_shape == out_shape and (support is None or coefficient is not None and coefficient.shape == out_shape):
@@ -273,15 +322,15 @@ def _broadcast_mask(
   return _incidence(shape, rows, mask.col[source])
 
 
-def _stack_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _stack_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   return _combine_children(expr, wrt, memo, stack=True)
 
 
-def _concat_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _concat_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   return _combine_children(expr, wrt, memo, stack=False)
 
 
-def _combine_children(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array], *, stack: bool) -> sparse.coo_array:
+def _combine_children(expr: Expr, wrt: Expr, memo: _JacContext, *, stack: bool) -> sparse.coo_array:
   rows, cols = [], []
   offset = 0
   axis = expr.attrs.get("axis", 0)
@@ -298,7 +347,7 @@ def _combine_children(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.
   return _incidence((expr.size, wrt.size), np.concatenate(rows), np.concatenate(cols))
 
 
-def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _matmul_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   x, y = expr.args
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
   m, k = (1, x.shape[0]) if len(x.shape) == 1 else x.shape
@@ -308,7 +357,7 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_a
     if not mask.nnz:
       return _empty((expr.size, wrt.size))
     active, inverse = np.unique(mask.row, return_inverse=True)
-    support = other.support
+    support = memo.support_of(other)
     if support is None:
       count = n if left else m
       source = np.repeat(np.arange(len(active)), count)
@@ -341,7 +390,7 @@ def _declared(callee: Any, output: int) -> bool:
   return callee.rules is not None and output < len(callee.outputs)
 
 
-def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], sparse.coo_array] | _JacContext) -> sparse.coo_array:
   """The pattern of ``callee``'s result ``output`` in its input ``k``.
 
   A function with custom rules has the pattern it declares, or a dense one; its body need not
@@ -363,17 +412,18 @@ def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], s
   return _incidence(pattern.shape, rows[keep], cols[keep])
 
 
-def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _call_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   callee = expr.attrs["callee"]
   ret = _empty((expr.size, wrt.size))
   for k, actual in enumerate(expr.args):
     actual_dep = _jac_mask(actual, wrt, memo)
     if actual_dep.nnz:
-      ret = _or(ret, _compose(_callee_mask(callee, expr.attrs["output"], k, memo), actual_dep))
+      child = memo if _declared(callee, expr.attrs["output"]) else _call_contexts(expr, memo)[0][1]
+      ret = _or(ret, _compose(_callee_mask(callee, expr.attrs["output"], k, child), actual_dep))
   return ret
 
 
-def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
+def _vmap_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   callee = expr.attrs["callee"]
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
@@ -386,18 +436,20 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arr
     outer_dep = _jac_mask(actual_outer, wrt, memo)
     if not outer_dep.nnz:
       continue
-    callee_dep = _callee_mask(callee, expr.attrs["output"], formal_idx, memo)
     start, stride = starts[formal_idx], strides[formal_idx]
     output = callee.results[expr.attrs["output"]]
-    rows = _stored_slots(output.type, callee_dep.row)
-    cols = _stored_slots(formal.type, callee_dep.col)
-    iterations = np.arange(length, dtype=np.int64)[:, None]
-    windows = _incidence(
-      (expr.size, actual_outer.size),
-      (iterations * output.type.storage_size + rows).reshape(-1),
-      (start + iterations * stride + cols).reshape(-1),
-    )
-    ret = _or(ret, _compose(windows, outer_dep))
+    contexts = [(np.arange(length, dtype=np.int64), memo)] if _declared(callee, expr.attrs["output"]) else _call_contexts(expr, memo)
+    for stages, child in contexts:
+      callee_dep = _callee_mask(callee, expr.attrs["output"], formal_idx, child)
+      rows = _stored_slots(output.type, callee_dep.row)
+      cols = _stored_slots(formal.type, callee_dep.col)
+      iterations = stages[:, None]
+      windows = _incidence(
+        (expr.size, actual_outer.size),
+        (iterations * output.type.storage_size + rows).reshape(-1),
+        (start + iterations * stride + cols).reshape(-1),
+      )
+      ret = _or(ret, _compose(windows, outer_dep))
   return ret
 
 
