@@ -899,6 +899,8 @@ sparse input carries its pattern, and the multipliers of a sparse output know th
 **[#44]. Pattern holes and the numerical fast path.** A numerical call with a SciPy argument
 canonicalizes it and digests its pattern to find the instance, which is O(nnz) per call; a concrete
 sparse leaf also accepts its values vector directly, which is the fast path. With [#42].
+The declaration spelling is `arg(name, shape, pattern=...)`, with `shape` optional and CSC the
+default layout. `instantiate` binds it with a concrete `TensorType`, including the pattern.
 
 **[#58]. Function-level `sc.jvp` and `sc.vjp`.** Arity ladders, built through `lift` and
 `Function.build`, so AD-built callees keep their trees and stop being `Any`-typed at run time. After

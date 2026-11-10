@@ -9,9 +9,10 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering, stop_gradient, pack, values
+from ..ir.layout import bind_sparse
 from ..ir.types import SparsityPattern, TensorType
 from .model import Function, _Derived, _traced, as_concrete
-from .tree import Tree, _G, _Leaf, _leaves
+from .tree import Tree, _G, _Leaf, _PatternHole, _leaves
 from .concrete import ConcreteFunction
 
 
@@ -85,7 +86,7 @@ def _batch_tree(tree: Tree, length: int) -> Tree:
   if isinstance(tree, _G):
     return _G(tuple(_batch_tree(part, length) for part in tree.parts), public=False)
   decl = tree.decls[0]
-  return _Leaf(tree.names[0], None if decl is None else replace(decl, shape=(length, *decl.shape)), layout=tree.layouts[0] or "csc")
+  return _Leaf(tree.names[0], None if decl is None else replace(decl, shape=(length, *decl.shape)), layout=tree._layout_decls[0])
 
 
 def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False) -> tuple[Expr, int, int]:
@@ -149,12 +150,32 @@ class _Mapped(_Derived):
       decl = None if tree is None else tree.decls[0]
       marker = value if isinstance(value, (_Broadcast, _Window)) else None
       value = marker.value if marker is not None else value
-      if tree is None and not isinstance(value, (Expr, np.ndarray)):
-        raise TypeError("bare mapped function leaves must be Expr or ndarray")
-      pattern = None if decl is None else decl.pattern
+      if tree is None and not isinstance(value, (Expr, np.ndarray)) and not sparse.issparse(value):
+        raise TypeError("bare mapped function leaves must be Expr, ndarray or SciPy sparse")
       is_expr = isinstance(value, Expr)
       actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
+      if tree is None and (sparse.issparse(actual) or is_expr and actual.type.pattern is not None):
+        decl = _PatternHole(shape_hole=True)
       repeated = isinstance(marker, _Broadcast)
+      canonical = None
+      if isinstance(decl, _PatternHole):
+        if isinstance(marker, _Window):
+          raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
+        pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
+        if decl.shape_hole and pattern is None:
+          decl = None
+        else:
+          shape = (
+            actual.shape[1:]
+            if decl.shape_hole and not repeated and len(actual.shape) > 2 and actual.shape[0] == self._length
+            else actual.shape
+            if decl.shape_hole
+            else decl.shape
+          )
+          decl = TensorType(shape, decl.dtype, decl.diff, pattern)
+        if canonical is not None:
+          actual = cast(Any, canonical)
+      pattern = None if decl is None else decl.pattern
       if isinstance(marker, _Window):
         if decl is None:
           raise TypeError("window needs a declared slice shape; instantiate the callee or use a leading-axis view")
@@ -184,7 +205,7 @@ class _Mapped(_Derived):
           outer = values(actual) if pattern is not None else actual.reshape(shape if repeated else (self._length, *shape))
           actual, start, stride = _view_window(outer, self._length, width, repeated=repeated)
         else:
-          if pattern is not None:
+          if pattern is not None and canonical is None:
             layout = cast(_Leaf, tree).layouts[0]
             assert layout is not None
             actual = layout.numerical_values(actual, shape if repeated else (self._length, *shape))[..., layout.inverse_permutation]

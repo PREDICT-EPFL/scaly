@@ -355,18 +355,24 @@ def _seeded(
     wrt = _unique_name(inputs.names, wrt, "wrt")
   if kind in ("fwd", "adj") and outputs is not None:
     of = _unique_name(outputs.names, of, "of")
+
+  def multipliers(tree: Tree) -> Tree:
+    if isinstance(tree, _G):
+      return _G(tuple(multipliers(part) for part in tree.parts), public=False)
+    return arg("lam:" + tree.names[0], tree.decls[0], layout=tree._layout_decls[0], pattern=... if tree.decls[0] is None else None)
+
   if kind == "fwd":
     seed = (
-      None if inputs is None or wrt is None else arg(f"fwd:{wrt}", inputs.decls[inputs.index(wrt)], layout=inputs.layouts[inputs.index(wrt)] or "csc")
+      None if inputs is None or wrt is None else arg(f"fwd:{wrt}", inputs.decls[inputs.index(wrt)], layout=inputs._layout_decls[inputs.index(wrt)])
     )
   elif kind == "adj":
     seed = (
       None
       if outputs is None or of is None
-      else arg(f"lam:{of}", outputs.decls[outputs.index(of)], layout=outputs.layouts[outputs.index(of)] or "csc")
+      else multipliers(arg(of, outputs.decls[outputs.index(of)], layout=outputs._layout_decls[outputs.index(of)]))
     )
   else:
-    seed = None if outputs is None else outputs.relabel("lam:")
+    seed = None if outputs is None else multipliers(outputs)
   seeded = None if inputs is None or seed is None else append_parameter(inputs, seed)
 
   def transform(concrete: ConcreteFunction) -> ConcreteFunction:

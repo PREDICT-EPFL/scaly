@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
+from scipy import sparse
 
 from ..ir.expr import Expr
+from ..ir.layout import bind_sparse
 from ..ir.types import SparsityPattern, TensorType, as_shape
 from .concrete import ConcreteFunction, DerivSpec
-from .tree import Tree, _G, _Leaf, _leaves, flat_tree, parameter_list
+from .tree import Tree, _G, _Leaf, _PatternHole, _is_hole, _shape_hole, _leaves, flat_tree, parameter_list
 
 if TYPE_CHECKING:
   from ..solvers.stats import SolverStats
@@ -30,8 +32,14 @@ def _types(skeleton: Any) -> tuple[TensorType, ...]:
   return tuple(_leaves(skeleton))
 
 
-def _mangle(name: str, skeleton: Any, open_types: tuple[TensorType, ...]) -> str:
-  shapes = "_".join("x".join(map(str, type_.shape)) if type_.shape else "s" for type_ in open_types)
+def _mangle(name: str, skeleton: Any, types: tuple[TensorType, ...], decls: tuple[TensorType | None, ...] | None = None) -> str:
+  tokens = []
+  for decl, type_ in zip(decls if decls is not None else (None,) * len(types), types, strict=True):
+    if _shape_hole(decl):
+      tokens.append("x".join(map(str, type_.shape)) if type_.shape else "s")
+    if isinstance(decl, _PatternHole) or decl is None and type_.pattern is not None:
+      tokens.append(f"p{type_.pattern.digest[:8]}" if type_.pattern is not None else "pdense")
+  shapes = "_".join(tokens)
   nesting = hashlib.sha256(repr(_structure(skeleton)).encode()).hexdigest()[:6]
   return "_".join(part for part in (name, shapes, f"t{nesting}") if part)
 
@@ -56,8 +64,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   def _build(self, types: tuple[TensorType, ...]) -> ConcreteFunction[Any, Any, Any, Any]:
     assert self.inputs is not None
     inputs = self.inputs.with_types(types)
-    open_types = tuple(type_ for decl, type_ in zip(self.inputs.decls, types, strict=True) if decl is None)
-    name = _mangle(self.name, _skeleton(inputs, types), open_types) if self.inputs.has_holes else self.name
+    name = _mangle(self.name, _skeleton(inputs, types), types, self.inputs.decls) if self.inputs.has_holes else self.name
     return ConcreteFunction._trace(name, self._fn, inputs, self.outputs, output_name=self.name)
 
   def _build_bare(self, skeleton: Any) -> ConcreteFunction[Any, Any, Any, Any]:
@@ -93,11 +100,13 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       raise TypeError(f"{self.name}: a bare function has no declared leaves to bind; call it instead")
     if shapes is None:
       if self.inputs.has_holes:
-        raise TypeError(f"{self.name} has shape holes in {self.inputs.names}; pass shapes to bind them")
+        raise TypeError(f"{self.name} has shape holes or pattern holes in {self.inputs.names}; pass types to bind them")
       types = self.inputs.types
     else:
       if len(shapes) != self.inputs.size:
         raise TypeError(f"{self.name}: declared {self.inputs.size} leaves, got {len(shapes)} bindings")
+      if any(isinstance(decl, _PatternHole) and not isinstance(shape, TensorType) for decl, shape in zip(self.inputs.decls, shapes, strict=True)):
+        raise TypeError(f"{self.name}: a pattern hole needs a TensorType binding")
       types = tuple(
         shape
         if isinstance(shape, TensorType)
@@ -107,7 +116,13 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         for decl, shape in zip(self.inputs.decls, shapes, strict=True)
       )
       for decl, type_ in zip(self.inputs.decls, types, strict=True):
-        expected = TensorType(type_.shape) if decl is None else decl
+        expected = (
+          TensorType(type_.shape)
+          if decl is None
+          else TensorType(type_.shape if decl.shape_hole else decl.shape, decl.dtype, decl.diff, type_.pattern)
+          if isinstance(decl, _PatternHole)
+          else decl
+        )
         if expected != type_:
           raise TypeError(f"{self.name}: binding type {type_} contradicts declaration {expected}")
     return cast(
@@ -116,10 +131,16 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     )
 
   def _instance_key(self, types: tuple[TensorType, ...]) -> Any:
-    layouts = (() if self.inputs is None else self.inputs.layouts) + (() if self.outputs is None else self.outputs.layouts)
+    layouts = (() if self.inputs is None else self.inputs.with_types(types).layouts) + (() if self.outputs is None else self.outputs.layouts)
     return (types, layouts) if any(layout is not None for layout in layouts) else types
 
   def _resolve(self, args: tuple[Any, ...], what: str) -> ConcreteFunction[Any, Any, Any, Any]:
+    return self._prepare_arguments(args, what)[0]
+
+  def _prepare_arguments(self, args: tuple[Any, ...], what: str) -> tuple[ConcreteFunction[Any, Any, Any, Any], tuple[Any, ...]]:
+    prepared = []
+    canonical = []
+
     def bind(tree: Tree[Any, Any] | None, value: Any) -> Any:
       if tree is not None and isinstance(tree, _G):
         if not isinstance(value, tuple) or len(value) != len(tree.parts):
@@ -128,33 +149,53 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       if tree is None and isinstance(value, tuple):
         return tuple(bind(None, item) for item in value)
       if tree is None:
-        if not isinstance(value, (Expr, np.ndarray)):
-          raise TypeError(f"{what}: bare function leaves must be Expr or ndarray; use np.asarray or declare the input tree")
+        if not isinstance(value, (Expr, np.ndarray)) and not sparse.issparse(value):
+          raise TypeError(f"{what}: bare function leaves must be Expr, ndarray or SciPy sparse; use np.asarray or declare the input tree")
         if isinstance(value, Expr) and value.type.dtype != TensorType(()).dtype:
           raise ValueError(f"{what}: bare functions require float64 symbolic leaves, got {value.type.dtype}")
-        return TensorType(value.shape)
-      decl = tree.decls[0]
+      decl = None if tree is None else tree.decls[0]
+      name = "input" if tree is None else tree.names[0]
       if isinstance(value, Expr):
         shape = value.shape
         expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
         if value.type.dtype != expected_dtype:
-          raise ValueError(f"{what}: expected dtype {expected_dtype} for {tree.names[0]!r}, got {value.type.dtype}")
-        if decl is not None and value.type.pattern is not decl.pattern:
-          raise ValueError(f"{what}: different stored pattern for {tree.names[0]!r}")
+          raise ValueError(f"{what}: expected dtype {expected_dtype} for {name!r}, got {value.type.dtype}")
+        if decl is not None and not isinstance(decl, _PatternHole) and value.type.pattern is not decl.pattern:
+          raise ValueError(f"{what}: different stored pattern for {name!r}")
       else:
         shape = np.shape(value)
         if decl is not None and decl.pattern is not None and shape == decl.storage_shape:
           shape = decl.shape
-      if decl is not None and shape != decl.shape:
-        raise ValueError(f"{what}: expected shape {decl.shape} for {tree.names[0]!r}, got {shape}")
+      if decl is not None and not _shape_hole(decl) and shape != decl.shape:
+        raise ValueError(f"{what}: expected shape {decl.shape} for {name!r}, got {shape}")
+      if tree is None or isinstance(decl, _PatternHole):
+        pattern = value.type.pattern if isinstance(value, Expr) else None
+        if sparse.issparse(value):
+          pattern, value = bind_sparse(value)
+          canonical.append(len(prepared))
+        prepared.append(value)
+        return TensorType(shape, pattern=pattern) if decl is None else TensorType(shape, decl.dtype, decl.diff, pattern)
+      prepared.append(value)
       return TensorType(shape) if decl is None else decl
 
     skeleton = bind(self.inputs, args)
-    return self._bind(skeleton, what)
+    instance = self._bind(skeleton, what)
+    for index in canonical:
+      layout = instance.input_tree.layouts[index]
+      assert layout is not None
+      prepared[index] = prepared[index][..., layout.permutation]
+    return instance, cast(tuple[Any, ...], instance.input_tree.unflatten(tuple(prepared)))
 
   def _bind(self, skeleton: Any, what: str) -> ConcreteFunction[Any, Any, Any, Any]:
     if self.inputs is not None and _structure(self.inputs.unflatten(self.inputs.decls)) != _structure(skeleton):
       raise ValueError(f"{what}: value does not have the declared structure of {self.inputs.names}")
+    if self.inputs is not None:
+      skeleton = self.inputs.unflatten(
+        tuple(
+          type_ if decl is None or type_.diff == decl.diff else replace(type_, diff=decl.diff)
+          for decl, type_ in zip(self.inputs.decls, _types(skeleton), strict=True)
+        )
+      )
     if skeleton not in self._argument_cache:
       instance = self._cache(skeleton, lambda: self._build_bare(skeleton)) if self.inputs is None else self.instantiate(_types(skeleton))
       self._argument_cache[skeleton] = instance
@@ -168,15 +209,18 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
 
   def __call__(self, *args: Any) -> Any:
     """Bind shapes and call the instance. An empty call evaluates numerically."""
-    return self._resolve(args, self.name)(*args)
+    instance, prepared = self._prepare_arguments(args, self.name)
+    return instance(*prepared)
 
   def symbolic_call[*Ss](self: Function[tuple[*Ss], NumericalInputs, SymbolicOutputs, NumericalOutputs], *args: *Ss) -> SymbolicOutputs:
     """Embed a symbolic call, including the zero-input case."""
-    return self._resolve(args, f"{self.name}.symbolic_call").symbolic_call(*args)
+    instance, prepared = self._prepare_arguments(args, f"{self.name}.symbolic_call")
+    return instance.symbolic_call(*prepared)
 
   def numerical_call[*Ns](self: Function[SymbolicInputs, tuple[*Ns], SymbolicOutputs, NumericalOutputs], *args: *Ns) -> NumericalOutputs:
     """Bind shapes, compile the instance, and evaluate its numerical outputs."""
-    return self._resolve(args, f"{self.name}.numerical_call").numerical_call(*args)
+    instance, prepared = self._prepare_arguments(args, f"{self.name}.numerical_call")
+    return instance.numerical_call(*prepared)
 
   @classmethod
   def _from_instance(cls, instance: ConcreteFunction[Any, Any, Any, Any]) -> Function[Any, Any, Any, Any]:
@@ -197,7 +241,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     combinations = {key: tuple(value) for key, value in (aux or {}).items()}
     source_inputs = self.inputs
     declarations = dict(zip(source_inputs.names, source_inputs.decls, strict=True))
-    missing = [key for key, decl in declarations.items() if decl is None and key not in input_names]
+    missing = [key for key, decl in declarations.items() if _is_hole(decl) and key not in input_names]
     if missing:
       raise ValueError(f"factory inputs must bind open source inputs: {missing}")
 
@@ -207,18 +251,19 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       if key.startswith("fwd:") and key[4:] in declarations:
         return declarations[key[4:]]
       if key.startswith("lam:"):
-        return None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
+        decl = None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
+        return _PatternHole(shape_hole=True) if decl is None else decl
       raise ValueError(f"unknown factory input: {key!r}")
 
-    input_layouts = dict(zip(source_inputs.names, source_inputs.layouts, strict=True))
-    output_layouts = {} if self.outputs is None else dict(zip(self.outputs.names, self.outputs.layouts, strict=True))
+    input_layouts = dict(zip(source_inputs.names, source_inputs._layout_decls, strict=True))
+    output_layouts = {} if self.outputs is None else dict(zip(self.outputs.names, self.outputs._layout_decls, strict=True))
     layouts = {**input_layouts, **{f"fwd:{k}": v for k, v in input_layouts.items()}, **{f"lam:{k}": v for k, v in output_layouts.items()}}
     parameters = parameter_list(tuple(_Leaf(key, declaration(key), layout=layouts.get(key) or "csc") for key in input_names))
     output_names = tuple(request if isinstance(request, str) else request.output_name for request in requests)
 
     def source_skeleton(skeleton: Any) -> Any:
       bindings = dict(zip(input_names, _types(skeleton), strict=True))
-      return source_inputs.unflatten(tuple(bindings[key] if decl is None else decl for key, decl in declarations.items()))
+      return source_inputs.unflatten(tuple(bindings[key] if _is_hole(decl) else decl for key, decl in declarations.items()))
 
     return lift(
       self,
@@ -330,10 +375,13 @@ def derived_name(source: Function, concrete: ConcreteFunction, requested: str | 
   """Give explicit derivative names the source's deterministic specialization suffix."""
   if requested is None:
     return default
-  if source.inputs is None:
-    open_types = concrete.input_tree.types
-  else:
-    open_types = tuple(type_ for decl, type_ in zip(source.inputs.decls, concrete.input_tree.types, strict=True) if decl is None)
   return (
-    _mangle(requested, _skeleton(concrete.input_tree, concrete.input_tree.types), open_types) if open_types or source.inputs is None else requested
+    _mangle(
+      requested,
+      _skeleton(concrete.input_tree, concrete.input_tree.types),
+      concrete.input_tree.types,
+      None if source.inputs is None else source.inputs.decls,
+    )
+    if source.inputs is None or source.inputs.has_holes
+    else requested
   )
