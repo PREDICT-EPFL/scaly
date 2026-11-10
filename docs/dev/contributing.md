@@ -109,6 +109,7 @@ The first collection can exit nonzero because the existing baseline is stale or 
 discards its error output: written to the same file, the error can land in the middle of a node ID
 and corrupt the baseline. The `grep` keeps only pytest node IDs, including parameter IDs with
 spaces, and `sort` makes the file deterministic. The final collection must pass.
+The baseline merges by union so concurrent additions do not conflict, and the check still catches stale results.
 
 A test that needs a built solver carries a marker:
 
