@@ -14,7 +14,7 @@ interfaces for inspecting or extending the compiler.
       show_source: false
       filters:
         - "!^_"
-        - "!^(lowering|with_lowering|opaque|sym|const)$"
+        - "!^(lowering|with_lowering|opaque|sym|const|support)$"
 
 ::: scaly.ir.expr.Expr.sym
     options:
@@ -36,7 +36,7 @@ interfaces for inspecting or extending the compiler.
       show_signature: false
       filters:
         - "!^_"
-        - "!^pattern_rule$"
+        - "!^(pattern_rule|support_rule)$"
 
 ## Functions
 

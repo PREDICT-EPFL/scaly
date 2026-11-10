@@ -17,6 +17,7 @@ src/scaly/
   ir/                    dialect definitions, verification, text, pass infrastructure
     types.py             DType, DeviceSpec, TensorType, SparsityPattern
     expr.py              ExprOp, OP_INFO, Expr, interning, builders, topo, format_expr
+    support.py           lazy value support over flat logical coordinates
     expr_spec.py         expression-dialect verify rules, verify_expr
     program.py           ProgramOp, RangeKind, ProgramNode, interning, builders
     program_spec.py      program-dialect verify rules, verify_program
@@ -172,6 +173,10 @@ does not see this dependency. If you change those attributes, update the rendere
 
 A scalar math op touches three files. Its row in the elementwise table carries everything the
 passes need to know about it.
+
+Every expression op also needs a support classification in `OP_INFO`: reuse its `pattern_rule`
+or set `support_rule`. For deliberately unknown support, add the op to the unknown set in
+`tests/test_op_coverage.py`.
 
 | To add | Touch |
 | --- | --- |

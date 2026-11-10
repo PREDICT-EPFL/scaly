@@ -112,6 +112,13 @@ at compile time with symbolic values, folding arithmetic as it goes, so a
 multiplication by a known zero disappears instead of becoming a statement. This
 is partial evaluation[^pe] with every loop bound known.
 
+Expansion also tracks entries known to be zero, including those with a constant
+zero factor or a quotient whose numerator is zero. It writes zero to those
+entries, including temporaries, without evaluating their arithmetic. Expanding
+`sc.const([0, 1]) / sc.const([0, 0])` therefore gives `[0, inf]`, while the loop
+form computes `0 / 0` and gives `[nan, inf]`. Under `auto`, this behaviour depends
+on where the expression sits and whether its procedure fits the size limits below.
+
 The choice is driven by `Expr.lowering`, a field every expression node carries.
 It is `"auto"` unless you set it with `.scalar()` or `.block()`, and it
 propagates to the nodes built from the hinted one. The hints of a function's
@@ -468,8 +475,9 @@ treats every operand as a real number. To put a NaN in a model, write
 Scalar expansion and lane widening keep the order in which a reduction adds its
 terms. Scalar and loop forms of the same function are still not promised to
 give bit-identical results, because the expression trees differ and the C
-compiler rounds each one its own way. Neither the JIT nor the recipe for
-exported code enables `-ffast-math`. Both pass `-fno-math-errno`, and the
+compiler rounds each one its own way. They can also differ at invalid operations
+because [expansion skips known-zero entries](#loops-or-scalar-code). Neither the
+JIT nor the recipe for exported code enables `-ffast-math`. Both pass `-fno-math-errno`, and the
 lowering hints do not change these flags.
 
 `reciprocal=True` allows one further change. A division `x / y` whose divisor

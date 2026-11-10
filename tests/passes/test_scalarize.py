@@ -284,6 +284,76 @@ def test_scalar_constants_cse_and_expression_trees() -> None:
   np.testing.assert_allclose(fn(data), np.sin(data[2]) * np.array([1, 1, 2]) + np.sin([0, 1, 2]), rtol=1e-14, atol=1e-14)
 
 
+@pytest.mark.parametrize("intermediate", [False, True])
+def test_known_zero_entries_skip_arithmetic_and_still_initialize_outputs(intermediate: bool) -> None:
+  mask = np.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+  scale = np.array([[2.0, np.nan, 3.0], [np.inf, 5.0, np.nan]])
+
+  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y"))
+  def fn(x):
+    product = (x * sc.const(mask)) * sc.const(scale)
+    return (product.sin() + 1 if intermediate else product).scalar()
+
+  observed = {}
+  lower_function(fn, observe=observed.__setitem__)
+  proc = main_proc(observed["pass:scalarize"])
+  _assert_scalar(proc)
+  stores = [s for s in _body(proc) if s.op == ProgramOp.STORE]
+  assert len(stores) == 6
+  if not intermediate:
+    assert sum(s.args[1].op == ProgramOp.CONST_FLOAT and s.args[1].attrs["value"] == 0 for s in stores) == 3
+  for data in (np.arange(6.0).reshape(2, 3) / 7, np.full((2, 3), -0.3)):
+    expected = np.zeros((2, 3))
+    active = mask != 0
+    expected[active] = data[active] * scale[active]
+    if intermediate:
+      expected = np.sin(expected) + 1
+    np.testing.assert_allclose(fn(data), expected, rtol=1e-14, atol=1e-14)
+
+
+def test_known_zeros_in_nested_mapped_calls_use_local_output_coordinates() -> None:
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
+  def stage(x):
+    return (x * sc.const([1.0, 0.0, 1.0])) * sc.const([2.0, np.nan, 3.0])
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
+  def nested(x):
+    return stage(x).sin()
+
+  @sc.function(sc.arg("x", 8), outputs=sc.group(sc.arg("mapped"), sc.arg("alias")))
+  def fn(x):
+    mapped = _mapped_call(nested, 3, [(x, 1, 2)])
+    return mapped.scalar(), mapped[2:8]
+
+  _assert_scalar(main_proc(lower_function(fn)))
+  data = np.linspace(-0.7, 1.1, 8)
+  expected = np.zeros((3, 3))
+  for i in range(3):
+    expected[i, [0, 2]] = np.sin(data[[1 + 2 * i, 3 + 2 * i]] * [2, 3])
+  mapped, alias = fn(data)
+  np.testing.assert_allclose(mapped, expected.ravel(), rtol=1e-14, atol=1e-14)
+  np.testing.assert_allclose(alias, expected.ravel()[2:8], rtol=1e-14, atol=1e-14)
+
+
+def test_known_zero_entries_survive_loop_invariant_hoisting() -> None:
+  @sc.function(sc.arg("x", 3), sc.arg("w", 3), outputs=sc.arg("y"))
+  def stage(x, w):
+    masked = (w * sc.const([1.0, 0.0, 1.0])) * sc.const([2.0, np.nan, 3.0])
+    return x + masked
+
+  @sc.function(sc.arg("x", (2, 3)), sc.arg("w", 3), outputs=sc.arg("y"))
+  def fn(x, w):
+    return sc.vmap(stage, 2)(x, sc.broadcast(w)).scalar()
+
+  observed = {}
+  lower_function(fn, observe=observed.__setitem__)
+  assert any("hoisted_from" in pr.attrs for pr in observed["pass:hoist_invariant"].args)
+  _assert_scalar(main_proc(lower_function(fn)))
+  data, weights = np.arange(6.0).reshape(2, 3) / 7, np.array([0.3, 0.4, -0.7])
+  expected = data + weights * [2, 0, 3]
+  np.testing.assert_allclose(fn(data, weights), expected, rtol=1e-14, atol=1e-14)
+
+
 def test_nested_calls_offsets_multiple_outputs_and_repeated_invocations() -> None:
   inner = sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("out0"), sc.arg("out1")), name="nested_inner")(lambda x: (x * x, x.sum()))
 
@@ -448,9 +518,9 @@ def test_symbolic_zero_identities_and_known_invalid_constants_have_distinct_sema
 def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
   fn = sc.function(sc.arg("x", 1), outputs=sc.arg("out0"), name="invalid_division")(lambda x: (sc.const([0.0, 1.0]) / sc.const([0.0, 0.0])).scalar())
   source = render_c_source(fn, lanes=1)
-  assert "(0.0 / 0.0)" in source and "(1.0 / 0.0)" in source
+  assert "(0.0 / 0.0)" not in source and "(1.0 / 0.0)" in source
   result = fn(np.ones(1))
-  assert np.isnan(result[0]) and np.isposinf(result[1])
+  assert result[0] == 0 and np.isposinf(result[1])
 
 
 def test_mixed_constant_math_folds_per_element() -> None:

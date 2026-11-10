@@ -12,7 +12,8 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp
+from ..ir.support import Support, broadcast_support
 from ..ir.types import SparsityPattern, broadcast_shape
 
 
@@ -100,6 +101,14 @@ def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sp
   return sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
 
 
+def _supported_rows(mask: sparse.csr_array, support: Support) -> sparse.csr_array:
+  if support is None:
+    return mask
+  coo = mask.tocoo()
+  keep = np.fromiter((int(row) in support for row in coo.row), dtype=bool, count=coo.nnz)
+  return sparse.csr_array((coo.data[keep], (coo.row[keep], coo.col[keep])), shape=mask.shape)
+
+
 def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   stack = [(expr, wrt, 0)]
   while stack:
@@ -128,14 +137,22 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arra
 
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
-    return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
+    mask = sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
+    return _supported_rows(mask, expr.support)
   if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}:
     return _empty((expr.size, wrt.size))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op in COMMON_ELEMENTWISE_BINARY:
     x, y = expr.args
-    return _or(_broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape), _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape))
+    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape)
+    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape)
+    rule = OP_INFO[ExprOp(expr.op)]
+    if rule.pattern_rule == "intersection":
+      xm = _supported_rows(xm, broadcast_support(y, expr.shape))
+    if rule.pattern_rule == "intersection" or rule.support_rule == "numerator":
+      ym = _supported_rows(ym, broadcast_support(x, expr.shape))
+    return _or(xm, ym)
   if expr.op == ExprOp.SUM:
     child = _jac_mask(expr.args[0], wrt, memo)
     incidence = _incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
@@ -209,7 +226,8 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_a
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
   x_rows: list[int] = []
   y_rows: list[int] = []
-  out_rows: list[int] = []
+  x_out_rows: list[int] = []
+  y_out_rows: list[int] = []
   if len(x.shape) == 1 and len(y.shape) == 1:
     entries = ((0, k, k) for k in range(x.shape[0]))
   elif len(x.shape) == 2 and len(y.shape) == 1:
@@ -222,14 +240,17 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_a
     )
   else:  # pragma: no cover
     raise NotImplementedError(f"matmul sparsity for {x.shape} @ {y.shape}")
+  xs, ys = x.support, y.support
   for out, xr, yr in entries:
-    out_rows.append(out)
-    x_rows.append(xr)
-    y_rows.append(yr)
-  out = np.asarray(out_rows, dtype=np.int64)
+    if ys is None or yr in ys:
+      x_out_rows.append(out)
+      x_rows.append(xr)
+    if xs is None or xr in xs:
+      y_out_rows.append(out)
+      y_rows.append(yr)
   return _or(
-    _compose(_incidence((expr.size, x.size), out, np.asarray(x_rows, dtype=np.int64)), xm),
-    _compose(_incidence((expr.size, y.size), out, np.asarray(y_rows, dtype=np.int64)), ym),
+    _compose(_incidence((expr.size, x.size), np.asarray(x_out_rows, dtype=np.int64), np.asarray(x_rows, dtype=np.int64)), xm),
+    _compose(_incidence((expr.size, y.size), np.asarray(y_out_rows, dtype=np.int64), np.asarray(y_rows, dtype=np.int64)), ym),
   )
 
 

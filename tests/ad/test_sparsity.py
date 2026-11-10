@@ -13,6 +13,65 @@ from scaly.ad import finite_difference
 from scaly.ad.sparse import Triangle
 
 
+def test_value_support_filters_elementwise_derivative_relations() -> None:
+  x = sc.sym("support_jac_x", 4)
+  mask = sc.const([0, 2, 0, 3])
+  numerator = x * mask
+  exprs = [numerator, numerator / (x + 5), numerator.sin(), sc.concat([numerator, numerator[::-1]])]
+  expected = [np.diag([False, True, False, True])] * 3
+  expected.append(np.concatenate([expected[0], expected[0][::-1]], axis=0))
+  for expr, pattern in zip(exprs, expected, strict=True):
+    np.testing.assert_array_equal(sc.jacobian_sparsity(expr, x).to_mask(), pattern)
+    fn = ConcreteFunction._from_exprs("support_jac_values", [x], [sc.jacobian(expr, x)], ["x"], ["jac"])
+    values = fn(np.array([0.2, 0.3, 0.4, 0.5]))
+    np.testing.assert_array_equal(np.asarray(values)[~pattern], 0)
+  y = (x * sc.const([1, 0, 1, 0])) * (x * sc.const([0, 1, 0, 1]))
+  assert sc.jacobian_sparsity(y, x).nnz == 0
+
+
+@pytest.mark.parametrize("shapes", [((4,), (4,)), ((3, 4), (4,)), ((4,), (4, 2)), ((3, 4), (4, 2))])
+def test_matmul_derivative_relations_use_other_operand_support(shapes) -> None:
+  rng = np.random.default_rng(4040)
+  for _ in range(8):
+    a, b = [rng.integers(-2, 3, size=shape).astype(float) for shape in shapes]
+    a[rng.random(a.shape) < 0.6] = 0
+    b[rng.random(b.shape) < 0.6] = 0
+    x, y = sc.sym("support_mm_x", a.shape), sc.sym("support_mm_y", b.shape)
+    for expr, variable, other, left in ((x @ sc.const(b), x, b, True), (sc.const(a) @ y, y, a, False)):
+      basis = np.eye(variable.size).reshape((variable.size, *variable.shape))
+      expected = np.stack([(seed @ other if left else other @ seed).reshape(-1) for seed in basis], axis=1) != 0
+      np.testing.assert_array_equal(sc.jacobian_sparsity(expr, variable).to_mask(), expected)
+
+
+def test_sparse_inputs_keep_only_stored_derivative_relations() -> None:
+  from scaly.ir.expr import Expr, ExprOp
+  from scaly.ir.types import TensorType
+
+  pattern = sc.SparsityPattern.from_mask(np.eye(3, dtype=bool)).canonicalize()[0]
+  x = Expr(ExprOp.INPUT, type=TensorType((2, 3, 3), pattern=pattern), name="support_jac_sparse")
+  expected = np.diag(np.tile(np.eye(3, dtype=bool), (2, 1, 1)).reshape(-1))
+  np.testing.assert_array_equal(sc.jacobian_sparsity(x, x).to_mask(), expected)
+  np.testing.assert_array_equal(sc.jacobian_sparsity(x.sin(), x).to_mask(), expected)
+
+
+def test_ordinary_derivative_relations_stay_within_each_nodes_support() -> None:
+  from scaly.ad.sparsity import _jac_mask
+  from scaly.ir.expr import topo
+
+  x = sc.sym("support_relations", (2, 3))
+  a = x * sc.const([[1, 0, 2], [0, 3, 0]])
+  b = sc.concat([a.sin(), a[:, ::-1]], axis=0)
+  product = b @ sc.const([[0, 1], [1, 0], [0, 0]])
+  moved = product.T.reshape((8,)).gather([7, 0, 1, 1])
+  scattered = sc.scatter(moved, [2, 4, 2, 0], (6,))
+  output = sc.concat([scattered, (a / (x * x + 1)).vec(), sc.stack([a.sum(), (a * 0).sum()])])
+  memo = {}
+  _jac_mask(output, x, memo)
+  for node in topo([output]):
+    if node.support is not None:
+      assert set(memo[(node.id, x.id)].tocoo().row) <= node.support
+
+
 def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Function, sc.Function]:
   if shared:
 

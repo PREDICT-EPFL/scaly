@@ -19,6 +19,7 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 
 import numpy as np
 
+from .support import Support, compute_support
 from .types import CanonicalPattern, DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes, frozen
 
 
@@ -137,6 +138,9 @@ class OpInfo:
   arity: int | None
   differentiable: bool = True
   pattern_rule: Literal["preserve", "union", "intersection", "matmul"] | None = None
+  support_rule: (
+    Literal["const", "preserve", "union", "numerator", "sum", "transpose", "slice", "gather", "scatter", "stack", "concat", "call", "vmap"] | None
+  ) = None
 
   @property
   def name(self) -> str:
@@ -145,7 +149,7 @@ class OpInfo:
 
 OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.INPUT: OpInfo(ExprOp.INPUT, 0),
-  ExprOp.CONST: OpInfo(ExprOp.CONST, 0, False),
+  ExprOp.CONST: OpInfo(ExprOp.CONST, 0, False, support_rule="const"),
   ExprOp.NEG: OpInfo(ExprOp.NEG, 1, pattern_rule="preserve"),
   ExprOp.SIN: OpInfo(ExprOp.SIN, 1, pattern_rule="preserve"),
   ExprOp.COS: OpInfo(ExprOp.COS, 1),
@@ -166,24 +170,24 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.ADD: OpInfo(ExprOp.ADD, 2, pattern_rule="union"),
   ExprOp.SUB: OpInfo(ExprOp.SUB, 2, pattern_rule="union"),
   ExprOp.MUL: OpInfo(ExprOp.MUL, 2, pattern_rule="intersection"),
-  ExprOp.DIV: OpInfo(ExprOp.DIV, 2),
+  ExprOp.DIV: OpInfo(ExprOp.DIV, 2, support_rule="numerator"),
   ExprOp.POW: OpInfo(ExprOp.POW, 2),
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2),
-  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, False),
-  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, False),
-  ExprOp.SUM: OpInfo(ExprOp.SUM, 1),
-  ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1),
-  ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1),
-  ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1),
-  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 1),
-  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1),
-  ExprOp.STACK: OpInfo(ExprOp.STACK, None),
-  ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None),
+  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, False, support_rule="union"),
+  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, False, support_rule="union"),
+  ExprOp.SUM: OpInfo(ExprOp.SUM, 1, support_rule="sum"),
+  ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, support_rule="preserve"),
+  ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, support_rule="transpose"),
+  ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, support_rule="slice"),
+  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 1, support_rule="gather"),
+  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1, support_rule="scatter"),
+  ExprOp.STACK: OpInfo(ExprOp.STACK, None, support_rule="stack"),
+  ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, support_rule="concat"),
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, pattern_rule="matmul"),
-  ExprOp.CALL: OpInfo(ExprOp.CALL, None),
-  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None),
+  ExprOp.CALL: OpInfo(ExprOp.CALL, None, support_rule="call"),
+  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, support_rule="vmap"),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
-  ExprOp.PRINT: OpInfo(ExprOp.PRINT, None),
+  ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, support_rule="preserve"),
   ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1, pattern_rule="preserve"),
 }
 
@@ -284,6 +288,7 @@ class Expr:
   lowering: Lowering = "auto"
   # Frozen → safe to cache. Populated lazily by structural_key on first call.
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
+  _support_cache: tuple[Support] | None = field(default=None, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
 
@@ -325,6 +330,7 @@ class Expr:
     put(instance, "attrs", frozen(attrs_eff))
     put(instance, "lowering", lowering)
     put(instance, "_key_cache", None)
+    put(instance, "_support_cache", None)
     _NODE_CACHE[key] = instance
     return instance
 
@@ -369,6 +375,14 @@ class Expr:
   @property
   def size(self) -> int:
     return self.type.size
+
+  @property
+  def support(self) -> Support:
+    """Flat logical entries that may be nonzero, or ``None`` when any entry may be nonzero.
+
+    Computed iteratively on first access and cached per node, outside the intern key.
+    """
+    return compute_support(self, OP_INFO)
 
   def structural_key(self) -> tuple[Any, ...]:
     stack: list[tuple[Expr, bool]] = [(self, False)]

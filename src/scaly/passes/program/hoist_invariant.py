@@ -142,7 +142,9 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope,
     return None
   decls = {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER}
   exported = [decls[b] for b in sorted(exported_names)]
-  shared = [buffer(b.attrs["name"], b.dtype, b.attrs["shape"]) for b in exported]
+  shared = [
+    ProgramNode(b.op, (), {**buffer(b.attrs["name"], b.dtype, b.attrs["shape"]).attrs, "support": b.attrs.get("support")}, b.dtype) for b in exported
+  ]
   read = {b for i in hoist for b in refs[i][0]}
   used = tuple(k for k in invariant if params[k].attrs["name"] in read)
   keep = lambda s: s.op == ProgramOp.BUFFER and s.attrs["name"] not in exported_names
