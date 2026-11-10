@@ -49,14 +49,18 @@ struct alignas(16) Buffer {
 COLUMN_MAJOR_BUFFER_TEMPLATE = """#ifndef SCALY_COLUMN_MAJOR_BUFFER_HPP
 #define SCALY_COLUMN_MAJOR_BUFFER_HPP
 template <typename T, std::size_t... Ns>
-struct alignas(16) ColumnMajorBuffer : Buffer<T, Ns...> {
-  template <typename... I> T& operator()(I... idx) { return this->data[offset(idx...)]; }
-  template <typename... I> const T& operator()(I... idx) const { return this->data[offset(idx...)]; }
+struct alignas(16) ColumnMajorBuffer {
+  static constexpr std::size_t ndim = sizeof...(Ns);
+  static constexpr std::array<std::size_t, ndim> shape = {Ns...};
+  static constexpr std::size_t size = (Ns * ... * std::size_t{1});
+  T data[size > 0 ? size : 1];
+  T* ptr() { return data; }
+  const T* ptr() const { return data; }
+  template <typename... I> T& operator()(I... idx) { return data[offset(idx...)]; }
+  template <typename... I> const T& operator()(I... idx) const { return data[offset(idx...)]; }
   template <typename... I> static constexpr std::size_t offset(I... idx) {
     static_assert(sizeof...(I) == sizeof...(Ns), "Buffer: one index per dimension");
-    constexpr std::size_t shape[] = {Ns..., 1};
     const std::size_t index[] = {static_cast<std::size_t>(idx)..., 0};
-    constexpr std::size_t ndim = sizeof...(Ns);
     std::size_t off = 0;
     for (std::size_t k = 0; k < ndim; ++k) {
       const std::size_t axis = ndim >= 2 && k >= ndim - 2 ? 2 * ndim - 3 - k : k;
@@ -105,6 +109,9 @@ def render_cpp_header(
   namespace, since a namespace and a function cannot share the global name. C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
   symbol = c_ident(fun.name)
+  column_major = any(isinstance(layout, DenseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
+  if column_major and symbol == "ColumnMajorBuffer":
+    raise ValueError("exported C++ identifier 'ColumnMajorBuffer' clashes with the buffer template; give the function a distinct name")
   inputs, outputs = buffer_idents(fun)
   workspace = NameScope((symbol, f"{symbol}_with_options", *inputs, *outputs), header=True).allocate("workspace")
   params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + [f"workspace_t& {workspace}"]
@@ -127,11 +134,7 @@ def render_cpp_header(
     f"#define {symbol}_SZ_W {sz_w}",
     "",
     BUFFER_TEMPLATE,
-    *(
-      ["", COLUMN_MAJOR_BUFFER_TEMPLATE]
-      if any(isinstance(layout, DenseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
-      else []
-    ),
+    *(["", COLUMN_MAJOR_BUFFER_TEMPLATE] if column_major else []),
     "",
     f"namespace {symbol} {{",
     f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
@@ -187,9 +190,6 @@ def render_cpp_header(
   for ident, type_, layout in zip(
     (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
   ):
-    if isinstance(layout, DenseLayout):
-      lines += ["", f"namespace {names.allocate(ident + '_' if names.contains(ident) else ident)} {{", "constexpr bool column_major = true;", "}"]
-      continue
     if not isinstance(layout, SparseLayout):
       continue
     lines += [

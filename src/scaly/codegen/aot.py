@@ -268,7 +268,12 @@ def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
       f"static const int {prefix}_shape[{type_.ndim}] = {_c_array(type_.shape)};",
       *(f"static const int {prefix}_{name}[{len(values)}] = {_c_array(values)};" for name, values in sparse_layout_tables(layout) if values),
     ]
-  return ["", "// Sparse leaf metadata: one local pattern shared by all batch entries.", *lines] if lines else []
+  comment = (
+    "// Leaf layout metadata."
+    if any(isinstance(layout, DenseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
+    else "// Sparse leaf metadata: one local pattern shared by all batch entries."
+  )
+  return ["", comment, *lines] if lines else []
 
 
 def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:

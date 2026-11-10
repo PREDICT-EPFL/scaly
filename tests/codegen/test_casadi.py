@@ -224,6 +224,10 @@ def test_casadi_column_major_cpp_buffer_indexing(tmp_path):
   client = tmp_path / "client.cpp"
   client.write_text(
     f'#include "{module.header_name}"\n'
+    "#include <type_traits>\n"
+    "static_assert(!std::is_convertible_v<const matrix_cpp::x_t&, const Buffer<double, 2, 3>&>);\n"
+    "static_assert(matrix_cpp::x_t::ndim == 2 && matrix_cpp::x_t::size == 6);\n"
+    "static_assert(matrix_cpp::x_t::shape[0] == 2 && matrix_cpp::x_t::shape[1] == 3);\n"
     "static_assert(matrix_cpp::x_t::offset(1, 2) == 5);\n"
     "static_assert(matrix_cpp::x_t::offset(0, 1) == 2);\n"
     "int main() {\n"
@@ -236,6 +240,14 @@ def test_casadi_column_major_cpp_buffer_indexing(tmp_path):
   executable = tmp_path / "client"
   subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", str(client), "-o", str(executable)], check=True)
   subprocess.run([str(executable)], check=True)
+
+
+def test_casadi_cpp_rejects_a_function_named_like_the_column_major_template():
+  fun = sc.function(sc.arg("x", (2, 3)), name="ColumnMajorBuffer")(lambda x: x)
+  with pytest.raises(ValueError, match="ColumnMajorBuffer.*template"):
+    render_c_api_header(fun, lang="cpp", casadi=True)
+  render_c_api_header(fun, lang="cpp")
+  render_c_api_header(fun, casadi=True)
 
 
 def test_casadi_dense_matrix_result_from_vector(tmp_path):

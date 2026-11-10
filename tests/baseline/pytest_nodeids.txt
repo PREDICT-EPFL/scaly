@@ -1528,6 +1528,7 @@ tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_mat
 tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_match_numpy[6-6-True-2-True-c]
 tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_match_numpy[6-6-True-2-True-gnu]
 tests/codegen/test_casadi.py::test_casadi_column_major_cpp_buffer_indexing
+tests/codegen/test_casadi.py::test_casadi_cpp_rejects_a_function_named_like_the_column_major_template
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape0-c]
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape0-cpp]
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape1-c]
@@ -3046,6 +3047,10 @@ tests/solvers/test_problem.py::test_single_block_problem_preserves_vmap_decision
 tests/solvers/test_problem.py::test_single_block_solver_signature_is_not_nested
 tests/solvers/test_problem.py::test_solver_call_defaults_initial_groups_to_zero_and_routes_x0_and_warm
 tests/solvers/test_problem.py::test_solver_rejects_an_unknown_backend
+tests/solvers/test_problem.py::test_solver_rejects_column_major_problem_leaves[params-piqp]
+tests/solvers/test_problem.py::test_solver_rejects_column_major_problem_leaves[params-sqp]
+tests/solvers/test_problem.py::test_solver_rejects_column_major_problem_leaves[vars-piqp]
+tests/solvers/test_problem.py::test_solver_rejects_column_major_problem_leaves[vars-sqp]
 tests/solvers/test_problem.py::test_sqp_compiles_present_zero_length_constraint_groups[0-0]
 tests/solvers/test_problem.py::test_sqp_compiles_present_zero_length_constraint_groups[0-1]
 tests/solvers/test_problem.py::test_sqp_compiles_present_zero_length_constraint_groups[1-0]

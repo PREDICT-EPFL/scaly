@@ -53,7 +53,7 @@ from ..function.model import Function, as_concrete
 # Solver modules also key on the contents of their include and library search
 # directories, each read once per process. Keep native files fixed while Python
 # runs, and stop it before replacing solver headers or libraries at the same paths.
-_JIT_CACHE_VERSION = "7"
+_JIT_CACHE_VERSION = "8"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
