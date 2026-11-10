@@ -22,7 +22,6 @@ import functools
 import hashlib
 import os
 import shlex
-import shutil
 import subprocess
 import tempfile
 import sys
@@ -190,7 +189,6 @@ def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule,
   except (OSError, subprocess.CalledProcessError) as exc:
     raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
   if epoch := _cache_epochs.get(fun.name, 0):
-    # Invalidation could not delete a library this process loaded, so recompilation needs another path.
     toolchain += f":{os.getpid()}:{epoch}"
   command = _compile_command(compiler.command, module, "module.c", "module" + shared_lib_ext())
   return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain)
@@ -455,22 +453,16 @@ def get_compiled(fun: Function | ConcreteFunction) -> CompiledFunction:
 
 
 def invalidate_cache(fun: ConcreteFunction) -> None:
-  """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
+  """Make ``fun``'s next build in this process use another cache path.
 
-  Safe to call when nothing is cached yet. Codegen failures (``NotImplementedError``) are
-  swallowed, since there cannot be a corresponding cache entry to remove. Windows cannot delete a
-  loaded DLL; the directory then keeps it, and this process compiles ``fun`` into another one.
+  Existing source files and libraries stay on disk for processes still building or loading them.
+  Loaded handles remain callable, including on Windows, where loaded DLLs cannot be deleted or
+  replaced. After ``recompile()`` in one process, a fresh process still reuses the original shared
+  library instead of rebuilding it. Scaly writes each library under a temporary name and renames
+  it into place only when complete, so no process finds a partial library.
+
+  Scaly does not prune old libraries after process exit. To reclaim the space, delete the cache
+  manually while no process is using it. Safe to call before the first build.
   """
-  compiler = find_c_compiler()
-  if compiler is None:
-    return
-  try:
-    _, key = _render_and_key(fun, compiler)
-  except NotImplementedError:
-    return
-  cache_dir = cache_root() / key
   with _artifact_lock:
-    _artifact_cache.pop(key, None)
-    shutil.rmtree(cache_dir, ignore_errors=True)
-    if cache_dir.exists():
-      _cache_epochs[fun.name] = _cache_epochs.get(fun.name, 0) + 1
+    _cache_epochs[fun.name] = _cache_epochs.get(fun.name, 0) + 1

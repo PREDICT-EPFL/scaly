@@ -201,7 +201,8 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
     lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"{symbol}_{ident}_t* {ident}")
     res_values.append(f"{ident}->data")
-  params.append(f"{symbol}_workspace_t* workspace")
+  workspace = NameScope((symbol, f"{symbol}_with_options", *inputs, *outputs), header=True).allocate("workspace")
+  params.append(f"{symbol}_workspace_t* {workspace}")
   lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
   for runtime in (False, True) if solver_backends_used(fun) else (False,):
     suffix = "_with_options" if runtime else ""
@@ -210,7 +211,7 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
       f"static inline int {symbol}_call{suffix}({', '.join(call_params)}) {{",
       f"  const double* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
       f"  double* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
-      f"  return {symbol}{suffix}(arg, res, NULL, workspace ? workspace->data : NULL, 0{', solver_options' if runtime else ''});",
+      f"  return {symbol}{suffix}(arg, res, NULL, {workspace} ? {workspace}->data : NULL, 0{', solver_options' if runtime else ''});",
       "}",
     ]
   return lines

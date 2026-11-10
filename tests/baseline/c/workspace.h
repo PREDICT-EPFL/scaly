@@ -55,8 +55,8 @@ typedef struct { SCALY_ALIGNAS(16) double data[2048]; } workspace_x_t;
 typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sum_t;
 typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sumsqr_t;
 typedef struct { SCALY_ALIGNAS(16) double data[workspace_SZ_W > 0 ? workspace_SZ_W : 1]; } workspace_workspace_t;
-static inline int workspace_call(const workspace_x_t* x, workspace_sum_t* sum, workspace_sumsqr_t* sumsqr, workspace_workspace_t* workspace) {
+static inline int workspace_call(const workspace_x_t* x, workspace_sum_t* sum, workspace_sumsqr_t* sumsqr, workspace_workspace_t* workspace_2) {
   const double* arg[workspace_SZ_ARG > 0 ? workspace_SZ_ARG : 1] = {x->data};
   double* res[workspace_SZ_RES > 0 ? workspace_SZ_RES : 1] = {sum->data, sumsqr->data};
-  return workspace(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+  return workspace(arg, res, NULL, workspace_2 ? workspace_2->data : NULL, 0);
 }

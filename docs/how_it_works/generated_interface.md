@@ -414,10 +414,11 @@ reaches a solver is opened with `dlmopen` into a separate linker namespace,
 shared by all solver libraries, so the solvers' own dependencies cannot
 collide with libraries already loaded by Python packages.
 
-`recompile()` renders the source once more to recompute the key, drops the
-handle and the in-memory entry, and deletes that key's directory. It does not
-compile. The next call or `compile()` does. A library that is already loaded,
-by this or any other `Function`, stays usable after its files are deleted.
+`recompile()` drops the handle and advances a process-local counter. It does
+not compile. The next call or `compile()` uses another cache path whose key
+includes the process ID and counter. Existing directories remain available
+to processes still building or loading the library, and existing handles stay callable.
+Scaly does not prune these files. Delete them only when no process uses the cache.
 
 The module map in [the codebase](../dev/codebase.md) points to the files
 behind each stage.

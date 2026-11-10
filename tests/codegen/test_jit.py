@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 from pathlib import Path
@@ -78,25 +79,31 @@ def test_compiler_wrapper_change_misses_the_cache(isolated_cache: Path, monkeypa
   assert build(": patched\n") != first
 
 
-def test_recompile_clears_cache_and_recompiles(isolated_cache: Path) -> None:
+def test_recompile_uses_another_path_and_preserves_files(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  commands: list[list[str]] = []
+  run = jit.subprocess.run
+  monkeypatch.setattr(jit.subprocess, "run", lambda command, **kwargs: commands.append(command) or run(command, **kwargs))
   fn = _simple_fn()
   fn(np.zeros(3))
   compiled = as_concrete(fn)._memo.compiled
   assert compiled is not None
   lib_path = Path(compiled.lib_path)
   assert lib_path.exists()
-  cache_dir = lib_path.parent
-  fn.recompile()
-  assert as_concrete(fn)._memo.compiled is None
-  # Windows cannot delete the loaded DLL, so only it survives and the next compilation goes elsewhere.
-  remaining = sorted(path.name for path in cache_dir.iterdir()) if cache_dir.exists() else []
-  assert remaining == ([lib_path.name] if sys.platform == "win32" else [])
   xv = np.array([0.5, 0.0, -1.0])
-  out = fn(xv)
-  np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
-  recompiled = as_concrete(fn)._memo.compiled
-  assert recompiled is not None
-  assert (recompiled.lib_path != lib_path) == (sys.platform == "win32")
+  paths = {lib_path}
+  for _ in range(2):
+    files = {path: path.read_bytes() for path in lib_path.parent.iterdir()}
+    fn.recompile()
+    assert as_concrete(fn)._memo.compiled is None
+    assert all(path.read_bytes() == content for path, content in files.items())
+    np.testing.assert_allclose(fn(xv), (np.sin(xv) + xv * xv).sum())
+    recompiled = as_concrete(fn)._memo.compiled
+    assert recompiled is not None
+    assert recompiled.lib_path not in paths
+    paths.add(recompiled.lib_path)
+    lib_path = recompiled.lib_path
+    assert jit.get_compiled(fn).lib_path == recompiled.lib_path
+  assert len([command for command in commands if "-fPIC" in command]) == 3
 
 
 def test_old_handle_stays_callable_after_recompilation(isolated_cache: Path) -> None:
@@ -107,7 +114,7 @@ def test_old_handle_stays_callable_after_recompilation(isolated_cache: Path) -> 
   new = jit.get_compiled(fn)
   for handle in (old, new):
     np.testing.assert_allclose(handle.run([xv])[0], (np.sin(xv) + xv * xv).sum())
-  assert (new.lib_path != old.lib_path) == (sys.platform == "win32")
+  assert new.lib_path != old.lib_path
 
 
 def test_publication_leaves_a_loaded_library_callable(isolated_cache: Path) -> None:
@@ -149,7 +156,8 @@ print(sum(compiles), jit.get_compiled(fn).lib_path)
 """
 
 
-def test_processes_share_a_cold_cache(tmp_path: Path) -> None:
+def test_processes_share_a_cold_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path / "cache"))
   env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")}
   go = tmp_path / "go"
   ready = [tmp_path / f"ready{i}" for i in range(3)]
@@ -166,6 +174,12 @@ def test_processes_share_a_cold_cache(tmp_path: Path) -> None:
   go.touch()
   outputs = [process.communicate(timeout=300) for process in first]
   assert all(process.returncode == 0 for process in first), outputs
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="shared_cache")
+  def fn(x: sc.Expr) -> sc.Expr:
+    return (x.sin() + x * x).sum()
+
+  jit.invalidate_cache(as_concrete(fn))
   (third,) = [child(2)]
   output, error = third.communicate(timeout=300)
   assert third.returncode == 0, error
@@ -173,6 +187,95 @@ def test_processes_share_a_cold_cache(tmp_path: Path) -> None:
   assert len({path for _, path in reports}) == 1
   assert all(int(count) <= 1 for count, _ in reports[:2])
   assert reports[2][0] == "0"
+
+
+_INVALIDATION_CHILD = """
+import sys
+from pathlib import Path
+
+import numpy as np
+import scaly as sc
+import scaly.codegen.jit as jit
+
+ready, phase = Path(sys.argv[1]), sys.argv[2]
+
+def pause(path):
+  temporary = ready.with_suffix(".tmp")
+  temporary.write_text(str(path))
+  temporary.replace(ready)
+  assert sys.stdin.readline().strip() == "continue"
+
+if phase == "link":
+  run = jit.subprocess.run
+  def compile(command, **kwargs):
+    if "-fPIC" in command:
+      source = next(arg for arg in command if arg.endswith(".c"))
+      obj = ready.with_suffix(".o")
+      run([*command[:command.index(jit.shared_lib_flag())], "-c", source, "-o", str(obj)], **kwargs)
+      pause(Path(source).with_name(f"lib{Path(source).stem}{jit.shared_lib_ext()}"))
+      command = [str(obj) if arg == source else arg for arg in command]
+    return run(command, **kwargs)
+  jit.subprocess.run = compile
+elif phase == "publish":
+  publish = jit._publish
+  def publish_library(temporary, path):
+    if path.name.startswith("lib"):
+      pause(path)
+    publish(temporary, path)
+  jit._publish = publish_library
+else:
+  load = jit.load_library
+  def load_library(path, **kwargs):
+    pause(path)
+    return load(path, **kwargs)
+  jit.load_library = load_library
+
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name=f"shared_invalidation_{phase}")
+def fn(x):
+  return (x.sin() + x * x).sum()
+
+xv = np.array([0.5, 0.0, -1.0])
+np.testing.assert_allclose(fn(xv), (np.sin(xv) + xv * xv).sum())
+"""
+
+
+@pytest.mark.parametrize("phase", ["link", "publish", "load"])
+def test_invalidation_preserves_another_process_artifact(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch, phase: str) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(isolated_cache / "shared"))
+  ready = isolated_cache / "ready"
+  child = subprocess.Popen(
+    [sys.executable, "-c", _INVALIDATION_CHILD, str(ready), phase],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+  )
+  try:
+    deadline = time.monotonic() + 120
+    while not ready.exists():
+      assert child.poll() is None, child.communicate()
+      assert time.monotonic() < deadline, f"child did not reach {phase}"
+      time.sleep(0.01)
+
+    @sc.function(sc.arg("x", 3), outputs=sc.arg("y", ()), name=f"shared_invalidation_{phase}")
+    def fn(x: sc.Expr) -> sc.Expr:
+      return (x.sin() + x * x).sum()
+
+    xv = np.array([0.5, 0.0, -1.0])
+    expected = (np.sin(xv) + xv * xv).sum()
+    np.testing.assert_allclose(fn(xv), expected)
+    old = as_concrete(fn)._memo.compiled
+    assert old is not None
+    assert old.lib_path == Path(ready.read_text())
+    fn.recompile()
+    np.testing.assert_allclose(old.run([xv])[0], expected)
+    output, error = child.communicate("continue\n", timeout=120)
+    assert child.returncode == 0, output + error
+    np.testing.assert_allclose(fn(xv), expected)
+  finally:
+    if child.poll() is None:
+      child.kill()
+      child.communicate()
 
 
 def test_threads_share_a_cold_cache(isolated_cache: Path) -> None:
@@ -189,9 +292,10 @@ def test_threads_share_a_cold_cache(isolated_cache: Path) -> None:
   np.testing.assert_allclose(jit.get_compiled(fun).run([xv])[0], (np.sin(xv) + xv * xv).sum())
 
 
-def test_invalidate_cache_handles_missing_directory(isolated_cache: Path) -> None:
+def test_recompile_before_first_call(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(jit, "find_c_compiler", lambda: pytest.fail("invalidation must not probe the compiler"))
   fn = _simple_fn()
-  fn.recompile()  # nothing to remove yet
+  fn.recompile()
   assert as_concrete(fn)._memo.compiled is None
 
 
@@ -323,7 +427,7 @@ def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
   assert len(set(keys)) == 3
 
 
-def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch):
+def test_scalar_math_override_reaches_compilation(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch):
   from scaly.codegen.toolchain import BuildRecipe
 
   monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
@@ -333,10 +437,6 @@ def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_
   source = next(artifact.lib_path.parent.glob("*.c")).read_text()
   assert "lanes=4, dialect=gnu, vector_libm=none" in source
   assert "-lmvec" not in artifact.flags
-  assert artifact.key in jit._artifact_cache
-  jit.invalidate_cache(fun)
-  assert artifact.key not in jit._artifact_cache
-  assert not artifact.lib_path.parent.exists()
 
 
 @pytest.mark.skipif(platform.libc_ver()[0] != "glibc" or platform.machine().lower() not in ("x86_64", "amd64"), reason="links libmvec")
