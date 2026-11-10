@@ -340,7 +340,7 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
 def test_nested_nlp_in_scaly_function() -> None:
   """NLP solver embedded in a larger Function."""
 
-  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj"), name="min_dist_to_unit_circle")
+  @sc.function(sc.arg("target", (2,)), outputs=sc.arg("x_proj", 2), name="min_dist_to_unit_circle")
   def proj(target: sc.Expr) -> sc.Expr:
     x = sc.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2

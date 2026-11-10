@@ -63,16 +63,16 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   length = len(pattern)
   seeds = _seeds(pattern)
 
-  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy"), name="bake")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy", (3, 3 * length)), name="bake")
   def fn(z):
     return sc.jvp_many(_mapped_call(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
 
-  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy"), name="bake_ref")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("dy", (3, 3 * length)), name="bake_ref")
   def ref(z):
     mapped = _mapped_call(stage, length, [(z, 0, 3)])
     return sc.stack([sc.jvp(mapped, z, sc.const(seed)) for seed in seeds])
 
-  @sc.function(sc.group(sc.arg("z", 3 * length), sc.arg("runtime_seed", seeds.shape)), outputs=sc.arg("dy"), name="bake_runtime")
+  @sc.function(sc.group(sc.arg("z", 3 * length), sc.arg("runtime_seed", seeds.shape)), outputs=sc.arg("dy", (3, 3 * length)), name="bake_runtime")
   def runtime(inputs):
     z, seed = inputs
     return sc.jvp_many(_mapped_call(stage, length, [(z, 0, 3)]), z, seed)
@@ -105,7 +105,7 @@ def test_local_coloring_and_packed_contributions_keep_seed_order():
     x, y = inputs
     return x.sin() + sc.stack([y[0] * y[1], y[0] / (y[1] + 2)])
 
-  @sc.function(sc.group(sc.arg("local_z", 12), sc.arg("local_seeds", (2, 12))), outputs=sc.arg("dy"), name="local_dense_products")
+  @sc.function(sc.group(sc.arg("local_z", 12), sc.arg("local_seeds", (2, 12))), outputs=sc.arg("dy", (2, 6)), name="local_dense_products")
   def products(inputs):
     z, seeds = inputs
     return sc.jvp_many(_mapped_call(stage, 3, [(z, 0, 4), (z, 2, 4)]), z, seeds)
@@ -164,6 +164,7 @@ def test_disjoint_constant_colors_select_typed_partials_without_zero_products(dt
   if dtype == np.float32:
     return
   actual = products(z)
+  assert isinstance(actual, np.ndarray)
   assert actual.dtype == dtype
   np.testing.assert_allclose(actual, expected, rtol=1e-6 if dtype == np.float32 else 1e-14, atol=1e-7 if dtype == np.float32 else 1e-14)
 

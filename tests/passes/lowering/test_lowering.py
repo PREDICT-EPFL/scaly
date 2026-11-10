@@ -141,7 +141,7 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
 
 @pytest.mark.parametrize("identity", ["none", "compile", "simplify"])
 def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str) -> None:
-  @sc.function(sc.arg("x", 64), outputs=sc.group(sc.arg("cos"), sc.arg("sin")), name=f"shared_outputs_{identity}")
+  @sc.function(sc.arg("x", 64), outputs=sc.group(sc.arg("cos", 64), sc.arg("sin", 64)), name=f"shared_outputs_{identity}")
   def fn(x):
     a = x.sin()
     outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
@@ -223,7 +223,7 @@ def test_matrix_panels_keep_ordered_reductions_private(shape, monkeypatch):
 def test_concat_seed_mass_component_axes_match_numpy_after_index_folding():
   from scaly.ir.program import walk_program
 
-  @sc.function(sc.group(sc.arg("a", (5, 31, 3)), sc.arg("b", (5, 1, 3))), outputs=sc.arg("out"), name="concat_coordinates")
+  @sc.function(sc.group(sc.arg("a", (5, 31, 3)), sc.arg("b", (5, 1, 3))), outputs=sc.arg("out", (5, 99)), name="concat_coordinates")
   def joined(inputs):
     a, b = inputs
     return sc.concat([b.reshape((5, 3)), (a.sin() * b).reshape((5, 93)), (b * b).reshape((5, 3))], axis=1)

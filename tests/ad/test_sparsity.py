@@ -265,7 +265,9 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
 
   @sc.function(
     sc.arg("triangle_x", 4),
-    outputs=sc.group(sc.arg("full"), sc.arg("triangle"), sc.arg("selected")),
+    outputs=sc.group(
+      sc.arg("full", full_expr.values.shape), sc.arg("triangle", triangle_expr.values.shape), sc.arg("selected", selected_expr.values.shape)
+    ),
     name=f"triangle_expr_{triangle}",
   )
   def value_fn(x):
@@ -521,7 +523,7 @@ def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
 
   np.testing.assert_array_equal(sc.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
 
-  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("colored"), sc.arg("reference")), name="shared_256_jac")
+  @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("colored", 1), sc.arg("reference", 1)), name="shared_256_jac")
   def f(x):
     y = inner(x + np.zeros(256))
     return sc.sparse_jacobian_colored(y, x).values, sc.sparse_jacobian_reference(y, x).values
@@ -627,7 +629,13 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense() -> None:
 
     @sc.function(
       sc.group(sc.arg("z", z.size), sc.arg("lam_f", ()), sc.arg("lam_g", length)),
-      outputs=sc.group(sc.arg("star_values"), sc.arg("one_sided_values"), sc.arg("star"), sc.arg("one_sided"), sc.arg("dense")),
+      outputs=sc.group(
+        sc.arg("star_values", star.values.shape),
+        sc.arg("one_sided_values", one_sided.values.shape),
+        sc.arg("star", (z.size, z.size)),
+        sc.arg("one_sided", (z.size, z.size)),
+        sc.arg("dense", (z.size, z.size)),
+      ),
       name=f"shared_fill_differential_{length}",
     )
     def fn(inputs):

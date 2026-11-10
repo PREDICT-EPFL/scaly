@@ -191,7 +191,7 @@ def test_toolchain_extra_compiles_a_jit_function(tmp_path, monkeypatch) -> None:
     pytest.skip("the toolchain extra is not installed")
   assert compiler.command[1:] == ("cc",)
 
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="zig_jit")
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y", 3), name="zig_jit")
   def fn(x):
     return x.sin() * x
 

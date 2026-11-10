@@ -92,14 +92,16 @@ def test_dense_and_sparse_forms(kind: str) -> None:
     expected = np.tril(expected)
   if "upper" in kind:
     expected = np.triu(expected)
-  np.testing.assert_allclose(fn(POINT[1:4], POINT), expected, rtol=1e-13, atol=1e-13)
+  actual = fn(POINT[1:4], POINT)
+  assert isinstance(actual, np.ndarray)
+  np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_forward_reverse_and_sparsity() -> None:
   seeds = np.arange(9.0).reshape(3, 3) - 2
   weights = np.linspace(1.0, 2.0, 6)
 
-  @sc.function(sc.arg("p", 3), sc.arg("c", 6), outputs=sc.group(sc.arg("single"), sc.arg("many"), sc.arg("adj")))
+  @sc.function(sc.arg("p", 3), sc.arg("c", 6), outputs=sc.group(sc.arg("single", 6), sc.arg("many", (3, 6)), sc.arg("adj", 3)))
   def fn(p: sc.Expr, c: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     vector = _vector(p, c)
     pattern = sc.jacobian_sparsity(vector, p)
@@ -117,7 +119,12 @@ def test_forward_reverse_and_sparsity() -> None:
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("reverse_order", [False, True])
 def test_overlapping_values_at_separate_inputs(nested: bool, reverse_order: bool) -> None:
-  @sc.function(sc.arg("a", 3), sc.arg("b", 2 if nested else 3), sc.arg("c", 6), outputs=sc.group(sc.arg("a"), sc.arg("b"), sc.arg("c")))
+  @sc.function(
+    sc.arg("a", 3),
+    sc.arg("b", 2 if nested else 3),
+    sc.arg("c", 6),
+    outputs=sc.group(sc.arg("a", 6 if reverse_order else 3), sc.arg("b", 2 if nested else 3), sc.arg("c", 3 if reverse_order else 6)),
+  )
   def fn(a: sc.Expr, b: sc.Expr, c: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     out = sc.sumsqr(a) + (b**3).sum() + c[0] * a[0]
     wrts = (c, b, a) if reverse_order else (a, b, c)
@@ -140,7 +147,11 @@ def _pair(a: sc.Expr) -> sc.Expr:
 @pytest.mark.parametrize("mapped", [False, True])
 @pytest.mark.parametrize("slice_output", [False, True])
 def test_call_and_map(mapped: bool, slice_output: bool) -> None:
-  @sc.function(sc.arg("p", 3), sc.arg("c", 6), outputs=sc.group(sc.arg("jac"), sc.arg("sparse"), sc.arg("adj")))
+  @sc.function(
+    sc.arg("p", 3),
+    sc.arg("c", 6),
+    outputs=sc.group(sc.arg("jac", (2 if slice_output else 4, 3)), sc.arg("sparse", (2 if slice_output else 4, 3)), sc.arg("adj", 3)),
+  )
   def fn(p: sc.Expr, c: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     args = sc.concat([p, c[4:5]])
     value = sc.vmap(_pair, 2)(args.reshape((2, 2))).vec() if mapped else sc.concat([_pair(args[:2]), _pair(args[2:])])
@@ -168,7 +179,7 @@ def test_newton_calls_derivatives_on_carry_slices() -> None:
   grad_energy = sc.gradient(energy, "energy", "x")
   hess_energy = sc.hessian(energy, "energy", "x")
 
-  @sc.function(sc.arg("carry", 4), outputs=sc.group(sc.arg("next"), sc.arg("grad")))
+  @sc.function(sc.arg("carry", 4), outputs=sc.group(sc.arg("next", 4), sc.arg("grad", 3)))
   def body(carry: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     x, a = carry[:3], carry[3]
     grad = grad_energy(x, a)
@@ -193,7 +204,7 @@ def test_newton_calls_derivatives_on_carry_slices() -> None:
 
 @pytest.mark.parametrize("window", [False, True])
 def test_structured_map_of_an_input_slice(window: bool) -> None:
-  @sc.function(sc.arg("c", 6), outputs=sc.group(sc.arg("jac"), sc.arg("sparse")))
+  @sc.function(sc.arg("c", 6), outputs=sc.group(sc.arg("jac", (4, 6)), sc.arg("sparse", (4, 6))))
   def fn(c: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     p = c[1:5]
     value = sc.vmap(_pair, 2)(sc.window(p, 0, 2) if window else p.reshape((2, 2))).vec()

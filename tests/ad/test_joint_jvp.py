@@ -66,7 +66,7 @@ def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> N
   length = 4
   seeds = np.tile(np.vstack([np.eye(3), np.zeros(3)]), (1, length))
 
-  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("h"), name="packed_hess")
+  @sc.function(sc.arg("z", 3 * length), outputs=sc.arg("h", seeds.shape), name="packed_hess")
   def fn(z):
     mapped = _mapped_call(stage, length, [(z, 0, 3), (z, 2, 3)])
     grad = sc.vjp((mapped,), (z,), (sc.const(np.ones(length)),))[0]
@@ -116,7 +116,7 @@ def test_self_products_keep_matrix_product_rule(matrix: bool) -> None:
 
   @sc.function(
     sc.group(sc.arg("x", shape), sc.arg("seed", (2, *shape))),
-    outputs=sc.group(sc.arg("one"), sc.arg("many"), sc.arg("square")),
+    outputs=sc.group(sc.arg("one", shape if matrix else ()), sc.arg("many", (2, *shape) if matrix else (2,)), sc.arg("square", (2, *shape))),
     name="self_products",
   )
   def fn(inputs):
@@ -137,7 +137,7 @@ def test_self_products_keep_matrix_product_rule(matrix: bool) -> None:
 def test_division_and_sqrt_derivatives_across_finite_scales(scale: float) -> None:
   @sc.function(
     sc.group(sc.arg("x", ()), sc.arg("y", ())),
-    outputs=sc.group(sc.arg("dx"), sc.arg("dy"), sc.arg("gx"), sc.arg("gy"), sc.arg("root")),
+    outputs=sc.group(sc.arg("dx", ()), sc.arg("dy", 2), sc.arg("gx", ()), sc.arg("gy", ()), sc.arg("root", 2)),
     name="finite_derivatives",
   )
   def fn(inputs):
@@ -167,7 +167,7 @@ def test_mapped_local_and_generic_seeds_share_one_callee() -> None:
     x, u = inputs
     return ((x @ sc.const(weights)) * u).sin()
 
-  @sc.function(sc.group(sc.arg("z", 12), sc.arg("seeds", (2, 12))), outputs=sc.arg("dy"), name="mixed_seed_actual")
+  @sc.function(sc.group(sc.arg("z", 12), sc.arg("seeds", (2, 12))), outputs=sc.arg("dy", (2, 8)), name="mixed_seed_actual")
   def fn(inputs):
     z, seeds = inputs
     return sc.jvp_many(_mapped_call(stage, 4, [(z, 0, 3), (z, 2, 3)]), z, seeds)
@@ -193,7 +193,7 @@ def test_call_combines_constant_and_runtime_tangents() -> None:
 
   seeds = np.vstack([np.eye(2), np.zeros(2)])
 
-  @sc.function(sc.arg("z", 2), outputs=sc.arg("dy"), name="mixed_call_actual")
+  @sc.function(sc.arg("z", 2), outputs=sc.arg("dy", seeds.shape), name="mixed_call_actual")
   def fn(z):
     return sc.jvp_many(stage((z, z.sin() + 2)), z, sc.const(seeds))
 
@@ -221,7 +221,7 @@ def test_nested_calls_with_shared_formals_and_runtime_cotangents(nseed):
 
   @sc.function(
     sc.group(tree, sc.arg("nested_seeds", (nseed, 4)), sc.arg("nested_cot", 2)),
-    outputs=sc.group(sc.arg("value"), sc.arg("single"), sc.arg("many"), sc.arg("gx"), sc.arg("gy")),
+    outputs=sc.group(sc.arg("value", 2), sc.arg("single", (nseed, 2)), sc.arg("many", (nseed, 2)), sc.arg("gx", 2), sc.arg("gy", 2)),
     name="nested_products",
   )
   def products(inputs):
@@ -269,7 +269,7 @@ def test_call_mixed_constant_and_runtime_seed_formals(nseed):
 
   @sc.function(
     sc.group(sc.arg("mixed_z", 2), sc.arg("mixed_seed", (nseed, 2))),
-    outputs=sc.group(sc.arg("baked"), sc.arg("runtime"), sc.arg("single")),
+    outputs=sc.group(sc.arg("baked", (nseed, 2)), sc.arg("runtime", (nseed, 2)), sc.arg("single", (nseed, 2))),
     name="mixed_formal_products",
   )
   def products(inputs):
@@ -295,7 +295,7 @@ def test_power_zero_base_with_inactive_runtime_exponent(mode):
 
   @sc.function(
     sc.group(sc.arg("power_x", 2), sc.arg("power_p", 2), sc.arg("power_seeds", (3, 2))),
-    outputs=sc.arg("derivative"),
+    outputs=sc.arg("derivative", 2 if mode == "reverse" else (3, 2)),
     name="power_zero_base",
   )
   def products(inputs):
@@ -338,7 +338,7 @@ def test_nested_call_and_map_against_numpy(layout, nseed):
 
   @sc.function(
     sc.group(sc.arg("outer_map_z", 6), sc.arg("outer_map_seeds", (nseed, 6)), sc.arg("outer_map_cot", 6)),
-    outputs=sc.group(sc.arg("value"), sc.arg("single"), sc.arg("many"), sc.arg("adj")),
+    outputs=sc.group(sc.arg("value", 6), sc.arg("single", (nseed, 6)), sc.arg("many", (nseed, 6)), sc.arg("adj", 6)),
   )
   def products(inputs):
     z, seeds, cot = inputs

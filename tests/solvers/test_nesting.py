@@ -39,7 +39,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
 
-  @sc.function(sc.arg("mu", (2,)), outputs=sc.arg("x"), name="nested_stats_host")
+  @sc.function(sc.arg("mu", (2,)), outputs=sc.arg("x", 2), name="nested_stats_host")
   def host(mu: sc.Expr) -> sc.Expr:
     return qp(mu)[0]
 

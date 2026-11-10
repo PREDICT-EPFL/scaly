@@ -9,11 +9,11 @@ Rebase only for a conflict. Runtime binding, layouts and output reconstruction s
 unchanged. Sparse names remain unpublished.
 
 - [x] Read the issue, prerequisite, nearby changes, project rules and declaration typing.
-- [ ] Add static regressions for both shape-hole spellings, inferred outputs, nested
+- [x] Add static regressions for both shape-hole spellings, inferred outputs, nested
   groups, concrete calls and maps, and observe the reported failure.
-- [ ] Correct the hole annotation. Preserve NumPy typing for declarations and derivative
+- [x] Correct the hole annotation. Preserve NumPy typing for declarations and derivative
   results that guarantee dense values. Migrate affected dense consumers without ignores.
-- [ ] Remove the temporary roadmap departure. Run strict ty, focused tests, mutation
+- [x] Remove the temporary roadmap departure. Run strict ty, focused tests, mutation
   checks and the detached shared-slot pre-merge hook. Keep C snapshots unchanged.
 - [ ] Commit and push the reviewed state, open and link a draft PR, obtain one Opus
   review, fix findings together, and request a delta check if fixes are needed.
@@ -23,3 +23,18 @@ unchanged. Sparse names remain unpublished.
 The main typing choice is the existing NumPy/SciPy union for unconstrained holes.
 Inferring density from input declarations would be unsound because a body can
 return a sparse constant. Adding sparsity parameters to Expr is outside this task.
+
+Strict ty and both Ruff checks pass. The static regression fails with 23 diagnostics
+when the old overload is restored, and removing one expected-error assertion fails
+with the expected argument error. The focused dense recheck passes all 152 cases.
+The migration adds concrete shapes to known-dense test declarations and narrows five
+runtime results with isinstance. No runtime implementation changed.
+
+The detached shared-slot pre-merge hook passed with exit 0, including 2,968 tests
+passed and 52 skipped, benchmark smoke, documentation build and the private-name
+check. The Python 3.14 and Windows strict ty variants pass. The additional boundary,
+snapshot and import run passed all 234 cases. C snapshots remain byte-identical.
+The README solver example and three function examples pass. The first full run
+caught one incorrect shape added during the dense migration; correcting the solver
+host output from length 1 to length 3 fixed it, with both local cases passing before
+the full successful rerun.

@@ -100,3 +100,70 @@ if TYPE_CHECKING:
   needs_dense(inferred(source))  # ty: ignore[invalid-argument-type]
   needs_dense(constant())  # ty: ignore[invalid-argument-type]
   needs_dense(mapped(sc.broadcast(source)))  # ty: ignore[invalid-argument-type]
+
+
+if TYPE_CHECKING:
+  diagonal, _ = sc.SparsityPattern((2, 2), (0, 1), (0, 1)).canonicalize()
+  diagonal_type = sc.TensorType((2, 2), pattern=diagonal)
+  diagonal_input = sc.arg("x", diagonal_type)
+  matrix = sparse.csc_array(np.eye(2))
+  expr = diagonal_input.symbols()
+  assert_type(sc.arg("out"), Tree[sc.Expr, NumericalArray])
+  assert_type(sc.arg("out", None), Tree[sc.Expr, NumericalArray])
+
+  @sc.function(diagonal_input, outputs=sc.arg("out"))
+  def hole(x: sc.Expr) -> sc.Expr:
+    return x.sin()
+
+  @sc.function(diagonal_input, outputs=sc.arg("out", None))
+  def none_hole(x: sc.Expr) -> sc.Expr:
+    return x.sin()
+
+  @sc.function(diagonal_input)
+  def inferred_diagonal(x: sc.Expr) -> sc.Expr:
+    return x.sin()
+
+  assert_type(hole, sc.Function[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, NumericalArray])
+  assert_type(none_hole, sc.Function[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, NumericalArray])
+  assert_type(hole(matrix), NumericalArray)
+  assert_type(none_hole(matrix), NumericalArray)
+  assert_type(inferred_diagonal(matrix), NumericalArray)
+  assert_type(hole.numerical_call(matrix), NumericalArray)
+  assert_type(none_hole.numerical_call(matrix), NumericalArray)
+  assert_type(hole(expr), sc.Expr)
+  assert_type(none_hole.symbolic_call(expr), sc.Expr)
+  hole_concrete = hole.instantiate()
+  assert_type(hole_concrete, ConcreteFunction[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, NumericalArray])
+  assert_type(hole_concrete(matrix), NumericalArray)
+  assert_type(none_hole.instantiate().numerical_call(matrix), NumericalArray)
+  assert_type(hole_concrete.symbolic_call(expr), sc.Expr)
+  assert_type(sc.vmap(hole, 2)(sc.broadcast(matrix)), NumericalArray)
+  assert_type(sc.vmap(none_hole, 2).numerical_call(sc.window(np.ones(4), 0, 2)), NumericalArray)
+  assert_type(sc.vmap(hole_concrete, 2)(sc.broadcast(expr)), sc.Expr)
+
+  @sc.function(diagonal_input, outputs=sc.group(sc.arg("out"), sc.group(sc.arg("other", None), sc.arg("dense", ()))))
+  def nested_holes(x: sc.Expr) -> tuple[sc.Expr, tuple[sc.Expr, sc.Expr]]:
+    return x, (x.sin(), x.sum())
+
+  assert_type(nested_holes(matrix), tuple[NumericalArray, tuple[NumericalArray, np.ndarray]])
+  assert_type(nested_holes.instantiate().numerical_call(matrix), tuple[NumericalArray, tuple[NumericalArray, np.ndarray]])
+  assert_type(sc.vmap(nested_holes, 2)(sc.broadcast(matrix)), tuple[NumericalArray, tuple[NumericalArray, np.ndarray]])
+  assert_type(nested_holes(expr), tuple[sc.Expr, tuple[sc.Expr, sc.Expr]])
+
+  @sc.function(sc.arg("dense", 2), outputs=sc.arg("out"))
+  def sparse_from_dense(x: sc.Expr) -> sc.Expr:
+    return sc.pack(x, diagonal)
+
+  @sc.function(outputs=sc.arg("out", None))
+  def sparse_constant() -> sc.Expr:
+    return sc.pack(sc.const([1.0, 2.0]), diagonal)
+
+  assert_type(sparse_from_dense(np.ones(2)), NumericalArray)
+  assert_type(sparse_constant(), NumericalArray)
+  hole.numerical_call(expr)  # ty: ignore[invalid-argument-type]
+  none_hole.symbolic_call(matrix)  # ty: ignore[invalid-argument-type]
+  needs_dense(hole(matrix))  # ty: ignore[invalid-argument-type]
+  needs_dense(none_hole(matrix))  # ty: ignore[invalid-argument-type]
+  needs_dense(hole_concrete(matrix))  # ty: ignore[invalid-argument-type]
+  needs_dense(sc.vmap(hole, 2)(sc.broadcast(matrix)))  # ty: ignore[invalid-argument-type]
+  needs_dense(nested_holes(matrix)[1][0])  # ty: ignore[invalid-argument-type]

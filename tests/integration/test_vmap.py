@@ -73,7 +73,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
   def build(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
     @sc.function(
       inputs_tree(N),
-      outputs=sc.arg("eq"),
+      outputs=sc.arg("eq", NX * (N + 1)),
       name=f"race_car_eq_vmap_N{N}",
     )
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -94,7 +94,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     pv = rng.normal(size=NX * (N + 1))
 
     # Sanity: the primal numerically matches the unrolled concat-of-call equivalent.
-    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"race_car_eq_ref_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq", NX * (N + 1)), name=f"race_car_eq_ref_N{N}")
     def ref(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -156,7 +156,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     return sc.group(sc.arg("z", NZ * (N + 1)), p)
 
   def build_vmap(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
-    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_vmap_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq", NX * (N + 1)), name=f"tr_vmap_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       initial = eq_initial((z[:NZ], p[:NX]))
@@ -166,7 +166,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     return fn
 
   def build_unroll(N: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
-    @sc.function(inputs_tree(N), outputs=sc.arg("eq"), name=f"tr_unroll_N{N}")
+    @sc.function(inputs_tree(N), outputs=sc.arg("eq", NX * (N + 1)), name=f"tr_unroll_N{N}")
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -246,7 +246,7 @@ def _build_pairs_fn(mapped: bool) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]],
 
   @sc.function(
     sc.group(sc.arg("u", NU * NB + 1), p_tree),
-    outputs=sc.arg("h"),
+    outputs=sc.arg("h", len(PAIRS) + 2 * NB),
     name=f"pairs_{'vmap' if mapped else 'unroll'}",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:

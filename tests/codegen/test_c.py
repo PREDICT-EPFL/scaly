@@ -12,7 +12,7 @@ from tests.compilers import c_compiler, cxx_compiler
 
 
 def test_compiled_erf_matches_math_erf() -> None:
-  @sc.function(sc.arg("x", 9), outputs=sc.arg("y"), name="compiled_erf")
+  @sc.function(sc.arg("x", 9), outputs=sc.arg("y", 9), name="compiled_erf")
   def f(x: sc.Expr) -> sc.Expr:
     return x.erf()
 
@@ -297,7 +297,7 @@ int main() {
 def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
   from scaly.codegen.aot import render_c_source
 
-  @sc.function(sc.arg("x", 7), outputs=sc.arg("y"), name="coalesced")
+  @sc.function(sc.arg("x", 7), outputs=sc.arg("y", 7), name="coalesced")
   def f(x: sc.Expr) -> sc.Expr:
     return (x * 2.0 + 1.0).scalar()
 

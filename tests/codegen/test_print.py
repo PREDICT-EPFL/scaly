@@ -15,7 +15,7 @@ from scaly.codegen.toolchain import find_c_compiler
 pytestmark = pytest.mark.skipif(find_c_compiler() is None, reason="cc is required to run generated C")
 
 
-@sc.function(sc.group(sc.arg("x", 2), sc.arg("k", ())), outputs=sc.arg("y"))
+@sc.function(sc.group(sc.arg("x", 2), sc.arg("k", ())), outputs=sc.arg("y", ()))
 def scaled(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, k = inputs
   return (sc.print("x={} k={}", x, k) * k).sum()

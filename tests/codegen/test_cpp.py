@@ -114,7 +114,7 @@ int main() {
 
 
 def test_cpp_header_and_c_header_compile_the_same_kernel() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="same")
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name="same")
   def f(x: sc.Expr) -> sc.Expr:
     return x * 2.0
 

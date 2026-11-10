@@ -89,7 +89,7 @@ def test_quotient_partials_keep_finite_products(op, x, y, direction, expected):
 
   @sc.function(
     sc.group(sc.arg("scale_x", ()), sc.arg("scale_y", ()), sc.arg("scale_t", ())),
-    outputs=sc.group(sc.arg("forward"), sc.arg("reverse")),
+    outputs=sc.group(sc.arg("forward", ()), sc.arg("reverse", ())),
     name=f"scale_{op}_{np.log10(x):.0f}",
   )
   def products(inputs):

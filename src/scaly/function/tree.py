@@ -217,7 +217,7 @@ class _Leaf(Tree[Expr, Array]):
 
 
 @overload
-def arg(name: str, shape: int | tuple[int, ...] | None = None, /) -> Tree[Expr, Array]: ...
+def arg(name: str, shape: int | tuple[int, ...], /) -> Tree[Expr, Array]: ...
 
 
 @overload

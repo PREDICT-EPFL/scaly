@@ -51,7 +51,9 @@ def test_slice_rejects_invalid_indices_without_a_shape_allocation(index) -> None
 
 
 def test_binary_nonlinear_method_helpers_eval() -> None:
-  @sc.function(sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.group(sc.arg("atan"), sc.arg("min"), sc.arg("max")), name="binary_helpers")
+  @sc.function(
+    sc.group(sc.arg("x", 3), sc.arg("y", 3)), outputs=sc.group(sc.arg("atan", 3), sc.arg("min", 3), sc.arg("max", 3)), name="binary_helpers"
+  )
   def f(xy: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     x, y = xy
     return x.atan2(y), x.minimum(y), x.maximum(y)
@@ -70,7 +72,7 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
 
 
 def test_dot_sumsqr_and_norm_2() -> None:
-  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("dot"), sc.arg("sumsqr"), sc.arg("norm")))
+  @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("dot", ()), sc.arg("sumsqr", ()), sc.arg("norm", ())))
   def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     return sc.dot(x, x.T), x.sumsqr(), sc.norm_2(x)
 

@@ -24,7 +24,7 @@ def test_joint_inputs_and_outputs_against_numpy(nseed):
 
   @sc.function(
     sc.group(sc.arg("joint_s", ()), sc.arg("joint_m", (2, 3)), sc.arg("joint_v", 4)),
-    outputs=sc.group(sc.arg("a"), sc.arg("b"), sc.arg("c")),
+    outputs=sc.group(sc.arg("a", (nseed, 2)), sc.arg("b", (nseed, 2)), sc.arg("c", (nseed, 1))),
   )
   def products(inputs):
     s, m, v = inputs
@@ -123,7 +123,7 @@ def test_linear_tangent_never_depends_on_primal(case, depth):
   for level in range(depth):
     build = _wrap_linear(build, f"linear_{case}_{level}")
 
-  @sc.function(sc.group(sc.arg("linear_u", 3), sc.arg("linear_seed", (2, 3))), outputs=sc.group(sc.arg("one"), sc.arg("many")))
+  @sc.function(sc.group(sc.arg("linear_u", 3), sc.arg("linear_seed", (2, 3))), outputs=sc.group(sc.arg("one", 3), sc.arg("many", (2, 3))))
   def products(inputs):
     u, seed = inputs
     y = build(u)
@@ -250,7 +250,7 @@ def test_print_differentiates_only_its_returned_value():
   y = sc.print("returned {} diagnostic {}", x.sin(), x.floor())
   tangent = sc.jvp_many(y, x, sc.const(np.eye(2)))
 
-  @sc.function(sc.arg("print_tangent_x", 2), outputs=sc.arg("dy"))
+  @sc.function(sc.arg("print_tangent_x", 2), outputs=sc.arg("dy", tangent.shape))
   def products(x):
     return tangent
 

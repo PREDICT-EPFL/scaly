@@ -98,7 +98,7 @@ def test_callee_formal_named_w_avoids_workspace_collision() -> None:
     x, w = inputs
     return x * w + w.sin()
 
-  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 3)), outputs=sc.arg("y"), name="w_name_vmap")
+  @sc.function(sc.group(sc.arg("z", 6), sc.arg("w", 3)), outputs=sc.arg("y", 6), name="w_name_vmap")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, wv = inputs
     return _mapped_call(piece, 2, [(z, 0, 3), (wv, 0, 0)])

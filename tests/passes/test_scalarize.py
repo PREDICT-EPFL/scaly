@@ -119,7 +119,7 @@ def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) ->
 
   procs = []
   for length in (3, 41):
-    fn = sc.function(sc.arg("z", 3 * length), outputs=sc.arg("out0"), name="hint_map")(lambda z: _mapped_call(stage, length, [(z, 0, 3)]))
+    fn = sc.function(sc.arg("z", 3 * length), outputs=sc.arg("out0", 3 * length), name="hint_map")(lambda z: _mapped_call(stage, length, [(z, 0, 3)]))
     observed = {}
     prog = lower_function(fn, observe=lambda name, program: observed.__setitem__(name, program))
     callee = observed["pass:scalarize"].args[0]
@@ -263,7 +263,7 @@ def test_views_broadcast_gather_and_scatter() -> None:
 
 
 def test_scalar_constants_cse_and_expression_trees() -> None:
-  @sc.function(sc.arg("v0", 3), outputs=sc.arg("out0"), name="folded")
+  @sc.function(sc.arg("v0", 3), outputs=sc.arg("out0", 3), name="folded")
   def fn(x: sc.Expr) -> sc.Expr:
     a = sc.gather(x, np.array([2, 0, 2])).sin()
     b = sc.gather(x, np.array([0, 2, 0])).sin()
@@ -289,7 +289,7 @@ def test_known_zero_entries_skip_arithmetic_and_still_initialize_outputs(interme
   mask = np.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
   scale = np.array([[2.0, np.nan, 3.0], [np.inf, 5.0, np.nan]])
 
-  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y"))
+  @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("y", (2, 3)))
   def fn(x):
     product = (x * sc.const(mask)) * sc.const(scale)
     return (product.sin() + 1 if intermediate else product).scalar()
@@ -320,7 +320,7 @@ def test_known_zeros_in_nested_mapped_calls_use_local_output_coordinates() -> No
   def nested(x):
     return stage(x).sin()
 
-  @sc.function(sc.arg("x", 8), outputs=sc.group(sc.arg("mapped"), sc.arg("alias")))
+  @sc.function(sc.arg("x", 8), outputs=sc.group(sc.arg("mapped", 9), sc.arg("alias", 6)))
   def fn(x):
     mapped = _mapped_call(nested, 3, [(x, 1, 2)])
     return mapped.scalar(), mapped[2:8]
@@ -341,7 +341,7 @@ def test_known_zero_entries_survive_loop_invariant_hoisting() -> None:
     masked = (w * sc.const([1.0, 0.0, 1.0])) * sc.const([2.0, np.nan, 3.0])
     return x + masked
 
-  @sc.function(sc.arg("x", (2, 3)), sc.arg("w", 3), outputs=sc.arg("y"))
+  @sc.function(sc.arg("x", (2, 3)), sc.arg("w", 3), outputs=sc.arg("y", (2, 3)))
   def fn(x, w):
     return sc.vmap(stage, 2)(x, sc.broadcast(w)).scalar()
 
@@ -374,7 +374,7 @@ def test_nested_calls_offsets_multiple_outputs_and_repeated_invocations() -> Non
 
 def test_block_callee_keeps_its_call_boundary() -> None:
   inner = sc.function(sc.arg("x", 4), outputs=sc.arg("out0"), name="block_inner")(lambda x: x.sin().block())
-  fn = sc.function(sc.arg("x", 4), outputs=sc.arg("out0"), name="block_outer")(lambda x: (inner(x) * x).scalar())
+  fn = sc.function(sc.arg("x", 4), outputs=sc.arg("out0", 4), name="block_outer")(lambda x: (inner(x) * x).scalar())
   prog = lower_function(fn)
   assert not any(pr.attrs.get("scalarized") for pr in prog.args)
   assert any(n.op == ProgramOp.CALL for n in walk_program(main_proc(prog)))
@@ -385,7 +385,7 @@ def test_block_callee_keeps_its_call_boundary() -> None:
 def test_reductions_keep_left_to_right_order_and_handle_empty_inputs() -> None:
   @sc.function(
     sc.group(sc.arg("x", 4), sc.arg("empty", 0)),
-    outputs=sc.group(sc.arg("out0"), sc.arg("out1"), sc.arg("out2"), sc.arg("out3")),
+    outputs=sc.group(sc.arg("out0", ()), sc.arg("out1", ()), sc.arg("out2", ()), sc.arg("out3", 0)),
     name="reduce",
   )
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
@@ -445,12 +445,12 @@ def test_forward_over_reverse_folds_constant_seeds_and_matches_analytic_hessian(
     residual = sc.concat([x[:3] + 0.1 * accel, x[3:] - 0.1 * accel])
     return sc.vjp((residual,), (x,), (lam,))[0]
 
-  @sc.function(sc.group(sc.arg("x", 6), sc.arg("lam", 6), sc.arg("seeds", (6, 6))), outputs=sc.arg("out0"), name="spring_symbolic")
+  @sc.function(sc.group(sc.arg("x", 6), sc.arg("lam", 6), sc.arg("seeds", (6, 6))), outputs=sc.arg("out0", (6, 6)), name="spring_symbolic")
   def symbolic(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, lam, seeds = inputs
     return sc.jvp_many(grad(x, lam), x, seeds).scalar()
 
-  @sc.function(sc.group(sc.arg("x", 6), sc.arg("lam", 6)), outputs=sc.arg("out0"), name="spring_baked")
+  @sc.function(sc.group(sc.arg("x", 6), sc.arg("lam", 6)), outputs=sc.arg("out0", (6, 6)), name="spring_baked")
   def baked(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, lam = inputs
     return sc.jvp_many(grad(x, lam), x, sc.const(np.eye(6))).scalar()
@@ -478,7 +478,9 @@ def test_scalar_matmul_matches_numpy(left: tuple[int, ...], right: tuple[int, ..
   _assert_scalar(main_proc(lower_function(fn)))
   rng = np.random.default_rng(8)
   xv, yv = rng.normal(size=left), rng.normal(size=right)
-  np.testing.assert_allclose(fn((xv, yv)), xv @ yv, rtol=1e-14, atol=1e-14)
+  actual = fn((xv, yv))
+  assert isinstance(actual, np.ndarray)
+  np.testing.assert_allclose(actual, xv @ yv, rtol=1e-14, atol=1e-14)
 
 
 def test_deep_scalar_reduction_has_bounded_expression_trees() -> None:
@@ -520,6 +522,7 @@ def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
   source = render_c_source(fn, lanes=1)
   assert "(0.0 / 0.0)" not in source and "(1.0 / 0.0)" in source
   result = fn(np.ones(1))
+  assert isinstance(result, np.ndarray)
   assert result[0] == 0 and np.isposinf(result[1])
 
 

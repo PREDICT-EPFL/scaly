@@ -361,7 +361,7 @@ def test_active_derivative_refusals(op, mode, point):
 
 
 def test_abs_zero_uses_x_over_abs_x_convention():
-  @sc.function(sc.arg("abs_x", 3), outputs=sc.group(sc.arg("fwd"), sc.arg("rev")))
+  @sc.function(sc.arg("abs_x", 3), outputs=sc.group(sc.arg("fwd", 3), sc.arg("rev", 3)))
   def products(x):
     y = x.abs()
     return sc.jvp(y, x, sc.const([1.0, 1.0, 1.0])), sc.vjp((y,), (x,), (sc.const([1.0, 1.0, 1.0]),))[0]

@@ -91,7 +91,7 @@ def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
 
-  @sc.function(sc.arg("u_ref", (2,)), outputs=sc.arg("u"), name="constrained_filter")
+  @sc.function(sc.arg("u_ref", (2,)), outputs=sc.arg("u", 2), name="constrained_filter")
   def filter_fn(u_ref: sc.Expr) -> sc.Expr:
     G = sc.const(np.array([[1.0, 1.0]]))
     l_ineq = sc.const(np.array([-0.5]))
@@ -112,7 +112,7 @@ def test_nested_qp_with_general_inequality() -> None:
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
 
-  @sc.function(sc.group(sc.arg("x", (2,)), sc.arg("u_ref", (2,))), outputs=sc.arg("u"), name="safety_filter")
+  @sc.function(sc.group(sc.arg("x", (2,)), sc.arg("u_ref", (2,))), outputs=sc.arg("u", 2), name="safety_filter")
   def safety_filter(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, u_ref = inputs
     P = sc.const(np.eye(2))
