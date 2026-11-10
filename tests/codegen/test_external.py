@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 import scaly as sc
 from scaly.codegen.aot import write_module
@@ -182,18 +183,25 @@ def test_missing_external_symbol_names_loader_error():
     missing()
 
 
-def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("backends", [(), ("test_solver",)])
+def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, capsys, backends):
+  from dataclasses import replace
   from types import SimpleNamespace
   from scaly.codegen import aot
 
   library = sc.CLibrary("portable", sources={"shared.c": SOURCE}, defines={"LOCAL_ONLY": 2}, link=("m",))
   kernel = library_host(library)
+  render = aot.render_c_module
+  monkeypatch.setattr(aot, "render_c_module", lambda *args, **kwargs: replace(render(*args, **kwargs), backends=backends))
+  monkeypatch.setattr(aot, "backend_compile_flags", lambda names: ("-ltest_solver",) if names else ())
   monkeypatch.setattr(aot.importlib, "import_module", lambda name: SimpleNamespace(kernel=kernel))
   monkeypatch.setattr(aot, "find_c_compiler", lambda: None)
   cache = tmp_path / "cache"
   monkeypatch.setenv("SCALY_CACHE_DIR", str(cache))
   aot.main(["model:kernel", "--out-dir", str(tmp_path / "export"), "--lanes", "1"])
-  assert "build manifest: " in capsys.readouterr().out
+  output = capsys.readouterr().out
+  assert "build manifest: " in output
+  assert ("link flags: -ltest_solver" in output) == bool(backends)
   assert not cache.exists()
   manifest = json.loads((tmp_path / "export" / "external_build_host.build.json").read_text())
   assert manifest["libraries"][0]["link"] == ["m"]

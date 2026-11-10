@@ -44,3 +44,10 @@ dlmopen error detail, and bare strings accepted as sequence fields. Fixes add re
 Cheap notes also addressed: explicit library search precedence, compiler-free AOT CLI export,
 NULL/flatten-order/dtype calling-convention docs, manifest format and direct custom-rule error.
 Remaining notes: namespace cap, current library-search API, warm preprocessing and callee protocol.
+
+The one short Opus delta check approved the fixes; that delegate is settled too. A nonblocking
+CLI note from the delta was fixed locally: an extern-bearing AOT module still prints the existing
+solver/math flags while reporting its portable manifest. Both cases have a focused regression.
+No third review. Full final hook is queued, detached at /tmp/scaly-83-checks.nA7TFO/premerge.
+Remaining: wait for hook, remove PLAN.md, push collected fixes once, update review evidence,
+mark ready, wait for CI and queue once with --squash --auto. Follow-up #357 owns namespace reuse.

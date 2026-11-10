@@ -683,8 +683,9 @@ def main(argv: list[str] | None = None) -> None:
   print(module.recipe.comment(module.source_name).rstrip())
   if module._libraries:
     print("build manifest: " + str(args.out_dir / f"{c_ident(module.fun.name)}.build.json"))
-  elif module.link_flags:
-    print("link flags: " + " ".join(module.link_flags))
+  flags = (*backend_compile_flags(module.backends), *module.recipe.link_flags)
+  if flags:
+    print("link flags: " + " ".join(flags))
 
 
 def _function_order(fun: ConcreteFunction) -> list[ConcreteFunction]:

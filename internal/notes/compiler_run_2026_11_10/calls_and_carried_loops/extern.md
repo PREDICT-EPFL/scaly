@@ -66,7 +66,8 @@ constructing `CLibrary`. `defines` is a JSON object, where `null` means `-DNAME`
 units, then link their objects with the generated source. `link` contains toolchain-resolved
 library names, and `versions` is dependency-version metadata. The generated source's root flags
 record the CPU recipe, but the consumer chooses compiler-specific vectorization tuning. The AOT
-command reports the manifest and does not require a compiler or prepare a JIT cache entry.
+command reports the manifest and existing solver/math link flags. It does not require a compiler
+or prepare a JIT cache entry.
 
 The interface has no library-directory field. Prebuilt libraries use the compiler's search path,
 including `SCALY_CC="cc -L..."` or `LIBRARY_PATH`. Explicit compiler directories take precedence
