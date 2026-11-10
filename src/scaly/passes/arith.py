@@ -206,9 +206,7 @@ def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> 
       return _LOGIC[op](*values)
     if op == ProgramOp.CAST:
       # A float becomes an integer by dropping its fraction; NaN and infinities raise and stay runtime operations.
-      return (
-        float(np.float32(values[0])) if dtype.bits == 32 and dtype.is_floating else float(values[0]) if dtype.is_floating else math.trunc(values[0])
-      )
+      return float(values[0]) if dtype.is_floating else math.trunc(values[0])
     if op in {ProgramOp.MINIMUM, ProgramOp.MAXIMUM} and all(math.isfinite(v) for v in values):
       return (min if op == ProgramOp.MINIMUM else max)(values)
   except (ValueError, OverflowError, ZeroDivisionError, FloatingPointError):

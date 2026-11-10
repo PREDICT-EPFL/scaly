@@ -45,6 +45,25 @@ def test_int64_to_float32_folding_rounds_once(value):
   assert fold_program(cast).attrs["value"] == expected
   assert constant(value, dtypes.float32).attrs["value"] == expected
   assert p.const_float(value, dtypes.float32).attrs["value"] == expected
+  expr = sc.const(value, dtype="float32")
+  assert expr.value is not None and expr.value.item() == expected
+
+
+@pytest.mark.parametrize("value,dtype", [(-1, "uint8"), (1 << 31, "int32"), (1 << 63, "int64")])
+def test_float32_literal_conversion_keeps_integer_range_checks(value, dtype):
+  with pytest.raises(OverflowError):
+    sc.const(value, dtype=dtype)
+
+
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_python_integer_literals_in_float32_expressions_round_once(mode):
+  value = (1 << 62) + (1 << 38) + 1
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("out"), name=f"python_midpoint_{mode}")
+  def fn(x):
+    return sc.cast(sc.cast(x, "float32") * 0 + value, "float64").with_lowering(mode)
+
+  assert fn(np.array(1.0)) == np.asarray(value).astype(np.float32).item()
 
 
 @pytest.mark.parametrize("mode", ["block", "scalar"])
@@ -202,6 +221,21 @@ def test_integer_libm_operations_never_convert_to_float(tmp_path, op):
   _run_raw(prog, tmp_path, [values], [got])
   expected = np.abs(values) if op == ProgramOp.ABS else (np.minimum if op == ProgramOp.MINIMUM else np.maximum)(values, 2**53 + 2)
   np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("dtype,bits", [("int32", 24), ("int64", 53)])
+@pytest.mark.parametrize("mode", ["block", "scalar", "folded"])
+def test_integer_abs_is_available_through_the_expression_api(dtype, bits, mode):
+  values = np.array([-4, -2, 0, 2, 4])
+  base = (1 << bits) + 1
+
+  @sc.function(sc.arg("x", 5), outputs=sc.arg("out"), name=f"integer_abs_{dtype}_{mode}")
+  def fn(x):
+    i = sc.const(values.astype(dtype)) if mode == "folded" else sc.cast(x, dtype)
+    large = sc.where(i < 0, i - base, i + base)
+    return sc.cast(large.abs() - base, "float64").with_lowering("scalar" if mode == "scalar" else "block")
+
+  np.testing.assert_array_equal(fn(values.astype(float)), np.abs(values))
 
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])

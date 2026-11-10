@@ -430,7 +430,7 @@ def _c_int(value: int) -> str:
   return "(-9223372036854775807LL - 1)" if value == -(1 << 63) else str(value)
 
 
-def _c_float(value: float, dtype: DType = dtypes.float64) -> str:
+def _c_float(value: float, dtype: DType) -> str:
   if dtype == dtypes.float32:
     value = np.asarray(value).astype(np.float32).item()
     if not math.isfinite(value):
@@ -535,7 +535,7 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
     if dialect == "gnu":
       # Values and parameters use the natural type: aarch64 GCC 13.1 and 14 to 16.1 crash on a by-value
       # parameter whose vector type carries both ``aligned`` and ``may_alias``. ``_mem`` is the
-      # under-aligned aliasing view for loads and stores through double buffers.
+      # under-aligned aliasing view for loads and stores through scalar buffers.
       vec = rng.attrs["lane_vector"]
       dtype = rng.attrs["lane_dtype"]
       scalar, size = dtype.c_type, dtype.itemsize
@@ -552,8 +552,8 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
         n for n in walk_program(prog) if n.op == ProgramOp.FOR and "vector_helper" in n.attrs and n.args[1].args[0].attrs["lane_vector"] == vec
       ]
       if any(n.op == ProgramOp.BIT_SELECT for h in helpers for n in walk_program(h.args[1])):
-        # The lane mask of BIT_SELECT: one 64-bit integer per double lane, all ones where the bit is set.
-        lines.append(f"typedef int{dtype.bits}_t {vec}_i64 __attribute__((vector_size({size} * {width})));")
+        # The lane mask uses one integer of the value's width, all ones where the bit is set.
+        lines.append(f"typedef int{dtype.bits}_t {vec}_i{dtype.bits} __attribute__((vector_size({size} * {width})));")
       operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
       math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm, dtype)]
       if math and vector_libm == "glibc":
@@ -735,26 +735,26 @@ def _emit_vector_body(
         bit_text = _emit_scalar(bit_node, {}, lane_vars)
         if dtype.bits == 32:
           hit = scope.allocate("kh")
-          lines.append(f"  {vec}_i64 {hit};")
+          lines.append(f"  {vec}_i{dtype.bits} {hit};")
           lines.append(
             f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {hit}[{lane}] = -(int32_t)((((uint64_t)({word_text})) >> ({bit_text})) & 1);"
           )
-          text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {hit}))"
+          text[node] = f"(({vec})((({vec}_i{dtype.bits}){text[value_node]}) & {hit}))"
           continue
         if bit_text not in lane_bits:
           lane_bits[bit_text] = scope.allocate("kb")
-          lines.append(f"  {vec}_i64 {lane_bits[bit_text]};")
+          lines.append(f"  {vec}_i{dtype.bits} {lane_bits[bit_text]};")
           lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {lane_bits[bit_text]}[{lane}] = {bit_text};")
         if (word_text, bit_text) not in lane_hits:
           word, hit = scope.allocate("kw"), scope.allocate("kh")
           lane_hits[word_text, bit_text] = hit
           if uniform:
-            lines.append(f"  {vec}_i64 {word} = ({vec}_i64){{}} + (int{dtype.bits}_t)({word_text});")
+            lines.append(f"  {vec}_i{dtype.bits} {word} = ({vec}_i{dtype.bits}){{}} + (int{dtype.bits}_t)({word_text});")
           else:
-            lines.append(f"  {vec}_i64 {word};")
+            lines.append(f"  {vec}_i{dtype.bits} {word};")
             lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {word}[{lane}] = (int{dtype.bits}_t)({word_text});")
-          lines.append(f"  {vec}_i64 {hit} = (({word} >> {lane_bits[bit_text]}) & 1) == 1;")
-        text[node] = f"(({vec})((({vec}_i64){text[value_node]}) & {lane_hits[word_text, bit_text]}))"
+          lines.append(f"  {vec}_i{dtype.bits} {hit} = (({word} >> {lane_bits[bit_text]}) & 1) == 1;")
+        text[node] = f"(({vec})((({vec}_i{dtype.bits}){text[value_node]}) & {lane_hits[word_text, bit_text]}))"
         continue
       args = [text[a] for a in node.args] if ready else []
       if node.op == ProgramOp.LOAD:

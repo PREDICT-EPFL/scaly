@@ -405,6 +405,8 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
 
 def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
   np_dtype = as_dtype(dtype).numpy() if dtype is not None else np.float64
+  if np.issubdtype(np_dtype, np.floating):
+    return np.asarray(value).astype(np_dtype, copy=False)
   return np.asarray(value, dtype=np_dtype)
 
 
@@ -780,6 +782,7 @@ class Expr:
     return unary(ExprOp.SQRT, self)
 
   def abs(self) -> Expr:
+    """Elementwise absolute value, retaining the operand's dtype."""
     return unary(ExprOp.ABS, self)
 
   def floor(self) -> Expr:
@@ -1017,6 +1020,7 @@ _LOGIC = {ExprOp.AND, ExprOp.OR, ExprOp.NOT}
 # What C computes exactly on integers; the libm functions and / would round through a double.
 _INTEGER_OPS = _PREDICATES | {
   ExprOp.NEG,
+  ExprOp.ABS,
   ExprOp.ADD,
   ExprOp.SUB,
   ExprOp.MUL,

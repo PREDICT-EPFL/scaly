@@ -2338,6 +2338,9 @@ tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-
 tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-4-gnu]
 tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-8-c]
 tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-8-gnu]
+tests/codegen/test_float32.py::test_float32_literal_conversion_keeps_integer_range_checks[-1-uint8]
+tests/codegen/test_float32.py::test_float32_literal_conversion_keeps_integer_range_checks[2147483648-int32]
+tests/codegen/test_float32.py::test_float32_literal_conversion_keeps_integer_range_checks[9223372036854775808-int64]
 tests/codegen/test_float32.py::test_float32_literals_use_nine_digits_and_an_f_suffix
 tests/codegen/test_float32.py::test_float32_special_libm_results_stay_float32[block]
 tests/codegen/test_float32.py::test_float32_special_libm_results_stay_float32[scalar]
@@ -2354,6 +2357,12 @@ tests/codegen/test_float32.py::test_folding_rounds_every_float32_operation[pow]
 tests/codegen/test_float32.py::test_folding_rounds_every_float32_operation[sub]
 tests/codegen/test_float32.py::test_int64_to_float32_folding_rounds_once[-4611686293305294849]
 tests/codegen/test_float32.py::test_int64_to_float32_folding_rounds_once[4611686293305294849]
+tests/codegen/test_float32.py::test_integer_abs_is_available_through_the_expression_api[block-int32-24]
+tests/codegen/test_float32.py::test_integer_abs_is_available_through_the_expression_api[block-int64-53]
+tests/codegen/test_float32.py::test_integer_abs_is_available_through_the_expression_api[folded-int32-24]
+tests/codegen/test_float32.py::test_integer_abs_is_available_through_the_expression_api[folded-int64-53]
+tests/codegen/test_float32.py::test_integer_abs_is_available_through_the_expression_api[scalar-int32-24]
+tests/codegen/test_float32.py::test_integer_abs_is_available_through_the_expression_api[scalar-int64-53]
 tests/codegen/test_float32.py::test_integer_constant_tables_and_sums_stay_exact[int32-24-block]
 tests/codegen/test_float32.py::test_integer_constant_tables_and_sums_stay_exact[int32-24-scalar]
 tests/codegen/test_float32.py::test_integer_constant_tables_and_sums_stay_exact[int64-53-block]
@@ -2387,6 +2396,8 @@ tests/codegen/test_float32.py::test_program_math_folding_matches_numpy_float32[s
 tests/codegen/test_float32.py::test_program_math_folding_matches_numpy_float32[tan]
 tests/codegen/test_float32.py::test_program_math_folding_matches_numpy_float32[tanh]
 tests/codegen/test_float32.py::test_program_nodes_require_an_explicit_dtype
+tests/codegen/test_float32.py::test_python_integer_literals_in_float32_expressions_round_once[block]
+tests/codegen/test_float32.py::test_python_integer_literals_in_float32_expressions_round_once[scalar]
 tests/codegen/test_float32.py::test_scalarizing_a_call_keeps_int64_to_float32_rounding[block]
 tests/codegen/test_float32.py::test_scalarizing_a_call_keeps_int64_to_float32_rounding[scalar]
 tests/codegen/test_float32.py::test_scatter_and_sum_constants_preserve_each_dtype[block]
@@ -3336,7 +3347,8 @@ tests/ir/test_expr.py::test_substitute_rebuilds_changed_ancestors_and_preserves_
 tests/ir/test_expr.py::test_substitute_rejects_incompatible_shape_or_dtype
 tests/ir/test_expr.py::test_uniform_constant_storage_does_not_depend_on_creation_order[False]
 tests/ir/test_expr.py::test_uniform_constant_storage_does_not_depend_on_creation_order[True]
-tests/ir/test_expr.py::test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys
+tests/ir/test_expr.py::test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys[float32]
+tests/ir/test_expr.py::test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys[float64]
 tests/ir/test_match.py::test_deep_program_chain_does_not_recurse
 tests/ir/test_match.py::test_expression_nodes_reject_caller_memo[False]
 tests/ir/test_match.py::test_fixpoint_retries_per_node_and_single_application_does_not

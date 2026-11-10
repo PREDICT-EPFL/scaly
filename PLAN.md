@@ -63,3 +63,16 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
   The full hook rerun under `/tmp/scaly-55-suite-3.*` exited 0: 3220 passed, 52 skipped,
   benchmark smoke, docs and private names passed. Lint, format and strict types passed.
   Obtain the short sol fix check and the main Opus review before the final push.
+- Sol's short fix check approved both midpoint fixes, with all 92 dtype cases passing.
+- Opus's main review requested expression-boundary midpoint conversion, the stale
+  lowering policy paragraph, and deletion of the unreachable float32 CAST fallback.
+  Those are fixed. Integer abs is now admitted by the expression API and covered in
+  both integer widths; lane-mask names/comments and the workspace roadmap wording
+  are corrected. The const_float convenience default stays for hand-built programs.
+- Floating expression conversion uses copy=False to preserve compact broadcast
+  storage; the existing huge-uniform test now covers both float widths. The focused
+  dtype/compact selection passes 105 tests, with 103 dtype cases. Full collection
+  is 3284 tests. Run the shared hook again, then request one Opus delta check only.
+- Non-actionable review notes: NumPy and libm float32 transcendentals can differ
+  within the ulp policy; folded and runtime sums use different orders already on
+  main; native C contraction differences also predate this task. No new issue needed.
