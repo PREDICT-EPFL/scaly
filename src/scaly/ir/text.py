@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from .expr import Expr, ExprOp, topo
+from .expr import Expr, ExprOp, callees_of, topo
 from .program import BINARY_FN_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
 from .types import TensorType
 
@@ -98,10 +98,8 @@ def _expr_callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
       return
     seen.add(id(fn))
     for node in topo(fn.outputs):
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        callee = node.attrs.get("callee")
-        if callee is not None:
-          visit(callee)
+      for callee in callees_of(node):
+        visit(callee)
     ordered.append(fn)
 
   visit(fun)
@@ -141,7 +139,7 @@ def _render_expr_region(outputs: Iterable[Expr], *, name: str | None = None) -> 
       attrs = {**attrs, "name": e.name, "lowering": e.lowering}
     elif op == ExprOp.CONST:
       attrs = {**attrs, "value": e.value, "lowering": e.lowering}
-    elif op in {ExprOp.CALL, ExprOp.VMAP}:
+    elif callees_of(e):
       callee = attrs.get("callee")
       attrs = {**attrs, "callee": getattr(callee, "name", callee)}
     text_args = f"({args})" if args else ""

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, concat, from_dense, gather, pack, scatter, stack, to_dense, values
+from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, pack, scatter, stack, to_dense, values
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, tangent as _elementwise_tangent
@@ -75,15 +75,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
     expr, visited = pending.pop()
     if expr.id in tangents:
       continue
-    args = (
-      ()
-      if expr.op == ExprOp.STOP_GRADIENT
-      else expr.args[:1]
-      if expr.op == ExprOp.PRINT
-      else read_args(expr)
-      if expr.op in {ExprOp.CALL, ExprOp.VMAP}
-      else expr.args
-    )
+    args = () if expr.op == ExprOp.STOP_GRADIENT else expr.args[:1] if expr.op == ExprOp.PRINT else read_args(expr) if callees_of(expr) else expr.args
     if expr.type.dtype.is_floating and nseed and args and not visited:
       pending.append((expr, True))
       pending.extend((arg, False) for arg in reversed(args) if arg.id not in tangents)
@@ -98,7 +90,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         tangent = None
       elif expr.op == ExprOp.PRINT:
         tangent = d[0]
-      elif expr.op in {ExprOp.CALL, ExprOp.VMAP}:
+      elif callees_of(expr):
         read = {arg.id for arg in args}
         call_tangents = [simplify_cse_fixpoint(t) if arg.id in read and (t := tangents[arg.id]) is not None else None for arg in expr.args]
         tangent = (

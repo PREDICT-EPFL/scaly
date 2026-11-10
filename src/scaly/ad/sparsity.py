@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp, callees_of
 from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
 
@@ -60,7 +60,7 @@ def _prunable_support(expr: Expr) -> Support:
       object.__setattr__(node, "_custom_derivative_cache", False)
       continue
     children = node.args
-    if node.op in {ExprOp.CALL, ExprOp.VMAP}:
+    if callees_of(node):
       callee, output = node.attrs["callee"], node.attrs["output"]
       if not visited and _declared(callee, output):
         object.__setattr__(node, "_custom_derivative_cache", True)
@@ -171,7 +171,7 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
       stack.append((node, variable, 1))
       if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
         stack.extend((arg, variable, 0) for arg in reversed(node.args) if (arg.id, variable.id) not in memo)
-    elif phase == 1 and node.op in (ExprOp.CALL, ExprOp.VMAP):
+    elif phase == 1 and callees_of(node):
       stack.append((node, variable, 2))
       callee = node.attrs["callee"]
       callee_out = callee.results[node.attrs["output"]]

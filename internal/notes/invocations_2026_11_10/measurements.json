@@ -1,0 +1,485 @@
+{
+  "machine": "la015",
+  "baseline": "origin/main after the five-layer sparse stack #278",
+  "measurement": "Static unique ProgramNode counts after optimize_program; UTF-8 bytes of generated C; three wall-clock C object compilation samples with /usr/bin/cc -O3 -fno-math-errno -c. No run-time measurements. The machine was shared; compile samples are recorded, not evidence of a speedup.",
+  "workspace_compile": "Only the compile sample renders the workspace corpus as workspace_measure, to avoid the pre-existing typed-wrapper parameter collision. Source sizes and operation counts use the unchanged corpus name.",
+  "multi_output": "The vmap_multi snapshot builder, also rendered on the baseline with the same body and names. Five trips, a vector result of size two and a scalar result, both used.",
+  "before": {
+    "compiler": [
+      "/usr/bin/cc"
+    ],
+    "flags": [
+      "-O3",
+      "-fno-math-errno",
+      "-c"
+    ],
+    "rows": {
+      "forward": {
+        "source_bytes": 1546,
+        "operations": {
+          "add": 4,
+          "assign": 2,
+          "buffer": 7,
+          "const_float": 3,
+          "const_int": 3,
+          "for": 3,
+          "load": 7,
+          "mul": 5,
+          "proc": 1,
+          "program": 1,
+          "range": 3,
+          "store": 5,
+          "sub": 1,
+          "var": 5,
+          "view": 9
+        },
+        "compile_seconds": [
+          0.024586511019151658,
+          0.026572425034828484,
+          0.023499206989072263
+        ]
+      },
+      "jac": {
+        "source_bytes": 5738,
+        "operations": {
+          "add": 16,
+          "assign": 2,
+          "buffer": 9,
+          "const_float": 4,
+          "const_int": 6,
+          "for": 11,
+          "load": 18,
+          "mul": 17,
+          "proc": 1,
+          "program": 1,
+          "range": 11,
+          "store": 13,
+          "sub": 1,
+          "var": 13,
+          "view": 24
+        },
+        "compile_seconds": [
+          0.03585666499566287,
+          0.035004492034204304,
+          0.03534138802206144
+        ]
+      },
+      "vmap": {
+        "source_bytes": 6021,
+        "operations": {
+          "add": 16,
+          "assign": 5,
+          "buffer": 3,
+          "const_float": 2,
+          "const_int": 8,
+          "for": 1,
+          "load": 10,
+          "mul": 11,
+          "proc": 1,
+          "program": 1,
+          "range": 1,
+          "store": 4,
+          "sub": 6,
+          "var": 6,
+          "view": 14
+        },
+        "compile_seconds": [
+          0.04077901702839881,
+          0.04135551198851317,
+          0.040859280969016254
+        ]
+      },
+      "spjac": {
+        "source_bytes": 10639,
+        "operations": {
+          "add": 5,
+          "assign": 6,
+          "buffer": 11,
+          "call": 1,
+          "const_float": 5,
+          "const_int": 12,
+          "for": 6,
+          "load": 9,
+          "mul": 19,
+          "neg": 2,
+          "proc": 2,
+          "program": 1,
+          "range": 6,
+          "store": 4,
+          "store_pair": 6,
+          "sub": 3,
+          "var": 12,
+          "view": 21
+        },
+        "compile_seconds": [
+          0.06029865797609091,
+          0.06239377299789339,
+          0.06273070798488334
+        ]
+      },
+      "wide": {
+        "source_bytes": 75813,
+        "operations": {
+          "abs": 1,
+          "acos": 1,
+          "add": 38,
+          "asin": 1,
+          "assign": 14,
+          "atan": 1,
+          "atan2": 1,
+          "buffer": 10,
+          "ceil": 1,
+          "const_float": 5,
+          "const_int": 8,
+          "cos": 1,
+          "cosh": 1,
+          "div": 3,
+          "erf": 1,
+          "exp": 1,
+          "floor": 1,
+          "for": 11,
+          "load": 25,
+          "log": 1,
+          "maximum": 1,
+          "minimum": 1,
+          "mul": 26,
+          "pow": 1,
+          "proc": 1,
+          "program": 1,
+          "range": 11,
+          "sin": 1,
+          "sinh": 1,
+          "sqrt": 1,
+          "store": 15,
+          "sub": 1,
+          "tan": 1,
+          "tanh": 1,
+          "var": 25,
+          "view": 32
+        },
+        "compile_seconds": [
+          0.08552084700204432,
+          0.09991577896289527,
+          0.08720992301823571
+        ]
+      },
+      "workspace": {
+        "source_bytes": 4137,
+        "operations": {
+          "add": 2,
+          "assign": 1,
+          "buffer": 4,
+          "const_float": 1,
+          "const_int": 3,
+          "for": 3,
+          "load": 5,
+          "mul": 1,
+          "proc": 1,
+          "program": 1,
+          "range": 3,
+          "sin": 1,
+          "store": 5,
+          "var": 4,
+          "view": 6
+        },
+        "compile_seconds": [
+          0.03102621901780367,
+          0.03022884199162945,
+          0.07295173301827163
+        ]
+      },
+      "solver": {
+        "source_bytes": 10906,
+        "operations": {
+          "add": 1,
+          "assign": 1,
+          "buffer": 12,
+          "call": 1,
+          "const_float": 4,
+          "const_int": 3,
+          "for": 1,
+          "load": 4,
+          "mul": 1,
+          "neg": 2,
+          "proc": 2,
+          "program": 1,
+          "range": 1,
+          "store": 2,
+          "store_pair": 5,
+          "var": 2,
+          "view": 9
+        },
+        "compile_seconds": [
+          0.05945556302322075,
+          0.061900397995486856,
+          0.06013446400174871
+        ]
+      },
+      "vmap_multi": {
+        "source_bytes": 4889,
+        "operations": {
+          "add": 1,
+          "buffer": 8,
+          "call": 2,
+          "const_float": 1,
+          "const_int": 5,
+          "for": 5,
+          "load": 4,
+          "mul": 3,
+          "proc": 2,
+          "program": 1,
+          "range": 5,
+          "sin": 1,
+          "store": 4,
+          "var": 5,
+          "view": 10
+        },
+        "compile_seconds": [
+          0.032843701948877424,
+          0.03243412700248882,
+          0.03317225101636723
+        ]
+      }
+    }
+  },
+  "after": {
+    "compiler": [
+      "/usr/bin/cc"
+    ],
+    "flags": [
+      "-O3",
+      "-fno-math-errno",
+      "-c"
+    ],
+    "rows": {
+      "forward": {
+        "source_bytes": 1546,
+        "operations": {
+          "add": 4,
+          "assign": 2,
+          "buffer": 7,
+          "const_float": 3,
+          "const_int": 3,
+          "for": 3,
+          "load": 7,
+          "mul": 5,
+          "proc": 1,
+          "program": 1,
+          "range": 3,
+          "store": 5,
+          "sub": 1,
+          "var": 5,
+          "view": 9
+        },
+        "compile_seconds": [
+          0.02400505600962788,
+          0.022822641010861844,
+          0.025261664006393403
+        ]
+      },
+      "jac": {
+        "source_bytes": 5738,
+        "operations": {
+          "add": 16,
+          "assign": 2,
+          "buffer": 9,
+          "const_float": 4,
+          "const_int": 6,
+          "for": 11,
+          "load": 18,
+          "mul": 17,
+          "proc": 1,
+          "program": 1,
+          "range": 11,
+          "store": 13,
+          "sub": 1,
+          "var": 13,
+          "view": 24
+        },
+        "compile_seconds": [
+          0.03639387397561222,
+          0.03496435604756698,
+          0.03961769101442769
+        ]
+      },
+      "vmap": {
+        "source_bytes": 6021,
+        "operations": {
+          "add": 16,
+          "assign": 5,
+          "buffer": 3,
+          "const_float": 2,
+          "const_int": 8,
+          "for": 1,
+          "load": 10,
+          "mul": 11,
+          "proc": 1,
+          "program": 1,
+          "range": 1,
+          "store": 4,
+          "sub": 6,
+          "var": 6,
+          "view": 14
+        },
+        "compile_seconds": [
+          0.042553928040433675,
+          0.04449850396485999,
+          0.04660833696834743
+        ]
+      },
+      "vmap_multi": {
+        "source_bytes": 4747,
+        "operations": {
+          "add": 1,
+          "buffer": 7,
+          "call": 1,
+          "const_float": 1,
+          "const_int": 5,
+          "for": 4,
+          "load": 4,
+          "mul": 2,
+          "proc": 2,
+          "program": 1,
+          "range": 4,
+          "sin": 1,
+          "store": 4,
+          "var": 4,
+          "view": 9
+        },
+        "compile_seconds": [
+          0.03884148399811238,
+          0.032140825991518795,
+          0.03564241505227983
+        ]
+      },
+      "spjac": {
+        "source_bytes": 10639,
+        "operations": {
+          "add": 5,
+          "assign": 6,
+          "buffer": 11,
+          "call": 1,
+          "const_float": 5,
+          "const_int": 12,
+          "for": 6,
+          "load": 9,
+          "mul": 19,
+          "neg": 2,
+          "proc": 2,
+          "program": 1,
+          "range": 6,
+          "store": 4,
+          "store_pair": 6,
+          "sub": 3,
+          "var": 12,
+          "view": 21
+        },
+        "compile_seconds": [
+          0.06756127497646958,
+          0.06824799999594688,
+          0.06912677502259612
+        ]
+      },
+      "wide": {
+        "source_bytes": 75813,
+        "operations": {
+          "abs": 1,
+          "acos": 1,
+          "add": 38,
+          "asin": 1,
+          "assign": 14,
+          "atan": 1,
+          "atan2": 1,
+          "buffer": 10,
+          "ceil": 1,
+          "const_float": 5,
+          "const_int": 8,
+          "cos": 1,
+          "cosh": 1,
+          "div": 3,
+          "erf": 1,
+          "exp": 1,
+          "floor": 1,
+          "for": 11,
+          "load": 25,
+          "log": 1,
+          "maximum": 1,
+          "minimum": 1,
+          "mul": 26,
+          "pow": 1,
+          "proc": 1,
+          "program": 1,
+          "range": 11,
+          "sin": 1,
+          "sinh": 1,
+          "sqrt": 1,
+          "store": 15,
+          "sub": 1,
+          "tan": 1,
+          "tanh": 1,
+          "var": 25,
+          "view": 32
+        },
+        "compile_seconds": [
+          0.11285554297501221,
+          0.1045984310330823,
+          0.10564215201884508
+        ]
+      },
+      "workspace": {
+        "source_bytes": 4137,
+        "operations": {
+          "add": 2,
+          "assign": 1,
+          "buffer": 4,
+          "const_float": 1,
+          "const_int": 3,
+          "for": 3,
+          "load": 5,
+          "mul": 1,
+          "proc": 1,
+          "program": 1,
+          "range": 3,
+          "sin": 1,
+          "store": 5,
+          "var": 4,
+          "view": 6
+        },
+        "compile_seconds": [
+          0.048163486004341394,
+          0.04076257499400526,
+          0.03151981602422893
+        ]
+      },
+      "solver": {
+        "source_bytes": 10906,
+        "operations": {
+          "add": 1,
+          "assign": 1,
+          "buffer": 12,
+          "call": 1,
+          "const_float": 4,
+          "const_int": 3,
+          "for": 1,
+          "load": 4,
+          "mul": 1,
+          "neg": 2,
+          "proc": 2,
+          "program": 1,
+          "range": 1,
+          "store": 2,
+          "store_pair": 5,
+          "var": 2,
+          "view": 9
+        },
+        "compile_seconds": [
+          0.08447513298597187,
+          0.06535259302472696,
+          0.06262023694580421
+        ]
+      }
+    }
+  },
+  "baseline_commit": "8d8c7870e9184ca87c2e259e807c95c954766087",
+  "rebase": "Sparse storage widths and per-result declared layouts are preserved while sibling invocations are grouped. All existing C snapshots and the new multi-output snapshot remain byte-identical to their pre-rebase versions."
+}

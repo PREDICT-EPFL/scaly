@@ -41,7 +41,7 @@ from scaly.codegen.solver import (
   render_solver_defaults,
   solver_options_declarations,
 )
-from scaly.ir.expr import ExprOp
+from scaly.ir.expr import callees_of
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import Function, as_concrete
 from scaly.passes.lowering import lower_function, main_proc
@@ -665,12 +665,10 @@ def _callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
         ret.append(callee)
     return ret
   for node in fun.nodes:
-    if node.op not in {ExprOp.CALL, ExprOp.VMAP}:
-      continue
-    callee = node.attrs["callee"]
-    if id(callee) not in seen:
-      seen.add(id(callee))
-      ret.append(callee)
+    for callee in callees_of(node):
+      if id(callee) not in seen:
+        seen.add(id(callee))
+        ret.append(callee)
   return ret
 
 

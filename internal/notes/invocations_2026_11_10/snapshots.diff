@@ -1,0 +1,16 @@
+--- before/vmap_multi.c
++++ after/vmap_multi.c
+@@ -95,12 +95,8 @@
+   if (!res[0]) return SCALY_ERR_NULL_RESULT;
+   if (!res[1]) return SCALY_ERR_NULL_RESULT;
+   double s0[10];
+-  double s1[2];
+   for (long long it_t0 = 0; it_t0 < 5; ++it_t0) {
+-    pair_raw((arg[0] + (2 * it_t0)), (s0 + (it_t0 * 2)), s1, NULL);
+-  }
+-  for (long long it_totals = 0; it_totals < 5; ++it_totals) {
+-    pair_raw((arg[0] + (2 * it_totals)), s1, (res[1] + it_totals), NULL);
++    pair_raw((arg[0] + (2 * it_t0)), (s0 + (it_t0 * 2)), (res[1] + it_t0), NULL);
+   }
+   for (long long c_vectors_start = 0; c_vectors_start <= 10 - SCALY_WIDTH_8_8_8_8; c_vectors_start += SCALY_WIDTH_8_8_8_8) {
+     lanes_2(c_vectors_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);

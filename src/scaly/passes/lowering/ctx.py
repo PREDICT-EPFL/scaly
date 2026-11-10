@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp
+from ...ir.expr import Expr, ExprOp, callees_of, invocation_key
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.model import Function, as_concrete
@@ -241,8 +241,10 @@ class LowerCtx:
     self.value_buffers: dict[int, str] = {}
     # Output Expr.id -> output buffer name, so the body writes outputs in place.
     self._output_alias: dict[int, str] = {}
-    # (callee identity, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
-    self.call_invocations: dict[tuple[ConcreteFunction, tuple[str, ...]], tuple[str, ...]] = {}
+    self.used_results: dict[tuple, list[Expr]] = {}
+    for node in fun.nodes:
+      if (key := invocation_key(node)) is not None:
+        self.used_results.setdefault(key, []).append(node)
     self._tmp = 0
     self._zero_padded: dict[int, ProgramNode] = {}
 
@@ -659,10 +661,10 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
       oracles.add(callee)
       visit(callee)
     for node in function.nodes:
-      if node.op in (ExprOp.CALL, ExprOp.VMAP):
-        if node.attrs["output"] >= len(node.attrs["callee"].outputs):
-          residuals.add(node.attrs["callee"])
-        visit(node.attrs["callee"])
+      for callee in callees_of(node):
+        if node.attrs["output"] >= len(callee.outputs):
+          residuals.add(callee)
+        visit(callee)
 
   visit(root)
   symbols[root] = names.claim(root.name)

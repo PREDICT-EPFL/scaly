@@ -1437,11 +1437,12 @@ tests/codegen/test_name_clash.py::test_shared_input_output_names_keep_distinct_b
 tests/codegen/test_name_clash.py::test_solver_oracles_with_same_name_keep_their_identity
 tests/codegen/test_print.py::test_c_and_python_output_stay_in_order_through_a_pipe
 tests/codegen/test_print.py::test_derivative_prints_when_it_computes_the_primal
+tests/codegen/test_print.py::test_distinct_arguments_sharing_a_buffer_are_distinct_invocations
 tests/codegen/test_print.py::test_format_text_reaches_stdout_unchanged
 tests/codegen/test_print.py::test_identical_prints_intern_to_one
 tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[direct]
 tests/codegen/test_print.py::test_loop_invariant_print_runs_every_trip[nested]
-tests/codegen/test_print.py::test_mapped_function_with_two_used_outputs_prints_once_per_used_output
+tests/codegen/test_print.py::test_mapped_function_with_two_used_outputs_prints_once_per_trip
 tests/codegen/test_print.py::test_mapped_print_runs_once_per_trip_in_order
 tests/codegen/test_print.py::test_print_returns_its_value_and_prints_at_each_call
 tests/codegen/test_print.py::test_scaly_printf_compiles_prints_out_or_reroutes_them[define0-x=[0.25, -0.75] k=2\n]
@@ -2158,6 +2159,16 @@ tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-0-3-F
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-1-2-False]
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6--2-False]
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6-0-True]
+tests/passes/lowering/test_calls.py::test_custom_rule_residual_shares_its_primal_invocation[False]
+tests/passes/lowering/test_calls.py::test_custom_rule_residual_shares_its_primal_invocation[True]
+tests/passes/lowering/test_calls.py::test_different_map_layouts_are_distinct_invocations
+tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[0]
+tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[1]
+tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[5]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[0]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[1]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[5]
+tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[None]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration
 tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaf_refused
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[input-float32]
@@ -2713,6 +2724,7 @@ tests/test_c_snapshot.py::test_generated_c_matches_snapshot[forward]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[jac]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[spjac]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap]
+tests/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap_multi]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[wide]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[workspace]
 tests/test_c_snapshot.py::test_generated_solver_c_matches_snapshot[solver]
