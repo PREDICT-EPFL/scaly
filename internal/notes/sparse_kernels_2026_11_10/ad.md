@@ -60,6 +60,10 @@ The section 1 packet's `sparse_values/banded_quadratic.py` runs all stages witho
 errors. Stage 7 reports largest private gradient buffers of 100 and 400 entries,
 and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400 respectively.
 
+Validation through detached `~/.scaly-suite/run` passed with 3,124 tests and 55
+solver skips, including types, formatting, lint, benchmark smoke, documentation
+build and the private-name check. No dense C snapshot was regenerated.
+
 ## Counts and generated C
 
 The following use scalar lanes and C99, with generic CPU flags. Counts are

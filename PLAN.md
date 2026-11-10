@@ -73,8 +73,9 @@ in the final write. Seven direct-output regressions pass; restoring the old
 lowering fails five. Sparse boundary and dense C snapshot checks passed 141 cases.
 The full pre-merge run with the boundary changes passed with 3,111 tests and 55 skips.
 Thirteen further tests cover every supported sparse unary partial and binary region
-against NumPy differences. Returning zero tangents fails all thirteen. The next
-full run includes these tests. The packet's banded quadratic reproduction runs all
+against NumPy differences. Returning zero tangents fails all thirteen. The final
+detached pre-merge hook passed with 3,124 tests and 55 skips, including smoke,
+docs, types, formatting, lint and the private-name check. The packet's banded quadratic reproduction runs all
 stages without errors. Stage 7 reports largest gradient buffers of 100 and 400,
 and sparse Hessian buffers of 300 and 1,200, at n=100 and n=400.
 SELECT remains part of this PR and #46: it
