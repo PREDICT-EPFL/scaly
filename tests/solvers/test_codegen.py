@@ -265,3 +265,68 @@ int main(void) {{
   # Windows has no rpath, so the executable finds the solver DLLs on PATH.
   path = os.pathsep.join([*map(str, solver_paths().lib_dirs), os.environ["PATH"]])
   subprocess.run([str(executable)], check=True, capture_output=True, env={**os.environ, "PATH": path})
+
+
+@pytest.mark.solver("piqp")
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+@pytest.mark.parametrize(
+  "input_name,output_name",
+  [("scaly_solver_option", "solution"), ("target", "scaly_solver_option"), ("scaly_solver_option", "scaly_solver_option_2")],
+)
+def test_typed_wrapper_parameters_do_not_hide_solver_option_type(lang: str, input_name: str, output_name: str, tmp_path: Path) -> None:
+  from scaly.codegen import render_c_module
+
+  @sc.function(sc.arg(input_name, 2), outputs=sc.arg(output_name), name="option_names")
+  def host(target: sc.Expr) -> sc.Expr:
+    qp = build_qp(P=sc.const(np.eye(2)), c=-target, name="typed_option_qp")
+    return qp(target)[0]
+
+  module = render_c_module(host, lang=lang, lanes=1)
+  (tmp_path / module.header_name).write_text(module.header)
+  source = tmp_path / module.source_name
+  source.write_text(module.source)
+  prefix = "option_names::" if lang == "cpp" else "option_names_"
+  args = "x, y, scratch" if lang == "cpp" else "&x, &y, &scratch"
+  options_call = "option_names::call" if lang == "cpp" else "option_names_call_with_options"
+  default_call = "option_names::call" if lang == "cpp" else "option_names_call"
+  driver = tmp_path / ("driver.cpp" if lang == "cpp" else "driver.c")
+  driver.write_text(
+    f"""#include <math.h>
+#include "{module.header_name}"
+int main(void) {{
+  {prefix}{input_name}_t x = {{{{1, -2}}}};
+  {prefix}{output_name}_t y = {{{{0}}}};
+  {prefix}workspace_t scratch;
+  scaly_solver_option values[] = {{{{"max_iter", 0, 100, 0.0, 0}}, {{"verbose", 0, 0, 0.0, 0}}, {{0, 0, 0, 0.0, 0}}}};
+  const scaly_solver_option* options[] = {{values}};
+  int err = {options_call}({args}, options);
+  if (err) return err;
+  if (fabs(y.data[0] - 1.0) > 1e-6 || fabs(y.data[1] + 2.0) > 1e-6) return 10;
+  return {default_call}({args});
+}}
+"""
+  )
+  obj = source.with_suffix(".o")
+  includes = [flag for flag in module.link_flags if flag.startswith("-I")]
+  cc = c_compiler()
+  subprocess.run([*cc, "-O2", "-Wall", "-Werror", "-c", str(source), *includes, "-o", str(obj)], check=True, capture_output=True)
+  executable = tmp_path / "driver"
+  subprocess.run(
+    [
+      *(cxx_compiler() if lang == "cpp" else cc),
+      "-std=c++17" if lang == "cpp" else "-std=c11",
+      "-O2",
+      "-Wall",
+      "-Werror",
+      str(obj),
+      str(driver),
+      *module.link_flags,
+      "-lm",
+      "-o",
+      str(executable),
+    ],
+    check=True,
+    capture_output=True,
+  )
+  path = os.pathsep.join([*map(str, solver_paths().lib_dirs), os.environ["PATH"]])
+  subprocess.run([str(executable)], check=True, capture_output=True, env={**os.environ, "PATH": path})

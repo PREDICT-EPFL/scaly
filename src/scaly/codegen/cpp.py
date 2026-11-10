@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables
+from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables, wrapper_param_idents
 from .casadi import CASADI_QUERIES, casadi_declarations, casadi_defines
 from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_declarations
 from ..function.concrete import ConcreteFunction
@@ -82,10 +82,14 @@ def render_cpp_header(
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
   symbol = c_ident(fun.name)
   inputs, outputs = buffer_idents(fun)
-  workspace = NameScope((symbol, f"{symbol}_with_options", *inputs, *outputs), header=True).allocate("workspace")
-  params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + [f"workspace_t& {workspace}"]
-  arg_init = ", ".join(f"{i}.ptr()" for i in inputs) or "nullptr"
-  res_init = ", ".join(f"{o}.ptr()" for o in outputs) or "nullptr"
+  input_params, output_params, workspace = wrapper_param_idents(symbol, inputs, outputs, type_prefix="")
+  params = (
+    [f"const {i}_t& {p}" for i, p in zip(inputs, input_params, strict=True)]
+    + [f"{o}_t& {p}" for o, p in zip(outputs, output_params, strict=True)]
+    + [f"workspace_t& {workspace}"]
+  )
+  arg_init = ", ".join(f"{p}.ptr()" for p in input_params) or "nullptr"
+  res_init = ", ".join(f"{p}.ptr()" for p in output_params) or "nullptr"
   lines = [
     "#pragma once",
     "",

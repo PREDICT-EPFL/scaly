@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from scaly.codegen.toolchain import BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
-from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables
+from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables, wrapper_param_idents
 from scaly.codegen.c import _c_reserved_names, _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
 from scaly.codegen.casadi import (
   casadi_declarations,
@@ -193,29 +193,15 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   res_values: list[str] = []
   lines = ["", "// Typed buffers: one struct per input and output, and the caller-owned workspace."]
   inputs, outputs = buffer_idents(fun)
-  names = NameScope(
-    (
-      symbol,
-      f"{symbol}_with_options",
-      "arg",
-      "res",
-      "solver_options",
-      f"{symbol}_workspace_t",
-      *(f"{symbol}_{ident}_t" for ident in (*inputs, *outputs)),
-    ),
-    header=True,
-  )
-  for ident, expr in zip(inputs, fun.inputs, strict=True):
-    param = names.allocate(ident)
+  input_params, output_params, workspace = wrapper_param_idents(symbol, inputs, outputs, type_prefix=f"{symbol}_")
+  for ident, param, expr in zip(inputs, input_params, fun.inputs, strict=True):
     lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"const {symbol}_{ident}_t* {param}")
     arg_values.append(f"{param}->data")
-  for ident, expr in zip(outputs, fun.outputs, strict=True):
-    param = names.allocate(ident)
+  for ident, param, expr in zip(outputs, output_params, fun.outputs, strict=True):
     lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"{symbol}_{ident}_t* {param}")
     res_values.append(f"{param}->data")
-  workspace = names.allocate("workspace")
   params.append(f"{symbol}_workspace_t* {workspace}")
   lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
   for runtime in (False, True) if solver_backends_used(fun) else (False,):
