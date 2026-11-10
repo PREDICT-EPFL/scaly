@@ -970,7 +970,7 @@ skips them even where `0 * inf` would be NaN; documented and tested. The first k
 
 - one generic compact map, a loop over the output's stored entries that reads each operand
   through a static position table with a zero slot for absent entries. It covers movement ops,
-  `CONCAT`, `GATHER`, `SCATTER`, elementwise ops and `SELECT`, with the union and intersection
+  `CONCAT`, `GATHER`, `SCATTER` and elementwise ops, with the union and intersection
   regions of operands with different patterns computed in NumPy when the graph is built, so no
   index comparison runs in the generated code. KKT assembly is this kernel;
 - `MATMUL` with a sparse operand: CSR row loops with loaded bounds for sparse times dense, the
@@ -979,6 +979,7 @@ skips them even where `0 * inf` would be NaN; documented and tested. The first k
 - `SUM` over stored entries.
 
 Moved max and min over stored entries to [#66] because `REDUCE` with `kind` is introduced there.
+Moved sparse `SELECT` to [#359] while its prerequisite [#30] was unmerged.
 
 Each region takes one of four forms: straight-line code when small, a loop over constant tables when
 irregular, an affine loop when `LowerCtx.index_at` recovers the index (regular runs, repeated stage
@@ -995,6 +996,11 @@ accumulating scatter loop is never widened, a carried range is never split, a re
 loaded bounds is never fused before [#69] says so. Gate: devrush's IPM KKT assembly and matrix-vector
 products on its Maros–Meszaros subset with no dense `(m, n)` buffer and Jacobian patterns equal to
 devrush's. This is the first usable sparse milestone.
+
+**[#359]. Sparse SELECT.** Add `SELECT` to the compact map with its branches' union region,
+narrowed per entry when the condition is constant. Forward and reverse rules stay on stored
+coordinates and preserve masked partials of unchosen branches. Derivative sparsity and value
+support follow the union rule. Moved from [#46] while its prerequisite [#30] was unmerged.
 
 **[#47]. Sparse-sparse products.** The Boolean product pattern computed at build time, lowered as a
 column loop over a dense accumulator column with the entries to clear known statically, instead of
@@ -1513,3 +1519,4 @@ writing the guide).
 [#220]: https://github.com/PREDICT-EPFL/scaly/issues/220
 [#221]: https://github.com/PREDICT-EPFL/scaly/issues/221
 [#225]: https://github.com/PREDICT-EPFL/scaly/issues/225
+[#359]: https://github.com/PREDICT-EPFL/scaly/issues/359

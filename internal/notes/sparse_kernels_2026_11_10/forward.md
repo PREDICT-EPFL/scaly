@@ -30,7 +30,7 @@ Input permutations enter access tables, computed outputs write their declared
 layout directly, and callers that require canonical values obtain a stored-size
 conversion. Calls and maps retain their existing boundary conversions.
 
-Mixed products traverse compact CSR rows, or rows of the transposed sparse
+Mixed products traverse compressed sparse row (CSR) storage, or rows of the transposed sparse
 operand for dense times sparse. Empty rows in dense vector results are zero.
 Loaded row bounds keep the output coordinates outside an ordered scalar
 accumulator. They do not use output lanes or interchange with the output range.
@@ -46,6 +46,8 @@ Roadmap departure: #46 covers SUM over stored entries. Max and min over stored
 entries move to #66 because it introduces REDUCE with kind. Its max/min reduction
 must include an absent zero wherever the reduction domain contains an absent
 coordinate and must preserve the loaded-bound scheduling contract above.
+Sparse SELECT moved to #359 after #320 left the merge queue without merging.
+It follows #30 and #46 and owns the sparse union pattern and stored masked partials.
 
 ## Forward validation
 
@@ -70,9 +72,14 @@ boundary, import-layer and dense-snapshot checks passed 284 tests.
 Review-gate measurements use scalar lanes and C99 with the same compile flags
 above. Counts are per procedure; source size and compile time cover its whole
 generated module. No run-time measurement is claimed.
+The matching-layout case uses compressed sparse column (CSC) storage.
 
 ```text
 scalar product: 8 sin, 13 multiplies, 3 additions; 0 loops, 0 tables; 1279 source bytes; compile 0.027 s
 mapped stage: 4 sin, 6 multiplies, 6 additions; 0 loops, 0 tables; 1909 source bytes; compile 0.052 s
 matching CSC map: 20 sin; 1 loop, 0 tables; 897 source bytes; compile 0.031 s
 ```
+
+The final detached pre-merge hook passed with 3,042 tests and 55 solver skips,
+including types, formatting, lint, smoke, documentation and the private-name check.
+Dense C snapshots remain unchanged.
