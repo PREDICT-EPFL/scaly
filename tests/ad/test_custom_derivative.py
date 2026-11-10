@@ -359,7 +359,8 @@ def test_declared_sparsity_takes_masks_and_patterns_and_checks_their_shape() -> 
 @pytest.mark.parametrize("declared", [False, True])
 @pytest.mark.parametrize("mapped", [False, True])
 @pytest.mark.parametrize("nested", [False, True])
-def test_custom_derivative_rows_outside_primal_support_survive_composition(declared: bool, mapped: bool, nested: bool) -> None:
+@pytest.mark.parametrize("scalar", [False, True])
+def test_custom_derivative_rows_outside_primal_support_survive_composition(declared: bool, mapped: bool, nested: bool, scalar: bool) -> None:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
   def masked(x):
     return x * sc.const([0, 1, 0])
@@ -382,7 +383,8 @@ def test_custom_derivative_rows_outside_primal_support_survive_composition(decla
   def derivatives(q):
     y = sc.vmap(callee, 2)(q) if mapped else callee(q)
     outputs = sc.concat([y.vec(), y.sin().vec(), (y * q).vec(), (y / (q + 2)).vec(), (y @ sc.const(np.diag(weights))).vec()])
-    return sc.jacobian(outputs, q), sc.sparse_jacobian(outputs, q).to_dense()
+    dense, sparse = sc.jacobian(outputs, q), sc.sparse_jacobian(outputs, q).to_dense()
+    return (dense.scalar(), sparse.scalar()) if scalar else (dense, sparse)
 
   q = np.arange(np.prod(shape)).reshape(shape) / 5 + 0.1
   primal = q * np.array([0, 1, 0])

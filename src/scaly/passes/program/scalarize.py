@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp
+from ...ir.support import Support
 from ...utils.names import c_ident
 from ..arith import CONSTANTS, constant, fold_program
 from .scheduling import ScalarNameAllocator, schedule_values
@@ -21,6 +22,7 @@ AUTO_EXPANSION_WORK_PER_PROC = 65_536
 class _Pointer:
   values: list[ProgramNode | None]
   offset: int = 0
+  support: Support = None
 
 
 class _Frame:
@@ -33,7 +35,10 @@ class _Frame:
   ) -> None:
     self.procs = procs
     self.folded = folded
-    self.buffers = {param.attrs["name"]: ptr for param, ptr in zip(proc.args[: proc.attrs["param_count"]], pointers, strict=True)}
+    self.buffers = {
+      param.attrs["name"]: _Pointer(ptr.values, ptr.offset, param.attrs.get("support"))
+      for param, ptr in zip(proc.args[: proc.attrs["param_count"]], pointers, strict=True)
+    }
     self.variables: dict[str, ProgramNode] = {}
 
   def pointer(self, node: ProgramNode) -> _Pointer:
@@ -79,10 +84,14 @@ class _Frame:
         else:
           values = stmt.attrs.get("values")
           ptr = _Pointer([constant(v, stmt.dtype) for v in values] if values is not None else [None] * math.prod(stmt.attrs["shape"]))
+        ptr.support = stmt.attrs.get("support")
         self.buffers[stmt.attrs["name"]] = ptr
       elif stmt.op == ProgramOp.STORE:
         ptr = self.pointer(stmt.args[0])
-        ptr.values[ptr.offset] = self.scalar(stmt.args[1], {})
+        base = self.buffers[stmt.args[0].attrs["buffer"]]
+        ptr.values[ptr.offset] = (
+          constant(0, stmt.dtype) if base.support is not None and ptr.offset - base.offset not in base.support else self.scalar(stmt.args[1], {})
+        )
       elif stmt.op == ProgramOp.ASSIGN:
         self.variables[stmt.attrs["target"]] = self.scalar(stmt.args[0], {})
       elif stmt.op == ProgramOp.FOR:

@@ -17,6 +17,7 @@ from ..program import ProgramObserver, optimize_program
 from ..program._common import rebuild_program, substitute_var, trip_count
 from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.program_spec import verify_program
+from ...ir.support import Support
 from ...ir.types import DeviceSpec, DType, dtypes
 from ...utils.names import NameScope
 from ..affine import affine_index_map
@@ -25,6 +26,12 @@ from ..expr import cse_many, simplify
 
 LowerRule = Callable[["LowerCtx", Expr], None]
 _RULES: dict[ExprOp, LowerRule] = {}
+
+
+def _with_support(buf: ProgramNode, support: Support) -> ProgramNode:
+  if support is None or len(support) == _size_of(buf.attrs["shape"]):
+    return buf
+  return ProgramNode(buf.op, buf.args, {**buf.attrs, "support": support}, buf.dtype)
 
 
 def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
@@ -246,7 +253,7 @@ class LowerCtx:
     its output buffer, so its rule writes directly into the output (no copy)."""
     seen: set[int] = set()
     for name, expr in zip(self.output_names, self.fun.outputs, strict=True):
-      buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global")
+      buf = _with_support(p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global"), expr.support)
       self.params.append(buf)
       self.buffers[name] = buf
       if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen:
@@ -279,11 +286,11 @@ class LowerCtx:
   def buf_of(self, expr: Expr) -> ProgramNode:
     return self.buffers[self.value_buffers[expr.id]]
 
-  def new_private(self, dtype: DType, shape: tuple[int, ...]) -> ProgramNode:
+  def new_private(self, dtype: DType, shape: tuple[int, ...], *, support: Support = None) -> ProgramNode:
     """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
     name = self.names.allocate(f"t{self._tmp}")
     self._tmp += 1
-    buf = p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private")
+    buf = _with_support(p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private"), support)
     self.buffers[name] = buf
     self.statements.append(buf)  # marks the local-array declaration for the renderer
     return buf
@@ -294,7 +301,7 @@ class LowerCtx:
     if alias is not None:
       self.value_buffers[expr.id] = alias
       return self.buffers[alias]
-    buf = self.new_private(expr.type.dtype, expr.shape)
+    buf = self.new_private(expr.type.dtype, expr.shape, support=expr.support)
     self.value_buffers[expr.id] = buf.attrs["name"]
     return buf
 

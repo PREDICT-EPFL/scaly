@@ -112,6 +112,10 @@ at compile time with symbolic values, folding arithmetic as it goes, so a
 multiplication by a known zero disappears instead of becoming a statement. This
 is partial evaluation[^pe] with every loop bound known.
 
+For an entry known to be zero, expansion skips its arithmetic and writes zero
+to the output. For example, expanding `[0, 1] / [0, 0]` writes zero for the first
+entry and evaluates `1 / 0` for the second, giving `[0, inf]`.
+
 The choice is driven by `Expr.lowering`, a field every expression node carries.
 It is `"auto"` unless you set it with `.scalar()` or `.block()`, and it
 propagates to the nodes built from the hinted one. The hints of a function's

@@ -25,14 +25,22 @@ especially Sparse tensors, Custom derivatives and Rules for every item. Read #40
   Keep the current AD code: ordinary coefficient pruning remains, and removing
   the blanket result filter is required. Preserve the memo and warn #41 about
   its compressed relation row domain.
-- [ ] Fold #276 into this PR on the new loop-nest emitter. Test support-based
+- [x] Fold #276 into this PR on the new loop-nest emitter. Test support-based
   scalar zero skipping, output initialization and numerical agreement with a
   NumPy or unrolled reference. Show the new gates fail under perturbation.
-- [ ] Review and measure any changed C snapshots using the serialized procedure.
+  Partial support annotates output and temporary buffers. Scalar expansion
+  writes zero without evaluating the RHS, using coordinates local to a callee.
+  Hoisted outputs retain the annotation. Four mutation checks fail as intended.
+  The custom-derivative composition test also runs under forced scalar lowering.
+- [x] Review and measure any changed C snapshots using the serialized procedure.
   Report source size, generation time and function-evaluation time in the PR.
+  All eight C snapshot cases remain byte-identical. No regeneration or snapshot
+  measurements are needed. There is no performance claim.
 - [ ] Run the full merge checks, then one cross-review of the work added since
   the last verdict and one short check of fixes. Include the restack's empty-copy
   compatibility fix in that review.
+  The expanded full merge hook passes: 2,728 tests, 52 skips, benchmark smoke,
+  docs build, strict types, Ruff and private-name checks. Cross-review is next.
 - [ ] Update PR evidence and review line, reference #40 and #276, remove this
   temporary plan and return the PR to review. No merge.
 
