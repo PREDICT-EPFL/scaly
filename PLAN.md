@@ -73,6 +73,10 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
   storage; the existing huge-uniform test now covers both float widths. The focused
   dtype/compact selection passes 105 tests, with 103 dtype cases. Full collection
   is 3284 tests. Run the shared hook again, then request one Opus delta check only.
+- The final shared hook under `/tmp/scaly-55-suite-4.*` exited 0: 3232 passed,
+  52 skipped; smoke, docs, private names, lint, formatting and strict types passed.
+  Float64 C snapshots remain byte-identical. Only the short Opus delta remains
+  before removing this plan, pushing all review fixes, and recording the verdict.
 - Non-actionable review notes: NumPy and libm float32 transcendentals can differ
   within the ulp policy; folded and runtime sums use different orders already on
   main; native C contraction differences also predate this task. No new issue needed.
