@@ -29,6 +29,7 @@ _RULES: dict[ExprOp, LowerRule] = {}
 
 
 def _with_support(buf: ProgramNode, support: Support) -> ProgramNode:
+  # Support is for scalar expansion only; later buffer rewrites may invalidate it.
   if support is None or len(support) == _size_of(buf.attrs["shape"]):
     return buf
   return ProgramNode(buf.op, buf.args, {**buf.attrs, "support": support}, buf.dtype)

@@ -34,14 +34,16 @@ especially Sparse tensors, Custom derivatives and Rules for every item. Read #40
   The custom-derivative composition test also runs under forced scalar lowering.
 - [x] Review and measure any changed C snapshots using the serialized procedure.
   Report source size, generation time and function-evaluation time in the PR.
-  All eight C snapshot cases remain byte-identical. No regeneration or snapshot
+  All seven C/header snapshot pairs remain byte-identical. No regeneration or snapshot
   measurements are needed. There is no performance claim.
 - [ ] Run the full merge checks, then one cross-review of the work added since
   the last verdict and one short check of fixes. Include the restack's empty-copy
   compatibility fix in that review.
   The expanded full merge hook passes: 2,728 tests, 52 skips, benchmark smoke,
   docs build, strict types, Ruff and private-name checks. Opus and Sol are reviewing
-  the new work. The memo removal changes no production code.
+  the new work. Both found no code bugs. Opus requested a documentation fix for
+  scalar-versus-loop NaN behaviour and a note on support metadata's lifetime.
+  Those are applied; run their checks and get the short Opus delta check.
 - [ ] Update PR evidence and review line, reference #40 and #276, remove this
   temporary plan and return the PR to review. No merge.
 
