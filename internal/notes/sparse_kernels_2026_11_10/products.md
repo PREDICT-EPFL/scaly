@@ -62,8 +62,13 @@ kernels". Eleven temporary perturbations each failed their targeted gate: replac
 with addition, clearing to one, ignoring the output permutation, allocating an m-by-n workspace,
 inserting scalar-pair tables, inserting logical-column tables, returning zero forward tangents,
 doubling a reverse contribution, disabling sampled lowering, and separately corrupting the kernel
-under each notebook port. All perturbations were removed. The existing sparse-kernel, import and
+under each notebook port. The arithmetic perturbation also fails the stored-zero/infinity and
+shared-product gates. All perturbations were removed. The existing sparse-kernel, import and
 dense-snapshot checks passed, 209 cases. No C snapshot was regenerated.
+
+The detached `~/.scaly-suite/run` exited zero. Its full suite passed with 3,333 tests and 55 solver
+skips, followed by benchmark smoke, the documentation build and the private-name check. Types,
+formatting and lint passed too. The node-ID baseline includes all 3,388 collected tests.
 
 ## Counts and generated C
 

@@ -9,7 +9,7 @@ compiler maintenance context; section 1's sparse_values packet; #46's plans, mix
 stored tangents and sampled adjoints. Publish sparse documentation in #307, not here.
 
 - [x] Read the brief, verify the clean linked checkout and approved parent, inspect issue #47
-      and section #292. Project REST endpoints return 404, so project status is unavailable.
+      and section #292. Project status is In progress, read and changed through projectsV2 REST.
 - [x] Add SciPy and finite-difference differential tests over empty, rectangular, banded, random
       and Gram products, in CSC, CSR and coordinate layouts. Observe the missing-kernel failure.
 - [x] Add the column accumulator plan in lowering/plans.py, with compressed active-column
@@ -19,7 +19,7 @@ stored tangents and sampled adjoints. Publish sparse documentation in #307, not 
       devrush notebooks, without their solver implementations.
 - [x] Pin table and workspace growth for weighted Gram products and perturb each new gate.
       Record operation counts, generated C size and C compile time; defer execution timings.
-- [ ] Run focused checks, regenerate test node IDs, then detached ~/.scaly-suite/run on the
+- [x] Run focused checks, regenerate test node IDs, then detached ~/.scaly-suite/run on the
       final review state. Dense C snapshots must remain unchanged.
 - [ ] Commit and push once for the draft PR against t3code/46-sparse-ad; register with gh stack
       and link in T3. Run cross-review with Opus and sol; fix findings and get one delta check.
