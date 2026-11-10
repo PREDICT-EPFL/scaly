@@ -625,9 +625,9 @@ class Expr:
   def scalar(self) -> Expr:
     """Return this expression with a hint to expand its procedure into straight-line scalar code.
 
-    The hint overrides the automatic size limits and applies to the entry point too. Only
-    procedures whose values are all ``float64``, ``int64`` or ``bool`` expand, and a ``block`` hint
-    in the same function wins. See the lowering page of *How it works* for the policy.
+    The hint overrides the automatic size limits and applies to the entry point too. Procedures
+    expand only when scalar substitution preserves each store's rounding and conversion. A
+    ``block`` hint in the same function wins. See the lowering page of *How it works* for the policy.
     """
     return self.with_lowering("scalar")
 
