@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Set, Iterator
+from collections.abc import Callable, Set, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
@@ -73,40 +73,137 @@ def _make_support(entries: np.ndarray) -> frozenset[int] | _SupportSet:
   return frozenset(map(int, entries)) if len(entries) <= 1024 else _SupportSet(entries)
 
 
+_SPECIALIZATION_LIMIT = 32
+
+
 def compute_support(root: Expr, rules: Mapping[ExprOp, OpInfo]) -> Support:
   """Compute and cache support without recursing through operands or callees."""
-  stack = [(root, False)]
+  if root._support_cache is not None:
+    return root._support_cache[0]
+  _run_support(_walk_support((root,), rules, None), rules)
+  return _cached(root)
+
+
+def specialize_support(callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Support]:
+  """Return a node-support lookup for the callee, using its own supports beyond the cache bound."""
+
+  def request():
+    return (yield callee, arguments)
+
+  return _run_support(request(), rules)
+
+
+def _run_support(walk, rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Support]:
+  """Suspend callee walks so deep call nesting uses no Python recursion."""
+  pending = [walk]
+  result = None
+  while pending:
+    try:
+      callee, arguments = pending[-1].send(result)
+    except StopIteration as done:
+      result = done.value
+      pending.pop()
+      continue
+    cache = callee._memo.supports
+    if arguments in cache:
+      result = cache[arguments].__getitem__
+    elif len(cache) >= _SPECIALIZATION_LIMIT:
+      pending.append(_walk_support(callee.results, rules, None))
+      result = None
+    else:
+      pending.append(_specialized_support(callee, arguments, rules))
+      result = None
+  assert result is not None
+  return result
+
+
+def _specialized_support(callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo]):
+  context = {formal: _bound_support(formal, support) for formal, support in zip(callee.inputs, arguments, strict=True)}
+  result = yield from _walk_support(callee.results, rules, context)
+  callee._memo.supports[arguments] = context
+  return result
+
+
+def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context: dict[Expr, Support] | None):
+  support_of = _cached if context is None else context.__getitem__
+  stack = [(root, False) for root in reversed(roots)]
   while stack:
     node, visited = stack.pop()
-    if node._support_cache is not None:
+    if (context is None and node._support_cache is not None) or (context is not None and node in context):
+      continue
+    if context is not None and not node.args:
+      yield from _walk_support((node,), rules, None)
+      context[node] = _cached(node)
       continue
     info = rules[cast("ExprOp", node.op)]
     rule = info.pattern_rule or info.support_rule
     if not visited:
       stack.append((node, True))
-      children = node.args
-      if rule in {"call", "vmap"} and (rule == "call" or node.attrs["length"]):
-        children = (*children, node.attrs["callee"].results[node.attrs["output"]])
-      stack.extend((arg, False) for arg in reversed(children) if arg._support_cache is None)
+      stack.extend((arg, False) for arg in reversed(node.args))
       continue
-    result = _rule(node, rule)
-    if node.size == 0:
-      result = frozenset()
-    elif (pattern := node.type.pattern) is not None:
-      matrix_size = pattern.shape[0] * pattern.shape[1]
-      bound = _make_support(
-        np.fromiter(
-          (
-            batch * matrix_size + r * pattern.shape[1] + c
-            for batch in range(node.size // matrix_size)
-            for r, c in zip(pattern.rows, pattern.cols, strict=True)
-          ),
-          dtype=np.int64,
-        )
-      )
-      result = bound if result is None else result & bound
-    object.__setattr__(node, "_support_cache", (result,))
-  return _cached(root)
+    result = (yield from _call_support(node, rule, support_of)) if rule in {"call", "vmap"} else _rule(node, rule, support_of)
+    result = _bound_support(node, result)
+    if context is None:
+      object.__setattr__(node, "_support_cache", (result,))
+    else:
+      context[node] = result
+  return support_of
+
+
+def _bound_support(node: Expr, result: Support) -> Support:
+  if node.size == 0:
+    return frozenset()
+  if node.type.pattern is not None:
+    bound = _make_support(stored_indices(node.type))
+    return bound if result is None else result & bound
+  return result
+
+
+def _call_support(node: Expr, op: str, support_of: Callable[[Expr], Support]):
+  callee, output = node.attrs["callee"], node.attrs["output"]
+  if op == "call":
+    context = yield callee, tuple(support_of(arg) for arg in node.args)
+    return context(callee.results[output])
+  length = node.attrs["length"]
+  if not length:
+    return frozenset()
+  groups: dict[tuple[Support, ...], list[int]] = {}
+  windows = []
+  for arg, formal, start, stride in zip(node.args, callee.inputs, node.attrs["starts"], node.attrs["strides"], strict=True):
+    support = support_of(arg)
+    indices = None if support is None else support_indices(support)
+    logical = stored_indices(formal.type) if formal.type.pattern is not None else None
+    windows.append((indices, formal.type.storage_size, logical, start, stride))
+  for stage in range(length):
+    arguments = []
+    for indices, width, logical, start, stride in windows:
+      support = None
+      if indices is not None:
+        offset = start + stage * stride
+        lo, hi = np.searchsorted(indices, (offset, offset + width))
+        entries = indices[lo:hi] - offset
+        support = _make_support(entries if logical is None else logical[entries])
+      arguments.append(support)
+    groups.setdefault(tuple(arguments), []).append(stage)
+  tiles = []
+  result_expr = callee.results[output]
+  for arguments, stages in groups.items():
+    context = yield callee, arguments
+    support = context(result_expr)
+    if result_expr.type.pattern is not None and support is not None:
+      support = _make_support(np.flatnonzero(np.isin(stored_indices(result_expr.type), support_indices(support))))
+    tiles.append((stages, support))
+  if all(support is None for _, support in tiles):
+    return None
+  width = result_expr.type.storage_size
+  return _make_support(
+    np.concatenate(
+      [
+        (np.asarray(stages, dtype=np.int64)[:, None] * width + (np.arange(width) if support is None else support_indices(support))).reshape(-1)
+        for stages, support in tiles
+      ]
+    )
+  )
 
 
 def _cached(node: Expr) -> Support:
@@ -118,9 +215,7 @@ def _entries(mask: np.ndarray) -> frozenset[int] | _SupportSet:
   return _make_support(np.flatnonzero(mask))
 
 
-def broadcast_support(node: Expr, shape: tuple[int, ...]) -> Support:
-  """Return a node's support in the coordinates of a broadcast result."""
-  support = node.support
+def _broadcast_support(node: Expr, shape: tuple[int, ...], support: Support) -> Support:
   if support is None or node.shape == shape:
     return support
   if len(support) == node.size and int(np.prod(shape, dtype=np.int64)) > 1024:
@@ -143,13 +238,13 @@ def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
   return a if result == a else b if result == b else result
 
 
-def _rule(node: Expr, op: str | None) -> Support:
+def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> Support:
   if op == "pack":
-    support = _cached(node.args[0])
+    support = support_of(node.args[0])
     indices = stored_indices(node.type)
     return _make_support(indices if support is None else indices[support_indices(support)])
   if op == "values":
-    support = _cached(node.args[0])
+    support = support_of(node.args[0])
     if support is None:
       return None
     return _make_support(np.flatnonzero(np.isin(stored_indices(node.args[0].type), support_indices(support))))
@@ -159,15 +254,15 @@ def _rule(node: Expr, op: str | None) -> Support:
       return frozenset() if value == 0 else _make_support(np.arange(node.size)) if node.size <= 1024 else None
     return _entries(node.value != 0)
   if op == "preserve":
-    return _cached(node.args[0])
+    return support_of(node.args[0])
   if op == "union":
-    a, b = (broadcast_support(arg, node.shape) for arg in node.args)
+    a, b = (_broadcast_support(arg, node.shape, support_of(arg)) for arg in node.args)
     return _combine(a, b, intersection=False)
   if op == "intersection":
     a, b = node.args
-    sa, sb = _cached(a), _cached(b)
+    sa, sb = support_of(a), support_of(b)
     if sa is None or sb is None:
-      return broadcast_support(b if sa is None else a, node.shape)
+      return _broadcast_support(b, node.shape, sb) if sa is None else _broadcast_support(a, node.shape, sa)
     if a.shape == b.shape:
       return _combine(sa, sb, intersection=True)
     cost_a = len(sa) * (node.size // a.size) if a.size else 0
@@ -180,13 +275,13 @@ def _rule(node: Expr, op: str | None) -> Support:
       return sa
     return _make_support(entries[keep])
   if op == "numerator":
-    return broadcast_support(node.args[0], node.shape)
+    return _broadcast_support(node.args[0], node.shape, support_of(node.args[0]))
   if op == "sum":
-    return frozenset() if _cached(node.args[0]) == frozenset() else frozenset({0})
+    return frozenset() if support_of(node.args[0]) == frozenset() else frozenset({0})
   if op in {"transpose", "slice", "gather"}:
-    if _cached(node.args[0]) is None:
+    if support_of(node.args[0]) is None:
       return None
-    support = _cached(node.args[0])
+    support = support_of(node.args[0])
     assert support is not None
     entries = support_indices(support)
     if op == "transpose":
@@ -197,17 +292,17 @@ def _rule(node: Expr, op: str | None) -> Support:
       entries = np.flatnonzero(np.isin(node.attrs["indices"].reshape(-1), entries))
     return _make_support(entries)
   if op == "scatter":
-    support = _cached(node.args[0])
+    support = support_of(node.args[0])
     indices = node.attrs["indices"].reshape(-1)
     return _make_support(indices if support is None else indices[support_indices(support)])
   if op in {"stack", "concat"}:
-    if all(_cached(arg) is None for arg in node.args):
+    if all(support_of(arg) is None for arg in node.args):
       return None
     chunks = []
     offset = 0
     axis = node.attrs.get("axis", 0)
     for i, arg in enumerate(node.args):
-      support = _cached(arg)
+      support = support_of(arg)
       entries = support_indices(support) if support is not None else np.arange(arg.size)
       coords = list(np.unravel_index(entries, arg.shape)) if arg.shape else []
       if op == "stack":
@@ -221,7 +316,7 @@ def _rule(node: Expr, op: str | None) -> Support:
     x, y = node.args
     if x.shape[-1] == 0:
       return frozenset()
-    a, b = _cached(x), _cached(y)
+    a, b = support_of(x), support_of(y)
     if a is None and b is None:
       return None
     xshape = (1, x.shape[0]) if len(x.shape) == 1 else (x.shape[0], x.shape[1])
@@ -237,17 +332,6 @@ def _rule(node: Expr, op: str | None) -> Support:
       return _make_support((rows[:, None] * yshape[1] + cols).reshape(-1))
     result = _pattern(a, xshape).matmul(_pattern(b, yshape))
     return _make_support(np.asarray(result.rows, dtype=np.int64) * result.shape[1] + np.asarray(result.cols, dtype=np.int64))
-  if op in {"call", "vmap"}:
-    if op == "vmap" and not node.attrs["length"]:
-      return frozenset()
-    output = node.attrs["callee"].results[node.attrs["output"]]
-    support = _cached(output)
-    if op == "vmap" and output.type.pattern is not None and support is not None:
-      support = _make_support(np.flatnonzero(np.isin(stored_indices(output.type), support_indices(support))))
-    if op == "call" or support is None:
-      return support
-    entries = np.arange(node.attrs["length"], dtype=np.int64)[:, None] * output.type.storage_size + support_indices(support)
-    return _make_support(entries.reshape(-1))
   return None
 
 
