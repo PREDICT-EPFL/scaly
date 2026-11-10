@@ -200,7 +200,7 @@ def test_cpp_workspace_parameter_does_not_shadow_exported_entry(tmp_path, input_
     value = x.sin()
     return value.sum(), (value * value).sum()
 
-  module = render_c_module(fun, lang="cpp", lanes=1)
+  module = render_c_module(fun, lang="cpp", lanes=1, frame_budget=0)
   assert module.workspace_size > 0
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
