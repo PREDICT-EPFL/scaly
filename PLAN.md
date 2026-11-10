@@ -8,6 +8,8 @@ Invalidation will leave artifact directories untouched and always advance the ex
 process-local epoch. A later build in this process gets a fresh path. Other processes keep
 their source, temporary output and published library throughout compilation and loading.
 Old artifacts need manual cleanup when no process uses the cache.
+After one process recompiles, a fresh process still reuses the original shared artifact.
+Atomic publication ensures that artifact is complete. The cross-process reuse test pins this.
 
 ## Work
 
@@ -25,3 +27,11 @@ The phases depend on the preceding phase. #64 and #269 share `codegen/jit.py`; #
 preserve unconditional epoch advancement without deleting artifact directories. The sparse
 stack also edits `function/concrete.py` and `codegen/jit.py`; rebase as necessary. No changes
 to the graph digest, solver fingerprints or hash-seed determinism belong here.
+
+## Evidence so far
+
+- All three two-process regressions failed on the original implementation for the intended
+  missing-file/directory errors. With the fix, 36 JIT tests and 8 C snapshot tests passed.
+- Ruff and ty passed. The full pre-merge run was interrupted by the provider stream closing.
+  Repeat it detached and inspect `/tmp/scaly-193-pre-merge.log` and `.exit`.
+- Commit, push, pull request creation and cross-review remain. Only the initial plan is committed.

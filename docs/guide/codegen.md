@@ -583,17 +583,19 @@ future compilations rebuild missing artifacts.
 energy.recompile()
 ```
 
-Despite its name, `recompile()` clears the function's compiled handle and disk
-cache entry without immediately compiling. The next numerical call or explicit
-`compile()` prepares the library again.
+Despite its name, `recompile()` clears the function's compiled handle without
+immediately compiling. The next numerical call or explicit `compile()` builds
+a fresh library at a separate path in this process. Existing cache files stay
+in place so other processes can finish compiling, publishing or loading them.
+The previous and the new handle both stay callable. Other processes can still
+reuse the original entry, including a fresh process started after `recompile()`.
+This is safe because atomic publication makes only complete libraries available
+in the shared cache.
 
-Windows refuses to replace or delete a DLL that a process has loaded, and Python
-never unloads one. `recompile()` therefore leaves a loaded DLL in the cache,
-and the next compilation in this process writes the function to a separate
-cache entry. The previous and the new handle both stay callable. Scaly
-does not prune the cache on any platform, so both DLLs remain after the process
-exits. Deleting the cache directory once no process has them loaded removes
-them.
+This also permits recompilation on Windows, which refuses to replace or delete
+a loaded DLL. Scaly does not prune the cache on any platform, so previous
+artifacts remain after the process exits. Delete the cache directory only
+when no process is using it.
 
 Scaly does not fall back to Python evaluation when compilation fails.
 `uv run scaly_toolchain` reports the compiler, cache directory, and resolved

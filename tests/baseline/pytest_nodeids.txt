@@ -1376,6 +1376,9 @@ tests/codegen/test_jit.py::test_folded_extrema_nan_match_runtime_and_numpy
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[False]
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[True]
 tests/codegen/test_jit.py::test_invalidate_cache_handles_missing_directory
+tests/codegen/test_jit.py::test_invalidation_preserves_another_process_artifact[link]
+tests/codegen/test_jit.py::test_invalidation_preserves_another_process_artifact[load]
+tests/codegen/test_jit.py::test_invalidation_preserves_another_process_artifact[publish]
 tests/codegen/test_jit.py::test_jit_cache_in_deep_directory_matches_numpy
 tests/codegen/test_jit.py::test_jit_compile_command_targets_host
 tests/codegen/test_jit.py::test_jit_compiles_from_the_temporary_directory
