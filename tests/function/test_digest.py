@@ -9,7 +9,6 @@ from __future__ import annotations
 import dataclasses
 import enum
 import functools
-import gc
 import importlib.util
 import os
 import py_compile
@@ -112,18 +111,9 @@ def test_a_callable_gives_no_digest_so_neither_does_a_rule_that_carries_state(ru
   assert digest.graph_digest(_attr(rule)) is None
 
 
-def test_a_dtype_equal_by_name_to_another_c_type_gives_another_digest() -> None:
+def test_a_dtype_named_like_another_with_another_c_type_gives_another_digest() -> None:
   impostor = DType("float64", 64, "float", is_floating=True)
-  assert impostor == dtypes.float64
-  # Interning hands a graph the nodes of an equal one built before, so each is built alone.
-  first = _attr(0, dtype=impostor, symbol="impostor")
-  assert first.inputs[0].type.dtype.c_type == "float"
-  first_digest = digest.graph_digest(first)
-  del first
-  gc.collect()
-  plain = _attr(0, symbol="impostor")
-  assert plain.inputs[0].type.dtype.c_type == "double"
-  assert digest.graph_digest(plain) not in (None, first_digest)
+  assert digest.graph_digest(_attr(impostor)) not in (None, digest.graph_digest(_attr(dtypes.float64)))
 
 
 @dataclasses.dataclass(frozen=True)

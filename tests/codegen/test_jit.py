@@ -116,6 +116,7 @@ int solver_cache_inputs_with_options(const double** arg, double** res, int* iw, 
 '''
 render = jit._render_native
 jit._render_native = lambda fun, compiler: replace(render(fun, compiler), body=body, backends=(backend.name,))
+jit.solver_backends_used = lambda fun: (backend.name,)  # what the index key reads of a solver graph
 compiles = []
 run = jit.subprocess.run
 jit.subprocess.run = lambda command, **kwargs: (compiles.append("-fPIC" in command), run(command, **kwargs))[1]

@@ -285,8 +285,18 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
   h = hashlib.sha256()
-  parts = (_JIT_CACHE_VERSION, C_API_SIGNATURE, _scaly_version(), source, graph, repr(recipe), _toolchain(fun, compiler), solver_inputs, *libc, *command)
-  for part in parts:
+  for part in (
+    _JIT_CACHE_VERSION,
+    C_API_SIGNATURE,
+    _scaly_version(),
+    source,
+    graph,
+    repr(recipe),
+    _toolchain(fun, compiler),
+    solver_inputs,
+    *libc,
+    *command,
+  ):
     h.update(part.encode())
     h.update(b"\0")
   return h.hexdigest()

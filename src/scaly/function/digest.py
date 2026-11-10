@@ -32,9 +32,10 @@ class Unkeyed(Exception):
 _FIELDS = ("name", "inputs", "outputs", "output_sparsities", "output_coloring_widths", "device", "descriptor", "role", "rules")
 _NOT_READ = ("input_tree", "output_tree", "_memo")
 # What a tree holds: the digest reads the names and the layouts, while the declared types only reach
-# the generated header, which the expression types already fix, and the parts only group the leaves.
+# the generated header, which the expression types already fix, the parts only group the leaves, and
+# the declared layouts are what the frontend resolves into the layouts.
 _TREE_READ = ("names", "layouts")
-_TREE_NOT_READ = ("decls", "parts")
+_TREE_NOT_READ = ("decls", "parts", "_layout_decls")
 
 # The array element kinds whose bytes are their value: flags, integers, floats and complex numbers.
 _PLAIN_KINDS = "biufc"

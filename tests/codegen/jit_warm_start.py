@@ -41,4 +41,4 @@ def outer(x, p):
 
 
 result = outer(np.array([0.5, -1.0, 2.0]), np.array([2.0, 0.25]))
-print(json.dumps({"lowered": len(lowered), "result": float(result), "library": str(jit.get_compiled(outer).lib_path)}))
+print(json.dumps({"lowered": len(lowered), "result": float(np.asarray(result)), "library": str(jit.get_compiled(outer).lib_path)}))
