@@ -2335,6 +2335,10 @@ tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-
 tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-8-c]
 tests/codegen/test_float32.py::test_float32_lanes_and_tails_match_numpy[strided-8-gnu]
 tests/codegen/test_float32.py::test_float32_literals_use_nine_digits_and_an_f_suffix
+tests/codegen/test_float32.py::test_float32_special_libm_results_stay_float32[block]
+tests/codegen/test_float32.py::test_float32_special_libm_results_stay_float32[scalar]
+tests/codegen/test_float32.py::test_float32_special_value_grid_matches_numpy[block]
+tests/codegen/test_float32.py::test_float32_special_value_grid_matches_numpy[scalar]
 tests/codegen/test_float32.py::test_float32_stores_are_not_coalesced_or_spilled
 tests/codegen/test_float32.py::test_float32_structural_operations_match_numpy[block]
 tests/codegen/test_float32.py::test_float32_structural_operations_match_numpy[folded]
