@@ -447,29 +447,34 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
 
   original = _raw_program()
   callee, root = original.args
-  x, y, tmp, mapped, copied = root.args
-  extra = p.buffer("extra", dtypes.float64, (5,), address_space="private")
+  _x, _y, _tmp, mapped, copied = root.args
+  length = 12
+  x, y = (p.buffer(name, dtypes.float64, (length,)) for name in ("x", "y"))
+  tmp = p.buffer("tmp", dtypes.float64, (length,), address_space="private")
+  mapped = p.for_(p.range_("i", 0, length), mapped.args[1:])
+  copied = p.for_(p.range_("i", 0, length), copied.args[1:])
+  extra = p.buffer("extra", dtypes.float64, (length,), address_space="private")
   i = p.var("i")
   read_x = p.load(p.view(x, [p.div(i, p.const_int(4)) if case == "few_indices" else i]))
   read_extra = p.load(p.view(extra, [i]))
   declarations, upstream = [extra], []
   rhs = read_x
   if case == "fold_store":
-    zeros = p.const_buffer("zeros", dtypes.float64, (5,), [0.0] * 5)
+    zeros = p.const_buffer("zeros", dtypes.float64, (length,), [0.0] * length)
     declarations.append(zeros)
     rhs = p.mul(rhs, p.load(p.view(zeros, [i])))
   if case == "fold_aliases":
-    for offset in range(5):
+    for offset in range(length):
       rhs = p.mul(rhs, p.sub(read_x, p.load(p.view(x, [p.const_int(offset)]))))
   if case == "mixed_trips":
-    initialized = p.for_(p.range_("i", 0, 5), [p.store(p.view(extra, [i]), p.const_float(0))])
-    partial = p.for_(p.range_("i", 0, 3), [p.store(p.view(extra, [i]), p.load(p.view(tmp, [i])))])
-    prepared = p.buffer("prepared", dtypes.float64, (5,), address_space="private")
+    initialized = p.for_(p.range_("i", 0, length), [p.store(p.view(extra, [i]), p.const_float(0))])
+    partial = p.for_(p.range_("i", 0, length // 2), [p.store(p.view(extra, [i]), p.load(p.view(tmp, [i])))])
+    prepared = p.buffer("prepared", dtypes.float64, (length,), address_space="private")
     declarations.append(prepared)
-    upstream = [initialized, mapped, partial, p.for_(p.range_("i", 0, 5), [p.store(p.view(prepared, [i]), p.mul(read_extra, p.const_float(1)))])]
+    upstream = [initialized, mapped, partial, p.for_(p.range_("i", 0, length), [p.store(p.view(prepared, [i]), p.mul(read_extra, p.const_float(1)))])]
     read_extra = p.load(p.view(prepared, [i]))
   else:
-    upstream = [p.for_(p.range_("i", 0, 5), [p.store(p.view(extra, [i]), rhs)]), mapped]
+    upstream = [p.for_(p.range_("i", 0, length), [p.store(p.view(extra, [i]), rhs)]), mapped]
   if case == "fold_consumer":
     read_extra = p.mul(read_extra, p.const_float(0))
   copied = p.for_(copied.args[0], [p.store(p.view(y, [i]), p.add(p.load(p.view(tmp, [i])), read_extra))])
@@ -481,7 +486,7 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
   verify_program(fused)
   optimized = optimize_program(original)
   _assert_fused(optimized)
-  arg = sc.sym("x", 5)
+  arg = sc.sym("x", length)
   signature = ConcreteFunction._from_exprs("root", [arg], [arg], ["x"], ["y"])
   source = tmp_path / "cells.c"
   library = tmp_path / ("cells" + shared_lib_ext())
@@ -491,11 +496,11 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
   ptr = ctypes.POINTER(ctypes.c_double)
   entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.POINTER(ctypes.c_int), ptr, ctypes.c_int]
   entry.restype = ctypes.c_int
-  data, out = np.linspace(-0.7, 0.8, 5), np.empty(5)
+  data, out = np.linspace(-0.7, 0.8, length), np.empty(length)
   assert entry((ptr * 1)(data.ctypes.data_as(ptr)), (ptr * 1)(out.ctypes.data_as(ptr)), None, None, 0) == 0
   expected = data.copy()
   if case == "few_indices":
-    expected += data[np.arange(5) // 4]
+    expected += data[np.arange(length) // 4]
   elif case == "mixed_trips":
-    expected[:3] += data[:3]
+    expected[: length // 2] += data[: length // 2]
   np.testing.assert_allclose(out, expected)

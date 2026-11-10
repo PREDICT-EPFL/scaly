@@ -22,4 +22,17 @@ issues are open. Parent #297's older serialization wording is superseded by the 
 
 Focused validation: 36 fusion and snapshot tests pass, as do Ruff and ty. The original pass
 fails the measurement-stencil count test at 270 versus 16,398 calls. A per-position rewrite
-perturbation makes both stencil variants fail. Current counts are 12/12 and 22/22.
+perturbation makes both stencil variants fail. Current counts are 12/12 and 23/23.
+
+The first array version failed a raw test where a product becomes zero because external load
+indices coincide at different positions. Saving a deferred value now groups those equality
+patterns and folds each group. All 37 focused tests, Ruff and ty pass. The detached full check
+is queued through the two-slot runner at `/tmp/tmp.JLttMeewOj/premerge`. Earlier queued checks were stopped before changes.
+Indicative 1,000,000-stage two-state, ten-substep RK4 gradient compilation: 11.278 s with the
+array pass versus 11.833 s with it disabled, on busy la015. No runtime performance claim.
+
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/323. The new shared rules are in
+`~/.scaly-suite/RULES.md`: use the two-slot runner, REST reads, and one merge request with
+`gh pr merge 323 --squash --auto` after the verdict. Treat GraphQL limits as a wait.
+The raw cases now use 12 positions, above their region store counts. 150 generated no-trip
+expression graphs match the original pass exactly. Current focused result remains 37 passed.
