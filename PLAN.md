@@ -12,14 +12,17 @@ snapshot measurements. Work starts above the sparse stack at `248b2159`.
       and the generated-interface explanation. Verify regressions and perturb the fix.
       All 16 regressions failed before the fix and under a restored old predicate.
       The focused run passed all 48 CasADi, pointer-entry and C snapshot tests.
-- [ ] Refresh the test collection baseline, then run all merge checks.
-      The baseline is refreshed and types, lint and formatting passed. The full suite
-      was interrupted by the machine-wide out-of-memory kill, with no test failure
-      reported. Rerun detached under `~/.scaly-suite.lock` with eight workers.
-- [ ] After #289 merges, fetch and rebase onto main with
-      `git rebase --onto origin/main 248b2159`, then rerun checks.
+- [x] Refresh the test collection baseline, then run all merge checks.
+      Detached locked hook passed: 2951 tests passed, 52 skipped, smoke and docs passed.
+      Log: `/tmp/scaly-290-checks.eX6rW9/pre-merge-retry.log`, exit 0.
+- [x] After #289 merges, fetch and rebase onto main with
+      `git rebase --onto origin/main 248b2159`.
+- [ ] Rerun merge checks on the rebased branch, detached under the suite lock.
 - [ ] Push, open the pull request against main, link it, and obtain cross-review.
       Apply findings and run one delta check if needed.
+      Cross-review started before opening the pull request during the #289 wait.
+      Sol approved without findings, including eight extra combined-empty cases.
+      Opus review is pending. The rebase preserved every task patch unchanged.
 - [ ] Remove this temporary plan, record completion evidence, and queue with
       `gh pr merge --squash` once review and CI pass.
 
