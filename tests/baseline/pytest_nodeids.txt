@@ -155,6 +155,7 @@ tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs0-at least
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs1-together]
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs2-together]
 tests/ad/test_custom_derivative.py::test_residual_names_avoid_output_names
+tests/ad/test_custom_derivative.py::test_reverse_compaction_checks_each_callee_once
 tests/ad/test_custom_derivative.py::test_reverse_coordinate_maps_preserve_custom_cotangent_derivatives[direct-broadcast]
 tests/ad/test_custom_derivative.py::test_reverse_coordinate_maps_preserve_custom_cotangent_derivatives[direct-slice]
 tests/ad/test_custom_derivative.py::test_reverse_coordinate_maps_preserve_custom_cotangent_derivatives[mapped-broadcast]
@@ -1094,6 +1095,8 @@ tests/ad/test_sparsity.py::test_sparse_lagrangian_hessian_through_vmap_matches_u
 tests/ad/test_sparsity.py::test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap[lower]
 tests/ad/test_sparsity.py::test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap[upper]
 tests/ad/test_sparsity.py::test_sparse_lagrangian_hessian_uses_aux_output
+tests/ad/test_sparsity.py::test_sparsity_combines_many_parts_in_one_coordinate_batch[concat]
+tests/ad/test_sparsity.py::test_sparsity_combines_many_parts_in_one_coordinate_batch[stack]
 tests/ad/test_sparsity.py::test_sparsity_type_compressed_format_errors
 tests/ad/test_sparsity.py::test_sparsity_type_csr_csc_conversions
 tests/ad/test_sparsity.py::test_sparsity_type_roundtrip_and_bounds
@@ -1786,6 +1789,8 @@ tests/ir/test_expr.py::test_structural_equality_collapses_to_identity
 tests/ir/test_expr.py::test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees
 tests/ir/test_expr.py::test_substitute_rebuilds_changed_ancestors_and_preserves_sharing
 tests/ir/test_expr.py::test_substitute_rejects_incompatible_shape_or_dtype
+tests/ir/test_expr.py::test_uniform_constant_storage_does_not_depend_on_creation_order[False]
+tests/ir/test_expr.py::test_uniform_constant_storage_does_not_depend_on_creation_order[True]
 tests/ir/test_expr.py::test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys
 tests/ir/test_match.py::test_deep_program_chain_does_not_recurse
 tests/ir/test_match.py::test_expression_nodes_reject_caller_memo[False]
@@ -1879,6 +1884,7 @@ tests/ir/test_sparse_patterns.py::test_zero_preserving_unary_retains_pattern[sto
 tests/ir/test_sparse_patterns.py::test_zero_preserving_unary_retains_pattern[tan]
 tests/ir/test_sparse_patterns.py::test_zero_preserving_unary_retains_pattern[tanh]
 tests/ir/test_support.py::test_calls_use_callee_support_and_maps_tile_it
+tests/ir/test_support.py::test_compact_support_set_operations_and_sorted_coordinates
 tests/ir/test_support.py::test_default_support_is_sound_unknown[acos]
 tests/ir/test_support.py::test_default_support_is_sound_unknown[atan2]
 tests/ir/test_support.py::test_default_support_is_sound_unknown[cos]
@@ -1894,7 +1900,8 @@ tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[minimum]
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[mul]
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[sub]
-tests/ir/test_support.py::test_growing_support_caches_use_compact_immutable_coordinates
+tests/ir/test_support.py::test_growing_support_caches_use_compact_immutable_coordinates[2048]
+tests/ir/test_support.py::test_growing_support_caches_use_compact_immutable_coordinates[400]
 tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes0]
 tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes1]
 tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes2]
@@ -1903,6 +1910,8 @@ tests/ir/test_support.py::test_matmul_support_is_boolean_product[shapes4]
 tests/ir/test_support.py::test_randomized_support_soundness_against_numpy
 tests/ir/test_support.py::test_sparse_type_bounds_support_without_changing_stored_pattern
 tests/ir/test_support.py::test_static_coordinate_images_and_reduction
+tests/ir/test_support.py::test_support_combines_many_parts_in_one_coordinate_batch[concat]
+tests/ir/test_support.py::test_support_combines_many_parts_in_one_coordinate_batch[stack]
 tests/ir/test_support.py::test_support_is_lazy_cached_immutable_and_outside_identity
 tests/ir/test_support.py::test_support_uses_shared_zero_preserving_rules[abs]
 tests/ir/test_support.py::test_support_uses_shared_zero_preserving_rules[asin]
@@ -2164,6 +2173,7 @@ tests/passes/test_expr.py::test_simplify_keeps_hint_when_replacement_is_declared
 tests/passes/test_expr.py::test_simplify_preserves_conflicting_hint_precedence
 tests/passes/test_expr.py::test_simplify_revisits_new_children_in_one_bounded_walk
 tests/passes/test_expr.py::test_simplify_rewrites_algebraic_identities_and_folds_constants
+tests/passes/test_expr.py::test_small_constant_scatter_still_folds
 tests/passes/test_expr.py::test_uniform_sum_keeps_numpy_signed_zero[False]
 tests/passes/test_expr.py::test_uniform_sum_keeps_numpy_signed_zero[True]
 tests/passes/test_fold_tiles.py::test_integer_tile_preserves_large_values

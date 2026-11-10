@@ -10,7 +10,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, gather, scatter
 from ..ir.program import ProgramOp
-from ..ir.support import support_indices
+from ..ir.support import support_indices, project_entries
 from .sparsity import _prunable_support
 
 type Local = Expr | int | tuple[Expr | int, Expr]
@@ -181,11 +181,7 @@ def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...
     return cot.sum()
   if (support := _prunable_support(cot)) is not None and len(support) < cot.size:
     entries = support_indices(support)
-    coords = np.unravel_index(entries, out_shape)
-    padded = (1,) * (len(out_shape) - len(in_shape)) + in_shape
-    source = np.zeros(len(entries), dtype=np.int64)
-    for dim, coord in zip(padded, coords, strict=True):
-      source = source * dim + (0 if dim == 1 else coord)
+    source = project_entries(entries, in_shape, out_shape)
     return scatter(gather(cot, entries), source, in_shape)
   source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
   source = np.broadcast_to(source, out_shape).reshape(-1)

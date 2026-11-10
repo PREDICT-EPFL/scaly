@@ -16,7 +16,7 @@ def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> 
 
   shape = (100_000, 100_000)
   zero = zeros_like(sc.sym("uniform_large", shape, dtype=sc.dtypes.float32))
-  assert zero.type.dtype == sc.dtypes.float32
+  assert zero.type.dtype == sc.dtypes.float64
   assert zero.value is not None and zero.value.strides == (0, 0)
   assert not zero.value.flags.writeable and zero.support == frozenset()
   assert zero.structural_key() is zero.structural_key()
@@ -29,6 +29,18 @@ def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> 
   constant = sc.const(np.broadcast_to(source, shape))
   source[0] = 9
   assert constant.value is not None and constant.value[99_999, 99_999] == 7
+
+
+@pytest.mark.parametrize("dense_first", [False, True])
+def test_uniform_constant_storage_does_not_depend_on_creation_order(dense_first) -> None:
+  values = np.full(2048 + dense_first, 0.1)
+  view = np.broadcast_to(values[:1], values.shape)
+  first, second = (values, view) if dense_first else (view, values)
+  constant = sc.const(first)
+  assert constant is sc.const(second)
+  assert constant.value is not None and constant.value.strides == (0,)
+  assert constant.support is None
+  assert sc.simplify(constant.sum()).value == 0.1 * values.size
 
 
 @pytest.mark.parametrize("index", [(3, slice(None)), (-4, slice(None)), (slice(None), 0), (slice(None, None, 0), slice(None))])

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Set, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
 import numpy as np
 
-from .types import CanonicalPattern
+from .types import CanonicalPattern, _uniform_value
 
 if TYPE_CHECKING:
   from .expr import Expr, ExprOp, OpInfo
@@ -17,10 +17,12 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, slots=True, eq=False)
 class _SupportSet(Set[int]):
   _entries: np.ndarray
+  _hash_cache: int | None = field(default=None, init=False, repr=False, compare=False)
 
   def __init__(self, entries: np.ndarray):
     values = np.unique(np.asarray(entries, dtype=np.int64))
     object.__setattr__(self, "_entries", np.frombuffer(values.tobytes(), dtype=np.int64))
+    object.__setattr__(self, "_hash_cache", None)
 
   def __len__(self) -> int:
     return len(self._entries)
@@ -39,6 +41,12 @@ class _SupportSet(Set[int]):
       return bool(np.array_equal(self._entries, other._entries))
     return isinstance(other, Set) and len(self) == len(other) and all(i in other for i in self)
 
+  def __hash__(self) -> int:
+    if self._hash_cache is None:
+      object.__setattr__(self, "_hash_cache", hash(frozenset(self)))
+    assert self._hash_cache is not None
+    return self._hash_cache
+
   def __and__(self, other):
     return _make_support(np.intersect1d(self._entries, support_indices(other), assume_unique=True))
 
@@ -48,13 +56,17 @@ class _SupportSet(Set[int]):
   __rand__ = __and__
   __ror__ = __or__
 
+  @classmethod
+  def _from_iterable(cls, values):
+    return _make_support(np.fromiter(values, dtype=np.int64))
+
 
 type Support = frozenset[int] | _SupportSet | None
 
 
 def support_indices(support: frozenset[int] | _SupportSet) -> np.ndarray:
   """Read known support as a coordinate array without copying an existing compact cache."""
-  return support._entries if isinstance(support, _SupportSet) else np.fromiter(support, dtype=np.int64, count=len(support))
+  return support._entries if isinstance(support, _SupportSet) else np.sort(np.fromiter(support, dtype=np.int64, count=len(support)))
 
 
 def _make_support(entries: np.ndarray) -> frozenset[int] | _SupportSet:
@@ -111,12 +123,13 @@ def broadcast_support(node: Expr, shape: tuple[int, ...]) -> Support:
   support = node.support
   if support is None or node.shape == shape:
     return support
+  if len(support) == node.size and int(np.prod(shape, dtype=np.int64)) > 1024:
+    return None
   return _make_support(broadcast_entries(support_indices(support), node.shape, shape)[0])
 
 
-def _pattern(support: Support, shape: tuple[int, int]) -> CanonicalPattern:
-  entries = range(shape[0] * shape[1]) if support is None else support
-  return CanonicalPattern(shape, tuple(i // shape[1] for i in entries), tuple(i % shape[1] for i in entries))
+def _pattern(support: frozenset[int] | _SupportSet, shape: tuple[int, int]) -> CanonicalPattern:
+  return CanonicalPattern(shape, tuple(i // shape[1] for i in support), tuple(i % shape[1] for i in support))
 
 
 def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
@@ -125,20 +138,38 @@ def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
   if a is b or a == b:
     return a
   result = a & b if intersection else a | b
+  if isinstance(result, frozenset) and len(result) > 1024:
+    result = _make_support(support_indices(result))
   return a if result == a else b if result == b else result
 
 
 def _rule(node: Expr, op: str | None) -> Support:
   if op == "const":
     assert node.value is not None
-    if node.value.size and all(stride == 0 or dim <= 1 for stride, dim in zip(node.value.strides, node.shape, strict=True)):
-      return frozenset() if node.value.flat[0] == 0 else _make_support(np.arange(node.size)) if node.size <= 1024 else None
+    if (value := _uniform_value(node.value)) is not None:
+      return frozenset() if value == 0 else _make_support(np.arange(node.size)) if node.size <= 1024 else None
     return _entries(node.value != 0)
   if op == "preserve":
     return _cached(node.args[0])
-  if op in {"union", "intersection"}:
+  if op == "union":
     a, b = (broadcast_support(arg, node.shape) for arg in node.args)
-    return _combine(a, b, intersection=op == "intersection")
+    return _combine(a, b, intersection=False)
+  if op == "intersection":
+    a, b = node.args
+    sa, sb = _cached(a), _cached(b)
+    if sa is None or sb is None:
+      return broadcast_support(b if sa is None else a, node.shape)
+    if a.shape == b.shape:
+      return _combine(sa, sb, intersection=True)
+    cost_a = len(sa) * (node.size // a.size) if a.size else 0
+    cost_b = len(sb) * (node.size // b.size) if b.size else 0
+    if cost_b < cost_a:
+      a, b, sa, sb = b, a, sb, sa
+    entries = broadcast_entries(support_indices(sa), a.shape, node.shape)[0]
+    keep = np.isin(project_entries(entries, b.shape, node.shape), support_indices(sb))
+    if a.shape == node.shape and np.all(keep):
+      return sa
+    return _make_support(entries[keep])
   if op == "numerator":
     return broadcast_support(node.args[0], node.shape)
   if op == "sum":
@@ -163,7 +194,7 @@ def _rule(node: Expr, op: str | None) -> Support:
   if op in {"stack", "concat"}:
     if all(_cached(arg) is None for arg in node.args):
       return None
-    result = frozenset()
+    chunks = []
     offset = 0
     axis = node.attrs.get("axis", 0)
     for i, arg in enumerate(node.args):
@@ -175,8 +206,8 @@ def _rule(node: Expr, op: str | None) -> Support:
       else:
         coords[axis] = coords[axis] + offset
         offset += arg.shape[axis]
-      result = result | _make_support(np.ravel_multi_index(tuple(coords), node.shape))
-    return result
+      chunks.append(np.ravel_multi_index(tuple(coords), node.shape))
+    return _make_support(np.concatenate(chunks))
   if op == "matmul":
     x, y = node.args
     if x.shape[-1] == 0:
@@ -204,7 +235,8 @@ def _rule(node: Expr, op: str | None) -> Support:
     support = _cached(output)
     if op == "call" or support is None:
       return support
-    return frozenset(stage * output.size + i for stage in range(node.attrs["length"]) for i in support)
+    entries = np.arange(node.attrs["length"], dtype=np.int64)[:, None] * output.size + support_indices(support)
+    return _make_support(entries.reshape(-1))
   return None
 
 
@@ -271,3 +303,13 @@ def broadcast_entries(entries: np.ndarray, in_shape: tuple[int, ...], out_shape:
     else:
       output = output * large + coord[source]
   return output, source
+
+
+def project_entries(entries: np.ndarray, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> np.ndarray:
+  """Project result coordinates onto an operand's broadcast axes."""
+  coords = np.unravel_index(entries, out_shape) if out_shape else ()
+  padded = (1,) * (len(out_shape) - len(in_shape)) + in_shape
+  source = np.zeros(len(entries), dtype=np.int64)
+  for dim, coord in zip(padded, coords, strict=True):
+    source = source * dim + (0 if dim == 1 else coord)
+  return source

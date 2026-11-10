@@ -18,6 +18,29 @@ from scaly.ir.expr import ExprOp, topo
 from scaly.passes.lowering import lower_function
 
 
+def test_reverse_compaction_checks_each_callee_once(monkeypatch) -> None:
+  import scaly.ad.sparsity as analysis
+
+  @sc.function(sc.arg("x", 2))
+  def masked(x):
+    return x * sc.const([1.0, 0.0])
+
+  count = 0
+  original = analysis._declared
+
+  def declared(callee, output):
+    nonlocal count
+    count += 1
+    return original(callee, output)
+
+  monkeypatch.setattr(analysis, "_declared", declared)
+  cot = sc.sym("memoized_custom_reachability", 2)
+  for _ in range(300):
+    cot = masked(cot)
+    assert analysis._prunable_support(cot) == frozenset({0})
+  assert count <= 301
+
+
 @pytest.mark.parametrize("mapping", ["slice", "broadcast"])
 @pytest.mark.parametrize("wrapper", ["direct", "nested", "mapped"])
 def test_reverse_coordinate_maps_preserve_custom_cotangent_derivatives(mapping, wrapper) -> None:

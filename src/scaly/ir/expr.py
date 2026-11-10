@@ -21,7 +21,7 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 import numpy as np
 
 from .support import Support, compute_support
-from .types import CanonicalPattern, DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes, frozen
+from .types import CanonicalPattern, DType, Lowering, TensorType, _array_data, as_dtype, as_shape, broadcast_shape, dtypes, frozen
 
 
 class ExprOp(StrEnum):
@@ -291,6 +291,7 @@ class Expr:
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
   _value_key: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
   _support_cache: tuple[Support] | None = field(default=None, init=False, repr=False, compare=False)
+  _custom_derivative_cache: bool | None = field(default=None, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
 
@@ -318,6 +319,11 @@ class Expr:
     if type_eff.pattern is not None or any(arg.type.pattern is not None for arg in args):
       check_stored_pattern(op, args, type_eff)
     attrs_eff = attrs if attrs is not None else {}
+    if value is not None:
+      data = _array_data(value)
+      bits = data.view(np.dtype(f"u{value.dtype.itemsize}"))
+      if bits.size and np.all(bits == bits.flat[0]):
+        value = np.broadcast_to(data.flat[:1].reshape(()), value.shape)
     key = _intern_key(op, args, type_eff, name, value, attrs_eff, lowering)
     cached = _NODE_CACHE.get(key)
     if cached is not None:
@@ -334,6 +340,7 @@ class Expr:
     put(instance, "_key_cache", None)
     put(instance, "_value_key", key[4])
     put(instance, "_support_cache", None)
+    put(instance, "_custom_derivative_cache", None)
     _NODE_CACHE[key] = instance
     return instance
 
@@ -603,7 +610,7 @@ class Expr:
 
 
 def _array_key(value: np.ndarray) -> tuple[Any, ...]:
-  compact = value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in value.strides)] if value.ndim else value
+  compact = _array_data(value)
   bits = compact.view(np.dtype(f"u{value.dtype.itemsize}"))
   if bits.size and np.all(bits == bits.flat[0]):
     return (value.shape, value.dtype.str, bits.flat[0].tobytes())
@@ -1008,7 +1015,7 @@ def vec(x: Any) -> Expr:
 
 
 def zeros_like(x: Expr) -> Expr:
-  return _uniform(0, x.shape, dtype=x.type.dtype, lowering=x.lowering)
+  return _uniform(0, x.shape, lowering=x.lowering)
 
 
 def format_expr(outputs: Expr | Iterable[Expr]) -> str:

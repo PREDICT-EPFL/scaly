@@ -13,7 +13,7 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp
-from ..ir.support import Support, broadcast_support, broadcast_entries, transpose_entries, slice_entries, support_indices
+from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries
 from ..ir.types import SparsityPattern, broadcast_shape
 
 
@@ -47,18 +47,28 @@ def _prunable_support(expr: Expr) -> Support:
   support = expr.support
   if support is None or len(support) == expr.size:
     return support
-  pending, seen = [expr], set()
+  pending = [(expr, False)]
   while pending:
-    node = pending.pop()
-    if node.id in seen or node.op == ExprOp.STOP_GRADIENT:
+    node, visited = pending.pop()
+    if node._custom_derivative_cache is not None:
       continue
-    seen.add(node.id)
-    pending.extend(node.args)
+    if node.op == ExprOp.STOP_GRADIENT:
+      object.__setattr__(node, "_custom_derivative_cache", False)
+      continue
+    children = node.args
     if node.op in {ExprOp.CALL, ExprOp.VMAP}:
       callee, output = node.attrs["callee"], node.attrs["output"]
-      if _declared(callee, output):
-        return None
-      pending.append(callee.results[output])
+      if not visited and _declared(callee, output):
+        object.__setattr__(node, "_custom_derivative_cache", True)
+        continue
+      children = (*children, callee.results[output])
+    if visited:
+      object.__setattr__(node, "_custom_derivative_cache", any(child._custom_derivative_cache for child in children))
+    else:
+      pending.append((node, True))
+      pending.extend((child, False) for child in children if child._custom_derivative_cache is None)
+  if expr._custom_derivative_cache:
+    return None
   return support
 
 
@@ -184,13 +194,11 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op in COMMON_ELEMENTWISE_BINARY:
     x, y = expr.args
-    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape)
-    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape)
     rule = OP_INFO[ExprOp(expr.op)]
-    if rule.pattern_rule == "intersection":
-      xm = _supported_rows(xm, broadcast_support(y, expr.shape))
-    if rule.pattern_rule == "intersection" or rule.support_rule == "numerator":
-      ym = _supported_rows(ym, broadcast_support(x, expr.shape))
+    xs = x if rule.pattern_rule == "intersection" or rule.support_rule == "numerator" else None
+    ys = y if rule.pattern_rule == "intersection" else None
+    xm = _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape, ys)
+    ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape, xs)
     return _or(xm, ym)
   if expr.op == ExprOp.SUM:
     child = _jac_mask(expr.args[0], wrt, memo)
@@ -228,12 +236,32 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
 
 
-def _broadcast_mask(mask: sparse.coo_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> sparse.coo_array:
-  if in_shape == out_shape:
-    return mask
+def _broadcast_mask(
+  mask: sparse.coo_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...], coefficient: Expr | None = None
+) -> sparse.coo_array:
+  shape = (int(np.prod(out_shape, dtype=np.int64)), mask.shape[1])
+  if not mask.nnz:
+    return _empty(shape)
+  support = coefficient.support if coefficient is not None else None
+  if coefficient is not None and support is not None and len(support) == coefficient.size:
+    support = None
+  if in_shape == out_shape and (support is None or coefficient is not None and coefficient.shape == out_shape):
+    return _supported_rows(mask, support)
   _ = broadcast_shape(in_shape, out_shape)
-  rows, source = broadcast_entries(mask.row, in_shape, out_shape)
-  return _incidence((int(np.prod(out_shape, dtype=np.int64)), mask.shape[1]), rows, mask.col[source])
+  if coefficient is not None and support is not None:
+    if not len(support):
+      return _empty(shape)
+    bound_cost = len(support) * (shape[0] // coefficient.size)
+    mask_cost = mask.nnz * (shape[0] // int(np.prod(in_shape, dtype=np.int64)))
+    if bound_cost < mask_cost:
+      rows = broadcast_entries(support_indices(support), coefficient.shape, out_shape)[0]
+      source = project_entries(rows, in_shape, out_shape)
+      return _compose(_incidence((shape[0], mask.shape[0]), rows, source), mask)
+  rows, source = (mask.row, np.arange(mask.nnz)) if in_shape == out_shape else broadcast_entries(mask.row, in_shape, out_shape)
+  if coefficient is not None and support is not None:
+    keep = np.isin(project_entries(rows, coefficient.shape, out_shape), support_indices(support))
+    rows, source = rows[keep], source[keep]
+  return _incidence(shape, rows, mask.col[source])
 
 
 def _stack_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:
@@ -245,7 +273,7 @@ def _concat_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_a
 
 
 def _combine_children(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array], *, stack: bool) -> sparse.coo_array:
-  result = _empty((expr.size, wrt.size))
+  rows, cols = [], []
   offset = 0
   axis = expr.attrs.get("axis", 0)
   for i, arg in enumerate(expr.args):
@@ -256,8 +284,9 @@ def _combine_children(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.
     else:
       coords[axis] = coords[axis] + offset
       offset += arg.shape[axis]
-    result = _or(result, _incidence(result.shape, np.ravel_multi_index(tuple(coords), expr.shape), mask.col))
-  return result
+    rows.append(np.ravel_multi_index(tuple(coords), expr.shape))
+    cols.append(mask.col)
+  return _incidence((expr.size, wrt.size), np.concatenate(rows), np.concatenate(cols))
 
 
 def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_array]) -> sparse.coo_array:

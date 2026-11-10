@@ -98,7 +98,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
 
 
 def _ones_like(expr: Expr) -> Expr:
-  return _uniform(1, expr.shape, dtype=expr.type.dtype, lowering=expr.lowering)
+  return _uniform(1, expr.shape, lowering=expr.lowering)
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:

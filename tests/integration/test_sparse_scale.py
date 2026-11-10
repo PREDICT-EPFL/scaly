@@ -77,11 +77,36 @@ def _workload(n: int, entries: int) -> None:
   row_adjoint = vjp((row + zero,), (row,), (matrix,))[0]
   source = sc.sym("scale_slice", (n, n))
   slice_adjoint = vjp((source[:, ::2],), (source,), (moved,))[0]
-  outputs = (matrix, tangent, moved, product, adjoint, zero, jac.values, row_adjoint, slice_adjoint)
+  p = sc.sym("scale_parameter")
+  scaled = matrix * 2.0
+  symbolic = matrix * p
+  assert scaled.support == matrix.support
+  assert (matrix + 1.0).support is None
+  assert jacobian_sparsity(scaled, x).nnz == entries
+  assert jacobian_sparsity(symbolic, p).nnz == entries
+  scalar_tangent = simplify_cse_fixpoint(jvp(symbolic, p, sc.const(1.0)))
+  assert scalar_tangent.support == matrix.support
+  masked = matrix * sc.const(np.arange(n, dtype=float) % 2)
+  assert jacobian_sparsity(masked, x).nnz == entries // 2
+  outputs = (matrix, tangent, moved, product, adjoint, zero, jac.values, row_adjoint, slice_adjoint, scaled, symbolic, scalar_tangent, masked)
   for output in outputs:
     verify_expr(output)
-  names = ["matrix", "tangent", "moved", "product", "adjoint", "zero", "jac", "row_adj", "slice_adj"]
-  fn = ConcreteFunction._from_exprs("sparse_scale", [x], outputs, ["x"], names)
+  names = [
+    "matrix",
+    "tangent",
+    "moved",
+    "product",
+    "adjoint",
+    "zero",
+    "jac",
+    "row_adj",
+    "slice_adj",
+    "scaled",
+    "symbolic",
+    "scalar_tangent",
+    "masked",
+  ]
+  fn = ConcreteFunction._from_exprs("sparse_scale", [x, p], outputs, ["x", "p"], names)
   program = lower_function(fn)
   assert program
 

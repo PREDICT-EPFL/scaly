@@ -13,6 +13,7 @@ import numpy as np
 from ..ad.rules import ELEMENTWISE
 from ..ir.expr import Expr, ExprOp, _attrs_key, _uniform, matmul, stack, topo
 from ..ir.match import Pattern, _replace_args, rewrite
+from ..ir.types import _uniform_value
 from .arith import ARITH_EXPR, fold
 
 
@@ -97,7 +98,7 @@ def _constant_fold(e: Expr) -> Expr:
   args = [v for v in vals if v is not None]
   try:
     with np.errstate(divide="raise", invalid="raise", over="raise"):
-      uniform = all(v.size and all(stride == 0 or dim <= 1 for stride, dim in zip(v.strides, v.shape, strict=True)) for v in args)
+      uniform = all(_uniform_value(v) is not None for v in args)
       if uniform and e.op in ELEMENTWISE:
         out = ELEMENTWISE[e.op].numpy(*(v.flat[0] for v in args))
         return _uniform(out, e.shape, dtype=e.type.dtype, lowering=e.lowering)
@@ -118,7 +119,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     indices = e.attrs["indices"]
     out = args[0][np.unravel_index(indices, args[0].shape)] if args[0].ndim else np.broadcast_to(args[0], indices.shape)
   elif e.op == ExprOp.SCATTER:
-    if e.size > e.args[0].size:
+    if e.size > max(1024, e.args[0].size):
       return None
     out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
     indices = e.attrs["indices"].reshape(-1)
@@ -133,7 +134,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = np.concatenate(args, axis=e.attrs.get("axis", 0))
   elif e.op == ExprOp.SUM:
     value = args[0]
-    if value.size > 1024 and all(stride == 0 or dim <= 1 for stride, dim in zip(value.strides, value.shape, strict=True)):
+    if value.size > 1024 and _uniform_value(value) is not None:
       out = np.asarray(np.sum(value.flat[:1]) * value.size, dtype=e.type.dtype.numpy())
     else:
       out = np.asarray(np.sum(value), dtype=np.float64)
@@ -156,7 +157,7 @@ def _is_zero(e: Expr) -> bool:
 
 def _is_one(e: Expr) -> bool:
   value = _const_value(e)
-  return value is not None and bool(np.all(value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in value.strides)] == 1))
+  return value is not None and _uniform_value(value) == 1
 
 
 def _arith(e: Expr) -> Expr:

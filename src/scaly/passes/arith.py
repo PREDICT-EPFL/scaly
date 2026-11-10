@@ -7,12 +7,10 @@ import operator
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, cast
 
-import numpy as np
-
 from ..ir import program as p
 from ..ir.expr import Expr, ExprOp, _uniform
 from ..ir.program import ProgramNode, ProgramOp
-from ..ir.types import DType
+from ..ir.types import DType, _uniform_value
 
 _KINDS = frozenset({"add", "sub", "mul", "div", "neg", "pow"})
 
@@ -122,8 +120,8 @@ def fold[Node: _HasArgs](d: Arith[Node], node: Node) -> Node:
 def _expr_const(e: Expr) -> int | float | None:
   if e.op != ExprOp.CONST or e.value is None or e.value.size == 0:
     return None
-  first = e.value.reshape(-1)[0]
-  return first.item() if bool(np.all(e.value[tuple(slice(0, 1) if stride == 0 else slice(None) for stride in e.value.strides)] == first)) else None
+  value = _uniform_value(e.value)
+  return value.item() if value is not None else None
 
 
 def _expr_full(value: int | float, like: Expr) -> Expr:

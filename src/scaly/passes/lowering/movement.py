@@ -5,6 +5,7 @@ from __future__ import annotations
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode
+from ...ir.types import _uniform_value
 from .ctx import LowerCtx, lowers, _flat_coordinates, _shift, _shape_or_scalar, _stride
 
 
@@ -18,7 +19,8 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
 def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   value = node.value
   assert value is not None
-  uniform = node.size > 1024 and all(stride == 0 or dim <= 1 for stride, dim in zip(value.strides, value.shape, strict=True))
+  # CONST outputs never alias output buffers. emit_outputs copies the table or filled private buffer.
+  uniform = node.size > 1024 and _uniform_value(value) is not None
   name = ctx.names.allocate(f"k{ctx._tmp}", generated=True)
   ctx._tmp += 1
   shape = (1,) if uniform else _shape_or_scalar(node.shape)
