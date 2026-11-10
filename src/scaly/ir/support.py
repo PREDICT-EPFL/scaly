@@ -78,6 +78,8 @@ _SPECIALIZATION_LIMIT = 32
 
 def compute_support(root: Expr, rules: Mapping[ExprOp, OpInfo]) -> Support:
   """Compute and cache support without recursing through operands or callees."""
+  if root._support_cache is not None:
+    return root._support_cache[0]
   _run_support(_walk_support((root,), rules, None), rules)
   return _cached(root)
 
@@ -109,11 +111,16 @@ def _run_support(walk, rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Suppo
       pending.append(_walk_support(callee.results, rules, None))
       result = None
     else:
-      context = {formal: _bound_support(formal, support) for formal, support in zip(callee.inputs, arguments, strict=True)}
-      cache[arguments] = context
-      pending.append(_walk_support(callee.results, rules, context))
+      pending.append(_specialized_support(callee, arguments, rules))
       result = None
   assert result is not None
+  return result
+
+
+def _specialized_support(callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo]):
+  context = {formal: _bound_support(formal, support) for formal, support in zip(callee.inputs, arguments, strict=True)}
+  result = yield from _walk_support(callee.results, rules, context)
+  callee._memo.supports[arguments] = context
   return result
 
 
@@ -123,6 +130,10 @@ def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context
   while stack:
     node, visited = stack.pop()
     if (context is None and node._support_cache is not None) or (context is not None and node in context):
+      continue
+    if context is not None and not node.args:
+      yield from _walk_support((node,), rules, None)
+      context[node] = _cached(node)
       continue
     info = rules[cast("ExprOp", node.op)]
     rule = info.pattern_rule or info.support_rule

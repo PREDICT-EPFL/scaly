@@ -79,7 +79,7 @@ def test_growing_support_caches_use_compact_immutable_coordinates(width) -> None
   assert (sums[-1] + sums[-1]).support is sums[-1].support
 
 
-def test_support_is_lazy_cached_immutable_and_outside_identity() -> None:
+def test_support_is_lazy_cached_immutable_and_outside_identity(monkeypatch) -> None:
   x = sc.sym("support_cache", 3)
   expr = x * sc.const([0, 1, 0])
   key = expr.structural_key()
@@ -91,6 +91,13 @@ def test_support_is_lazy_cached_immutable_and_outside_identity() -> None:
   assert isinstance(support, frozenset)
   assert x.support is None
   assert sc.const([0, np.nan, 2, -0.0]).support == frozenset({1, 2})
+  import scaly.ir.support as support_module
+
+  def no_walk(*args):
+    pytest.fail("a cached root must not start a support walk")
+
+  monkeypatch.setattr(support_module, "_run_support", no_walk)
+  assert expr.support is support
 
 
 def test_support_walk_is_iterative_through_shared_graphs_and_callees() -> None:
@@ -220,6 +227,38 @@ def test_call_support_specializations_are_bounded_and_keep_cached_patterns() -> 
   assert callee(actuals[0]).support == frozenset({0})
   assert callee(_masked("support_bound_reused", np.arange(width) == 0)).support == frozenset({0})
   assert len(callee._memo.supports) == _SPECIALIZATION_LIMIT
+
+
+def test_interrupted_call_support_does_not_publish_an_incomplete_cache(monkeypatch) -> None:
+  import scaly.ir.support as support
+
+  x = sc.sym("support_interrupt_formal", 3)
+  callee = ConcreteFunction._from_exprs("support_interrupt", [x], [(x.sin() + 1).cos() * x], ["x"], ["y"])
+  actual = _masked("support_interrupt_actual", [0, 1, 0])
+  original = support._rule
+
+  def interrupt(node, op, support_of):
+    if node.op == ExprOp.COS:
+      raise KeyboardInterrupt
+    return original(node, op, support_of)
+
+  with monkeypatch.context() as patch:
+    patch.setattr(support, "_rule", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+      callee(actual).support
+  assert not callee._memo.supports
+  assert callee(actual).support == frozenset({1})
+
+
+def test_specializations_share_argument_independent_leaf_supports() -> None:
+  x = sc.sym("support_constant_formal", (40, 40))
+  constant = sc.const(np.arange(1600, dtype=np.float64).reshape(40, 40))
+  callee = ConcreteFunction._from_exprs("support_shared_constant", [x], [x * constant], ["x"], ["y"])
+  for i in range(4):
+    actual = _masked(f"support_shared_constant_{i}", (np.arange(1600) == i).reshape(40, 40))
+    assert callee(actual).support == (frozenset() if i == 0 else frozenset({i}))
+  assert len(callee._memo.supports) == 4
+  assert all(context[constant] is constant.support for context in callee._memo.supports.values())
 
 
 @pytest.mark.parametrize("start,stride", [(0, 3), (2, 2), (1, 0)])
