@@ -54,3 +54,10 @@ regressions. All 96 C/header comparisons, including sparse no-select gradients a
 Hessians, are byte-identical. The narrow correctness delta check approved both fixes, with all 26 select tests
 passing. Its thread is settled. The required Opus review is still running. Keep
 all review fixes together for the next push; nothing new has been pushed yet.
+
+Opus found a broadcast cotangent shrinking when _mask_of treated a smaller chosen
+branch as a full mask. Restored its original shape guard and added a failing-then-passing
+compiled regression. Documented custom reverse rules needing finite results at zero
+cotangents. Removed the unneeded floating argument filter and stopped differentiation
+of mapped condition arguments. Documented the pre-existing callee-local mapped select
+gap and filed it as #364, outside this task. All 27 select tests and 96 C comparisons pass.

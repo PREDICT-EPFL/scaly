@@ -352,6 +352,20 @@ def test_called_masks_preserve_broadcast_shapes_in_a_second_reverse_derivative(m
   np.testing.assert_array_equal(second(np.array([0.0])), [0.0])
 
 
+def test_a_broadcast_cotangent_keeps_the_output_shape() -> None:
+  x, p = sc.sym("x", 3), sc.sym("p")
+  (adjoint,) = sc.vjp((x + 1.0,), (x,), (sc.where(p > 0.0, 2.0 * p, np.zeros(3)),))
+  assert adjoint.shape == (3,)
+
+  @sc.function(sc.arg("x", 3), sc.arg("p", ()), outputs=sc.arg("g", 3), name="sd_broadcast_cot")
+  def derivatives(x: sc.Expr, p: sc.Expr) -> sc.Expr:
+    (grad,) = sc.vjp((x + 1.0,), (x,), (sc.where(p > 0.0, 2.0 * p, np.zeros(3)),))
+    return grad
+
+  np.testing.assert_array_equal(derivatives(np.ones(3), np.array(1.5)), np.full(3, 3.0))
+  np.testing.assert_array_equal(derivatives(np.ones(3), np.array(-1.5)), np.zeros(3))
+
+
 def test_reverse_mode_refuses_an_integer_or_bool_output() -> None:
   x = sc.sym("x", 3)
   for value in (sc.cast(x, "int64")[0], (x > 0.0)[0]):

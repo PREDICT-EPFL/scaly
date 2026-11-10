@@ -9,7 +9,23 @@ from scipy.sparse import csr_array
 
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, as_expr, cast as cast_expr, concat, gather, pack, scatter, stack, substitute, topo, values, where, zeros_like
+from ..ir.expr import (
+  Expr,
+  ExprOp,
+  as_expr,
+  cast as cast_expr,
+  concat,
+  gather,
+  pack,
+  scatter,
+  stack,
+  stop_gradient,
+  substitute,
+  topo,
+  values,
+  where,
+  zeros_like,
+)
 from ..ir.types import TensorType, dtypes
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
@@ -428,7 +444,7 @@ def _vmap_adj_function(
     lam = _tangent_symbol(lam_name, callee.outputs[output_index])
     mask_name = f"mask:{callee.output_names[output_index]}"
     # Helper leaves are float64 until typed lowering lands; the condition travels as nondifferentiable 0/1 values.
-    mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype, diff=False), name=mask_name) if masked else None
+    mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype), name=mask_name) if masked else None
     seed = lam if mask is None else _masked_seed(lam, cast_expr(mask, dtypes.bool_))
     grads = body_cotangents(callee, output_index, active_formals, seed, pullback)
     parts = [values(grad).vec() for grad in grads]
@@ -464,11 +480,7 @@ def _vmap_vjp(
   starts = vmap_expr.attrs["starts"]
   strides = vmap_expr.attrs["strides"]
   slice_size = vmap_expr.attrs["slice_size"]
-  active_formals = tuple(
-    k
-    for k, arg in enumerate(vmap_expr.args)
-    if arg.type.dtype.is_floating and any(_depends_on(arg, wrt, dep_memo, through_stops=False) for wrt in wrts)
-  )
+  active_formals = tuple(k for k, arg in enumerate(vmap_expr.args) if any(_depends_on(arg, wrt, dep_memo, through_stops=False) for wrt in wrts))
   if not active_formals:
     return []
 
@@ -477,7 +489,9 @@ def _vmap_vjp(
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
   seed_specs = [(cot, 0, slice_size)]
   if mask is not None:
-    seed_specs.append((cast_expr(mask | Expr.const(np.zeros(cot.shape, dtype=bool), dtype=dtypes.bool_), cot.type.dtype), 0, slice_size))
+    seed_specs.append(
+      (stop_gradient(cast_expr(mask | Expr.const(np.zeros(cot.shape, dtype=bool), dtype=dtypes.bool_), cot.type.dtype)), 0, slice_size)
+    )
   mapped = _mapped_call(adj_fn, length, [*primal_specs, *seed_specs])
   adj_size = sum(callee.inputs[k].type.storage_size for k in active_formals)
   result_size = adj_size * (2 if mask is not None else 1)

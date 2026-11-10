@@ -1192,6 +1192,8 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
   branches, so a branch may be NaN or infinite where it is not chosen, and the derivative ignores
   the branch not chosen too: ``where(x > 0, sqrt(x), 0)`` has derivative zero at ``x = 0``,
   including when a ``Function`` or ``vmap`` computes the square root. The condition has no derivative.
+  Custom reverse rules receive zero cotangents on unchosen entries and must return finite results
+  there. A select inside a mapped ``Function`` does not suppress undefined derivatives in the map's arguments.
   """
   condition = _condition(condition)
   x, y = _operands(x, y)

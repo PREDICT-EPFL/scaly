@@ -280,6 +280,15 @@ The condition has no derivative, and neither has any comparison.
 The same holds when a `Function` or `sc.vmap` computes the branch. With `root`
 a `Function` returning `sqrt`, `sc.where(x > 0, root(x), 0.0).sum()` has
 gradient `[0.0, 0.25]` at `x = [0.0, 4.0]`.
+Custom reverse rules receive zero cotangents for entries the select does not
+choose and must return finite results there.
+
+!!! warning "A select inside a mapped function"
+    Reverse mode does not carry a condition from inside a mapped `Function`
+    back through operations on the map's arguments. Mapping a function that
+    returns `sc.where(u > 0.0, u, 0.0)` over `x.sqrt()` can therefore leave a
+    NaN gradient at `x = 0`. Apply `sc.where` outside the map to guard those
+    earlier operations.
 
 ### Supported array operations
 
