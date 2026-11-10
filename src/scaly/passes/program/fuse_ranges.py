@@ -376,7 +376,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       if len(target.args) != 1:
         return proc
       output_indices = _indices(target.args[0], variables, constants, count)
-      if output_indices is None or len(np.unique(output_indices)) != count:
+      if output_indices is None or np.any(np.diff(np.sort(output_indices)) == 0):
         return proc
       if dest not in cells:
         size = prod(declarations[dest].attrs["shape"])
