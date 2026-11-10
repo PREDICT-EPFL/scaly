@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from math import prod
 
 import numpy as np
 
@@ -26,6 +25,7 @@ from ._common import (
   trip_count,
 )
 from .scheduling import ScalarNameAllocator, schedule_values
+from .fuse_elementwise import _has_expensive
 
 
 @dataclass(frozen=True)
@@ -190,13 +190,12 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   region = set(seeds)
   produced = set().union(*(buffer_refs(stmt).writes for stmt in seeds.values()))
   private = {stmt.attrs["name"] for stmt in body if stmt.op == ProgramOp.BUFFER and stmt.attrs.get("address_space") == "private"}
-  mapped_trips = max(trip_count(seed.args[0]) or 0 for seed in seeds.values())
   while True:
     consumed = set().union(*(refs[i].reads for i in region)) & private
     upstream = {
       i
       for i, ref in enumerate(refs)
-      if ref.writes & consumed and (parsed := _loops(body[i])) is not None and prod(trip_count(rng) or 0 for rng in parsed[0]) >= mapped_trips
+      if ref.writes & consumed and _loops(body[i]) is not None and (ref.writes & produced or not _has_expensive(body[i]))
     }
     consumers = {i for i, ref in enumerate(refs) if ref.reads & produced and body[i].op != ProgramOp.BUFFER}
     extra = (consumers | upstream) - region
