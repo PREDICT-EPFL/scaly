@@ -61,3 +61,7 @@ Evidence so far:
   runs outside Codex's process tree as the transient systemd user service
   scaly-163-pre-merge.service, still with two workers and the same final log/exit paths. Check
   systemctl --user show scaly-163-pre-merge.service before restarting it.
+- The systemd run passed lint, formatting, types, and the final full suite: 2606 passed,
+  52 skipped. Benchmark smoke has passed its four problem-oracle checks and is still running
+  the remaining cells. Draft PR and cross-review can proceed with the review prerequisites
+  green; the remaining hooks must finish before the PR is ready to queue.
