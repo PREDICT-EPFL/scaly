@@ -13,8 +13,11 @@ without changing patterns, dense text, generated C, or public interfaces.
       shared across printers. No pattern or type semantics change.
 - [x] Run focused tests and perturb the formatter to prove the tests fail.
       137 tests passed. Erasing the suffix caused the nine sparse checks to fail again.
-- [ ] Run pre-merge checks through `~/.scaly-suite/run`, detached. Final-candidate logs are
+- [x] Run pre-merge checks through `~/.scaly-suite/run`, detached. Final-candidate logs are
       `/tmp/scaly-302.YMUXBc/premerge-main.log` and `.exit`.
+      Exit 0: strict types, Ruff format/lint, 2,945 passed with 52 optional skips, benchmark smoke,
+      documentation build without issues and the private-name check. The suite includes C
+      snapshots, import boundaries/layers, README and standalone examples.
       The original unbounded run was killed during memory exhaustion. One detached attempt was
       terminated while waiting for the old lock. Its retry was deliberately stopped when #289
       merged so the rebased candidate can be checked. Neither is a full-suite result.
