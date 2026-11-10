@@ -237,7 +237,22 @@ def test_float32_reduction_derivative_paths() -> None:
 
 @pytest.mark.parametrize(
   "case",
-  ["sum", "dot", "matvec", "vecmat", "matmat", "self_dot", "self_matmul", "print", "print_repeated", "unreached", "call", "mapped", "broadcast"],
+  [
+    "sum",
+    "dot",
+    "matvec",
+    "vecmat",
+    "matmat",
+    "self_dot",
+    "self_matmul",
+    "print",
+    "print_repeated",
+    "unreached",
+    "call",
+    "mapped",
+    "broadcast",
+    "custom",
+  ],
 )
 @pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp", "gradient", "jacobian", "hessian"])
 def test_float32_structural_derivatives_stay_float32(case, mode):
@@ -248,6 +263,22 @@ def test_float32_structural_derivatives_stay_float32(case, mode):
     first = x * x
     other = first if case == "print_repeated" else y * y
     out = sc.Expr(sc.ExprOp.PRINT, (first, other), first.type, attrs={"format": "{} {}"}).sum()
+  elif case == "custom":
+
+    @sc.function(sc.arg("structural_custom_x", sc.TensorType(x.shape, dtype=f32)))
+    def body(value):
+      return value.sin(), value * value
+
+    @sc.function(sc.arg("structural_custom_x", sc.TensorType(x.shape, dtype=f32)))
+    def forward(value):
+      return (value.sin(), value * value), value
+
+    @sc.function()
+    def backward(value, cotangents):
+      sine_cot, square_cot = cotangents
+      return sine_cot * value.cos() + 2 * square_cot * value
+
+    out = sc.custom_derivative(body, fwd=forward, bwd=backward)(x)[0].sum()
   elif case in {"call", "mapped", "broadcast"}:
 
     @sc.function(sc.arg("structural_body_x", sc.TensorType((2,), dtype=f32)), outputs=sc.arg("y"), name="structural_body")
@@ -275,9 +306,15 @@ def test_float32_structural_derivatives_stay_float32(case, mode):
       "jacobian": lambda: sc.jacobian(out, wrt),
       "hessian": lambda: sc.hessian(out, wrt),
     }[mode]()
-    nodes = topo((derivative,))
-    assert {node.type.dtype for node in nodes if node.type.dtype.is_floating} == {f32}
-    assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None)
+    pending, seen = [derivative], set()
+    while pending:
+      nodes = topo((pending.pop(),))
+      assert {node.type.dtype for node in nodes if node.type.dtype.is_floating} == {f32}
+      assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None)
+      for node in nodes:
+        if node.op in {sc.ExprOp.CALL, sc.ExprOp.VMAP} and (callee := node.attrs["callee"]) not in seen:
+          seen.add(callee)
+          pending.extend(callee.results)
 
 
 @pytest.mark.parametrize("case", ["sum", "self_dot", "print"])
