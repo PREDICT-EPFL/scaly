@@ -19,16 +19,16 @@ from ..ir.types import SparsityPattern
 from .concrete import ConcreteFunction, CustomRules
 from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from .model import Function, _traced, derived_name, lift
-from .tree import Array, Tree, _G, append_parameter, arg, parameter_list
+from .tree import Array, NumericalArray, Tree, _G, append_parameter, arg, parameter_list
 
 
 class _InferredOutputs[NI, *Ss](Protocol):
   """What ``@function(...)`` without ``outputs=`` returns. The symbolic output type is the body's;
-  the numerical one is ``Array`` for an ``Expr`` body and ``Any`` otherwise, since no map from one
+  the numerical one is ``NumericalArray`` for an ``Expr`` body and ``Any`` otherwise, since no map from one
   to the other exists (README, "Why a wrapper class exists")."""
 
   @overload
-  def __call__(self, fn: Callable[[*Ss], Expr], /) -> Function[tuple[*Ss], NI, Expr, Array]: ...
+  def __call__(self, fn: Callable[[*Ss], Expr], /) -> Function[tuple[*Ss], NI, Expr, NumericalArray]: ...
   @overload
   def __call__[SO](self, fn: Callable[[*Ss], SO], /) -> Function[tuple[*Ss], NI, SO, Any]: ...
 
@@ -37,7 +37,7 @@ class _Bare(Protocol):
   """What ``@function()`` returns. A body without parameters counts as fully declared."""
 
   @overload
-  def __call__(self, fn: Callable[[], Expr], /) -> Function[tuple[()], tuple[()], Expr, Array]: ...
+  def __call__(self, fn: Callable[[], Expr], /) -> Function[tuple[()], tuple[()], Expr, NumericalArray]: ...
   @overload
   def __call__[SO](self, fn: Callable[[], SO], /) -> Function[tuple[()], tuple[()], SO, Any]: ...
   @overload

@@ -16,6 +16,8 @@ drop this coverage. The benchmark keeps its own formulation gates in
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pytest
 
@@ -72,7 +74,8 @@ def stage_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
 
 
 def _inputs_tree(horizon: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
-  return sc.group(sc.arg("z", NZ * (horizon + 1)), sc.arg("p", sc.TensorType((n_param(horizon),), diff=False)))
+  p = cast(Tree[sc.Expr, np.ndarray], sc.arg("p", sc.TensorType((n_param(horizon),), diff=False)))
+  return sc.group(sc.arg("z", NZ * (horizon + 1)), p)
 
 
 def bicycle_eq_function(horizon: int) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:

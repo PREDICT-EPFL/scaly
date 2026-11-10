@@ -10,6 +10,8 @@ formulation, so nothing here depends on a trained checkpoint or on a solver plug
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pytest
 
@@ -64,7 +66,8 @@ def n_dec(stages: int) -> int:
 
 
 def _inputs_tree(stages: int) -> Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]]:
-  return sc.group(sc.arg("z", n_dec(stages)), sc.arg("p", sc.TensorType((N_PW,), diff=False)))
+  p = cast(Tree[sc.Expr, np.ndarray], sc.arg("p", sc.TensorType((N_PW,), diff=False)))
+  return sc.group(sc.arg("z", n_dec(stages)), p)
 
 
 def _cost_stage() -> sc.Function[tuple[tuple[sc.Expr, sc.Expr, sc.Expr]], tuple[tuple[np.ndarray, np.ndarray, np.ndarray]], sc.Expr, np.ndarray]:
