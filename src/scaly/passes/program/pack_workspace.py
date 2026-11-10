@@ -96,7 +96,8 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
     size = _size_of(packable[buf].attrs["shape"])
     chosen: str | None = None
     for slot, fa in free_at.items():
-      if plan.slot_dtype[slot] == dt and fa <= first_write[buf]:
+      # A scalar reduction result must not pin a spilled matrix slot until its consumer runs.
+      if plan.slot_dtype[slot] == dt and fa <= first_write[buf] and not (size < WORKSPACE_SPILL_THRESHOLD <= plan.slot_size[slot]):
         chosen = slot
         break
     if chosen is None:

@@ -58,3 +58,9 @@ Compile evidence is in `/tmp/scaly-45-evidence-{main,branch}/evidence.json` and 
 draft PR description in `/tmp/scaly-45-pr.md`. Counts match for every snapshot.
 Clang 20.1.8 compiles the generated C with gather/scatter disabled. Compile CPU
 seconds are the median of three compilations, not runtime benchmark evidence.
+
+The program tests also caught greedy workspace reuse letting a scalar sum pin
+a freed 1600-element matrix slot, doubling workspace. Packing now reserves
+spill-sized slots for spill-sized values. The existing packing witness fails
+before the fix and passes after it; 15 packing/hoisting tests pass. Regenerating
+the snapshots again changes no files. Restart the whole hook with this fix.
