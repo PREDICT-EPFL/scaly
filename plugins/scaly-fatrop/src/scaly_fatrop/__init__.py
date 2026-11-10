@@ -1,5 +1,7 @@
 """Fatrop backend metadata, options and paths to its vendored native library."""
 
+from __future__ import annotations
+
 import math
 import sys
 from pathlib import Path

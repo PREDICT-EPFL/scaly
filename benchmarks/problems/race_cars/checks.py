@@ -480,7 +480,7 @@ def check_sqp_matches_ipopt() -> None:
 
 def check_fatrop_matches_ipopt() -> None:
   """Whole-problem Fatrop and IPOPT reach the same race-car solution to 1e-8."""
-  config = EpisodeConfig(horizon=3, ipopt_tol=1e-12)
+  config = EpisodeConfig(horizon=3, ipopt_tol=1e-10)
   planner = MotionPlanner(load_track(config.track).center_line, horizon=config.horizon, dt=config.params.dt, v_ref=config.v_ref)
   start = planner.center_path[0]
   heading = float(planner.phi_ref[0])

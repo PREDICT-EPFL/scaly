@@ -12,8 +12,8 @@ they share a cause. Compiler roadmap sections belong to other threads.
 
 - [x] Read the run plan, implementation procedure, repository rules and live issue.
 - [x] Verify the isolated worktree on la015 and check dependencies and open PRs.
-- [ ] Diagnose all current and recovered failures from their run logs.
-- [ ] Reproduce the current failures locally where la015 permits, add useful
+- [x] Diagnose all current and recovered failures from their run logs.
+- [x] Reproduce the current failures locally where la015 permits, add useful
       regression coverage, then make focused fixes and prove the checks can fail.
 - [ ] Run the required merge checks and changed nightly commands locally.
 - [ ] Open a draft PR, link it in T3 and trigger the branch's dispatchable nightly.
@@ -28,3 +28,18 @@ this temporary plan in the final commit before marking the pull request ready.
 Initial evidence: both older Python jobs fail when importing `scaly_fatrop` because
 `_Backend.render_wrapper` references a type imported only for type checking.
 The macOS full smoke fails in the race-cars solver check with Fatrop native status 4.
+
+The Python import was reproduced on both supported older interpreters, and adding
+postponed annotations fixes both. Existing backend registration tests also pass.
+The macOS failure follows `fatrop_stage_functions`, in `fatrop_matches_ipopt`.
+Native status 4 means line search failed. Local round-to-positive-infinity stress
+reproduces that status at the original 1e-12 tolerance. At 1e-10 all three directed
+rounding modes converge and retain the original 1e-8 solution agreement. A 1e-6
+solution mutation is rejected. No solver status or comparison threshold changed.
+
+Earlier Clang 22 failure has no logs and a check annotation saying the hosted
+runner lost communication. The Windows build logs show repeated MSYS2 download
+HTTP 504s. Both jobs passed in run 42782804912. Neither shares the current causes.
+
+Running: all pre-merge hooks, full required-solver suites on Python 3.12 and 3.13,
+and `uv run benchmarks/run.py smoke --full`. Logs are in `/tmp/scaly-279-*`.
