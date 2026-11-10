@@ -27,7 +27,7 @@ pattern-copy handoff. #277's custom-rule rows and #286's resource gate remain bi
 - [x] Audit every #42-owned entry in PR #274, including lowering ctx and stored seed windows.
 - [x] Numerical SciPy/NumPy proof, empty patterns, batches, unequal patterns and explicit zeros.
 - [x] Show new gates fail under perturbation; retain #41 and custom-rule regression gates.
-- [ ] Full merge hook, byte-identical C snapshots, public-name/API filtering and examples.
+- [x] Full merge hook, byte-identical C snapshots, public-name/API filtering and examples.
 - [ ] Push draft PR, link in T3, independent Opus and Sol review, fix and delta checks.
 - [ ] Remove plan, mark ready, update issue/project and hand back with PR evidence.
 
@@ -60,3 +60,6 @@ Public seeded/custom derivative layouts are complete. The final collection has 2
 All 41 boundary tests, 1,097 AD tests, 102 import/public-name/op-coverage tests and required
 #41/custom-rule gates pass. The complete merge hook is running. The final full hook must use
 the current collection baseline before the draft PR and independent review.
+
+The full hook passed. Final suite: 2,829 passed and 52 optional skips. Draft PR #287 is open
+against the requested base and linked in T3. Independent Opus xhigh and Sol xhigh reviews follow.
