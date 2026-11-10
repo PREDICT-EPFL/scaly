@@ -73,6 +73,18 @@ def _wide() -> sc.Function:
   return wide
 
 
+def _multi_output_vmap() -> sc.Function:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("vector"), sc.arg("total")))
+  def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return x.sin().block(), x.sum().block()
+
+  @sc.function(sc.arg("xs", (5, 2)), outputs=sc.group(sc.arg("vectors"), sc.arg("totals")))
+  def multi_output(xs: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.vmap(pair, 5)(xs)
+
+  return multi_output
+
+
 def _workspace() -> sc.Function:
   """A shared intermediate large enough to spill after expression normalization."""
 
@@ -99,6 +111,7 @@ CORPUS = {
   "forward": _dynamics,
   "jac": lambda: sc.jacobian(_dynamics(), "znext", "z"),
   "vmap": _shooting,
+  "vmap_multi": _multi_output_vmap,
   "spjac": lambda: sc.sparse_jacobian(_shooting(), "eq", "z"),
   "wide": _wide,
   "workspace": _workspace,

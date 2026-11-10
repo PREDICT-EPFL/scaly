@@ -20,12 +20,12 @@ keys so differently sized siblings group. Record this departure in the roadmap i
 ## Work
 
 - [x] Read the run plan, skills, issue, parent, prerequisites and compiler conventions.
-- [ ] Record started status and branch on the issue.
-- [ ] Add failing tests for unequal mapped results, custom-rule residual siblings, and arguments
+- [x] Record started status and branch on the issue.
+- [x] Add failing tests for unequal mapped results, custom-rule residual siblings, and arguments
       sharing storage but differing by expression identity. Read relevant devrush cases.
-- [ ] Capture baseline operation counts, source bytes and generated-C compile times.
-- [ ] Implement discovery, invocation grouping and lowering; update printing guide and roadmap.
-- [ ] Prove the tests fail under perturbation; regenerate C and collection snapshots.
+- [x] Capture baseline operation counts, source bytes and generated-C compile times.
+- [x] Implement discovery, invocation grouping and lowering; update printing guide and roadmap.
+- [x] Prove the tests fail under perturbation; regenerate C and collection snapshots.
 - [ ] Rebase onto the sparse stack after it lands; regenerate snapshots and evidence.
 - [ ] Run the full suite and `wt hook pre-merge --yes`, plus relevant examples.
 - [ ] Commit, push and open a draft PR against main. Run one Opus 5.5 high cross-review,
@@ -39,3 +39,8 @@ No run-time timings on this shared machine. Retain operation counts, generated b
 compilation measurements, and the reviewed snapshot diff. Full checks precede review.
 The task explicitly requests one reviewer, overriding cross-review's usual second high-risk
 review. Merge the task branch only through its PR; never push main, create tags or releases.
+
+Initial targeted checks: 130 passed. Ruff and ty passed. Mutation checks split sibling keys
+and erased PRINT argument identity; six grouping gates and the identity gate failed as expected.
+The first full hook and standalone collection were interrupted by the provider stream closure.
+The printing example passed. The workspace header collision is tracked separately as #311.

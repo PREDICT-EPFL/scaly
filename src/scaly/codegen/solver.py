@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from collections.abc import Mapping
 
 from scaly.codegen.abi import c_ident
-from scaly.ir.expr import ExprOp
+from scaly.ir.expr import callees_of
 from scaly.function.concrete import ConcreteFunction
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees, solver_descriptor
 
@@ -90,8 +90,8 @@ def solver_functions(fun: ConcreteFunction) -> tuple[ConcreteFunction, ...]:
         visit(callee)
       return
     for node in fn.nodes:
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        visit(node.attrs["callee"])
+      for callee in callees_of(node):
+        visit(callee)
 
   visit(fun)
   return tuple(found.values())

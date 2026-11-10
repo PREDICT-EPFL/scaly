@@ -22,11 +22,11 @@ def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr
   ``outer[start + i*stride : start + i*stride + formal.type.storage_size]`` from a rank-1 ``outer``, and
   ``stride=0`` broadcasts one slice to every call. The verifier refuses a window that reads past its
   outer when the function holding the node is built. Formals and outputs may be rank-2; the node
-  has shape ``(length * callee.outputs[output].type.storage_size,)``, with the calls' outputs concatenated flat.
+  has shape ``(length * callee.results[output].type.storage_size,)``, with the calls' results concatenated flat.
   Compact sparse windows use canonical pattern order; lowering applies the callee leaf's layout.
   """
   callee = as_concrete(callee)
-  out_expr = callee.outputs[output]
+  out_expr = callee.results[output]
   outers = tuple(as_expr(outer) for outer, _, _ in inputs)
   diff = out_expr.type.diff and any(o.type.diff for o in outers)
   return Expr(

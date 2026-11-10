@@ -184,8 +184,7 @@ int main(void) {
   assert subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout == expected
 
 
-def test_mapped_function_with_two_used_outputs_prints_once_per_used_output(capfd) -> None:
-  """Each used output of a mapped call is its own loop, as the guide states."""
+def test_mapped_function_with_two_used_outputs_prints_once_per_trip(capfd) -> None:
 
   @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("a"), sc.arg("b")))
   def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -198,4 +197,17 @@ def test_mapped_function_with_two_used_outputs_prints_once_per_used_output(capfd
     return a + b
 
   np.testing.assert_allclose(both(np.arange(3.0)), 2 * np.arange(3.0) + 3.0)
-  assert capfd.readouterr().out == "x=0\nx=1\nx=2\n" * 2
+  assert capfd.readouterr().out == "x=0\nx=1\nx=2\n"
+
+
+def test_distinct_arguments_sharing_a_buffer_are_distinct_invocations(capfd) -> None:
+  @sc.function(sc.arg("x", ()))
+  def callee(x):
+    return sc.print("callee={}", x) + 1.0
+
+  @sc.function(sc.arg("x", ()))
+  def outer(x):
+    return callee(x) + callee(sc.print("argument={}", x))
+
+  np.testing.assert_allclose(outer(np.array(2.0)), 6.0)
+  assert sorted(capfd.readouterr().out.splitlines()) == ["argument=2", "callee=2", "callee=2"]

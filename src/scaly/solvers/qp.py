@@ -13,7 +13,7 @@ from ..ad.sparsity import _jac_mask
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function
 from ..function.tree import group, arg, Tree
-from ..ir.expr import Expr, ExprOp, concat, substitute, topo
+from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, topo
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function, solver_options
@@ -58,8 +58,7 @@ def _reaches_op(exprs: Sequence[Expr], op: ExprOp) -> bool:
     for node in topo(targets):
       if node.op == op:
         return True
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        callee = node.attrs["callee"]
+      for callee in callees_of(node):
         if id(callee) not in seen:
           seen.add(id(callee))
           if visit(callee.results):
