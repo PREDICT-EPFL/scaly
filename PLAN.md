@@ -16,15 +16,15 @@ especially Sparse tensors, Custom derivatives and Rules for every item. Read #40
   passes 2,716 tests with 52 skips, including byte-identical C snapshots.
 - [x] Get the independent investigation of custom-derivative support from
   claudeAgent, claude-fable-5-2, medium effort. Give it the design and both code
-  versions without the previous review's conclusion. Its only owned file is
-  `internal/notes/support_analysis_2026_11_10/custom_derivative_investigation.md`.
+  versions without the previous review's conclusion. Its conclusion and evidence
+  are in the PR description. The coordinator requested removal of the memo.
 - [x] If the investigation reopens the design, stop and post the evidence on
   #40 for the maintainer. Otherwise apply its outcome and record the conclusion
   in the PR description.
   Fable confirms the existing contract permits rules outside primal support.
   Keep the current AD code: ordinary coefficient pruning remains, and removing
-  the blanket result filter is required. Preserve the memo and warn #41 about
-  its compressed relation row domain.
+  the blanket result filter is required. The coordinator relayed the row-domain
+  point to #41; any roadmap change stays with the maintainer.
 - [x] Fold #276 into this PR on the new loop-nest emitter. Test support-based
   scalar zero skipping, output initialization and numerical agreement with a
   NumPy or unrolled reference. Show the new gates fail under perturbation.
@@ -40,7 +40,8 @@ especially Sparse tensors, Custom derivatives and Rules for every item. Read #40
   the last verdict and one short check of fixes. Include the restack's empty-copy
   compatibility fix in that review.
   The expanded full merge hook passes: 2,728 tests, 52 skips, benchmark smoke,
-  docs build, strict types, Ruff and private-name checks. Cross-review is next.
+  docs build, strict types, Ruff and private-name checks. Opus and Sol are reviewing
+  the new work. The memo removal changes no production code.
 - [ ] Update PR evidence and review line, reference #40 and #276, remove this
   temporary plan and return the PR to review. No merge.
 
