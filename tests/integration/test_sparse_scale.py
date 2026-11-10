@@ -35,6 +35,10 @@ class _MemoryCounters(ctypes.Structure):
 
 
 def _peak_rss() -> int:
+  if sys.platform == "linux":
+    # ru_maxrss can inherit the parent's pre-exec peak; VmHWM belongs to this address space.
+    with open("/proc/self/status") as status:
+      return int(next(line for line in status if line.startswith("VmHWM:")).split()[1]) * 1024
   if sys.platform != "win32":
     import resource
 
@@ -112,6 +116,33 @@ def _workload(n: int, entries: int) -> None:
 
 
 def test_sparse_matrix_compiler_resource_gate() -> None:
+  probe = subprocess.run(
+    [
+      sys.executable,
+      "-c",
+      """
+import subprocess, sys
+buffer = bytearray(256 * 1024**2)
+del buffer
+subprocess.run([sys.executable, "-c", '''
+import runpy, sys
+peak = runpy.run_path(sys.argv[1])["_peak_rss"]
+baseline = peak()
+buffer = bytearray(64 * 1024**2)
+del buffer
+print(baseline, peak())
+''', sys.argv[1]], check=True)
+""",
+      __file__,
+    ],
+    capture_output=True,
+    text=True,
+    timeout=_TIME_LIMIT,
+    env={**os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
+  )
+  assert probe.returncode == 0, probe.stdout + probe.stderr
+  baseline, freed = map(int, probe.stdout.split())
+  assert baseline + 32 * 1024**2 <= freed < 256 * 1024**2
   result = subprocess.run(
     [sys.executable, __file__],
     capture_output=True,
