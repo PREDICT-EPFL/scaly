@@ -60,5 +60,6 @@ Run-wide rules: `~/.scaly-suite/RULES.md`, read before testing.
   Both have failing reproductions and fixes using direct NumPy array conversions.
   The focused arithmetic, dtype and snapshot selection passes 259 tests. Eight added
   midpoint cases bring the dtype selection to 92 cases and the full collection to 3272.
-  Run the full hook again for these production changes, then obtain the short sol fix
-  check and the main Opus review before the final push.
+  The full hook rerun under `/tmp/scaly-55-suite-3.*` exited 0: 3220 passed, 52 skipped,
+  benchmark smoke, docs and private names passed. Lint, format and strict types passed.
+  Obtain the short sol fix check and the main Opus review before the final push.
