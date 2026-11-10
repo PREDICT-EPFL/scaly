@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol, cast
 
 from ..ir import program as p
-from ..ir.expr import Expr, ExprOp, _uniform
+from ..ir.expr import Expr, ExprOp, _uniform, pack
 from ..ir.program import ProgramNode, ProgramOp
 from ..ir.types import DType, _uniform_value
 
@@ -24,7 +24,7 @@ class _HasArgs(Protocol):
 class Arith[Node: _HasArgs]:
   """What a rule may ask of a node: its arithmetic kind, a uniform constant's value, and how to build results.
 
-  ``fits(arg, result)`` says whether ``arg`` may stand in for ``result`` (same shape and dtype).
+  ``fits(arg, result)`` says whether ``arg`` may stand in for ``result`` (same shape, dtype and stored pattern).
   ``scalar`` makes a coefficient of the result's dtype; ``full`` makes a constant that takes the
   result's place, so tensor and scalar constants materialize differently under one policy.
   """
@@ -118,6 +118,9 @@ def fold[Node: _HasArgs](d: Arith[Node], node: Node) -> Node:
 
 
 def _expr_const(e: Expr) -> int | float | None:
+  if e.op == ExprOp.PACK:
+    value = _expr_const(e.args[0])
+    return value if value == 0 or e.attrs["pattern"].nnz == math.prod(e.shape[-2:]) else None
   if e.op != ExprOp.CONST or e.value is None or e.value.size == 0:
     return None
   value = _uniform_value(e.value)
@@ -125,13 +128,15 @@ def _expr_const(e: Expr) -> int | float | None:
 
 
 def _expr_full(value: int | float, like: Expr) -> Expr:
+  if like.type.pattern is not None:
+    return pack(_uniform(value, like.type.storage_shape, dtype=like.type.dtype, lowering=like.lowering), like.type.pattern, shape=like.shape)
   return _uniform(value, like.shape, dtype=like.type.dtype, lowering=like.lowering)
 
 
 ARITH_EXPR: Arith[Expr] = Arith(
   kind=lambda e: str(e.op) if str(e.op) in _KINDS else None,
   const=_expr_const,
-  fits=lambda arg, result: arg.shape == result.shape and arg.type.dtype == result.type.dtype,
+  fits=lambda arg, result: arg.shape == result.shape and arg.type.dtype == result.type.dtype and arg.type.pattern is result.type.pattern,
   scalar=lambda value, like: Expr.const(value, dtype=like.type.dtype, lowering=like.lowering),
   full=_expr_full,
   build=lambda kind, args, like: Expr(ExprOp(kind), args, like.type, lowering=like.lowering),
