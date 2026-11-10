@@ -63,15 +63,14 @@ before the fix and passes after it; 15 packing/hoisting tests pass. Regenerating
 the snapshots again changes no files.
 
 Current validation job: detached `nohup setsid` shell, log
-`/tmp/scaly-45-locked.log`, exit code `/tmp/scaly-45-locked.exit`. It runs
+`/tmp/scaly-45-locked-final.log`, exit code `/tmp/scaly-45-locked-final.exit`. It runs
 `flock ~/.scaly-suite.lock env PYTEST_XDIST_AUTO_NUM_WORKERS=8 wt hook pre-merge --yes`
-on pushed compiler state `Keep scalar results out of freed matrix spill slots`.
+on pushed compiler state `Limit spill-slot protection to scalar results`.
 The coordinator's latest rule supersedes earlier caps: every full suite uses
 this lock; focused tests run unlocked with `-n 2`, never `-n=auto` outside the lock.
 The earlier unlocked runs were stopped. Poll the exit file; do not start another
 full run. Retry a killed-worker or timeout failure once before diagnosing it.
-An automatic continuation in this thread is scheduled for 19:12 Zurich time to
-check this local job. It is a one-time task named
+An automatic continuation in this thread checks this local job. It is a one-time task named
 `Continue #45 after the locked local pre-merge`; replace it only if the local
 job is still pending. Do not use scheduled polling for GitHub checks or merging.
 At the 19:09 continuation, the locked run had reached 95% and had two failure
