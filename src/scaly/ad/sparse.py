@@ -267,7 +267,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   local coloring and const-seed JVPs wrapped in VMAPs.
 
   Falls back to ``sparse_jacobian_colored`` if any formal's actual outer tensor depends on
-  ``wrt`` through computation rather than being ``wrt`` itself.
+  ``wrt`` through computation rather than being ``wrt`` itself or a constant gather of it.
   """
 
   callee = vmap_expr.attrs["callee"]
@@ -284,12 +284,15 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     )
 
   dep_memo: dict[tuple[int, int], bool] = {}
-  direct_formals: list[int] = []
+  direct_formals: dict[int, np.ndarray | None] = {}
   for f_idx, actual in enumerate(vmap_expr.args):
     while actual.op == ExprOp.RESHAPE:
       actual = actual.args[0]
-    if actual.id == wrt.id:
-      direct_formals.append(f_idx)
+    source = actual.args[0] if actual.op == ExprOp.GATHER else actual
+    while source.op == ExprOp.RESHAPE:
+      source = source.args[0]
+    if source.id == wrt.id:
+      direct_formals[f_idx] = actual.attrs["indices"].reshape(-1) if actual.op == ExprOp.GATHER else None
     elif _depends_on(actual, wrt, dep_memo):
       # Indirect dependency would require a chain-rule through actual_outer; fall back.
       return sparse_jacobian_colored(vmap_expr, wrt)
@@ -307,7 +310,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
 
   pieces: list[tuple[Expr, np.ndarray]] = []  # (gathered piece values, nnz slots they cover)
   coloring_width = 0
-  for f_idx in direct_formals:
+  for f_idx, column_map in direct_formals.items():
     formal = callee.inputs[f_idx]
     local_mask = _callee_mask(callee, output_idx, f_idx, {})
     out = callee.results[output_idx]
@@ -337,20 +340,34 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     formal_size = formal.type.storage_size
     start_f = starts[f_idx]
     stride_f = strides[f_idx]
-    lc_arr = cols_arr - (start_f + it_global * stride_f)
-    in_window = (lc_arr >= 0) & (lc_arr < formal_size)
-    contributes = np.zeros(nnz, dtype=bool)
-    if in_window.any():
-      valid = np.flatnonzero(in_window)
-      contributes[valid] = np.asarray(local_mask.tocsr()[lr_global[valid], lc_arr[valid]]).reshape(-1)
-    if not contributes.any():
+    if column_map is None:
+      lc_arr = cols_arr - (start_f + it_global * stride_f)
+      in_window = (lc_arr >= 0) & (lc_arr < formal_size)
+      contributes = np.zeros(nnz, dtype=bool)
+      if in_window.any():
+        valid = np.flatnonzero(in_window)
+        contributes[valid] = np.asarray(local_mask.tocsr()[lr_global[valid], lc_arr[valid]]).reshape(-1)
+      contrib_idx = np.flatnonzero(contributes)
+      iterations, local_rows, local_cols = it_global[contrib_idx], lr_global[contrib_idx], lc_arr[contrib_idx]
+    else:
+      iterations = np.repeat(np.arange(length), local_mask.nnz)
+      local_rows, local_cols = np.tile(local_mask.row, length), np.tile(local_mask.col, length)
+      columns = column_map[start_f + iterations * stride_f + local_cols]
+      coordinates = (iterations * slice_size + local_rows) * wrt.size + columns
+      global_coordinates = rows_arr * wrt.size + cols_arr
+      slots = np.searchsorted(global_coordinates, coordinates)
+      valid = np.flatnonzero(slots < nnz)
+      valid = valid[global_coordinates[slots[valid]] == coordinates[valid]]
+      valid = valid[np.argsort(slots[valid], kind="stable")]
+      contrib_idx = slots[valid]
+      iterations, local_rows, local_cols = iterations[valid], local_rows[valid], local_cols[valid]
+    if not contrib_idx.size:
       continue
-    contrib_idx = np.flatnonzero(contributes)
     active_to_pos = {c: i for i, c in enumerate(active)}
     local_colors_arr = np.asarray(local_colors, dtype=np.int64)
-    color_at = local_colors_arr[lc_arr[contrib_idx]]
+    color_at = local_colors_arr[local_cols]
     pos_at = np.asarray([active_to_pos[int(c)] for c in color_at], dtype=np.int64)
-    flat_indices = it_global[contrib_idx] * (active_count * slice_size) + pos_at * slice_size + lr_global[contrib_idx]
+    flat_indices = iterations * (active_count * slice_size) + pos_at * slice_size + local_rows
     pieces.append((gather(mapped_flat, flat_indices), contrib_idx))
 
   if not pieces:
@@ -367,7 +384,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     return SparseJacobian(permuted, values, coloring_width)
   values = None
   for gathered, contrib_idx in pieces:
-    piece_values = gathered if contrib_idx.size == nnz else scatter(gathered, contrib_idx, (nnz,))
+    piece_values = gathered if np.array_equal(contrib_idx, np.arange(nnz)) else scatter(gathered, contrib_idx, (nnz,))
     values = piece_values if values is None else values + piece_values
   assert values is not None
   return SparseJacobian(global_sparsity, values, coloring_width)

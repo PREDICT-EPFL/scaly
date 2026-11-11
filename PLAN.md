@@ -8,15 +8,20 @@ compiler maintenance context's Mapped derivative construction section.
 
 - [x] Read the issue, prerequisite #300, section #293, project instructions and design.
       REST Project discovery returned HTTP 404; progress is recorded on the issue.
-- [ ] Add a regression that rejects global coloring for CSC and coordinate windows.
+- [x] Add a regression that rejects global coloring for CSC and coordinate windows.
       Compare values and sparsity against an independent reference for overlapping
       and zero-stride windows, non-involutive orders, batched leaves, empty patterns
       and zero-length maps. See it fail before the fix.
-- [ ] Recognize constant gathers of wrt and route stage-local columns through their
+- [x] Recognize constant gathers of wrt and route stage-local columns through their
       slot mapping. Keep computed actuals on the existing fallback.
-- [ ] Run focused tests with at most two workers, demonstrate the regression gate
+- [x] Run focused tests with at most two workers, demonstrate the regression gate
       fails under perturbation, and measure the issue reproduction's source size,
       Program IR arithmetic and generated-C compile time. No run-time timings.
+      112 tests passed, including all C snapshots. Removing gather recognition made
+      both 20-stage layout cases fail as intended. The issue reproduction is 17,847
+      bytes and 70 arithmetic operations per stage before, 6,839 bytes and 9 after.
+      Generated-C compilation with cc -O2 took 0.1295 s before and 0.0657 s after;
+      these are single observations during concurrent compiler work.
 - [ ] Commit the final candidate and run the detached full pre-merge hook through
       `~/.scaly-suite/run`, polling its exit file within this turn. Preserve snapshots.
 - [ ] Open and link one draft PR after local checks pass. Obtain the cross-review
