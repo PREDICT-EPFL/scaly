@@ -366,6 +366,8 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     a, b = support_of(x), support_of(y)
     if a is None and b is None:
       return None
+    if a is not None and not a or b is not None and not b:
+      return frozenset()
     m, k = (1, x.shape[0]) if len(x.shape) == 1 else x.shape[-2:]
     n = 1 if len(y.shape) == 1 else y.shape[-1]
     batch = node.shape[: len(node.shape) - (len(x.shape) > 1) - (len(y.shape) > 1)]
@@ -375,13 +377,16 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     if ae is None or be is None:
       if ae is not None:
         rows = np.unique(ae // k)
-        entries = (rows[:, None] * n + np.arange(n)).reshape(-1)
+        full = len(rows) == batches * m
+        entries = (rows[:, None] * n + np.arange(n)).reshape(-1) if not full else None
       else:
         assert be is not None
         cols = np.unique(be // (k * n) * n + be % n)
-        entries = (cols[:, None] // n * (m * n) + np.arange(m) * n + cols[:, None] % n).reshape(-1)
-      if len(entries) == node.size:
+        full = len(cols) == batches * n
+        entries = (cols[:, None] // n * (m * n) + np.arange(m) * n + cols[:, None] % n).reshape(-1) if not full else None
+      if full:
         return frozenset(range(node.size)) if node.size <= 1024 else None
+      assert entries is not None
       return _make_support(entries)
     result = _pattern(ae, (m, k), batches).matmul(_pattern(be, (k, n), batches))
     return _make_support(np.asarray(result.rows, dtype=np.int64) * n + np.asarray(result.cols, dtype=np.int64) % n)
