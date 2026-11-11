@@ -9,6 +9,9 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import CModule, render_c_module
+from scaly.codegen.c import _includes, _render_raw_callee
+from scaly.ir import program as p
+from scaly.passes.arith import constant
 from scaly.passes.lowering import ctx, lower_function, main_proc
 from tests.compilers import c_compiler, named_compiler
 
@@ -64,6 +67,89 @@ def test_constant_integer_data_keeps_wrapping_in_scheduled_assignments(tmp_path:
   inputs = np.zeros(1)
   _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, named_compiler("gcc"), True)
   np.testing.assert_array_equal(arithmetic(inputs), expected)
+
+
+@pytest.mark.parametrize("dtype", ["int64", "int32"])
+@pytest.mark.parametrize("variant", ["block", "scalar"])
+@pytest.mark.parametrize("negative", [False, True])
+def test_integer_sum_wraps_at_both_limits(tmp_path, monkeypatch, dtype, variant, negative) -> None:
+  if dtype == "int32" and variant == "scalar":
+    monkeypatch.setattr(ctx, "_EXACT_STORES", (*ctx._EXACT_STORES, sc.dtypes.int32))
+  info = np.iinfo(dtype)
+  values = np.array([info.min, -1] if negative else [info.max - 1023, 1024], dtype=dtype)
+  base = 1 << (info.bits // 2)
+
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name=f"sum_wrap_{dtype}_{variant}_{negative}")
+  def arithmetic(x):
+    total = sc.cast(x, dtype).sum()
+    return sc.stack([sc.cast(total // base, "float64"), sc.cast(total % base, "float64")]).with_lowering(variant)
+
+  with np.errstate(over="ignore"):
+    reference = np.sum(values, dtype=dtype)
+  expected = np.array([reference // base, reference % base], dtype=np.float64)
+  inputs = values.astype(np.float64)
+  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, named_compiler("gcc"), True)
+  np.testing.assert_array_equal(arithmetic(inputs), expected)
+
+
+@pytest.mark.parametrize("dtype", ["int64", "int32"])
+@pytest.mark.parametrize("variant", ["block", "scalar"])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_integer_axis_sums_wrap_in_strided_and_contiguous_schedules(tmp_path, monkeypatch, dtype, variant, axis) -> None:
+  if dtype == "int32" and variant == "scalar":
+    monkeypatch.setattr(ctx, "_EXACT_STORES", (*ctx._EXACT_STORES, sc.dtypes.int32))
+  info = np.iinfo(dtype)
+  values = np.tile(np.array([info.max - 1023, 1024, info.min, -1, 0], dtype=dtype), (4, 1))
+  base = 1 << (info.bits // 2)
+
+  @sc.function(sc.arg("x", values.shape), outputs=sc.arg("y"), name=f"axis_sum_wrap_{dtype}_{variant}_{axis}")
+  def arithmetic(x):
+    total = sc.cast(x, dtype).sum(axis)
+    return sc.stack([sc.cast(total // base, "float64"), sc.cast(total % base, "float64")]).with_lowering(variant)
+
+  with np.errstate(over="ignore"):
+    reference = np.sum(values, axis=axis, dtype=dtype)
+  expected = np.array([reference // base, reference % base], dtype=np.float64)
+  inputs = values.astype(np.float64)
+  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, named_compiler("gcc"), True)
+  np.testing.assert_array_equal(arithmetic(inputs), expected)
+
+
+@pytest.mark.parametrize("dtype", [sc.dtypes.int64, sc.dtypes.int32])
+def test_nested_block_keeps_integer_wrapping(tmp_path, dtype) -> None:
+  info = np.iinfo(dtype.numpy())
+  x, y = (p.buffer(name, dtype, (1,)) for name in ("x", "y"))
+  at = lambda buffer: p.view(buffer, [p.const_int(0)])
+  body = [
+    p.assign("seed", p.load(at(x)), declare=True),
+    p.block(
+      p.assign("incremented", p.add(p.var("seed", dtype), constant(1, dtype)), declare=True),
+      p.store(at(y), p.var("incremented", dtype)),
+    ),
+  ]
+  proc = p.proc("block_wrap", [x, y], body)
+  source = "\n".join([*_includes(dialect="c"), *_render_raw_callee(proc, dialect="c")])
+  source += f"""
+#include <stdio.h>
+int main(void) {{
+  {dtype.c_type} x = {info.max}, y = 0;
+  block_wrap_raw(&x, &y, NULL);
+  printf("%lld\\n", (long long)y);
+  return 0;
+}}
+"""
+  path, executable = tmp_path / "block.c", tmp_path / "block"
+  path.write_text(source)
+  built = subprocess.run(
+    [*named_compiler("gcc"), "-O2", "-fsanitize=signed-integer-overflow", "-fsanitize-undefined-trap-on-error", str(path), "-o", str(executable)],
+    capture_output=True,
+    text=True,
+  )
+  assert built.returncode == 0, built.stderr
+  run = subprocess.run([str(executable)], capture_output=True, text=True)
+  assert run.returncode == 0, run.stderr
+  assert run.stderr == ""
+  assert int(run.stdout) == info.min
 
 
 def _assert_compiled_result(
