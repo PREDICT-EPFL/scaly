@@ -213,7 +213,8 @@ def _slice_of_slice(e: Expr) -> Expr:
     else:
       a2, b2, _ = outer.indices(stop1 - start1)
       combined.append(slice(start1 + a2, start1 + b2))
-  return base[tuple(combined)]
+  result = base[tuple(combined)]
+  return result if result.type.pattern is e.type.pattern else e
 
 
 def _slice_of_stack_full(e: Expr) -> bool:
@@ -237,7 +238,8 @@ def _slice_of_stack(e: Expr) -> Expr:
     return stack_node
   new_args = [arg[rest] for arg in stack_node.args]
   new_axis = sum(1 for item in index[:axis] if isinstance(item, slice))
-  return stack(new_args, axis=new_axis)
+  result = stack(new_args, axis=new_axis)
+  return result if result.type.pattern is e.type.pattern else e
 
 
 def _is_matrix_transpose(e: Expr) -> bool:

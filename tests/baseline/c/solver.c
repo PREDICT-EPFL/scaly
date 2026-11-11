@@ -223,11 +223,12 @@ int qp_host_with_options(const double** arg, double** res, int* iw, double* w, i
   double s2[1];
   double s3[1];
   corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL, solver_options);
-  res[0][0] = 0.0;
+  double acc_cost = 0.0;
   for (long long i_cost = 0; i_cost < 2; ++i_cost) {
     double v0 = s0[i_cost];
-    res[0][0] = (res[0][0] + (v0 * v0));
+    acc_cost = (acc_cost + (v0 * v0));
   }
+  res[0][0] = acc_cost;
   return SCALY_SUCCESS;
 }
 

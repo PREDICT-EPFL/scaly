@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import RangeKind
 from .ctx import LowerCtx, lowers
+from .schedule import emit_reduction
 
 
 @lowers(ExprOp.SUM)
 def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
-  """Full reduction to a scalar: zero the accumulator, then a REDUCE loop adds every element."""
+  """Full reduction to one scalar accumulator, initialized even for an empty input."""
   src = node.args[0]
   acc = ctx.alloc_tmp(node)
-  z = p.const_int(0)
-  ctx.statements.append(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
-  name = ctx.names.allocate(f"i_{acc.attrs['name']}")
-  rng = p.range_(name, 0, src.type.storage_size, kind=RangeKind.REDUCE)
-  i = p.var(name)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))
+  reductions, (i,) = ctx.reduce((src.type.storage_size,), f"i_{acc.attrs['name']}")
+  value = (
+    ctx.read_stored(src, np.arange(src.type.storage_size, dtype=np.int64), i)
+    if src.type.pattern is not None
+    else p.load(p.view(ctx.buf_of(src), [i]))
+  )
+  emit_reduction(ctx, [], reductions, p.view(acc, [p.const_int(0)]), value)

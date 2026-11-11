@@ -62,11 +62,11 @@ static inline __attribute__((always_inline)) void lanes_1(long long i, long long
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = x[((i + k) < 2047 ? (i + k) : 2047)];
   lanes_8_8_8_8_vec_st(&s0[(i) + 0], lanes_8_8_8_8_vec_sin(l), n);
 }
-static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const double* s0, double* sum) {
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* acc_sum, const double* s0) {
   lanes_8_8_8_8_vec l;
   if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 2047 ? (i + k) : 2047)];
-  for (long long k = 0; k < n; ++k) sum[0] = (sum[0] + l[k]);
+  for (long long k = 0; k < n; ++k) acc_sum[0] = (acc_sum[0] + l[k]);
 }
 int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
@@ -83,18 +83,20 @@ int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
 #if (2048 % SCALY_WIDTH_8_8_8_8) != 0
   lanes_1(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, arg[0]);
 #endif
-  res[0][0] = 0.0;
+  double acc_sum = 0.0;
   for (long long i_sum_start = 0; i_sum_start <= 2048 - SCALY_WIDTH_8_8_8_8; i_sum_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_2(i_sum_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);
+    lanes_2(i_sum_start, SCALY_WIDTH_8_8_8_8, &acc_sum, s0);
   }
 #if (2048 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_2(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, res[0]);
+  lanes_2(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, &acc_sum, s0);
 #endif
-  res[1][0] = 0.0;
+  res[0][0] = acc_sum;
+  double acc_sumsqr = 0.0;
   for (long long i_sumsqr = 0; i_sumsqr < 2048; ++i_sumsqr) {
     double v0 = s0[i_sumsqr];
-    res[1][0] = (res[1][0] + (v0 * v0));
+    acc_sumsqr = (acc_sumsqr + (v0 * v0));
   }
+  res[1][0] = acc_sumsqr;
   return SCALY_SUCCESS;
 }
 

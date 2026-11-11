@@ -107,6 +107,23 @@ def test_reduction_does_not_stage_an_aliased_accumulator():
   assert widen_ranges(prog) is prog
 
 
+@pytest.mark.parametrize("case", ["ordered", "declare", "self_dependency", "not_reduction"])
+def test_scalar_accumulator_is_staged_only_for_an_ordered_update(case):
+  x, y = p.buffer("x", dtypes.float64, (19,)), p.buffer("y", dtypes.float64, (1,))
+  acc = p.var("acc", dtypes.float64)
+  term = p.load(p.view(x, [p.var("i")]))
+  if case == "self_dependency":
+    term = p.mul(acc, term)
+  update = p.assign("acc", p.add(acc, term), declare=case == "declare")
+  rng = p.range_("i", 0, 19, kind=RangeKind.GLOBAL if case == "not_reduction" else RangeKind.REDUCE)
+  body = [p.assign("acc", p.const_float(0), declare=True), p.for_(rng, [update]), p.store(p.view(y, [p.const_int(0)]), acc)]
+  result = widen_ranges(p.program([p.proc("ordered", [x, y], body)]), lanes=4)
+  verify_program(result)
+  updates = [n for n in walk_program(result) if n.attrs.get("ordered_reduction")]
+  assert bool(updates) == (case == "ordered")
+  assert bool([n for n in walk_program(result) if "vector_helper" in n.attrs]) == (case == "ordered")
+
+
 def test_store_schedule_reduces_live_values_without_reordering_memory():
   from scaly.passes.program.widen_ranges import _interleave_stores
 

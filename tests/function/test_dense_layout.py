@@ -29,6 +29,15 @@ def test_dense_layout_numerical_calls_and_shape_binding(shape):
   assert fun.inputs.relabel("prefix_").layouts == fun.inputs.layouts
 
 
+def test_dense_layout_reshape_uses_logical_order():
+  @sc.function(sc.arg("x", (2, 3), layout="column-major"), name="dense_reshape")
+  def fun(x):
+    return x.reshape((6,))
+
+  x = np.arange(6, dtype=float).reshape(2, 3)
+  np.testing.assert_array_equal(fun(x), x.reshape(6))
+
+
 def test_dense_layout_calls_maps_and_derivatives():
   @sc.function(sc.arg("x", (2, 3), layout="column-major"), outputs=sc.arg("y", layout="column-major"), name="dense_stage")
   def stage(x):

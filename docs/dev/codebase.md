@@ -36,6 +36,8 @@ src/scaly/
       movement.py       constants, reshapes, slices, transposes, stacks, concatenations
       reduce.py         full tensor reductions
       contraction.py    vector and matrix products
+      schedule.py       ordered reduction schedules and scalar accumulators
+      plans.py          stored-coordinate maps and their kernel regions
       calls.py          Function calls, mapped calls, solver oracle dependencies
       gather.py         gathers and scatters
       effects.py        prints
