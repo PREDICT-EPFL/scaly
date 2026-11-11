@@ -115,3 +115,10 @@ The collection baseline's automatic merge retained the old `[100]` and `[400]`
 banded-test IDs alongside their newer symmetry parameters. A fresh complete
 collection removes those obsolete IDs and restores sorted order, with 3,832
 collected cases and no test removed.
+
+Rebasing over #320 conflicted only in `ad/reverse.py::vjp`. The active-operand
+filter keeps main's floating-type check and includes sparse MATMUL operands.
+Main's `carry_mask` dispatch and `accumulate` stay around #46's stored-coordinate
+projection and sparse-to-dense cotangent normalization. The partial table in
+`ad/rules.py` and the analysis in `ad/sparsity.py` stay identical to main.
+Sparse SELECT still belongs to #359.
