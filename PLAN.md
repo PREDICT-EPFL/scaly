@@ -25,7 +25,7 @@ sampled sparse adjoints and forward call helpers remain documented open boundari
 - [x] Integrate #65 after #408 merged and pass both required maximum regressions.
 - [x] Remove the forward-call helper extension and its tests, restore its documented limit,
       and leave #432 open. Record the rule and every known open boundary as requested.
-- [ ] Run the final full pre-merge hook detached through ~/.scaly-suite/run on this scoped state.
+- [x] Run the final full pre-merge hook detached through ~/.scaly-suite/run on this scoped state.
 - [ ] Get the main review from claude-fable-5-2 at high effort, per the updated RULES.md Models
       section. No Opus review ran; its obsolete quota-failed task was cancelled and settled.
 - [ ] Confirm Sol's correctness findings in one fresh low-effort delta task against the rebased
@@ -41,9 +41,14 @@ sampled sparse adjoints and forward call helpers remain documented open boundari
   Log /tmp/scaly-364-suite-pBCJnx/recheck.log. This is not final validation.
 - Scoped state: 109 select/snapshot/coverage checks pass, including all 99 select cases.
   Log /tmp/scaly-364-scoped-focused.log. Ruff and ty pass.
+- Scoped full hook: exit 0, 6,164 passed and 56 skipped; type checking, both Ruff checks,
+  benchmark smoke, documentation build and private-name check pass.
+  Log /tmp/scaly-364-scoped-suite-u9zsiv/final.log.
 - C/header comparisons against current main for inline, called and mapped gradients without
   selects match byte for byte. Proof path is in /tmp/scaly-364-main-proof.path.
-- All in-scope reviewer failures were reproduced before fixing. The numerical-nonzero activity
-  perturbation failed the mapped zero-cotangent Hessian and second-forward zero-tangent check.
+- All in-scope reviewer failures were reproduced before fixing. A fresh numerical-nonzero
+  activity perturbation failed both the mapped zero-cotangent Hessian and the inline
+  second-forward zero-tangent check. Restoring conditions passed both. Logs:
+  /tmp/scaly-364-scoped-perturb.log and /tmp/scaly-364-scoped-restored.log.
 - Sol's full review returned changes needed; the thread was settled. All in-scope findings are
   fixed locally. Its demand to include #432 is superseded by the coordinator's scope revision.
