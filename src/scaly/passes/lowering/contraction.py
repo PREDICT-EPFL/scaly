@@ -6,7 +6,6 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import RangeKind
 from ...ir.support import support_indices
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, _flat
@@ -44,24 +43,35 @@ def _lower_supported_matmul(ctx: LowerCtx, node: Expr) -> bool:
   supports = [ctx.support_of(arg) for arg in node.args]
   if all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
     return False
-  ai, bi = [np.arange(arg.size, dtype=np.int64) if s is None else support_indices(s) for arg, s in zip(node.args, supports, strict=True)]
   inner = a.shape[-1]
+  height = a.shape[0] if len(a.shape) == 2 else 1
   width = b.shape[-1] if len(b.shape) == 2 else 1
-  ak, bk = ai % inner, bi // width
-  left, right = [], []
-  for k in np.intersect1d(ak, bk):
-    aa, bb = ai[ak == k], bi[bk == k]
-    left.append(np.repeat(aa, len(bb)))
-    right.append(np.tile(bb, len(aa)))
-  reads_a = np.concatenate(left) if left else np.empty(0, dtype=np.int64)
-  reads_b = np.concatenate(right) if right else np.empty(0, dtype=np.int64)
-  writes = reads_a // inner * width + reads_b % width
   out = ctx.alloc_tmp(node)
   zero, (z,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
   ctx.emit(zero, [p.store(p.view(out, [z]), p.const_float(0, dtype=node.type.dtype))])
-  ranges, (k,) = ctx.nest((len(writes),), f"pairs_{out.attrs['name']}", kind=RangeKind.REDUCE)
-  target = p.view(out, [ctx.index_at(writes, k, shared=True)])
-  value = p.mul(ctx.read_stored(a, reads_a, k), ctx.read_stored(b, reads_b, k))
+  ranges, (k,) = ctx.reduce((inner,), f"inner_{out.attrs['name']}")
+  coords, values = [], []
+  for left, (arg, support) in zip((True, False), zip(node.args, supports, strict=True), strict=True):
+    if support is None or len(support) == arg.size:
+      extent = height if left else width
+      loops, (coord,) = ctx.nest((extent,), f"free_{out.attrs['name']}_{int(left)}")
+      slot = p.add(p.mul(coord, p.const_int(inner)), k) if left else p.add(p.mul(k, p.const_int(width)), coord)
+    else:
+      entries = support_indices(support)
+      contracted = entries % inner if left else entries // width
+      order = np.argsort(contracted, kind="stable")
+      entries = entries[order]
+      pointers = np.concatenate(([0], np.cumsum(np.bincount(contracted, minlength=inner))))
+      start = ctx.index_at(pointers, k, shared=True)
+      stop = ctx.index_at(pointers, p.add(k, p.const_int(1)), shared=True)
+      loops, (i,) = ctx.nest(((start, stop),), f"stored_{out.attrs['name']}_{int(left)}")
+      coord = ctx.index_at(entries // inner if left else entries % width, i, shared=True)
+      slot = ctx.index_at(entries, i, shared=True)
+    ranges.extend(loops)
+    coords.append(coord)
+    values.append(p.load(ctx.stored_view(arg, slot)))
+  target = p.view(out, [p.add(p.mul(coords[0], p.const_int(width)), coords[1])])
+  value = p.mul(*values)
   ctx.emit(ranges, [p.store(target, p.add(p.load(target), value))])
   return True
 

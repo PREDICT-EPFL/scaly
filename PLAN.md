@@ -1,152 +1,42 @@
 # Seed-pair lowering for #225
 
-Implement the fixed Sparse tensors design in `internal/notes/core_compiler_roadmap.md`, under
-`internal/notes/compiler_run_2026_11_10/plan.md` and `~/.scaly-suite/RULES.md`. Start from
-origin/main; branch `t3code/225-seed-pair-lowering`, pull request base main. Also Part of #214.
-Do not change scalarization budgets, support rules, sparse outputs or Hessian assembly.
+Implement the Sparse tensors roadmap under the compiler run plan and ~/.scaly-suite/RULES.md.
+Branch t3code/225-seed-pair-lowering, PR #419, base main. No budget or support-rule changes.
 
-- [x] Read the run plan, rules, #225/#214/#220, prerequisite outcomes and overlapping pull requests.
-- [x] Capture the chain M=9 baseline with default budgets: operations per stage, source bytes,
-      generation seconds and generated-C compile seconds. Runtime waits for Phase 4.
-- [x] Add failing differential and structure tests for partly zero mapped tangents and nested calls.
-- [x] Thread argument support through lowering and emit per-entry seed lists beside iteration plans,
-      folding known-zero operands and retaining primal work outside seed loops.
-- [ ] Cover contractions and movement, and check sparse-data Jacobian code growth requested by #225.
-- [x] Perturb a seed list and demonstrate the differential test fails; restore and pass focused tests.
-- [x] Regenerate C snapshots and node-ID baseline; measure the resulting build.
-- [x] Run all pre-merge checks detached through ~/.scaly-suite/run, polling the exit file in this turn.
-- [ ] Commit, push once, open and link draft PR. Review with Opus and high-risk correctness reviewer,
-      fix findings and obtain one delta check. Settle used review threads.
-- [ ] Remove PLAN.md, publish review fixes together, mark ready, post numbers on #214, queue once
-      with gh pr merge --squash --auto and watch checks. Report evidence and any departure.
+- [x] Read the run plan, rules, #225/#214/#220 and overlapping pull requests through REST.
+- [x] Capture the launch-base chain M=9, 40-stage Hessian baseline with default budgets.
+- [x] Implement per-entry seed lists, argument-support variants and mapped-call workspace reuse.
+- [x] Differential tests against NumPy, including actual mapped JVPs and a deliberately broken list.
+- [x] Regenerate snapshots; all existing snapshots and the new seed-pair snapshot are byte-identical.
+- [x] Independent Sol review and delta: preserve transitive call-input producer lifetimes.
+- [x] Opus primary review: fix int/bool typed zeros and contraction tables proportional to operands.
+- [x] Remove sparse-vector matmul/gather/scatter per-seed AD stacks, with size and loop-growth gates.
+- [x] Forced rebase onto merged #406, preserving its sparse SELECT lowering.
+- [ ] Complete detached full pre-merge through ~/.scaly-suite/run and poll its exit inside this turn.
+- [ ] One Opus low-effort delta on the fixes and regenerated snapshot diff; settle after using result.
+- [ ] Remove this plan, push all review fixes together and link PR immediately after the push.
+- [ ] Update PR and #214 with evidence, mark ready, queue once with squash auto-merge, report.
 
-Known overlap: #314, #355, #358, #360, #361, #368, #369, #382, #404, #406, #408, #411,
-#415, #416, #417. Rebase only for a conflict or merge queue ejection, regenerate snapshots then
-have the reviewer read that diff. #225 comment also asks to bound sparse matmul/gather/scatter
-seed-group source growth; assess what lowering can combine without changing AD support rules.
+The section coordinator re-cut #225 under run-plan rule 5: #427 owns the operation target and
+straight-line floor investigation; it is blocked by #225 and blocks #214. Do not park #419 for
+its 67,308 count. #225 still owns the sparse-data Jacobian source-growth criterion, now covered.
+No roadmap departure. Runtime waits for Phase 4; #216 does not exist and #214 stays open.
 
+Evidence lives under /tmp/scaly-225/ on la015. Both builds use the exact descriptor Hessian from
+benchmarks.harness.sweep._descriptor_kernel(chain_nlp(9,40), "hess"), render_c_module defaults,
+and gcc -O2 -fPIC -shared ... -lm. Source size is the C translation unit excluding its header.
+- Launch main: 253,786 ops/stage, 632,057 B, 5.1856 s generation, 9.0952 s compile.
+- Corrected: 67,308 ops/stage, 1,121,802 B, 5.6640 s generation, 6.6690 s compile.
+- Lifted-budget diagnostic on unchanged launch main: 58,465 ops/stage (not production).
+- Mapped arithmetic gate: launch base 196 > 60; candidate 52. Seed-table perturbation changes values.
+- Sparse-data Jacobian loops at 8/16/32 seeds: matmul 7/7/7, gather 1/1/1, scatter 1/1/2;
+  source bytes respectively 2,225/3,300/7,635; 1,317/1,895/4,204; 1,514/4,204/10,299.
+- Contraction review probe, n=64, 90%/50%/30% seeds: 293,035/249,965/228,328 B, previously
+  4,325,579/about 2.49 MB/about 1.57 MB. Numeric max error below 2.2e-13.
+- New typed-zero and source-size tests failed on reviewed code before their fixes (five failures).
+  All three sparse-data growth tests also failed with the per-seed stacks before the AD change.
+- Fourth pre-merge (before Opus fixes) passed: 4,662 tests, 56 skipped. Final suite pending.
 
-## Evidence and remaining criteria
-
-The launch base is main's "Walk each Function graph once when taking its digest" change.
-All measurements use `benchmarks.problems.chain.chain_nlp(9, 40)` and the descriptor's exact
-lower-triangle Hessian from `benchmarks.harness.sweep._descriptor_kernel(..., "hess")`.
-`render_c_module` uses default budgets and build options; gcc uses `-O2 -fPIC -shared ... -lm`.
-Artifacts and scripts are under `/tmp/scaly-225/` on la015.
-
-- Before: 253,786 operations per stage, 632,057 source bytes, 5.1856 s generation, 9.0952 s C compile.
-- Candidate: 67,862 operations per stage, 1,221,133 bytes, 7.0827 s generation, 7.0714 s C compile.
-- The approximately 60,000-operation criterion is NOT met. A diagnostic-only full expansion of
-  unchanged main gives 58,465 operations per stage, 1,104,278 bytes and 25.6363 s generation.
-  The same count holds before #315. The old study's 46,680 no longer reproduces. No production
-  budget changes were made. Posted this on #225; #214 must remain open.
-- The two ODE forward-helper supports remain exactly 249 and 567 input pairs. Cache limits are not hit.
-- `tests/passes/lowering/test_seed_pairs.py` has eight collected tests. On the launch base the
-  arithmetic gate fails 196 > 60; on the candidate it passes. The perturbed seed-table test
-  uses an isolated JIT cache and forces recompilation, then confirms NumPy comparison fails.
-- 360 focused lowering/integration/scalarization tests passed before the last test additions;
-  122 focused seed/snapshot/import checks passed on the final candidate. Ruff and ty pass.
-- Existing snapshots regenerated byte-identically. Added `seed_pairs.c` and `.h` to pin the new
-  path. The complete node-ID baseline contains 4,672 tests.
-- Full pre-merge runs detached: `/tmp/scaly-225/full-suite.log` and `.exit`, launcher PID 3612549.
-- Sparse-data Jacobian source-growth criterion is also NOT met. `/tmp/scaly-225/growth.py`
-  sees matmul loop counts 34/66/130, gather 10/18/34 and scatter 28/52/100 for 8/16/32 seeds.
-  These originate in `ad/forward.py`'s per-seed sparse matmul/gather/scatter stacks; lowering
-  still emits the groups. Do not silently claim this added #225 comment is complete.
-
-The current diff intentionally stays in lowering plus tests and snapshots. No roadmap departure
-has been applied. Ask reviewers to assess the remaining gap and any concrete in-scope fix; if it
-still fails after review and one delta check, follow the run plan's parking rule rather than queue
-an incomplete change. Keep this plan while the pull request is draft.
-
-
-## Full-suite follow-up
-
-The first complete run ended with 4,613 passed, 56 skipped and three failures. Fixed the two
-unit-map dispatch metric failures by retaining the original induction variable for an unfiltered
-map, and normalized full-support call arguments to avoid redundant variants. Do not use seed
-plans when neither the result nor an operand has known zeros. Rectangular seed bands retain
-contiguous entry traversal.
-
-The neural-process Jacobian workspace gate also failed, 12,288 versus 6,144 allowed. New sparse
-kernels prevented producer fusion, and workspace packing treated every temporary in an inlined
-map as live for the whole loop. Lowering now marks scratch that is defined for each call;
-`pack_workspace` follows its kernel lifetimes inside scalar and widened maps. Inputs and values
-used after the map remain pinned across every trip. Whole-loop packing remains for unmarked and
-carried storage. Two generated-C tests cover reuse, values defined before the loop and outputs
-read after it. The numerical test caught and fixed premature reuse of a live output. Existing
-mixed-width vector helper slot reuse caught and fixed an end-position error.
-
-The targeted gates now pass. The broad check after these fixes passed 636 tests, with 50 skipped.
-Ruff and ty pass. The collection now contains 4,674 tests. Re-run the full hook detached before
-pushing and launching review. No PR or branch push has happened yet.
-
-Latest build before the final bound-read accounting tweak: 67,308 operations per stage,
-1,121,802 source bytes, 6.3706 s generation and 7.0294 s compile. The operation criterion and
-sparse-data Jacobian growth criterion remain unmet. Existing snapshots still regenerate
-byte-identically, including the new seed-list case. The workspace file overlaps #368; its changes
-are allowed by this task's workspace scope and may need a conflict rebase.
-
-
-## Ready for independent review
-
-The second full pre-merge hook passed with exit 0: 4,618 passed, 56 skipped; all benchmark smoke
-checks, documentation, type, lint, formatting and private-name checks passed. Log and exit file:
-`/tmp/scaly-225/full-suite-2.log` and `/tmp/scaly-225/full-suite-2.exit`.
-
-Final measured default-budget build: 67,308 operations per stage, 1,121,802 source bytes,
-5.5007 s generation, 8.0032 s generated-C compile, dispatch workspace 57,276 doubles and whole
-workspace 452,466 doubles. The two outstanding criteria remain unchanged. Prepare a draft PR and
-get one Opus xhigh review plus one independent sol xhigh correctness review, then fix and request
-one low-effort delta check. Do not queue or remove this plan while criteria are unmet.
-
-
-## Conflict rebase before review
-
-GitHub reported an actual conflict with "Call external C functions from Scaly graphs" (#355),
-so the branch was rebased onto that main. The call-lowering conflict keeps external calls on their
-external symbol and preserves the external-call marker; only ordinary calls specialize support.
-The merged workspace change retains main's external-call accounting. Snapshots regenerate
-byte-identically, and the node-ID union now contains 4,717 tests. Rebased focused external/seed/
-workspace checks and the final full pre-merge hook must pass before the forced rebase push and
-review. Use `/tmp/scaly-225/full-suite-3.log` and `.exit` for that run. The prior full hook passed
-on the pre-rebase state. The chain translation unit is being checked for byte identity to the
-measured artifact, so unchanged build numbers remain attributed to that identical code.
-
-
-Rebased validation is complete: `/tmp/scaly-225/full-suite-3.exit` is 0. The whole hook passed
-with 4,661 tests passed and 56 skipped, all smoke gates passed, and docs/type/lint/format/private
-checks passed. The 47 focused external/seed/workspace checks also passed. The chain translation
-unit is exactly byte-identical to `/tmp/scaly-225/final.c`, including the 67,308-operation count,
-1,121,802 source bytes and workspace figures. The conflict rebase is ready to push for review.
-
-
-## Independent correctness review
-
-Sol xhigh found one act-on item at the reviewed head: scope references omitted transitive CALL-input
-producer dependencies, so a producer defined before a map could reuse storage written later inside
-the map. This violated the existing Apple-clang workaround, although no wrong arithmetic was
-reproduced on Linux. Added the dependency to scope references and a structural regression gate.
-The new gate fails on the reviewed head; seven focused closure/workspace/vector checks pass after
-the fix. Existing C snapshots and the measured chain translation unit remain byte-identical.
-The full pre-merge must run again via `/tmp/scaly-225/full-suite-4.log` and `.exit`, followed by
-one Sol low-effort delta check of this fix alone. This correction is local and awaits the single
-combined review-fix push.
-
-The Opus xhigh request returned no verdict because Claude hit its five-hour quota until 06:30 UTC
-on 2026-11-11. Its old-head task was cancelled and settled after the correctness fix changed the
-review target. Start one fresh Opus review of the corrected head when its quota permits, using
-`/tmp/scaly-225/review-brief.txt`, and settle it only after using its result. No reviewer verdict
-may be invented. The two outstanding acceptance criteria still prevent queueing.
-
-
-The correctness correction is confirmed. Sol's low-effort delta check reported the finding
-resolved and no adjacent concerns. The fourth full hook passed with exit 0: 4,662 tests passed,
-56 skipped, benchmark smoke and docs/type/lint/format/private-name checks all green. Existing
-snapshots and the chain C translation unit remain byte-identical. The collection has 4,718 cases.
-
-The primary review still owes a verdict. Request a fresh Opus xhigh review of the current local
-head, with quota resumption at 06:30 UTC if necessary. Do not settle that review while it is still
-quota-paused. The original cancelled request and the exact briefs/reproductions are in the T3
-history and `/tmp/scaly-225/`. The correctness fix and this note remain local until the one
-combined review-fix push; PR #419 is still draft. Do not queue it with either acceptance gap open.
+Opus's cheap notes are addressed by sharing mapped support windows with analysis through a minimal
+ir/support.py hook and removing a dead patterned-node check. No support rules are changed.
+The primary review thread and cancelled quota-failed request are settled; the delta is still owed.

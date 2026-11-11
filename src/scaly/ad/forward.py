@@ -169,13 +169,25 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.GATHER:
     indices = expr.attrs["indices"].reshape(-1)
     if args[0].type.pattern is not None:
-      return stack(gather(d[0][i], expr.attrs["indices"]) for i in range(nseed))
+      source = stored_indices(args[0].type)
+      reads = indices[stored_indices(expr.type)]
+      slots = np.searchsorted(source, reads)
+      valid = slots < len(source)
+      valid[valid] &= source[slots[valid]] == reads[valid]
+      slots = np.where(valid, slots, len(source))
+      padded = concat((values(d[0]).reshape((nseed, len(source))), _uniform(0, (nseed, 1), dtype=expr.type.dtype, lowering=expr.lowering)), axis=1)
+      full = (np.arange(nseed, dtype=np.int64)[:, None] * (len(source) + 1) + slots[None, :]).reshape(-1)
+      return _reshape_tangent(gather(padded, full), expr, nseed)
     full = (np.arange(nseed, dtype=np.int64)[:, None] * args[0].size + indices[None, :]).reshape(-1)
     return gather(d[0], full).reshape((nseed, *expr.shape))
   if op == ExprOp.SCATTER:
     indices = expr.attrs["indices"].reshape(-1)
     if args[0].type.pattern is not None:
-      return stack(scatter(d[0][i], indices, expr.shape) for i in range(nseed))
+      target = indices[stored_indices(args[0].type)]
+      slots = np.searchsorted(stored_indices(expr.type), target) if expr.type.pattern is not None else target
+      full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.type.storage_size + slots[None, :]).reshape(-1)
+      stored = scatter(values(d[0]).vec(), full, (nseed * expr.type.storage_size,))
+      return _reshape_tangent(stored, expr, nseed)
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
     return scatter(d[0].reshape((nseed * args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
   if op == ExprOp.STACK:
@@ -183,7 +195,7 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.CONCAT:
     return concat(d, axis=expr.attrs.get("axis", 0) + 1)
   if op == ExprOp.MATMUL:
-    if any(arg.type.pattern is not None for arg in args):
+    if expr.attrs.get("sampled") is not None:
       terms = []
       sampled = expr.attrs.get("sampled")
       if not _is_zero_const(d[0]):
@@ -212,6 +224,8 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
 
 
 def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:
+  if x.type.pattern is not None:
+    return to_dense((dx * y).sum(axis=2)) if len(y.shape) == 1 else stack(dx[i] @ y for i in range(nseed))
   # Keep folded seeds for stored kernels until #403 adds batched sparse products.
   if y.type.pattern is not None:
     if len(x.shape) == 1:
@@ -225,6 +239,8 @@ def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:
 
 
 def _jvp_many_matmul_right(x: Expr, y: Expr, dy: Expr, nseed: int) -> Expr:
+  if y.type.pattern is not None:
+    return to_dense((x.reshape((1, x.size, 1)) * dy).sum(axis=1)) if len(x.shape) == 1 else stack(x @ dy[i] for i in range(nseed))
   if x.type.pattern is not None:
     if len(y.shape) == 1:
       return (x @ dy.T).T

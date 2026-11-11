@@ -9,8 +9,7 @@ from ...ir.expr import Expr, ExprOp, invocation_key
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
-from ...ir.support import Support, _make_support, support_indices
-from ...ir.types import stored_indices
+from ...ir.support import Support, _mapped_support_groups
 from ..program.scalarize import expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
 
@@ -104,22 +103,7 @@ def _result_buffers(ctx: LowerCtx, node: Expr) -> tuple[list[ProgramNode], dict[
 @lowers(ExprOp.VMAP)
 def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   callee = node.attrs["callee"]
-  groups: dict[tuple[Support, ...], list[int]] = {}
-  windows = []
-  for actual, formal, start, stride in zip(node.args, callee.inputs, node.attrs["starts"], node.attrs["strides"], strict=True):
-    support = ctx.support_of(actual)
-    windows.append((None if support is None else support_indices(support), formal, start, stride))
-  for stage in range(node.attrs["length"]):
-    arguments = []
-    for indices, formal, start, stride in windows:
-      support = None
-      if indices is not None:
-        offset = start + stage * stride
-        lo, hi = np.searchsorted(indices, (offset, offset + formal.type.storage_size))
-        entries = indices[lo:hi] - offset
-        support = _make_support(entries if formal.type.pattern is None else stored_indices(formal.type)[entries])
-      arguments.append(support)
-    groups.setdefault(tuple(arguments), []).append(stage)
+  groups = _mapped_support_groups(node, ctx.support_of)
   for arguments, stages in groups.items():
     _lower_vmap_group(ctx, node, np.asarray(stages, dtype=np.int64), _ensure_callee(ctx, callee, arguments))
   if not groups:

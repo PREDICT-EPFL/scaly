@@ -300,8 +300,6 @@ def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
   support = ctx.support_of(node)
   if (support is None or len(support) == node.size) and all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
     return False
-  if node.type.pattern is not None:
-    return False
   logical = np.arange(node.size, dtype=np.int64) if support is None else support_indices(support)
   reads = []
   for arg, known in zip(node.args, supports, strict=True):
@@ -310,7 +308,7 @@ def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
   out = ctx.alloc_tmp(node)
   if len(logical) < node.size:
     ranges, (k,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
-    ctx.emit(ranges, [p.store(p.view(out, [k]), p.const_float(0, dtype=node.type.dtype))])
+    ctx.emit(ranges, [p.store(p.view(out, [k]), constant(0, node.type.dtype))])
   width = int(np.prod(node.shape[1:], dtype=np.int64))
   for region, count in seed_regions(logical, reads, width):
     entries = len(region.writes) // count

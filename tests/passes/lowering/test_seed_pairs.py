@@ -125,3 +125,45 @@ def test_callee_support_variants_are_bounded_and_fallback_remains_sound():
   module = render_c_module(host, lanes=1)
   variants = [proc for proc in module.program.args if proc.attrs.get("name", "").startswith("seed_pair_bounded_inner_support")]
   assert len(variants) <= 32
+
+
+@pytest.mark.parametrize("dtype", ["int64", "bool"])
+def test_supported_nonfloating_elementwise_uses_typed_zeros(dtype):
+  mask = np.zeros((3, 4))
+  mask[0, 1] = mask[1, 0] = 1
+
+  @sc.function(sc.arg("x", (3, 4)), name=f"seed_typed_inner_{dtype}")
+  def inner(x):
+    return (x * 3).cast(dtype).cast("float64").block()
+
+  @sc.function(sc.arg("x", (3, 4)), name=f"seed_typed_host_{dtype}")
+  def host(x):
+    return inner(x * sc.const(mask)).block()
+
+  x = np.random.default_rng(225).normal(size=mask.shape)
+  np.testing.assert_array_equal(host(x), (3 * x * mask).astype(dtype).astype(float))
+
+
+@pytest.mark.parametrize("density", [0.3, 0.5, 0.9])
+def test_supported_matmul_source_scales_with_operand_entries(density):
+  n = 64
+  rng = np.random.default_rng(225)
+  w1, w2 = rng.normal(size=(2, n, n))
+  seeds = rng.normal(size=(n, n)) * (rng.random((n, n)) < density)
+
+  @sc.function(sc.arg("x", n), sc.arg("d", (n, n)), name=f"seed_mlp_tangent_{int(density * 100)}")
+  def tangent(x, d):
+    h = (sc.const(w1) @ x).tanh()
+    return sc.jvp_many((sc.const(w2) @ h).tanh(), x, d).block()
+
+  @sc.function(sc.arg("x", n), name=f"seed_mlp_host_{int(density * 100)}")
+  def host(x):
+    return tangent(x, sc.const(seeds)).block()
+
+  module = render_c_module(host, lanes=1)
+  assert len(module.body.encode()) < 400_000
+  x = rng.normal(size=n)
+  h = np.tanh(w1 @ x)
+  y = np.tanh(w2 @ h)
+  jac = (1 - y**2)[:, None] * w2 @ ((1 - h**2)[:, None] * w1)
+  np.testing.assert_allclose(host(x), seeds @ jac.T, rtol=1e-12, atol=1e-12)
