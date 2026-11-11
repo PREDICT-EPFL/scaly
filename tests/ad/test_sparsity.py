@@ -878,11 +878,9 @@ def test_deep_euler_graph(walk) -> None:
 
 def test_deep_callee_masks_skip_inactive_solver_parameters() -> None:
   from scaly.ad.sparsity import jacobian_sparsity
-  from scaly.solvers.model import SolverDescriptor
 
   p, x = sc.sym("deep_callee_p", 2), sc.sym("deep_callee_x", 2)
-  descriptor = SolverDescriptor("deep_callee_solver", "test", 2, 0, 0, (("p", (2,)),), (("y", (2,)),), (), 1)
-  solver = sc.Expr(sc.ExprOp.SOLVER_CALL, (p,), sc.TensorType((2,), diff=False), attrs={"solver": descriptor, "output": 0, "output_name": "y"})
+  solver = sc.extern(sc.CLibrary("deep_callee_solver"), "deep_callee_solver", inputs=(sc.arg("p", 2),), outputs=sc.arg("y", 2))(p)
   fn = ConcreteFunction._from_exprs("deep_callee_base", [p, x], [solver + x], ["p", "x"], ["y"])
   result = fn(sc.const(np.zeros(2)), x)
   for i in range(800):

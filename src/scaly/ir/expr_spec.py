@@ -226,28 +226,6 @@ def _slice_index(expr: Expr) -> str | None:
   return None
 
 
-def _solver_call_signature(expr: Expr) -> str | None:
-  solver = expr.attrs.get("solver")
-  if solver is None:
-    return "SOLVER_CALL missing 'solver' attr"
-  output = expr.attrs.get("output")
-  if not isinstance(output, int) or not 0 <= output < len(solver.output_signature):
-    return f"SOLVER_CALL output index {output!r} out of range"
-  if len(expr.args) != len(solver.input_signature):
-    return "SOLVER_CALL argument count does not match solver input signature"
-  for actual, (name, shape) in zip(expr.args, solver.input_signature, strict=True):
-    if actual.shape != shape:
-      return f"SOLVER_CALL arg {name!r} shape {actual.shape} != signature shape {shape}"
-  name, shape = solver.output_signature[output]
-  if expr.attrs.get("output_name") != name:
-    return f"SOLVER_CALL output_name does not match signature name {name!r}"
-  if expr.shape != shape:
-    return f"SOLVER_CALL output shape {expr.shape} != signature shape {shape}"
-  if expr.type.diff:
-    return "SOLVER_CALL output must be non-differentiable"
-  return None
-
-
 def _matmul_shape(expr: Expr) -> str | None:
   if len(expr.args) != 2:
     return f"MATMUL has {len(expr.args)} args"
@@ -502,7 +480,6 @@ spec_expr = Spec(
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
     Rule(ExprOp.SLICE, "slice-index", _slice_index),
-    Rule(ExprOp.SOLVER_CALL, "solver-call-signature", _solver_call_signature),
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.EXTERN, "extern-attrs", _call_attrs),

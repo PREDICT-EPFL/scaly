@@ -29,7 +29,8 @@ class CLibrary:
   into immutable tuples. ``include_dirs`` names additional header directories. ``defines`` maps
   macro names to values, or ``None`` for a macro without a value. ``compile_flags`` uses clang's
   dialect and applies only to these sources. ``link`` contains library names such as ``"m"``,
-  resolved by the selected toolchain. ``versions`` records user-supplied dependency versions.
+  resolved by the selected toolchain, searching ``library_dirs`` before system directories.
+  ``versions`` records user-supplied dependency versions.
   Source, headers, flags and resolved library content all contribute to the JIT cache key.
   """
 
@@ -37,6 +38,7 @@ class CLibrary:
   sources: Mapping[str, str] | tuple[tuple[str, str], ...] = ()
   headers: Mapping[str, str] | tuple[tuple[str, str], ...] = ()
   include_dirs: tuple[str, ...] = ()
+  library_dirs: tuple[str, ...] = ()
   defines: Mapping[str, str | int | None] | tuple[tuple[str, str | int | None], ...] = ()
   compile_flags: tuple[str, ...] = ()
   link: tuple[str, ...] = ()
@@ -45,7 +47,7 @@ class CLibrary:
   def __post_init__(self) -> None:
     if not self.name:
       raise ValueError("CLibrary needs a non-empty name")
-    for name in ("include_dirs", "compile_flags", "link"):
+    for name in ("include_dirs", "library_dirs", "compile_flags", "link"):
       if isinstance(getattr(self, name), str):
         raise TypeError(f"CLibrary {name} needs a sequence of strings, not a bare string")
     object.__setattr__(self, "sources", _files(self.sources))
@@ -53,6 +55,7 @@ class CLibrary:
     if set(dict(self.sources)) & set(dict(self.headers)):
       raise ValueError("library source and header file names must be distinct")
     object.__setattr__(self, "include_dirs", tuple(str(Path(directory).resolve()) for directory in self.include_dirs))
+    object.__setattr__(self, "library_dirs", tuple(str(Path(directory).resolve()) for directory in self.library_dirs))
     object.__setattr__(self, "defines", tuple(sorted((name, None if value is None else str(value)) for name, value in dict(self.defines).items())))
     object.__setattr__(self, "compile_flags", tuple(self.compile_flags))
     object.__setattr__(self, "link", tuple(self.link))

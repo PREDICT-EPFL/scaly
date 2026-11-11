@@ -94,7 +94,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   for i in range(param_count):
     lines.append(f"  const double* p{i};")
   lines.append("  double* w;")
-  lines.append("  const scaly_solver_option* const* solver_options;")
   lines.append("  double t_fe;")
   lines.append("  int32_t n_eval_f, n_eval_grad_f, n_eval_g, n_eval_jac_g, n_eval_h, iter;")
   lines.append("  double inf_pr, step_inf, alpha;")
@@ -119,9 +118,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
   lines.append("  double fe_t0 = scaly_clock_s();")
   lines.append("  double f_buf[1];")
-  lines.append(
-    f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', *([f'{symbol}_g_scratch'] if m else [])])}, ctx->w{', ctx->solver_options' if ctx.oracle_options(base) else ''});"
-  )
+  lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', *([f'{symbol}_g_scratch'] if m else [])])}, ctx->w);")
   lines.append("  ctx->t_fe += scaly_clock_s() - fe_t0;")
   lines.append("  ctx->n_eval_f += 1;")
   lines.append("  obj_value[0] = f_buf[0];")
@@ -133,7 +130,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append("  (void)N; (void)new_x;")
   lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
   lines.append("  double fe_t0 = scaly_clock_s();")
-  lines.append(f"  {grad_raw}(x, {', '.join([*param_args, 'grad_f'])}, ctx->w{', ctx->solver_options' if ctx.oracle_options(grad) else ''});")
+  lines.append(f"  {grad_raw}(x, {', '.join([*param_args, 'grad_f'])}, ctx->w);")
   lines.append("  ctx->t_fe += scaly_clock_s() - fe_t0;")
   lines.append("  ctx->n_eval_grad_f += 1;")
   lines.append("  return true;")
@@ -149,7 +146,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
     lines.append("  double fe_t0 = scaly_clock_s();")
     lines.append("  double f_buf[1];")
-    lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', 'g'])}, ctx->w{', ctx->solver_options' if ctx.oracle_options(base) else ''});")
+    lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', 'g'])}, ctx->w);")
     lines.append("  ctx->t_fe += scaly_clock_s() - fe_t0;")
     lines.append("  ctx->n_eval_g += 1;")
     lines.append("  return true;")
@@ -171,7 +168,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     lines.append("  } else {")
     assert jac_raw is not None
     lines.append("    double fe_t0 = scaly_clock_s();")
-    lines.append(f"    {jac_raw}(x, {', '.join([*param_args, 'values'])}, ctx->w{', ctx->solver_options' if ctx.oracle_options(jac) else ''});")
+    lines.append(f"    {jac_raw}(x, {', '.join([*param_args, 'values'])}, ctx->w);")
     lines.append("    ctx->t_fe += scaly_clock_s() - fe_t0;")
     lines.append("    ctx->n_eval_jac_g += 1;")
     lines.append("  }")
@@ -199,7 +196,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     if m:
       hess_args.append("lambda")
     hess_args.append("values")
-    lines.append(f"    {hess_raw}({', '.join(hess_args)}, ctx->w{', ctx->solver_options' if ctx.oracle_options(hess) else ''});")
+    lines.append(f"    {hess_raw}({', '.join(hess_args)}, ctx->w);")
     lines.append("    ctx->t_fe += scaly_clock_s() - fe_t0;")
     lines.append("    ctx->n_eval_h += 1;")
     lines.append("  }")
@@ -231,14 +228,13 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   # Wrapper body.
   c_inputs = [f"const double* in{i}" for i in range(len(desc.input_signature))]
   c_outputs = [f"double* out{i}" for i in range(len(desc.output_signature))]
-  params = [*c_inputs, *c_outputs, "double* w", "const scaly_solver_option* const* solver_options"]
+  params = [*c_inputs, *c_outputs, "double* w", "const scaly_solver_option* options"]
   lines.append(f"static void {raw}({', '.join(params)}) {{")
   lines.append("  double stats_t0 = scaly_clock_s();")
   # Stash params + workspace in the static context, reset per-solve stats.
   for i in range(param_count):
     lines.append(f"  {symbol}_ctx.p{i} = in{param_start + i};")
   lines.append(f"  {symbol}_ctx.w = w;")
-  lines.append(f"  {symbol}_ctx.solver_options = solver_options;")
   lines.append(f"  {symbol}_ctx.t_fe = 0.0;")
   lines.append(f"  {symbol}_ctx.n_eval_f = 0; {symbol}_ctx.n_eval_grad_f = 0; {symbol}_ctx.n_eval_g = 0;")
   lines.append(f"  {symbol}_ctx.n_eval_jac_g = 0; {symbol}_ctx.n_eval_h = 0; {symbol}_ctx.iter = 0;")
@@ -254,7 +250,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     bounds_outs.extend(["l_in", "u_in"])
   bounds_call = ", ".join([*[f"in{param_start + i}" for i in range(param_count)], *bounds_outs])
   lines.append("  double bounds_t0 = scaly_clock_s();")
-  lines.append(f"  {bounds_raw}({bounds_call}, w{', solver_options' if ctx.oracle_options(bounds) else ''});")
+  lines.append(f"  {bounds_raw}({bounds_call}, w);")
   lines.append(f"  {symbol}_ctx.t_fe += scaly_clock_s() - bounds_t0;")
   lines.append(f"  for (int i = 0; i < {n}; ++i) {{")
   lines.append(f"    if (!(x_L[i] > -{_IPOPT_INF})) x_L[i] = -{_IPOPT_INF};")
@@ -290,7 +286,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   # return (a rejected option surfaces as SCALY_SOLVE_ERROR stats with
   # defined outputs).
   lines.append("  int setup_ok = problem != NULL;")
-  lines.append(f"  for (const scaly_solver_option* option = solver_options[{ctx.options_index}]; setup_ok && option->name; ++option) {{")
+  lines.append("  for (const scaly_solver_option* option = options; setup_ok && option->name; ++option) {")
   lines.append("    if (option->kind == 0) setup_ok = AddIpoptIntOption(problem, (char*)option->name, (ipindex)option->integer);")
   lines.append("    else if (option->kind == 1) setup_ok = AddIpoptNumOption(problem, (char*)option->name, option->number);")
   lines.append("    else setup_ok = AddIpoptStrOption(problem, (char*)option->name, (char*)option->text);")

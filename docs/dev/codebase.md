@@ -39,7 +39,7 @@ src/scaly/
       contraction.py    vector and matrix products
       schedule.py       ordered reduction schedules and scalar accumulators
       plans.py          stored-coordinate maps and their kernel regions
-      calls.py          Function calls, mapped calls, solver oracle dependencies
+      calls.py          Function calls, mapped calls and external calls
       gather.py         gathers and scatters
       effects.py        prints
     program/             program optimizations                    (ProgramNode -> ProgramNode)
@@ -86,14 +86,14 @@ src/scaly/
     cpp.py               the C++ header: the Buffer template and a namespace per function
     casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, the gather
     __main__.py          compatibility shim for `python -m scaly.codegen`
-    solver.py            solver-wrapper framing around a plugin-rendered body
+    solver.py            solver extern libraries and their options/statistics interface
     aot.py               one lowering -> CModule, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch; the index that skips rendering on a hit
     toolchain.py         CPU build recipes, native feature detection, compiler discovery, cache root
     external.py          external-library fingerprints, object compilation and build-manifest export
 
   solvers/
-    model.py             solver descriptors, stage oracle records and opaque Functions
+    model.py             solver descriptors, stage oracle records and extern Functions
     problem.py           typed backend-free Problem declarations and their stacked NLP form
     ocp.py               the discrete-time OCP builder and its general and stage-form problems
     solver.py            backend selection and the parameter-based Solver call

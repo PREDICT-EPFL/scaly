@@ -52,14 +52,11 @@ from ..passes import program
 from ..passes.lowering import workspace_dtype
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
-from ..solvers.graph import solver_backends_used
-from ..solvers.paths import SolverLibraryError, backend_compile_flags, solver_paths
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import (
   BuildRecipe,
   Compiler,
   cache_root,
-  directory_fingerprint,
   compiler_fingerprint,
   find_c_compiler,
   native_recipe,
@@ -75,10 +72,8 @@ from ..function.model import Function, as_concrete
 
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly.
-# Solver modules also key on the contents of their include and library search
-# directories, each read once per process. Keep native files fixed while Python
-# runs, and stop it before replacing solver headers or libraries at the same paths.
-_JIT_CACHE_VERSION = "9"
+# External-library contents and build flags enter both cache keys.
+_JIT_CACHE_VERSION = "10"
 
 _C_VOID_PP = ctypes.POINTER(ctypes.c_void_p)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
@@ -89,10 +84,9 @@ _RTLD_DI_LMID = 1
 @dataclass
 class _LinkerNamespace:
   id: int
-  external: bool
   libraries: list[ctypes.CDLL]
   dependencies: dict[str, tuple[str, str]]
-  environ: ctypes.c_void_p | None = None
+  environ: ctypes.c_void_p
 
 
 _LINKER_NAMESPACES: list[_LinkerNamespace] = []
@@ -173,18 +167,18 @@ def _namespace_dependencies(path: Path) -> dict[str, tuple[str, str]]:
   return dependencies
 
 
-def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ()) -> ctypes.CDLL:
+def load_library(path: Path, *, isolated: bool, library_dirs: tuple[str, ...] = ()) -> ctypes.CDLL:
   """Load a shared library, isolating incompatible Linux dependency builds from one another.
 
   External kernels reuse a namespace when shared names identify the same path and content,
-  including transitive dependencies. The solver namespace stays separate. Loaded handles and
+  including transitive dependencies. Loaded handles and
   namespaces live until process exit, so old compiled handles remain callable after a rebuild.
   Environment changes after the last load remain subject to the limitation tracked in #159.
   """
   if isolated and sys.platform == "win32":
     with ExitStack() as stack:
-      for directory in solver_paths(required=False).lib_dirs:
-        stack.enter_context(os.add_dll_directory(str(directory.resolve())))
+      for directory in library_dirs:
+        stack.enter_context(os.add_dll_directory(str(Path(directory).resolve())))
       return ctypes.CDLL(str(path))
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
@@ -213,49 +207,34 @@ def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ())
     return lib
 
   with _LINKER_NAMESPACE_LOCK:
-    dependencies = _namespace_dependencies(path) if namespace else {}
+    dependencies = _namespace_dependencies(path)
     previous = next(
       (
         candidate
         for candidate in _LINKER_NAMESPACES
-        if candidate.external == bool(namespace)
-        and all(name not in candidate.dependencies or candidate.dependencies[name] == identity for name, identity in dependencies.items())
+        if all(name not in candidate.dependencies or candidate.dependencies[name] == identity for name, identity in dependencies.items())
       ),
       None,
     )
-    anchor = None
     if previous is None:
       # A libc-only anchor leaves other symbols in each kernel's local dependency scope.
       # DEEPBIND can split libc's allocator calls from a kernel's free; the extern buffer
       # contract does not prevent that internal mismatch. Keep ordinary LOCAL lookup.
-      anchor = open_library(_LM_ID_NEWLM, _linux_loader()[1] if namespace else str(path))
+      anchor = open_library(_LM_ID_NEWLM, _linux_loader()[1])
       dlinfo = libc.dlinfo
       dlinfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
       dlinfo.restype = ctypes.c_int
       resolved = ctypes.c_long()
       if dlinfo(anchor._handle, _RTLD_DI_LMID, ctypes.byref(resolved)) != 0:
         raise OSError(f"dlinfo failed for {path}")
-      previous = _LinkerNamespace(resolved.value, bool(namespace), [anchor], {})
+      previous = _LinkerNamespace(resolved.value, [anchor], {}, ctypes.c_void_p.in_dll(anchor, "environ"))
       _LINKER_NAMESPACES.append(previous)
-      try:
-        previous.environ = ctypes.c_void_p.in_dll(anchor, "environ")
-      except ValueError:
-        pass  # A self-contained solver kernel need not link libc.
-    environ = previous.environ
     # A namespace's libc retains the process environment array from its first load. Refresh it
     # before another initializer calls getenv, since Python may have replaced that array.
-    if environ is not None:
-      environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
-    lib = anchor if anchor is not None and not namespace else open_library(previous.id, str(path))
-    if environ is None:
-      try:
-        environ = ctypes.c_void_p.in_dll(lib, "environ")
-      except ValueError:
-        pass  # A self-contained external kernel need not link libc.
-    if lib is not anchor:
-      previous.libraries.append(lib)
+    previous.environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
+    lib = open_library(previous.id, str(path))
+    previous.libraries.append(lib)
     previous.dependencies.update(dependencies)
-    previous.environ = environ
   return lib
 
 
@@ -344,24 +323,6 @@ def _compile_command(
   ]
 
 
-def solver_inputs_fingerprint(link_flags: tuple[str, ...]) -> str:
-  """Content digest of solver include/library trees, each read once per process.
-
-  The digest covers indirect headers and bundled library dependencies, even when a plugin's
-  version stays unchanged. Native files must stay fixed during the process, as loaded libraries do.
-  """
-  h = hashlib.sha256()
-  directories = dict.fromkeys(Path(flag[2:]) for flag in link_flags if flag.startswith(("-I", "-L")))
-  for directory in directories:
-    h.update(_solver_directory_fingerprint(directory))
-  return h.hexdigest()
-
-
-@functools.cache
-def _solver_directory_fingerprint(directory: Path) -> bytes:
-  return directory_fingerprint(directory)
-
-
 def _hash_parts(*parts: str) -> str:
   h = hashlib.sha256()
   for part in parts:
@@ -369,17 +330,16 @@ def _hash_parts(*parts: str) -> str:
   return h.hexdigest()
 
 
-def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str, solver_inputs: str = "") -> str:
+def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str) -> str:
   """SHA-256 over the rendered C source, which spells the entry signature, plus the cache version.
 
   Any change to the codegen output, the entry signature, or `_JIT_CACHE_VERSION` invalidates
   previously cached artifacts. ConcreteFunction names and the full compile command are included so
   two functions that happen to share a source skeleton (different symbols or solver rpaths) still
   get distinct entries. ``toolchain`` is the compiler's ``compiler_fingerprint``, so another
-  compiler, a changed one at the same path, or another CPU misses the cache. ``solver_inputs``
-  identifies the native headers and libraries used to build a solver module.
+  compiler, a changed one at the same path, or another CPU misses the cache.
   """
-  return _hash_parts(_JIT_CACHE_VERSION, fun_name, source, toolchain, solver_inputs, *command)
+  return _hash_parts(_JIT_CACHE_VERSION, fun_name, source, toolchain, *command)
 
 
 def _toolchain(fun: ConcreteFunction, compiler: Compiler, libraries: tuple[LibraryBuild, ...] = ()) -> str:
@@ -405,8 +365,7 @@ def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule,
   command = _compile_command(
     compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module._libraries)
   )
-  solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
-  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
+  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain)
 
 
 @functools.cache
@@ -428,17 +387,15 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   if (graph := graph_digest(fun)) is None or (source := source_digest()) is None:
     return None
   recipe = _host_recipe(compiler.command)
-  backends = solver_backends_used(fun)
   try:
     libraries = tuple(prepare_library(library, compiler.command) for library in libraries_of(fun))
-    link_flags = (*backend_compile_flags(backends), *recipe.link_flags, *(flag for library in libraries for flag in library.link_flags))
-  except (SolverLibraryError, OSError, subprocess.CalledProcessError):
+    link_flags = (*recipe.link_flags, *(flag for library in libraries for flag in library.link_flags))
+  except (OSError, subprocess.CalledProcessError):
     return None  # rendering says what is missing
   command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext(), external=bool(libraries))
-  solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
   toolchain = _toolchain(fun, compiler, libraries)
-  return _hash_parts(_JIT_CACHE_VERSION, _scaly_version(), source, graph, repr(recipe), toolchain, solver_inputs, *libc, *command)
+  return _hash_parts(_JIT_CACHE_VERSION, _scaly_version(), source, graph, repr(recipe), toolchain, *libc, *command)
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,9 +404,9 @@ class _Artifact:
   key: str
   flags: tuple[str, ...]
   workspace_size: int
-  solver_library: bool
+  library_dirs: tuple[str, ...]
   prints: bool
-  namespace: tuple[str, ...] = ()
+  external: bool = False
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -482,7 +439,7 @@ def _index_read(index: str) -> _Artifact | None:
     return _Artifact(
       lib_path=cache_root() / entry.pop("library"),
       flags=tuple(entry.pop("flags")),
-      namespace=tuple(entry.pop("namespace")),
+      library_dirs=tuple(entry.pop("library_dirs")),
       **entry,
     )
   except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -544,9 +501,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     key=key,
     flags=module.link_flags,
     workspace_size=module.workspace_size,
-    solver_library=bool(module.backends or module._libraries),
+    library_dirs=tuple(dict.fromkeys(str(Path(link.path).parent) for build in module._library_builds for link in build.links)),
     prints=prints(module.program) or bool(module._libraries),
-    namespace=("extern", *(f"{link.path}:{link.identity}" for build in module._library_builds for link in build.links)) if module._libraries else (),
+    external=bool(module._libraries),
   )
   if verify and index is not None and indexed is not None and replace(indexed, lib_path=lib_path) != artifact:
     raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
@@ -564,7 +521,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
       # Explicit CasADi oracle exports disable MinGW's automatic exports of our entry points.
       # A module definition file also works with Zig, which ignores --export-all-symbols.
       exports = [symbol]
-      if module.backends:
+      if solver_functions(fun):
         exports += [f"{symbol}_with_options"]
         for solver_symbol in solver_stats_symbols(fun):
           exports += [f"{solver_symbol}_stats", f"{solver_symbol}_default_options"]
@@ -632,7 +589,9 @@ class CompiledFunction:
     self._fun = fun
     self._artifact = _build_artifact(fun)
     self._lib = load_library(
-      self._artifact.lib_path, isolated=self._artifact.solver_library, **({"namespace": self._artifact.namespace} if self._artifact.namespace else {})
+      self._artifact.lib_path,
+      isolated=bool(self._artifact.external),
+      **({"library_dirs": self._artifact.library_dirs} if self._artifact.external else {}),
     )
     symbol = c_ident(fun.name)
     self._symbol = symbol
@@ -735,7 +694,7 @@ class CompiledFunction:
       sys.stdout.flush()
     status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
     if self._artifact.prints:
-      libc = self._lib if self._artifact.solver_library and sys.platform == "linux" else _process_libc()
+      libc = self._lib if self._artifact.external and sys.platform == "linux" else _process_libc()
       if flush := getattr(libc, "fflush", None):
         flush(None)
     if status != 0:

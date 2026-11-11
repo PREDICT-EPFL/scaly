@@ -249,9 +249,9 @@ def _format_report() -> str:
       f"  {name} loadable: {solver_loadable(name)}",
     ]
   try:
-    lines.append("  JIT solver flags: " + " ".join(backend_compile_flags(tuple(sorted(paths.loads)))))
+    lines.append("  native solver consumer flags: " + " ".join(backend_compile_flags(tuple(sorted(paths.loads)))))
   except SolverLibraryError as exc:
-    lines.append("  JIT solver flags: <unavailable>")
+    lines.append("  native solver consumer flags: <unavailable>")
     lines.append("  reason: " + str(exc).splitlines()[0])
   return "\n".join(lines)
 

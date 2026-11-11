@@ -69,7 +69,7 @@ record the CPU recipe, but the consumer chooses compiler-specific vectorization 
 command reports the manifest and existing solver/math link flags. It does not require a compiler
 or prepare a JIT cache entry.
 
-The interface has no library-directory field. Prebuilt libraries use the compiler's search path,
+Before #342, the interface had no library-directory field. Prebuilt libraries used the compiler's search path,
 including `SCALY_CC="cc -L..."` or `LIBRARY_PATH`. Explicit compiler directories take precedence
 over a system copy. A custom derivative attaches to a wrapping Function, and passing the extern
 itself reports that requirement. Flatten order, NULL workspace and the current float64 boundary
@@ -88,8 +88,8 @@ directories.
 
 Each external namespace starts with the process's libc as its anchor. Kernels then load with
 `RTLD_NOW | RTLD_LOCAL`. Only libc and the dynamic loader occupy the namespace's shared lookup
-scope, so other symbols resolve through each kernel's own dependencies. The solver namespace
-remains separate and keeps its existing first-kernel anchor and load flags.
+scope, so other symbols resolve through each kernel's own dependencies. Before #342 the solver
+namespace remained separate, with its existing first-kernel anchor and load flags.
 
 The correctness review rejected `RTLD_DEEPBIND`. It split `strdup`'s allocation in the shared libc
 from a later kernel's `free`, which bound to a dependency's replacement allocator, and crashed in
@@ -124,3 +124,63 @@ contents/versions, so changes between processes miss the index. An unchanged ind
 lower the graph. The key still preprocesses each source when a graph is looked up. `_Extern` supplies the
 callee metadata the compiler walks, rather than being a concrete expression graph. These last two
 choices remain implementation points for the section's later simplification pass.
+
+
+## Solver bridges on externs (#342)
+
+Every solver Function contains ordinary EXTERN nodes selecting the outputs of
+one concrete bridge. Construction records the installed library and oracle graphs without
+lowering. At module rendering, core lowers the oracles together with the selected build
+recipe and renders fixed-signature oracle entries and the plugin wrapper into CLibrary
+sources. Warm JIT index hits skip both host and oracle lowering. The library describes the
+installed headers and named native dependency. SQP and Fatrop use the same
+bridge contract so the retired operation and all special lowering can disappear.
+The plugin protocol is version 9. No native build hooks change.
+
+A host Function lowers normally, including when it mixes solver calls and
+user externs. Each bridge declares its oracle workspace. Its source compiles
+once through the external object cache and links into each host shared object.
+The host's public option entry sets each bridge's options before evaluation.
+The bridge keeps its native workspace and statistics, with the same exported
+statistics accessor and default-option API. All internal oracle signatures
+end in `w`; they no longer carry an option context. Fixed-signature entries
+write only the oracle's declared outputs, even when its internal calls also
+write custom-rule residuals. The lowerer accepts ordinary C name reservations
+for the surrounding bridge and supplied external oracles.
+
+Two qualifications are recorded in the roadmap. `CLibrary.library_dirs` gives
+the installed library search directories, replacing the previous requirement
+to change the compiler environment. It appears in the exported manifest.
+Solver bridges keep their non-reentrant native workspace and statistics and add a
+per-bridge option pointer. The general extern contract's ban on state cannot apply to them. This is
+an explicit exception for solver bridges, not a broader extern promise.
+
+The JIT has one isolated external-library path. Solver libraries use #357's
+checked namespace pool, libc anchor and ordinary local lookup. The separate
+solver pool, backend build flags and native-directory fingerprint in the JIT
+are removed. Dependency lookup and extern fingerprints own these inputs, including
+contents of declared library directories so Windows DLL changes invalidate an unchanged
+import archive. Object builds compile from their fingerprinted source directory, so
+a compiler cache cannot retain a header whose contents changed at the same timestamp.
+The allocation, environment, interposition and lifetime limits described
+above still apply.
+
+Ahead-of-time consumers compile the main source and every library source
+listed in the build manifest. Each library record supplies its own include
+directories, defines, compilation flags, library directories and dependency
+names. Native paths describe the exporting installation and may need changing
+for a deployment target. The main source alone no longer contains the solver
+wrapper and oracles.
+
+The solver snapshot is split between `solver.c` and `solver.extern.c`, so the
+bridge remains covered. All other existing snapshots, including `solver.h`,
+stay byte-identical. `solver_externs/measurements.json` records generated source
+size and C compile observations on shared la015. The combined source grows
+from 10,932 to 13,099 bytes because separate translation units repeat their
+C declarations. These are compile observations, not a runtime performance claim.
+
+The later conflict rebase preserves typed entry/workspace handling from #56 and
+ordinary support-specialized procedures from #225. Solver leaf validation runs
+when preparing the bridge, before generic lowering. The solver host snapshot
+adds only the `_support` procedure suffix after that rebase; its external bridge
+source and all other snapshots stay byte-identical.

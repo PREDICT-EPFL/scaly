@@ -290,3 +290,23 @@ def test_a_library_built_under_another_cache_root_is_not_indexed_in_this_one(tmp
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path / "second"))
   assert jit._build_artifact(fun) == built
   assert not (tmp_path / "second" / "index").exists()
+
+
+@pytest.mark.solver("piqp")
+def test_solver_warm_start_never_lowers_at_construction_or_on_an_index_hit(tmp_path: Path) -> None:
+  first = _warm_start(tmp_path, 1, TEST_SOLVER="1")
+  second = _warm_start(tmp_path, 2, TEST_SOLVER="1")
+  verified = _warm_start(tmp_path, 3, TEST_SOLVER="1", SCALY_JIT_KEY="verify")
+  assert (first["construction"], second["construction"], verified["construction"]) == (0, 0, 0)
+  assert (first["lowered"], second["lowered"], verified["lowered"]) == (2, 0, 2)
+  np.testing.assert_allclose(first["result"], [0.5, -1.0, 2.0], atol=1e-6)
+  assert first["result"] == second["result"] == verified["result"]
+  assert first["library"] == second["library"] == verified["library"]
+
+  moved = tmp_path.with_name(tmp_path.name + "_moved")
+  tmp_path.rename(moved)
+  relocated = _warm_start(moved, 4, TEST_SOLVER="1")
+  assert (relocated["construction"], relocated["lowered"]) == (0, 0)
+  assert relocated["result"] == first["result"]
+  assert Path(relocated["library"]).parent.name == Path(first["library"]).parent.name
+  assert Path(relocated["library"]).is_file()

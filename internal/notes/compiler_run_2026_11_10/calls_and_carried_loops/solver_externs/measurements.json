@@ -1,0 +1,38 @@
+{
+  "fixture": "tests/test_c_snapshot.py::_qp_host",
+  "compiler": [
+    "/usr/bin/cc"
+  ],
+  "flags": [
+    "-O2",
+    "-fPIC",
+    "-c"
+  ],
+  "before": {
+    "source_bytes": 10932,
+    "compile_seconds": 0.09200274699833244
+  },
+  "after": {
+    "source_bytes": 13099,
+    "compile_seconds": 0.07192288897931576,
+    "units": [
+      {
+        "unit": "host",
+        "source_bytes": 3604,
+        "compile_seconds": 0.025435541989281774,
+        "flags": []
+      },
+      {
+        "unit": "library_0",
+        "source_bytes": 9495,
+        "compile_seconds": 0.046487346990033984,
+        "flags": [
+          "-I/home/ted/.t3/worktrees/scaly/t3code-342-solvers-on-e-bb00cd11a8c5919a/plugins/scaly-piqp/src/scaly_piqp/include",
+          "-O2",
+          "-fno-math-errno"
+        ]
+      }
+    ]
+  },
+  "note": "Shared la015; compile observations only. No runtime measurements or performance claim."
+}

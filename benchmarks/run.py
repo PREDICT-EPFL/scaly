@@ -25,7 +25,7 @@ import numpy as np
 
 import scaly as sc
 from scaly.codegen.aot import render_c_module
-from scaly.solvers.graph import solver_compile_flags
+from scaly.codegen.external import compile_library, prepare_library
 from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import (
   CLOSED_LOOP_PAIRS,
@@ -157,13 +157,16 @@ def _solver_call_smoke(required: bool) -> str | None:
     return "solver_call skipped: no loadable solver plugins"
   out_dir = SMOKE_RESULTS / "solver_call"
   out_dir.mkdir(parents=True, exist_ok=True)
-  sources, flags = [], []
+  sources, flags, library_objects = [], [], []
   for fun in functions:
     module = render_c_module(fun)
     (out_dir / module.header_name).write_text(module.header)
     (out_dir / module.source_name).write_text(module.source)
     sources.append(module.source_name)
-    for flag in solver_compile_flags(module.fun):
+    compiler = gbench.c_compiler()
+    builds = tuple(prepare_library(library, compiler) for library in module._libraries)
+    library_objects.extend(obj for build in builds for obj in compile_library(build, compiler))
+    for flag in (*module.recipe.link_flags, *(flag for build in builds for flag in build.link_flags)):
       if flag not in flags:
         flags.append(flag)
   cpp = out_dir / "solver_smoke.cpp"
@@ -193,8 +196,8 @@ def _solver_call_smoke(required: bool) -> str | None:
     )
     + "\n"
   )
-  objects = []
-  compile_flags = [flag for flag in flags if not flag.startswith(("-L", "-l", "-Wl,"))]
+  objects = library_objects
+  compile_flags = [flag for flag in flags if flag.startswith(("-I", "-D"))]
   for source in sources:
     obj = str(Path(source).with_suffix(".o"))
     subprocess.run([*gbench.c_compiler(), "-O2", "-I", str(out_dir), "-c", source, "-o", obj, *compile_flags], cwd=out_dir, check=True)

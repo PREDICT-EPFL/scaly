@@ -97,20 +97,16 @@ def test_gather_scatter_eval_and_ad() -> None:
 
 
 def _solver_call(parameter: sc.Expr) -> sc.Expr:
-  from scaly.solvers.model import SolverDescriptor
-
-  descriptor = SolverDescriptor("ad_test_solver", "test", parameter.size, 0, 0, (("p", parameter.shape),), (("y", parameter.shape),), (), 1)
-  return sc.Expr(
-    sc.ExprOp.SOLVER_CALL, (parameter,), sc.TensorType(parameter.shape, diff=False), attrs={"solver": descriptor, "output": 0, "output_name": "y"}
+  return sc.extern(sc.CLibrary("ad_test_solver"), "ad_test_solver", inputs=(sc.arg("p", parameter.shape),), outputs=sc.arg("y", parameter.shape))(
+    parameter
   )
 
 
-@pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp", "sparsity"])
+@pytest.mark.parametrize("mode", ["jvp", "jvp_many", "vjp"])
 @pytest.mark.parametrize("wrapped", ["direct", "call", "mapped"])
 def test_active_solver_derivative_refused(mode, wrapped) -> None:
   from scaly.ad.forward import jvp, jvp_many
   from scaly.ad.reverse import vjp
-  from scaly.ad.sparsity import jacobian_sparsity
   from scaly.function.concrete import ConcreteFunction
 
   x = sc.sym("solver_parameter", 2)
@@ -123,15 +119,13 @@ def test_active_solver_derivative_refused(mode, wrapped) -> None:
       result = _mapped_call(fn, 1, [(x, 0, 0)])
     else:
       result = fn(x * 2.0)
-  with pytest.raises(NotImplementedError, match="SOLVER_CALL"):
+  with pytest.raises(NotImplementedError, match="sc.custom_derivative"):
     if mode == "jvp":
       jvp(result, x, sc.const(np.ones(2)))
     elif mode == "jvp_many":
       jvp_many(result, x, sc.const(np.eye(2)))
     elif mode == "vjp":
       vjp((result,), (x,), (sc.const(np.ones(2)),))
-    else:
-      jacobian_sparsity(result, x)
 
 
 def test_inactive_solver_derivatives_remain_zero() -> None:
@@ -144,15 +138,14 @@ def test_inactive_solver_derivatives_remain_zero() -> None:
   np.testing.assert_array_equal(jvp(result, unrelated, sc.const(np.ones(2))).value, np.zeros(2))
   np.testing.assert_array_equal(jvp(result, x, sc.const(np.zeros(2))).value, np.zeros(2))
   np.testing.assert_array_equal(vjp((result,), (unrelated,), (sc.const(np.ones(2)),))[0].value, np.zeros(2))
-  np.testing.assert_array_equal(vjp((result,), (x,), (sc.const(np.zeros(2)),))[0].value, np.zeros(2))
   assert jacobian_sparsity(result, unrelated).nnz == 0
 
 
 @pytest.mark.parametrize("mapped", [False, True])
 def test_solver_call_with_inactive_parameter_allows_other_derivatives(mapped) -> None:
+  from scaly.ad.sparsity import jacobian_sparsity
   from scaly.ad.forward import jvp, jvp_many
   from scaly.ad.reverse import vjp
-  from scaly.ad.sparsity import jacobian_sparsity
   from scaly.function.concrete import ConcreteFunction
   from scaly.function.sugar import _mapped_call
 

@@ -15,7 +15,7 @@ from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.codegen.solver import SolverWrapperCtx
 from scaly.ir.types import SparsityPattern
-from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
+from scaly.solvers.model import ExternalOracle, SolverDescriptor
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
@@ -48,7 +48,10 @@ def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> ConcreteFu
     jac_sparsity=SparsityPattern.empty((0, 2)),
     hess_sparsity=SparsityPattern((2, 2), rows, cols),
   )
-  return descriptor_function(descriptor).instantiate()
+  inputs = tuple(sc.sym(name, shape) for name, shape in descriptor.input_signature)
+  return ConcreteFunction._from_exprs(
+    descriptor.name, inputs, inputs, tuple(name for name, _ in descriptor.input_signature), tuple(name for name, _ in descriptor.output_signature)
+  )._replace(descriptor=descriptor)
 
 
 def test_ipopt_wrapper_rejects_a_mixed_hessian_triangle() -> None:
@@ -56,7 +59,7 @@ def test_ipopt_wrapper_rejects_a_mixed_hessian_triangle() -> None:
 
   solver = _wrapper_fixture((0, 1), (1, 0))
   with pytest.raises(ValueError, match="exactly one triangle"):
-    render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0))
+    render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats"))
 
 
 @pytest.mark.solver("ipopt")
@@ -81,7 +84,7 @@ def test_ipopt_wrapper_accepts_an_empty_hessian_pattern() -> None:
   from scaly_ipopt.codegen import render_wrapper
 
   solver = _wrapper_fixture((), ())
-  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats", 0)))
+  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats")))
   assert "ipopt_fixture_hess_rows" not in source
   assert "ipopt_fixture_hess_cols" not in source
   assert "foreign_hess_raw" not in source

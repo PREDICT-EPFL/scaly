@@ -415,7 +415,7 @@ def test_solver_graphs_stay_float64():
     return sc.cast(sc.sumsqr(qp(sc.cast(mu, "float64"))[0]), "float32")
 
   with pytest.raises(LoweringError, match="solver.*float64"):
-    lower_function(host)
+    render_c_module(host)
 
 
 def test_no_float64_constant_remains_public():

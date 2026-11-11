@@ -1,4 +1,4 @@
-"""Lower calls, maps, carried loops and conditionals, including solver oracle dependencies."""
+"""Lower calls, maps, carried loops and conditionals, external functions included."""
 
 from __future__ import annotations
 
@@ -18,15 +18,6 @@ STATIC_LOOP_BUDGET = 256
 
 
 def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, arguments: tuple[Support, ...] | None = None) -> str:
-  from ...solvers.graph import is_solver_function, solver_callees
-
-  if is_solver_function(callee):
-    # Opaque: the solver wrapper is rendered by codegen/solver (rule 6), not lowered. Its body is
-    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
-    ctx.solver_fns[callee] = callee
-    for oracle in solver_callees(callee):
-      _ensure_callee(ctx, oracle)
-    return ctx.symbols[callee]
   if arguments is not None:
     arguments = tuple(
       arg.support if support is not None and len(support) == arg.size else support for arg, support in zip(callee.inputs, arguments, strict=True)
@@ -41,7 +32,6 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, arguments: tuple[Sup
     ctx.callees[key] = _lower_to_proc(
       callee,
       ctx.callees,
-      ctx.solver_fns,
       ctx.program_names,
       ctx.symbols,
       ctx.residuals,

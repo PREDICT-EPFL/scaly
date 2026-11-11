@@ -14,7 +14,9 @@ from ..function.extern import CLibrary, _Extern
 from ..function.concrete import ConcreteFunction
 from ..ir.expr import callees_of
 from ..solvers.graph import solver_callees
-from .toolchain import LinkedLibrary, cache_root, compiler_fingerprint, directory_fingerprint, resolve_library
+from ..solvers.model import _SolverLibrary
+from ..solvers.paths import SolverLibraryError, solver_diagnostic, solver_discoverable
+from .toolchain import LinkedLibrary, cache_root, compiler_fingerprint, directory_fingerprint, no_gather_flags, resolve_library, vector_libm_flags
 
 
 def libraries_of(fun: ConcreteFunction) -> tuple[CLibrary, ...]:
@@ -29,6 +31,8 @@ def libraries_of(fun: ConcreteFunction) -> tuple[CLibrary, ...]:
     seen.add(callee)
     if isinstance(callee, _Extern):
       found[callee.library] = None
+      if isinstance(callee.library, _SolverLibrary):
+        pending.extend(reversed(solver_callees(callee.library.function)))
     else:
       children = [*solver_callees(callee), *(child for node in callee.nodes for child in callees_of(node))]
       pending.extend(reversed(children))
@@ -77,16 +81,21 @@ class LibraryBuild:
 
 def prepare_library(library: CLibrary, compiler: tuple[str, ...]) -> LibraryBuild:
   """Fingerprint source, expanded headers, flags, compiler and resolved linked libraries."""
-  description = json.dumps({field: getattr(library, field) for field in library.__dataclass_fields__}, sort_keys=True)
+  if isinstance(library, _SolverLibrary) and not solver_discoverable(library.function.descriptor.backend):
+    raise SolverLibraryError(solver_diagnostic(library.function.descriptor.backend))
+  description = json.dumps({field: getattr(library, field) for field in CLibrary.__dataclass_fields__}, sort_keys=True)
   directory = cache_root() / "extern" / hashlib.sha256(description.encode()).hexdigest()
   directory.mkdir(parents=True, exist_ok=True)
   _write_files(library, directory)
   flags = _compile_flags(library, directory)
-  links = tuple(resolve_library(name, compiler) for name in library.link)
+  if isinstance(library, _SolverLibrary) and library.recipe is not None:
+    flags += (*no_gather_flags(compiler), *vector_libm_flags(compiler, library.recipe.vector_libm))
+  links = tuple(resolve_library(name, (*compiler, *("-L" + Path(path).as_posix() for path in library.library_dirs))) for name in library.link)
   digest = hashlib.sha256(description.encode())
   digest.update(compiler_fingerprint(compiler).encode())
-  for include in library.include_dirs:
-    digest.update(directory_fingerprint(Path(include)))
+  digest.update(repr(flags[1:]).encode())
+  for directory_path in (*library.include_dirs, *library.library_dirs):
+    digest.update(directory_fingerprint(Path(directory_path)))
   for link in links:
     digest.update(json.dumps((link.path, link.identity, link.flags)).encode())
   for name, _ in library.sources:
@@ -102,6 +111,7 @@ def compile_library(build: LibraryBuild, compiler: tuple[str, ...]) -> tuple[str
   """Compile each source once into a content-addressed object, with library-local flags."""
   directory = cache_root() / "extern" / build.key
   directory.mkdir(parents=True, exist_ok=True)
+  _write_files(build.library, directory)
   objects = []
   for index, (name, _) in enumerate(build.library.sources):
     target = directory / f"{index}.o"
@@ -110,7 +120,7 @@ def compile_library(build: LibraryBuild, compiler: tuple[str, ...]) -> tuple[str
       os.close(descriptor)
       try:
         subprocess.run(
-          [*compiler, "-O2", "-fPIC", *build.flags, "-x", "c", "-c", (build.directory / name).as_posix(), "-o", temporary],
+          [*compiler, "-O2", "-fPIC", *build.flags, "-x", "c", "-c", (directory / name).as_posix(), "-o", temporary],
           cwd=tempfile.gettempdir(),
           capture_output=True,
           check=True,
@@ -135,6 +145,7 @@ def export_libraries(libraries: tuple[CLibrary, ...], directory: Path) -> list[d
         "sources": [(relative / name).as_posix() for name, _ in library.sources],
         "headers": [(relative / name).as_posix() for name, _ in library.headers],
         "include_dirs": [relative.as_posix(), *library.include_dirs],
+        "library_dirs": list(library.library_dirs),
         "defines": dict(library.defines),
         "compile_flags": list(library.compile_flags),
         "link": list(library.link),

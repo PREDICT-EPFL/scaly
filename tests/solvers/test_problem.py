@@ -10,7 +10,6 @@ from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.codegen import render_c_source
 from scaly.ir.expr import topo
 from scaly.solvers.registry import SolverPluginError
 
@@ -211,9 +210,14 @@ def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
   def host() -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     return outputs
 
-  source = render_c_source(host)
-  assert source.count("static inline void filter_problem_hess_upper_raw(") == 1
-  assert source.count("static inline void filter_problem_hess_lower_raw(") == 1
+  from scaly.codegen import render_c_module
+
+  libraries = render_c_module(host)._libraries
+  assert len(libraries) == 3
+  for library in libraries:
+    source = "\n".join(text for _, text in library.sources)
+    triangle = "lower" if library.name == "filter_third" else "upper"
+    assert source.count(f"static inline void filter_problem_hess_{triangle}_entry_raw(") == 1
 
 
 @pytest.mark.solver("sqp")

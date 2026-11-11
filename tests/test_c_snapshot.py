@@ -23,7 +23,7 @@ import pytest
 
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp
-from scaly.codegen import render_c_api_header, render_c_source
+from scaly.codegen import render_c_api_header, render_c_source, render_c_module
 from scaly.solvers.registry import available_backends
 
 BASELINE = Path(__file__).resolve().parent / "baseline" / "c"
@@ -137,7 +137,11 @@ SOLVER_CORPUS = {"solver": _qp_host}
 
 
 def _rendered(fun: sc.Function) -> dict[str, str]:
-  return {".c": render_c_source(fun), ".h": render_c_api_header(fun)}
+  result = {".c": render_c_source(fun), ".h": render_c_api_header(fun)}
+  libraries = render_c_module(fun)._libraries
+  if libraries:
+    result[".extern.c"] = "\n".join(source for library in libraries for _, source in library.sources)
+  return result
 
 
 @pytest.mark.parametrize("name", sorted(CORPUS))
@@ -156,6 +160,7 @@ def test_generated_solver_c_matches_snapshot(name: str) -> None:
 def test_baseline_holds_exactly_the_corpus() -> None:
   """A dropped corpus entry is a silently narrower gate, and an orphan baseline is never read."""
   expected = {f"{name}{suffix}" for name in (*CORPUS, *SOLVER_CORPUS) for suffix in (".c", ".h")}
+  expected.update(f"{name}.extern.c" for name in SOLVER_CORPUS)
   assert {p.name for p in BASELINE.iterdir()} == expected
 
 
@@ -174,7 +179,7 @@ def main() -> int:
       path.write_text(text)
       print(f"{'CHANGED' if changed else 'unchanged'}: {path.name} ({len(text.splitlines())} lines)")
   for path in sorted(BASELINE.iterdir()):
-    if path.stem not in (*CORPUS, *SOLVER_CORPUS):
+    if path.name not in {f"{name}{suffix}" for name in (*CORPUS, *SOLVER_CORPUS) for suffix in (".c", ".h", ".extern.c")}:
       path.unlink()
       print(f"removed orphan: {path.name}")
   print("\nA CHANGED line during phases 1-6 of the restructure is a bug in the refactor, not an update.")

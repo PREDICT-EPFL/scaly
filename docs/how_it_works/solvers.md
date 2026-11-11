@@ -12,66 +12,23 @@ the generated wrappers do.
 
 ## One solve per descriptor
 
-`sc.solver` returns a `Solver` whose `function` is an ordinary `Function`. Its
-outputs are `expr.solver_call` nodes that all carry the same
-`SolverDescriptor`, the record of everything the plugin needs: dimensions,
-oracles, sparsity patterns and matrix interface. Python supplies tuning options
-on each call.
-Nesting the allocation solver from the guide in a larger function and printing `sc.render_expr_assembly(allocate)`
-shows both levels:
+`sc.solver` returns a `Solver` whose `function` is an ordinary `Function`.
+Each output calls the same external solver bridge and selects one result.
+The bridge compiles with its oracles in a separate C translation unit and
+links to the plugin's installed native library. Python supplies tuning
+options on each call, and the generated entry forwards them to the bridge.
 
-```python
-@sc.function(sc.arg("target", 2), outputs=sc.group(sc.arg("allocation"), sc.arg("lam_eq")))
-def allocate(target: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    u, _, lam_eq, _ = solve(target)
-    return 2.0 * u, lam_eq
-```
+Several used outputs of one invocation share one solve. Unused outputs get
+scratch buffers because the native wrapper writes all its results. The
+caller and its surrounding calculations lower through the ordinary compiler
+pipeline. The bridge declares the scratch space its oracles need, which
+contributes to the caller's workspace.
 
-With the long `solver=SolverDescriptor(...)` attribute replaced by `...`:
-
-```
-expr.module {
-  expr.func @allocation_piqp(%u: tensor<2xfloat64>, %lam:u: tensor<2xfloat64>, %lam_eq: tensor<1xfloat64>, %lam_ineq: tensor<0xfloat64>, %target: tensor<2xfloat64>) -> (%u: tensor<2xfloat64>, %lam:u: tensor<2xfloat64>, %lam_eq: tensor<1xfloat64>, %lam_ineq: tensor<0xfloat64>) {
-    %0 = expr.input {lowering="auto", name="u"} : tensor<2xfloat64>
-    %1 = expr.input {lowering="auto", name="lam:u"} : tensor<2xfloat64>
-    %2 = expr.input {lowering="auto", name="lam_eq"} : tensor<1xfloat64>
-    %3 = expr.input {lowering="auto", name="lam_ineq"} : tensor<0xfloat64>
-    %4 = expr.input {lowering="auto", name="target"} : tensor<2xfloat64>
-    %5 = expr.solver_call(%0, %1, %2, %3, %4) {output=0, output_name="u", solver=...} : tensor<2xfloat64>
-    %6 = expr.solver_call(%0, %1, %2, %3, %4) {output=1, output_name="lam:u", solver=...} : tensor<2xfloat64>
-    %7 = expr.solver_call(%0, %1, %2, %3, %4) {output=2, output_name="lam_eq", solver=...} : tensor<1xfloat64>
-    %8 = expr.solver_call(%0, %1, %2, %3, %4) {output=3, output_name="lam_ineq", solver=...} : tensor<0xfloat64>
-    expr.return %5, %6, %7, %8
-  }
-  expr.func @allocate(%target: tensor<2xfloat64 diff>) -> (%allocation: tensor<2xfloat64>, %lam_eq: tensor<1xfloat64>) {
-    %0 = expr.const {lowering="auto", value=2.} : tensor<float64>
-    %1 = expr.const {lowering="auto", value=[0., 0.]} : tensor<2xfloat64>
-    %2 = expr.const {lowering="auto", value=[0.]} : tensor<1xfloat64>
-    %3 = expr.const {lowering="auto", value=[]} : tensor<0xfloat64>
-    %4 = expr.input {lowering="auto", name="target"} : tensor<2xfloat64 diff>
-    %5 = expr.call(%1, %1, %2, %3, %4) {callee="allocation_piqp", output=0} : tensor<2xfloat64>
-    %6 = expr.mul(%0, %5) : tensor<2xfloat64>
-    %7 = expr.call(%1, %1, %2, %3, %4) {callee="allocation_piqp", output=2} : tensor<1xfloat64>
-    expr.return %6, %7
-  }
-}
-```
-
-The caller sees an ordinary call with zero constants for the initial values.
-The four `solver_call` nodes differ only in `output`, and the descriptor
-compares by identity, so they stay four views of one solve. Lowering treats
-the solver function as opaque. It lowers the oracles to procedures and
-replaces both call nodes with a single call that writes all four results,
-including the two that `allocate` never reads. The program for `allocate`,
-trimmed to the call:
-
-```
-prog.call @allocation_piqp(%k1, %k1, %k2, %k3, %target, %s0, %s1, %s2, %s3) {callee_needs_w=False, n_in=5, n_out=4, w_self=0}
-```
-
-The solver function has no expression body to differentiate, which is why a
-derivative through it is zero, as the
-[guide warns](../guide/solvers.md#nesting-a-solver-in-a-graph).
+An active derivative through the solve raises and asks for
+`sc.custom_derivative` on a wrapping Function. Its Jacobian pattern is dense
+unless a custom rule declares a pattern. The
+[solver guide](../guide/solvers.md#nesting-a-solver-in-a-graph) describes this
+limit.
 
 ## The oracles of a nonlinear program
 
@@ -110,17 +67,17 @@ output. Each wrapper converts them to its solver's own convention, such as
 
 ## The wrapper calls the oracles
 
-For a problem named `circle` solved with Scaly SQP, the generated file
-contains these calls:
+For a problem named `circle` solved with Scaly SQP, the generated host and
+bridge contain these calls:
 
 ```mermaid
 flowchart LR
     entry["circle_sqp<br/>exported entry"] --> wrapper["circle_sqp_raw<br/>SQP iteration"]
-    wrapper -->|once per solve| bounds["circle_bounds_raw"]
-    wrapper -->|each iterate and trial point| base["circle_base_raw"]
-    wrapper -->|each iterate| grad["circle_grad_raw"]
-    wrapper -->|each iterate| jac["circle_jac_raw"]
-    wrapper -->|each iterate| hess["circle_hess_upper_raw"]
+    wrapper -->|once per solve| bounds["circle_bounds_entry_raw"]
+    wrapper -->|each iterate and trial point| base["circle_base_entry_raw"]
+    wrapper -->|each iterate| grad["circle_grad_entry_raw"]
+    wrapper -->|each iterate| jac["circle_jac_entry_raw"]
+    wrapper -->|each iterate| hess["circle_hess_upper_entry_raw"]
     wrapper -->|each iterate| piqp["PIQP<br/>QP subproblem"]
 ```
 
@@ -129,7 +86,7 @@ part written by the plugin. The oracles are lowered and optimized like any
 other function, and the sparsity patterns of the Jacobian and Hessian are
 fixed, so the wrapper holds them as static index tables and only refills
 values. [Generated code and compilation](generated_interface.md#module-layout)
-shows where each piece sits in the file.
+shows where each piece sits in the exported files.
 
 What persists between calls differs by backend:
 

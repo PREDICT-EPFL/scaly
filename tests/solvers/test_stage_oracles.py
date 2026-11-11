@@ -1,6 +1,7 @@
 """Dense derivatives of mapped stage Functions against whole-problem derivatives."""
 
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -50,7 +51,17 @@ def _ocp(N=3, *, globals_=True):
 
 @pytest.mark.parametrize("declared", [None, False])
 def test_backend_without_stage_oracles_keeps_whole_problem_oracles(monkeypatch, declared):
-  backend = SimpleNamespace(name="fatrop", kind="nlp", hess_triangle="lower", prepare_options=lambda options: ({}, options))
+  backend = SimpleNamespace(
+    name="fatrop",
+    kind="nlp",
+    hess_triangle="lower",
+    prepare_options=lambda options: ({}, options),
+    header="stage.h",
+    lib_stem="stage",
+    link_flags=(),
+    include_dir=lambda: Path("/nonexistent"),
+    lib_dir=lambda: Path("/nonexistent"),
+  )
   if declared is not None:
     backend.stage_oracles = declared
   monkeypatch.setattr(registry, "get_backend", lambda name: backend)
@@ -63,7 +74,16 @@ def test_backend_without_stage_oracles_keeps_whole_problem_oracles(monkeypatch, 
 
 def test_backend_can_request_stage_oracles_under_any_name(monkeypatch):
   backend = SimpleNamespace(
-    name="mapped_backend", kind="nlp", hess_triangle="lower", stage_oracles=True, prepare_options=lambda options: ({}, options)
+    name="mapped_backend",
+    kind="nlp",
+    hess_triangle="lower",
+    stage_oracles=True,
+    prepare_options=lambda options: ({}, options),
+    header="stage.h",
+    lib_stem="stage",
+    link_flags=(),
+    include_dir=lambda: Path("/nonexistent"),
+    lib_dir=lambda: Path("/nonexistent"),
   )
   monkeypatch.setattr(registry, "get_backend", lambda name: backend)
   problem = _ocp().stage_problem()

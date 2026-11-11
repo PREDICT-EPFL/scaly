@@ -246,7 +246,7 @@ def test_inactive_external_derivatives_and_zero_input_call():
   np.testing.assert_allclose(constant(), 2)
 
 
-@pytest.mark.parametrize("field", ["include_dirs", "compile_flags", "link"])
+@pytest.mark.parametrize("field", ["include_dirs", "library_dirs", "compile_flags", "link"])
 def test_library_rejects_a_bare_string_for_a_sequence_field(field):
   with pytest.raises(TypeError, match=field):
     pair_library(**{field: "-O3" if field == "compile_flags" else "inc"})

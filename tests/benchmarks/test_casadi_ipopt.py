@@ -16,7 +16,18 @@ from scaly_ipopt import BACKEND, BUILD_CONFIG
 pytestmark = pytest.mark.solver("ipopt")
 
 
-def test_compiled_nlpsol_uses_scaly_ipopt_and_refreshes_outputs() -> None:
+def test_compiled_nlpsol_uses_scaly_ipopt_and_refreshes_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
+  from benchmarks.harness import casadi_ipopt
+  from scaly.solvers.paths import solver_paths
+
+  load = casadi_ipopt.load_library
+  directories = []
+
+  def checked_load(path, *, isolated, library_dirs=()):
+    directories.append(library_dirs)
+    return load(path, isolated=isolated, library_dirs=library_dirs)
+
+  monkeypatch.setattr(casadi_ipopt, "load_library", checked_load)
   x = ca.MX.sym("x", 2)
   p = ca.MX.sym("p")
   nlp = ca.Function("compiled_nlpsol_test", [x, p], [ca.sumsqr(x - p), ca.sum1(x)])
@@ -25,6 +36,7 @@ def test_compiled_nlpsol_uses_scaly_ipopt_and_refreshes_outputs() -> None:
     nlp,
     {"print_time": False, "ipopt.print_level": 0, "ipopt.sb": "yes"},
   )
+  assert directories == [tuple(str(path) for path in solver_paths().lib_dirs)]
   lower, upper = np.full(2, -10.0), np.full(2, 10.0)
   zeros_x, zeros_g = np.zeros(2), np.zeros(1)
 

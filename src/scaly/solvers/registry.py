@@ -29,7 +29,7 @@ if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function.concrete import ConcreteFunction
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 8
+SOLVER_PLUGIN_PROTOCOL_VERSION = 9
 ENTRY_POINT_GROUP = "scaly.solvers"
 
 
@@ -61,7 +61,7 @@ class SolverBackend(Protocol):
     """Emit the C wrapper for one solver ``ConcreteFunction`` (see docs/dev/solver_plugins.md).
 
     Must define ``static void <ctx.raw_symbol>(...)`` with the descriptor's
-    ``in*``/``out*`` signature followed by ``double* w`` and the option context,
+    ``in*``/``out*`` signature followed by ``double* w`` and one option-array pointer,
     drive the solver's
     C API with the oracle kernels (``ctx.raw_symbol_of``), and fill
     ``ctx.stats_symbol`` on every call.

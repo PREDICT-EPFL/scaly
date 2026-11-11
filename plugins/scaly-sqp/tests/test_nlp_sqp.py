@@ -7,7 +7,7 @@ import pytest
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from scaly.codegen.aot import render_c_source
+from tests.solvers.problem_helpers import render_solver_source as render_c_source
 from scaly.ir.types import SparsityPattern
 from scaly_piqp import PIQP_VERSION
 from tests.solvers.problem_helpers import build_nlp, solve_nlp

@@ -1,20 +1,35 @@
-"""Solver descriptors and their opaque plain-ConcreteFunction expression graphs."""
+"""Solver descriptors and the Functions that call their external bridges."""
 
 from __future__ import annotations
 
 import ctypes
+from pathlib import Path
+import numpy as np
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from ..ir.expr import Expr, ExprOp
+from ..ir.expr import Expr
 from ..ir.layout import DenseLayout
 from ..function.concrete import ConcreteFunction
+from ..function.extern import CLibrary, extern
 from ..function.model import Function
-from ..function.tree import Tree
+from ..function.tree import Tree, arg
 from ..function.tree import flat_tree, flat_parameters
 from ..ir.types import SparsityPattern, TensorType
 from .stages import StageLayout, detect_stage_layout
+
+
+if TYPE_CHECKING:
+  from ..codegen.toolchain import BuildRecipe
+
+
+@dataclass(frozen=True)
+class _SolverLibrary(CLibrary):
+  """A native plugin declaration whose bridge is rendered with the module recipe."""
+
+  function: ConcreteFunction = field(kw_only=True)
+  recipe: BuildRecipe | None = None
 
 
 class CSolverOption(ctypes.Structure):
@@ -75,14 +90,11 @@ class StageOracles:
   hess: ConcreteFunction
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class SolverDescriptor:
   """Everything a solver plugin's generated C wrapper needs to drive a solve.
 
-  Stored as a single attr on every ``ExprOp.SOLVER_CALL`` node so that nodes for
-  different outputs of the same solve share one identity. Frozen + identity
-  hash (via ``id``) so it can live inside ``Expr.attrs`` without surprising
-  structural equality.
+  The solver Function retains this record for runtime options and statistics.
   """
 
   name: str
@@ -120,22 +132,7 @@ class SolverDescriptor:
   # the QP data buffers.
   oracle_output_names: tuple[str, ...] = ()
   compile_options: tuple[tuple[str, Any], ...] = ()
-  # Hash key used as a stable identifier (set in __post_init__)
-  _key: int = field(default=0, hash=False, compare=False, repr=False)
   runtime_options: ctypes.Array[CSolverOption] = field(default_factory=lambda: (CSolverOption * 1)(), hash=False, compare=False, repr=False)
-
-  def __post_init__(self) -> None:
-    object.__setattr__(self, "_key", id(self))
-
-  def __hash__(self) -> int:
-    return self._key
-
-  def __eq__(self, other: object) -> bool:
-    return self is other
-
-  def structural_key(self) -> tuple[Any, ...]:
-    """Stable per-instance key used by ``Expr.structural_key`` for SOLVER_CALL nodes."""
-    return ("SolverDescriptor", self._key, self.name, self.backend, self.n, self.n_eq, self.n_ineq)
 
   @cached_property
   def stage_layout(self) -> StageLayout:
@@ -152,20 +149,37 @@ def descriptor_function(
   input_tree: Tree[Any, Any] | None = None,
   output_tree: Tree[Any, Any] | None = None,
 ) -> Function[Any, Any, Any, Any]:
-  """Build a Function whose concrete graph has opaque outputs sharing ``descriptor``."""
-  input_exprs = tuple(Expr.sym(name, shape if shape else (), diff=False) for name, shape in descriptor.input_signature)
-  args = tuple(input_exprs)
-  output_exprs = tuple(
-    Expr(
-      ExprOp.SOLVER_CALL,
-      args,
-      TensorType(shape, diff=False),
-      attrs={"solver": descriptor, "output": i, "output_name": name},
-    )
-    for i, (name, shape) in enumerate(descriptor.output_signature)
-  )
+  """Build a Function calling the plugin's concrete extern bridge."""
+  from .registry import get_backend
+
+  input_exprs = tuple(Expr.sym(name, shape) for name, shape in descriptor.input_signature)
+  output_exprs = tuple(Expr.const(np.zeros(shape)) for _, shape in descriptor.output_signature)
   inputs = input_tree or flat_parameters(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
   outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
   if any(isinstance(layout, DenseLayout) for layout in (*inputs.layouts, *outputs.layouts)):
     raise ValueError("solvers require row-major dense leaves; use an ordinary Function wrapper for a column-major interface")
-  return Function._from_instance(ConcreteFunction.build(descriptor.name, inputs, input_exprs, outputs, output_exprs, descriptor=descriptor))
+  inputs = inputs.with_types(tuple(TensorType(type_.shape, type_.dtype) for type_ in inputs.types))
+  outputs = outputs.with_types(tuple(TensorType(type_.shape, type_.dtype) for type_ in outputs.types))
+  prototype = ConcreteFunction.build(descriptor.name, inputs, input_exprs, outputs, output_exprs, descriptor=descriptor)
+  from .paths import solver_paths
+  from ..utils.names import c_ident
+
+  backend = get_backend(descriptor.backend)
+  paths = solver_paths()
+  load = paths.loads.get(backend.name)
+  directories = (str(Path(load).parent),) if load and Path(load).is_absolute() else (() if load else (str(backend.lib_dir()),))
+  library = _SolverLibrary(
+    c_ident(descriptor.name),
+    function=prototype,
+    include_dirs=tuple(str(path) for path in paths.include_dirs if (path / backend.header).is_file()) or (str(backend.include_dir()),),
+    library_dirs=directories,
+    link=tuple(flag[2:] for flag in backend.link_flags if flag.startswith("-l")),
+    compile_flags=tuple(flag for flag in backend.link_flags if not flag.startswith("-l")),
+  )
+  call = extern(
+    library,
+    f"{c_ident(descriptor.name)}_solve",
+    inputs=tuple(arg(name, value.type) for name, value in zip(inputs.names, input_exprs)),
+    outputs=outputs,
+  )
+  return Function._from_instance(prototype._replace(outputs=call._call(input_exprs)))

@@ -199,13 +199,6 @@ def pack_workspace(prog: ProgramNode, *, frame_budget: int = 65536) -> ProgramNo
         plan.own_spill = _aligned(plan.own_spill + _slot_bytes(plan, slot) // unit.itemsize, unit)
         frame -= slots(name)[owner, slot] * _slot_bytes(plan, slot)
 
-  # A solver wrapper (rendered by codegen/solver, so it has no PROC here) is an opaque callee: it owns
-  # no spill of its own but passes its ``w`` straight through to its oracle Functions, so its
-  # workspace is the max over those oracle PROCs. The lowerer records solver -> oracle names on
-  # the PROGRAM; we seed those names into the sz_w recursion below.
-  solver_oracles: dict[str, tuple[str, ...]] = prog.attrs.get("solver_oracles", {})
-  solver_external_workspace: dict[str, int] = prog.attrs.get("solver_external_workspace", {})
-
   # sz_w(proc) = own spill + max callee workspace: callees share the window after the own spill.
   # A byte workspace instead lays its callees' windows end to end, so every byte of it holds one
   # dtype for the whole call and no access changes the type of memory another one reads.
@@ -216,12 +209,8 @@ def pack_workspace(prog: ProgramNode, *, frame_budget: int = 65536) -> ProgramNo
   def total(name: str) -> int:
     if name in sz_w:
       return sz_w[name]
-    if name in solver_oracles:
-      sz_w[name] = 0  # break cycles defensively; a solver owns no spill itself
-      sz_w[name] = max((solver_external_workspace.get(name, 0), *(total(o) for o in solver_oracles[name] if o in plans)))
-      return sz_w[name]
     sz_w[name] = plans[name].own_spill  # break cycles defensively
-    callees = sorted({c for c in plans[name].callees if c in plans or c in solver_oracles or c in sz_w})
+    callees = sorted({c for c in plans[name].callees if c in plans or c in sz_w})
     if unit != dtypes.uint8:
       sz_w[name] = plans[name].own_spill + max((total(c) for c in callees), default=0)
       return sz_w[name]

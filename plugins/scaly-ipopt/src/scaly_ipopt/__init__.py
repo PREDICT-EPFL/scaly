@@ -30,7 +30,7 @@ class _Backend:
   name = "ipopt"
   kind = "nlp"
   hess_triangle = "lower"
-  protocol_version = 8
+  protocol_version = 9
   lib_stem = "scaly_ipopt-3" if platform.system() == "Windows" else "ipopt"
   link_flags = ("-lipopt",)
   header = "coin-or/IpStdCInterface.h"

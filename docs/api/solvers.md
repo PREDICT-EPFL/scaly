@@ -104,5 +104,3 @@ how they fit together.
 ::: scaly.solvers.graph.is_solver_function
 
 ::: scaly.solvers.graph.solver_callees
-
-::: scaly.solvers.graph.solver_compile_flags

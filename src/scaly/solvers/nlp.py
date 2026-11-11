@@ -35,19 +35,19 @@ def build_nlp[SV, NV, SP, NP](
   hess_fn = nlp.hess(backend.hess_triangle) if staged is None else None
   hess_sparsity = hess_fn.output_sparsities[0] if hess_fn is not None else None
 
-  solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
+  solver_vars = problem.vars
   input_tree = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    arg("lam_eq", TensorType((problem.n_eq,), diff=False)),
-    arg("lam_ineq", TensorType((problem.n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((problem.n_eq,))),
+    arg("lam_ineq", TensorType((problem.n_ineq,))),
     problem.params,
   )
   output_tree = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    arg("lam_eq", TensorType((problem.n_eq,), diff=False)),
-    arg("lam_ineq", TensorType((problem.n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((problem.n_eq,))),
+    arg("lam_ineq", TensorType((problem.n_ineq,))),
   )
   input_signature = tuple(zip(input_tree.names, input_tree.shapes, strict=True))
   output_signature = tuple(zip(output_tree.names, output_tree.shapes, strict=True))

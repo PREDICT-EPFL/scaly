@@ -304,12 +304,9 @@ tests/ad/test_derivatives.py::test_vjp_through_vmap_outer_slice_of_wrt
 tests/ad/test_derivatives.py::test_vjp_through_vmap_partitioned_stride_with_offset_and_zero_fill
 tests/ad/test_derivatives.py::test_vjp_through_vmap_single_formal_overlap_uses_grouped_scatter
 tests/ad/test_differential.py::test_abs_zero_has_zero_slope
-tests/ad/test_differential.py::test_active_opaque_derivative_refusals[many-extern]
-tests/ad/test_differential.py::test_active_opaque_derivative_refusals[many-solver_call]
-tests/ad/test_differential.py::test_active_opaque_derivative_refusals[reverse-extern]
-tests/ad/test_differential.py::test_active_opaque_derivative_refusals[reverse-solver_call]
-tests/ad/test_differential.py::test_active_opaque_derivative_refusals[single-extern]
-tests/ad/test_differential.py::test_active_opaque_derivative_refusals[single-solver_call]
+tests/ad/test_differential.py::test_active_opaque_derivative_refusals[many]
+tests/ad/test_differential.py::test_active_opaque_derivative_refusals[reverse]
+tests/ad/test_differential.py::test_active_opaque_derivative_refusals[single]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[abs-empty]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[abs-scalar]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[abs-tensor]
@@ -2237,15 +2234,12 @@ tests/ad/test_differential.py::test_singular_boundary_conventions[pow]
 tests/ad/test_differential.py::test_singular_boundary_conventions[sqrt]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[call-jvp]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[call-jvp_many]
-tests/ad/test_expr.py::test_active_solver_derivative_refused[call-sparsity]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[call-vjp]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[direct-jvp]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[direct-jvp_many]
-tests/ad/test_expr.py::test_active_solver_derivative_refused[direct-sparsity]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[direct-vjp]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[mapped-jvp]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[mapped-jvp_many]
-tests/ad/test_expr.py::test_active_solver_derivative_refused[mapped-sparsity]
 tests/ad/test_expr.py::test_active_solver_derivative_refused[mapped-vjp]
 tests/ad/test_expr.py::test_constant_scatter_accumulates
 tests/ad/test_expr.py::test_gather_adjoint_has_one_scatter[2000]
@@ -3376,7 +3370,6 @@ tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-library]
 tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-symlink]
 tests/codegen/test_jit.py::test_solver_build_change_misses_cache[False-unreadable]
 tests/codegen/test_jit.py::test_solver_build_change_misses_cache[True-both]
-tests/codegen/test_jit.py::test_solver_fingerprint_reads_files_once_per_configuration
 tests/codegen/test_jit.py::test_threads_share_a_cold_cache
 tests/codegen/test_jit.py::test_unsupported_lowering_still_raises_jit_unavailable
 tests/codegen/test_jit.py::test_vector_math_override_rejects_invalid_values[sleef]
@@ -3395,6 +3388,7 @@ tests/codegen/test_jit_index.py::test_an_option_read_while_rendering_is_part_of_
 tests/codegen/test_jit_index.py::test_invalidation_builds_apart_from_the_entry_other_processes_use
 tests/codegen/test_jit_index.py::test_one_callee_called_twice_is_not_two_equal_callees[across two callers]
 tests/codegen/test_jit_index.py::test_one_callee_called_twice_is_not_two_equal_callees[in one caller]
+tests/codegen/test_jit_index.py::test_solver_warm_start_never_lowers_at_construction_or_on_an_index_hit
 tests/codegen/test_jit_index.py::test_the_key_changes_with_the_compile_options
 tests/codegen/test_jit_index.py::test_verify_mode_renders_on_a_hit_and_raises_when_the_entry_differs
 tests/codegen/test_name_clash.py::test_c_wrapper_parameters_do_not_hide_later_typedefs[f_workspace_t-y-z]
@@ -3412,6 +3406,10 @@ tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[
 tests/codegen/test_name_clash.py::test_exported_reserved_symbol_is_a_user_error[new]
 tests/codegen/test_name_clash.py::test_header_parameters_do_not_shadow_buffer_aliases
 tests/codegen/test_name_clash.py::test_header_scope_preserves_library_and_table_names
+tests/codegen/test_name_clash.py::test_host_cannot_use_a_solver_bridge_export_name[default_options]
+tests/codegen/test_name_clash.py::test_host_cannot_use_a_solver_bridge_export_name[set_options]
+tests/codegen/test_name_clash.py::test_host_cannot_use_a_solver_bridge_export_name[solve]
+tests/codegen/test_name_clash.py::test_host_cannot_use_a_solver_bridge_export_name[stats]
 tests/codegen/test_name_clash.py::test_input_names_do_not_shadow_generated_names[default]
 tests/codegen/test_name_clash.py::test_input_names_do_not_shadow_generated_names[i_y]
 tests/codegen/test_name_clash.py::test_input_names_do_not_shadow_generated_names[k0]
@@ -3452,6 +3450,7 @@ tests/codegen/test_name_clash.py::test_scalar_declarations_follow_c99_block_and_
 tests/codegen/test_name_clash.py::test_scalar_declarations_follow_c99_block_and_loop_scopes[True]
 tests/codegen/test_name_clash.py::test_scope_suffixes_remain_valid_and_children_see_global_names
 tests/codegen/test_name_clash.py::test_shared_input_output_names_keep_distinct_buffers
+tests/codegen/test_name_clash.py::test_solver_bridge_reserves_its_own_raw_symbol
 tests/codegen/test_name_clash.py::test_solver_oracles_with_same_name_keep_their_identity
 tests/codegen/test_name_clash.py::test_workspace_parameter_does_not_shadow_exported_entry[workspace_2]
 tests/codegen/test_name_clash.py::test_workspace_parameter_does_not_shadow_exported_entry[x]
@@ -4087,6 +4086,7 @@ tests/function/test_extern.py::test_inactive_external_derivatives_and_zero_input
 tests/function/test_extern.py::test_library_content_and_flags_change_jit_key
 tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[compile_flags]
 tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[include_dirs]
+tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[library_dirs]
 tests/function/test_extern.py::test_library_rejects_a_bare_string_for_a_sequence_field[link]
 tests/function/test_extern.py::test_named_system_math_library_is_resolved_and_linked
 tests/function/test_extern.py::test_wrapper_custom_derivative_matches_finite_differences[False]
@@ -4598,7 +4598,6 @@ tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[log]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[pow]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[print]
-tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[solver_call]
 tests/ir/test_sparse_patterns.py::test_pack_assembly_keeps_large_pattern_attributes_compact
 tests/ir/test_sparse_patterns.py::test_pack_attribute_mismatch_names_the_patterns
 tests/ir/test_sparse_patterns.py::test_pattern_copies_mutable_input_and_verifier_checks_shape
@@ -4684,7 +4683,6 @@ tests/ir/test_support.py::test_default_support_is_sound_unknown[cosh]
 tests/ir/test_support.py::test_default_support_is_sound_unknown[exp]
 tests/ir/test_support.py::test_default_support_is_sound_unknown[log]
 tests/ir/test_support.py::test_default_support_is_sound_unknown[pow]
-tests/ir/test_support.py::test_default_support_is_sound_unknown[solver_call]
 tests/ir/test_support.py::test_disjoint_products_fold_and_structural_zero_removes_nan
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[add]
 tests/ir/test_support.py::test_elementwise_support_with_unequal_broadcast_ranks[div]
@@ -4782,14 +4780,6 @@ tests/ir/test_verifier.py::test_slice_contract_accepts_normalized_index[index2]
 tests/ir/test_verifier.py::test_slice_contract_rejects_invalid_nodes[None-shape0]
 tests/ir/test_verifier.py::test_slice_contract_rejects_invalid_nodes[index1-shape1]
 tests/ir/test_verifier.py::test_slice_contract_rejects_invalid_nodes[index2-shape2]
-tests/ir/test_verifier.py::test_solver_call_contract[arity]
-tests/ir/test_verifier.py::test_solver_call_contract[diff]
-tests/ir/test_verifier.py::test_solver_call_contract[input_shape]
-tests/ir/test_verifier.py::test_solver_call_contract[output]
-tests/ir/test_verifier.py::test_solver_call_contract[output_name]
-tests/ir/test_verifier.py::test_solver_call_contract[shape]
-tests/ir/test_verifier.py::test_solver_call_contract[solver]
-tests/ir/test_verifier.py::test_solver_call_contract_accepts_descriptor_function
 tests/ir/test_verifier.py::test_transpose_axes_must_be_permutation
 tests/ir/test_verifier.py::test_unary_dtype_mismatch_caught
 tests/ir/test_verifier.py::test_verifier_checks_batched_result_shape
@@ -5631,7 +5621,7 @@ tests/passes/test_program.py::test_multi_buffer_write_keeps_previous_call_input_
 tests/passes/test_program.py::test_multi_buffer_write_keeps_previous_call_input_dependencies[names1]
 tests/passes/test_program.py::test_no_spill_when_temps_small
 tests/passes/test_program.py::test_packing_reuses_slots_and_spills
-tests/passes/test_program.py::test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order
+tests/passes/test_program.py::test_procedure_pruning_keeps_entry_calls_in_order
 tests/passes/test_program.py::test_regular_raw_callees_stay_inline
 tests/passes/test_program.py::test_scalar_invariant_assignments_are_reused_across_mapped_calls
 tests/passes/test_program.py::test_scalar_schedule_keeps_cheap_products_local_without_duplicating_loads
@@ -5727,8 +5717,11 @@ tests/passes/test_widen_ranges.py::test_store_schedule_reduces_live_values_witho
 tests/passes/test_widen_ranges.py::test_store_schedule_refuses_alias_reads_and_mutable_scalars
 tests/solvers/test_codegen.py::test_exported_solver_accepts_runtime_options[c]
 tests/solvers/test_codegen.py::test_exported_solver_accepts_runtime_options[cpp]
+tests/solvers/test_codegen.py::test_missing_solver_library_keeps_the_solver_diagnostic
 tests/solvers/test_codegen.py::test_solver_interface_is_static[piqp]
 tests/solvers/test_codegen.py::test_solver_interface_is_static[sqp]
+tests/solvers/test_codegen.py::test_solver_manifest_builds_without_backend_flags[ipopt]
+tests/solvers/test_codegen.py::test_solver_manifest_builds_without_backend_flags[piqp]
 tests/solvers/test_codegen.py::test_solver_options_share_one_build[False-ipopt-options4]
 tests/solvers/test_codegen.py::test_solver_options_share_one_build[False-piqp-options0]
 tests/solvers/test_codegen.py::test_solver_options_share_one_build[False-piqp-options1]
@@ -5739,7 +5732,9 @@ tests/solvers/test_codegen.py::test_solver_options_share_one_build[True-piqp-opt
 tests/solvers/test_codegen.py::test_solver_options_share_one_build[True-piqp-options1]
 tests/solvers/test_codegen.py::test_solver_options_share_one_build[True-sqp-options2]
 tests/solvers/test_codegen.py::test_solver_options_share_one_build[True-sqp-options3]
+tests/solvers/test_codegen.py::test_solver_oracles_follow_the_module_recipe
 tests/solvers/test_codegen.py::test_solver_stats_reject_uninitialized_and_mismatched_versions
+tests/solvers/test_codegen.py::test_solver_system_soname_does_not_add_the_working_directory
 tests/solvers/test_codegen.py::test_sparse_qp_rejects_nested_solver_data
 tests/solvers/test_codegen.py::test_two_solver_wrappers_in_one_translation_unit
 tests/solvers/test_codegen.py::test_two_sqp_wrappers_in_one_translation_unit
@@ -5751,6 +5746,10 @@ tests/solvers/test_codegen.py::test_typed_wrapper_parameters_do_not_hide_solver_
 tests/solvers/test_codegen.py::test_typed_wrapper_parameters_do_not_hide_solver_option_type[target-scaly_solver_option-cpp]
 tests/solvers/test_nesting.py::test_duplicate_nested_solver_names_fail_before_c_compilation
 tests/solvers/test_nesting.py::test_nested_solver_stats_query_uses_compiled_host_handle
+tests/solvers/test_nesting.py::test_solver_and_user_extern_share_a_function[ipopt]
+tests/solvers/test_nesting.py::test_solver_and_user_extern_share_a_function[piqp]
+tests/solvers/test_nesting.py::test_solver_graph_uses_extern_and_requires_custom_derivative[ipopt]
+tests/solvers/test_nesting.py::test_solver_graph_uses_extern_and_requires_custom_derivative[piqp]
 tests/solvers/test_nesting.py::test_solver_outputs_share_one_program_ir_call
 tests/solvers/test_ocp.py::test_a_discrete_map_sums_its_costs_and_the_terminal_constraint_holds
 tests/solvers/test_ocp.py::test_a_free_final_time_reaches_the_same_solution_through_both_lowerings
@@ -6031,7 +6030,6 @@ tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_n
 tests/solvers/test_qp.py::test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero
 tests/solvers/test_qp.py::test_sparse_qp_keeps_matrix_entries_a_parameter_condition_can_switch_on
 tests/solvers/test_registry.py::test_broken_path_provider_does_not_hide_other_plugins
-tests/solvers/test_registry.py::test_conflicting_external_oracle_symbol_definitions_are_rejected
 tests/solvers/test_registry.py::test_entry_point_name_mismatch_is_rejected
 tests/solvers/test_registry.py::test_external_oracle_source_and_symbol_cross_the_plugin_boundary
 tests/solvers/test_registry.py::test_external_oracle_source_is_deduplicated_across_solver_wrappers
@@ -6045,6 +6043,7 @@ tests/solvers/test_registry.py::test_nlp_backend_must_declare_a_hessian_triangle
 tests/solvers/test_registry.py::test_nlp_backend_stage_oracles_flag_must_be_boolean[1]
 tests/solvers/test_registry.py::test_nlp_backend_stage_oracles_flag_must_be_boolean[None]
 tests/solvers/test_registry.py::test_nlp_backend_stage_oracles_flag_must_be_boolean[yes]
+tests/solvers/test_registry.py::test_static_external_oracle_symbols_are_local_to_each_bridge
 tests/solvers/test_registry.py::test_stats_abi_v3_layout_is_additive
 tests/solvers/test_stage_oracles.py::test_attached_stage_functions_require_a_layout
 tests/solvers/test_stage_oracles.py::test_attached_stage_functions_require_matching_layout_sizes[nx0-nu0]

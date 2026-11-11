@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..ir.expr import ExprOp, callees_of
+from ..ir.expr import callees_of
 from ..function.concrete import ConcreteFunction
-from .paths import backend_compile_flags
 from .model import ExternalOracle
 
 if TYPE_CHECKING:
@@ -44,7 +43,7 @@ def solver_callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
 
 def solver_backends_used(fun: ConcreteFunction) -> tuple[str, ...]:
   """Sorted names of every solver backend reachable from ``fun`` (through
-  CALL/VMAP callees, SOLVER_CALL nodes, and solver oracle Functions)."""
+  callees and solver oracle Functions)."""
   found: set[str] = set()
   seen: set[int] = set()
 
@@ -60,8 +59,6 @@ def solver_backends_used(fun: ConcreteFunction) -> tuple[str, ...]:
     for node in fn.nodes:
       for callee in callees_of(node):
         visit(callee)
-      if node.op == ExprOp.SOLVER_CALL:
-        found.add(node.attrs["solver"].backend)
 
   visit(fun)
   return tuple(sorted(found))
@@ -77,21 +74,3 @@ def external_oracles(fun: ConcreteFunction) -> tuple[ExternalOracle, ...]:
     if isinstance(oracle, ExternalOracle) and oracle not in out:
       out.append(oracle)
   return tuple(out)
-
-
-def solver_compile_flags(fun: ConcreteFunction, *, rpath: bool = True) -> list[str]:
-  """Compiler/linker flags an AOT consumer needs for ``fun``.
-
-  Returns ``[]`` when ``fun`` does not transitively reach any solver.
-  Otherwise: plugin package ``-I`` / ``-L`` paths, each reached backend's
-  ``link_flags``, and an ``-Wl,-rpath`` pointing at the vendored lib
-  directories so the resulting binary finds the shared libs at load time
-  without ``LD_LIBRARY_PATH`` / ``DYLD_LIBRARY_PATH`` overrides.
-
-  Set ``rpath=False`` if the consumer plans to bundle the libs elsewhere and
-  will set the rpath / install_name themselves.
-  """
-  names = solver_backends_used(fun)
-  if not names:
-    return []
-  return backend_compile_flags(names, rpath=rpath)

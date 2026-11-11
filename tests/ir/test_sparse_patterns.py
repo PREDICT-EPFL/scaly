@@ -188,7 +188,6 @@ def test_zero_preserving_unary_retains_pattern(op: ExprOp) -> None:
     ExprOp.COSH,
     ExprOp.EXP,
     ExprOp.LOG,
-    ExprOp.SOLVER_CALL,
     ExprOp.PRINT,
     ExprOp.DIV,
     ExprOp.POW,

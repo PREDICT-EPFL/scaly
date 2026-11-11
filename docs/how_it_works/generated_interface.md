@@ -115,13 +115,12 @@ lists the recipe options and their values.
 
 ## Module layout
 
-Every module is one C source and one header. The source contains, in order:
+Every module has a main C source and one header. The source contains, in order:
 
 1. The recipe comment and, for a C header, `#include` of that header.
 2. System includes, vector typedefs and lane macros, and the status codes.
 3. One `static inline void <callee>_raw(...)` per retained callee.
-4. For a module that reaches a solver, the solver wrappers.
-5. The exported entry, named after the root function.
+4. The exported entry, named after the root function.
 
 Distinct functions may share a Python name. Scaly gives their internal C
 procedures distinct names and keeps each call attached to its own function.
@@ -141,35 +140,12 @@ workspace. When a callee does spill, the caller passes its own `w` advanced
 past its own spill window. The workspace pointer has the entry's type,
 `double*` here, and `void*` for a function whose inputs and outputs mix types.
 
-A solver-bearing module adds the solver wrapper and a statistics accessor. The
-top-level definitions of the SQP solver for a two-variable problem, printed
-from its source with long signatures cut:
-
-```c
-#include "circle_sqp.h"
-#include <math.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <time.h>
-#include "piqp/piqp.h"
-static double scaly_clock_s(void) {
-static inline void circle_base_raw(const double* x, const double* p, double* f, double* g, doubl ...
-static inline void circle_grad_raw(const double* x, const double* p, double* grad_f_x, double* w) {
-static inline void circle_jac_raw(const double* x, const double* p, double* spjac_g_x, double* w) {
-static inline void circle_hess_upper_raw(const double* x, const double* p, const double* lam_f,  ...
-static inline void circle_bounds_raw(const double* p, double* x_lb, double* x_ub, double* w) {
-static scaly_solver_stats circle_sqp_stats_data;
-static void circle_sqp_raw(const double* in0, const double* in1, const double* in2, const double ...
-int circle_sqp_stats(scaly_solver_stats* out) {
-int circle_sqp_with_options(const double** arg, double** res, int* iw, double* w, int mem, ...
-const scaly_solver_option* circle_sqp_default_options(void) {
-int circle_sqp(const double** arg, double** res, int* iw, double* w, int mem) {
-```
-
-The oracles are ordinary `_raw` procedures lowered like any other function.
-Only `circle_sqp_raw` comes from a template in the solver plugin, and it is
-placed after the oracles it calls. [Solvers](solvers.md) describes what that
-wrapper does.
+A module that reaches a solver also exports a build manifest and external
+wrapper sources. Each wrapper compiles with its oracles as a separate C
+translation unit. It links to the plugin's native library and exports a solve
+function, an option setter and a statistics accessor. The host entry validates
+its arguments, supplies the option arrays, then calls its ordinary generated
+body. [Solvers](solvers.md) describes what each wrapper does.
 
 ## The pointer ABI
 
@@ -385,8 +361,8 @@ The key is a SHA-256 hash over, in order:
   size and modification time of its executable, its `--version` output, and
   the macros the host recipe probe prints, which name the CPU features and the
   compiler version
-- for a solver module, a digest of the names and contents of readable files
-  in its native include and library directories
+- for external libraries, fingerprints of their sources, headers, compilation
+  flags and resolved native dependencies
 - the full compile command apart from file paths: the optimization, CPU and
   `-fno-math-errno` flags, `-fPIC -shared`, the link flags (solver paths,
   `-lmvec`) and `-lm`
@@ -422,14 +398,14 @@ a SHA-256 hash over:
 - a digest of the installed source of Scaly and of its solver plugins, which
   are the code that renders the C, with the Scaly, Python and NumPy versions
 - the cache version, the ABI signature, the host recipe, the compiler
-  fingerprint, a solver module's native file digest and the compile command, as
+  fingerprint, external-library fingerprints and the compile command, as
   in the cache key above, and the glibc version when glibc vector math is
   selected
 
 A process that finds an entry loads the library it names, without lowering,
-rendering or compiling. Solver modules still read every readable file beneath
-their native include and library directories, once per directory per process,
-even when several solver backends use the same directories. A miss renders the C, compiles it when the library is
+rendering or compiling the host graph or its solver oracles. Library fingerprints
+still inspect declared headers and linked dependencies. A miss renders the host C
+and solver bridges with the selected recipe, compiles them when the library is
 not there yet, and records the library in the index. An entry names its library
 by its path inside the cache root, so the cache can be moved, and a library
 deleted behind an entry is rendered and compiled again. Entries are written
@@ -448,8 +424,10 @@ artifact in an in-memory table and does not touch the compiler either.
 opens the library with `ctypes`, resolves the entry and any `_stats`
 accessors, and keeps the handle on the `Function`. On Linux a library that
 reaches a solver is opened with `dlmopen` into a separate linker namespace,
-shared by all solver libraries, so the solvers' own dependencies cannot
-collide with libraries already loaded by Python packages.
+shared with other external kernels whose dependency names resolve to the
+same paths and contents. Conflicting versions use different namespaces. Each
+namespace starts with libc and loads kernels with ordinary local symbol
+lookup, so solver dependencies stay isolated from Python packages.
 
 `recompile()` drops the handle and advances a process-local counter. It does
 not compile. The next call or `compile()` uses another cache path whose key

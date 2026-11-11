@@ -14,7 +14,6 @@ import scaly as sc
 from scaly.function.sugar import _mapped_call
 from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, ExprOp, topo
 from scaly.ir.types import CanonicalPattern
-from scaly.solvers.model import SolverDescriptor
 
 
 @dataclass(frozen=True)
@@ -472,19 +471,14 @@ def test_every_expr_op_is_accounted_for():
   assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_BINARY == COMMON_ELEMENTWISE_BINARY
   # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences. LOOP refuses
   # derivatives, tested in tests/function/test_loop.py.
-  assert {case.op for case in CASES} | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT, ExprOp.LOOP} == set(ExprOp)
+  assert {case.op for case in CASES} | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.STOP_GRADIENT, ExprOp.LOOP} == set(ExprOp)
 
 
-@pytest.mark.parametrize("op", [ExprOp.SOLVER_CALL, ExprOp.EXTERN])
 @pytest.mark.parametrize("mode", ["single", "many", "reverse"])
-def test_active_opaque_derivative_refusals(op, mode):
+def test_active_opaque_derivative_refusals(mode):
   x = sc.sym("refused_x", ())
-  if op == ExprOp.EXTERN:
-    y = sc.extern(sc.CLibrary("differential_external"), "differential_external", inputs=(sc.arg("x", ()),), outputs=sc.arg("y", ()))(x)
-  else:
-    descriptor = SolverDescriptor("differential_solver", "test", 1, 0, 0, (("p", ()),), (("y", ()),), (), 1)
-    y = sc.Expr(op, (x,), sc.TensorType((), diff=False), attrs={"solver": descriptor, "output": 0, "output_name": "y"})
-  with pytest.raises(NotImplementedError, match="SOLVER_CALL" if op == ExprOp.SOLVER_CALL else op.value):
+  y = sc.extern(sc.CLibrary("differential_external"), "differential_external", inputs=(sc.arg("x", ()),), outputs=sc.arg("y", ()))(x)
+  with pytest.raises(NotImplementedError, match="sc.custom_derivative"):
     if mode == "single":
       sc.jvp(y, x, sc.const(1.0))
     elif mode == "many":

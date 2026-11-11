@@ -84,10 +84,10 @@ def test_every_expr_op_is_classified_in_every_pass() -> None:
     "forward AD": _dispatch_ops(forward._pushforward, forward._pushforward_rule),
     "reverse AD": _dispatch_ops(reverse.vjp, reverse._local_vjp),
     "sparsity": _dispatch_ops(sparsity._jac_mask_uncached),
-    # INPUT is bound by emit_inputs; SOLVER_CALL is opaque and handled by the solver wrapper.
-    "lowering": set(_RULES) | {ExprOp.INPUT, ExprOp.SOLVER_CALL},
+    # INPUT is bound by emit_inputs.
+    "lowering": set(_RULES) | {ExprOp.INPUT},
     "support": {op for op, info in OP_INFO.items() if info.pattern_rule or info.support_rule}
-    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL, ExprOp.EXTERN}
+    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.EXTERN}
     | {ExprOp.LE, ExprOp.EQ, ExprOp.NOT, ExprOp.ISFINITE},
     # Add graph_digest here in #64. It must cover set(ExprOp).
   }

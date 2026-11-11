@@ -98,28 +98,25 @@ backend = SimpleNamespace(name="ipopt", lib_stem="cache_solver", header="solver/
 paths._backends = lambda: {backend.name: backend}
 registry.get_backend = lambda _name: backend
 paths._plugin_solver_paths = lambda: [(root / "include", root / "lib")] if os.environ["TEST_SOLVER_PLUGIN"] == "1" else []
-
+installed = paths.solver_paths()
+library = sc.CLibrary(
+  "cache_solver", include_dirs=tuple(map(str, installed.include_dirs)), library_dirs=tuple(map(str, installed.lib_dirs)), link=("cache_solver",),
+  sources={"bridge.c": '''#include <solver/api.h>
+void cache_evaluate(const double* x, double* y, double* w) {
+  Settings settings = {0};
+  settings.value = x[0] + OFFSET;
+  y[0] = evaluate(&settings);
+  (void)w;
+}
+'''},
+)
+evaluate = sc.extern(library, "cache_evaluate", inputs=(sc.arg("x", 1),), outputs=sc.arg("y", 1))
 @sc.function(sc.arg("x", 1), outputs=sc.arg("y", 1), name="solver_cache_inputs")
 def fun(x):
-  return x
-
-body = '''#include <solver/api.h>
-int solver_cache_inputs(const double** arg, double** res, int* iw, double* w, int mem) {
-  Settings settings = {0};
-  settings.value = arg[0][0] + OFFSET;
-  res[0][0] = evaluate(&settings);
-  return 0;
-}
-int solver_cache_inputs_with_options(const double** arg, double** res, int* iw, double* w, int mem, const void* options) {
-  return solver_cache_inputs(arg, res, iw, w, mem);
-}
-'''
-render = jit._render_native
-jit._render_native = lambda fun, compiler: replace(render(fun, compiler), body=body, backends=(backend.name,))
-jit.solver_backends_used = lambda fun: (backend.name,)  # what the index key reads of a solver graph
+  return evaluate(x)
 compiles = []
 run = jit.subprocess.run
-jit.subprocess.run = lambda command, **kwargs: (compiles.append("-fPIC" in command), run(command, **kwargs))[1]
+jit.subprocess.run = lambda command, **kwargs: (compiles.append(any(str(arg).endswith("/solver_cache_inputs.c") for arg in command)), run(command, **kwargs))[1]
 compiled = jit.get_compiled(fun)
 result = compiled.run([np.array([3.0])])[0].item()
 print(json.dumps({"key": compiled.cache_key, "compiles": sum(compiles), "result": result}))
@@ -200,35 +197,6 @@ def test_solver_build_change_misses_cache(tmp_path: Path, plugin: bool, changed:
   assert second["compiles"] == 1
   assert second["result"] == (5.0 if changed == "both" else 4.0)
   assert build() == {**second, "compiles": 0}
-
-
-def test_solver_fingerprint_reads_files_once_per_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  include, lib = tmp_path / "include", tmp_path / "lib"
-  include.mkdir()
-  lib.mkdir()
-  (include / "solver.h").write_bytes(b"solver headers")
-  (lib / "libsolver.so").write_bytes(b"solver library")
-  flags = (f"-I{include}", f"-L{lib}", "-lsolver")
-  opened = []
-  original_open = Path.open
-
-  def record(path, *args, **kwargs):
-    opened.append(path)
-    return original_open(path, *args, **kwargs)
-
-  monkeypatch.setattr(Path, "open", record)
-  first = jit.solver_inputs_fingerprint(flags)
-  assert set(opened) == {include / "solver.h", lib / "libsolver.so"}
-  assert len(opened) == 2
-
-  def unexpected_io(*args, **kwargs):
-    pytest.fail("a warm fingerprint must not read or stat files")
-
-  monkeypatch.setattr(Path, "open", unexpected_io)
-  monkeypatch.setattr(Path, "stat", unexpected_io)
-  monkeypatch.setattr(os, "walk", unexpected_io)
-  assert jit.solver_inputs_fingerprint(flags) == first
-  assert jit.solver_inputs_fingerprint((*flags[:-1], "-lother_solver", "-lmvec")) == first
 
 
 def test_recompile_uses_another_path_and_preserves_files(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -500,10 +468,9 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache: Path, nested: bo
   else:
     fun = cast(sc.Function, solver.function)
   module = render_c_module(fun, lanes=1)
-  procs = module.program.args[: module.program.attrs["proc_count"]]
-  assert any(proc.attrs.get("hoisted_from") == stage.name for proc in procs)
-  names = {proc.attrs["name"] for proc in procs}
-  assert all(name in names for oracles in module.program.attrs["solver_oracles"].values() for name in oracles)
+  source = "\n".join(text for library in module._libraries for _, text in library.sources)
+  assert "_hoisted" in source
+  assert "oracle_stage" in source
   pv = np.array([0.2])
   result = fun(pv) if nested else solver(pv)[0]
   np.testing.assert_allclose(result, np.full(3, np.exp(pv[0])), atol=1e-7)
