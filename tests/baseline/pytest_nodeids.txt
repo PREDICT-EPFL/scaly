@@ -4037,7 +4037,14 @@ tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared
 tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[5]
 tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[None]
 tests/passes/lowering/test_calls.py::test_static_loop_budget_boundary_and_scalar_override
+tests/passes/lowering/test_calls.py::test_static_loop_budget_includes_the_step_index_store
 tests/passes/lowering/test_calls.py::test_static_loop_preserves_a_block_callee_boundary
+tests/passes/lowering/test_calls.py::test_static_scan_keeps_cached_sparse_reorders_initialized
+tests/passes/lowering/test_calls.py::test_unrolled_index_arithmetic_preserves_nan_and_zero_bits
+tests/passes/lowering/test_calls.py::test_unrolled_trajectory_writes_its_mutable_storage[False-1]
+tests/passes/lowering/test_calls.py::test_unrolled_trajectory_writes_its_mutable_storage[False-3]
+tests/passes/lowering/test_calls.py::test_unrolled_trajectory_writes_its_mutable_storage[True-1]
+tests/passes/lowering/test_calls.py::test_unrolled_trajectory_writes_its_mutable_storage[True-3]
 tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bitwise[False]
 tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bitwise[True]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration

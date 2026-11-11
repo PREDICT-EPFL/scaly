@@ -225,8 +225,8 @@ def test_small_static_triangle_folds_masked_terms() -> None:
   source = render_c_source(expanded)
   assert " ? " not in source and "i_loop" not in source
   assert source.count("sin(") == 3
-  v = np.array([0.1, 0.2, 0.3, 0.4])
-  assert expanded(v).tobytes() == rolled(v).tobytes()
+  for v in (np.array([0.1, 0.2, 0.3, 0.4]), np.array([0.1, 0.2, -0.0, -0.0])):
+    assert expanded(v).tobytes() == rolled(v).tobytes()
 
 
 def test_nested_scan_work_is_included_in_outer_budget() -> None:
@@ -283,3 +283,70 @@ def test_static_loop_preserves_a_block_callee_boundary() -> None:
 
   assert _has_carried_loop(_static_scan(blocked, 2))
   assert _has_carried_loop(_static_scan(blocked, 2, "scalar"))
+
+
+def test_static_scan_keeps_cached_sparse_reorders_initialized(tmp_path, monkeypatch) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+  type_ = sc.TensorType((2, 2), pattern=CanonicalPattern((2, 2), (0, 0, 1), (0, 1, 0)))
+
+  @sc.function(sc.arg("a", type_, layout="csr"), outputs=sc.arg("an", type_, layout="csr"))
+  def double(a):
+    return a * 2.0
+
+  @sc.function(sc.arg("a", type_, layout="csc"))
+  def f(a):
+    y, _ = sc.scan(double, a, length=2)
+    return sc.to_dense(y), sc.to_dense(double(a))
+
+  got = f(sparse.csc_array([[1.0, 2.0], [5.0, 0.0]]))
+  np.testing.assert_array_equal(got[0], [[4.0, 8.0], [20.0, 0.0]])
+  np.testing.assert_array_equal(got[1], [[2.0, 4.0], [10.0, 0.0]])
+
+
+@pytest.mark.parametrize("size", [1, 3])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_unrolled_trajectory_writes_its_mutable_storage(size, reverse, tmp_path, monkeypatch) -> None:
+  from scaly.function.sugar import _loop_node
+
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+
+  @sc.function(sc.arg("c", size))
+  def double(c):
+    return c * 2.0
+
+  x = sc.sym("x", size)
+  attrs = {"n_carry": 1, "length": 3, "starts": (), "strides": (), "index": False, "reverse": reverse, "in_place": ()}
+  y = _loop_node(as_concrete(double), None, (x,), attrs, 2)
+  fn = ConcreteFunction._from_exprs("odd_trajectory", [x], [y], ["x"], ["trajectory"])
+  x0 = np.arange(1.0, size + 1)
+  values = np.stack([x0, 2 * x0, 4 * x0])
+  np.testing.assert_array_equal(fn(x0).reshape((3, size)), values[::-1] if reverse else values)
+
+
+def test_unrolled_index_arithmetic_preserves_nan_and_zero_bits(tmp_path, monkeypatch) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+
+  @sc.function(sc.arg("c", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(c, j):
+    return c * j.cast(sc.dtypes.float64) + 1.0
+
+  x = sc.sym("x", 4)
+  y, _ = sc.scan(step, x, length=2, index=True)
+  expanded = ConcreteFunction._from_exprs("index_special", [x], [y], ["x"], ["y"])
+  rolled = ConcreteFunction._from_exprs("index_special", [x], [y.block()], ["x"], ["y"])
+  v = np.array([np.nan, np.inf, -np.inf, -0.0])
+  assert expanded(v).tobytes() == rolled(v).tobytes()
+
+
+def test_static_loop_budget_includes_the_step_index_store(monkeypatch) -> None:
+  from scaly.passes.lowering import calls
+
+  @sc.function(sc.arg("c", ()), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(c, j):
+    return c + j.cast(sc.dtypes.float64)
+
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 4)
+  x = sc.sym("x")
+  y, _ = sc.scan(step, x, length=2, index=True)
+  fn = ConcreteFunction._from_exprs("wrapper_budget", [x], [y], ["x"], ["y"])
+  assert _has_carried_loop(fn)

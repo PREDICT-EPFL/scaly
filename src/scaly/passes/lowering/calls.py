@@ -6,12 +6,10 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, invocation_key
-from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
+from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
-from ..program.scalarize import _Frame, _Pointer
-from ..program.scheduling import ScalarNameAllocator, schedule_values
-from ..arith import constant
+from ..program.scalarize import expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
 
 
@@ -163,8 +161,6 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   (``j + 1`` in reverse), when its trajectory is used. Stacked outputs and trajectory slots past
   the trip count are zeroed only when a condition or a trip operand can end the loop early.
   """
-  before_loop = len(ctx.statements)
-  existing_buffers = tuple(ctx.buffers.values())
   callee: ConcreteFunction = node.attrs["callee"]
   cond: ConcreteFunction | None = node.attrs["cond"]
   n_carry, length, index, reverse = node.attrs["n_carry"], node.attrs["length"], node.attrs["index"], node.attrs["reverse"]
@@ -192,6 +188,10 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   last = p.sub(count, p.const_int(1))
   k = p.sub(last, i) if reverse else i
   sizes = [c.type.storage_size for c in callee.inputs[:n_carry]]
+  for arg in (*carries, *outers):
+    ctx.buf_of(arg)
+  before_loop = len(ctx.statements)
+  existing_buffers = list(ctx.buffers.values())
   slots = [ctx.new_private(c.type.dtype, ((length + 1 if j in traj else 2) * sizes[j],)) for j, c in enumerate(callee.inputs[:n_carry])]
 
   def slot(j: int, at: ProgramNode) -> ProgramNode:
@@ -280,45 +280,10 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   hints = {sibling.lowering for sibling in siblings}
   if not early and not hints & {"block", "opaque"}:
     procs = {proc.attrs["name"]: proc for proc in ctx.callees.values()}
-    proc = ctx.callees.get(callee)
-    cost = None if proc is None else _loop_cost(proc, procs)
+    cost = _loop_cost(p.proc("loop_step", (), body), procs)
     if cost is not None and ("scalar" in hints or length * cost <= STATIC_LOOP_BUDGET):
-      body = ctx.statements[before_loop:]
-      referenced = {n.attrs["buffer"] for stmt in body for n in walk_program(stmt) if n.op == ProgramOp.VIEW}
-      params = [buf for buf in existing_buffers if buf.attrs["name"] in referenced]
-      proc = p.proc("static_loop", params, body)
-      pointers = [
-        _Pointer([constant(v, buf.dtype) for v in buf.attrs["values"]])
-        if "values" in buf.attrs
-        else _Pointer([p.load(p.view(buf, [p.const_int(i)])) for i in range(int(np.prod(buf.attrs["shape"])))])
-        for buf in params
-      ]
-      frame = _Frame(proc, pointers, procs, {})
-      frame.run(tuple(body))
-      targets, values = [], []
-      for sibling in used.values():
-        if not sibling.type.storage_size:
-          continue
-        buf = ctx.raw_buf_of(sibling)
-        ptr = frame.buffers[buf.attrs["name"]]
-        for at in range(sibling.type.storage_size):
-          value = ptr.values[ptr.offset + at]
-          assert value is not None
-          targets.append(p.view(buf, [p.const_int(at)]))
-          values.append(value)
-      occupied = set()
-      scope = ctx.names
-      while scope is not None:
-        occupied.update(scope.occupied)
-        scope = scope.parent
-      names = ScalarNameAllocator(occupied)
-      declarations, values = schedule_values(values, names)
-      ctx.names.occupied.update(names.scope.occupied)
-      ctx.statements[before_loop:] = [
-        *(stmt for stmt in body if stmt.op == ProgramOp.BUFFER),
-        *declarations,
-        *(p.store(target, value) for target, value in zip(targets, values, strict=True)),
-      ]
+      results = [(ctx.raw_buf_of(sibling), sibling.type.storage_size) for sibling in used.values()]
+      ctx.statements[before_loop:] = expand_static_loop(existing_buffers, ctx.statements[before_loop:], results, procs, ctx.names)
 
   for sibling in siblings:
     if sibling.id not in ctx.value_buffers:

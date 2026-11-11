@@ -1219,8 +1219,8 @@ body, every right-hand side of a solve included: devrush counted one and a Hessi
 became 860 KB of C. Constant folding then deletes
 the masked terms of a triangle written with `where(iota < j, ...)`, so a library Cholesky of a small
 dense block gives the straight-line code devrush's `Unroll` option produced, without an option.
-Unrolling never changes the reference schedule's summation order (decision 13).
-Departure for #50: narrow stores, preserved call boundaries and effectful bodies stay rolled even with a scalar hint, replacing unrestricted expansion there because the scalar interpreter cannot erase those stores or calls safely.
+Unrolling never changes the reference schedule's summation order (decision 13). A loop with a condition or any trip operand is not static, even when the trip operand is constant.
+Departure for #50: narrow stores, preserved call boundaries, dynamic nested ranges and effectful bodies stay rolled even with a scalar hint, replacing unrestricted expansion there because the scalar interpreter cannot erase those stores, calls or control flow safely.
 
 **[#53]. `COND`.** Once masked cotangents exist, `where` is correct in both AD modes, so `COND` is
 about cost and about effects inside branches. `COND(selector, *operands)` with a tuple of branch

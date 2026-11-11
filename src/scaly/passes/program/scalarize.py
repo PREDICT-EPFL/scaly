@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp
 from ...ir.support import Support
-from ...utils.names import c_ident
+from ...utils.names import NameScope, c_ident
 from ..arith import CONSTANTS, constant, fold_program
 from .scheduling import ScalarNameAllocator, schedule_values
 
@@ -18,9 +18,21 @@ AUTO_SCALAR_GROWTH_PER_PROGRAM = 16_384
 AUTO_EXPANSION_WORK_PER_PROC = 65_536
 
 
+class _InputValues(dict[int, ProgramNode | None]):
+  def __init__(self, buffer: ProgramNode) -> None:
+    super().__init__()
+    self.buffer = buffer
+
+  def __missing__(self, index: int) -> ProgramNode:
+    values = self.buffer.attrs.get("values")
+    value = constant(values[index], self.buffer.dtype) if values is not None else p.load(p.view(self.buffer, [p.const_int(index)]))
+    self[index] = value
+    return value
+
+
 @dataclass(slots=True)
 class _Pointer:
-  values: list[ProgramNode | None]
+  values: list[ProgramNode | None] | _InputValues
   offset: int = 0
   support: Support = None
 
@@ -32,7 +44,10 @@ class _Frame:
     pointers: list[_Pointer],
     procs: dict[str, ProgramNode],
     folded: dict[tuple[ProgramNode, tuple[ProgramNode, ...]], ProgramNode],
+    *,
+    strict: bool = False,
   ) -> None:
+    self.strict = strict
     self.procs = procs
     self.folded = folded
     self.buffers = {
@@ -68,7 +83,8 @@ class _Frame:
         key = n, args
         value = self.folded.get(key)
         if value is None:
-          value = self.folded[key] = fold_program(ProgramNode(n.op, args, dtype=n.dtype))
+          attrs = {**n.attrs, "strict": True} if self.strict and n.dtype.is_floating else n.attrs
+          value = self.folded[key] = fold_program(ProgramNode(n.op, args, attrs, n.dtype))
         memo[n] = value
       else:
         stack.append((n, True))
@@ -102,10 +118,44 @@ class _Frame:
           self.run(stmt.args[1:])
       elif stmt.op == ProgramOp.CALL:
         callee = self.procs[stmt.attrs["callee"]]
-        frame = _Frame(callee, [self.pointer(a) for a in stmt.args], self.procs, self.folded)
+        frame = _Frame(callee, [self.pointer(a) for a in stmt.args], self.procs, self.folded, strict=self.strict)
         frame.run(callee.args[callee.attrs["param_count"] :])
       else:
         raise NotImplementedError(f"scalarization does not support {stmt.op}")
+
+
+def expand_static_loop(
+  params: list[ProgramNode],
+  body: list[ProgramNode],
+  results: list[tuple[ProgramNode, int]],
+  procs: dict[str, ProgramNode],
+  names: NameScope,
+) -> list[ProgramNode]:
+  """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage."""
+  proc = p.proc("static_loop", params, body)
+  frame = _Frame(proc, [_Pointer(_InputValues(buf)) for buf in params], procs, {}, strict=True)
+  frame.run(tuple(body))
+  buffers = {buf.attrs["name"]: buf for buf in (*params, *body) if buf.op == ProgramOp.BUFFER}
+  targets, values = [], []
+  for buf, size in results:
+    if not size:
+      continue
+    ptr = frame.buffers[buf.attrs["name"]]
+    offset = 0
+    while "alias_of" in buf.attrs:
+      offset += buf.attrs["alias_offset"]
+      buf = buffers[buf.attrs["alias_of"]]
+    for at in range(size):
+      value = ptr.values[ptr.offset + at]
+      assert value is not None
+      targets.append(p.view(buf, [p.const_int(offset + at)]))
+      values.append(value)
+  declarations, values = schedule_values(values, ScalarNameAllocator(names))
+  return [
+    *(stmt for stmt in body if stmt.op == ProgramOp.BUFFER),
+    *declarations,
+    *(p.store(target, value) for target, value in zip(targets, values, strict=True)),
+  ]
 
 
 def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
@@ -119,7 +169,8 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
   frame.run(proc.args[len(params) :])
   outputs: list[tuple[ProgramNode, ProgramNode]] = []
   for param, ptr in zip(params[n_in:], pointers[n_in:], strict=True):
-    for i, value in enumerate(ptr.values):
+    for i in range(math.prod(param.attrs["shape"])):
+      value = ptr.values[i]
       assert value is not None, "scalarization left an output element uninitialized"
       outputs.append((p.view(param, [p.const_int(i)]), value))
   names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
