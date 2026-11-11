@@ -119,3 +119,22 @@ with 4,661 tests passed and 56 skipped, all smoke gates passed, and docs/type/li
 checks passed. The 47 focused external/seed/workspace checks also passed. The chain translation
 unit is exactly byte-identical to `/tmp/scaly-225/final.c`, including the 67,308-operation count,
 1,121,802 source bytes and workspace figures. The conflict rebase is ready to push for review.
+
+
+## Independent correctness review
+
+Sol xhigh found one act-on item at the reviewed head: scope references omitted transitive CALL-input
+producer dependencies, so a producer defined before a map could reuse storage written later inside
+the map. This violated the existing Apple-clang workaround, although no wrong arithmetic was
+reproduced on Linux. Added the dependency to scope references and a structural regression gate.
+The new gate fails on the reviewed head; seven focused closure/workspace/vector checks pass after
+the fix. Existing C snapshots and the measured chain translation unit remain byte-identical.
+The full pre-merge must run again via `/tmp/scaly-225/full-suite-4.log` and `.exit`, followed by
+one Sol low-effort delta check of this fix alone. This correction is local and awaits the single
+combined review-fix push.
+
+The Opus xhigh request returned no verdict because Claude hit its five-hour quota until 06:30 UTC
+on 2026-11-11. Its old-head task was cancelled and settled after the correctness fix changed the
+review target. Start one fresh Opus review of the corrected head when its quota permits, using
+`/tmp/scaly-225/review-brief.txt`, and settle it only after using its result. No reviewer verdict
+may be invented. The two outstanding acceptance criteria still prevent queueing.

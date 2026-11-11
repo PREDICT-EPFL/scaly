@@ -103,6 +103,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       first_read.setdefault(b, i)
     for b in call_inputs:
       for dep in deps.get(b, set()):
+        references[i].add(dep)
         last_use[dep] = max(last_use.get(dep, i), i)
     produced_from = reads.union(*(deps.get(r, ()) for r in reads))
     for b in writes:

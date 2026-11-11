@@ -521,6 +521,26 @@ def test_multi_buffer_write_keeps_previous_call_input_dependencies(names) -> Non
   assert original_value not in {arg.attrs["name"] for arg in consumer.args}
 
 
+def test_mapped_calls_keep_input_producer_closures_live_across_iterations():
+  from scaly.passes.program.pack_workspace import _plan_pack
+
+  def temp(name):
+    buf = buffer(name, dtypes.float64, (3,), address_space="private")
+    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": True}, buf.dtype)
+
+  x, y = (buffer(name, dtypes.float64, (3,)) for name in ("x", "y"))
+  producer, base, result, later = map(temp, ("producer", "base", "result", "later"))
+  at = lambda buf: view(buf, [const_int(0)])
+  copy = lambda dst, src: store(at(dst), load(at(src)))
+  axis = range_("i", 0, 3)
+  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, axis.dtype)
+  call = ProgramNode(ProgramOp.CALL, (base, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()})
+  body = [call, copy(later, x), store(view(y, [var("i")]), add(load(at(later)), load(at(result))))]
+  root = proc_("root", [x, y], [producer, base, result, later, copy(producer, x), copy(base, producer), for_(axis, body)])
+  plan = _plan_pack(root)
+  assert plan.rename["producer"] != plan.rename["later"]
+
+
 def test_regular_raw_callees_stay_inline() -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="inner")
   def inner(x):
