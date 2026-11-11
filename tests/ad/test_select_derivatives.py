@@ -337,6 +337,32 @@ def test_called_masks_use_stored_coordinates_for_sparse_outputs(mapped: bool, si
 
 
 @pytest.mark.parametrize("mapped", [False, True])
+def test_called_masks_keep_sparse_adjoint_activity_before_singular_inputs(mapped: bool) -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 2))
+
+  @sc.function(sc.arg("u", sc.TensorType(pattern.shape, pattern=pattern)), outputs=sc.arg("r"), name="sd_sparse_twice")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return 2.0 * u
+
+  size = 4 if mapped else 2
+
+  @sc.function(sc.arg("x", size), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_sparse_input_mask")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    roots = x.sqrt()
+    sparse = sc.pack(roots.reshape((2, 2)), pattern) if mapped else sc.pack(roots, pattern)
+    chosen = sc.where(x > 0.0, sc.values(sc.vmap(stage, 2)(sparse) if mapped else stage(sparse)).vec(), 0.0)
+    return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
+
+  point = np.array([0.0, 4.0, -1.0, 9.0]) if mapped else np.array([0.0, 4.0])
+  grad, jac = (np.asarray(v) for v in derivatives(point))
+  expected = np.zeros_like(point)
+  active = point > 0.0
+  expected[active] = 1.0 / np.sqrt(point[active])
+  np.testing.assert_allclose(grad, expected, rtol=1e-15)
+  np.testing.assert_array_equal(grad, jac.sum(axis=0))
+
+
+@pytest.mark.parametrize("mapped", [False, True])
 def test_called_masks_preserve_broadcast_shapes_in_a_second_reverse_derivative(mapped: bool) -> None:
   @sc.function(sc.arg("u", 1), outputs=sc.arg("r"), name="sd_bcast_sin")
   def stage(u: sc.Expr) -> sc.Expr:

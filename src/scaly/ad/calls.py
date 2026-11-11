@@ -29,7 +29,7 @@ from ..ir.expr import (
 from ..ir.types import TensorType, dtypes
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
-from .rules import cotangent_mask
+from .rules import _sample_stored, cotangent_mask
 from .sparsity import _callee_mask, _depends_on, _incidence, _mask_sparsity, _prunable_support, _stored_slots, column_coloring
 
 _Pushforward = Callable[[Sequence[Expr], dict[Expr, Expr], int, str], tuple[Expr | None, ...]]
@@ -450,7 +450,7 @@ def _vmap_adj_function(
     parts = [values(grad).vec() for grad in grads]
     if masked:
       for grad in grads:
-        compact = values(grad)
+        compact = _sample_stored(grad, grad.type)
         condition = cotangent_mask(compact)
         ones = Expr.const(np.ones(grad.type.storage_shape, dtype=grad.type.dtype.numpy()), dtype=grad.type.dtype)
         parts.append((ones if condition is None else where(condition, ones, zeros_like(compact))).vec())
@@ -484,13 +484,13 @@ def _vmap_vjp(
   if not active_formals:
     return []
 
-  mask = cotangent_mask(cot)
+  mask = cotangent_mask(_sample_stored(cot, cot.type))
   adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals, pullback=pullback, masked=mask is not None)
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
   seed_specs = [(cot, 0, slice_size)]
   if mask is not None:
     seed_specs.append(
-      (stop_gradient(cast_expr(mask | Expr.const(np.zeros(cot.shape, dtype=bool), dtype=dtypes.bool_), cot.type.dtype)), 0, slice_size)
+      (stop_gradient(cast_expr(mask | Expr.const(np.zeros(cot.type.storage_shape, dtype=bool), dtype=dtypes.bool_), cot.type.dtype)), 0, slice_size)
     )
   mapped = _mapped_call(adj_fn, length, [*primal_specs, *seed_specs])
   adj_size = sum(callee.inputs[k].type.storage_size for k in active_formals)
@@ -540,7 +540,7 @@ def _call_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None, *, pullback
   lam = _tangent_symbol(f"lam:{callee.result_names[output_idx]}", callee_out)
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   replacements[lam.id] = cot
-  condition = cotangent_mask(values(cot))
+  condition = cotangent_mask(_sample_stored(cot, cot.type))
   seed = lam
   if condition is not None:
     mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, dtypes.bool_), name=f"mask:{callee.result_names[output_idx]}")
