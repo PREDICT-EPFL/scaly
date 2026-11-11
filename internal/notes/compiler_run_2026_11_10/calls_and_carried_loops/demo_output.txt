@@ -1,0 +1,64 @@
+== #28: a mapped Function with two used outputs and a print ==
+  for (long long it_t0 = 0; it_t0 < 5; ++it_t0) {
+    pair_raw((arg[0] + (2 * it_t0)), (s0 + (it_t0 * 2)), (res[1] + it_t0), NULL);
+  }
+loops in the entry that call the mapped body: 1
+trip x=[0, 1]
+trip x=[2, 3]
+trip x=[4, 5]
+trip x=[6, 7]
+trip x=[8, 9]
+prints: 5 for 5 trips and two used outputs (before #28: 10)
+
+== #28: the snapshot that changed, tests/baseline/c/vmap_multi.c ==
+--- before/vmap_multi.c
++++ after/vmap_multi.c
+@@ -95,12 +95,8 @@
+   if (!res[0]) return SCALY_ERR_NULL_RESULT;
+   if (!res[1]) return SCALY_ERR_NULL_RESULT;
+   double s0[10];
+-  double s1[2];
+   for (long long it_t0 = 0; it_t0 < 5; ++it_t0) {
+-    pair_raw((arg[0] + (2 * it_t0)), (s0 + (it_t0 * 2)), s1, NULL);
+-  }
+-  for (long long it_totals = 0; it_totals < 5; ++it_totals) {
+-    pair_raw((arg[0] + (2 * it_totals)), s1, (res[1] + it_totals), NULL);
++    pair_raw((arg[0] + (2 * it_t0)), (s0 + (it_t0 * 2)), (res[1] + it_t0), NULL);
+   }
+   for (long long c_vectors_start = 0; c_vectors_start <= 10 - SCALY_WIDTH_8_8_8_8; c_vectors_start += SCALY_WIDTH_8_8_8_8) {
+     lanes_2(c_vectors_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);
+                              before #28   after #28  this checkout
+program nodes                         57          50             50
+calls                                  2           1              1
+loops                                  5           4              4
+buffers                                8           7              7
+generated C, bytes                  4889        4747           4720
+cc -O3 -c, median of 3, ms          32.8        35.6           33.7
+The first two columns are recorded in invocations/measurements.json (baseline 8d8c7870). Counts include the
+mapped body's own procedure. The recorded renderings are 27 bytes longer than the snapshot file, for a reason the
+record does not give. The diff above is the 142 bytes between them. The compile times come from a shared machine
+and show no difference.
+
+== #29: a hand-built carried range with BREAK_IF ==
+program
+  proc recurrence(flags:bool(6,), out:float64(1,), count:int64(1,)):
+    out[0] <- 0
+    for i in [0, 6) step 1 kind=serial, carried, exit_var:
+      break_if flags[i]
+      out[0] <- ((out[0] / 2) + 1)
+    count[0] <- i
+
+the loop keeps its six trips, exit variable and break after each of 16 passes (lanes=2, reciprocal=True):
+hoist_invariant, scalarize, hoist_scalar_invariant, fold_tiles, fuse_ranges, prune_procedures, combine_scatter_sums, fuse_elementwise, fold_arith, pack_masks, unroll_unit_loops, fold_arith_after_unroll, hoist_reciprocals, widen_ranges, pack_workspace, coalesce_stores
+
+static inline void recurrence_raw(const uint8_t* flags, double* out, int64_t* count, double* w) {
+  (void)w;
+  out[0] = 0.0;
+  double inv = (1.0 / 2.0);
+  long long i = 0;
+  for (i = 0; i < 6; ++i) {
+    if (flags[i]) break;
+    out[0] = ((out[0] * inv) + 1.0);
+  }
+  count[0] = i;
+}
