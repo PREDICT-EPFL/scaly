@@ -9,7 +9,7 @@ Implement issue #32 on the approved local #34 branch, following the fixed design
 - [x] Extend the existing LOOP forward rule with primal and tangent carries.
 - [x] Cover edge counts, slicing, parameters, dtypes, nesting and trajectories.
 - [x] Check RK4 derivatives and record C sizes, operations and compile times.
-- [ ] Run focused checks and the detached suite through the shared runner.
+- [x] Run focused checks and the detached suite through the shared runner.
 - [ ] Open the stacked pull request when #34 has one; obtain Opus review and delta check.
 - [ ] Resolve required stack rebases, validate, and report ready to queue.
 
@@ -27,3 +27,8 @@ The devrush sources ported are tests/core/integration/test_multiseed_loops.py
 (scan edge lengths, shared inputs, symbolic seeds, nested scans/maps, nested forward)
 and tests/core/integration/test_loop_edge_cases.py (nonfloating carry tangents).
 Reverse-mode cases, trajectories in reverse, and local compression remain out of scope.
+
+Full shared-runner check passed: 4787 passed, 56 skipped; type, format, lint,
+benchmark smoke, docs build and private-name checks passed. C snapshots unchanged.
+The first runner attempt stopped on the stale node-ID baseline, now refreshed.
+#34 has pull request #425. Open this layer against t3code/34-fold-vmap.
