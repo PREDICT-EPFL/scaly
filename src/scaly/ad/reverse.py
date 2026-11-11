@@ -6,10 +6,10 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, from_dense, gather, pack, scatter, topo, to_dense, values, zeros_like
+from ..ir.expr import _index_values, Expr, ExprOp, _uniform, from_dense, gather, pack, scatter, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
 from .calls import _call_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, accumulate, carry_mask, cotangent
+from .rules import ELEMENTWISE, accumulate, carry_mask, cotangent, scatter_weights
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -107,9 +107,15 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     selected = gather(cot, entries) if entries is not None else cot
     return (scatter(selected, indices, args[0].shape),)
   if expr.op == ExprOp.GATHER:
-    return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
+    if expr.args[1].value is None or expr.attrs.get("mode") == "fill":
+      return (scatter(cot, expr.args[1], args[0].shape, axis=expr.attrs.get("axis"), mode=expr.attrs.get("mode", "promise_in_bounds")), None)
+    return (_gather_vjp(cot, _index_values(expr), args[0].shape), None)
   if expr.op == ExprOp.SCATTER:
-    return (gather(cot, expr.attrs["indices"]),)
+    if expr.attrs["combine"] != "add":
+      base_weight, update_weight = scatter_weights(expr)
+      selected = gather(cot, args[1], axis=expr.attrs.get("axis"), mode=expr.attrs["mode"]).reshape(args[2].shape)
+      return (cot * base_weight, None, selected * update_weight)
+    return (cot, None, gather(cot, expr.args[1], axis=expr.attrs.get("axis"), mode=expr.attrs["mode"]).reshape(args[2].shape))
   if expr.op == ExprOp.STACK:
     return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
   if expr.op == ExprOp.CONCAT:

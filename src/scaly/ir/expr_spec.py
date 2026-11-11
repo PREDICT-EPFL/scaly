@@ -38,6 +38,7 @@ from .expr import (
   topo,
 )
 from .spec import Rule, Spec, VerifyError
+from .support import index_shape
 from .types import CanonicalPattern, DType, broadcast_shape
 
 
@@ -322,13 +323,17 @@ def _vmap_attrs(expr: Expr) -> str | None:
 
 
 def _scatter_indices(expr: Expr) -> str | None:
-  if "indices" not in expr.attrs:
-    return "SCATTER missing 'indices' attr"
-  idx = expr.attrs["indices"]
-  if not expr.args:
-    return "SCATTER missing values arg"
-  if int(np.asarray(idx).size) != expr.args[0].size:
-    return f"SCATTER indices size {np.asarray(idx).size} != values size {expr.args[0].size}"
+  if len(expr.args) != 3 or expr.args[1].type.dtype.name != "int64":
+    return "SCATTER requires base, int64 indices and values operands"
+  if expr.attrs.get("mode") not in ("fill", "promise_in_bounds") or expr.attrs.get("combine") not in ("set", "add", "max", "min"):
+    return "SCATTER requires a valid mode and combination"
+  axis = expr.attrs.get("axis")
+  if axis is not None and (not isinstance(axis, int) or not 0 <= axis < len(expr.shape)):
+    return "SCATTER axis must be a normalized base axis"
+  if int(np.prod(index_shape(expr.shape, expr.args[1].shape, expr.attrs.get("axis")), dtype=int)) != expr.args[2].size:
+    return "SCATTER index and values sizes differ"
+  if expr.shape != expr.args[0].shape or expr.type.dtype != expr.args[0].type.dtype or expr.type.dtype != expr.args[2].type.dtype:
+    return "SCATTER base shape and value dtypes must match the result"
   return None
 
 
@@ -342,11 +347,15 @@ def _storage_conversion(expr: Expr) -> str | None:
 
 
 def _gather_indices(expr: Expr) -> str | None:
-  if "indices" not in expr.attrs:
-    return "GATHER missing 'indices' attr"
-  idx = np.asarray(expr.attrs["indices"])
-  if tuple(idx.shape) != expr.shape:
-    return f"GATHER output shape {expr.shape} != indices shape {tuple(idx.shape)}"
+  if len(expr.args) != 2 or expr.args[1].type.dtype.name != "int64":
+    return "GATHER requires an int64 index operand"
+  if expr.attrs.get("mode") not in ("fill", "promise_in_bounds"):
+    return "GATHER requires a valid indexing mode"
+  axis = expr.attrs.get("axis")
+  if axis is not None and (not isinstance(axis, int) or not 0 <= axis < len(expr.args[0].shape)):
+    return "GATHER axis must be a normalized source axis"
+  if index_shape(expr.args[0].shape, expr.args[1].shape, expr.attrs.get("axis")) != expr.shape:
+    return f"GATHER output shape {expr.shape} != indices shape {expr.args[1].shape}"
   return None
 
 

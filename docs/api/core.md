@@ -126,6 +126,26 @@ expression graph for inspection and export.
     options:
       show_source: false
 
+::: scaly.ir.expr.segment_max
+    options:
+      show_source: false
+
+::: scaly.ir.expr.take
+    options:
+      show_source: false
+
+::: scaly.ir.expr.dynamic_slice
+    options:
+      show_source: false
+
+::: scaly.ir.expr.index_add
+    options:
+      show_source: false
+
+::: scaly.ir.expr.index_set
+    options:
+      show_source: false
+
 ::: scaly.ir.expr.atan2
 
 ::: scaly.ir.expr.minimum

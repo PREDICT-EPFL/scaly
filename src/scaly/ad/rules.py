@@ -8,11 +8,34 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, cast, gather, not_equal, pack, scatter, values, where
+from ..ir.expr import Expr, ExprOp, _uniform, cast, equal, gather, not_equal, pack, scatter, values, where
 from ..ir.program import ProgramOp
 from ..ir.support import support_indices, project_entries
-from ..ir.types import TensorType, stored_indices
+from ..ir.types import TensorType, dtypes, stored_indices
 from .sparsity import _prunable_support
+
+
+def scatter_weights(expr: Expr) -> tuple[Expr, Expr]:
+  """Return the base and update weights for an ordered scatter derivative."""
+  base, index, updates = expr.args
+  mode = expr.attrs["mode"]
+  axis = expr.attrs.get("axis")
+  one = _uniform(1, (), dtype=expr.type.dtype)
+  if expr.attrs["combine"] == "set":
+    positions = Expr.const(np.arange(updates.size, dtype=np.int64).reshape(updates.shape) + 1, dtype=dtypes.int64)
+    winners = scatter(_uniform(0, base.shape, dtype=dtypes.int64), index, positions, axis=axis, combine="set", mode=mode)
+    update_weight = cast(equal(gather(winners, index, axis=axis, mode=mode).reshape(updates.shape), positions), expr.type.dtype).reshape(
+      updates.shape
+    )
+    base_weight = cast(equal(winners, _uniform(0, (), dtype=dtypes.int64)), expr.type.dtype)
+    return base_weight, update_weight
+  base_mask = cast(equal(base, expr), expr.type.dtype)
+  update_mask = cast(equal(updates, gather(expr, index, axis=axis, mode=mode).reshape(updates.shape)), expr.type.dtype)
+  count = scatter(base_mask, index, update_mask, axis=axis, mode=mode)
+  denominator = where(equal(count, _uniform(0, (), dtype=expr.type.dtype)), one, count)
+  base_weight = base_mask / denominator
+  update_weight = update_mask / gather(denominator, index, axis=axis, mode=mode, fill_value=1).reshape(updates.shape)
+  return base_weight, update_weight
 
 
 @dataclass(frozen=True, slots=True)

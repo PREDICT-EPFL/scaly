@@ -72,7 +72,7 @@ def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4,
 
     def transform(stmt: ProgramNode) -> ProgramNode:
       nonlocal helpers
-      if stmt.op != ProgramOp.FOR:
+      if stmt.op != ProgramOp.FOR or stmt.attrs.get("zero_fill"):
         return stmt
       rng, *inner = stmt.args
 

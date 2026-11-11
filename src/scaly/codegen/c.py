@@ -87,6 +87,7 @@ def _includes(
     "#include <math.h>",
     "#include <stddef.h>",
     "#include <stdint.h>",
+    *(["#include <string.h>"] if prog is not None and any(n.attrs.get("zero_fill") for n in walk_program(prog)) else []),
     *extra,
     *(_FAST_MATH_GUARD if ProgramOp.ISFINITE in ops else []),
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
@@ -318,6 +319,11 @@ def _emit_statement(
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
+    if stmt.attrs.get("zero_fill"):
+      target = _emit_view(stmt.args[1].args[0], ptr_expr, {rng.attrs["name"]: "0"})
+      count = _emit_scalar(rng.args[1], ptr_expr)
+      lines.append(f"{pad}memset(&{target}, 0, {count} * sizeof({stmt.args[1].dtype.c_type}));")
+      return
     name = c_ident(rng.attrs["name"])
     start = _emit_scalar(rng.args[0], ptr_expr)
     stop = _emit_scalar(rng.args[1], ptr_expr)

@@ -14,7 +14,16 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_TERNARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp, callees_of
+from ..ir.expr import (
+  _index_values,
+  COMMON_ELEMENTWISE_BINARY,
+  COMMON_ELEMENTWISE_TERNARY,
+  COMMON_ELEMENTWISE_UNARY,
+  OP_INFO,
+  Expr,
+  ExprOp,
+  callees_of,
+)
 from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries, specialize_support
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
 
@@ -277,11 +286,32 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     rows, keep = slice_entries(child.row, expr.args[0].shape, expr.attrs["index"])
     return _incidence((expr.size, wrt.size), rows, child.col[keep])
   if expr.op == ExprOp.GATHER:
-    return _take_rows(_jac_mask(expr.args[0], wrt, memo), expr.attrs["indices"])
+    if expr.args[1].value is None:
+      child = _jac_mask(expr.args[0], wrt, memo)
+      cols = np.unique(child.col)
+      return _incidence((expr.size, wrt.size), np.repeat(np.arange(expr.size), len(cols)), np.tile(cols, expr.size))
+    if expr.attrs.get("mode") == "fill":
+      indices = _index_values(expr).reshape(-1)
+      valid = (indices >= 0) & (indices < expr.args[0].size)
+      child = _take_rows(_jac_mask(expr.args[0], wrt, memo), indices[valid])
+      return _incidence((expr.size, wrt.size), np.flatnonzero(valid)[child.row], child.col)
+    return _take_rows(_jac_mask(expr.args[0], wrt, memo), _index_values(expr))
   if expr.op == ExprOp.SCATTER:
-    child = _jac_mask(expr.args[0], wrt, memo)
-    indices = expr.attrs["indices"].reshape(-1)
-    return _incidence((expr.size, wrt.size), indices[child.row], child.col)
+    base = _jac_mask(expr.args[0], wrt, memo)
+    child = _jac_mask(expr.args[2], wrt, memo)
+    if expr.args[1].value is None:
+      cols = np.unique(child.col)
+      return _or(base, _incidence((expr.size, wrt.size), np.repeat(np.arange(expr.size), len(cols)), np.tile(cols, expr.size)))
+    indices = _index_values(expr).reshape(-1)
+    valid = (indices[child.row] >= 0) & (indices[child.row] < expr.size)
+    if expr.attrs["combine"] == "set":
+      lanes = np.flatnonzero((indices >= 0) & (indices < expr.size))
+      destinations, reverse = np.unique(indices[lanes][::-1], return_index=True)
+      winners = lanes[len(lanes) - 1 - reverse]
+      valid &= np.isin(child.row, winners)
+      keep = ~np.isin(base.row, destinations)
+      base = _incidence(base.shape, base.row[keep], base.col[keep])
+    return _or(base, _incidence((expr.size, wrt.size), indices[child.row[valid]], child.col[valid]))
   if expr.op == ExprOp.STACK:
     return _stack_mask(expr, wrt, memo)
   if expr.op == ExprOp.CONCAT:

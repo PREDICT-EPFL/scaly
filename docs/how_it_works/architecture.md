@@ -49,7 +49,7 @@ syntax is gone by the time the IR exists, and C syntax does not exist yet.
 Scaly's IR is the graph that tracing builds, and its nodes are the `Expr` values
 you already use. Each node is one operation. An `Expr` stores the operation tag
 in `op`, its operands in `args`, its shape and data type in `type`, and
-operation-specific data, such as the indices of a gather, in `attrs`. After
+operation-specific data, such as the axes of a transpose, in `attrs`. After
 lowering, the nodes are `ProgramNode`s instead, with the same `op`, `args` and
 `attrs` fields and a `dtype`. The [next section](#why-two-dialects) explains why
 there are two kinds of node.

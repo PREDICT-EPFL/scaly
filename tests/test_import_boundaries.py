@@ -33,6 +33,9 @@ def test_public_exports_are_canonical() -> None:
 
   assert sc.segment_sum is segment_sum
   assert "segment_sum" in sc.__all__
+  for name in ("segment_max", "take", "dynamic_slice", "index_add", "index_set"):
+    assert name in sc.__all__
+    assert getattr(sc, name).__module__ == "scaly.ir.expr"
   assert sc.Expr is Expr
   assert sc.ExprOp is ExprOp
   assert sc.Function is Function

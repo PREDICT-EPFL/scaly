@@ -11,7 +11,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from ..ad.rules import ELEMENTWISE
-from ..ir.expr import Expr, ExprOp, _uniform, matmul, stack, topo
+from ..ir.expr import _index_values, Expr, ExprOp, _uniform, matmul, stack, topo
 from ..ir.match import Pattern, _replace_args, rewrite
 from ..ir.types import _uniform_value
 from .arith import ARITH_EXPR, fold
@@ -118,17 +118,23 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
   elif e.op == ExprOp.SLICE:
     out = args[0][e.attrs["index"]]
   elif e.op == ExprOp.GATHER:
-    indices = e.attrs["indices"]
-    out = args[0][np.unravel_index(indices, args[0].shape)] if args[0].ndim else np.broadcast_to(args[0], indices.shape)
-  elif e.op == ExprOp.SCATTER:
-    if e.size > max(1024, e.args[0].size):
-      return None
-    out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
-    indices = e.attrs["indices"].reshape(-1)
-    if len(set(indices.tolist())) == len(indices):
-      out[indices] = args[0].reshape(-1)
+    indices = _index_values(e)
+    if e.attrs.get("mode") == "fill":
+      if not args[0].size:
+        return np.full(e.shape, e.attrs["fill_value"], dtype=args[0].dtype)
+      valid = (indices >= 0) & (indices < args[0].size)
+      out = np.where(valid, args[0].reshape(-1)[np.clip(indices, 0, args[0].size - 1)], e.attrs["fill_value"])
     else:
-      np.add.at(out, indices, args[0].reshape(-1))
+      out = args[0][np.unravel_index(indices, args[0].shape)] if args[0].ndim else np.broadcast_to(args[0], indices.shape)
+  elif e.op == ExprOp.SCATTER:
+    if e.size > max(1024, e.args[2].size):
+      return None
+    out = args[0].copy().reshape(-1)
+    indices = _index_values(e).reshape(-1)
+    combine = e.attrs["combine"]
+    for index, value in zip(indices, args[2].reshape(-1), strict=True):
+      if 0 <= index < e.size:
+        out[index] = value if combine == "set" else {"add": np.add, "max": np.maximum, "min": np.minimum}[combine](out[index], value)
     out = out.reshape(e.shape)
   elif e.op == ExprOp.STACK:
     out = np.stack(args, axis=e.attrs.get("axis", 0))
@@ -272,7 +278,9 @@ def _matmul_ones(e: Expr) -> Expr:
 
 
 def _gather_identity(e: Expr) -> bool:
-  indices = e.attrs["indices"]
+  if e.args[1].value is None:
+    return False
+  indices = _index_values(e)
   return indices.size == e.args[0].size and bool(np.array_equal(indices.reshape(-1), np.arange(indices.size)))
 
 
@@ -285,9 +293,9 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),
   Pattern(ExprOp.MATMUL, _matmul_ones_vector, _matmul_ones),
   Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
-  Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]) and e.attrs.get("fill_value", 0) == 0, _zero_unary),
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
-  Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(ExprOp.SCATTER, _is_zero, _zero_unary),
   Pattern(ExprOp.STACK, _all_args_zero, _zero_unary),
   Pattern(ExprOp.CONCAT, _all_args_zero, _zero_unary),
   Pattern(ExprOp.SLICE, _slice_of_stack_full, _slice_of_stack),

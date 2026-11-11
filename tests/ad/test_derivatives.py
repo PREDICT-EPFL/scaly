@@ -310,7 +310,7 @@ def test_float32_structural_derivatives_stay_float32(case, mode):
     while pending:
       nodes = topo((pending.pop(),))
       assert {node.type.dtype for node in nodes if node.type.dtype.is_floating} == {f32}
-      assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None)
+      assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None and node.type.dtype.is_floating)
       for node in nodes:
         if node.op in {sc.ExprOp.CALL, sc.ExprOp.VMAP} and (callee := node.attrs["callee"]) not in seen:
           seen.add(callee)

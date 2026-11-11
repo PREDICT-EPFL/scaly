@@ -2417,8 +2417,16 @@ tests/integration/test_vmap_mlp.py::test_vmapped_source_is_constant_in_the_horiz
 tests/integration/test_vmap_mlp.py::test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows[auto]
 tests/integration/test_vmap_mlp.py::test_vmapped_stage_matches_the_numpy_model
 tests/ir/test_expr.py::test_array_keys_serialize_only_compacted_bytes
+tests/ir/test_expr.py::test_axis_gather_and_scatter_match_numpy[False--1]
+tests/ir/test_expr.py::test_axis_gather_and_scatter_match_numpy[False-0]
+tests/ir/test_expr.py::test_axis_gather_and_scatter_match_numpy[False-1]
+tests/ir/test_expr.py::test_axis_gather_and_scatter_match_numpy[True--1]
+tests/ir/test_expr.py::test_axis_gather_and_scatter_match_numpy[True-0]
+tests/ir/test_expr.py::test_axis_gather_and_scatter_match_numpy[True-1]
 tests/ir/test_expr.py::test_binary_nonlinear_method_helpers_eval
 tests/ir/test_expr.py::test_colliding_array_attributes_and_constants_evaluate_separately
+tests/ir/test_expr.py::test_constant_gather_fill_matches_numpy[0]
+tests/ir/test_expr.py::test_constant_gather_fill_matches_numpy[4]
 tests/ir/test_expr.py::test_constant_keys_compare_bytes_when_digests_collide[first0-second0]
 tests/ir/test_expr.py::test_constant_keys_compare_bytes_when_digests_collide[first1-second1]
 tests/ir/test_expr.py::test_constant_keys_compare_bytes_when_digests_collide[first2-second2]
@@ -2426,6 +2434,8 @@ tests/ir/test_expr.py::test_constants_and_attributes_are_frozen_copies
 tests/ir/test_expr.py::test_debug_printing_uses_stable_topological_names
 tests/ir/test_expr.py::test_differentiability_metadata_propagates_through_exprs
 tests/ir/test_expr.py::test_dot_sumsqr_and_norm_2
+tests/ir/test_expr.py::test_gather_has_an_int64_index_operand
+tests/ir/test_expr.py::test_index_builders_match_numpy
 tests/ir/test_expr.py::test_interning_hit_returns_the_node_as_it_was_built
 tests/ir/test_expr.py::test_interning_shares_attributes_with_the_same_bits
 tests/ir/test_expr.py::test_interning_tells_apart_attributes_that_differ_in_bits_or_kind[0.0--0.0]
@@ -2440,6 +2450,25 @@ tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={0}-values
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={:.3f}-values3-ValueError-only empty '{}' placeholders]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={} y={}-values1-ValueError-2 placeholders for 1 value]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={}-values4-TypeError-float64, int32, int64, bool values, got float32]
+tests/ir/test_expr.py::test_runtime_gather_fill_matches_numpy
+tests/ir/test_expr.py::test_runtime_gather_forward_derivative_matches_finite_difference
+tests/ir/test_expr.py::test_runtime_index_extremes_and_empty_sources[block-0]
+tests/ir/test_expr.py::test_runtime_index_extremes_and_empty_sources[block-4]
+tests/ir/test_expr.py::test_runtime_index_extremes_and_empty_sources[scalar-0]
+tests/ir/test_expr.py::test_runtime_index_extremes_and_empty_sources[scalar-4]
+tests/ir/test_expr.py::test_runtime_scatter_derivatives_match_finite_differences[add]
+tests/ir/test_expr.py::test_runtime_scatter_derivatives_match_finite_differences[max]
+tests/ir/test_expr.py::test_runtime_scatter_derivatives_match_finite_differences[min]
+tests/ir/test_expr.py::test_runtime_scatter_derivatives_match_finite_differences[set]
+tests/ir/test_expr.py::test_scatter_base_and_runtime_indices_match_numpy[add]
+tests/ir/test_expr.py::test_scatter_base_and_runtime_indices_match_numpy[max]
+tests/ir/test_expr.py::test_scatter_base_and_runtime_indices_match_numpy[min]
+tests/ir/test_expr.py::test_scatter_base_and_runtime_indices_match_numpy[set]
+tests/ir/test_expr.py::test_scatter_extrema_split_ties_with_base[False-max-1]
+tests/ir/test_expr.py::test_scatter_extrema_split_ties_with_base[False-min--1]
+tests/ir/test_expr.py::test_scatter_extrema_split_ties_with_base[True-max-1]
+tests/ir/test_expr.py::test_scatter_extrema_split_ties_with_base[True-min--1]
+tests/ir/test_expr.py::test_set_sparsity_removes_overwritten_base_and_losing_updates
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index0]
 tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index1]
@@ -2749,6 +2778,7 @@ tests/passes/lowering/test_lowering.py::test_normalization_keeps_constant_and_co
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[compile]
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[none]
 tests/passes/lowering/test_lowering.py::test_normalization_preserves_shared_work_across_hinted_outputs[simplify]
+tests/passes/lowering/test_lowering.py::test_runtime_scatter_zero_base_emits_memset
 tests/passes/lowering/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
 tests/passes/lowering/test_nest.py::test_broadcasts_in_one_flat_loop[leading]
 tests/passes/lowering/test_nest.py::test_broadcasts_in_one_flat_loop[middle]

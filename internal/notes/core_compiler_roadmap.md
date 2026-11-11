@@ -1281,6 +1281,7 @@ lanes, `max` and `min` split ties. Sparsity and support are exact for a constant
 conservative row otherwise. `scalarize` reports a data-dependent address as not eligible instead of
 failing in `_Frame.pointer`. `segment_sum`, `segment_max`, `take`, `dynamic_slice`, `index_add` and
 `index_set` are builders. Snapshots byte-identical for constant indices.
+*Replaced in #35: constant-index zero-base scatters retain their zero-fill loops to preserve C snapshots, while runtime zero-base scatters emit memset.*
 
 **[#36]. In-place loop carries.** Buffer reuse in `passes/lowering/in_place.py`. Semantics stay
 functional; writing into the old buffer is a lowering decision, by three rules, cheapest first:

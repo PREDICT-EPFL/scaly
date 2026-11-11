@@ -204,8 +204,8 @@ def test_gather_adjoint_has_one_scatter(n: int) -> None:
   cot = sc.sym("cot", (2, n))
   adj = _gather_vjp(cot, ids.reshape(2, n), (n,))
   assert adj.op == ExprOp.SCATTER
-  assert len(topo((adj,))) == 2
-  assert adj.attrs["indices"].size == 2 * n
+  assert len(topo((adj,))) == 4
+  assert adj.args[1].size == 2 * n
 
 
 def test_repeated_gather_reverse_adjoint_matches_numpy() -> None:
@@ -227,7 +227,7 @@ def test_unbroadcast_uses_one_scatter(shape: tuple[int, ...], out_shape: tuple[i
   cot = sc.sym("cot", out_shape)
   adj = _unbroadcast(cot, shape, out_shape)
   assert adj.op == ExprOp.SCATTER
-  assert len(topo((adj,))) == 2
+  assert len(topo((adj,))) == 4
 
   @sc.function(sc.arg("cot", out_shape), outputs=sc.arg("y"))
   def f(cot):
