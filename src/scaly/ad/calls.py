@@ -9,10 +9,27 @@ from scipy.sparse import csr_array
 
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, pack, scatter, stack, substitute, topo, values, zeros_like
-from ..ir.types import TensorType
+from ..ir.expr import (
+  Expr,
+  ExprOp,
+  as_expr,
+  cast as cast_expr,
+  concat,
+  gather,
+  pack,
+  scatter,
+  stack,
+  stop_gradient,
+  substitute,
+  topo,
+  values,
+  where,
+  zeros_like,
+)
+from ..ir.types import TensorType, dtypes
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
+from .rules import _sample_stored, cotangent_mask
 from .sparsity import _callee_mask, _depends_on, _incidence, _mask_sparsity, _prunable_support, _stored_slots, column_coloring
 
 _Pushforward = Callable[[Sequence[Expr], dict[Expr, Expr], int, str], tuple[Expr | None, ...]]
@@ -26,6 +43,12 @@ def _stored_result(result: Expr, primal: Expr, batch: tuple[int, ...] = ()) -> E
 
 def _tangent_symbol(name: str, primal: Expr, batch: tuple[int, ...] = ()) -> Expr:
   return Expr(ExprOp.INPUT, type=TensorType((*batch, *primal.shape), primal.type.dtype, primal.type.diff, primal.type.pattern), name=name)
+
+
+def _masked_seed(cot: Expr, condition: Expr) -> Expr:
+  compact = values(cot)
+  seed = where(condition, compact, zeros_like(compact))
+  return seed if cot.type.pattern is None else pack(seed, cot.type.pattern, shape=cot.shape)
 
 
 def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], nseed: int, pushforward: _Pushforward) -> tuple[Expr | None, ...]:
@@ -412,19 +435,33 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
 
 
 def _vmap_adj_function(
-  callee: ConcreteFunction[Any, Any, Any, Any], output_index: int, active_formals: tuple[int, ...], *, pullback: _Pullback
+  callee: ConcreteFunction[Any, Any, Any, Any], output_index: int, active_formals: tuple[int, ...], *, pullback: _Pullback, masked: bool = False
 ) -> _VmapAdjoint:
-  key = HelperKey.of(callee, "adjoint", (output_index,), active_formals)
+  key = HelperKey.of(callee, "adjoint", (output_index,), active_formals, masked=masked)
   cache = callee._memo.helpers
   if key not in cache:
     lam_name = f"lam:{callee.output_names[output_index]}"
     lam = _tangent_symbol(lam_name, callee.outputs[output_index])
-    grads = body_cotangents(callee, output_index, active_formals, lam, pullback)
-    adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([values(grad).vec() for grad in grads])))
+    mask_name = f"mask:{callee.output_names[output_index]}"
+    # The condition travels as nondifferentiable 0/1 values in the cotangent's dtype.
+    mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype), name=mask_name) if masked else None
+    seed = lam if mask is None else _masked_seed(lam, cast_expr(mask, dtypes.bool_))
+    grads = body_cotangents(callee, output_index, active_formals, seed, pullback)
+    parts = [values(grad).vec() for grad in grads]
+    if masked:
+      for grad in grads:
+        compact = _sample_stored(grad, grad.type)
+        condition = cotangent_mask(compact)
+        ones = Expr.const(np.ones(grad.type.storage_shape, dtype=grad.type.dtype.numpy()), dtype=grad.type.dtype)
+        parts.append((ones if condition is None else where(condition, ones, zeros_like(compact))).vec())
+    adj = callee._inherit_lowering(simplify_cse_fixpoint(concat(parts)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
+    if mask is not None:
+      inputs += (mask,)
+      input_names += (mask_name,)
     fn = ConcreteFunction._from_exprs(
       helper_name(callee, key), inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"], role="adjoint"
     )
@@ -447,33 +484,44 @@ def _vmap_vjp(
   if not active_formals:
     return []
 
-  adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals, pullback=pullback)
+  mask = cotangent_mask(_sample_stored(cot, cot.type))
+  adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals, pullback=pullback, masked=mask is not None)
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-  mapped = _mapped_call(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
+  seed_specs = [(cot, 0, slice_size)]
+  if mask is not None:
+    seed_specs.append(
+      (stop_gradient(cast_expr(mask | Expr.const(np.zeros(cot.type.storage_shape, dtype=bool), dtype=dtypes.bool_), cot.type.dtype)), 0, slice_size)
+    )
+  mapped = _mapped_call(adj_fn, length, [*primal_specs, *seed_specs])
   adj_size = sum(callee.inputs[k].type.storage_size for k in active_formals)
+  result_size = adj_size * (2 if mask is not None else 1)
   ret: list[tuple[Expr, Expr]] = []
   offset = 0
   for k in active_formals:
     arg, start, stride = vmap_expr.args[k], starts[k], strides[k]
     formal_size = callee.inputs[k].type.storage_size
-    if formal_size == 0:
-      vbar = zeros_like(arg)
-    elif stride == 0:
-      indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
-      segments = gather(mapped, indices).reshape((length, formal_size))
-      vbar = Expr.const(np.ones(length, dtype=arg.type.dtype.numpy()), dtype=arg.type.dtype) @ segments
-      if start != 0 or formal_size != arg.size:
-        vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
-    else:
-      pieces: list[Expr] = []
-      groups = -(-formal_size // stride)
-      for group in range(groups):
-        iterations = range(group, length, groups)
-        indices = np.asarray([it * adj_size + offset + j for it in iterations for j in range(formal_size)], dtype=np.int64)
-        destinations = np.asarray([start + it * stride + j for it in iterations for j in range(formal_size)], dtype=np.int64)
-        if indices.size:
-          pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
-      vbar = _sum_exprs(pieces)
+    assembled = []
+    for part_offset in (offset,) if mask is None else (offset, adj_size + offset):
+      if formal_size == 0:
+        vbar = zeros_like(arg)
+      elif stride == 0:
+        indices = np.asarray([it * result_size + part_offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
+        segments = gather(mapped, indices).reshape((length, formal_size))
+        vbar = Expr.const(np.ones(length, dtype=arg.type.dtype.numpy()), dtype=arg.type.dtype) @ segments
+        if start != 0 or formal_size != arg.size:
+          vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
+      else:
+        pieces: list[Expr] = []
+        groups = -(-formal_size // stride)
+        for group in range(groups):
+          iterations = range(group, length, groups)
+          indices = np.asarray([it * result_size + part_offset + j for it in iterations for j in range(formal_size)], dtype=np.int64)
+          destinations = np.asarray([start + it * stride + j for it in iterations for j in range(formal_size)], dtype=np.int64)
+          if indices.size:
+            pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
+        vbar = _sum_exprs(pieces)
+      assembled.append(vbar)
+    vbar = assembled[0] if mask is None else where(assembled[1] > 0.0, assembled[0], zeros_like(arg))
     ret.append((arg, vbar))
     offset += formal_size
   return ret
@@ -492,8 +540,14 @@ def _call_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None, *, pullback
   lam = _tangent_symbol(f"lam:{callee.result_names[output_idx]}", callee_out)
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   replacements[lam.id] = cot
+  condition = cotangent_mask(_sample_stored(cot, cot.type))
+  seed = lam
+  if condition is not None:
+    mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, dtypes.bool_), name=f"mask:{callee.result_names[output_idx]}")
+    replacements[mask.id] = condition | Expr.const(np.zeros(cot.type.storage_shape, dtype=bool), dtype=dtypes.bool_)
+    seed = _masked_seed(lam, mask)
   indices = tuple(range(len(args))) if active is None else active
-  grads = body_cotangents(callee, output_idx, indices, lam, pullback)
+  grads = body_cotangents(callee, output_idx, indices, seed, pullback)
   adjoints = dict(zip(indices, grads, strict=True))
   return tuple(_substitute(adjoints[i], replacements) if i in adjoints else zeros_like(arg) for i, arg in enumerate(args))
 

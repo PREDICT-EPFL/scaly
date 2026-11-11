@@ -290,6 +290,15 @@ def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
   return None
 
 
+def cotangent_mask(cot: Expr) -> Expr | None:
+  """The conjunction of the select conditions enclosing a cotangent, independent of its value."""
+  condition: Expr | None = None
+  while (mask := _mask_of(cot)) is not None:
+    condition = mask[0] if condition is None else condition & mask[0]
+    cot = mask[1]
+  return condition
+
+
 def _masked(cot: Expr, product: Callable[[Expr], Expr]) -> Expr:
   mask = _mask_of(cot)
   if mask is None:

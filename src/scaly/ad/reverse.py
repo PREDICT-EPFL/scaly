@@ -50,7 +50,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):
         if arg.id in expr_ids:
-          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+          adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
       continue
     active = (
       tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg))
@@ -126,7 +126,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
   if expr.op == ExprOp.SCATTER:
     if args[0].type.pattern is not None:
       return (_stored_movement_vjp(expr, cot),)
-    return (gather(cot, expr.attrs["indices"]),)
+    return (gather(cot, expr.attrs["indices"]).reshape(args[0].shape),)
   if expr.op == ExprOp.STACK:
     return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
   if expr.op == ExprOp.CONCAT:
