@@ -7,7 +7,7 @@ Base: the #31 branch merged with origin/t3code/35-index-operands. Design is the 
 - [x] Implement lowering proofs and scatter reuse, loop procedure variants, and the inout parameter contract across verification and program passes.
 - [x] Measure the four-entry update of a 100k carry with counts, buffers, generated C and compile time.
 - [x] Run focused checks and the detached full suite through ~/.scaly-suite/run.
-- [ ] Cross-review with Opus and sol, fix findings and run one delta check.
+- [x] Cross-review with Opus and sol, fix findings and run one delta check.
 - [ ] After #411 and #415 merge, rebase task commits onto origin/main, rerun the suite, open and link the PR. Queue only on instruction.
 
 Focused validation: 237 pass across lowering, program passes and import boundaries; loop and C snapshot checks pass. The floor-read mutation reproduces [2.5, 2.5, 3.5] exactly and is restored. Measurements and generated C are under internal/notes/compiler_run_2026_11_10/in_place/.
@@ -29,3 +29,5 @@ Sol delta check approved: the P1 is resolved, all 32 in-place tests pass, and no
 Opus reviewed the whole task after the quota reset and found a missing PRINT alias. Both later-read and stacked-output regressions failed before adding PRINT to the alias set. Same-index fusion now has a structural assertion and fails with fusion disabled; the end-to-end hoist test fails with its guard removed. Normalization now runs once for a proved body. Disjointness uses per-step offset membership rather than a length-by-reads-by-writes comparison; a 1600-column proof succeeds using 2558400 entries per input rather than 4093440000 pairwise comparisons. Unknown-name and trajectory errors have context, and the roadmap departure uses its established format. Existing measurement C/headers remain byte-identical. The unowned scheduling limitation, duplicate variants, and unreachable fuse_ranges/inout case will be listed as PR gaps, with no new issue round. Full suite log: /tmp/scaly36-validation/suite-7.log; Opus delta check follows validation.
 
 Validation after the Opus fixes passed every merge hook in suite-7.log (exit 0): 3945 passed, 56 skipped, benchmark smoke and documentation build passed. Mutation checks prove the fusion and hoisting tests fail when their respective behavior is removed. The Opus delta check is now the only remaining local review step.
+
+Opus approved its delta: both act-on findings are fixed, all 38 in-place tests pass, and nothing adjacent is broken. Both required reviewers and their delta checks are complete; all delegate threads are settled. The reviewed fixes and latest full checks are ready. Both #411 and #415 remain open, so wait for their merges before rebasing the task commits onto origin/main, dropping the prerequisite merge, rerunning the suite, and opening the PR. Queue only after the coordinator says queue now.
