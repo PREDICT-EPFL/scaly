@@ -13,7 +13,7 @@ import pytest
 import scaly as sc
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call
-from scaly.ir.expr import OP_INFO, Expr, ExprOp, binary, unary
+from scaly.ir.expr import is_map, OP_INFO, Expr, ExprOp, binary, unary
 from scaly.ir.types import SparsityPattern, TensorType
 
 
@@ -236,7 +236,7 @@ def test_call_support_cache_is_shared_by_outputs_and_argument_support() -> None:
   assert a.support == frozenset({1, 3}) and b.support == frozenset({0, 2})
   same = _masked("support_other_actual", [0, 1, 0, 1])
   assert callee(same)[0].support is a.support
-  context = specialize_support(concrete, (x.support,), OP_INFO)
+  context = specialize_support(concrete, (x.support,), OP_INFO, is_map)
   assert context(concrete.outputs[0]) is a.support
   assert len(concrete._memo.supports) == 1
   assert concrete.inputs[0].support is None and concrete.outputs[0].support is None

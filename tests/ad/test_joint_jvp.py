@@ -11,7 +11,7 @@ import scaly as sc
 from scaly.ad.calls import _call_jvp_many_function, _vmap_adj_function
 from scaly.ad.forward import _pushforward
 from scaly.ad.reverse import vjp
-from scaly.ir.expr import ExprOp, topo
+from scaly.ir.expr import is_map, ExprOp, topo
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.passes.lowering import lower_function
 
@@ -51,7 +51,7 @@ def test_joint_active_formals(mapped: bool, constant: bool, nseed: int) -> None:
     expected[:, 2 * it : 2 * it + 2] = np.cos(a * b) * (da * b + a * db) + da / b - a * db / b**2
   actual = fn(zv) if constant else fn((zv, sv))
   np.testing.assert_allclose(actual, expected[0] if nseed == 1 else expected, atol=1e-12, rtol=1e-12)
-  calls = [node for node in topo([derivative]) if node.op in {ExprOp.CALL, ExprOp.VMAP}]
+  calls = [node for node in topo([derivative]) if node.op in {ExprOp.CALL, ExprOp.LOOP}]
   assert len(calls) == 1
 
 
@@ -79,7 +79,7 @@ def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> N
   for it in range(length):
     expected[:3, 3 * it : 3 * it + 3] = np.exp(zv[3 * it : 3 * it + 3] @ weights) * np.outer(weights, weights)
   np.testing.assert_allclose(fn(zv), expected, atol=1e-12, rtol=1e-12)
-  calls = [node for node in topo([hess]) if node.op == ExprOp.VMAP]
+  calls = [node for node in topo([hess]) if is_map(node)]
   assert len(calls) == 1 and "_fwd_pack_" in calls[0].attrs["callee"].name
   prog = lower_function(fn)
   exp_nodes = {node for node in walk_program(prog) if node.op == ProgramOp.EXP}
@@ -181,7 +181,7 @@ def test_mapped_local_and_generic_seeds_share_one_callee() -> None:
     dx, du = sv[:, 3 * it : 3 * it + 2] @ weights, sv[:, 3 * it + 2 : 3 * it + 3]
     expected[:, 2 * it : 2 * it + 2] = np.cos(xval * uval) * (dx * uval + xval * du)
   np.testing.assert_allclose(fn((zv, sv)), expected, atol=1e-12, rtol=1e-12)
-  calls = [node for node in topo([derivative]) if node.op == ExprOp.VMAP]
+  calls = [node for node in topo([derivative]) if is_map(node)]
   assert len(calls) == 1 and "_fwd_pack_" in calls[0].attrs["callee"].name
 
 

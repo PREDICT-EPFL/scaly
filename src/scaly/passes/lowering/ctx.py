@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, OP_INFO, _index_values, callees_of, gather, invocation_key, topo
+from ...ir.expr import Expr, ExprOp, OP_INFO, _index_values, callees_of, gather, invocation_key, is_map, topo
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.extern import _Extern
@@ -185,7 +185,7 @@ def _lower_to_proc(
   ctx = LowerCtx(fun, callees, names, symbols, residuals, broadcasts, observe_expr, invariant=invariant)
   if argument_support is not None:
     ctx.seed_pairs = True
-    ctx.support_of = specialize_support(fun, argument_support, OP_INFO)
+    ctx.support_of = specialize_support(fun, argument_support, OP_INFO, is_map)
   ctx.inout_carries = inout_carries or {}
   nodes = fun.nodes
   # Float32 constants and operations retain their rounding during scalar substitution.
@@ -316,7 +316,7 @@ class LowerCtx:
       if (
         expr.op in (ExprOp.INPUT, ExprOp.CONST)
         or expr.id in seen
-        or (layout is not None and (expr.type.pattern is None or expr.op in (ExprOp.CALL, ExprOp.VMAP, ExprOp.LOOP)))
+        or (layout is not None and (expr.type.pattern is None or expr.op in (ExprOp.CALL, ExprOp.LOOP)))
       ):
         continue  # INPUT/CONST or shared output: emit_outputs inserts the copy
       seen.add(expr.id)
@@ -1027,11 +1027,11 @@ def _function_names(
     functions.append(function)
     for node in function.nodes:
       for callee in callees_of(node):
-        if node.op != ExprOp.LOOP and node.attrs["output"] >= len(callee.outputs):
+        if callee is node.attrs.get("callee") and len(callee.outputs) <= node.attrs["output"] < len(callee.results):
           residuals.add(callee)
-        if node.op in (ExprOp.VMAP, ExprOp.LOOP) and 0 in node.attrs["strides"]:
+        if node.op == ExprOp.LOOP and 0 in node.attrs["strides"]:
           # A loop's body takes its carries and its step number before the sliced arguments.
-          first = node.attrs["n_carry"] + node.attrs["index"] if node.op == ExprOp.LOOP else 0
+          first = node.attrs["n_carry"] + node.attrs["index"]
           fixed = frozenset(first + k for k, stride in enumerate(node.attrs["strides"]) if stride == 0)
           broadcasts[callee] = broadcasts.get(callee, frozenset()) | {fixed}
         visit(callee)

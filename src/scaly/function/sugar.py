@@ -18,7 +18,7 @@ from .concrete import ConcreteFunction
 
 
 def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
-  """Create an ``ExprOp.VMAP`` node: ``length`` independent calls of ``callee``.
+  """Create an independent ``ExprOp.LOOP`` node: ``length`` independent calls of ``callee``.
 
   ``inputs`` holds one ``(outer, start, stride)`` per callee input, in order. The i-th call reads
   ``outer[start + i*stride : start + i*stride + formal.type.storage_size]`` from a rank-1 ``outer``, and
@@ -32,7 +32,7 @@ def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr
   outers = tuple(as_expr(outer) for outer, _, _ in inputs)
   diff = out_expr.type.diff and any(o.type.diff for o in outers)
   return Expr(
-    ExprOp.VMAP,
+    ExprOp.LOOP,
     outers,
     TensorType((length * out_expr.type.storage_size,), out_expr.type.dtype, diff=diff),
     attrs={
@@ -41,7 +41,11 @@ def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr
       "length": int(length),
       "starts": tuple(int(start) for _, start, _ in inputs),
       "strides": tuple(int(stride) for _, _, stride in inputs),
-      "slice_size": int(out_expr.type.storage_size),
+      "n_carry": 0,
+      "cond": None,
+      "index": False,
+      "reverse": False,
+      "in_place": (),
     },
     lowering=common_lowering(*outers) if outers else "auto",
   )
@@ -479,7 +483,7 @@ def _loop(
   ys = tuple(_stacked(_loop_node(callee, cond, args, attrs, n_carry + i), callee.outputs[n_carry + i], length) for i in range(n_ys))
   carry = _G(cast(_G, callee.input_tree).parts[: len(inits)], public=False).unflatten(finals)
   stacked = _G(tuple(parts[len(inits) :]), public=False).unflatten(ys)
-  return carry if isinstance(init, tuple) else carry[0], stacked, _loop_node(callee, cond, args, attrs, n_carry + n_ys)
+  return carry if isinstance(init, tuple) else carry[0], stacked, _loop_node(callee, cond, args, attrs, len(callee.results))
 
 
 def scan(

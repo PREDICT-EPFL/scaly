@@ -14,7 +14,7 @@ import scaly as sc
 from scaly.ad import finite_difference
 from scaly.codegen import render_c_source
 from scaly.function.model import as_concrete
-from scaly.ir.expr import ExprOp, topo
+from scaly.ir.expr import is_map, ExprOp, topo
 from scaly.passes.lowering import lower_function
 
 
@@ -120,7 +120,7 @@ def _reached(fn) -> list:
     current = todo.pop()
     if current not in found:
       found.append(current)
-      todo += [node.attrs["callee"] for node in topo(current.results) if node.op in (ExprOp.CALL, ExprOp.VMAP)]
+      todo += [node.attrs["callee"] for node in topo(current.results) if node.op in (ExprOp.CALL, ExprOp.LOOP)]
   return found
 
 
@@ -218,7 +218,7 @@ def test_several_seeds_map_one_single_seed_rule() -> None:
   rules = as_concrete(ruled).rules
   assert rules is not None
   rule = rules.jvp
-  maps = [node for fn in _reached(jac) for node in topo(fn.results) if node.op == ExprOp.VMAP and node.attrs["callee"] is rule]
+  maps = [node for fn in _reached(jac) for node in topo(fn.results) if is_map(node) and node.attrs["callee"] is rule]
   assert [node.attrs["length"] for node in maps] == [3]
   np.testing.assert_allclose(jac(POINT), np.diag(6.0 * np.sin(POINT) * np.cos(POINT)), rtol=1e-14)
 

@@ -8,6 +8,7 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
+from scaly.ir.expr import is_map
 from scaly.codegen.toolchain import LaneCount
 
 
@@ -27,7 +28,7 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(lanes: LaneCount) ->
       return ((z * z).sum(), _mapped_call(piece, length, [(z, 0, 2)]))
 
     sphess = base.factory(f"vmap_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
-    vmap_nodes = [node for node in topo(as_concrete(sphess).outputs) if node.op == sc.ExprOp.VMAP]
+    vmap_nodes = [node for node in topo(as_concrete(sphess).outputs) if is_map(node)]
     mapped_callees = sorted({node.attrs["callee"].name for node in vmap_nodes})
     second_order = tuple(name for name in mapped_callees if "_adj" in name and "_fwd" in name)
     source = render_c_source(sphess, lanes=lanes)
@@ -81,7 +82,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer() -> None:
   assert lower_sp.nnz < full_sp.nnz
   shared_index = 2 * length
   assert any(row == shared_index and col < shared_index for row, col in zip(full_sp.rows, full_sp.cols, strict=True))
-  assert any(node.op == sc.ExprOp.VMAP for node in topo(as_concrete(lower).outputs))
+  assert any(is_map(node) for node in topo(as_concrete(lower).outputs))
 
   source = render_c_source(lower)
   declaration_lengths = {
@@ -185,7 +186,7 @@ def test_mapped_spjac_values_follow_the_header_tables_of_their_layout() -> None:
   fn = _rk4_bicycle_eq_vmap(N)
   spjf = fn.factory(f"trk_vmap_csc_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
   dense_fn = fn.factory(f"trk_vmap_dense_N{N}", ["z", "p"], [sc.factory.Jac("eq", "z")])
-  assert any(node.op == sc.ExprOp.VMAP for node in topo(as_concrete(spjf).outputs))
+  assert any(is_map(node) for node in topo(as_concrete(spjf).outputs))
   module = render_c_module(spjf, header_name="t.h", source_name="t.c")
 
   def table(name: str) -> np.ndarray:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, invocation_key
+from ...ir.expr import Expr, ExprOp, is_map, invocation_key
 from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
@@ -92,17 +92,16 @@ def _result_buffers(ctx: LowerCtx, node: Expr) -> tuple[list[ProgramNode], dict[
   return buffers, used
 
 
-@lowers(ExprOp.VMAP)
-def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
+def _lower_map(ctx: LowerCtx, node: Expr) -> None:
   callee = node.attrs["callee"]
   groups = _mapped_support_groups(node, ctx.support_of)
   for arguments, stages in groups.items():
-    _lower_vmap_group(ctx, node, np.asarray(stages, dtype=np.int64), _ensure_callee(ctx, callee, arguments))
+    _lower_map_group(ctx, node, np.asarray(stages, dtype=np.int64), _ensure_callee(ctx, callee, arguments))
   if not groups:
     _result_buffers(ctx, node)
 
 
-def _lower_vmap_group(ctx: LowerCtx, node: Expr, stages: np.ndarray, symbol: str) -> None:
+def _lower_map_group(ctx: LowerCtx, node: Expr, stages: np.ndarray, symbol: str) -> None:
   """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
   reads ``outer_k[start_k + it·stride_k ...]`` and writes all used outputs into their mapped buffers."""
   callee: ConcreteFunction = node.attrs["callee"]
@@ -132,7 +131,7 @@ def _lower_vmap_group(ctx: LowerCtx, node: Expr, stages: np.ndarray, symbol: str
   out_args = []
   for i, buf in enumerate(scratch):
     if i in used and layouts[i] is None:
-      slice_size = int(used[i].attrs["slice_size"])
+      slice_size = results[i].type.storage_size
       off = p.mul(it, p.const_int(slice_size)) if slice_size != 1 else it
       out_args.append(p.view(buf, [off]))
     else:
@@ -148,7 +147,7 @@ def _lower_vmap_group(ctx: LowerCtx, node: Expr, stages: np.ndarray, symbol: str
   body = [*prologue, call]
   for i in used:
     if (layout := layouts[i]) is not None:
-      off = p.mul(it, p.const_int(int(used[i].attrs["slice_size"])))
+      off = p.mul(it, p.const_int(results[i].type.storage_size))
       ctx.reorder(scratch[i], results[i], layout.inverse_permutation, p.view(buffers[i], [off]))
   body.extend(ctx.statements[before:])
   del ctx.statements[before:]
@@ -219,21 +218,26 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   (``j + 1`` in reverse), when its trajectory is used. Stacked outputs and trajectory slots past
   the trip count are zeroed only when a condition or a trip operand can end the loop early.
   """
+  if all(is_map(sibling) for sibling in ctx.used_results[invocation_key(node)]):
+    _lower_map(ctx, node)
+    return
   callee: ConcreteFunction = node.attrs["callee"]
   cond: ConcreteFunction | None = node.attrs["cond"]
   n_carry, length, index, reverse = node.attrs["n_carry"], node.attrs["length"], node.attrs["index"], node.attrs["reverse"]
   starts, strides = node.attrs["starts"], node.attrs["strides"]
   carries, outers = node.args[:n_carry], node.args[n_carry : n_carry + len(starts)]
   trip = node.args[n_carry + len(starts)] if len(node.args) > n_carry + len(starts) else None
-  n_ys = len(callee.outputs) - n_carry
+  results = callee.results if callee in ctx.residuals else callee.outputs
+  layouts = (*callee.output_tree.layouts, *(None for _ in results[len(callee.outputs) :]))
+  n_ys, count_output = len(results) - n_carry, len(callee.results)
   for fn in (callee, *(() if cond is None else (cond,))):
     _ensure_callee(ctx, fn)
-    layouts = (*fn.input_tree.layouts[:n_carry], *(fn.output_tree.layouts[:n_carry] if fn is callee else ()))
-    if any(layout is not None and not np.array_equal(layout.permutation, np.arange(len(layout.permutation))) for layout in layouts):
+    carry_layouts = (*fn.input_tree.layouts[:n_carry], *(fn.output_tree.layouts[:n_carry] if fn is callee else ()))
+    if any(layout is not None and not np.array_equal(layout.permutation, np.arange(len(layout.permutation))) for layout in carry_layouts):
       raise LoweringError(f"loop carries of {fn.name!r} must use the canonical sparse layout")
   siblings = ctx.used_results[invocation_key(node)]
   used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
-  traj = {c for c in range(n_carry) if n_carry + n_ys + 1 + c in used}
+  traj = {c for c in range(n_carry) if count_output + 1 + c in used}
   symbol = ctx.symbols[callee]
   normalized = _normalize_function(callee, residuals=callee in ctx.residuals)
   chains = carry_reuse(normalized, n_carry, length, index, traj)
@@ -295,7 +299,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     copy(slots[j], slot(j, p.const_int(0)), ctx.buf_of(init), p.const_int(0), sizes[j])
   ys = []
   for y in range(n_ys):
-    out = callee.outputs[n_carry + y].type
+    out = results[n_carry + y].type
     ys.append(ctx.alloc_tmp(used[n_carry + y]) if n_carry + y in used else ctx.new_private(out.dtype, out.storage_shape))
   before = len(ctx.statements)
   args = [p.view(slots[j], [slot(j, i)]) for j in range(n_carry)]
@@ -321,7 +325,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   outs = [p.view(slots[j], [slot(j, p.add(i, p.const_int(1)))]) for j in range(n_carry)]
   scratch = []
   for y, buf in enumerate(ys):
-    result, layout = callee.outputs[n_carry + y], callee.output_tree.layouts[n_carry + y]
+    result, layout = results[n_carry + y], layouts[n_carry + y]
     if n_carry + y not in used:
       outs.append(buf)
     elif layout is None:
@@ -330,21 +334,18 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
       scratch.append((y, ctx.new_private(result.type.dtype, result.type.storage_shape)))
       outs.append(scratch[-1][1])
   ins = inputs(callee)
-  results = _proc_results(ctx, callee, outs)
-  results = [out for j, out in enumerate(results) if j not in reuse]
+  call_results = [out for j, out in enumerate(_proc_results(ctx, callee, outs)) if j not in reuse]
   ctx.statements.append(
     ProgramNode(
       ProgramOp.CALL,
-      (*ins, *results),
-      attrs={"callee": symbol, "n_in": len(ins), "n_out": len(results), "inout": tuple(sorted(reuse)), "returns": ()},
+      (*ins, *call_results),
+      attrs={"callee": symbol, "n_in": len(ins), "n_out": len(call_results), "inout": tuple(sorted(reuse)), "returns": ()},
       dtype=dtypes.float64,
     )
   )
   for y, buf in scratch:
-    result = callee.outputs[n_carry + y]
-    ctx.reorder(
-      buf, result, callee.output_tree.layouts[n_carry + y].inverse_permutation, p.view(ys[y], [p.mul(k, p.const_int(result.type.storage_size))])
-    )
+    result = results[n_carry + y]
+    ctx.reorder(buf, result, layouts[n_carry + y].inverse_permutation, p.view(ys[y], [p.mul(k, p.const_int(result.type.storage_size))]))
   body = ctx.statements[before:]
   del ctx.statements[before:]
   ctx.statements.extend(statement for statement in body if statement.op == ProgramOp.BUFFER)
@@ -354,15 +355,15 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   for j in range(n_carry):
     if j in used:
       copy(ctx.alloc_tmp(used[j]), p.const_int(0), slots[j], slot(j, taken), sizes[j])
-  if n_carry + n_ys in used:
-    ctx.statements.append(p.store(p.view(ctx.alloc_tmp(used[n_carry + n_ys]), [p.const_int(0)]), taken))
+  if count_output in used:
+    ctx.statements.append(p.store(p.view(ctx.alloc_tmp(used[count_output]), [p.const_int(0)]), taken))
   for j in traj:
-    sibling = used[n_carry + n_ys + 1 + j]
+    sibling = used[count_output + 1 + j]
     alias = ctx.new_alias(sibling.type.dtype, sibling.shape, slots[j].attrs["name"], sizes[j] if reverse else 0)
     ctx.value_buffers[sibling.id] = alias.attrs["name"]
     ctx.statements.append(alias)
   if early:
-    fills = [(ys[y], 0, callee.outputs[n_carry + y].type) for y in range(n_ys) if n_carry + y in used]
+    fills = [(ys[y], 0, results[n_carry + y].type) for y in range(n_ys) if n_carry + y in used]
     fills += [(slots[j], sizes[j] if reverse else 0, callee.inputs[j].type) for j in traj]
     for buf, offset, type_ in fills:
       if type_.storage_size and length:

@@ -126,7 +126,7 @@ Arity is the number of operands.
 | Indexing        | `slice`, `gather`, `scatter`                  | 1, 2 or 3 | Gather and scatter take int64 index operands |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
 | Linear algebra  | `matmul`                                      | 2        | NumPy's rules, leading axes broadcast     |
-| Function calls  | `call`, `vmap`                                | Variable | An ordinary or a mapped call              |
+| Function calls  | `call`, `loop`                                | Variable | An ordinary or a mapped call              |
 
 `dot`, `sumsqr`, `norm_1`, `norm_2`, `norm_inf`, `argmin`, `argmax`, `mean`,
 `diag` and `vec` are builders that expand into these operations. There are no matrix decompositions, interpolation tables or
@@ -135,7 +135,8 @@ data-dependent control flow yet, and no `expm1` or `log1p`.
 ### Calls and mapped calls
 
 A symbolic call to a `Function` adds one `call` node, and `sc.vmap` adds one
-`vmap` node, whatever the size of the callee. Here a stage model like the one in
+`loop` node without carries or a condition, whatever the size of the callee.
+Here a stage model like the one in
 [Getting started](../guide/getting_started.md) is mapped over ten stages and
 the last state goes through a terminal cost:
 
@@ -162,23 +163,23 @@ print(sc.render_expr_assembly(stages))
 The module lists `model` and `terminal` first. This is the part for `stages`:
 
 ```
-expr.func @stages(%zs: tensor<20xfloat64 diff>, %us: tensor<10xfloat64 diff>) -> (%J: tensor<float64 diff>) {
-  %0 = expr.input {lowering="auto", name="zs"} : tensor<20xfloat64 diff>
-  %1 = expr.input {lowering="auto", name="us"} : tensor<10xfloat64 diff>
-  %2 = expr.vmap(%0, %1) {callee="model", length=10, output=0, slice_size=2, starts=[0, 0], strides=[2, 1]} : tensor<20xfloat64 diff>
-  %3 = expr.reshape(%2) {shape=[10, 2]} : tensor<10x2xfloat64 diff>
-  %4 = expr.reshape(%3) {shape=[20]} : tensor<20xfloat64 diff>
-  %5 = expr.slice(%4) {index=[slice(18, None, None)]} : tensor<2xfloat64 diff>
-  %6 = expr.call(%5) {callee="terminal", output=0} : tensor<float64 diff>
-  expr.return %6
-}
+  expr.func @stages(%zs: tensor<20xfloat64 diff>, %us: tensor<10xfloat64 diff>) -> (%J: tensor<float64 diff>) {
+    %0 = expr.input {lowering="auto", name="zs"} : tensor<20xfloat64 diff>
+    %1 = expr.input {lowering="auto", name="us"} : tensor<10xfloat64 diff>
+    %2 = expr.loop(%0, %1) {callee="model", cond=None, in_place=[], index=False, length=10, n_carry=0, output=0, reverse=False, starts=[0, 0], strides=[2, 1]} : tensor<20xfloat64 diff>
+    %3 = expr.reshape(%2) {shape=[10, 2]} : tensor<10x2xfloat64 diff>
+    %4 = expr.reshape(%3) {shape=[20]} : tensor<20xfloat64 diff>
+    %5 = expr.slice(%4) {index=[slice(18, None, None)]} : tensor<2xfloat64 diff>
+    %6 = expr.call(%5) {callee="terminal", output=0} : tensor<float64 diff>
+    expr.return %6
+  }
 ```
 
 Both nodes keep the callee as an attribute and select one of its outputs with
-`output`. The `vmap` node records the leading-axis slicing as reads of the flat
+`output`. The `loop` node records the leading-axis slicing as reads of the flat
 operands. Iteration `i` reads `zs[2i : 2i+2]` and `us[i : i+1]`, from `starts`
-and `strides`, and writes `slice_size` values of the flat output. Outer operands
-of a `vmap` are always one-dimensional, so the reshapes in `stages` leave no
+and `strides`, and writes two values of the flat output. Outer operands
+of a mapped loop are always one-dimensional, so the reshapes in `stages` leave no
 node behind. The
 [functions guide](../guide/functions.md#regular-repetition-vmap) covers the
 slicing rules. The [program dialect](#calls-and-loops-after-lowering) shows what
@@ -235,7 +236,7 @@ as C does, and serve index arithmetic, whose operands are never negative.
 ### Calls and loops after lowering
 
 Lowering `stages` from the [expression example](#calls-and-mapped-calls) turns
-the `vmap` into a loop around one call and keeps the `call`:
+the mapped `loop` into a program loop around one call and keeps the `call`:
 
 ```
 prog.module {
@@ -261,7 +262,7 @@ prog.module {
 }
 ```
 
-The `starts` and `strides` of the `vmap` node became the views
+The `starts` and `strides` of the `loop` node became the views
 `%zs[2 * it]` and `%us[it]`. A view passed to a call is an address, not a load,
 and the C for `stages` shows it as pointer arithmetic (trimmed to the loop and
 the call):

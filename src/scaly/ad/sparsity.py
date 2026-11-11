@@ -22,6 +22,7 @@ from ..ir.expr import (
   OP_INFO,
   Expr,
   ExprOp,
+  is_map,
   callees_of,
 )
 from ..ir.support import (
@@ -227,7 +228,7 @@ def _call_contexts(expr: Expr, context: _JacContext) -> list[tuple[np.ndarray, _
       groups.setdefault(tuple(arguments), []).append(stage)
   contexts = []
   for arguments, stages in groups.items():
-    support_of = specialize_support(callee, arguments, OP_INFO)
+    support_of = specialize_support(callee, arguments, OP_INFO, is_map)
     if support_of not in context.specializations:
       context.specializations[support_of] = _JacContext({}, support_of, context.specializations)
     contexts.append((np.asarray(stages, dtype=np.int64), context.specializations[support_of]))
@@ -246,12 +247,12 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
       continue
     if phase == 0:
       stack.append((node, variable, 1, context))
-      if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
+      if node.op != ExprOp.STOP_GRADIENT and (not is_map(node) or node.attrs["length"]):
         stack.extend((arg, variable, 0, context) for arg in reversed(node.args) if (arg.id, variable.id) not in masks)
     elif phase == 1 and node.op == ExprOp.COND:
       stack.append((node, variable, 2, context))
       stack.extend((call, variable, 0, context) for call in _cond_calls(node, context))
-    elif phase == 1 and callees_of(node) and node.op not in (ExprOp.EXTERN, ExprOp.LOOP):
+    elif phase == 1 and (node.op == ExprOp.CALL or is_map(node)):
       stack.append((node, variable, 2, context))
       callee = node.attrs["callee"]
       callee_out = callee.results[node.attrs["output"]]
@@ -360,7 +361,7 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     return _matmul_mask(expr, wrt, memo)
   if expr.op == ExprOp.CALL:
     return _call_mask(expr, wrt, memo)
-  if expr.op == ExprOp.VMAP:
+  if is_map(expr):
     return _vmap_mask(expr, wrt, memo)
   if expr.op == ExprOp.EXTERN:
     ret = _empty((expr.size, wrt.size))
@@ -577,8 +578,8 @@ def _loop_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   converged carries at every slot.
   """
   callee, n_carry, length, output = expr.attrs["callee"], expr.attrs["n_carry"], expr.attrs["length"], expr.attrs["output"]
-  n_ys, skip = len(callee.outputs) - n_carry, n_carry + expr.attrs["index"]
-  support_of = specialize_support(callee, (None,) * len(callee.inputs), OP_INFO)
+  n_ys, skip = len(callee.results) - n_carry, n_carry + expr.attrs["index"]
+  support_of = specialize_support(callee, (None,) * len(callee.inputs), OP_INFO, is_map)
   child = memo.specializations.setdefault(support_of, _JacContext({}, support_of, memo.specializations))
   steps = np.arange(length, dtype=np.int64)[:, None]
   outers = []

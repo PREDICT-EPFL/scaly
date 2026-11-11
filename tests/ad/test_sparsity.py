@@ -43,7 +43,7 @@ def test_mixed_tangent_selections_preserve_zeros(boundary, movement) -> None:
       for node in topo(pending.pop()):
         if node.op in {ExprOp.MUL, ExprOp.MATMUL}:
           assert node.support != frozenset()
-        if node.op in {ExprOp.CALL, ExprOp.VMAP} and node.attrs["callee"] not in seen:
+        if node.op in {ExprOp.CALL, ExprOp.LOOP} and node.attrs["callee"] not in seen:
           seen.add(node.attrs["callee"])
           pending.append(node.attrs["callee"].results)
   fn = ConcreteFunction._from_exprs("mixed_tangent_values", [x, p, seeds], [tangent, simplified], ["x", "p", "seeds"], ["raw", "simplified"])

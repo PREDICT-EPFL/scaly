@@ -149,7 +149,7 @@ def test_vmap_rank1_outer_required() -> None:
 
   bad_outer = sc.sym("batch", (4, 2))  # not rank-1
   bad = Expr(
-    ExprOp.VMAP,
+    ExprOp.LOOP,
     (bad_outer,),
     TensorType((4,), dtype=dtypes.float64, diff=True),
     attrs={
@@ -158,22 +158,37 @@ def test_vmap_rank1_outer_required() -> None:
       "length": 4,
       "starts": (0,),
       "strides": (2,),
-      "slice_size": 1,
+      "n_carry": 0,
+      "cond": None,
+      "index": False,
+      "reverse": False,
+      "in_place": (),
     },
   )
-  with pytest.raises(VerifyError, match="vmap-attrs"):
+  with pytest.raises(VerifyError, match="loop-attrs"):
     verify_expr(bad)
 
 
 def _vmap(callee, outers, length: int, starts, strides) -> Expr:
-  """A VMAP node built without the builder's own window checks, so only the verifier judges it."""
+  """A no-carry LOOP node built without the builder's own window checks, so only the verifier judges it."""
   concrete = as_concrete(callee)
   out = concrete.outputs[0]
   return Expr(
-    ExprOp.VMAP,
+    ExprOp.LOOP,
     tuple(outers),
     TensorType((length * out.size,)),
-    attrs={"callee": concrete, "output": 0, "length": length, "starts": tuple(starts), "strides": tuple(strides), "slice_size": out.size},
+    attrs={
+      "callee": concrete,
+      "output": 0,
+      "length": length,
+      "starts": tuple(starts),
+      "strides": tuple(strides),
+      "n_carry": 0,
+      "cond": None,
+      "index": False,
+      "reverse": False,
+      "in_place": (),
+    },
   )
 
 
@@ -192,7 +207,7 @@ def test_vmap_windows_must_fit_inside_their_outer(length: int, start: int, strid
   if fits:
     build()
   else:
-    with pytest.raises(VerifyError, match="vmap-attrs"):
+    with pytest.raises(VerifyError, match="loop-attrs"):
       build()
 
 
@@ -207,9 +222,9 @@ def test_vmap_window_bounds_use_each_formal_size_and_name_the_input() -> None:
     return host(lambda inputs: _vmap(stage, inputs, 4, starts, strides)).instantiate()
 
   build([0, 0], [2, 0])
-  with pytest.raises(VerifyError, match="input 0 reads past its outer of size 12"):
+  with pytest.raises(VerifyError, match="outer 0 window .*reads past its outer of size 12"):
     build([0, 0], [3, 0])
-  with pytest.raises(VerifyError, match="input 1 reads past its outer of size 2"):
+  with pytest.raises(VerifyError, match="outer 1 window .*reads past its outer of size 2"):
     build([0, 1], [2, 0])
 
 
@@ -223,7 +238,7 @@ def test_vmap_window_bounds_do_not_wrap_around_for_numpy_attrs(length: int, stri
   if fits:
     verify_expr(node)
   else:
-    with pytest.raises(VerifyError, match="vmap-attrs"):
+    with pytest.raises(VerifyError, match="loop-attrs"):
       verify_expr(node)
 
 

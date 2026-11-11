@@ -109,7 +109,8 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
    the plan's interface is designed for both before [#27] fixes it.
 6. **One loop op for maps, scans and while loops.** `LOOP` has an optional condition, a static
    bound, a trip count that may be given at run time under that bound, and documented numbered
-   results: final carries, stacked outputs, the trip count as int64, and per-carry trajectories. A
+   results: final carries, stacked outputs including custom-rule residuals, the trip count as int64,
+   and per-carry trajectories. The count follows all of the callee's results, including residuals. A
    map is a `LOOP` with no carry and no condition; `VMAP` folds into it once `LOOP` exists, as a
    rename that keeps every snapshot byte for byte. Devrush had separate `SCAN` and `WHILE` ops, a
    hidden `output=-1` trajectory node and duplicated AD builders.
@@ -758,6 +759,9 @@ tiles, structured sparse AD and the 14 files that name `ExprOp.VMAP` test "a loo
 through one predicate beside `callees_of`. The forward and reverse rules become `LOOP`'s with no
 carry, which removes a second invocation model and a second adjoint route. Snapshots byte-identical,
 `vmap.c` included.
+
+Custom-rule residuals keep their callee result indices among the stacked outputs. The trip count
+and carry trajectories follow all callee results, so a mapped residual never selects the count.
 
 **[#13]. Typed vmap.** The tensor track's leading-axis design merged with devrush's views plan and
 the playground's `vmap` candidate (`typing_playground/function.py`), lifted with `lift`.

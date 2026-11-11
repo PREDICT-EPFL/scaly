@@ -268,41 +268,6 @@ def _call_attrs(expr: Expr) -> str | None:
   return None
 
 
-def _vmap_attrs(expr: Expr) -> str | None:
-  """Verify VMAP's flat outer storage: outers are rank-1 and every window fits inside its outer.
-
-  Callee formals and outputs may be rank-2; a window spans its formal's size.
-  """
-  callee = expr.attrs.get("callee")
-  if callee is None:
-    return "VMAP missing 'callee' attr"
-  for k in ("length", "starts", "strides", "slice_size", "output"):
-    if k not in expr.attrs:
-      return f"VMAP missing {k!r} attr"
-  length = int(expr.attrs["length"])
-  if length < 0:
-    return f"VMAP length must be non-negative, got {length}"
-  starts = expr.attrs["starts"]
-  strides = expr.attrs["strides"]
-  if len(expr.args) != len(callee.inputs) or len(starts) != len(callee.inputs) or len(strides) != len(callee.inputs):
-    return f"VMAP args/starts/strides length mismatch vs callee {callee.name!r} inputs"
-  for i, (outer, start, stride, formal) in enumerate(zip(expr.args, starts, strides, callee.inputs, strict=True)):
-    start, stride = int(start), int(stride)
-    if len(outer.shape) != 1:
-      return f"VMAP outer arg must be rank-1, got {outer.shape}"
-    if start < 0 or stride < 0:
-      return f"VMAP input {i} start and stride must be non-negative, got {start} and {stride}"
-    if length > 0 and start + (length - 1) * stride + formal.type.storage_size > outer.size:
-      return f"VMAP input {i} reads past its outer of size {outer.size}: start={start}, stride={stride}, length={length}, formal_size={formal.size}"
-  expected_size = length * int(expr.attrs["slice_size"])
-  output = int(expr.attrs["output"])
-  if not 0 <= output < len(callee.results) or int(expr.attrs["slice_size"]) != callee.results[output].type.storage_size:
-    return "VMAP slice_size must match the selected output's stored size"
-  if expr.shape != (expected_size,):
-    return f"VMAP output shape {expr.shape} != ({expected_size},)"
-  return None
-
-
 def _cond_attrs(expr: Expr) -> str | None:
   branches = expr.attrs.get("branches")
   if not isinstance(branches, tuple) or not branches:
@@ -330,13 +295,13 @@ def _cond_attrs(expr: Expr) -> str | None:
 
 
 def loop_result_type(attrs: Mapping[str, Any], output: int) -> TensorType | None:
-  """The type of result ``output`` of a ``LOOP``: final carries, stacked ys, the trip count, then trajectories."""
+  """The type of result ``output`` of a ``LOOP``: final carries, stacked results including residuals, the trip count, then trajectories."""
   callee, n_carry, length = attrs["callee"], int(attrs["n_carry"]), int(attrs["length"])
-  n_ys = len(callee.outputs) - n_carry
+  n_ys = len(callee.results) - n_carry
   if 0 <= output < n_carry:
     return callee.inputs[output].type
   if n_carry <= output < n_carry + n_ys or n_carry + n_ys < output <= 2 * n_carry + n_ys:
-    source = callee.outputs[output] if output < n_carry + n_ys else callee.inputs[output - n_carry - n_ys - 1]
+    source = callee.results[output] if output < n_carry + n_ys else callee.inputs[output - n_carry - n_ys - 1]
     return TensorType((length * source.type.storage_size,), source.type.dtype)
   return TensorType((), dtypes.int64) if output == n_carry + n_ys else None
 
@@ -492,7 +457,6 @@ spec_expr = Spec(
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.EXTERN, "extern-attrs", _call_attrs),
-    Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
     Rule(ExprOp.COND, "cond-attrs", _cond_attrs),
     Rule(ExprOp.LOOP, "loop-attrs", _loop_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),

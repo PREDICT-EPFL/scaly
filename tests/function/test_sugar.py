@@ -7,8 +7,8 @@ from scipy import sparse
 import pytest
 
 import scaly as sc
-from scaly.function.sugar import _mapped_call
-from scaly.ir.expr import topo
+from scaly.function.sugar import _loop_node, _mapped_call
+from scaly.ir.expr import invocation_key, is_map, topo
 from scaly.codegen import render_c_source
 
 
@@ -28,10 +28,43 @@ def test_mapped_template_keeps_parameter_and_nested_output_trees() -> None:
   np.testing.assert_array_equal(cost, np.sum(x * x, axis=1))
   symbolic, (symbolic_cost,) = mapped((sc.sym("x", (3, 2)), sc.broadcast(sc.const(2.0))))
   assert symbolic.shape == (3, 2) and symbolic_cost.shape == (3,)
-  assert symbolic.args[0].op == sc.ExprOp.VMAP
+  assert symbolic.args[0].op == sc.ExprOp.LOOP
+  assert symbolic.args[0].attrs["n_carry"] == 0
+  assert symbolic.args[0].attrs["cond"] is None
+  assert "VMAP" not in sc.ExprOp.__members__
   assert not any(node.op == sc.ExprOp.CALL for node in topo([symbolic, symbolic_cost]))
   assert mapped.instantiate(((3, 2), (3,))).output_shapes == ((3, 2), (3,))
   assert traces == [(2,)]
+
+
+@pytest.mark.parametrize("length", [0, 1, 4])
+def test_a_scan_without_carries_uses_the_map_derivatives(length: int) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("y", 2), sc.arg("cost", ())))
+  def stage(x):
+    return x.sin() + x * x, (x * x * x).sum()
+
+  @sc.function(sc.arg("x", (length, 2)))
+  def scanned(x):
+    _, (y, cost) = sc.scan(stage, (), (x,), length=length)
+    return y, cost
+
+  @sc.function(sc.arg("x", (length, 2)))
+  def unrolled(x):
+    return (
+      sc.stack([stage(x[k])[0] for k in range(length)]) if length else sc.const(np.empty((0, 2))),
+      sc.stack([stage(x[k])[1] for k in range(length)]) if length else sc.const(np.empty(0)),
+    )
+
+  x = np.arange(length * 2.0).reshape(length, 2) / 7
+  y, cost = scanned(x)
+  np.testing.assert_allclose(y, np.sin(x) + x * x)
+  np.testing.assert_allclose(cost, np.sum(x**3, axis=1))
+  for output in ("out0", "out1"):
+    for derivative in (sc.jacobian, sc.sparse_jacobian):
+      actual, expected = derivative(scanned, output, "x")(x), derivative(unrolled, output, "x")(x)
+      np.testing.assert_allclose(sparse.coo_array(actual).toarray(), sparse.coo_array(expected).toarray())
+  loss = sc.function(sc.arg("x", (length, 2)), outputs=sc.arg("loss", ()))(lambda x: scanned(x)[1].sum())
+  np.testing.assert_allclose(sc.hessian(loss)(x), np.diag(6 * x.reshape(-1)))
 
 
 def test_affine_views_equal_explicit_ir_windows_and_emit_identical_c() -> None:
@@ -43,12 +76,68 @@ def test_affine_views_equal_explicit_ir_windows_and_emit_identical_c() -> None:
   Z = z.reshape((4, 3))
   viewed = sc.vmap(stage, 4)(Z[:, :2], Z[:, 2]).vec()
   explicit = _mapped_call(stage, 4, [(z, 0, 3), (z, 2, 3)])
-  assert viewed.args[0].args[0] is explicit  # output reshapes retain the original VMAP node
+  assert viewed.args[0].args[0] is explicit  # output reshapes retain the original LOOP node
   left = sc.function(sc.arg("z", 12), outputs=sc.arg("y", 8), name="views")(
     lambda x: sc.vmap(stage, 4)(x.reshape((4, 3))[:, :2], x.reshape((4, 3))[:, 2]).vec()
   )
   right = sc.function(sc.arg("z", 12), outputs=sc.arg("y", 8), name="views")(lambda x: _mapped_call(stage, 4, [(x, 0, 3), (x, 2, 3)]))
   assert render_c_source(left) == render_c_source(right)
+
+
+def test_a_map_and_its_trip_count_share_one_invocation() -> None:
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y", ()))
+  def stage(x):
+    return x * x
+
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("y", 3), sc.arg("count", ())))
+  def host(x):
+    mapped = _mapped_call(stage, 3, [(x, 0, 1)])
+    count = _loop_node(mapped.attrs["callee"], None, mapped.args, dict(mapped.attrs), 1)
+    assert is_map(mapped) and not is_map(count)
+    assert invocation_key(mapped) == invocation_key(count)
+    return mapped.with_lowering("block"), sc.cast(count, "float64")
+
+  y, count = host(np.arange(3.0))
+  np.testing.assert_array_equal(y, [0.0, 1.0, 4.0])
+  assert count == 3
+  from scaly.ir.program import ProgramOp, walk_program
+  from scaly.passes.lowering import lower_function
+
+  assert sum(node.op == ProgramOp.FOR for node in walk_program(lower_function(host))) == 1
+
+
+@pytest.mark.parametrize("kind", ["index", "reverse", "trip", "condition"])
+def test_a_no_carry_loop_with_step_control_keeps_its_loop_rules(kind: str) -> None:
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("y", ()))
+  def square(x):
+    return x * x
+
+  @sc.function(sc.arg("k", sc.TensorType((), sc.dtypes.int64)), sc.arg("x", ()), outputs=sc.arg("y", ()))
+  def indexed(k, x):
+    return x * x + k.cast(sc.dtypes.float64)
+
+  @sc.function(sc.arg("x", ()), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)))
+  def positive(x):
+    return x > 0
+
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", 4))
+  def host(x):
+    _, (y,) = sc.scan(
+      indexed if kind == "index" else square, (), (x,), length=4, index=kind == "index", reverse=kind == "reverse", trip=2 if kind == "trip" else None
+    )
+    node = next(node for node in topo((y,)) if node.op == sc.ExprOp.LOOP)
+    if kind == "condition":
+      node = _loop_node(node.attrs["callee"], positive.instantiate(), node.args, dict(node.attrs), 0)
+      y = node
+    assert not is_map(node)
+    for derivative in (lambda: sc.jvp(y, x, sc.const(np.ones(4))), lambda: sc.vjp((y,), (x,), (sc.const(np.ones(4)),))):
+      with pytest.raises(NotImplementedError, match="scan and while_loop"):
+        derivative()
+    return y
+
+  x = np.array([1.0, 2.0, -3.0, 4.0])
+  expected = x * x + np.arange(4) if kind == "index" else np.array([1.0, 4.0, 0.0, 0.0]) if kind in {"trip", "condition"} else x * x
+  np.testing.assert_array_equal(host(x), expected)
 
 
 @pytest.mark.parametrize("kind", ["transpose", "negative", "gapped", "nested_slice"])

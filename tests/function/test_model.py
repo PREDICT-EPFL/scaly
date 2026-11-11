@@ -75,7 +75,7 @@ def test_call_helpers_record_their_role() -> None:
     return sc.vmap(inner, 3)(z).sum()
 
   def roles(derived) -> set[str | None]:
-    return {expr.attrs["callee"].role for expr in topo(as_concrete(derived).outputs) if expr.op in (sc.ExprOp.CALL, sc.ExprOp.VMAP)}
+    return {expr.attrs["callee"].role for expr in topo(as_concrete(derived).outputs) if expr.op in (sc.ExprOp.CALL, sc.ExprOp.LOOP)}
 
   assert roles(outer) == {None}
   assert roles(sc.forward(outer, "out", "z")) == {"forward"}

@@ -45,6 +45,8 @@ def _dispatch_ops(*functions) -> set[ExprOp]:
       for condition in ast.walk(node.test):
         if isinstance(condition, ast.Call) and isinstance(condition.func, ast.Name) and condition.func.id == "callees_of":
           ops.update(CALLEE_OPS - {ExprOp.EXTERN})
+        if isinstance(condition, ast.Call) and isinstance(condition.func, ast.Name) and condition.func.id == "is_map":
+          ops.add(ExprOp.LOOP)
         if not isinstance(condition, ast.Compare) or ast.unparse(condition.left) not in {"expr.op", "op"}:
           continue
         for comparator in condition.comparators:

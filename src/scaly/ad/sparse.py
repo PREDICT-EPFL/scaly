@@ -2,7 +2,7 @@
 
 The pattern itself — which entries can be nonzero — comes from ``sparsity.py``, which knows
 nothing about AD. This module turns a pattern into values: graph coloring, compressed JVPs, and
-the structured VMAP decomposition that keeps a multistage Jacobian from materializing densely.
+the structured map decomposition that keeps a multistage Jacobian from materializing densely.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, _index_values, concat, gather, pack, _scatter_zero, values as stored_values
+from ..ir.expr import Expr, ExprOp, is_map, _index_values, concat, gather, pack, _scatter_zero, values as stored_values
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
@@ -188,7 +188,7 @@ def sparse_jacobian(expr: Expr, wrt: Expr) -> Expr:
   """Sparse Jacobian: a sparse tensor of shape ``(expr.size, wrt.size)`` storing only its structural nonzeros.
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
-  Takes the structured path when ``expr`` is a ``VMAP`` (or a concatenation of them) over
+  Takes the structured path when ``expr`` is a mapped loop (or a concatenation of them) over
   ``wrt`` or a constant gather of it. It colors the callee's small local pattern instead of the
   whole matrix, so the cost tracks the callee rather than the iteration count. Otherwise falls back
   to coloring the global pattern.
@@ -206,15 +206,15 @@ def _sparse_jacobian(expr: Expr, wrt: Expr) -> _Compact:
 
 def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> _Compact | None:
   """Try to compute the compact sparse Jacobian by splitting along axis 0 and routing every
-  rank-1 ``ExprOp.VMAP`` piece through per-formal local coloring + const-seed JVPs.
+  rank-1 mapped loop through per-formal local coloring + const-seed JVPs.
 
-  Returns ``None`` if the expression's structure prevents this decomposition (any non-VMAP piece
+  Returns ``None`` if the expression's structure prevents this decomposition (any non-map piece
   that itself depends on ``wrt`` would force the fallback, which we handle by mixing the
-  structured per-piece VMAP path with the global-colored path for the rest).
+  structured per-piece path with the global-colored path for the rest).
   """
 
   pieces = _split_axis0_pieces(expr)
-  if pieces is None or not any(piece.op == ExprOp.VMAP for piece, _ in pieces):
+  if pieces is None or not any(is_map(piece) for piece, _ in pieces):
     return None
 
   global_rows: list[int] = []
@@ -222,7 +222,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> _Compact | None:
   global_values: list[Expr] = []
   coloring_width = 0
   for piece, row_offset in pieces:
-    if piece.op == ExprOp.VMAP:
+    if is_map(piece):
       sj = _sparse_jacobian_vmap(piece, wrt)
     else:
       sj = _colored(piece, wrt)
@@ -271,8 +271,8 @@ def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
 
 
 def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> _Compact:
-  """Compute compact sparse Jacobian of a rank-1 ``ExprOp.VMAP`` w.r.t. ``wrt`` using per-formal
-  local coloring and const-seed JVPs wrapped in VMAPs.
+  """Compute compact sparse Jacobian of a rank-1 mapped loop w.r.t. ``wrt`` using per-formal
+  local coloring and const-seed JVPs wrapped in maps.
 
   Falls back to ``sparse_jacobian_colored`` if any formal's actual outer tensor depends on
   ``wrt`` through computation rather than being ``wrt`` itself or a constant gather of it.
@@ -283,7 +283,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> _Compact:
   length = vmap_expr.attrs["length"]
   starts = vmap_expr.attrs["starts"]
   strides = vmap_expr.attrs["strides"]
-  slice_size = vmap_expr.attrs["slice_size"]
+  slice_size = callee.results[output_idx].type.storage_size
 
   global_sparsity = jacobian_sparsity(vmap_expr, wrt)
   if global_sparsity.nnz == 0 or length == 0:

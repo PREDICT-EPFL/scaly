@@ -9,6 +9,7 @@ import numpy as np
 from ..ir.expr import (
   Expr,
   ExprOp,
+  is_map,
   _full_like,
   _index_values,
   _scatter_zero,
@@ -110,7 +111,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
       else expr.args[:1]
       if expr.op == ExprOp.PRINT
       else read_args(expr)
-      if callees_of(expr) and expr.op != ExprOp.LOOP
+      if expr.op in (ExprOp.CALL, ExprOp.COND) or is_map(expr)
       else expr.args
     )
     if expr.type.dtype.is_floating and nseed and args and not visited:
@@ -129,12 +130,12 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         tangent = d[0]
       elif expr.op == ExprOp.EXTERN:
         raise NotImplementedError(f"active derivative through extern {expr.attrs['callee'].name!r} needs sc.custom_derivative on a wrapping Function")
-      elif expr.op == ExprOp.LOOP:
+      elif expr.op == ExprOp.LOOP and not is_map(expr):
         raise NotImplementedError("derivatives through scan and while_loop are not implemented yet")
       elif callees_of(expr):
         read = {arg.id for arg in args}
         call_tangents = [simplify_cse_fixpoint(t) if arg.id in read and (t := tangents[arg.id]) is not None else None for arg in expr.args]
-        rule = {ExprOp.CALL: _call_jvp_many, ExprOp.VMAP: _vmap_jvp_many, ExprOp.COND: _cond_jvp_many}[ExprOp(expr.op)]
+        rule = {ExprOp.CALL: _call_jvp_many, ExprOp.LOOP: _vmap_jvp_many, ExprOp.COND: _cond_jvp_many}[ExprOp(expr.op)]
         tangent = rule(expr, call_tangents, nseed, pushforward=_pushforward)
       elif expr.op in ELEMENTWISE:
         if ELEMENTWISE[expr.op].partials is None:
