@@ -243,7 +243,7 @@ class LowerCtx:
     self.symbols = symbols
     # Functions whose procedures also write their residuals, because some call reads one.
     self.residuals = residuals
-    # Functions mapped with some arguments broadcast: the sets of input positions each map holds fixed.
+    # Functions mapped or looped over with some arguments broadcast: the input positions each holds fixed.
     self.broadcasts = broadcasts
     self.input_names = tuple(self.names.allocate(n) for n in fun.input_names)
     self.output_names = tuple(self.names.allocate(n) for n in fun.output_names)
@@ -1035,7 +1035,8 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...], names
 def _function_names(
   root: ConcreteFunction, reserved_names: Iterable[str] = ()
 ) -> tuple[NameScope, dict[ConcreteFunction, str], frozenset[ConcreteFunction], dict[ConcreteFunction, frozenset[frozenset[int]]]]:
-  """Name every reachable function, and find those whose residuals some call reads."""
+  """Name every reachable function, find those whose residuals some call reads, and the argument
+  positions each map or loop of a function holds the same at every trip."""
 
   names = NameScope(reserved_names)
   symbols: dict[ConcreteFunction, str] = {}
@@ -1063,8 +1064,10 @@ def _function_names(
       for callee in callees_of(node):
         if node.op != ExprOp.LOOP and node.attrs["output"] >= len(callee.outputs):
           residuals.add(callee)
-        if node.op == ExprOp.VMAP and 0 in node.attrs["strides"]:
-          fixed = frozenset(k for k, stride in enumerate(node.attrs["strides"]) if stride == 0)
+        if node.op in (ExprOp.VMAP, ExprOp.LOOP) and 0 in node.attrs["strides"]:
+          # A loop's body takes its carries and its step number before the sliced arguments.
+          first = node.attrs["n_carry"] + node.attrs["index"] if node.op == ExprOp.LOOP else 0
+          fixed = frozenset(first + k for k, stride in enumerate(node.attrs["strides"]) if stride == 0)
           broadcasts[callee] = broadcasts.get(callee, frozenset()) | {fixed}
         visit(callee)
 

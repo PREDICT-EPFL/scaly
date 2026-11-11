@@ -53,10 +53,12 @@ def plan_fusion(fun: ConcreteFunction, invariant: frozenset[frozenset[int]], *, 
   single read, so the call is not duplicated. Everything else is stored: reductions, products,
   scatters, concatenations, calls, outputs and sparse values.
 
-  ``invariant`` holds, for a mapped function, the input positions each of its maps broadcasts. The
-  map's trip is a range that a node depending only on those inputs does not depend on, so such a node
-  is not deferred into a consumer that depends on the others, and stays where ``hoist_invariant``
-  can lift it out of the map. A procedure lowered as scalars keeps a node with known zeros stored,
+  ``invariant`` holds, for a function mapped or run as a loop body, the input positions each map or
+  loop holds the same at every trip. The trip is a range that a node depending only on those inputs
+  does not depend on, so such a node is not deferred into a consumer that depends on the others, and
+  stays where ``hoist_invariant`` can lift it out of the loop. Everything else in a loop body fuses
+  as in any procedure, within one trip: the body is its own procedure, and the loop reads its
+  operands from buffers, so no value is evaluated inside the carried range on the loop's behalf. A procedure lowered as scalars keeps a node with known zeros stored,
   since its known zeros stay zero where the arithmetic would give a NaN.
 
   A left-associated sum whose operands are dense scatters it alone reads, directly or through a

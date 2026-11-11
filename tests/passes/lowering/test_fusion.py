@@ -194,7 +194,7 @@ def test_sum_of_scatters_accumulates_into_one_buffer(overlap: bool) -> None:
     term = np.zeros(8)
     np.add.at(term, ids, values)
     expected += term
-  np.testing.assert_allclose(fn(data), expected, rtol=1e-14)
+  np.testing.assert_allclose(np.asarray(fn(data)), expected, rtol=1e-14)
 
 
 @needs_cc
@@ -215,7 +215,7 @@ def test_scatter_of_a_mapped_transpose_reads_by_affine_indices() -> None:
   stages = np.stack([np.concatenate([np.sin(z[2 * i : 2 * i + 2]), z[2 * i : 2 * i + 2] ** 2]) for i in range(3)]).reshape(3, 2, 2)
   expected = stages.transpose(1, 0, 2).reshape(12)
   expected[::2] += 0.5 * z
-  np.testing.assert_allclose(fn(z), expected, rtol=1e-14)
+  np.testing.assert_allclose(np.asarray(fn(z)), expected, rtol=1e-14)
 
 
 def _bare_ctx() -> ctx.LowerCtx:
@@ -255,3 +255,74 @@ def test_a_carried_range_is_never_merged_split_or_reordered() -> None:
   )
   (stmt,) = lctx.statements
   assert stmt.args[0].attrs.get("carried") and trip_count(stmt.args[0]) == 8
+
+
+def _carried_loop(proc: ProgramNode) -> ProgramNode:
+  (loop,) = [s for s in proc.args if s.op == ProgramOp.FOR and s.args[0].attrs.get("carried")]
+  return loop
+
+
+@needs_cc
+def test_loop_operands_are_computed_once_outside_the_carried_range() -> None:
+  """A loop reads its operands from buffers, so a value computed for it, whether shared by every step
+  or sliced per step, runs once before the carried range and never inside it."""
+
+  @sc.function(sc.arg("c", 3), sc.arg("w", 3), sc.arg("v", 3), outputs=sc.group(sc.arg("cn", 3), sc.arg("y", ())))
+  def step(c, w, v):
+    return c * w + v, c.sum()
+
+  @sc.function(sc.arg("c0", 3), sc.arg("w", 3), sc.arg("v", (4, 3)), name="loop_operands")
+  def fn(c0, w, v):
+    c, (ys,) = sc.scan(step, c0, (sc.broadcast(w.sin()), v.exp()), length=4)
+    return c, ys
+
+  proc = _lowered(fn)
+  loop = _carried_loop(proc)
+  assert not any(n.op in (ProgramOp.SIN, ProgramOp.EXP) for n in walk_program(loop))
+  assert _work(proc, ProgramOp.SIN) == 3 and _work(proc, ProgramOp.EXP) == 12
+  rng = np.random.default_rng(31)
+  c0, w, v = rng.uniform(-1, 1, 3), rng.uniform(-1, 1, 3), rng.uniform(-1, 1, (4, 3))
+  c, ys = c0, []
+  for k in range(4):
+    ys.append(c.sum())
+    c = c * np.sin(w) + np.exp(v[k])
+  got = fn(c0, w, v)
+  np.testing.assert_allclose(got[0], c, rtol=1e-14)
+  np.testing.assert_allclose(got[1], ys, rtol=1e-14)
+
+
+@needs_cc
+def test_loop_body_fuses_within_one_trip_and_keeps_shared_work_apart() -> None:
+  """A loop body is its own procedure, where every rule applies within one step. Work on an argument
+  every step shares stays a statement of its own, so ``hoist_invariant`` lifts it out of the loop,
+  while the per-step chain fuses into one loop."""
+
+  @sc.function(sc.arg("c", 3), sc.arg("w", 3), sc.arg("v", 3), outputs=sc.group(sc.arg("cn", 3), sc.arg("y", ())))
+  def step(c, w, v):
+    return (c * w.exp() + v).sin() * 0.5, c.sum()
+
+  @sc.function(sc.arg("c0", 3), sc.arg("w", 3), sc.arg("v", (4, 3)), name="loop_body")
+  def fn(c0, w, v):
+    c, (ys,) = sc.scan(step, c0, (sc.broadcast(w), v), length=4)
+    return c, ys
+
+  seen: dict[str, ProgramNode] = {}
+  lower_function(fn, observe=seen.__setitem__)
+  lowered = seen["lowered"]
+  (body,) = [pr for pr in lowered.args[:-1] if any(n.op == ProgramOp.SIN for n in walk_program(pr))]
+  # exp(w) is stored apart from the per-step product, and the product, sin and scale are one loop.
+  assert len(_privates(body)) == 1
+  (fused,) = [s for s in body.args if s.op == ProgramOp.FOR and any(n.op == ProgramOp.SIN for n in walk_program(s))]
+  assert any(n.op == ProgramOp.MUL for n in walk_program(fused)) and not any(n.op == ProgramOp.EXP for n in walk_program(fused))
+  final = lower_function(fn)
+  root = final.args[-1]
+  assert any(n.op == ProgramOp.CALL for n in root.args if n.op == ProgramOp.CALL), "the shared work runs once before the loop"
+  rng = np.random.default_rng(32)
+  c0, w, v = rng.uniform(-1, 1, 3), rng.uniform(-1, 1, 3), rng.uniform(-1, 1, (4, 3))
+  c, ys = c0, []
+  for k in range(4):
+    ys.append(c.sum())
+    c = np.sin(c * np.exp(w) + v[k]) * 0.5
+  got = fn(c0, w, v)
+  np.testing.assert_allclose(got[0], c, rtol=1e-14)
+  np.testing.assert_allclose(got[1], ys, rtol=1e-14)
