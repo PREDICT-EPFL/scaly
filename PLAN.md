@@ -12,7 +12,7 @@ Authorized by the section 7 coordinator under internal/notes/compiler_run_2026_1
 - NumPy differential cases, AD harness extension, mask finite differences and schedule checks pass.
 - Batched sparse products explicitly deferred to #403, with the issue number in the error; unbatched sparse paths unchanged.
 - First full suite found two structural expectations: preserved unbatched reverse rules to avoid extra copies, updated the leading-seed access-map test for the batched node. Rerun pending.
-- Existing C snapshots pass byte-identically to the #66 base. Guide/API updated. No commits or pushes yet.
+- Existing C snapshots pass byte-identically to the #66 base. Guide/API updated. Source committed and restacked onto the rebased #66 after #30. No pushes yet.
 
 ## Remaining work
 
@@ -27,3 +27,11 @@ Authorized by the section 7 coordinator under internal/notes/compiler_run_2026_1
 - [ ] Queue once with gh pr merge N --squash --auto after verdict and green checks. Watch PR using T3, fix conflicts/ejections and requeue as needed. Report criteria evidence, verdict, follow-ups and queued/merged state.
 
 All GitHub reads use gh api REST. Push only review/merge states. No direct main push, tags or releases. Delete this temporary plan on completion.
+
+## Restacked validation
+
+All pre-merge checks passed through the detached suite runner: 4,581 passed, 55 skipped, benchmark smoke, documentation build and private-name check. Focused differential/AD/snapshot run passed 1,454 tests. C snapshots remain byte-identical to the #66 base. No source files were changed during this run.
+
+A previous run began within the source-digest clock slack after an edit, making JIT index checks decline their keys; the isolated JIT index tests passed on retry. The restacked full run passed those checks too.
+
+Next: first push and draft PR, one independent cross-review and its delta check, remove this plan, ready/queue the PR. Keep #65's rules and reduction work untouched. Link the stack with gh stack so #68 can extend it.
