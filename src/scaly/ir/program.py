@@ -404,7 +404,7 @@ def for_(rng: ProgramNode, body: Sequence[ProgramNode], *, exit_var: bool = Fals
 
 def if_(cond: ProgramNode, then: Sequence[ProgramNode], otherwise: Sequence[ProgramNode] = ()) -> ProgramNode:
   """Execute one of two blocks according to a boolean scalar."""
-  return ProgramNode(ProgramOp.IF, (cond, block(*then), block(*otherwise)))
+  return ProgramNode(ProgramOp.IF, (cond, block(*then), block(*otherwise)), dtype=dtypes.float64)
 
 
 def break_if(cond: ProgramNode) -> ProgramNode:

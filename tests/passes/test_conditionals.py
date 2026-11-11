@@ -30,7 +30,7 @@ def conditional_program():
   otherwise = [p.store(p.view(tmp, [i]), p.div(p.const_float(1), p.add(value, p.const_float(2))))]
   loop = p.for_(p.range_("i", 0, 8), [p.if_(flag, then, otherwise), p.store(p.view(y, [i]), p.load(p.view(tmp, [i])))])
   raw = p.proc("branch", [x, y], [tmp, loop])
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "scalar"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "scalar"}, dtype=raw.dtype)
   return p.program([proc])
 
 
@@ -79,7 +79,7 @@ def test_preparation_bounds_branch_values_and_the_condition():
 @pytest.mark.parametrize("args", [(), (p.const_int(0), p.block(), p.block()), (p.const_int(1),), (p.const_int(1), p.block())])
 def test_if_verifier_rejects_bad_condition_or_blocks(args):
   with pytest.raises(VerifyError, match="IF takes"):
-    verify_program(ProgramNode(ProgramOp.IF, args))
+    verify_program(ProgramNode(ProgramOp.IF, args, dtype=dtypes.float64))
 
 
 def test_if_does_not_hide_an_invalid_break():

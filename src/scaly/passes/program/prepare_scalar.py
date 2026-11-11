@@ -23,7 +23,7 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
       if stmt.op == ProgramOp.IF:
         declarations, (condition,) = schedule_values((stmt.args[0],), names)
         branches = tuple(p.block(*rewrite_body(branch.args, names)) for branch in stmt.args[1:])
-        out.extend((*declarations, ProgramNode(stmt.op, (condition, *branches), stmt.attrs, stmt.dtype)))
+        out.extend((*declarations, ProgramNode(stmt.op, (condition, *branches), stmt.attrs, dtype=stmt.dtype)))
         continue
       if stmt.op == ProgramOp.STORE:
         declarations, roots = schedule_values((*stmt.args[0].args, stmt.args[1]), names)
