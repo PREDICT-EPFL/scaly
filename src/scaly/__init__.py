@@ -16,6 +16,7 @@ from .function.api import (
   sparse_jacobian,
   sparse_lagrangian_hessian,
 )
+from .ir.einsum import einsum
 from .ir.text import render_expr_assembly, render_program_assembly
 from .ir.expr import (
   COMMON_OPS,
@@ -139,6 +140,7 @@ __all__ = [
   "custom_derivative",
   "diag",
   "dot",
+  "einsum",
   "equal",
   "matmul",
   "format_expr",

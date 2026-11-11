@@ -18,6 +18,7 @@ src/scaly/
     types.py             DType, DeviceSpec, TensorType, SparsityPattern
     layout.py            declared dense and sparse value orders and immutable boundary indices
     expr.py              ExprOp, OP_INFO, Expr, interning, builders, topo, format_expr
+    einsum.py            labelled contractions built from existing tensor operations
     support.py           lazy value support over flat logical coordinates
     expr_spec.py         expression-dialect verify rules, verify_expr
     program.py           ProgramOp, RangeKind, ProgramNode, interning, builders

@@ -282,6 +282,20 @@ def _cases() -> list[Case]:
   ]:
     values = tuple(np.arange(np.prod(shape), dtype=float).reshape(shape) / 5 + 0.4 for shape in (left, right))
     cases.append(Case(f"matmul-{name}", ExprOp.MATMUL, values, lambda x, y: x @ y, np.matmul))
+  for spec, shapes in [
+    ("bij,bjk->bik", [(2, 2, 3), (2, 3, 2)]),
+    ("...ij,...j->...i", [(2, 1, 2, 3), (3, 3)]),
+    ("ii->", [(3, 3)]),
+    ("ijik->ijk", [(2, 2, 2, 3)]),
+    ("ij->i", [(2, 3)]),
+    ("ij,jk,kl->il", [(2, 3), (3, 2), (2, 2)]),
+  ]:
+    values = tuple(np.arange(np.prod(shape), dtype=float).reshape(shape) / 5 + 0.4 for shape in shapes)
+    build = lambda *xs, spec=spec: sc.einsum(spec, *xs)
+    numpy = lambda *xs, spec=spec: np.einsum(spec, *xs)
+    op = build(*(sc.const(v) for v in values)).op
+    assert isinstance(op, ExprOp)
+    cases.append(Case(f"einsum-{spec}", op, values, build, numpy))
   for shape in [(3,), (2, 2)]:
     values = np.arange(np.prod(shape), dtype=float).reshape(shape) / 5 + 0.4
     cases.append(Case(f"matmul-self-rank{len(shape)}", ExprOp.MATMUL, (values,), lambda x: x @ x, lambda x: x @ x))

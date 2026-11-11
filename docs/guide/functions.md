@@ -315,6 +315,21 @@ print(center_rows(np.arange(6.0).reshape(2, 3)))
 its diagonal. The optional integer `k` selects a diagonal above the main one
 when positive and below when negative.
 
+`sc.einsum(spec, *operands)` contracts labelled axes, as in NumPy. For example,
+`"bij,bjk->bik"` multiplies batches of matrices. A label repeated within one
+operand selects a diagonal, and `...` represents broadcast leading axes.
+
+```python
+@sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("row_totals"))
+def row_totals(x: sc.Expr) -> sc.Expr:
+    return sc.einsum("ij->i", x)
+
+print(row_totals(np.arange(6.0).reshape(2, 3)))  # [ 3. 12.]
+```
+
+Operands contract from left to right without reordering, so their order decides
+the size of the intermediate arrays.
+
 `sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
 `indices`. `sc.scatter(values, indices, shape)` places values into a zero array.
 Repeated indices sum in input order. `sc.segment_sum(values, ids, n)` uses the

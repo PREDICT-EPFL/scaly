@@ -96,6 +96,11 @@ expression graph for inspection and export.
 
 ## Builders
 
+::: scaly.ir.einsum.einsum
+    options:
+      show_source: false
+
+
 ::: scaly.ir.expr.diag
     options:
       show_source: false
