@@ -140,13 +140,18 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     count = int(np.prod([value.shape[axis] for axis in axes], dtype=np.int64))
     uniform = _uniform_value(value)
     if uniform is not None and value.size > 1024:
-      result = np.multiply(np.sum(value.flat[:1]), count) if kind == "add" else uniform if count else {"max": -np.inf, "min": np.inf}[kind]
+      result = (
+        np.multiply(np.sum(value.flat[:1], dtype=e.type.dtype.numpy()), count, dtype=e.type.dtype.numpy())
+        if kind == "add"
+        else uniform
+        if count
+        else {"max": -np.inf, "min": np.inf}[kind]
+      )
       out = np.broadcast_to(np.asarray(result, dtype=e.type.dtype.numpy()), e.shape)
     elif kind == "add":
       out = np.sum(value, axis=axes, dtype=e.type.dtype.numpy())
     else:
       out = (np.max if kind == "max" else np.min)(value, axis=axes, initial=-np.inf if kind == "max" else np.inf)
-
   elif e.op == ExprOp.MATMUL:
     out = args[0] @ args[1]
   elif e.op in ELEMENTWISE:

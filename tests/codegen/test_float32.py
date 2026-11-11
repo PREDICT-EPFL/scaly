@@ -13,11 +13,11 @@ import scaly as sc
 from scaly.ad.rules import ELEMENTWISE
 from scaly.codegen.c import _emit_scalar, _includes, _render_raw_callee
 from scaly.ir import program as p
-from scaly.ir.expr import OP_INFO
+from scaly.ir.expr import OP_INFO, _reduce
 from scaly.ir.program import ProgramNode, ProgramOp, walk_program
 from scaly.ir.program_spec import verify_program
 from scaly.ir.spec import VerifyError
-from scaly.ir.types import TensorType, dtypes
+from scaly.ir.types import CanonicalPattern, TensorType, dtypes
 from scaly.passes.arith import constant, fold_program
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program.coalesce_stores import coalesce_stores
@@ -501,3 +501,63 @@ def test_float32_special_libm_results_stay_float32(mode):
     expected = [_reference(op, F32_X, F32_Y) for op in ops] + [F32_X**F32_Y, np.floor(F32_X) * np.float32(0.1) + np.sqrt(np.abs(F32_X))]
   for got, ref in zip(np.asarray(fn(F32_X.astype(float), F32_Y.astype(float))), expected, strict=True):
     _assert_float32_special(got, ref)
+
+
+@pytest.mark.parametrize("dtype,kind", [("float32", k) for k in ("add", "mean", "max", "min")] + [("int32", "add"), ("int64", "add")])
+@pytest.mark.parametrize("mode", ["block", "scalar", "folded"])
+@pytest.mark.parametrize("form", ["dense", "supported", "sparse"])
+def test_axis_reductions_keep_the_value_dtype(dtype, kind, mode, form):
+  axes = (0, 1, (0, 1), ())
+  mask = np.array([[1, 1, 1], [1, 0, 0], [0, 0, 0], [0, 1, 1]], dtype=dtype)
+  slots = np.flatnonzero(mask)
+  rows, cols = np.nonzero(mask)
+  pattern = CanonicalPattern(mask.shape, tuple(map(int, rows)), tuple(map(int, cols)))
+  if dtype == "float32":
+    data = np.random.default_rng(55).uniform(0.2, 1.0, mask.shape).astype(dtype)
+  else:
+    big = 2 ** (53 if dtype == "int64" else 24) + 1
+    data = np.tile(np.array([big, -big + 1, 1], dtype=dtype), (4, 1))
+  source = data if form == "dense" else data * mask
+  if kind in {"add", "mean"}:
+    expected = [(np.sum if kind == "add" else np.mean)(source, axis=axis, keepdims=True, dtype=dtype) for axis in axes]
+  else:
+    expected = [(np.max if kind == "max" else np.min)(source, axis=axis, keepdims=True) for axis in axes]
+
+  @sc.function(sc.arg("x", mask.shape), outputs=sc.group(*(sc.arg(f"out{i}") for i in range(len(axes)))))
+  def fn(x):
+    value = sc.const(data) if mode == "folded" else sc.const(data) + sc.cast(x, dtype)
+    if form == "supported":
+      value = value * sc.const(mask)
+    elif form == "sparse":
+      value = sc.pack(sc.gather(value, slots), pattern)
+    result = []
+    for axis, ref in zip(axes, expected, strict=True):
+      if kind in {"add", "mean"}:
+        reduced = (value.sum if kind == "add" else value.mean)(axis, keepdims=True)
+      else:
+        reduced = _reduce(value, kind, axis)
+        reduced = reduced.reshape(tuple(1 if i in reduced.attrs["axes"] else n for i, n in enumerate(value.shape)))
+      reduced = reduced.to_dense()
+      if dtype != "float32":
+        reduced = sc.equal(reduced, sc.const(ref))
+      result.append(sc.cast(reduced, "float64").with_lowering("scalar" if mode == "scalar" else "block"))
+    return tuple(result)
+
+  for actual, ref in zip(fn(np.zeros(mask.shape)), expected, strict=True):
+    if dtype == "float32":
+      np.testing.assert_array_max_ulp(np.asarray(actual, dtype=dtype), ref, maxulp=4)
+    else:
+      np.testing.assert_array_equal(actual, np.ones_like(ref))
+
+
+@pytest.mark.parametrize("dtype", ["float32", "int32", "int64"])
+@pytest.mark.parametrize("mode", ["block", "scalar", "folded"])
+def test_empty_axis_sums_keep_typed_zero(dtype, mode):
+  @sc.function(sc.arg("x", (3, 0)), outputs=sc.group(sc.arg("rows"), sc.arg("total")))
+  def fn(x):
+    value = sc.const(np.empty((3, 0), dtype=dtype)) if mode == "folded" else sc.cast(x, dtype)
+    return tuple(sc.cast(value.sum(axis), "float64").with_lowering("scalar" if mode == "scalar" else "block") for axis in (1, None))
+
+  rows, total = fn(np.empty((3, 0)))
+  np.testing.assert_array_equal(rows, np.zeros(3))
+  assert total == 0
