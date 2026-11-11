@@ -242,7 +242,8 @@ print(choose(A_value, np.array(1.0)).data)   # [ 4. -1. -1.  4. -1. -1.  4.]
 print(choose(A_value, np.array(-1.0)).data)  # [ 8. -2. -2.  8. -2. -2.  8.]
 ```
 
-As with dense values, the branch not chosen does not contribute to derivatives.
+As with [dense values](functions.md#symbolic-values-are-not-python-conditions),
+the branch not chosen does not contribute to derivatives.
 
 ## Structural zeros
 
