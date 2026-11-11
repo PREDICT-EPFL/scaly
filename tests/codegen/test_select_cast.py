@@ -136,6 +136,28 @@ CAST_CASES = np.array([-(2.0**62), -2.5, -1.5, -0.5, -0.0, 0.5, 1.9, 2.0**53, 2.
 
 
 @pytest.mark.parametrize("variant", ["block", "scalar"])
+def test_uint8_casts_are_rejected_before_lowering(variant: str) -> None:
+  for x in (getattr(sc.const([0, 255]), variant)(), getattr(sc.sym("bytes", 2), variant)()):
+    with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
+      sc.cast(x, "uint8")
+    with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
+      x.cast(sc.dtypes.uint8)
+
+
+@pytest.mark.parametrize("dtype", ["int32", "int64"])
+@pytest.mark.parametrize("variant", ["block", "scalar"])
+def test_supported_integer_arithmetic_at_byte_boundaries_matches_numpy(dtype: str, variant: str) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name=f"sc_byte_boundaries_{dtype}_{variant}")
+  def arithmetic(x: sc.Expr) -> sc.Expr:
+    a = sc.cast(x, dtype)
+    return getattr(sc.stack([sc.cast(a + a, "float64"), sc.cast(a + 1 > a, "float64")]), variant)()
+
+  values = np.array([0.0, 255.0])
+  a = values.astype(dtype)
+  np.testing.assert_array_equal(arithmetic(values), np.stack([a + a, a + 1 > a]).astype(np.float64))
+
+
+@pytest.mark.parametrize("variant", ["block", "scalar"])
 def test_int_casts_truncate_toward_zero_and_int64_arithmetic_stays_exact(variant: str) -> None:
   @sc.function(sc.arg("z", CAST_CASES.size), outputs=sc.group(*(sc.arg(f"o{k}") for k in range(8))), name=f"sc_int_casts_{variant}")
   def casts(x: sc.Expr) -> tuple[sc.Expr, ...]:

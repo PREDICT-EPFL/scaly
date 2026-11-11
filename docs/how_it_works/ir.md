@@ -55,6 +55,9 @@ round the quotient down, as NumPy does, so `-7 // 2` is `-4` and `-7 % 2` is
 `1`. A zero divisor gives `0` for both, as in NumPy. `/` takes floating
 operands only. Arithmetic on `bool` raises and asks for a cast.
 
+`uint8` is not supported for expressions. A cast, symbol, constant or
+`TensorType` with that dtype raises `ValueError` when the graph is built.
+
 A Python number or list beside an expression takes that expression's data type.
 An `int` may join an integer or floating expression, but it raises
 `OverflowError` outside an integer type's range, and a `float` beside an integer

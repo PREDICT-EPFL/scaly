@@ -84,6 +84,27 @@ def test_unsigned_constants_fold_within_their_own_range() -> None:
   assert evaluate(ProgramOp.ADD, [100, 27], dtypes.int64) == 127
 
 
+@pytest.mark.parametrize("dtype", ["uint8", dtypes.uint8], ids=["name", "descriptor"])
+def test_uint8_is_not_an_expression_dtype(dtype: sc.DType | str) -> None:
+  for make in (
+    lambda: sc.TensorType((2,), dtype=sc.as_dtype(dtype)),
+    lambda: sc.sym("bytes", 2, dtype=dtype, diff=False),
+    lambda: sc.const([0, 255], dtype=dtype),
+  ):
+    with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
+      make()
+
+
+@pytest.mark.parametrize("value", [0, 255])
+def test_numpy_uint8_constants_are_rejected(value: int) -> None:
+  for data in (np.uint8(value), np.array([value], dtype=np.uint8)):
+    with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
+      sc.const(data)
+    converted = sc.const(data, dtype="float64")
+    assert converted.type.dtype == dtypes.float64
+    np.testing.assert_array_equal(converted.value, np.asarray(data, dtype=np.float64))
+
+
 def test_dtype_propagation_through_unary_and_binary() -> None:
   x = sc.sym("x", 3, dtype=dtypes.float32)
   y = x.sin() + x
@@ -144,7 +165,7 @@ def test_python_scalars_take_the_dtype_of_the_expression_beside_them() -> None:
   with pytest.raises(OverflowError):
     _ = sc.sym("i32", dtype=dtypes.int32, diff=False) + 2**40
   with pytest.raises(OverflowError):
-    _ = sc.sym("u8", dtype=dtypes.uint8, diff=False) + -1
+    _ = sc.sym("i32", dtype=dtypes.int32, diff=False) + (-(2**31) - 1)
 
 
 def test_numpy_values_are_strong_and_must_match() -> None:

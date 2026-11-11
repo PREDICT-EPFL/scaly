@@ -334,6 +334,10 @@ print(row_totals(np.arange(6.0).reshape(2, 3)))  # [ 3. 12.]
 Operands contract from left to right without reordering, so their order decides
 the size of the intermediate arrays.
 
+`uint8` arrays and scalars cannot become expressions, and `sc.cast(x, "uint8")`
+raises `ValueError`. Convert byte data to a supported type explicitly, for
+example with `sc.const(data, dtype="int32")`.
+
 `sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
 `indices`. `sc.scatter(values, indices, shape)` places values into a zero array.
 Repeated indices sum in input order. `sc.segment_sum(values, ids, n)` uses the

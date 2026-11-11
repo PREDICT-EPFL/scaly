@@ -1229,6 +1229,7 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
 def cast(x: Any, dtype: DType | str) -> Expr:
   """Convert ``x`` elementwise to ``dtype``, as NumPy's ``astype`` does.
 
+  ``uint8`` is not supported for expressions and raises ``ValueError``.
   A float becomes an integer by dropping its fraction, and a float outside the integer's range,
   NaN included, has no defined result. A cast to ``bool`` is ``x != 0``, so NaN is true. A cast
   keeps its derivative only from one float dtype to another.

@@ -11,9 +11,9 @@ operations intact. Signed overflow, invalid float-to-integer casts and float32 l
 to other issues.
 
 - [x] Read the task, roadmap, run plan, rules, public API and packed-mask implementation.
-- [ ] Add failing public-path regressions, including 0 and 255 with scalar and block hints.
-- [ ] Reject uint8 expression types, update the documented limit and verify internal masks.
-- [ ] Update collection baseline and prove regressions fail without the guard.
+- [x] Add failing public-path regressions, including 0 and 255 with scalar and block hints.
+- [x] Reject uint8 expression types, update the documented limit and verify internal masks.
+- [x] Update collection baseline and prove regressions fail without the guard.
 - [ ] Run the full pre-merge hook detached through the shared suite runner.
 - [ ] Open a draft PR on main after checks, link it, and get Opus cross-review and the required
       additional correctness review for IR changes. Fix findings and check only those fixes.

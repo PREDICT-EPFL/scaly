@@ -318,6 +318,8 @@ class TensorType:
     _check_shape("tensor", self.shape)
     if not isinstance(self.dtype, DType):
       object.__setattr__(self, "dtype", as_dtype(self.dtype))
+    if self.dtype.name == "uint8":
+      raise ValueError("unsupported expression dtype uint8; use bool, int32, int64, float32 or float64")
     if self.pattern is not None:
       if not isinstance(self.pattern, CanonicalPattern):
         raise TypeError("tensor pattern must be canonical; use SparsityPattern.canonicalize()")
