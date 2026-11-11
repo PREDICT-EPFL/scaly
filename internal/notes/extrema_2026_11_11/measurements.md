@@ -35,3 +35,8 @@ boundary until #56. Tests inspect their int64 dtype and nondifferentiability,
 then cast them to float64 to compare compiled results with NumPy. Integer minimum
 accumulators use an exact int64 identity so these builders never round indices
 through a floating reduction.
+
+The composed-extrema tie test and the transposed-view norm test adapt the split
+convention cases in frozen `origin/devrush`, `tests/core/ad/test_derivatives.py`
+and `tests/core/ad/test_reduction_derivative_edge_cases.py`. Configurable tie
+conventions and segment extrema from those tests are outside this task.

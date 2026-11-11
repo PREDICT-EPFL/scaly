@@ -193,13 +193,11 @@ def test_zero_preserving_unary_retains_pattern(op: ExprOp) -> None:
     ExprOp.DIV,
     ExprOp.POW,
     ExprOp.ATAN2,
-    ExprOp.MINIMUM,
-    ExprOp.MAXIMUM,
   ],
 )
 def test_missing_pattern_rules_refuse_construction_and_forged_nodes(op: ExprOp) -> None:
   x = _input("unsupported_pattern", np.eye(3, dtype=bool))
-  args = (x, x) if op in {ExprOp.DIV, ExprOp.POW, ExprOp.ATAN2, ExprOp.MINIMUM, ExprOp.MAXIMUM} else (x,)
+  args = (x, x) if op in {ExprOp.DIV, ExprOp.POW, ExprOp.ATAN2} else (x,)
   with pytest.raises(ValueError, match="to_dense"):
     Expr(op, args, x.type)
   bad = _forge(x, op=op, args=args)

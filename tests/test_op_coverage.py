@@ -22,6 +22,7 @@ EXISTING_ELEMENTWISE_REFERENCES = {
   ("passes/expr.py", "SIMPLIFY_PATTERNS"): "ADD SUB MUL MUL DIV NEG POW",
   # The masked cotangent a select sends, and the one op whose dtype is its own target.
   ("ad/rules.py", "_mask_of"): "SELECT",
+  ("ad/rules.py", "_extremum_partial"): "MAXIMUM",
   ("ir/expr_spec.py", "_elementwise_shape_dtype"): "CAST",
 }
 

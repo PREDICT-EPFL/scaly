@@ -629,6 +629,8 @@ tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[mul-uneq
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[neg-empty]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[neg-scalar]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[neg-tensor]
+tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[norm-1]
+tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[norm-inf]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[pack]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[pow-broadcast-axes]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[pow-empty]
@@ -1616,6 +1618,12 @@ tests/ad/test_differential.py::test_many_seed_differences_and_duality[neg-scalar
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[neg-tensor-0]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[neg-tensor-1]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[neg-tensor-3]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[norm-1-0]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[norm-1-1]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[norm-1-3]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[norm-inf-0]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[norm-inf-1]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[norm-inf-3]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[pack-0]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[pack-1]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[pack-3]
@@ -2150,6 +2158,8 @@ tests/ad/test_differential.py::test_single_seed_differences_and_duality[mul-uneq
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[neg-empty]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[neg-scalar]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[neg-tensor]
+tests/ad/test_differential.py::test_single_seed_differences_and_duality[norm-1]
+tests/ad/test_differential.py::test_single_seed_differences_and_duality[norm-inf]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[pack]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[pow-broadcast-axes]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[pow-empty]
@@ -2248,12 +2258,6 @@ tests/ad/test_expr.py::test_gather_adjoint_has_one_scatter[2000]
 tests/ad/test_expr.py::test_gather_adjoint_has_one_scatter[20]
 tests/ad/test_expr.py::test_gather_scatter_eval_and_ad
 tests/ad/test_expr.py::test_inactive_solver_derivatives_remain_zero
-tests/ad/test_expr.py::test_internal_extremum_derivatives_name_the_followup[forward-max]
-tests/ad/test_expr.py::test_internal_extremum_derivatives_name_the_followup[forward-min]
-tests/ad/test_expr.py::test_internal_extremum_derivatives_name_the_followup[many-max]
-tests/ad/test_expr.py::test_internal_extremum_derivatives_name_the_followup[many-min]
-tests/ad/test_expr.py::test_internal_extremum_derivatives_name_the_followup[reverse-max]
-tests/ad/test_expr.py::test_internal_extremum_derivatives_name_the_followup[reverse-min]
 tests/ad/test_expr.py::test_repeated_gather_reverse_adjoint_matches_numpy
 tests/ad/test_expr.py::test_scatter_accumulates_in_index_order[ids0-False]
 tests/ad/test_expr.py::test_scatter_accumulates_in_index_order[ids0-True]
@@ -2312,12 +2316,14 @@ tests/ad/test_extrema.py::test_exact_partials[<lambda>1]
 tests/ad/test_extrema.py::test_exact_partials[<lambda>2]
 tests/ad/test_extrema.py::test_exact_partials[<lambda>3]
 tests/ad/test_extrema.py::test_exact_partials[<lambda>4]
+tests/ad/test_extrema.py::test_nonzero_ties_in_composed_extrema
 tests/ad/test_extrema.py::test_norms_nan_and_zero
 tests/ad/test_extrema.py::test_sparse_leading_axis_tangent_keeps_pattern
 tests/ad/test_extrema.py::test_sparse_public_builders_nan_axes_and_indices[block-max]
 tests/ad/test_extrema.py::test_sparse_public_builders_nan_axes_and_indices[block-min]
 tests/ad/test_extrema.py::test_sparse_public_builders_nan_axes_and_indices[scalar-max]
 tests/ad/test_extrema.py::test_sparse_public_builders_nan_axes_and_indices[scalar-min]
+tests/ad/test_extrema.py::test_tied_norm_inf_through_a_transposed_view
 tests/ad/test_extrema.py::test_ties_and_sparse_zeros[False-max]
 tests/ad/test_extrema.py::test_ties_and_sparse_zeros[False-min]
 tests/ad/test_extrema.py::test_ties_and_sparse_zeros[True-max]
@@ -2355,8 +2361,6 @@ tests/ad/test_forward.py::test_linear_tangent_never_depends_on_primal[3-times_co
 tests/ad/test_forward.py::test_matmul_graph_does_not_grow_with_seed_count[both]
 tests/ad/test_forward.py::test_matmul_graph_does_not_grow_with_seed_count[left]
 tests/ad/test_forward.py::test_matmul_graph_does_not_grow_with_seed_count[right]
-tests/ad/test_forward.py::test_missing_rule_names_the_original_callee[False]
-tests/ad/test_forward.py::test_missing_rule_names_the_original_callee[True]
 tests/ad/test_forward.py::test_nonfloating_values_have_no_tangent[dtype0]
 tests/ad/test_forward.py::test_nonfloating_values_have_no_tangent[dtype1]
 tests/ad/test_forward.py::test_nonfloating_values_have_no_tangent[dtype2]
@@ -2365,6 +2369,8 @@ tests/ad/test_forward.py::test_primal_alignment_shares_one_cosine_without_seed_c
 tests/ad/test_forward.py::test_print_differentiates_only_its_returned_value
 tests/ad/test_forward.py::test_runtime_callee_seeds_use_one_body_traversal
 tests/ad/test_forward.py::test_seed_axis_is_one_matmul
+tests/ad/test_forward.py::test_zero_floor_derivative_through_calls[False]
+tests/ad/test_forward.py::test_zero_floor_derivative_through_calls[True]
 tests/ad/test_forward.py::test_zero_tangents_and_empty_seed_axis_keep_dtype[dtype0]
 tests/ad/test_forward.py::test_zero_tangents_and_empty_seed_axis_keep_dtype[dtype1]
 tests/ad/test_helpers.py::test_helper_names_are_stable_across_fresh_builds
@@ -4412,8 +4418,6 @@ tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[div]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[exp]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[log]
-tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[maximum]
-tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[minimum]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[pow]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[print]
 tests/ir/test_sparse_patterns.py::test_missing_pattern_rules_refuse_construction_and_forged_nodes[solver_call]

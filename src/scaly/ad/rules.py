@@ -56,6 +56,11 @@ class Elementwise:
   expensive: bool = False
 
 
+def zero_partial(e: Expr) -> int:
+  """A structurally zero partial, shared by the derivative and sparsity traversals."""
+  return 0
+
+
 def _const(value: float, like: Expr) -> Expr:
   return Expr.const(value, dtype=like.type.dtype)
 
@@ -151,8 +156,8 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     (lambda e: Mask(not_equal(e.args[0], 0), where(e.args[0] > 0, _const(1, e), where(e.args[0] < 0, _const(-1, e), e.args[0]))),),
     c_integer="(({type})({0} < 0 ? 0 - (uint64_t)({0}) : (uint64_t)({0})))",
   ),
-  ExprOp.FLOOR: Elementwise(ProgramOp.FLOOR, np.floor, "floor", (lambda e: 0,)),
-  ExprOp.CEIL: Elementwise(ProgramOp.CEIL, np.ceil, "ceil", (lambda e: 0,)),
+  ExprOp.FLOOR: Elementwise(ProgramOp.FLOOR, np.floor, "floor", (zero_partial,)),
+  ExprOp.CEIL: Elementwise(ProgramOp.CEIL, np.ceil, "ceil", (zero_partial,)),
   ExprOp.ADD: Elementwise(ProgramOp.ADD, np.add, "+", (lambda e: 1, lambda e: 1)),
   ExprOp.SUB: Elementwise(ProgramOp.SUB, np.subtract, "-", (lambda e: 1, lambda e: -1)),
   ExprOp.MUL: Elementwise(ProgramOp.MUL, np.multiply, "*", (lambda e: e.args[1], lambda e: e.args[0]), _mul_jvp),

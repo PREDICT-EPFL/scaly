@@ -240,22 +240,6 @@ def test_unbroadcast_uses_axis_reduction_without_scatter(shape: tuple[int, ...],
   np.testing.assert_array_equal(f(values), expected.reshape(shape))
 
 
-@pytest.mark.parametrize("kind", ["max", "min"])
-@pytest.mark.parametrize("mode", ["forward", "many", "reverse"])
-def test_internal_extremum_derivatives_name_the_followup(kind, mode) -> None:
-  from scaly.ir.expr import _reduce
-
-  x = sc.sym("extremum_active", (2, 3))
-  y = _reduce(x, kind, 1)
-  with pytest.raises(NotImplementedError, match=f"{kind}.*#65"):
-    if mode == "forward":
-      sc.jvp(y, x, sc.const(np.ones(x.shape)))
-    elif mode == "many":
-      sc.jvp_many(y, x, sc.const(np.ones((2, *x.shape))))
-    else:
-      sc.vjp((y,), (x,), (sc.const(np.ones(y.shape)),))
-
-
 def test_constant_scatter_accumulates() -> None:
   @sc.function(sc.arg("x", 1), outputs=sc.arg("y"))
   def f(x):

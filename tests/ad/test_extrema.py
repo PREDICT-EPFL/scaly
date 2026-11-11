@@ -187,3 +187,26 @@ def test_zero_partial_masks_an_infinite_inner_partial(name):
   t, g = map(np.asarray, f(np.array([0.0, 4.0])))
   np.testing.assert_equal(t, 0.25 if name == "abs" else 0)
   np.testing.assert_equal(g, [0, 0.25] if name == "abs" else [0, 0])
+
+
+def test_nonzero_ties_in_composed_extrema():
+  @sc.function(sc.arg("x", 5), outputs=sc.group(sc.arg("t"), sc.arg("g"), sc.arg("h")))
+  def f(x):
+    y = sc.maximum(x, 1).sum() + sc.reduce_max(x) + sc.reduce_min(x)
+    return sc.jvp_many(y, x, sc.const(np.eye(5))), sc.gradient(y, x), sc.hessian(y, x)
+
+  t, g, h = map(np.asarray, f(np.array([1.0, 3.0, 3.0, -2.0, -2.0])))
+  np.testing.assert_equal(t, [0.5, 1.5, 1.5, 0.5, 0.5])
+  np.testing.assert_equal(g, t)
+  np.testing.assert_equal(h, np.zeros((5, 5)))
+
+
+def test_tied_norm_inf_through_a_transposed_view():
+  @sc.function(sc.arg("x", (2, 3)), outputs=sc.group(sc.arg("g"), sc.arg("h")))
+  def f(x):
+    y = sc.norm_inf(x.T[:, ::-1])
+    return sc.gradient(y, x), sc.hessian(y, x)
+
+  g, h = map(np.asarray, f(np.array([[-3.0, 1.0, 3.0], [2.0, -3.0, 0.0]])))
+  np.testing.assert_allclose(g, [[-1 / 3, 0, 1 / 3], [0, -1 / 3, 0]])
+  np.testing.assert_equal(h, np.zeros((6, 6)))

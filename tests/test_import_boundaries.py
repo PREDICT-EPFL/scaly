@@ -76,6 +76,7 @@ def test_public_exports_are_canonical() -> None:
     "solver",
   } <= set(sc.__all__)
   assert not hasattr(sc, "nlp")
+  assert {"reduce_max", "reduce_min", "argmax", "argmin", "norm_inf", "norm_1"} <= set(sc.__all__)
   assert not hasattr(sc, "qp")
   assert not hasattr(sc, "SolverFunction")
   assert not hasattr(sc, "Tree")

@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, top
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import stored_indices
 from .calls import _call_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent, _unbroadcast, reduction_partial, times_partial
+from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent, _unbroadcast, reduction_partial, times_partial, zero_partial
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -45,7 +45,13 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
-    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST, ExprOp.STOP_GRADIENT, ExprOp.FLOOR, ExprOp.CEIL} or not needed(expr):
+    if (
+      cot is None
+      or expr.op in {ExprOp.INPUT, ExprOp.CONST, ExprOp.STOP_GRADIENT}
+      or expr.op in ELEMENTWISE
+      and ELEMENTWISE[expr.op].partials == (zero_partial,)
+      or not needed(expr)
+    ):
       continue
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):

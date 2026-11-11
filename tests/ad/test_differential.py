@@ -191,6 +191,8 @@ def _cases() -> list[Case]:
                 lambda x, axes=axes, keepdims=keepdims, reference=reference: reference(x, axis=axes, keepdims=keepdims),
               )
             )
+  for name, build, reference in [("norm-inf", sc.norm_inf, lambda x: np.max(np.abs(x))), ("norm-1", sc.norm_1, lambda x: np.sum(np.abs(x)))]:
+    cases.append(Case(name, ExprOp.REDUCE, (np.array([-0.2, 0.5, -0.9]),), build, reference))
   for axis in (0, 1):
     for kind, build, reference in [("max", sc.reduce_max, np.max), ("min", sc.reduce_min, np.min)]:
       cases.append(
