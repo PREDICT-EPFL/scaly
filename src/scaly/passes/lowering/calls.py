@@ -10,7 +10,7 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
 from ...ir.support import Support, _mapped_support_groups
-from ..program.scalarize import expand_static_loop
+from ..program.scalarize import _DataDependentAddress, expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc, _normalize_function
 from .in_place import carry_reuse
 
@@ -336,6 +336,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
       ProgramOp.CALL,
       (*ins, *results),
       attrs={"callee": symbol, "n_in": len(ins), "n_out": len(results), "inout": tuple(sorted(reuse)), "returns": ()},
+      dtype=dtypes.float64,
     )
   )
   for y, buf in scratch:
@@ -375,7 +376,12 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     cost = _loop_cost(p.proc("loop_step", (), body), procs)
     if cost is not None and ("scalar" in hints or length * cost <= STATIC_LOOP_BUDGET):
       results = [(ctx.raw_buf_of(sibling), sibling.type.storage_size) for sibling in used.values()]
-      ctx.statements[before_loop:] = expand_static_loop(existing_buffers, ctx.statements[before_loop:], results, procs, ctx.names)
+      try:
+        expanded = expand_static_loop(existing_buffers, ctx.statements[before_loop:], results, procs, ctx.names)
+      except _DataDependentAddress:
+        pass
+      else:
+        ctx.statements[before_loop:] = expanded
 
   for sibling in siblings:
     if sibling.id not in ctx.value_buffers:

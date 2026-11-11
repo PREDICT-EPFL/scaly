@@ -5,8 +5,8 @@
   "updated_entries_per_step": 4,
   "steps": 100,
   "baseline": {
-    "source_bytes": 5103,
-    "compile_seconds": 0.032019276986829937,
+    "source_bytes": 5123,
+    "compile_seconds": 0.22366538795176893,
     "step_operations": {
       "store": 100004,
       "load": 100012,
@@ -33,8 +33,8 @@
     "carry_buffer_bytes": 1600000
   },
   "reused": {
-    "source_bytes": 4127,
-    "compile_seconds": 0.030974100984167308,
+    "source_bytes": 4147,
+    "compile_seconds": 0.2738786989939399,
     "step_operations": {
       "load": 8,
       "store": 4,

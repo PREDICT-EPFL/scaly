@@ -188,7 +188,7 @@ def scatter_reuse(ctx, node: Expr) -> bool:
     return False
   if "support" in buf.attrs:
     # Support describes the old value, not every value the reused storage will hold.
-    replacement = ProgramNode(buf.op, buf.args, {key: value for key, value in buf.attrs.items() if key != "support"}, buf.dtype)
+    replacement = ProgramNode(buf.op, buf.args, {key: value for key, value in buf.attrs.items() if key != "support"}, dtype=buf.dtype)
     ctx.buffers[buf.attrs["name"]] = replacement
     ctx.statements[ctx.statements.index(buf)] = replacement
   ctx.value_buffers[node.id] = ctx.value_buffers[base.id]

@@ -13,7 +13,7 @@ def _loop(body, size, length=3, **kwargs):
   @sc.function(sc.arg("initial", size))
   def run(initial):
     result, _ = sc.scan(body, initial, length=length, in_place=(0,), **kwargs)
-    return result
+    return result.with_lowering("block")
 
   return run
 
@@ -47,7 +47,7 @@ def test_same_runtime_index():
   @sc.function(sc.arg("initial", 8), sc.arg("pivot", ()))
   def run(initial, pivot):
     result, _ = sc.scan(step, initial, (sc.broadcast(pivot.cast(sc.dtypes.int64)),), length=3, in_place=(0,))
-    return result
+    return result.with_lowering("block")
 
   expected = np.arange(8.0) + 0.5
   expected[4] = 7
@@ -84,7 +84,7 @@ def test_floor_reads_old_entries():
   @sc.function(sc.arg("initial", 3))
   def functional(initial):
     result, _ = sc.scan(step, initial, length=1)
-    return result
+    return result.with_lowering("block")
 
   np.testing.assert_array_equal(functional(np.array([1.5, 2.5, 3.5])), [1.5, 2.5, 3.5])
 
@@ -119,7 +119,7 @@ def test_unknown_runtime_index_refuses_disjointness():
   @sc.function(sc.arg("initial", 8), sc.arg("pivot", ()))
   def run(initial, pivot):
     result, _ = sc.scan(step, initial, (sc.broadcast(pivot.cast(sc.dtypes.int64)),), length=3, in_place=("carry",))
-    return result
+    return result.with_lowering("block")
 
   with pytest.raises(NotImplementedError, match="carry"):
     lower_function(run)
@@ -218,9 +218,9 @@ def test_inout_parameter_and_call_contract():
 
   carry = p.buffer("carry", sc.dtypes.float64, (4,), intent="inout")
   proc = p.proc("update", [carry], [p.store(p.view(carry, [p.const_int(0)]), p.const_float(2))])
-  proc = ProgramNode(proc.op, proc.args, {**proc.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "scalar"}, proc.dtype)
+  proc = ProgramNode(proc.op, proc.args, {**proc.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "scalar"}, dtype=proc.dtype)
   actual = p.buffer("actual", sc.dtypes.float64, (4,))
-  call = ProgramNode(ProgramOp.CALL, (actual,), {"callee": "update", "n_in": 1, "n_out": 0, "inout": (0,), "returns": ()})
+  call = ProgramNode(ProgramOp.CALL, (actual,), {"callee": "update", "n_in": 1, "n_out": 0, "inout": (0,), "returns": ()}, dtype=sc.dtypes.float64)
   caller = p.proc("caller", [actual], [call])
   program = p.program([proc, caller])
   verify_program(program)
@@ -229,7 +229,7 @@ def test_inout_parameter_and_call_contract():
   assert scalarize_program(program).args[0] is proc
   with pytest.raises(NotImplementedError, match="inout"):
     _scalarize_proc(proc, {"update": proc})
-  wrong = ProgramNode(call.op, call.args, {**call.attrs, "inout": ()})
+  wrong = ProgramNode(call.op, call.args, {**call.attrs, "inout": ()}, dtype=call.dtype)
   with pytest.raises(VerifyError, match="inout"):
     verify_program(p.program([proc, p.proc("caller", [actual], [wrong])]))
 
@@ -264,7 +264,7 @@ def test_floor_regression_numpy_result():
   @sc.function(sc.arg("initial", 3))
   def run(initial):
     result, _ = sc.scan(step, initial, length=1)
-    return result
+    return result.with_lowering("block")
 
   initial = np.array([1.5, 2.5, 3.5])
   expected = initial.copy()
@@ -428,7 +428,7 @@ def test_inout_carry_is_not_hoisted():
 
   @sc.function(sc.arg("initial", 4), sc.arg("xs", (3, 2)))
   def run(initial, xs):
-    return sc.scan(accumulate, initial, (xs,), length=3, in_place=(0,))[0]
+    return sc.scan(accumulate, initial, (xs,), length=3, in_place=(0,))[0].with_lowering("block")
 
   initial, xs = np.arange(4.0), np.arange(6.0).reshape(3, 2)
   expected = initial.copy()
@@ -480,3 +480,52 @@ def test_trajectory_explains_strict_refusal():
   run = ConcreteFunction._from_exprs("strict_trajectory", [initial], [final, trajectory], ["initial"], ["final", "trajectory"])
   with pytest.raises(NotImplementedError, match="carry.*trajectory is used"):
     lower_function(run)
+
+
+@pytest.mark.parametrize("hint", ["auto", "scalar", "block"])
+def test_static_unroll_matches_rolled_in_place(hint):
+  @sc.function(sc.arg("carry", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, j):
+    return sc.scatter(carry, j, sc.gather(carry, j) + 2, combine="set")
+
+  @sc.function(sc.arg("initial", 4), name=f"carry_unroll_{hint}")
+  def run(initial):
+    final, _ = sc.scan(step, initial, length=4, index=True, in_place=("carry",))
+    return final.with_lowering(hint)
+
+  initial = np.arange(4.0)
+  np.testing.assert_array_equal(run(initial), initial + 2)
+  program = lower_function(run)
+  carried = any(node.op == ProgramOp.RANGE and node.attrs.get("carried") for node in walk_program(program))
+  assert carried == (hint == "block")
+  assert bool(_inout(run)) == (hint == "block")
+
+
+@pytest.mark.parametrize("hint", ["auto", "scalar", "block"])
+def test_unroll_hint_does_not_bypass_in_place_refusal(hint):
+  @sc.function(sc.arg("carry", 3))
+  def step(carry):
+    printed = sc.print("{}", carry)
+    first = sc.scatter(carry, [0], sc.gather(printed, [2]), combine="set")
+    return sc.scatter(first, [1], sc.gather(printed, [0]), combine="set")
+
+  @sc.function(sc.arg("initial", 3))
+  def run(initial):
+    final, _ = sc.scan(step, initial, length=2, in_place=("carry",))
+    return final.with_lowering(hint)
+
+  with pytest.raises(NotImplementedError, match="cannot prove in_place carry 'carry'"):
+    lower_function(run)
+
+
+def test_dynamic_index_keeps_an_in_place_loop_rolled():
+  @sc.function(sc.arg("carry", 4), sc.arg("pivot", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, pivot):
+    return sc.scatter(carry, pivot, sc.gather(carry, pivot) + 1, combine="set")
+
+  @sc.function(sc.arg("initial", 4), sc.arg("pivot", ()))
+  def run(initial, pivot):
+    return sc.scan(step, initial, (sc.broadcast(pivot.cast(sc.dtypes.int64)),), length=3, in_place=(0,))[0]
+
+  np.testing.assert_array_equal(run(np.arange(4.0), np.array(2.0)), [0, 1, 5, 3])
+  assert _inout(run)

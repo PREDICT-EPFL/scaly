@@ -1,6 +1,6 @@
 # In-place lowering, issue #36
 
-Base: the #31 branch merged with origin/t3code/35-index-operands. Design is the #36 paragraph of internal/notes/core_compiler_roadmap.md. The compiler run plan and ~/.scaly-suite/RULES.md govern validation and publication.
+Base: rebased task commits onto origin/t3code/35-index-operands, which includes current main and #35; the old prerequisite merge and #31/#35 commits were dropped. Design is the #36 paragraph of internal/notes/core_compiler_roadmap.md. The compiler run plan and ~/.scaly-suite/RULES.md govern validation and publication.
 
 - [x] Merge the two prerequisites and resolve the verifier import conflict.
 - [x] Add failing differential tests for last use, same index, disjoint indices, conservative refusal and floor reads.
@@ -8,7 +8,7 @@ Base: the #31 branch merged with origin/t3code/35-index-operands. Design is the 
 - [x] Measure the four-entry update of a 100k carry with counts, buffers, generated C and compile time.
 - [x] Run focused checks and the detached full suite through ~/.scaly-suite/run.
 - [x] Cross-review with Opus and sol, fix findings and run one delta check.
-- [ ] After #411 and #415 merge, rebase task commits onto origin/main, rerun the suite, open and link the PR. Queue only on instruction.
+- [ ] After #411 and #415 merge, rebase task commits onto origin/main, rerun the suite, open and link the PR. Queue now is authorized after the final main rebase and checks.
 
 Focused validation: 237 pass across lowering, program passes and import boundaries; loop and C snapshot checks pass. The floor-read mutation reproduces [2.5, 2.5, 3.5] exactly and is restored. Measurements and generated C are under internal/notes/compiler_run_2026_11_10/in_place/.
 
@@ -31,3 +31,5 @@ Opus reviewed the whole task after the quota reset and found a missing PRINT ali
 Validation after the Opus fixes passed every merge hook in suite-7.log (exit 0): 3945 passed, 56 skipped, benchmark smoke and documentation build passed. Mutation checks prove the fusion and hoisting tests fail when their respective behavior is removed. The Opus delta check is now the only remaining local review step.
 
 Opus approved its delta: both act-on findings are fixed, all 38 in-place tests pass, and nothing adjacent is broken. Both required reviewers and their delta checks are complete; all delegate threads are settled. The reviewed fixes and latest full checks are ready. Both #411 and #415 remain open, so wait for their merges before rebasing the task commits onto origin/main, dropping the prerequisite merge, rerunning the suite, and opening the PR. Queue only after the coordinator says queue now.
+
+Coordinator authorized an immediate rebase onto the queued #35 head and queueing the final PR. The rebase conflicted only in calls.py and gather.py; resolutions preserve #50 expansion setup, #355 EXTERN handling and #360 explicit program dtypes. Focused validation passed 207 checks including loop, in-place, import and C snapshot tests. Seven new cases cover auto/scalar/block expansion versus rolled results, strict refusals under every hint, and dynamic-pivot expansion falling back to the rolled in-place loop. The latter failed with _DataDependentAddress before its focused fix. Measurement operation counts/buffers are unchanged; both C files only gained the current frame-budget recipe comment. Next: full suite-8, Fable high delta check of the rebase, then check #415 and rebase the task commits from its queued head onto origin/main. Rerun the suite if main moved; open and queue the PR.

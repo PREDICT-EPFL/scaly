@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c alternating.c
  * clang -O3 -fno-math-errno -c alternating.c
@@ -40,6 +40,7 @@
 #define update_loop_SZ_RES 1
 #define update_loop_SZ_IW 0
 #define update_loop_SZ_W 200000
+#define update_loop_FRAME_BYTES 4096
 
 // The pointer ABI for update_loop.
 #ifdef __cplusplus
