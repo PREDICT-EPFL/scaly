@@ -7,7 +7,7 @@ import numpy as np
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
-from .ctx import LowerCtx, lowers, LoweringError, _flat
+from .ctx import LowerCtx, lowers, _flat
 from .schedule import emit_reduction
 from .plans import lower_sparse_product
 
