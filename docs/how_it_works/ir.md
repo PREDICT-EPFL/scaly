@@ -62,6 +62,10 @@ expression raises `TypeError`. NumPy arrays and scalars keep their own data
 type, so they must match the expression. `sc.const` follows the same rule: it
 keeps a NumPy value's data type and makes anything else `float64`.
 
+NumPy's unsigned byte dtype, `uint8`, is not supported for expressions.
+A cast, symbol, constant or `TensorType` requesting that dtype
+raises `ValueError` at construction.
+
 ```python
 n + 1                    # int64
 x * np.int64(2)          # TypeError: mixed dtypes float64 and int64

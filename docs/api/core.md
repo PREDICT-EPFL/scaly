@@ -81,7 +81,7 @@ expression graph for inspection and export.
       show_source: false
       filters:
         - "!^_"
-        - "!^float32$"
+        - "!^(float32|uint8)$"
 
 ::: scaly.ir.types.SparsityPattern
     options:

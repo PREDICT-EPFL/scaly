@@ -1243,6 +1243,8 @@ def cast(x: Any, dtype: DType | str) -> Expr:
   A float becomes an integer by dropping its fraction, and a float outside the integer's range,
   NaN included, has no defined result. A cast to ``bool`` is ``x != 0``, so NaN is true. A cast
   keeps its derivative only from one float dtype to another.
+
+  ``uint8`` is not supported for expressions and raises ``ValueError``.
   """
   x, dtype = _condition(x) if isinstance(x, bool) else as_expr(x), as_dtype(dtype)
   if dtype == x.type.dtype:

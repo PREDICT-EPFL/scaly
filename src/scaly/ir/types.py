@@ -81,7 +81,7 @@ class dtypes:
     try:
       return cls._BY_NAME[name]
     except KeyError as e:
-      raise ValueError(f"unknown dtype {name!r}; supported: {sorted(cls._BY_NAME)}") from e
+      raise ValueError(f"unknown dtype {name!r}; known names: {sorted(cls._BY_NAME)}") from e
 
   @classmethod
   def all(cls) -> tuple[DType, ...]:
@@ -323,6 +323,8 @@ class TensorType:
     _check_shape("tensor", self.shape)
     if not isinstance(self.dtype, DType):
       object.__setattr__(self, "dtype", as_dtype(self.dtype))
+    if self.dtype.name == "uint8" or self.dtype.is_unsigned and self.dtype.bits == 8:
+      raise ValueError("unsupported expression dtype uint8")
     if self.pattern is not None:
       if not isinstance(self.pattern, CanonicalPattern):
         raise TypeError("tensor pattern must be canonical; use SparsityPattern.canonicalize()")
