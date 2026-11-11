@@ -18,6 +18,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -69,7 +71,7 @@ def _wide() -> sc.Function:
     hyp = a.sinh() + b.cosh() + b.tanh() + a.erf()
     c = (a.exp() + b.sqrt().log()) * (trig + hyp) + (a.floor() + b.ceil())
     z = sc.const(WEIGHTS).T @ (c / (1.0 + y * y))
-    return (z, sc.scatter(z[:4], np.array([3, 1, 2, 0]), (4,)))
+    return (z, _scatter_zero(z[:4], np.array([3, 1, 2, 0]), (4,)))
 
   return wide
 

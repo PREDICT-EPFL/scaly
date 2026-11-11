@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.codegen.aot import render_c_source
-from scaly.ir.expr import gather, scatter
+from scaly.ir.expr import gather
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.types import dtypes
 from scaly.passes.affine import affine_index_map
@@ -56,7 +58,7 @@ def test_affine_index_map_recovers_the_ranges_and_round_trips(indices, dims, coe
   np.testing.assert_array_equal(amap.evaluate(len(indices)), indices)
 
 
-@pytest.mark.parametrize("build", [lambda x, idx: gather(x, idx), lambda x, idx: scatter(x[: len(idx)], idx, (256,))])
+@pytest.mark.parametrize("build", [lambda x, idx: gather(x, idx), lambda x, idx: _scatter_zero(x[: len(idx)], idx, (256,))])
 def test_affine_gather_and_scatter_emit_no_index_table(build) -> None:
   affine = 1 + 3 * np.arange(80, dtype=np.int64)
   perturbed = affine.copy()
@@ -75,11 +77,11 @@ def test_affine_gather_and_scatter_emit_no_index_table(build) -> None:
 def test_an_empty_index_lowers_and_declares_nothing() -> None:
   """An empty gather or scatter has no index to be affine in; its loop runs zero times."""
   empty = np.zeros(0, dtype=np.int64)
-  for name, build in (("gather", lambda x: gather(x, empty)), ("scatter", lambda x: scatter(x[:0], empty, (8,)))):
+  for name, build in (("gather", lambda x: gather(x, empty)), ("scatter", lambda x: _scatter_zero(x[:0], empty, (8,)))):
     fun = sc.function(sc.arg("x", 8), outputs=sc.arg("y"), name=f"affine_empty_{name}")(build)
     assert _const_int_buffers(lower_function(fun)) == []
   values = np.arange(8.0)
-  scattered = sc.function(sc.arg("x", 8), outputs=sc.arg("y"), name="affine_empty_scatter_values")(lambda x: scatter(x[:0], empty, (8,)))
+  scattered = sc.function(sc.arg("x", 8), outputs=sc.arg("y"), name="affine_empty_scatter_values")(lambda x: _scatter_zero(x[:0], empty, (8,)))
   np.testing.assert_array_equal(np.asarray(scattered(values)).reshape(-1), np.zeros(8))
 
 

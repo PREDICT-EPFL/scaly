@@ -1,5 +1,7 @@
 """Sparse iteration plans visit stored coordinates and preserve ordered reductions."""
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 from scipy import sparse
@@ -90,7 +92,7 @@ def test_sparse_movement_maps_match_numpy(operation, lowering):
       return sc.stack((x, -x))
     if operation == "gather":
       return sc.gather(x, indices)
-    return sc.scatter(x, scatter_indices, (3, 3))
+    return _scatter_zero(x, scatter_indices, (3, 3))
 
   fn = sc.function(sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout="csc"), name=f"sparse_{operation}_{lowering}")(
     lambda x: body(x).with_lowering(lowering)
@@ -225,7 +227,7 @@ def test_sparse_zero_movement_keeps_its_stored_type(operation):
     zero = x * 0
     return {
       "gather": lambda: sc.gather(zero, [[0, 1], [2, 3]]),
-      "scatter": lambda: sc.scatter(zero, [0, 1, 2, 3], (2, 2)),
+      "scatter": lambda: _scatter_zero(zero, [0, 1, 2, 3], (2, 2)),
       "stack": lambda: sc.stack((zero, zero)),
       "concat": lambda: sc.concat((zero, zero)),
     }[operation]().block()
@@ -321,7 +323,7 @@ def test_sparse_scatter_folds_output_layout_into_destination_table():
   indices = np.arange(20)
   indices[[0, 3, 5, 8, 14, 19]] = [8, 0, 12, 3, 19, 8]
   fn = sc.function(sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout="csr"), name="sparse_scatter_layout")(
-    lambda x: sc.scatter(x, indices, pattern.shape).block()
+    lambda x: _scatter_zero(x, indices, pattern.shape).block()
   )
   tables = [n for n in walk_program(_lowered(fn)) if n.op == ProgramOp.BUFFER and "values" in n.attrs]
   assert len(tables) == 1

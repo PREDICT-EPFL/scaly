@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -618,15 +620,14 @@ def test_slice_gradient_combines_pads(count: int) -> None:
 
 @pytest.mark.parametrize("shared", [False, True])
 def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None:
-  from scaly.ir.expr import scatter
 
   output_tree = sc.group(sc.arg("sum"), sc.arg("a")) if shared else sc.arg("sum")
 
   @sc.function(sc.arg("x", 3), outputs=output_tree, name="scatter_sum")
   def f(x):
-    a = scatter(x, [1, 3, 5], 8)
-    b = scatter(2 * x, [3, 5, 7], 8)
-    c = scatter(-x, [0, 3, 7], 8)
+    a = _scatter_zero(x, [1, 3, 5], 8)
+    b = _scatter_zero(2 * x, [3, 5, 7], 8)
+    c = _scatter_zero(-x, [0, 3, 7], 8)
     return (a + (b + c), a) if shared else a + (b + c)
 
   data = np.array([-1.5, 2.0, 0.25])
@@ -644,13 +645,12 @@ def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None
 
 @pytest.mark.parametrize("alias", [False, True])
 def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None:
-  from scaly.ir.expr import scatter
   from scaly.ir.program import ProgramNode, const_int
 
   @sc.function(sc.arg("x", 4), outputs=sc.arg("sum"), name="mutated_scatter")
   def f(x):
-    a = scatter(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)
-    b = scatter(x[2:] if alias else 2 * x, [1, 3] if alias else [1, 3, 5, 7], 8)
+    a = _scatter_zero(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)
+    b = _scatter_zero(x[2:] if alias else 2 * x, [1, 3] if alias else [1, 3, 5, 7], 8)
     return a + b
 
   stages = {}
@@ -669,8 +669,8 @@ def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None
 def test_scatter_sum_rejects_self_reading_sources(repeated: bool) -> None:
   @sc.function(sc.arg("x", 4), outputs=sc.arg("sum"))
   def f(x):
-    a = sc.scatter(x, [0, 2, 4, 6], 8)
-    b = sc.scatter(2 * x, [1, 1, 3, 5] if repeated else [1, 3, 5, 7], 8)
+    a = _scatter_zero(x, [0, 2, 4, 6], 8)
+    b = _scatter_zero(2 * x, [1, 1, 3, 5] if repeated else [1, 3, 5, 7], 8)
     return a + b
 
   stages = {}
@@ -696,11 +696,10 @@ def test_scatter_sum_rejects_self_reading_sources(repeated: bool) -> None:
 
 @pytest.mark.parametrize("left_associated", [False, True])
 def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
-  from scaly.ir.expr import scatter
 
   @sc.function(sc.arg("x", 3), outputs=sc.arg("sum"), name="grouped_scatter")
   def f(x):
-    a, b, c = (scatter(x[i : i + 1], [1], 4) for i in range(3))
+    a, b, c = (_scatter_zero(x[i : i + 1], [1], 4) for i in range(3))
     return (a + b) + c if left_associated else a + (b + c)
 
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 1 if left_associated else 0, 0, 0])
@@ -708,13 +707,12 @@ def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
 
 def test_scatter_sum_combines_reshaped_scatters() -> None:
   """The chain Hessian sums flat scatters through a reshape: same size, different declared shape."""
-  from scaly.ir.expr import scatter
 
   index_sets = [[0, 3, 6], [1, 4, 7], [2, 5, 6], [0, 1, 2]]
 
   @sc.function(sc.arg("x", 3), outputs=sc.arg("sum", (2, 4)), name="reshaped_scatter_sum")
   def f(x):
-    terms = [scatter((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
+    terms = [_scatter_zero((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
     return sum(terms[1:], start=terms[0])
 
   _, _, loops = _classify(_main_body(f))
@@ -735,9 +733,9 @@ def test_scatter_sum_combines_accumulate_loops(shared: bool) -> None:
 
   @sc.function(sc.arg("x", 5), outputs=output_tree)
   def f(x):
-    a = sc.scatter(x, [1, 3, 1, 1, 0], 8)
-    b = sc.scatter(2 * x, [2, 4, 2, 4, 6], 8)
-    c = sc.scatter(-x, [0, 3, 7, 5, 2], 8)
+    a = _scatter_zero(x, [1, 3, 1, 1, 0], 8)
+    b = _scatter_zero(2 * x, [2, 4, 2, 4, 6], 8)
+    c = _scatter_zero(-x, [0, 3, 7, 5, 2], 8)
     return (a + b + c, a) if shared else a + b + c
 
   stages = {}
@@ -770,7 +768,7 @@ def test_scatter_lowering_marks_repeats_as_reductions() -> None:
 
     @sc.function(sc.arg("x", 4), outputs=sc.arg("y"))
     def f(x):
-      return sc.scatter(x, ids, 8)
+      return _scatter_zero(x, ids, 8)
 
     stages = {}
     lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
@@ -1063,7 +1061,7 @@ def test_hoist_keeps_unknown_call_outputs_inside_the_map() -> None:
 def test_scatter_sum_preserves_repeated_leaf_grouping() -> None:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("sum"))
   def f(x):
-    return sc.scatter(x[:1], [1], 4) + sc.scatter(x[1:], [1, 1], 4)
+    return _scatter_zero(x[:1], [1], 4) + _scatter_zero(x[1:], [1, 1], 4)
 
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 0, 0, 0])
 

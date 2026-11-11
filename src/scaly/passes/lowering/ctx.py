@@ -311,8 +311,18 @@ class LowerCtx:
   # --- body -----------------------------------------------------------------
 
   def emit_body(self) -> None:
-    # What the outputs compute, which leaves out the canonical order an output's declared layout replaces.
+    needed = set()
     for node in topo(self._computed):
+      operands = node.args
+      if node.op in (ExprOp.GATHER, ExprOp.SCATTER) and node.args[1].value is not None:
+        operands = node.args[:1] if node.op == ExprOp.GATHER else (node.args[0], node.args[2])
+      if node.op == ExprOp.SCATTER and node.args[0].support == frozenset():
+        operands = tuple(arg for arg in operands if arg is not node.args[0])
+      needed.update(operands)
+    needed.update(self._computed)
+    for node in topo(self._computed):
+      if node.op == ExprOp.CONST and node not in needed:
+        continue
       if node.id in self.value_buffers:
         continue  # input (or already lowered)
       rule = _RULES.get(ExprOp(node.op))

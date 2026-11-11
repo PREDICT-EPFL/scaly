@@ -37,6 +37,10 @@ class _Pointer:
   support: Support = None
 
 
+class _DataDependentAddress(Exception):
+  pass
+
+
 class _Frame:
   def __init__(
     self,
@@ -60,7 +64,10 @@ class _Frame:
     if node.op == ProgramOp.BUFFER:
       return self.buffers[node.attrs["name"]]
     ptr = self.buffers[node.attrs["buffer"]]
-    offset = self.scalar(node.args[0], {}).attrs["value"]
+    index = self.scalar(node.args[0], {})
+    if index.op != ProgramOp.CONST_INT:
+      raise _DataDependentAddress
+    offset = index.attrs["value"]
     return _Pointer(ptr.values, ptr.offset + offset)
 
   def scalar(self, node: ProgramNode, memo: dict[ProgramNode, ProgramNode]) -> ProgramNode:
@@ -237,7 +244,11 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     if mode == "inline":
       expansion_work[name] = total_work
       continue
-    candidate = _scalarize_proc(proc, procs)
+    try:
+      candidate = _scalarize_proc(proc, procs)
+    except _DataDependentAddress:
+      expansion_work[name] = None
+      continue
     ops, growth = scalar_cost(candidate)
     if proc.attrs["lowering"] == "auto" and (ops > AUTO_SCALAR_OPS_PER_PROC or scalar_growth + growth > AUTO_SCALAR_GROWTH_PER_PROGRAM):
       expansion_work[name] = None

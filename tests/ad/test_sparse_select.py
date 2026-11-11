@@ -1,5 +1,7 @@
 """Sparse SELECT values, stored-coordinate derivatives and masked singular partials."""
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 from scipy import sparse
@@ -142,7 +144,7 @@ def test_sparse_select_mask_reaches_singular_partial_through_movement(movement):
       "slice": lambda: x[::-1, ::2],
       "vector": lambda: x[0],
       "gather": lambda: sc.gather(x, [[19, 0, 4], [10, 16, 9]]),
-      "scatter": lambda: sc.scatter(x, np.arange(20) % 9, (3, 3)),
+      "scatter": lambda: _scatter_zero(x, np.arange(20) % 9, (3, 3)),
       "stack": lambda: sc.stack((x, 2 * x)),
       "concat": lambda: sc.concat((x, 2 * x), axis=1),
       "sum": lambda: x.sum(),

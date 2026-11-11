@@ -1,5 +1,7 @@
 """Normal equations and finite-element restriction ported from devrush's sparse notebooks."""
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 from scipy import sparse
@@ -88,7 +90,7 @@ def test_fem_assembly_and_sparse_restriction_derivatives():
   @sc.function(sc.arg("k", len(triangles)), name="fem_sparse_restriction")
   def conductance(k):
     element_values = sc.gather(k, np.repeat(np.arange(len(triangles)), 9)) * sc.const(matrices.ravel())
-    assembled = sc.pack(sc.scatter(element_values, slots, (pk.nnz,)), pk)
+    assembled = sc.pack(_scatter_zero(element_values, slots, (pk.nnz,)), pk)
     restriction = sc.const(r)
     return restriction @ assembled @ restriction.T
 

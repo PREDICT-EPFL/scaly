@@ -17,6 +17,16 @@ from scaly.ir.program import ProgramOp
 _HAVE_CC = find_c_compiler() is not None
 
 
+def test_runtime_scatter_zero_base_emits_memset() -> None:
+  @sc.function(sc.arg("indices", 3), sc.arg("updates", 3), outputs=sc.arg("out"))
+  def indexed(indices, updates):
+    return sc.scatter(sc.const(np.zeros(8)), indices.cast(sc.dtypes.int64), updates, mode="fill")
+
+  source = render_c_source(indexed)
+  assert "memset(" in source
+  np.testing.assert_array_equal(indexed(np.array([1.0, 1.0, -1.0]), np.array([2.0, 3.0, 99.0])), [0, 5, 0, 0, 0, 0, 0, 0])
+
+
 def test_large_uniform_constants_lower_without_expanding_initializers() -> None:
   from scaly.ir.expr import _uniform
   from scaly.ir.program import walk_program
