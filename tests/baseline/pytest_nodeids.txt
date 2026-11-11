@@ -1187,6 +1187,7 @@ tests/ad/test_sparse_boundary.py::test_gathered_mapped_columns_accumulate_within
 tests/ad/test_sparse_boundary.py::test_mixed_sparse_matmul_derivatives_match_numpy[False]
 tests/ad/test_sparse_boundary.py::test_mixed_sparse_matmul_derivatives_match_numpy[True]
 tests/ad/test_sparse_boundary.py::test_pack_values_derivatives_match_numpy
+tests/ad/test_sparse_boundary.py::test_repeated_gather_count_does_not_imply_full_jacobian_coverage
 tests/ad/test_sparse_boundary.py::test_sparse_call_seed_and_adjoint_storage_match_numpy[False]
 tests/ad/test_sparse_boundary.py::test_sparse_call_seed_and_adjoint_storage_match_numpy[True]
 tests/ad/test_sparse_boundary.py::test_sparse_forward_broadcast_keeps_seed_axis_separate[shape0]

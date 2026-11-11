@@ -22,11 +22,20 @@ compiler maintenance context's Mapped derivative construction section.
       bytes and 70 arithmetic operations per stage before, 6,839 bytes and 9 after.
       Generated-C compilation with cc -O2 took 0.1295 s before and 0.0657 s after;
       these are single observations during concurrent compiler work.
-- [ ] Commit the final candidate and run the detached full pre-merge hook through
+- [x] Commit the initial candidate and run the detached full pre-merge hook through
       `~/.scaly-suite/run`, polling its exit file within this turn. Preserve snapshots.
+      The complete hook passed: 3,528 tests passed, 52 skipped; all other checks passed.
 - [ ] Open and link one draft PR after local checks pass. Obtain the cross-review
       verdict from Opus and the required independent correctness review. Fix findings
       together, check any fixes, and settle the completed delegate threads.
+      PR #390 is linked. Sol approved without findings. Opus requested a regression
+      for repeated gather contributions whose count equals nnz without full coverage,
+      and one unified column-mapping path. Both are applied; the regression fails
+      when the old coverage condition is restored. All 216 focused tests pass,
+      snapshots and the reproduction's generated C are byte-identical. The public
+      docstring now describes constant gathers; the optional maintenance-note edit
+      stays outside this task's source-and-tests scope. The initial Opus thread is
+      settled. Next: full hook on the revised candidate, then one Opus delta check.
 - [ ] Remove this temporary plan, record criterion evidence and review in the PR,
       mark ready, and queue once with `gh pr merge --squash --auto`.
 

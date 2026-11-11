@@ -278,3 +278,14 @@ def test_gathered_mapped_columns_accumulate_within_and_across_formals(monkeypatc
   data = np.linspace(-0.8, 0.9, raw.size)
   actual, dense = _evaluate("gathered_columns_jac", [raw], [compact.to_dense(), sc.jacobian(reference, raw)], [data])
   np.testing.assert_allclose(actual, dense, rtol=1e-13, atol=1e-13)
+
+
+def test_repeated_gather_count_does_not_imply_full_jacobian_coverage():
+  stage = sc.function(sc.arg("x", 2), sc.arg("y", 1), name="gathered_cover_stage")(lambda x, y: x.sin().sum() + 3 * y.sum())
+  raw = sc.sym("gathered_cover_raw", 2)
+  result = _mapped_call(stage, 1, [(raw.gather([0, 0]), 0, 2), (raw, 1, 1)])
+  compact = sparse_jacobian(result, raw)
+  actual, dense = _evaluate("gathered_cover_jac", [raw], [compact.to_dense(), sc.jacobian(result, raw)], [np.array([0.3, -0.2])])
+  np.testing.assert_array_equal(compact.sparsity.to_mask(), [[True, True]])
+  np.testing.assert_allclose(actual, [[2 * np.cos(0.3), 3]], rtol=1e-13, atol=1e-13)
+  np.testing.assert_allclose(actual, dense, rtol=1e-13, atol=1e-13)
