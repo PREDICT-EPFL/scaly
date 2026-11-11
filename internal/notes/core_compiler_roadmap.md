@@ -1353,7 +1353,7 @@ functional; writing into the old buffer is a lowering decision, by three rules, 
    elementwise table, and the entries read must be disjoint from those later links write.
 
 *Replaced in #36: unrestricted NumPy evaluation becomes exact bounded integer and boolean
-evaluation with C-preserved constants, because floating NumPy and C math can choose different
+evaluation, because floating NumPy and C math can choose different
 indices.*
 
 The entries an op reads are not its derivative pattern. Devrush's proof took `floor` and `ceil`,

@@ -364,7 +364,7 @@ def test_batched_integer_indices_remain_provable():
   assert _inout(fn)
 
 
-def test_integer_constant_rounding_cannot_prove_disjointness():
+def test_large_integer_index_constants_remain_exact():
   from unittest.mock import patch
 
   @sc.function(sc.arg("carry", 3), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
@@ -375,7 +375,7 @@ def test_integer_constant_rounding_cannot_prove_disjointness():
 
   @sc.function(sc.arg("initial", 3), name="integer_constant_automatic")
   def automatic(initial):
-    return sc.scan(step, initial, length=1, index=True)[0]
+    return sc.scan(step, initial, length=1, index=True, in_place=("carry",))[0].with_lowering("block")
 
   @sc.function(sc.arg("initial", 3), name="integer_constant_reference")
   def reference(initial):
@@ -385,7 +385,8 @@ def test_integer_constant_rounding_cannot_prove_disjointness():
   with patch("scaly.passes.lowering.calls.carry_reuse", return_value={}):
     expected = reference(initial)
   np.testing.assert_array_equal(automatic(initial), expected)
-  assert not _inout(automatic)
+  np.testing.assert_array_equal(expected, [2, 2, 2])
+  assert _inout(automatic)
 
 
 def test_print_alias_reads_the_entering_carry():
