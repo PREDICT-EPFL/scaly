@@ -21,11 +21,11 @@ import math
 
 import numpy as np
 
-from .abi import abi_status_defines, c_api_signature, c_ident
+from .abi import ENTRY_C_TYPES, abi_status_defines, c_api_signature, c_ident
 from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
 from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
-from ..passes.lowering import LoweringError, main_proc
+from ..passes.lowering import LoweringError, main_proc, workspace_dtype
 from ..passes.arith import SIGNED_WRAP_OPS
 from ..ir import program as p
 from ..ir.expr import OP_INFO
@@ -147,7 +147,7 @@ def render_program_c(
   lines += extern_declarations(prog)
   reserved_names = _c_reserved_names(prog)
   for callee in callees:
-    lines += _render_raw_callee(callee, dialect=dialect, vector_libm=vector_libm, reserved_names=reserved_names)
+    lines += _render_raw_callee(callee, dialect=dialect, vector_libm=vector_libm, reserved_names=reserved_names, unit=workspace_dtype(fun))
     lines.append("")
   lines += _render_entry(proc, fun, casadi=casadi, dialect=dialect, vector_libm=vector_libm)
   if casadi:
@@ -177,7 +177,7 @@ def entry_prologue(fun: ConcreteFunction, sz_w: int, *, options_count: int = 0) 
   ``iw`` and ``mem`` are accepted and ignored; ``sz_w`` is the total workspace the entry reads."""
   symbol = c_ident(fun.name)
   lines = [
-    c_api_signature(f"{symbol}_with_options" if options_count else symbol, solver_options=bool(options_count)) + " {",
+    c_api_signature(fun, f"{symbol}_with_options" if options_count else symbol, solver_options=bool(options_count)) + " {",
     "  (void)iw;",
     "  (void)mem;",
     "  if (!arg || !res) return SCALY_ERR_NULL_ABI;",
@@ -209,6 +209,7 @@ def _render_entry(
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))  # set by passes/program/pack_workspace.py
+  unit = workspace_dtype(fun)
 
   # Buffer name -> C pointer expression for the ABI entry (inputs are arg[i], outputs res[i]).
   ptr_expr: dict[str, str] = {}
@@ -219,6 +220,14 @@ def _render_entry(
     *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm),
     *entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi), options_count=options_count),
   ]
+  if unit == dtypes.uint8:
+    # Untyped entry pointers: one cast per leaf, defined because each came from an object of that
+    # type. Lowering named the parameters clear of the entry's own arguments.
+    for i, param in enumerate(proc.args[:param_count]):
+      local = c_ident(param.attrs["name"])
+      const = "const " if i < len(fun.inputs) else ""
+      lines.append(f"  {const}{param.dtype.c_type}* {local} = ({const}{param.dtype.c_type}*){ptr_expr[param.attrs['name']]};")
+      ptr_expr[param.attrs["name"]] = local
   epilogue: list[str] = []
   if casadi:
     gather = casadi_gather(fun, sz_w)
@@ -231,8 +240,8 @@ def _render_entry(
     )
     lines += gather.setup
     epilogue = gather.epilogue
-  _emit_local_buffers(body, lines, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, solver_callees=solver_callees)
+  _emit_local_buffers(body, lines, ptr_expr, indent=2, unit=unit)
+  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, solver_callees=solver_callees, unit=unit)
   lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
   return lines
 
@@ -248,10 +257,12 @@ def _render_raw_callee(
   vector_libm: VectorLibm = "none",
   reserved_names: NameScope | None = None,
   solver_callees: frozenset[str] = frozenset(),
+  unit: DType = dtypes.float64,
 ) -> list[str]:
-  """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
+  """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., <unit>* w)`` — a
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
-  the caller's ``w`` advanced past its own spill window). The leading ``input_count`` params are
+  the caller's ``w`` advanced past its own spill window). ``w`` points to ``unit``, the
+  program's workspace dtype, and is ``void*`` for a byte workspace. The leading ``input_count`` params are
   inputs and are ``const``-qualified (read-only by construction), so a solver wrapper can pass
   its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
 
@@ -268,7 +279,7 @@ def _render_raw_callee(
   param_decls = ", ".join(
     [
       *(f"{'const ' if i < input_count else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}" for i, pp in enumerate(params)),
-      "double* w",
+      f"{ENTRY_C_TYPES[unit]}* w",
       *((f"const scaly_solver_option* const* {options_name}",) if solver_callees else ()),
     ]
   )
@@ -284,15 +295,22 @@ def _render_raw_callee(
   out = [*_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm), f"{qualifier} void {implementation}({param_decls}) {{"]
   if not sz_w:
     out.append("  (void)w;")
-  _emit_local_buffers(body, out, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+  _emit_local_buffers(body, out, ptr_expr, indent=2, unit=unit)
+  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect, solver_callees=solver_callees, options_name=options_name, unit=unit)
   out.append("}")
   if implementation != raw_name:
     out.append(f"static void (*volatile {raw_name})({param_decls}) = {implementation};")
   return out
 
 
-def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dict[str, str], indent: int) -> None:
+def _workspace_at(offset: int, unit: DType) -> str:
+  """``w`` advanced by ``offset`` units, counted in bytes for a byte workspace."""
+  if offset == 0:
+    return "w"
+  return f"(unsigned char*)w + {offset}" if unit == dtypes.uint8 else f"w + {offset}"
+
+
+def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dict[str, str], indent: int, *, unit: DType = dtypes.float64) -> None:
   pad = " " * indent
   seen: set[str] = set()
   for stmt in body:
@@ -316,7 +334,9 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}const {stmt.dtype.c_type}* {name} = {rhs};")
     elif "workspace_offset" in stmt.attrs:
       # A spilled slot: a window into the caller-provided w[] instead of a stack array.
-      lines.append(f"{pad}{stmt.dtype.c_type}* {name} = w + {stmt.attrs['workspace_offset']};")
+      offset = int(stmt.attrs["workspace_offset"])
+      window = f"w + {offset}" if unit != dtypes.uint8 else f"({stmt.dtype.c_type}*)({_workspace_at(offset, unit)})"
+      lines.append(f"{pad}{stmt.dtype.c_type}* {name} = {window};")
     else:
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
@@ -348,6 +368,7 @@ def _emit_body(
   solver_callees: frozenset[str] = frozenset(),
   options_name: str = "solver_options",
   integer_data: bool | None = None,
+  unit: DType = dtypes.float64,
 ) -> None:
   """Render Program statements in order."""
   if integer_data is None:
@@ -356,7 +377,15 @@ def _emit_body(
     if stmt.op == ProgramOp.BUFFER:
       continue
     _emit_statement(
-      stmt, ptr_expr, lines, indent, dialect=dialect, solver_callees=solver_callees, options_name=options_name, integer_data=integer_data
+      stmt,
+      ptr_expr,
+      lines,
+      indent,
+      dialect=dialect,
+      solver_callees=solver_callees,
+      options_name=options_name,
+      integer_data=integer_data,
+      unit=unit,
     )
 
 
@@ -370,6 +399,7 @@ def _emit_statement(
   solver_callees: frozenset[str] = frozenset(),
   options_name: str = "solver_options",
   integer_data: bool,
+  unit: DType = dtypes.float64,
 ) -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.BLOCK:
@@ -382,6 +412,7 @@ def _emit_statement(
       solver_callees=solver_callees,
       options_name=options_name,
       integer_data=integer_data,
+      unit=unit,
     )
   elif stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
@@ -405,6 +436,7 @@ def _emit_statement(
       solver_callees=solver_callees,
       options_name=options_name,
       integer_data=integer_data,
+      unit=unit,
     )
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.IF:
@@ -437,8 +469,9 @@ def _emit_statement(
     # Workspace tail: a callee needing its own w[] gets this proc's w advanced past its spill
     # window; one needing none gets NULL. Set by the workspace pass; absent => no spill anywhere.
     if stmt.attrs.get("callee_needs_w"):
-      offset = int(stmt.attrs.get("w_self", 0))
-      ptrs.append("w" if offset == 0 else f"w + {offset}")
+      window = _workspace_at(int(stmt.attrs.get("w_self", 0)), unit)
+      # An external function takes ``double* w`` whatever the caller's workspace.
+      ptrs.append(f"(double*)({window})" if stmt.attrs.get("external") and unit == dtypes.uint8 else window)
     else:
       ptrs.append("NULL")
     if stmt.attrs["callee"] in solver_callees:

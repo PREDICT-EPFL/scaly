@@ -138,7 +138,8 @@ disappears, so function boundaries in Python do not promise C procedures.
 
 `euler_raw` is called with `w = NULL` because it spills nothing to the
 workspace. When a callee does spill, the caller passes its own `w` advanced
-past its own spill window.
+past its own spill window. The workspace pointer has the entry's type,
+`double*` here, and `void*` for a function whose inputs and outputs mix types.
 
 A solver-bearing module adds the solver wrapper and a statistics accessor. The
 top-level definitions of the SQP solver for a two-variable problem, printed
@@ -177,10 +178,12 @@ the [guide](../guide/codegen.md#the-pointer-entry) explains each argument. A mod
 containing a solver also exports a `_with_options` entry with a sixth argument
 for call-time option arrays. Python uses this entry. The standard entry calls it
 with backend defaults. The [option interface](../guide/codegen.md#solver-options-in-c)
-describes the arrays and their lifetime. Every input and output buffer is an
-array of `double`. Lowering and just-in-time compilation reject a `Function`
-whose input or output leaves have a data type other than `float64`, including
-callees. Boolean and integer values inside a function are allowed. The body
+describes the arrays and their lifetime. `rollout` has `float64` inputs and
+outputs, so its pointers point to `double`. A function whose inputs and
+outputs are all `float32` takes `float` pointers, and any other mix of
+`float64`, `float32`, `int32`, `int64` and `bool` takes `void` pointers, which
+the entry casts once per input and output to its C type. The
+[guide](../guide/codegen.md#float32-and-integer-functions) shows both. The body
 starts with null checks that return one of five codes:
 
 | Code                    | Value | Returned when                                         |
@@ -202,11 +205,15 @@ statistics described [below](#solver-statistics).
 
 ### Alignment
 
-The pointer interface needs only the natural alignment of `double`. Stores of
+The pointer interface needs only the natural alignment of each input's and
+output's type, and a `void* w` needs 8 bytes, the alignment of its widest
+temporaries. Stores of
 several values at once go through vector types declared `aligned(8)` and
 `may_alias`, like the `double2` store in `euler_raw`, so the compiler never
 assumes 16-byte alignment of a caller's buffer. The typed structs in the header
-request 16 bytes regardless.
+request 16 bytes regardless. Every temporary that lowering moves to the
+workspace starts at a multiple of 64 bytes from `w`, with the padding counted in `SZ_W`, so a
+workspace aligned to 64 bytes gives every temporary a cache-line boundary.
 
 ### C++ linkage
 

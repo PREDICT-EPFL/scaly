@@ -425,7 +425,11 @@ A view such as a slice keeps the buffer it points into live until the view's
 last use.
 
 With the default frame budget, these slots stay local arrays. With
-`frame_budget=8192`, the largest slot moves to the caller's workspace `w`:
+`frame_budget=8192`, the largest slot moves to the caller's workspace `w`. The
+workspace has the type of the function's inputs and outputs when they are all
+`float64` or all `float32`, and only slots of that type can move there. A
+function whose inputs and outputs mix types has a workspace of bytes that takes
+slots of every type. Each slot starts at a multiple of 64 bytes:
 
 ```c
 double* s0 = w + 0;
@@ -438,7 +442,9 @@ sharing. It also reports `#define f_FRAME_BYTES 4112`, the estimated stack frame
 counts local buffers, repeated inlined callees and a fixed scalar-spill allowance.
 A procedure's workspace requirement is its own slots plus the largest
 requirement among the procedures it calls, which reuse the space after the
-caller's own slots. [Working memory](../guide/codegen.md#working-memory) in the
+caller's own slots. In a workspace of bytes the procedures it calls get
+consecutive windows instead, so each byte holds values of one type during the
+call. [Working memory](../guide/codegen.md#working-memory) in the
 guide shows how to read the number.
 
 ## Arithmetic semantics

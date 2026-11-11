@@ -19,10 +19,10 @@ def _readonly(value: Any) -> np.ndarray:
   return np.frombuffer(np.asarray(value, dtype=np.int64).tobytes(), dtype=np.int64)
 
 
-def bind_sparse(value: Any) -> tuple[CanonicalPattern, np.ndarray]:
-  """Canonicalize a copied SciPy argument and recover its shared matrix pattern."""
-  if not np.can_cast(value.dtype, np.float64, "same_kind"):
-    raise TypeError(f"cannot cast {value.dtype} to float64")
+def bind_sparse(value: Any, dtype: np.dtype) -> tuple[CanonicalPattern, np.ndarray]:
+  """Canonicalize a copied SciPy argument as ``dtype`` and recover its shared matrix pattern."""
+  if not np.can_cast(value.dtype, dtype, "same_kind"):
+    raise TypeError(f"cannot cast {value.dtype} to {dtype}")
   copied = sparse.coo_array(value, copy=True)
   copied.sum_duplicates()
   shape = copied.shape
@@ -42,7 +42,7 @@ def bind_sparse(value: Any) -> tuple[CanonicalPattern, np.ndarray]:
     not np.array_equal(actual, expected) for actual, expected in zip(copied.coords, sparse_layout(pattern, "csr").coordinates(shape), strict=True)
   ):
     raise ValueError("sparse batches must share one stored pattern")
-  return pattern, np.ascontiguousarray(copied.data.reshape((*shape[:-2], nnz)), dtype=np.float64)
+  return pattern, np.ascontiguousarray(copied.data.reshape((*shape[:-2], nnz)), dtype=dtype)
 
 
 @dataclass(frozen=True)
@@ -63,9 +63,9 @@ class DenseLayout:
     """Indices restoring row-major matrix values."""
     return _readonly(np.argsort(self.permutation))
 
-  def numerical_values(self, value: Any, shape: tuple[int, ...]) -> np.ndarray:
-    """Keep logical coordinates while making each matrix column-contiguous."""
-    array = np.asarray(value, dtype=np.float64)
+  def numerical_values(self, value: Any, shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+    """Keep logical coordinates while making each matrix column-contiguous, as ``dtype``."""
+    array = np.asarray(value, dtype=dtype)
     if array.shape != shape:
       raise ValueError(f"dense input has shape {array.shape}, expected {shape}")
     return np.ascontiguousarray(array.swapaxes(-1, -2)).swapaxes(-1, -2)
@@ -135,20 +135,20 @@ class SparseLayout:
       )
     return self._batch_coordinates[shape]
 
-  def numerical_values(self, value: Any, shape: tuple[int, ...]) -> np.ndarray:
-    """Copy and canonicalize sparse input, checking every stored coordinate."""
+  def numerical_values(self, value: Any, shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+    """Copy and canonicalize sparse input as ``dtype``, checking every stored coordinate."""
     storage_shape = (*shape[:-2], self.pattern.nnz)
     if not sparse.issparse(value):
       array = np.asarray(value)
       if array.shape != storage_shape:
         raise ValueError(f"expected a sparse array of shape {shape} or stored values of shape {storage_shape}, got {array.shape}")
-      if not np.can_cast(array.dtype, np.float64, "same_kind"):
-        raise TypeError(f"cannot cast {array.dtype} to float64")
-      return np.require(array, dtype=np.float64, requirements="C")
+      if not np.can_cast(array.dtype, dtype, "same_kind"):
+        raise TypeError(f"cannot cast {array.dtype} to {dtype}")
+      return np.require(array, dtype=dtype, requirements="C")
     if value.shape != shape:
       raise ValueError(f"sparse input has shape {value.shape}, expected {shape}")
-    if not np.can_cast(value.dtype, np.float64, "same_kind"):
-      raise TypeError(f"cannot cast {value.dtype} to float64")
+    if not np.can_cast(value.dtype, dtype, "same_kind"):
+      raise TypeError(f"cannot cast {value.dtype} to {dtype}")
     copied = sparse.coo_array(value, copy=True)
     copied.sum_duplicates()
     coordinates = copied.coords
@@ -160,7 +160,7 @@ class SparseLayout:
     ):
       raise ValueError("sparse input has a different stored pattern")
     canonical = copied.data[order].reshape(storage_shape)
-    return np.ascontiguousarray(canonical[..., self.permutation], dtype=np.float64)
+    return np.ascontiguousarray(canonical[..., self.permutation], dtype=dtype)
 
   def sparse_array(self, values: np.ndarray, shape: tuple[int, ...]) -> sparse.sparray:
     """Attach the shared read-only indices to a fresh declared-order value buffer."""

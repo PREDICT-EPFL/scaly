@@ -11,7 +11,7 @@ from .abi import c_ident
 from ..function.concrete import ConcreteFunction
 from ..function.tree import Tree, _G, _Leaf
 from ..ir.layout import DenseLayout, SparseLayout
-from ..ir.types import SparsityPattern
+from ..ir.types import SparsityPattern, dtypes
 
 CASADI_QUERIES = (
   "n_in",
@@ -61,12 +61,14 @@ def casadi_declarations(symbol: str) -> list[str]:
 
 
 def check_casadi_layout(fun: ConcreteFunction) -> None:
-  """Reject leaves CasADi cannot describe: batch axes and non-CSC sparse orders."""
+  """Reject leaves CasADi cannot describe: other dtypes than float64, batch axes and non-CSC sparse orders."""
   for kind, names, exprs, layouts, sparsities in (
     ("input", fun.input_names, fun.inputs, fun.input_tree.layouts, (None,) * len(fun.inputs)),
     ("output", fun.output_names, fun.outputs, fun.output_tree.layouts, fun.output_sparsities),
   ):
     for name, expr, layout, sp in zip(names, exprs, layouts, sparsities, strict=True):
+      if expr.type.dtype != dtypes.float64:
+        raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} has dtype {expr.type.dtype}; CasADi passes only float64 values")
       if isinstance(layout, SparseLayout):
         if len(expr.shape) > 2:
           raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} has batch axes; CasADi only supports two-dimensional sparse leaves")

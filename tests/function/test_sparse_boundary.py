@@ -63,7 +63,7 @@ def test_sparse_layout_permutations_and_numerical_copies() -> None:
     leaf = sc.arg("x", sc.TensorType(PATTERN.shape, pattern=PATTERN), layout=requested)
     layout = leaf.layouts[0]
     assert isinstance(layout, SparseLayout)
-    compact = layout.numerical_values(source, PATTERN.shape)
+    compact = layout.numerical_values(source, PATTERN.shape, np.dtype(np.float64))
     np.testing.assert_array_equal(compact, canonical[layout.permutation])
     np.testing.assert_array_equal(compact[layout.inverse_permutation], canonical)
     restored = layout.sparse_array(compact, PATTERN.shape)
@@ -285,8 +285,8 @@ def test_sparse_seeded_functions_and_factory_preserve_source_layouts(layout) -> 
   direction = sparse.coo_array(([1.0, -2.0, 0.0, 3.0], (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
   declared = inp.layouts[0]
   assert isinstance(declared, SparseLayout)
-  x = declared.numerical_values(source, PATTERN.shape)
-  seed = declared.numerical_values(direction, PATTERN.shape)
+  x = declared.numerical_values(source, PATTERN.shape, np.dtype(np.float64))
+  seed = declared.numerical_values(direction, PATTERN.shape, np.dtype(np.float64))
   expected = np.cos(source.toarray()) * direction.toarray()
   for derivative in (forward, adjoint):
     result = derivative(x, seed)
@@ -358,7 +358,9 @@ def test_sparse_custom_rules_preserve_boundaries_and_reject_different_patterns(l
   assert isinstance(declared, SparseLayout)
   for derivative in (sc.forward(ruled), sc.adjoint(ruled)):
     call: Any = derivative
-    result = call(declared.numerical_values(primal, PATTERN.shape), declared.numerical_values(seed, PATTERN.shape))
+    result = call(
+      declared.numerical_values(primal, PATTERN.shape, np.dtype(np.float64)), declared.numerical_values(seed, PATTERN.shape, np.dtype(np.float64))
+    )
     assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
     assert result.format == declared.format
     np.testing.assert_allclose(result.toarray(), 3 * primal.toarray() * seed.toarray())

@@ -45,7 +45,7 @@ def test_pattern_instances_reuse_symbolic_numerical_and_explicit_bindings(layout
     assert f"p{pattern.digest[:8]}" in instance.name and "__" not in instance.name
     again: Any = negate(source * 2)
     np.testing.assert_array_equal(again.toarray(), -source.toarray() * 2)
-    stored = instance.input_tree.layouts[0].numerical_values(source, SHAPE)
+    stored = instance.input_tree.layouts[0].numerical_values(source, SHAPE, np.dtype(np.float64))
     direct: Any = instance(stored)
     np.testing.assert_array_equal(direct.toarray(), -source.toarray())
     instances.append(instance)
@@ -132,9 +132,9 @@ def test_hole_binding_canonicalizes_only_once(monkeypatch: pytest.MonkeyPatch) -
   source = sparse.coo_array(([1.0], ([0], [1])), shape=SHAPE)
   original = SparseLayout.numerical_values
 
-  def values_only(self, value, shape):
+  def values_only(self, value, shape, dtype):
     assert isinstance(value, np.ndarray)
-    return original(self, value, shape)
+    return original(self, value, shape, dtype)
 
   monkeypatch.setattr(SparseLayout, "numerical_values", values_only)
   np.testing.assert_array_equal(identity(source).toarray(), source.toarray())

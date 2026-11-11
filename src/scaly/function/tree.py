@@ -11,7 +11,7 @@ from scipy import sparse
 
 from ..ir.expr import Expr, ExprOp
 from ..ir.layout import DenseLayout, Layout, LeafLayout, SparseLayout, sparse_layout
-from ..ir.types import TensorType, as_shape, dtypes
+from ..ir.types import TensorType, as_shape
 
 type ShapeDecl = int | tuple[int, ...] | TensorType | None
 type LeafDecl = TensorType | None
@@ -237,11 +237,9 @@ class _Leaf(Tree[Expr, Array]):
     if isinstance(value, Expr):
       raise ValueError(f"{what}: expected a numerical value for {self.names[0]!r}, got Expr")
     dtype = self.types[0].dtype
-    if dtype != dtypes.float64:
-      raise NotImplementedError(f"{what}: input leaf {self.names[0]!r} has dtype {dtype}; only float64 leaves are supported")
     layout = self.layouts[0]
     if isinstance(layout, SparseLayout):
-      return (layout.numerical_values(value, self.shapes[0]),)
+      return (layout.numerical_values(value, self.shapes[0], dtype.numpy()),)
     if sparse.issparse(value):
       raise ValueError(f"{what}: sparse argument for dense leaf {self.names[0]!r}")
     array = np.asarray(value)
@@ -250,7 +248,7 @@ class _Leaf(Tree[Expr, Array]):
     array = array.astype(dtype.numpy(), copy=False)
     if array.shape != self.shapes[0]:
       raise ValueError(f"{what}: expected shape {self.shapes[0]} for {self.names[0]!r}, got {array.shape}")
-    return (layout.numerical_values(array, self.shapes[0]) if layout is not None else np.require(array, requirements="C"),)
+    return (layout.numerical_values(array, self.shapes[0], dtype.numpy()) if layout is not None else np.require(array, requirements="C"),)
 
   def unflatten(self, values: tuple[Any, ...]) -> Any:
     if len(values) != 1:

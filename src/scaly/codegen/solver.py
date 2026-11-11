@@ -183,7 +183,7 @@ def solver_options_declarations(fun: ConcreteFunction) -> list[str]:
     return []
   symbol = c_ident(fun.name)
   return [
-    c_api_signature(f"{symbol}_with_options", solver_options=True) + ";",
+    c_api_signature(fun, f"{symbol}_with_options", solver_options=True) + ";",
     f"#define {symbol}_N_SOLVERS {len(solvers)}",
     *(f"#define {symbol}_OPTIONS_{c_ident(fn.name)} {i}" for i, fn in enumerate(solvers)),
     *(f"const scaly_solver_option* {c_ident(fn.name)}_default_options(void);" for fn in solvers),

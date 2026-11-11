@@ -75,7 +75,8 @@ typedef struct { SCALY_ALIGNAS(16) double data[energy_SZ_W > 0 ? energy_SZ_W : 1
 static inline int energy_call(const energy_x_t* x, energy_energy__t* energy_, energy_workspace_t* workspace);
 ```
 
-Each struct holds one contiguous buffer of `double` values. Arrays use
+Each struct holds one contiguous buffer of an input's or output's values,
+`double` for the default `float64`. Arrays use
 row-major order by default, as in a contiguous NumPy array, and a scalar occupies one
 entry. A leaf declared with `sc.arg("A", (2, 3), layout="column-major")` stores
 each matrix by column. For shape `(4, 2, 3)`, the four two-by-three matrices
@@ -90,7 +91,9 @@ The structs own their storage. You can allocate them on the stack, statically,
 or on the heap. C11 and C++ buffers request 16-byte alignment, while C99 uses
 natural alignment. The workspace struct reserves at least one entry because
 standard C does not allow a zero-length array. The header reports the real
-requirement in doubles as `energy_SZ_W`.
+requirement as `energy_SZ_W`, counted in doubles for this function.
+[Float32 and integer functions](#float32-and-integer-functions) describes the
+other data types.
 
 For the `energy` model above, the following complete C caller supplies one
 three-element input and reads one scalar output. The compilation command below
@@ -137,7 +140,9 @@ these commands.
 ### The pointer entry
 
 `energy_call` is a header-only helper. The compiled symbol underneath it is a
-pointer-based entry point with the same shape for every generated function:
+pointer-based entry point with the same five arguments for every generated
+function. For a function whose inputs and outputs are all `float64`, such as
+`energy`, it is:
 
 ```c
 int energy(const double** arg, double** res, int* iw, double* w, int mem);
@@ -152,7 +157,7 @@ The helper only fills the two pointer arrays and forwards to this entry.
 Call the entry directly in two situations. The first is memory that another
 library already owns, such as a message array in a ROS node or an Eigen
 matrix, which the typed structs would require copying. The second is loading
-the compiled library with `dlopen` and no header, where this fixed signature
+the compiled library with `dlopen` and no header, where this signature
 is the whole contract. The C++ header and the CasADi layer are both built on
 the same symbol, so every generated module can be called this way.
 
@@ -187,6 +192,92 @@ use backend tuning defaults. PIQP's `sparse` and SQP's `qp` select the compiled
 matrix interface and are absent from the runtime arrays. Other options supplied
 to `sc.solver` affect Python calls without changing the exported source. An
 ahead-of-time caller supplies its chosen tuning through `_with_options`.
+
+## Float32 and integer functions
+
+A `TensorType` in place of a shape gives an input or output another data type:
+`float32`, `int32`, `int64` or `bool`. Expressions built from such an input
+have its type, the generated C stores and computes them in the matching C
+type, and the entry, the typed buffers and a numerical Python call pass the
+values in that type too. In this function a Python `2.0` takes the type of
+`x`, so the product stays `float32` and the C code calls `sinf`:
+
+```python
+import numpy as np
+
+f32 = sc.TensorType((3,), dtype=sc.dtypes.float32)
+
+@sc.function(sc.arg("x", f32), outputs=sc.arg("y"))
+def scaled(x: sc.Expr) -> sc.Expr:
+    return 2.0 * x.sin()
+
+y = scaled(np.array([0.0, 0.5, 1.0]))
+print(y, y.dtype)
+# [0.        0.9588511 1.6829419] float32
+```
+
+A numerical call converts each input array to the input's type when the
+conversion does not turn floats into integers or numbers into `bool`. A
+`float64` or integer array is accepted for a `float32` input, and a `bool`
+array for an integer one. A float array for an integer input raises
+`TypeError` naming the function and the input. Each output comes back in the
+type of the expression it returns, `float32` for `scaled`.
+
+The pointer types of the entry follow the types of the inputs and outputs:
+
+| Inputs and outputs             | Entry pointers                                  | `SZ_W` counts |
+| ------------------------------ | ----------------------------------------------- | ------------- |
+| all `float64`                  | `const double** arg, double** res, double* w`   | doubles       |
+| all `float32`                  | `const float** arg, float** res, float* w`      | floats        |
+| any other combination of types | `const void** arg, void** res, void* w`         | bytes         |
+
+`iw` and `mem` keep their types. A typed buffer holds `double`, `float`,
+`int32_t`, `int64_t` or `bool`, the C type of its input or output, and the C++
+header spells the same types, as in `Buffer<float, 3>`. A `bool` value is one
+byte holding 0 or 1. With `void` pointers, each `arg[i]` and `res[i]` must
+point to values of that input's or output's C type, and `w` must be aligned to
+8 bytes, which `malloc` guarantees.
+
+This function mixes three types, so its entry takes `void` pointers:
+
+```python
+steps = sc.TensorType((4,), dtype=sc.dtypes.int64)
+mask = sc.TensorType((4,), dtype=sc.dtypes.bool_)
+
+@sc.function(sc.arg("x", 4), sc.arg("k", steps), sc.arg("active", mask), outputs=sc.arg("y"))
+def gated(x: sc.Expr, k: sc.Expr, active: sc.Expr) -> sc.Expr:
+    return sc.where(active, x * sc.cast(k // 2, "float64"), 0.0)
+
+print(gated(np.ones(4), np.array([1, 2, 3, 4]), np.array([True, False, True, True])))
+# [0. 0. 1. 2.]
+```
+
+Its header declares:
+
+```c
+int gated(const void** arg, void** res, int* iw, void* w, int mem);
+typedef struct { SCALY_ALIGNAS(16) double data[4]; } gated_x_t;
+typedef struct { SCALY_ALIGNAS(16) int64_t data[4]; } gated_k_t;
+typedef struct { SCALY_ALIGNAS(16) bool data[4]; } gated_active_t;
+typedef struct { SCALY_ALIGNAS(16) double data[4]; } gated_y_t;
+typedef struct { SCALY_ALIGNAS(16) unsigned char data[gated_SZ_W > 0 ? gated_SZ_W : 1]; } gated_workspace_t;
+```
+
+The workspace of such a function is a block of bytes that may hold temporaries
+of several types. Allocate it with `malloc`, for example
+`gated_workspace_t* workspace = malloc(sizeof *workspace)`. Memory from
+`malloc` has no declared type, so C's aliasing rules let the function store
+values of each type in it, which a stack or static `unsigned char` array does
+not allow. In C++ an array of `unsigned char` provides storage for other
+objects, so `gated::workspace_t` may live anywhere. A function whose inputs and
+outputs all have one floating type keeps its workspace in that type, and the
+stack and static structs shown earlier stay valid for it. Its temporaries of
+other types stay local arrays, so a large one takes stack space.
+
+!!! note "Solvers and CasADi stay float64"
+    A module that calls a solver needs `float64` inputs and outputs in every
+    function it contains, and `casadi=True` needs `float64` inputs and
+    outputs. Both raise an error otherwise.
 
 ## Generated text and export options
 
@@ -414,7 +505,7 @@ entries by column must reorder the corresponding Jacobian rows and columns.
     Dense arrays of rank greater than two are rejected by `casadi=True`.
     Scalars, vectors, dense matrices, compact sparse derivative outputs and
     [sparse matrices](sparse_matrices.md#generated-c) in CSC order without
-    batch axes are supported.
+    batch axes are supported, all in `float64`.
     Solvers require row-major declarations for dense variables and parameters.
     To export `solver.function` with matrix arguments or results for CasADi,
     call it inside an ordinary `Function` and export that wrapper. Direct
@@ -633,7 +724,10 @@ from scaly.codegen import workspace_size
 print(workspace_size(energy))  # 0
 ```
 
-The number counts `double` entries in `w`, not bytes or total temporary memory.
+The number counts entries of `w`, doubles for a function whose inputs and
+outputs are all `float64`, floats when they are all `float32`, and bytes
+otherwise. It is not
+the total temporary memory.
 For an export with non-default options, use that module's `workspace_size` or
 its header's `<name>_SZ_W` constant. In particular, CasADi sparse-output
 conversion can require additional workspace.

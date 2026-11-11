@@ -115,7 +115,10 @@ def lower_function(
     )
   externs = tuple(fn for fn in symbols if isinstance(fn, _Extern))
   prog = ProgramNode(
-    prog.op, prog.args, {**prog.attrs, "function_symbols": tuple(symbols.items()), **({"externs": externs} if externs else {})}, dtype=prog.dtype
+    prog.op,
+    prog.args,
+    {**prog.attrs, "function_symbols": tuple(symbols.items()), "workspace_dtype": workspace_dtype(fun), **({"externs": externs} if externs else {})},
+    dtype=prog.dtype,
   )
   if observe is not None:
     observe("lowered", prog)
@@ -710,13 +713,11 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
         raise ValueError(f"conflicting external declarations for C symbol {function.name!r}")
       symbols[function] = function.name
       names.occupied.add(function.name)
-      _check_float64_leaves(function)
+      _check_float64_leaves(function, "an external C function")
       return
     if function in seen:
       return
     seen.add(function)
-    if function is root or function in oracles:
-      _check_float64_leaves(function)
     functions.append(function)
     for oracle in external_oracles(function):
       names.occupied.add(oracle.raw_symbol)
@@ -730,6 +731,11 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
         visit(callee)
 
   visit(root)
+  solver_graph = any(is_solver_function(function) for function in functions)
+  for function in functions if solver_graph else ():
+    _check_float64_leaves(function, "a graph that calls a solver")
+  if workspace_dtype(root) == dtypes.float32 and (needs := next((fn for fn in external_symbols.values() if fn.workspace), None)):
+    raise LoweringError(f"external C function {needs.name!r} needs a double workspace, and {root.name!r} with only float32 leaves has a float one")
   symbols[root] = names.claim(root.name)
   names.occupied.add(f"{symbols[root]}_FRAME_BYTES")
   for function in functions:
@@ -748,8 +754,17 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
   return names, symbols, frozenset(residuals)
 
 
-def _check_float64_leaves(fun: ConcreteFunction) -> None:
+def workspace_dtype(fun: ConcreteFunction) -> DType:
+  """The unit of ``fun``'s entry pointers and workspace: float64 or float32 when every leaf has
+  that dtype, otherwise uint8 for untyped pointers and a byte-addressed workspace."""
+  found = {leaf.type.dtype for leaf in (*fun.inputs, *fun.outputs)}
+  if found <= {dtypes.float64}:
+    return dtypes.float64
+  return dtypes.float32 if found == {dtypes.float32} else dtypes.uint8
+
+
+def _check_float64_leaves(fun: ConcreteFunction, needs: str) -> None:
   for side, names, leaves in (("input", fun.input_names, fun.inputs), ("output", fun.output_names, fun.outputs)):
     for name, leaf in zip(names, leaves, strict=True):
       if leaf.type.dtype != dtypes.float64:
-        raise LoweringError(f"function {fun.name!r} {side} leaf {name!r} has dtype {leaf.type.dtype}; only float64 leaves are supported")
+        raise LoweringError(f"function {fun.name!r} {side} leaf {name!r} has dtype {leaf.type.dtype}; {needs} needs float64 leaves")

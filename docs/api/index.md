@@ -24,4 +24,4 @@ are internal and may move without notice.
 
 `scaly.__all__` lists the names available directly under `scaly`. A few constants and module
 aliases have no separate generated entry: `COMMON_OPS`, `OP_INFO`,
-`SCALY_SOLVER_STATS_VERSION`, `factory`, `spec_expr`, `spec_expr_shared`, and `C_API_SIGNATURE`.
+`SCALY_SOLVER_STATS_VERSION`, `factory`, `spec_expr`, and `spec_expr_shared`.

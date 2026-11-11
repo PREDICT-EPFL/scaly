@@ -36,6 +36,7 @@ A `TensorType` holds a fixed shape of non-negative integers, a data type and a
 | `sc.dtypes.bool_`   | `uint8_t`  | 1     |
 | `sc.dtypes.int32`   | `int32_t`  | 4     |
 | `sc.dtypes.int64`   | `int64_t`  | 8     |
+| `sc.dtypes.float32` | `float`    | 4     |
 | `sc.dtypes.float64` | `double`   | 8     |
 
 The default is `float64`. An operation on two data types fails when you build
@@ -289,11 +290,11 @@ The attributes on a `prog.proc` line are these:
 
 | Attribute        | Meaning                                                                |
 | ---------------- | ---------------------------------------------------------------------- |
-| `input_count`    | How many leading parameters are inputs, rendered as `const double*`    |
+| `input_count`    | How many leading parameters are inputs, rendered as `const` pointers   |
 | `lowering`       | The combined hint of the function's nodes                              |
 | `scalarize_mode` | Whether the procedure may be expanded into scalar statements           |
 | `scalarized`     | Present once it has been                                               |
-| `sz_w`           | Workspace size in doubles the caller must provide, callees included    |
+| `sz_w`           | Workspace size the caller must provide, callees included               |
 | `w_self`         | The part of that workspace the procedure uses itself                   |
 
 ### Views and aliases

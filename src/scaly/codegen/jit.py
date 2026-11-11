@@ -43,12 +43,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .abi import C_API_SIGNATURE, c_ident
+from .abi import c_ident
 from .external import LibraryBuild, compile_library, libraries_of, prepare_library
 from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
 from ..passes import program
+from ..passes.lowering import workspace_dtype
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.graph import solver_backends_used
@@ -77,9 +78,9 @@ from ..function.model import Function, as_concrete
 # Solver modules also key on the contents of their include and library search
 # directories, each read once per process. Keep native files fixed while Python
 # runs, and stop it before replacing solver headers or libraries at the same paths.
-_JIT_CACHE_VERSION = "8"
+_JIT_CACHE_VERSION = "9"
 
-_C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
+_C_VOID_PP = ctypes.POINTER(ctypes.c_void_p)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
@@ -369,16 +370,16 @@ def _hash_parts(*parts: str) -> str:
 
 
 def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str, solver_inputs: str = "") -> str:
-  """SHA-256 over the rendered C source plus the cache-version and ABI signature.
+  """SHA-256 over the rendered C source, which spells the entry signature, plus the cache version.
 
-  Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
+  Any change to the codegen output, the entry signature, or `_JIT_CACHE_VERSION` invalidates
   previously cached artifacts. ConcreteFunction names and the full compile command are included so
   two functions that happen to share a source skeleton (different symbols or solver rpaths) still
   get distinct entries. ``toolchain`` is the compiler's ``compiler_fingerprint``, so another
   compiler, a changed one at the same path, or another CPU misses the cache. ``solver_inputs``
   identifies the native headers and libraries used to build a solver module.
   """
-  return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, solver_inputs, *command)
+  return _hash_parts(_JIT_CACHE_VERSION, fun_name, source, toolchain, solver_inputs, *command)
 
 
 def _toolchain(fun: ConcreteFunction, compiler: Compiler, libraries: tuple[LibraryBuild, ...] = ()) -> str:
@@ -437,7 +438,7 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
   toolchain = _toolchain(fun, compiler, libraries)
-  return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, _scaly_version(), source, graph, repr(recipe), toolchain, solver_inputs, *libc, *command)
+  return _hash_parts(_JIT_CACHE_VERSION, _scaly_version(), source, graph, repr(recipe), toolchain, solver_inputs, *libc, *command)
 
 
 @dataclass(frozen=True, slots=True)
@@ -614,7 +615,9 @@ class CompiledFunction:
     "_entry",
     "_stats_entries",
     "_options",
-    "_sz_w",
+    "_w_bytes",
+    "_input_dtypes",
+    "_output_dtypes",
     "_input_sizes",
     "_input_shapes",
     "_input_names",
@@ -635,13 +638,7 @@ class CompiledFunction:
     self._symbol = symbol
     solvers = solver_functions(fun)
     entry = getattr(self._lib, f"{symbol}_with_options" if solvers else symbol)
-    entry.argtypes = [
-      ctypes.POINTER(_C_DOUBLE_P),
-      ctypes.POINTER(_C_DOUBLE_P),
-      _C_INT_P,
-      _C_DOUBLE_P,
-      ctypes.c_int,
-    ]
+    entry.argtypes = [_C_VOID_PP, _C_VOID_PP, _C_INT_P, ctypes.c_void_p, ctypes.c_int]
     self._options = (ctypes.POINTER(CSolverOption) * len(solvers))(*(fn.descriptor.runtime_options for fn in solvers))
     if solvers:
       entry.argtypes = [*entry.argtypes, ctypes.POINTER(ctypes.POINTER(CSolverOption))]
@@ -656,7 +653,9 @@ class CompiledFunction:
       stats_entry.argtypes = [ctypes.POINTER(CSolverStats)]
       stats_entry.restype = ctypes.c_int
       self._stats_entries[stats_symbol] = stats_entry
-    self._sz_w = self._artifact.workspace_size
+    self._w_bytes = self._artifact.workspace_size * workspace_dtype(fun).itemsize
+    self._input_dtypes = tuple(e.type.dtype.numpy() for e in fun.inputs)
+    self._output_dtypes = tuple(e.type.dtype.numpy() for e in fun.outputs)
     self._input_names = tuple(fun.input_names)
     self._input_shapes = tuple(e.type.storage_shape for e in fun.inputs)
     self._input_sizes = tuple(e.type.storage_size for e in fun.inputs)
@@ -694,8 +693,8 @@ class CompiledFunction:
   def run(self, args: list[Any]) -> list[Any]:
     """Dispatch the compiled entry point with positional NumPy inputs.
 
-    Inputs are converted to contiguous float64 buffers with shapes validated against the
-    declared input shapes. Outputs are freshly-allocated NumPy arrays reshaped to the
+    Inputs are converted to contiguous buffers of their leaf dtypes with shapes validated against
+    the declared input shapes. Outputs are freshly-allocated NumPy arrays reshaped to the
     ConcreteFunction's declared output shapes (the compact buffer shape for sparse outputs).
     Raises ``JitError`` if the C function returns a non-zero ABI status.
     """
@@ -703,12 +702,13 @@ class CompiledFunction:
       raise TypeError(f"expected {self._n_args} inputs, got {len(args)}")
 
     arg_buffers: list[np.ndarray] = []
-    arg_array = (_C_DOUBLE_P * max(self._n_args, 1))()
+    arg_array = (ctypes.c_void_p * max(self._n_args, 1))()
     for i, value in enumerate(args):
       name = self._input_names[i]
       expected_shape = self._input_shapes[i]
       layout = self._fun.input_tree.layouts[i]
-      arr = np.asarray(value, dtype=np.float64) if layout is None else layout.numerical_values(value, self._fun.inputs[i].shape)
+      dtype = self._input_dtypes[i]
+      arr = np.asarray(value, dtype=dtype) if layout is None else layout.numerical_values(value, self._fun.inputs[i].shape, dtype)
       if arr.shape != expected_shape:
         raise ValueError(f"input {name!r} has shape {arr.shape}, expected {expected_shape}")
       if isinstance(layout, DenseLayout):
@@ -716,21 +716,18 @@ class CompiledFunction:
       if not arr.flags["C_CONTIGUOUS"]:
         arr = np.ascontiguousarray(arr)
       arg_buffers.append(arr)
-      arg_array[i] = arr.ctypes.data_as(_C_DOUBLE_P)
+      arg_array[i] = arr.ctypes.data
 
     outputs: list[np.ndarray] = []
-    res_array = (_C_DOUBLE_P * max(self._n_res, 1))()
+    res_array = (ctypes.c_void_p * max(self._n_res, 1))()
     for i in range(self._n_res):
-      out = np.empty(self._output_sizes[i], dtype=np.float64)
+      out = np.empty(self._output_sizes[i], dtype=self._output_dtypes[i])
       outputs.append(out)
-      res_array[i] = out.ctypes.data_as(_C_DOUBLE_P)
+      res_array[i] = out.ctypes.data
 
-    if self._sz_w:
-      w_buf = (ctypes.c_double * self._sz_w)()
-      w_ptr = ctypes.cast(w_buf, _C_DOUBLE_P)
-    else:
-      w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
-      w_ptr = _C_DOUBLE_P()
+    # Eight-byte words, so every slot of a byte workspace is aligned to its dtype.
+    w_buf = np.empty(-(-self._w_bytes // 8), dtype=np.uint64)
+    w_ptr = w_buf.ctypes.data if self._w_bytes else None
 
     # C stdout buffers apart from sys.stdout, and holds its lines until exit when it is not a terminal.
     # Flushing both around a call that prints keeps the two in the order they were written.

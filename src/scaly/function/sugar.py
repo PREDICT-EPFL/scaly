@@ -163,7 +163,7 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
     if isinstance(decl, _PatternHole):
       if isinstance(marker, _Window):
         raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
-      pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
+      pattern, canonical = bind_sparse(actual, decl.dtype.numpy()) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
       if decl.shape_hole and pattern is None:
         decl = None
       else:
@@ -210,8 +210,8 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
       else:
         if pattern is not None and canonical is None:
           layout = cast(_Leaf, tree).layouts[0]
-          assert layout is not None
-          actual = layout.numerical_values(actual, shape if repeated else (length, *shape))
+          assert layout is not None and decl is not None
+          actual = layout.numerical_values(actual, shape if repeated else (length, *shape), decl.dtype.numpy())
         actual = actual.reshape(-1)
         start, stride = 0, 0 if repeated else width
     if decl is not None and shape != decl.shape:
@@ -295,10 +295,8 @@ class _Mapped(_Derived):
     mapped = self._mapped_instance(skeleton)
     arrays = []
     for actual, (start, stride), formal in zip(actuals, layouts, concrete.inputs, strict=True):
-      array = np.asarray([actual[start + i * stride : start + i * stride + formal.type.storage_size] for i in range(self._length)]).reshape(
-        (self._length, *formal.type.storage_shape)
-      )
-      arrays.append(array)
+      slices = [actual[start + i * stride : start + i * stride + formal.type.storage_size] for i in range(self._length)]
+      arrays.append(np.asarray(slices, dtype=actual.dtype).reshape((self._length, *formal.type.storage_shape)))
 
     return mapped.numerical_call(*mapped.input_tree.unflatten(tuple(arrays)))
 

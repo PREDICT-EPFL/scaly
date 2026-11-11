@@ -5,12 +5,14 @@ the symbol mangling (``docs/how_it_works/generated_interface.md``). The typed st
 from __future__ import annotations
 
 from ..function.concrete import ConcreteFunction
+from ..function.model import Function, as_concrete
 from ..ir.layout import SparseLayout
+from ..ir.types import DType, dtypes
+from ..passes.lowering import workspace_dtype
 from ..utils.names import c_ident as c_ident, NameScope
 
-# ``mem`` follows CasADi 3.8: an ``int`` memory handle a stateful function would index a pool with.
-# Every scaly function is stateless and ignores it.
-C_API_SIGNATURE = "int f(const double** arg, double** res, int* iw, double* w, int mem)"
+# The pointee of ``arg``, ``res`` and ``w`` for each workspace dtype; a uint8 workspace is addressed in bytes.
+ENTRY_C_TYPES = {dtypes.float64: "double", dtypes.float32: "float", dtypes.uint8: "void"}
 
 # The status codes every generated entry returns (docs/how_it_works/generated_interface.md).
 ABI_STATUS = {"SCALY_SUCCESS": 0, "SCALY_ERR_NULL_ABI": 1, "SCALY_ERR_NULL_WORK": 2, "SCALY_ERR_NULL_RESULT": 3, "SCALY_ERR_NULL_INPUT": 4}
@@ -64,10 +66,28 @@ def wrapper_param_idents(symbol: str, inputs: list[str], outputs: list[str], *, 
   return [names.allocate(n) for n in inputs], [names.allocate(n) for n in outputs], names.allocate("workspace")
 
 
-def c_api_signature(symbol: str = "f", *, solver_options: bool = False) -> str:
-  """The universal ABI entry signature, spelled for a given symbol name."""
-  signature = C_API_SIGNATURE.replace(" f(", f" {symbol}(")
-  return signature[:-1] + ", const scaly_solver_option* const* solver_options)" if solver_options else signature
+def c_api_signature(fun: Function | ConcreteFunction, symbol: str | None = None, *, solver_options: bool = False) -> str:
+  """The entry signature of ``fun``, named ``symbol`` or after ``fun``. ``arg``, ``res`` and ``w``
+  point to ``double`` when every leaf is float64, to ``float`` when every leaf is float32, and to
+  ``void`` otherwise, with ``SZ_W`` then counting bytes. ``mem`` follows CasADi 3.8: an ``int``
+  memory handle a stateful function would index a pool with. Every Scaly function is stateless and
+  ignores it."""
+  fun = as_concrete(fun)
+  t = ENTRY_C_TYPES[workspace_dtype(fun)]
+  options = ", const scaly_solver_option* const* solver_options" if solver_options else ""
+  return f"int {symbol or c_ident(fun.name)}(const {t}** arg, {t}** res, int* iw, {t}* w, int mem{options})"
+
+
+def leaf_c_type(dtype: DType) -> str:
+  """The C type a leaf's values cross the entry as. A bool leaf is C's ``bool``, one byte holding 0
+  or 1, which the kernel reads and writes as ``uint8_t``."""
+  return "bool" if dtype.is_bool else dtype.c_type
+
+
+def workspace_c_type(fun: ConcreteFunction) -> str:
+  """The element type of a typed header's workspace buffer: the entry's pointee, or bytes."""
+  t = ENTRY_C_TYPES[workspace_dtype(fun)]
+  return "unsigned char" if t == "void" else t
 
 
 def sparse_layout_tables(layout: SparseLayout) -> tuple[tuple[str, tuple[int, ...]], ...]:
