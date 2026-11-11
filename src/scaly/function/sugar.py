@@ -509,8 +509,9 @@ def scan(
   outputs, each with a leading axis of ``length``. ``trip``, an int64 scalar, runs only the first
   ``min(trip, length)`` steps; the unused entries of the stacked outputs are zero. With ``reverse``
   the steps run from the last to the first, and step ``k`` still reads slice ``k`` and writes
-  output ``k``. ``in_place`` names carry positions or input names that lowering must prove safe to update in place. Differentiating through the loop raises
-  ``NotImplementedError``.
+  output ``k``. ``in_place`` names carry positions or input names that lowering must prove safe
+  to update in place. Forward derivatives follow the same steps as the primal loop.
+  Reverse derivatives raise ``NotImplementedError``.
   """
   carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan", in_place)
   return carry, ys
@@ -524,7 +525,8 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, params: tuple[
   one per entry of ``params``, which every step reads whole. ``cond`` returns a bool scalar and is
   evaluated before each step; ``body`` returns the new carries, each with its input's shape and
   dtype. Returns ``(carry, count)``: the final carry, shaped like ``init``, and the number of
-  steps taken as an int64 scalar. Differentiating through the loop raises ``NotImplementedError``.
+  steps taken as an int64 scalar. Forward derivatives take the same steps, with the condition
+  evaluated on primal carries. Reverse derivatives raise ``NotImplementedError``.
   """
   carry, ys, count = _loop(body, cond, init, _whole(tuple(params)), max_iter, None, index, False, "while_loop")
   if ys:

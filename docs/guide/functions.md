@@ -590,6 +590,45 @@ iteration's output into the next iteration. The loop body need not grow with
 the number of calls, but numerical work, input and output storage, and
 derivative sparsity tables can.
 
+## Sequential repetition: `scan` and `while_loop`
+
+`sc.scan` feeds each step's carry into the next step. Its body is a Function
+that returns the updated carry first, followed by any values to stack:
+
+```python
+@sc.function(sc.arg("carry", ()), sc.arg("x", ()))
+def accumulate(carry: sc.Expr, x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return carry + x, carry * x
+
+@sc.function(sc.arg("initial", ()), sc.arg("xs", 3))
+def recurrence(initial: sc.Expr, xs: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    final, (products,) = sc.scan(accumulate, initial, (xs,), length=3)
+    return final, products
+
+print(recurrence(np.array(1.0), np.array([2.0, 3.0, 4.0])))
+# (array(10.), array([ 2.,  9., 24.]))
+```
+
+Each input in `xs` uses the same slicing rules as `vmap`, including
+`sc.broadcast` and `sc.window`. `length` fixes the maximum number of steps.
+An optional int64 scalar `trip` sets the number taken at evaluation time,
+clamped between zero and `length`. Unused stacked entries are zero.
+`reverse=True` visits the selected steps in reverse order and keeps each
+stacked value at its original step index.
+
+`sc.while_loop(cond, body, init, max_iter=bound, params=(...))` checks its
+condition before each step and returns the final carry and the int64 number
+of steps taken. The condition and body take the same arguments. Parameters
+are read whole each step. Both builders accept `index=True` to pass an int64
+step number after the carries. Carries keep their shapes and data types.
+
+Forward derivatives through either loop take exactly the primal's steps,
+including early exit. `sc.jvp` propagates one direction and `sc.jacobian`
+propagates several directions together. Integer and boolean carries have no
+tangent, and conditions are not differentiated. At inputs where a condition
+changes the number of steps, this derivative need not agree with finite
+differences. Reverse derivatives through these loops are not supported.
+
 ## Printing from generated code
 
 `sc.print` prints numerical values each time the compiled code computes them.

@@ -97,6 +97,12 @@ expression graph for inspection and export.
 
 ::: scaly.ir.types.as_dtype
 
+## Sequential loops
+
+::: scaly.function.sugar.scan
+
+::: scaly.function.sugar.while_loop
+
 ## Builders
 
 ::: scaly.ir.einsum.einsum

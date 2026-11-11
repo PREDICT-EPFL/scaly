@@ -29,6 +29,7 @@ class HelperKey:
   active: tuple[int, ...]
   lowering: Lowering
   nseed: int | None = None
+  n_carry: int | None = None
   constants: tuple[tuple[str, bytes] | None, ...] = ()
   members: tuple[ConcreteFunction, ...] = ()
   rules: tuple[str, ...] = ()
@@ -52,4 +53,5 @@ def helper_name(callee: ConcreteFunction, key: HelperKey) -> str:
   fields += (key.rules,) if key.rules else ()
   fields += (key.masked,) if key.masked else ()
   fields += ("cond",) if key.conditional else ()
+  fields += (key.n_carry,) if key.n_carry is not None else ()
   return f"{callee.name}_{stem}_{hashlib.sha1(repr(fields).encode()).hexdigest()[:10]}"
