@@ -88,7 +88,6 @@ const = Expr.const
 
 
 __all__ = [
-  "einsum",
   "SCALY_SOLVER_STATS_VERSION",
   "ScalySolveStatus",
   "Bounded",
@@ -141,6 +140,7 @@ __all__ = [
   "custom_derivative",
   "diag",
   "dot",
+  "einsum",
   "equal",
   "matmul",
   "format_expr",

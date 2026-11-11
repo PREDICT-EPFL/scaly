@@ -13,8 +13,11 @@ from .expr import Expr, as_expr, matmul
 def einsum(spec: str, *operands: Any) -> Expr:
   """Contract labelled axes, with NumPy's string subscript and broadcasting rules.
 
-  Contractions run left to right through matrix products. Repeated labels select
-  diagonals. Ellipses stand for broadcast batch axes. No order search is performed.
+  A label repeated within one operand selects a diagonal, and ``...`` stands for
+  broadcast leading axes. Operands contract pairwise from left to right as matrix
+  products, so their order decides the size of each intermediate. Sparse operands
+  follow the restrictions of these operations, including the refusal of batched
+  sparse matrix products.
   """
   if not isinstance(spec, str):
     raise TypeError("einsum spec must be a string")
@@ -67,11 +70,7 @@ def einsum(spec: str, *operands: Any) -> Expr:
     if len(unique) != len(labels):
       shape = tuple(local[c] for c in unique)
       coordinates = np.indices(shape, dtype=np.int64)
-      idx = np.zeros(shape, dtype=np.int64)
-      stride = 1
-      for c, n in reversed(list(zip(labels, x.shape, strict=True))):
-        idx += coordinates[unique.index(c)] * stride
-        stride *= n
+      idx = np.ravel_multi_index(tuple(coordinates[unique.index(c)] for c in labels), x.shape)
       xs[i] = x.gather(idx)
     labels_all.append(unique)
 
@@ -82,21 +81,17 @@ def einsum(spec: str, *operands: Any) -> Expr:
     idx = np.broadcast_to(np.arange(x.size).reshape(x.shape), shape)
     return x.gather(idx)
 
+  def drop(value: Expr, own: list[str], keep: set[str]) -> tuple[Expr, list[str]]:
+    axes = tuple(i for i, c in enumerate(own) if c not in keep)
+    return (value.sum(axis=axes) if axes else value), [c for c in own if c in keep]
+
   xs = [expand(x, labels) for x, labels in zip(xs, labels_all, strict=True)]
   x, labels = xs[0], labels_all[0]
   for i in range(1, len(xs)):
     y, right = xs[i], labels_all[i]
     needed = set(output).union(*(set(v) for v in labels_all[i + 1 :]))
-    for side in (0, 1):
-      own, other = (labels, right) if side == 0 else (right, labels)
-      axes = tuple(j for j, c in enumerate(own) if c not in needed and c not in other)
-      if axes:
-        if side == 0:
-          x = x.sum(axis=axes)
-          labels = [c for j, c in enumerate(labels) if j not in axes]
-        else:
-          y = y.sum(axis=axes)
-          right = [c for j, c in enumerate(right) if j not in axes]
+    x, labels = drop(x, labels, needed | set(right))
+    y, right = drop(y, right, needed | set(labels))
     shared = [c for c in labels if c in right]
     batch = [c for c in shared if c in needed]
     contracted = [c for c in shared if c not in needed]
@@ -114,8 +109,5 @@ def einsum(spec: str, *operands: Any) -> Expr:
     )
     labels = batch + left_free + right_free
     x = x.reshape(tuple(sizes[c] for c in labels))
-  axes = tuple(i for i, c in enumerate(labels) if c not in output)
-  if axes:
-    x = x.sum(axis=axes)
-    labels = [c for c in labels if c in output]
+  x, labels = drop(x, labels, set(output))
   return x.transpose(tuple(labels.index(c) for c in output))
