@@ -104,14 +104,15 @@ def test_a_missing_library_behind_an_index_entry_is_rebuilt(isolated_cache: Path
 def test_an_entry_names_its_library_inside_the_cache_so_the_cache_can_move(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   fun = _fn()
   built = jit._build_artifact(fun)
+  library = built.lib_path.relative_to(jit.cache_root())  # the root as the JIT spells it: an extended path on Windows
   (entry,) = (isolated_cache / "index").iterdir()
-  assert json.loads(entry.read_text())["library"] == built.lib_path.relative_to(isolated_cache).as_posix()
+  assert json.loads(entry.read_text())["library"] == library.as_posix()
   moved = isolated_cache.with_name(isolated_cache.name + "_moved")
   isolated_cache.rename(moved)
   monkeypatch.setenv("SCALY_CACHE_DIR", str(moved))
   _fresh()
   lowered = _lowered(monkeypatch)
-  assert jit._build_artifact(fun).lib_path == moved / built.lib_path.relative_to(isolated_cache)
+  assert jit._build_artifact(fun).lib_path == jit.cache_root() / library
   assert lowered == []
 
 
