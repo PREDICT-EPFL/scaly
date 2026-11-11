@@ -138,3 +138,15 @@ on 2026-11-11. Its old-head task was cancelled and settled after the correctness
 review target. Start one fresh Opus review of the corrected head when its quota permits, using
 `/tmp/scaly-225/review-brief.txt`, and settle it only after using its result. No reviewer verdict
 may be invented. The two outstanding acceptance criteria still prevent queueing.
+
+
+The correctness correction is confirmed. Sol's low-effort delta check reported the finding
+resolved and no adjacent concerns. The fourth full hook passed with exit 0: 4,662 tests passed,
+56 skipped, benchmark smoke and docs/type/lint/format/private-name checks all green. Existing
+snapshots and the chain C translation unit remain byte-identical. The collection has 4,718 cases.
+
+The primary review still owes a verdict. Request a fresh Opus xhigh review of the current local
+head, with quota resumption at 06:30 UTC if necessary. Do not settle that review while it is still
+quota-paused. The original cancelled request and the exact briefs/reproductions are in the T3
+history and `/tmp/scaly-225/`. The correctness fix and this note remain local until the one
+combined review-fix push; PR #419 is still draft. Do not queue it with either acceptance gap open.
