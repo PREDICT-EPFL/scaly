@@ -145,7 +145,7 @@ def test_sparse_map_broadcast_and_raw_windows_use_declared_layout(layout, length
   assert isinstance(compiled, sparse.coo_array) and isinstance(direct, sparse.coo_array)
   expected = np.zeros((length, *PATTERN.shape))
   declared = leaf.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   for i in range(length):
     compact = data[1 + 6 * i : 1 + 6 * i + PATTERN.nnz]
     expected[i, declared.rows, declared.cols] = np.sin(compact)
@@ -169,7 +169,7 @@ def test_sparse_window_layout_matches_direct_values_for_batches_and_empty_patter
   stage = sc.function(leaf, name="sparse_batched_window_stage")(lambda x: x.sin())
   mapped = sc.vmap(stage, length)
   declared = leaf.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   width = leaf.types[0].storage_size
   stride = width + 2
   data = np.arange(1 + length * stride, dtype=float) / 7
@@ -197,7 +197,7 @@ def test_sparse_window_layout_routes_overlapping_values_and_derivatives(layout, 
   data = np.arange(size, dtype=float) / 7
   wrapper = sc.function(sc.arg("raw", size), name="sparse_window_weighted_outer")(lambda raw: mapped(sc.window(raw, 1, stride)))
   declared = leaf.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   indices = 1 + np.arange(3)[:, None] * stride + np.arange(PATTERN.nnz)
   factors = weights[declared.rows, declared.cols]
   expected = (np.sin(data[indices]) * factors).sum(axis=1)
