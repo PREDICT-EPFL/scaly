@@ -3,6 +3,8 @@
 import math
 from itertools import combinations
 
+from tests.matmul_cases import SHAPES
+
 import numpy as np
 import pytest
 
@@ -404,3 +406,17 @@ def test_constant_select_does_not_enumerate_two_unknown_dense_supports() -> None
   assert sc.where(sc.const(condition), x.sin(), y.cos()).support is None
   expected = frozenset(np.flatnonzero(np.broadcast_to(condition, x.shape)))
   assert sc.where(sc.const(condition), x.sin(), 0.0).support == expected
+
+
+@pytest.mark.parametrize("shapes", SHAPES)
+@pytest.mark.parametrize("known", [(True, False), (False, True), (True, True)])
+def test_batched_matmul_support(shapes, known):
+  rng = np.random.default_rng(670)
+  values = [rng.random(shape) < 0.4 for shape in shapes]
+  args = [
+    sc.const(mask.astype(float)) if fixed else sc.sym(f"x{i}", shape)
+    for i, (shape, mask, fixed) in enumerate(zip(shapes, values, known, strict=True))
+  ]
+  expected = np.matmul(*(mask if fixed else np.ones(shape, dtype=bool) for shape, mask, fixed in zip(shapes, values, known, strict=True)))
+  result = args[0] @ args[1]
+  assert result.support == _entries(expected)

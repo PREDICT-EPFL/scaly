@@ -26,8 +26,10 @@ from scaly.solvers.solver import Solver
 
 def test_public_exports_are_canonical() -> None:
   program = __import__("scaly.ir.program", fromlist=["ProgramNode"])
-  from scaly.ir.expr import segment_sum, stop_gradient
+  from scaly.ir.expr import matmul, segment_sum, stop_gradient
 
+  assert sc.matmul is matmul
+  assert "matmul" in sc.__all__
   assert sc.stop_gradient is stop_gradient
   assert "stop_gradient" in sc.__all__
 

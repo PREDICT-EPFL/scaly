@@ -17,16 +17,21 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   if a.type.pattern is not None or b.type.pattern is not None:
     _lower_stored_matmul(ctx, node)
     return
-  if len(a.shape) not in (1, 2) or len(b.shape) not in (1, 2):
-    raise LoweringError(f"matmul shapes {a.shape}@{b.shape} not lowered (batched / higher-rank deferred)")
   out = ctx.alloc_tmp(node)
   name = out.attrs["name"]
   outputs, coords = ctx.nest(node.shape, f"i_{name}")
   reductions, (k,) = ctx.reduce((a.shape[-1],), f"k_{name}")
-  a_coords = [coords[0], k] if len(a.shape) == 2 else [k]
-  b_coords = [k, coords[-1]] if len(b.shape) == 2 else [k]
+  batch_rank = len(node.shape) - (len(a.shape) > 1) - (len(b.shape) > 1)
+
+  def batch_coords(arg):
+    return [p.const_int(0) if dim == 1 else coords[batch_rank - len(arg.shape[:-2]) + axis] for axis, dim in enumerate(arg.shape[:-2])]
+
+  a_coords = [*batch_coords(a), coords[batch_rank], k] if len(a.shape) > 1 else [k]
+  b_coords = [*batch_coords(b), k, coords[-1]] if len(b.shape) > 1 else [k]
   target = p.view(out, [_flat(node.shape, coords)])
-  emit_reduction(ctx, outputs, reductions, target, p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)))
+  emit_reduction(
+    ctx, outputs, reductions, target, p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)), batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank])
+  )
 
 
 def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:

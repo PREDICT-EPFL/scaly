@@ -251,7 +251,7 @@ def _slice_of_stack(e: Expr) -> Expr:
 
 
 def _is_matrix_transpose(e: Expr) -> bool:
-  return e.op == ExprOp.TRANSPOSE and len(e.shape) == 2 and e.attrs["axes"] == (1, 0)
+  return e.op == ExprOp.TRANSPOSE and len(e.shape) >= 2 and e.attrs["axes"] == (*range(len(e.shape) - 2), len(e.shape) - 1, len(e.shape) - 2)
 
 
 def _matmul_of_transpose_and_vector(e: Expr) -> bool:
@@ -272,7 +272,7 @@ def _matmul_ones_vector(e: Expr) -> bool:
 
 def _matmul_ones(e: Expr) -> Expr:
   a, b = e.args
-  return b.sum(0) if len(a.shape) == 1 and _is_one(a) else a.sum(-1)
+  return b.sum(-2 if len(b.shape) > 1 else -1) if len(a.shape) == 1 and _is_one(a) else a.sum(-1)
 
 
 def _gather_identity(e: Expr) -> bool:

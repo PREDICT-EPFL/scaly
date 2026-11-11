@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from tests.matmul_cases import SHAPES
+
 import numpy as np
 import pytest
 
@@ -513,3 +515,46 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
     assert "nonsmooth" in str(e)
   else:  # pragma: no cover
     raise AssertionError("nonsmooth JVP through wrt should still fail")
+
+
+@pytest.mark.parametrize("shapes", SHAPES)
+@pytest.mark.parametrize("nseed", [1, 3])
+def test_batched_matmul_derivatives(shapes, nseed):
+  from scaly.ad.reverse import vjp
+
+  a, b = shapes
+  rng = np.random.default_rng(68)
+  x, y = rng.normal(size=a), rng.normal(size=b)
+  dx, dy = rng.normal(size=(nseed, *a)), rng.normal(size=(nseed, *b))
+  cot = rng.normal(size=np.matmul(x, y).shape)
+
+  @sc.function(sc.group(sc.arg("a", a), sc.arg("b", b)), outputs=sc.group(sc.arg("dleft"), sc.arg("dright"), sc.arg("ra"), sc.arg("rb")))
+  def f(inputs):
+    a, b = inputs
+    out = a @ b
+    ra, rb = vjp([out], [a, b], [sc.const(cot)])
+    return sc.jvp_many(out, a, sc.const(dx)), sc.jvp_many(out, b, sc.const(dy)), ra, rb
+
+  da, db, ra, rb = f((x, y))
+  expected_a = np.stack([np.matmul(seed, y) for seed in dx])
+  expected_b = np.stack([np.matmul(x, seed) for seed in dy])
+  np.testing.assert_allclose(da, expected_a, atol=1e-12)
+  np.testing.assert_allclose(db, expected_b, atol=1e-12)
+  for i in range(nseed):
+    np.testing.assert_allclose(np.sum(ra * dx[i]), np.sum(cot * expected_a[i]), atol=1e-10)
+    np.testing.assert_allclose(np.sum(rb * dy[i]), np.sum(cot * expected_b[i]), atol=1e-10)
+  eps = 1e-5
+  finite = (np.matmul(x + eps * dx[0], y + eps * dy[0]) - np.matmul(x - eps * dx[0], y - eps * dy[0])) / (2 * eps)
+  np.testing.assert_allclose(da[0] + db[0], finite, atol=1e-9)
+
+
+def test_reverse_broadcast_reduces_batch_axes():
+  from scaly.ad.reverse import vjp
+  from scaly.ir.expr import ExprOp, topo
+
+  x, y = sc.sym("x", (1, 2, 3)), sc.sym("y", (4, 3, 2))
+  out = x @ y
+  (dx,) = vjp([out], [x], [sc.sym("cot", out.shape)])
+  nodes = topo([dx])
+  assert any(e.op == ExprOp.REDUCE and e.attrs["axes"] == (0,) for e in nodes)
+  assert all(e.op != ExprOp.SCATTER for e in nodes)

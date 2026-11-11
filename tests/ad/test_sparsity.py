@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import cast
 
+from tests.matmul_cases import SHAPES
+
 import numpy as np
 import pytest
 
@@ -887,3 +889,28 @@ def test_deep_callee_masks_skip_inactive_solver_parameters() -> None:
     fn = ConcreteFunction._from_exprs(f"deep_callee_{i}", [x], [result], ["x"], ["y"])
     result = fn(x)
   np.testing.assert_array_equal(jacobian_sparsity(result, x).to_mask(), np.eye(2, dtype=bool))
+
+
+@pytest.mark.parametrize("shapes", SHAPES)
+@pytest.mark.parametrize("left", [False, True])
+def test_sparsity_finite_difference(shapes, left):
+  from scaly.ad.sparsity import jacobian_sparsity
+
+  a, b = shapes
+  rng = np.random.default_rng(69)
+  x, y = rng.normal(size=a), rng.normal(size=b)
+  x[x < 0] = 0
+  y[y < 0] = 0
+  variable = sc.sym("variable", a if left else b)
+  expression = variable @ sc.const(y) if left else sc.const(x) @ variable
+  pattern = jacobian_sparsity(expression, variable)
+  actual = np.zeros(pattern.shape, dtype=bool)
+  actual[pattern.rows, pattern.cols] = True
+  expected = np.zeros(pattern.shape, dtype=bool)
+  for column in range(variable.size):
+    delta = np.zeros(variable.shape)
+    delta.reshape(-1)[column] = 1e-5
+    high = np.matmul(x + delta, y) if left else np.matmul(x, y + delta)
+    low = np.matmul(x - delta, y) if left else np.matmul(x, y - delta)
+    expected[:, column] = np.abs((high - low).reshape(-1)) > 1e-10
+  np.testing.assert_array_equal(actual, expected)

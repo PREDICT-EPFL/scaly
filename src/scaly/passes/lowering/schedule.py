@@ -18,12 +18,13 @@ def emit_reduction(
   value: ProgramNode,
   *,
   kind: str = "add",
+  batch_axes: int = 0,
   identity: ProgramNode | None = None,
 ) -> None:
   """Use four scalar output lanes for unit-stride reductions, otherwise put reduction axes first.
 
   Four output lanes expand during emission, each with its own named accumulator. A strided
-  reduction carries its running sums in the destination between iterations. Loaded bounds keep
+  reduction carries its running sums in the destination between iterations, with batch axes outside. Loaded bounds keep
   their output coordinates outside the reduction and disable lane expansion.
   """
   if identity is None:
@@ -44,7 +45,7 @@ def emit_reduction(
   loaded = any(n.op == ProgramOp.LOAD for r in reductions for bound in r.args[:2] for n in walk_program(bound))
   if strided and not loaded:
     ctx.emit(outputs, [p.store(target, identity)])
-    ctx.emit([*reductions, *outputs], [p.store(target, combine(p.load(target), value))])
+    ctx.emit([*outputs[:batch_axes], *reductions, *outputs[batch_axes:]], [p.store(target, combine(p.load(target), value))])
     return
 
   def emit(outer: Sequence[ProgramNode], coordinates: Sequence[ProgramNode] = ()) -> None:
