@@ -13,7 +13,7 @@ Ruff format/lint, ty and diff whitespace checks passed. C snapshots are unchange
 - [x] Preview the accumulators branch locally and run focused tests with -n 2.
 - [x] Preview the predicates branch locally and run focused tests with -n 2.
 - [x] Return to the prepared main-based task branch and record any integration work still needed.
-- [ ] When the coordinator confirms #30 closed, rebase onto final main, preserving both changes.
+- [x] When the coordinator confirms #30 closed, rebase onto final main, preserving both changes.
 - [ ] If resolution changes behavior beyond mechanical conflict fixes, one Opus delta check of
       the resolution only; settle its delegate after using the result.
 - [ ] Run the final full hook only through ~/.scaly-suite/run, detached; remove PLAN.md and push
@@ -65,3 +65,17 @@ source-digest clock guard; the subsequent fresh run passes without overriding th
 The requested Opus delta is deferred to the final integrated state, after the coordinator's #30
 signal, so it covers this new behavior and all final rebase resolutions once. No full suite or
 push has been performed during this preparation. The published PR head remains unchanged.
+
+## Final integration authorized
+
+The coordinator confirmed #30 closed and authorized the final sequence: focused tests, one Opus
+delta covering the index fix and resolution, the full runner, one force-with-lease push, ready,
+and one squash/auto request because GitHub dropped the old auto-merge. #355 lands before #314;
+keep the toolchain and workspace changes small and do not wait for #314.
+
+The branch is rebased onto main containing #315, #320 and #321. Final conflicts were only the
+exhaustive op tables in tests/test_op_coverage.py and tests/ad/test_differential.py; each keeps
+both predicate cases and EXTERN. Focused tests: 1315 passed, 1 skipped with -n 2. Ruff format/lint,
+ty and whitespace checks pass. C snapshots are unchanged against the new base.
+The earlier hold and deferred-review instructions above are historical; the coordinator's go is
+now in effect. Next: Opus delta, then full runner, remove this plan, one push and auto-merge.
